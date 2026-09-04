@@ -4,6 +4,10 @@ FROM debian:12
 
 ARG VPP_VERSION=26.06-release
 ENV DEBIAN_FRONTEND=noninteractive
+# O postinst do vpp roda "sysctl --system", que nao tem permissao em
+# container, e o script e "sh -e". O proprio pacote expoe esta variavel
+# exatamente para instalacao em container.
+ENV VPP_INSTALL_SKIP_SYSCTL=1
 
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build pkg-config gdb git \

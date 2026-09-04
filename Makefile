@@ -4,8 +4,10 @@ BUILD  := .build
 
 .PHONY: test vectors clean
 
-test: vectors $(BUILD)/test_bpa
+test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports
 	@$(BUILD)/test_bpa
+	@echo
+	@$(BUILD)/test_bpa_ports
 
 vectors:
 	@cd ref && python3 gen_vectors.py
@@ -15,6 +17,11 @@ $(BUILD)/test_bpa: test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c \
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c
+
+$(BUILD)/test_bpa_ports: test/test_bpa_ports.c src/plugins/bpa/bpa_ports.h \
+                         test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_ports.c
 
 # Valida o proprio modelo de referencia.
 model:
