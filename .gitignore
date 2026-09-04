@@ -1,5 +1,6 @@
-build/
 __pycache__/
 *.pyc
 *.o
 *.so
+.build/
+test/bpa_vectors.h

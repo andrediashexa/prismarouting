@@ -8,8 +8,15 @@
 #ifndef __included_bpa_pool_h__
 #define __included_bpa_pool_h__
 
+/* The mapping core is pure arithmetic, so it builds either inside VPP or
+ * standalone against a small shim. Standalone is what the unit test uses:
+ * it keeps the algorithm testable in CI without a VPP tree. */
+#ifdef BPA_STANDALONE
+#include "bpa_shim.h"
+#else
 #include <vlib/vlib.h>
 #include <vnet/ip/ip4_packet.h>
+#endif
 
 typedef enum
 {
