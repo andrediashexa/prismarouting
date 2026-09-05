@@ -16,6 +16,25 @@ bad()  { say "  [FALHA] $*"; fail=$((fail+1)); }
 say ""
 say "=============== HexaRouting: autoteste de boot ==============="
 
+# --- instrucoes de CPU ---
+# O binario do VPP e compilado assumindo SSE4.2 e usa AVX quando disponivel.
+# Numa CPU sem isso ele morre com SIGILL em milissegundos, e como o
+# vpp.service tem Restart=always o sintoma vira um loop de reinicio que nao
+# diz nada sobre a causa. Foi assim que se perderam varias horas: o
+# diagnostico so apareceu no "code=killed, signal=ILL" do journal.
+missing=""
+for f in sse4_2; do
+  grep -qw "$f" /proc/cpuinfo || missing="$missing $f"
+done
+if [ -n "$missing" ]; then
+  bad "CPU sem:$missing - o VPP exige e vai morrer com SIGILL"
+  say "        modelo: $(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2-)"
+elif grep -qw avx2 /proc/cpuinfo; then
+  ok "CPU com sse4_2 e avx2"
+else
+  say "  [aviso] CPU sem avx2: o VPP funciona, mas rende menos"
+fi
+
 # --- dataplane ---
 if vppctl show version >/dev/null 2>&1; then
   ok "VPP responde: $(vppctl show version 2>/dev/null | cut -d' ' -f1-2)"
@@ -25,6 +44,24 @@ else
   tail -12 /var/log/vpp/vpp.log 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
   say "        systemctl status vpp:"
   systemctl status vpp.service --no-pager -n 8 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
+fi
+
+# --- servico instavel: sobe, cai, sobe de novo ---
+# Um servico que reinicia em loop pode estar "ativo" no instante em que se
+# olha, e o "systemctl status" mostra ativo. So o contador de reinicios conta
+# a historia - e sem ele o diagnostico vira adivinhacao.
+restarts=$(systemctl show vpp.service -p NRestarts --value 2>/dev/null)
+[ -n "$restarts" ] || restarts=0
+if [ "$restarts" -gt 2 ] 2>/dev/null; then
+  bad "vpp.service ja reiniciou $restarts vezes: esta em loop"
+  say "        ultimas linhas de /var/log/vpp/vpp.log:"
+  tail -20 /var/log/vpp/vpp.log 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
+  say "        journal do vpp.service:"
+  journalctl -u vpp.service --no-pager -n 20 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
+elif [ "$restarts" -gt 0 ] 2>/dev/null; then
+  say "  [aviso] vpp.service reiniciou $restarts vez(es)"
+else
+  ok "vpp.service estavel (0 reinicios)"
 fi
 
 # --- plugins ---

@@ -92,12 +92,28 @@ O tuning roda em **todo** boot, sem sentinela, para respeitar mudanca em
 `tune.env` ou troca de NIC. Quem evita o custo do `update-grub` e o
 `apply-tuning`, que compara antes de regenerar.
 
+## Requisito de CPU
+
+O binario do VPP e compilado assumindo **SSE4.2**, e usa AVX quando ha. Numa
+CPU sem isso ele morre com `SIGILL` em milissegundos; como o `vpp.service`
+tem `Restart=always`, o sintoma que aparece e um loop de reinicio que nao diz
+nada sobre a causa.
+
+Foi exatamente o que aconteceu nos testes: o QEMU sem `-cpu max` usa o modelo
+`qemu64`, que nao tem SSE4.2. Perseguir esse loop custou duas hipoteses
+erradas antes de o journal mostrar `code=killed, signal=ILL`.
+
+Por isso o autoteste checa os conjuntos de instrucao **antes** de olhar o
+VPP, e o `lab/boot-iso.sh` passa `-cpu max`. Um provedor instalando em
+hardware antigo veria o mesmo loop, e agora ve a razao no console.
+
 ## Instalacao
 
 ```sh
 sh appliance/install.sh              # sobre um Debian 12 existente
 DESTDIR=/mnt sh appliance/install.sh # dentro de um chroot, para a ISO
 sh appliance/build-iso.sh            # ISO hibrida BIOS/UEFI
+sh lab/boot-iso.sh                   # boota a ISO e confere o autoteste
 ```
 
 Depois de instalar, ajustar `/etc/hexarouting/tune.env` (NIC do dataplane e
