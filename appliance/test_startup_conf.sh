@@ -13,6 +13,24 @@ mkdir -p /run/vpp /vpp_plugins /var/log/vpp
 (cd /src/.build-vpp && ninja >/dev/null 2>&1)
 sh /src/appliance/install.sh >/dev/null 2>&1
 
+# The VTY had never been run from its installed location by any test: the labs
+# run it out of the source tree, where config.py happens to sit beside it. So
+# "hexash: ModuleNotFoundError" shipped in every ISO, and only a login found it.
+echo "=== does the INSTALLED hexash actually start? ==="
+sh /src/appliance/install.sh >/dev/null 2>&1
+out=$(hexash -c "show rollback" 2>&1)
+case "$out" in
+  *Traceback*|*ModuleNotFoundError*|*"not found"*)
+    bad "the installed hexash does not start:"; echo "$out" | sed 's/^/    /' ;;
+  *) say "installed hexash runs: $(echo "$out" | head -1)" ;;
+esac
+out=$(hexash -c "show cgnat pool" 2>&1)
+case "$out" in
+  *Traceback*) bad "the installed hexash cannot reach the dataplane:"; echo "$out" | sed 's/^/    /' ;;
+  *) say "and reaches the dataplane" ;;
+esac
+
+echo
 echo "=== does the box know its own version? ==="
 HEXA_VERSION_STAMP="0.0.0-test (deadbee)" sh /src/appliance/install.sh >/dev/null 2>&1
 stamp=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
