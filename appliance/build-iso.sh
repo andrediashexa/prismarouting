@@ -65,7 +65,12 @@ chroot "$ROOT" /bin/sh -c "apt-get clean; rm -rf /var/lib/apt/lists/*"
 KVER=$(basename "$(ls -d "$ROOT"/lib/modules/* | head -1)")
 cp "$ROOT/boot/vmlinuz-$KVER"  "$WORK/iso/live/vmlinuz"
 cp "$ROOT/boot/initrd.img-$KVER" "$WORK/iso/live/initrd"
-mksquashfs "$ROOT" "$WORK/iso/live/filesystem.squashfs" -e boot -comp xz -no-progress
+# -mem e -processors limitam o mksquashfs: com xz sem limite ele consome
+# memoria proporcional ao paralelismo e derruba a maquina de build. O custo e
+# alguns segundos a mais; o beneficio e o build caber numa VM modesta.
+mksquashfs "$ROOT" "$WORK/iso/live/filesystem.squashfs" \
+  -e boot -comp xz -no-progress \
+  -processors "${SQUASH_PROCS:-2}" -mem "${SQUASH_MEM:-768M}"
 
 say "bootloader"
 cat > "$WORK/iso/boot/grub/grub.cfg" <<'EOF'
