@@ -11,17 +11,51 @@ GRUBFILE=/etc/default/grub.d/hexarouting.cfg
 VPPCONF=/etc/vpp/startup.conf
 : "${HEXA_DATAPLANE_IF:=}"
 : "${HEXA_SUBSCRIBERS:=200000}"
+: "${HEXA_LOW_LATENCY:=1}"
+
+# O governor e runtime, nao linha de kernel: nao adianta pedir no GRUB, e
+# nao sobrevive a um reboot sozinho. Com ondemand/schedutil o core do SO cai
+# de frequencia quando a caixa esta quieta, e a primeira rajada chega antes
+# de ele subir - perda que aparece como micro-burst inexplicavel.
+governor_performance() {
+  found=0
+  changed=0
+  for g in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
+    [ -w "$g" ] || continue
+    found=1
+    avail=$(cat "$(dirname "$g")/scaling_available_governors" 2>/dev/null || echo "")
+    case " $avail " in
+      *" performance "*) ;;
+      *) continue ;;
+    esac
+    [ "$(cat "$g")" = performance ] && continue
+    echo performance > "$g" 2>/dev/null && changed=$((changed + 1))
+  done
+  if [ "$found" = 0 ]; then
+    # Comum em VM: sem cpufreq exposto nao ha o que ajustar, e isso nao e erro.
+    echo "no cpufreq policy exposed: skipping governor"
+  else
+    echo "cpufreq governor: performance ($changed changed)"
+  fi
+}
+
+if [ "$HEXA_LOW_LATENCY" = 1 ]; then
+  governor_performance
+else
+  echo "HEXA_LOW_LATENCY=0: leaving the cpufreq governor alone"
+fi
 
 before=$(cat "$GRUBFILE" 2>/dev/null || true)
 
 set -- --write --subscribers "$HEXA_SUBSCRIBERS"
 [ -n "$HEXA_DATAPLANE_IF" ] && set -- "$@" --interface "$HEXA_DATAPLANE_IF"
+[ "$HEXA_LOW_LATENCY" = 1 ] || set -- "$@" --no-low-latency
 hexarouting-tune "$@" >/dev/null || exit 1
 
 after=$(cat "$GRUBFILE" 2>/dev/null || true)
 
 if [ "$before" = "$after" ]; then
-  echo "tuning inalterado"
+  echo "tuning unchanged"
   exit 0
 fi
 
@@ -29,16 +63,16 @@ fi
 # nao muda nada e pode demorar minutos varrendo dispositivos. O tuning passa
 # a valer quando a caixa for instalada.
 if [ -d /run/live/medium ] || [ -f /run/live/overlay ]; then
-  echo "sistema live: pulando update-grub (o tuning vale apos instalar)" >&2
+  echo "live system: skipping update-grub (tuning applies once installed)" >&2
   exit 0
 fi
 
 if command -v update-grub >/dev/null 2>&1; then
   update-grub
-  echo "linha de comando do kernel mudou (isolcpus/hugepages);" \
-       "reinicie para que valha" >&2
+  echo "kernel command line changed (isolcpus/hugepages);" \
+       "reboot for it to take effect" >&2
 else
-  echo "update-grub ausente: aplique a linha de comando de $GRUBFILE" \
-       "no seu bootloader e reinicie" >&2
+  echo "update-grub missing: apply the command line from $GRUBFILE" \
+       "in your bootloader and reboot" >&2
   exit 1
 fi

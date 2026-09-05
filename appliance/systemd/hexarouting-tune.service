@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - calcula o tuning de boot a partir do hardware
+Description=HexaRouting - compute boot tuning from the hardware
 Documentation=file:///usr/share/doc/hexarouting/architecture.md
 # Roda antes do VPP: o startup.conf gerado e o que o VPP le. As mudancas de
 # linha de comando do kernel (isolcpus, hugepages) so valem no boot seguinte.

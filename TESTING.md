@@ -171,13 +171,22 @@ access.
 ## 4. Appliance — the ISO
 
 ```sh
-sh appliance/build-iso.sh      # ~10 min
-sh tools/lab.sh boot-iso       # seconds with KVM, minutes without
+make iso                       # ~10 min, installs the image tools it needs
+make test-iso                  # builds, then boots and demands "HexaRouting ready"
 make test-appliance            # generates startup.conf and starts VPP with it
 ```
 
-`boot-iso` exits non-zero when the self-test does not report
+`make test-iso` exits non-zero when the self-test does not report
 `HexaRouting ready`, and dumps the console to `boot-console.log` on failure.
+It refuses to boot an ISO older than the sources — a build that dies halfway
+used to be followed by a green boot of the *previous* image.
+
+`make test-appliance` runs two profiles, because they share no code path:
+
+| Script | Profile | Why it matters |
+|---|---|---|
+| `test_startup_conf.sh` | first boot: no pinning, 4k pages, DPDK off | The profile every freshly installed box uses |
+| `test_tuned_conf.sh` | tuned: `corelist-workers`, `dpdk { dev … num-rx-queues }`, `page-size default-hugepage` | Reserves real 2 MB hugepages so the production stanzas actually meet a parser; skips with a message if the host cannot spare them |
 
 Verified requirements: **4 GB RAM** and a CPU with **SSE4.2**. Below either,
 VPP is killed by the OOM killer or by SIGILL, and the self-test says so first.

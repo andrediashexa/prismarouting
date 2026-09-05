@@ -15,7 +15,33 @@ VPP_VERSION=${VPP_VERSION:-26.06-release}
 FRR_VERSION=${FRR_VERSION:-10.7.1-0~deb12u1}
 
 say() { echo "==> $*"; }
-[ "$(id -u)" = 0 ] || { echo "precisa ser root" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
+
+# Sem esta checagem a falta de uma ferramenta so aparece la na frente,
+# como um "not found" no meio do log - e quem estiver testando boota a
+# ISO velha achando que testou a nova.
+missing=""
+for t in debootstrap xorriso mksquashfs mkfs.vfat mcopy grub-mkrescue; do
+  command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+done
+[ -z "$missing" ] || {
+  echo "missing tools:$missing" >&2
+  echo "install with: apt-get install -y debootstrap xorriso squashfs-tools dosfstools mtools grub-common grub-pc-bin grub-efi-amd64-bin" >&2
+  exit 1
+}
+
+# O plugin nao e compilado aqui: se faltar, a falha so aparece depois do
+# debootstrap inteiro, com uns dez minutos ja gastos. E resolver o caminho
+# UMA vez, aqui, evita o modo de falha que ja aconteceu: a checagem achava
+# o .so no host e a copia procurava so em /vpp_plugins, do container.
+if [ -f "$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so" ]; then
+  PLUGIN_SO="$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
+elif [ -f /vpp_plugins/bpa_plugin.so ]; then
+  PLUGIN_SO=/vpp_plugins/bpa_plugin.so
+else
+  echo "bpa_plugin.so not found; run tools/build.sh plugin first" >&2
+  exit 1
+fi
 
 ROOT=$WORK/chroot
 rm -rf "$WORK"
@@ -47,10 +73,8 @@ chroot "$ROOT" /bin/sh -c "
 say "HexaRouting"
 mkdir -p "$ROOT/src"
 cp -a "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs" "$ROOT/src/"
-if [ -f /vpp_plugins/bpa_plugin.so ]; then
-  mkdir -p "$ROOT/vpp_plugins"
-  cp /vpp_plugins/bpa_plugin.so "$ROOT/vpp_plugins/"
-fi
+mkdir -p "$ROOT/vpp_plugins"
+cp "$PLUGIN_SO" "$ROOT/vpp_plugins/"
 chroot "$ROOT" /bin/sh -c "cd /src && sh appliance/install.sh"
 rm -rf "$ROOT/src"
 
@@ -87,6 +111,6 @@ menuentry "HexaRouting (modo de recuperacao)" {
 EOF
 
 say "ISO hibrida"
-grub-mkrescue -o "$OUT" "$WORK/iso" -- -volid HEXAROUTING 2>/dev/null
+grub-mkrescue -o "$OUT" "$WORK/iso" -- -volid HEXAROUTING
 
 say "pronto: $OUT ($(du -h "$OUT" | cut -f1))"

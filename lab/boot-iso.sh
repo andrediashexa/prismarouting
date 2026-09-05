@@ -13,6 +13,19 @@
 # junto. Nao era o VPP sendo guloso: ele foi morto com 19 MB residentes.
 set -u
 ISO=${ISO:-/src/hexarouting.iso}
+SRC=${SRC:-/src}
+
+# Uma ISO mais velha que as fontes nao testa o que voce mudou. Ja
+# aconteceu duas vezes: o build morreu por falta de debootstrap e o
+# boot seguinte aprovou a ISO anterior, com as strings antigas.
+if [ "${ALLOW_STALE_ISO:-0}" != 1 ] && [ -f "$ISO" ]; then
+  newer=$(find "$SRC/appliance" "$SRC/src" -type f -newer "$ISO" -print 2>/dev/null | head -1)
+  if [ -n "$newer" ]; then
+    echo "ISO is older than the sources (e.g. $newer)" >&2
+    echo "rebuild with appliance/build-iso.sh, or set ALLOW_STALE_ISO=1" >&2
+    exit 1
+  fi
+fi
 mkdir -p /mnt/iso /tmp/bf
 mount -o loop,ro "$ISO" /mnt/iso
 cp /mnt/iso/live/vmlinuz /mnt/iso/live/initrd /tmp/bf/
@@ -43,7 +56,7 @@ sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log > /tmp/clean.log
 # existe para evitar.
 cp /tmp/clean.log "${LOGCOPY:-/src/boot-console.log}" 2>/dev/null || true
 
-sed -n '/autoteste de boot/,/=====$/p' /tmp/clean.log | head -40
+sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
 if grep -q "HexaRouting ready" /tmp/clean.log; then
   exit 0
 fi
@@ -51,7 +64,7 @@ fi
 echo
 echo "=========== SELF-TEST DID NOT REPORT READY ==========="
 echo "--- o autoteste chegou a rodar? ---"
-grep -c "autoteste de boot" /tmp/clean.log | sed 's/^/  ocorrencias: /'
+grep -c "boot self-test" /tmp/clean.log | sed 's/^/  ocorrencias: /'
 echo "--- servicos ---"
 grep -iE "hexarouting|vpp\.service|frr\.service" /tmp/clean.log | tail -10 | sed 's/^/  /'
 echo "--- falhas do systemd ---"

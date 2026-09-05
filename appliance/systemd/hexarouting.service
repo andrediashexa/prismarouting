@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - aplica a configuracao de CGNAT no dataplane
+Description=HexaRouting - apply the CGNAT configuration to the dataplane
 Documentation=file:///usr/share/doc/hexarouting/architecture.md
 # O FRR e Wants e nao Requires: sem roteamento a caixa ainda encaminha o que
 # tiver em rota estatica, e derrubar o CGNAT junto so aumentaria o estrago.

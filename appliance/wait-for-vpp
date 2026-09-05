@@ -8,7 +8,7 @@ n=0
 until vppctl show version >/dev/null 2>&1; do
   n=$((n + 1))
   if [ "$n" -ge "$TIMEOUT" ]; then
-    echo "VPP nao respondeu em ${TIMEOUT}s" >&2
+    echo "VPP did not respond within ${TIMEOUT}s" >&2
     exit 1
   fi
   sleep 1

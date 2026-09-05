@@ -19,7 +19,14 @@ case "$TARGET" in
     ;;
   plugin)
     docker run --rm -v "$REPO:/src" -w /src "$IMAGE" sh -c \
-      "mkdir -p .build-vpp && cd .build-vpp && cmake -G Ninja .. >/dev/null && ninja && chown -R $(id -u):$(id -g) /src/.build-vpp"
+      "set -e
+       mkdir -p .build-vpp && cd .build-vpp && cmake -G Ninja .. >/dev/null && ninja
+       # As macros do VPP linkam direto em /vpp_plugins, que e do container e
+       # some com o --rm. Sem esta copia o .so nunca chega ao host, e quem
+       # for montar a ISO depois nao acha o plugin.
+       mkdir -p /src/.build-vpp/lib/vpp_plugins
+       cp /vpp_plugins/bpa_plugin.so /src/.build-vpp/lib/vpp_plugins/
+       chown -R $(id -u):$(id -g) /src/.build-vpp"
     ;;
   *)
     echo "uso: $0 [image|plugin]" >&2

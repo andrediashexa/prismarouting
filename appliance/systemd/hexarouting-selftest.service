@@ -1,5 +1,5 @@
 [Unit]
-Description=HexaRouting - autoteste de boot no console
+Description=HexaRouting - boot self-test on the console
 Documentation=file:///usr/share/doc/hexarouting/appliance.md
 After=hexarouting.service frr.service
 Wants=hexarouting.service
