@@ -1,0 +1,208 @@
+#!/bin/sh
+# Installs the running live system onto a disk.
+#
+# The ISO boots a complete HexaRouting and loses it on reboot. This is the
+# missing half. It copies the live filesystem to a disk, installs a bootloader,
+# and leaves a box that boots on its own - including the tuning, which the live
+# system skips because a live system has no next boot to apply it on.
+#
+# Two rules this script exists to honour, both of them about not destroying
+# something by accident:
+#
+#   - it never touches a disk that was not named on the command line, and
+#   - it never runs without a confirmation that repeats the disk back.
+#
+# An appliance installer that guesses its target destroys a machine, and the
+# machine it destroys is usually the one that was already doing something.
+set -u
+
+say()  { echo "==> $*"; }
+die()  { echo "error: $*" >&2; exit 1; }
+
+DISK=${1:-}
+ASSUME_YES=${HEXA_INSTALL_YES:-0}
+SRC=${HEXA_INSTALL_SRC:-/run/live/medium/live/filesystem.squashfs}
+MNT=/tmp/hexa-install
+
+usage() {
+  cat >&2 <<EOF
+usage: hexarouting-install <disk>
+
+  <disk>   whole disk to install onto, e.g. /dev/sda or /dev/nvme0n1.
+           EVERYTHING ON IT IS DESTROYED.
+
+Available disks:
+EOF
+  lsblk -dno NAME,SIZE,MODEL 2>/dev/null | sed 's/^/  \/dev\//' >&2
+  exit 1
+}
+
+[ -n "$DISK" ] || usage
+[ "$(id -u)" = 0 ] || die "must run as root"
+
+# Every tool checked before anything is written. Discovering a missing one
+# after the partition table is rewritten leaves a disk that is neither the old
+# system nor the new one.
+missing=""
+for t in sfdisk mkfs.ext4 mkfs.vfat unsquashfs blkid lsblk findmnt \
+         grub-install update-grub; do
+  command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+done
+[ -z "$missing" ] || die "missing tools:$missing - the ISO should carry them"
+
+[ -b "$DISK" ] || die "$DISK is not a block device"
+[ -f "$SRC" ]  || die "live filesystem not found at $SRC (are you on the ISO?)"
+
+# Refuse to install onto the medium currently being read. Overwriting the ISO
+# you booted from fails halfway through and leaves neither system usable.
+ROOTDEV=$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)
+case "${ROOTDEV:-}" in
+  "$DISK"*) die "$DISK is the medium this system booted from" ;;
+esac
+
+MODEL=$(lsblk -dno MODEL "$DISK" 2>/dev/null | tr -s ' ')
+SIZE=$(lsblk -dno SIZE "$DISK" 2>/dev/null)
+echo
+echo "About to ERASE $DISK  ($SIZE ${MODEL:-unknown})"
+lsblk -no NAME,SIZE,FSTYPE,MOUNTPOINT "$DISK" 2>/dev/null | sed 's/^/    /'
+echo
+if [ "$ASSUME_YES" != 1 ]; then
+  # The disk is repeated back and has to be typed. A "yes/no" prompt is
+  # answered reflexively; typing the device name is not.
+  printf "Type the disk path to confirm: "
+  read -r answer
+  [ "$answer" = "$DISK" ] || die "not confirmed (got '$answer')"
+fi
+
+EFI=0
+[ -d /sys/firmware/efi ] && EFI=1
+
+say "partitioning $DISK (UEFI=$EFI)"
+# udev opens a freshly attached disk to probe it, and sfdisk wants an exclusive
+# lock on the same device. Losing that race makes sfdisk WAIT - printing
+# nothing, so the install looks hung rather than blocked. Seen once on a disk
+# that had partitioned fine on the previous run, which is what a race looks
+# like.
+#
+# --lock=no and a timeout, so that if it blocks anyway the installer says
+# so instead of sitting there. A partitioner that can hang silently is worse
+# than one that fails: the operator has no idea whether the disk was touched.
+command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
+if [ "$EFI" = 1 ]; then
+  LAYOUT="label: gpt
+,512M,U
+,,L"
+else
+  LAYOUT="label: dos
+,512M,c,*
+,,L"
+fi
+printf '%s\n' "$LAYOUT" | timeout 90 sfdisk --lock=no --wipe=always \
+    "$DISK" >/tmp/sfdisk.log 2>&1
+rc=$?
+if [ "$rc" = 124 ]; then
+  die "sfdisk timed out on $DISK after 90s (device busy?); the disk may be
+  partially written - see /tmp/sfdisk.log"
+fi
+[ "$rc" = 0 ] || { sed 's/^/  /' /tmp/sfdisk.log >&2; die "sfdisk failed on $DISK"; }
+sync
+partprobe "$DISK" 2>/dev/null || true
+command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
+sleep 2
+
+case "$DISK" in
+  *nvme*|*mmcblk*) P1="${DISK}p1"; P2="${DISK}p2" ;;
+  *)               P1="${DISK}1";  P2="${DISK}2"  ;;
+esac
+[ -b "$P2" ] || die "partitioning did not produce $P2"
+
+say "formatting"
+mkfs.vfat -F32 "$P1" >/dev/null
+mkfs.ext4 -q -F -L hexarouting "$P2" >/dev/null
+
+say "copying the system"
+rm -rf "$MNT"; mkdir -p "$MNT"
+mount "$P2" "$MNT" || die "cannot mount $P2"
+unsquashfs -f -d "$MNT" "$SRC" >/dev/null || die "unsquashfs failed"
+
+# An empty /boot means the squashfs was built excluding it, and everything
+# after this point would still succeed: grub-install writes a bootloader,
+# update-grub writes a menu with no entries, and the disk boots to a "grub>"
+# prompt. Failing here says which step was wrong instead of leaving that to be
+# deduced from a bootloader prompt.
+[ -f "$MNT"/boot/vmlinuz-* ] 2>/dev/null || \
+  die "no kernel in $MNT/boot - the live filesystem was built without /boot"
+
+mkdir -p "$MNT/boot/efi"
+[ "$EFI" = 1 ] && mount "$P1" "$MNT/boot/efi"
+
+say "fstab"
+ROOT_UUID=$(blkid -s UUID -o value "$P2")
+EFI_UUID=$(blkid -s UUID -o value "$P1" 2>/dev/null || true)
+{
+  echo "UUID=$ROOT_UUID / ext4 errors=remount-ro 0 1"
+  [ "$EFI" = 1 ] && [ -n "$EFI_UUID" ] && \
+    echo "UUID=$EFI_UUID /boot/efi vfat umask=0077 0 1"
+} > "$MNT/etc/fstab"
+
+# The live system boots with live-boot, which an installed system must not do.
+# Leaving these behind produces a box that mounts a squashfs that is no longer
+# there and drops to an initramfs prompt.
+rm -f "$MNT/etc/systemd/system/getty@tty1.service.d/autologin.conf" \
+      "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf" \
+      2>/dev/null || true
+
+# A racked appliance is reached by serial console or IPMI. The live ISO gets a
+# console because the boot loader is handed console=ttyS0 on the command line;
+# an installed system has to configure its own, and without it the box boots
+# perfectly and shows nothing - which is indistinguishable from a box that did
+# not boot. That is exactly how this was first seen: GRUB said "Welcome to
+# GRUB!" and the console went silent for the rest of the boot.
+say "serial console"
+mkdir -p "$MNT/etc/default/grub.d"
+cat > "$MNT/etc/default/grub.d/hexarouting-console.cfg" <<'GRUBEOF'
+# Generated by hexarouting-install. Do not edit by hand.
+GRUB_TERMINAL="console serial"
+GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1"
+GRUB_CMDLINE_LINUX="$GRUB_CMDLINE_LINUX console=tty0 console=ttyS0,115200"
+GRUBEOF
+
+say "bootloader"
+for d in dev dev/pts proc sys run; do
+  mkdir -p "$MNT/$d"; mount --bind "/$d" "$MNT/$d"
+done
+if [ "$EFI" = 1 ]; then
+  chroot "$MNT" grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+      --bootloader-id=HexaRouting --removable >/dev/null 2>&1 \
+      || die "grub-install (UEFI) failed"
+else
+  chroot "$MNT" grub-install "$DISK" >/dev/null 2>&1 \
+      || die "grub-install (BIOS) failed"
+fi
+chroot "$MNT" update-grub >/dev/null 2>&1 || die "update-grub failed"
+
+# The tuning service is a no-op on a live system, deliberately: isolcpus and
+# hugepages come from the kernel command line and a live system has no next
+# boot to apply them on. On the installed system it must run, and its result
+# takes effect on the first reboot after this install.
+say "boot tuning"
+chroot "$MNT" /usr/lib/hexarouting/apply-tuning >/dev/null 2>&1 || true
+chroot "$MNT" update-grub >/dev/null 2>&1 || true
+
+say "root password"
+if [ "$ASSUME_YES" = 1 ]; then
+  # Unattended installs are for the lab. Leaving the image's known password on
+  # an installed box would be worse than saying so.
+  echo "  unattended: keeping the image password; CHANGE IT"
+else
+  chroot "$MNT" passwd root || die "setting the root password failed"
+fi
+
+for d in run sys proc dev/pts dev; do umount -l "$MNT/$d" 2>/dev/null || true; done
+[ "$EFI" = 1 ] && umount "$MNT/boot/efi" 2>/dev/null || true
+umount "$MNT" 2>/dev/null || true
+
+echo
+say "installed on $DISK"
+echo "    Remove the ISO and reboot. The first boot applies isolcpus and"
+echo "    hugepages, so the box is fully tuned from the second boot on."

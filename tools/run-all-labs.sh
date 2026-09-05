@@ -16,7 +16,11 @@ for f in "$REPO"/lab/*.sh; do
   # verdict.sh is not a lab, it is the assertion library the labs source.
   # Counted as "ran", it leaves the summary with a number that never reaches
   # zero - and the day a real lab loses its verdict, nobody notices.
-  case "$n" in hw-lab|hw-vpp|boot-iso|verdict) continue ;; esac
+  # lib.sh and verdict.sh are sourced by the labs, not run as labs. Counting a
+  # library as "ran (no verdict yet)" leaves a number in the summary that never
+  # reaches zero, and the day a real lab loses its verdict the line reads the
+  # same as it always did.
+  case "$n" in hw-lab|hw-vpp|boot-iso|install-iso|verdict|lib) continue ;; esac
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
 
   out=$(timeout 300 sh "$REPO/tools/lab.sh" "$n" 2>&1)

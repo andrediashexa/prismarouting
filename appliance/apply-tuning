@@ -52,7 +52,16 @@ before=$(cat "$GRUBFILE" 2>/dev/null || true)
 set -- --write --subscribers "$HEXA_SUBSCRIBERS"
 [ -n "$HEXA_DATAPLANE_IF" ] && set -- "$@" --interface "$HEXA_DATAPLANE_IF"
 [ "$HEXA_LOW_LATENCY" = 1 ] || set -- "$@" --no-low-latency
-hexarouting-tune "$@" >/dev/null || exit 1
+# The decision goes to the journal. Diagnosing a box whose profile did not
+# match its hardware meant guessing across whole build cycles, because the one
+# component that knew why was throwing its reasoning away.
+report=$(hexarouting-tune "$@" 2>&1) || { printf '%s\n' "$report" >&2; exit 1; }
+printf '%s\n' "$report" | grep -E "^# |WARNING" >&2
+printf 'kernel cmdline hugepages: %s\n' \
+  "$(tr ' ' '\n' < /proc/cmdline | grep '^hugepages=' || echo '(none)')" >&2
+printf 'reserved 1G pages now: %s\n' \
+  "$(cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages 2>/dev/null \
+     || echo '(no 1G support)')" >&2
 
 after=$(cat "$GRUBFILE" 2>/dev/null || true)
 

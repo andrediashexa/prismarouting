@@ -1,0 +1,59 @@
+#!/bin/sh
+# Runs the installer when the kernel command line asks for it.
+#
+#   hexarouting.install            prompt for the disk on the console
+#   hexarouting.install=/dev/vda   install onto that disk, still confirming
+#   hexarouting.yes                skip the confirmation (unattended, for tests)
+#
+# The kernel command line is the hook rather than typing into the console,
+# because a test that drives an installer by sending keystrokes at the right
+# moment tests the timing of the keystrokes.
+set -u
+cmdline=$(cat /proc/cmdline 2>/dev/null || echo "")
+
+case " $cmdline " in
+  *" hexarouting.install"*) ;;
+  *) exit 0 ;;
+esac
+
+disk=""
+for tok in $cmdline; do
+  case "$tok" in
+    hexarouting.install=*) disk=${tok#hexarouting.install=} ;;
+    hexarouting.yes) HEXA_INSTALL_YES=1; export HEXA_INSTALL_YES ;;
+  esac
+done
+
+exec >/dev/console 2>&1 </dev/console
+echo
+echo "=============== HexaRouting: install to disk ==============="
+if [ -z "$disk" ]; then
+  lsblk -dno NAME,SIZE,MODEL 2>/dev/null | sed 's/^/  \/dev\//'
+  printf "Disk to install onto (blank to skip): "
+  read -r disk
+  [ -n "$disk" ] || { echo "skipped"; exit 0; }
+fi
+
+/usr/sbin/hexarouting-install "$disk"
+rc=$?
+
+if [ "${HEXA_INSTALL_YES:-0}" != 1 ]; then
+  exit $rc
+fi
+
+# Unattended: say so and power off.
+#
+# Both halves matter. The marker is printed only on success, so a failed
+# install cannot be mistaken for a finished one. The poweroff is what makes
+# the marker reliable at all: without it the machine sits at a login prompt
+# until the harness times out and kills it mid-line - which is exactly how
+# this was first seen, with the console reading "HexaRouting inst".
+if [ "$rc" = 0 ]; then
+  echo "HexaRouting installed to $disk"
+else
+  echo "HexaRouting install FAILED on $disk (status $rc)"
+fi
+sync
+sleep 1
+systemctl poweroff --no-block 2>/dev/null || poweroff -f 2>/dev/null || true
+exit $rc

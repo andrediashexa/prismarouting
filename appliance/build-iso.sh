@@ -65,6 +65,7 @@ chroot "$ROOT" /bin/sh -c "
   export DEBIAN_FRONTEND=noninteractive VPP_INSTALL_SKIP_SYSCTL=1
   apt-get update -qq
   apt-get install -y --no-install-recommends \
+    squashfs-tools dosfstools parted fdisk \
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
     libvppinfra=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION
@@ -96,12 +97,21 @@ chroot "$ROOT" /bin/sh -c "apt-get clean; rm -rf /var/lib/apt/lists/*"
 KVER=$(basename "$(ls -d "$ROOT"/lib/modules/* | head -1)")
 cp "$ROOT/boot/vmlinuz-$KVER"  "$WORK/iso/live/vmlinuz"
 cp "$ROOT/boot/initrd.img-$KVER" "$WORK/iso/live/initrd"
+# /boot is KEPT in the squashfs, though the live boot does not need it: the
+# kernel and initrd are copied to the ISO separately, above.
+#
+# It is kept because the installer unpacks this squashfs onto a disk, and a
+# system with no /boot has no kernel, no initrd and no GRUB modules. GRUB
+# installs fine, finds nothing to boot, and drops to a "grub>" prompt - which
+# looks exactly like a broken bootloader and is not. Excluding it saves about
+# 80 MB of ISO and costs the product its ability to be installed.
+#
 # -mem and -processors bound mksquashfs: with xz and no limit it consumes
 # memory proportional to the parallelism and takes the build machine down. The
 # cost is a few extra seconds; the benefit is a build that fits in a modest
 # VM.
 mksquashfs "$ROOT" "$WORK/iso/live/filesystem.squashfs" \
-  -e boot -comp xz -no-progress \
+  -comp xz -no-progress \
   -processors "${SQUASH_PROCS:-2}" -mem "${SQUASH_MEM:-768M}"
 
 say "bootloader"
@@ -112,7 +122,11 @@ menuentry "HexaRouting" {
     linux /live/vmlinuz boot=live components quiet
     initrd /live/initrd
 }
-menuentry "HexaRouting (modo de recuperacao)" {
+menuentry "HexaRouting (install to disk)" {
+    linux /live/vmlinuz boot=live components hexarouting.install
+    initrd /live/initrd
+}
+menuentry "HexaRouting (recovery: single user)" {
     linux /live/vmlinuz boot=live components single
     initrd /live/initrd
 }

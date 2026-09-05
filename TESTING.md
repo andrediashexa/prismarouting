@@ -174,6 +174,7 @@ access.
 make iso                       # ~10 min, installs the image tools it needs
 make test-iso                  # builds, then boots and demands "HexaRouting ready"
 make test-appliance            # generates startup.conf and starts VPP with it
+make test-install              # installs onto a blank disk, boots that disk
 ```
 
 `make test-iso` exits non-zero when the self-test does not report
