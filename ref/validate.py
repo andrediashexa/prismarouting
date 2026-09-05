@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validacao exaustiva do modelo BPA, incluindo pools de faixas nao contiguas."""
+"""Exhaustive validation of the BPA model, including non-contiguous pools."""
 
 import ipaddress, sys, random
 from bpa_model import PoolConfig, AddrSet, MapPolicy, PoolMode, plan, BpaError
@@ -10,10 +10,10 @@ def check(cond, msg):
     global FAIL
     if not cond:
         FAIL += 1
-        print(f"  FALHA: {msg}")
+        print(f"  FAIL: {msg}")
 
 def roundtrip_full(pool: PoolConfig):
-    """Todo assinante -> bloco -> volta ao mesmo assinante."""
+    """Every subscriber -> block -> back to the same subscriber."""
     n = min(pool.capacity, pool.inside.count)
     seen = {}
     errors = 0
@@ -25,19 +25,19 @@ def roundtrip_full(pool: PoolConfig):
         if key in seen:
             errors += 1
             if errors < 4:
-                print(f"  COLISAO: {ip_priv} e {seen[key]} -> {key}")
+                print(f"  COLLISION: {ip_priv} and {seen[key]} -> {key}")
         seen[key] = ip_priv
 
         for port in (f["port_lo"], f["port_lo"] + pool.block_size // 2, f["port_hi"]):
             if pool.reverse(f["ip_pub"], port) != ip_priv:
                 errors += 1
                 if errors < 4:
-                    print(f"  REVERSO ERRADO: {ip_priv} -> {f['ip_pub']}:{port}")
+                    print(f"  WRONG REVERSE: {ip_priv} -> {f['ip_pub']}:{port}")
 
-    check(errors == 0, f"{errors} erros de round-trip")
-    check(len(seen) == n, f"esperado {n} blocos distintos, obtido {len(seen)}")
+    check(errors == 0, f"{errors} round-trip errors")
+    check(len(seen) == n, f"expected {n} distinct blocks, got {len(seen)}")
     if errors == 0:
-        print(f"  OK  {n:,} assinantes, {len(seen):,} blocos distintos, 0 colisoes")
+        print(f"  OK  {n:,} subscribers, {len(seen):,} distinct blocks, 0 collisions")
 
 def roundtrip_all_ports(pool: PoolConfig, sample: int = 50):
     n = min(pool.capacity, pool.inside.count)
@@ -50,19 +50,19 @@ def roundtrip_all_ports(pool: PoolConfig, sample: int = 50):
         for port in range(f["port_lo"], f["port_hi"] + 1):
             if pool.reverse(f["ip_pub"], port) != ip_priv:
                 bad += 1
-    check(bad == 0, f"{bad} portas mapearam para o assinante errado")
+    check(bad == 0, f"{bad} ports mapped to the wrong subscriber")
     if bad == 0:
-        print(f"  OK  {min(sample,n) * pool.block_size:,} portas verificadas uma a uma")
+        print(f"  OK  {min(sample,n) * pool.block_size:,} ports checked one by one")
 
 def check_addrset_bijection(pool: PoolConfig):
-    """endereco <-> indice tem que ser bijecao nos dois conjuntos."""
+    """address <-> index must be a bijection in both sets."""
     bad = 0
-    for s, label in ((pool.inside, "interno"), (pool.outside, "publico")):
+    for s, label in ((pool.inside, "inside"), (pool.outside, "public")):
         for idx in range(s.count):
             a = s.addr_of(idx)
             if a is None or s.index_of(a) != idx:
                 bad += 1
-        # enderecos imediatamente fora de cada faixa nao podem ser aceitos
+        # addresses immediately outside each range must not be accepted
         for base, cnt, _ in s.ranges:
             for probe in (base - 1, base + cnt):
                 got = s.index_of(probe)
@@ -70,41 +70,41 @@ def check_addrset_bijection(pool: PoolConfig):
                     inside_another = any(b <= probe < b + c for b, c, _ in s.ranges)
                     if not inside_another:
                         bad += 1
-    check(bad == 0, f"{bad} falhas de bijecao endereco<->indice")
+    check(bad == 0, f"{bad} address<->index bijection failures")
     if bad == 0:
-        print(f"  OK  bijecao endereco<->indice integra nos dois conjuntos")
+        print(f"  OK  address<->index bijection intact in both sets")
 
 def check_guards(pool: PoolConfig):
     lo_pub = pool.outside.addr_of(0)
     cases = [
-        ("porta abaixo da faixa", lambda: pool.reverse(lo_pub, pool.port_min - 1)),
-        ("porta 0", lambda: pool.reverse(lo_pub, 0)),
-        ("ip interno fora", lambda: pool.forward(pool.inside.ranges[0][0] - 1)),
+        ("port below the range", lambda: pool.reverse(lo_pub, pool.port_min - 1)),
+        ("port 0", lambda: pool.reverse(lo_pub, 0)),
+        ("inside ip out of set", lambda: pool.forward(pool.inside.ranges[0][0] - 1)),
     ]
     for name, fn in cases:
         try:
             fn()
-            check(False, f"{name}: deveria ter sido rejeitado")
+            check(False, f"{name}: should have been rejected")
         except BpaError:
             pass
-    print(f"  OK  {len(cases)} entradas invalidas rejeitadas")
+    print(f"  OK  {len(cases)} invalid inputs rejected")
 
 # ---------------------------------------------------------------- pools
 
 pools = [
-    # contiguo, como antes: garante que nada regrediu
-    PoolConfig("contiguo", ["100.64.0.0/22"], ["200.150.0.10/31"],
+    # contiguous, as before: makes sure nothing regressed
+    PoolConfig("contiguous", ["100.64.0.0/22"], ["200.150.0.10/31"],
                block_size=512, policy=MapPolicy.INTERLEAVED),
-    # tres faixas separadas, n_pub = 4+2+1 = 7, NAO e potencia de dois
-    PoolConfig("fragmentado-7", ["100.64.0.0/22"],
+    # three separate ranges, n_pub = 4+2+1 = 7, NOT a power of two
+    PoolConfig("fragmented-7", ["100.64.0.0/22"],
                ["200.150.0.8/30", "45.170.16.64/31", "203.0.113.200/32"],
                block_size=512, policy=MapPolicy.INTERLEAVED),
-    # mesma coisa na politica blocked
-    PoolConfig("fragmentado-blocked", ["100.64.0.0/22"],
+    # the same thing under the blocked policy
+    PoolConfig("fragmented-blocked", ["100.64.0.0/22"],
                ["200.150.0.8/30", "45.170.16.64/31", "203.0.113.200/32"],
                block_size=512, policy=MapPolicy.BLOCKED),
-    # interno tambem fragmentado, misturando CGNAT e RFC1918
-    PoolConfig("interno-fragmentado", ["100.64.0.0/24", "10.20.0.0/24"],
+    # the inside set fragmented too, mixing CGNAT and RFC1918 space
+    PoolConfig("inside-fragmented", ["100.64.0.0/24", "10.20.0.0/24"],
                ["200.150.0.0/29", "45.170.16.0/30"],
                block_size=1024, policy=MapPolicy.INTERLEAVED),
 ]
@@ -119,27 +119,27 @@ for p in pools:
     check_guards(p)
 
 print("\n" + "=" * 64)
-print("CONFIGURACOES INVALIDAS DEVEM SER RECUSADAS")
+print("INVALID CONFIGURATIONS MUST BE REFUSED")
 bad_cases = [
-    ("prefixos sobrepostos", lambda: AddrSet(["200.150.0.0/24", "200.150.0.128/25"])),
-    ("prefixo identico repetido", lambda: AddrSet(["200.150.0.0/24", "200.150.0.0/24"])),
-    ("conjunto vazio", lambda: AddrSet([])),
-    ("bloco nao potencia de 2", lambda: PoolConfig("x", ["10.0.0.0/24"], ["1.2.3.0/24"], block_size=500)),
+    ("overlapping prefixes", lambda: AddrSet(["200.150.0.0/24", "200.150.0.128/25"])),
+    ("identical prefix repeated", lambda: AddrSet(["200.150.0.0/24", "200.150.0.0/24"])),
+    ("empty set", lambda: AddrSet([])),
+    ("block not a power of two", lambda: PoolConfig("x", ["10.0.0.0/24"], ["1.2.3.0/24"], block_size=500)),
 ]
 for name, fn in bad_cases:
     try:
         fn()
-        check(False, f"{name}: deveria ter sido recusado")
+        check(False, f"{name}: should have been refused")
     except BpaError:
-        print(f"  OK  recusou: {name}")
+        print(f"  OK  refused: {name}")
 
 print("\n" + "=" * 64)
-print("FUSAO DE FAIXAS ADJACENTES (menos faixas = datapath mais rapido)")
+print("MERGING OF ADJACENT RANGES (fewer ranges = faster datapath)")
 merged = AddrSet(["200.150.0.0/25", "200.150.0.128/25", "45.170.16.0/24"])
-check(len(merged.ranges) == 2, f"esperado 2 faixas apos fusao, obtido {len(merged.ranges)}")
-check(merged.count == 512, f"esperado 512 enderecos, obtido {merged.count}")
-print(f"  3 prefixos -> {len(merged.ranges)} faixas, {merged.count} enderecos: {merged.describe()}")
+check(len(merged.ranges) == 2, f"expected 2 ranges after merging, got {len(merged.ranges)}")
+check(merged.count == 512, f"expected 512 addresses, got {merged.count}")
+print(f"  3 prefixes -> {len(merged.ranges)} ranges, {merged.count} addresses: {merged.describe()}")
 
 print("\n" + "=" * 64)
-print(f"RESULTADO: {'TODOS OS TESTES PASSARAM' if FAIL == 0 else str(FAIL) + ' FALHAS'}")
+print(f"RESULT: {'ALL TESTS PASSED' if FAIL == 0 else str(FAIL) + ' FAILURES'}")
 sys.exit(1 if FAIL else 0)

@@ -24,7 +24,7 @@ static unsigned checks = 0;
 	{                                                                     \
 	  if (failures < 10)                                                  \
 	    {                                                                 \
-	      printf ("  FALHA: ");                                           \
+	      printf ("  FAIL: ");                                           \
 	      printf (__VA_ARGS__);                                           \
 	      printf ("\n");                                                  \
 	    }                                                                 \
@@ -62,13 +62,13 @@ main (void)
   bpa_pool_t pools[BPA_VEC_N_POOLS];
   unsigned i;
 
-  printf ("=== construcao dos conjuntos e valores derivados ===\n");
+  printf ("=== address sets and derived values ===\n");
   for (i = 0; i < BPA_VEC_N_POOLS; i++)
     {
       const bpa_vec_pool_t *v = &bpa_vec_pools[i];
       clib_error_t *e = load_pool (&pools[i], v);
 
-      CHECK (e == 0, "pool '%s' rejeitado", v->name);
+      CHECK (e == 0, "pool '%s' rejected", v->name);
       if (e)
 	continue;
 
@@ -90,15 +90,15 @@ main (void)
       CHECK (pools[i].capacity == v->exp_capacity, "'%s': capacity C=%u ref=%u",
 	     v->name, pools[i].capacity, v->exp_capacity);
 
-      printf ("  %-18s in=%u addr/%u faixa  out=%u addr/%u faixa  "
-	      "blocos/IP=%-4u cap=%-6u div=%u%s\n",
+      printf ("  %-18s in=%u addr/%u range  out=%u addr/%u range  "
+	      "blocks/IP=%-4u cap=%-6u div=%u%s\n",
 	      v->name, pools[i].inside.count, pools[i].inside.n_ranges,
 	      pools[i].outside.count, pools[i].outside.n_ranges,
 	      pools[i].blocks_per_ip, pools[i].capacity, pools[i].div.d,
 	      pools[i].div.is_pow2 ? " (shift)" : " (reciprocal)");
     }
 
-  printf ("\n=== bijecao endereco <-> indice ===\n");
+  printf ("\n=== address <-> index bijection ===\n");
   for (i = 0; i < BPA_VEC_N_POOLS; i++)
     {
       bpa_pool_t *p = &pools[i];
@@ -115,7 +115,7 @@ main (void)
 		  || bpa_set_index_of (set, addr, &back) || back != j)
 		bad++;
 	    }
-	  /* enderecos logo fora de cada faixa nao podem ser aceitos */
+	  /* addresses just outside each range must not be accepted */
 	  for (j = 0; j < set->n_ranges; j++)
 	    {
 	      u32 probe[2] = { set->ranges[j].base - 1,
@@ -133,11 +133,11 @@ main (void)
 		}
 	    }
 	}
-      CHECK (bad == 0, "'%s': %u falhas de bijecao", (char *) p->name, bad);
+      CHECK (bad == 0, "'%s': %u bijection failures", (char *) p->name, bad);
     }
-  printf ("  OK  ida e volta integra, e enderecos fora das faixas recusados\n");
+  printf ("  OK  round trip intact, addresses outside the ranges refused\n");
 
-  printf ("\n=== %u vetores forward (C vs modelo Python) ===\n",
+  printf ("\n=== %u forward vectors (C vs Python model) ===\n",
 	  BPA_VEC_N_FWD);
   for (i = 0; i < BPA_VEC_N_FWD; i++)
     {
@@ -145,19 +145,19 @@ main (void)
       bpa_block_t b;
       int rv = bpa_forward (&pools[v->pool], v->ip_priv, &b);
 
-      CHECK (rv == 0, "forward %u rejeitou %u", i, v->ip_priv);
+      CHECK (rv == 0, "forward %u rejected %u", i, v->ip_priv);
       if (rv)
 	continue;
-      CHECK (b.ip_pub == v->ip_pub, "vetor %u: ip_pub C=%u ref=%u", i,
+      CHECK (b.ip_pub == v->ip_pub, "vector %u: ip_pub C=%u ref=%u", i,
 	     b.ip_pub, v->ip_pub);
-      CHECK (b.port_lo == v->port_lo, "vetor %u: port_lo C=%u ref=%u", i,
+      CHECK (b.port_lo == v->port_lo, "vector %u: port_lo C=%u ref=%u", i,
 	     b.port_lo, v->port_lo);
-      CHECK (b.port_hi == v->port_hi, "vetor %u: port_hi C=%u ref=%u", i,
+      CHECK (b.port_hi == v->port_hi, "vector %u: port_hi C=%u ref=%u", i,
 	     b.port_hi, v->port_hi);
     }
-  printf ("  %u comparacoes\n", BPA_VEC_N_FWD * 3);
+  printf ("  %u comparisons\n", BPA_VEC_N_FWD * 3);
 
-  printf ("\n=== %u vetores reverse (C vs modelo Python) ===\n",
+  printf ("\n=== %u reverse vectors (C vs Python model) ===\n",
 	  BPA_VEC_N_REV);
   for (i = 0; i < BPA_VEC_N_REV; i++)
     {
@@ -165,15 +165,15 @@ main (void)
       u32 got = 0;
       int rv = bpa_reverse (&pools[v->pool], v->ip_pub, v->port, &got);
 
-      CHECK (rv == 0, "reverse %u rejeitou %u:%u", i, v->ip_pub, v->port);
+      CHECK (rv == 0, "reverse %u rejected %u:%u", i, v->ip_pub, v->port);
       if (rv)
 	continue;
-      CHECK (got == v->ip_priv, "vetor %u: ip_priv C=%u ref=%u", i, got,
+      CHECK (got == v->ip_priv, "vector %u: ip_priv C=%u ref=%u", i, got,
 	     v->ip_priv);
     }
-  printf ("  %u comparacoes\n", BPA_VEC_N_REV);
+  printf ("  %u comparisons\n", BPA_VEC_N_REV);
 
-  printf ("\n=== round-trip exaustivo em C, porta a porta ===\n");
+  printf ("\n=== exhaustive round trip in C, port by port ===\n");
   for (i = 0; i < BPA_VEC_N_POOLS; i++)
     {
       bpa_pool_t *p = &pools[i];
@@ -201,13 +201,13 @@ main (void)
 	      tested++;
 	    }
 	}
-      CHECK (bad == 0, "pool '%s': %u portas mapearam errado", (char *) p->name,
+      CHECK (bad == 0, "pool '%s': %u ports mapped wrong", (char *) p->name,
 	     bad);
-      printf ("  %-18s %llu portas conferidas, %u erros\n", (char *) p->name,
+      printf ("  %-18s %llu ports checked, %u errors\n", (char *) p->name,
 	      (unsigned long long) tested, bad);
     }
 
-  printf ("\n=== rejeicao de entradas invalidas ===\n");
+  printf ("\n=== invalid inputs are refused ===\n");
   {
     bpa_pool_t *p = &pools[0];
     u32 dummy, lo_pub = 0;
@@ -215,68 +215,68 @@ main (void)
 
     bpa_set_addr_of (&p->outside, 0, &lo_pub);
     CHECK (bpa_reverse (p, lo_pub, p->port_min - 1, &dummy) != 0,
-	   "porta abaixo da faixa foi aceita");
-    CHECK (bpa_reverse (p, lo_pub, 0, &dummy) != 0, "porta 0 foi aceita");
+	   "a port below the range was accepted");
+    CHECK (bpa_reverse (p, lo_pub, 0, &dummy) != 0, "port 0 was accepted");
     CHECK (bpa_reverse (p, p->outside.ranges[0].base - 1, 2000, &dummy) != 0,
 	   "ip publico fora do conjunto foi aceito");
     CHECK (bpa_forward (p, p->inside.ranges[0].base - 1, &b) != 0,
 	   "ip interno fora do conjunto foi aceito");
-    printf ("  4 casos negativos verificados\n");
+    printf ("  4 negative cases checked\n");
   }
 
-  printf ("\n=== conjuntos e pools mal configurados devem ser recusados ===\n");
+  printf ("\n=== misconfigured sets and pools must be refused ===\n");
   {
     bpa_addr_set_t s;
     bpa_pool_t p;
     u32 b1[2], c1[2];
 
-    /* sobreposicao quebraria a bijecao: um assinante viraria outro */
+    /* an overlap would break the bijection: one subscriber becomes another */
     b1[0] = 0xC0A80000u; c1[0] = 256;
     b1[1] = 0xC0A80080u; c1[1] = 128;
     CHECK (bpa_addr_set_build (&s, b1, c1, 2) != 0,
-	   "prefixos sobrepostos foram aceitos");
+	   "overlapping prefixes were accepted");
 
     b1[0] = 0xC0A80000u; c1[0] = 256;
     b1[1] = 0xC0A80000u; c1[1] = 256;
     CHECK (bpa_addr_set_build (&s, b1, c1, 2) != 0,
-	   "prefixo duplicado foi aceito");
+	   "a duplicate prefix was accepted");
 
     CHECK (bpa_addr_set_build (&s, b1, c1, 0) != 0,
-	   "conjunto vazio foi aceito");
+	   "an empty set was accepted");
 
-    b1[0] = 0xFFFFFF00u; c1[0] = 512; /* passa do fim do espaco v4 */
+    b1[0] = 0xFFFFFF00u; c1[0] = 512; /* runs past the end of the v4 space */
     CHECK (bpa_addr_set_build (&s, b1, c1, 1) != 0,
-	   "faixa que estoura 255.255.255.255 foi aceita");
+	   "a range overflowing 255.255.255.255 was accepted");
 
     load_pool (&p, &bpa_vec_pools[0]);
     p.block_size = 500;
-    CHECK (bpa_pool_init (&p) != 0, "block_size nao-pot2 foi aceito");
+    CHECK (bpa_pool_init (&p) != 0, "a non-power-of-two block_size was accepted");
 
     load_pool (&p, &bpa_vec_pools[0]);
     p.port_min = 40000; p.port_max = 30000;
-    CHECK (bpa_pool_init (&p) != 0, "faixa de portas invertida foi aceita");
+    CHECK (bpa_pool_init (&p) != 0, "an inverted port range was accepted");
 
     load_pool (&p, &bpa_vec_pools[0]);
     p.block_size = 0;
-    CHECK (bpa_pool_init (&p) != 0, "block_size zero foi aceito");
-    printf ("  7 configuracoes invalidas recusadas\n");
+    CHECK (bpa_pool_init (&p) != 0, "a zero block_size was accepted");
+    printf ("  7 invalid configurations refused\n");
   }
 
-  printf ("\n=== fusao de faixas adjacentes ===\n");
+  printf ("\n=== merging of adjacent ranges ===\n");
   {
     bpa_addr_set_t s;
-    u32 b[3] = { 0xC8960080u, 0xC8960000u, 0x2DAA1000u }; /* fora de ordem */
+    u32 b[3] = { 0xC8960080u, 0xC8960000u, 0x2DAA1000u }; /* out of order */
     u32 c[3] = { 128, 128, 256 };
 
-    CHECK (bpa_addr_set_build (&s, b, c, 3) == 0, "fusao rejeitou entrada valida");
-    CHECK (s.n_ranges == 2, "esperado 2 faixas apos fusao, obtido %u",
+    CHECK (bpa_addr_set_build (&s, b, c, 3) == 0, "merging rejected a valid input");
+    CHECK (s.n_ranges == 2, "expected 2 ranges after merging, got %u",
 	   s.n_ranges);
-    CHECK (s.count == 512, "esperado 512 enderecos, obtido %u", s.count);
-    printf ("  3 prefixos fora de ordem -> %u faixas, %u enderecos\n",
+    CHECK (s.count == 512, "expected 512 addresses, got %u", s.count);
+    printf ("  3 out-of-order prefixes -> %u ranges, %u addresses\n",
 	    s.n_ranges, s.count);
   }
 
-  printf ("\n%s  (%u verificacoes, %d falhas)\n",
-	  failures ? "FALHOU" : "TODOS OS TESTES PASSARAM", checks, failures);
+  printf ("\n%s  (%u checks, %d failures)\n",
+	  failures ? "FAILED" : "ALL TESTS PASSED", checks, failures);
   return failures ? 1 : 0;
 }

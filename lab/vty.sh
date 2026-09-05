@@ -1,5 +1,5 @@
 #!/bin/sh
-# VTY do HexaRouting: uma CLI so para roteamento e CGNAT.
+# The HexaRouting VTY: one CLI for both routing and CGNAT.
 set -u
 mkdir -p /run/vpp /vpp_plugins /etc/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -61,7 +61,7 @@ echo "=========== CGNAT pela VTY ==========="
 # This lab used to end at "exit", which now discards the candidate - the
 # check that caught it is the reason each lab states its own verdict.
 $HX -c "configure" \
-    -c "cgnat pool provedor-a" \
+    -c "cgnat pool provider-a" \
     -c "inside 100.64.0.0/22" \
     -c "outside 200.150.0.0/24" \
     -c "outside 45.170.16.0/26" \
@@ -87,7 +87,7 @@ echo "  -- o FRR recebeu?"
 vtysh -c "show run" 2>/dev/null | grep -A4 "router bgp" | sed 's/^/    /'
 
 echo
-echo "=========== sessao BGP sobe e a rota chega na FIB do VPP ==========="
+echo "=========== the BGP session comes up and the route reaches the VPP FIB ==========="
 n=0
 until vppctl show ip fib 203.0.113.0/24 2>/dev/null | grep -q "^203.0.113.0/24" || [ "$n" -ge 40 ]; do sleep 1; n=$((n+1)); done
 echo "  (${n}s)"
@@ -98,23 +98,23 @@ echo "=========== show running-config: os dois mundos ==========="
 $HX -c "show running-config" 2>/dev/null | grep -vE "^(Building|Current|frr version|frr defaults|hostname|log |service |!$)" | head -22 | sed 's/^/  /'
 
 echo
-echo "=========== pool invalido tem que ser recusado e NAO entrar na config ==========="
+echo "=========== an invalid pool must be refused and NOT enter the config ==========="
 $HX -c "configure" \
-    -c "cgnat pool ruim" \
+    -c "cgnat pool bad" \
     -c "inside 100.64.0.0/22" \
     -c "outside 10.0.0.0/24" \
     -c "exit" \
     -c "commit" 2>&1 | sed 's/^/  /'
-echo "  -- 'ruim' aparece na running-config? (nao deve)"
-$HX -c "show running-config" 2>/dev/null | grep -c "cgnat pool ruim" | sed 's/^/    ocorrencias: /'
+echo "  -- does 'bad' appear in the running-config? (it must not)"
+$HX -c "show running-config" 2>/dev/null | grep -c "cgnat pool bad" | sed 's/^/    occurrences: /'
 
 echo
 echo "=========== write memory e recarga ==========="
 $HX -c "save" 2>&1 | head -2 | sed 's/^/  /'
-echo "  -- arquivo gravado:"
+echo "  -- file written:"
 cat "$HEXA_CONFIG" | sed 's/^/    /'
-echo "  -- apagando o pool do dataplane e recarregando do arquivo"
-vppctl bpa pool provedor-a del
+echo "  -- deleting the pool from the dataplane and reloading from the file"
+vppctl bpa pool provider-a del
 vppctl show bpa pool | head -1 | sed 's/^/    antes: /'
 $HX --load "$HEXA_CONFIG"
 vppctl show bpa pool | head -2 | sed 's/^/    depois: /'
@@ -125,6 +125,6 @@ echo "=========== VERDICT ==========="
 R=$($HX -c "show running-config" 2>/dev/null)
 expect_in "CGNAT is in the running config" "cgnat pool" "$R"
 expect_in "routing is in the same running config" "router bgp 65000" "$R"
-expect_not_in "the refused pool stayed out" "cgnat pool ruim" "$R"
+expect_not_in "the refused pool stayed out" "cgnat pool bad" "$R"
 expect "the BGP route reached the VPP FIB" sh -c "vppctl show ip fib 203.0.113.0/24 | grep -q '^203.0.113.0/24'"
 verdict

@@ -199,10 +199,10 @@ VNET_FEATURE_INIT (bpa_in2out_handoff_feature, static) = {
   .node_name = "bpa-in2out-handoff",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
   /*
-   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
-   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
-   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
-   * por fragmento.
+   * Has to run AFTER shallow virtual reassembly, otherwise the buffer's port
+   * fields do not exist yet and a following fragment is read with a garbage
+   * port - which creates a phantom session and burns one port of the block
+   * per fragment.
    */
   .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };
@@ -212,10 +212,10 @@ VNET_FEATURE_INIT (bpa_out2in_handoff_feature, static) = {
   .node_name = "bpa-out2in-handoff",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
   /*
-   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
-   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
-   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
-   * por fragmento.
+   * Has to run AFTER shallow virtual reassembly, otherwise the buffer's port
+   * fields do not exist yet and a following fragment is read with a garbage
+   * port - which creates a phantom session and burns one port of the block
+   * per fragment.
    */
   .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };

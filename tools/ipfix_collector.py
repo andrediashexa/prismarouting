@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Coletor IPFIX minimo, so para verificar o export do HexaRouting.
+Minimal IPFIX collector, only for checking HexaRouting's export.
 
-Decodifica o template e os registros de dados e imprime os eventos de bloco
-da RFC 8158 em texto. Nao e produto: existe para o teste provar que o que sai
-do VPP esta conforme a norma, e nao so que "algum pacote saiu".
+Decodes the template and the data records and prints the RFC 8158 block events
+as text. It is not a product: it exists so the tests can prove that what leaves
+VPP conforms to the standard, not merely that "some packet went out".
 """
 import socket, struct, sys, time
 
@@ -17,11 +17,11 @@ IE = {
     361: ("portRangeStart", "u16"),
     362: ("portRangeEnd", "u16"),
 }
-EVENT = {12: "esgotamento", 16: "ALOCACAO", 17: "LIBERACAO"}
+EVENT = {12: "EXHAUSTION", 16: "ALLOCATION", 17: "DEALLOCATION"}
 
 templates = {}   # template_id -> [(ie, length)]
 records = []
-pending = []     # data sets vistos antes do seu template
+pending = []     # data sets seen before their template
 
 def decode(kind, raw):
     if kind == "ip":
@@ -41,7 +41,7 @@ def emit(tid, body, late=False):
         records.append(rec)
         ev = EVENT.get(rec.get("natEvent"), rec.get("natEvent"))
         ts = rec.get("observationTimeMilliseconds", 0) / 1000.0
-        tag = " (reprocessado)" if late else ""
+        tag = " (reprocessed)" if late else ""
         print(f"  {time.strftime('%H:%M:%S', time.gmtime(ts))} "
               f"{ev:11} {rec.get('sourceIPv4Address')} -> "
               f"{rec.get('postNATSourceIPv4Address')} "
@@ -53,7 +53,7 @@ def handle(pkt):
         return
     ver, length, exp_time, seq, domain = struct.unpack("!HHIII", pkt[:16])
     if ver != 10:
-        print(f"  versao {ver}, esperado 10 (IPFIX)"); return
+        print(f"  version {ver}, expected 10 (IPFIX)"); return
     off = 16
     while off + 4 <= length:
         set_id, set_len = struct.unpack("!HH", pkt[off:off+4])
@@ -72,9 +72,9 @@ def handle(pkt):
                     fields.append((ie & 0x7fff, ln))
                 templates[tid] = fields
                 names = ", ".join(f"{IE.get(i,(str(i),))[0]}({l})" for i, l in fields)
-                print(f"  TEMPLATE {tid}: {cnt} campos, {sum(l for _,l in fields)} bytes")
+                print(f"  TEMPLATE {tid}: {cnt} fields, {sum(l for _,l in fields)} bytes")
                 print(f"    {names}")
-            # um template novo pode destravar dados que chegaram antes dele
+            # a new template can unblock data that arrived before it
             for tid, body_pending in pending[:]:
                 if tid in templates:
                     pending.remove((tid, body_pending))
@@ -82,8 +82,8 @@ def handle(pkt):
         elif set_id >= 256:                  # data set
             fields = templates.get(set_id)
             if not fields:
-                # coletor de verdade guarda e reprocessa quando o template chega
-                print(f"  dados para template {set_id} ainda sem template: guardando")
+                # a real collector holds and reprocesses when the template arrives
+                print(f"  data for template {set_id} with no template yet: holding")
                 pending.append((set_id, body))
             else:
                 emit(set_id, body)
@@ -91,22 +91,22 @@ def handle(pkt):
 
 def serve_tcp(port, secs):
     """
-    IPFIX sobre TCP e um fluxo continuo de mensagens, nao um datagrama por
-    pacote: e preciso remontar pelo tamanho no cabecalho.
+    IPFIX over TCP is a continuous stream of messages, not one datagram per
+    packet: it has to be reassembled using the length in the header.
     """
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", port))
     srv.listen(1)
     srv.settimeout(1.0)
-    print(f"coletor IPFIX/TCP ouvindo em {port} por {secs:.0f}s")
+    print(f"IPFIX/TCP collector listening on {port} for {secs:.0f}s")
     end, buf, conn = time.time() + secs, b"", None
     while time.time() < end:
         if conn is None:
             try:
                 conn, _ = srv.accept()
                 conn.settimeout(1.0)
-                print("  conexao aceita")
+                print("  connection accepted")
             except socket.timeout:
                 continue
         try:
@@ -114,7 +114,7 @@ def serve_tcp(port, secs):
         except socket.timeout:
             continue
         if not chunk:
-            print("  conexao encerrada pelo exportador")
+            print("  connection closed by the exporter")
             conn.close(); conn = None; continue
         buf += chunk
         while len(buf) >= 16:
@@ -143,7 +143,7 @@ def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(("0.0.0.0", port))
     s.settimeout(1.0)
-    print(f"coletor IPFIX ouvindo em udp/{port} por {secs:.0f}s")
+    print(f"IPFIX collector listening on udp/{port} for {secs:.0f}s")
     end = time.time() + secs
     n = 0
     while time.time() < end:
@@ -156,12 +156,12 @@ def main():
     allocs = sum(1 for r in records if r.get("natEvent") == 16)
     deallocs = sum(1 for r in records if r.get("natEvent") == 17)
     exh = sum(1 for r in records if r.get("natEvent") == 12)
-    print(f"\nRESUMO: {n} pacotes, {len(records)} registros "
-          f"({allocs} alocacoes, {deallocs} liberacoes, {exh} esgotamentos)")
+    print(f"\nSUMMARY: {n} packets, {len(records)} records "
+          f"({allocs} allocations, {deallocs} deallocations, {exh} exhaustions)")
     if allocs and deallocs and allocs == deallocs:
-        print("Toda alocacao teve sua liberacao correspondente.")
+        print("Every allocation had its matching deallocation.")
     elif allocs != deallocs:
-        print(f"ATENCAO: {allocs} alocacoes contra {deallocs} liberacoes; "
-              f"a diferenca sao blocos ainda em uso ou registros perdidos.")
+        print(f"WARNING: {allocs} allocations against {deallocs} deallocations; "
+              f"the difference is blocks still in use, or records lost.")
 
 main()

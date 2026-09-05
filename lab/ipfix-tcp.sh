@@ -1,9 +1,9 @@
 #!/bin/sh
-# Transporte TCP do log: o teste que importa e derrubar o coletor no meio.
+# TCP transport for the log: the test that matters is killing the collector.
 #
-# Em UDP, os eventos gerados enquanto o coletor esta fora somem em silencio -
-# e perder um natEvent 17 recria a lacuna que faz um oficio apontar o
-# assinante errado. Aqui eles tem que ir para disco e voltar na reconexao.
+# Over UDP, events produced while the collector is down vanish silently - and
+# losing one natEvent 17 recreates the gap that makes a court order name the
+# wrong subscriber. Here they have to go to disk and come back on reconnect.
 set -u
 mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -23,9 +23,9 @@ vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up
-# O exportador TCP usa socket do kernel, nao o dataplane do VPP: o coletor
-# tem que ser alcancavel pela pilha do Linux. Numa caixa real quem da esse
-# caminho e o linux_cp, espelhando a interface como TAP.
+# The TCP exporter uses a kernel socket, not VPP's dataplane: the collector has
+# to be reachable through the Linux stack. On a real box linux_cp provides that
+# path, mirroring the interface as a TAP.
 vppctl lcp create host-veth-vpp host-if vppmgmt0
 vppctl set interface mtu 1500 host-veth-vpp
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
@@ -54,7 +54,7 @@ burst() {
   for sub in "$@"; do vppctl packet-generator delete b$sub >/dev/null 2>&1; done
 }
 
-echo "=========== FASE 1: coletor no ar ==========="
+echo "=========== PHASE 1: collector up ==========="
 ip netns exec peer python3 /src/tools/ipfix_collector.py tcp 4740 12 > /tmp/c1.out 2>&1 &
 C1=$!
 sleep 3
@@ -62,20 +62,23 @@ burst 5
 sleep 3
 vppctl show bpa logging | grep -A5 "transporte TCP" | sed 's/^/  /'
 wait $C1
-echo "  --- recebido (saida crua do coletor) ---"
+echo "  --- received (raw collector output) ---"
 cat /tmp/c1.out | sed 's/^/    /'
 
 echo
-echo "=========== FASE 2: coletor DERRUBADO, eventos continuam ==========="
-echo "  (sem coletor: os eventos tem que ir para o transbordo em disco)"
+echo "=========== PHASE 2: collector KILLED, events keep coming ==========="
+echo "  (with no collector: the events have to go to the spill file)"
 vppctl bpa timeouts udp 2
 burst 6 9
 sleep 8
-vppctl show bpa logging | grep -E "conectado|transbordo|pendentes" | sed 's/^/  /'
+# The needles were in Portuguese while the plugin prints in English: this line
+# never showed anything, so the diagnosis came out empty in exactly the phase
+# that kills the collector.
+vppctl show bpa logging | grep -E "collector|spill|pending" | sed 's/^/  /'
 ls -l /var/log/hexarouting/ipfix-spill.bin 2>/dev/null | sed 's/^/  /' || echo "  (nada em disco ainda: buffer em memoria ainda cabe)"
 
 echo
-echo "=========== FASE 3: coletor volta ==========="
+echo "=========== PHASE 3: collector comes back ==========="
 ip netns exec peer python3 /src/tools/ipfix_collector.py tcp 4740 15 > /tmp/c2.out 2>&1 &
 C2=$!
 wait $C2
@@ -88,7 +91,7 @@ echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 C2=$(cat /tmp/c2.out)
-expect_in "records arrived after the collector came back" "LIBERACAO" "$C2"
+expect_in "records arrived after the collector came back" "DEALLOCATION" "$C2"
 expect_in "the template was resent on reconnect" "TEMPLATE 256" "$C2"
-expect_not_in "nothing was left pending" "270 pendentes" "$(vppctl show bpa logging)"
+expect_not_in "nothing was left pending" "270 pending" "$(vppctl show bpa logging)"
 verdict

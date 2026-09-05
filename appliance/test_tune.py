@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Testes do hexarouting-tune com topologias sinteticas.
+Tests for hexarouting-tune against synthetic topologies.
 
-A maquina de desenvolvimento nao tem SMT nem multiplos nos NUMA, que e
-justamente onde as decisoes de tuning importam. Aqui as topologias sao
+The development machine has neither SMT nor multiple NUMA nodes, which is
+exactly where the tuning decisions matter. So the topologies are built on
 montadas em disco e conferidas.
 """
 import os, shutil, subprocess, sys, tempfile
@@ -16,7 +16,7 @@ def check(cond, msg):
     global fail
     if not cond:
         fail += 1
-        print(f"  FALHA: {msg}")
+        print(f"  FAIL: {msg}")
 
 def w(path, content):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -26,8 +26,8 @@ def w(path, content):
 def build(root, sockets, cores_per_socket, threads, nic_node=None,
           hugepages_1g=0, isolated="", nic_pci=None):
     """
-    Numeracao tipica do Linux: primeiro todos os primeiros threads, depois
-    todos os segundos. Com 2 sockets x 8 cores x 2 threads, a irma da cpu0
+    Typical Linux numbering: first every first thread, then every second one.
+    With 2 sockets x 8 cores x 2 threads, the sibling of cpu0 is cpu16.
     e a cpu16.
     """
     per_thread = sockets * cores_per_socket
@@ -48,8 +48,8 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
           ",".join(map(str, sorted(cpus))))
     if nic_node is not None:
         if nic_pci:
-            # A NIC de verdade e um symlink para o device PCI. Sem reproduzir
-            # isso, o caminho que gera o stanza dpdk nunca e exercitado.
+            # A real NIC is a symlink to the PCI device. Without reproducing
+            # that, the path generating the dpdk stanza is never exercised.
             dev = f"{root}/sys/devices/pci0000:00/{nic_pci}"
             w(f"{dev}/numa_node", nic_node)
             os.makedirs(f"{root}/sys/class/net/eth0", exist_ok=True)
@@ -91,174 +91,174 @@ with tempfile.TemporaryDirectory() as root:
     workers = expand(field(out, "# workers"). split(": ")[-1])
     isolated = expand(field(out, "# isolated:"))
     oscpus = expand(field(out, "# operating system and VPP main:"))
-    print(f"  workers={len(workers)} isolados={len(isolated)} os={oscpus}")
+    print(f"  workers={len(workers)} isolated={len(isolated)} os={oscpus}")
 
     check(all(c in nodes[1] for c in workers),
           f"workers fora do no da NIC: {[c for c in workers if c not in nodes[1]]}")
-    check(len(workers) == 7, f"esperado 7 workers (8 cores - 1 do SO), obtido {len(workers)}")
-    check(len(isolated) == 14, f"esperado 14 CPUs isoladas (7 cores x 2 threads), obtido {len(isolated)}")
-    check(not set(workers) & set(oscpus), "worker sobre CPU do sistema operacional")
-    check(len(oscpus) == 2, f"o SO deveria ficar com o core inteiro (2 threads), obtido {oscpus}")
-    # nenhuma irma de worker pode ficar de fora do isolamento
+    check(len(workers) == 7, f"expected 7 workers (8 cores - 1 for the OS), got {len(workers)}")
+    check(len(isolated) == 14, f"expected 14 isolated CPUs (7 cores x 2 threads), got {len(isolated)}")
+    check(not set(workers) & set(oscpus), "worker landed on an operating-system CPU")
+    check(len(oscpus) == 2, f"the OS should keep the whole core (2 threads), got {oscpus}")
+    # no worker sibling may be left out of the isolation
     for c in workers:
         sib = c + 16 if c < 16 else c - 16
-        check(sib in isolated, f"irma SMT {sib} do worker {c} nao foi isolada")
+        check(sib in isolated, f"SMT sibling {sib} of worker {c} was not isolated")
 
-print("\n=== 1 socket x 4 cores, sem SMT ===")
+print("\n=== 1 socket x 4 cores, no SMT ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0)
     out = run(root, "--interface", "eth0")
     workers = expand(field(out, "# workers").split(": ")[-1])
     isolated = expand(field(out, "# isolated:"))
-    print(f"  workers={workers} isolados={isolated}")
-    check(workers == [1, 2, 3], f"esperado [1,2,3], obtido {workers}")
-    check(isolated == [1, 2, 3], f"sem SMT, isolados devem ser os workers; obtido {isolated}")
+    print(f"  workers={workers} isolated={isolated}")
+    check(workers == [1, 2, 3], f"expected [1,2,3], got {workers}")
+    check(isolated == [1, 2, 3], f"without SMT the isolated set is the workers; got {isolated}")
 
-print("\n=== maquina minima: 1 socket x 1 core, sem SMT ===")
+print("\n=== minimal machine: 1 socket x 1 core, no SMT ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=1, threads=1, nic_node=0)
     out = run(root, "--interface", "eth0")
     print("  " + field(out, "# workers"))
-    check("(nenhum)" in out or "sem workers" in out,
-          "maquina de 1 core deveria terminar sem workers, nao com isolcpus vazio")
+    check("(none)" in out or "no workers" in out,
+          "a 1-core machine should end with no workers, not with an empty isolcpus")
     check("isolcpus=" not in out.split("### /etc/vpp")[0].split("GRUB")[-1],
-          "nao pode emitir isolcpus numa maquina sem core sobrando")
+          "must not emit isolcpus on a machine with no core to spare")
 
-print("\n=== NIC sem afinidade NUMA declarada (-1) ===")
+print("\n=== NIC with no NUMA affinity declared (-1) ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=2, cores_per_socket=4, threads=1, nic_node=-1)
     out = run(root, "--interface", "eth0")
     check("declares no NUMA affinity" in out,
-          "deveria avisar que a NIC nao declarou no NUMA")
+          "should warn that the NIC declared no NUMA node")
     workers = expand(field(out, "# workers").split(": ")[-1])
     check(all(c < 4 for c in workers),
-          f"sem afinidade, devia cair no no 0; workers={workers}")
-    print(f"  caiu no no 0: workers={workers}")
+          f"with no affinity it should fall back to node 0; workers={workers}")
+    print(f"  fell back to node 0: workers={workers}")
 
-print("\n=== limite de workers respeitado ===")
+print("\n=== worker limit is honoured ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=2, nic_node=0)
     out = run(root, "--interface", "eth0", "--max-workers", "3")
     workers = expand(field(out, "# workers").split(": ")[-1])
     isolated = expand(field(out, "# isolated:"))
-    check(len(workers) == 3, f"esperado 3 workers, obtido {len(workers)}")
-    check(len(isolated) == 6, f"3 cores x 2 threads = 6 isoladas, obtido {len(isolated)}")
-    print(f"  workers={workers} isolados={isolated}")
+    check(len(workers) == 3, f"expected 3 workers, got {len(workers)}")
+    check(len(isolated) == 6, f"3 cores x 2 threads = 6 isolated, got {len(isolated)}")
+    print(f"  workers={workers} isolated={isolated}")
 
-print("\n=== hugepages crescem com o numero de assinantes ===")
+print("\n=== hugepages grow with the subscriber count ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0)
     small = int(field(run(root, "--interface", "eth0", "--subscribers", "10000"),
                       "# 1G hugepages:").split()[0])
     big = int(field(run(root, "--interface", "eth0", "--subscribers", "500000"),
                     "# 1G hugepages:").split()[0])
-    check(big > small, f"500k assinantes ({big}G) deveria pedir mais que 10k ({small}G)")
-    print(f"  10k assinantes -> {small}G ; 500k -> {big}G")
+    check(big > small, f"500k subscribers ({big}G) should ask for more than 10k ({small}G)")
+    print(f"  10k subscribers -> {small}G ; 500k -> {big}G")
 
-print("\n=== primeiro boot: kernel ainda sem hugepage nem isolcpus ===")
+print("\n=== first boot: kernel still without hugepages or isolcpus ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_1g=0, isolated="")
     out = run(root, "--interface", "eth0")
-    check("FIRST BOOT" in out, "deveria detectar que o kernel nao esta tunado")
-    check("FIRST BOOT MODE" in out, "startup.conf deveria sair conservador")
+    check("FIRST BOOT" in out, "should detect that the kernel is not tuned")
+    check("FIRST BOOT MODE" in out, "startup.conf should come out conservative")
     check("corelist-workers" not in out,
-          "nao pode pinar worker sem isolcpus: o VPP tomaria os cores do SO")
+          "must not pin workers without isolcpus: VPP would take the OS cores")
     check("default-hugepage" not in out,
-          "nao pode exigir hugepage que nao existe: poe o VPP em loop de reinicio")
-    check("page-size 4k" in out, "deveria cair para paginas de 4k")
+          "must not demand hugepages that do not exist: that is a VPP restart loop")
+    check("page-size 4k" in out, "should fall back to 4k pages")
     check("plugin dpdk_plugin.so { disable }" in out,
-          "sem hugepage a EAL do DPDK falha e o VPP sai; com Restart=always "
-          "isso vira loop de reinicio")
-    # e a linha do GRUB continua pedindo o tuning para o boot seguinte
-    check("isolcpus=1-7" in out, "o GRUB ainda deve pedir isolcpus para o proximo boot")
-    check("hugepages=" in out, "o GRUB ainda deve pedir hugepages para o proximo boot")
-    print("  config conservadora agora, GRUB pedindo o tuning para o proximo boot")
+          "without hugepages the DPDK EAL fails and VPP exits; with Restart=always "
+          "that becomes a restart loop")
+    # and the GRUB line keeps asking for the tuning on the next boot
+    check("isolcpus=1-7" in out, "GRUB must still ask for isolcpus on the next boot")
+    check("hugepages=" in out, "GRUB must still ask for hugepages on the next boot")
+    print("  conservative now, GRUB asking for the tuning on the next boot")
 
-print("\n=== boot seguinte: kernel ja tunado ===")
+print("\n=== next boot: kernel already tuned ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_1g=6, isolated="1-7")
     out = run(root, "--interface", "eth0")
-    check("FIRST BOOT" not in out, "nao deveria mais estar em primeiro boot")
-    check("corelist-workers 1-7" in out, "deveria pinar os workers")
-    check("default-hugepage" in out, "deveria usar hugepages")
+    check("FIRST BOOT" not in out, "should no longer be in first boot")
+    check("corelist-workers 1-7" in out, "should pin the workers")
+    check("default-hugepage" in out, "should use hugepages")
     check("plugin dpdk_plugin.so { disable }" not in out,
-          "com hugepage o DPDK tem que voltar")
-    check("bpa_plugin.so { enable }" in out, "o plugin do CGNAT tem que estar ligado")
-    print("  config completa: pinning e hugepages")
+          "with hugepages DPDK has to come back")
+    check("bpa_plugin.so { enable }" in out, "the CGNAT plugin has to be enabled")
+    print("  full config: pinning and hugepages")
 
-print("\n=== hugepages reservadas mas isolcpus ausente: ainda conservador ===")
+print("\n=== hugepages reserved but isolcpus missing: still conservative ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_1g=6, isolated="")
     out = run(root, "--interface", "eth0")
     check("FIRST BOOT" in out,
-          "sem isolcpus, pinar worker faz o VPP competir com o SO")
-    print("  meio caminho ainda e tratado como nao tunado")
+          "without isolcpus, pinning a worker makes VPP compete with the OS")
+    print("  halfway is still treated as untuned")
 
-print("\n=== fila de RX por worker e endereco PCI da NIC ===")
+print("\n=== one RX queue per worker, and the NIC's PCI address ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_1g=6, isolated="1-7", nic_pci="0000:3b:00.0")
     out = run(root, "--interface", "eth0")
     workers = expand(field(out, "# workers").split(": ")[-1])
-    check("dev 0000:3b:00.0" in out, "o stanza dpdk deve nomear o device PCI")
+    check("dev 0000:3b:00.0" in out, "the dpdk stanza must name the PCI device")
     check(f"num-rx-queues {len(workers)}" in out,
-          f"uma fila por worker: esperava {len(workers)}")
-    check("num-tx-queues" in out, "sem fila de TX o DPDK cai no default")
-    print(f"  dpdk: {len(workers)} filas em 0000:3b:00.0")
+          f"one queue per worker: expected {len(workers)}")
+    check("num-tx-queues" in out, "without a TX queue count DPDK falls back to its default")
+    print(f"  dpdk: {len(workers)} queues on 0000:3b:00.0")
 
-print("\n=== NIC que nao e PCI nao inventa endereco ===")
+print("\n=== a NIC that is not PCI must not invent an address ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
           hugepages_1g=6, isolated="1-3")
     out = run(root, "--interface", "eth0")
-    check("dev 0000:" not in out, "nao pode inventar endereco PCI")
-    check("dev default" in out, "ainda deve dimensionar a fila no default")
-    print("  cai no dev default")
+    check("dev 0000:" not in out, "must not invent a PCI address")
+    check("dev default" in out, "should still size the queue on the default")
+    print("  falls back to dev default")
 
-print("\n=== C-states e THP desligados por padrao ===")
+print("\n=== C-states and THP off by default ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_1g=6, isolated="1-7")
     out = run(root, "--interface", "eth0")
-    check("processor.max_cstate=1" in out, "C-state profundo deve sair da linha")
-    check("intel_idle.max_cstate=0" in out, "intel_idle tambem responde por C-state")
-    check("transparent_hugepage=never" in out, "khugepaged para a CPU que compacta")
+    check("processor.max_cstate=1" in out, "deep C-states must leave the command line")
+    check("intel_idle.max_cstate=0" in out, "intel_idle also governs C-states")
+    check("transparent_hugepage=never" in out, "khugepaged stalls the CPU it compacts on")
     off = run(root, "--interface", "eth0", "--no-low-latency")
-    check("max_cstate" not in off, "--no-low-latency tem que remover mesmo")
-    check("isolcpus=1-7" in off, "e nao pode derrubar o resto do tuning junto")
-    print("  ligado por padrao, desligavel na flag")
+    check("max_cstate" not in off, "--no-low-latency has to actually remove it")
+    check("isolcpus=1-7" in off, "and must not take the rest of the tuning with it")
+    print("  on by default, switchable off")
 
-print("\n=== IRQ banida dos cores isolados ===")
+print("\n=== IRQs banned from the isolated cores ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=2, nic_node=0,
           hugepages_1g=6, isolated="1-7,9-15")
     out = run(root, "--interface", "eth0")
     banned = field(out, "IRQBALANCE_BANNED_CPULIST=")
     check(expand(banned) == expand(field(out, "# isolated:")),
-          f"banidas devem ser exatamente as isoladas; obtido {banned!r}")
-    print(f"  banidas: {banned}")
+          f"banned must be exactly the isolated set; got {banned!r}")
+    print(f"  banned: {banned}")
 
-print("\n=== maquina sem core para isolar nao gera lista vazia de banimento ===")
+print("\n=== a machine with no core to isolate emits no empty ban list ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=1, threads=1, nic_node=0)
     out = run(root, "--interface", "eth0")
     check("IRQBALANCE_BANNED_CPULIST=" not in out,
-          "banir lista vazia desliga o irqbalance inteiro em algumas versoes")
-    print("  nao emite banimento")
+          "banning an empty list disables irqbalance entirely in some versions")
+    print("  emits no ban")
 
 # ---------------------------------------------------------------- apply-tuning
 
-print("\n=== apply-tuning nao pode travar o boot num sistema live ===")
+print("\n=== apply-tuning must not stall the boot on a live system ===")
 import subprocess, os as _os, tempfile as _tf, shutil as _sh
 
 APPLY = os.path.join(HERE, "apply-tuning")
 fakebin = _tf.mkdtemp()
-# update-grub falso que demora: se for chamado, o teste percebe
+# A slow fake update-grub: if it gets called, the test notices
 with open(os.path.join(fakebin, "update-grub"), "w") as f:
-    f.write("#!/bin/sh\necho CHAMOU-UPDATE-GRUB\nsleep 5\n")
+    f.write("#!/bin/sh\necho CALLED-UPDATE-GRUB\nsleep 5\n")
 _os.chmod(os.path.join(fakebin, "update-grub"), 0o755)
 with open(os.path.join(fakebin, "hexarouting-tune"), "w") as f:
     f.write("#!/bin/sh\nexit 0\n")
@@ -269,14 +269,14 @@ env = dict(_os.environ, PATH=fakebin + ":" + _os.environ["PATH"],
 r = subprocess.run(["sh", APPLY], capture_output=True, text=True, env=env,
                    timeout=30)
 out = r.stdout + r.stderr
-check("CHAMOU-UPDATE-GRUB" in out or "tuning unchanged" in out,
-      "num sistema normal o update-grub deveria ser considerado")
-# O ajuste de governor roda antes de tudo: se ele abortar por nao achar
-# cpufreq, o resto do apply-tuning nunca acontece.
-check("governor" in out, f"apply-tuning deveria relatar o governor; saiu {out!r}")
-check(r.returncode == 0, f"apply-tuning nao pode falhar aqui (rc={r.returncode})")
-print("  sistema normal: comportamento preservado, governor relatado")
+check("CALLED-UPDATE-GRUB" in out or "tuning unchanged" in out,
+      "on a normal system update-grub should be considered")
+# The governor step runs before everything else: if it aborts because there
+# is no cpufreq, the rest of apply-tuning never happens.
+check("governor" in out, f"apply-tuning should report the governor; output was {out!r}")
+check(r.returncode == 0, f"apply-tuning must not fail here (rc={r.returncode})")
+print("  normal system: behaviour preserved, governor reported")
 _sh.rmtree(fakebin, ignore_errors=True)
 
-print(f"\n{'TODOS OS TESTES PASSARAM' if not fail else str(fail) + ' FALHAS'}")
+print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

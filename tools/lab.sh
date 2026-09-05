@@ -1,12 +1,12 @@
 #!/bin/sh
-# Roda um lab no container de build.
+# Runs a lab in the build container.
 #
-#   sh tools/lab.sh                lista os labs
-#   sh tools/lab.sh datapath       roda lab/datapath.sh
-#   sh tools/lab.sh boot-iso       boota a ISO (precisa dela construida)
+#   sh tools/lab.sh                lists the labs
+#   sh tools/lab.sh datapath       runs lab/datapath.sh
+#   sh tools/lab.sh boot-iso       boots the ISO (which must already be built)
 #
-# Nesta maquina o grupo docker so vale em login novo, entao reexecutamos via
-# "sg docker" quando o socket nega acesso.
+# On this machine the docker group only takes effect in a new login, so we
+# re-exec through "sg docker" when the socket denies access.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=${IMAGE:-hexarouting-dev:26.06}
@@ -22,7 +22,7 @@ if [ $# -eq 0 ]; then
 fi
 
 LAB=$1
-[ -f "$REPO/lab/$LAB.sh" ] || { echo "lab '$LAB' nao existe" >&2; exit 1; }
+[ -f "$REPO/lab/$LAB.sh" ] || { echo "lab '$LAB' does not exist" >&2; exit 1; }
 
 if ! docker ps >/dev/null 2>&1; then
   exec sg docker -c "IMAGE='$IMAGE' '$0' '$LAB'"

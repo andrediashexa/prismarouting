@@ -1,11 +1,11 @@
 #!/bin/sh
-# Modo dinamico com 2 workers: valida o particionamento do espaco de blocos.
+# Dynamic mode with 2 workers: validates the partitioning of the block space.
 #
-# Alocacao de bloco seria estado compartilhado entre workers. Em vez de lock,
-# o espaco e particionado: o worker w so aloca blocos com
-# block_idx % n_workers == w. Como o in2out ja manda o assinante para
-# sub_idx % n_workers, os dois batem, e o out2in (que resolve por
-# block_idx % n_workers) cai no mesmo worker.
+# Block allocation would be state shared between workers. Instead of a lock,
+# the space is partitioned: worker w only allocates blocks with
+# block_idx % n_workers == w. Since in2out already sends the subscriber to
+# sub_idx % n_workers, the two agree, and out2in (which resolves by
+# block_idx % n_workers) lands on the same worker.
 set -u
 mkdir -p /run/vpp /vpp_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -27,12 +27,12 @@ vppctl set ip neighbor pg0 100.64.3.253 02:00:00:00:00:01
 vppctl ip route add 8.8.8.8/32 via 200.150.0.2 pg1
 vppctl ip route add 100.64.0.0/22 via 100.64.3.253 pg0
 
-# 4 IPs publicos x 3 blocos = 12 blocos, 6 por worker
+# 4 public IPs x 3 blocks = 12 blocks, 6 per worker
 vppctl bpa pool din inside 100.64.0.0/22 outside 200.150.0.16/30 block 16384 mode dynamic
 vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 
-echo "=== fatias de bloco por worker (12 blocos, 2 workers) ==="
+echo "=== block slices per worker (12 blocks, 2 workers) ==="
 vppctl show bpa blocks | sed 's/^/  /'
 
 echo
@@ -49,14 +49,14 @@ vppctl show trace | grep -E "BPA (handoff|in2out)" | sed 's/^/  /'
 for sub in 5 6 9 12; do vppctl packet-generator delete s$sub >/dev/null 2>&1; done
 
 echo
-echo "=== distribuicao (assinante par -> worker 0, impar -> worker 1) ==="
+echo "=== distribution (even subscriber -> worker 0, odd -> worker 1) ==="
 vppctl show bpa blocks | sed 's/^/  /'
 vppctl show bpa session | sed 's/^/  /'
 
 echo
-echo "=== volta: cada resposta tem que achar seu worker ==="
-# 40000 nao cabe no bloco 1024-17407, entao o alocador entregou a primeira
-# porta livre: 1024 em cada endereco publico.
+echo "=== return path: every reply has to find its worker ==="
+# 40000 does not fit in the 1024-17407 block, so the allocator handed out the
+# first free port: 1024 on each public address.
 echo "  esperado: .16->100.64.0.6 (t1)  .17->100.64.0.5 (t2)"
 echo "            .18->100.64.0.12 (t1) .19->100.64.0.9 (t2)"
 for t in "200.150.0.16 1024" "200.150.0.17 1024" "200.150.0.18 1024" "200.150.0.19 1024"; do
@@ -70,8 +70,11 @@ vppctl clear trace >/dev/null; vppctl trace add pg-input 20 >/dev/null
 vppctl packet-generator enable >/dev/null; sleep 1
 vppctl show trace | grep -E "BPA out2in" | sed 's/^/  /'
 echo
-echo "  pacotes sem sessao (deve ser 0):"
-vppctl show errors | grep -iE "sem sessao|bloco nao alocado" | sed 's/^/    /' || echo "    nenhum"
+# These are the plugin's error-counter strings. They used to be searched for in
+# Portuguese, which the plugin never emitted: the grep never matched and the
+# line printed "none" regardless of what had actually happened.
+echo "  packets with no session (must be 0):"
+vppctl show errors | grep -iE "no session for destination|no free block" | sed 's/^/    /' || echo "    none"
 
 echo
 echo "=========== VERDICT ==========="

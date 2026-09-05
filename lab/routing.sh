@@ -1,6 +1,6 @@
 #!/bin/sh
 # Plano de controle completo: BGP, OSPF e IS-IS sobre o TAP do linux_cp,
-# com as tres rotas aprendidas chegando na FIB do VPP.
+# with all three learned routes reaching the VPP FIB.
 #
 #   [netns peer] AS 65001 / OSPF / IS-IS       [default] HexaRouting
 #     dum-bgp   203.0.113.0/24  -- BGP  -->
@@ -8,7 +8,7 @@
 #     dum-isis  198.19.0.0/24   -- ISIS -->                  -> FIB do VPP
 #     veth-out 10.0.0.2 ------(veth)------ veth-vpp -> VPP -> vppwan0 10.0.0.1
 #
-# IS-IS e o teste que importa para o punt: ele nao roda sobre IP, usa CLNS
+# IS-IS is the test that matters for punt: it does not run over IP, it uses CLNS
 # direto sobre o enlace. Se o caminho de punt so entendesse IPv4/IPv6, BGP e
 # OSPF subiriam e o IS-IS ficaria mudo.
 set -u
@@ -26,7 +26,7 @@ ip link set veth-out netns peer
 ip netns exec peer ip link set lo up
 ip netns exec peer ip link set veth-out up
 ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
-# um prefixo por protocolo, para nao haver duvida de quem trouxe o que
+# one prefix per protocol, so there is no doubt about which brought which
 for d in bgp:203.0.113.1/24 ospf:198.18.0.1/24 isis:198.19.0.1/24; do
   n=${d%%:*}; a=${d##*:}
   ip netns exec peer ip link add dum-$n type dummy
@@ -36,20 +36,20 @@ done
 
 vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
-vppctl show version >/dev/null 2>&1 || { echo "VPP nao subiu"; tail -25 /tmp/vpp.log; exit 1; }
+vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
 vppctl lcp create host-veth-vpp host-if vppwan0
 
-# O TAP herda MTU 9000 e o fio esta em 1500. O OSPF compara MTU nos pacotes
-# DD, entao a adjacencia trava em Exchange sem dizer o porque. MTU tem que
-# ser explicito, nao herdado.
+# The TAP inherits MTU 9000 while the wire is at 1500. OSPF compares MTU in DD
+# packets, so the adjacency stalls in Exchange without saying why. MTU has to
+# be explicit, never inherited.
 vppctl set interface mtu 1500 host-veth-vpp
 
-# IS-IS nao roda sobre IP: e OSI NLPID 0x83 direto sobre o enlace. Sem isto
-# o quadro chega no VPP, cai em osi-input como "unknown osi protocol" e e
-# descartado - BGP e OSPF sobem normalmente e so o IS-IS fica mudo.
+# IS-IS does not run over IP: it is OSI NLPID 0x83 straight over the link.
+# Without this the frame reaches VPP, lands in osi-input as "unknown osi
+# protocol" and is dropped - BGP and OSPF come up fine and only IS-IS is mute.
 vppctl lcp osi-proto enable 0x83
 
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
@@ -144,15 +144,15 @@ echo "(${n}s, $ok de 3)"
 echo
 echo "=== adjacencias ==="
 printf 'BGP   : '; vtysh -c "show bgp ipv4 unicast summary" 2>/dev/null | grep -E "^10\.0\.0\.2" | awk '{print "peer "$1" AS "$3" up "$9" prefixos "$10}'
-printf 'OSPF  : '; vtysh -c "show ip ospf neighbor" 2>/dev/null | grep -E "^10\.0\.0\.2" | awk '{print "vizinho "$1" estado "$3}'
-printf 'IS-IS : '; vtysh -c "show isis neighbor" 2>/dev/null | grep -iE "upstream" | awk '{print "vizinho "$1" estado "$4" interface "$2}'
+printf 'OSPF  : '; vtysh -c "show ip ospf neighbor" 2>/dev/null | grep -E "^10\.0\.0\.2" | awk '{print "neighbour "$1" state "$3}'
+printf 'IS-IS : '; vtysh -c "show isis neighbor" 2>/dev/null | grep -iE "upstream" | awk '{print "neighbour "$1" state "$4" interface "$2}'
 
 echo
-echo "=== rotas na FIB do Linux (instaladas pelo FRR) ==="
+echo "=== routes in the Linux FIB (installed by FRR) ==="
 ip route show | grep -E "203.0.113|198.18|198.19" | sed 's/^/  /'
 
 echo
-echo "=== rotas na FIB do VPP (o que importa) ==="
+echo "=== routes in the VPP FIB (what actually matters) ==="
 for pfx in 203.0.113.0/24 198.18.0.0/24 198.19.0.0/24; do
   printf '  %-16s ' "$pfx"
   vppctl show ip fib "$pfx" 2>/dev/null | grep -oE "ipv4 via [0-9.]+ [a-z0-9-]+" | head -1 || echo "AUSENTE"

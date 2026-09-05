@@ -36,18 +36,18 @@ echo "=== dump pela API ==="
 vat2 -p /vat2_plugins bpa_pool_dump '{}' 2>&1 | head -14 | sed 's/^/  /'
 
 echo
-echo "=== erro devolve CODIGO, nao texto ==="
-echo "  (bloco 500 nao e potencia de dois)"
+echo "=== an error returns a CODE, not text ==="
+echo "  (block 500 is not a power of two)"
 vat2 -p /vat2_plugins bpa_pool_add_del '{
-  "is_add": true, "name": "ruim", "block_size": 500,
+  "is_add": true, "name": "bad", "block_size": 500,
   "port_min": 1024, "port_max": 65535,
   "policy": "BPA_API_POLICY_INTERLEAVED", "mode": "BPA_API_MODE_DETERMINISTIC",
   "n_inside": 1, "n_prefixes": 2,
   "prefixes": ["10.0.0.0/24", "203.0.113.0/24"]
 }' 2>&1 | sed 's/^/  /'
-echo "  o pool 'ruim' entrou? (nao deve)"
-vppctl show bpa pool | grep -c "pool ruim" | sed 's/^/    ocorrencias: /'
-echo "  e a razao detalhada foi para o log:"
+echo "  did the 'bad' pool get in? (it must not)"
+vppctl show bpa pool | grep -c "pool bad" | sed 's/^/    occurrences: /'
+echo "  and the detailed reason went to the log:"
 vppctl show logging 2>/dev/null | grep -i "block size" | tail -1 | sed 's/^/    /'
 
 echo

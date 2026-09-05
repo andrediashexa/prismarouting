@@ -1,9 +1,9 @@
 #!/bin/sh
-# Exportacao IPFIX de eventos de bloco (RFC 8158), com coletor de verdade
-# decodificando o que sai.
+# IPFIX export of block events (RFC 8158), with a real collector decoding what
+# goes out.
 #
-#   pg0/pg1  trafego de assinante, pool dinamico
-#   veth     caminho ate o coletor, que roda no netns "peer"
+#   pg0/pg1  subscriber traffic, dynamic pool
+#   veth     path to the collector, which runs in the "peer" netns
 set -u
 mkdir -p /run/vpp /vpp_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -21,19 +21,19 @@ ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
 
 vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
-vppctl show version >/dev/null 2>&1 || { echo "VPP nao subiu"; tail -20 /tmp/vpp.log; exit 1; }
+vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 
-# caminho ate o coletor
+# path to the collector
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
-# Sem vizinho resolvido, os primeiros registros IPFIX sao descartados
-# enquanto o ARP nao completa. Para log de compliance isso e perda
-# silenciosa, entao o caminho ate o coletor tem que estar pronto antes.
+# With no resolved neighbour, the first IPFIX records are dropped while ARP is
+# still incomplete. For a compliance log that is silent loss, so the path to
+# the collector has to be ready beforehand.
 PEERMAC=$(ip netns exec peer cat /sys/class/net/veth-out/address)
 vppctl set ip neighbor host-veth-vpp 10.0.0.2 $PEERMAC
 
-# trafego de assinante
+# subscriber traffic
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl create packet-generator interface pg1 >/dev/null
 vppctl set interface state pg0 up
@@ -57,15 +57,16 @@ echo "=== habilitando o log de blocos ==="
 vppctl bpa logging enable
 vppctl show bpa logging | sed 's/^/  /'
 
-# coletor no outro lado do fio
+# collector on the far side of the wire
 ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 30 > /tmp/collector.out 2>&1 &
 COL=$!
-# captura o fio em paralelo: separa "VPP nao enviou" de "coletor perdeu"
+# captures the wire in parallel: separates "VPP did not send" from "the
+# collector lost it"
 ip netns exec peer timeout 28 tcpdump -nni veth-out -c 40 "udp port 4739" > /tmp/tcpdump.out 2>&1 &
 sleep 2
 
 echo
-echo "=== 3 assinantes: 3 alocacoes de bloco ==="
+echo "=== 3 subscribers: 3 block allocations ==="
 for sub in 5 6 9; do
   vppctl packet-generator new "name s$sub limit 1 node ip4-input interface pg0 size 60-60 \
       data { UDP: 100.64.0.$sub -> 8.8.8.8 \
@@ -75,7 +76,7 @@ done
 vppctl packet-generator enable >/dev/null; sleep 1
 for sub in 5 6 9; do vppctl packet-generator delete s$sub >/dev/null 2>&1; done
 
-echo "=== 4o assinante: esgotamento (natEvent 12) ==="
+echo "=== 4th subscriber: exhaustion (natEvent 12) ==="
 vppctl packet-generator new "name s12 limit 1 node ip4-input interface pg0 size 60-60 \
     data { UDP: 100.64.0.12 -> 8.8.8.8 \
            UDP: 40000 -> 53 \
@@ -84,7 +85,7 @@ vppctl packet-generator enable >/dev/null; sleep 1
 vppctl packet-generator delete s12 >/dev/null 2>&1
 
 echo
-echo "=== forcando a expiracao para gerar as 3 liberacoes ==="
+echo "=== forcing expiry to produce the 3 releases ==="
 vppctl bpa timeouts udp 2
 n=0
 until vppctl show bpa blocks | grep -q "total: 0/3" || [ "$n" -ge 25 ]; do sleep 1; n=$((n+1)); done
@@ -98,7 +99,7 @@ vppctl show bpa logging | sed 's/^/  /'
 wait $COL 2>/dev/null
 echo
 echo "=========== O QUE PASSOU NO FIO (tcpdump) ==========="
-grep -c "IP " /tmp/tcpdump.out 2>/dev/null | sed 's/^/  pacotes udp\/4739: /'
+grep -c "IP " /tmp/tcpdump.out 2>/dev/null | sed 's/^/  udp\/4739 packets: /'
 grep "IP " /tmp/tcpdump.out 2>/dev/null | awk '{print $NF}' | sort | uniq -c | sed 's/^/  tamanhos: /'
 echo
 echo "=========== O QUE O COLETOR RECEBEU E DECODIFICOU ==========="
@@ -109,7 +110,7 @@ echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 C=$(cat /tmp/collector.out)
 expect_in "the collector decoded the template" "TEMPLATE 256" "$C"
-expect_in "allocations arrived" "ALOCACAO" "$C"
-expect_in "de-allocations arrived" "LIBERACAO" "$C"
-expect_in "every allocation had its release" "Toda alocacao teve sua liberacao" "$C"
+expect_in "allocations arrived" "ALLOCATION" "$C"
+expect_in "de-allocations arrived" "DEALLOCATION" "$C"
+expect_in "every allocation had its release" "Every allocation had its matching" "$C"
 verdict

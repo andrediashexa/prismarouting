@@ -1,9 +1,9 @@
 #!/bin/sh
-# Monta a ISO instalavel do HexaRouting.
+# Builds the installable HexaRouting ISO.
 #
-# Precisa de root e de debootstrap; roda dentro do container de build com
-# --privileged. O resultado e uma ISO hibrida (BIOS e UEFI) que sobe um
-# sistema vivo com VPP, FRR e HexaRouting ja instalados.
+# Needs root and debootstrap; runs inside the build container with
+# --privileged. The result is a hybrid ISO (BIOS and UEFI) booting a live
+# system with VPP, FRR and HexaRouting already installed.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -17,9 +17,9 @@ FRR_VERSION=${FRR_VERSION:-10.7.1-0~deb12u1}
 say() { echo "==> $*"; }
 [ "$(id -u)" = 0 ] || { echo "must run as root" >&2; exit 1; }
 
-# Sem esta checagem a falta de uma ferramenta so aparece la na frente,
-# como um "not found" no meio do log - e quem estiver testando boota a
-# ISO velha achando que testou a nova.
+# Without this check a missing tool only shows up much later, as a
+# "not found" in the middle of the log - and whoever is testing boots the old
+# ISO believing they tested the new one.
 missing=""
 for t in debootstrap xorriso mksquashfs mkfs.vfat mcopy grub-mkrescue; do
   command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
@@ -30,10 +30,11 @@ done
   exit 1
 }
 
-# O plugin nao e compilado aqui: se faltar, a falha so aparece depois do
-# debootstrap inteiro, com uns dez minutos ja gastos. E resolver o caminho
-# UMA vez, aqui, evita o modo de falha que ja aconteceu: a checagem achava
-# o .so no host e a copia procurava so em /vpp_plugins, do container.
+# The plugin is not compiled here: if it is missing, the failure only shows
+# up after the whole debootstrap, with ten minutes already spent. And
+# resolving the path ONCE, here, avoids the failure that already happened: the
+# check found the .so on the host while the copy looked only in the
+# container's /vpp_plugins.
 if [ -f "$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so" ]; then
   PLUGIN_SO="$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
 elif [ -f /vpp_plugins/bpa_plugin.so ]; then
@@ -78,7 +79,7 @@ cp "$PLUGIN_SO" "$ROOT/vpp_plugins/"
 chroot "$ROOT" /bin/sh -c "cd /src && sh appliance/install.sh"
 rm -rf "$ROOT/src"
 
-say "identidade da caixa"
+say "box identity"
 echo hexarouting > "$ROOT/etc/hostname"
 printf '127.0.0.1 localhost\n127.0.1.1 hexarouting\n' > "$ROOT/etc/hosts"
 chroot "$ROOT" /bin/sh -c "echo 'root:hexarouting' | chpasswd"
@@ -89,9 +90,10 @@ chroot "$ROOT" /bin/sh -c "apt-get clean; rm -rf /var/lib/apt/lists/*"
 KVER=$(basename "$(ls -d "$ROOT"/lib/modules/* | head -1)")
 cp "$ROOT/boot/vmlinuz-$KVER"  "$WORK/iso/live/vmlinuz"
 cp "$ROOT/boot/initrd.img-$KVER" "$WORK/iso/live/initrd"
-# -mem e -processors limitam o mksquashfs: com xz sem limite ele consome
-# memoria proporcional ao paralelismo e derruba a maquina de build. O custo e
-# alguns segundos a mais; o beneficio e o build caber numa VM modesta.
+# -mem and -processors bound mksquashfs: with xz and no limit it consumes
+# memory proportional to the parallelism and takes the build machine down. The
+# cost is a few extra seconds; the benefit is a build that fits in a modest
+# VM.
 mksquashfs "$ROOT" "$WORK/iso/live/filesystem.squashfs" \
   -e boot -comp xz -no-progress \
   -processors "${SQUASH_PROCS:-2}" -mem "${SQUASH_MEM:-768M}"

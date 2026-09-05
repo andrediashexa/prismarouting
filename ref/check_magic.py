@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Prova que o reciprocal de bpa_pool.c reproduz a divisao inteira exata.
+Proves that the reciprocal in bpa_pool.c reproduces exact integer division.
 
-Replica a aritmetica do C e compara com // em todo o intervalo de sub_idx
-que um pool real pode produzir, para todo blocks_per_ip alcancavel.
+Replicates the C arithmetic and compares it with // over the whole range of
+sub_idx a real pool can produce, for every reachable blocks_per_ip.
 """
 import sys
 
@@ -19,11 +19,11 @@ def magic_for(d):
     m = ((1 << (32 + l)) + d - 1) // d
     return m, 32 + l
 
-# O divisor do datapath depende da politica:
-#   interleaved -> outside.count, que agora e a soma de faixas arbitrarias
+# The datapath divisor depends on the policy:
+#   interleaved -> outside.count, which is now the sum of arbitrary ranges
 #   blocked     -> blocks_per_ip
-# Com pools fragmentados o divisor deixou de ser bem-comportado, entao
-# testamos qualquer valor plausivel, nao so os alinhados.
+# With fragmented pools the divisor stopped being well behaved, so we test
+# any plausible value, not only the aligned ones.
 import random
 divisors = set()
 for port_min in (1024, 2048, 4096):
@@ -45,31 +45,31 @@ overflow_worst = 0
 for d in divisors:
     m, shift = magic_for(d)
 
-    # 1. o produto intermediario nao pode estourar u64
+    # 1. the intermediate product must not overflow u64
     worst = (MAX_CAPACITY - 1) * m
     overflow_worst = max(overflow_worst, worst)
     if worst > U64:
-        print(f"  OVERFLOW: d={d} magic={m} produto={worst.bit_length()} bits")
+        print(f"  OVERFLOW: d={d} magic={m} product={worst.bit_length()} bits")
         fail += 1
         continue
 
-    # 2. equivalencia exata com a divisao inteira
-    # varre as bordas de cada quociente, onde o reciprocal erra se errar
+    # 2. exact equivalence with integer division
+    # sweeps the edges of each quotient, where the reciprocal fails if it does
     bad = 0
     for q in range(0, min(d * 4, MAX_CAPACITY // max(d, 1)) + 1):
         for n in (q * d - 1, q * d, q * d + 1):
             if 0 <= n < MAX_CAPACITY:
                 if ((n * m) >> shift) != n // d:
                     bad += 1
-    # e uma varredura densa na faixa baixa, que e onde os pools reais vivem
+    # and a dense sweep of the low range, which is where real pools live
     for n in range(0, min(300_000, MAX_CAPACITY)):
         if ((n * m) >> shift) != n // d:
             bad += 1
             break
     if bad:
-        print(f"  FALHA: d={d} magic={m} shift={shift} -> {bad} divergencias")
+        print(f"  FAIL: d={d} magic={m} shift={shift} -> {bad} divergences")
         fail += 1
 
-print(f"produto intermediario no pior caso: {overflow_worst.bit_length()} bits (limite 64)")
-print(f"\nRESULTADO: {'reciprocal exato para todos os divisores' if not fail else str(fail)+' FALHAS'}")
+print(f"worst-case intermediate product: {overflow_worst.bit_length()} bits (limit 64)")
+print(f"\nRESULT: {'reciprocal exact for every divisor' if not fail else str(fail)+' FAILURES'}")
 sys.exit(1 if fail else 0)

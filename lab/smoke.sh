@@ -1,8 +1,8 @@
 #!/bin/sh
-# Sobe o VPP com o plugin e exercita a CLI de pools. Nao precisa de NIC.
+# Starts VPP with the plugin and exercises the pool CLI. Needs no NIC.
 set -e
 mkdir -p /run/vpp /vpp_plugins
-# o .so vive em /vpp_plugins, que e do container: reconstroi a cada execucao
+# the .so lives in /vpp_plugins, which belongs to the container: rebuilt each run
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -10,7 +10,7 @@ cd /src
 vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
 n=0
 until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
-vppctl show version >/dev/null 2>&1 || { echo "VPP nao subiu"; tail -20 /tmp/vpp.log; exit 1; }
+vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 
 vppctl bpa pool provedor-a inside 100.64.0.0/12 \
   outside 200.150.0.0/24 outside 45.170.16.0/24 outside 189.90.100.0/26 block 512

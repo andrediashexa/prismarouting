@@ -1,16 +1,16 @@
 /*
- * bpa_log_tcp.c - exportacao IPFIX sobre TCP, com buffer local.
+ * bpa_log_tcp.c - IPFIX export over TCP, with a local buffer.
  *
- * A infraestrutura vnet/ipfix-export do VPP so fala UDP. Para telemetria
- * isso basta; para log de compliance nao: perder um natEvent 17 recria a
- * lacuna entre liberar e realocar um bloco, e e nessa lacuna que uma
- * consulta judicial devolve o assinante errado (ver docs/logging.md).
+ * VPP's vnet/ipfix-export infrastructure only speaks UDP. For telemetry that
+ * is enough; for a compliance log it is not: losing one natEvent 17 recreates
+ * the gap between releasing and reallocating a block, and it is in that gap
+ * that a court request returns the wrong subscriber (see docs/logging.md).
  *
- * Aqui a mensagem IPFIX e montada a mao - o formato e simples e nao vale
- * torcer a infraestrutura de UDP para caber. O socket e nao bloqueante: um
- * coletor lento nao pode travar a thread principal do VPP. Quando ele fica
- * inalcancavel, os bytes vao para um arquivo de transbordo e voltam na
- * reconexao, em ordem.
+ * The IPFIX message is assembled by hand here - the format is simple and it is
+ * not worth bending the UDP infrastructure to fit. The socket is non-blocking:
+ * a slow collector must not stall VPP's main thread. When the collector becomes
+ * unreachable the bytes go to a spill file and come back on reconnection, in
+ * order.
  */
 
 #include <errno.h>
@@ -29,12 +29,12 @@
 #define BPA_TCP_DOMAIN	     1
 #define BPA_TCP_RETRY_SECS   5.0
 #define BPA_TCP_TEMPLATE_IVL 60.0
-/* Acima disto o buffer em memoria vai para o arquivo de transbordo. */
+/* Above this, the in-memory buffer goes to the spill file. */
 #define BPA_TCP_SPILL_BYTES  (1 << 20)
 
 bpa_log_tcp_t bpa_log_tcp;
 
-/* Elementos da Tabela 21 da RFC 8158, na mesma ordem do registro. */
+/* RFC 8158 Table 21 elements, in the same order as the record. */
 static const u16 bpa_tcp_ies[][2] = {
   { 323, 8 }, { 230, 1 }, { 8, 4 }, { 225, 4 }, { 361, 2 }, { 362, 2 },
   { 283, 4 },
@@ -62,7 +62,7 @@ bpa_tcp_put_u32 (u8 **b, u32 v)
   bpa_tcp_put (b, &v, 4);
 }
 
-/* Cabecalho de mensagem IPFIX (RFC 7011), com o tamanho preenchido depois. */
+/* IPFIX message header (RFC 7011), with the length filled in afterwards. */
 static u32
 bpa_tcp_msg_start (u8 **b, f64 now)
 {
@@ -84,12 +84,12 @@ bpa_tcp_msg_end (u8 **b, u32 at)
 }
 
 /*
- * Monta a mensagem de template e a coloca NA FRENTE do buffer.
+ * Builds the template message and places it AT THE FRONT of the buffer.
  *
- * Prepender e obrigatorio numa conexao nova: o que estava represado durante a
- * queda ja esta no buffer, e sem o template na frente o coletor descarta tudo
- * - foi o que o teste mostrou, com o exportador dizendo "270 bytes enviados"
- * e o coletor contando zero registro.
+ * Prepending is mandatory on a new connection: whatever was held back during
+ * the outage is already in the buffer, and without the template in front the
+ * collector drops all of it - which is what the test showed, with the exporter
+ * reporting "270 bytes sent" and the collector counting zero records.
  */
 static void
 bpa_tcp_prepend_template (f64 now)
@@ -135,8 +135,8 @@ bpa_log_tcp_record (f64 now, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
   if (!bpa_log_tcp.enabled)
     return;
 
-  /* Um registro por mensagem mantem o codigo simples; o custo e 20 bytes de
-   * cabecalho por evento, e eventos de bloco sao raros por definicao. */
+  /* One record per message keeps the code simple; the cost is 20 bytes of
+   * header per event, and block events are rare by definition. */
   at = bpa_tcp_msg_start (b, now);
   set_at = vec_len (*b);
   bpa_tcp_put_u16 (b, BPA_TCP_TEMPLATE_ID);
@@ -197,17 +197,17 @@ bpa_tcp_try_connect (f64 now)
       bpa_log_tcp.connected = (errno == EINPROGRESS) ? 0 : 1;
       bpa_log_tcp.pending_connect = (errno == EINPROGRESS) ? 1 : 0;
       bpa_log_tcp.n_connects++;
-      /* toda conexao nova comeca pelo template: sem ele o coletor descarta.
-       * Flag explicita, e nao aritmetica de relogio: vlib_time_now() e
-       * monotonico e comeca em zero, entao "now - 0 > intervalo" e falso
-       * durante o primeiro minuto de vida do VPP - e o template nunca saia. */
+      /* every new connection starts with the template: without it the collector
+       * drops. An explicit flag, not clock arithmetic: vlib_time_now() is
+       * monotonic and starts at zero, so "now - 0 > interval" is false during
+       * VPP's first minute of life - and the template never went out. */
       bpa_log_tcp.need_template = 1;
       return;
     }
   close (fd);
 }
 
-/* Grava o excedente em disco para nao crescer sem limite nem perder evento. */
+/* Writes the excess to disk, to neither grow without bound nor lose an event. */
 static void
 bpa_tcp_spill (void)
 {
@@ -220,7 +220,7 @@ bpa_tcp_spill (void)
 	     O_WRONLY | O_APPEND | O_CREAT, 0640);
   if (fd < 0)
     {
-      /* Nao ha para onde escrever: descartar e a unica saida, mas contada. */
+      /* Nowhere left to write: dropping is the only way out, but it is counted. */
       bpa_log_tcp.n_dropped += vec_len (bpa_log_tcp.outbuf);
       vec_reset_length (bpa_log_tcp.outbuf);
       return;
@@ -234,7 +234,7 @@ bpa_tcp_spill (void)
   vec_reset_length (bpa_log_tcp.outbuf);
 }
 
-/* Reenvia o transbordo antes de qualquer coisa nova, para manter a ordem. */
+/* Resends the spill before anything new, to preserve ordering. */
 static void
 bpa_tcp_replay_spill (void)
 {
@@ -257,8 +257,8 @@ bpa_tcp_replay_spill (void)
 
   if (n == st.st_size)
     {
-      /* Prepende: o transbordo e mais antigo que o que esta em memoria, e
-       * uma alocacao tem que chegar ao coletor antes da sua liberacao. */
+      /* Prepend: the spill is older than what is in memory, and an allocation
+       * has to reach the collector before its own release. */
       vec_insert (bpa_log_tcp.outbuf, n, 0);
       clib_memcpy_fast (bpa_log_tcp.outbuf, buf, n);
       unlink ((char *) bpa_log_tcp.spill_path);
@@ -291,16 +291,17 @@ bpa_log_tcp_service (f64 now)
       socklen_t l = sizeof (err);
 
       /*
-       * SO_ERROR igual a zero NAO significa conectado: durante o handshake
-       * ele tambem e zero. Sem esperar POLLOUT, o exportador se declarava
-       * conectado com o handshake em curso e todo send devolvia EAGAIN para
-       * sempre - com o "show" dizendo "connected" e nada saindo.
+       * SO_ERROR equal to zero does NOT mean connected: during the handshake
+       * it is zero as well. Without waiting for POLLOUT, the exporter declared
+       * itself connected with the handshake still in progress and every send
+       * returned EAGAIN forever - with "show" saying "connected" and nothing
+       * going out.
        */
       if (poll (&pfd, 1, 0) <= 0)
 	{
 	  if (now > bpa_log_tcp.next_attempt)
 	    {
-	      bpa_tcp_disconnect (); /* handshake nao completou: recomeca */
+	      bpa_tcp_disconnect (); /* handshake did not complete: start over */
 	      bpa_tcp_spill ();
 	    }
 	  return;
@@ -337,7 +338,7 @@ bpa_log_tcp_service (f64 now)
 	  continue;
 	}
       if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-	break; /* coletor lento: fica no buffer, tenta no proximo tick */
+	break; /* slow collector: stays in the buffer, retried next tick */
       bpa_tcp_disconnect ();
       break;
     }

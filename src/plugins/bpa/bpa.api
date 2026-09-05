@@ -1,9 +1,9 @@
 /*
- * API binaria do plugin bpa.
+ * Binary API of the bpa plugin.
  *
- * Existe porque a CLI do VPP devolve 0 mesmo quando o comando falha: quem
- * diz e o texto. O hexash detectava erro por padrao de texto, o que quebra
- * ao primeiro ajuste de mensagem. Aqui ha codigo de retorno de verdade.
+ * It exists because VPP's CLI returns 0 even when the command failed: the text
+ * is what says so. hexash detected errors by text pattern, which breaks at the
+ * first reworded message. Here there are real return codes.
  */
 
 option version = "0.1.0";
@@ -23,12 +23,12 @@ enum bpa_mode : u8
   BPA_API_MODE_DYNAMIC = 1,
 };
 
-/** \brief Cria ou remove um pool de CGNAT BPA.
-    @param is_add - 1 cria, 0 remove
-    @param name - nome do pool
-    @param block_size - portas por bloco, potencia de dois
-    @param n_inside - quantos dos prefixos abaixo sao internos
-    @param prefixes - os internos primeiro, depois os publicos
+/** \brief Creates or removes a BPA CGNAT pool.
+    @param is_add - 1 creates, 0 removes
+    @param name - pool name
+    @param block_size - ports per block, a power of two
+    @param n_inside - how many of the prefixes below are inside ones
+    @param prefixes - the inside ones first, then the public ones
 */
 autoreply define bpa_pool_add_del
 {
@@ -47,7 +47,7 @@ autoreply define bpa_pool_add_del
   vl_api_prefix_t prefixes[n_prefixes];
 };
 
-/** \brief Liga ou desliga o CGNAT numa interface. */
+/** \brief Enables or disables CGNAT on an interface. */
 autoreply define bpa_interface_add_del_feature
 {
   u32 client_index;
@@ -58,7 +58,7 @@ autoreply define bpa_interface_add_del_feature
   vl_api_interface_index_t sw_if_index;
 };
 
-/** \brief Lista os pools configurados. */
+/** \brief Lists the configured pools. */
 define bpa_pool_dump
 {
   u32 client_index;

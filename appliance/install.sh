@@ -1,8 +1,8 @@
 #!/bin/sh
-# Instala o HexaRouting sobre um Debian 12 ja existente.
+# Installs HexaRouting onto an existing Debian 12.
 #
-# Nao constroi ISO: para instalacao nova, ver build-iso.sh. Este caminho
-# serve para atualizar uma caixa em producao sem reinstalar.
+# Does not build an ISO: for a fresh install see build-iso.sh. This path is
+# for updating a box in production without reinstalling it.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -54,8 +54,9 @@ for d in architecture routing logging; do
   install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/hexarouting/$d.md"
 done
 
-# Em chroot ou container nao ha systemd rodando; instalar continua valido,
-# so nao da para habilitar servico. Isso e o caso normal ao montar a ISO.
+# In a chroot or container there is no systemd running; installing is still
+# valid, only enabling services is not. That is the normal case when the ISO
+# is being assembled.
 if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
    && [ -d /run/systemd/system ]; then
   say "enabling services"
@@ -66,7 +67,7 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   echo "Installed. Adjust /etc/hexarouting/tune.env and reboot so that"
   echo "isolcpus and hugepages take effect."
 else
-  # habilitacao offline: cria o link que o systemctl enable criaria
+  # offline enablement: creates the link systemctl enable would create
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
   for u in hexarouting-tune.service hexarouting.service \
            hexarouting-selftest.service; do

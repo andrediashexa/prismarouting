@@ -1,4 +1,4 @@
-/* bpa.h - CGNAT com Bloco de Portas Alocadas. */
+/* bpa.h - CGNAT with allocated port blocks (BPA). */
 
 #ifndef __included_bpa_h__
 #define __included_bpa_h__
@@ -19,8 +19,8 @@ typedef struct
 
   bpa_per_thread_t *per_thread; /* one per vlib worker */
   bpa_timeouts_t timeouts;
-  u32 block_holddown; /* segundos que um bloco fica reservado apos ocioso */
-  u32 hash_buckets;   /* dimensionamento das tabelas de sessao */
+  u32 block_holddown; /* seconds a block stays reserved after going idle */
+  u32 hash_buckets;   /* session table sizing */
   u32 hash_memory;
 
   /* handoff */
@@ -30,7 +30,7 @@ typedef struct
   bpa_divisor_t workers; /* spreads subscribers over the workers */
 
   vlib_log_class_t log_class; /* aparece em "show logging" */
-  u8 *audit_path;	      /* trilha de configuracao datada */
+  u8 *audit_path;	      /* dated configuration trail */
 
   u16 msg_id_base;
   vlib_main_t *vlib_main;

@@ -1,15 +1,16 @@
 /*
- * bpa_audit.c - trilha de configuracao datada.
+ * bpa_audit.c - dated configuration trail.
  *
- * No modo deterministico nao ha evento de alocacao a logar: a prova de quem
- * usou (IP publico, porta, instante) e o algoritmo mais a configuracao do
- * pool. Isso so vale enquanto se souber QUAL configuracao vigia naquele
- * instante. Se o pool mudou dia 10 e o oficio pergunta sobre o dia 5, a
- * formula atual responde a pergunta errada com toda a confianca.
+ * In deterministic mode there is no allocation event to log: the proof of who
+ * used (public IP, port, instant) is the algorithm plus the pool
+ * configuration. That only holds while it is known WHICH configuration was in
+ * force at that instant. If the pool changed on the 10th and the court order
+ * asks about the 5th, the current formula answers the wrong question with
+ * complete confidence.
  *
- * Por isso toda mudanca de pool e registrada, datada em UTC, em arquivo
- * append-only. O registro tem a definicao completa, para poder ser relido
- * sem depender de nada mais.
+ * So every pool change is recorded, dated in UTC, in an append-only file. The
+ * record carries the complete definition, so that it can be read back without
+ * depending on anything else.
  */
 
 #include <fcntl.h>
@@ -65,9 +66,9 @@ bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
     line = bpa_audit_format_pool (line, p);
 
   /*
-   * Tambem para o log do VPP: um arquivo local sobrevive a um reboot, nao a
-   * uma perda de disco. Quem leva a serio manda o log do VPP para syslog
-   * remoto, e ai a trilha sai da caixa.
+   * Also to VPP's log: a local file survives a reboot, not a lost disk.
+   * Anyone who takes this seriously ships VPP's log to a remote syslog, and
+   * then the trail leaves the box.
    */
   vlib_log_notice (bm->log_class, "%v", line);
 
@@ -85,7 +86,7 @@ bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
   if (write (fd, line, vec_len (line)) != (ssize_t) vec_len (line))
     vlib_log_err (bm->log_class, "incomplete write to the configuration trail");
   else
-    fsync (fd); /* compliance: nao pode ficar so no cache */
+    fsync (fd); /* compliance: it must not live only in the cache */
   close (fd);
 
 done:

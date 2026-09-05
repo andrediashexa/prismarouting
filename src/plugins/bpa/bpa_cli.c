@@ -321,10 +321,10 @@ bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
 				      enable, 0, 0);
 
     /*
-     * Reassembly virtual raso: guarda as portas do primeiro fragmento e as
-     * anexa aos seguintes. Sem isso um fragmento sem porta nao casa com
-     * sessao e e descartado. E refcontado, entao conviver com outra feature
-     * que tambem o use nao e problema.
+     * Shallow virtual reassembly: it keeps the ports from the first fragment
+     * and attaches them to the following ones. Without it a fragment with no
+     * port matches no session and is dropped. It is refcounted, so coexisting
+     * with another feature that also uses it is not a problem.
      */
     if (!rv)
       ip4_sv_reass_enable_disable_with_refcnt (sw_if_index, enable);
@@ -574,11 +574,11 @@ VLIB_CLI_COMMAND (bpa_show_logging_command, static) = {
 };
 
 /*
- * Decompoe uma faixa [base, base+count) nos prefixos CIDR que a cobrem.
+ * Decomposes a range [base, base+count) into the CIDR prefixes covering it.
  *
- * As faixas do pool nascem de prefixos mas sao fundidas quando adjacentes,
- * entao uma faixa pode nao ser mais um prefixo unico. Para a configuracao
- * poder ser relida, ela precisa voltar a sair como prefixos.
+ * Pool ranges are born from prefixes but merged when adjacent, so a range may
+ * no longer be a single prefix. For the configuration to be readable back, it
+ * has to come out as prefixes again.
  */
 static u8 *
 format_bpa_range_as_prefixes (u8 *s, va_list *args)
@@ -594,7 +594,7 @@ format_bpa_range_as_prefixes (u8 *s, va_list *args)
       u32 len;
       ip4_address_t a;
 
-      /* maior potencia de dois alinhada em base e que cabe em count */
+      /* largest power of two aligned on base that still fits in count */
       while (size < count && (base & size) == 0 && size < 0x80000000u)
 	size <<= 1;
       while (size > count)
@@ -625,9 +625,9 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 i;
 
   /*
-   * Emite a configuracao na sintaxe da VTY, para o hexash poder mostrar
-   * "show running-config" e gravar. O dataplane e a fonte da verdade: a
-   * VTY roda como processo curto e nao pode guardar estado entre chamadas.
+   * Emits the configuration in VTY syntax, so hexash can show
+   * "show running-config" and save it. The dataplane is the source of truth:
+   * the VTY runs as a short-lived process and cannot hold state between calls.
    */
   pool_foreach (p, bm->pools)
     {

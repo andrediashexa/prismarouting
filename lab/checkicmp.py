@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Confere o erro ICMP traduzido, lido de um pcap.
+Checks the translated ICMP error, read from a pcap.
 
-Traduzir o pacote nao basta: se o checksum do ICMP sair errado, a pilha do
-assinante descarta e o PMTUD continua quebrado - com a diferenca de que agora
-falha em silencio, com o contador do CGNAT dizendo que traduziu.
+Translating the packet is not enough: if the ICMP checksum comes out wrong,
+the subscriber's stack drops it and PMTUD stays broken - except that now it
+fails silently, with the CGNAT counter claiming it translated.
 """
 import ipaddress, struct, sys
 
@@ -25,7 +25,7 @@ def read_pcap(path):
     elif magic in (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d"):
         endian, nano = ">", magic[1] == 0xb2
     else:
-        raise SystemExit(f"pcap com magic desconhecido: {magic.hex()}")
+        raise SystemExit(f"pcap with unknown magic: {magic.hex()}")
     link = struct.unpack(endian + "I", data[20:24])[0]
     off, pkts = 24, []
     while off + 16 <= len(data):
@@ -42,7 +42,7 @@ fail, seen = 0, 0
 def bad(msg):
     global fail
     fail += 1
-    print(f"  FALHA: {msg}")
+    print(f"  FAIL: {msg}")
 
 for raw in pkts:
     p = raw[14:] if link == 1 else raw          # tira Ethernet se houver
@@ -54,14 +54,14 @@ for raw in pkts:
         continue
     seen += 1
     outer_dst = str(ipaddress.IPv4Address(p[16:20]))
-    print(f"  pacote ICMP tipo {icmp[0]} codigo {icmp[1]}, destino externo {outer_dst}")
+    print(f"  ICMP packet type {icmp[0]} code {icmp[1]}, outer destination {outer_dst}")
 
     if csum(p[:hlen]) != 0:
         bad("checksum do IP externo invalido")
     if outer_dst != want_priv:
         bad(f"destino externo {outer_dst}, esperado {want_priv}")
     if csum(icmp) != 0:
-        bad(f"checksum do ICMP invalido (assinante descartaria o pacote)")
+        bad("invalid ICMP checksum (the subscriber would drop the packet)")
     else:
         print("    checksum do ICMP: valido")
 
@@ -79,9 +79,9 @@ for raw in pkts:
     if isrc != want_priv:
         bad(f"origem embutida {isrc}, esperado {want_priv}")
     if sport != want_port:
-        bad(f"porta embutida {sport}, esperado {want_port}")
+        bad(f"embedded port {sport}, expected {want_port}")
 
 if not seen:
-    bad("nenhum erro ICMP encontrado no pcap")
+    bad("no ICMP error found in the pcap")
 print(f"\n  {'ICMP TRADUZIDO CORRETAMENTE' if not fail else str(fail)+' FALHAS'}")
 sys.exit(1 if fail else 0)

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Modelo de referencia do mapeamento BPA (Bloco de Portas Alocadas).
+Reference model of the BPA (allocated port block) mapping.
 
-Esta e a especificacao executavel do algoritmo. O plugin VPP em
-src/plugins/bpa DEVE reproduzir estes resultados bit a bit; os vetores
-de teste gerados aqui alimentam os testes unitarios do C.
+This is the executable specification of the algorithm. The VPP plugin in
+src/plugins/bpa MUST reproduce these results bit for bit; the test vectors
+generated here feed the C unit tests.
 
-Dois modos:
-  DETERMINISTIC - mapeamento algoritmico fixo, reversivel por formula.
-                  Zero log de alocacao. A prova para a autoridade e o
-                  algoritmo + a configuracao do pool.
-  DYNAMIC (PBA) - bloco alocado sob demanda no primeiro fluxo e liberado
-                  por inatividade. Gera 1 log por alocacao/liberacao.
-                  Permite oversubscription do pool publico.
+Two modes:
+  DETERMINISTIC - fixed algorithmic mapping, reversible by formula.
+                  Zero allocation logging. The proof for the authority is
+                  the algorithm plus the pool configuration.
+  DYNAMIC (PBA) - block allocated on demand at the first flow and released
+                  on inactivity. Produces one log record per allocation and
+                  release. Allows oversubscribing the public pool.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ import struct
 
 
 class MapPolicy(Enum):
-    """Como os assinantes sao distribuidos entre os IPs publicos."""
-    BLOCKED = "blocked"          # assinantes consecutivos -> mesmo IP publico
-    INTERLEAVED = "interleaved"  # assinantes consecutivos -> IPs publicos distintos
+    """How subscribers are spread across the public IPs."""
+    BLOCKED = "blocked"          # consecutive subscribers -> same public IP
+    INTERLEAVED = "interleaved"  # consecutive subscribers -> distinct public IPs
 
 
 class PoolMode(Enum):
@@ -41,12 +41,12 @@ class BpaError(Exception):
 @dataclass
 class AddrSet:
     """
-    Conjunto de enderecos formado por prefixos possivelmente nao contiguos,
-    apresentado como um espaco de indices denso de 0..count-1.
+    An address set built from possibly non-contiguous prefixes, presented as
+    a dense index space from 0..count-1.
 
-    Provedor nenhum tem IPv4 num bloco unico e alinhado: a alocacao real e
-    fragmentada. O BPA precisa de um indice denso, entao a traducao
-    endereco <-> indice fica encapsulada aqui.
+    No provider holds its IPv4 in a single aligned block: real allocations are
+    fragmented. BPA needs a dense index, so the address <-> index translation
+    is encapsulated here.
     """
     prefixes: list
     ranges: list = field(default_factory=list, init=False)  # (base, count, first_idx)
@@ -54,7 +54,7 @@ class AddrSet:
 
     def __post_init__(self):
         if not self.prefixes:
-            raise BpaError("conjunto de enderecos vazio")
+            raise BpaError("empty address set")
 
         parsed = []
         for p in self.prefixes:
@@ -62,15 +62,15 @@ class AddrSet:
             parsed.append((int(n.network_address), n.num_addresses))
         parsed.sort()
 
-        # sobreposicao quebraria a bijecao endereco <-> indice: e erro de
-        # configuracao, nao algo para corrigir em silencio
+        # an overlap would break the address <-> index bijection: that is a
+        # configuration error, not something to fix silently
         for (b1, c1), (b2, c2) in zip(parsed, parsed[1:]):
             if b2 < b1 + c1:
                 raise BpaError(
-                    f"prefixos sobrepostos: {ipaddress.IPv4Address(b1)}/+{c1} "
-                    f"e {ipaddress.IPv4Address(b2)}/+{c2}")
+                    f"overlapping prefixes: {ipaddress.IPv4Address(b1)}/+{c1} "
+                    f"and {ipaddress.IPv4Address(b2)}/+{c2}")
 
-        # faixas adjacentes viram uma so, o que deixa o datapath mais rapido
+        # adjacent ranges become one, which makes the datapath faster
         merged = []
         for base, cnt in parsed:
             if merged and merged[-1][0] + merged[-1][1] == base:
@@ -85,7 +85,7 @@ class AddrSet:
         self.count = idx
 
     def index_of(self, addr: int):
-        """endereco -> indice denso, ou None se estiver fora do conjunto."""
+        """address -> dense index, or None when outside the set."""
         lo, hi = 0, len(self.ranges) - 1
         while lo <= hi:
             mid = (lo + hi) // 2
@@ -99,7 +99,7 @@ class AddrSet:
         return None
 
     def addr_of(self, idx: int):
-        """indice denso -> endereco, ou None se estiver fora."""
+        """dense index -> address, or None when outside."""
         if idx < 0 or idx >= self.count:
             return None
         lo, hi = 0, len(self.ranges) - 1
@@ -122,9 +122,9 @@ class AddrSet:
 @dataclass
 class PoolConfig:
     """
-    Um pool BPA. inside/outside sao listas de prefixos: provedores tem
-    alocacao IPv4 fragmentada, entao assumir um bloco unico e alinhado
-    inviabilizaria o produto na maioria das instalacoes.
+    A BPA pool. inside/outside are lists of prefixes: providers hold
+    fragmented IPv4 allocations, so assuming a single aligned block would rule
+    the product out of most deployments.
     """
     name: str
     inside_prefixes: list
@@ -146,18 +146,18 @@ class PoolConfig:
         self.outside = AddrSet(self.outside_prefixes)
 
         if self.port_min < 1 or self.port_max > 65535 or self.port_min > self.port_max:
-            raise BpaError(f"faixa de portas invalida: {self.port_min}-{self.port_max}")
+            raise BpaError(f"invalid port range: {self.port_min}-{self.port_max}")
         self.port_count = self.port_max - self.port_min + 1
 
         if self.block_size < 1 or (self.block_size & (self.block_size - 1)) != 0:
-            raise BpaError(f"block_size deve ser potencia de 2, recebido {self.block_size}")
+            raise BpaError(f"block_size must be a power of two, got {self.block_size}")
         if self.block_size > self.port_count:
-            raise BpaError("block_size maior que a faixa de portas")
+            raise BpaError("block_size larger than the port range")
 
         self.blocks_per_ip = self.port_count // self.block_size
         self.capacity = self.outside.count * self.blocks_per_ip
 
-    # atalhos de leitura
+    # read-only shortcuts
     @property
     def inside_count(self) -> int:
         return self.inside.count
@@ -166,13 +166,13 @@ class PoolConfig:
     def outside_count(self) -> int:
         return self.outside.count
 
-    # ---------------- mapeamento direto (inside -> outside) ----------------
+    # ---------------- forward mapping (inside -> outside) ----------------
 
     def sub_index(self, ip_priv) -> int:
         v = int(ipaddress.IPv4Address(ip_priv)) if isinstance(ip_priv, str) else ip_priv
         idx = self.inside.index_of(v)
         if idx is None:
-            raise BpaError(f"{ipaddress.IPv4Address(v)} fora do conjunto interno")
+            raise BpaError(f"{ipaddress.IPv4Address(v)} outside the inside set")
         return idx
 
     def split(self, sub_idx: int):
@@ -189,12 +189,12 @@ class PoolConfig:
         return blk_idx * self.outside.count + pub_idx
 
     def forward(self, ip_priv) -> dict:
-        """Traducao determinista inside->outside."""
+        """Deterministic inside->outside translation."""
         sub_idx = self.sub_index(ip_priv)
         if sub_idx >= self.capacity:
             raise BpaError(
-                f"assinante {sub_idx} excede a capacidade do pool ({self.capacity}); "
-                f"acrescente faixas publicas ou reduza block_size")
+                f"subscriber {sub_idx} exceeds the pool capacity ({self.capacity}); "
+                f"add public ranges or reduce block_size")
         pub_idx, blk_idx = self.split(sub_idx)
         ip_pub = self.outside.addr_of(pub_idx)
         port_lo = self.port_min + blk_idx * self.block_size
@@ -207,59 +207,59 @@ class PoolConfig:
             "port_hi": port_lo + self.block_size - 1,
         }
 
-    # ---------------- mapeamento reverso (outside -> inside) ----------------
+    # ---------------- reverse mapping (outside -> inside) ----------------
 
     def reverse(self, ip_pub, port: int) -> str:
         """
-        Traducao determinista outside->inside: aritmetica mais duas buscas
-        binarias em vetores pequenos, sem nenhum lookup de sessao.
+        Deterministic outside->inside translation: arithmetic plus two binary
+        searches over small vectors, with no session lookup at all.
         """
         v = int(ipaddress.IPv4Address(ip_pub)) if isinstance(ip_pub, str) else ip_pub
         pub_idx = self.outside.index_of(v)
         if pub_idx is None:
-            raise BpaError(f"{ipaddress.IPv4Address(v)} fora do conjunto publico")
+            raise BpaError(f"{ipaddress.IPv4Address(v)} outside the public set")
         if port < self.port_min or port > self.port_max:
-            raise BpaError(f"porta {port} fora da faixa {self.port_min}-{self.port_max}")
+            raise BpaError(f"port {port} outside the range {self.port_min}-{self.port_max}")
 
         blk_idx = (port - self.port_min) // self.block_size
         if blk_idx >= self.blocks_per_ip:
-            raise BpaError(f"bloco {blk_idx} fora do pool")
+            raise BpaError(f"block {blk_idx} outside the pool")
 
         sub_idx = self.join(pub_idx, blk_idx)
         ip_priv = self.inside.addr_of(sub_idx)
         if ip_priv is None:
-            raise BpaError(f"sub_idx {sub_idx} sem assinante correspondente")
+            raise BpaError(f"sub_idx {sub_idx} has no matching subscriber")
         return str(ipaddress.IPv4Address(ip_priv))
 
-    # ---------------- planejamento ----------------
+    # ---------------- planning ----------------
 
     def summary(self) -> str:
         usable = min(self.capacity, self.inside.count)
         waste = self.port_count - (self.blocks_per_ip * self.block_size)
-        limit = "conjunto interno" if self.inside.count < self.capacity else "pool publico"
+        limit = "inside set" if self.inside.count < self.capacity else "public pool"
         return "\n".join([
             f"pool '{self.name}'  [{self.mode.value} / {self.policy.value}]",
-            f"  interno        {self.inside.describe()}  ({self.inside.count:,} enderecos, {len(self.inside.ranges)} faixa(s))",
-            f"  publico        {self.outside.describe()}  ({self.outside.count:,} enderecos, {len(self.outside.ranges)} faixa(s))",
-            f"  portas         {self.port_min}-{self.port_max}  ({self.port_count:,} por IP)",
-            f"  bloco          {self.block_size} portas  -> {self.blocks_per_ip} blocos por IP publico",
-            f"  compartilha    {self.blocks_per_ip}:1  (assinantes por IP publico)",
-            f"  capacidade     {self.capacity:,} assinantes",
-            f"  aproveitavel   {usable:,} assinantes  (limitado pelo {limit})",
-            f"  portas ociosas {waste} por IP publico",
+            f"  inside     {self.inside.describe()}  ({self.inside.count:,} addresses, {len(self.inside.ranges)} range(s))",
+            f"  public     {self.outside.describe()}  ({self.outside.count:,} addresses, {len(self.outside.ranges)} range(s))",
+            f"  ports      {self.port_min}-{self.port_max}  ({self.port_count:,} per IP)",
+            f"  block      {self.block_size} ports  -> {self.blocks_per_ip} blocks per public IP",
+            f"  sharing    {self.blocks_per_ip}:1  (subscribers per public IP)",
+            f"  capacity   {self.capacity:,} subscribers",
+            f"  usable     {usable:,} subscribers  (limited by the {limit})",
+            f"  idle ports {waste} per public IP",
         ])
 
 
 def plan(subscribers: int, block_size: int, port_min: int = 1024,
          port_max: int = 65535) -> dict:
-    """Quantos IPs publicos para N assinantes com blocos de block_size portas."""
+    """How many public IPs for N subscribers with block_size-port blocks."""
     port_count = port_max - port_min + 1
     blocks_per_ip = port_count // block_size
     need = -(-subscribers // blocks_per_ip)
     return {
-        "assinantes": subscribers,
+        "subscribers": subscribers,
         "block_size": block_size,
-        "blocos_por_ip": blocks_per_ip,
-        "ips_publicos": need,
-        "equivale_a": f"/{32 - max(0, need - 1).bit_length()}" if need else "-",
+        "blocks_per_ip": blocks_per_ip,
+        "public_ips": need,
+        "equivalent_to": f"/{32 - max(0, need - 1).bit_length()}" if need else "-",
     }

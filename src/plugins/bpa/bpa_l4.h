@@ -17,11 +17,11 @@
 /*
  * Returns 0 and the L4 id; -1 when the packet is not translatable.
  *
- * `*l4h` sai zero quando o pacote nao carrega cabecalho L4 - o caso do
- * fragmento que nao e o primeiro. Nesses, quem fornece as portas e o
- * reassembly virtual raso do VPP, que as guardou do primeiro fragmento. Sem
- * isso, um fragmento sem porta nao casa com sessao nenhuma e e descartado:
- * DNS grande, VPN e jogo param de funcionar de forma intermitente.
+ * `*l4h` comes out zero when the packet carries no L4 header - the case of a
+ * non-first fragment. For those, the ports come from VPP's shallow virtual
+ * reassembly, which kept them from the first fragment. Without it, a fragment
+ * with no port matches no session and is dropped: large DNS, VPN and gaming
+ * start failing intermittently.
  */
 static_always_inline int
 bpa_l4_id (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, int want_dst,
@@ -32,11 +32,11 @@ bpa_l4_id (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, int want_dst,
 
   if (PREDICT_FALSE (vnet_buffer (b)->ip.reass.is_non_first_fragment))
     {
-      *l4h = 0; /* nao ha L4 aqui: so o endereco sera reescrito */
-      /* O reassembly guarda a porta em ordem de rede. Ler como ordem de
-       * host devolve o valor com os bytes trocados - 12345 (0x3039) vira
-       * 14640 (0x3930) - e o node abre uma sessao fantasma, queimando uma
-       * porta do bloco por fragmento. */
+      *l4h = 0; /* no L4 here: only the address will be rewritten */
+      /* Reassembly stores the port in network order. Reading it as host
+       * order returns the value byte-swapped - 12345 (0x3039) becomes
+       * 14640 (0x3930) - and the node opens a phantom session, burning one
+       * port of the block per fragment. */
       *port = clib_net_to_host_u16 (want_dst
 				      ? vnet_buffer (b)->ip.reass.l4_dst_port
 				      : vnet_buffer (b)->ip.reass.l4_src_port);

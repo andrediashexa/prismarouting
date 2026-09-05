@@ -1,7 +1,7 @@
 #!/bin/sh
 # Espera o VPP aceitar comandos. O systemd considera o vpp.service iniciado
-# assim que o processo sobe, mas o socket de CLI e os plugins levam mais um
-# instante: aplicar configuracao antes disso falha de forma intermitente.
+# as soon as the process starts, but the CLI socket and the plugins take a
+# moment longer: applying configuration before that fails intermittently.
 set -u
 TIMEOUT=${1:-30}
 n=0

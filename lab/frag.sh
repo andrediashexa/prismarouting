@@ -1,6 +1,6 @@
 #!/bin/sh
-# Fragmento que nao e o primeiro nao tem porta. Sem reassembly virtual raso,
-# ele nao casa com sessao e some - DNS grande, VPN e jogo param de forma
+# A non-first fragment carries no port. Without shallow virtual reassembly it
+# matches no session and disappears - large DNS, VPN and gaming break
 # intermitente.
 set -u
 mkdir -p /run/vpp /vpp_plugins
@@ -23,11 +23,11 @@ vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 
 echo "=== reassembly virtual raso ficou ligado na interface? ==="
-vppctl show interface features pg0 | grep -iE "reass" | sed 's/^/  /' || echo "  (nao aparece)"
+vppctl show interface features pg0 | grep -iE "reass" | sed 's/^/  /' || echo "  (does not appear)"
 
 echo
 echo "=== enviando os dois fragmentos ==="
-echo "  esperado: os dois saem como 200.150.0.17; so o primeiro tem porta"
+echo "  expected: both leave as 200.150.0.17; only the first carries a port"
 rm -f /tmp/frag.pcap
 vppctl packet-generator capture pg1 pcap /tmp/frag.pcap count 2
 for w in first second; do
@@ -40,10 +40,10 @@ vppctl clear trace >/dev/null; vppctl trace add pg-input 6 >/dev/null
 vppctl packet-generator enable >/dev/null; sleep 2
 
 echo
-echo "=== o que o dataplane fez ==="
+echo "=== what the dataplane did ==="
 vppctl show trace | grep -E "BPA in2out" | sed 's/^/  /'
 echo
-echo "=== o que saiu no fio ==="
+echo "=== what went out on the wire ==="
 python3 - <<'EOF' 2>&1 | sed 's/^/  /'
 import ipaddress, struct
 d = open("/tmp/frag.pcap","rb").read()
@@ -62,10 +62,10 @@ while off + 16 <= len(d):
     src = str(ipaddress.IPv4Address(p[12:16]))
     if offs == 0:
         sport = struct.unpack("!H", p[hlen:hlen+2])[0]
-        print(f"fragmento 1: src={src} offset=0 MF={mf} porta={sport}")
+        print(f"fragment 1: src={src} offset=0 MF={mf} port={sport}")
         if src != "200.150.0.17" or sport != 1536: ok = False; print("  FALHA")
     else:
-        print(f"fragmento 2: src={src} offset={offs} MF={mf} (sem cabecalho UDP)")
+        print(f"fragment 2: src={src} offset={offs} MF={mf} (no UDP header)")
         if src != "200.150.0.17": ok = False; print("  FALHA")
 print(f"\n{'OS DOIS FRAGMENTOS TRADUZIDOS' if ok and n==2 else f'PROBLEMA: {n} fragmentos'}")
 EOF

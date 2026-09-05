@@ -89,7 +89,7 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
 done:
   if (e)
     {
-      /* A mensagem detalhada vai para o log; o cliente recebe codigo. */
+      /* The detailed message goes to the log; the client gets a code. */
       vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
       clib_error_free (e);
       if (!rv)
