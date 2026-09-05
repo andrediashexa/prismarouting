@@ -38,4 +38,15 @@ sysctl -qw net.ipv4.ip_forward=1
 sysctl -qw net.ipv4.conf.all.rp_filter=0
 sysctl -qw net.ipv4.conf.ens18.rp_filter=0
 
-say "pronto para subir o VPP (ver lab/hw-vpp.conf)"
+say "liberando o caminho WAN na FORWARD"
+# O Docker instalado nesta maquina poe a politica FORWARD em DROP. O caminho
+# WAN do CGNAT (tap -> ens18) morre ali em silencio: o pacote sai do VPP,
+# aparece no tap, e some. O contador de DROP da chain e que denuncia.
+#
+# Regras especificas em vez de trocar a politica global: afrouxar a politica
+# desfaria o isolamento que o Docker montou.
+for r in "-i vppwan -o ens18" "-i ens18 -o vppwan"; do
+  iptables -C FORWARD $r -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 $r -j ACCEPT
+done
+
+say "pronto para subir o VPP: sh lab/hw-vpp.sh"

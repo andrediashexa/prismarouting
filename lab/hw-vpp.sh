@@ -40,3 +40,16 @@ vppctl bpa pool prod inside 100.64.0.0/22 outside 198.19.24.0/24 block 512
 vppctl set interface bpa in2out host-ens19
 vppctl set interface bpa out2in tap0
 vppctl show bpa pool
+
+cat <<'EOF'
+
+Teste, a partir do peer:
+  ip route replace 1.1.1.1/32 via 10.95.172.128 dev ens19
+  ping -c4 -I 100.64.0.5 1.1.1.1
+  curl --interface 100.64.0.5 https://1.1.1.1/
+
+Esperado (conferido contra ref/bpa_model.py):
+  100.64.0.5 -> 198.19.24.5   portas 1024-1535
+  100.64.0.6 -> 198.19.24.6   portas 1024-1535
+  100.64.0.7 -> 198.19.24.7   portas 1024-1535
+EOF
