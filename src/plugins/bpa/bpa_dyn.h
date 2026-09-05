@@ -1,0 +1,92 @@
+/*
+ * bpa_dyn.h - dynamic (PBA) block allocator.
+ *
+ * In deterministic mode a subscriber's block is a formula. In dynamic mode
+ * the block is allocated on the first flow and released after the subscriber
+ * goes idle, which lets a provider serve more subscribers than
+ * blocks-times-addresses would allow. The cost is that every allocation and
+ * release is an event that must be logged (RFC 8158 natEvent 16 and 17).
+ *
+ * Sharding: block allocation would be shared state across workers, which
+ * would reintroduce the lock the rest of the design avoids. Instead the
+ * block space is partitioned: worker w owns every block_idx where
+ * block_idx % n_workers == w, so allocation is worker-local.
+ *
+ * That partition is what makes the handoff work unchanged in both modes:
+ *
+ *   in2out  worker = sub_idx   % n_workers
+ *   out2in  worker = block_idx % n_workers
+ *
+ * A worker only ever hands a subscriber a block from its own slice, so the
+ * two agree. And in deterministic mode block_idx == sub_idx, so the same
+ * line of code serves both.
+ */
+
+#ifndef __included_bpa_dyn_h__
+#define __included_bpa_dyn_h__
+
+#include <vlib/vlib.h>
+
+#include "bpa_pool.h"
+
+/*
+ * How long a block stays reserved after its last session ends.
+ *
+ * This is not tidiness: without hold-down, a subscriber that goes quiet for
+ * a second and comes back churns a release and an allocation, and every one
+ * of those is a log record. Hold-down is the main lever on log volume.
+ */
+#define BPA_BLOCK_HOLDDOWN 120
+
+#define BPA_NO_BLOCK ((u32) ~0)
+
+typedef struct
+{
+  u32 *owner;	    /* local idx -> sub_idx, BPA_NO_BLOCK when free */
+  f64 *idle_since;  /* local idx -> when it went idle; 0 while in use */
+  u32 *free_list;   /* stack of free local idx */
+  uword *by_sub;    /* sub_idx -> local idx + 1, so 0 means "none" */
+  u32 n_local;	    /* blocks in this worker's slice */
+  u32 n_alloc;	    /* currently held */
+  u64 n_allocations;/* lifetime; becomes natEvent 16 count */
+  u64 n_releases;   /* lifetime; becomes natEvent 17 count */
+  u64 n_exhausted;  /* allocation refused; becomes natEvent 12 */
+  u8 active;
+} bpa_dyn_t;
+
+clib_error_t *bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker,
+			    u32 n_workers);
+void bpa_dyn_free (bpa_dyn_t *d);
+
+/*
+ * Block currently held by this subscriber, allocating one if needed.
+ * Returns 0 on success, -1 when the slice is exhausted.
+ */
+int bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
+		     u32 worker, u32 n_workers, bpa_block_t *b);
+
+/* Subscriber's last session ended: start the hold-down. */
+void bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now);
+
+/* Subscriber became active again before hold-down expired. */
+void bpa_dyn_active (bpa_dyn_t *d, u32 sub_idx);
+
+/* Release blocks idle for longer than holddown. Returns how many. */
+u32 bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown);
+
+/* Which subscriber currently holds this block. -1 when it is free. */
+static_always_inline int
+bpa_dyn_owner (const bpa_dyn_t *d, u32 block_idx, u32 n_workers, u32 *sub_idx)
+{
+  u32 local = block_idx / n_workers;
+
+  if (PREDICT_FALSE (!d->active || local >= d->n_local))
+    return -1;
+  if (PREDICT_FALSE (d->owner[local] == BPA_NO_BLOCK))
+    return -1;
+
+  *sub_idx = d->owner[local];
+  return 0;
+}
+
+#endif /* __included_bpa_dyn_h__ */

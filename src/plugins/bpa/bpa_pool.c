@@ -165,18 +165,6 @@ bpa_pool_init (bpa_pool_t *p)
       (unsigned long long) capacity, BPA_MAX_CAPACITY);
   p->capacity = (u32) capacity;
 
-  /*
-   * The datapath translates every pool with the deterministic arithmetic.
-   * Accepting "mode dynamic" here would silently give a provider a pool
-   * that logs nothing while they believe blocks are being allocated and
-   * logged - a compliance hole created by a config option that lies.
-   * Reject it until the block allocator exists.
-   */
-  if (p->mode == BPA_MODE_DYNAMIC)
-    return clib_error_return (
-      0, "pool '%v': modo dinamico ainda nao implementado; use "
-	 "'mode deterministic'", p->name);
-
   p->log2_block = bpa_log2_exact (p->block_size);
 
   /* One divisor drives the policy split; see bpa_split(). */

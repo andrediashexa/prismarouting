@@ -106,15 +106,49 @@ e foi exatamente onde as sessoes nasceram; as tres respostas chegaram na
 thread 1 e foram entregues ao dono correto, com zero pacotes em
 "sem sessao". Ver `lab/handoff.sh`.
 
-## Modo dinamico (PBA)
+## Modo dinamico (PBA): implementado
 
-Bloco alocado no primeiro fluxo, liberado por inatividade.
+Bloco alocado no primeiro fluxo, devolvido apos hold-down.
 
-- free-list de blocos por pool
-- bihash `ip_priv -> bloco`
-- timer de inatividade por bloco
-- 1 log por alocacao e 1 por liberacao (syslog RFC 5424 / IPFIX)
-- permite oversubscription: 200k assinantes com muito menos que um /21
+### O problema de sharding, e a saida
+
+Alocacao de bloco seria estado compartilhado entre workers, o que
+reintroduziria o lock que o resto do desenho evita. Em vez disso o espaco de
+blocos e **particionado**: o worker `w` so aloca blocos com
+`block_idx % n_workers == w`.
+
+E essa particao que faz o handoff continuar valendo nos dois modos:
+
+```
+in2out   worker = sub_idx   % n_workers
+out2in   worker = block_idx % n_workers
+```
+
+O worker so entrega ao assinante um bloco da propria fatia, entao os dois
+concordam. E no modo deterministico `block_idx == sub_idx`, entao a mesma
+linha de codigo serve para os dois - o node de handoff nao ramifica por modo.
+
+Custo declarado: a taxa de oversubscription passa a ser por worker, nao
+global. Com assinantes espalhados por hash isso e estatisticamente
+equivalente, mas uma fatia pode esgotar com outra ainda tendo bloco livre.
+
+### Hold-down
+
+Um bloco fica reservado por `block-holddown` segundos depois da ultima
+sessao acabar. Nao e organizacao: sem hold-down, um assinante que fica quieto
+um segundo e volta gera uma liberacao e uma alocacao, e **cada uma dessas e
+um registro de log**. Hold-down e a principal alavanca sobre o volume de log
+que o IPFIX vai exportar.
+
+### Verificado em lab
+
+`lab/dynamic.sh`, com 1024 assinantes possiveis contra 3 blocos:
+alocacao sob demanda, mesmo assinante mantendo o bloco, quarto assinante
+recusado com contador, volta traduzida, e blocos devolvidos apos hold-down.
+
+`lab/dynamic-workers.sh`, com 2 workers e 12 blocos: 6 blocos por fatia,
+assinantes pares na thread 1 e impares na thread 2, cada um com bloco da
+propria fatia, e as quatro respostas achando o worker dono.
 
 ## Orcamento de memoria (200k assinantes)
 
@@ -137,7 +171,7 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Nodes in2out / out2in, com traducao verificada por injecao de pacote
 - [x] Tabela de sessao (bihash) por worker + expiracao com timeouts configuraveis
 - [x] Handoff entre workers, verificado com 2 workers (`lab/handoff.sh`)
-- [ ] Alocador dinamico de blocos + timers de bloco
+- [x] Alocador dinamico de blocos, com hold-down e particao por worker
 - [x] Roteamento: BGP, OSPF e IS-IS via FRR, com as tres rotas chegando na
       FIB do VPP (`lab/routing.sh`)
 - [x] Validar pool contra endereco local, nas duas direcoes

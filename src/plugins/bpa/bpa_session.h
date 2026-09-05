@@ -20,6 +20,7 @@
 
 #include "bpa_pool.h"
 #include "bpa_ports.h"
+#include "bpa_dyn.h"
 
 /*
  * Default timeouts in seconds. The floors come from RFC 4787 (UDP, 2 min)
@@ -75,6 +76,7 @@ typedef struct
   clib_bihash_16_8_t in2out;	  /* (priv ip, priv port, proto) -> session */
   clib_bihash_16_8_t out2in;	  /* (pub ip, pub port, proto)  -> session */
   bpa_sub_t *subs;		  /* pool of per-subscriber port bitmaps */
+  bpa_dyn_t *dyn;	  /* dynamic block state, indexed by pool index */
   uword *sub_by_idx;		  /* sub_idx -> index into subs */
   u32 n_expired;
   u32 expire_cursor;	  /* budgeted walk resumes here */
@@ -111,7 +113,7 @@ clib_error_t *bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index);
 bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 				   u32 pool_index, const bpa_block_t *b,
 				   u16 port_priv, u8 proto, f64 now);
-void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s);
+void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);
 

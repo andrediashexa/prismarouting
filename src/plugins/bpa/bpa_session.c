@@ -118,9 +118,11 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 }
 
 void
-bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s)
+bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 {
+  bpa_main_t *bm = &bpa_main;
   clib_bihash_kv_16_8_t kv;
+  bpa_pool_t *p;
   bpa_sub_t *sub;
   uword *q;
 
@@ -137,6 +139,23 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s)
       bpa_portmap_free (&sub->map, s->port_off);
       if (sub->n_sessions)
 	sub->n_sessions--;
+
+      /*
+       * Last session gone: in dynamic mode the block enters hold-down
+       * instead of being released right away. Releasing immediately would
+       * make a subscriber who pauses for a second churn a release and an
+       * allocation, and each of those is a log record.
+       */
+      if (sub->n_sessions == 0
+	  && !pool_is_free_index (bm->pools, s->pool_index))
+	{
+	  p = pool_elt_at_index (bm->pools, s->pool_index);
+	  if (p->mode == BPA_MODE_DYNAMIC
+	      && s->pool_index < vec_len (pt->dyn))
+	    bpa_dyn_idle (vec_elt_at_index (pt->dyn, s->pool_index),
+			  s->sub_idx, now);
+	}
+
       bpa_sub_put (pt, s->sub_idx, sub);
     }
 
@@ -171,7 +190,7 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 	  bpa_session_t *s = pool_elt_at_index (pt->sessions, cursor);
 	  if (now - s->last_heard > (f64) bpa_session_timeout (s, t))
 	    {
-	      bpa_session_free (pt, s);
+	      bpa_session_free (pt, s, now);
 	      freed++;
 	    }
 	}
@@ -218,8 +237,17 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 
       vlib_worker_thread_barrier_sync (vm);
       for (i = 0; i < vec_len (bm->per_thread); i++)
-	freed += bpa_expire_walk (vec_elt_at_index (bm->per_thread, i),
-				  &bm->timeouts, now, BPA_EXPIRE_BUDGET);
+	{
+	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+	  u32 j;
+
+	  freed += bpa_expire_walk (pt, &bm->timeouts, now, BPA_EXPIRE_BUDGET);
+
+	  /* blocks whose hold-down ran out go back to the free list */
+	  for (j = 0; j < vec_len (pt->dyn); j++)
+	    bpa_dyn_reap (vec_elt_at_index (pt->dyn, j), now,
+			  bm->block_holddown);
+	}
       vlib_worker_thread_barrier_release (vm);
     }
 

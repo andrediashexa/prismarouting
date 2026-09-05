@@ -397,3 +397,85 @@ VLIB_CLI_COMMAND (bpa_timeouts_command, static) = {
 		"[tcp-established <s>]",
   .function = bpa_timeouts_command_fn,
 };
+
+static clib_error_t *
+bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			    vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  u32 i;
+  int any = 0;
+
+  pool_foreach (p, bm->pools)
+    {
+      u32 pi = p - bm->pools;
+      u64 total = 0, alloc = 0, allocs = 0, rels = 0, exh = 0;
+
+      if (p->mode != BPA_MODE_DYNAMIC)
+	continue;
+      any = 1;
+
+      vlib_cli_output (vm, "pool %v (hold-down %us)", p->name,
+		       bm->block_holddown);
+      for (i = 0; i < vec_len (bm->per_thread); i++)
+	{
+	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+	  bpa_dyn_t *d;
+
+	  if (pi >= vec_len (pt->dyn))
+	    continue;
+	  d = vec_elt_at_index (pt->dyn, pi);
+	  if (!d->active)
+	    continue;
+
+	  vlib_cli_output (vm,
+			   "  thread %u: %u/%u blocos em uso, %Lu alocacoes, "
+			   "%Lu liberacoes, %Lu recusas",
+			   i, d->n_alloc, d->n_local, d->n_allocations,
+			   d->n_releases, d->n_exhausted);
+	  total += d->n_local;
+	  alloc += d->n_alloc;
+	  allocs += d->n_allocations;
+	  rels += d->n_releases;
+	  exh += d->n_exhausted;
+	}
+      vlib_cli_output (vm,
+		       "  total: %Lu/%Lu em uso, %Lu alocacoes, %Lu "
+		       "liberacoes, %Lu recusas",
+		       alloc, total, allocs, rels, exh);
+    }
+
+  if (!any)
+    vlib_cli_output (vm, "nenhum pool dinamico configurado");
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_blocks_command, static) = {
+  .path = "show bpa blocks",
+  .short_help = "show bpa blocks",
+  .function = bpa_show_blocks_command_fn,
+};
+
+static clib_error_t *
+bpa_holddown_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			 vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 v;
+
+  if (unformat (input, "%u", &v))
+    {
+      bm->block_holddown = v;
+      return 0;
+    }
+
+  vlib_cli_output (vm, "block-holddown %u", bm->block_holddown);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_holddown_command, static) = {
+  .path = "bpa block-holddown",
+  .short_help = "bpa block-holddown [<segundos>]",
+  .function = bpa_holddown_command_fn,
+};

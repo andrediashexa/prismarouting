@@ -43,6 +43,7 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   _ (UNSUPPORTED, "protocolo nao traduzido")                                  \
   _ (OVER_CAPACITY, "assinante acima da capacidade do pool")                  \
   _ (BLOCK_EXHAUSTED, "bloco de portas esgotado")                             \
+  _ (NO_BLOCK, "sem bloco livre no pool dinamico")                            \
   _ (TRUNCATED, "pacote truncado")
 
 typedef enum
@@ -185,10 +186,28 @@ VLIB_NODE_FN (bpa_in2out_node)
 	}
 
       p = pool_elt_at_index (bm->pools, pool_index);
-      if (PREDICT_FALSE (bpa_forward (p, src_host, &blk)))
+
+      if (PREDICT_TRUE (p->mode == BPA_MODE_DETERMINISTIC))
 	{
-	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_OVER_CAPACITY];
-	  goto trace;
+	  if (PREDICT_FALSE (bpa_forward (p, src_host, &blk)))
+	    {
+	      b[0]->error = node->errors[BPA_IN2OUT_ERROR_OVER_CAPACITY];
+	      goto trace;
+	    }
+	}
+      else
+	{
+	  u32 w, nw;
+
+	  bpa_worker_id (bm, thread_index, &w, &nw);
+	  if (PREDICT_FALSE (
+		pool_index >= vec_len (pt->dyn)
+		|| bpa_dyn_acquire (vec_elt_at_index (pt->dyn, pool_index), p,
+				    sub_idx, w, nw, &blk)))
+	    {
+	      b[0]->error = node->errors[BPA_IN2OUT_ERROR_NO_BLOCK];
+	      goto trace;
+	    }
 	}
 
       s = bpa_session_create (pt, p, pool_index, &blk, port_priv, (u8) proto,

@@ -19,6 +19,7 @@ typedef struct
 
   bpa_per_thread_t *per_thread; /* one per vlib worker */
   bpa_timeouts_t timeouts;
+  u32 block_holddown; /* segundos que um bloco fica reservado apos ocioso */
 
   /* handoff */
   u32 in2out_fq_index;
@@ -83,6 +84,25 @@ bpa_pool_by_outside (bpa_main_t *bm, u32 addr, u32 *pool_index)
 	}
     }
   return -1;
+}
+
+/*
+ * This worker's identity for block sharding. With no workers configured
+ * everything runs on thread 0 and behaves as a single slice.
+ */
+static_always_inline void
+bpa_worker_id (const bpa_main_t *bm, u32 thread_index, u32 *w, u32 *nw)
+{
+  if (PREDICT_TRUE (bm->n_workers != 0))
+    {
+      *nw = bm->n_workers;
+      *w = thread_index - 1;
+    }
+  else
+    {
+      *nw = 1;
+      *w = 0;
+    }
 }
 
 /* IP protocol number -> bpa_proto_t, or -1 when we do not translate it. */

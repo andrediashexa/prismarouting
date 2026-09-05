@@ -97,6 +97,33 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
   p->name = vec_dup (cfg->name);
   hash_set_mem (bm->pool_by_name, p->name, p - bm->pools);
 
+  if (p->mode == BPA_MODE_DYNAMIC)
+    {
+      u32 i, nw, w;
+
+      for (i = 0; i < vec_len (bm->per_thread); i++)
+	{
+	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+
+	  /* thread 0 only carries blocks when there are no workers */
+	  if (bm->n_workers && i == 0)
+	    continue;
+
+	  bpa_worker_id (bm, i, &w, &nw);
+	  vec_validate (pt->dyn, p - bm->pools);
+	  e = bpa_dyn_init (vec_elt_at_index (pt->dyn, p - bm->pools), p, w,
+			    nw);
+	  if (e)
+	    {
+	      hash_unset_mem (bm->pool_by_name, p->name);
+	      vec_free (p->name);
+	      pool_put (bm->pools, p);
+	      vlib_worker_thread_barrier_release (bm->vlib_main);
+	      return e;
+	    }
+	}
+    }
+
   vlib_worker_thread_barrier_release (bm->vlib_main);
 
   if (pool_index)
@@ -118,6 +145,15 @@ bpa_pool_del (u8 *name)
   vlib_worker_thread_barrier_sync (bm->vlib_main);
 
   p = pool_elt_at_index (bm->pools, q[0]);
+  {
+    u32 i;
+    for (i = 0; i < vec_len (bm->per_thread); i++)
+      {
+	bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+	if (q[0] < vec_len (pt->dyn))
+	  bpa_dyn_free (vec_elt_at_index (pt->dyn, q[0]));
+      }
+  }
   hash_unset_mem (bm->pool_by_name, p->name);
   vec_free (p->name);
   pool_put (bm->pools, p);
@@ -185,6 +221,7 @@ bpa_init (vlib_main_t *vm)
   bm->timeouts.icmp = BPA_TIMEOUT_ICMP;
   bm->timeouts.tcp_trans = BPA_TIMEOUT_TCP_TRANS;
   bm->timeouts.tcp_estab = BPA_TIMEOUT_TCP_ESTAB;
+  bm->block_holddown = BPA_BLOCK_HOLDDOWN;
 
   /*
    * Subscribers are spread over the workers with the same reciprocal used

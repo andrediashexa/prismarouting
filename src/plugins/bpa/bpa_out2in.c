@@ -51,6 +51,7 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   _ (NO_SESSION, "sem sessao para o destino")                                 \
   _ (UNSUPPORTED, "protocolo nao traduzido")                                  \
   _ (OUT_OF_BLOCK, "porta fora de qualquer bloco")                            \
+  _ (BLOCK_FREE, "bloco nao alocado a nenhum assinante")                      \
   _ (TRUNCATED, "pacote truncado")
 
 typedef enum
@@ -186,13 +187,46 @@ VLIB_NODE_FN (bpa_out2in_node)
       /*
        * Arithmetic pre-check: does this port belong to any block of this
        * pool at all? Rejects scan traffic before it touches the hash.
+       *
+       * bpa_reverse_sub() yields the BLOCK index. In deterministic mode the
+       * block index is the subscriber index - that identity is what makes
+       * the mode stateless. In dynamic mode the block belongs to whoever
+       * currently holds it, so it takes a lookup.
        */
       {
 	bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
-	if (PREDICT_FALSE (bpa_reverse (p, dst_host, port_pub, &ip_priv)))
+	u32 block_idx, sub_idx;
+
+	if (PREDICT_FALSE (
+	      bpa_reverse_sub (p, dst_host, port_pub, &block_idx)))
 	  {
 	    b[0]->error = node->errors[BPA_OUT2IN_ERROR_OUT_OF_BLOCK];
 	    goto trace;
+	  }
+
+	if (PREDICT_TRUE (p->mode == BPA_MODE_DETERMINISTIC))
+	  {
+	    if (PREDICT_FALSE (
+		  bpa_set_addr_of (&p->inside, block_idx, &ip_priv)))
+	      {
+		b[0]->error = node->errors[BPA_OUT2IN_ERROR_OUT_OF_BLOCK];
+		goto trace;
+	      }
+	  }
+	else
+	  {
+	    u32 w, nw;
+
+	    bpa_worker_id (bm, thread_index, &w, &nw);
+	    if (PREDICT_FALSE (
+		  pool_index >= vec_len (pt->dyn)
+		  || bpa_dyn_owner (vec_elt_at_index (pt->dyn, pool_index),
+				    block_idx, nw, &sub_idx)
+		  || bpa_set_addr_of (&p->inside, sub_idx, &ip_priv)))
+	      {
+		b[0]->error = node->errors[BPA_OUT2IN_ERROR_BLOCK_FREE];
+		goto trace;
+	      }
 	  }
       }
 
