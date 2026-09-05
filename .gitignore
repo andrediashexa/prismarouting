@@ -6,3 +6,4 @@ __pycache__/
 test/bpa_vectors.h
 .build-vpp/
 hexarouting.iso
+boot-console.log
