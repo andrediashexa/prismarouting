@@ -159,6 +159,23 @@ refused -7: the dataplane refused it: invalid value
             (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
 ```
 
+### What goes over the API, and what does not
+
+| Operation | Path | Why |
+|---|---|---|
+| Create, replace, delete a pool | binary API | These are writes. A write reported as successful when it was refused is the defect being removed. |
+| `commit check` | CLI | Validation has no API message of its own, and inventing one that creates-then-deletes would rebuild the outage risk that a name check once caused. It writes nothing either way. |
+| Reachability, before any change | binary API | Asked **once**, before anything is touched. Discovering the dataplane is unreachable halfway through leaves the box in neither the old configuration nor the new one, and the operator with no way to know which pools made it. |
+
+A refused write **MUST** fail the commit, **MUST** name the pool — a commit
+carrying several pools has to say which one — and **MUST** leave the candidate
+intact, or the operator loses the edit they were trying to correct.
+
+An upgrade hazard worth stating: a box updated without the current
+`install.sh` has no vat2 plugin, and every commit touching a pool will fail.
+That is the correct behaviour — the alternative is falling back to text
+parsing, which is the defect — and the message says exactly what is missing.
+
 The client takes no plugin path. On an appliance there is none to give, because
 `install.sh` puts the vat2 plugin where `vat2` already looks — and `lab/api.sh`
 mirrors that layout rather than passing `-p`, so it proves the client in the

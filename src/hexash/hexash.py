@@ -23,6 +23,7 @@ import tempfile
 import time
 
 from config import Config, Pool
+import vppapi
 
 readline = None
 
@@ -337,6 +338,7 @@ class Rollback:
 class Shell:
     def __init__(self):
         self.dp = Vpp()
+        self.api = vppapi.Vat2()
         self.frr = Frr()
         self.rb = Rollback()
         self.mode = "operational"      # operational | config | pool
@@ -381,6 +383,16 @@ class Shell:
 
     # ---------------------------------------------------------- commit
 
+    def api_call(self, message, args):
+        """
+        One place where the VTY talks to the dataplane, so the trace that found
+        the `commit check` bug keeps working - now over API calls rather than
+        CLI lines.
+        """
+        if Vpp.TRACE:
+            print(f"[api] {message} {args}", file=sys.stderr)
+        return self.api.call(message, args)
+
     def apply(self, target: Config, check_only=False) -> bool:
         """
         Converge the device onto `target`. Returns True on success.
@@ -391,6 +403,16 @@ class Shell:
         """
         running = self.running_config()
         d = running.delta_to(target)
+
+        # Asked once, before anything is touched. Discovering the dataplane is
+        # unreachable halfway through leaves the box in a state that is neither
+        # the old configuration nor the new one, and the operator with no way
+        # to know which pools made it.
+        if d["pool_add"] or d["pool_replace"] or d["pool_remove"]:
+            state, msg = self.api.available()
+            if state != vppapi.OK:
+                self.err(f"cannot reach the dataplane: {msg}")
+                return False
 
         if check_only:
             ok = True
@@ -405,6 +427,11 @@ class Shell:
                 # create anything - an earlier version deleted and recreated
                 # the running pool to work around a name check, which turned a
                 # read-only operation into an outage risk.
+                #
+                # Still over the CLI: validation has no API message of its own,
+                # and inventing one that creates-then-deletes would rebuild
+                # exactly that outage risk. What changed is that a check which
+                # cannot run is no longer silently a pass.
                 rc, out = self.dp.run(pool.device_command() + " check")
                 if rc:
                     print(out)
@@ -418,14 +445,20 @@ class Shell:
             return ok
 
         for name in d["pool_remove"]:
-            self.dp.run(f"bpa pool {name} del")
+            p = Pool(name)
+            r = self.api_call("bpa_pool_add_del", p.api_args(is_add=False))
+            if not r.ok and r.state != vppapi.REFUSED:
+                self.err(f"removing pool '{name}': {r.reason}")
+                return False
         for pool in d["pool_replace"]:
-            self.dp.run(f"bpa pool {pool.name} del")
+            self.api_call("bpa_pool_add_del", pool.api_args(is_add=False))
         for pool in d["pool_add"] + d["pool_replace"]:
-            rc, out = self.dp.run(pool.device_command())
-            if rc:
-                print(out)
-                self.err(f"pool '{pool.name}' refused by the dataplane")
+            r = self.api_call("bpa_pool_add_del", pool.api_args())
+            if not r.ok:
+                # Named, because a commit carrying several pools has to say
+                # which one the dataplane refused. "commit failed" sends the
+                # operator to read the whole candidate.
+                self.err(f"pool '{pool.name}': {r.reason}")
                 return False
 
         for ifname in d["if_remove"]:

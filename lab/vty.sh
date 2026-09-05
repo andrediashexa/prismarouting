@@ -6,6 +6,9 @@ mkdir -p /run/vpp /vpp_plugins /etc/hexarouting
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
+. /src/lab/lib.sh
+use_binary_api
+
 HX="python3 /src/src/hexash/hexash.py"
 export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
 

@@ -61,12 +61,9 @@ expect_not_in "and is not created" "pool z " "$(vppctl show bpa pool)"
 
 # --- the client hexash will use, against a real dataplane ---
 # The client deliberately takes no plugin path: on an appliance there is none
-# to give, because install.sh puts the vat2 plugin where vat2 already looks.
-# So the lab has to mirror that layout instead of passing -p, or it would prove
-# the client works in a configuration no box ever runs - which is exactly how
-# 0.2.0 shipped a hexash that had never been started from its install location.
-install -D -m 0644 /vat2_plugins/bpa_test_plugin_bpa_plugin.so \
-  /usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+# to give. use_binary_api sets up the layout a real box runs.
+. /src/lab/lib.sh
+use_binary_api
 CLI=$(python3 /src/lab/api_client_check.py 2>&1)
 echo "$CLI" | sed 's/^/  /'
 expect_in "the client reports the dataplane ready" "available: ok" "$CLI"
