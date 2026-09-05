@@ -204,3 +204,7 @@ out: with the right address and the wrong session.
 - [x] Appliance: boot tuning, systemd units, installer, ISO ([appliance.md](appliance.md))
 - [ ] **HA / failover** — analysed in [ha.md](ha.md), not implemented
 - [ ] Migrate `hexash` from the CLI to the binary API
+
+What is still missing, and why each item matters, is in
+[roadmap.md](roadmap.md) — including the items that turn out to be already
+satisfied by this design rather than needing to be built.

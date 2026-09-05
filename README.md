@@ -56,6 +56,7 @@ docs/architecture.md   design decisions, sharding, mapping algorithm
 docs/routing.md        FRR integration, VTY, punt pitfalls
 docs/logging.md        BPA log export over IPFIX (RFC 8158)
 docs/appliance.md      boot tuning, systemd, install, ISO
+docs/roadmap.md        what a CGNAT still needs, and why each item matters
 docs/ha.md             high-availability analysis (NOT implemented)
 ref/                   executable reference model of BPA, in Python
 src/plugins/bpa/       the VPP CGNAT plugin
