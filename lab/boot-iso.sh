@@ -62,13 +62,23 @@ sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
 # prints the version line and carries on without it. Demanding both stops a
 # build that lost the stamp from passing green.
 if grep -q "HexaRouting ready" /tmp/clean.log; then
-  if grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
+  if ! grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
+    echo
+    echo "=========== READY, BUT NO VERSION STAMP ==========="
+    grep -i "version" /tmp/clean.log | tail -5 | sed 's/^/  /'
+    echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
+    exit 1
+  fi
+  # The VTY is the product's front door, and 0.2.0 shipped with it broken while
+  # every other check passed. A "ready" that does not include the VTY proves the
+  # dataplane and nothing an operator can actually reach.
+  if grep -q "\[ ok \] VTY starts" /tmp/clean.log; then
     exit 0
   fi
   echo
-  echo "=========== READY, BUT NO VERSION STAMP ==========="
-  grep -i "version" /tmp/clean.log | tail -5 | sed 's/^/  /'
-  echo "--- console completo em ${LOGCOPY:-/src/boot-console.log} ---"
+  echo "=========== READY, BUT THE VTY DID NOT START ==========="
+  grep -i "hexash\|VTY" /tmp/clean.log | tail -6 | sed 's/^/  /'
+  echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
   exit 1
 fi
 

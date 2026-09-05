@@ -126,6 +126,22 @@ else
   say "  [warn] cpufreq governor is '$gov', not performance"
 fi
 
+# --- a VTY abre? ---
+# 0.2.0 embarcou um hexash que morria no start por falta de config.py, e este
+# autoteste passou verde: ele media o dataplane, o roteamento e o tuning, e
+# nunca a porta de entrada. Um boot que nao exercita a VTY nao sabe se ela
+# existe.
+if ! command -v hexash >/dev/null 2>&1; then
+  bad "hexash is not installed"
+else
+  out=$(hexash -c "show rollback" 2>&1)
+  case "$out" in
+    *Traceback*|*ModuleNotFoundError*|*"No module named"*)
+      bad "hexash does not start: $(printf '%s' "$out" | tail -1)" ;;
+    *) ok "VTY starts: $(printf '%s' "$out" | head -1)" ;;
+  esac
+fi
+
 # --- plano de controle ---
 if vtysh -c "show version" >/dev/null 2>&1; then
   ok "FRR responding"
