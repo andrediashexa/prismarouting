@@ -527,3 +527,121 @@ VLIB_CLI_COMMAND (bpa_show_logging_command, static) = {
   .short_help = "show bpa logging",
   .function = bpa_show_logging_command_fn,
 };
+
+/*
+ * Decompoe uma faixa [base, base+count) nos prefixos CIDR que a cobrem.
+ *
+ * As faixas do pool nascem de prefixos mas sao fundidas quando adjacentes,
+ * entao uma faixa pode nao ser mais um prefixo unico. Para a configuracao
+ * poder ser relida, ela precisa voltar a sair como prefixos.
+ */
+static u8 *
+format_bpa_range_as_prefixes (u8 *s, va_list *args)
+{
+  u32 base = va_arg (*args, u32);
+  u32 count = va_arg (*args, u32);
+  u32 indent = va_arg (*args, u32);
+  const char *kw = va_arg (*args, const char *);
+
+  while (count > 0)
+    {
+      u32 size = 1;
+      u32 len;
+      ip4_address_t a;
+
+      /* maior potencia de dois alinhada em base e que cabe em count */
+      while (size < count && (base & size) == 0 && size < 0x80000000u)
+	size <<= 1;
+      while (size > count)
+	size >>= 1;
+
+      for (len = 32; len > 0 && (1u << (32 - len)) < size; len--)
+	;
+
+      a.as_u32 = clib_host_to_net_u32 (base);
+      s = format (s, "%U%s %U/%u\n", format_white_space, indent, kw,
+		  format_ip4_address, &a, len);
+
+      base += size;
+      count -= size;
+    }
+  return s;
+}
+
+static clib_error_t *
+bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			    vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_sw_interface_t *si;
+  bpa_pool_t *p;
+  u8 *s = 0;
+  u32 i;
+
+  /*
+   * Emite a configuracao na sintaxe da VTY, para o hexash poder mostrar
+   * "show running-config" e gravar. O dataplane e a fonte da verdade: a
+   * VTY roda como processo curto e nao pode guardar estado entre chamadas.
+   */
+  pool_foreach (p, bm->pools)
+    {
+      s = format (s, "cgnat pool %v\n", p->name);
+      for (i = 0; i < p->inside.n_ranges; i++)
+	s = format (s, "%U", format_bpa_range_as_prefixes,
+		    p->inside.ranges[i].base, p->inside.ranges[i].count, 1,
+		    "inside");
+      for (i = 0; i < p->outside.n_ranges; i++)
+	s = format (s, "%U", format_bpa_range_as_prefixes,
+		    p->outside.ranges[i].base, p->outside.ranges[i].count, 1,
+		    "outside");
+      s = format (s, " block-size %u\n", p->block_size);
+      if (p->port_min != 1024 || p->port_max != 65535)
+	s = format (s, " ports %u %u\n", p->port_min, p->port_max);
+      s = format (s, " policy %U\n", format_bpa_policy, p->policy);
+      s = format (s, " mode %U\n", format_bpa_mode, p->mode);
+      s = format (s, " exit\n");
+    }
+
+  pool_foreach (si, vnm->interface_main.sw_interfaces)
+    {
+      if (vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out",
+				   si->sw_if_index) == 1
+	  || vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out-handoff",
+				      si->sw_if_index) == 1)
+	s = format (s, "cgnat interface %U inside\n",
+		    format_vnet_sw_if_index_name, vnm, si->sw_if_index);
+      if (vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in",
+				   si->sw_if_index) == 1
+	  || vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in-handoff",
+				      si->sw_if_index) == 1)
+	s = format (s, "cgnat interface %U outside\n",
+		    format_vnet_sw_if_index_name, vnm, si->sw_if_index);
+    }
+
+  if (bm->timeouts.udp != BPA_TIMEOUT_UDP)
+    s = format (s, "cgnat timeout udp %u\n", bm->timeouts.udp);
+  if (bm->timeouts.icmp != BPA_TIMEOUT_ICMP)
+    s = format (s, "cgnat timeout icmp %u\n", bm->timeouts.icmp);
+  if (bm->timeouts.tcp_trans != BPA_TIMEOUT_TCP_TRANS)
+    s = format (s, "cgnat timeout tcp-transitory %u\n", bm->timeouts.tcp_trans);
+  if (bm->timeouts.tcp_estab != BPA_TIMEOUT_TCP_ESTAB)
+    s = format (s, "cgnat timeout tcp-established %u\n", bm->timeouts.tcp_estab);
+  if (bm->block_holddown != BPA_BLOCK_HOLDDOWN)
+    s = format (s, "cgnat block-holddown %u\n", bm->block_holddown);
+  if (bpa_log_main.enabled)
+    s = format (s, "cgnat logging enable\n");
+
+  if (s)
+    {
+      vlib_cli_output (vm, "%v", s);
+      vec_free (s);
+    }
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_config_command, static) = {
+  .path = "show bpa config",
+  .short_help = "show bpa config",
+  .function = bpa_show_config_command_fn,
+};

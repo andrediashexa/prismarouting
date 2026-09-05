@@ -132,9 +132,38 @@ Tres caminhos:
 | B. `hexad` como daemon FRR | linka a `libfrr`, registra no `vtysh`, traduz comando em chamada da API binaria do VPP | CLI realmente unica; acopla com internals do FRR |
 | C. VTY propria do zero | controle total | mais trabalho, e reimplementa o que a `libfrr` ja faz bem |
 
-**Proposta: B.** O `vtysh` ja multiplexa varios daemons; um daemon a mais e
-o caminho previsto pelo FRR, nao uma gambiarra. E o que entrega
+**Escolhida: A, e por um motivo que so apareceu ao verificar.**
+
+A opcao B parecia melhor no papel, mas a lista de daemons do `vtysh` e
+**compilada** (`vtysh_client[]`) e nao ha mecanismo de plugin. Registrar um
+daemon novo exigiria manter um fork do `vtysh` pelo resto da vida do produto,
+e reaplica-lo a cada versao do FRR. Custo permanente alto para um ganho de
+integracao que o repasse resolve.
+
+O `hexash` trata CGNAT nativamente e repassa roteamento ao `vtysh`,
+preservando o contexto de bloco. O resultado e o mesmo que se buscava:
 `show running-config` mostrando BGP e CGNAT na mesma saida.
+
+### A fonte da verdade e o dataplane
+
+Detalhe que so apareceu no teste: cada `hexash -c ...` e um processo novo,
+entao estado em memoria nao sobrevive entre invocacoes, e a primeira versao
+gravava configuracao vazia. A correcao foi fazer o plugin emitir a propria
+configuracao em sintaxe de VTY (`show bpa config`), que o `hexash` le.
+
+E o mesmo desenho do `vtysh`: quem sabe a configuracao e o daemon, nao a
+shell. Efeito colateral util: uma faixa publica fundida a partir de prefixos
+adjacentes e decomposta de volta em prefixos CIDR na saida, entao a
+configuracao gravada pode ser relida.
+
+### Limites desta primeira versao
+
+- sem `?` e sem completacao por tab; historico e edicao de linha vem do
+  readline
+- a deteccao de erro do dataplane e por padrao de texto, porque o `vppctl`
+  devolve 0 mesmo em erro. Trocar pela API binaria esta no roadmap
+- escrita em Python: e plano de controle interativo, fora de qualquer caminho
+  de pacote. Em C seriam 3x as linhas para o mesmo resultado
 
 Esboco da gramatica:
 

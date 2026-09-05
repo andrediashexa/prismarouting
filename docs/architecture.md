@@ -175,8 +175,9 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Roteamento: BGP, OSPF e IS-IS via FRR, com as tres rotas chegando na
       FIB do VPP (`lab/routing.sh`)
 - [x] Validar pool contra endereco local, nas duas direcoes
-- [ ] **VTY unica (`hexad`)** - daemon no estilo FRR registrado no `vtysh`,
-      para `show running-config` mostrar roteamento e CGNAT na mesma saida
+- [x] VTY unica (`hexash`) - CGNAT nativo e roteamento repassado ao `vtysh`;
+      o daemon registrado no `vtysh` foi descartado porque a lista de daemons
+      dele e compilada e exigiria um fork permanente
 - [x] Exportacao de log BPA via IPFIX, so alocacoes (RFC 8158 `natEvent`
       16, 17 e 12), verificada com coletor decodificando (`lab/ipfix.sh`)
 - [ ] Trilha de configuracao append-only - e o "log" do modo deterministico
