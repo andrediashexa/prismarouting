@@ -1,247 +1,206 @@
-# HexaRouting — arquitetura
+# HexaRouting — Architecture
 
-Roteador em software com CGNAT BPA sobre VPP/DPDK, plano de controle em FRR.
-Alvo: 100 Gbps+, 200k+ assinantes, appliance completo.
+## TL;DR
 
-O plano de roteamento e da VTY esta em [routing.md](routing.md).
+CGNAT that maps each subscriber to a **contiguous port block** on a public
+address. In **deterministic** mode that mapping is a formula, so it needs no
+allocation log and no shared state — which is also what lets both traffic
+directions shard across workers without a lock. In **dynamic** mode blocks are
+allocated on demand and every allocation is logged, trading log volume for
+IPv4 savings.
 
-## Decisoes tomadas
+The Python model in `ref/` is the specification; the C implementation is
+checked against it on every build.
 
-| # | Decisao | Escolha | Motivo |
-|---|---------|---------|--------|
-| D1 | Base do dataplane | plugin proprio dentro do VPP | herda FIB, ARP/ND, fragmentacao, ICMP, tracing, API e BGP via linux-cp; sobra foco para a logica de BPA |
-| D2 | Modos de BPA | deterministico **e** dinamico, por pool | deterministico da log zero; dinamico economiza IPv4 |
-| D3 | Politica de mapeamento padrao | `interleaved` | shift-only nas duas direcoes + menor blast radius de blacklist |
-| D4 | Sharding entre workers | handoff do VPP, por indice de assinante | garante que in2out e out2in do mesmo assinante caiam no mesmo worker |
-| D5 | Enderecamento do pool | conjunto de prefixos nao contiguos | e produto para varios provedores, e nenhum tem IPv4 num bloco unico alinhado |
-| D6 | Plano de controle | FRR sobre `linux_cp`/`linux_nl` | os dois plugins ja vem no VPP 26.06; FRR nao precisa saber que o VPP existe |
-| D7 | Configuracao | VTY unica, `hexad` como daemon do `vtysh` | operador de provedor espera `configure terminal` e `write memory` cobrindo roteamento e CGNAT juntos |
+> The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
+> **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** in
+> this document are to be interpreted as described in
+> [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-## D5: por que o pool nao pode ser um prefixo so
+## 5W2H
 
-A alocacao IPv4 de um provedor real e fragmentada: um /22 do LACNIC, um /24
-comprado, um /23 herdado de aquisicao. Exigir um prefixo unico e alinhado
-inviabilizaria o produto na maioria das instalacoes.
+| | |
+|---|---|
+| **What** | A VPP plugin translating RFC 6598 subscriber addresses to public addresses using per-subscriber port blocks. |
+| **Why** | To make CGNAT auditable without per-flow logging, and to keep the return path free of shared lookup state. |
+| **Who** | Written for ISP operators; the algorithm is auditable by whoever answers a court order. |
+| **When** | Translation happens in the dataplane per packet; block assignment happens once per subscriber (deterministic) or per session burst (dynamic). |
+| **Where** | On the `ip4-unicast` feature arc, after shallow virtual reassembly and before `ip4-lookup`. |
+| **How** | Address sets are indexed densely; a reciprocal multiply replaces integer division on the datapath. |
+| **How much** | 512-port block ⇒ 126 subscribers per public IP. 200k subscribers ⇒ a `/21` in deterministic mode. |
 
-Entao `inside` e `outside` sao **conjuntos** de prefixos, apresentados ao
-algoritmo como um espaco de indices denso `[0, count)`. A traducao
-endereco <-> indice fica isolada em `bpa_addr_set_t`:
+## Design decisions
 
-- faixas ordenadas por endereco, busca binaria nas duas direcoes
-- caminho rapido para o caso de faixa unica, que e o mais comum
-- prefixos adjacentes sao fundidos, o que encurta a busca no datapath
-- prefixos sobrepostos sao **recusados**: sobreposicao quebra a bijecao
-  endereco <-> indice, e bijecao quebrada significa um assinante sendo
-  logado como outro - erro regulatorio, nao apenas bug
+| # | Decision | Choice | Rationale |
+|---|----------|--------|-----------|
+| D1 | Dataplane base | In-tree-style VPP plugin | Inherits FIB, ARP/ND, fragmentation, ICMP, tracing, API and BGP via `linux_cp` |
+| D2 | BPA modes | Deterministic **and** dynamic, per pool | Deterministic gives zero logging; dynamic saves IPv4 |
+| D3 | Default mapping policy | `interleaved` | Smaller blast radius when a public IP is blacklisted |
+| D4 | Worker sharding | VPP handoff, keyed on subscriber index | Guarantees both directions land on the same worker |
+| D5 | Pool addressing | Sets of non-contiguous prefixes | Real provider IPv4 is fragmented; a single aligned prefix would rule out most deployments |
+| D6 | Control plane | FRR over `linux_cp`/`linux_nl` | Both plugins ship with VPP 26.06; FRR needs no modification |
+| D7 | Configuration | Single VTY (`hexash`) | Operators expect `configure terminal` and `write memory` covering routing and CGNAT together |
 
-Consequencia: `outside.count` deixou de ser potencia de dois, entao a
-otimizacao shift-only da politica interleaved nao vale sempre. O datapath
-usa o reciprocal ja existente (multiply-shift) e cai no shift quando o
-divisor por acaso e potencia de dois. `ref/check_magic.py` prova o
-reciprocal exato para 1074 divisores arbitrarios ate 266 milhoes.
+## The mapping
 
-## O problema central: sharding
+A pool defines two **address sets** and a block size. Each set is a list of
+possibly non-contiguous prefixes presented as a dense index space `[0, count)`.
 
-Com N workers, os dois sentidos do mesmo assinante precisam cair no **mesmo**
-worker, senao a tabela de sessao vira estrutura compartilhada com lock — e isso
-mata a escala em 100 G.
-
-- `in2out`: o worker sai direto do IP de origem. Trivial.
-- `out2in`: o pacote chega com (ip_pub, porta). Precisamos do assinante **antes**
-  de saber o worker.
-
-No modo deterministico isso e resolvido por aritmetica: `reverse()` e O(1) e
-sem memoria, entao qualquer worker calcula o assinante e faz handoff para o
-dono. O custo e um enqueue de indice de buffer — o mesmo mecanismo que o
-`nat44-ed` do VPP usa em producao.
-
-### Otimizacao possivel (fase 2)
-
-Se `n_workers` for potencia de 2 e a politica for `interleaved`, entao
-`pub_idx = sub_idx & (n_pub-1)`. Escolhendo `worker = pub_idx & (n_workers-1)`,
-o worker passa a ser funcao apenas dos **bits baixos do IP publico de destino**.
-Isso permite programar a RETA da NIC (E810 / CX6) para entregar o trafego
-out2in ja na fila certa, eliminando o handoff no sentido de retorno.
-
-## Modo deterministico: por que escala
-
-A traducao de volta e formula pura, sem lookup de sessao:
-
-```
-pub_idx = ip_pub - outside_base
-blk_idx = (port - port_min) / block_size
-sub_idx = blk_idx * n_pub + pub_idx        (interleaved)
-ip_priv = inside_base + sub_idx
+```mermaid
+flowchart LR
+    A["Subscriber<br/>100.64.0.5"] --> B["dense index<br/>sub_idx = 5"]
+    B --> C{"policy"}
+    C -->|interleaved| D["pub_idx = sub_idx mod n_pub<br/>blk_idx = sub_idx div n_pub"]
+    C -->|blocked| E["pub_idx = sub_idx div blocks_per_ip<br/>blk_idx = sub_idx mod blocks_per_ip"]
+    D --> F["public address + port range"]
+    E --> F
 ```
 
-Consequencias:
-- zero log de alocacao — a prova para a autoridade e o algoritmo + a config
-- o caminho out2in nao toca a tabela de sessao para descobrir o destino
-- estado necessario e apenas o bitmap de portas por assinante, para escolher
-  porta livre dentro do bloco: `block_size` bits por assinante ativo
-  (512 portas -> 64 bytes; 200k assinantes -> ~13 MB)
+Requirements:
 
-## Sharding: implementado
+* Prefixes within a set **MUST NOT** overlap. Overlap breaks the
+  address↔index bijection, and a broken bijection means one subscriber is
+  logged as another — a compliance failure, not merely a bug. Overlapping
+  prefixes **MUST** be rejected at configuration time.
+* Adjacent prefixes **SHOULD** be merged, which shortens the datapath search.
+* `block_size` **MUST** be a power of two.
+* Pool capacity **MUST NOT** exceed 2^28 subscribers, which bounds the
+  reciprocal multiplication below 2^61 and keeps it inside `u64`.
 
-`bpa-in2out-handoff` e `bpa-out2in-handoff` resolvem o indice denso do
-assinante e entregam o buffer ao worker dono, via
-`vlib_buffer_enqueue_to_thread()`.
+### Why `interleaved` is the default
 
-- **in2out**: o indice sai direto do endereco de origem
-- **out2in**: `bpa_reverse_sub()` recupera o indice a partir de
-  `(endereco publico, porta)` so com aritmetica, sem consultar nenhuma
-  estrutura compartilhada entre workers
+With `interleaved`, consecutive subscribers land on **different** public
+addresses. If one public address is blacklisted, the damage spreads thinly
+instead of taking down an entire neighbourhood behind one OLT.
 
-A segunda linha e o motivo de o mapeamento deterministico importar alem do
-log: sem ela, o caminho de volta nao teria como achar o dono sem um lookup
-numa tabela global, e ai o lock voltaria.
+### Division on the datapath
 
-A distribuicao usa o mesmo reciprocal do split do pool, entao o numero de
-workers **nao precisa** ser potencia de dois. Sem workers configurados, a
-CLI poe o node de traducao direto no arco: handoff seria uma volta pela
-fila de frames sem ganho.
+`outside.count` is arbitrary once pools accept fragmented prefixes, so the
+split cannot rely on shifts alone. A reciprocal multiply is precomputed per
+pool; when the divisor happens to be a power of two, a shift is used instead.
+`ref/check_magic.py` proves the reciprocal exact for 1074 arbitrary divisors
+up to 266 million, with the worst intermediate product at 61 bits.
 
-Verificado com 2 workers: assinantes 5, 6 e 9 previstos em thread 2, 1 e 2,
-e foi exatamente onde as sessoes nasceram; as tres respostas chegaram na
-thread 1 e foram entregues ao dono correto, com zero pacotes em
-"sem sessao". Ver `lab/handoff.sh`.
+## Sharding
 
-## Tratamento de TCP e de erro ICMP
+Session state and the per-subscriber port bitmap are per-worker and lock-free.
+That is only safe if **both directions of a subscriber reach the same worker**,
+and NIC RSS gives no such guarantee: outbound hashes on the private address,
+inbound on the public one.
 
-Duas lacunas que causam reclamacao de assinante, nao numero feio em grafico.
-
-### Estado TCP
-
-Marcar "estabelecida" em qualquer ACK e nunca tratar RST ou FIN faz uma
-conexao fechada segurar a porta pelo timeout de estabelecida - 2 horas. Num
-bloco de 512 portas isso esgota o assinante rapido, e chega ao suporte como
-"a internet parou", sem nada obvio no dataplane.
-
-`bpa_tcp_track()` mantem um estado minimo: RST fecha e a sessao expira na
-varredura seguinte; FIM em qualquer sentido tira do timeout longo; o ACK apos
-o handshake e o que promove para estabelecida.
-
-Verificado em `lab/icmp-tcp.sh` com pacotes de flags reais: apos o RST a
-sessao sai imediatamente, com o timeout de estabelecida ainda em 7440s.
-
-### Erro ICMP e o PMTUD
-
-Erros ICMP carregam o pacote original embutido, e e o embutido que diz de
-quem eles falam. Sem traduzir isso, o "fragmentation needed" do PMTUD nunca
-chega ao assinante: a conexao TCP fica pendurada e o sintoma e "alguns sites
-nao abrem" - o classico do CGNAT mal feito. Traceroute tambem para.
-
-O node reescreve o destino externo e a origem do pacote embutido. O checksum
-do ICMP cobre o embutido inteiro, entao toda mudanca la dentro, **inclusive o
-proprio checksum do IP embutido**, tem que ser refletida nele.
-
-Traduzir nao basta: com o checksum errado a pilha do assinante descarta, e o
-PMTUD continua quebrado com o contador dizendo que traduziu. Por isso o teste
-captura o pacote que sai e confere os tres checksums em `lab/checkicmp.py`.
-
-### Fragmentacao
-
-Fragmento que nao e o primeiro nao carrega cabecalho L4, entao nao tem porta
-para casar com sessao: sem tratamento ele e descartado, e DNS grande, VPN e
-jogo param de forma intermitente - o pior tipo de sintoma para diagnosticar.
-
-A saida e o reassembly virtual raso do VPP, ligado junto com a feature e
-refcontado. Ele guarda as portas do primeiro fragmento e as anexa aos
-seguintes, sem remontar o datagrama.
-
-Duas armadilhas, as duas encontradas no teste e nenhuma visivel por leitura:
-
-1. **Ordem de feature.** Sem `runs_after` no
-   `ip4-sv-reassembly-feature`, o node do BPA podia rodar antes e ler campos
-   de buffer que ainda nao existiam.
-2. **Ordem de byte.** O reassembly guarda a porta em ordem de rede. Lida como
-   ordem de host, 12345 (`0x3039`) vira 14640 (`0x3930`), o node nao acha a
-   sessao e abre outra - **queimando uma porta do bloco por fragmento**. Num
-   assinante que fragmenta bastante, isso esgota o bloco sozinho.
-
-O segundo so apareceu porque o teste conferia a porta, e nao apenas se o
-pacote saiu traduzido. Ele saia: com o endereco certo e a sessao errada.
-
-## Modo dinamico (PBA): implementado
-
-Bloco alocado no primeiro fluxo, devolvido apos hold-down.
-
-### O problema de sharding, e a saida
-
-Alocacao de bloco seria estado compartilhado entre workers, o que
-reintroduziria o lock que o resto do desenho evita. Em vez disso o espaco de
-blocos e **particionado**: o worker `w` so aloca blocos com
-`block_idx % n_workers == w`.
-
-E essa particao que faz o handoff continuar valendo nos dois modos:
-
-```
-in2out   worker = sub_idx   % n_workers
-out2in   worker = block_idx % n_workers
+```mermaid
+sequenceDiagram
+    participant N as NIC (RSS)
+    participant H as bpa-*-handoff
+    participant W as Owning worker
+    N->>H: packet (any worker)
+    Note over H: in2out — index from source address<br/>out2in — index from (public address, port)
+    H->>W: enqueue to bpa_owner_worker(index)
+    Note over W: session table and port bitmap<br/>are worker-local, no lock
 ```
 
-O worker so entrega ao assinante um bloco da propria fatia, entao os dois
-concordam. E no modo deterministico `block_idx == sub_idx`, entao a mesma
-linha de codigo serve para os dois - o node de handoff nao ramifica por modo.
+* Both handoff nodes **MUST** compute the same owner for a given subscriber.
+* The worker count **MAY** be any value; the same reciprocal used for the pool
+  split removes the power-of-two requirement.
+* With no workers configured, the CLI **MUST** install the translation node
+  directly on the arc — a handoff would be a frame-queue round trip for
+  nothing.
 
-Custo declarado: a taxa de oversubscription passa a ser por worker, nao
-global. Com assinantes espalhados por hash isso e estatisticamente
-equivalente, mas uma fatia pode esgotar com outra ainda tendo bloco livre.
+The out2in direction resolves the owner by arithmetic alone. This is why the
+deterministic mapping matters beyond logging: without it the return path could
+not find its owner without consulting a structure shared across workers, and
+the lock this design avoids would come back through the side door.
 
-### Hold-down
+## Dynamic mode (PBA)
 
-Um bloco fica reservado por `block-holddown` segundos depois da ultima
-sessao acabar. Nao e organizacao: sem hold-down, um assinante que fica quieto
-um segundo e volta gera uma liberacao e uma alocacao, e **cada uma dessas e
-um registro de log**. Hold-down e a principal alavanca sobre o volume de log
-que o IPFIX vai exportar.
+Blocks are allocated on first flow and returned after a hold-down period.
 
-### Verificado em lab
+Block allocation would be shared state across workers. Instead the block space
+is **partitioned**: worker `w` allocates only blocks where
+`block_idx mod n_workers == w`. Because a worker only ever hands a subscriber a
+block from its own slice, the two handoff formulas agree — and in deterministic
+mode `block_idx == sub_idx`, so one line of code serves both modes.
 
-`lab/dynamic.sh`, com 1024 assinantes possiveis contra 3 blocos:
-alocacao sob demanda, mesmo assinante mantendo o bloco, quarto assinante
-recusado com contador, volta traduzida, e blocos devolvidos apos hold-down.
+* Hold-down **MUST** be non-zero in production. Without it a subscriber who
+  pauses for a second churns a release and an allocation, and **each of those
+  is a log record**. Hold-down is the primary lever on log volume.
+* Oversubscription is measured **per worker**, not globally. One slice **MAY**
+  exhaust while another still has free blocks.
 
-`lab/dynamic-workers.sh`, com 2 workers e 12 blocos: 6 blocos por fatia,
-assinantes pares na thread 1 e impares na thread 2, cada um com bloco da
-propria fatia, e as quatro respostas achando o worker dono.
+## Memory
 
-## Orcamento de memoria (200k assinantes)
-
-| Estrutura | Dimensao | Tamanho |
+| Structure | Sizing | Notes |
 |---|---|---|
-| bitmap de portas | 200k x block_size/8 | ~13 MB @ bloco 512 |
-| sessoes | 200k x ~100 medias x 64 B | ~1,3 GB |
-| bihash in2out + out2in | overhead ~2x | ~2,6 GB |
+| Port bitmap | `block_size` bits per active subscriber | 64 bytes at 512 ports; ~13 MB for 200k |
+| Session tables | Two bihash tables per worker | Default 16 MB each, configurable via `bpa session-table` |
+| Block ownership (dynamic) | 4 bytes per block per worker slice | |
 
-Exige hugepages de 1 G e pinning de NUMA. A VM atual (8 GB, 1 no NUMA) serve
-para desenvolvimento e teste funcional, nao para carga.
+Session table size is a **virtual** reservation, but the OOM killer counts
+virtual memory. The default is therefore modest: a deployment with 200k
+subscribers **SHOULD** raise it, and a small box **MUST NOT** pay for capacity
+it will never use.
 
-## Estado do projeto
+## TCP and ICMP handling
 
-- [x] Modelo de referencia do BPA validado (`ref/bpa_model.py`, `ref/validate.py`)
-- [x] Nucleo em C do mapeamento, conferido contra o modelo (`make test`)
-- [x] Alocador de portas por assinante (`bpa_ports.h`)
-- [x] Plugin carrega no VPP 26.06 com CLI de pools
-- [x] Pools de prefixos nao contiguos, para alocacao IPv4 real de provedor
-- [x] Nodes in2out / out2in, com traducao verificada por injecao de pacote
-- [x] Tabela de sessao (bihash) por worker + expiracao com timeouts configuraveis
-- [x] Handoff entre workers, verificado com 2 workers (`lab/handoff.sh`)
-- [x] Alocador dinamico de blocos, com hold-down e particao por worker
-- [x] Roteamento: BGP, OSPF e IS-IS via FRR, com as tres rotas chegando na
-      FIB do VPP (`lab/routing.sh`)
-- [x] Validar pool contra endereco local, nas duas direcoes
-- [x] VTY unica (`hexash`) - CGNAT nativo e roteamento repassado ao `vtysh`;
-      o daemon registrado no `vtysh` foi descartado porque a lista de daemons
-      dele e compilada e exigiria um fork permanente
-- [x] Exportacao de log BPA via IPFIX, so alocacoes (RFC 8158 `natEvent`
-      16, 17 e 12), verificada com coletor decodificando (`lab/ipfix.sh`)
-- [ ] Trilha de configuracao append-only - e o "log" do modo deterministico
-- [x] API binaria do plugin (`bpa.api`), com codigo de retorno de verdade
-- [ ] Migrar o `hexash` da CLI para a API binaria
-- [x] Appliance: tuning de boot calculado do hardware, unidades systemd,
-      instalador e ISO - ver [appliance.md](appliance.md)
-- [x] Fragmentacao, via reassembly virtual raso
-- [ ] HA / failover entre caixas - analise em [ha.md](ha.md); nada implementado
-- [x] Transporte TCP para o log IPFIX, com transbordo em disco
-- [x] Trilha de configuracao datada (`show bpa pool history`)
+Two gaps that produce subscriber complaints rather than ugly graphs:
+
+**TCP state.** Marking a session established on any ACK and ignoring RST and
+FIN makes a closed connection hold its port for the established timeout — two
+hours. On a 512-port block that exhausts a subscriber quickly, and reaches
+support as "the Internet stopped" with nothing obvious in the dataplane. The
+implementation **MUST** release on RST and **MUST** leave the long timeout on
+FIN.
+
+**ICMP errors.** ICMP errors carry the original packet embedded, and it is the
+embedded packet that identifies the session. Without translating it, PMTUD's
+*fragmentation needed* never reaches the subscriber: the TCP connection hangs
+and the symptom is "some sites do not load". Traceroute stops working too.
+
+The ICMP checksum covers the whole embedded packet, so every change inside it —
+**including the embedded IP header's own checksum** — **MUST** be reflected in
+it. Translating with a wrong checksum is worse than not translating: the
+subscriber's stack discards the packet, PMTUD stays broken, and the counter
+claims success.
+
+## Fragments
+
+A non-first fragment carries no L4 header and therefore no port to match a
+session. Without handling, it is dropped, and large DNS, VPN and gaming break
+**intermittently** — the hardest symptom to diagnose.
+
+VPP's shallow virtual reassembly caches the first fragment's ports and attaches
+them to the following ones.
+
+* The BPA nodes **MUST** declare `runs_after` on `ip4-sv-reassembly-feature`.
+  Otherwise they may run first and read buffer fields that do not yet exist.
+* The reassembly stores ports in **network byte order**. Read as host order,
+  12345 (`0x3039`) becomes 14640 (`0x3930`), the node misses the session and
+  opens another — **burning one port per fragment**. A subscriber that
+  fragments heavily exhausts its block on its own.
+
+That second one was found only because the test checked the *port* of the
+translated fragment, not merely that a packet came out translated. It did come
+out: with the right address and the wrong session.
+
+## Project state
+
+- [x] BPA reference model (`ref/bpa_model.py`, `ref/validate.py`)
+- [x] C mapping core, checked against the model (`make test`)
+- [x] Per-subscriber port allocator
+- [x] Plugin loads in VPP 26.06 with pool CLI
+- [x] Pools of non-contiguous prefixes
+- [x] `in2out` / `out2in` nodes, verified by packet injection
+- [x] Per-worker session table with configurable timeouts
+- [x] Worker handoff, verified with two workers
+- [x] Routing: BGP, OSPF and IS-IS reaching the VPP FIB
+- [x] Pool validated against local addresses
+- [x] Dynamic block allocator with hold-down and per-worker partitioning
+- [x] Fragment handling via shallow virtual reassembly
+- [x] TCP state and ICMP error translation
+- [x] IPFIX export over UDP and TCP ([logging.md](logging.md))
+- [x] Dated configuration trail
+- [x] Single VTY (`hexash`) with completion and contextual help
+- [x] Binary API with real return codes
+- [x] Appliance: boot tuning, systemd units, installer, ISO ([appliance.md](appliance.md))
+- [ ] **HA / failover** — analysed in [ha.md](ha.md), not implemented
+- [ ] Migrate `hexash` from the CLI to the binary API

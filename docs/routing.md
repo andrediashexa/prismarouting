@@ -1,198 +1,189 @@
-# HexaRouting — plano de roteamento (OSPF, IS-IS, BGP) e VTY
+# HexaRouting — Routing and VTY
 
-O sistema deixa de ser "uma caixa de CGNAT" e passa a ser um roteador com
-CGNAT BPA embutido. Este documento e o projeto; nada aqui esta implementado.
+## TL;DR
 
-## Componentes
+FRR provides BGP, OSPF and IS-IS. VPP's `linux_cp` mirrors each dataplane
+interface as a Linux TAP, so FRR sees ordinary netdevs and needs no
+modification; `linux_nl` carries the routes FRR installs back into the VPP FIB.
+`hexash` is one CLI for routing and CGNAT.
 
-| Peca | Papel |
-|------|-------|
-| VPP | dataplane: encaminhamento e CGNAT BPA (plugin `bpa`) |
-| FRR | plano de controle: `bgpd`, `ospfd`, `isisd`, `zebra` |
-| `linux_cp` + `linux_nl` (VPP) | cola entre os dois |
-| `hexad` | daemon de configuracao do HexaRouting, integrado ao VTY |
+Two failures found in the lab, both silent: OSPF stalls in `Exchange` when the
+TAP inherits a different MTU, and IS-IS never comes up unless OSI passthrough
+is explicitly enabled.
 
-## Como FRR conversa com o VPP
+> The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY** and
+> **RECOMMENDED** in this document are to be interpreted as described in
+> [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-O VPP 26.06 ja traz `linux_cp_plugin.so` e `linux_nl_plugin.so`, com headers
-em `/usr/include/lcp/`. Nao ha integracao a inventar:
+## 5W2H
 
-1. `linux_cp` espelha cada interface do VPP como um TAP no Linux (um "LIP",
-   Linux Interface Pair) e sincroniza estado e enderecos.
-2. FRR roda no Linux e enxerga os TAPs como netdevs normais. Forma
-   adjacencia OSPF/IS-IS e sessao BGP sem nenhuma modificacao.
-3. As rotas que o FRR instala na FIB do Linux sao lidas por `linux_nl` via
-   netlink e programadas na FIB do VPP.
+| | |
+|---|---|
+| **What** | Integration of FRR's control plane with the VPP dataplane, plus a unified configuration shell. |
+| **Why** | A CGNAT box on a provider's border is a router; it must speak the provider's IGP and EGP. |
+| **Who** | Network operators who already know FRR syntax and expect it to work unchanged. |
+| **When** | Routes propagate to the VPP FIB within seconds of adjacency establishment. |
+| **Where** | Control-plane packets are punted to Linux TAPs; the dataplane keeps forwarding. |
+| **How** | `linux_cp` mirrors interfaces; `linux_nl` listens to netlink; `hexash` forwards routing commands to `vtysh`. |
+| **How much** | No measurable dataplane cost: punt only affects protocol packets, not transit. |
 
-FRR nao precisa saber que o VPP existe. E o mesmo desenho que produtos
-comerciais de VPP usam.
+## Components
 
-### Alternativa para a fase 2
+| Piece | Role |
+|-------|------|
+| VPP | Dataplane: forwarding and CGNAT (`bpa` plugin) |
+| FRR | Control plane: `bgpd`, `ospfd`, `isisd`, `zebra` |
+| `linux_cp` + `linux_nl` | The glue between them |
+| `hexash` | HexaRouting's configuration shell |
 
-FRR tem plano de dados plugavel (`zebra_dplane`). Um plugin que programe o
-VPP direto pela API binaria elimina a ida e volta pela FIB do kernel e
-melhora a convergencia. Custa acoplamento com o FRR. Fica para depois de o
-caminho padrao estar funcionando.
+```mermaid
+flowchart TB
+    subgraph L["Linux"]
+        FRR["FRR daemons"]
+        TAP["vppwan0 (TAP)"]
+        FIB["kernel FIB"]
+        FRR -->|installs routes| FIB
+        FRR <-->|adjacency| TAP
+    end
+    subgraph V["VPP"]
+        IF["host-interface / DPDK port"]
+        VFIB["VPP FIB"]
+        NL["linux_nl"]
+    end
+    TAP <-->|linux_cp mirror| IF
+    FIB -->|netlink| NL --> VFIB
+    IF -->|transit traffic| VFIB
+```
 
-## O detalhe que quebra desenho ingenuo: IS-IS nao roda sobre IP
+FRR does not need to know VPP exists.
 
-Cada protocolo tem exigencia diferente de punt:
+## Pitfall 1 — inherited MTU stalls OSPF
 
-| Protocolo | Encapsulamento | Endereco |
-|-----------|----------------|----------|
-| BGP | TCP porta 179 | unicast, endereco local da caixa |
-| OSPFv2 | IP protocolo 89 | multicast 224.0.0.5 e 224.0.0.6 |
-| IS-IS | **OSI CLNS direto sobre o enlace** | multicast L2 `01:80:C2:00:00:14/15` |
+The TAP created by `linux_cp` comes up with MTU 9000. If the physical link is
+1500, OSPF forms a neighbour, reaches **`Exchange/DR` and stops there**: it
+compares MTU in Database Description packets and gives up silently. No log
+says "MTU mismatch"; the operator sees an adjacency that never completes.
 
-IS-IS **nao usa IP**. Um caminho de punt que so entenda IPv4 e IPv6 forma
-adjacencia OSPF e sessao BGP normalmente, e simplesmente nunca sobe IS-IS —
-falha silenciosa e chata de diagnosticar. O TAP do `linux_cp` espelha quadro
-Ethernet, entao carrega CLNS; e por isso que ele e o caminho escolhido, e
-nao um punt so de IP.
+With the MTU aligned, the adjacency reached **`Full` in 8 seconds**.
 
-## Duas armadilhas encontradas no lab (nao teoricas)
+* MTU **MUST** be explicit configuration, never inherited.
 
-Ambas descobertas ao subir os tres protocolos em `lab/routing.sh`. As duas
-falham de um jeito que nao aponta para a causa.
+## Pitfall 2 — IS-IS is not carried over IP
 
-### 1. MTU herdado trava o OSPF em Exchange
+IS-IS runs OSI CLNS directly over the link layer, using L2 multicast
+`01:80:C2:00:00:14/15`. Captures at three points located the loss precisely:
 
-O TAP criado pelo `linux_cp` nasce com MTU 9000. Se o enlace fisico estiver
-em 1500, o OSPF forma vizinhanca, chega ate **Exchange/DR e para ali**: ele
-compara MTU nos pacotes DD e desiste em silencio. Nao ha log dizendo "MTU
-divergente"; o operador ve so uma adjacencia que nunca completa.
+| Capture point | IS-IS hellos |
+|---------------|--------------|
+| Peer's interface, sending | present |
+| VPP's physical interface | present |
+| The TAP | **none** |
 
-Com `set interface mtu 1500 <interface>` (que o `lcp-sync` propaga ao TAP), a
-adjacencia foi para **Full em 8 segundos**.
+VPP's counter showed `osi-input: unknown osi protocol`. The frame arrives, is
+recognised as OSI, and nobody is registered to receive IS-IS.
 
-Conclusao para o appliance: **MTU tem que ser configuracao explicita**, nunca
-herdada. Entra na gramatica da VTY como parametro de interface.
-
-### 2. IS-IS morre em `osi-input` se o OSI nao for habilitado
-
-Confirmado o que o desenho previa, e com o ponto exato da morte. Capturas nos
-tres pontos do caminho:
-
-| Onde | Hellos IS-IS |
-|------|--------------|
-| `veth-out`, o peer enviando | presentes |
-| `veth-vpp`, chegando no VPP | presentes |
-| `vppwan0`, o TAP | **zero** |
-
-O contador do VPP mostrava `osi-input: unknown osi protocol`. O quadro chega,
-e reconhecido como OSI, e ninguem esta registrado para receber IS-IS.
-
-O `linux_cp` do VPP 26.06 ja tem a solucao, so nao vem ligada:
+VPP 26.06's `linux_cp` already solves this; it is simply not enabled:
 
 ```
 lcp osi-proto enable 0x83
 ```
 
-0x83 e o NLPID do IS-IS. Com isso o vizinho subiu e a rota chegou na FIB.
+`0x83` is the IS-IS NLPID.
 
-O detalhe que torna isto perigoso: **BGP e OSPF sobem normalmente sem esse
-comando.** Quem testar so com eles conclui que a integracao esta pronta, e o
-IS-IS fica mudo ate alguem tentar usar. Por isso o IS-IS ficou por ultimo na
-ordem de implementacao: e ele que valida o caminho de punt L2.
+* Deployments using IS-IS **MUST** enable OSI passthrough.
+* Because **BGP and OSPF come up without it**, testing with only those two
+  gives false confidence and IS-IS stays mute until someone needs it. IS-IS is
+  therefore implemented last, deliberately: it is what validates the L2 punt.
 
-## A armadilha: CGNAT sobre o proprio roteamento
+## Pitfall 3 — CGNAT eating its own control plane
 
-Sessao BGP e adjacencia OSPF/IS-IS terminam em enderecos **da propria
-caixa**. Se um pool BPA contiver um desses enderecos, `bpa-out2in` vai
-tentar traduzir os pacotes de protocolo: a sessao BGP cai de forma
-intermitente e o motivo nao aparece em lugar nenhum obvio.
+BGP sessions and OSPF/IS-IS adjacencies terminate on the box's **own**
+addresses. `bpa-out2in` runs on the `ip4-unicast` arc, before `ip4-lookup` and
+therefore before `ip4-local` decides a packet is local — so it sees the BGP
+packet first. If a public pool contains a peering address, the session drops
+intermittently with nothing obvious anywhere.
 
-O node `bpa-out2in` roda no arco `ip4-unicast`, **antes** do `ip4-lookup` e
-portanto antes do `ip4-local` que entrega trafego local. Ou seja, ele ve o
-pacote BGP primeiro. Duas defesas, as duas necessarias:
+Two defences, both **REQUIRED**:
 
-1. **Validar na criacao do pool**: recusar pool cujo conjunto publico
-   contenha qualquer endereco de interface local. Pega o erro no instante em
-   que o operador o comete, que e onde ele e barato.
-2. **Pular destino local no out2in**: consultar a FIB e nao traduzir o que e
-   endereco local. Cobre o endereco configurado *depois* do pool.
+1. Pool creation **MUST** be refused when the public set contains an address
+   configured on a local interface. The error names the address and the
+   interface.
+2. An address configured **after** the pool cannot be refused, so it **MUST**
+   be reported at error level in `show logging` — operators read that, not the
+   VPP process's stderr.
 
-Nota relacionada: os enderecos do pool publico normalmente **nao** sao
-enderecos de interface. Eles chegam a caixa por rota do upstream, nao por
-configuracao local. Se alguem configurar um endereco do pool numa interface,
-as duas defesas acima entram em conflito com a intencao - por isso a
-validacao recusa em vez de ajustar sozinha.
+Pool addresses themselves are normally **not** interface addresses: they reach
+the box by an upstream route, not local configuration.
 
 ## VTY
 
-O objetivo e uma CLI unica, no estilo que operador de provedor espera:
-`configure terminal`, `show running-config`, `write memory` - cobrindo
-roteamento **e** CGNAT no mesmo lugar.
+The goal is one CLI in the style operators expect: `configure terminal`,
+`show running-config`, `write memory`, covering routing **and** CGNAT.
 
-Tres caminhos:
+| Option | How | Cost |
+|--------|-----|------|
+| A. Wrap `vtysh` | Route `router bgp` to `vtysh`, `cgnat …` to VPP | Chosen |
+| B. FRR-style daemon registered with `vtysh` | Link `libfrr`, translate to the binary API | Rejected |
+| C. Own VTY from scratch | Full control | Reimplements what `libfrr` already does |
 
-| Opcao | Como | Custo |
-|-------|------|-------|
-| A. Envolver o `vtysh` | shell propria roteia `router bgp` para o vtysh e `cgnat ...` para a API do VPP | rapido, mas dois arquivos de config e dois `write memory` |
-| B. `hexad` como daemon FRR | linka a `libfrr`, registra no `vtysh`, traduz comando em chamada da API binaria do VPP | CLI realmente unica; acopla com internals do FRR |
-| C. VTY propria do zero | controle total | mais trabalho, e reimplementa o que a `libfrr` ja faz bem |
+**Option B was rejected after checking.** `vtysh`'s daemon list is **compiled
+in** (`vtysh_client[]`) with no plugin mechanism. Registering a new daemon
+would mean maintaining a `vtysh` fork for the life of the product, reapplied on
+every FRR release. Forwarding delivers the same unified
+`show running-config` without that permanent cost.
 
-**Escolhida: A, e por um motivo que so apareceu ao verificar.**
+### The dataplane is the source of truth
 
-A opcao B parecia melhor no papel, mas a lista de daemons do `vtysh` e
-**compilada** (`vtysh_client[]`) e nao ha mecanismo de plugin. Registrar um
-daemon novo exigiria manter um fork do `vtysh` pelo resto da vida do produto,
-e reaplica-lo a cada versao do FRR. Custo permanente alto para um ganho de
-integracao que o repasse resolve.
+Each `hexash -c …` is a new process, so in-memory state does not survive
+between invocations — the first version wrote an empty configuration. The
+plugin therefore emits its own configuration in VTY syntax
+(`show bpa config`), which `hexash` reads.
 
-O `hexash` trata CGNAT nativamente e repassa roteamento ao `vtysh`,
-preservando o contexto de bloco. O resultado e o mesmo que se buscava:
-`show running-config` mostrando BGP e CGNAT na mesma saida.
+This mirrors `vtysh`: the daemon knows its configuration, not the shell. A
+useful side effect is that a public range merged from adjacent prefixes is
+decomposed back into CIDR on output, so the saved configuration can be reread.
 
-### A fonte da verdade e o dataplane
+### Completion and help
 
-Detalhe que so apareceu no teste: cada `hexash -c ...` e um processo novo,
-entao estado em memoria nao sobrevive entre invocacoes, e a primeira versao
-gravava configuracao vazia. A correcao foi fazer o plugin emitir a propria
-configuracao em sintaxe de VTY (`show bpa config`), que o `hexash` le.
-
-E o mesmo desenho do `vtysh`: quem sabe a configuracao e o daemon, nao a
-shell. Efeito colateral util: uma faixa publica fundida a partir de prefixos
-adjacentes e decomposta de volta em prefixos CIDR na saida, entao a
-configuracao gravada pode ser relida.
-
-### Limites desta primeira versao
-
-- sem `?` e sem completacao por tab; historico e edicao de linha vem do
-  readline
-- a deteccao de erro do dataplane e por padrao de texto, porque o `vppctl`
-  devolve 0 mesmo em erro. Trocar pela API binaria esta no roadmap
-- escrita em Python: e plano de controle interativo, fora de qualquer caminho
-  de pacote. Em C seriam 3x as linhas para o mesmo resultado
-
-Esboco da gramatica:
+Tab completes; `?` lists the valid options at the cursor with a description:
 
 ```
-hexarouting# configure terminal
-hexarouting(config)# cgnat pool provedor-a
-hexarouting(config-cgnat-pool)# inside 100.64.0.0/12
-hexarouting(config-cgnat-pool)# outside 200.150.0.0/24
-hexarouting(config-cgnat-pool)# outside 45.170.16.0/24
-hexarouting(config-cgnat-pool)# block-size 512
-hexarouting(config-cgnat-pool)# mode deterministic
-hexarouting(config-cgnat-pool)# exit
-hexarouting(config)# router bgp 65000
-hexarouting(config-router)# neighbor 200.150.0.2 remote-as 65001
+hexarouting# show cgnat ?
+  blocks   blocks allocated in dynamic mode
+  logging  IPFIX export state
+  pool     configured CGNAT pools
+  session  active sessions per thread
+
+hexarouting(config-cgnat-pool)# inside ?
+  <A.B.C.D/M>
 ```
 
-## Versao do FRR
+The tree covers the CGNAT commands fully and the routing entry points. Past an
+FRR command it **admits it does not know**, rather than presenting a copied
+list of thousands of commands that would drift out of date with every FRR
+release and start suggesting commands that no longer exist.
 
-O Debian 12 traz FRR 8.4.4, ja antigo. Para produto, fixar uma versao do
-repositorio do proprio FRR (`deb.frrouting.org`), como ja e feito com o VPP
-no `build/Dockerfile.dev`. Versao de plano de controle nao pode flutuar com
-o que a distro tiver no dia.
+### Limits of this version
 
-## Estado
+* The dataplane error check is textual, because `vppctl` returns 0 even on
+  failure. Migrating `hexash` to the binary API **SHOULD** replace it.
+* `hexash` is written in Python. It is an interactive control-plane shell,
+  outside any packet path; C would take three times the code for the same
+  result.
 
-- [x] `linux_cp` + `linux_nl` no lab (`lab/lcp.sh`)
-- [x] BGP, OSPF e IS-IS sobre o TAP, com as tres rotas na FIB do VPP
+## FRR version
+
+Debian 12 ships FRR 8.4.4, already old. Production **SHOULD** pin a version
+from FRR's own repository (`deb.frrouting.org`), as `build/Dockerfile.dev`
+does. A control-plane version **MUST NOT** float with whatever the distribution
+happens to carry.
+
+## State
+
+- [x] `linux_cp` + `linux_nl` in the lab (`lab/lcp.sh`)
+- [x] BGP, OSPF and IS-IS over the TAP, all three routes in the VPP FIB
       (`lab/routing.sh`)
-- [x] Validacao de sobreposicao entre pool e endereco local, nas duas direcoes
-- [ ] `hexad` com a gramatica de CGNAT no `vtysh`
-- [ ] MTU como parametro explicito de interface na VTY
-- [ ] Migrar a configuracao para a VTY, mantendo a CLI de debug do plugin
+- [x] Pool validated against local addresses, both directions
+- [x] `hexash` with completion and contextual help
+- [ ] MTU as an explicit interface parameter in the VTY
+- [ ] Migrate configuration writes to the binary API

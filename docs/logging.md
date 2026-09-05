@@ -1,142 +1,178 @@
-# Exportacao de log BPA via IPFIX/NetFlow
+# HexaRouting — BPA Log Export via IPFIX
 
-Registro de **alocacao de bloco**, nao de fluxo. E o que torna o CGNAT
-auditavel sem gerar terabytes por dia.
+## TL;DR
 
-## O ponto de partida: quanto se loga em cada modo
+Log **block allocations**, not flows. RFC 8158 defines `natEvent` 16 (port
+block allocation) and 17 (de-allocation) for exactly this. Roughly 80 MB/day
+for 200k subscribers in dynamic mode, against ~2.4 GB/day for per-flow NAT —
+and **zero** in deterministic mode, where the proof is the algorithm plus the
+configuration.
 
-| Modo | O que se loga | Volume |
-|------|---------------|--------|
-| Deterministico | **nada** por assinante; so mudanca de configuracao | ~zero |
-| Dinamico (PBA) | alocacao e liberacao de bloco | ~1 registro por bloco |
-| NAT tradicional (referencia) | cada fluxo | 1 registro por conexao |
+De-allocation records are **not optional**: without them a court order lands on
+the wrong subscriber.
 
-No deterministico a prova de quem usou `(IP publico, porta, instante)` e o
-algoritmo mais a configuracao do pool. Nao existe evento a registrar - e
-exatamente por isso o modo existe. O que **precisa** existir e uma trilha de
-auditoria da configuracao: se o pool mudou em alguma data, e preciso saber
-qual era a configuracao vigente naquele instante, senao a formula responde a
-pergunta errada. Ver "Trilha de configuracao" abaixo.
+> The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY** and
+> **REQUIRED** in this document are to be interpreted as described in
+> [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-No dinamico ha eventos reais, e e ai que o IPFIX entra.
+## 5W2H
 
-## Norma: RFC 8158
+| | |
+|---|---|
+| **What** | IPFIX export of port-block lifecycle events, per RFC 8158. |
+| **Why** | Marco Civil (Law 12.965/2014, arts. 13–15) requires one year of connection records. Identifying a subscriber from (public IP, port, timestamp) requires the mapping. |
+| **Who** | The provider's compliance and legal teams answer with this data; the collector is theirs. |
+| **When** | On block allocation, on release, and on exhaustion. Never per flow. |
+| **Where** | Exported from the box to a collector reachable by the **Linux** stack — the exporter uses a kernel socket, not the VPP dataplane. |
+| **How** | UDP via VPP's `ipfix-export`, or TCP with local spill for compliance-grade delivery. |
+| **How much** | ~25 bytes per record; ~80 MB/day at 200k subscribers in dynamic mode. |
 
-A RFC 8158 define elementos IPFIX para log de eventos de NAT, e traz dois
-valores de `natEvent` feitos exatamente para BPA:
+## How much is logged, by mode
 
-| natEvent | Significado |
-|---------:|-------------|
-| 16 | Port block allocation |
-| 17 | Port block de-allocation |
-| 12 | NAT ports exhausted |
-| 18 | Threshold reached |
+| Mode | What is logged | Volume |
+|------|----------------|--------|
+| Deterministic | **nothing** per subscriber; only configuration changes | ~zero |
+| Dynamic (PBA) | block allocation and release | ~1 record per block |
+| Per-flow NAT (reference) | every flow | 1 record per connection |
 
-### Template do registro (Tabela 21 da RFC 8158)
+In deterministic mode the proof of who used `(public IP, port, instant)` is the
+algorithm plus the pool configuration. There is no event to record — which is
+precisely why the mode exists. What **MUST** exist instead is a dated
+configuration trail; see below.
 
-| IE | Nome | Bits | Obrigatorio | Conteudo no hexarouting |
-|---:|------|-----:|-------------|---------------------|
-| 323 | timeStamp | 64 | sim | instante do evento, UTC |
-| 230 | natEvent | 8 | sim | 16 ou 17 |
-| 8 | sourceIPv4Address | 32 | sim | IP do assinante |
-| 225 | postNATSourceIPv4Address | 32 | sim | IP publico atribuido |
-| 361 | portRangeStart | 16 | sim | `port_lo` do bloco |
-| 362 | portRangeEnd | 16 | nao | `port_hi` do bloco |
-| 283 | natPoolId | 32 | nao | indice do pool |
-| 463 | natInstanceID | 32 | nao | identificador da caixa |
+## Record format (RFC 8158, Table 21)
 
-Sao ~25 bytes de dados por registro. O VPP ja conhece `natEvent`,
-`natPoolId`, `portRangeStart`, `portRangeEnd` e `postNATSourceIPv4Address`
-em `vnet/ipfix-export/ipfix_info_elements.h`, e `flow_report.h` ja cuida de
-template, numero de sequencia e transporte. Nao ha IPFIX para escrever do
-zero: so montar o template e emitir o registro.
+| IE | Name | Bits | Required | Content |
+|---:|------|-----:|----------|---------|
+| 323 | `observationTimeMilliseconds` | 64 | yes | event time, UTC |
+| 230 | `natEvent` | 8 | yes | 16, 17 or 12 |
+| 8 | `sourceIPv4Address` | 32 | yes | subscriber address |
+| 225 | `postNATSourceIPv4Address` | 32 | yes | assigned public address |
+| 361 | `portRangeStart` | 16 | yes | block start |
+| 362 | `portRangeEnd` | 16 | no | block end |
+| 283 | `natPoolId` | 32 | no | pool index |
 
-## Por que liberacao tambem precisa ser logada
+`natEvent` values used: **16** allocation, **17** de-allocation, **12** ports
+exhausted.
 
-Este e o ponto que costuma passar batido, e ele muda a resposta juridica.
+VPP already knows these information elements in
+`vnet/ipfix-export/ipfix_info_elements.h`, and `flow_report.h` handles
+templates, sequence numbers and transport. There is no IPFIX to write from
+scratch for the UDP path.
 
-Logando **so alocacao**:
+## Why de-allocation is mandatory
 
+This is the point most easily missed, and it changes the legal answer.
+
+```mermaid
+sequenceDiagram
+    participant B as Block B
+    Note over B: t0 — allocated to subscriber X → record
+    Note over B: t1 — released on idle → RECORD REQUIRED
+    Note over B: t2 — allocated to subscriber Y → record
 ```
-t0  bloco B alocado ao assinante X      -> registro
-t1  bloco B liberado por inatividade    -> sem registro
-t2  bloco B alocado ao assinante Y      -> registro
-```
 
-Pergunta judicial: quem usava `(IP, porta em B)` no instante `t1.5`?
+A court asks who held `(IP, port in B)` at `t1.5`. A natural query — "the last
+allocation before this instant" — answers **X**. Wrong: at `t1.5` nobody held
+that block. The provider would hand over an innocent subscriber.
 
-Uma consulta que busca "a ultima alocacao anterior ao instante" responde
-**X**. Errado: em `t1.5` ninguem detinha aquele bloco. O provedor entregaria
-um assinante inocente.
+At `t0.5` and `t2.5` the same query is correct. The error appears only in the
+gap, which is exactly where nobody tests.
 
-Em `t0.5` e `t2.5` a mesma consulta acerta. O erro so aparece na lacuna, que
-e justamente onde ninguem testa. Por isso `natEvent 17` nao e organizacao:
-e correcao.
+* `natEvent` 17 **MUST** be emitted on release. It is correctness, not tidiness.
 
-## Volume esperado
+## Volume
 
-Premissas explicitas, para ordem de grandeza e nao precisao:
+Explicit assumptions, for order of magnitude rather than precision: 200k
+subscribers, dynamic mode, a block renegotiated ~5 times a day per active
+subscriber, ~25 bytes of data per record and ~40 bytes with IPFIX framing.
 
-- 200 mil assinantes
-- modo dinamico, bloco renegociado ~5x por dia por assinante ativo
-- ~25 bytes de dados por registro, ~40 bytes com enquadramento IPFIX
+| Scenario | Records/day | Raw volume/day |
+|----------|------------:|---------------:|
+| BPA dynamic (alloc + release) | ~2 million | ~80 MB |
+| Per-flow NAT (reference) | ~40 million | ~2.4 GB |
+| BPA deterministic | 0 | 0 |
 
-| Cenario | Registros/dia | Volume bruto/dia |
-|---------|--------------:|-----------------:|
-| BPA dinamico (aloc + liberacao) | ~2 milhoes | ~80 MB |
-| NAT por fluxo (referencia) | ~40 milhoes | ~2,4 GB |
-| BPA deterministico | 0 | 0 |
+One year of retention in dynamic mode is tens of gigabytes, not tens of
+terabytes. That is the commercial argument for BPA.
 
-Guarda de 1 ano no dinamico fica na casa de dezenas de GB, nao de dezenas
-de TB. E o argumento comercial do BPA.
+## Transport
 
-## Transporte: TCP implementado
+RFC 7011 permits SCTP, TCP and UDP.
 
-`bpa logging tcp <coletor> [port <n>]`. A infraestrutura do VPP so fala UDP,
-entao a mensagem IPFIX e montada a mao - o formato e simples e nao vale
-torcer o exportador de UDP para caber.
+* **UDP** is simple and widely accepted, but loses records under congestion.
+  Losing one `natEvent` 17 recreates the gap described above.
+* **TCP** is implemented, with a local spill file.
+* **SCTP** is what the standard prefers and what almost nobody deploys in
+  Brazil.
 
-Decisoes:
+Compliance logging **SHOULD** use TCP. UDP **MAY** be used for telemetry, and
+both **MAY** be enabled at once.
 
-- **socket nao bloqueante**: coletor lento nao pode travar a thread principal
-- **transbordo em disco** quando o coletor cai; se nem isso for possivel, o
-  descarte e **contado**, nunca silencioso
-- **o transbordo e prepen­dido** na volta, nao anexado: uma alocacao tem que
-  chegar antes da sua liberacao, ou o coletor monta um historico impossivel
-- **toda conexao nova comeca pelo template**, tambem prependido: o que estava
-  represado ja esta no buffer, e sem o template na frente o coletor descarta
+### TCP implementation
 
-### O limite honesto do TCP
+`bpa logging tcp <collector> [port <n>]`. VPP's infrastructure only speaks UDP,
+so the IPFIX message is assembled directly — the format is simple and not worth
+bending the UDP exporter around.
 
-Verificado em `lab/ipfix-tcp.sh`: com o coletor derrubado no meio, os
-registros ficam represados e chegam decodificados na reconexao. Mas TCP nao
-da entrega garantida de ponta a ponta - bytes aceitos pelo buffer do socket
-contam como enviados e podem se perder se a conexao morrer em seguida. No
-teste, dois registros emitidos no instante da queda ficaram nessa faixa.
+* The socket **MUST** be non-blocking: a slow collector **MUST NOT** stall
+  VPP's main thread.
+* Pending bytes **MUST** spill to disk when the collector is unreachable. If
+  even that fails, the discard **MUST** be counted, never silent.
+* The spill **MUST** be prepended on reconnect, not appended: an allocation has
+  to reach the collector before its release, or the collector reconstructs an
+  impossible history.
+* Every new connection **MUST** start with the template, also prepended.
 
-Garantia real exigiria confirmacao no nivel de aplicacao, que o IPFIX sobre
-TCP nao tem. O que o TCP entrega e muito melhor que UDP - nada de perda
-silenciosa sob congestionamento, e a queda do coletor deixa de custar
-registro - mas nao e absoluto, e o `show bpa logging` mostra os contadores
-para que a diferenca seja visivel em vez de suposta.
+### The honest limit of TCP
 
-### Alternativas da norma
+Verified in `lab/ipfix-tcp.sh`: with the collector killed mid-run, records are
+buffered and arrive decoded on reconnect. But TCP does not give end-to-end
+delivery guarantees — bytes accepted by the socket buffer count as sent and can
+be lost if the connection dies immediately after. In the test, two records
+emitted at the moment of the outage fell in that window.
 
-A RFC 7011 admite SCTP, TCP e UDP.
+A real guarantee would require application-level acknowledgement, which IPFIX
+over TCP does not provide. TCP is much better than UDP — no silent loss under
+congestion, and a collector outage no longer costs records — but it is not
+absolute. `show bpa logging` exposes the counters so the difference is visible
+rather than assumed.
 
-- **UDP**: simples e o mais aceito pelos coletores, mas perde registro sob
-  congestionamento. Perder um `natEvent 17` recria exatamente a lacuna da
-  secao anterior.
-- **TCP**: entrega confiavel, ao custo de bloquear quando o coletor cai.
-- **SCTP**: o que a norma prefere, com pouca adocao pratica no Brasil.
+## Two pitfalls found while implementing
 
-Implementado: TCP com buffer em disco. UDP fica disponivel para quem so quer
-telemetria, e os dois podem estar ligados ao mesmo tempo.
+Both fail silently, and both cost precisely the earliest records — when nobody
+is watching.
 
-## Trilha de configuracao: implementada
+### The dataplane cannot emit IPFIX directly
 
-No deterministico a configuracao **e** o log. Toda mudanca de pool vai para
-um arquivo append-only, datada em UTC, com a definicao completa:
+Calling the export path from inside graph dispatch writes the buffer, but it
+never leaves the wire. Only events emitted from **process** context reached the
+collector.
+
+The correct design, and the one VPP's own NAT plugin uses: the dataplane node
+**enqueues** into a per-thread queue (lock-free, each worker writes only its
+own) and a process drains it under the barrier and exports. The queue is
+bounded, so an unreachable collector becomes counted loss rather than unbounded
+memory.
+
+### Records before the template are undecodable
+
+The first events went out on the wire before the first template. `tcpdump`
+showed the packets; no collector could read them, because without the template
+there is no way to know the record layout.
+
+This is silent loss right after enabling logging or restarting the box.
+
+* Events **MUST** be held while `last_template_sent == 0`.
+* A serious collector **SHOULD** buffer a data set that arrives without its
+  template and reprocess it when the template appears. `tools/ipfix_collector.py`
+  does this, and that is how the ordering became visible instead of looking
+  like vanished records.
+
+## Configuration trail
+
+In deterministic mode the configuration **is** the log. Every pool change is
+appended to a file, dated in UTC, with the complete definition:
 
 ```
 2026-09-05T02:07:58Z add pool provedor-a inside 100.64.0.0+1024 \
@@ -146,75 +182,29 @@ um arquivo append-only, datada em UTC, com a definicao completa:
 2026-09-05T02:08:01Z add pool provedor-a ... block 1024 ...
 ```
 
-A pergunta que isso responde: *qual era o bloco do provedor-a na data do
-oficio?* Sem a trilha, a formula **atual** responderia com o bloco atual para
-uma data em que o pool usava outro - e apontaria o assinante errado com toda
-a confianca.
+The question this answers: *what block size was in effect on the date named in
+the court order?* Without the trail, the **current** formula answers with the
+current block for a date when the pool used another — and names the wrong
+subscriber with full confidence.
 
-O registro traz a definicao inteira, nao um diff, para poder ser lido sem
-depender de mais nada. Ha `fsync` a cada escrita: log de compliance nao pode
-ficar so no cache de pagina.
+* Records **MUST** carry the whole definition, not a diff, so they can be read
+  without further context.
+* Each write **MUST** be `fsync`ed: a compliance log **MUST NOT** live only in
+  the page cache.
+* Entries are also sent to VPP's log. A local file survives a reboot, not a disk
+  loss; deployments that take this seriously **SHOULD** forward VPP's log to a
+  remote syslog so the trail leaves the box.
 
-Cada entrada tambem vai para o log do VPP. Um arquivo local sobrevive a um
-reboot, nao a uma perda de disco; quem leva a serio manda o log do VPP para
-syslog remoto, e ai a trilha sai da caixa.
+`show bpa pool history` reads the trail; `bpa audit-path` changes its location.
 
-`show bpa pool history` le a trilha; `bpa audit-path` muda o caminho.
+## State
 
-## Carimbo de tempo
-
-Requisito de compliance, nao detalhe de implementacao:
-
-- gravar sempre em UTC, com fuso explicito no coletor
-- exigir NTP sincronizado; recusar exportar com relogio nao sincronizado, ou
-  marcar os registros como suspeitos
-- usar relogio monotonico para medir duracao e relogio de parede so para o
-  carimbo
-
-## Contexto regulatorio
-
-O Marco Civil da Internet (Lei 12.965/2014, arts. 13 a 15) obriga a guarda
-de registros de conexao por 1 ano. Com CGNAT, identificar o assinante a
-partir de `(IP publico, porta, instante)` depende do mapeamento - e e esse
-mapeamento que o BPA torna barato de guardar. Isto descreve o requisito
-tecnico; a adequacao juridica de cada provedor e com o juridico dele.
-
-## Duas armadilhas encontradas ao implementar
-
-As duas falham em silencio, e as duas custam justamente os registros do
-inicio - que e quando ninguem esta olhando.
-
-### 1. O dataplane nao pode emitir IPFIX direto
-
-Chamar o caminho de export de dentro do dispatch do grafo escreve o buffer
-mas ele nunca sai do fio. So os eventos emitidos de contexto de **processo**
-chegavam ao coletor.
-
-Desenho correto, que e o mesmo que o plugin de NAT do VPP usa: o node do
-dataplane **enfileira** o evento numa fila por thread (sem lock, cada worker
-so escreve na sua) e um processo drena sob a barreira e exporta. A fila tem
-teto: coletor inalcancavel vira perda contabilizada, nao memoria crescendo.
-
-### 2. Registro antes do template e indecifravel
-
-Os primeiros eventos sairam no fio antes do primeiro template. O tcpdump
-mostrava os pacotes; nenhum coletor conseguiria le-los, porque sem o template
-nao ha como saber o formato do registro.
-
-Isso e perda silenciosa logo apos habilitar o log ou reiniciar a caixa. A
-correcao e segurar os eventos na fila enquanto `last_template_sent == 0`.
-
-Vale para o coletor tambem: um coletor serio guarda o data set que chegou sem
-template e reprocessa quando ele chega. `tools/ipfix_collector.py` faz isso, e
-foi assim que a ordem virou visivel em vez de "sumiram registros".
-
-## Plano de implementacao
-
-- [x] `bpa_log.c`: template RFC 8158 via `flow_report.h`
-- [x] `natEvent 16` na alocacao, `17` na liberacao, `12` no esgotamento
-- [x] Fila por thread no dataplane, drenada pelo processo
-- [x] Teste de ponta a ponta com coletor decodificando (`lab/ipfix.sh`),
-      conferindo que toda alocacao tem sua liberacao correspondente
-- [x] Transporte TCP com buffer local e transbordo em disco
-- [ ] Trilha de configuracao append-only e `show bpa pool history`
-- [ ] Escolha de coletor por CLI propria, hoje herdada do exportador do VPP
+- [x] RFC 8158 template via `flow_report.h`
+- [x] `natEvent` 16 on allocation, 17 on release, 12 on exhaustion
+- [x] Per-thread queue in the dataplane, drained by a process
+- [x] TCP transport with disk spill
+- [x] Dated configuration trail
+- [x] End-to-end test with a decoding collector (`lab/ipfix.sh`,
+      `lab/ipfix-tcp.sh`), confirming every allocation has its matching release
+- [ ] Collector selection via a dedicated CLI; today the UDP path inherits
+      VPP's exporter configuration

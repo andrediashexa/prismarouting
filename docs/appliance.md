@@ -1,168 +1,217 @@
-# HexaRouting como appliance
+# HexaRouting — Appliance
 
-Instalar VPP e FRR e a parte facil. O que decide se a caixa entrega os
-100 Gbps ou metade disso e o tuning de boot, e ele nao falha de forma
-visivel: a caixa sobe, encaminha, e rende menos.
+## TL;DR
 
-## `hexarouting-tune`
+Installing VPP and FRR is the easy part. What decides whether the box delivers
+100 Gbps or half of it is **boot tuning**, and it fails invisibly: the box
+comes up, forwards, and underperforms. `hexarouting-tune` computes CPU
+isolation, hugepages and pinning from the actual hardware instead of copied
+values.
 
-Calcula isolamento de CPU, hugepages e pinning a partir do hardware, em vez
-de valores copiados de um blog. Regras aplicadas, com o motivo:
+Minimum requirements: **4 GB RAM** and a CPU with **SSE4.2**. Below either, VPP
+dies — by OOM or by SIGILL — and the boot self-test says so on the console
+before the operator has to guess.
 
-| Regra | Por que |
-|-------|---------|
-| CPU 0 e sua irma SMT ficam para o SO e a main do VPP | isolar tudo deixa o kernel sem onde rodar |
-| workers so no no NUMA da NIC | atravessar NUMA no caminho de pacote custa mais do que o worker extra rende |
-| um worker por core fisico, irma isolada junto | senao carga do sistema compete pelo mesmo core fisico |
-| `nohz_full` e `rcu_nocbs` acompanham o `isolcpus` | isolar sem tirar o tick e o callback de RCU deixa jitter, que aparece como perda em rajada |
-| hugepages de 1G dimensionadas pelo alvo de assinantes | orcamento de sessao e bitmap vem de [architecture.md](architecture.md) |
+> The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY** and
+> **RECOMMENDED** in this document are to be interpreted as described in
+> [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-Testado com topologias sinteticas em `appliance/test_tune.py`, porque a
-maquina de desenvolvimento nao tem SMT nem multiplos nos NUMA - e e
-exatamente ali que as decisoes importam. Um dos casos monta 2 sockets x 8
-cores x 2 threads com a NIC no no 1 e confere que nenhum worker caiu no no 0
-e que nenhuma irma SMT ficou fora do isolamento.
+## 5W2H
 
-## Primeiro boot: o tuning ainda nao vale
+| | |
+|---|---|
+| **What** | A bootable Debian appliance carrying VPP, FRR and HexaRouting, with boot tuning computed at first start. |
+| **Why** | Hand-tuned `isolcpus` and hugepages are the difference between full and half throughput, and getting them wrong produces no error. |
+| **Who** | Whoever racks the box; the self-test speaks to them over serial console or IPMI. |
+| **When** | Tuning is computed on every boot; kernel-level changes take effect on the **next** one. |
+| **Where** | `/etc/vpp/startup.conf` and `/etc/default/grub.d/hexarouting.cfg`, both generated. |
+| **How** | Reads `/sys` topology, NIC NUMA affinity, reserved hugepages and isolated CPUs. |
+| **How much** | 512-port blocks and 200k subscribers ⇒ roughly 6 × 1 GB hugepages, computed rather than guessed. |
 
-Encontrado ao bootar a ISO em QEMU, e nao antes: `isolcpus` e hugepages vem
-da linha de comando do kernel, entao **so entram em vigor no boot seguinte**.
-A primeira versao gerava um `startup.conf` exigindo `default-hugepage` que
-ainda nao existia, e o VPP entrava em loop de reinicio - o que quebraria toda
-primeira inicializacao depois de instalar.
+## Boot tuning
 
-Agora o `hexarouting-tune` le o estado real do kernel:
+```mermaid
+flowchart TB
+    A["/sys topology<br/>NIC NUMA affinity"] --> B["hexarouting-tune"]
+    C["reserved hugepages<br/>isolated CPUs"] --> B
+    B --> D{"kernel already tuned?"}
+    D -->|no| E["conservative startup.conf<br/>no pinning, 4k pages, DPDK off"]
+    D -->|yes| F["full startup.conf<br/>pinning + hugepages + DPDK"]
+    B --> G["grub.d cmdline<br/>for the NEXT boot"]
+```
+
+Rules applied, each with its reason:
+
+| Rule | Why |
+|------|-----|
+| CPU 0 and its SMT sibling stay with the OS and VPP's main thread | Isolating everything leaves the kernel nowhere to run |
+| Workers only on the NIC's NUMA node | Crossing NUMA on the packet path costs more than the extra worker earns |
+| One worker per physical core, sibling isolated with it | Otherwise system load competes for the same physical core |
+| `nohz_full` and `rcu_nocbs` follow `isolcpus` | Isolating without removing the tick and RCU callbacks leaves jitter, which shows up as burst loss |
+| 1 GB hugepages sized from the subscriber target | Session and bitmap budget comes from [architecture.md](architecture.md) |
+
+Tested against synthetic topologies in `appliance/test_tune.py`, because the
+development machine has neither SMT nor multiple NUMA nodes — and that is
+exactly where the decisions matter. One case builds 2 sockets × 8 cores ×
+2 threads with the NIC on node 1 and asserts that no worker landed on node 0
+and no SMT sibling escaped isolation.
+
+## First boot: the tuning is not in effect yet
+
+`isolcpus` and hugepages come from the kernel command line, so they take effect
+only on the **next** boot. The first implementation generated a
+`startup.conf` demanding `default-hugepage` that did not yet exist, and VPP
+entered a restart loop — which would break every first start after installation.
+
+`hexarouting-tune` now reads the kernel's actual state:
 
 ```
 /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
 /sys/devices/system/cpu/isolated
 ```
 
-Enquanto os dois nao estiverem no lugar, o `startup.conf` sai conservador:
-sem pinning, paginas de 4k, heap menor. Funciona em qualquer lugar e nao
-rende - mas sobe. A linha do GRUB continua pedindo o tuning completo para o
-boot seguinte, e ai o mesmo comando passa a gerar a config completa.
+* While either is missing, the generated `startup.conf` **MUST** be
+  conservative: no pinning, 4k pages, smaller heap, **DPDK disabled**. Without
+  hugepages the DPDK EAL fails to initialise and VPP exits; with
+  `Restart=always` on `vpp.service` that becomes a restart loop pointing at
+  nothing.
+* Half-configured also counts as untuned: hugepages reserved without
+  `isolcpus` still yields the conservative file, because pinning workers
+  without isolation makes VPP compete with the system.
+* The GRUB line **MUST** still request the full tuning for the next boot.
 
-Meio caminho tambem conta como nao tunado: hugepages reservadas sem
-`isolcpus` ainda sai conservador, porque pinar worker sem isolamento faz o
-VPP competir com o proprio sistema.
+## The VPP startup file has no include directive
 
-## O startup.conf do VPP nao tem include
+Found while investigating why VPP restarted on the ISO: the packaged
+`/etc/vpp/startup.conf` has no include directive, and VPP supports none. The
+first implementation wrote tuning to `/etc/vpp/startup.conf.d/tuning.conf`,
+which **was never read**.
 
-Encontrado ao investigar por que o VPP reiniciava na ISO: o
-`/etc/vpp/startup.conf` do pacote nao tem diretiva de include, e o VPP nao
-suporta nenhuma. A primeira versao gravava o tuning em
-`/etc/vpp/startup.conf.d/tuning.conf`, que **nunca foi lido**.
+The effect is the worst kind for a product: no error, no warning, the box comes
+up and forwards. It merely delivers half the throughput, with no way for the
+operator to know why.
 
-O efeito e o pior possivel para um produto: nao ha erro, nao ha aviso, a
-caixa sobe e encaminha. Ela so rende metade, e ninguem tem como saber por que.
+`hexarouting-tune` therefore generates the file VPP actually reads,
+concatenating `/etc/hexarouting/vpp-base.conf` — operator-editable, holding
+`unix`, `linux-cp` and so on — with the computed `plugins`, `cpu`, `buffers`
+and `memory` stanzas.
 
-Agora o `hexarouting-tune` gera o arquivo que o VPP realmente le,
-concatenando `/etc/hexarouting/vpp-base.conf` - editavel pelo operador, com
-`unix`, `plugins`, `linux-cp` - com as stanzas `cpu`, `buffers` e `memory`
-que ele calcula. A base nao deve conter essas tres, para nao duplicar.
+* The base file **MUST NOT** contain those four stanzas; they are generated.
+* `appliance/test_startup_conf.sh` closes the testing gap that allowed this: it
+  generates the configuration, **starts VPP with it**, and checks that the
+  plugins loaded, the process is still alive after five seconds, and a pool can
+  be created. Run with `make test-appliance`.
 
-`appliance/test_startup_conf.sh` fecha o buraco de teste que permitiu isso:
-gera a configuracao, **sobe o VPP com ela**, confere que os plugins
-carregaram, que o processo continua vivo e que da para criar pool. Roda com
-`make test-appliance`.
+## Tuning must not block boot
 
-## O tuning nao pode travar o boot
+`hexarouting-tune.service` once sat for **five minutes** with systemd waiting
+`no limit`, holding the rest of the boot behind it. The immediate cause was
+`update-grub`: on a live system GRUB is not even installed to disk, and
+`os-prober` scans every block device looking for other operating systems.
 
-Encontrado bootando a ISO: o `hexarouting-tune.service` ficou **5 minutos**
-parado, com o systemd esperando `no limit`, e o resto do boot atras dele.
+Three fixes, because one would not be enough:
 
-A causa e o `update-grub`. Num sistema live o GRUB nem esta instalado em
-disco, e o `os-prober` varre todos os dispositivos de bloco procurando outros
-sistemas - o que num appliance nao existe.
+| Fix | Why |
+|-----|-----|
+| `GRUB_DISABLE_OS_PROBER=true` in the generated `grub.d` file | An appliance has no other OS to find, and the scan is most of the time |
+| `apply-tuning` skips `update-grub` on a live system | There it changes nothing |
+| `TimeoutStartSec=90` on the unit | Safety belt, valid even if the other two fail |
 
-Tres correcoes, porque uma so nao bastaria:
+The third matters most. The tuning only takes effect on the next boot anyway,
+so blocking the current one for it is a bad trade in every scenario. **No
+HexaRouting service SHOULD be able to block boot without a limit** — that was a
+design defect, not merely an effect of `update-grub`.
 
-| Correcao | Por que |
-|---|---|
-| `GRUB_DISABLE_OS_PROBER=true` no grub.d gerado | num appliance nao ha outro SO para achar, e a varredura e o grosso do tempo |
-| `apply-tuning` pula `update-grub` em sistema live | ali ele nao muda nada, e o tuning so vale depois de instalar |
-| `TimeoutStartSec=90` na unidade | cinto de seguranca: nenhum servico nosso pode travar o boot indefinidamente |
+## Memory requirement
 
-A terceira e a que importa mesmo se as outras duas falharem. O tuning so
-surte efeito no boot seguinte de qualquer forma - travar o boot atual por
-causa dele e um mau negocio em qualquer cenario.
+**Minimum 4 GB.** A live system keeps its writable root entirely in RAM as an
+overlay on the squashfs; together with VPP, 2 GB is not enough and the OOM
+killer takes VPP — and the rest of the boot with it.
 
-## Servicos
+Measured while booting the ISO with 2 GB: `Out of memory: Killed process (vpp)`,
+with VPP holding only **19 MB resident**. It was not the glutton; it was the
+chosen victim. Installed to disk the requirement drops, since there is no RAM
+overlay, but 4 GB remains the sensible floor for a dataplane.
 
+Session tables are sized with `bpa session-table buckets <n> memory <MB>`,
+defaulting to 16k buckets and 16 MB per table. The size is a virtual
+reservation, but the OOM killer counts virtual memory — hence the modest
+default. A 200k-subscriber deployment **SHOULD** raise it; a small box **MUST
+NOT** pay for it.
+
+## CPU requirement
+
+VPP's binary assumes **SSE4.2** and uses AVX where available. On a CPU without
+it, VPP dies with `SIGILL` in milliseconds; with `Restart=always`, the symptom
+is a restart loop that says nothing about the cause.
+
+That is exactly what happened in testing: QEMU without `-cpu` uses the `qemu64`
+model, which lacks SSE4.2. Chasing that loop cost two wrong hypotheses before
+the journal showed `code=killed, signal=ILL`.
+
+* The self-test **MUST** check instruction sets **before** looking at VPP.
+* `lab/boot-iso.sh` passes an adequate CPU model, and uses KVM when available —
+  boots drop from minutes to seconds.
+
+## Services
+
+```mermaid
+flowchart LR
+    T["hexarouting-tune<br/>Before=vpp"] --> V["vpp.service"]
+    V --> H["hexarouting.service<br/>After=vpp,frr"]
+    F["frr.service"] --> H
+    H --> S["hexarouting-selftest<br/>console report"]
 ```
-hexarouting-tune.service   Before=vpp.service    calcula e grava o tuning
-vpp.service                                      dataplane
-frr.service                                      plano de controle
-hexarouting.service        After=vpp,frr         aplica a config de CGNAT
-```
 
-Duas decisoes que valem explicar:
+Two decisions worth explaining:
 
-- **FRR e `Wants`, nao `Requires`.** Sem roteamento a caixa ainda encaminha o
-  que houver em rota estatica; derrubar o CGNAT junto so aumentaria o estrago.
-- **Sem `ExecStop`.** A configuracao vive no VPP. Parar o servico nao pode
-  apagar pool de producao; quem remove pool e o operador, pela VTY.
+* **FRR is `Wants`, not `Requires`.** Without routing the box still forwards
+  whatever static routes exist; taking CGNAT down with it would only widen the
+  damage.
+* **No `ExecStop`.** The configuration lives in VPP. Stopping the service
+  **MUST NOT** delete production pools; removing a pool is the operator's
+  action, through the VTY.
 
-O `hexarouting.service` espera o VPP aceitar comandos antes de aplicar: o
-systemd considera o `vpp.service` iniciado quando o processo sobe, mas o
-socket de CLI e os plugins levam mais um instante, e aplicar antes disso
-falha de forma intermitente.
+`hexarouting.service` waits for VPP to accept commands before applying
+configuration: systemd considers `vpp.service` started once the process is up,
+but the CLI socket and plugins take a moment longer, and applying before that
+fails intermittently.
 
-O tuning roda em **todo** boot, sem sentinela, para respeitar mudanca em
-`tune.env` ou troca de NIC. Quem evita o custo do `update-grub` e o
-`apply-tuning`, que compara antes de regenerar.
+Tuning runs on **every** boot, with no sentinel, so a change in `tune.env` or a
+NIC swap is honoured. `apply-tuning` avoids the cost of `update-grub` by
+comparing before regenerating.
 
-## Requisito de memoria
+## Boot self-test
 
-**Minimo 4 GB.** Um sistema live mantem a raiz gravavel inteira em RAM, como
-overlay sobre o squashfs; somado ao VPP, 2 GB nao bastam e o matador de OOM
-leva o VPP - e com ele o resto do boot.
+A racked appliance is seen over serial console or IPMI, not `journalctl`. If
+something essential did not come up, it **MUST** be on screen with the reason
+attached — not merely `failed`.
 
-Medido bootando a ISO com 2 GB: `Out of memory: Killed process (vpp)`, com o
-VPP tendo apenas **19 MB residentes**. Ele nao era o glutao; foi a vitima
-escolhida. Instalado em disco a exigencia cai, porque nao ha overlay em RAM,
-mas 4 GB continua sendo o piso sensato para um dataplane.
+The self-test checks RAM, CPU instruction sets, VPP, restart counters, the
+tuning state, FRR and configured pools. On failure it dumps the tail of
+`/var/log/vpp/vpp.log` and the unit status. It distinguishes warning from
+failure — running in first-boot mode is expected and reported as a warning —
+and always exits zero: **the diagnostic MUST NOT bring down the boot**.
 
-As tabelas de sessao sao dimensionaveis por `bpa session-table buckets <n>
-memory <MB>`, com padrao modesto (16k buckets, 16 MB por tabela). O tamanho e
-reserva de espaco virtual, mas o matador de OOM conta o virtual - por isso o
-padrao nao e generoso. Quem tem 200k assinantes aumenta; quem tem caixa
-pequena nao paga por isso.
+The restart counter matters more than it looks. A service flapping in a loop
+can be "active" at the instant one looks, and `systemctl status` will say so.
+Only `NRestarts` tells the story.
 
-O autoteste checa a RAM e avisa antes de o VPP morrer.
-
-## Requisito de CPU
-
-O binario do VPP e compilado assumindo **SSE4.2**, e usa AVX quando ha. Numa
-CPU sem isso ele morre com `SIGILL` em milissegundos; como o `vpp.service`
-tem `Restart=always`, o sintoma que aparece e um loop de reinicio que nao diz
-nada sobre a causa.
-
-Foi exatamente o que aconteceu nos testes: o QEMU sem `-cpu max` usa o modelo
-`qemu64`, que nao tem SSE4.2. Perseguir esse loop custou duas hipoteses
-erradas antes de o journal mostrar `code=killed, signal=ILL`.
-
-Por isso o autoteste checa os conjuntos de instrucao **antes** de olhar o
-VPP, e o `lab/boot-iso.sh` passa `-cpu max`. Um provedor instalando em
-hardware antigo veria o mesmo loop, e agora ve a razao no console.
-
-## Instalacao
+## Installation
 
 ```sh
-sh appliance/install.sh              # sobre um Debian 12 existente
-DESTDIR=/mnt sh appliance/install.sh # dentro de um chroot, para a ISO
-sh appliance/build-iso.sh            # ISO hibrida BIOS/UEFI
-sh lab/boot-iso.sh                   # boota a ISO e confere o autoteste
+sh appliance/install.sh              # onto an existing Debian 12
+DESTDIR=/mnt sh appliance/install.sh # into a chroot, for the ISO
+sh appliance/build-iso.sh            # hybrid BIOS/UEFI ISO
+sh tools/lab.sh boot-iso             # boot it and check the self-test
 ```
 
-Depois de instalar, ajustar `/etc/hexarouting/tune.env` (NIC do dataplane e
-alvo de assinantes) e reiniciar: `isolcpus` e hugepages so valem no boot
-seguinte.
+After installing, adjust `/etc/hexarouting/tune.env` (dataplane NIC and
+subscriber target) and reboot: `isolcpus` and hugepages only apply on the next
+boot.
 
-## O que ainda falta
+## What is still missing
 
-- HA: hoje nao ha failover. Duas caixas com o mesmo pool deterministico
-  traduzem igual, o que ajuda, mas a tabela de sessao nao e sincronizada
-- transporte TCP para o log IPFIX (ver [logging.md](logging.md))
-- trilha de configuracao datada, que e o "log" do modo deterministico
+* **HA**: no failover today. Two boxes with the same deterministic pool
+  translate identically, which helps, but the session table is not
+  synchronised. See [ha.md](ha.md).
