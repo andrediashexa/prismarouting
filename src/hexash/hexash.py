@@ -167,7 +167,13 @@ def tree_walk(mode, words):
 class Vpp:
     """Talks to the bpa plugin through VPP's CLI."""
 
+    #: set HEXA_TRACE=1 to see every command sent to the dataplane. A check
+    #: that shows a mutating command here is a bug, not a nuance.
+    TRACE = os.environ.get("HEXA_TRACE") == "1"
+
     def run(self, cmd):
+        if self.TRACE:
+            print(f"[device] {cmd}", file=sys.stderr)
         try:
             p = subprocess.run([VPPCTL] + shlex.split(cmd),
                                capture_output=True, text=True, timeout=15)
@@ -374,14 +380,11 @@ class Shell:
                     continue
                 # The device validates for real: block size, prefix overlap,
                 # capacity, and whether the public range collides with a local
-                # address. Checking only syntax here would approve pools the
-                # device refuses - false confidence where the operator is
-                # relying on the check.
-                if pool.name in running.pools:
-                    self.dp.run(f"bpa pool {pool.name} del", )
+                # address. It creates nothing, and it MUST NOT be made to
+                # create anything - an earlier version deleted and recreated
+                # the running pool to work around a name check, which turned a
+                # read-only operation into an outage risk.
                 rc, out = self.dp.run(pool.device_command() + " check")
-                if pool.name in running.pools:
-                    self.dp.run(running.pools[pool.name].device_command())
                 if rc:
                     print(out)
                     self.err(f"pool '{pool.name}' would be refused")

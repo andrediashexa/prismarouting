@@ -75,15 +75,15 @@ bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
 clib_error_t *
 bpa_pool_validate (bpa_pool_t *cfg)
 {
-  bpa_main_t *bm = &bpa_main;
   bpa_pool_t probe;
   clib_error_t *e;
-  uword *q;
 
-  q = hash_get_mem (bm->pool_by_name, cfg->name);
-  if (q)
-    return clib_error_return (0, "pool already exists");
-
+  /*
+   * Deliberately no name-collision check. A candidate configuration that
+   * carries an existing name is a REPLACEMENT, and validating it must not
+   * require deleting the running pool first - a check that mutates state is
+   * not a check.
+   */
   e = bpa_check_local_overlap (&cfg->outside, cfg->name);
   if (e)
     return e;

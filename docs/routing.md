@@ -167,6 +167,12 @@ Requirements:
 * Edits **MUST NOT** reach the dataplane before `commit`.
 * `commit` **MUST** validate before applying, and **MUST** restore the previous
   state if application fails halfway.
+* `commit check` **MUST NOT** change anything on the device. An earlier
+  version deleted and recreated the running pool to work around a
+  name-collision check; it worked, and left a production pool one failed
+  command away from disappearing during a read-only operation. `bpa pool …
+  check` therefore performs no name check: in a candidate model, an existing
+  name is a replacement, not a collision.
 * `commit check` **MUST** validate against the device, not merely against
   syntax. The plugin exposes `bpa pool … check`, which runs every check the
   creation path runs — block size, prefix overlap, capacity, and collision

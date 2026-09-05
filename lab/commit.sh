@@ -63,3 +63,29 @@ echo "=========== 6. rollback 1 returns to the previous revision ==========="
 $HX -c "configure" -c "rollback 1" -c "show configuration compare" -c "commit" 2>&1 | sed 's/^/  /'
 echo "  -- device followed the rollback:"
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
+
+echo
+echo "=========== 7. a check MUST NOT mutate the device ==========="
+# An earlier version deleted and recreated the running pool to work around a
+# name check. It "worked", and put a production pool one failed command away
+# from disappearing during a read-only operation.
+TRACE=$(HEXA_TRACE=1 $HX -c "configure" -c "cgnat pool alpha" \
+        -c "block-size 2048" -c "exit" -c "commit check" 2>&1 >/dev/null \
+        | grep "^\[device\]")
+echo "$TRACE" | sed 's/^/  /'
+if echo "$TRACE" | grep -qE "\[device\] (bpa pool [^ ]+ del|set interface bpa|bpa timeouts|bpa block-holddown)"; then
+  echo "  FAIL: a check issued a mutating command"
+  exit 1
+fi
+if echo "$TRACE" | grep -qE "\[device\] bpa pool .* [^k]$"; then
+  echo "  FAIL: a check issued a pool creation"
+  exit 1
+fi
+echo "  OK: read-only commands only"
+
+echo
+echo "=========== 8. the check still catches what the device refuses ==========="
+$HX -c "configure" -c "cgnat pool alpha" -c "block-size 500" -c "exit" \
+    -c "commit check" 2>&1 | grep -vE "entering" | sed 's/^/  /'
+echo "  -- device untouched:"
+vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
