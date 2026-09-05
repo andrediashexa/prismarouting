@@ -21,6 +21,7 @@
 #include "bpa_pool.h"
 #include "bpa_ports.h"
 #include "bpa_dyn.h"
+#include "bpa_log.h"
 
 /*
  * Default timeouts in seconds. The floors come from RFC 4787 (UDP, 2 min)
@@ -78,6 +79,8 @@ typedef struct
   bpa_sub_t *subs;		  /* pool of per-subscriber port bitmaps */
   bpa_dyn_t *dyn;	  /* dynamic block state, indexed by pool index */
   uword *sub_by_idx;		  /* sub_idx -> index into subs */
+  bpa_log_event_t *log_queue; /* enfileirado pelo dataplane, drenado pelo processo */
+  u64 log_dropped;
   u32 n_expired;
   u32 expire_cursor;	  /* budgeted walk resumes here */
   u8 initialised;

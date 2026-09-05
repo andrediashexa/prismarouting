@@ -40,6 +40,10 @@ extern vlib_node_registration_t bpa_out2in_node;
 extern vlib_node_registration_t bpa_in2out_handoff_node;
 extern vlib_node_registration_t bpa_out2in_handoff_node;
 
+/* Enfileira um evento de log do dataplane. Sem lock: a fila e da thread. */
+void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
+			  u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id);
+
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 

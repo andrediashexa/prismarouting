@@ -177,11 +177,8 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Validar pool contra endereco local, nas duas direcoes
 - [ ] **VTY unica (`hexad`)** - daemon no estilo FRR registrado no `vtysh`,
       para `show running-config` mostrar roteamento e CGNAT na mesma saida
-- [ ] **Exportacao de log BPA via IPFIX/NetFlow, so alocacoes** - ver
-      [logging.md](logging.md). RFC 8158 `natEvent` 16 e 17. Depende do modo
-      dinamico, que e quem gera os eventos. Liberacao (17) e obrigatoria:
-      logar so alocacao faz uma consulta judicial apontar assinante errado
-      na lacuna entre liberar e realocar
+- [x] Exportacao de log BPA via IPFIX, so alocacoes (RFC 8158 `natEvent`
+      16, 17 e 12), verificada com coletor decodificando (`lab/ipfix.sh`)
 - [ ] Trilha de configuracao append-only - e o "log" do modo deterministico
 - [ ] API binaria do plugin, para a VTY e para automacao
 - [ ] Appliance: ISO, tuning de kernel, systemd, HA

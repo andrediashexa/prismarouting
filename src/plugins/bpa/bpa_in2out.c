@@ -10,6 +10,7 @@
 
 #include "bpa.h"
 #include "bpa_l4.h"
+#include "bpa_log.h"
 
 typedef struct
 {
@@ -198,16 +199,26 @@ VLIB_NODE_FN (bpa_in2out_node)
       else
 	{
 	  u32 w, nw;
+	  int is_new = 0;
 
 	  bpa_worker_id (bm, thread_index, &w, &nw);
 	  if (PREDICT_FALSE (
 		pool_index >= vec_len (pt->dyn)
 		|| bpa_dyn_acquire (vec_elt_at_index (pt->dyn, pool_index), p,
-				    sub_idx, w, nw, &blk)))
+				    sub_idx, w, nw, &blk, &is_new)))
 	    {
+	      /* RFC 8158 natEvent 12: alem de compliance, e o alarme que
+	       * antecipa chamado de suporte. */
+	      bpa_log_queue_event (pt, BPA_NAT_EVENT_PORTS_EXHAUSTED, src_host,
+				   0, 0, 0, pool_index);
 	      b[0]->error = node->errors[BPA_IN2OUT_ERROR_NO_BLOCK];
 	      goto trace;
 	    }
+
+	  if (is_new)
+	    bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_ALLOC, src_host,
+				 blk.ip_pub, blk.port_lo, blk.port_hi,
+				 pool_index);
 	}
 
       s = bpa_session_create (pt, p, pool_index, &blk, port_priv, (u8) proto,

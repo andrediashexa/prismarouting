@@ -4,15 +4,7 @@
 
 /* block_idx <-> (pub_idx, blk_idx) reuses the pool policy split, so a
  * dynamic pool still spreads consecutive allocations across public
- * addresses when the policy is interleaved. */
-static_always_inline void
-bpa_dyn_block_addr (const bpa_pool_t *p, u32 block_idx, bpa_block_t *b)
-{
-  bpa_split (p, block_idx, &b->pub_idx, &b->blk_idx);
-  bpa_set_addr_of (&p->outside, b->pub_idx, &b->ip_pub);
-  b->port_lo = p->port_min + b->blk_idx * p->block_size;
-  b->port_hi = b->port_lo + p->block_size - 1;
-}
+ * addresses when the policy is interleaved. Ver bpa_dyn_block_addr(). */
 
 clib_error_t *
 bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers)
@@ -64,11 +56,12 @@ bpa_dyn_free (bpa_dyn_t *d)
 
 int
 bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
-		 u32 n_workers, bpa_block_t *b)
+		 u32 n_workers, bpa_block_t *b, int *is_new)
 {
   u32 local, block_idx;
   uword *q;
 
+  *is_new = 0;
   q = hash_get (d->by_sub, sub_idx);
   if (PREDICT_TRUE (q != 0))
     {
@@ -89,6 +82,7 @@ bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
   hash_set (d->by_sub, sub_idx, (uword) local + 1);
   d->n_alloc++;
   d->n_allocations++;
+  *is_new = 1;
 
 found:
   block_idx = local * n_workers + worker;
@@ -116,7 +110,8 @@ bpa_dyn_active (bpa_dyn_t *d, u32 sub_idx)
 }
 
 u32
-bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown)
+bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
+	      bpa_dyn_release_t *out, u32 max_out)
 {
   u32 i, freed = 0;
 
@@ -125,12 +120,17 @@ bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown)
 
   for (i = 0; i < d->n_local; i++)
     {
+      if (freed >= max_out)
+	break;
       if (d->owner[i] == BPA_NO_BLOCK)
 	continue;
       if (d->idle_since[i] == 0)
 	continue;
       if (now - d->idle_since[i] <= (f64) holddown)
 	continue;
+
+      out[freed].sub_idx = d->owner[i];
+      out[freed].block_idx = i * n_workers + worker;
 
       hash_unset (d->by_sub, d->owner[i]);
       d->owner[i] = BPA_NO_BLOCK;

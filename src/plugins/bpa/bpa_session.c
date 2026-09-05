@@ -1,6 +1,7 @@
 /* bpa_session.c - per-worker session table. */
 
 #include "bpa.h"
+#include "bpa_log.h"
 
 /*
  * Per-worker table sizing. Sessions are sharded by subscriber, so each
@@ -243,11 +244,42 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 
 	  freed += bpa_expire_walk (pt, &bm->timeouts, now, BPA_EXPIRE_BUDGET);
 
-	  /* blocks whose hold-down ran out go back to the free list */
+	  /* blocks whose hold-down ran out go back to the free list, and
+	   * each release is an RFC 8158 natEvent 17 */
 	  for (j = 0; j < vec_len (pt->dyn); j++)
-	    bpa_dyn_reap (vec_elt_at_index (pt->dyn, j), now,
-			  bm->block_holddown);
+	    {
+	      bpa_dyn_release_t rel[64];
+	      u32 nrel, k, w, nw;
+	      bpa_pool_t *p;
+
+	      if (pool_is_free_index (bm->pools, j))
+		continue;
+	      p = pool_elt_at_index (bm->pools, j);
+
+	      bpa_worker_id (bm, i, &w, &nw);
+	      nrel = bpa_dyn_reap (vec_elt_at_index (pt->dyn, j), now,
+				   bm->block_holddown, w, nw, rel,
+				   ARRAY_LEN (rel));
+
+	      for (k = 0; k < nrel; k++)
+		{
+		  bpa_block_t blk;
+		  u32 ip_priv = 0;
+
+		  if (bpa_set_addr_of (&p->inside, rel[k].sub_idx, &ip_priv))
+		    continue;
+		  bpa_dyn_block_addr (p, rel[k].block_idx, &blk);
+
+		  /* roda na main thread, entao o buffer IPFIX e o dela */
+		  bpa_log_block_event (vm, vm->thread_index,
+				       BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
+				       blk.ip_pub, blk.port_lo, blk.port_hi, j);
+		}
+	    }
 	}
+      /* o dataplane so enfileira; e daqui que os registros saem */
+      bpa_log_drain (vm);
+
       vlib_worker_thread_barrier_release (vm);
     }
 

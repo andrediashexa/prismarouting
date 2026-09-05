@@ -4,6 +4,7 @@
 #include <vnet/ip/ip.h>
 
 #include "bpa.h"
+#include "bpa_log.h"
 
 u8 *
 format_bpa_policy (u8 *s, va_list *args)
@@ -478,4 +479,51 @@ VLIB_CLI_COMMAND (bpa_holddown_command, static) = {
   .path = "bpa block-holddown",
   .short_help = "bpa block-holddown [<segundos>]",
   .function = bpa_holddown_command_fn,
+};
+
+static clib_error_t *
+bpa_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			vlib_cli_command_t *cmd)
+{
+  int enable = -1;
+
+  if (unformat (input, "enable"))
+    enable = 1;
+  else if (unformat (input, "disable"))
+    enable = 0;
+  else
+    return clib_error_return (0, "diga 'enable' ou 'disable'");
+
+  return bpa_log_enable (enable);
+}
+
+VLIB_CLI_COMMAND (bpa_logging_command, static) = {
+  .path = "bpa logging",
+  .short_help = "bpa logging <enable|disable>",
+  .function = bpa_logging_command_fn,
+};
+
+static clib_error_t *
+bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			     vlib_cli_command_t *cmd)
+{
+  bpa_log_main_t *lm = &bpa_log_main;
+
+  vlib_cli_output (vm, "exportacao IPFIX de eventos de bloco (RFC 8158)");
+  vlib_cli_output (vm, "  estado      %s",
+		   lm->enabled ? "habilitada" : "desabilitada");
+  vlib_cli_output (vm, "  template    %u (%u bytes por registro)",
+		   lm->template_id, BPA_LOG_RECORD_SIZE);
+  vlib_cli_output (vm, "  registros   %Lu emitidos, %Lu descartados",
+		   lm->n_records, lm->n_dropped);
+  vlib_cli_output (vm, "  natEvent    16 alocacao, 17 liberacao, 12 esgotamento");
+  vlib_cli_output (vm, "  despachos   %Lu com dados, %Lu vazios, %Lu sem buffer",
+		   lm->n_flush_sent, lm->n_flush_empty, lm->n_getbuf_fail);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_logging_command, static) = {
+  .path = "show bpa logging",
+  .short_help = "show bpa logging",
+  .function = bpa_show_logging_command_fn,
 };

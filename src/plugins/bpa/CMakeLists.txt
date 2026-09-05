@@ -3,6 +3,7 @@ add_vpp_plugin(bpa
   bpa.c
   bpa_pool.c
   bpa_dyn.c
+  bpa_log.c
   bpa_session.c
   bpa_in2out.c
   bpa_handoff.c

@@ -58,12 +58,21 @@ clib_error_t *bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker,
 			    u32 n_workers);
 void bpa_dyn_free (bpa_dyn_t *d);
 
+/* Um bloco devolvido ao pool, para o caller poder logar natEvent 17. */
+typedef struct
+{
+  u32 sub_idx;
+  u32 block_idx;
+} bpa_dyn_release_t;
+
 /*
  * Block currently held by this subscriber, allocating one if needed.
  * Returns 0 on success, -1 when the slice is exhausted.
+ * *is_new is set when a block was actually allocated, which is the moment
+ * that has to be logged as RFC 8158 natEvent 16.
  */
 int bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
-		     u32 worker, u32 n_workers, bpa_block_t *b);
+		     u32 worker, u32 n_workers, bpa_block_t *b, int *is_new);
 
 /* Subscriber's last session ended: start the hold-down. */
 void bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now);
@@ -71,8 +80,22 @@ void bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now);
 /* Subscriber became active again before hold-down expired. */
 void bpa_dyn_active (bpa_dyn_t *d, u32 sub_idx);
 
-/* Release blocks idle for longer than holddown. Returns how many. */
-u32 bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown);
+/*
+ * Release blocks idle for longer than holddown. Fills `out` with what was
+ * released so the caller can emit natEvent 17, and returns how many.
+ */
+u32 bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker,
+		  u32 n_workers, bpa_dyn_release_t *out, u32 max_out);
+
+/* block_idx -> (endereco publico, faixa de portas). */
+static_always_inline void
+bpa_dyn_block_addr (const bpa_pool_t *p, u32 block_idx, bpa_block_t *b)
+{
+  bpa_split (p, block_idx, &b->pub_idx, &b->blk_idx);
+  bpa_set_addr_of (&p->outside, b->pub_idx, &b->ip_pub);
+  b->port_lo = p->port_min + b->blk_idx * p->block_size;
+  b->port_hi = b->port_lo + p->block_size - 1;
+}
 
 /* Which subscriber currently holds this block. -1 when it is free. */
 static_always_inline int

@@ -132,16 +132,44 @@ partir de `(IP publico, porta, instante)` depende do mapeamento - e e esse
 mapeamento que o BPA torna barato de guardar. Isto descreve o requisito
 tecnico; a adequacao juridica de cada provedor e com o juridico dele.
 
+## Duas armadilhas encontradas ao implementar
+
+As duas falham em silencio, e as duas custam justamente os registros do
+inicio - que e quando ninguem esta olhando.
+
+### 1. O dataplane nao pode emitir IPFIX direto
+
+Chamar o caminho de export de dentro do dispatch do grafo escreve o buffer
+mas ele nunca sai do fio. So os eventos emitidos de contexto de **processo**
+chegavam ao coletor.
+
+Desenho correto, que e o mesmo que o plugin de NAT do VPP usa: o node do
+dataplane **enfileira** o evento numa fila por thread (sem lock, cada worker
+so escreve na sua) e um processo drena sob a barreira e exporta. A fila tem
+teto: coletor inalcancavel vira perda contabilizada, nao memoria crescendo.
+
+### 2. Registro antes do template e indecifravel
+
+Os primeiros eventos sairam no fio antes do primeiro template. O tcpdump
+mostrava os pacotes; nenhum coletor conseguiria le-los, porque sem o template
+nao ha como saber o formato do registro.
+
+Isso e perda silenciosa logo apos habilitar o log ou reiniciar a caixa. A
+correcao e segurar os eventos na fila enquanto `last_template_sent == 0`.
+
+Vale para o coletor tambem: um coletor serio guarda o data set que chegou sem
+template e reprocessa quando ele chega. `tools/ipfix_collector.py` faz isso, e
+foi assim que a ordem virou visivel em vez de "sumiram registros".
+
 ## Plano de implementacao
 
-Depende do modo dinamico existir, porque e ele que gera os eventos.
-
-1. `bpa_log.c`: registro do template RFC 8158 via `flow_report.h`
-2. Emitir `natEvent 16` na alocacao e `17` na liberacao do bloco
-3. Emitir `natEvent 12` no esgotamento do bloco - alem de compliance, e o
-   alarme que antecipa chamado de suporte ("meu torrent parou")
-4. Transporte TCP com buffer local; UDP opcional
-5. Trilha de configuracao append-only e `show bpa pool history`
-6. CLI: `bpa logging collector <ip> port <n> [transport tcp|udp]`
-7. Teste de ponta a ponta: coletor de mentira no lab conferindo que cada
-   alocacao tem sua liberacao correspondente
+- [x] `bpa_log.c`: template RFC 8158 via `flow_report.h`
+- [x] `natEvent 16` na alocacao, `17` na liberacao, `12` no esgotamento
+- [x] Fila por thread no dataplane, drenada pelo processo
+- [x] Teste de ponta a ponta com coletor decodificando (`lab/ipfix.sh`),
+      conferindo que toda alocacao tem sua liberacao correspondente
+- [ ] Transporte TCP com buffer local; hoje so UDP, que perde registro sob
+      congestionamento - e perder um `natEvent 17` recria a lacuna descrita
+      acima
+- [ ] Trilha de configuracao append-only e `show bpa pool history`
+- [ ] Escolha de coletor por CLI propria, hoje herdada do exportador do VPP
