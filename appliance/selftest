@@ -16,6 +16,16 @@ bad()  { say "  [FAIL] $*"; fail=$((fail+1)); }
 say ""
 say "================ HexaRouting: boot self-test ================"
 
+# The first thing on the screen is the version. Whoever is at the console of a
+# faulty box has to say what is running before anything else, and "unknown" is
+# an answer too - worse is the line not being there at all.
+ver=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+if [ -n "$ver" ]; then
+  ok "HexaRouting $ver"
+else
+  bad "no version stamp in /usr/share/hexarouting/VERSION"
+fi
+
 # --- memoria ---
 # A live system keeps the whole overlay in RAM. Together with VPP, 2 GB is
 # not enough: the OOM killer takes VPP and brings the rest down with it. Found

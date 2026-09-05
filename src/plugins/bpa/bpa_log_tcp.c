@@ -68,7 +68,7 @@ bpa_tcp_msg_start (u8 **b, f64 now)
 {
   u32 at = vec_len (*b);
 
-  bpa_tcp_put_u16 (b, 10); /* versao */
+  bpa_tcp_put_u16 (b, 10); /* version */
   bpa_tcp_put_u16 (b, 0);  /* tamanho, preenchido em msg_end */
   bpa_tcp_put_u32 (b, (u32) now);
   bpa_tcp_put_u32 (b, bpa_log_tcp.seq);

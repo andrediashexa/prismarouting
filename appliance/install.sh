@@ -35,6 +35,21 @@ for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.servi
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 
+say "version stamp"
+# The box has to be able to state its own version: the tag identifies the
+# release only to whoever has the repository open, and that is not the person
+# on the phone. And if the tree had uncommitted changes, the file says so - an
+# ISO that declares itself v0.4.1 without being it sends the whole
+# investigation the wrong way.
+if [ -n "${HEXA_VERSION_STAMP:-}" ]; then
+  stamp=$HEXA_VERSION_STAMP
+else
+  stamp=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
+fi
+install -d -m 0755 "$DESTDIR/usr/share/hexarouting"
+printf '%s\n' "$stamp" > "$DESTDIR/usr/share/hexarouting/VERSION"
+chmod 0644 "$DESTDIR/usr/share/hexarouting/VERSION"
+
 say "kernel knobs"
 install -D -m 0644 "$REPO/appliance/etc/sysctl.conf" \
     "$DESTDIR/etc/sysctl.d/99-hexarouting.conf"

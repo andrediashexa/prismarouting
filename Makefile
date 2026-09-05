@@ -12,6 +12,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports
 	@python3 appliance/test_tune.py
 	@echo
 	@python3 test/test_hexash_complete.py
+	@echo
+	@sh test/test_version_stamp.sh
 
 vectors:
 	@cd ref && python3 gen_vectors.py

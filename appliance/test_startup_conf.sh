@@ -13,6 +13,22 @@ mkdir -p /run/vpp /vpp_plugins /var/log/vpp
 (cd /src/.build-vpp && ninja >/dev/null 2>&1)
 sh /src/appliance/install.sh >/dev/null 2>&1
 
+echo "=== does the box know its own version? ==="
+HEXA_VERSION_STAMP="0.0.0-test (deadbee)" sh /src/appliance/install.sh >/dev/null 2>&1
+stamp=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+[ "$stamp" = "0.0.0-test (deadbee)" ] \
+  && say "the installed stamp is the one the build passed" \
+  || bad "wrong stamp: '$stamp'"
+# With no stamp from the build, the installer has to fall back to the
+# repository VERSION - and never invent a number.
+sh /src/appliance/install.sh >/dev/null 2>&1
+stamp=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+case "$stamp" in
+  "$(cat /src/VERSION)"*) say "no stamp, falls back to the repo VERSION: $stamp" ;;
+  *) bad "with no stamp it produced '$stamp', expected it to start with $(cat /src/VERSION)" ;;
+esac
+
+echo
 echo "=== does the tuning write where VPP reads? ==="
 rm -f /etc/vpp/startup.conf
 HEXA_SUBSCRIBERS=200000 /usr/lib/hexarouting/apply-tuning >/dev/null 2>&1

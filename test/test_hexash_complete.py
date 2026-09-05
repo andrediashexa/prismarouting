@@ -92,5 +92,41 @@ check(not o and hint is None,
       f"should admit it does not know, got options={o} hint={hint!r}")
 print("  admits that from there on FRR is the one that knows")
 
+print("\n=== show version ===")
+o, _, _ = opts("operational", "show ")
+check("version" in o, f"'version' should be under show: {sorted(o)}")
+
+import tempfile as _tf, os as _os
+with _tf.TemporaryDirectory() as d:
+    vf = _os.path.join(d, "VERSION")
+    with open(vf, "w") as f:
+        f.write("0.9.1 (abc1234-dirty)\n")
+    _os.environ["HEXA_VERSION_FILE"] = vf
+    import importlib
+    importlib.reload(hexash)
+    check(hexash.hexarouting_version() == "0.9.1 (abc1234-dirty)",
+          f"should read the stamp from the file, read {hexash.hexarouting_version()!r}")
+    # A dirty tree has to keep saying it is dirty: that stamp is what stops an
+    # ISO from declaring itself a release when it is not one.
+    check("dirty" in hexash.hexarouting_version(),
+          "the dirty-tree stamp must not be swallowed")
+
+# With no installed file it has to fall back to the repository VERSION - that
+# is what makes hexash run from a development tree tell the truth.
+_os.environ["HEXA_VERSION_FILE"] = "/does/not/exist/VERSION"
+importlib.reload(hexash)
+repo_version = open(_os.path.join(_os.path.dirname(_os.path.abspath(hexash.__file__)),
+                                  "..", "..", "VERSION")).read().strip()
+check(hexash.hexarouting_version() == repo_version,
+      f"should fall back to the repository VERSION ({repo_version!r}), "
+      f"read {hexash.hexarouting_version()!r}")
+# A deliberate tripwire: 1.0.0 is a decision by the maintainer, not a number
+# somebody raises by accident. When they declare it ready, this check goes out
+# together with the rule in CONTRIBUTING.md.
+check(repo_version.startswith("0."),
+      f"the version is {repo_version!r}: 1.0.0 only once the maintainer "
+      "declares it production-ready (CONTRIBUTING.md, section 5)")
+print(f"  version read: {hexash.hexarouting_version()}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
