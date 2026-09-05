@@ -159,6 +159,9 @@ with tempfile.TemporaryDirectory() as root:
     check("default-hugepage" not in out,
           "nao pode exigir hugepage que nao existe: poe o VPP em loop de reinicio")
     check("page-size 4k" in out, "deveria cair para paginas de 4k")
+    check("plugin dpdk_plugin.so { disable }" in out,
+          "sem hugepage a EAL do DPDK falha e o VPP sai; com Restart=always "
+          "isso vira loop de reinicio")
     # e a linha do GRUB continua pedindo o tuning para o boot seguinte
     check("isolcpus=1-7" in out, "o GRUB ainda deve pedir isolcpus para o proximo boot")
     check("hugepages=" in out, "o GRUB ainda deve pedir hugepages para o proximo boot")
@@ -172,6 +175,9 @@ with tempfile.TemporaryDirectory() as root:
     check("PRIMEIRO BOOT" not in out, "nao deveria mais estar em primeiro boot")
     check("corelist-workers 1-7" in out, "deveria pinar os workers")
     check("default-hugepage" in out, "deveria usar hugepages")
+    check("plugin dpdk_plugin.so { disable }" not in out,
+          "com hugepage o DPDK tem que voltar")
+    check("bpa_plugin.so { enable }" in out, "o plugin do CGNAT tem que estar ligado")
     print("  config completa: pinning e hugepages")
 
 print("\n=== hugepages reservadas mas isolcpus ausente: ainda conservador ===")

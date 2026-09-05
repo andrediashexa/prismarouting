@@ -89,7 +89,55 @@ def handle(pkt):
                 emit(set_id, body)
         off += set_len
 
+def serve_tcp(port, secs):
+    """
+    IPFIX sobre TCP e um fluxo continuo de mensagens, nao um datagrama por
+    pacote: e preciso remontar pelo tamanho no cabecalho.
+    """
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", port))
+    srv.listen(1)
+    srv.settimeout(1.0)
+    print(f"coletor IPFIX/TCP ouvindo em {port} por {secs:.0f}s")
+    end, buf, conn = time.time() + secs, b"", None
+    while time.time() < end:
+        if conn is None:
+            try:
+                conn, _ = srv.accept()
+                conn.settimeout(1.0)
+                print("  conexao aceita")
+            except socket.timeout:
+                continue
+        try:
+            chunk = conn.recv(65535)
+        except socket.timeout:
+            continue
+        if not chunk:
+            print("  conexao encerrada pelo exportador")
+            conn.close(); conn = None; continue
+        buf += chunk
+        while len(buf) >= 16:
+            mlen = struct.unpack("!H", buf[2:4])[0]
+            if mlen < 16 or len(buf) < mlen:
+                break
+            handle(buf[:mlen])
+            buf = buf[mlen:]
+    if conn:
+        conn.close()
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "tcp":
+        port = int(sys.argv[2]) if len(sys.argv) > 2 else 4739
+        secs = float(sys.argv[3]) if len(sys.argv) > 3 else 25
+        serve_tcp(port, secs)
+        allocs = sum(1 for r in records if r.get("natEvent") == 16)
+        deallocs = sum(1 for r in records if r.get("natEvent") == 17)
+        exh = sum(1 for r in records if r.get("natEvent") == 12)
+        print(f"\nRESUMO: {len(records)} registros "
+              f"({allocs} alocacoes, {deallocs} liberacoes, {exh} esgotamentos)")
+        return
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 4739
     secs = float(sys.argv[2]) if len(sys.argv) > 2 else 25
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

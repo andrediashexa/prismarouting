@@ -163,6 +163,17 @@ bpa_log_flush (vlib_main_t *vm)
  * Drena todas as filas. Roda sob a barreira dos workers, no processo, que e
  * o unico contexto de onde o export IPFIX efetivamente sai do fio.
  */
+/* Emite nos transportes habilitados. UDP para telemetria, TCP para o log
+ * que nao pode perder registro; os dois podem estar ligados ao mesmo tempo. */
+static void
+bpa_log_emit (vlib_main_t *vm, f64 now, u8 event, u32 ip_priv, u32 ip_pub,
+	      u16 port_lo, u16 port_hi, u32 pool_id)
+{
+  bpa_log_block_event (vm, vm->thread_index, event, ip_priv, ip_pub, port_lo,
+		       port_hi, pool_id);
+  bpa_log_tcp_record (now, event, ip_priv, ip_pub, port_lo, port_hi, pool_id);
+}
+
 void
 bpa_log_drain (vlib_main_t *vm)
 {
@@ -172,7 +183,7 @@ bpa_log_drain (vlib_main_t *vm)
   flow_report_t *fr;
   u32 i, j;
 
-  if (!bpa_log_main.enabled)
+  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
     return;
 
   /*
@@ -186,10 +197,13 @@ bpa_log_drain (vlib_main_t *vm)
    * um coletor inalcancavel resulta em perda contabilizada, nao em memoria
    * crescendo sem fim.
    */
-  exp = pool_elt_at_index (frm->exporters, 0);
-  fr = pool_elt_at_index (exp->reports, bpa_log_main.flow_report_index);
-  if (fr->last_template_sent == 0)
-    return;
+  if (bpa_log_main.enabled)
+    {
+      exp = pool_elt_at_index (frm->exporters, 0);
+      fr = pool_elt_at_index (exp->reports, bpa_log_main.flow_report_index);
+      if (fr->last_template_sent == 0)
+	return;
+    }
 
   for (i = 0; i < vec_len (bm->per_thread); i++)
     {
@@ -199,13 +213,14 @@ bpa_log_drain (vlib_main_t *vm)
 	{
 	  bpa_log_event_t *e = vec_elt_at_index (pt->log_queue, j);
 
-	  bpa_log_block_event (vm, vm->thread_index, e->event, e->ip_priv,
-			       e->ip_pub, e->port_lo, e->port_hi, e->pool_id);
+	  bpa_log_emit (vm, vlib_time_now (vm), e->event, e->ip_priv,
+			e->ip_pub, e->port_lo, e->port_hi, e->pool_id);
 	}
       vec_reset_length (pt->log_queue);
     }
 
   bpa_log_flush (vm);
+  bpa_log_tcp_service (vlib_time_now (vm));
 }
 
 void

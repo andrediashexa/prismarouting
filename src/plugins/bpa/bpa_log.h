@@ -64,6 +64,34 @@ void bpa_log_block_event (vlib_main_t *vm, u32 thread_index, u8 event,
 			  u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
 			  u32 pool_id);
 
+/*
+ * Exportacao sobre TCP, para quando perder registro nao e aceitavel.
+ * O socket e nao bloqueante e o excedente vai para arquivo de transbordo.
+ */
+typedef struct
+{
+  int fd;
+  ip4_address_t collector;
+  u16 port;
+  u8 enabled;
+  u8 connected;
+  u8 pending_connect;
+  u8 *outbuf;
+  u8 *spill_path;
+  f64 next_attempt;
+  f64 last_template;
+  u32 seq;
+  u64 n_records, n_sent, n_spilled, n_replayed, n_dropped, n_connects;
+} bpa_log_tcp_t;
+
+extern bpa_log_tcp_t bpa_log_tcp;
+
+clib_error_t *bpa_log_tcp_enable (ip4_address_t *collector, u16 port,
+				  int enable);
+void bpa_log_tcp_record (f64 now, u8 event, u32 ip_priv, u32 ip_pub,
+			 u16 port_lo, u16 port_hi, u32 pool_id);
+void bpa_log_tcp_service (f64 now);
+
 /* Drena as filas de todas as threads. Chamado sob barreira. */
 void bpa_log_drain (vlib_main_t *vm);
 

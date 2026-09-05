@@ -205,6 +205,27 @@ def render_grub(p):
     )
 
 
+PLUGINS_TUNED = """plugins {
+  plugin default { enable }
+  plugin bpa_plugin.so { enable }
+  plugin linux_cp_plugin.so { enable }
+  plugin linux_nl_plugin.so { enable }
+}
+"""
+
+# Sem hugepage a EAL do DPDK falha e o VPP sai. Como o vpp.service tem
+# Restart=always, o resultado e um loop de reinicio que nao aponta a causa.
+PLUGINS_FIRSTBOOT = """plugins {
+  plugin default { enable }
+  # DPDK desabilitado ate haver hugepage: sem ela a EAL falha e o VPP sai.
+  plugin dpdk_plugin.so { disable }
+  plugin bpa_plugin.so { enable }
+  plugin linux_cp_plugin.so { enable }
+  plugin linux_nl_plugin.so { enable }
+}
+"""
+
+
 def render_vpp(p):
     if not p["tuned_now"]:
         # Primeiro boot: o kernel ainda nao reservou hugepage nem isolou CPU.
@@ -219,6 +240,7 @@ def render_vpp(p):
             "# qualquer lugar e nao poe o VPP em loop de reinicio. Reinicie\n"
             "# para que isolcpus e hugepages entrem em vigor; no boot seguinte\n"
             "# este arquivo passa a sair com o tuning completo.\n"
+            + PLUGINS_FIRSTBOOT + "\n"
             "cpu {\n"
             "  # sem workers ate o kernel isolar CPU\n"
             "}\n\n"
@@ -240,6 +262,7 @@ def render_vpp(p):
                f"  corelist-workers {fmt_list(p['workers'])}\n")
     return (
         "# Gerado por hexarouting-tune. Nao editar a mao.\n"
+        + PLUGINS_TUNED + "\n"
         "cpu {\n" + cpu + "}\n\n"
         "buffers {\n"
         f"  buffers-per-numa {max(16384, len(p['workers']) * 16384)}\n"

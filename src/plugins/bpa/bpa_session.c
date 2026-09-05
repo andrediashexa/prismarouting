@@ -274,6 +274,9 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		  bpa_log_block_event (vm, vm->thread_index,
 				       BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
 				       blk.ip_pub, blk.port_lo, blk.port_hi, j);
+		  bpa_log_tcp_record (now, BPA_NAT_EVENT_BLOCK_DEALLOC,
+				      ip_priv, blk.ip_pub, blk.port_lo,
+				      blk.port_hi, j);
 		}
 	    }
 	}

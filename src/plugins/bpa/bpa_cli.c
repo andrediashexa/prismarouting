@@ -529,6 +529,29 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
   vlib_cli_output (vm, "  natEvent    16 alocacao, 17 liberacao, 12 esgotamento");
   vlib_cli_output (vm, "  despachos   %Lu com dados, %Lu vazios, %Lu sem buffer",
 		   lm->n_flush_sent, lm->n_flush_empty, lm->n_getbuf_fail);
+
+  if (bpa_log_tcp.enabled)
+    {
+      vlib_cli_output (vm, "transporte TCP (nao perde registro)");
+      vlib_cli_output (vm, "  coletor     %U:%u  %s", format_ip4_address,
+		       &bpa_log_tcp.collector, bpa_log_tcp.port,
+		       bpa_log_tcp.connected	     ? "conectado"
+		       : bpa_log_tcp.pending_connect ? "conectando"
+						     : "desconectado");
+      vlib_cli_output (vm,
+		       "  registros   %Lu emitidos, %Lu bytes enviados, "
+		       "%Lu pendentes",
+		       bpa_log_tcp.n_records, bpa_log_tcp.n_sent,
+		       (u64) vec_len (bpa_log_tcp.outbuf));
+      vlib_cli_output (vm,
+		       "  transbordo  %Lu bytes em disco, %Lu reenviados, "
+		       "%Lu descartados",
+		       bpa_log_tcp.n_spilled, bpa_log_tcp.n_replayed,
+		       bpa_log_tcp.n_dropped);
+      vlib_cli_output (vm, "  conexoes    %Lu", bpa_log_tcp.n_connects);
+    }
+  else
+    vlib_cli_output (vm, "transporte TCP: desabilitado");
   return 0;
 }
 
@@ -654,4 +677,29 @@ VLIB_CLI_COMMAND (bpa_show_config_command, static) = {
   .path = "show bpa config",
   .short_help = "show bpa config",
   .function = bpa_show_config_command_fn,
+};
+
+static clib_error_t *
+bpa_logging_tcp_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			    vlib_cli_command_t *cmd)
+{
+  ip4_address_t addr = { 0 };
+  u32 port = 4739;
+
+  if (unformat (input, "disable"))
+    return bpa_log_tcp_enable (0, 0, 0);
+
+  if (!unformat (input, "%U", unformat_ip4_address, &addr))
+    return clib_error_return (0, "informe o endereco do coletor");
+  unformat (input, "port %u", &port);
+  if (port > 65535)
+    return clib_error_return (0, "porta invalida");
+
+  return bpa_log_tcp_enable (&addr, (u16) port, 1);
+}
+
+VLIB_CLI_COMMAND (bpa_logging_tcp_command, static) = {
+  .path = "bpa logging tcp",
+  .short_help = "bpa logging tcp <coletor> [port <n>] | bpa logging tcp disable",
+  .function = bpa_logging_tcp_command_fn,
 };

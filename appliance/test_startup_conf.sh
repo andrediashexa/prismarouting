@@ -19,8 +19,16 @@ HEXA_SUBSCRIBERS=200000 /usr/lib/hexarouting/apply-tuning >/dev/null 2>&1
   || bad "/etc/vpp/startup.conf nao foi gerado"
 grep -q "GERADO por hexarouting-tune" /etc/vpp/startup.conf \
   && say "com marca de gerado" || bad "sem marca de gerado"
-grep -q "bpa_plugin.so" /etc/vpp/startup.conf \
-  && say "base do operador presente (plugin bpa)" || bad "base nao foi concatenada"
+# Confere algo que SO existe na base. A stanza plugins e gerada, entao
+# procura-la aqui daria um falso positivo de "base concatenada".
+grep -q "cli-listen /run/vpp/cli.sock" /etc/vpp/startup.conf \
+  && say "base do operador concatenada (unix/cli-listen)" \
+  || bad "base nao foi concatenada"
+grep -q "bpa_plugin.so { enable }" /etc/vpp/startup.conf \
+  && say "plugin do CGNAT habilitado na config gerada" \
+  || bad "plugin do CGNAT ausente"
+n=$(grep -c "^plugins {" /etc/vpp/startup.conf)
+[ "$n" = 1 ] && say "uma unica stanza plugins" || bad "plugins{} aparece $n vezes"
 grep -qE "^(cpu|buffers|memory) \{" /etc/vpp/startup.conf \
   && say "stanzas calculadas presentes" || bad "stanzas calculadas ausentes"
 n=$(grep -c "^cpu {" /etc/vpp/startup.conf)
