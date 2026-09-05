@@ -1,7 +1,7 @@
 #!/bin/sh
-# Prova que o handoff coloca as duas direcoes do mesmo assinante no mesmo
-# worker. Sem ele, a resposta cairia num worker sem a sessao e o pacote
-# morreria em "sem sessao para o destino".
+# Proves that the handoff puts both directions of the same subscriber on the
+# same worker. Without it, the reply would land on a worker with no session and
+# the packet would die in "no session for destination".
 set -u
 mkdir -p /run/vpp /vpp_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -12,7 +12,7 @@ cd /src
 vpp -c /src/lab/startup-workers.conf > /tmp/vpp.log 2>&1 &
 n=0
 until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
-vppctl show version >/dev/null 2>&1 || { echo "VPP nao subiu"; tail -20 /tmp/vpp.log; exit 1; }
+vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 
 echo "=== threads ==="
 vppctl show threads | head -5
@@ -33,7 +33,7 @@ vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 
 echo
-echo "=== feature ativa na interface (deve ser o node de handoff) ==="
+echo "=== feature active on the interface (must be the handoff node) ==="
 vppctl show interface features pg0 | grep -A2 "ip4-unicast" | grep bpa
 vppctl show interface features pg1 | grep -A2 "ip4-unicast" | grep bpa
 
@@ -55,12 +55,12 @@ vppctl show trace | grep -E "BPA (handoff|in2out)" | sed 's/^/  /'
 for sub in 5 6 9; do vppctl packet-generator delete s$sub; done
 
 echo
-echo "=== distribuicao das sessoes por thread ==="
-echo "previsto: thread 1 -> 1 sessao (sub 6) ; thread 2 -> 2 sessoes (sub 5 e 9)"
+echo "=== session distribution per thread ==="
+echo "predicted: thread 1 -> 1 session (sub 6) ; thread 2 -> 2 sessions (subs 5 and 9)"
 vppctl show bpa session
 
 echo
-echo "=== OUT2IN: respostas para os 3 ==="
+echo "=== OUT2IN: replies for all three ==="
 pg "name r5 limit 1 node ip4-input interface pg1 size 60-60 \
     data { UDP: 8.8.8.8 -> 200.150.0.17 \
            UDP: 53 -> 1536 \

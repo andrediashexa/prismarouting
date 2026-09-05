@@ -1,23 +1,24 @@
 #!/bin/sh
-# Boota a ISO em QEMU e mostra o autoteste do console.
+# Boots the ISO in QEMU and shows the console self-test.
 #
-# O modelo de CPU importa duas vezes. O padrao do QEMU (qemu64) nao tem
-# SSE4.2 e o VPP morre com SIGILL em 199ms - um loop de reinicio que nao
-# existe no produto. Mas "-cpu max" tambem nao serve: ele emula ate AVX-512
-# em software e o boot em TCG fica lento a ponto de estourar o timeout.
-# Nehalem e o modelo minimo que atende o requisito real (SSE4.2).
+# The CPU model matters twice over. QEMU's default (qemu64) has no SSE4.2 and
+# VPP dies with SIGILL in 199ms - a restart loop that does not exist in the
+# product. But "-cpu max" is no good either: it emulates up to AVX-512 in
+# software and a TCG boot gets slow enough to blow the timeout. Nehalem is the
+# minimum model that meets the real requirement (SSE4.2).
 #
-# BOOT_MEM em 4096: um sistema live mantem a raiz gravavel inteira em RAM
-# (overlay sobre o squashfs). Com 2 GB o matador de OOM leva o VPP - medido,
-# com "Out of memory: Killed process (vpp)" no console - e derruba o resto
-# junto. Nao era o VPP sendo guloso: ele foi morto com 19 MB residentes.
+# BOOT_MEM at 4096: a live system keeps the whole writable root in RAM (an
+# overlay over the squashfs). With 2 GB the OOM killer takes VPP - measured,
+# with "Out of memory: Killed process (vpp)" on the console - and brings the
+# rest down with it. It was not VPP being greedy: it was killed with 19 MB
+# resident.
 set -u
 ISO=${ISO:-/src/hexarouting.iso}
 SRC=${SRC:-/src}
 
-# Uma ISO mais velha que as fontes nao testa o que voce mudou. Ja
-# aconteceu duas vezes: o build morreu por falta de debootstrap e o
-# boot seguinte aprovou a ISO anterior, com as strings antigas.
+# An ISO older than the sources does not test what you changed. It has already
+# happened twice: the build died for a missing debootstrap and the next boot
+# passed the previous image, with the old strings in it.
 if [ "${ALLOW_STALE_ISO:-0}" != 1 ] && [ -f "$ISO" ]; then
   newer=$(find "$SRC/appliance" "$SRC/src" -type f -newer "$ISO" -print 2>/dev/null | head -1)
   if [ -n "$newer" ]; then
@@ -31,16 +32,16 @@ mount -o loop,ro "$ISO" /mnt/iso
 cp /mnt/iso/live/vmlinuz /mnt/iso/live/initrd /tmp/bf/
 umount /mnt/iso
 
-# Com KVM o boot leva segundos em vez de minutos, e "-cpu host" entrega os
-# conjuntos de instrucao reais - o que o VPP precisa. Sem KVM cai para TCG
-# com Nehalem, o minimo que atende o requisito (SSE4.2) sem o custo de
-# emular AVX-512 como faria "-cpu max".
+# With KVM the boot takes seconds instead of minutes, and "-cpu host" gives
+# the real instruction sets - which is what VPP needs. Without KVM it falls
+# back to TCG with Nehalem, the minimum meeting the requirement (SSE4.2)
+# without the cost of emulating AVX-512 as "-cpu max" would.
 if [ -w /dev/kvm ]; then
   ACCEL="-enable-kvm -cpu host"
-  echo "acelerando com KVM"
+  echo "accelerating with KVM"
 else
   ACCEL="-cpu ${BOOT_CPU:-Nehalem}"
-  echo "sem KVM: emulando com ${BOOT_CPU:-Nehalem} (lento)"
+  echo "no KVM: emulating with ${BOOT_CPU:-Nehalem} (slow)"
 fi
 
 timeout "${BOOT_SECS:-420}" qemu-system-x86_64 \
@@ -51,9 +52,9 @@ timeout "${BOOT_SECS:-420}" qemu-system-x86_64 \
 
 sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log > /tmp/clean.log
 
-# O log sai do container: sem isso um boot que falha nao deixa nada para
-# olhar, e o diagnostico vira adivinhacao - exatamente o que este script
-# existe para evitar.
+# The log leaves the container: without that, a failed boot leaves nothing to
+# look at and the diagnosis becomes guesswork - exactly what this script exists
+# to prevent.
 cp /tmp/clean.log "${LOGCOPY:-/src/boot-console.log}" 2>/dev/null || true
 
 sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
@@ -63,13 +64,13 @@ fi
 
 echo
 echo "=========== SELF-TEST DID NOT REPORT READY ==========="
-echo "--- o autoteste chegou a rodar? ---"
-grep -c "boot self-test" /tmp/clean.log | sed 's/^/  ocorrencias: /'
-echo "--- servicos ---"
+echo "--- did the self-test even run? ---"
+grep -c "boot self-test" /tmp/clean.log | sed 's/^/  occurrences: /'
+echo "--- services ---"
 grep -iE "hexarouting|vpp\.service|frr\.service" /tmp/clean.log | tail -10 | sed 's/^/  /'
-echo "--- falhas do systemd ---"
+echo "--- systemd failures ---"
 grep -iE "FAILED|Failed to start|Dependency failed" /tmp/clean.log | tail -8 | sed 's/^/  /'
-echo "--- ultimas 25 linhas do console ---"
+echo "--- last 25 console lines ---"
 tail -25 /tmp/clean.log | sed 's/^/  /'
-echo "--- console completo em ${LOGCOPY:-/src/boot-console.log} ---"
+echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
 exit 1

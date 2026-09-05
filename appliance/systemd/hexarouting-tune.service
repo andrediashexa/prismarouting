@@ -1,20 +1,20 @@
 [Unit]
 Description=HexaRouting - compute boot tuning from the hardware
 Documentation=file:///usr/share/doc/hexarouting/architecture.md
-# Roda antes do VPP: o startup.conf gerado e o que o VPP le. As mudancas de
-# linha de comando do kernel (isolcpus, hugepages) so valem no boot seguinte.
+# Runs before VPP: the generated startup.conf is what VPP reads. Kernel
+# command line changes (isolcpus, hugepages) only apply on the next boot.
 #
-# Roda em todo boot, sem sentinela: o calculo e barato e assim uma mudanca em
-# tune.env, ou uma troca de NIC, e respeitada. Quem evita o custo do
-# update-grub e o apply-tuning, comparando antes de regenerar.
+# Runs on every boot, with no sentinel: the calculation is cheap, so a change
+# in tune.env or a swapped NIC is honoured. What avoids the cost of
+# update-grub is apply-tuning, which compares before regenerating.
 Before=vpp.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Sem isto o systemd espera "no limit": um update-grub lento trava o boot
-# inteiro, e foi o que aconteceu - 5 minutos parado no tuning. O tuning so
-# surte efeito no proximo boot de qualquer forma, entao nao vale esse preco.
+# Without this systemd waits "no limit": a slow update-grub stalls the
+# whole boot, and that is what happened - 5 minutes stuck in tuning. The
+# tuning only takes effect on the next boot anyway, so it is not worth it.
 TimeoutStartSec=90
 ExecStart=/usr/lib/hexarouting/apply-tuning
 EnvironmentFile=-/etc/hexarouting/tune.env

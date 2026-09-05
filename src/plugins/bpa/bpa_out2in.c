@@ -226,7 +226,7 @@ bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
   s = pool_elt_at_index (pt->sessions, value.value);
   *ip_priv_out = s->ip_priv;
 
-  /* --- destino externo: nosso publico -> assinante --- */
+  /* --- outer destination: our public address -> subscriber --- */
   sum = ip->checksum;
   sum = ip_csum_update (sum, ip->dst_address.as_u32,
 			clib_host_to_net_u32 (s->ip_priv), ip4_header_t,

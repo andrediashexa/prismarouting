@@ -2,8 +2,8 @@
 """
 Monta um datagrama UDP partido em dois fragmentos IP, em hex.
 
-O segundo fragmento nao carrega cabecalho UDP: e por isso que ele nao casa
-com sessao nenhuma sem o reassembly virtual raso guardando as portas do
+The second fragment carries no UDP header: that is why it matches no session
+at all unless shallow virtual reassembly has kept the ports from the
 primeiro.
 """
 import ipaddress, struct, sys
@@ -36,6 +36,6 @@ if which == "first":
     # cabecalho UDP + primeira metade da carga
     pkt = ip4(src, dst, 17, udp + data[:8], 0, mf=1)
 else:
-    # so a segunda metade: sem cabecalho UDP nenhum
+    # only the second half: no UDP header at all
     pkt = ip4(src, dst, 17, data[8:], 16, mf=0)
 print("0x" + pkt.hex())

@@ -36,7 +36,7 @@ test_exhaust (u16 n_ports)
 
   memset (seen, 0, sizeof (seen));
   bpa_portmap_init (&pm, n_ports, storage);
-  CHECK (pm.n_free == n_ports, "bloco %u: n_free inicial %u", n_ports,
+  CHECK (pm.n_free == n_ports, "block %u: initial n_free %u", n_ports,
 	 pm.n_free);
 
   for (;;)
@@ -55,18 +55,18 @@ test_exhaust (u16 n_ports)
 	break; /* runaway guard */
     }
 
-  CHECK (got == n_ports, "bloco %u: entregou %u portas, esperado %u", n_ports,
+  CHECK (got == n_ports, "block %u: handed out %u ports, expected %u", n_ports,
 	 got, n_ports);
-  CHECK (dup == 0, "bloco %u: %u portas duplicadas", n_ports, dup);
-  CHECK (oob == 0, "bloco %u: %u portas fora do bloco", n_ports, oob);
-  CHECK (pm.n_free == 0, "bloco %u: n_free final %u", n_ports, pm.n_free);
-  CHECK (bpa_portmap_alloc (&pm, -1) == -1, "bloco %u: alocou esgotado",
+  CHECK (dup == 0, "block %u: %u duplicated ports", n_ports, dup);
+  CHECK (oob == 0, "block %u: %u ports outside the block", n_ports, oob);
+  CHECK (pm.n_free == 0, "block %u: final n_free %u", n_ports, pm.n_free);
+  CHECK (bpa_portmap_alloc (&pm, -1) == -1, "block %u: allocated from an exhausted map",
 	 n_ports);
 
   for (i = 0; i < n_ports; i++)
-    CHECK (seen[i] == 1, "bloco %u: offset %u nunca entregue", n_ports, i);
+    CHECK (seen[i] == 1, "block %u: offset %u never handed out", n_ports, i);
 
-  printf ("  bloco %-5u %u portas distintas, esgotamento correto\n", n_ports,
+  printf ("  block %-5u %u distinct ports, exhaustion correct\n", n_ports,
 	  got);
 }
 
@@ -77,25 +77,25 @@ main (void)
   bpa_portmap_t pm;
 
   printf ("=== exhaustion without collision, several block sizes ===\n");
-  test_exhaust (32); /* exercita o mascaramento da cauda */
+  test_exhaust (32); /* exercises the tail masking */
   test_exhaust (64);
   test_exhaust (128);
   test_exhaust (512);
   test_exhaust (4096);
 
-  printf ("\n=== preservacao de porta ===\n");
+  printf ("\n=== port preservation ===\n");
   {
     bpa_portmap_init (&pm, 512, storage);
     CHECK (bpa_portmap_alloc (&pm, 300) == 300, "did not honour port 300");
     CHECK (bpa_portmap_is_used (&pm, 300), "300 was not marked used");
     /* preferred one already taken: must fall back, never repeat */
     CHECK (bpa_portmap_alloc (&pm, 300) != 300, "entregou 300 duas vezes");
-    /* preferida fora do bloco: ignora e aloca normal */
+    /* preferred outside the block: ignore it and allocate normally */
     {
       int off = bpa_portmap_alloc (&pm, 9999);
       CHECK (off >= 0 && off < 512, "preferida invalida quebrou a alocacao");
     }
-    printf ("  porta preferida respeitada, colisao e fora-de-faixa tratadas\n");
+    printf ("  preferred port honoured, collision and out-of-range handled\n");
   }
 
   printf ("\n=== liberacao e reuso ===\n");
@@ -129,21 +129,21 @@ main (void)
     bpa_portmap_free (&pm, 0); /* double free */
     CHECK (pm.n_free == 128, "double free changed n_free to %u", pm.n_free);
 
-    bpa_portmap_free (&pm, 5000); /* fora do bloco */
+    bpa_portmap_free (&pm, 5000); /* outside the block */
     CHECK (pm.n_free == 128, "an out-of-range free changed n_free to %u",
 	   pm.n_free);
-    printf ("  double free e free fora de faixa ignorados\n");
+    printf ("  double free and out-of-range free ignored\n");
   }
 
-  printf ("\n=== cauda nunca e entregue (bloco de 32 em palavra de 64) ===\n");
+  printf ("\n=== the tail is never handed out (32-port block in a 64-bit word) ===\n");
   {
     u32 i, bad = 0;
     bpa_portmap_init (&pm, 32, storage);
     for (i = 32; i < 64; i++)
       if (!bpa_portmap_is_used (&pm, (u16) i))
 	bad++;
-    CHECK (bad == 0, "%u bits de cauda ficaram livres", bad);
-    printf ("  32 bits de cauda marcados como usados no init\n");
+    CHECK (bad == 0, "%u tail bits were left free", bad);
+    printf ("  32 tail bits marked used at init\n");
   }
 
   printf ("\n%s  (%u checks, %d failures)\n",

@@ -338,7 +338,7 @@ bpa_log_tcp_service (f64 now)
 	  continue;
 	}
       if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-	break; /* coletor lento: fica no buffer, tenta no proximo tick */
+	break; /* slow collector: stays in the buffer, retried next tick */
       bpa_tcp_disconnect ();
       break;
     }

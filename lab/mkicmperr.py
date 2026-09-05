@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Monta um ICMP "fragmentation needed" com o pacote original embutido, em hex,
-para o packet-generator do VPP.
+Builds an ICMP "fragmentation needed" carrying the original packet embedded,
+in hex, for VPP's packet generator.
 
-E o pacote que o PMTUD depende. Sem traducao dele, a conexao TCP do assinante
-fica pendurada e o sintoma que chega ao suporte e "alguns sites nao abrem".
+This is the packet PMTUD depends on. Without translating it, the subscriber's
+TCP connection hangs and the symptom that reaches support is "some sites do
+not open".
 """
 import ipaddress, struct, sys
 
@@ -27,11 +28,11 @@ def ip4(src, dst, proto, payload_len, total=None):
 router, pub, remote = sys.argv[1], sys.argv[2], sys.argv[3]
 pub_port, remote_port, mtu = int(sys.argv[4]), int(sys.argv[5]), 1500
 
-# pacote original que o roteador esta reportando: assinante -> remoto
+# the original packet the router is reporting on: subscriber -> remote
 inner_udp = struct.pack("!HHHH", pub_port, remote_port, 8, 0)
 inner_ip = ip4(pub, remote, 17, len(inner_udp), total=1500)
 
-# corpo do ICMP: tipo 3 codigo 4, com o MTU do proximo salto
+# ICMP body: type 3 code 4, carrying the next-hop MTU
 icmp_body = struct.pack("!HH", 0, mtu) + inner_ip + inner_udp
 icmp = struct.pack("!BBH", 3, 4, 0) + icmp_body
 icmp = icmp[:2] + struct.pack("!H", csum(icmp)) + icmp[4:]

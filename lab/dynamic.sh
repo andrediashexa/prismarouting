@@ -1,8 +1,8 @@
 #!/bin/sh
-# Modo dinamico (PBA): bloco alocado sob demanda, devolvido apos hold-down.
+# Dynamic mode (PBA): block allocated on demand, returned after hold-down.
 #
 # Pool proposital de borda: 1024 assinantes possiveis contra 3 blocos.
-#   64512 portas / bloco de 16384 = 3 blocos num unico IP publico
+#   64512 ports / 16384-port block = 3 blocks on a single public IP
 # Blocos previstos, em ordem de alocacao: portas 1024, 17408, 33792.
 set -u
 mkdir -p /run/vpp /vpp_plugins
@@ -13,7 +13,7 @@ cd /src
 
 vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
-vppctl show version >/dev/null 2>&1 || { echo "VPP nao subiu"; tail -20 /tmp/vpp.log; exit 1; }
+vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl create packet-generator interface pg1 >/dev/null
@@ -45,30 +45,33 @@ send() {
 }
 
 echo
-echo "=========== 3 assinantes pegam os 3 blocos ==========="
-for sub in 5 6 9; do echo "  assinante 100.64.0.$sub:"; send $sub 5; done
+echo "=========== 3 subscribers take the 3 blocks ==========="
+for sub in 5 6 9; do echo "  subscriber 100.64.0.$sub:"; send $sub 5; done
 
 echo
-echo "=========== o mesmo assinante NAO deve trocar de bloco ==========="
-echo "  100.64.0.5 de novo, porta de origem diferente:"
+echo "=========== the same subscriber must NOT change block ==========="
+echo "  100.64.0.5 again, different source port:"
 send 5 6
 
 echo
-echo "=========== 4o assinante: nao ha bloco livre ==========="
+echo "=========== 4th subscriber: no free block ==========="
 echo "  100.64.0.12:"
 send 12 5
-echo "  contador de recusa:"
-vppctl show errors | grep -i "sem bloco livre" | sed 's/^/    /'
+# The counter has to be searched for by the string the plugin emits. This line
+# looked for the Portuguese version, which the plugin never emitted: it never
+# matched, and a refusal showed up as absent output instead of a counter.
+echo "  refusal counter:"
+vppctl show errors | grep -i "no free block" | sed 's/^/    /'
 
 echo
-echo "=========== estado dos blocos ==========="
+echo "=========== block state ==========="
 vppctl show bpa blocks | sed 's/^/  /'
 
 echo
-echo "=========== volta da internet ==========="
-# A preservacao de porta manteve 12345, que cai dentro do bloco 1024-17407
-# do primeiro assinante. E a porta real, nao o inicio do bloco.
-echo "  esperado: 200.150.0.16:12345 -> 100.64.0.5:12345"
+echo "=========== coming back from the internet ==========="
+# Port preservation kept 12345, which falls inside the first subscriber's
+# 1024-17407 block. It is the real port, not the start of the block.
+echo "  expected: 200.150.0.16:12345 -> 100.64.0.5:12345"
 pg "name r1 limit 1 node ip4-input interface pg1 size 60-60 \
     data { UDP: 8.8.8.8 -> 200.150.0.16 \
            UDP: 53 -> 12345 \
@@ -79,18 +82,18 @@ vppctl show trace | grep "BPA out2in" | sed 's/^/    /'
 vppctl packet-generator delete r1 >/dev/null 2>&1
 
 echo
-echo "=========== hold-down: blocos voltam para o pool ==========="
-# So agora encurtamos o timeout: se fosse no inicio, as sessoes morreriam
-# no meio dos testes anteriores.
+echo "=========== hold-down: blocks return to the pool ==========="
+# Only now do we shorten the timeout: doing it at the start would kill the
+# sessions in the middle of the earlier tests.
 vppctl bpa timeouts udp 3
-echo "  sessoes expiram em 3s, blocos ficam 5s em hold-down"
+echo "  sessions expire in 3s, blocks stay 5s in hold-down"
 n=0
 until vppctl show bpa blocks | grep -q "total: 0/3" || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 echo "  (${n}s)"
 vppctl show bpa blocks | sed 's/^/  /'
 
 echo
-echo "=========== agora o 4o assinante consegue ==========="
+echo "=========== now the 4th subscriber succeeds ==========="
 echo "  100.64.0.12:"
 send 12 5
 

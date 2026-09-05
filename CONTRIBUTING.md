@@ -34,7 +34,7 @@ repository MUST follow all five rules below.
 
 | # | Rule | Notes |
 |---|------|-------|
-| 1 | Documentation MUST be written in **English** | This includes user-facing strings, CLI syntax, VTY output and generated configuration files. Code comments MAY remain in Portuguese; they are not equipment syntax. |
+| 1 | Documentation MUST be written in **English** | This includes user-facing strings, CLI syntax, VTY output, generated configuration files **and source comments**. Everything the project writes down is in English. |
 | 2 | Every document MUST open with a **TL;DR** | Three to six lines. A reader who stops there MUST still know what the document is about and what it decided. |
 | 3 | Every document MUST answer **5W2H** | What, Why, Who, Where, When, How, How much. A table is RECOMMENDED. Short documents MAY fold 5W2H into prose, but no question may go unanswered. |
 | 4 | Normative statements MUST use **RFC 2119** keywords | Write "the pool MUST reject overlapping prefixes", not "the pool should probably reject". Every document that uses the keywords MUST cite RFC 2119, as this one does. |
@@ -133,6 +133,5 @@ A branch is ready to merge when **all** of the following hold:
 * **Code review sign-off** — the repository has a single maintainer today, so
   no approval rule is stated. When that changes, this section is where it
   goes.
-* **Code comment language** — deliberately unconstrained. Rule 1 governs what
-  the equipment and its documentation say, not how the source explains itself
-  to whoever maintains it.
+* **Spoken language** — this document governs what the project *writes*.
+  Nobody is required to discuss the work in English.

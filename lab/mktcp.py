@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monta um pacote TCP com flags escolhidas, em hex, para o packet-generator."""
+"""Builds a TCP packet with chosen flags, in hex, for the packet generator."""
 import ipaddress, struct, sys
 
 FLAGS = {"fin": 0x01, "syn": 0x02, "rst": 0x04, "psh": 0x08,

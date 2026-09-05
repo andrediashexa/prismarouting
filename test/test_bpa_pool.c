@@ -215,7 +215,7 @@ main (void)
 
     bpa_set_addr_of (&p->outside, 0, &lo_pub);
     CHECK (bpa_reverse (p, lo_pub, p->port_min - 1, &dummy) != 0,
-	   "porta abaixo da faixa foi aceita");
+	   "a port below the range was accepted");
     CHECK (bpa_reverse (p, lo_pub, 0, &dummy) != 0, "port 0 was accepted");
     CHECK (bpa_reverse (p, p->outside.ranges[0].base - 1, 2000, &dummy) != 0,
 	   "ip publico fora do conjunto foi aceito");

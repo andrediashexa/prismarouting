@@ -11,7 +11,7 @@
 #include <vlib/vlib.h>
 #include <vnet/ip/ip.h>
 
-/* RFC 8158, registro natEvent */
+/* RFC 8158, natEvent record */
 #define BPA_NAT_EVENT_PORTS_EXHAUSTED 12
 #define BPA_NAT_EVENT_BLOCK_ALLOC     16
 #define BPA_NAT_EVENT_BLOCK_DEALLOC   17

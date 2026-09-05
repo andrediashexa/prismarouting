@@ -1,11 +1,11 @@
 #!/bin/sh
-# Abre a VTY do HexaRouting.
+# Opens the HexaRouting VTY.
 #
-#   sh tools/vty.sh                 sessao interativa
-#   sh tools/vty.sh -c "comando"    um comando e sai
+#   sh tools/vty.sh                 interactive session
+#   sh tools/vty.sh -c "command"    one command, then exit
 #
-# A VTY roda onde o dataplane esta: dentro do container que segura o VPP.
-# O vppctl fala por um socket que vive la dentro.
+# The VTY runs where the dataplane is: inside the container holding VPP.
+# vppctl speaks over a socket that lives in there.
 set -eu
 CONTAINER=${CONTAINER:-hexa-vpp}
 
@@ -14,12 +14,12 @@ if ! docker ps >/dev/null 2>&1; then
 fi
 
 docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || {
-  echo "container '$CONTAINER' nao esta rodando." >&2
-  echo "suba o lab com: sh tools/lab.sh hw-lab   (ver TESTING.md)" >&2
+  echo "container '$CONTAINER' is not running." >&2
+  echo "start the lab with: sh tools/lab.sh hw-lab   (see TESTING.md)" >&2
   exit 1
 }
 
-# -t so quando ha terminal: sem isso o modo -c quebra em pipe
+# -t only when there is a terminal: without that, -c mode breaks in a pipe
 TTY=""
 [ -t 0 ] && TTY="-it"
 exec docker exec $TTY "$CONTAINER" python3 /src/src/hexash/hexash.py "$@"

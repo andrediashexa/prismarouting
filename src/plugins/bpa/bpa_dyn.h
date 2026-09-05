@@ -87,7 +87,7 @@ void bpa_dyn_active (bpa_dyn_t *d, u32 sub_idx);
 u32 bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker,
 		  u32 n_workers, bpa_dyn_release_t *out, u32 max_out);
 
-/* block_idx -> (endereco publico, faixa de portas). */
+/* block_idx -> (public address, port range). */
 static_always_inline void
 bpa_dyn_block_addr (const bpa_pool_t *p, u32 block_idx, bpa_block_t *b)
 {

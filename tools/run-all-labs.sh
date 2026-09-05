@@ -13,9 +13,9 @@ pass=0; fail=0; ran=0
 
 for f in "$REPO"/lab/*.sh; do
   n=$(basename "$f" .sh)
-  # verdict.sh nao e lab, e a biblioteca de asserts que os labs carregam.
-  # Contado como "ran", ele deixa o resumo com um numero que nunca zera - e o
-  # dia em que um lab de verdade ficar sem verdict, ninguem repara.
+  # verdict.sh is not a lab, it is the assertion library the labs source.
+  # Counted as "ran", it leaves the summary with a number that never reaches
+  # zero - and the day a real lab loses its verdict, nobody notices.
   case "$n" in hw-lab|hw-vpp|boot-iso|verdict) continue ;; esac
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
 

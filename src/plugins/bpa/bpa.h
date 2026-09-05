@@ -30,7 +30,7 @@ typedef struct
   bpa_divisor_t workers; /* spreads subscribers over the workers */
 
   vlib_log_class_t log_class; /* aparece em "show logging" */
-  u8 *audit_path;	      /* trilha de configuracao datada */
+  u8 *audit_path;	      /* dated configuration trail */
 
   u16 msg_id_base;
   vlib_main_t *vlib_main;
