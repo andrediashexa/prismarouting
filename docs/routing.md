@@ -117,6 +117,55 @@ the box by an upstream route, not local configuration.
 
 ## VTY
 
+### How hexash reaches the dataplane
+
+Through the **binary API**, not `vppctl`.
+
+`vppctl` exits 0 even when the command it ran failed; the only evidence of a
+refusal is the text it printed. A control plane built on that cannot tell
+"pool created" from "pool rejected", so `commit` could report success while the
+dataplane held none of the configuration.
+
+The client is `src/hexash/vppapi.py`, driving `vat2`. Two alternatives were
+rejected:
+
+| Option | Why not |
+|---|---|
+| `vpp_papi`, the Python bindings | fd.io does not package them. Using them means vendoring the library out of the VPP source tree and keeping that copy in step with every VPP bump. |
+| Keep parsing `vppctl` text | It is the defect being removed. Text patterns break at the first reworded message, and there is no return code to check. |
+
+`vat2` ships inside the `vpp` package itself, so it is on every installed box
+and every ISO, and it is versioned with VPP by construction. The cost is a
+process per call rather than a persistent connection — irrelevant for
+configuration, which happens at human speed and is all `hexash` does.
+
+Five outcomes are distinguished, because they need different actions:
+
+| State | Means | What the operator does |
+|---|---|---|
+| `ok` | applied | nothing |
+| `refused` | the dataplane said no, with a return code | fix the configuration |
+| `not-running` | no reply at all | start the dataplane |
+| `no-plugin` | VPP is up, the CGNAT API is not registered | fix the install |
+| `no-client` | `vat2` is missing | install the `vpp` package |
+
+Collapsing these into "it failed" is how an unplugged dataplane and a rejected
+configuration become indistinguishable. A refusal **MUST** carry the return
+value, the name from `vnet/error.h`, and the sentence the plugin sent to VPP's
+log — the number alone is not actionable:
+
+```
+refused -7: the dataplane refused it: invalid value
+            (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
+```
+
+The client takes no plugin path. On an appliance there is none to give, because
+`install.sh` puts the vat2 plugin where `vat2` already looks — and `lab/api.sh`
+mirrors that layout rather than passing `-p`, so it proves the client in the
+configuration a box actually runs.
+
+### Design
+
 The goal is one CLI in the style operators expect: `configure terminal`,
 `show running-config`, `write memory`, covering routing **and** CGNAT.
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# API binaria: codigo de retorno de verdade, em vez de casar padrao de texto.
+# Binary API: a real return code, instead of matching text patterns.
 set -u
 mkdir -p /run/vpp /vpp_plugins /vat2_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -58,4 +58,28 @@ expect_in "the pool created through the API is listed" "via-api" "$OK"
 BAD=$(vat2 -p /vat2_plugins bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
 expect_not_in "an invalid pool returns an error code" '"retval":\t0' "$BAD"
 expect_not_in "and is not created" "pool z " "$(vppctl show bpa pool)"
+
+# --- the client hexash will use, against a real dataplane ---
+# The client deliberately takes no plugin path: on an appliance there is none
+# to give, because install.sh puts the vat2 plugin where vat2 already looks.
+# So the lab has to mirror that layout instead of passing -p, or it would prove
+# the client works in a configuration no box ever runs - which is exactly how
+# 0.2.0 shipped a hexash that had never been started from its install location.
+install -D -m 0644 /vat2_plugins/bpa_test_plugin_bpa_plugin.so \
+  /usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+CLI=$(python3 /src/lab/api_client_check.py 2>&1)
+echo "$CLI" | sed 's/^/  /'
+expect_in "the client reports the dataplane ready" "available: ok" "$CLI"
+expect_in "a valid pool comes back ok" "valid: ok 0" "$CLI"
+expect_in "an invalid pool comes back refused" "invalid: refused -7" "$CLI"
+expect_in "and carries a reason an operator can act on" "power of two" "$CLI"
+expect_not_in "the refused pool really is absent" "pool client-bad" "$(vppctl show bpa pool)"
+
+# --- with the dataplane stopped: the case that used to be a traceback ---
+pkill -f "vpp -c /src/lab/startup-test.conf" 2>/dev/null
+sleep 2
+DOWN=$(python3 /src/lab/api_client_check.py down 2>&1)
+echo "  $DOWN"
+expect_in "a stopped dataplane is reported, not crashed into" "not-running" "$DOWN"
+expect_in "and says what to check" "systemctl" "$DOWN"
 verdict
