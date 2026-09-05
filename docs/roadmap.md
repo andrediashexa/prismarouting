@@ -227,7 +227,7 @@ next one would otherwise have to work around, not because of size.
 The project stays on `0.x.x` throughout; `1.0.0` is the maintainer's decision,
 as stated in [CONTRIBUTING.md](../CONTRIBUTING.md) section 5. A merge happens
 only when the maintainer asks for one, and each merge produces a version bump,
-an annotated tag and a changelog entry.
+an annotated tag, a changelog entry and a published GitHub Release.
 
 ### What each release contains
 

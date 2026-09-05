@@ -97,3 +97,7 @@ stays on `0.x.x` until it is declared ready for production; see
 | VTY (`hexash`) | Working, with tab completion and contextual `?` |
 | Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready |
 | **HA / failover** | **NOT implemented** — see [docs/ha.md](docs/ha.md) |
+| **Throughput** | **NOT measured** — every performance figure is untested; see [#28](https://github.com/andrediashexa/hexarouting/issues/28) |
+
+What is planned, in which release, and why in that order:
+[docs/roadmap.md](docs/roadmap.md) section 5.

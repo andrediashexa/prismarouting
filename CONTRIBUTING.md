@@ -10,8 +10,9 @@ TL;DR, uses RFC 2119 keywords for anything normative, answers 5W2H, and draws
 its diagrams in Mermaid. A feature too large for one issue is split into
 sub-issues, and their branches are cut from the parent issue's branch — not
 from `master`. Merges happen when the maintainer asks, and every merge is a
-release: a version bump, an annotated tag and a changelog entry. The project
-stays on `0.x.x` until the maintainer declares it production-ready.
+release: a version bump, an annotated tag, a changelog entry and a published
+GitHub Release. The project stays on `0.x.x` until the maintainer declares it
+production-ready.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY** and **OPTIONAL** in this
@@ -181,7 +182,7 @@ diff.
 ### Every merge is a release
 
 A merge into `master` happens only when the maintainer asks for it, and when
-it happens it **MUST** produce all three of:
+it happens it **MUST** produce all four of:
 
 1. **A version bump** in `VERSION`, which is the single source of truth. No
    version string is hardcoded anywhere else.
@@ -190,6 +191,12 @@ it happens it **MUST** produce all three of:
 3. **A `CHANGELOG.md` entry** listing the issues the merge closes, in the
    order a reader cares about: behaviour changes first, then fixes, then
    internal work.
+4. **A published GitHub Release** on that tag, carrying the same note. A tag
+   is a pointer; a release is where an operator who does not clone the
+   repository actually reads what changed and downloads the artifact. The
+   release notes **MUST NOT** be generated from the commit list: a list of
+   commits describes the work, and what a reader needs is what changed for
+   them.
 
 ```mermaid
 flowchart LR
@@ -197,11 +204,18 @@ flowchart LR
     B --> C["CHANGELOG entry<br/>issues closed"]
     C --> D["merge into master"]
     D --> E["annotated tag vX.Y.Z<br/>message = release note"]
-    E --> F["close the issues"]
+    E --> F["GitHub Release<br/>same note, plus artifacts"]
+    F --> G["close the issues"]
 ```
 
 The tag is created **after** the merge commit exists, and points at it. A tag
-that predates its own content is worse than no tag.
+that predates its own content is worse than no tag. The release is published
+from the tag, never the other way round.
+
+A release **SHOULD** carry the artifact a reader would otherwise have to build:
+for this project, the ISO. A release note that describes an appliance without
+offering it makes the reader do the ten-minute build to find out whether the
+change was worth it.
 
 ### The version has to be visible on the box
 
