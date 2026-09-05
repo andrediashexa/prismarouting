@@ -162,6 +162,11 @@ bpa_tcp_track (bpa_session_t *s, u8 flags)
     s->tcp_state = BPA_TCP_ESTAB;
 }
 
+/* Padroes modestos: o tamanho e reserva virtual, e o matador de OOM conta o
+ * virtual. Ver o comentario em bpa_session.c. */
+#define BPA_HASH_BUCKETS_DEFAULT (16 * 1024)
+#define BPA_HASH_MEMORY_DEFAULT	 (16 << 20)
+
 clib_error_t *bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index);
 bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 				   u32 pool_index, const bpa_block_t *b,

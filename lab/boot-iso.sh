@@ -7,9 +7,10 @@
 # em software e o boot em TCG fica lento a ponto de estourar o timeout.
 # Nehalem e o modelo minimo que atende o requisito real (SSE4.2).
 #
-# BOOT_MEM em 2048 e proposital: a maquina de build tambem segura o cache do
-# squashfs, e 3 GB de VM somados a isso derrubavam o monitor de memoria. Dois
-# gigas sobram para um boot de verificacao.
+# BOOT_MEM em 4096: um sistema live mantem a raiz gravavel inteira em RAM
+# (overlay sobre o squashfs). Com 2 GB o matador de OOM leva o VPP - medido,
+# com "Out of memory: Killed process (vpp)" no console - e derruba o resto
+# junto. Nao era o VPP sendo guloso: ele foi morto com 19 MB residentes.
 set -u
 ISO=${ISO:-/src/hexarouting.iso}
 mkdir -p /mnt/iso /tmp/bf
@@ -17,8 +18,20 @@ mount -o loop,ro "$ISO" /mnt/iso
 cp /mnt/iso/live/vmlinuz /mnt/iso/live/initrd /tmp/bf/
 umount /mnt/iso
 
+# Com KVM o boot leva segundos em vez de minutos, e "-cpu host" entrega os
+# conjuntos de instrucao reais - o que o VPP precisa. Sem KVM cai para TCG
+# com Nehalem, o minimo que atende o requisito (SSE4.2) sem o custo de
+# emular AVX-512 como faria "-cpu max".
+if [ -w /dev/kvm ]; then
+  ACCEL="-enable-kvm -cpu host"
+  echo "acelerando com KVM"
+else
+  ACCEL="-cpu ${BOOT_CPU:-Nehalem}"
+  echo "sem KVM: emulando com ${BOOT_CPU:-Nehalem} (lento)"
+fi
+
 timeout "${BOOT_SECS:-420}" qemu-system-x86_64 \
-  -cpu "${BOOT_CPU:-Nehalem}" -m "${BOOT_MEM:-2048}" -smp 2 -nographic -no-reboot \
+  $ACCEL -m "${BOOT_MEM:-4096}" -smp 2 -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1" \
   > /tmp/boot.log 2>&1

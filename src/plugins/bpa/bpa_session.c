@@ -5,26 +5,30 @@
 
 /*
  * Per-worker table sizing. Sessions are sharded by subscriber, so each
- * worker holds roughly total_sessions / n_workers entries. These are
- * starting values; a deployment tunes them from the config file.
+ * worker holds roughly total_sessions / n_workers entries.
+ *
+ * O tamanho e RESERVA de espaco virtual, nao consumo imediato - mas o
+ * matador de OOM conta o virtual. Com 64 MB por tabela, duas tabelas e
+ * varias threads, o VPP mapeava mais de 1 GB e era morto numa caixa de 2 GB.
+ * O padrao ficou modesto e configuravel: quem tem 200k assinantes aumenta
+ * pelo startup.conf, quem tem uma caixa pequena nao paga por isso.
  */
-#define BPA_HASH_BUCKETS  (64 * 1024)
-#define BPA_HASH_MEMORY	  (64 << 20)
 
 clib_error_t *
 bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
 {
+  bpa_main_t *bm = &bpa_main;
   u8 *name;
 
   if (pt->initialised)
     return 0;
 
   name = format (0, "bpa-in2out-%u%c", thread_index, 0);
-  clib_bihash_init_16_8 (&pt->in2out, (char *) name, BPA_HASH_BUCKETS,
-			 BPA_HASH_MEMORY);
+  clib_bihash_init_16_8 (&pt->in2out, (char *) name, bm->hash_buckets,
+			 bm->hash_memory);
   name = format (0, "bpa-out2in-%u%c", thread_index, 0);
-  clib_bihash_init_16_8 (&pt->out2in, (char *) name, BPA_HASH_BUCKETS,
-			 BPA_HASH_MEMORY);
+  clib_bihash_init_16_8 (&pt->out2in, (char *) name, bm->hash_buckets,
+			 bm->hash_memory);
 
   pt->sub_by_idx = hash_create (0, sizeof (uword));
   pt->initialised = 1;

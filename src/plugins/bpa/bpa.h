@@ -20,6 +20,8 @@ typedef struct
   bpa_per_thread_t *per_thread; /* one per vlib worker */
   bpa_timeouts_t timeouts;
   u32 block_holddown; /* segundos que um bloco fica reservado apos ocioso */
+  u32 hash_buckets;   /* dimensionamento das tabelas de sessao */
+  u32 hash_memory;
 
   /* handoff */
   u32 in2out_fq_index;

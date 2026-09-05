@@ -227,6 +227,8 @@ bpa_init (vlib_main_t *vm)
   bm->timeouts.tcp_trans = BPA_TIMEOUT_TCP_TRANS;
   bm->timeouts.tcp_estab = BPA_TIMEOUT_TCP_ESTAB;
   bm->block_holddown = BPA_BLOCK_HOLDDOWN;
+  bm->hash_buckets = BPA_HASH_BUCKETS_DEFAULT;
+  bm->hash_memory = BPA_HASH_MEMORY_DEFAULT;
 
   /*
    * Subscribers are spread over the workers with the same reciprocal used

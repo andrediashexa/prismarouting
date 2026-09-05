@@ -706,3 +706,35 @@ VLIB_CLI_COMMAND (bpa_logging_tcp_command, static) = {
   .short_help = "bpa logging tcp <coletor> [port <n>] | bpa logging tcp disable",
   .function = bpa_logging_tcp_command_fn,
 };
+
+static clib_error_t *
+bpa_sessions_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			 vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 buckets = 0, mem_mb = 0;
+
+  if (unformat (input, "buckets %u memory %u", &buckets, &mem_mb)
+      || unformat (input, "memory %u buckets %u", &mem_mb, &buckets))
+    {
+      if (pool_elts (bm->pools))
+	return clib_error_return (
+	  0, "as tabelas ja foram criadas; ajuste antes de configurar pools");
+      bm->hash_buckets = buckets;
+      bm->hash_memory = mem_mb << 20;
+      return 0;
+    }
+
+  vlib_cli_output (vm, "buckets %u, memoria %u MB por tabela",
+		   bm->hash_buckets, bm->hash_memory >> 20);
+  vlib_cli_output (vm,
+		   "  (sao duas tabelas por thread, e o tamanho e reserva "
+		   "virtual: o matador de OOM conta o virtual)");
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_sessions_command, static) = {
+  .path = "bpa session-table",
+  .short_help = "bpa session-table [buckets <n> memory <MB>]",
+  .function = bpa_sessions_command_fn,
+};

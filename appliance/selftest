@@ -16,6 +16,21 @@ bad()  { say "  [FALHA] $*"; fail=$((fail+1)); }
 say ""
 say "=============== HexaRouting: autoteste de boot ==============="
 
+# --- memoria ---
+# Sistema live guarda o overlay inteiro em RAM. Somado ao VPP, 2 GB nao
+# bastam: o matador de OOM leva o VPP e derruba o resto junto. Descoberto
+# bootando a ISO com 2 GB - "Out of memory: Killed process (vpp)".
+memkb=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+memmb=$((memkb / 1024))
+if [ "$memmb" -lt 2600 ]; then
+  bad "apenas ${memmb} MB de RAM: o VPP sera morto por falta de memoria"
+  say "        minimo recomendado: 4 GB (2 GB nao bastam num sistema live)"
+elif [ "$memmb" -lt 3600 ]; then
+  say "  [aviso] ${memmb} MB de RAM: suficiente para subir, apertado para carga"
+else
+  ok "${memmb} MB de RAM"
+fi
+
 # --- instrucoes de CPU ---
 # O binario do VPP e compilado assumindo SSE4.2 e usa AVX quando disponivel.
 # Numa CPU sem isso ele morre com SIGILL em milissegundos, e como o

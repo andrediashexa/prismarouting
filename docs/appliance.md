@@ -113,6 +113,25 @@ O tuning roda em **todo** boot, sem sentinela, para respeitar mudanca em
 `tune.env` ou troca de NIC. Quem evita o custo do `update-grub` e o
 `apply-tuning`, que compara antes de regenerar.
 
+## Requisito de memoria
+
+**Minimo 4 GB.** Um sistema live mantem a raiz gravavel inteira em RAM, como
+overlay sobre o squashfs; somado ao VPP, 2 GB nao bastam e o matador de OOM
+leva o VPP - e com ele o resto do boot.
+
+Medido bootando a ISO com 2 GB: `Out of memory: Killed process (vpp)`, com o
+VPP tendo apenas **19 MB residentes**. Ele nao era o glutao; foi a vitima
+escolhida. Instalado em disco a exigencia cai, porque nao ha overlay em RAM,
+mas 4 GB continua sendo o piso sensato para um dataplane.
+
+As tabelas de sessao sao dimensionaveis por `bpa session-table buckets <n>
+memory <MB>`, com padrao modesto (16k buckets, 16 MB por tabela). O tamanho e
+reserva de espaco virtual, mas o matador de OOM conta o virtual - por isso o
+padrao nao e generoso. Quem tem 200k assinantes aumenta; quem tem caixa
+pequena nao paga por isso.
+
+O autoteste checa a RAM e avisa antes de o VPP morrer.
+
 ## Requisito de CPU
 
 O binario do VPP e compilado assumindo **SSE4.2**, e usa AVX quando ha. Numa
