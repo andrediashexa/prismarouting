@@ -234,11 +234,7 @@ VLIB_NODE_FN (bpa_in2out_node)
     translate:
       s->last_heard = now;
       if (proto == BPA_PROTO_TCP)
-	{
-	  tcp_header_t *tcp = l4h;
-	  if (tcp->flags & TCP_FLAG_ACK)
-	    s->tcp_estab = 1;
-	}
+	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
 
       bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub);
       n_translated++;

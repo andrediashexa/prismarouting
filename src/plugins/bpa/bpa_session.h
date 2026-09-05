@@ -17,6 +17,7 @@
 
 #include <vlib/vlib.h>
 #include <vppinfra/bihash_16_8.h>
+#include <vnet/tcp/tcp_packet.h>
 
 #include "bpa_pool.h"
 #include "bpa_ports.h"
@@ -42,6 +43,22 @@ typedef struct
   u32 tcp_estab;
 } bpa_timeouts_t;
 
+/*
+ * Estado TCP minimo, o suficiente para nao segurar porta a toa.
+ *
+ * Marcar "estabelecida" em qualquer ACK e nunca tratar RST ou FIN faz uma
+ * conexao fechada segurar a porta pelo timeout de estabelecida - 2 horas.
+ * Num bloco de 512 portas isso esgota o assinante rapido, e a reclamacao
+ * chega como "a internet parou" sem nada obvio no dataplane.
+ */
+typedef enum
+{
+  BPA_TCP_INIT = 0, /* handshake em andamento */
+  BPA_TCP_ESTAB,    /* ACK visto apos o handshake */
+  BPA_TCP_CLOSING,  /* FIN visto em algum sentido */
+  BPA_TCP_CLOSED,   /* RST: expira na proxima varredura */
+} bpa_tcp_state_t;
+
 typedef enum
 {
   BPA_PROTO_TCP = 0,
@@ -58,7 +75,7 @@ typedef struct
   u16 port_pub;
   u16 port_off;	 /* offset within the block, needed to free the port */
   u8 proto;	 /* bpa_proto_t */
-  u8 tcp_estab;
+  u8 tcp_state; /* bpa_tcp_state_t */
   u32 sub_idx;
   u32 pool_index;
   f64 last_heard;
@@ -108,8 +125,41 @@ bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
     case BPA_PROTO_ICMP:
       return t->icmp;
     default:
-      return s->tcp_estab ? t->tcp_estab : t->tcp_trans;
+      break;
     }
+
+  switch (s->tcp_state)
+    {
+    case BPA_TCP_CLOSED:
+      return 0; /* RST: nao ha por que segurar a porta */
+    case BPA_TCP_ESTAB:
+      return t->tcp_estab;
+    default:
+      return t->tcp_trans;
+    }
+}
+
+/*
+ * Acompanha o estado pelas flags. Vale para os dois sentidos: um RST de
+ * qualquer lado encerra, e um FIN de qualquer lado ja tira a sessao do
+ * timeout longo.
+ */
+static_always_inline void
+bpa_tcp_track (bpa_session_t *s, u8 flags)
+{
+  if (PREDICT_FALSE (flags & TCP_FLAG_RST))
+    {
+      s->tcp_state = BPA_TCP_CLOSED;
+      return;
+    }
+  if (PREDICT_FALSE (flags & TCP_FLAG_FIN))
+    {
+      if (s->tcp_state != BPA_TCP_CLOSED)
+	s->tcp_state = BPA_TCP_CLOSING;
+      return;
+    }
+  if ((flags & TCP_FLAG_ACK) && s->tcp_state == BPA_TCP_INIT)
+    s->tcp_state = BPA_TCP_ESTAB;
 }
 
 clib_error_t *bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index);

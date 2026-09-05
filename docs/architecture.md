@@ -106,6 +106,39 @@ e foi exatamente onde as sessoes nasceram; as tres respostas chegaram na
 thread 1 e foram entregues ao dono correto, com zero pacotes em
 "sem sessao". Ver `lab/handoff.sh`.
 
+## Tratamento de TCP e de erro ICMP
+
+Duas lacunas que causam reclamacao de assinante, nao numero feio em grafico.
+
+### Estado TCP
+
+Marcar "estabelecida" em qualquer ACK e nunca tratar RST ou FIN faz uma
+conexao fechada segurar a porta pelo timeout de estabelecida - 2 horas. Num
+bloco de 512 portas isso esgota o assinante rapido, e chega ao suporte como
+"a internet parou", sem nada obvio no dataplane.
+
+`bpa_tcp_track()` mantem um estado minimo: RST fecha e a sessao expira na
+varredura seguinte; FIM em qualquer sentido tira do timeout longo; o ACK apos
+o handshake e o que promove para estabelecida.
+
+Verificado em `lab/icmp-tcp.sh` com pacotes de flags reais: apos o RST a
+sessao sai imediatamente, com o timeout de estabelecida ainda em 7440s.
+
+### Erro ICMP e o PMTUD
+
+Erros ICMP carregam o pacote original embutido, e e o embutido que diz de
+quem eles falam. Sem traduzir isso, o "fragmentation needed" do PMTUD nunca
+chega ao assinante: a conexao TCP fica pendurada e o sintoma e "alguns sites
+nao abrem" - o classico do CGNAT mal feito. Traceroute tambem para.
+
+O node reescreve o destino externo e a origem do pacote embutido. O checksum
+do ICMP cobre o embutido inteiro, entao toda mudanca la dentro, **inclusive o
+proprio checksum do IP embutido**, tem que ser refletida nele.
+
+Traduzir nao basta: com o checksum errado a pilha do assinante descarta, e o
+PMTUD continua quebrado com o contador dizendo que traduziu. Por isso o teste
+captura o pacote que sai e confere os tres checksums em `lab/checkicmp.py`.
+
 ## Modo dinamico (PBA): implementado
 
 Bloco alocado no primeiro fluxo, devolvido apos hold-down.

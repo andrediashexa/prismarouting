@@ -52,6 +52,8 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   _ (UNSUPPORTED, "protocolo nao traduzido")                                  \
   _ (OUT_OF_BLOCK, "porta fora de qualquer bloco")                            \
   _ (BLOCK_FREE, "bloco nao alocado a nenhum assinante")                      \
+  _ (ICMP_ERROR, "erros ICMP traduzidos")                                     \
+  _ (ICMP_MALFORMED, "erro ICMP truncado ou malformado")                      \
   _ (TRUNCATED, "pacote truncado")
 
 typedef enum
@@ -133,6 +135,127 @@ bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
   ip->dst_address.as_u32 = clib_host_to_net_u32 (new_addr);
 }
 
+/*
+ * Erros ICMP carregam o pacote original embutido, e e o embutido que diz de
+ * quem eles falam.
+ *
+ * Sem traduzir isso, o "fragmentation needed" do PMTUD nunca chega ao
+ * assinante: a conexao TCP fica pendurada e o sintoma que chega ao suporte e
+ * "alguns sites nao abrem". Traceroute tambem para de funcionar atraves do
+ * CGNAT.
+ */
+static_always_inline int
+bpa_icmp_is_error (u8 type)
+{
+  switch (type)
+    {
+    case ICMP4_destination_unreachable:
+    case ICMP4_time_exceeded:
+    case ICMP4_parameter_problem:
+    case ICMP4_source_quench:
+    case ICMP4_redirect:
+      return 1;
+    default:
+      return 0;
+    }
+}
+
+/*
+ * Traduz um erro ICMP vindo da internet.
+ *
+ * Estrutura: IP externo (dst = nosso publico) / ICMP / IP embutido
+ * (src = nosso publico, dst = remoto) / 8 bytes do L4 original.
+ *
+ * Reescreve o destino externo e a origem do embutido. O checksum do ICMP
+ * cobre o pacote embutido inteiro, entao toda mudanca la dentro - inclusive
+ * o proprio checksum do IP embutido - tem que ser refletida nele.
+ *
+ * Retorna 0 quando traduziu.
+ */
+static_always_inline int
+bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
+		       bpa_per_thread_t *pt, u32 *ip_priv_out)
+{
+  u8 *end = (u8 *) vlib_buffer_get_current (b) + b->current_length;
+  icmp46_header_t *icmp = (icmp46_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
+  clib_bihash_kv_16_8_t kv, value;
+  bpa_session_t *s;
+  ip4_header_t *inner;
+  u16 *inner_port;
+  u32 inner_hlen, inner_src;
+  ip_csum_t sum;
+  int inner_proto;
+  u16 old_port;
+  u32 old_addr;
+
+  /* ICMP (4) + 4 nao usados + IP minimo (20) + 8 do L4 original */
+  if (PREDICT_FALSE ((u8 *) icmp + 8 + 20 + 8 > end))
+    return -1;
+
+  inner = (ip4_header_t *) ((u8 *) icmp + 8);
+  inner_hlen = ip4_header_bytes (inner);
+  if (PREDICT_FALSE (inner_hlen < 20 || (u8 *) inner + inner_hlen + 8 > end))
+    return -1;
+
+  inner_proto = bpa_proto_of (inner->protocol);
+  if (PREDICT_FALSE (inner_proto < 0))
+    return -1;
+
+  /* Para TCP e UDP a porta de origem sao os dois primeiros bytes do L4;
+   * para ICMP embutido, o identificador esta logo apos o cabecalho. */
+  inner_port = (u16 *) ((u8 *) inner + inner_hlen);
+  if (inner_proto == BPA_PROTO_ICMP)
+    inner_port = (u16 *) ((u8 *) inner + inner_hlen + 4);
+  if (PREDICT_FALSE ((u8 *) inner_port + 2 > end))
+    return -1;
+
+  inner_src = clib_net_to_host_u32 (inner->src_address.as_u32);
+  bpa_key (&kv, inner_src, clib_net_to_host_u16 (inner_port[0]),
+	   (u8) inner_proto);
+  if (PREDICT_FALSE (clib_bihash_search_16_8 (&pt->out2in, &kv, &value)))
+    return -1;
+
+  s = pool_elt_at_index (pt->sessions, value.value);
+  *ip_priv_out = s->ip_priv;
+
+  /* --- destino externo: nosso publico -> assinante --- */
+  sum = ip->checksum;
+  sum = ip_csum_update (sum, ip->dst_address.as_u32,
+			clib_host_to_net_u32 (s->ip_priv), ip4_header_t,
+			dst_address);
+  ip->checksum = ip_csum_fold (sum);
+  ip->dst_address.as_u32 = clib_host_to_net_u32 (s->ip_priv);
+
+  /* --- origem do embutido, e o checksum do ICMP acompanhando tudo --- */
+  {
+    ip_csum_t icmp_sum = icmp->checksum;
+    u16 old_inner_csum = inner->checksum;
+    ip_csum_t inner_sum;
+
+    old_addr = inner->src_address.as_u32;
+    old_port = inner_port[0];
+
+    inner_sum = inner->checksum;
+    inner_sum = ip_csum_update (inner_sum, old_addr,
+				clib_host_to_net_u32 (s->ip_priv),
+				ip4_header_t, src_address);
+    inner->checksum = ip_csum_fold (inner_sum);
+    inner->src_address.as_u32 = clib_host_to_net_u32 (s->ip_priv);
+    inner_port[0] = clib_host_to_net_u16 (s->port_priv);
+
+    icmp_sum = ip_csum_update (icmp_sum, old_addr,
+			       inner->src_address.as_u32, ip4_header_t,
+			       src_address);
+    icmp_sum = ip_csum_update (icmp_sum, old_inner_csum, inner->checksum,
+			       ip4_header_t, checksum);
+    icmp_sum = ip_csum_update (icmp_sum, old_port, inner_port[0],
+			       udp_header_t, src_port);
+    icmp->checksum = ip_csum_fold (icmp_sum);
+  }
+
+  return 0;
+}
+
 VLIB_NODE_FN (bpa_out2in_node)
 (vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
 {
@@ -143,7 +266,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0;
+  u32 n_translated = 0, n_icmp_err = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -176,6 +299,30 @@ VLIB_NODE_FN (bpa_out2in_node)
 	{
 	  b[0]->error = node->errors[BPA_OUT2IN_ERROR_UNSUPPORTED];
 	  goto trace;
+	}
+
+      /* Erro ICMP: quem identifica a sessao e o pacote embutido, nao o
+       * cabecalho externo. Caminho separado. */
+      if (PREDICT_FALSE (proto == BPA_PROTO_ICMP))
+	{
+	  icmp46_header_t *ic =
+	    (icmp46_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
+
+	  if ((u8 *) ic + 4 <= (u8 *) vlib_buffer_get_current (b[0])
+				 + b[0]->current_length
+	      && bpa_icmp_is_error (ic->type))
+	    {
+	      if (bpa_icmp_error_out2in (b[0], ip, pt, &ip_priv))
+		{
+		  b[0]->error =
+		    node->errors[BPA_OUT2IN_ERROR_ICMP_MALFORMED];
+		  goto trace;
+		}
+	      matched = 1;
+	      n_icmp_err++;
+	      vnet_feature_next_u16 (&next[0], b[0]);
+	      goto trace;
+	    }
 	}
 
       if (PREDICT_FALSE (bpa_l4_dst (b[0], ip, proto, &port_pub, &l4h)))
@@ -242,11 +389,7 @@ VLIB_NODE_FN (bpa_out2in_node)
       matched = 1;
       s->last_heard = now;
       if (proto == BPA_PROTO_TCP)
-	{
-	  tcp_header_t *tcp = l4h;
-	  if (tcp->flags & TCP_FLAG_ACK)
-	    s->tcp_estab = 1;
-	}
+	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
 
       bpa_rewrite_dst (ip, l4h, (u8) proto, s->ip_priv, s->port_priv);
       n_translated++;
@@ -274,6 +417,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_TRANSLATED, n_translated);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_ICMP_ERROR, n_icmp_err);
   return frame->n_vectors;
 }
 
