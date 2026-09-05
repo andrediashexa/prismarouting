@@ -218,19 +218,78 @@ selling the bridge and not the far side.
 * **Per-flow logging** — deliberately refused. It is the thing BPA exists to
   avoid; see [logging.md](logging.md).
 
-## 5. Ordering
+## 5. Delivery plan
 
-If the items above were done in the order that removes the most operator pain
-per unit of work:
+Every item above is tracked as an issue and assigned to a release milestone.
+Releases are cut in this order because each one removes a class of problem the
+next one would otherwise have to work around, not because of size.
 
-1. Per-pool timeouts, half-open state, port hold-down (2.1)
-2. Extended blocks with a per-subscriber cap (2.2)
-3. FTP and SIP ALG (2.3)
-4. Hairpinning and static port forwarding (3.1)
-5. Filtering mode and the conformance suite (2.4)
-6. Per-subscriber limits and utilisation observability (3.1, 3.3)
-7. Syslog export and identity correlation (3.2)
-8. HA — already tracked as [#6](https://github.com/andrediashexa/hexarouting/issues/6)
+The project stays on `0.x.x` throughout; `1.0.0` is the maintainer's decision,
+as stated in [CONTRIBUTING.md](../CONTRIBUTING.md) section 5. A merge happens
+only when the maintainer asks for one, and each merge produces a version bump,
+an annotated tag and a changelog entry.
 
-Items 1 to 3 are what an operator notices in the first month. Item 8 is what
-they notice once, at the worst possible moment.
+### What each release contains
+
+| Release | Theme | Issues | Why here and not later |
+|---|---|---|---|
+| **v0.2.0** | Foundations already built | [#1](https://github.com/andrediashexa/hexarouting/issues/1) comments in English, [#2](https://github.com/andrediashexa/hexarouting/issues/2) MTU in the VTY, [#10](https://github.com/andrediashexa/hexarouting/issues/10) versioning, [#11](https://github.com/andrediashexa/hexarouting/issues/11) this roadmap | Three of these sit finished in branches. Merging them first means every later release is tagged, changelogged and readable by whoever inherits it. |
+| **v0.3.0** | A control plane that reports failure | [#3](https://github.com/andrediashexa/hexarouting/issues/3), [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5) hexash on the binary API | Everything after this adds configuration. Adding it on top of a `commit` that cannot tell success from failure means each new feature inherits a control plane that lies. This is the one ordering constraint that is not negotiable. |
+| **v0.4.0** | Subscriber experience | [#12](https://github.com/andrediashexa/hexarouting/issues/12) per-pool timeouts and half-open state, [#13](https://github.com/andrediashexa/hexarouting/issues/13) extended blocks | The two things an operator notices in the first month: ports held by dead connections, and one customer cut off while the pool is half empty. |
+| **v0.5.0** | Application compatibility | [#14](https://github.com/andrediashexa/hexarouting/issues/14) ALG, [#15](https://github.com/andrediashexa/hexarouting/issues/15) filtering mode and conformance, [#16](https://github.com/andrediashexa/hexarouting/issues/16) hairpinning | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. |
+| **v0.6.0** | Inbound and protection | [#17](https://github.com/andrediashexa/hexarouting/issues/17) port forwarding, [#18](https://github.com/andrediashexa/hexarouting/issues/18) per-subscriber limits, [#19](https://github.com/andrediashexa/hexarouting/issues/19) MSS clamping, [#24](https://github.com/andrediashexa/hexarouting/issues/24) uRPF, [#25](https://github.com/andrediashexa/hexarouting/issues/25) bypass lists, [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection, [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation | Answers for the customer who needs a port in, and bounds on the customer who takes too many. |
+| **v0.7.0** | Compliance | [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog, [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity, [#22](https://github.com/andrediashexa/hexarouting/issues/22) trail integrity, [#23](https://github.com/andrediashexa/hexarouting/issues/23) pool-resize procedure | The log already exists and is correct. This release makes it usable by the systems and the people who have to act on it. |
+| **v0.8.0** | High availability | [#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9) | Deliberately after correctness. HA over a CGNAT with known gaps replicates the gaps. |
+| **v0.9.0** | Performance, measured | [#28](https://github.com/andrediashexa/hexarouting/issues/28) throughput on real NICs, [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS, [#30](https://github.com/andrediashexa/hexarouting/issues/30) soak test | Before this release the performance numbers do not exist. After it they do, with their conditions. |
+| **v0.10.0** | The way out of CGNAT | [#31](https://github.com/andrediashexa/hexarouting/issues/31) NAT64, DS-Lite, MAP-E/MAP-T, 464XLAT | The far side of the bridge. |
+| *backlog* | | [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP | Depends on #17 and earns its cost only once manual forwards become a volume. |
+
+### Dependencies that actually constrain the order
+
+Most of the plan could be reordered. These four links cannot:
+
+```mermaid
+flowchart LR
+    A["#3 binary API<br/>errors are reported"] --> B["#12 #13<br/>new configuration"]
+    A --> C["#17 port forwarding"]
+    C --> D["#32 PCP"]
+    E["#15 conformance lab"] --> F["#16 hairpinning"]
+    G["#28 throughput harness"] --> H["#29 symmetric RSS"]
+```
+
+* **#3 before any new configuration.** A feature added while `commit` reports
+  success on a dataplane that refused it inherits that defect permanently.
+* **#17 before #32.** PCP is the automated path onto the forwarding table; the
+  table has to exist first.
+* **#15 before #16.** Hairpinning changes which packets are delivered. Without
+  the conformance lab asserting the current mapping and filtering behaviour
+  first, a hairpinning regression is indistinguishable from a design choice.
+* **#28 before #29.** Symmetric RSS is an optimisation. Optimising before the
+  harness exists means the improvement is asserted rather than measured, which
+  is how this project has been wrong before.
+
+Everything else is a preference and may be reordered on demand from a real
+deployment. A provider blocked on SIP moves #14 forward; that is a better
+reason than this table.
+
+### Working rules for each release
+
+1. Every issue gets its own branch, cut from `master`, per
+   [CONTRIBUTING.md](../CONTRIBUTING.md) section 3.
+2. A branch is not ready until it carries a test that **fails without it**.
+   For items in section 1 of this document — behaviour that already holds —
+   the test MUST be observed to pass on `master` first, since there it
+   confirms rather than proves.
+3. Nothing merges until the maintainer asks. Branches accumulate; that is
+   intended, and it is why each one has to stand on its own.
+4. A release is cut when its milestone is empty, or when the maintainer
+   decides what remains can wait.
+
+### What this plan does not promise
+
+* **Dates.** Nothing here is estimated in time. The S/M/L marks are relative
+  to work already in this repository, and the only honest schedule is the one
+  produced after the first two releases are done.
+* **That the order survives contact.** The first real deployment will
+  reprioritise this list, and it should. What the plan buys is that the
+  reordering is a decision rather than a discovery.
