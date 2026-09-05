@@ -2,5 +2,8 @@ add_vpp_plugin(bpa
   SOURCES
   bpa.c
   bpa_pool.c
+  bpa_session.c
+  bpa_in2out.c
+  bpa_out2in.c
   bpa_cli.c
 )

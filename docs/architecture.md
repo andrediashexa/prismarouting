@@ -77,6 +77,15 @@ Consequencias:
   porta livre dentro do bloco: `block_size` bits por assinante ativo
   (512 portas -> 64 bytes; 200k assinantes -> ~13 MB)
 
+## Estado do sharding (importante)
+
+Os nodes hoje assumem **um unico worker**. `bpa_owner_thread()` existe mas
+ainda nao e usado: sem handoff, o RSS da NIC pode entregar o in2out de um
+assinante num worker e o out2in noutro, e a sessao nao seria encontrada.
+
+Enquanto o handoff nao existir, o `startup.conf` de producao **nao pode**
+declarar workers. E o proximo item do caminho critico.
+
 ## Modo dinamico (PBA)
 
 Bloco alocado no primeiro fluxo, liberado por inatividade.
@@ -105,8 +114,9 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Alocador de portas por assinante (`bpa_ports.h`)
 - [x] Plugin carrega no VPP 26.06 com CLI de pools
 - [x] Pools de prefixos nao contiguos, para alocacao IPv4 real de provedor
-- [ ] Nodes in2out / out2in / handoff
-- [ ] Tabela de sessao (bihash) + timers
+- [x] Nodes in2out / out2in, com traducao verificada por injecao de pacote
+- [x] Tabela de sessao (bihash) por worker + expiracao com timeouts configuraveis
+- [ ] **Handoff entre workers** - obrigatorio antes de habilitar multiplos workers
 - [ ] Alocador dinamico de blocos
 - [ ] Exportador de log (syslog / IPFIX)
 - [ ] CLI e API binaria

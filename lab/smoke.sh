@@ -2,6 +2,11 @@
 # Sobe o VPP com o plugin e exercita a CLI de pools. Nao precisa de NIC.
 set -e
 mkdir -p /run/vpp /vpp_plugins
+# o .so vive em /vpp_plugins, que e do container: reconstroi a cada execucao
+(cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
+  mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
+}
+cd /src
 vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
 n=0
 until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done

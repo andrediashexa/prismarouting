@@ -1,0 +1,233 @@
+/* bpa_session.c - per-worker session table. */
+
+#include "bpa.h"
+
+/*
+ * Per-worker table sizing. Sessions are sharded by subscriber, so each
+ * worker holds roughly total_sessions / n_workers entries. These are
+ * starting values; a deployment tunes them from the config file.
+ */
+#define BPA_HASH_BUCKETS  (64 * 1024)
+#define BPA_HASH_MEMORY	  (64 << 20)
+
+clib_error_t *
+bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
+{
+  u8 *name;
+
+  if (pt->initialised)
+    return 0;
+
+  name = format (0, "bpa-in2out-%u%c", thread_index, 0);
+  clib_bihash_init_16_8 (&pt->in2out, (char *) name, BPA_HASH_BUCKETS,
+			 BPA_HASH_MEMORY);
+  name = format (0, "bpa-out2in-%u%c", thread_index, 0);
+  clib_bihash_init_16_8 (&pt->out2in, (char *) name, BPA_HASH_BUCKETS,
+			 BPA_HASH_MEMORY);
+
+  pt->sub_by_idx = hash_create (0, sizeof (uword));
+  pt->initialised = 1;
+  return 0;
+}
+
+/* Returns the subscriber's port bitmap, creating it on first use. */
+static bpa_sub_t *
+bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx)
+{
+  bpa_sub_t *sub;
+  uword *q;
+  u64 *bits;
+  u32 n_words;
+
+  q = hash_get (pt->sub_by_idx, sub_idx);
+  if (q)
+    return pool_elt_at_index (pt->subs, q[0]);
+
+  n_words = (p->block_size + 63) / 64;
+  bits = clib_mem_alloc (n_words * sizeof (u64));
+
+  pool_get_zero (pt->subs, sub);
+  bpa_portmap_init (&sub->map, p->block_size, bits);
+  hash_set (pt->sub_by_idx, sub_idx, sub - pt->subs);
+  return sub;
+}
+
+static void
+bpa_sub_put (bpa_per_thread_t *pt, u32 sub_idx, bpa_sub_t *sub)
+{
+  if (sub->n_sessions)
+    return;
+
+  clib_mem_free (sub->map.bits);
+  hash_unset (pt->sub_by_idx, sub_idx);
+  pool_put (pt->subs, sub);
+}
+
+bpa_session_t *
+bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
+		    const bpa_block_t *b, u16 port_priv, u8 proto, f64 now)
+{
+  clib_bihash_kv_16_8_t kv;
+  bpa_session_t *s;
+  bpa_sub_t *sub;
+  int off, preferred = -1;
+
+  sub = bpa_sub_get (pt, p, b->sub_idx);
+
+  /* Port preservation: keep the original source port when it happens to
+   * fall inside this subscriber's block and is still free. */
+  if (port_priv >= b->port_lo && port_priv <= b->port_hi)
+    preferred = port_priv - b->port_lo;
+
+  off = bpa_portmap_alloc (&sub->map, preferred);
+  if (off < 0)
+    {
+      bpa_sub_put (pt, b->sub_idx, sub);
+      return 0; /* block exhausted */
+    }
+
+  pool_get_zero (pt->sessions, s);
+  s->ip_pub = b->ip_pub;
+  s->port_priv = port_priv;
+  s->port_off = (u16) off;
+  s->port_pub = b->port_lo + (u16) off;
+  s->proto = proto;
+  s->sub_idx = b->sub_idx;
+  s->pool_index = pool_index;
+  s->last_heard = now;
+
+  if (bpa_set_addr_of (&p->inside, b->sub_idx, &s->ip_priv))
+    {
+      bpa_portmap_free (&sub->map, (u16) off);
+      pool_put (pt->sessions, s);
+      bpa_sub_put (pt, b->sub_idx, sub);
+      return 0;
+    }
+
+  sub->n_sessions++;
+
+  bpa_key (&kv, s->ip_priv, s->port_priv, proto);
+  kv.value = s - pt->sessions;
+  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+
+  bpa_key (&kv, s->ip_pub, s->port_pub, proto);
+  kv.value = s - pt->sessions;
+  clib_bihash_add_del_16_8 (&pt->out2in, &kv, 1);
+
+  return s;
+}
+
+void
+bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s)
+{
+  clib_bihash_kv_16_8_t kv;
+  bpa_sub_t *sub;
+  uword *q;
+
+  bpa_key (&kv, s->ip_priv, s->port_priv, s->proto);
+  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+
+  bpa_key (&kv, s->ip_pub, s->port_pub, s->proto);
+  clib_bihash_add_del_16_8 (&pt->out2in, &kv, 0);
+
+  q = hash_get (pt->sub_by_idx, s->sub_idx);
+  if (q)
+    {
+      sub = pool_elt_at_index (pt->subs, q[0]);
+      bpa_portmap_free (&sub->map, s->port_off);
+      if (sub->n_sessions)
+	sub->n_sessions--;
+      bpa_sub_put (pt, s->sub_idx, sub);
+    }
+
+  pool_put (pt->sessions, s);
+}
+
+/*
+ * Budgeted expiry walk. Called from the process node so a large table
+ * never stalls a worker: it resumes where it stopped.
+ */
+u32
+bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
+		 u32 budget)
+{
+  u32 checked = 0, freed = 0;
+  u32 cursor = pt->expire_cursor;
+  u32 cap = vec_len (pt->sessions);
+
+  if (cap == 0)
+    {
+      pt->expire_cursor = 0;
+      return 0;
+    }
+
+  while (checked < budget && checked < cap)
+    {
+      if (cursor >= cap)
+	cursor = 0;
+
+      if (!pool_is_free_index (pt->sessions, cursor))
+	{
+	  bpa_session_t *s = pool_elt_at_index (pt->sessions, cursor);
+	  if (now - s->last_heard > (f64) bpa_session_timeout (s, t))
+	    {
+	      bpa_session_free (pt, s);
+	      freed++;
+	    }
+	}
+      cursor++;
+      checked++;
+    }
+
+  pt->expire_cursor = cursor;
+  pt->n_expired += freed;
+  return freed;
+}
+
+/*
+ * Expiry process.
+ *
+ * Session state is per-worker and freeing an entry races with the worker
+ * reading it, so the walk runs under the worker barrier. The budget keeps
+ * each pass short: at 10k sessions the barrier is held for microseconds.
+ *
+ * The phase-2 version moves expiry inline into each worker's node, which
+ * removes the barrier entirely. That only pays off once the table is large,
+ * so it is deliberately not the first implementation.
+ */
+#define BPA_EXPIRE_INTERVAL 1.0
+#define BPA_EXPIRE_BUDGET   10000
+
+static uword
+bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  while (1)
+    {
+      f64 now;
+      u32 i, freed = 0;
+
+      vlib_process_wait_for_event_or_clock (vm, BPA_EXPIRE_INTERVAL);
+      vlib_process_get_events (vm, 0);
+
+      if (vec_len (bm->per_thread) == 0)
+	continue;
+
+      now = vlib_time_now (vm);
+
+      vlib_worker_thread_barrier_sync (vm);
+      for (i = 0; i < vec_len (bm->per_thread); i++)
+	freed += bpa_expire_walk (vec_elt_at_index (bm->per_thread, i),
+				  &bm->timeouts, now, BPA_EXPIRE_BUDGET);
+      vlib_worker_thread_barrier_release (vm);
+    }
+
+  return 0;
+}
+
+VLIB_REGISTER_NODE (bpa_expire_node) = {
+  .function = bpa_expire_process,
+  .type = VLIB_NODE_TYPE_PROCESS,
+  .name = "bpa-expire-process",
+};

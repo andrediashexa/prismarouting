@@ -14,6 +14,24 @@ format_bpa_policy (u8 *s, va_list *args)
 }
 
 u8 *
+format_bpa_proto (u8 *s, va_list *args)
+{
+  u32 p = va_arg (*args, u32);
+
+  switch (p)
+    {
+    case BPA_PROTO_TCP:
+      return format (s, "tcp");
+    case BPA_PROTO_UDP:
+      return format (s, "udp");
+    case BPA_PROTO_ICMP:
+      return format (s, "icmp");
+    default:
+      return format (s, "proto-%u", p);
+    }
+}
+
+u8 *
 format_bpa_mode (u8 *s, va_list *args)
 {
   bpa_mode_t m = va_arg (*args, int);
@@ -234,4 +252,141 @@ VLIB_CLI_COMMAND (bpa_show_pool_command, static) = {
   .path = "show bpa pool",
   .short_help = "show bpa pool",
   .function = bpa_show_pool_command_fn,
+};
+
+static clib_error_t *
+bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			  vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  vnet_main_t *vnm = vnet_get_main ();
+  clib_error_t *error = 0;
+  u32 sw_if_index = ~0;
+  int is_in = -1, enable = 1;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (0, "expected direction and interface");
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "in2out"))
+	is_in = 1;
+      else if (unformat (line_input, "out2in"))
+	is_in = 0;
+      else if (unformat (line_input, "del"))
+	enable = 0;
+      else if (unformat (line_input, "%U", unformat_vnet_sw_interface, vnm,
+			 &sw_if_index))
+	;
+      else
+	{
+	  error = clib_error_return (0, "unknown input '%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+
+  if (is_in < 0)
+    {
+      error = clib_error_return (0, "specify in2out or out2in");
+      goto done;
+    }
+  if (sw_if_index == ~0)
+    {
+      error = clib_error_return (0, "interface is required");
+      goto done;
+    }
+
+  {
+    int rv = vnet_feature_enable_disable (
+      "ip4-unicast", is_in ? "bpa-in2out" : "bpa-out2in", sw_if_index, enable,
+      0, 0);
+    if (rv)
+      error = clib_error_return (0, "vnet_feature_enable_disable falhou: %d",
+				 rv);
+  }
+
+done:
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_interface_command, static) = {
+  .path = "set interface bpa",
+  .short_help = "set interface bpa <in2out|out2in> <interface> [del]",
+  .function = bpa_interface_command_fn,
+};
+
+static clib_error_t *
+bpa_show_session_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			     vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_per_thread_t *pt;
+  u32 i, total = 0;
+
+  vec_foreach_index (i, bm->per_thread)
+    {
+      pt = vec_elt_at_index (bm->per_thread, i);
+      vlib_cli_output (vm, "thread %u: %u sessoes, %u assinantes ativos, "
+			   "%u expiradas",
+		       i, pool_elts (pt->sessions), pool_elts (pt->subs),
+		       pt->n_expired);
+      total += pool_elts (pt->sessions);
+    }
+  vlib_cli_output (vm, "total: %u sessoes", total);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_session_command, static) = {
+  .path = "show bpa session",
+  .short_help = "show bpa session",
+  .function = bpa_show_session_command_fn,
+};
+
+static clib_error_t *
+bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			 vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  u32 v;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    {
+      vlib_cli_output (vm,
+		       "udp %u  icmp %u  tcp-transitory %u  tcp-established %u",
+		       bm->timeouts.udp, bm->timeouts.icmp,
+		       bm->timeouts.tcp_trans, bm->timeouts.tcp_estab);
+      return 0;
+    }
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "udp %u", &v))
+	bm->timeouts.udp = v;
+      else if (unformat (line_input, "icmp %u", &v))
+	bm->timeouts.icmp = v;
+      else if (unformat (line_input, "tcp-transitory %u", &v))
+	bm->timeouts.tcp_trans = v;
+      else if (unformat (line_input, "tcp-established %u", &v))
+	bm->timeouts.tcp_estab = v;
+      else
+	{
+	  error = clib_error_return (0, "unknown input '%U'",
+				     format_unformat_error, line_input);
+	  break;
+	}
+    }
+
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_timeouts_command, static) = {
+  .path = "bpa timeouts",
+  .short_help = "bpa timeouts [udp <s>] [icmp <s>] [tcp-transitory <s>] "
+		"[tcp-established <s>]",
+  .function = bpa_timeouts_command_fn,
 };
