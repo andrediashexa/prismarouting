@@ -2,7 +2,7 @@
 CFLAGS ?= -O2 -Wall -Wextra -Werror -DBPA_STANDALONE
 BUILD  := .build
 
-.PHONY: test test-appliance test-iso iso model vectors clean
+.PHONY: test test-appliance test-iso iso hw-up hw-vpp hw-down model vectors clean
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports
 	@$(BUILD)/test_bpa
@@ -37,6 +37,23 @@ test-appliance:
 	@echo
 	@sg docker -c "docker run --rm --privileged -v $$(pwd):/src -w /src \
 	    hexarouting-dev:26.06 sh /src/appliance/test_tuned_conf.sh"
+
+# The hardware lab keeps a container alive so that hexash and vppctl have a VPP
+# to talk to. Long-lived means somebody has to stop it: hw-down exists so that
+# "somebody" is a command rather than a memory.
+hw-up:
+	@sg docker -c "docker rm -f hexa-vpp >/dev/null 2>&1; \
+	    docker run -d --name hexa-vpp --privileged --network=host \
+	      -v $$(pwd):/src -w /src hexarouting-dev:26.06 sleep infinity" >/dev/null
+	@echo "hexa-vpp is up. Remember: make hw-down when you are finished."
+
+hw-vpp:
+	@sg docker -c "docker exec hexa-vpp sh /src/lab/hw-vpp.sh"
+
+# Safe when it is not there, so it can be run without checking first.
+hw-down:
+	@sg docker -c "docker rm -f hexa-vpp >/dev/null 2>&1" || true
+	@echo "hexa-vpp removed."
 
 # ISO: needs root and the image tools, so it runs in the container.
 # The dependencies live here on purpose - build-iso.sh only checks them.

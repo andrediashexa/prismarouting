@@ -101,9 +101,24 @@ flowchart LR
 ```
 
 ```sh
-sh tools/lab.sh hw-lab
-sg docker -c 'docker exec hexa-vpp sh /src/lab/hw-vpp.sh'
+sh tools/lab.sh hw-lab          # host side: addresses, routes, forwarding
+make hw-up                      # starts the long-lived hexa-vpp container
+make hw-vpp                     # brings VPP up inside it
 ```
+
+The `hexa-vpp` container **outlives the command that started it** — that is the
+point, since `hexash` and `vppctl` talk to a VPP running inside it. It is also
+why it **MUST** be removed when the session is over:
+
+```sh
+make hw-down                    # stops it and frees its memory
+```
+
+One of these was left running for thirteen hours holding roughly 4 GB, and got
+an unrelated `make test-install` killed by the OOM killer — a failure that
+looked like the test needing more memory and was not. Until this section
+existed, nothing in the repository created the container and nothing removed
+it.
 
 Then, on the peer:
 
