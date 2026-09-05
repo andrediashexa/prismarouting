@@ -51,6 +51,7 @@ flowchart LR
 ## Layout
 
 ```
+CONTRIBUTING.md        project rules: documentation, issues, branches
 docs/architecture.md   design decisions, sharding, mapping algorithm
 docs/routing.md        FRR integration, VTY, punt pitfalls
 docs/logging.md        BPA log export over IPFIX (RFC 8158)
