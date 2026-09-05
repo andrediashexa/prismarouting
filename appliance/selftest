@@ -1,0 +1,73 @@
+#!/bin/sh
+# Autoteste de boot do HexaRouting, escrito no console.
+#
+# Appliance em rack e visto por console serial ou IPMI, nao por journalctl.
+# Se algo essencial nao subiu, tem que estar na tela - e com a razao junto,
+# nao so "failed". Foi a falta disso que fez cada diagnostico da ISO custar
+# um rebuild inteiro.
+set -u
+OUT=${HEXA_SELFTEST_OUT:-/dev/console}
+fail=0
+
+say()  { echo "$*" > "$OUT" 2>/dev/null || echo "$*"; }
+ok()   { say "  [ ok ] $*"; }
+bad()  { say "  [FALHA] $*"; fail=$((fail+1)); }
+
+say ""
+say "=============== HexaRouting: autoteste de boot ==============="
+
+# --- dataplane ---
+if vppctl show version >/dev/null 2>&1; then
+  ok "VPP responde: $(vppctl show version 2>/dev/null | cut -d' ' -f1-2)"
+else
+  bad "VPP nao responde"
+  say "        ultimas linhas de /var/log/vpp/vpp.log:"
+  tail -12 /var/log/vpp/vpp.log 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
+  say "        systemctl status vpp:"
+  systemctl status vpp.service --no-pager -n 8 2>/dev/null | sed 's/^/          /' > "$OUT" 2>/dev/null
+fi
+
+# --- plugins ---
+if vppctl show plugins 2>/dev/null | grep -q bpa_plugin; then
+  ok "plugin de CGNAT carregado"
+else
+  bad "plugin de CGNAT ausente"
+fi
+
+# --- tuning: o silencio aqui e o que custa metade do throughput ---
+if [ -f /etc/vpp/startup.conf ] && grep -q "GERADO por hexarouting-tune" /etc/vpp/startup.conf; then
+  if grep -q "MODO DE PRIMEIRO BOOT" /etc/vpp/startup.conf; then
+    say "  [aviso] rodando em modo de PRIMEIRO BOOT: sem pinning e sem hugepage."
+    say "          reinicie para que isolcpus e hugepages entrem em vigor."
+  else
+    ok "tuning completo ativo: $(grep -o 'corelist-workers.*' /etc/vpp/startup.conf || echo 'sem workers')"
+  fi
+else
+  bad "/etc/vpp/startup.conf nao foi gerado pelo hexarouting-tune"
+fi
+
+# --- plano de controle ---
+if vtysh -c "show version" >/dev/null 2>&1; then
+  ok "FRR responde"
+else
+  bad "FRR nao responde"
+fi
+
+# --- configuracao aplicada ---
+pools=$(vppctl show bpa pool 2>/dev/null | grep -c "^pool ")
+[ -n "$pools" ] || pools=0
+if [ "$pools" -gt 0 ]; then
+  ok "$pools pool(s) de CGNAT configurado(s)"
+else
+  say "  [info] nenhum pool de CGNAT configurado ainda (use 'hexash')"
+fi
+
+say "-------------------------------------------------------------"
+if [ "$fail" = 0 ]; then
+  say "  HexaRouting pronto."
+else
+  say "  $fail verificacao(oes) falhou(aram). A caixa NAO esta pronta."
+fi
+say "============================================================="
+say ""
+exit 0   # nunca derruba o boot por causa do proprio diagnostico

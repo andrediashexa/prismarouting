@@ -1,0 +1,19 @@
+[Unit]
+Description=HexaRouting - autoteste de boot no console
+Documentation=file:///usr/share/doc/hexarouting/appliance.md
+After=hexarouting.service frr.service
+Wants=hexarouting.service
+# Roda mesmo quando o hexarouting.service falha: e justamente ai que o
+# diagnostico importa.
+DefaultDependencies=no
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/hexarouting/selftest
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
