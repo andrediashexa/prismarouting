@@ -138,13 +138,9 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Tabela de sessao (bihash) por worker + expiracao com timeouts configuraveis
 - [x] Handoff entre workers, verificado com 2 workers (`lab/handoff.sh`)
 - [ ] Alocador dinamico de blocos + timers de bloco
-- [ ] **Roteamento: OSPF, IS-IS e BGP via FRR** - ver [routing.md](routing.md).
-      `linux_cp` espelha interface como TAP, `linux_nl` traz as rotas para a
-      FIB do VPP. IS-IS por ultimo: nao roda sobre IP, entao e ele que
-      valida o punt de quadro L2
-- [ ] **Validar pool contra endereco local** - se um pool publico contiver o
-      endereco de peering, o `bpa-out2in` traduz o proprio BGP e a sessao cai
-      sem explicacao. Recusar na criacao do pool e pular destino local no node
+- [x] Roteamento: BGP, OSPF e IS-IS via FRR, com as tres rotas chegando na
+      FIB do VPP (`lab/routing.sh`)
+- [x] Validar pool contra endereco local, nas duas direcoes
 - [ ] **VTY unica (`hexad`)** - daemon no estilo FRR registrado no `vtysh`,
       para `show running-config` mostrar roteamento e CGNAT na mesma saida
 - [ ] **Exportacao de log BPA via IPFIX/NetFlow, so alocacoes** - ver

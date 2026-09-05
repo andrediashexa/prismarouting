@@ -50,6 +50,51 @@ falha silenciosa e chata de diagnosticar. O TAP do `linux_cp` espelha quadro
 Ethernet, entao carrega CLNS; e por isso que ele e o caminho escolhido, e
 nao um punt so de IP.
 
+## Duas armadilhas encontradas no lab (nao teoricas)
+
+Ambas descobertas ao subir os tres protocolos em `lab/routing.sh`. As duas
+falham de um jeito que nao aponta para a causa.
+
+### 1. MTU herdado trava o OSPF em Exchange
+
+O TAP criado pelo `linux_cp` nasce com MTU 9000. Se o enlace fisico estiver
+em 1500, o OSPF forma vizinhanca, chega ate **Exchange/DR e para ali**: ele
+compara MTU nos pacotes DD e desiste em silencio. Nao ha log dizendo "MTU
+divergente"; o operador ve so uma adjacencia que nunca completa.
+
+Com `set interface mtu 1500 <interface>` (que o `lcp-sync` propaga ao TAP), a
+adjacencia foi para **Full em 8 segundos**.
+
+Conclusao para o appliance: **MTU tem que ser configuracao explicita**, nunca
+herdada. Entra na gramatica da VTY como parametro de interface.
+
+### 2. IS-IS morre em `osi-input` se o OSI nao for habilitado
+
+Confirmado o que o desenho previa, e com o ponto exato da morte. Capturas nos
+tres pontos do caminho:
+
+| Onde | Hellos IS-IS |
+|------|--------------|
+| `veth-out`, o peer enviando | presentes |
+| `veth-vpp`, chegando no VPP | presentes |
+| `vppwan0`, o TAP | **zero** |
+
+O contador do VPP mostrava `osi-input: unknown osi protocol`. O quadro chega,
+e reconhecido como OSI, e ninguem esta registrado para receber IS-IS.
+
+O `linux_cp` do VPP 26.06 ja tem a solucao, so nao vem ligada:
+
+```
+lcp osi-proto enable 0x83
+```
+
+0x83 e o NLPID do IS-IS. Com isso o vizinho subiu e a rota chegou na FIB.
+
+O detalhe que torna isto perigoso: **BGP e OSPF sobem normalmente sem esse
+comando.** Quem testar so com eles conclui que a integracao esta pronta, e o
+IS-IS fica mudo ate alguem tentar usar. Por isso o IS-IS ficou por ultimo na
+ordem de implementacao: e ele que valida o caminho de punt L2.
+
 ## A armadilha: CGNAT sobre o proprio roteamento
 
 Sessao BGP e adjacencia OSPF/IS-IS terminam em enderecos **da propria
@@ -113,12 +158,12 @@ repositorio do proprio FRR (`deb.frrouting.org`), como ja e feito com o VPP
 no `build/Dockerfile.dev`. Versao de plano de controle nao pode flutuar com
 o que a distro tiver no dia.
 
-## Ordem sugerida
+## Estado
 
-1. `linux_cp` + `linux_nl` no lab, com uma interface espelhada no Linux
-2. FRR subindo e formando sessao BGP sobre o TAP
-3. Rota aprendida por BGP aparecendo na FIB do VPP (`show ip fib`)
-4. OSPF, depois IS-IS - IS-IS por ultimo, porque e o que testa o punt L2
-5. Validacao de sobreposicao entre pool e endereco local (a armadilha acima)
-6. `hexad` com a gramatica de CGNAT no `vtysh`
-7. Migrar a CLI de debug do plugin para a VTY, mantendo a de debug
+- [x] `linux_cp` + `linux_nl` no lab (`lab/lcp.sh`)
+- [x] BGP, OSPF e IS-IS sobre o TAP, com as tres rotas na FIB do VPP
+      (`lab/routing.sh`)
+- [x] Validacao de sobreposicao entre pool e endereco local, nas duas direcoes
+- [ ] `hexad` com a gramatica de CGNAT no `vtysh`
+- [ ] MTU como parametro explicito de interface na VTY
+- [ ] Migrar a configuracao para a VTY, mantendo a CLI de debug do plugin
