@@ -221,6 +221,99 @@ After installing, adjust `/etc/hexarouting/tune.env` (dataplane NIC and
 subscriber target) and reboot: `isolcpus` and hugepages only apply on the next
 boot.
 
+## Is a newer kernel worth it?
+
+Asked, analysed, and the answer is **no — not yet, and not for throughput**.
+Recorded here because "we should upgrade the kernel for performance" is the
+kind of proposal that returns every six months.
+
+### Where the kernel is, and is not, on the packet path
+
+Once VPP owns the NIC through `vfio-pci`, packets never enter the kernel
+network stack. They move from the NIC to hugepages by DMA and are processed by
+poll-mode workers in userspace. The kernel schedules nothing on that path,
+copies nothing, and routes nothing.
+
+```mermaid
+flowchart LR
+    N["NIC"] -->|DMA, vfio-pci| H["hugepages"]
+    H --> W["VPP workers<br/>userspace, poll mode"]
+    W --> F["translate + forward"]
+    K["Linux kernel<br/>network stack"] -.->|not on this path| W
+    W -->|"punt: BGP, OSPF, IS-IS<br/>only"| K
+```
+
+So the kernel version affects CGNAT throughput **only** indirectly:
+
+| Kernel area | Effect on this product |
+|---|---|
+| `vfio-pci`, IOMMU | Decides whether a NIC works at all, not how fast. Mature since long before 6.1. |
+| Scheduler isolation | `isolcpus`, `nohz_full`, `rcu_nocbs` are what the tuner uses, and all three are mature in 6.1. |
+| Hugepages, NUMA | Allocation policy, already handled by the tuner. |
+| `linux_cp` TAP path | Carries routing protocols only — a few packets per second. |
+| **In-tree NIC drivers** | The one real dependency. Mellanox `mlx5` uses a *bifurcated* driver: the DPDK PMD works through the kernel driver and `rdma-core`, so kernel age matters there. Intel `ice` bound to `vfio-pci` does not care. |
+
+### Why the answer is "not yet"
+
+The honest reason is not technical, it is evidential. **This project has no
+throughput measurement at all** ([#28](https://github.com/andrediashexa/hexarouting/issues/28)).
+Upgrading the kernel for performance and then declaring a gain would be
+asserting an improvement nobody measured — the exact failure this repository
+has been bitten by repeatedly, and the one `CONTRIBUTING.md` names.
+
+A kernel upgrade also costs something real: it moves the appliance off the
+distribution kernel, which is where the security updates arrive on their own.
+
+### What would change the answer
+
+* A deployment on **Mellanox CX5/CX6**. There the `mlx5` PMD depends on the
+  kernel driver and `rdma-core`, and 6.1 is genuinely old for that hardware.
+  That is a *works or does not work* argument, not a throughput one.
+* [#28](https://github.com/andrediashexa/hexarouting/issues/28) existing. With
+  a harness, the question stops being an opinion: measure on 6.1, measure on
+  the newer kernel, and let the numbers decide.
+
+Debian 13 would bring kernel 6.12 LTS at no extra cost — which is a lifecycle
+argument for
+[#36](https://github.com/andrediashexa/hexarouting/issues/36), not a
+performance one. That upgrade is currently blocked upstream; the issue records
+why, with evidence.
+
+## Logging into the appliance
+
+The ISO boots straight into the VTY: the console is autologged in and root's
+login shell is `/usr/bin/hexash-login`, which starts `hexash`.
+
+| Situation | What happens |
+|---|---|
+| Console or SSH login | Lands in `hexash` |
+| `start shell` inside the VTY | Opens a shell as a child; `exit` returns to the VTY |
+| `scp`, `rsync`, `git` over SSH | Reach a real shell — a login shell invoked with `-c` passes through |
+| `hexash` fails to start | Falls back to a shell **with the reason printed** |
+| Boot with `hexash=off` | Skips the VTY entirely; the ISO offers it as a menu entry |
+
+`start shell` appears in neither tab completion nor `?`. It is hidden, not
+restricted: anyone who can log in can run it. **It is not a security
+boundary** — that is
+[#35](https://github.com/andrediashexa/hexarouting/issues/35), roles in the
+VTY. Hiding it only keeps it from being the obvious next thing after `?`.
+
+The fallback and the `hexash=off` escape exist because pointing a login shell
+at an application creates a lockout risk: a `hexash` that fails to start would
+otherwise leave nobody able to reach the box, over console or SSH. That is a
+worse failure than the one landing in the VTY solves, so there are two
+independent ways out, and the second does not depend on `hexash` working at
+all.
+
+`install.sh` does **not** change any login shell unless `HEXA_VTY_LOGIN=1` is
+set. On an existing Debian the machine may have other jobs, and silently
+replacing root's shell is the kind of surprise an operator discovers at the
+worst moment.
+
+Console autologin is set by the **ISO only**. On an installed box it would mean
+physical or IPMI access equals full access with no password, which is the
+operator's decision rather than our default.
+
 ## What is still missing
 
 * **HA**: no failover today. Two boxes with the same deterministic pool

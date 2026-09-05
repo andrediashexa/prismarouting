@@ -153,6 +153,28 @@ the box by an upstream route, not local configuration.
 
 ## VTY
 
+### The VTY is the front door
+
+An operator logging into the appliance, over console or SSH, lands in `hexash`
+rather than in a Unix shell. Root's login shell is `/usr/bin/hexash-login`,
+a wrapper rather than `hexash` itself, and the reason is lockout: a `hexash`
+that fails to start would otherwise leave nobody able to reach the box.
+
+`start shell` opens a real shell as a child of the VTY; leaving it returns to
+the VTY rather than logging out. It appears in neither tab completion nor `?`.
+
+* The escape is hidden, **not** restricted. Anyone who can log in can run it.
+  It **MUST NOT** be described as a security control; authorization is
+  [#35](https://github.com/andrediashexa/hexarouting/issues/35).
+* A shell **MUST** remain reachable. Recovery, `tcpdump`, and reading a log the
+  VTY does not expose all need one, and an appliance that makes them impossible
+  gets a permanent hole opened by the first operator who needs one.
+* Booting with `hexash=off` skips the VTY entirely, and **MUST** keep working
+  even when `hexash` is broken — it is read from `/proc/cmdline` by the
+  wrapper, so it does not depend on the VTY starting.
+
+See [appliance.md](appliance.md) for the login table and the recovery paths.
+
 ### How hexash reaches the dataplane
 
 Through the **binary API**, not `vppctl`.

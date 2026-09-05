@@ -15,9 +15,13 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports
 	@echo
 	@sh test/test_version_stamp.sh
 	@echo
+<<<<<<< HEAD
 	@python3 test/test_vppapi.py
 	@echo
 	@python3 test/test_hexash_apply.py
+=======
+	@sh test/test_hexash_login.sh
+>>>>>>> issue/37-vty-login
 
 vectors:
 	@cd ref && python3 gen_vectors.py

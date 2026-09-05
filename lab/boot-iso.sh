@@ -69,15 +69,25 @@ if grep -q "HexaRouting ready" /tmp/clean.log; then
     echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
     exit 1
   fi
-  # The VTY is the product's front door, and 0.2.0 shipped with it broken while
-  # every other check passed. A "ready" that does not include the VTY proves the
-  # dataplane and nothing an operator can actually reach.
-  if grep -q "\[ ok \] VTY starts" /tmp/clean.log; then
+  # Two different things, both required. The self-test line proves hexash
+  # STARTS - 0.2.0 shipped with it broken while every other check passed. The
+  # prompt proves a login LANDS in it: a box that boots to a bash prompt has
+  # the CGNAT running and the front door wrong, and nothing else in the boot
+  # log would say so.
+  if ! grep -q "\[ ok \] VTY starts" /tmp/clean.log; then
+    echo
+    echo "=========== READY, BUT THE VTY DID NOT START ==========="
+    grep -i "hexash\|VTY" /tmp/clean.log | tail -6 | sed 's/^/  /'
+    echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
+    exit 1
+  fi
+  if grep -q "hexarouting>" /tmp/clean.log; then
     exit 0
   fi
   echo
-  echo "=========== READY, BUT THE VTY DID NOT START ==========="
-  grep -i "hexash\|VTY" /tmp/clean.log | tail -6 | sed 's/^/  /'
+  echo "=========== READY, BUT DID NOT LAND IN THE VTY ==========="
+  echo "--- last 15 console lines ---"
+  tail -15 /tmp/clean.log | sed 's/^/  /'
   echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
   exit 1
 fi
