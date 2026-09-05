@@ -4,7 +4,8 @@
 
 Every feature gets an issue. Every issue gets a branch. Every branch gets
 documentation, and everything this project writes down — documentation, CLI
-syntax, generated files and source comments — is in English, opens with a
+syntax, generated files, source comments and anything posted on GitHub — is in
+English, opens with a
 TL;DR, uses RFC 2119 keywords for anything normative, answers 5W2H, and draws
 its diagrams in Mermaid. A feature too large for one issue is split into
 sub-issues, and their branches are cut from the parent issue's branch — not
@@ -32,8 +33,23 @@ document are to be interpreted as described in [RFC 2119][rfc2119].
 
 ## 1. Documentation
 
-Every document under `docs/`, every `README.md` and every `*.md` added to this
-repository MUST follow all five rules below.
+These rules apply to every document under `docs/`, every `README.md`, every
+`*.md` added to this repository, **and to everything the project writes on
+GitHub**: issue bodies, issue comments, pull request descriptions, release
+notes and tag messages.
+
+GitHub text is documentation that happens to live outside the tree. An issue
+is where the reason for a change is recorded, and it is read by the same
+people, under the same conditions, as a file in `docs/` — often years later,
+often by someone deciding whether a behaviour was deliberate. An issue that
+says "it should probably reject overlapping prefixes" leaves the next reader
+guessing whether that was a requirement or a musing; **MUST** and **SHOULD**
+settle it.
+
+The proportionality rule still applies: a two-line comment on an issue does
+not need a TL;DR or a 5W2H table. What is not negotiable in GitHub text is
+**English** and **RFC 2119 keywords for anything normative** — an acceptance
+criterion, a constraint, a decision about what the software has to do.
 
 | # | Rule | Notes |
 |---|------|-------|
@@ -41,7 +57,17 @@ repository MUST follow all five rules below.
 | 2 | Every document MUST open with a **TL;DR** | Three to six lines. A reader who stops there MUST still know what the document is about and what it decided. |
 | 3 | Every document MUST answer **5W2H** | What, Why, Who, Where, When, How, How much. A table is RECOMMENDED. Short documents MAY fold 5W2H into prose, but no question may go unanswered. |
 | 4 | Normative statements MUST use **RFC 2119** keywords | Write "the pool MUST reject overlapping prefixes", not "the pool should probably reject". Every document that uses the keywords MUST cite RFC 2119, as this one does. |
-| 5 | Diagrams, when needed, MUST be **Mermaid** | Inline in the Markdown. No binary images, no external diagram services — a diagram that cannot be diffed cannot be reviewed. Diagrams are OPTIONAL; a diagram that only restates the prose SHOULD be dropped. |
+| 5 | Diagrams, when needed, MUST be **Mermaid** | Inline in the Markdown. No binary images, no external diagram services — a diagram that cannot be diffed cannot be reviewed. GitHub renders Mermaid in issues and comments, so this rule holds there too. Diagrams are OPTIONAL; a diagram that only restates the prose SHOULD be dropped. |
+
+Where each rule binds:
+
+| | `docs/`, `README`, `*.md` | Issues, comments, PRs, tag messages |
+|---|---|---|
+| English | MUST | MUST |
+| RFC 2119 for normative statements | MUST | MUST |
+| TL;DR | MUST | SHOULD, for anything longer than a screen |
+| 5W2H | MUST | SHOULD, on the issue body; not on comments |
+| Mermaid for diagrams | MUST | MUST |
 
 A document that describes a decision SHOULD state what was rejected and why.
 The reason a knob exists is worth more than the knob's name.

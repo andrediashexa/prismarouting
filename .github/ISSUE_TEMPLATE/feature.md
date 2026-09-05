@@ -5,7 +5,10 @@ title: ''
 labels: feature
 ---
 
-<!-- Rules: CONTRIBUTING.md. Written in English, like everything here. -->
+<!-- Rules: CONTRIBUTING.md section 1. English, and RFC 2119 keywords for
+     anything normative - MUST, MUST NOT, SHOULD, MAY. An acceptance criterion
+     written as "it should probably" leaves the next reader guessing whether it
+     was a requirement. -->
 
 ## What
 
