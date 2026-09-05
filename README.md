@@ -16,6 +16,7 @@ docs/architecture.md      decisoes de projeto, sharding, estado
 docs/routing.md           plano de FRR, VTY e as armadilhas de punt
 docs/logging.md           exportacao de log BPA via IPFIX (RFC 8158)
 docs/appliance.md         tuning de boot, systemd, instalacao e ISO
+docs/ha.md                analise de alta disponibilidade (nao implementado)
 ref/                      modelo de referencia do BPA, em Python
 src/plugins/bpa/          plugin VPP do CGNAT BPA
 src/hexash/               VTY: CGNAT nativo, roteamento via vtysh

@@ -242,6 +242,6 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Appliance: tuning de boot calculado do hardware, unidades systemd,
       instalador e ISO - ver [appliance.md](appliance.md)
 - [x] Fragmentacao, via reassembly virtual raso
-- [ ] HA / failover entre caixas
+- [ ] HA / failover entre caixas - analise em [ha.md](ha.md); nada implementado
 - [x] Transporte TCP para o log IPFIX, com transbordo em disco
 - [x] Trilha de configuracao datada (`show bpa pool history`)
