@@ -39,6 +39,36 @@ typedef enum
   BPA_MODE_DYNAMIC,
 } bpa_mode_t;
 
+/*
+ * Precomputed reciprocal, so the datapath never issues a hardware divide.
+ * Used for the pool policy split and for spreading subscribers over workers.
+ * ref/check_magic.py proves it exact for every divisor below BPA_MAX_CAPACITY.
+ */
+typedef struct
+{
+  u32 d;
+  u64 magic;
+  u8 shift;
+  u8 log2;
+  u8 is_pow2;
+} bpa_divisor_t;
+
+void bpa_divisor_init (bpa_divisor_t *dv, u32 d);
+
+static_always_inline u32
+bpa_divide (const bpa_divisor_t *dv, u32 n)
+{
+  if (PREDICT_TRUE (dv->is_pow2))
+    return n >> dv->log2;
+  return (u32) (((u64) n * dv->magic) >> dv->shift);
+}
+
+static_always_inline u32
+bpa_modulo (const bpa_divisor_t *dv, u32 n)
+{
+  return n - bpa_divide (dv, n) * dv->d;
+}
+
 typedef struct
 {
   u32 base;	 /* first address, host order */
@@ -80,21 +110,11 @@ typedef struct
   u8 log2_block; /* block_size is a power of two */
 
   /*
-   * Single divisor for the policy split:
+   * Divisor for the policy split:
    *   INTERLEAVED -> outside.count   (blk_idx = sub / d, pub_idx = sub % d)
    *   BLOCKED     -> blocks_per_ip   (pub_idx = sub / d, blk_idx = sub % d)
-   *
-   * With fragmented pools the divisor is an arbitrary number, so the
-   * datapath uses a precomputed reciprocal instead of a hardware divide.
-   * When the divisor happens to be a power of two we shift instead.
-   * ref/check_magic.py proves the reciprocal exact for every divisor below
-   * BPA_MAX_CAPACITY.
    */
-  u32 divisor;
-  u64 div_magic;
-  u8 div_shift;
-  u8 div_log2;	 /* valid only when div_is_pow2 */
-  u8 div_is_pow2;
+  bpa_divisor_t div;
 } bpa_pool_t;
 
 typedef struct
@@ -196,20 +216,11 @@ bpa_set_addr_of (const bpa_addr_set_t *s, u32 idx, u32 *addr)
 /* ------------------------------------------------------------------ */
 /* policy split                                                        */
 
-/* Unsigned divide by pool->divisor without a hardware divide. */
-static_always_inline u32
-bpa_div (const bpa_pool_t *p, u32 n)
-{
-  if (PREDICT_TRUE (p->div_is_pow2))
-    return n >> p->div_log2;
-  return (u32) (((u64) n * p->div_magic) >> p->div_shift);
-}
-
 static_always_inline void
 bpa_split (const bpa_pool_t *p, u32 sub_idx, u32 *pub_idx, u32 *blk_idx)
 {
-  u32 q = bpa_div (p, sub_idx);
-  u32 r = sub_idx - q * p->divisor;
+  u32 q = bpa_divide (&p->div, sub_idx);
+  u32 r = sub_idx - q * p->div.d;
 
   if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
     {
@@ -227,8 +238,8 @@ static_always_inline u32
 bpa_join (const bpa_pool_t *p, u32 pub_idx, u32 blk_idx)
 {
   if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
-    return blk_idx * p->divisor + pub_idx;
-  return pub_idx * p->divisor + blk_idx;
+    return blk_idx * p->div.d + pub_idx;
+  return pub_idx * p->div.d + blk_idx;
 }
 
 /* ------------------------------------------------------------------ */
@@ -257,14 +268,14 @@ bpa_forward (const bpa_pool_t *p, u32 ip_priv, bpa_block_t *b)
 }
 
 /*
- * outside -> inside. Arithmetic plus two binary searches over small arrays,
- * with no session lookup at all. This is why the deterministic mode needs
- * no allocation logging and why the return path shards cleanly.
+ * outside -> inside, stopping at the dense subscriber index.
+ * The handoff node needs only this: resolving the index to an address
+ * would cost a second binary search it has no use for.
  */
 static_always_inline int
-bpa_reverse (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *ip_priv)
+bpa_reverse_sub (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *sub_idx)
 {
-  u32 pub_idx, blk_idx, sub_idx;
+  u32 pub_idx, blk_idx;
 
   if (PREDICT_FALSE (bpa_set_index_of (&p->outside, ip_pub, &pub_idx)))
     return -1;
@@ -275,7 +286,22 @@ bpa_reverse (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *ip_priv)
   if (PREDICT_FALSE (blk_idx >= p->blocks_per_ip))
     return -1;
 
-  sub_idx = bpa_join (p, pub_idx, blk_idx);
+  *sub_idx = bpa_join (p, pub_idx, blk_idx);
+  return 0;
+}
+
+/*
+ * outside -> inside. Arithmetic plus two binary searches over small arrays,
+ * with no session lookup at all. This is why the deterministic mode needs
+ * no allocation logging and why the return path shards cleanly.
+ */
+static_always_inline int
+bpa_reverse (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *ip_priv)
+{
+  u32 sub_idx;
+
+  if (PREDICT_FALSE (bpa_reverse_sub (p, ip_pub, port, &sub_idx)))
+    return -1;
 
   return bpa_set_addr_of (&p->inside, sub_idx, ip_priv);
 }
@@ -283,11 +309,14 @@ bpa_reverse (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *ip_priv)
 /*
  * Worker that owns a subscriber. Both directions must agree on this,
  * otherwise the per-subscriber port bitmap becomes shared state.
+ *
+ * The worker count is whatever the operator configured, so this uses the
+ * same reciprocal as the pool split rather than requiring a power of two.
  */
 static_always_inline u32
-bpa_owner_thread (u32 sub_idx, u32 n_workers)
+bpa_owner_worker (const bpa_divisor_t *workers, u32 sub_idx)
 {
-  return sub_idx & (n_workers - 1); /* n_workers forced to a power of two */
+  return bpa_modulo (workers, sub_idx);
 }
 
 #endif /* __included_bpa_pool_h__ */

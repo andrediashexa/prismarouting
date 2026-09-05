@@ -14,6 +14,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_l4.h"
 
 typedef struct
 {
@@ -71,34 +72,6 @@ typedef enum
   BPA_OUT2IN_NEXT_DROP,
   BPA_OUT2IN_N_NEXT,
 } bpa_out2in_next_t;
-
-static_always_inline int
-bpa_l4_dst (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, u16 *port,
-	    void **l4h)
-{
-  u32 hlen = ip4_header_bytes (ip);
-  void *p = (u8 *) ip + hlen;
-
-  if (PREDICT_FALSE ((u8 *) p + 8 > (u8 *) vlib_buffer_get_current (b)
-				      + b->current_length))
-    return -1;
-
-  *l4h = p;
-
-  if (proto == BPA_PROTO_ICMP)
-    {
-      icmp46_header_t *icmp = p;
-      if (icmp->type != ICMP4_echo_request && icmp->type != ICMP4_echo_reply)
-	return -1;
-      /* The reply carries back the identifier we assigned on the way out. */
-      *port = clib_net_to_host_u16 (((u16 *) (icmp + 1))[0]);
-      return 0;
-    }
-
-  /* destination port is the second u16 of both TCP and UDP */
-  *port = clib_net_to_host_u16 (((u16 *) p)[1]);
-  return 0;
-}
 
 static_always_inline void
 bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,

@@ -77,14 +77,30 @@ Consequencias:
   porta livre dentro do bloco: `block_size` bits por assinante ativo
   (512 portas -> 64 bytes; 200k assinantes -> ~13 MB)
 
-## Estado do sharding (importante)
+## Sharding: implementado
 
-Os nodes hoje assumem **um unico worker**. `bpa_owner_thread()` existe mas
-ainda nao e usado: sem handoff, o RSS da NIC pode entregar o in2out de um
-assinante num worker e o out2in noutro, e a sessao nao seria encontrada.
+`bpa-in2out-handoff` e `bpa-out2in-handoff` resolvem o indice denso do
+assinante e entregam o buffer ao worker dono, via
+`vlib_buffer_enqueue_to_thread()`.
 
-Enquanto o handoff nao existir, o `startup.conf` de producao **nao pode**
-declarar workers. E o proximo item do caminho critico.
+- **in2out**: o indice sai direto do endereco de origem
+- **out2in**: `bpa_reverse_sub()` recupera o indice a partir de
+  `(endereco publico, porta)` so com aritmetica, sem consultar nenhuma
+  estrutura compartilhada entre workers
+
+A segunda linha e o motivo de o mapeamento deterministico importar alem do
+log: sem ela, o caminho de volta nao teria como achar o dono sem um lookup
+numa tabela global, e ai o lock voltaria.
+
+A distribuicao usa o mesmo reciprocal do split do pool, entao o numero de
+workers **nao precisa** ser potencia de dois. Sem workers configurados, a
+CLI poe o node de traducao direto no arco: handoff seria uma volta pela
+fila de frames sem ganho.
+
+Verificado com 2 workers: assinantes 5, 6 e 9 previstos em thread 2, 1 e 2,
+e foi exatamente onde as sessoes nasceram; as tres respostas chegaram na
+thread 1 e foram entregues ao dono correto, com zero pacotes em
+"sem sessao". Ver `lab/handoff.sh`.
 
 ## Modo dinamico (PBA)
 
@@ -116,7 +132,7 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Pools de prefixos nao contiguos, para alocacao IPv4 real de provedor
 - [x] Nodes in2out / out2in, com traducao verificada por injecao de pacote
 - [x] Tabela de sessao (bihash) por worker + expiracao com timeouts configuraveis
-- [ ] **Handoff entre workers** - obrigatorio antes de habilitar multiplos workers
+- [x] Handoff entre workers, verificado com 2 workers (`lab/handoff.sh`)
 - [ ] Alocador dinamico de blocos + timers de bloco
 - [ ] **Exportacao de log BPA via IPFIX/NetFlow, so alocacoes** - ver
       [logging.md](logging.md). RFC 8158 `natEvent` 16 e 17. Depende do modo

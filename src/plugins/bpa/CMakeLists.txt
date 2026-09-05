@@ -4,6 +4,7 @@ add_vpp_plugin(bpa
   bpa_pool.c
   bpa_session.c
   bpa_in2out.c
+  bpa_handoff.c
   bpa_out2in.c
   bpa_cli.c
 )

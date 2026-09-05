@@ -88,6 +88,34 @@ bpa_addr_set_build (bpa_addr_set_t *s, const u32 *bases, const u32 *counts,
   return 0;
 }
 
+/*
+ *   l     = bit_length(d)
+ *   magic = ceil(2^(32+l) / d)
+ *   n / d == (n * magic) >> (32 + l)   for every n < BPA_MAX_CAPACITY
+ *
+ * The product stays under 2^61, safely inside u64. Proven for 1074
+ * arbitrary divisors by ref/check_magic.py.
+ */
+void
+bpa_divisor_init (bpa_divisor_t *dv, u32 d)
+{
+  u8 l = 0;
+
+  dv->d = d;
+  dv->is_pow2 = (d && ((d & (d - 1)) == 0)) ? 1 : 0;
+
+  dv->log2 = 0;
+  if (dv->is_pow2)
+    while ((1u << dv->log2) < d)
+      dv->log2++;
+
+  while ((1u << l) <= d && l < 32)
+    l++;
+
+  dv->magic = ((((u64) 1 << (32 + l)) + d - 1) / d);
+  dv->shift = 32 + l;
+}
+
 static u8
 bpa_log2_exact (u32 v)
 {
@@ -107,7 +135,6 @@ clib_error_t *
 bpa_pool_init (bpa_pool_t *p)
 {
   u64 capacity;
-  u8 l;
 
   if (p->inside.count == 0 || p->outside.count == 0)
     return clib_error_return (0, "pool '%v': address sets must be built first",
@@ -153,25 +180,13 @@ bpa_pool_init (bpa_pool_t *p)
   p->log2_block = bpa_log2_exact (p->block_size);
 
   /* One divisor drives the policy split; see bpa_split(). */
-  p->divisor = p->policy == BPA_POLICY_INTERLEAVED ? p->outside.count
-						   : p->blocks_per_ip;
-  if (p->divisor == 0)
-    return clib_error_return (0, "pool '%v': divisor is zero", p->name);
-
-  p->div_is_pow2 = bpa_is_pow2 (p->divisor) ? 1 : 0;
-  p->div_log2 = p->div_is_pow2 ? bpa_log2_exact (p->divisor) : 0;
-
-  /*
-   *   l     = bit_length(divisor)
-   *   magic = ceil(2^(32+l) / divisor)
-   *   n / divisor == (n * magic) >> (32 + l)   for every n < BPA_MAX_CAPACITY
-   */
-  l = 0;
-  while ((1u << l) <= p->divisor && l < 32)
-    l++;
-
-  p->div_magic = ((((u64) 1 << (32 + l)) + p->divisor - 1) / p->divisor);
-  p->div_shift = 32 + l;
+  {
+    u32 d = p->policy == BPA_POLICY_INTERLEAVED ? p->outside.count
+						: p->blocks_per_ip;
+    if (d == 0)
+      return clib_error_return (0, "pool '%v': divisor is zero", p->name);
+    bpa_divisor_init (&p->div, d);
+  }
 
   return 0;
 }

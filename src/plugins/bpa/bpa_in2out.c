@@ -9,6 +9,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_l4.h"
 
 typedef struct
 {
@@ -63,36 +64,6 @@ typedef enum
   BPA_IN2OUT_NEXT_DROP,
   BPA_IN2OUT_N_NEXT,
 } bpa_in2out_next_t;
-
-/* Returns 0 and the L4 id on success; -1 when the packet is not translatable. */
-static_always_inline int
-bpa_l4_src (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, u16 *port,
-	    void **l4h)
-{
-  u32 hlen = ip4_header_bytes (ip);
-  void *p = (u8 *) ip + hlen;
-
-  if (PREDICT_FALSE ((u8 *) p + 8 > (u8 *) vlib_buffer_get_current (b)
-				      + b->current_length))
-    return -1;
-
-  *l4h = p;
-
-  if (proto == BPA_PROTO_ICMP)
-    {
-      icmp46_header_t *icmp = p;
-      /* Only echo carries an identifier we can use as a port. ICMP errors
-       * need the embedded packet rewritten, which is a separate job. */
-      if (icmp->type != ICMP4_echo_request && icmp->type != ICMP4_echo_reply)
-	return -1;
-      *port = clib_net_to_host_u16 (((u16 *) (icmp + 1))[0]);
-      return 0;
-    }
-
-  /* TCP and UDP both start with source port then destination port. */
-  *port = clib_net_to_host_u16 (((u16 *) p)[0]);
-  return 0;
-}
 
 static_always_inline void
 bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,

@@ -83,6 +83,20 @@ bpa_init (vlib_main_t *vm)
   bm->timeouts.tcp_trans = BPA_TIMEOUT_TCP_TRANS;
   bm->timeouts.tcp_estab = BPA_TIMEOUT_TCP_ESTAB;
 
+  /*
+   * Subscribers are spread over the workers with the same reciprocal used
+   * by the pool split, so the worker count need not be a power of two.
+   * With no workers configured everything stays on thread 0 and the
+   * handoff nodes are never put on the feature arc.
+   */
+  bm->n_workers = vlib_num_workers ();
+  bpa_divisor_init (&bm->workers, bm->n_workers ? bm->n_workers : 1);
+
+  bm->in2out_fq_index =
+    vlib_frame_queue_main_init (bpa_in2out_node.index, 0);
+  bm->out2in_fq_index =
+    vlib_frame_queue_main_init (bpa_out2in_node.index, 0);
+
   /* One session table per vlib main, worker or not: index by thread. */
   vec_validate (bm->per_thread, tm->n_vlib_mains - 1);
   for (i = 0; i < vec_len (bm->per_thread); i++)

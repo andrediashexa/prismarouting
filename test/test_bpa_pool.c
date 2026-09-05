@@ -94,8 +94,8 @@ main (void)
 	      "blocos/IP=%-4u cap=%-6u div=%u%s\n",
 	      v->name, pools[i].inside.count, pools[i].inside.n_ranges,
 	      pools[i].outside.count, pools[i].outside.n_ranges,
-	      pools[i].blocks_per_ip, pools[i].capacity, pools[i].divisor,
-	      pools[i].div_is_pow2 ? " (shift)" : " (reciprocal)");
+	      pools[i].blocks_per_ip, pools[i].capacity, pools[i].div.d,
+	      pools[i].div.is_pow2 ? " (shift)" : " (reciprocal)");
     }
 
   printf ("\n=== bijecao endereco <-> indice ===\n");

@@ -20,6 +20,12 @@ typedef struct
   bpa_per_thread_t *per_thread; /* one per vlib worker */
   bpa_timeouts_t timeouts;
 
+  /* handoff */
+  u32 in2out_fq_index;
+  u32 out2in_fq_index;
+  u32 n_workers;
+  bpa_divisor_t workers; /* spreads subscribers over the workers */
+
   u16 msg_id_base;
   vlib_main_t *vlib_main;
   vnet_main_t *vnet_main;
@@ -28,6 +34,8 @@ typedef struct
 extern bpa_main_t bpa_main;
 extern vlib_node_registration_t bpa_in2out_node;
 extern vlib_node_registration_t bpa_out2in_node;
+extern vlib_node_registration_t bpa_in2out_handoff_node;
+extern vlib_node_registration_t bpa_out2in_handoff_node;
 
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);

@@ -87,7 +87,7 @@ format_bpa_pool (u8 *s, va_list *args)
   s = format (s, "\n%Ucapacidade   %u assinantes (aproveitavel %u)",
 	      format_white_space, indent + 2, p->capacity, usable);
   s = format (s, "\n%Udivisor      %u (%s)", format_white_space, indent + 2,
-	      p->divisor, p->div_is_pow2 ? "shift" : "reciprocal");
+	      p->div.d, p->div.is_pow2 ? "shift" : "reciprocal");
   return s;
 }
 
@@ -298,9 +298,16 @@ bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
     }
 
   {
-    int rv = vnet_feature_enable_disable (
-      "ip4-unicast", is_in ? "bpa-in2out" : "bpa-out2in", sw_if_index, enable,
-      0, 0);
+    const char *feature;
+    int rv;
+
+    if (bpa_main.n_workers)
+      feature = is_in ? "bpa-in2out-handoff" : "bpa-out2in-handoff";
+    else
+      feature = is_in ? "bpa-in2out" : "bpa-out2in";
+
+    rv = vnet_feature_enable_disable ("ip4-unicast", feature, sw_if_index,
+				      enable, 0, 0);
     if (rv)
       error = clib_error_return (0, "vnet_feature_enable_disable falhou: %d",
 				 rv);
