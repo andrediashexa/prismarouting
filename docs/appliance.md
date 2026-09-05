@@ -67,6 +67,27 @@ gera a configuracao, **sobe o VPP com ela**, confere que os plugins
 carregaram, que o processo continua vivo e que da para criar pool. Roda com
 `make test-appliance`.
 
+## O tuning nao pode travar o boot
+
+Encontrado bootando a ISO: o `hexarouting-tune.service` ficou **5 minutos**
+parado, com o systemd esperando `no limit`, e o resto do boot atras dele.
+
+A causa e o `update-grub`. Num sistema live o GRUB nem esta instalado em
+disco, e o `os-prober` varre todos os dispositivos de bloco procurando outros
+sistemas - o que num appliance nao existe.
+
+Tres correcoes, porque uma so nao bastaria:
+
+| Correcao | Por que |
+|---|---|
+| `GRUB_DISABLE_OS_PROBER=true` no grub.d gerado | num appliance nao ha outro SO para achar, e a varredura e o grosso do tempo |
+| `apply-tuning` pula `update-grub` em sistema live | ali ele nao muda nada, e o tuning so vale depois de instalar |
+| `TimeoutStartSec=90` na unidade | cinto de seguranca: nenhum servico nosso pode travar o boot indefinidamente |
+
+A terceira e a que importa mesmo se as outras duas falharem. O tuning so
+surte efeito no boot seguinte de qualquer forma - travar o boot atual por
+causa dele e um mau negocio em qualquer cenario.
+
 ## Servicos
 
 ```

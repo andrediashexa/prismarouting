@@ -189,5 +189,30 @@ with tempfile.TemporaryDirectory() as root:
           "sem isolcpus, pinar worker faz o VPP competir com o SO")
     print("  meio caminho ainda e tratado como nao tunado")
 
+# ---------------------------------------------------------------- apply-tuning
+
+print("\n=== apply-tuning nao pode travar o boot num sistema live ===")
+import subprocess, os as _os, tempfile as _tf, shutil as _sh
+
+APPLY = os.path.join(HERE, "apply-tuning")
+fakebin = _tf.mkdtemp()
+# update-grub falso que demora: se for chamado, o teste percebe
+with open(os.path.join(fakebin, "update-grub"), "w") as f:
+    f.write("#!/bin/sh\necho CHAMOU-UPDATE-GRUB\nsleep 5\n")
+_os.chmod(os.path.join(fakebin, "update-grub"), 0o755)
+with open(os.path.join(fakebin, "hexarouting-tune"), "w") as f:
+    f.write("#!/bin/sh\nexit 0\n")
+_os.chmod(os.path.join(fakebin, "hexarouting-tune"), 0o755)
+
+env = dict(_os.environ, PATH=fakebin + ":" + _os.environ["PATH"],
+           HEXA_DATAPLANE_IF="", HEXA_SUBSCRIBERS="1000")
+r = subprocess.run(["sh", APPLY], capture_output=True, text=True, env=env,
+                   timeout=30)
+out = r.stdout + r.stderr
+check("CHAMOU-UPDATE-GRUB" in out or "tuning inalterado" in out,
+      "num sistema normal o update-grub deveria ser considerado")
+print("  sistema normal: comportamento preservado")
+_sh.rmtree(fakebin, ignore_errors=True)
+
 print(f"\n{'TODOS OS TESTES PASSARAM' if not fail else str(fail) + ' FALHAS'}")
 sys.exit(1 if fail else 0)

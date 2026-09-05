@@ -202,6 +202,11 @@ def render_grub(p):
         f"isolcpus={iso} nohz_full={iso} rcu_nocbs={iso} "
         f"default_hugepagesz=1G hugepagesz=1G hugepages={p['hugepages_1g']} "
         'intel_iommu=on iommu=pt"\n'
+        # O os-prober varre todos os dispositivos de bloco procurando
+        # outros sistemas. Num appliance nao ha o que achar, e a
+        # varredura chega a levar minutos - travando o boot no
+        # servico de tuning.
+        "GRUB_DISABLE_OS_PROBER=true\n"
     )
 
 

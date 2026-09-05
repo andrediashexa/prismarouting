@@ -25,6 +25,14 @@ if [ "$before" = "$after" ]; then
   exit 0
 fi
 
+# Num sistema live o GRUB nao esta instalado em disco: rodar update-grub ali
+# nao muda nada e pode demorar minutos varrendo dispositivos. O tuning passa
+# a valer quando a caixa for instalada.
+if [ -d /run/live/medium ] || [ -f /run/live/overlay ]; then
+  echo "sistema live: pulando update-grub (o tuning vale apos instalar)" >&2
+  exit 0
+fi
+
 if command -v update-grub >/dev/null 2>&1; then
   update-grub
   echo "linha de comando do kernel mudou (isolcpus/hugepages);" \

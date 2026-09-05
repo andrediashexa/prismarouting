@@ -12,6 +12,10 @@ Before=vpp.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Sem isto o systemd espera "no limit": um update-grub lento trava o boot
+# inteiro, e foi o que aconteceu - 5 minutos parado no tuning. O tuning so
+# surte efeito no proximo boot de qualquer forma, entao nao vale esse preco.
+TimeoutStartSec=90
 ExecStart=/usr/lib/hexarouting/apply-tuning
 EnvironmentFile=-/etc/hexarouting/tune.env
 
