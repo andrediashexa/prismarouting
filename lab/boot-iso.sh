@@ -57,8 +57,18 @@ sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log > /tmp/clean.log
 cp /tmp/clean.log "${LOGCOPY:-/src/boot-console.log}" 2>/dev/null || true
 
 sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
+# "ready" sozinho nao prova que a ISO carrega carimbo de versao: o autoteste
+# imprime a linha da versao e segue mesmo sem ela. Cobrar as duas coisas evita
+# que um build que perdeu o carimbo passe verde.
 if grep -q "HexaRouting ready" /tmp/clean.log; then
-  exit 0
+  if grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
+    exit 0
+  fi
+  echo
+  echo "=========== READY, BUT NO VERSION STAMP ==========="
+  grep -i "version" /tmp/clean.log | tail -5 | sed 's/^/  /'
+  echo "--- console completo em ${LOGCOPY:-/src/boot-console.log} ---"
+  exit 1
 fi
 
 echo

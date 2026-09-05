@@ -12,6 +12,22 @@ mkdir -p /run/vpp /vpp_plugins /var/log/vpp
 (cd /src/.build-vpp && ninja >/dev/null 2>&1)
 sh /src/appliance/install.sh >/dev/null 2>&1
 
+echo "=== a caixa sabe dizer a propria versao? ==="
+HEXA_VERSION_STAMP="0.0.0-test (deadbee)" sh /src/appliance/install.sh >/dev/null 2>&1
+stamp=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+[ "$stamp" = "0.0.0-test (deadbee)" ] \
+  && say "carimbo instalado e o que o build passou" \
+  || bad "carimbo errado: '$stamp'"
+# Sem o carimbo do build, o instalador tem que cair no VERSION do repo - e
+# nunca inventar um numero.
+sh /src/appliance/install.sh >/dev/null 2>&1
+stamp=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+case "$stamp" in
+  "$(cat /src/VERSION)"*) say "sem carimbo, cai no VERSION do repo: $stamp" ;;
+  *) bad "sem carimbo saiu '$stamp', esperava comecar com $(cat /src/VERSION)" ;;
+esac
+
+echo
 echo "=== o tuning grava onde o VPP le? ==="
 rm -f /etc/vpp/startup.conf
 HEXA_SUBSCRIBERS=200000 /usr/lib/hexarouting/apply-tuning >/dev/null 2>&1

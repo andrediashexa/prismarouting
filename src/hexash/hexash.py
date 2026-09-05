@@ -33,6 +33,27 @@ VPPCTL = os.environ.get("VPPCTL", "vppctl")
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 
+# One source of truth, written by the build. A version compiled into the code
+# drifts from the tag the moment someone forgets to edit it, and a box that
+# misreports its version sends every later investigation the wrong way.
+VERSION_PATH = os.environ.get("HEXA_VERSION_FILE",
+                              "/usr/share/hexarouting/VERSION")
+
+
+def hexarouting_version():
+    """Version of this build, or a string that admits it is unknown."""
+    for path in (VERSION_PATH,
+                 os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "..", "..", "VERSION")):
+        try:
+            with open(path) as f:
+                v = f.read().strip()
+            if v:
+                return v
+        except OSError:
+            continue
+    return "unknown (no VERSION file)"
+
 # vppctl exits 0 even when a command fails: the text is what says so. Errors
 # come out as "<command>: <message>" or "unknown input ...". Replacing this
 # with the binary API, which has real return codes, is on the roadmap.
@@ -73,7 +94,7 @@ SHOW = {
     "bgp": ("BGP information (FRR)", None),
     "isis": ("IS-IS information (FRR)", None),
     "interface": ("interfaces (FRR)", None),
-    "version": ("version (FRR)", None),
+    "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
 }
 
@@ -659,9 +680,26 @@ class Shell:
         if line in ("show running-config", "show run"):
             print(self.running_config().text(), end="")
             return
+        if line == "show version":
+            self.show_version()
+            return
         rc, out = self.frr.show(line)
         if out:
             print(out)
+
+    def show_version(self):
+        """
+        The three versions that matter are in three different places, and an
+        operator on the phone should not have to run three commands to read
+        them - least of all the two that require knowing vppctl and vtysh
+        exist at all.
+        """
+        print(f"HexaRouting {hexarouting_version()}")
+        rc, out = self.dp.run("show version")
+        print(f"  dataplane: {out.strip().splitlines()[0] if rc == 0 and out.strip() else 'not responding'}")
+        rc, out = self.frr.show("show version")
+        line = out.strip().splitlines()[0] if out.strip() else ""
+        print(f"  routing:   {line or 'not responding'}")
 
     def show_compare(self):
         if self.candidate is None:

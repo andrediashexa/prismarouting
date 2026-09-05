@@ -51,7 +51,9 @@ flowchart LR
 ## Layout
 
 ```
-CONTRIBUTING.md        project rules: documentation, issues, branches
+CONTRIBUTING.md        project rules: documentation, issues, branches, releases
+CHANGELOG.md           what changed in each released version
+VERSION                single source of truth for the version
 docs/architecture.md   design decisions, sharding, mapping algorithm
 docs/routing.md        FRR integration, VTY, punt pitfalls
 docs/logging.md        BPA log export over IPFIX (RFC 8158)
@@ -79,6 +81,11 @@ sh tools/lab.sh datapath    # packet-level translation
 ```
 
 ## Status
+
+The current version is in [`VERSION`](VERSION) — deliberately not repeated
+here, since a number written in two places becomes two numbers. The project
+stays on `0.x.x` until it is declared ready for production; see
+[CONTRIBUTING.md](CONTRIBUTING.md) section 5 and [CHANGELOG.md](CHANGELOG.md).
 
 | Component | State |
 |---|---|

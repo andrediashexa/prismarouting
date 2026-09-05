@@ -75,7 +75,13 @@ mkdir -p "$ROOT/src"
 cp -a "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs" "$ROOT/src/"
 mkdir -p "$ROOT/vpp_plugins"
 cp "$PLUGIN_SO" "$ROOT/vpp_plugins/"
-chroot "$ROOT" /bin/sh -c "cd /src && sh appliance/install.sh"
+# O chroot nao ve o .git do host, entao o carimbo e calculado aqui e passado
+# adiante. Sem isso toda ISO se declararia "unknown".
+if [ -z "${HEXA_VERSION_STAMP:-}" ]; then
+  HEXA_VERSION_STAMP=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
+fi
+say "version: $HEXA_VERSION_STAMP"
+chroot "$ROOT" /bin/sh -c "cd /src && HEXA_VERSION_STAMP='$HEXA_VERSION_STAMP' sh appliance/install.sh"
 rm -rf "$ROOT/src"
 
 say "identidade da caixa"

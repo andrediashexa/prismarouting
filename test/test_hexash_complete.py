@@ -91,5 +91,41 @@ check(not o and hint is None,
       f"deveria admitir que nao sabe, obtido opcoes={o} hint={hint!r}")
 print("  admite que dali em diante quem sabe e o FRR")
 
+print("\n=== show version ===")
+o, _, _ = opts("operational", "show ")
+check("version" in o, f"'version' deveria estar em show: {sorted(o)}")
+
+import tempfile as _tf, os as _os
+with _tf.TemporaryDirectory() as d:
+    vf = _os.path.join(d, "VERSION")
+    with open(vf, "w") as f:
+        f.write("0.9.1 (abc1234-dirty)\n")
+    _os.environ["HEXA_VERSION_FILE"] = vf
+    import importlib
+    importlib.reload(hexash)
+    check(hexash.hexarouting_version() == "0.9.1 (abc1234-dirty)",
+          f"deveria ler o carimbo do arquivo, leu {hexash.hexarouting_version()!r}")
+    # Arvore suja tem que continuar dizendo que e suja: e o carimbo que
+    # impede uma ISO de se declarar release sem ser.
+    check("dirty" in hexash.hexarouting_version(),
+          "o carimbo de arvore suja nao pode ser engolido")
+
+# Sem o arquivo instalado, tem que cair no VERSION do repositorio - e o que
+# faz o hexash rodar da arvore de desenvolvimento dizer a verdade.
+_os.environ["HEXA_VERSION_FILE"] = "/nao/existe/VERSION"
+importlib.reload(hexash)
+repo_version = open(_os.path.join(_os.path.dirname(_os.path.abspath(hexash.__file__)),
+                                  "..", "..", "VERSION")).read().strip()
+check(hexash.hexarouting_version() == repo_version,
+      f"deveria cair no VERSION do repo ({repo_version!r}), "
+      f"leu {hexash.hexarouting_version()!r}")
+# Tripwire deliberado: 1.0.0 e uma decisao do mantenedor, nao um numero que
+# alguem sobe sem querer. Quando ele disser que esta pronto, esta checagem sai
+# junto com a regra em CONTRIBUTING.md.
+check(repo_version.startswith("0."),
+      f"a versao e {repo_version!r}: 1.0.0 so quando o mantenedor declarar "
+      "pronto para producao (CONTRIBUTING.md, secao 5)")
+print(f"  versao lida: {hexash.hexarouting_version()}")
+
 print(f"\n{'TODOS OS TESTES PASSARAM' if not fail else str(fail) + ' FALHAS'}")
 sys.exit(1 if fail else 0)

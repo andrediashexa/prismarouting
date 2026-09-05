@@ -35,6 +35,20 @@ for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.servi
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 
+say "version stamp"
+# A caixa tem que saber dizer a propria versao: a tag so identifica a release
+# para quem tem o repositorio aberto, e nao e ele quem esta no telefone. E se a
+# arvore tinha mudanca nao commitada, o arquivo diz isso - uma ISO que se
+# declara v0.4.1 sem ser manda a investigacao inteira para o lado errado.
+if [ -n "${HEXA_VERSION_STAMP:-}" ]; then
+  stamp=$HEXA_VERSION_STAMP
+else
+  stamp=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
+fi
+install -d -m 0755 "$DESTDIR/usr/share/hexarouting"
+printf '%s\n' "$stamp" > "$DESTDIR/usr/share/hexarouting/VERSION"
+chmod 0644 "$DESTDIR/usr/share/hexarouting/VERSION"
+
 say "kernel knobs"
 install -D -m 0644 "$REPO/appliance/etc/sysctl.conf" \
     "$DESTDIR/etc/sysctl.d/99-hexarouting.conf"

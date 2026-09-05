@@ -3,11 +3,14 @@
 ## TL;DR
 
 Every feature gets an issue. Every issue gets a branch. Every branch gets
-documentation, and that documentation is written in English, opens with a
+documentation, and everything this project writes down — documentation, CLI
+syntax, generated files and source comments — is in English, opens with a
 TL;DR, uses RFC 2119 keywords for anything normative, answers 5W2H, and draws
 its diagrams in Mermaid. A feature too large for one issue is split into
 sub-issues, and their branches are cut from the parent issue's branch — not
-from `master`.
+from `master`. Merges happen when the maintainer asks, and every merge is a
+release: a version bump, an annotated tag and a changelog entry. The project
+stays on `0.x.x` until the maintainer declares it production-ready.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY** and **OPTIONAL** in this
@@ -34,7 +37,7 @@ repository MUST follow all five rules below.
 
 | # | Rule | Notes |
 |---|------|-------|
-| 1 | Documentation MUST be written in **English** | This includes user-facing strings, CLI syntax, VTY output and generated configuration files. Code comments MAY remain in Portuguese; they are not equipment syntax. |
+| 1 | Documentation MUST be written in **English** | This includes user-facing strings, CLI syntax, VTY output, generated configuration files **and source comments**. Everything the project writes down is in English. |
 | 2 | Every document MUST open with a **TL;DR** | Three to six lines. A reader who stops there MUST still know what the document is about and what it decided. |
 | 3 | Every document MUST answer **5W2H** | What, Why, Who, Where, When, How, How much. A table is RECOMMENDED. Short documents MAY fold 5W2H into prose, but no question may go unanswered. |
 | 4 | Normative statements MUST use **RFC 2119** keywords | Write "the pool MUST reject overlapping prefixes", not "the pool should probably reject". Every document that uses the keywords MUST cite RFC 2119, as this one does. |
@@ -127,12 +130,70 @@ A branch is ready to merge when **all** of the following hold:
 5. The commit message explains the failure or the decision, not the diff. The
    diff is already in the commit.
 
-## 5. What this does not cover
+## 5. Versioning and releases
 
-* **Release versioning and tagging** — not defined yet.
+### Before 1.0.0
+
+The project is on `0.x.x` and **MUST** stay there until the maintainer
+declares it ready for production. `1.0.0` is a decision, not a milestone
+reached by counting features: it is the statement "this may carry a
+provider's subscribers", and only the maintainer makes it.
+
+Until then:
+
+| Change merged into `master` | Bump |
+|---|---|
+| A feature issue, or a parent issue with its sub-issues | `0.MINOR.0` |
+| A fix, a chore, a documentation-only change | `0.x.PATCH` |
+| Anything at all | never `1.0.0` on its own |
+
+Breaking changes are permitted before 1.0.0 — that is what `0.x` means — but
+they **MUST** be called out in the changelog entry, under their own heading.
+An operator who upgrades an appliance in the field has no way to read the
+diff.
+
+### Every merge is a release
+
+A merge into `master` happens only when the maintainer asks for it, and when
+it happens it **MUST** produce all three of:
+
+1. **A version bump** in `VERSION`, which is the single source of truth. No
+   version string is hardcoded anywhere else.
+2. **An annotated tag** `vX.Y.Z`, whose message is the release note — what
+   changed and why, not the diff.
+3. **A `CHANGELOG.md` entry** listing the issues the merge closes, in the
+   order a reader cares about: behaviour changes first, then fixes, then
+   internal work.
+
+```mermaid
+flowchart LR
+    A["maintainer asks<br/>for a merge"] --> B["bump VERSION"]
+    B --> C["CHANGELOG entry<br/>issues closed"]
+    C --> D["merge into master"]
+    D --> E["annotated tag vX.Y.Z<br/>message = release note"]
+    E --> F["close the issues"]
+```
+
+The tag is created **after** the merge commit exists, and points at it. A tag
+that predates its own content is worse than no tag.
+
+### The version has to be visible on the box
+
+A version that lives only in git identifies the release to whoever has the
+repository open, which is not the person reporting a fault. Therefore:
+
+* The boot self-test **MUST** print the version.
+* `hexash` **MUST** report it under `show version`, alongside the VPP and FRR
+  versions it drives.
+* An artifact built from a tree with uncommitted changes **MUST** say so, and
+  **MUST NOT** claim to be a released version. An ISO that reports `v0.4.1`
+  when it was built from something else sends every later investigation in
+  the wrong direction.
+
+## 6. What this does not cover
+
 * **Code review sign-off** — the repository has a single maintainer today, so
   no approval rule is stated. When that changes, this section is where it
   goes.
-* **Code comment language** — deliberately unconstrained. Rule 1 governs what
-  the equipment and its documentation say, not how the source explains itself
-  to whoever maintains it.
+* **Spoken language** — this document governs what the project *writes*.
+  Nobody is required to discuss the work in English.
