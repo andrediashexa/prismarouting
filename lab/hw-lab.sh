@@ -10,8 +10,20 @@
 # que o lab e acessado; entrega-la ao dataplane corta o acesso as duas VMs.
 #
 # Rode no HexaRouting. Precisa de acesso root ao peer por chave.
-set -u
+# set -e: sem isto o script seguia ate o fim imprimindo "pronto" mesmo com
+# ssh e iptables faltando. Script que declara sucesso depois de falhar e pior
+# que script nenhum.
+set -eu
 PEER=${PEER:-root@10.95.200.197}
+
+# Falta de ferramenta e erro de ambiente, nao de configuracao: dizer qual
+# falta poupa a caca.
+for t in ip sysctl ssh iptables; do
+  command -v "$t" >/dev/null 2>&1 || {
+    echo "ERRO: '$t' nao encontrado. Instale antes de rodar." >&2
+    exit 1
+  }
+done
 LINK_LOCAL=10.95.172.128
 LINK_PEER=10.95.172.129
 TRANSIT_VPP=169.254.99.1
