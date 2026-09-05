@@ -102,6 +102,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   ip4_address_t addr;
   u32 len = 0;
   u32 block = 512, port_min = 1024, port_max = 65535;
+  u32 tv = 0;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   bpa_pool_t cfg = { 0 };
   u8 *name = 0;
@@ -158,6 +159,20 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	cfg.mode = BPA_MODE_DETERMINISTIC;
       else if (unformat (line_input, "mode dynamic"))
 	cfg.mode = BPA_MODE_DYNAMIC;
+      /* Per-pool lifetimes. Absent means inherit the global, which is why
+       * zero is the "not set" value rather than a legal setting. */
+      else if (unformat (line_input, "timeout udp %u", &tv))
+	cfg.timeouts.udp = tv;
+      else if (unformat (line_input, "timeout icmp %u", &tv))
+	cfg.timeouts.icmp = tv;
+      else if (unformat (line_input, "timeout tcp-syn %u", &tv))
+	cfg.timeouts.tcp_syn = tv;
+      else if (unformat (line_input, "timeout tcp-transitory %u", &tv))
+	cfg.timeouts.tcp_trans = tv;
+      else if (unformat (line_input, "timeout tcp-established %u", &tv))
+	cfg.timeouts.tcp_estab = tv;
+      else if (unformat (line_input, "timeout port-holddown %u", &tv))
+	cfg.timeouts.port_holddown = tv;
       else if (!name && unformat (line_input, "%v", &name))
 	;
       else
@@ -383,9 +398,11 @@ bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
   if (!unformat_user (input, unformat_line_input, line_input))
     {
       vlib_cli_output (vm,
-		       "udp %u  icmp %u  tcp-transitory %u  tcp-established %u",
+		       "udp %u  icmp %u  tcp-syn %u  tcp-transitory %u  "
+		       "tcp-established %u  port-holddown %u",
 		       bm->timeouts.udp, bm->timeouts.icmp,
-		       bm->timeouts.tcp_trans, bm->timeouts.tcp_estab);
+		       bm->timeouts.tcp_syn, bm->timeouts.tcp_trans,
+		       bm->timeouts.tcp_estab, bm->timeouts.port_holddown);
       return 0;
     }
 
@@ -399,6 +416,10 @@ bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	bm->timeouts.tcp_trans = v;
       else if (unformat (line_input, "tcp-established %u", &v))
 	bm->timeouts.tcp_estab = v;
+      else if (unformat (line_input, "tcp-syn %u", &v))
+	bm->timeouts.tcp_syn = v;
+      else if (unformat (line_input, "port-holddown %u", &v))
+	bm->timeouts.port_holddown = v;
       else
 	{
 	  error = clib_error_return (0, "unknown input '%U'",
@@ -645,6 +666,20 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, " ports %u %u\n", p->port_min, p->port_max);
       s = format (s, " policy %U\n", format_bpa_policy, p->policy);
       s = format (s, " mode %U\n", format_bpa_mode, p->mode);
+      /* Only the overrides. Emitting inherited values would turn every
+       * global change into a diff against every pool. */
+      if (p->timeouts.udp)
+	s = format (s, " timeout udp %u\n", p->timeouts.udp);
+      if (p->timeouts.icmp)
+	s = format (s, " timeout icmp %u\n", p->timeouts.icmp);
+      if (p->timeouts.tcp_syn)
+	s = format (s, " timeout tcp-syn %u\n", p->timeouts.tcp_syn);
+      if (p->timeouts.tcp_trans)
+	s = format (s, " timeout tcp-transitory %u\n", p->timeouts.tcp_trans);
+      if (p->timeouts.tcp_estab)
+	s = format (s, " timeout tcp-established %u\n", p->timeouts.tcp_estab);
+      if (p->timeouts.port_holddown)
+	s = format (s, " timeout port-holddown %u\n", p->timeouts.port_holddown);
       s = format (s, " exit\n");
     }
 
@@ -670,6 +705,11 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
     s = format (s, "cgnat timeout icmp %u\n", bm->timeouts.icmp);
   if (bm->timeouts.tcp_trans != BPA_TIMEOUT_TCP_TRANS)
     s = format (s, "cgnat timeout tcp-transitory %u\n", bm->timeouts.tcp_trans);
+  if (bm->timeouts.tcp_syn != BPA_TIMEOUT_TCP_SYN)
+    s = format (s, "cgnat timeout tcp-syn %u\n", bm->timeouts.tcp_syn);
+  if (bm->timeouts.port_holddown != BPA_PORT_HOLDDOWN)
+    s = format (s, "cgnat timeout port-holddown %u\n",
+		bm->timeouts.port_holddown);
   if (bm->timeouts.tcp_estab != BPA_TIMEOUT_TCP_ESTAB)
     s = format (s, "cgnat timeout tcp-established %u\n", bm->timeouts.tcp_estab);
   if (bm->block_holddown != BPA_BLOCK_HOLDDOWN)
