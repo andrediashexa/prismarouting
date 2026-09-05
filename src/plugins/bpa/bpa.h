@@ -26,6 +26,8 @@ typedef struct
   u32 n_workers;
   bpa_divisor_t workers; /* spreads subscribers over the workers */
 
+  vlib_log_class_t log_class; /* aparece em "show logging" */
+
   u16 msg_id_base;
   vlib_main_t *vlib_main;
   vnet_main_t *vnet_main;

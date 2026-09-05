@@ -3,10 +3,66 @@
 #include <vlib/vlib.h>
 #include <vnet/plugin/plugin.h>
 #include <vpp/app/version.h>
+#include <vnet/ip/ip_interface.h>
 
 #include "bpa.h"
 
 bpa_main_t bpa_main;
+
+/*
+ * Refuses a pool whose public set contains an address configured on one of
+ * our own interfaces.
+ *
+ * bpa-out2in runs on the ip4-unicast arc, before ip4-lookup and therefore
+ * before ip4-local decides a packet is for us. It would happily translate
+ * the box's own BGP session or OSPF adjacency, which then breaks
+ * intermittently with nothing obvious in any log. Catching it here costs
+ * one walk over the interface addresses at config time.
+ */
+static clib_error_t *
+bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  ip4_main_t *im = &ip4_main;
+  ip_lookup_main_t *lm = &im->lookup_main;
+  vnet_sw_interface_t *si;
+  ip4_address_t clash;
+  u32 clash_sw_if_index = ~0;
+  int found = 0;
+
+  pool_foreach (si, vnm->interface_main.sw_interfaces)
+    {
+      ip_interface_address_t *ia;
+
+      if (found)
+	break;
+
+      foreach_ip_interface_address (
+	lm, ia, si->sw_if_index, 1 /* honor unnumbered */, ({
+	  ip4_address_t *a = ip_interface_address_get_address (lm, ia);
+	  u32 host = clib_net_to_host_u32 (a->as_u32);
+	  u32 idx;
+
+	  if (!found && bpa_set_index_of (outside, host, &idx) == 0)
+	    {
+	      found = 1;
+	      clash = *a;
+	      clash_sw_if_index = si->sw_if_index;
+	    }
+	}));
+    }
+
+  if (found)
+    return clib_error_return (
+      0,
+      "pool '%v': o endereco publico %U esta configurado em %U. O CGNAT "
+      "traduziria o proprio trafego de controle da caixa (BGP, OSPF) e a "
+      "sessao cairia sem motivo aparente",
+      name, format_ip4_address, &clash, format_vnet_sw_if_index_name, vnm,
+      clash_sw_if_index);
+
+  return 0;
+}
 
 clib_error_t *
 bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
@@ -19,6 +75,10 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
   q = hash_get_mem (bm->pool_by_name, cfg->name);
   if (q)
     return clib_error_return (0, "pool already exists");
+
+  e = bpa_check_local_overlap (&cfg->outside, cfg->name);
+  if (e)
+    return e;
 
   /* Workers read bm->pools on the datapath; mutate it under the barrier. */
   vlib_worker_thread_barrier_sync (bm->vlib_main);
@@ -66,6 +126,39 @@ bpa_pool_del (u8 *name)
   return 0;
 }
 
+/*
+ * The mirror of bpa_check_local_overlap(): an address configured after the
+ * pool exists. We cannot refuse it from here, so we make the noise loud
+ * enough that it is found before a customer does.
+ */
+static void
+bpa_ip4_address_change (ip4_main_t *im, uword opaque, u32 sw_if_index,
+			ip4_address_t *address, u32 address_length,
+			u32 if_address_index, u32 is_delete)
+{
+  bpa_main_t *bm = &bpa_main;
+  vnet_main_t *vnm = vnet_get_main ();
+  bpa_pool_t *p;
+  u32 host, idx;
+
+  if (is_delete)
+    return;
+
+  host = clib_net_to_host_u32 (address->as_u32);
+
+  pool_foreach (p, bm->pools)
+    {
+      if (bpa_set_index_of (&p->outside, host, &idx) == 0)
+	vlib_log_err (
+	  bm->log_class,
+	  "%U foi configurado em %U mas pertence ao pool publico '%v'. O "
+	  "trafego de controle da caixa nesse endereco sera traduzido pelo "
+	  "CGNAT. Remova o endereco ou o pool.",
+	  format_ip4_address, address, format_vnet_sw_if_index_name, vnm,
+	  sw_if_index, p->name);
+    }
+}
+
 static clib_error_t *
 bpa_init (vlib_main_t *vm)
 {
@@ -77,6 +170,16 @@ bpa_init (vlib_main_t *vm)
   bm->vlib_main = vm;
   bm->vnet_main = vnet_get_main ();
   bm->pool_by_name = hash_create_vec (0, sizeof (u8), sizeof (uword));
+  bm->log_class = vlib_log_register_class ("bpa", 0);
+
+  {
+    ip4_main_t *im = &ip4_main;
+    ip4_add_del_interface_address_callback_t cb = {
+      .function = bpa_ip4_address_change,
+      .function_opaque = 0,
+    };
+    vec_add1 (im->add_del_interface_address_callbacks, cb);
+  }
 
   bm->timeouts.udp = BPA_TIMEOUT_UDP;
   bm->timeouts.icmp = BPA_TIMEOUT_ICMP;
