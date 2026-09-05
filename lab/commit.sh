@@ -99,6 +99,25 @@ R=$(vppctl show bpa pool)
 expect_in "rollback took the device back to the earlier block size" "512 ports" "$R"
 expect_in "two revisions are on record" "1 commit(s) ago" "$($HX -c 'show rollback' 2>&1)"
 
+# --- MTU: committed, then rolled back to the value that was there before ---
+# The hard half of the acceptance criteria. A rollback that can add a statement
+# but not restore the previous value is not a rollback, and MTU is the case
+# where that shows: the device holds one number and there is nothing to diff
+# against unless the previous one was recorded.
+BEFORE=$(vppctl show interface pg0 | awk 'NR==2 {split($4,a,"/"); print a[1]}')
+$HX -c "configure" -c "interface pg0" -c "mtu 1400" -c "exit" -c "commit" \
+    >/dev/null 2>&1 || true
+AFTER=$(vppctl show interface pg0 | awk 'NR==2 {split($4,a,"/"); print a[1]}')
+$HX -c "rollback 1" -c "commit" >/dev/null 2>&1 || true
+BACK=$(vppctl show interface pg0 | awk 'NR==2 {split($4,a,"/"); print a[1]}')
+echo "  pg0 mtu: $BEFORE -> $AFTER -> $BACK"
+expect "the committed MTU reached the device" test "$AFTER" = "1400"
+# Guarded: if the MTU never changed, "it went back" is true for the wrong
+# reason. An assertion that holds when nothing happened is not an assertion.
+expect "the MTU actually changed, so the rollback below means something" \
+  test "$BEFORE" != "$AFTER"
+expect "rollback restored the previous MTU" test "$BACK" = "$BEFORE"
+
 # --- a commit the dataplane refuses must FAIL ---
 # This is the case that could not pass before the binary API: vppctl exits 0
 # even when the command failed, so commit reported success while the dataplane

@@ -165,4 +165,23 @@ for pfx in 203.0.113.0/24 198.18.0.0/24 198.19.0.0/24; do
   expect "$pfx reached the VPP FIB" sh -c "vppctl show ip fib $pfx | grep -q '^$pfx'"
 done
 expect "IS-IS adjacency is up" sh -c "vtysh -c 'show isis neighbor' 2>/dev/null | grep -qi up"
+
+# --- MTU committed through the VTY reaches BOTH sides ---
+# The lab sets 1500 by hand at the top, which is what makes OSPF come up here.
+# This proves the operator can now do the same through the configuration, and
+# that it lands on the VPP interface AND its TAP. Setting only the TAP leaves
+# the packet path untouched, which is the half that matters and the half a
+# quick test would miss.
+HX="python3 /src/src/hexash/hexash.py"
+$HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1400" -c "exit" \
+    -c "commit" > /tmp/mtu.log 2>&1 || true
+tail -3 /tmp/mtu.log | sed 's/^/  commit: /'
+expect "the dataplane interface took the committed MTU"   sh -c "vppctl show interface host-veth-vpp | grep -q 1400"
+expect "and so did its TAP" sh -c "ip link show vppwan0 | grep -q 'mtu 1400'"
+expect "the MTU is in the running configuration"   sh -c "$HX -c 'show running-config' | grep -q 'mtu 1400'"
+
+# Put it back, or the OSPF assertions above would be checking a link this test
+# just broke.
+$HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1500" -c "exit" \
+    -c "commit" >/dev/null 2>&1 || true
 verdict
