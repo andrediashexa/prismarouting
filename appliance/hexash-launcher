@@ -1,0 +1,8 @@
+#!/bin/sh
+# Launcher for the VTY.
+#
+# A launcher and not a symlink: hexash.py does "from config import ..." and so
+# needs sys.path[0] to be the directory holding both files. How Python derives
+# that for a symlinked script has changed between releases, and an appliance
+# should not depend on which release it got.
+exec python3 /usr/lib/hexarouting/hexash.py "$@"

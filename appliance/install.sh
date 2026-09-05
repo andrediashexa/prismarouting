@@ -12,7 +12,14 @@ PLUGIN_DIR=${PLUGIN_DIR:-/usr/lib/x86_64-linux-gnu/vpp_plugins}
 say() { echo "==> $*"; }
 
 say "binaries"
-install -D -m 0755 "$REPO/src/hexash/hexash.py"      "$DESTDIR/usr/bin/hexash"
+# hexash imports config.py from its own directory, so both have to travel
+# together. Installing only hexash.py put a VTY on the box that raised
+# ModuleNotFoundError on every start - the product's front door, broken on
+# every installed box and every ISO, and invisible because the labs run it
+# from the source tree where config.py sits next to it.
+install -D -m 0755 "$REPO/src/hexash/hexash.py"      "$DESTDIR/usr/lib/hexarouting/hexash.py"
+install -D -m 0644 "$REPO/src/hexash/config.py"      "$DESTDIR/usr/lib/hexarouting/config.py"
+install -D -m 0755 "$REPO/appliance/hexash-launcher" "$DESTDIR/usr/bin/hexash"
 install -D -m 0755 "$REPO/appliance/hexarouting-tune" "$DESTDIR/usr/bin/hexarouting-tune"
 install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/hexarouting/wait-for-vpp"
 install -D -m 0755 "$REPO/appliance/apply-tuning"     "$DESTDIR/usr/lib/hexarouting/apply-tuning"
