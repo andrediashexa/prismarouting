@@ -5,6 +5,7 @@
 
 #include "bpa.h"
 #include "bpa_log.h"
+#include <vnet/ip/reass/ip4_sv_reass.h>
 
 u8 *
 format_bpa_policy (u8 *s, va_list *args)
@@ -309,6 +310,15 @@ bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
     rv = vnet_feature_enable_disable ("ip4-unicast", feature, sw_if_index,
 				      enable, 0, 0);
+
+    /*
+     * Reassembly virtual raso: guarda as portas do primeiro fragmento e as
+     * anexa aos seguintes. Sem isso um fragmento sem porta nao casa com
+     * sessao e e descartado. E refcontado, entao conviver com outra feature
+     * que tambem o use nao e problema.
+     */
+    if (!rv)
+      ip4_sv_reass_enable_disable_with_refcnt (sw_if_index, enable);
     if (rv)
       error = clib_error_return (0, "vnet_feature_enable_disable falhou: %d",
 				 rv);

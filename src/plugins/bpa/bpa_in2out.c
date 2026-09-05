@@ -18,6 +18,8 @@ typedef struct
   u16 port_priv, port_pub;
   u8 proto;
   u8 created;
+  u8 is_frag;
+  u16 reass_port;
 } bpa_in2out_trace_t;
 
 static u8 *
@@ -31,10 +33,11 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   priv.as_u32 = clib_host_to_net_u32 (t->ip_priv);
   pub.as_u32 = clib_host_to_net_u32 (t->ip_pub);
 
-  return format (s, "BPA in2out %U:%u -> %U:%u proto %U%s",
+  return format (s, "BPA in2out %U:%u -> %U:%u proto %U%s%s",
 		 format_ip4_address, &priv, t->port_priv, format_ip4_address,
 		 &pub, t->port_pub, format_bpa_proto, t->proto,
-		 t->created ? " (sessao nova)" : "");
+		 t->created ? " (sessao nova)" : "",
+		 t->is_frag ? " [fragmento seguinte]" : "");
 }
 
 #define foreach_bpa_in2out_error                                              \
@@ -81,6 +84,14 @@ bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
 			    clib_host_to_net_u32 (new_addr), ip4_header_t,
 			    src_address);
       ip->checksum = ip_csum_fold (sum);
+    }
+
+  /* Fragmento que nao e o primeiro: nao ha porta a reescrever, e o checksum
+   * L4 vive no primeiro fragmento. So o endereco muda. */
+  if (PREDICT_FALSE (l4h == 0))
+    {
+      ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
+      return;
     }
 
   if (proto == BPA_PROTO_ICMP)
@@ -251,6 +262,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 	  t->port_priv = port_priv;
 	  t->ip_pub = s ? s->ip_pub : 0;
 	  t->port_pub = s ? s->port_pub : 0;
+	  t->is_frag = vnet_buffer (b[0])->ip.reass.is_non_first_fragment;
+	  t->reass_port = vnet_buffer (b[0])->ip.reass.l4_src_port;
 	}
 
       b++;
@@ -284,4 +297,11 @@ VNET_FEATURE_INIT (bpa_in2out_feature, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "bpa-in2out",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
+  /*
+   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
+   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
+   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
+   * por fragmento.
+   */
+  .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };

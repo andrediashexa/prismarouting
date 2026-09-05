@@ -198,10 +198,24 @@ VNET_FEATURE_INIT (bpa_in2out_handoff_feature, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "bpa-in2out-handoff",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
+  /*
+   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
+   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
+   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
+   * por fragmento.
+   */
+  .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };
 
 VNET_FEATURE_INIT (bpa_out2in_handoff_feature, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "bpa-out2in-handoff",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
+  /*
+   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
+   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
+   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
+   * por fragmento.
+   */
+  .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };

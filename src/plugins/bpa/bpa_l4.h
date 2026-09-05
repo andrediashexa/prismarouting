@@ -10,15 +10,38 @@
 #include <vnet/ip/ip4_packet.h>
 #include <vnet/ip/icmp46_packet.h>
 
+#include <vnet/buffer.h>
+
 #include "bpa_session.h"
 
-/* Returns 0 and the L4 id; -1 when the packet is not translatable. */
+/*
+ * Returns 0 and the L4 id; -1 when the packet is not translatable.
+ *
+ * `*l4h` sai zero quando o pacote nao carrega cabecalho L4 - o caso do
+ * fragmento que nao e o primeiro. Nesses, quem fornece as portas e o
+ * reassembly virtual raso do VPP, que as guardou do primeiro fragmento. Sem
+ * isso, um fragmento sem porta nao casa com sessao nenhuma e e descartado:
+ * DNS grande, VPN e jogo param de funcionar de forma intermitente.
+ */
 static_always_inline int
 bpa_l4_id (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, int want_dst,
 	   u16 *port, void **l4h)
 {
   u32 hlen = ip4_header_bytes (ip);
   void *p = (u8 *) ip + hlen;
+
+  if (PREDICT_FALSE (vnet_buffer (b)->ip.reass.is_non_first_fragment))
+    {
+      *l4h = 0; /* nao ha L4 aqui: so o endereco sera reescrito */
+      /* O reassembly guarda a porta em ordem de rede. Ler como ordem de
+       * host devolve o valor com os bytes trocados - 12345 (0x3039) vira
+       * 14640 (0x3930) - e o node abre uma sessao fantasma, queimando uma
+       * porta do bloco por fragmento. */
+      *port = clib_net_to_host_u16 (want_dst
+				      ? vnet_buffer (b)->ip.reass.l4_dst_port
+				      : vnet_buffer (b)->ip.reass.l4_src_port);
+      return 0;
+    }
 
   if (PREDICT_FALSE ((u8 *) p + 8
 		     > (u8 *) vlib_buffer_get_current (b) + b->current_length))

@@ -92,6 +92,14 @@ bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
       ip->checksum = ip_csum_fold (sum);
     }
 
+  /* Fragmento que nao e o primeiro: nao ha porta a reescrever, e o checksum
+   * L4 vive no primeiro fragmento. So o endereco muda. */
+  if (PREDICT_FALSE (l4h == 0))
+    {
+      ip->dst_address.as_u32 = clib_host_to_net_u32 (new_addr);
+      return;
+    }
+
   if (proto == BPA_PROTO_ICMP)
     {
       icmp46_header_t *icmp = l4h;
@@ -303,7 +311,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 
       /* Erro ICMP: quem identifica a sessao e o pacote embutido, nao o
        * cabecalho externo. Caminho separado. */
-      if (PREDICT_FALSE (proto == BPA_PROTO_ICMP))
+      if (PREDICT_FALSE (proto == BPA_PROTO_ICMP
+			 && !vnet_buffer (b[0])->ip.reass.is_non_first_fragment))
 	{
 	  icmp46_header_t *ic =
 	    (icmp46_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
@@ -439,4 +448,11 @@ VNET_FEATURE_INIT (bpa_out2in_feature, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "bpa-out2in",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
+  /*
+   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
+   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
+   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
+   * por fragmento.
+   */
+  .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };

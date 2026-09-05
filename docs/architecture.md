@@ -139,6 +139,29 @@ Traduzir nao basta: com o checksum errado a pilha do assinante descarta, e o
 PMTUD continua quebrado com o contador dizendo que traduziu. Por isso o teste
 captura o pacote que sai e confere os tres checksums em `lab/checkicmp.py`.
 
+### Fragmentacao
+
+Fragmento que nao e o primeiro nao carrega cabecalho L4, entao nao tem porta
+para casar com sessao: sem tratamento ele e descartado, e DNS grande, VPN e
+jogo param de forma intermitente - o pior tipo de sintoma para diagnosticar.
+
+A saida e o reassembly virtual raso do VPP, ligado junto com a feature e
+refcontado. Ele guarda as portas do primeiro fragmento e as anexa aos
+seguintes, sem remontar o datagrama.
+
+Duas armadilhas, as duas encontradas no teste e nenhuma visivel por leitura:
+
+1. **Ordem de feature.** Sem `runs_after` no
+   `ip4-sv-reassembly-feature`, o node do BPA podia rodar antes e ler campos
+   de buffer que ainda nao existiam.
+2. **Ordem de byte.** O reassembly guarda a porta em ordem de rede. Lida como
+   ordem de host, 12345 (`0x3039`) vira 14640 (`0x3930`), o node nao acha a
+   sessao e abre outra - **queimando uma porta do bloco por fragmento**. Num
+   assinante que fragmenta bastante, isso esgota o bloco sozinho.
+
+O segundo so apareceu porque o teste conferia a porta, e nao apenas se o
+pacote saiu traduzido. Ele saia: com o endereco certo e a sessao errada.
+
 ## Modo dinamico (PBA): implementado
 
 Bloco alocado no primeiro fluxo, devolvido apos hold-down.
@@ -217,6 +240,7 @@ para desenvolvimento e teste funcional, nao para carga.
 - [ ] API binaria do plugin, para a VTY e para automacao
 - [x] Appliance: tuning de boot calculado do hardware, unidades systemd,
       instalador e ISO - ver [appliance.md](appliance.md)
+- [x] Fragmentacao, via reassembly virtual raso
 - [ ] HA / failover entre caixas
 - [ ] Transporte TCP para o log IPFIX
 - [x] Trilha de configuracao datada (`show bpa pool history`)
