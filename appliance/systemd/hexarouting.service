@@ -1,0 +1,22 @@
+[Unit]
+Description=HexaRouting - aplica a configuracao de CGNAT no dataplane
+Documentation=file:///usr/share/doc/hexarouting/architecture.md
+# O FRR e Wants e nao Requires: sem roteamento a caixa ainda encaminha o que
+# tiver em rota estatica, e derrubar o CGNAT junto so aumentaria o estrago.
+After=vpp.service frr.service
+Requires=vpp.service
+Wants=frr.service
+PartOf=vpp.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/lib/hexarouting/wait-for-vpp 60
+ExecStart=/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf
+# Sem ExecStop: a configuracao vive no VPP, e parar este servico nao deve
+# apagar pool de producao. Quem remove pool e o operador, pela VTY.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

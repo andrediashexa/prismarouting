@@ -182,4 +182,8 @@ para desenvolvimento e teste funcional, nao para carga.
       16, 17 e 12), verificada com coletor decodificando (`lab/ipfix.sh`)
 - [ ] Trilha de configuracao append-only - e o "log" do modo deterministico
 - [ ] API binaria do plugin, para a VTY e para automacao
-- [ ] Appliance: ISO, tuning de kernel, systemd, HA
+- [x] Appliance: tuning de boot calculado do hardware, unidades systemd,
+      instalador e ISO - ver [appliance.md](appliance.md)
+- [ ] HA / failover entre caixas
+- [ ] Transporte TCP para o log IPFIX
+- [ ] Trilha de configuracao datada

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Aplica o tuning calculado e so mexe no GRUB quando algo mudou.
+#
+# Rodar o calculo em todo boot e barato e faz o appliance respeitar mudancas
+# em tune.env. Rodar update-grub em todo boot nao e: escreve em disco e custa
+# segundos. Entao calcula sempre, grava sempre, e regenera o GRUB so na
+# diferenca.
+set -u
+
+GRUBFILE=/etc/default/grub.d/hexarouting.cfg
+: "${HEXA_DATAPLANE_IF:=}"
+: "${HEXA_SUBSCRIBERS:=200000}"
+
+before=$(cat "$GRUBFILE" 2>/dev/null || true)
+
+set -- --write --subscribers "$HEXA_SUBSCRIBERS"
+[ -n "$HEXA_DATAPLANE_IF" ] && set -- "$@" --interface "$HEXA_DATAPLANE_IF"
+hexarouting-tune "$@" >/dev/null || exit 1
+
+after=$(cat "$GRUBFILE" 2>/dev/null || true)
+
+if [ "$before" = "$after" ]; then
+  echo "tuning inalterado"
+  exit 0
+fi
+
+if command -v update-grub >/dev/null 2>&1; then
+  update-grub
+  echo "linha de comando do kernel mudou (isolcpus/hugepages);" \
+       "reinicie para que valha" >&2
+else
+  echo "update-grub ausente: aplique a linha de comando de $GRUBFILE" \
+       "no seu bootloader e reinicie" >&2
+  exit 1
+fi

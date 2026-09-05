@@ -15,18 +15,19 @@ appliance Debian.
 docs/architecture.md      decisoes de projeto, sharding, estado
 docs/routing.md           plano de FRR, VTY e as armadilhas de punt
 docs/logging.md           exportacao de log BPA via IPFIX (RFC 8158)
+docs/appliance.md         tuning de boot, systemd, instalacao e ISO
 ref/                      modelo de referencia do BPA, em Python
 src/plugins/bpa/          plugin VPP do CGNAT BPA
 src/hexash/               VTY: CGNAT nativo, roteamento via vtysh
 test/                     testes do nucleo, sem VPP e sem root
 lab/                      topologias de teste com packet-generator
-appliance/                ISO, tuning de kernel, systemd
+appliance/                tuning de boot, systemd, instalador, ISO
 ```
 
 ## Testes
 
 ```sh
-make test     # nucleo BPA: mapeamento e alocador de portas
+make test     # nucleo BPA, alocador de portas e tuning de boot
 make model    # valida o proprio modelo de referencia
 ```
 

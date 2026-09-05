@@ -1,0 +1,19 @@
+[Unit]
+Description=HexaRouting - calcula o tuning de boot a partir do hardware
+Documentation=file:///usr/share/doc/hexarouting/architecture.md
+# Roda antes do VPP: o startup.conf gerado e o que o VPP le. As mudancas de
+# linha de comando do kernel (isolcpus, hugepages) so valem no boot seguinte.
+#
+# Roda em todo boot, sem sentinela: o calculo e barato e assim uma mudanca em
+# tune.env, ou uma troca de NIC, e respeitada. Quem evita o custo do
+# update-grub e o apply-tuning, comparando antes de regenerar.
+Before=vpp.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/hexarouting/apply-tuning
+EnvironmentFile=-/etc/hexarouting/tune.env
+
+[Install]
+WantedBy=multi-user.target

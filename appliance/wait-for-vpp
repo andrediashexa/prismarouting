@@ -1,0 +1,16 @@
+#!/bin/sh
+# Espera o VPP aceitar comandos. O systemd considera o vpp.service iniciado
+# assim que o processo sobe, mas o socket de CLI e os plugins levam mais um
+# instante: aplicar configuracao antes disso falha de forma intermitente.
+set -u
+TIMEOUT=${1:-30}
+n=0
+until vppctl show version >/dev/null 2>&1; do
+  n=$((n + 1))
+  if [ "$n" -ge "$TIMEOUT" ]; then
+    echo "VPP nao respondeu em ${TIMEOUT}s" >&2
+    exit 1
+  fi
+  sleep 1
+done
+exit 0

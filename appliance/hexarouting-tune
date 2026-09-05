@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""
+hexarouting-tune - calcula o tuning de boot a partir do hardware.
+
+Decide quais CPUs isolar, quantas hugepages reservar e como pinar os workers
+do VPP. Erro aqui nao quebra nada visivelmente: a caixa sobe, encaminha, e
+entrega metade do throughput. Por isso o calculo e explicito e testavel, e
+nao um punhado de valores copiados de um blog.
+
+Regras aplicadas:
+
+  - a CPU 0 e sua irma SMT ficam para o sistema operacional e para a thread
+    principal do VPP. Isolar tudo deixa o kernel sem onde rodar.
+  - workers so no no NUMA da NIC. Atravessar NUMA no caminho de pacote custa
+    mais que o worker extra rende.
+  - com SMT, um worker por core fisico. A irma e isolada tambem, para nao
+    aparecer carga do sistema competindo pelo mesmo core.
+  - nohz_full e rcu_nocbs acompanham o isolcpus: isolar sem tirar o tick e o
+    callback de RCU deixa jitter que aparece como perda em rajada.
+"""
+
+import argparse
+import os
+import sys
+
+
+def read(path, default=None):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def parse_list(spec):
+    """'0-3,8' -> [0,1,2,3,8]"""
+    out = []
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-")
+            out.extend(range(int(a), int(b) + 1))
+        else:
+            out.append(int(part))
+    return sorted(set(out))
+
+
+def fmt_list(cpus):
+    """[0,1,2,3,8] -> '0-3,8'"""
+    if not cpus:
+        return ""
+    cpus = sorted(cpus)
+    runs, start, prev = [], cpus[0], cpus[0]
+    for c in cpus[1:]:
+        if c == prev + 1:
+            prev = c
+            continue
+        runs.append((start, prev))
+        start = prev = c
+    runs.append((start, prev))
+    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
+class Topology:
+    def __init__(self, root="/"):
+        self.root = root
+        self.cpus = {}      # cpu -> (package, core, siblings)
+        self.nodes = {}     # node -> [cpus]
+        self._load()
+
+    def p(self, *parts):
+        return os.path.join(self.root, *parts)
+
+    def _load(self):
+        base = self.p("sys/devices/system/cpu")
+        if not os.path.isdir(base):
+            raise SystemExit(f"topologia nao encontrada em {base}")
+        for name in sorted(os.listdir(base)):
+            if not name.startswith("cpu") or not name[3:].isdigit():
+                continue
+            n = int(name[3:])
+            t = os.path.join(base, name, "topology")
+            pkg = read(os.path.join(t, "physical_package_id"))
+            core = read(os.path.join(t, "core_id"))
+            sib = parse_list(read(os.path.join(t, "thread_siblings_list"), str(n)))
+            if pkg is None or core is None:
+                continue
+            self.cpus[n] = (int(pkg), int(core), sib)
+
+        nbase = self.p("sys/devices/system/node")
+        if os.path.isdir(nbase):
+            for name in sorted(os.listdir(nbase)):
+                if name.startswith("node") and name[4:].isdigit():
+                    self.nodes[int(name[4:])] = parse_list(
+                        read(os.path.join(nbase, name, "cpulist"), ""))
+        if not self.nodes:
+            self.nodes = {0: sorted(self.cpus)}
+
+    def nic_node(self, ifname):
+        v = read(self.p("sys/class/net", ifname, "device/numa_node"))
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return None
+        # -1 significa "sem afinidade declarada"
+        return n if n >= 0 else None
+
+    def physical_cores(self, cpus):
+        """Agrupa por core fisico, devolvendo (lider, irmas)."""
+        seen, out = set(), []
+        for c in sorted(cpus):
+            if c in seen:
+                continue
+            _, _, sib = self.cpus[c]
+            group = [s for s in sib if s in self.cpus]
+            seen.update(group)
+            out.append((min(group), sorted(group)))
+        return out
+
+
+def plan(topo, ifname, subscribers, max_workers=None):
+    node = topo.nic_node(ifname) if ifname else None
+    if node is None or node not in topo.nodes:
+        node = sorted(topo.nodes)[0]
+        nic_note = (f"NIC '{ifname}' sem afinidade NUMA declarada; usando no {node}"
+                    if ifname else f"nenhuma NIC informada; usando no {node}")
+    else:
+        nic_note = f"NIC '{ifname}' no no NUMA {node}"
+
+    node_cpus = [c for c in topo.nodes[node] if c in topo.cpus]
+    cores = topo.physical_cores(node_cpus)
+
+    # o primeiro core fisico do no fica para o sistema e para a main do VPP
+    os_core, os_cpus = cores[0]
+    worker_cores = cores[1:]
+    if max_workers:
+        worker_cores = worker_cores[:max_workers]
+
+    workers = [lead for lead, _ in worker_cores]
+    isolated = sorted(c for _, sibs in worker_cores for c in sibs)
+
+    # Hugepages de 1G. Orcamento por assinante vem de docs/architecture.md:
+    # ~13 MB de bitmap e ~2,6 GB de tabela de sessao para 200k assinantes,
+    # mais buffers por worker.
+    session_gb = max(1, round(subscribers * 13.5e-6 * 1024 / 1024))
+    buffers_gb = max(1, (len(workers) + 3) // 4)
+    hugepages_1g = session_gb + buffers_gb + 1  # +1 de folga para a main heap
+
+    return {
+        "node": node,
+        "nic_note": nic_note,
+        "os_cpus": os_cpus,
+        "main_core": os_core,
+        "workers": workers,
+        "isolated": isolated,
+        "hugepages_1g": hugepages_1g,
+        "subscribers": subscribers,
+        "total_cpus": len(topo.cpus),
+    }
+
+
+def render_grub(p):
+    if not p["isolated"]:
+        return "# nenhum core a isolar: maquina pequena demais para workers dedicados"
+    iso = fmt_list(p["isolated"])
+    return (
+        "# Gerado por hexarouting-tune. Nao editar a mao.\n"
+        'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT '
+        f"isolcpus={iso} nohz_full={iso} rcu_nocbs={iso} "
+        f"default_hugepagesz=1G hugepagesz=1G hugepages={p['hugepages_1g']} "
+        'intel_iommu=on iommu=pt"\n'
+    )
+
+
+def render_vpp(p):
+    if not p["workers"]:
+        cpu = "  # sem workers: caixa pequena, tudo na main thread\n"
+    else:
+        cpu = (f"  main-core {p['main_core']}\n"
+               f"  corelist-workers {fmt_list(p['workers'])}\n")
+    return (
+        "# Gerado por hexarouting-tune. Nao editar a mao.\n"
+        "cpu {\n" + cpu + "}\n\n"
+        "buffers {\n"
+        f"  buffers-per-numa {max(16384, len(p['workers']) * 16384)}\n"
+        "  default data-size 2048\n"
+        "  page-size default-hugepage\n"
+        "}\n\n"
+        "memory {\n"
+        "  main-heap-size 2G\n"
+        "  main-heap-page-size default-hugepage\n"
+        "}\n"
+    )
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--interface", help="NIC do dataplane, para escolher o no NUMA")
+    ap.add_argument("--subscribers", type=int, default=200000)
+    ap.add_argument("--max-workers", type=int)
+    ap.add_argument("--sysfs-root", default="/")
+    ap.add_argument("--write", action="store_true",
+                    help="grava em /etc/default/grub.d e /etc/vpp")
+    a = ap.parse_args()
+
+    topo = Topology(a.sysfs_root)
+    p = plan(topo, a.interface, a.subscribers, a.max_workers)
+
+    grub = render_grub(p)
+    vpp = render_vpp(p)
+
+    print(f"# {p['nic_note']}")
+    print(f"# {p['total_cpus']} CPUs no total; no NUMA escolhido: {p['node']}")
+    print(f"# sistema operacional e main do VPP: {fmt_list(p['os_cpus'])}")
+    print(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
+    print(f"# isolados: {fmt_list(p['isolated']) or '(nenhum)'}")
+    print(f"# hugepages de 1G: {p['hugepages_1g']} "
+          f"(dimensionado para {p['subscribers']} assinantes)")
+    print()
+    print("### /etc/default/grub.d/hexarouting.cfg")
+    print(grub)
+    print("### /etc/vpp/startup.conf.d/tuning.conf")
+    print(vpp)
+
+    if a.write:
+        for path, content in (
+            ("/etc/default/grub.d/hexarouting.cfg", grub),
+            ("/etc/vpp/startup.conf.d/tuning.conf", vpp),
+        ):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(content)
+            print(f"gravado {path}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

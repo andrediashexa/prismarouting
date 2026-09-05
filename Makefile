@@ -8,6 +8,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports
 	@$(BUILD)/test_bpa
 	@echo
 	@$(BUILD)/test_bpa_ports
+	@echo
+	@python3 appliance/test_tune.py
 
 vectors:
 	@cd ref && python3 gen_vectors.py
