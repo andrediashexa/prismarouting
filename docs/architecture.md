@@ -77,9 +77,12 @@ para desenvolvimento e teste funcional, nao para carga.
 ## Estado do projeto
 
 - [x] Modelo de referencia do BPA validado (`ref/bpa_model.py`, `ref/validate.py`)
-- [ ] Nucleo em C do mapeamento (`src/plugins/bpa/bpa_pool.c`)
+- [x] Nucleo em C do mapeamento, conferido contra o modelo (`make test`)
+- [x] Alocador de portas por assinante (`bpa_ports.h`)
+- [x] Plugin carrega no VPP 26.06 com CLI de pools
 - [ ] Nodes in2out / out2in / handoff
-- [ ] Alocador dinamico de blocos + timers
+- [ ] Tabela de sessao (bihash) + timers
+- [ ] Alocador dinamico de blocos
 - [ ] Exportador de log (syslog / IPFIX)
 - [ ] CLI e API binaria
 - [ ] Appliance: ISO, tuning de kernel, systemd, HA
