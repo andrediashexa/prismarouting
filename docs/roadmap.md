@@ -188,17 +188,22 @@ is committed until the maintainer says so.
 | **Port block utilisation observability** | An operator needs to see block utilisation *before* exhaustion. `natEvent 12` reports the failure; a histogram predicts it. | S |
 | **uRPF on the inside** | Without it a spoofed source is translated and logged as a subscriber who did not send it — a wrong answer to a court order, produced with full confidence. | S |
 
-### 3.4 The way out of CGNAT
+### 3.4 The way out of CGNAT — **out of scope**
 
-CGNAT is a bridge, not a destination. The product that only does CGNAT is
-selling the bridge and not the far side.
+This section argued for NAT64+DNS64, DS-Lite, MAP-E/MAP-T and 464XLAT, on the
+grounds that CGNAT is a bridge and a product that only sells the bridge leaves
+the far side to someone else. The argument was not wrong: MAP-E in particular
+is nearly stateless, which removes the session table from the data path and
+with it most of the logging obligation.
 
-| Item | Why | Effort |
-|---|---|---|
-| **NAT64 + DNS64** (RFC 6146/6147) | IPv6-only access networks with IPv4 reachability. Reuses this plugin's session table and much of its logging. | L |
-| **DS-Lite AFTR** (RFC 6333) | IPv4 over an IPv6 access network, keeping IPv4 service without IPv4 addressing in the access. | L |
-| **MAP-E / MAP-T** (RFC 7597/7599) | Stateless or nearly stateless, which removes the session table from the data path entirely — and with it most of the logging obligation. Closest in spirit to deterministic BPA. | L |
-| **464XLAT** | The client-side counterpart that makes IPv6-only access work with IPv4-only applications. | M |
+**The maintainer has decided this product is a CGNAT and nothing else**
+([#31](https://github.com/andrediashexa/hexarouting/issues/31), closed as out of scope). Each of those four is a new dataplane
+roughly the size of the CGNAT itself, and building them would be building a
+different product alongside this one.
+
+Kept here rather than deleted, because a reader who wonders why an IPv6
+transition mechanism is missing deserves the answer that it was considered and
+declined, not silence.
 
 ### 3.5 Performance and correctness assurance
 
@@ -231,17 +236,21 @@ an annotated tag, a changelog entry and a published GitHub Release.
 
 ### What each release contains
 
+**Delivered so far:** v0.2.0 (foundations) and v0.3.0 (a control plane that
+reports failure, and an ISO that installs). Ten issues closed. The one ordering
+constraint that was not negotiable — the binary API before any new
+configuration — is behind us.
+
 | Release | Theme | Issues | Why here and not later |
 |---|---|---|---|
 | **v0.2.0** | Foundations already built | [#1](https://github.com/andrediashexa/hexarouting/issues/1) comments in English, [#2](https://github.com/andrediashexa/hexarouting/issues/2) MTU in the VTY, [#10](https://github.com/andrediashexa/hexarouting/issues/10) versioning, [#11](https://github.com/andrediashexa/hexarouting/issues/11) this roadmap | Three of these sit finished in branches. Merging them first means every later release is tagged, changelogged and readable by whoever inherits it. |
 | **v0.3.0** | A control plane that reports failure | [#3](https://github.com/andrediashexa/hexarouting/issues/3), [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5) hexash on the binary API | Everything after this adds configuration. Adding it on top of a `commit` that cannot tell success from failure means each new feature inherits a control plane that lies. This is the one ordering constraint that is not negotiable. |
-| **v0.4.0** | Subscriber experience | [#12](https://github.com/andrediashexa/hexarouting/issues/12) per-pool timeouts and half-open state, [#13](https://github.com/andrediashexa/hexarouting/issues/13) extended blocks | The two things an operator notices in the first month: ports held by dead connections, and one customer cut off while the pool is half empty. |
-| **v0.5.0** | Application compatibility | [#14](https://github.com/andrediashexa/hexarouting/issues/14) ALG, [#15](https://github.com/andrediashexa/hexarouting/issues/15) filtering mode and conformance, [#16](https://github.com/andrediashexa/hexarouting/issues/16) hairpinning | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. |
+| **v0.4.0** | Subscriber experience, and reaching your neighbour | [#12](https://github.com/andrediashexa/hexarouting/issues/12) per-pool timeouts and half-open state, [#13](https://github.com/andrediashexa/hexarouting/issues/13) extended blocks, [#15](https://github.com/andrediashexa/hexarouting/issues/15) filtering mode and conformance, [#16](https://github.com/andrediashexa/hexarouting/issues/16) hairpinning | The two things an operator notices in the first month — ports held by dead connections, and one customer cut off while the pool is half empty — plus hairpinning, which the maintainer raised as important. #15 comes with it because #16 depends on it, not because it was also wanted. |
+| **v0.5.0** | Application compatibility | [#14](https://github.com/andrediashexa/hexarouting/issues/14) ALG | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. |
 | **v0.6.0** | Inbound and protection | [#17](https://github.com/andrediashexa/hexarouting/issues/17) port forwarding, [#18](https://github.com/andrediashexa/hexarouting/issues/18) per-subscriber limits, [#19](https://github.com/andrediashexa/hexarouting/issues/19) MSS clamping, [#24](https://github.com/andrediashexa/hexarouting/issues/24) uRPF, [#25](https://github.com/andrediashexa/hexarouting/issues/25) bypass lists, [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection, [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation | Answers for the customer who needs a port in, and bounds on the customer who takes too many. |
 | **v0.7.0** | Compliance | [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog, [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity, [#22](https://github.com/andrediashexa/hexarouting/issues/22) trail integrity, [#23](https://github.com/andrediashexa/hexarouting/issues/23) pool-resize procedure | The log already exists and is correct. This release makes it usable by the systems and the people who have to act on it. |
 | **v0.8.0** | High availability | [#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9) | Deliberately after correctness. HA over a CGNAT with known gaps replicates the gaps. |
 | **v0.9.0** | Performance, measured | [#28](https://github.com/andrediashexa/hexarouting/issues/28) throughput on real NICs, [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS, [#30](https://github.com/andrediashexa/hexarouting/issues/30) soak test | Before this release the performance numbers do not exist. After it they do, with their conditions. |
-| **v0.10.0** | The way out of CGNAT | [#31](https://github.com/andrediashexa/hexarouting/issues/31) NAT64, DS-Lite, MAP-E/MAP-T, 464XLAT | The far side of the bridge. |
 | *backlog* | | [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP | Depends on #17 and earns its cost only once manual forwards become a volume. |
 
 ### Dependencies that actually constrain the order
