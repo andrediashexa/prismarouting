@@ -44,19 +44,19 @@ typedef struct
 } bpa_timeouts_t;
 
 /*
- * Estado TCP minimo, o suficiente para nao segurar porta a toa.
+ * Minimal TCP state, just enough not to hold a port for nothing.
  *
- * Marcar "estabelecida" em qualquer ACK e nunca tratar RST ou FIN faz uma
- * conexao fechada segurar a porta pelo timeout de estabelecida - 2 horas.
- * Num bloco de 512 portas isso esgota o assinante rapido, e a reclamacao
- * chega como "a internet parou" sem nada obvio no dataplane.
+ * Marking "established" on any ACK and never handling RST or FIN makes a
+ * closed connection hold its port for the established timeout - two hours.
+ * In a 512-port block that exhausts the subscriber quickly, and the complaint
+ * arrives as "the internet stopped" with nothing obvious in the dataplane.
  */
 typedef enum
 {
-  BPA_TCP_INIT = 0, /* handshake em andamento */
-  BPA_TCP_ESTAB,    /* ACK visto apos o handshake */
-  BPA_TCP_CLOSING,  /* FIN visto em algum sentido */
-  BPA_TCP_CLOSED,   /* RST: expira na proxima varredura */
+  BPA_TCP_INIT = 0, /* handshake in progress */
+  BPA_TCP_ESTAB,    /* ACK seen after the handshake */
+  BPA_TCP_CLOSING,  /* FIN seen in either direction */
+  BPA_TCP_CLOSED,   /* RST: expires on the next sweep */
 } bpa_tcp_state_t;
 
 typedef enum
@@ -96,7 +96,7 @@ typedef struct
   bpa_sub_t *subs;		  /* pool of per-subscriber port bitmaps */
   bpa_dyn_t *dyn;	  /* dynamic block state, indexed by pool index */
   uword *sub_by_idx;		  /* sub_idx -> index into subs */
-  bpa_log_event_t *log_queue; /* enfileirado pelo dataplane, drenado pelo processo */
+  bpa_log_event_t *log_queue; /* queued by the dataplane, drained by the process */
   u64 log_dropped;
   u32 n_expired;
   u32 expire_cursor;	  /* budgeted walk resumes here */
@@ -131,7 +131,7 @@ bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
   switch (s->tcp_state)
     {
     case BPA_TCP_CLOSED:
-      return 0; /* RST: nao ha por que segurar a porta */
+      return 0; /* RST: no reason to hold the port */
     case BPA_TCP_ESTAB:
       return t->tcp_estab;
     default:
@@ -140,9 +140,9 @@ bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
 }
 
 /*
- * Acompanha o estado pelas flags. Vale para os dois sentidos: um RST de
- * qualquer lado encerra, e um FIN de qualquer lado ja tira a sessao do
- * timeout longo.
+ * Tracks the state from the flags. Valid in both directions: an RST from
+ * either side ends it, and a FIN from either side already takes the session
+ * off the long timeout.
  */
 static_always_inline void
 bpa_tcp_track (bpa_session_t *s, u8 flags)
@@ -162,8 +162,8 @@ bpa_tcp_track (bpa_session_t *s, u8 flags)
     s->tcp_state = BPA_TCP_ESTAB;
 }
 
-/* Padroes modestos: o tamanho e reserva virtual, e o matador de OOM conta o
- * virtual. Ver o comentario em bpa_session.c. */
+/* Modest defaults: the size is a virtual reservation, and the OOM killer
+ * counts virtual. See the comment in bpa_session.c. */
 #define BPA_HASH_BUCKETS_DEFAULT (16 * 1024)
 #define BPA_HASH_MEMORY_DEFAULT	 (16 << 20)
 

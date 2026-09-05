@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Testes da completacao e do "?" da VTY.
+Tests for the VTY's completion and "?" help.
 
-Exercitam a arvore de comandos sem terminal: o que o readline faria ao
-completar ou ao pedir ajuda vem de _options(), e e isso que se confere aqui.
+They exercise the command tree with no terminal: what readline would do when
+completing or asking for help comes from _options(), and that is what is
+checked here.
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
@@ -15,7 +16,7 @@ def check(cond, msg):
     global fail
     if not cond:
         fail += 1
-        print(f"  FALHA: {msg}")
+        print(f"  FAIL: {msg}")
 
 def opts(mode, line, ending=None):
     sh = hexash.Shell()
@@ -30,22 +31,22 @@ o, _, _ = opts("operational", "")
 check({"configure", "show", "rollback", "save", "exit"} <= o, f"missing: {o}")
 print(f"  {sorted(o)}")
 
-print("\n=== 'show ' mostra os sub-comandos ===")
+print("\n=== 'show ' lists the sub-commands ===")
 o, _, _ = opts("operational", "show ")
-check("cgnat" in o and "running-config" in o, f"esperado cgnat e running-config: {o}")
+check("cgnat" in o and "running-config" in o, f"expected cgnat and running-config: {o}")
 print(f"  {sorted(o)}")
 
-print("\n=== 'show cgnat ' desce mais um nivel ===")
+print("\n=== 'show cgnat ' goes one level deeper ===")
 o, _, _ = opts("operational", "show cgnat ")
 check(o == {"pool", "session", "blocks", "logging", "history"}, f"got {o}")
 print(f"  {sorted(o)}")
 
-print("\n=== prefixo parcial completa ===")
+print("\n=== a partial prefix completes ===")
 o, _, prefix = opts("operational", "conf")
-check(o == {"configure"}, f"'conf' deveria dar so 'configure': {o}")
-check(prefix == "conf", f"prefixo {prefix}")
+check(o == {"configure"}, f"'conf' should yield only 'configure': {o}")
+check(prefix == "conf", f"prefix {prefix}")
 o, _, _ = opts("operational", "show cgnat po")
-check(o == {"pool"}, f"'po' deveria dar so 'pool': {o}")
+check(o == {"pool"}, f"'po' should yield only 'pool': {o}")
 print("  'conf' -> configure ; 'show cgnat po' -> pool")
 
 print("\n=== modo pool: opcoes proprias ===")
@@ -53,27 +54,27 @@ o, _, _ = opts("pool", "")
 check({"inside", "outside", "block-size", "policy", "mode", "exit"} <= o,
       f"faltam opcoes de pool: {o}")
 o, _, _ = opts("pool", "policy ")
-check(o == {"interleaved", "blocked"}, f"policy deveria ter duas opcoes: {o}")
+check(o == {"interleaved", "blocked"}, f"policy should have two options: {o}")
 o, _, _ = opts("pool", "mode ")
-check(o == {"deterministic", "dynamic"}, f"mode deveria ter duas opcoes: {o}")
-print(f"  policy -> {sorted(o)} ; mode tem duas opcoes")
+check(o == {"deterministic", "dynamic"}, f"mode should have two options: {o}")
+print(f"  policy -> {sorted(o)} ; mode has two options")
 
-print("\n=== argumento livre vira dica, nao lista vazia ===")
+print("\n=== a free argument becomes a hint, not an empty list ===")
 o, hint, _ = opts("pool", "inside ")
-check(hint == hexash.ARG_PREFIX, f"esperado dica de prefixo, obtido {hint!r}")
-check(not o, f"nao deveria listar opcoes apos 'inside': {o}")
+check(hint == hexash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
+check(not o, f"should not list options after 'inside': {o}")
 o, hint, _ = opts("config", "cgnat block-holddown ")
-check(hint == hexash.ARG_NUM, f"esperado dica numerica, obtido {hint!r}")
+check(hint == hexash.ARG_NUM, f"expected a numeric hint, got {hint!r}")
 print(f"  'inside ' -> {hexash.ARG_PREFIX} ; 'block-holddown ' -> {hexash.ARG_NUM}")
 
-print("\n=== config: CGNAT e roteamento no mesmo nivel ===")
+print("\n=== config: CGNAT and routing at the same level ===")
 o, _, _ = opts("config", "")
 check({"cgnat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
       f"got {o}")
 o, _, _ = opts("config", "cgnat ")
-check({"pool", "interface", "timeout", "logging", "block-holddown"} <= o, f"obtido {o}")
+check({"pool", "interface", "timeout", "logging", "block-holddown"} <= o, f"got {o}")
 o, _, _ = opts("config", "router ")
-check({"bgp", "ospf", "isis"} <= o, f"obtido {o}")
+check({"bgp", "ospf", "isis"} <= o, f"got {o}")
 print("  cgnat, router, interface, no, exit")
 
 print("\n=== commit sub-commands, Juniper style ===")
@@ -85,11 +86,11 @@ o, hint, _ = opts("config", "rollback ")
 check(hint == hexash.ARG_REV, f"rollback should hint a revision, got {hint!r}")
 print(f"  rollback -> {hexash.ARG_REV}")
 
-print("\n=== comando desconhecido nao inventa opcao ===")
-o, hint, _ = opts("config", "algo-que-nao-existe ")
+print("\n=== an unknown command must not invent options ===")
+o, hint, _ = opts("config", "something-that-does-not-exist ")
 check(not o and hint is None,
-      f"deveria admitir que nao sabe, obtido opcoes={o} hint={hint!r}")
-print("  admite que dali em diante quem sabe e o FRR")
+      f"should admit it does not know, got options={o} hint={hint!r}")
+print("  admits that from there on FRR is the one that knows")
 
-print(f"\n{'TODOS OS TESTES PASSARAM' if not fail else str(fail) + ' FALHAS'}")
+print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

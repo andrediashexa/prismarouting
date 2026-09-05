@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-hexarouting-tune - calcula o tuning de boot a partir do hardware.
+hexarouting-tune - computes boot tuning from the hardware.
 
-Decide quais CPUs isolar, quantas hugepages reservar e como pinar os workers
-do VPP. Erro aqui nao quebra nada visivelmente: a caixa sobe, encaminha, e
-entrega metade do throughput. Por isso o calculo e explicito e testavel, e
-nao um punhado de valores copiados de um blog.
+Decides which CPUs to isolate, how many hugepages to reserve and how to pin
+the VPP workers. Getting this wrong breaks nothing visibly: the box boots,
+forwards, and delivers half the throughput. So the calculation is explicit
+and testable, rather than a handful of values copied from a blog post.
 
-Regras aplicadas:
+Rules applied:
 
-  - a CPU 0 e sua irma SMT ficam para o sistema operacional e para a thread
-    principal do VPP. Isolar tudo deixa o kernel sem onde rodar.
-  - workers so no no NUMA da NIC. Atravessar NUMA no caminho de pacote custa
-    mais que o worker extra rende.
-  - com SMT, um worker por core fisico. A irma e isolada tambem, para nao
-    aparecer carga do sistema competindo pelo mesmo core.
-  - nohz_full e rcu_nocbs acompanham o isolcpus: isolar sem tirar o tick e o
-    callback de RCU deixa jitter que aparece como perda em rajada.
-  - C-states profundos ficam desligados. Um worker em poll mode nunca fica
-    ocioso o bastante para o core dormir de propria vontade, mas o core do
-    SO fica - e acordar dele custa dezenas de microssegundos no meio de uma
-    rajada. Vale a energia a mais.
-  - uma fila de RX por worker na NIC do dataplane. Sem isso o DPDK abre o
-    default e sobra worker sem fila, ou falta fila e o RSS empilha fluxo.
-  - as IRQs do sistema sao banidas dos cores isolados. Nao adianta isolar do
-    escalonador e continuar levando interrupcao.
+  - CPU 0 and its SMT sibling stay with the operating system and VPP's main
+    thread. Isolating everything leaves the kernel nowhere to run.
+  - workers only on the NIC's NUMA node. Crossing NUMA on the packet path
+    costs more than the extra worker earns.
+  - with SMT, one worker per physical core. The sibling is isolated too, so
+    that system load does not compete for the same core.
+  - nohz_full and rcu_nocbs follow isolcpus: isolating without removing the
+    tick and the RCU callbacks leaves jitter, which shows up as burst loss.
+  - deep C-states are turned off. A poll-mode worker never goes idle enough
+    for its core to sleep on its own, but the OS core does - and waking it
+    costs tens of microseconds in the middle of a burst. Worth the extra
+    power.
+  - one RX queue per worker on the dataplane NIC. Without it DPDK opens its
+    default, and either a worker has no queue or a queue piles up flows.
+  - system IRQs are banned from the isolated cores. Isolating from the
+    scheduler while still taking interrupts isolates nothing.
 """
 
 import argparse
@@ -72,7 +72,7 @@ def fmt_list(cpus):
 
 
 def hugepages_1g_reserved(root):
-    """Hugepages de 1G efetivamente reservadas AGORA."""
+    """1G hugepages actually reserved RIGHT NOW."""
     v = read(os.path.join(
         root, "sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages"), "0")
     try:
@@ -82,7 +82,7 @@ def hugepages_1g_reserved(root):
 
 
 def isolated_now(root):
-    """CPUs que o kernel esta isolando AGORA."""
+    """CPUs the kernel is isolating RIGHT NOW."""
     return parse_list(read(os.path.join(
         root, "sys/devices/system/cpu/isolated"), ""))
 
@@ -100,7 +100,7 @@ class Topology:
     def _load(self):
         base = self.p("sys/devices/system/cpu")
         if not os.path.isdir(base):
-            raise SystemExit(f"topologia nao encontrada em {base}")
+            raise SystemExit(f"topology not found in {base}")
         for name in sorted(os.listdir(base)):
             if not name.startswith("cpu") or not name[3:].isdigit():
                 continue
@@ -123,13 +123,13 @@ class Topology:
             self.nodes = {0: sorted(self.cpus)}
 
     def nic_pci(self, ifname):
-        """Endereco PCI da NIC, para nomear o device no stanza dpdk."""
+        """PCI address of the NIC, to name the device in the dpdk stanza."""
         link = self.p("sys/class/net", ifname, "device")
         try:
             addr = os.path.basename(os.path.realpath(link))
         except OSError:
             return None
-        # 0000:3b:00.0 - qualquer outra coisa nao e PCI (virtio-mmio, etc.)
+        # 0000:3b:00.0 - anything else is not PCI (virtio-mmio, and so on)
         parts = addr.split(":")
         return addr if len(parts) == 3 and parts[0].isalnum() else None
 
@@ -139,11 +139,11 @@ class Topology:
             n = int(v)
         except (TypeError, ValueError):
             return None
-        # -1 significa "sem afinidade declarada"
+        # -1 means "no affinity declared"
         return n if n >= 0 else None
 
     def physical_cores(self, cpus):
-        """Agrupa por core fisico, devolvendo (lider, irmas)."""
+        """Groups by physical core, returning (leader, siblings)."""
         seen, out = set(), []
         for c in sorted(cpus):
             if c in seen:
@@ -167,7 +167,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
     node_cpus = [c for c in topo.nodes[node] if c in topo.cpus]
     cores = topo.physical_cores(node_cpus)
 
-    # o primeiro core fisico do no fica para o sistema e para a main do VPP
+    # the node's first physical core stays with the OS and VPP's main thread
     os_core, os_cpus = cores[0]
     worker_cores = cores[1:]
     if max_workers:
@@ -176,22 +176,22 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
     workers = [lead for lead, _ in worker_cores]
     isolated = sorted(c for _, sibs in worker_cores for c in sibs)
 
-    # Hugepages de 1G. Orcamento por assinante vem de docs/architecture.md:
-    # ~13 MB de bitmap e ~2,6 GB de tabela de sessao para 200k assinantes,
-    # mais buffers por worker.
+    # 1G hugepages. The per-subscriber budget comes from docs/architecture.md:
+    # ~13 MB of bitmap and ~2.6 GB of session table for 200k subscribers,
+    # plus buffers per worker.
     session_gb = max(1, round(subscribers * 13.5e-6 * 1024 / 1024))
     buffers_gb = max(1, (len(workers) + 3) // 4)
-    hugepages_1g = session_gb + buffers_gb + 1  # +1 de folga para a main heap
+    hugepages_1g = session_gb + buffers_gb + 1  # +1 of slack for the main heap
 
     reserved = hugepages_1g_reserved(topo.root)
     isolated_active = isolated_now(topo.root)
 
-    # O tuning so entra em vigor no boot seguinte: isolcpus e hugepages vem
-    # da linha de comando do kernel. Emitir agora um startup.conf que exige
-    # hugepage que ainda nao existe poe o VPP em loop de reinicio - e isso
-    # quebra toda primeira inicializacao depois de instalar. Enquanto o
-    # kernel nao estiver tunado, o config sai conservador: sem pinning e sem
-    # hugepage. Funciona em qualquer lugar, so nao rende.
+    # The tuning only takes effect on the next boot: isolcpus and hugepages
+    # come from the kernel command line. Emitting a startup.conf now that
+    # demands a hugepage which does not yet exist puts VPP in a restart loop
+    # - and that breaks every first boot after an install. While the kernel
+    # is not tuned, the config comes out conservative: no pinning and no
+    # hugepages. It runs anywhere, it just does not perform.
     tuned_now = (reserved >= 1 and set(isolated) <= set(isolated_active)
                  and bool(isolated))
 
@@ -213,11 +213,11 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
     }
 
 
-# Um core em C6 leva dezenas de microssegundos para voltar. O worker em poll
-# mode nunca dorme, mas o core do SO dorme - e e ele que acorda para tratar a
-# interrupcao ou o timer no meio da rajada. transparent_hugepage=never entra
-# junto porque o khugepaged compacta memoria em background e a compactacao
-# para a CPU que estiver segurando a pagina.
+# A core in C6 takes tens of microseconds to come back. The poll-mode worker
+# never sleeps, but the OS core does - and it is the one that wakes up to
+# handle the interrupt or the timer in the middle of a burst.
+# transparent_hugepage=never comes along because khugepaged compacts memory
+# in the background, and compaction stalls whichever CPU holds the page.
 LOW_LATENCY_CMDLINE = ("intel_idle.max_cstate=0 processor.max_cstate=1 "
                        "transparent_hugepage=never")
 
@@ -233,19 +233,18 @@ def render_grub(p):
         f"isolcpus={iso} nohz_full={iso} rcu_nocbs={iso} "
         f"default_hugepagesz=1G hugepagesz=1G hugepages={p['hugepages_1g']} "
         f'intel_iommu=on iommu=pt{latency}"\n'
-        # O os-prober varre todos os dispositivos de bloco procurando
-        # outros sistemas. Num appliance nao ha o que achar, e a
-        # varredura chega a levar minutos - travando o boot no
-        # servico de tuning.
+        # os-prober scans every block device looking for other systems. On
+        # an appliance there is nothing to find, and the scan can take
+        # minutes - stalling the boot inside the tuning service.
         "GRUB_DISABLE_OS_PROBER=true\n"
     )
 
 
 def render_irqbalance(p):
     """
-    Isolar do escalonador e continuar recebendo interrupcao no mesmo core nao
-    isola nada: a IRQ preempta o worker do mesmo jeito. O irqbalance so respeita
-    o banimento se ele estiver no ambiente do servico.
+    Isolating from the scheduler while still taking interrupts on the same
+    core isolates nothing: the IRQ preempts the worker just the same.
+    irqbalance only honours the ban if it is in the service's environment.
     """
     if not p["isolated"]:
         return "# no isolated core: nothing to ban from irqbalance\n"
@@ -264,11 +263,11 @@ PLUGINS_TUNED = """plugins {
 }
 """
 
-# Sem hugepage a EAL do DPDK falha e o VPP sai. Como o vpp.service tem
-# Restart=always, o resultado e um loop de reinicio que nao aponta a causa.
+# Without hugepages the DPDK EAL fails and VPP exits. Since vpp.service has
+# Restart=always, the result is a restart loop that points at nothing.
 PLUGINS_FIRSTBOOT = """plugins {
   plugin default { enable }
-  # DPDK desabilitado ate haver hugepage: sem ela a EAL falha e o VPP sai.
+  # DPDK disabled until hugepages exist: without them the EAL fails and VPP exits.
   plugin dpdk_plugin.so { disable }
   plugin bpa_plugin.so { enable }
   plugin linux_cp_plugin.so { enable }
@@ -279,7 +278,7 @@ PLUGINS_FIRSTBOOT = """plugins {
 
 def render_vpp(p):
     if not p["tuned_now"]:
-        # Primeiro boot: o kernel ainda nao reservou hugepage nem isolou CPU.
+        # First boot: the kernel has not reserved hugepages or isolated CPUs yet.
         return (
             "# Generated by hexarouting-tune. Do not edit by hand.\n"
             "#\n"
@@ -293,7 +292,7 @@ def render_vpp(p):
             "# is written with the full tuning.\n"
             + PLUGINS_FIRSTBOOT + "\n"
             "cpu {\n"
-            "  # sem workers ate o kernel isolar CPU\n"
+            "  # no workers until the kernel isolates CPUs\n"
             "}\n\n"
             "buffers {\n"
             "  buffers-per-numa 8192\n"
@@ -307,14 +306,14 @@ def render_vpp(p):
         )
 
     if not p["workers"]:
-        cpu = "  # sem workers: caixa pequena, tudo na main thread\n"
+        cpu = "  # no workers: small box, everything on the main thread\n"
     else:
         cpu = (f"  main-core {p['main_core']}\n"
                f"  corelist-workers {fmt_list(p['workers'])}\n")
-    # Uma fila de RX por worker. Sem dizer nada o DPDK abre o default (1) e
-    # todo o trafego entra por um worker so - os outros ficam em polling de
-    # fila vazia, e o grafico de CPU nem denuncia, porque poll mode marca
-    # 100% em qualquer caso.
+    # One RX queue per worker. Left unsaid, DPDK opens its default (1) and
+    # all traffic enters through a single worker - the others poll an empty
+    # queue, and the CPU graph does not give it away, because poll mode reads
+    # 100% either way.
     nq = max(1, len(p["workers"]))
     if p["nic_pci"]:
         dpdk = ("dpdk {\n"
@@ -348,16 +347,16 @@ def render_vpp(p):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--interface", help="NIC do dataplane, para escolher o no NUMA")
+    ap.add_argument("--interface", help="dataplane NIC, to choose the NUMA node")
     ap.add_argument("--subscribers", type=int, default=200000)
     ap.add_argument("--max-workers", type=int)
     ap.add_argument("--no-low-latency", action="store_true",
-                    help="nao desliga C-states nem THP na linha do kernel")
+                    help="do not disable C-states or THP on the kernel line")
     ap.add_argument("--sysfs-root", default="/")
     ap.add_argument("--vpp-base", default="/etc/hexarouting/vpp-base.conf",
-                    help="base do startup.conf, concatenada com o tuning")
+                    help="startup.conf base, concatenated with the tuning")
     ap.add_argument("--write", action="store_true",
-                    help="grava em /etc/default/grub.d e /etc/vpp")
+                    help="write to /etc/default/grub.d and /etc/vpp")
     a = ap.parse_args()
 
     topo = Topology(a.sysfs_root)
@@ -393,17 +392,18 @@ def main():
             f.write(grub)
         print("wrote /etc/default/grub.d/hexarouting.cfg", file=sys.stderr)
 
-        # Escrito sempre: se o irqbalance for instalado depois, o banimento
-        # ja esta la e passa a valer sozinho.
+        # Always written: if irqbalance is installed later, the ban is
+        # already there and starts applying on its own.
         os.makedirs("/etc/default", exist_ok=True)
         with open("/etc/default/irqbalance", "w") as f:
             f.write(irq)
         print("wrote /etc/default/irqbalance", file=sys.stderr)
 
-        # O startup.conf do VPP nao tem include: escrever num startup.conf.d
-        # nao faz nada, e o tuning inteiro fica inerte sem nenhum sinal - a
-        # caixa sobe, encaminha, e rende metade. Entao geramos o arquivo que
-        # o VPP realmente le, concatenando a base editavel pelo operador.
+        # VPP's startup.conf has no include directive: writing into a
+        # startup.conf.d does nothing, and the whole tuning sits inert with no
+        # signal at all - the box boots, forwards, and delivers half. So we
+        # generate the file VPP actually reads, concatenating the base the
+        # operator may edit.
         base = ""
         if os.path.exists(a.vpp_base):
             with open(a.vpp_base) as f:

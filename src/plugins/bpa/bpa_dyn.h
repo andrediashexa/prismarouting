@@ -58,7 +58,7 @@ clib_error_t *bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker,
 			    u32 n_workers);
 void bpa_dyn_free (bpa_dyn_t *d);
 
-/* Um bloco devolvido ao pool, para o caller poder logar natEvent 17. */
+/* A block returned to the pool, so the caller can log natEvent 17. */
 typedef struct
 {
   u32 sub_idx;

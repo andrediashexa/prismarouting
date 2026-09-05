@@ -1,13 +1,14 @@
 /*
- * bpa_log.c - exportacao IPFIX de eventos de bloco (RFC 8158).
+ * bpa_log.c - IPFIX export of block events (RFC 8158).
  *
- * Reaproveita a infraestrutura vnet/ipfix-export do VPP: template, numero de
- * sequencia e transporte ja existem. O que este arquivo acrescenta e o
- * template da Tabela 21 da RFC 8158 e a emissao dos eventos.
+ * Reuses VPP's vnet/ipfix-export infrastructure: the template, the sequence
+ * number and the transport already exist. What this file adds is the RFC 8158
+ * Table 21 template and the emission of the events themselves.
  *
- * Nao ha registro por fluxo, de proposito. No modo dinamico sai um registro
- * por alocacao e um por liberacao; no deterministico nao sai nenhum, porque
- * nao ha evento - a prova e o algoritmo mais a configuracao.
+ * There is no per-flow record, deliberately. In dynamic mode one record goes
+ * out per allocation and one per release; in deterministic mode none goes out
+ * at all, because there is no event - the proof is the algorithm plus the
+ * configuration.
  */
 
 #include <vnet/ipfix-export/flow_report.h>
@@ -19,12 +20,12 @@
 bpa_log_main_t bpa_log_main;
 
 /*
- * Template da Tabela 21 da RFC 8158.
+ * RFC 8158 Table 21 template.
  *
- * portRangeEnd e natPoolId sao opcionais na norma, mas vao junto: sem o fim
- * do bloco o coletor teria de conhecer o block_size vigente na data do
- * evento para saber o alcance, e essa e exatamente a informacao que a
- * trilha de configuracao existe para guardar.
+ * portRangeEnd and natPoolId are optional in the standard, but they go along:
+ * without the end of the block the collector would have to know the block_size
+ * in force on the date of the event to know the range, and that is exactly the
+ * information the configuration trail exists to keep.
  */
 static ipfix_report_element_t bpa_block_elements[] = {
   { observationTimeMilliseconds, 8 },
@@ -42,9 +43,9 @@ bpa_log_data_callback (flow_report_main_t *frm, ipfix_exporter_t *exp,
 		       u32 node_index)
 {
   /*
-   * Os registros sao empurrados por bpa_log_drain(), que escreve e despacha
-   * na mesma passagem. Este callback existe so porque a infraestrutura o
-   * exige; nao ha nada para puxar por timer.
+   * Records are pushed by bpa_log_drain(), which writes and dispatches in the
+   * same pass. This callback exists only because the infrastructure demands
+   * it; there is nothing to pull on a timer.
    */
   return f;
 }
@@ -90,8 +91,8 @@ bpa_log_enable (int enable)
 }
 
 /*
- * Enfileira um evento a partir do dataplane. A fila e por thread, entao nao
- * ha lock: cada worker so escreve na sua.
+ * Queues an event from the dataplane. The queue is per thread, so there is no
+ * lock: each worker only ever writes to its own.
  */
 void
 bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
@@ -99,8 +100,8 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 {
   bpa_log_event_t *e;
 
-  /* Basta um transporte habilitado: com so o TCP ligado, a versao anterior
-   * descartava todo evento de alocacao aqui, em silencio. */
+  /* One enabled transport is enough: with only TCP on, the previous version
+   * dropped every allocation event here, silently. */
   if (PREDICT_FALSE (!bpa_log_main.enabled && !bpa_log_tcp.enabled))
     return;
 
@@ -120,11 +121,11 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 }
 
 /*
- * Despacha o buffer parcial da thread corrente, se houver.
+ * Dispatches the current thread's partial buffer, if any.
  *
- * Nao basta deixar isso para o flow_data_callback: o buffer escrito numa
- * passagem era perdido antes de a proxima chamada do callback acontecer, e
- * so o ultimo lote chegava ao coletor. Escrever e despachar tem que ser a
+ * Leaving this to flow_data_callback is not enough: the buffer written in one
+ * pass was lost before the next callback fired, and only the last batch ever
+ * reached the collector. Writing and dispatching have to be the same pass.
  * mesma operacao.
  */
 static void
@@ -162,11 +163,11 @@ bpa_log_flush (vlib_main_t *vm)
 }
 
 /*
- * Drena todas as filas. Roda sob a barreira dos workers, no processo, que e
- * o unico contexto de onde o export IPFIX efetivamente sai do fio.
+ * Drains every queue. Runs under the worker barrier, in process context, which
+ * is the only place from which the IPFIX export actually reaches the wire.
  */
-/* Emite nos transportes habilitados. UDP para telemetria, TCP para o log
- * que nao pode perder registro; os dois podem estar ligados ao mesmo tempo. */
+/* Emits on the enabled transports. UDP for telemetry, TCP for the log that
+ * cannot lose a record; both may be on at the same time. */
 static void
 bpa_log_emit (vlib_main_t *vm, f64 now, u8 event, u32 ip_priv, u32 ip_pub,
 	      u16 port_lo, u16 port_hi, u32 pool_id)
@@ -189,15 +190,15 @@ bpa_log_drain (vlib_main_t *vm)
     return;
 
   /*
-   * Registro emitido antes do primeiro template e indecifravel: o coletor
-   * nao sabe o formato e descarta. Verificado em lab/ipfix.sh, onde os
-   * quatro primeiros eventos sairam no fio e nenhum coletor conseguiria
-   * le-los. Para log de compliance isso e perda silenciosa logo apos um
-   * restart, que e justamente quando ninguem esta olhando.
+   * A record emitted before the first template is undecodable: the collector
+   * does not know the format and drops it. Observed in lab/ipfix.sh, where the
+   * first four events went out on the wire and no collector could have read
+   * them. For a compliance log that is silent loss right after a restart,
+   * which is exactly when nobody is watching.
    *
-   * Os eventos ficam na fila ate o template sair. A fila e limitada, entao
-   * um coletor inalcancavel resulta em perda contabilizada, nao em memoria
-   * crescendo sem fim.
+   * Events stay queued until the template goes out. The queue is bounded, so
+   * an unreachable collector produces accounted loss rather than memory
+   * growing without end.
    */
   if (bpa_log_main.enabled)
     {
@@ -260,7 +261,7 @@ bpa_log_block_event (vlib_main_t *vm, u32 thread_index, u8 event, u32 ip_priv,
   offset = ptd->next_data_offset;
   d = (u8 *) vlib_buffer_get_current (b0) + offset;
 
-  /* milissegundos desde a epoca, na escala do proprio exportador */
+  /* milliseconds since the epoch, on the exporter's own scale */
   now_ms = (u64) ((frm->unix_time_0 + vlib_time_now (vm) - frm->vlib_time_0)
 		  * 1e3);
 
@@ -283,7 +284,7 @@ bpa_log_block_event (vlib_main_t *vm, u32 thread_index, u8 event, u32 ip_priv,
   b0->current_length = offset;
   lm->n_records++;
 
-  /* despacha antes que o proximo registro nao caiba */
+  /* dispatch before the next record would not fit */
   if (offset + BPA_LOG_RECORD_SIZE > exp->path_mtu)
     vnet_ipfix_exp_send_buffer (
       vm, exp, fr, pool_elt_at_index (exp->streams, fr->stream_index),

@@ -16,7 +16,7 @@ static unsigned checks = 0;
 	{                                                                     \
 	  if (failures < 10)                                                  \
 	    {                                                                 \
-	      printf ("  FALHA: ");                                           \
+	      printf ("  FAIL: ");                                           \
 	      printf (__VA_ARGS__);                                           \
 	      printf ("\n");                                                  \
 	    }                                                                 \
@@ -76,7 +76,7 @@ main (void)
   u64 storage[BPA_PORTMAP_MAX_WORDS];
   bpa_portmap_t pm;
 
-  printf ("=== esgotamento sem colisao, varios tamanhos de bloco ===\n");
+  printf ("=== exhaustion without collision, several block sizes ===\n");
   test_exhaust (32); /* exercita o mascaramento da cauda */
   test_exhaust (64);
   test_exhaust (128);
@@ -86,9 +86,9 @@ main (void)
   printf ("\n=== preservacao de porta ===\n");
   {
     bpa_portmap_init (&pm, 512, storage);
-    CHECK (bpa_portmap_alloc (&pm, 300) == 300, "nao preservou a porta 300");
-    CHECK (bpa_portmap_is_used (&pm, 300), "300 nao ficou marcada");
-    /* preferida ja ocupada: deve cair para outra, nunca repetir */
+    CHECK (bpa_portmap_alloc (&pm, 300) == 300, "did not honour port 300");
+    CHECK (bpa_portmap_is_used (&pm, 300), "300 was not marked used");
+    /* preferred one already taken: must fall back, never repeat */
     CHECK (bpa_portmap_alloc (&pm, 300) != 300, "entregou 300 duas vezes");
     /* preferida fora do bloco: ignora e aloca normal */
     {
@@ -106,7 +106,7 @@ main (void)
     bpa_portmap_init (&pm, 128, storage);
     while (bpa_portmap_alloc (&pm, -1) >= 0)
       ;
-    CHECK (pm.n_free == 0, "bloco nao esgotou");
+    CHECK (pm.n_free == 0, "the block did not run out");
 
     free_me = 77;
     bpa_portmap_free (&pm, free_me);
@@ -116,10 +116,10 @@ main (void)
     off = bpa_portmap_alloc (&pm, -1);
     CHECK (off == free_me, "reuso devolveu %d, esperado %u", off, free_me);
     CHECK (pm.n_free == 0, "n_free apos realocar = %u", pm.n_free);
-    printf ("  porta liberada volta a ser alocavel\n");
+    printf ("  a freed port becomes allocatable again\n");
   }
 
-  printf ("\n=== operacoes invalidas nao corrompem o mapa ===\n");
+  printf ("\n=== invalid operations do not corrupt the map ===\n");
   {
     bpa_portmap_init (&pm, 128, storage);
     CHECK (bpa_portmap_alloc (&pm, -1) == 0, "primeira alocacao != 0");
@@ -127,10 +127,10 @@ main (void)
     bpa_portmap_free (&pm, 0);
     CHECK (pm.n_free == 128, "n_free apos liberar = %u", pm.n_free);
     bpa_portmap_free (&pm, 0); /* double free */
-    CHECK (pm.n_free == 128, "double free alterou n_free para %u", pm.n_free);
+    CHECK (pm.n_free == 128, "double free changed n_free to %u", pm.n_free);
 
     bpa_portmap_free (&pm, 5000); /* fora do bloco */
-    CHECK (pm.n_free == 128, "free fora de faixa alterou n_free para %u",
+    CHECK (pm.n_free == 128, "an out-of-range free changed n_free to %u",
 	   pm.n_free);
     printf ("  double free e free fora de faixa ignorados\n");
   }
@@ -146,7 +146,7 @@ main (void)
     printf ("  32 bits de cauda marcados como usados no init\n");
   }
 
-  printf ("\n%s  (%u verificacoes, %d falhas)\n",
-	  failures ? "FALHOU" : "TODOS OS TESTES PASSARAM", checks, failures);
+  printf ("\n%s  (%u checks, %d failures)\n",
+	  failures ? "FAILED" : "ALL TESTS PASSED", checks, failures);
   return failures ? 1 : 0;
 }

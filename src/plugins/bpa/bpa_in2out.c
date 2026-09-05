@@ -86,8 +86,8 @@ bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
       ip->checksum = ip_csum_fold (sum);
     }
 
-  /* Fragmento que nao e o primeiro: nao ha porta a reescrever, e o checksum
-   * L4 vive no primeiro fragmento. So o endereco muda. */
+  /* A non-first fragment: there is no port to rewrite, and the L4 checksum
+   * lives in the first fragment. Only the address changes. */
   if (PREDICT_FALSE (l4h == 0))
     {
       ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
@@ -218,8 +218,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 		|| bpa_dyn_acquire (vec_elt_at_index (pt->dyn, pool_index), p,
 				    sub_idx, w, nw, &blk, &is_new)))
 	    {
-	      /* RFC 8158 natEvent 12: alem de compliance, e o alarme que
-	       * antecipa chamado de suporte. */
+	      /* RFC 8158 natEvent 12: beyond compliance, this is the alarm that
+	       * gets ahead of the support call. */
 	      bpa_log_queue_event (pt, BPA_NAT_EVENT_PORTS_EXHAUSTED, src_host,
 				   0, 0, 0, pool_index);
 	      b[0]->error = node->errors[BPA_IN2OUT_ERROR_NO_BLOCK];
@@ -298,10 +298,10 @@ VNET_FEATURE_INIT (bpa_in2out_feature, static) = {
   .node_name = "bpa-in2out",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
   /*
-   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
-   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
-   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
-   * por fragmento.
+   * Has to run AFTER shallow virtual reassembly, otherwise the buffer's port
+   * fields do not exist yet and a following fragment is read with a garbage
+   * port - which creates a phantom session and burns one port of the block
+   * per fragment.
    */
   .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };

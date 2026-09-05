@@ -7,11 +7,11 @@
  * Per-worker table sizing. Sessions are sharded by subscriber, so each
  * worker holds roughly total_sessions / n_workers entries.
  *
- * O tamanho e RESERVA de espaco virtual, nao consumo imediato - mas o
- * matador de OOM conta o virtual. Com 64 MB por tabela, duas tabelas e
- * varias threads, o VPP mapeava mais de 1 GB e era morto numa caixa de 2 GB.
- * O padrao ficou modesto e configuravel: quem tem 200k assinantes aumenta
- * pelo startup.conf, quem tem uma caixa pequena nao paga por isso.
+ * The size is a RESERVATION of virtual space, not immediate consumption -
+ * but the OOM killer counts virtual. At 64 MB per table, two tables and
+ * several threads, VPP mapped over 1 GB and was killed on a 2 GB box.
+ * The default is now modest and configurable: whoever has 200k subscribers
+ * raises it in startup.conf, whoever has a small box does not pay for it.
  */
 
 clib_error_t *
@@ -274,7 +274,7 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		    continue;
 		  bpa_dyn_block_addr (p, rel[k].block_idx, &blk);
 
-		  /* roda na main thread, entao o buffer IPFIX e o dela */
+		  /* runs on the main thread, so the IPFIX buffer is that thread's */
 		  bpa_log_block_event (vm, vm->thread_index,
 				       BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
 				       blk.ip_pub, blk.port_lo, blk.port_hi, j);
@@ -284,7 +284,7 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		}
 	    }
 	}
-      /* o dataplane so enfileira; e daqui que os registros saem */
+      /* the dataplane only queues; this is where the records go out */
       bpa_log_drain (vm);
 
       vlib_worker_thread_barrier_release (vm);

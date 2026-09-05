@@ -92,8 +92,8 @@ bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
       ip->checksum = ip_csum_fold (sum);
     }
 
-  /* Fragmento que nao e o primeiro: nao ha porta a reescrever, e o checksum
-   * L4 vive no primeiro fragmento. So o endereco muda. */
+  /* A non-first fragment: there is no port to rewrite, and the L4 checksum
+   * lives in the first fragment. Only the address changes. */
   if (PREDICT_FALSE (l4h == 0))
     {
       ip->dst_address.as_u32 = clib_host_to_net_u32 (new_addr);
@@ -144,12 +144,12 @@ bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
 }
 
 /*
- * Erros ICMP carregam o pacote original embutido, e e o embutido que diz de
- * quem eles falam.
+ * ICMP errors carry the original packet embedded, and it is the embedded one
+ * that says who they are about.
  *
- * Sem traduzir isso, o "fragmentation needed" do PMTUD nunca chega ao
- * assinante: a conexao TCP fica pendurada e o sintoma que chega ao suporte e
- * "alguns sites nao abrem". Traceroute tambem para de funcionar atraves do
+ * Without translating it, PMTUD's "fragmentation needed" never reaches the
+ * subscriber: the TCP connection hangs and the symptom that reaches support
+ * is "some sites do not open". Traceroute also stops working through the
  * CGNAT.
  */
 static_always_inline int
@@ -169,16 +169,16 @@ bpa_icmp_is_error (u8 type)
 }
 
 /*
- * Traduz um erro ICMP vindo da internet.
+ * Translates an ICMP error coming from the internet.
  *
- * Estrutura: IP externo (dst = nosso publico) / ICMP / IP embutido
- * (src = nosso publico, dst = remoto) / 8 bytes do L4 original.
+ * Structure: outer IP (dst = our public) / ICMP / embedded IP
+ * (src = our public, dst = remote) / 8 bytes of the original L4.
  *
- * Reescreve o destino externo e a origem do embutido. O checksum do ICMP
- * cobre o pacote embutido inteiro, entao toda mudanca la dentro - inclusive
- * o proprio checksum do IP embutido - tem que ser refletida nele.
+ * Rewrites the outer destination and the embedded source. The ICMP checksum
+ * covers the whole embedded packet, so every change in there - including the
+ * embedded IP's own checksum - has to be reflected in it.
  *
- * Retorna 0 quando traduziu.
+ * Returns 0 when it translated.
  */
 static_always_inline int
 bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
@@ -196,7 +196,7 @@ bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
   u16 old_port;
   u32 old_addr;
 
-  /* ICMP (4) + 4 nao usados + IP minimo (20) + 8 do L4 original */
+  /* ICMP (4) + 4 unused + minimum IP (20) + 8 of the original L4 */
   if (PREDICT_FALSE ((u8 *) icmp + 8 + 20 + 8 > end))
     return -1;
 
@@ -209,8 +209,8 @@ bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
   if (PREDICT_FALSE (inner_proto < 0))
     return -1;
 
-  /* Para TCP e UDP a porta de origem sao os dois primeiros bytes do L4;
-   * para ICMP embutido, o identificador esta logo apos o cabecalho. */
+  /* For TCP and UDP the source port is the first two bytes of the L4;
+   * for embedded ICMP, the identifier sits right after the header. */
   inner_port = (u16 *) ((u8 *) inner + inner_hlen);
   if (inner_proto == BPA_PROTO_ICMP)
     inner_port = (u16 *) ((u8 *) inner + inner_hlen + 4);
@@ -234,7 +234,7 @@ bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
   ip->checksum = ip_csum_fold (sum);
   ip->dst_address.as_u32 = clib_host_to_net_u32 (s->ip_priv);
 
-  /* --- origem do embutido, e o checksum do ICMP acompanhando tudo --- */
+  /* --- embedded source, with the ICMP checksum following all of it --- */
   {
     ip_csum_t icmp_sum = icmp->checksum;
     u16 old_inner_csum = inner->checksum;
@@ -309,8 +309,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 	  goto trace;
 	}
 
-      /* Erro ICMP: quem identifica a sessao e o pacote embutido, nao o
-       * cabecalho externo. Caminho separado. */
+      /* ICMP error: what identifies the session is the embedded packet, not
+       * the outer header. Separate path. */
       if (PREDICT_FALSE (proto == BPA_PROTO_ICMP
 			 && !vnet_buffer (b[0])->ip.reass.is_non_first_fragment))
 	{
@@ -449,10 +449,10 @@ VNET_FEATURE_INIT (bpa_out2in_feature, static) = {
   .node_name = "bpa-out2in",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
   /*
-   * Tem que rodar DEPOIS do reassembly virtual raso, senao os campos de
-   * porta do buffer ainda nao existem e um fragmento seguinte e lido com
-   * porta lixo - o que cria uma sessao fantasma e queima uma porta do bloco
-   * por fragmento.
+   * Has to run AFTER shallow virtual reassembly, otherwise the buffer's port
+   * fields do not exist yet and a following fragment is read with a garbage
+   * port - which creates a phantom session and burns one port of the block
+   * per fragment.
    */
   .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };

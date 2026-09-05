@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-Gera test/bpa_vectors.h a partir do modelo de referencia.
+Generates test/bpa_vectors.h from the reference model.
 
-Os prefixos vao crus, sem fusao: o C precisa ordenar, recusar sobreposicao
-e fundir adjacentes por conta propria, e o resultado e conferido contra o
-que o modelo Python produziu.
+The prefixes go in raw, unmerged: the C has to sort, refuse overlaps and merge
+adjacent ranges on its own, and the result is checked against what the Python
+model produced.
 """
 import ipaddress, os
 from bpa_model import PoolConfig, MapPolicy
 
 POOLS = [
-    ("contiguo", ["100.64.0.0/22"], ["200.150.0.10/31"], 512, MapPolicy.INTERLEAVED),
+    ("contiguous", ["100.64.0.0/22"], ["200.150.0.10/31"], 512, MapPolicy.INTERLEAVED),
     ("frag-interleaved", ["100.64.0.0/22"],
      ["200.150.0.8/30", "45.170.16.64/31", "203.0.113.200/32"], 512, MapPolicy.INTERLEAVED),
     ("frag-blocked", ["100.64.0.0/22"],
      ["200.150.0.8/30", "45.170.16.64/31", "203.0.113.200/32"], 512, MapPolicy.BLOCKED),
-    ("interno-frag", ["100.64.0.0/24", "10.20.0.0/24"],
+    ("inside-frag", ["100.64.0.0/24", "10.20.0.0/24"],
      ["200.150.0.0/29", "45.170.16.0/30"], 1024, MapPolicy.INTERLEAVED),
-    # prefixos adjacentes e fora de ordem: exercita fusao e ordenacao no C
-    ("adjacentes", ["100.64.0.0/23"],
+    # adjacent and out-of-order prefixes: exercises merging and sorting in C
+    ("adjacent", ["100.64.0.0/23"],
      ["200.150.0.128/25", "200.150.0.0/25"], 2048, MapPolicy.BLOCKED),
 ]
 

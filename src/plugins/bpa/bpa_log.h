@@ -1,8 +1,8 @@
 /*
- * bpa_log.h - exportacao IPFIX de eventos de bloco (RFC 8158).
+ * bpa_log.h - IPFIX export of block events (RFC 8158).
  *
- * Loga alocacao de bloco, nao fluxo. E o que torna o CGNAT auditavel sem
- * gerar terabytes por dia. Ver docs/logging.md.
+ * Logs block allocation, not flows. That is what makes the CGNAT auditable
+ * without producing terabytes a day. See docs/logging.md.
  */
 
 #ifndef __included_bpa_log_h__
@@ -20,12 +20,12 @@
 #define BPA_LOG_RECORD_SIZE 25
 
 /*
- * Evento enfileirado pelo dataplane.
+ * An event queued by the dataplane.
  *
- * O node NAO chama o caminho de export direto: emitir IPFIX de dentro do
- * dispatch do grafo nao funciona - o buffer e escrito mas nunca sai do fio.
- * Descoberto em lab/ipfix.sh, onde so os eventos emitidos do contexto de
- * processo chegavam ao coletor. O dataplane enfileira e um processo drena.
+ * The node does NOT call the export path directly: emitting IPFIX from inside
+ * graph dispatch does not work - the buffer is written but never reaches the
+ * wire. Found in lab/ipfix.sh, where only the events emitted from process
+ * context arrived at the collector. The dataplane queues, a process drains.
  */
 typedef struct
 {
@@ -37,8 +37,8 @@ typedef struct
   u8 event;
 } bpa_log_event_t;
 
-/* Teto da fila por thread: se o processo atrasar, perde-se o excedente de
- * forma contabilizada, em vez de crescer sem limite. */
+/* Per-thread queue ceiling: if the process falls behind, the excess is lost
+ * in an accounted way, rather than growing without bound. */
 #define BPA_LOG_QUEUE_MAX 8192
 
 typedef struct
@@ -51,7 +51,7 @@ typedef struct
   u64 n_flush_sent;
   u64 n_flush_empty;
   u64 n_getbuf_fail;
-  u64 n_dropped; /* sem coletor configurado */
+  u64 n_dropped; /* no collector configured */
   u8 enabled;
 } bpa_log_main_t;
 
@@ -59,14 +59,14 @@ extern bpa_log_main_t bpa_log_main;
 
 clib_error_t *bpa_log_enable (int enable);
 
-/* Emite de fato. So pode ser chamado de contexto de processo. */
+/* Actually emits. May only be called from process context. */
 void bpa_log_block_event (vlib_main_t *vm, u32 thread_index, u8 event,
 			  u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
 			  u32 pool_id);
 
 /*
- * Exportacao sobre TCP, para quando perder registro nao e aceitavel.
- * O socket e nao bloqueante e o excedente vai para arquivo de transbordo.
+ * Export over TCP, for when losing a record is not acceptable.
+ * The socket is non-blocking and the excess goes to a spill file.
  */
 typedef struct
 {
@@ -95,10 +95,10 @@ void bpa_log_tcp_record (f64 now, u8 event, u32 ip_priv, u32 ip_pub,
 			 u16 port_lo, u16 port_hi, u32 pool_id);
 void bpa_log_tcp_service (f64 now);
 
-/* Drena as filas de todas as threads. Chamado sob barreira. */
+/* Drains every thread's queue. Called under the barrier. */
 void bpa_log_drain (vlib_main_t *vm);
 
-/* bpa_log_queue_event() e declarada em bpa.h, que ja enxerga
- * bpa_per_thread_t; declara-la aqui exigiria uma dependencia circular. */
+/* bpa_log_queue_event() is declared in bpa.h, which already sees
+ * bpa_per_thread_t; declaring it here would need a circular dependency. */
 
 #endif /* __included_bpa_log_h__ */
