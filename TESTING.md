@@ -111,8 +111,22 @@ ao `vtysh` do FRR com o contexto preservado. O `show running-config` le a
 configuracao do **dataplane**, nao da memoria da shell - cada invocacao e um
 processo novo.
 
-Limites desta primeira versao: sem `?` e sem completacao por tab. Historico e
-edicao de linha vem do readline.
+Tab completa, e `?` lista as opcoes com descricao no ponto em que voce esta:
+
+```
+hexarouting# show cgnat ?
+  blocks   blocos alocados no modo dinamico
+  logging  estado da exportacao IPFIX
+  pool     pools de CGNAT configurados
+  session  sessoes ativas por thread
+
+hexarouting(config-cgnat-pool)# inside ?
+  <A.B.C.D/M>
+```
+
+A arvore cobre os comandos de CGNAT inteiros e os pontos de entrada do
+roteamento. Depois de um comando do FRR ela admite que nao sabe, em vez de
+fingir uma lista que ficaria desatualizada a cada versao do FRR.
 
 ## 4. Appliance (ISO)
 

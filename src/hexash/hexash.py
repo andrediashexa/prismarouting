@@ -16,6 +16,8 @@ import os
 import re
 import shlex
 import subprocess
+
+readline = None
 import sys
 
 CONFIG_PATH = os.environ.get("HEXA_CONFIG", "/etc/hexarouting/hexarouting.conf")
@@ -34,6 +36,129 @@ FRR_BLOCKS = ("router ", "interface ", "vrf ", "route-map ", "line ",
 # Substituir isso pela API binaria, que tem codigo de retorno de verdade,
 # esta no roadmap; ate la a deteccao e por padrao de texto.
 VPP_ERROR = re.compile(r"^(unknown input\b|[a-z][a-z0-9 _-]*: \S)")
+
+
+# ---------------------------------------------------------------------------
+# Arvore de comandos, para completacao e para o "?".
+#
+# Cada entrada e (descricao, subarvore). Subarvore None encerra o comando;
+# uma string no lugar dela e a dica do argumento esperado, mostrada pelo "?"
+# como o Cisco faz - "<A.B.C.D/M>" e mais util que uma lista vazia.
+#
+# Os comandos do FRR nao estao aqui inteiros: sao milhares e mudam a cada
+# versao. A arvore cobre os pontos de entrada e o resto e repassado; e
+# honesto dizer "daqui para frente quem sabe e o FRR" em vez de fingir uma
+# lista que ficaria desatualizada.
+# ---------------------------------------------------------------------------
+
+ARG_PREFIX = "<A.B.C.D/M>"
+ARG_NUM = "<1-65535>"
+ARG_WORD = "<palavra>"
+
+SHOW_CGNAT = {
+    "pool": ("pools de CGNAT configurados", None),
+    "session": ("sessoes ativas por thread", None),
+    "blocks": ("blocos alocados no modo dinamico", None),
+    "logging": ("estado da exportacao IPFIX", None),
+}
+
+SHOW = {
+    "cgnat": ("informacao de CGNAT", SHOW_CGNAT),
+    "running-config": ("configuracao em vigor, CGNAT e roteamento", None),
+    "ip": ("informacao de IP (FRR)", None),
+    "bgp": ("informacao de BGP (FRR)", None),
+    "isis": ("informacao de IS-IS (FRR)", None),
+    "interface": ("interfaces (FRR)", None),
+    "version": ("versao (FRR)", None),
+    "logging": ("log do sistema (FRR)", None),
+}
+
+CGNAT_POOL = {
+    "inside": ("prefixo interno, pode repetir", ARG_PREFIX),
+    "outside": ("prefixo publico, pode repetir", ARG_PREFIX),
+    "block-size": ("portas por bloco, potencia de dois", "<64-65536>"),
+    "ports": ("faixa de portas usavel", "<min> <max>"),
+    "policy": ("como espalhar assinantes entre IPs publicos", {
+        "interleaved": ("vizinhos em IPs publicos distintos", None),
+        "blocked": ("vizinhos no mesmo IP publico", None),
+    }),
+    "mode": ("como o bloco e atribuido", {
+        "deterministic": ("por formula, sem log de alocacao", None),
+        "dynamic": ("sob demanda, com log de alocacao", None),
+    }),
+    "exit": ("aplica o pool e volta", None),
+}
+
+CGNAT_CONFIG = {
+    "pool": ("cria ou edita um pool", ARG_WORD),
+    "interface": ("liga o CGNAT numa interface", "<interface> inside|outside"),
+    "timeout": ("tempo de vida das sessoes", {
+        "udp": ("segundos", ARG_NUM),
+        "icmp": ("segundos", ARG_NUM),
+        "tcp-transitory": ("segundos", ARG_NUM),
+        "tcp-established": ("segundos", ARG_NUM),
+    }),
+    "block-holddown": ("segundos que um bloco fica reservado", ARG_NUM),
+    "logging": ("exportacao IPFIX de eventos de bloco", {
+        "enable": ("liga", None),
+        "disable": ("desliga", None),
+    }),
+}
+
+TREE = {
+    "view": {
+        "enable": ("entra no modo privilegiado", None),
+        "show": ("mostra informacao", SHOW),
+        "exit": ("encerra a sessao", None),
+    },
+    "enable": {
+        "configure": ("entra em configuracao", {
+            "terminal": ("configura pelo terminal", None)}),
+        "show": ("mostra informacao", SHOW),
+        "write": ("grava a configuracao", {
+            "memory": ("grava em disco", None)}),
+        "disable": ("volta ao modo nao privilegiado", None),
+        "exit": ("encerra a sessao", None),
+    },
+    "config": {
+        "cgnat": ("configuracao de CGNAT", CGNAT_CONFIG),
+        "no": ("remove configuracao", {
+            "cgnat": ("remove configuracao de CGNAT", {
+                "pool": ("remove um pool", ARG_WORD)})}),
+        "router": ("protocolos de roteamento (FRR)", {
+            "bgp": ("BGP", "<AS>"),
+            "ospf": ("OSPF", None),
+            "isis": ("IS-IS", ARG_WORD),
+        }),
+        "interface": ("configuracao de interface (FRR)", ARG_WORD),
+        "exit": ("volta ao modo anterior", None),
+    },
+    "pool": CGNAT_POOL,
+}
+
+
+def tree_walk(mode, words):
+    """
+    Onde estamos na arvore depois de `words`.
+
+    Devolve (node, hint): node e o dicionario de opcoes seguintes, ou None
+    quando o comando ja terminou; hint e a dica de argumento, se houver.
+    """
+    node = TREE.get(mode)
+    hint = None
+    for w in words:
+        if not isinstance(node, dict):
+            return None, hint
+        entry = node.get(w)
+        if entry is None:
+            # palavra desconhecida: daqui para frente quem sabe e o FRR
+            return None, None
+        _, sub = entry
+        if isinstance(sub, str):
+            return None, sub
+        node = sub
+        hint = None
+    return node, hint
 
 
 class Vpp:
@@ -350,6 +475,77 @@ class Shell:
         if out:
             print(out)
 
+
+    # ---------------------------------------------------------- completacao
+
+    def _options(self, line, ending_word):
+        """
+        Opcoes validas no ponto atual da linha.
+
+        `ending_word` diz se o cursor esta no meio de uma palavra: nesse caso
+        a ultima palavra e o prefixo a completar, nao um passo ja dado.
+        """
+        words = line.split()
+        prefix = ""
+        if ending_word and words:
+            prefix = words[-1]
+            words = words[:-1]
+
+        node, hint = tree_walk(self.mode, words)
+        if node is None:
+            # Fora da arvore: ou o comando terminou, ou dali em diante quem
+            # sabe e o FRR. Mostramos a dica de argumento quando existe.
+            return {}, hint, prefix
+        opts = {k: v[0] for k, v in node.items() if k.startswith(prefix)}
+        return opts, hint, prefix
+
+    def complete(self, text, state):
+        """Completador do readline."""
+        if state == 0:
+            line = readline.get_line_buffer()
+            ending = bool(line) and not line.endswith(" ")
+            opts, hint, _ = self._options(line, ending)
+            self._last_opts = opts
+            self._last_hint = hint
+            self._matches = sorted(opts)
+            if not opts and hint:
+                # Sem opcoes o readline nao chama o hook de exibicao, e a dica
+                # de argumento nunca apareceria. Duas entradas sem prefixo
+                # comum forcam a exibicao sem inserir nada na linha - quem
+                # imprime e o hook, que mostra so a dica.
+                self._matches = [hint, "\u200b"]
+        try:
+            m = self._matches[state]
+        except IndexError:
+            return None
+        # dica de argumento nao e completacao: nunca entra na linha
+        if not self._last_opts:
+            return m
+        return m + " "
+
+    def display_matches(self, substitution, matches, longest):
+        """
+        Mostra as opcoes com descricao, no estilo que operador espera.
+
+        O readline sozinho imprime so as palavras em colunas; a descricao ao
+        lado e o que torna o "?" util para quem nao decorou a gramatica.
+        """
+        opts = getattr(self, "_last_opts", {})
+        print()
+        if opts:
+            width = max(len(m) for m in opts)
+            for m in sorted(opts):
+                print(f"  {m:<{width}}  {opts[m]}")
+        hint = getattr(self, "_last_hint", None)
+        if hint:
+            print(f"  {hint}")
+        if not opts and not hint:
+            print("  (nenhuma opcao conhecida aqui; o comando segue para o FRR)")
+        print()
+        # redesenha o prompt com o que ja estava digitado
+        sys.stdout.write(self.prompt() + readline.get_line_buffer())
+        sys.stdout.flush()
+
     # ---------------------------------------------------------- loop
 
     def feed(self, line):
@@ -371,10 +567,24 @@ class Shell:
         self.mode = "enable"
 
     def repl(self):
+        global readline
         try:
-            import readline  # noqa: F401  habilita historico e edicao
+            import readline
         except ImportError:
-            pass
+            readline = None
+        if readline:
+            readline.set_completer(self.complete)
+            readline.set_completer_delims(" \t\n")
+            readline.parse_and_bind("tab: complete")
+            # "?" mostra as opcoes sem inserir o caractere, como no Cisco
+            readline.parse_and_bind('"?": possible-completions')
+            # duas tabulacoes ja listam por padrao; o hook so acrescenta a
+            # descricao ao lado de cada opcao
+            try:
+                readline.set_completion_display_matches_hook(
+                    self.display_matches)
+            except AttributeError:
+                pass  # readline antigo: fica so a lista, sem descricao
         while True:
             try:
                 line = input(self.prompt())
