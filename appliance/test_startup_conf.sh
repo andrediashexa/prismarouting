@@ -24,6 +24,17 @@ case "$out" in
     bad "the installed hexash does not start:"; echo "$out" | sed 's/^/    /' ;;
   *) say "installed hexash runs: $(echo "$out" | head -1)" ;;
 esac
+# Every module the VTY imports has to be installed, not a hand-kept list of
+# them. Naming files one by one shipped a missing config.py in 0.2.0 and a
+# missing vppapi.py the moment the binary API landed.
+for m in $(sed -n 's/^import \([a-z_][a-z_]*\)$/\1/p;s/^from \([a-z_][a-z_]*\) import.*/\1/p' \
+             /src/src/hexash/hexash.py); do
+  [ -f "/src/src/hexash/$m.py" ] || continue
+  [ -f "/usr/lib/hexarouting/$m.py" ] \
+    && say "module $m.py installed" \
+    || bad "hexash imports $m but $m.py was not installed"
+done
+
 out=$(hexash -c "show cgnat pool" 2>&1)
 case "$out" in
   *Traceback*) bad "the installed hexash cannot reach the dataplane:"; echo "$out" | sed 's/^/    /' ;;

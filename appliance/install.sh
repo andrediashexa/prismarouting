@@ -17,8 +17,18 @@ say "binaries"
 # ModuleNotFoundError on every start - the product's front door, broken on
 # every installed box and every ISO, and invisible because the labs run it
 # from the source tree where config.py sits next to it.
-install -D -m 0755 "$REPO/src/hexash/hexash.py"      "$DESTDIR/usr/lib/hexarouting/hexash.py"
-install -D -m 0644 "$REPO/src/hexash/config.py"      "$DESTDIR/usr/lib/hexarouting/config.py"
+# The WHOLE module directory, not a list of files.
+#
+# Naming them one by one has now shipped the same defect twice: config.py was
+# missing in 0.2.0 and the VTY raised ModuleNotFoundError on every installed
+# box, and vppapi.py was missing the moment the binary API landed. A list that
+# has to be updated whenever an import is added is a list that will be wrong
+# again.
+install -d -m 0755 "$DESTDIR/usr/lib/hexarouting"
+for f in "$REPO"/src/hexash/*.py; do
+  install -D -m 0644 "$f" "$DESTDIR/usr/lib/hexarouting/$(basename "$f")"
+done
+chmod 0755 "$DESTDIR/usr/lib/hexarouting/hexash.py"
 install -D -m 0755 "$REPO/appliance/hexash-launcher" "$DESTDIR/usr/bin/hexash"
 install -D -m 0755 "$REPO/appliance/hexarouting-tune" "$DESTDIR/usr/bin/hexarouting-tune"
 install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/hexarouting/wait-for-vpp"
