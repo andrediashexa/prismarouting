@@ -64,6 +64,35 @@ bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
   return 0;
 }
 
+/*
+ * Every check bpa_pool_add() performs, without creating anything.
+ *
+ * Exists so a configuration can be validated before it is applied. Without
+ * it, a "commit check" can only inspect syntax and then approve a pool the
+ * device will refuse - false confidence exactly where an operator is relying
+ * on the check.
+ */
+clib_error_t *
+bpa_pool_validate (bpa_pool_t *cfg)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t probe;
+  clib_error_t *e;
+  uword *q;
+
+  q = hash_get_mem (bm->pool_by_name, cfg->name);
+  if (q)
+    return clib_error_return (0, "pool already exists");
+
+  e = bpa_check_local_overlap (&cfg->outside, cfg->name);
+  if (e)
+    return e;
+
+  /* run the derived-value computation on a copy, so nothing is retained */
+  probe = *cfg;
+  return bpa_pool_init (&probe);
+}
+
 clib_error_t *
 bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 {

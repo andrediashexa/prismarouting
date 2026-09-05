@@ -167,6 +167,12 @@ Requirements:
 * Edits **MUST NOT** reach the dataplane before `commit`.
 * `commit` **MUST** validate before applying, and **MUST** restore the previous
   state if application fails halfway.
+* `commit check` **MUST** validate against the device, not merely against
+  syntax. The plugin exposes `bpa pool … check`, which runs every check the
+  creation path runs — block size, prefix overlap, capacity, and collision
+  with a local address — and creates nothing. Checking syntax alone would
+  approve pools the device refuses, which is false confidence exactly where an
+  operator is relying on the check.
 * CGNAT **MUST** be applied before routing. A routing change can cost
   reachability, and doing it last keeps the half-configured window short.
 * Pools are replaced whole rather than edited in place: the device takes a pool
@@ -224,9 +230,8 @@ release and start suggesting commands that no longer exist.
 
 * The dataplane error check is textual, because `vppctl` returns 0 even on
   failure. Migrating `hexash` to the binary API **SHOULD** replace it.
-* `commit check` validates the routing half through `frr-reload.py --test` and
-  the CGNAT half structurally. It does **not** dry-run pool creation on the
-  device, because the device offers no dry-run for it.
+* A box running CGNAT with no routing daemon is a legitimate deployment, so a
+  missing or silent FRR **MUST NOT** block a CGNAT-only commit.
 * `hexash` is written in Python. It is an interactive control-plane shell,
   outside any packet path; C would take three times the code for the same
   result.

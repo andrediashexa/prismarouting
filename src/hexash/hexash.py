@@ -201,6 +201,11 @@ class Frr:
             args += ["-c", l]
         return self._exec(args)
 
+    def available(self):
+        """Is FRR actually answering? A box may run CGNAT with no routing."""
+        rc, _ = self._exec(["-c", "show version"])
+        return rc == 0
+
     def reload(self, lines, check_only=False):
         """
         Converge FRR onto `lines` using frr-reload.py, which computes the
@@ -209,6 +214,10 @@ class Frr:
         """
         if not os.path.exists(FRR_RELOAD):
             return 1, f"{FRR_RELOAD} not found: routing rollback unavailable"
+        if not self.available():
+            # A CGNAT-only box is a legitimate deployment. Refusing every
+            # commit because no routing daemon is running would be wrong.
+            return 1, "FRR is not responding"
         with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as f:
             f.write("\n".join(lines) + "\n")
             path = f.name
@@ -216,11 +225,23 @@ class Frr:
             mode = "--test" if check_only else "--reload"
             p = subprocess.run(["python3", FRR_RELOAD, mode, "--stdout", path],
                                capture_output=True, text=True, timeout=60)
-            return p.returncode, ((p.stdout or "") + (p.stderr or "")).rstrip()
+            out = ((p.stdout or "") + (p.stderr or "")).rstrip()
+            if p.returncode:
+                # frr-reload dumps a Python traceback on failure. An operator
+                # needs the reason, not our tooling's stack.
+                out = self._summarise(out)
+            return p.returncode, out
         except subprocess.TimeoutExpired:
             return 1, "frr-reload timed out"
         finally:
             os.unlink(path)
+
+    @staticmethod
+    def _summarise(out):
+        keep = [l for l in out.splitlines()
+                if l.startswith(("Exiting:", "ERROR", "% ", "Failed"))
+                or "Exception:" in l]
+        return "\n".join(keep[-4:]) if keep else out.splitlines()[-1] if out else ""
 
     def _exec(self, args):
         try:
@@ -347,15 +368,29 @@ class Shell:
         if check_only:
             ok = True
             for pool in d["pool_add"] + d["pool_replace"]:
-                rc, out = self.dp.run(pool.device_command() + " check")
-                # the device has no dry-run for pools; validate what we can
                 if not pool.inside or not pool.outside:
                     self.err(f"pool '{pool.name}': inside and outside required")
                     ok = False
-            rc, out = self.frr.reload(target.routing, check_only=True)
-            if rc:
-                print(out)
-                ok = False
+                    continue
+                # The device validates for real: block size, prefix overlap,
+                # capacity, and whether the public range collides with a local
+                # address. Checking only syntax here would approve pools the
+                # device refuses - false confidence where the operator is
+                # relying on the check.
+                if pool.name in running.pools:
+                    self.dp.run(f"bpa pool {pool.name} del", )
+                rc, out = self.dp.run(pool.device_command() + " check")
+                if pool.name in running.pools:
+                    self.dp.run(running.pools[pool.name].device_command())
+                if rc:
+                    print(out)
+                    self.err(f"pool '{pool.name}' would be refused")
+                    ok = False
+            if target.routing or running.routing:
+                rc, out = self.frr.reload(target.routing, check_only=True)
+                if rc:
+                    print(f"routing validation failed: {out}")
+                    ok = False
             return ok
 
         for name in d["pool_remove"]:

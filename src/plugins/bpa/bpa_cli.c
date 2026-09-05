@@ -105,7 +105,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   bpa_pool_t cfg = { 0 };
   u8 *name = 0;
-  int is_del = 0;
+  int is_del = 0, is_check = 0;
 
   cfg.policy = BPA_POLICY_INTERLEAVED;
   cfg.mode = BPA_MODE_DETERMINISTIC;
@@ -117,6 +117,8 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       if (unformat (line_input, "del"))
 	is_del = 1;
+      else if (unformat (line_input, "check"))
+	is_check = 1;
       /* inside and outside repeat: provider IPv4 is fragmented */
       else if (unformat (line_input, "inside %U/%d", unformat_ip4_address,
 			 &addr, &len))
@@ -207,7 +209,14 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   cfg.port_max = (u16) port_max;
   cfg.block_size = (u16) block;
 
-  error = bpa_pool_add (&cfg, 0);
+  if (is_check)
+    {
+      error = bpa_pool_validate (&cfg);
+      if (!error)
+	vlib_cli_output (vm, "pool '%v' is valid", name);
+    }
+  else
+    error = bpa_pool_add (&cfg, 0);
 
 done:
   vec_free (in_b);
@@ -226,7 +235,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "outside <pfx>/<len> [outside <pfx>/<len> ...] "
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
-    "| bpa pool <name> del",
+    "[check] | bpa pool <name> del",
   .function = bpa_pool_add_command_fn,
 };
 

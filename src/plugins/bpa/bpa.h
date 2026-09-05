@@ -49,6 +49,7 @@ void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
 
 void bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only);
 
+clib_error_t *bpa_pool_validate (bpa_pool_t *cfg);
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 
