@@ -158,6 +158,16 @@ else
   say "  [info] no CGNAT pool configured yet (use 'hexash')"
 fi
 
+# A live system says so, and says how to stop being one. Without this the
+# operator boots a working appliance, finds no install option, and concludes
+# the product is broken rather than running from a live image.
+if [ -d /run/live/medium ] || [ -f /run/live/overlay ]; then
+  say "  [info] live system: nothing is persisted across a reboot."
+  if [ -x /usr/sbin/hexarouting-install ]; then
+    say "         to install: hexarouting-install /dev/sdX"
+  fi
+fi
+
 say "-------------------------------------------------------------"
 if [ "$fail" = 0 ]; then
   say "  HexaRouting ready."

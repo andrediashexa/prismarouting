@@ -24,6 +24,8 @@ install -D -m 0755 "$REPO/appliance/hexarouting-tune" "$DESTDIR/usr/bin/hexarout
 install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/hexarouting/wait-for-vpp"
 install -D -m 0755 "$REPO/appliance/apply-tuning"     "$DESTDIR/usr/lib/hexarouting/apply-tuning"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/hexarouting/selftest"
+install -D -m 0755 "$REPO/appliance/hexarouting-install" "$DESTDIR/usr/sbin/hexarouting-install"
+install -D -m 0755 "$REPO/appliance/install-from-cmdline" "$DESTDIR/usr/lib/hexarouting/install-from-cmdline"
 install -D -m 0755 "$REPO/tools/ipfix_collector.py"   "$DESTDIR/usr/lib/hexarouting/ipfix-collector"
 
 say "dataplane plugin"
@@ -56,7 +58,8 @@ else
 fi
 
 say "systemd"
-for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.service; do
+for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.service \
+         hexarouting-installer.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 
@@ -121,7 +124,7 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   say "enabling services"
   systemctl daemon-reload
   systemctl enable hexarouting-tune.service hexarouting.service \
-    hexarouting-selftest.service
+    hexarouting-selftest.service hexarouting-installer.service
   echo
   echo "Installed. Adjust /etc/hexarouting/tune.env and reboot so that"
   echo "isolcpus and hugepages take effect."
@@ -129,7 +132,7 @@ else
   # offline enablement: creates the link systemctl enable would create
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
   for u in hexarouting-tune.service hexarouting.service \
-           hexarouting-selftest.service; do
+           hexarouting-selftest.service hexarouting-installer.service; do
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done

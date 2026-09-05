@@ -221,6 +221,67 @@ After installing, adjust `/etc/hexarouting/tune.env` (dataplane NIC and
 subscriber target) and reboot: `isolcpus` and hugepages only apply on the next
 boot.
 
+## Installing to disk
+
+The ISO boots a live system and `hexarouting-install <disk>` writes it to a
+disk. The boot menu offers it as **HexaRouting (install to disk)**.
+
+```
+hexarouting-install /dev/sda
+```
+
+It **MUST NOT** touch a disk it was not given, and **MUST NOT** proceed without
+confirmation. The confirmation is the disk path typed back, not a yes/no — a
+yes/no is answered reflexively, and an installer that guesses its target
+destroys a machine that was already doing something. It also refuses the medium
+it booted from.
+
+Unattended installs, for labs and for the boot test, come from the kernel
+command line:
+
+| Parameter | Effect |
+|---|---|
+| `hexarouting.install` | prompt for the disk on the console |
+| `hexarouting.install=/dev/vda` | install onto that disk, still confirming |
+| `hexarouting.yes` | skip the confirmation, then **power off** |
+
+The power-off is not a convenience. Without it the machine sits at a login
+prompt until the harness kills it and the completion message is truncated
+mid-line — which is how the first version reported a finished install as a
+failure.
+
+### What it took to make this work
+
+Four defects, each producing a system that looked broken in a way pointing
+somewhere other than its cause:
+
+| Symptom | Actual cause |
+|---|---|
+| The installer never ran | `After=hexarouting-selftest.service` together with `WantedBy=multi-user.target` is an ordering cycle; systemd broke it by dropping the job |
+| GRUB reached a `grub>` prompt | The squashfs was built with `-e boot`, so the installed system had no kernel, no initrd and no GRUB modules. The bootloader installed correctly and had nothing to boot |
+| The installed system booted silently | The live ISO is handed `console=ttyS0` by the boot loader; an installed system configures its own. It was booting fine and saying nothing, which is indistinguishable from not booting |
+| VPP segfaulted in a restart loop | The tuner sized hugepages from the subscriber target alone, and the main heap was a fixed 2G. A pool smaller than the heap starts VPP on memory that is not there |
+
+The last one is the one to remember. `hexarouting-tune` exists to prevent quiet
+half-throughput failures, and it was producing a dataplane that did not run at
+all. Three changes, all of which **MUST** hold:
+
+* Hugepages are bounded by physical RAM, and a shortfall against the subscriber
+  target is stated in capitals — the operator's problem is an undersized box,
+  not an adjusted number.
+* The main heap is sized from the pages the kernel **actually reserved**, not
+  from a constant. Reserved pages are ground truth; the request is an intention.
+* The tuned profile is **not** emitted when the tuner decided this machine
+  should have no pool. Pages can be reserved for reasons a given run knows
+  nothing about — including VPP pre-allocating them during its own crash loop —
+  and a tuner that argues with itself across boots is worse than one that is
+  merely conservative.
+
+`apply-tuning` writes its reasoning to the journal: the report, the
+`hugepages=` on the kernel command line, and the pages actually reserved.
+Diagnosing a box whose profile did not match its hardware meant guessing across
+whole build cycles, because the one component that knew why discarded it.
+
 ## Is a newer kernel worth it?
 
 Asked, analysed, and the answer is **no — not yet, and not for throughput**.

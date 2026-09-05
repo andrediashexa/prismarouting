@@ -2,7 +2,7 @@
 CFLAGS ?= -O2 -Wall -Wextra -Werror -DBPA_STANDALONE
 BUILD  := .build
 
-.PHONY: test test-appliance test-iso iso model vectors clean
+.PHONY: test test-appliance test-iso test-install iso model vectors clean
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports
 	@$(BUILD)/test_bpa
@@ -57,6 +57,13 @@ iso:
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq $(ISO_DEPS) >/dev/null 2>&1; \
 	    sh /src/appliance/build-iso.sh)
+
+# Installs the ISO onto a blank disk and boots that disk with the ISO gone.
+# The second boot is the assertion: a live image cannot prove it.
+test-install: iso
+	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
+	    apt-get install -y -qq qemu-system-x86 qemu-utils >/dev/null 2>&1; \
+	    sh /src/lab/install-iso.sh)
 
 # Boots the freshly built ISO and demands the self-test say "ready".
 test-iso: iso

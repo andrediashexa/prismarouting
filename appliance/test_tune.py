@@ -24,7 +24,7 @@ def w(path, content):
         f.write(str(content) + "\n")
 
 def build(root, sockets, cores_per_socket, threads, nic_node=None,
-          hugepages_1g=0, isolated="", nic_pci=None):
+          hugepages_1g=0, isolated="", nic_pci=None, ram_gb=64):
     """
     Typical Linux numbering: first every first thread, then every second one.
     With 2 sockets x 8 cores x 2 threads, the sibling of cpu0 is cpu16.
@@ -59,6 +59,9 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
     w(f"{root}/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages",
       hugepages_1g)
     w(f"{root}/sys/devices/system/cpu/isolated", isolated)
+    # Plenty of RAM unless a case says otherwise, so the existing cases are
+    # unaffected by the cap below.
+    w(f"{root}/proc/meminfo", f"MemTotal:       {ram_gb * 1024 * 1024} kB")
     return node_cpus
 
 def run(root, *args):
@@ -196,6 +199,60 @@ with tempfile.TemporaryDirectory() as root:
     check("FIRST BOOT" in out,
           "without isolcpus, pinning a worker makes VPP compete with the OS")
     print("  halfway is still treated as untuned")
+
+print("\n=== hugepages are bounded by the RAM the machine has ===")
+# An installed box asked for 5 GB of hugepages on 3 GB of RAM, started VPP
+# against a heap that was not there, and died with SIGSEGV in a restart loop -
+# after passing every other check. Sizing from the subscriber target alone is
+# what produced it.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=2, threads=1, nic_node=0,
+          hugepages_1g=6, isolated="1", ram_gb=3)
+    out = run(root, "--interface", "eth0", "--subscribers", "200000")
+    asked = int(field(out, "# 1G hugepages:").split()[0])
+    check(asked == 0,
+          f"a 3 GB box must not be told to reserve {asked} GB of hugepages")
+    check("WARNING" in out, "the operator must be told the box is undersized")
+    print(f"  3 GB box, 200k subscribers -> {asked} GB requested, warned")
+
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_1g=6, isolated="1-7", ram_gb=16)
+    out = run(root, "--interface", "eth0", "--subscribers", "200000")
+    asked = int(field(out, "# 1G hugepages:").split()[0])
+    check(0 < asked <= 12, f"16 GB should allow a real pool, got {asked}")
+    check("WARNING" not in out, "a box with room must not be warned")
+    print(f"  16 GB box, 200k subscribers -> {asked} GB requested, no warning")
+
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_1g=6, isolated="1-7", ram_gb=8)
+    out = run(root, "--interface", "eth0", "--subscribers", "2000000")
+    check("WARNING" in out, "an oversized target on a small box must warn")
+    check("add RAM" in out, "and say what to do about it")
+    print("  8 GB box, 2M subscribers -> capped and warned")
+
+print("\n=== the main heap is sized from the pages actually reserved ===")
+# A fixed 2G heap against a smaller pool starts VPP on memory that is not
+# there, and it dies with SIGSEGV. Seen on a box whose RAM was reduced between
+# the boot that computed the tuning and the boot that used it.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          hugepages_1g=2, isolated="1-3", ram_gb=16)
+    out = run(root, "--interface", "eth0", "--subscribers", "200000")
+    heap = [l for l in out.splitlines() if "main-heap-size" in l]
+    check(any("1G" in l for l in heap),
+          f"a 2 GB pool must not be given a 2G heap: {heap}")
+    print(f"  2 GB reserved ->{heap[0].split('main-heap-size')[1]}")
+
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          hugepages_1g=8, isolated="1-3", ram_gb=32)
+    out = run(root, "--interface", "eth0", "--subscribers", "200000")
+    heap = [l for l in out.splitlines() if "main-heap-size" in l]
+    check(any("2G" in l for l in heap),
+          f"a large pool should still get the full heap: {heap}")
+    print(f"  8 GB reserved ->{heap[0].split('main-heap-size')[1]}")
 
 print("\n=== one RX queue per worker, and the NIC's PCI address ===")
 with tempfile.TemporaryDirectory() as root:

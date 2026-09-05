@@ -1,0 +1,22 @@
+[Unit]
+Description=HexaRouting - install to disk when the kernel command line asks
+Documentation=file:///usr/share/doc/hexarouting/appliance.md
+ConditionKernelCommandLine=hexarouting.install
+# Same dependency shape as the self-test, and for the same reason: ordering
+# after multi-user.target while being wanted BY it is a cycle, and systemd
+# breaks a cycle by dropping a job - silently, from the operator's point of
+# view. The first version of this unit did exactly that and was skipped.
+DefaultDependencies=no
+After=multi-user.target hexarouting-selftest.service
+Wants=hexarouting-selftest.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=tty-force
+StandardOutput=tty
+TTYPath=/dev/console
+ExecStart=/usr/lib/hexarouting/install-from-cmdline
+
+[Install]
+WantedBy=multi-user.target
