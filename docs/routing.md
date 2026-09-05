@@ -68,6 +68,42 @@ With the MTU aligned, the adjacency reached **`Full` in 8 seconds**.
 
 * MTU **MUST** be explicit configuration, never inherited.
 
+### Configuring it
+
+```
+hexarouting# [edit] interface host-veth-vpp
+hexarouting# [edit]  mtu 1500
+hexarouting# [edit]  exit
+hexarouting# [edit] commit
+```
+
+Accepted range 576-9216, refused by the parser rather than by the device, so
+the operator is told at the point of typing instead of at commit time. `no mtu`
+removes the statement.
+
+**It is applied to both sides.** `linux_cp` pairs a VPP interface with a Linux
+TAP, and only the VPP interface is on the packet path. Setting the TAP alone —
+which is what FRR's own `mtu` would do — leaves the half that matters unchanged
+and reproduces the mismatch this exists to prevent.
+
+Two details that cost time to find:
+
+* The command is `set interface mtu **packet** <n>`, not `set interface mtu
+  <n>`. The second changes the hardware maximum frame size, which most drivers
+  refuse — and refuse while `vppctl` still exits **0**, so the failure is
+  invisible. The first sets the L3 MTU, which is what OSPF compares.
+* The result is therefore **read back** rather than inferred from the exit
+  status. Until MTU moves to the binary API alongside the pool operations
+  ([#3](https://github.com/andrediashexa/hexarouting/issues/3)), verifying the
+  effect is the only honest check.
+
+The running configuration reports the MTU of **every** interface the dataplane
+has, not only the ones somebody typed. "Explicitly configured" is not a
+property the dataplane can answer, and inventing that distinction would mean
+the VTY remembering things between invocations — which it deliberately does
+not. The consequence is the one that matters: a rollback can restore the
+previous MTU, because the previous value was recorded rather than guessed.
+
 ## Pitfall 2 — IS-IS is not carried over IP
 
 IS-IS runs OSI CLNS directly over the link layer, using L2 multicast

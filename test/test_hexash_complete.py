@@ -77,6 +77,54 @@ o, _, _ = opts("config", "router ")
 check({"bgp", "ospf", "isis"} <= o, f"got {o}")
 print("  cgnat, router, interface, no, exit")
 
+print("\n=== mtu is discoverable inside an interface block ===")
+# An operator who cannot find `mtu` with `?` inherits the TAP's 9000 and spends
+# an afternoon on an OSPF adjacency stuck in Exchange, which is the failure
+# docs/routing.md records and this parameter exists to prevent.
+import config as _config
+sh = hexash.Shell()
+sh.mode = "config"
+sh.candidate = _config.Config()
+sh.feed("interface ens19")
+o, _, _ = sh._options("", False)
+check("mtu" in o, f"'mtu' must be offered inside an interface block: {sorted(o)}")
+print(f"  interface block offers: {sorted(k for k in o if k in ('mtu', 'exit'))}")
+
+print("\n=== the parser rejects an out-of-range mtu, not the device ===")
+# Refusing it here means the operator is told at the point of typing, instead
+# of at commit time after the candidate is already built.
+before = sh.failed
+sh.feed("mtu 1500")
+check(sh.candidate.mtus.get("ens19") == 1500,
+      f"a valid mtu must be stored: {sh.candidate.mtus}")
+sh.feed("mtu 99")
+sh.feed("mtu 20000")
+sh.feed("mtu abc")
+check(sh.candidate.mtus.get("ens19") == 1500,
+      f"invalid values must not overwrite a good one: {sh.candidate.mtus}")
+check(sh.failed - before == 3, f"each invalid value must be reported: {sh.failed - before}")
+sh.feed("no mtu")
+check("ens19" not in sh.candidate.mtus,
+      f"'no mtu' must remove the statement: {sh.candidate.mtus}")
+print("  1500 accepted; 99, 20000 and 'abc' refused; 'no mtu' removes it")
+
+print("\n=== mtu survives the configuration round trip ===")
+# It has to appear in show configuration, be saved, and be read back - or a
+# rollback would silently drop it.
+cfg = _config.Config()
+cfg.mtus["ens19"] = 1500
+cfg.interfaces["ens19"] = "inside"
+text = cfg.text()
+check("mtu 1500" in text, f"mtu must appear in the configuration:\n{text}")
+back = _config.Config.parse(text)
+check(back.mtus == {"ens19": 1500}, f"and be read back: {back.mtus}")
+check(back.text() == text, "the round trip must be stable")
+d = _config.Config().delta_to(cfg)
+check(d["mtu_set"] == {"ens19": 1500}, f"the delta must carry it: {d['mtu_set']}")
+d = cfg.delta_to(_config.Config())
+check(d["mtu_del"] == ["ens19"], f"and carry its removal: {d['mtu_del']}")
+print("  written, parsed, and both directions of the delta")
+
 print("\n=== commit sub-commands, Juniper style ===")
 o, _, _ = opts("config", "commit ")
 check({"check", "confirmed", "comment"} <= o, f"got {o}")

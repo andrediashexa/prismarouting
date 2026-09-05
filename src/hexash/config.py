@@ -66,6 +66,11 @@ class Config:
     def __init__(self):
         self.pools: dict[str, Pool] = {}
         self.interfaces: dict[str, str] = {}   # name -> inside|outside
+        # MTU is deliberately its own map, not a field of the CGNAT interface
+        # entry: an interface can need an explicit MTU without carrying CGNAT
+        # at all. docs/routing.md records why it must never be inherited - an
+        # unaligned MTU stalls OSPF in Exchange with no log saying why.
+        self.mtus: dict[str, int] = {}         # name -> MTU
         self.globals: list[str] = []           # other cgnat statements
         self.routing: list[str] = []           # verbatim FRR statements
 
@@ -77,6 +82,10 @@ class Config:
             out += self.pools[name].lines()
         for ifname in sorted(self.interfaces):
             out.append(f"cgnat interface {ifname} {self.interfaces[ifname]}")
+        for ifname in sorted(self.mtus):
+            out.append(f"interface {ifname}")
+            out.append(f" mtu {self.mtus[ifname]}")
+            out.append(" exit")
         out += sorted(self.globals)
         out.append(ROUTING_HEADER)
         out += self.routing
@@ -87,6 +96,7 @@ class Config:
         cfg = cls()
         section = "cgnat"
         pool = None
+        iface = None
         for raw in text.splitlines():
             line = raw.rstrip()
             if not line.strip():
@@ -113,6 +123,14 @@ class Config:
                 w = s.split()
                 if len(w) >= 4:
                     cfg.interfaces[w[2]] = w[3]
+            elif s.startswith("interface "):
+                iface = s.split()[1]
+            elif iface is not None and line.startswith(" "):
+                w = s.split()
+                if w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
+                    cfg.mtus[iface] = int(w[1])
+                if s == "exit":
+                    iface = None
             elif s.startswith("cgnat "):
                 cfg.globals.append(s)
         return cfg
@@ -171,6 +189,11 @@ class Config:
         if_add = {k: v for k, v in other.interfaces.items()
                   if self.interfaces.get(k) != v}
         if_del = [k for k in self.interfaces if k not in other.interfaces]
+        mtu_set = {k: v for k, v in other.mtus.items() if self.mtus.get(k) != v}
+        # Removing the statement has to put the interface back to the driver
+        # default, not leave the last committed value behind. A rollback that
+        # cannot undo is not a rollback.
+        mtu_del = [k for k in self.mtus if k not in other.mtus]
 
         return {
             "pool_add": add,
@@ -178,6 +201,8 @@ class Config:
             "pool_replace": replace,
             "if_add": if_add,
             "if_remove": if_del,
+            "mtu_set": mtu_set,
+            "mtu_del": mtu_del,
             "globals": [g for g in other.globals if g not in self.globals],
             "routing_changed": self.routing != other.routing,
         }

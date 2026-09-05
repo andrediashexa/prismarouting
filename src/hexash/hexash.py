@@ -98,6 +98,15 @@ SHOW = {
     "logging": ("system log (FRR)", None),
 }
 
+# Offered inside an `interface <name>` block. It is not part of the mode tree
+# because the block is entered by an argument, not by a keyword the tree can
+# walk into - and an operator who cannot discover `mtu` with `?` will inherit
+# the TAP's 9000 and spend an afternoon on an OSPF adjacency stuck in Exchange.
+INTERFACE_BLOCK = {
+    "mtu": ("MTU, on both the dataplane interface and its TAP", "<576-9216>"),
+    "exit": ("leave the interface", None),
+}
+
 CGNAT_POOL = {
     "inside": ("inside prefix, may repeat", ARG_PREFIX),
     "outside": ("public prefix, may repeat", ARG_PREFIX),
@@ -157,7 +166,7 @@ TREE = {
             "ospf": ("OSPF", None),
             "isis": ("IS-IS", ARG_WORD),
         }),
-        "interface": ("interface configuration (FRR)", ARG_WORD),
+        "interface": ("interface configuration", ARG_WORD),
         "commit": ("apply the candidate configuration", COMMIT),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "show": ("display information", SHOW),
@@ -368,8 +377,37 @@ class Shell:
         rc, out = self.dp.run("show bpa config")
         if rc == 0 and out.strip():
             cfg = Config.parse(out)
+        cfg.mtus = self.device_mtus()
         cfg.routing = self.frr.running()
         return cfg
+
+    def device_mtus(self) -> dict:
+        """
+        MTU per interface, read from the dataplane.
+
+        Every interface is reported, not only the ones somebody typed. "Explicitly
+        configured" is not a property the dataplane can answer, and inventing the
+        distinction would mean hexash remembering things between invocations -
+        which it deliberately does not, because the device is the source of truth
+        and the VTY is a short-lived process.
+
+        The consequence is deliberate: a rollback can put an MTU back, because
+        the previous value was recorded rather than inferred.
+        """
+        rc, out = self.dp.run("show interface")
+        mtus = {}
+        for line in (out or "").splitlines():
+            w = line.split()
+            # Name Idx State MTU(L3/IP4/IP6/MPLS) ... - only the header rows
+            # start at column 0; counters are indented.
+            if len(w) < 4 or line.startswith(" ") or w[0] == "Name":
+                continue
+            if w[0] == "local0" or "/" not in w[3]:
+                continue
+            l3 = w[3].split("/")[0]
+            if l3.isdigit() and int(l3) > 0:
+                mtus[w[0]] = int(l3)
+        return mtus
 
     def vpp(self, cmd, quiet=False):
         rc, out = self.dp.run(cmd)
@@ -440,6 +478,33 @@ class Shell:
                 self.err(f"interface {ifname} refused by the dataplane")
                 return False
 
+        # MTU on BOTH sides. docs/routing.md records the failure: the TAP
+        # created by linux_cp comes up at 9000, OSPF compares MTU in Database
+        # Description packets, and the adjacency stops at Exchange with nothing
+        # in the log saying why. Setting only the TAP leaves the packet path -
+        # the VPP interface - unchanged, which is the half that matters.
+        for ifname, mtu in d["mtu_set"].items():
+            # "mtu packet" sets the L3 MTU, which is what OSPF compares in
+            # Database Description packets. Plain "set interface mtu" changes
+            # the hardware max frame size, which most drivers refuse - and
+            # refuse while vppctl still exits 0, so the failure was invisible.
+            self.dp.run(f"set interface mtu packet {mtu} {ifname}")
+            # Read back rather than trust the exit status. vppctl returns 0
+            # even when the command printed "Unsupported", which is the whole
+            # reason the pool path moved to the binary API. Until MTU follows
+            # it, verifying the effect is the only honest check.
+            if self.device_mtus().get(ifname) != mtu:
+                self.err(f"interface {ifname}: the dataplane did not take "
+                         f"mtu {mtu}")
+                return False
+            self.set_host_mtu(ifname, mtu)
+        for ifname in d["mtu_del"]:
+            # No stored default to restore: the driver's own value is whatever
+            # the interface reports before we touch it, so removal is reported
+            # rather than guessed at.
+            print(f"note: mtu removed from {ifname}; the driver default "
+                  "applies after the interface is recreated")
+
         for g in d["globals"]:
             self.apply_global(g)
 
@@ -450,6 +515,25 @@ class Shell:
                 self.err("routing reload failed")
                 return False
         return True
+
+    def set_host_mtu(self, ifname, mtu):
+        """
+        The Linux side of a linux_cp pair. Best effort: a box with no TAP for
+        this interface is a legitimate configuration, and failing the commit
+        over it would refuse a valid change.
+        """
+        rc, out = self.dp.run(f"show lcp")
+        host = ""
+        for line in (out or "").splitlines():
+            if ifname in line:
+                parts = line.split()
+                for i, tok in enumerate(parts):
+                    if tok == "host" and i + 1 < len(parts):
+                        host = parts[i + 1]
+        if not host:
+            return
+        subprocess.run(["ip", "link", "set", "dev", host, "mtu", str(mtu)],
+                       capture_output=True)
 
     def apply_global(self, line):
         w = line.split()
@@ -614,6 +698,26 @@ class Shell:
             self.candidate.globals.append(line)
             return True
 
+        # `mtu` inside an interface block belongs to the device, not to FRR.
+        # FRR would accept it and set it on the TAP alone, which is the half
+        # that does not matter: the packet path is the VPP interface, and an
+        # MTU set on one side only reproduces the mismatch this exists to
+        # prevent. Everything else in the block is still FRR's.
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "mtu"):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 2 or not w[1].isdigit():
+                self.err("usage: mtu <576-9216>")
+            elif not 576 <= int(w[1]) <= 9216:
+                self.err(f"mtu {w[1]} out of range (576-9216)")
+            else:
+                self.candidate.mtus[ifname] = int(w[1])
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:2] == ["no", "mtu"]):
+            self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
+            return True
+
         # anything else is routing: staged in the candidate, applied on commit
         self.candidate.routing.append(line)
         if line.startswith(("router ", "interface ", "vrf ", "route-map ")):
@@ -739,6 +843,17 @@ class Shell:
             prefix = words[-1]
             words = words[:-1]
         node, hint = tree_walk(self.mode, words)
+        # Inside an interface block the tree has nothing more to say: the block
+        # was entered through an argument. What the device itself handles there
+        # is offered here, and the rest still goes to FRR.
+        if (not words and self.frr_ctx
+                and self.frr_ctx[-1].startswith("interface ")):
+            merged = {k: v[0] for k, v in INTERFACE_BLOCK.items()
+                      if k.startswith(prefix)}
+            if node:
+                merged.update({k: v[0] for k, v in node.items()
+                               if k.startswith(prefix)})
+            return merged, hint, prefix
         if node is None:
             return {}, hint, prefix
         opts = {k: v[0] for k, v in node.items() if k.startswith(prefix)}
