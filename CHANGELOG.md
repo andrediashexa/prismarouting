@@ -25,7 +25,83 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.2.1.
+Nothing merged since v0.3.0.
+
+## 0.3.0 — a control plane that reports failure, and an ISO that installs
+
+Two things an operator could not do before this release: trust that `commit`
+means the dataplane accepted the configuration, and install the appliance from
+its own image.
+
+### Added
+
+* **`hexash` drives the dataplane through the binary API** ([#3](https://github.com/andrediashexa/hexarouting/issues/3),
+  [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5)). `vppctl` exits 0 even when the command failed, so
+  `commit` could report success while the dataplane held none of the
+  configuration. A refused pool now fails the commit, names the pool, and
+  leaves the candidate intact. Five outcomes are distinguished — applied,
+  refused, dataplane down, plugin missing, client missing — because they need
+  four different actions from the operator.
+* **The ISO installs to disk** ([#33](https://github.com/andrediashexa/hexarouting/issues/33)). `hexarouting-install <disk>`,
+  offered as a boot menu entry. It never touches a disk it was not given,
+  refuses the medium it booted from, and confirms by having the disk path
+  typed back rather than with a yes/no.
+* **Logging in lands in the VTY** ([#37](https://github.com/andrediashexa/hexarouting/issues/37)), over console or SSH.
+  `start shell` opens a real shell as a child and returns to the VTY on exit;
+  it appears in neither completion nor `?`. **It is hidden, not restricted** —
+  anyone who can log in can run it, and the authorization boundary is
+  [#35](https://github.com/andrediashexa/hexarouting/issues/35), not this.
+* **MTU is an explicit interface parameter** ([#2](https://github.com/andrediashexa/hexarouting/issues/2)), applied to both the
+  VPP interface and its `linux_cp` TAP. `docs/routing.md` had said normatively
+  since the routing work that MTU **MUST** be explicit and never inherited,
+  and the VTY did not implement it.
+* **`make hw-up` / `hw-vpp` / `hw-down`** ([#38](https://github.com/andrediashexa/hexarouting/issues/38)) give the hardware
+  lab's long-lived container an owner.
+
+### Fixed
+
+* **Hugepages are bounded by physical RAM.** The tuner sized them from the
+  subscriber target alone, so a 3 GB box was told to reserve 5 GB, VPP started
+  against a heap that was not there, and it died with SIGSEGV in a restart
+  loop. `hexarouting-tune` exists to prevent quiet half-throughput failures and
+  was producing a dataplane that did not run at all.
+* **The main heap is sized from the pages actually reserved**, not from a
+  constant 2G. Reserved pages are ground truth; the request is an intention.
+* **The tuned profile is not emitted when the tuner decided this machine
+  should have no hugepage pool.** Pages can be reserved for reasons a given run
+  knows nothing about, including VPP pre-allocating them during its own crash
+  loop, and a tuner that argues with itself across boots is worse than one that
+  is merely conservative.
+* **`install.sh` installs the whole `hexash` module directory.** Naming files
+  one at a time shipped a missing `config.py` in 0.2.0 and a missing
+  `vppapi.py` the moment the binary API landed. The appliance test now reads
+  `hexash.py`'s own imports and requires each module to be present.
+* **`set interface mtu packet <n>`**, not `set interface mtu <n>`. The second
+  changes the hardware maximum frame size, which most drivers refuse — while
+  `vppctl` still exits 0. The result is read back rather than inferred.
+* **`apply-tuning` writes its reasoning to the journal.** Diagnosing a box
+  whose profile did not match its hardware meant guessing across whole build
+  cycles, because the one component that knew why discarded it.
+
+### Breaking
+
+* A box upgraded without the current `install.sh` has no vat2 plugin, and
+  **every commit touching a pool will fail** with a message naming what is
+  missing. That is deliberate: the alternative is falling back to parsing CLI
+  text, which is the defect this release removes.
+
+### Tests that failed before their fix
+
+Recorded because the value of this release is mostly in what can now fail:
+
+* An assertion reported the boot tuning as applied on a boot whose console had
+  printed only `Welcome to GRUB!`. Absence of a string is not evidence when
+  there was no output to search.
+* A rollback assertion passed while nothing had changed — 9000 restored to
+  9000 is true for the wrong reason. It is now guarded by a check that the
+  value moved at all.
+* An assertion demanded the tuned profile from a box with too little RAM for
+  one, failing a tuner that was behaving exactly as designed.
 
 ## 0.2.1 — the VTY starts
 
