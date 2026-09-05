@@ -55,9 +55,9 @@ bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
   if (found)
     return clib_error_return (
       0,
-      "pool '%v': o endereco publico %U esta configurado em %U. O CGNAT "
-      "traduziria o proprio trafego de controle da caixa (BGP, OSPF) e a "
-      "sessao cairia sem motivo aparente",
+      "pool '%v': public address %U is configured on %U. CGNAT would "
+      "translate the box's own control-plane traffic (BGP, OSPF) and the "
+      "session would drop for no apparent reason",
       name, format_ip4_address, &clash, format_vnet_sw_if_index_name, vnm,
       clash_sw_if_index);
 
@@ -190,9 +190,9 @@ bpa_ip4_address_change (ip4_main_t *im, uword opaque, u32 sw_if_index,
       if (bpa_set_index_of (&p->outside, host, &idx) == 0)
 	vlib_log_err (
 	  bm->log_class,
-	  "%U foi configurado em %U mas pertence ao pool publico '%v'. O "
-	  "trafego de controle da caixa nesse endereco sera traduzido pelo "
-	  "CGNAT. Remova o endereco ou o pool.",
+	  "%U was configured on %U but belongs to public pool '%v'. The box's "
+	  "own control-plane traffic on that address will be translated by "
+	  "CGNAT. Remove the address or the pool.",
 	  format_ip4_address, address, format_vnet_sw_if_index_name, vnm,
 	  sw_if_index, p->name);
     }
@@ -260,5 +260,5 @@ VLIB_INIT_FUNCTION (bpa_init);
 
 VLIB_PLUGIN_REGISTER () = {
   .version = "0.1",
-  .description = "CGNAT com Bloco de Portas Alocadas (BPA)",
+  .description = "CGNAT with allocated port blocks (BPA)",
 };

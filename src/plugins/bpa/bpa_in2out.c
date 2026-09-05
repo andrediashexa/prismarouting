@@ -36,19 +36,19 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   return format (s, "BPA in2out %U:%u -> %U:%u proto %U%s%s",
 		 format_ip4_address, &priv, t->port_priv, format_ip4_address,
 		 &pub, t->port_pub, format_bpa_proto, t->proto,
-		 t->created ? " (sessao nova)" : "",
-		 t->is_frag ? " [fragmento seguinte]" : "");
+		 t->created ? " (new session)" : "",
+		 t->is_frag ? " [non-first fragment]" : "");
 }
 
 #define foreach_bpa_in2out_error                                              \
-  _ (TRANSLATED, "pacotes traduzidos")                                        \
-  _ (SESSION_NEW, "sessoes criadas")                                          \
-  _ (NO_POOL, "sem pool para o endereco de origem")                           \
-  _ (UNSUPPORTED, "protocolo nao traduzido")                                  \
-  _ (OVER_CAPACITY, "assinante acima da capacidade do pool")                  \
-  _ (BLOCK_EXHAUSTED, "bloco de portas esgotado")                             \
-  _ (NO_BLOCK, "sem bloco livre no pool dinamico")                            \
-  _ (TRUNCATED, "pacote truncado")
+  _ (TRANSLATED, "packets translated")                                        \
+  _ (SESSION_NEW, "sessions created")                                          \
+  _ (NO_POOL, "no pool for source address")                           \
+  _ (UNSUPPORTED, "unsupported protocol")                                  \
+  _ (OVER_CAPACITY, "subscriber beyond pool capacity")                  \
+  _ (BLOCK_EXHAUSTED, "port block exhausted")                             \
+  _ (NO_BLOCK, "no free block in dynamic pool")                            \
+  _ (TRUNCATED, "truncated packet")
 
 typedef enum
 {

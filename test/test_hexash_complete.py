@@ -25,26 +25,26 @@ def opts(mode, line, ending=None):
     o, hint, prefix = sh._options(line, ending)
     return set(o), hint, prefix
 
-print("=== modo enable: '?' na linha vazia ===")
-o, _, _ = opts("enable", "")
-check({"configure", "show", "write", "disable", "exit"} <= o, f"faltam comandos: {o}")
+print("=== operational mode: '?' on an empty line ===")
+o, _, _ = opts("operational", "")
+check({"configure", "show", "rollback", "save", "exit"} <= o, f"missing: {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== 'show ' mostra os sub-comandos ===")
-o, _, _ = opts("enable", "show ")
+o, _, _ = opts("operational", "show ")
 check("cgnat" in o and "running-config" in o, f"esperado cgnat e running-config: {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== 'show cgnat ' desce mais um nivel ===")
-o, _, _ = opts("enable", "show cgnat ")
-check(o == {"pool", "session", "blocks", "logging"}, f"obtido {o}")
+o, _, _ = opts("operational", "show cgnat ")
+check(o == {"pool", "session", "blocks", "logging", "history"}, f"got {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== prefixo parcial completa ===")
-o, _, prefix = opts("enable", "conf")
+o, _, prefix = opts("operational", "conf")
 check(o == {"configure"}, f"'conf' deveria dar so 'configure': {o}")
 check(prefix == "conf", f"prefixo {prefix}")
-o, _, _ = opts("enable", "show cgnat po")
+o, _, _ = opts("operational", "show cgnat po")
 check(o == {"pool"}, f"'po' deveria dar so 'pool': {o}")
 print("  'conf' -> configure ; 'show cgnat po' -> pool")
 
@@ -68,12 +68,22 @@ print(f"  'inside ' -> {hexash.ARG_PREFIX} ; 'block-holddown ' -> {hexash.ARG_NU
 
 print("\n=== config: CGNAT e roteamento no mesmo nivel ===")
 o, _, _ = opts("config", "")
-check({"cgnat", "router", "interface", "no", "exit"} <= o, f"obtido {o}")
+check({"cgnat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
+      f"got {o}")
 o, _, _ = opts("config", "cgnat ")
 check({"pool", "interface", "timeout", "logging", "block-holddown"} <= o, f"obtido {o}")
 o, _, _ = opts("config", "router ")
 check({"bgp", "ospf", "isis"} <= o, f"obtido {o}")
 print("  cgnat, router, interface, no, exit")
+
+print("\n=== commit sub-commands, Juniper style ===")
+o, _, _ = opts("config", "commit ")
+check({"check", "confirmed", "comment"} <= o, f"got {o}")
+print(f"  commit -> {sorted(o)}")
+
+o, hint, _ = opts("config", "rollback ")
+check(hint == hexash.ARG_REV, f"rollback should hint a revision, got {hint!r}")
+print(f"  rollback -> {hexash.ARG_REV}")
 
 print("\n=== comando desconhecido nao inventa opcao ===")
 o, hint, _ = opts("config", "algo-que-nao-existe ")

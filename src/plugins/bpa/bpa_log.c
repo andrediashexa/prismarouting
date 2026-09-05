@@ -66,8 +66,8 @@ bpa_log_enable (int enable)
 
   if (enable && ip_address_is_zero (&exp->ipfix_collector))
     return clib_error_return (
-      0, "nenhum coletor IPFIX configurado; use "
-	 "'set ipfix exporter collector <ip> src <ip>' antes");
+      0, "no IPFIX collector configured; use "
+	 "'set ipfix exporter collector <ip> src <ip>' first");
 
   clib_memset (&a, 0, sizeof (a));
   a.is_add = enable;

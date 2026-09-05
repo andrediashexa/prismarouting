@@ -74,19 +74,19 @@ format_bpa_pool (u8 *s, va_list *args)
 
   s = format (s, "pool %v [%U / %U]", p->name, format_bpa_mode, p->mode,
 	      format_bpa_policy, p->policy);
-  s = format (s, "\n%Uinterno      %U (%u enderecos, %u faixa(s))",
+  s = format (s, "\n%Uinside       %U (%u addresses, %u range(s))",
 	      format_white_space, indent + 2, format_bpa_addr_set, &p->inside,
 	      p->inside.count, p->inside.n_ranges);
-  s = format (s, "\n%Upublico      %U (%u enderecos, %u faixa(s))",
+  s = format (s, "\n%Uoutside      %U (%u addresses, %u range(s))",
 	      format_white_space, indent + 2, format_bpa_addr_set, &p->outside,
 	      p->outside.count, p->outside.n_ranges);
-  s = format (s, "\n%Uportas       %u-%u (%u por IP)", format_white_space,
+  s = format (s, "\n%Uports        %u-%u (%u per IP)", format_white_space,
 	      indent + 2, p->port_min, p->port_max, p->port_count);
-  s = format (s, "\n%Ubloco        %u portas -> %u blocos por IP publico",
+  s = format (s, "\n%Ublock        %u ports -> %u blocks per public IP",
 	      format_white_space, indent + 2, p->block_size, p->blocks_per_ip);
-  s = format (s, "\n%Ucompartilha  %u:1", format_white_space, indent + 2,
+  s = format (s, "\n%Usharing      %u:1", format_white_space, indent + 2,
 	      p->blocks_per_ip);
-  s = format (s, "\n%Ucapacidade   %u assinantes (aproveitavel %u)",
+  s = format (s, "\n%Ucapacity     %u subscribers (usable %u)",
 	      format_white_space, indent + 2, p->capacity, usable);
   s = format (s, "\n%Udivisor      %u (%s)", format_white_space, indent + 2,
 	      p->div.d, p->div.is_pow2 ? "shift" : "reciprocal");
@@ -239,7 +239,7 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   if (pool_elts (bm->pools) == 0)
     {
-      vlib_cli_output (vm, "nenhum pool configurado");
+      vlib_cli_output (vm, "no pools configured");
       return 0;
     }
 
@@ -320,7 +320,7 @@ bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
     if (!rv)
       ip4_sv_reass_enable_disable_with_refcnt (sw_if_index, enable);
     if (rv)
-      error = clib_error_return (0, "vnet_feature_enable_disable falhou: %d",
+      error = clib_error_return (0, "vnet_feature_enable_disable failed: %d",
 				 rv);
   }
 
@@ -346,13 +346,13 @@ bpa_show_session_command_fn (vlib_main_t *vm, unformat_input_t *input,
   vec_foreach_index (i, bm->per_thread)
     {
       pt = vec_elt_at_index (bm->per_thread, i);
-      vlib_cli_output (vm, "thread %u: %u sessoes, %u assinantes ativos, "
-			   "%u expiradas",
+      vlib_cli_output (vm, "thread %u: %u sessions, %u active subscribers, "
+			   "%u expired",
 		       i, pool_elts (pt->sessions), pool_elts (pt->subs),
 		       pt->n_expired);
       total += pool_elts (pt->sessions);
     }
-  vlib_cli_output (vm, "total: %u sessoes", total);
+  vlib_cli_output (vm, "total: %u sessions", total);
   return 0;
 }
 
@@ -441,8 +441,8 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	    continue;
 
 	  vlib_cli_output (vm,
-			   "  thread %u: %u/%u blocos em uso, %Lu alocacoes, "
-			   "%Lu liberacoes, %Lu recusas",
+			   "  thread %u: %u/%u blocks in use, %Lu allocations, "
+			   "%Lu releases, %Lu refusals",
 			   i, d->n_alloc, d->n_local, d->n_allocations,
 			   d->n_releases, d->n_exhausted);
 	  total += d->n_local;
@@ -452,13 +452,13 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  exh += d->n_exhausted;
 	}
       vlib_cli_output (vm,
-		       "  total: %Lu/%Lu em uso, %Lu alocacoes, %Lu "
-		       "liberacoes, %Lu recusas",
+		       "  total: %Lu/%Lu in use, %Lu allocations, %Lu "
+		       "releases, %Lu refusals",
 		       alloc, total, allocs, rels, exh);
     }
 
   if (!any)
-    vlib_cli_output (vm, "nenhum pool dinamico configurado");
+    vlib_cli_output (vm, "no dynamic pools configured");
   return 0;
 }
 
@@ -502,7 +502,7 @@ bpa_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
   else if (unformat (input, "disable"))
     enable = 0;
   else
-    return clib_error_return (0, "diga 'enable' ou 'disable'");
+    return clib_error_return (0, "say 'enable' or 'disable'");
 
   return bpa_log_enable (enable);
 }
@@ -519,42 +519,42 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 {
   bpa_log_main_t *lm = &bpa_log_main;
 
-  vlib_cli_output (vm, "exportacao IPFIX de eventos de bloco (RFC 8158)");
-  vlib_cli_output (vm, "  estado      %s",
-		   lm->enabled ? "habilitada" : "desabilitada");
-  vlib_cli_output (vm, "  template    %u (%u bytes por registro)",
+  vlib_cli_output (vm, "IPFIX export of block events (RFC 8158)");
+  vlib_cli_output (vm, "  state       %s",
+		   lm->enabled ? "enabled" : "disabled");
+  vlib_cli_output (vm, "  template    %u (%u bytes per record)",
 		   lm->template_id, BPA_LOG_RECORD_SIZE);
-  vlib_cli_output (vm, "  registros   %Lu emitidos, %Lu descartados",
+  vlib_cli_output (vm, "  records     %Lu emitted, %Lu dropped",
 		   lm->n_records, lm->n_dropped);
-  vlib_cli_output (vm, "  natEvent    16 alocacao, 17 liberacao, 12 esgotamento");
-  vlib_cli_output (vm, "  despachos   %Lu com dados, %Lu vazios, %Lu sem buffer",
+  vlib_cli_output (vm, "  natEvent    16 allocation, 17 de-allocation, 12 exhaustion");
+  vlib_cli_output (vm, "  flushes     %Lu with data, %Lu empty, %Lu without buffer",
 		   lm->n_flush_sent, lm->n_flush_empty, lm->n_getbuf_fail);
 
   if (bpa_log_tcp.enabled)
     {
-      vlib_cli_output (vm, "transporte TCP (sobrevive a queda do coletor)");
-      vlib_cli_output (vm, "  coletor     %U:%u  %s", format_ip4_address,
+      vlib_cli_output (vm, "TCP transport (survives collector outage)");
+      vlib_cli_output (vm, "  collector   %U:%u  %s", format_ip4_address,
 		       &bpa_log_tcp.collector, bpa_log_tcp.port,
-		       bpa_log_tcp.connected	     ? "conectado"
-		       : bpa_log_tcp.pending_connect ? "conectando"
-						     : "desconectado");
+		       bpa_log_tcp.connected	     ? "connected"
+		       : bpa_log_tcp.pending_connect ? "connecting"
+						     : "disconnected");
       vlib_cli_output (vm,
-		       "  registros   %Lu emitidos, %Lu bytes enviados, "
-		       "%Lu pendentes",
+		       "  records     %Lu emitted, %Lu bytes sent, "
+		       "%Lu pending",
 		       bpa_log_tcp.n_records, bpa_log_tcp.n_sent,
 		       (u64) vec_len (bpa_log_tcp.outbuf));
       vlib_cli_output (vm,
-		       "  transbordo  %Lu bytes em disco, %Lu reenviados, "
-		       "%Lu descartados",
+		       "  spill       %Lu bytes on disk, %Lu replayed, "
+		       "%Lu dropped",
 		       bpa_log_tcp.n_spilled, bpa_log_tcp.n_replayed,
 		       bpa_log_tcp.n_dropped);
       vlib_cli_output (vm,
-		       "  conexoes    %Lu, service %Lu, send %Lu, errno %d",
+		       "  connections %Lu, service %Lu, send %Lu, errno %d",
 		       bpa_log_tcp.n_connects, bpa_log_tcp.n_service,
 		       bpa_log_tcp.n_send_calls, bpa_log_tcp.last_errno);
     }
   else
-    vlib_cli_output (vm, "transporte TCP: desabilitado");
+    vlib_cli_output (vm, "TCP transport: disabled");
   return 0;
 }
 
@@ -693,17 +693,17 @@ bpa_logging_tcp_command_fn (vlib_main_t *vm, unformat_input_t *input,
     return bpa_log_tcp_enable (0, 0, 0);
 
   if (!unformat (input, "%U", unformat_ip4_address, &addr))
-    return clib_error_return (0, "informe o endereco do coletor");
+    return clib_error_return (0, "collector address required");
   unformat (input, "port %u", &port);
   if (port > 65535)
-    return clib_error_return (0, "porta invalida");
+    return clib_error_return (0, "invalid port");
 
   return bpa_log_tcp_enable (&addr, (u16) port, 1);
 }
 
 VLIB_CLI_COMMAND (bpa_logging_tcp_command, static) = {
   .path = "bpa logging tcp",
-  .short_help = "bpa logging tcp <coletor> [port <n>] | bpa logging tcp disable",
+  .short_help = "bpa logging tcp <collector> [port <n>] | bpa logging tcp disable",
   .function = bpa_logging_tcp_command_fn,
 };
 
@@ -719,17 +719,17 @@ bpa_sessions_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       if (pool_elts (bm->pools))
 	return clib_error_return (
-	  0, "as tabelas ja foram criadas; ajuste antes de configurar pools");
+	  0, "tables already created; set this before configuring pools");
       bm->hash_buckets = buckets;
       bm->hash_memory = mem_mb << 20;
       return 0;
     }
 
-  vlib_cli_output (vm, "buckets %u, memoria %u MB por tabela",
+  vlib_cli_output (vm, "buckets %u, memory %u MB per table",
 		   bm->hash_buckets, bm->hash_memory >> 20);
   vlib_cli_output (vm,
-		   "  (sao duas tabelas por thread, e o tamanho e reserva "
-		   "virtual: o matador de OOM conta o virtual)");
+		   "  (two tables per thread; the size is a virtual "
+		   "reservation, and the OOM killer counts virtual)");
   return 0;
 }
 

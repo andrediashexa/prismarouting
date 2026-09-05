@@ -1,149 +1,153 @@
 #!/usr/bin/env python3
 """
-hexash - VTY do HexaRouting.
+hexash - the HexaRouting VTY.
 
-Uma CLI so para roteamento e CGNAT. Comandos de CGNAT sao traduzidos para o
-plugin bpa no VPP; comandos de roteamento sao repassados ao vtysh do FRR com
-o contexto preservado.
+One CLI for routing and CGNAT, with a Juniper-style configuration model:
+changes edit a *candidate*, `commit` applies it, and `rollback` returns to any
+of the previous committed revisions.
 
-Por que nao um daemon registrado no vtysh: a lista de daemons do vtysh e
-compilada (vtysh_client[]), sem mecanismo de plugin. Registrar um daemon novo
-exigiria manter um fork do vtysh pelo resto da vida do produto. Repassar e
-mais barato e nao prende a evolucao do FRR.
+Why not a daemon registered with vtysh: vtysh's daemon list is compiled in
+(vtysh_client[]) with no plugin mechanism. Registering a new daemon would mean
+maintaining a vtysh fork for the life of the product. Forwarding costs nothing
+and does not pin us to an FRR release.
 """
+
+from __future__ import annotations
 
 import os
 import re
 import shlex
 import subprocess
+import sys
+import tempfile
+import time
+
+from config import Config, Pool
 
 readline = None
-import sys
 
 CONFIG_PATH = os.environ.get("HEXA_CONFIG", "/etc/hexarouting/hexarouting.conf")
+ROLLBACK_DIR = os.environ.get("HEXA_ROLLBACK", "/etc/hexarouting/rollback")
+ROLLBACK_KEEP = 20
 VPPCTL = os.environ.get("VPPCTL", "vppctl")
 VTYSH = os.environ.get("VTYSH", "vtysh")
+FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 
-# Comandos do FRR que abrem um bloco de configuracao. Usados para saber o
-# contexto a repetir quando repassamos a proxima linha ao vtysh.
-FRR_BLOCKS = ("router ", "interface ", "vrf ", "route-map ", "line ",
-              "key chain ", "bfd", "segment-routing", "pbr-map ",
-              "address-family ")
-
-
-# O vppctl devolve 0 mesmo quando o comando falha: quem diz e o texto. Os
-# erros do VPP saem como "<comando>: <mensagem>" ou "unknown input ...".
-# Substituir isso pela API binaria, que tem codigo de retorno de verdade,
-# esta no roadmap; ate la a deteccao e por padrao de texto.
+# vppctl exits 0 even when a command fails: the text is what says so. Errors
+# come out as "<command>: <message>" or "unknown input ...". Replacing this
+# with the binary API, which has real return codes, is on the roadmap.
 VPP_ERROR = re.compile(r"^(unknown input\b|[a-z][a-z0-9 _-]*: \S)")
 
-
 # ---------------------------------------------------------------------------
-# Arvore de comandos, para completacao e para o "?".
+# Command tree, used for completion and for "?".
 #
-# Cada entrada e (descricao, subarvore). Subarvore None encerra o comando;
-# uma string no lugar dela e a dica do argumento esperado, mostrada pelo "?"
-# como o Cisco faz - "<A.B.C.D/M>" e mais util que uma lista vazia.
+# Each entry is (description, subtree). A None subtree ends the command; a
+# string in its place is the expected-argument hint, shown by "?" the way
+# Juniper and Cisco both do - "<A.B.C.D/M>" is more useful than an empty list.
 #
-# Os comandos do FRR nao estao aqui inteiros: sao milhares e mudam a cada
-# versao. A arvore cobre os pontos de entrada e o resto e repassado; e
-# honesto dizer "daqui para frente quem sabe e o FRR" em vez de fingir uma
-# lista que ficaria desatualizada.
+# FRR's commands are not reproduced here: there are thousands and they change
+# with every release. The tree covers the entry points and then admits it does
+# not know, rather than suggesting commands that may no longer exist.
 # ---------------------------------------------------------------------------
 
 ARG_PREFIX = "<A.B.C.D/M>"
 ARG_NUM = "<1-65535>"
-ARG_WORD = "<palavra>"
+ARG_WORD = "<word>"
+ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
-    "pool": ("pools de CGNAT configurados", None),
-    "session": ("sessoes ativas por thread", None),
-    "blocks": ("blocos alocados no modo dinamico", None),
-    "logging": ("estado da exportacao IPFIX", None),
+    "pool": ("configured CGNAT pools", None),
+    "session": ("active sessions per thread", None),
+    "blocks": ("blocks allocated in dynamic mode", None),
+    "logging": ("IPFIX export state", None),
+    "history": ("dated configuration trail", None),
 }
 
 SHOW = {
-    "cgnat": ("informacao de CGNAT", SHOW_CGNAT),
-    "running-config": ("configuracao em vigor, CGNAT e roteamento", None),
-    "ip": ("informacao de IP (FRR)", None),
-    "bgp": ("informacao de BGP (FRR)", None),
-    "isis": ("informacao de IS-IS (FRR)", None),
+    "cgnat": ("CGNAT information", SHOW_CGNAT),
+    "configuration": ("candidate configuration", {
+        "compare": ("differences against the running configuration", None)}),
+    "running-config": ("configuration in effect, CGNAT and routing", None),
+    "rollback": ("committed revisions available", None),
+    "ip": ("IP information (FRR)", None),
+    "bgp": ("BGP information (FRR)", None),
+    "isis": ("IS-IS information (FRR)", None),
     "interface": ("interfaces (FRR)", None),
-    "version": ("versao (FRR)", None),
-    "logging": ("log do sistema (FRR)", None),
+    "version": ("version (FRR)", None),
+    "logging": ("system log (FRR)", None),
 }
 
 CGNAT_POOL = {
-    "inside": ("prefixo interno, pode repetir", ARG_PREFIX),
-    "outside": ("prefixo publico, pode repetir", ARG_PREFIX),
-    "block-size": ("portas por bloco, potencia de dois", "<64-65536>"),
-    "ports": ("faixa de portas usavel", "<min> <max>"),
-    "policy": ("como espalhar assinantes entre IPs publicos", {
-        "interleaved": ("vizinhos em IPs publicos distintos", None),
-        "blocked": ("vizinhos no mesmo IP publico", None),
+    "inside": ("inside prefix, may repeat", ARG_PREFIX),
+    "outside": ("public prefix, may repeat", ARG_PREFIX),
+    "block-size": ("ports per block, power of two", "<64-65536>"),
+    "ports": ("usable port range", "<min> <max>"),
+    "policy": ("how subscribers spread across public addresses", {
+        "interleaved": ("neighbours on distinct public addresses", None),
+        "blocked": ("neighbours on the same public address", None),
     }),
-    "mode": ("como o bloco e atribuido", {
-        "deterministic": ("por formula, sem log de alocacao", None),
-        "dynamic": ("sob demanda, com log de alocacao", None),
+    "mode": ("how the block is assigned", {
+        "deterministic": ("by formula, no allocation logging", None),
+        "dynamic": ("on demand, with allocation logging", None),
     }),
-    "exit": ("aplica o pool e volta", None),
+    "exit": ("leave the pool", None),
 }
 
 CGNAT_CONFIG = {
-    "pool": ("cria ou edita um pool", ARG_WORD),
-    "interface": ("liga o CGNAT numa interface", "<interface> inside|outside"),
-    "timeout": ("tempo de vida das sessoes", {
-        "udp": ("segundos", ARG_NUM),
-        "icmp": ("segundos", ARG_NUM),
-        "tcp-transitory": ("segundos", ARG_NUM),
-        "tcp-established": ("segundos", ARG_NUM),
+    "pool": ("create or edit a pool", ARG_WORD),
+    "interface": ("enable CGNAT on an interface", "<interface> inside|outside"),
+    "timeout": ("session lifetimes", {
+        "udp": ("seconds", ARG_NUM),
+        "icmp": ("seconds", ARG_NUM),
+        "tcp-transitory": ("seconds", ARG_NUM),
+        "tcp-established": ("seconds", ARG_NUM),
     }),
-    "block-holddown": ("segundos que um bloco fica reservado", ARG_NUM),
-    "logging": ("exportacao IPFIX de eventos de bloco", {
-        "enable": ("liga", None),
-        "disable": ("desliga", None),
+    "block-holddown": ("seconds a block stays reserved once idle", ARG_NUM),
+    "logging": ("IPFIX export of block events", {
+        "enable": ("enable UDP export", None),
+        "disable": ("disable UDP export", None),
+        "tcp": ("export over TCP", "<collector> [port <n>]"),
     }),
+    "session-table": ("session table sizing", "buckets <n> memory <MB>"),
+}
+
+COMMIT = {
+    "check": ("validate the candidate without applying it", None),
+    "confirmed": ("apply, and roll back unless confirmed", "<1-60> minutes"),
+    "comment": ("record a note with this commit", "<text>"),
 }
 
 TREE = {
-    "view": {
-        "enable": ("entra no modo privilegiado", None),
-        "show": ("mostra informacao", SHOW),
-        "exit": ("encerra a sessao", None),
-    },
-    "enable": {
-        "configure": ("entra em configuracao", {
-            "terminal": ("configura pelo terminal", None)}),
-        "show": ("mostra informacao", SHOW),
-        "write": ("grava a configuracao", {
-            "memory": ("grava em disco", None)}),
-        "disable": ("volta ao modo nao privilegiado", None),
-        "exit": ("encerra a sessao", None),
+    "operational": {
+        "configure": ("edit the candidate configuration", None),
+        "show": ("display information", SHOW),
+        "rollback": ("load a committed revision into the candidate", ARG_REV),
+        "save": ("write the running configuration to disk", None),
+        "exit": ("end the session", None),
     },
     "config": {
-        "cgnat": ("configuracao de CGNAT", CGNAT_CONFIG),
-        "no": ("remove configuracao", {
-            "cgnat": ("remove configuracao de CGNAT", {
-                "pool": ("remove um pool", ARG_WORD)})}),
-        "router": ("protocolos de roteamento (FRR)", {
+        "cgnat": ("CGNAT configuration", CGNAT_CONFIG),
+        "no": ("remove configuration", {
+            "cgnat": ("remove CGNAT configuration", {
+                "pool": ("remove a pool", ARG_WORD),
+                "interface": ("disable CGNAT on an interface", ARG_WORD)})}),
+        "router": ("routing protocols (FRR)", {
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", None),
             "isis": ("IS-IS", ARG_WORD),
         }),
-        "interface": ("configuracao de interface (FRR)", ARG_WORD),
-        "exit": ("volta ao modo anterior", None),
+        "interface": ("interface configuration (FRR)", ARG_WORD),
+        "commit": ("apply the candidate configuration", COMMIT),
+        "rollback": ("load a committed revision into the candidate", ARG_REV),
+        "show": ("display information", SHOW),
+        "exit": ("leave configuration mode", None),
     },
     "pool": CGNAT_POOL,
 }
 
 
 def tree_walk(mode, words):
-    """
-    Onde estamos na arvore depois de `words`.
-
-    Devolve (node, hint): node e o dicionario de opcoes seguintes, ou None
-    quando o comando ja terminou; hint e a dica de argumento, se houver.
-    """
+    """Where we are in the tree after `words`; (options, argument hint)."""
     node = TREE.get(mode)
     hint = None
     for w in words:
@@ -151,8 +155,7 @@ def tree_walk(mode, words):
             return None, hint
         entry = node.get(w)
         if entry is None:
-            # palavra desconhecida: daqui para frente quem sabe e o FRR
-            return None, None
+            return None, None       # unknown word: FRR territory from here
         _, sub = entry
         if isinstance(sub, str):
             return None, sub
@@ -162,110 +165,165 @@ def tree_walk(mode, words):
 
 
 class Vpp:
-    """Conversa com o plugin bpa pela CLI do VPP."""
+    """Talks to the bpa plugin through VPP's CLI."""
 
     def run(self, cmd):
         try:
             p = subprocess.run([VPPCTL] + shlex.split(cmd),
-                               capture_output=True, text=True, timeout=10)
+                               capture_output=True, text=True, timeout=15)
         except FileNotFoundError:
-            return 1, f"{VPPCTL} nao encontrado"
+            return 1, f"{VPPCTL} not found"
         except subprocess.TimeoutExpired:
-            return 1, "VPP nao respondeu"
+            return 1, "VPP did not respond"
         out = ((p.stdout or "") + (p.stderr or "")).rstrip()
         first = out.split("\n")[0] if out else ""
         return (1 if VPP_ERROR.match(first) else 0), out
 
 
 class Frr:
-    """Repassa ao vtysh, repetindo o contexto de bloco."""
+    """Talks to FRR through vtysh, and reloads whole configurations."""
 
-    def run_show(self, cmd):
+    def show(self, cmd):
         return self._exec(["-c", cmd])
 
-    def run_config(self, ctx, cmd):
+    def running(self):
+        rc, out = self.show("show running-config")
+        if rc:
+            return []
+        skip = ("Building configuration", "Current configuration",
+                "frr version", "frr defaults", "end")
+        return [l.rstrip() for l in out.splitlines()
+                if l.strip() and not l.startswith(skip)]
+
+    def apply_lines(self, lines):
         args = ["-c", "configure terminal"]
-        for c in ctx:
-            args += ["-c", c]
-        args += ["-c", cmd]
+        for l in lines:
+            args += ["-c", l]
         return self._exec(args)
+
+    def reload(self, lines, check_only=False):
+        """
+        Converge FRR onto `lines` using frr-reload.py, which computes the
+        delta. Without it a rollback could only add statements, never remove
+        them - and a rollback that cannot remove is not a rollback.
+        """
+        if not os.path.exists(FRR_RELOAD):
+            return 1, f"{FRR_RELOAD} not found: routing rollback unavailable"
+        with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as f:
+            f.write("\n".join(lines) + "\n")
+            path = f.name
+        try:
+            mode = "--test" if check_only else "--reload"
+            p = subprocess.run(["python3", FRR_RELOAD, mode, "--stdout", path],
+                               capture_output=True, text=True, timeout=60)
+            return p.returncode, ((p.stdout or "") + (p.stderr or "")).rstrip()
+        except subprocess.TimeoutExpired:
+            return 1, "frr-reload timed out"
+        finally:
+            os.unlink(path)
 
     def _exec(self, args):
         try:
             p = subprocess.run([VTYSH] + args, capture_output=True,
-                               text=True, timeout=15)
+                               text=True, timeout=30)
         except FileNotFoundError:
-            return 1, f"{VTYSH} nao encontrado"
+            return 1, f"{VTYSH} not found"
         except subprocess.TimeoutExpired:
-            return 1, "vtysh nao respondeu"
+            return 1, "vtysh did not respond"
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).rstrip()
 
 
-class Pool:
-    def __init__(self, name):
-        self.name = name
-        self.inside = []
-        self.outside = []
-        self.block_size = 512
-        self.port_min = 1024
-        self.port_max = 65535
-        self.policy = "interleaved"
-        self.mode = "deterministic"
+class Rollback:
+    """
+    Committed revisions on disk.
 
-    def vpp_command(self):
-        parts = ["bpa pool", self.name]
-        for p in self.inside:
-            parts += ["inside", p]
-        for p in self.outside:
-            parts += ["outside", p]
-        parts += ["block", str(self.block_size)]
-        parts += ["ports", f"{self.port_min}-{self.port_max}"]
-        parts += ["policy", self.policy]
-        parts += ["mode", self.mode]
-        return " ".join(parts)
+    Numbering follows Juniper: 0 is the configuration now in effect, 1 the one
+    before it, and so on. `rollback 0` therefore discards uncommitted edits
+    rather than undoing the last commit - the same meaning an operator coming
+    from JunOS already expects.
+    """
 
-    def config_lines(self):
-        out = [f"cgnat pool {self.name}"]
-        for p in self.inside:
-            out.append(f" inside {p}")
-        for p in self.outside:
-            out.append(f" outside {p}")
-        out.append(f" block-size {self.block_size}")
-        if (self.port_min, self.port_max) != (1024, 65535):
-            out.append(f" ports {self.port_min} {self.port_max}")
-        out.append(f" policy {self.policy}")
-        out.append(f" mode {self.mode}")
-        out.append(" exit")
+    def __init__(self, path=ROLLBACK_DIR, keep=ROLLBACK_KEEP):
+        self.path = path
+        self.keep = keep
+
+    def _file(self, n):
+        return os.path.join(self.path, f"{n}.conf")
+
+    def list(self):
+        out = []
+        for n in range(self.keep):
+            f = self._file(n)
+            if os.path.exists(f):
+                with open(f) as fh:
+                    first = fh.readline().strip()
+                comment = first[2:] if first.startswith("# ") else ""
+                out.append((n, time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(f))),
+                    comment))
         return out
+
+    def load(self, n):
+        f = self._file(n)
+        if not os.path.exists(f):
+            return None
+        with open(f) as fh:
+            return "".join(l for l in fh if not l.startswith("# "))
+
+    def push(self, text, comment=""):
+        """Store a new revision 0, shifting the others down."""
+        os.makedirs(self.path, exist_ok=True)
+        oldest = self._file(self.keep - 1)
+        if os.path.exists(oldest):
+            os.unlink(oldest)
+        for n in range(self.keep - 2, -1, -1):
+            src = self._file(n)
+            if os.path.exists(src):
+                os.replace(src, self._file(n + 1))
+        with open(self._file(0), "w") as fh:
+            if comment:
+                fh.write(f"# {comment}\n")
+            fh.write(text)
 
 
 class Shell:
     def __init__(self):
-        self.dp = Vpp()             # dataplane
+        self.dp = Vpp()
         self.frr = Frr()
-        self.mode = "view"          # view | enable | config | pool
-        self.pool = None            # Pool em edicao
-        self.frr_ctx = []           # contexto de bloco do FRR
+        self.rb = Rollback()
+        self.mode = "operational"      # operational | config | pool
+        self.pool = None               # Pool being edited
+        self.candidate = None          # Config being edited
+        self.frr_ctx = []              # FRR block context inside config mode
         self.failed = 0
+        self.confirm_deadline = None   # for "commit confirmed"
+        self.confirm_backup = None
 
     # ---------------------------------------------------------- prompt
 
     def prompt(self):
-        return {
-            "view": "hexarouting> ",
-            "enable": "hexarouting# ",
-            "config": "hexarouting(config)# ",
-            "pool": "hexarouting(config-cgnat-pool)# ",
-        }[self.mode]
-
-    # ---------------------------------------------------------- helpers
+        if self.mode == "operational":
+            return "hexarouting> "
+        if self.mode == "pool":
+            return "hexarouting# [edit cgnat pool] "
+        return "hexarouting# [edit] "
 
     def err(self, msg):
-        print(f"%% {msg}")
+        print(f"error: {msg}")
         self.failed += 1
 
+    # ---------------------------------------------------------- device
+
+    def running_config(self) -> Config:
+        """The configuration actually in effect, read from the device."""
+        cfg = Config()
+        rc, out = self.dp.run("show bpa config")
+        if rc == 0 and out.strip():
+            cfg = Config.parse(out)
+        cfg.routing = self.frr.running()
+        return cfg
+
     def vpp(self, cmd, quiet=False):
-        """Executa no dataplane. Imprime a saida e devolve 0 se deu certo."""
         rc, out = self.dp.run(cmd)
         if out and not quiet:
             print(out)
@@ -273,234 +331,344 @@ class Shell:
             self.failed += 1
         return rc
 
-    # ---------------------------------------------------------- modos
+    # ---------------------------------------------------------- commit
 
-    def do_view(self, line):
-        w = line.split()
-        if w[0] == "enable":
-            self.mode = "enable"
-        elif w[0] in ("exit", "quit", "logout"):
-            return False
-        else:
-            self.do_show_or_pass(line)
+    def apply(self, target: Config, check_only=False) -> bool:
+        """
+        Converge the device onto `target`. Returns True on success.
+
+        CGNAT is applied first and routing second, deliberately: a routing
+        change can cost reachability, and doing it last keeps the window in
+        which the box is half-configured as short as possible.
+        """
+        running = self.running_config()
+        d = running.delta_to(target)
+
+        if check_only:
+            ok = True
+            for pool in d["pool_add"] + d["pool_replace"]:
+                rc, out = self.dp.run(pool.device_command() + " check")
+                # the device has no dry-run for pools; validate what we can
+                if not pool.inside or not pool.outside:
+                    self.err(f"pool '{pool.name}': inside and outside required")
+                    ok = False
+            rc, out = self.frr.reload(target.routing, check_only=True)
+            if rc:
+                print(out)
+                ok = False
+            return ok
+
+        for name in d["pool_remove"]:
+            self.dp.run(f"bpa pool {name} del")
+        for pool in d["pool_replace"]:
+            self.dp.run(f"bpa pool {pool.name} del")
+        for pool in d["pool_add"] + d["pool_replace"]:
+            rc, out = self.dp.run(pool.device_command())
+            if rc:
+                print(out)
+                self.err(f"pool '{pool.name}' refused by the dataplane")
+                return False
+
+        for ifname in d["if_remove"]:
+            direction = running.interfaces[ifname]
+            k = "in2out" if direction == "inside" else "out2in"
+            self.dp.run(f"set interface bpa {k} {ifname} del")
+        for ifname, direction in d["if_add"].items():
+            k = "in2out" if direction == "inside" else "out2in"
+            rc, out = self.dp.run(f"set interface bpa {k} {ifname}")
+            if rc:
+                print(out)
+                self.err(f"interface {ifname} refused by the dataplane")
+                return False
+
+        for g in d["globals"]:
+            self.apply_global(g)
+
+        if d["routing_changed"]:
+            rc, out = self.frr.reload(target.routing)
+            if rc:
+                print(out)
+                self.err("routing reload failed")
+                return False
         return True
 
-    def do_enable(self, line):
+    def apply_global(self, line):
         w = line.split()
-        if line in ("configure terminal", "conf t", "configure"):
+        if len(w) < 2:
+            return
+        if w[1] == "timeout" and len(w) >= 4:
+            self.dp.run(f"bpa timeouts {w[2]} {w[3]}")
+        elif w[1] == "block-holddown" and len(w) >= 3:
+            self.dp.run(f"bpa block-holddown {w[2]}")
+        elif w[1] == "logging" and len(w) >= 3:
+            if w[2] == "tcp":
+                self.dp.run("bpa logging tcp " + " ".join(w[3:]))
+            else:
+                self.dp.run(f"bpa logging {w[2]}")
+        elif w[1] == "session-table":
+            self.dp.run("bpa session-table " + " ".join(w[2:]))
+
+    def do_commit(self, args):
+        """commit [check | confirmed <min> | comment <text>]"""
+        if self.candidate is None:
+            self.err("no candidate configuration")
+            return
+        running = self.running_config()
+
+        if args and args[0] == "check":
+            if self.apply(self.candidate, check_only=True):
+                print("configuration check succeeds")
+            return
+
+        if running.is_same(self.candidate):
+            print("no changes to commit")
+            return
+
+        confirm_min = 0
+        comment = ""
+        if args and args[0] == "confirmed":
+            try:
+                confirm_min = int(args[1]) if len(args) > 1 else 10
+            except (IndexError, ValueError):
+                self.err("usage: commit confirmed <minutes>")
+                return
+        elif args and args[0] == "comment":
+            comment = " ".join(args[1:]).strip('"')
+
+        if not self.apply(self.candidate, check_only=True):
+            self.err("candidate did not pass validation; nothing applied")
+            return
+
+        backup = running.text()
+        if not self.apply(self.candidate):
+            self.err("commit failed; rolling back to the previous state")
+            self.apply(Config.parse(backup))
+            return
+
+        self.rb.push(self.candidate.text(), comment)
+        print("commit complete")
+
+        if confirm_min:
+            # The point of "commit confirmed" is surviving a change that cuts
+            # your own access: if the operator cannot type "commit" again, the
+            # box returns on its own.
+            self.confirm_deadline = time.time() + confirm_min * 60
+            self.confirm_backup = backup
+            print(f"rollback in {confirm_min} minute(s) unless you enter "
+                  f"'commit' to confirm")
+
+    def check_confirm_timeout(self):
+        if self.confirm_deadline and time.time() > self.confirm_deadline:
+            print("\ncommit was not confirmed: rolling back")
+            self.apply(Config.parse(self.confirm_backup))
+            self.candidate = self.running_config()
+            self.confirm_deadline = None
+            self.confirm_backup = None
+
+    def do_rollback(self, args):
+        try:
+            n = int(args[0]) if args else 0
+        except ValueError:
+            self.err("usage: rollback <0-%d>" % (ROLLBACK_KEEP - 1))
+            return
+        if n == 0:
+            self.candidate = self.running_config()
+            print("candidate reset to the running configuration")
+            return
+        text = self.rb.load(n)
+        if text is None:
+            self.err(f"revision {n} does not exist")
+            return
+        self.candidate = Config.parse(text)
+        print(f"load complete (revision {n})")
+        print("use 'show configuration compare' to review, 'commit' to apply")
+
+    # ---------------------------------------------------------- modes
+
+    def do_operational(self, line):
+        w = line.split()
+        if w[0] in ("configure", "conf"):
+            self.candidate = self.running_config()
             self.mode = "config"
+            print("entering configuration mode")
         elif w[0] in ("exit", "quit", "logout"):
-            self.mode = "view"
-        elif line in ("write memory", "write", "wr"):
-            self.write_memory()
-        elif w[0] == "disable":
-            self.mode = "view"
+            return False
+        elif w[0] == "rollback":
+            self.candidate = self.running_config()
+            self.do_rollback(w[1:])
+            if self.candidate is not None:
+                self.mode = "config"
+        elif w[0] == "save":
+            self.save_running()
+        elif w[0] == "commit":
+            self.err("enter configuration mode first")
         else:
-            self.do_show_or_pass(line)
+            self.show_or_pass(line)
         return True
 
     def do_config(self, line):
         w = line.split()
 
+        if w[0] == "commit":
+            self.do_commit(w[1:])
+            return True
+        if w[0] == "rollback":
+            self.do_rollback(w[1:])
+            return True
+        if w[0] == "show":
+            self.show_or_pass(line)
+            return True
         if w[0] in ("exit", "quit", "end"):
             if self.frr_ctx:
                 self.frr_ctx.pop()
-            else:
-                self.mode = "enable"
+                return True
+            running = self.running_config()
+            if self.candidate is not None and not running.is_same(self.candidate):
+                print("warning: uncommitted changes were discarded "
+                      "(use 'commit' to apply them)")
+            self.candidate = None
+            self.mode = "operational"
             return True
 
         if line.startswith("cgnat pool "):
-            self.pool = Pool(w[2])
+            name = w[2]
+            self.pool = self.candidate.pools.get(name) or Pool(name)
+            self.candidate.pools[name] = self.pool
             self.mode = "pool"
             return True
-
         if line.startswith("no cgnat pool "):
-            self.vpp(f"bpa pool {w[3]} del")
+            self.candidate.pools.pop(w[3], None)
             return True
-
         if line.startswith("cgnat interface "):
-            return self.cgnat_interface(w)
-
-        if line.startswith("cgnat block-holddown "):
-            self.vpp(f"bpa block-holddown {w[2]}")
+            if len(w) < 4 or w[3] not in ("inside", "outside"):
+                self.err("usage: cgnat interface <interface> <inside|outside>")
+            else:
+                self.candidate.interfaces[w[2]] = w[3]
+            return True
+        if line.startswith("no cgnat interface "):
+            self.candidate.interfaces.pop(w[3], None)
+            return True
+        if line.startswith("cgnat "):
+            key = " ".join(w[:3])
+            self.candidate.globals = [g for g in self.candidate.globals
+                                      if not g.startswith(key)]
+            self.candidate.globals.append(line)
             return True
 
-        if line.startswith("cgnat timeout "):
-            # cgnat timeout udp 300  ->  bpa timeouts udp 300
-            self.vpp(f"bpa timeouts {w[2]} {w[3]}")
-            return True
-
-        if line.startswith("cgnat logging "):
-            self.vpp(f"bpa logging {w[2]}")
-            return True
-
-        # tudo mais e roteamento: vai para o FRR com o contexto atual
-        rc, out = self.frr.run_config(self.frr_ctx, line)
-        if out:
-            print(out)
-        if rc == 0 and line.startswith(FRR_BLOCKS):
+        # anything else is routing: staged in the candidate, applied on commit
+        self.candidate.routing.append(line)
+        if line.startswith(("router ", "interface ", "vrf ", "route-map ")):
             self.frr_ctx.append(line)
-        return True
-
-    def cgnat_interface(self, w):
-        # cgnat interface <if> <inside|outside> [disable]
-        if len(w) < 4:
-            self.err("uso: cgnat interface <interface> <inside|outside>")
-            return True
-        ifname, direction = w[2], w[3]
-        if direction not in ("inside", "outside"):
-            self.err("direcao deve ser 'inside' ou 'outside'")
-            return True
-        disable = len(w) > 4 and w[4] == "disable"
-        d = "in2out" if direction == "inside" else "out2in"
-        cmd = f"set interface bpa {d} {ifname}" + (" del" if disable else "")
-        self.vpp(cmd)
         return True
 
     def do_pool(self, line):
         w = line.split()
         p = self.pool
-
         if w[0] in ("exit", "end"):
-            return self.apply_pool()
-
+            self.mode = "config"
+            self.pool = None
+            return True
         try:
             if w[0] == "inside":
                 p.inside.append(w[1])
             elif w[0] == "outside":
                 p.outside.append(w[1])
             elif w[0] == "block-size":
-                p.block_size = int(w[1])
+                p.block_size = str(int(w[1]))
             elif w[0] == "ports":
-                p.port_min, p.port_max = int(w[1]), int(w[2])
+                p.ports = f"{int(w[1])} {int(w[2])}"
             elif w[0] == "policy":
                 if w[1] not in ("interleaved", "blocked"):
-                    raise ValueError("policy deve ser interleaved ou blocked")
+                    raise ValueError("policy must be interleaved or blocked")
                 p.policy = w[1]
             elif w[0] == "mode":
                 if w[1] not in ("deterministic", "dynamic"):
-                    raise ValueError("mode deve ser deterministic ou dynamic")
+                    raise ValueError("mode must be deterministic or dynamic")
                 p.mode = w[1]
+            elif w[0] == "no" and len(w) > 2:
+                if w[1] == "inside" and w[2] in p.inside:
+                    p.inside.remove(w[2])
+                elif w[1] == "outside" and w[2] in p.outside:
+                    p.outside.remove(w[2])
             else:
-                self.err(f"comando desconhecido no modo pool: {w[0]}")
+                self.err(f"unknown statement in pool mode: {w[0]}")
         except (IndexError, ValueError) as e:
-            self.err(f"argumento invalido: {e}")
-        return True
-
-    def apply_pool(self):
-        """
-        O pool so vai para o VPP no 'exit'.
-
-        O plugin recebe a definicao inteira num comando so, enquanto a VTY a
-        constroi linha a linha. Aplicar a cada linha criaria pools
-        incompletos e invalidos; por isso a aplicacao e no fechamento do
-        bloco, e um erro deixa o pool fora da configuracao.
-        """
-        p = self.pool
-        self.mode = "config"
-        self.pool = None
-
-        if not p.inside or not p.outside:
-            self.err(f"pool '{p.name}': faltam prefixos inside/outside; "
-                     f"nao aplicado")
-            return True
-
-        # Reaplicar um pool existente: remove antes, para a definicao nova
-        # substituir a antiga em vez de colidir por nome.
-        # Sem estado entre invocacoes, nao da para saber se o pool ja existe:
-        # tenta remover e ignora o erro de "nao existe".
-        self.dp.run(f"bpa pool {p.name} del")
-
-        rc, out = self.dp.run(p.vpp_command())
-        if rc:
-            print(out)
-            self.err(f"pool '{p.name}' recusado pelo dataplane")
-            return True
-
+            self.err(f"invalid argument: {e}")
         return True
 
     # ---------------------------------------------------------- show
 
-    def do_show_or_pass(self, line):
+    def show_or_pass(self, line):
         m = {
             "show cgnat pool": "show bpa pool",
             "show cgnat session": "show bpa session",
             "show cgnat blocks": "show bpa blocks",
             "show cgnat logging": "show bpa logging",
+            "show cgnat history": "show bpa pool history",
         }
         if line in m:
             self.vpp(m[line])
             return
-        if line in ("show running-config", "show run"):
-            self.show_running()
+        if line in ("show configuration compare", "show configuration | compare"):
+            self.show_compare()
             return
-        rc, out = self.frr.run_show(line)
+        if line == "show configuration":
+            print((self.candidate or self.running_config()).text(), end="")
+            return
+        if line == "show rollback":
+            self.show_rollback()
+            return
+        if line in ("show running-config", "show run"):
+            print(self.running_config().text(), end="")
+            return
+        rc, out = self.frr.show(line)
         if out:
             print(out)
 
-    def running_config(self):
-        """
-        Le a configuracao do dataplane, nao da memoria.
+    def show_compare(self):
+        if self.candidate is None:
+            print("no candidate configuration")
+            return
+        d = self.running_config().compare(self.candidate)
+        print(d if d else "no differences")
 
-        A VTY roda como processo curto: cada 'hexash -c ...' e um processo
-        novo, entao estado em memoria nao sobrevive entre invocacoes. O
-        dataplane e a fonte da verdade, do mesmo jeito que no vtysh os
-        daemons e que sabem a propria configuracao.
-        """
-        rc, out = self.dp.run("show bpa config")
-        lines = ["!", "! HexaRouting", "!"]
-        if rc == 0 and out.strip():
-            lines += [l for l in out.split("\n") if l.strip()]
-        lines.append("!")
-        return lines
+    def show_rollback(self):
+        revs = self.rb.list()
+        if not revs:
+            print("no committed revisions")
+            return
+        for n, when, comment in revs:
+            label = "current" if n == 0 else f"{n} commit(s) ago"
+            print(f"  {n:>2}  {when}  {label}"
+                  + (f"  {comment}" if comment else ""))
 
-    def show_running(self):
-        print("\n".join(self.running_config()))
-        rc, out = self.frr.run_show("show running-config")
-        if out:
-            print(out)
-
-    def write_memory(self):
+    def save_running(self):
         d = os.path.dirname(CONFIG_PATH)
         try:
             if d:
                 os.makedirs(d, exist_ok=True)
             with open(CONFIG_PATH, "w") as f:
-                f.write("\n".join(self.running_config()) + "\n")
+                f.write(self.running_config().text())
         except OSError as e:
-            self.err(f"nao consegui gravar {CONFIG_PATH}: {e}")
+            self.err(f"cannot write {CONFIG_PATH}: {e}")
             return
-        print(f"configuracao do CGNAT gravada em {CONFIG_PATH}")
-        rc, out = self.frr._exec(["-c", "write memory"])
-        if out:
-            print(out)
+        print(f"configuration saved to {CONFIG_PATH}")
 
-
-    # ---------------------------------------------------------- completacao
+    # ---------------------------------------------------------- completion
 
     def _options(self, line, ending_word):
-        """
-        Opcoes validas no ponto atual da linha.
-
-        `ending_word` diz se o cursor esta no meio de uma palavra: nesse caso
-        a ultima palavra e o prefixo a completar, nao um passo ja dado.
-        """
         words = line.split()
         prefix = ""
         if ending_word and words:
             prefix = words[-1]
             words = words[:-1]
-
         node, hint = tree_walk(self.mode, words)
         if node is None:
-            # Fora da arvore: ou o comando terminou, ou dali em diante quem
-            # sabe e o FRR. Mostramos a dica de argumento quando existe.
             return {}, hint, prefix
         opts = {k: v[0] for k, v in node.items() if k.startswith(prefix)}
         return opts, hint, prefix
 
     def complete(self, text, state):
-        """Completador do readline."""
         if state == 0:
             line = readline.get_line_buffer()
             ending = bool(line) and not line.endswith(" ")
@@ -509,27 +677,19 @@ class Shell:
             self._last_hint = hint
             self._matches = sorted(opts)
             if not opts and hint:
-                # Sem opcoes o readline nao chama o hook de exibicao, e a dica
-                # de argumento nunca apareceria. Duas entradas sem prefixo
-                # comum forcam a exibicao sem inserir nada na linha - quem
-                # imprime e o hook, que mostra so a dica.
-                self._matches = [hint, "\u200b"]
+                # With no options readline never calls the display hook, so the
+                # argument hint would never appear. Two entries with no common
+                # prefix force the display without inserting anything.
+                self._matches = [hint, "​"]
         try:
             m = self._matches[state]
         except IndexError:
             return None
-        # dica de argumento nao e completacao: nunca entra na linha
         if not self._last_opts:
-            return m
+            return m            # a hint is not a completion: never inserted
         return m + " "
 
     def display_matches(self, substitution, matches, longest):
-        """
-        Mostra as opcoes com descricao, no estilo que operador espera.
-
-        O readline sozinho imprime so as palavras em colunas; a descricao ao
-        lado e o que torna o "?" util para quem nao decorou a gramatica.
-        """
         opts = getattr(self, "_last_opts", {})
         print()
         if opts:
@@ -540,9 +700,8 @@ class Shell:
         if hint:
             print(f"  {hint}")
         if not opts and not hint:
-            print("  (nenhuma opcao conhecida aqui; o comando segue para o FRR)")
+            print("  (no known options here; the command is passed to FRR)")
         print()
-        # redesenha o prompt com o que ja estava digitado
         sys.stdout.write(self.prompt() + readline.get_line_buffer())
         sys.stdout.flush()
 
@@ -553,18 +712,20 @@ class Shell:
         line = re.sub(r"\s+", " ", line)
         if not line:
             return True
-        handler = {"view": self.do_view, "enable": self.do_enable,
-                   "config": self.do_config, "pool": self.do_pool}[self.mode]
+        self.check_confirm_timeout()
+        handler = {"operational": self.do_operational,
+                   "config": self.do_config,
+                   "pool": self.do_pool}[self.mode]
         return handler(line)
 
     def load(self, path):
+        """Apply a saved configuration file to the device."""
         if not os.path.exists(path):
             return
-        self.mode = "config"
         with open(path) as f:
-            for line in f:
-                self.feed(line)
-        self.mode = "enable"
+            target = Config.parse(f.read())
+        if self.apply(target):
+            self.rb.push(target.text(), "loaded from file")
 
     def repl(self):
         global readline
@@ -576,15 +737,12 @@ class Shell:
             readline.set_completer(self.complete)
             readline.set_completer_delims(" \t\n")
             readline.parse_and_bind("tab: complete")
-            # "?" mostra as opcoes sem inserir o caractere, como no Cisco
             readline.parse_and_bind('"?": possible-completions')
-            # duas tabulacoes ja listam por padrao; o hook so acrescenta a
-            # descricao ao lado de cada opcao
             try:
                 readline.set_completion_display_matches_hook(
                     self.display_matches)
             except AttributeError:
-                pass  # readline antigo: fica so a lista, sem descricao
+                pass
         while True:
             try:
                 line = input(self.prompt())
@@ -601,7 +759,7 @@ def main():
 
     if args and args[0] == "--load":
         sh.load(args[1] if len(args) > 1 else CONFIG_PATH)
-        return sh.failed and 1 or 0
+        return 1 if sh.failed else 0
 
     cmds = []
     while args:
@@ -611,12 +769,11 @@ def main():
             args = args[1:]
 
     if cmds:
-        sh.mode = "enable"
         for c in cmds:
             sh.feed(c)
         return 1 if sh.failed else 0
 
-    print("HexaRouting VTY. '?' nao implementado ainda; use 'exit' para sair.")
+    print("HexaRouting VTY.  '?' for help, TAB to complete, 'exit' to leave.")
     return sh.repl()
 
 

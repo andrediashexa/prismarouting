@@ -294,7 +294,7 @@ bpa_log_tcp_service (f64 now)
        * SO_ERROR igual a zero NAO significa conectado: durante o handshake
        * ele tambem e zero. Sem esperar POLLOUT, o exportador se declarava
        * conectado com o handshake em curso e todo send devolvia EAGAIN para
-       * sempre - com o "show" dizendo "conectado" e nada saindo.
+       * sempre - com o "show" dizendo "connected" e nada saindo.
        */
       if (poll (&pfd, 1, 0) <= 0)
 	{

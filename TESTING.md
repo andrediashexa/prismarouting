@@ -67,6 +67,7 @@ sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
 sh tools/lab.sh vty            # the VTY configuring routing and CGNAT
 sh tools/lab.sh api            # binary API
+sh tools/lab.sh commit         # candidate, commit, rollback
 sh tools/lab.sh audit          # dated configuration trail
 ```
 
@@ -145,8 +146,27 @@ hexarouting# show cgnat ?
 ```
 
 CGNAT commands go to the VPP plugin; anything else is forwarded to FRR's
-`vtysh` with the block context preserved. `show running-config` reads the
-configuration from the **dataplane**, not from shell memory.
+`vtysh`. `show running-config` reads the configuration from the **dataplane**,
+not from shell memory.
+
+Configuration follows the Juniper model — edits build a candidate and reach the
+device only on `commit`:
+
+```
+hexarouting> configure
+hexarouting# [edit] cgnat pool alpha
+hexarouting# [edit cgnat pool] inside 100.64.0.0/22
+hexarouting# [edit cgnat pool] exit
+hexarouting# [edit] show configuration compare
+hexarouting# [edit] commit check
+hexarouting# [edit] commit comment "first pool"
+hexarouting# [edit] rollback 1
+hexarouting# [edit] commit
+```
+
+`commit confirmed <minutes>` applies the change and rolls it back
+automatically unless confirmed — for the change that might cut your own
+access.
 
 ## 4. Appliance — the ISO
 
@@ -157,7 +177,7 @@ make test-appliance            # generates startup.conf and starts VPP with it
 ```
 
 `boot-iso` exits non-zero when the self-test does not report
-`HexaRouting pronto`, and dumps the console to `boot-console.log` on failure.
+`HexaRouting ready`, and dumps the console to `boot-console.log` on failure.
 
 Verified requirements: **4 GB RAM** and a CPU with **SSE4.2**. Below either,
 VPP is killed by the OOM killer or by SIGILL, and the self-test says so first.

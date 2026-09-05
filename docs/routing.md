@@ -132,6 +132,63 @@ would mean maintaining a `vtysh` fork for the life of the product, reapplied on
 every FRR release. Forwarding delivers the same unified
 `show running-config` without that permanent cost.
 
+### Configuration model: candidate, commit, rollback
+
+Configuration follows the Juniper model. Statements typed in configuration
+mode edit a **candidate**; the device is untouched until `commit`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Operational
+    Operational --> Candidate: configure
+    Candidate --> Candidate: edit statements
+    Candidate --> Candidate: show configuration compare
+    Candidate --> Validated: commit check
+    Validated --> Running: commit
+    Candidate --> Running: commit
+    Running --> Candidate: rollback N
+    Running --> Reverted: commit confirmed expires
+    Reverted --> Running
+```
+
+| Command | Effect |
+|---------|--------|
+| `configure` | Load the running configuration into a candidate |
+| `show configuration compare` | Unified diff, running → candidate |
+| `commit check` | Validate without applying |
+| `commit` | Apply, and store a new revision |
+| `commit comment "<text>"` | Same, with a note recorded against the revision |
+| `commit confirmed <min>` | Apply, and roll back automatically unless confirmed |
+| `rollback <0-19>` | Load a committed revision into the candidate |
+| `show rollback` | List revisions with timestamp and comment |
+
+Requirements:
+
+* Edits **MUST NOT** reach the dataplane before `commit`.
+* `commit` **MUST** validate before applying, and **MUST** restore the previous
+  state if application fails halfway.
+* CGNAT **MUST** be applied before routing. A routing change can cost
+  reachability, and doing it last keeps the half-configured window short.
+* Pools are replaced whole rather than edited in place: the device takes a pool
+  definition in a single command, and a partial edit would leave an invalid
+  pool between the two halves of the change.
+* `rollback 0` returns the candidate to the running configuration, discarding
+  uncommitted edits — the same meaning JunOS gives it.
+
+`commit confirmed` exists for the change that cuts your own access. If the
+operator cannot type `commit` again, the box returns on its own.
+
+### Rolling back routing, not just CGNAT
+
+A rollback that restored CGNAT and left routing untouched would leave the box
+in a state that never existed. Routing is therefore part of the same
+configuration document, and rollback converges FRR onto the revision using
+`frr-reload.py`, which computes the delta.
+
+* Without `frr-reload.py`, a rollback could only add statements, never remove
+  them — and a rollback that cannot remove is not a rollback. Its absence
+  **MUST** be reported rather than silently degrading to a partial restore.
+
 ### The dataplane is the source of truth
 
 Each `hexash -c …` is a new process, so in-memory state does not survive
@@ -167,6 +224,9 @@ release and start suggesting commands that no longer exist.
 
 * The dataplane error check is textual, because `vppctl` returns 0 even on
   failure. Migrating `hexash` to the binary API **SHOULD** replace it.
+* `commit check` validates the routing half through `frr-reload.py --test` and
+  the CGNAT half structurally. It does **not** dry-run pool creation on the
+  device, because the device offers no dry-run for it.
 * `hexash` is written in Python. It is an interactive control-plane shell,
   outside any packet path; C would take three times the code for the same
   result.
@@ -185,5 +245,6 @@ happens to carry.
       (`lab/routing.sh`)
 - [x] Pool validated against local addresses, both directions
 - [x] `hexash` with completion and contextual help
+- [x] Candidate/commit/rollback covering CGNAT and routing
 - [ ] MTU as an explicit interface parameter in the VTY
 - [ ] Migrate configuration writes to the binary API

@@ -36,7 +36,7 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   priv.as_u32 = clib_host_to_net_u32 (t->ip_priv);
 
   if (!t->matched)
-    return format (s, "BPA out2in %U:%u proto %U sem sessao",
+    return format (s, "BPA out2in %U:%u proto %U no session",
 		   format_ip4_address, &pub, t->port_pub, format_bpa_proto,
 		   t->proto);
 
@@ -46,15 +46,15 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
 }
 
 #define foreach_bpa_out2in_error                                              \
-  _ (TRANSLATED, "pacotes traduzidos")                                        \
-  _ (NOT_OURS, "destino fora dos pools publicos")                             \
-  _ (NO_SESSION, "sem sessao para o destino")                                 \
-  _ (UNSUPPORTED, "protocolo nao traduzido")                                  \
-  _ (OUT_OF_BLOCK, "porta fora de qualquer bloco")                            \
-  _ (BLOCK_FREE, "bloco nao alocado a nenhum assinante")                      \
-  _ (ICMP_ERROR, "erros ICMP traduzidos")                                     \
-  _ (ICMP_MALFORMED, "erro ICMP truncado ou malformado")                      \
-  _ (TRUNCATED, "pacote truncado")
+  _ (TRANSLATED, "packets translated")                                        \
+  _ (NOT_OURS, "destination outside public pools")                             \
+  _ (NO_SESSION, "no session for destination")                                 \
+  _ (UNSUPPORTED, "unsupported protocol")                                  \
+  _ (OUT_OF_BLOCK, "port outside every block")                            \
+  _ (BLOCK_FREE, "block not allocated to any subscriber")                      \
+  _ (ICMP_ERROR, "ICMP errors translated")                                     \
+  _ (ICMP_MALFORMED, "truncated or malformed ICMP error")                      \
+  _ (TRUNCATED, "truncated packet")
 
 typedef enum
 {

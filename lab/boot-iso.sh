@@ -44,12 +44,12 @@ sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log > /tmp/clean.log
 cp /tmp/clean.log "${LOGCOPY:-/src/boot-console.log}" 2>/dev/null || true
 
 sed -n '/autoteste de boot/,/=====$/p' /tmp/clean.log | head -40
-if grep -q "HexaRouting pronto" /tmp/clean.log; then
+if grep -q "HexaRouting ready" /tmp/clean.log; then
   exit 0
 fi
 
 echo
-echo "=========== AUTOTESTE NAO REPORTOU PRONTO ==========="
+echo "=========== SELF-TEST DID NOT REPORT READY ==========="
 echo "--- o autoteste chegou a rodar? ---"
 grep -c "autoteste de boot" /tmp/clean.log | sed 's/^/  ocorrencias: /'
 echo "--- servicos ---"

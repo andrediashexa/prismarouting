@@ -75,15 +75,15 @@ bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
   if (fd < 0)
     {
       vlib_log_err (bm->log_class,
-		    "nao consegui abrir a trilha de configuracao em %v: a "
-		    "prova do modo deterministico depende dela",
+		    "cannot open the configuration trail at %v: the proof for "
+		    "deterministic mode depends on it",
 		    bm->audit_path);
       goto done;
     }
 
   line = format (line, "\n");
   if (write (fd, line, vec_len (line)) != (ssize_t) vec_len (line))
-    vlib_log_err (bm->log_class, "escrita incompleta na trilha de configuracao");
+    vlib_log_err (bm->log_class, "incomplete write to the configuration trail");
   else
     fsync (fd); /* compliance: nao pode ficar so no cache */
   close (fd);
@@ -103,11 +103,11 @@ bpa_show_history_command_fn (vlib_main_t *vm, unformat_input_t *input,
   fd = open ((char *) bm->audit_path, O_RDONLY);
   if (fd < 0)
     {
-      vlib_cli_output (vm, "nenhuma trilha em %v", bm->audit_path);
+      vlib_cli_output (vm, "no trail at %v", bm->audit_path);
       return 0;
     }
 
-  vlib_cli_output (vm, "trilha de configuracao: %v", bm->audit_path);
+  vlib_cli_output (vm, "configuration trail: %v", bm->audit_path);
   while ((n = read (fd, buf, sizeof (buf) - 1)) > 0)
     {
       buf[n] = 0;

@@ -37,18 +37,18 @@ format_bpa_handoff_trace (u8 *s, va_list *args)
   bpa_handoff_trace_t *t = va_arg (*args, bpa_handoff_trace_t *);
 
   if (!t->matched)
-    return format (s, "BPA handoff: sem assinante, fica na thread %u",
+    return format (s, "BPA handoff: no subscriber, staying on thread %u",
 		   t->from_thread);
 
-  return format (s, "BPA handoff: assinante %u, thread %u -> %u", t->sub_idx,
+  return format (s, "BPA handoff: subscriber %u, thread %u -> %u", t->sub_idx,
 		 t->from_thread, t->owner);
 }
 
 #define foreach_bpa_handoff_error                                             \
-  _ (HANDED_OFF, "pacotes entregues a outro worker")                          \
-  _ (SAME_WORKER, "pacotes ja no worker dono")                                \
-  _ (NO_OWNER, "pacotes sem assinante identificavel")                         \
-  _ (CONGESTED, "pacotes descartados por congestionamento")
+  _ (HANDED_OFF, "packets handed to another worker")                          \
+  _ (SAME_WORKER, "packets already on owning worker")                                \
+  _ (NO_OWNER, "packets with no identifiable subscriber")                         \
+  _ (CONGESTED, "packets dropped by congestion")
 
 typedef enum
 {

@@ -20,8 +20,8 @@ bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers)
 
   if (n == 0)
     return clib_error_return (
-      0, "pool '%v': capacidade %u nao alcanca o worker %u; reduza o numero "
-	 "de workers ou aumente o pool",
+      0, "pool '%v': capacity %u does not reach worker %u; reduce the worker "
+	 "count or enlarge the pool",
       p->name, p->capacity, worker);
 
   d->n_local = n;
