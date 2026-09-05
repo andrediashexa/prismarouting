@@ -544,8 +544,37 @@ class Shell:
 
     # ---------------------------------------------------------- modes
 
+    def start_shell(self):
+        """
+        Hidden escape to a real shell.
+
+        Deliberately absent from TREE, so neither completion nor `?` offers it.
+        Hidden, not restricted: anyone who can log in can run it, and the
+        authorization boundary is roles in the VTY, not obscurity. It exists
+        because recovery, tcpdump and reading a log the VTY does not expose all
+        need a shell, and an appliance that makes those impossible gets one
+        opened permanently by the first operator who needs one.
+
+        Spawned as a child rather than exec'd: leaving the shell has to come
+        back to the VTY, not log the operator out.
+        """
+        shell = os.environ.get("HEXA_SHELL") or "/bin/bash"
+        if not os.path.exists(shell):
+            shell = "/bin/sh"
+        print(f"entering {shell}; type 'exit' to return to the VTY")
+        try:
+            subprocess.call([shell, "-i"])
+        except OSError as e:
+            self.err(f"cannot start {shell}: {e}")
+            return
+        print("back in the HexaRouting VTY")
+
     def do_operational(self, line):
         w = line.split()
+        # Checked before the command tree, so it works without appearing in it.
+        if w[:2] == ["start", "shell"]:
+            self.start_shell()
+            return True
         if w[0] in ("configure", "conf"):
             self.candidate = self.running_config()
             self.mode = "config"
@@ -568,6 +597,9 @@ class Shell:
     def do_config(self, line):
         w = line.split()
 
+        if w[:2] == ["start", "shell"]:
+            self.start_shell()
+            return True
         if w[0] == "commit":
             self.do_commit(w[1:])
             return True
@@ -819,6 +851,13 @@ class Shell:
                     self.display_matches)
             except AttributeError:
                 pass
+        # Shown only on a terminal: piping commands in must not have a banner
+        # prepended to the output, or every script that parses it breaks.
+        if sys.stdin.isatty():
+            print(f"HexaRouting VTY {hexarouting_version()}")
+            print("'?' for help, TAB to complete, 'configure' to edit, "
+                  "'exit' to leave.")
+            print()
         while True:
             try:
                 line = input(self.prompt())
@@ -849,7 +888,6 @@ def main():
             sh.feed(c)
         return 1 if sh.failed else 0
 
-    print("HexaRouting VTY.  '?' for help, TAB to complete, 'exit' to leave.")
     return sh.repl()
 
 

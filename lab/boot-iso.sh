@@ -62,13 +62,24 @@ sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
 # prints the version line and carries on without it. Demanding both stops a
 # build that lost the stamp from passing green.
 if grep -q "HexaRouting ready" /tmp/clean.log; then
-  if grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
+  if ! grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
+    echo
+    echo "=========== READY, BUT NO VERSION STAMP ==========="
+    grep -i "version" /tmp/clean.log | tail -5 | sed 's/^/  /'
+    echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
+    exit 1
+  fi
+  # Landing in the VTY is the point of the login shell. A box that boots to a
+  # bash prompt has the CGNAT running and the front door wrong, and nothing
+  # else in the boot log would say so.
+  if grep -q "hexarouting>" /tmp/clean.log; then
     exit 0
   fi
   echo
-  echo "=========== READY, BUT NO VERSION STAMP ==========="
-  grep -i "version" /tmp/clean.log | tail -5 | sed 's/^/  /'
-  echo "--- console completo em ${LOGCOPY:-/src/boot-console.log} ---"
+  echo "=========== READY, BUT DID NOT LAND IN THE VTY ==========="
+  echo "--- last 15 console lines ---"
+  tail -15 /tmp/clean.log | sed 's/^/  /'
+  echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
   exit 1
 fi
 

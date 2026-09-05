@@ -92,6 +92,20 @@ check(not o and hint is None,
       f"should admit it does not know, got options={o} hint={hint!r}")
 print("  admits that from there on FRR is the one that knows")
 
+print("\n=== 'start shell' is hidden but reachable ===")
+# Hidden means: absent from completion and from '?', at every level. If it
+# ever shows up in the tree, the reason it is hidden is gone.
+for mode, line in (("operational", ""), ("config", ""), ("pool", ""),
+                   ("operational", "start "), ("config", "start ")):
+    o, hint, _ = opts(mode, line)
+    check("start" not in o and "shell" not in o,
+          f"'start shell' leaked into completion for {mode!r} {line!r}: {sorted(o)}")
+check(hasattr(hexash.Shell, "start_shell"), "the escape must still exist")
+src = open(hexash.__file__).read()
+check('["start", "shell"]' in src,
+      "the escape must be dispatched before the command tree")
+print("  absent from completion and from '?', still dispatched")
+
 print("\n=== show version ===")
 o, _, _ = opts("operational", "show ")
 check("version" in o, f"'version' should be under show: {sorted(o)}")

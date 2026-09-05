@@ -35,6 +35,25 @@ for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.servi
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 
+say "login shell"
+install -D -m 0755 "$REPO/appliance/hexash-login" "$DESTDIR/usr/bin/hexash-login"
+# Opt-in on purpose. On an existing Debian the machine may have other jobs, and
+# silently replacing root's login shell is hostile - the operator would discover
+# it at the worst moment, on the next login. The ISO sets HEXA_VTY_LOGIN=1.
+if [ "${HEXA_VTY_LOGIN:-0}" = 1 ]; then
+  grep -qx /usr/bin/hexash-login "$DESTDIR/etc/shells" 2>/dev/null || \
+    echo /usr/bin/hexash-login >> "$DESTDIR/etc/shells"
+  if [ -n "$DESTDIR" ]; then
+    sed -i 's|^root:\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):.*|root:\1:\2:\3:\4:\5:/usr/bin/hexash-login|' \
+      "$DESTDIR/etc/passwd"
+  else
+    chsh -s /usr/bin/hexash-login root
+  fi
+  say "  root logs into the VTY; 'start shell' escapes, 'hexash=off' bypasses"
+else
+  say "  not changing any login shell (set HEXA_VTY_LOGIN=1 to land in the VTY)"
+fi
+
 say "version stamp"
 # The box has to be able to state its own version: the tag identifies the
 # release only to whoever has the repository open, and that is not the person

@@ -82,8 +82,25 @@ if [ -z "${HEXA_VERSION_STAMP:-}" ]; then
   HEXA_VERSION_STAMP=$(sh "$REPO/tools/version-stamp.sh" "$REPO")
 fi
 say "version: $HEXA_VERSION_STAMP"
-chroot "$ROOT" /bin/sh -c "cd /src && HEXA_VERSION_STAMP='$HEXA_VERSION_STAMP' sh appliance/install.sh"
+chroot "$ROOT" /bin/sh -c "cd /src && HEXA_VERSION_STAMP='$HEXA_VERSION_STAMP' HEXA_VTY_LOGIN=1 sh appliance/install.sh"
 rm -rf "$ROOT/src"
+
+# Autologin on the console, for the LIVE image only. A racked appliance is
+# reached by serial console or IPMI, and a live lab image that stops at a login
+# prompt does not show what it is. On an INSTALLED box this would mean physical
+# or IPMI access equals full access with no password, which is a decision for
+# the operator, not a default - so install.sh never does this.
+say "console autologin (live image only)"
+for tty in ttyS0 tty1; do
+  d="$ROOT/etc/systemd/system/serial-getty@$tty.service.d"
+  [ "$tty" = tty1 ] && d="$ROOT/etc/systemd/system/getty@$tty.service.d"
+  mkdir -p "$d"
+  cat > "$d/autologin.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear %I \$TERM
+EOF
+done
 
 say "box identity"
 echo hexarouting > "$ROOT/etc/hostname"
@@ -112,8 +129,12 @@ menuentry "HexaRouting" {
     linux /live/vmlinuz boot=live components quiet
     initrd /live/initrd
 }
-menuentry "HexaRouting (modo de recuperacao)" {
-    linux /live/vmlinuz boot=live components single
+menuentry "HexaRouting (shell instead of the VTY)" {
+    linux /live/vmlinuz boot=live components hexash=off
+    initrd /live/initrd
+}
+menuentry "HexaRouting (recovery: single user, shell)" {
+    linux /live/vmlinuz boot=live components single hexash=off
     initrd /live/initrd
 }
 EOF
