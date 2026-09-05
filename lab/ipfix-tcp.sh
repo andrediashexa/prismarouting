@@ -23,6 +23,11 @@ vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up
+# O exportador TCP usa socket do kernel, nao o dataplane do VPP: o coletor
+# tem que ser alcancavel pela pilha do Linux. Numa caixa real quem da esse
+# caminho e o linux_cp, espelhando a interface como TAP.
+vppctl lcp create host-veth-vpp host-if vppmgmt0
+vppctl set interface mtu 1500 host-veth-vpp
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
 PEERMAC=$(ip netns exec peer cat /sys/class/net/veth-out/address)
 vppctl set ip neighbor host-veth-vpp 10.0.0.2 $PEERMAC
@@ -51,13 +56,14 @@ burst() {
 
 echo "=========== FASE 1: coletor no ar ==========="
 ip netns exec peer python3 /src/tools/ipfix_collector.py tcp 4740 12 > /tmp/c1.out 2>&1 &
+C1=$!
 sleep 3
 burst 5
 sleep 3
 vppctl show bpa logging | grep -A5 "transporte TCP" | sed 's/^/  /'
-wait
-echo "  --- recebido ---"
-grep -E "ALOCACAO|RESUMO" /tmp/c1.out | sed 's/^/    /'
+wait $C1
+echo "  --- recebido (saida crua do coletor) ---"
+cat /tmp/c1.out | sed 's/^/    /'
 
 echo
 echo "=========== FASE 2: coletor DERRUBADO, eventos continuam ==========="
@@ -71,9 +77,9 @@ ls -l /var/log/hexarouting/ipfix-spill.bin 2>/dev/null | sed 's/^/  /' || echo "
 echo
 echo "=========== FASE 3: coletor volta ==========="
 ip netns exec peer python3 /src/tools/ipfix_collector.py tcp 4740 15 > /tmp/c2.out 2>&1 &
-sleep 12
-echo "  --- recebido apos a reconexao ---"
-grep -E "ALOCACAO|LIBERACAO|RESUMO" /tmp/c2.out | sed 's/^/    /'
-wait
+C2=$!
+wait $C2
+echo "  --- recebido apos a reconexao (saida crua) ---"
+cat /tmp/c2.out | sed 's/^/    /'
 echo
 vppctl show bpa logging | grep -A5 "transporte TCP" | sed 's/^/  /'

@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -82,10 +83,19 @@ bpa_tcp_msg_end (u8 **b, u32 at)
   clib_memcpy_fast (*b + at + 2, &len, 2);
 }
 
+/*
+ * Monta a mensagem de template e a coloca NA FRENTE do buffer.
+ *
+ * Prepender e obrigatorio numa conexao nova: o que estava represado durante a
+ * queda ja esta no buffer, e sem o template na frente o coletor descarta tudo
+ * - foi o que o teste mostrou, com o exportador dizendo "270 bytes enviados"
+ * e o coletor contando zero registro.
+ */
 static void
-bpa_tcp_append_template (f64 now)
+bpa_tcp_prepend_template (f64 now)
 {
-  u8 **b = &bpa_log_tcp.outbuf;
+  u8 *tmp = 0;
+  u8 **b = &tmp;
   u32 at = bpa_tcp_msg_start (b, now);
   u32 set_at = vec_len (*b);
   u32 i;
@@ -105,7 +115,13 @@ bpa_tcp_append_template (f64 now)
     clib_memcpy_fast (*b + set_at + 2, &slen, 2);
   }
   bpa_tcp_msg_end (b, at);
+
+  vec_insert (bpa_log_tcp.outbuf, vec_len (tmp), 0);
+  clib_memcpy_fast (bpa_log_tcp.outbuf, tmp, vec_len (tmp));
+  vec_free (tmp);
+
   bpa_log_tcp.last_template = now;
+  bpa_log_tcp.need_template = 0;
 }
 
 void
@@ -181,8 +197,11 @@ bpa_tcp_try_connect (f64 now)
       bpa_log_tcp.connected = (errno == EINPROGRESS) ? 0 : 1;
       bpa_log_tcp.pending_connect = (errno == EINPROGRESS) ? 1 : 0;
       bpa_log_tcp.n_connects++;
-      /* toda conexao nova comeca pelo template: sem ele o coletor descarta */
-      bpa_log_tcp.last_template = 0;
+      /* toda conexao nova comeca pelo template: sem ele o coletor descarta.
+       * Flag explicita, e nao aritmetica de relogio: vlib_time_now() e
+       * monotonico e comeca em zero, entao "now - 0 > intervalo" e falso
+       * durante o primeiro minuto de vida do VPP - e o template nunca saia. */
+      bpa_log_tcp.need_template = 1;
       return;
     }
   close (fd);
@@ -256,6 +275,8 @@ bpa_log_tcp_service (f64 now)
   if (!bpa_log_tcp.enabled)
     return;
 
+  bpa_log_tcp.n_service++;
+
   if (bpa_log_tcp.fd < 0)
     {
       bpa_tcp_try_connect (now);
@@ -265,26 +286,50 @@ bpa_log_tcp_service (f64 now)
 
   if (bpa_log_tcp.pending_connect)
     {
+      struct pollfd pfd = { .fd = bpa_log_tcp.fd, .events = POLLOUT };
       int err = 0;
       socklen_t l = sizeof (err);
+
+      /*
+       * SO_ERROR igual a zero NAO significa conectado: durante o handshake
+       * ele tambem e zero. Sem esperar POLLOUT, o exportador se declarava
+       * conectado com o handshake em curso e todo send devolvia EAGAIN para
+       * sempre - com o "show" dizendo "conectado" e nada saindo.
+       */
+      if (poll (&pfd, 1, 0) <= 0)
+	{
+	  if (now > bpa_log_tcp.next_attempt)
+	    {
+	      bpa_tcp_disconnect (); /* handshake nao completou: recomeca */
+	      bpa_tcp_spill ();
+	    }
+	  return;
+	}
+
       if (getsockopt (bpa_log_tcp.fd, SOL_SOCKET, SO_ERROR, &err, &l) || err)
 	{
+	  bpa_log_tcp.last_errno = err;
 	  bpa_tcp_disconnect ();
 	  bpa_tcp_spill ();
 	  return;
 	}
+
       bpa_log_tcp.pending_connect = 0;
       bpa_log_tcp.connected = 1;
       bpa_tcp_replay_spill ();
     }
 
-  if (now - bpa_log_tcp.last_template > BPA_TCP_TEMPLATE_IVL)
-    bpa_tcp_append_template (now);
+  if (bpa_log_tcp.need_template
+      || now - bpa_log_tcp.last_template > BPA_TCP_TEMPLATE_IVL)
+    bpa_tcp_prepend_template (now);
 
   while (vec_len (bpa_log_tcp.outbuf))
     {
+      bpa_log_tcp.n_send_calls++;
       n = send (bpa_log_tcp.fd, bpa_log_tcp.outbuf,
 		vec_len (bpa_log_tcp.outbuf), MSG_NOSIGNAL);
+      if (n < 0)
+	bpa_log_tcp.last_errno = errno;
       if (n > 0)
 	{
 	  vec_delete (bpa_log_tcp.outbuf, n, 0);

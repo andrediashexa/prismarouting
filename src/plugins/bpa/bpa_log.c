@@ -99,7 +99,9 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
 {
   bpa_log_event_t *e;
 
-  if (PREDICT_FALSE (!bpa_log_main.enabled))
+  /* Basta um transporte habilitado: com so o TCP ligado, a versao anterior
+   * descartava todo evento de alocacao aqui, em silencio. */
+  if (PREDICT_FALSE (!bpa_log_main.enabled && !bpa_log_tcp.enabled))
     return;
 
   if (PREDICT_FALSE (vec_len (pt->log_queue) >= BPA_LOG_QUEUE_MAX))

@@ -532,7 +532,7 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   if (bpa_log_tcp.enabled)
     {
-      vlib_cli_output (vm, "transporte TCP (nao perde registro)");
+      vlib_cli_output (vm, "transporte TCP (sobrevive a queda do coletor)");
       vlib_cli_output (vm, "  coletor     %U:%u  %s", format_ip4_address,
 		       &bpa_log_tcp.collector, bpa_log_tcp.port,
 		       bpa_log_tcp.connected	     ? "conectado"
@@ -548,7 +548,10 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       "%Lu descartados",
 		       bpa_log_tcp.n_spilled, bpa_log_tcp.n_replayed,
 		       bpa_log_tcp.n_dropped);
-      vlib_cli_output (vm, "  conexoes    %Lu", bpa_log_tcp.n_connects);
+      vlib_cli_output (vm,
+		       "  conexoes    %Lu, service %Lu, send %Lu, errno %d",
+		       bpa_log_tcp.n_connects, bpa_log_tcp.n_service,
+		       bpa_log_tcp.n_send_calls, bpa_log_tcp.last_errno);
     }
   else
     vlib_cli_output (vm, "transporte TCP: desabilitado");

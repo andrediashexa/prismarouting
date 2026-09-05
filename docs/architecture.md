@@ -242,5 +242,5 @@ para desenvolvimento e teste funcional, nao para carga.
       instalador e ISO - ver [appliance.md](appliance.md)
 - [x] Fragmentacao, via reassembly virtual raso
 - [ ] HA / failover entre caixas
-- [ ] Transporte TCP para o log IPFIX
+- [x] Transporte TCP para o log IPFIX, com transbordo em disco
 - [x] Trilha de configuracao datada (`show bpa pool history`)

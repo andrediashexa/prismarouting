@@ -80,8 +80,11 @@ typedef struct
   u8 *spill_path;
   f64 next_attempt;
   f64 last_template;
+  u8 need_template;
   u32 seq;
   u64 n_records, n_sent, n_spilled, n_replayed, n_dropped, n_connects;
+  u64 n_service, n_send_calls;
+  int last_errno;
 } bpa_log_tcp_t;
 
 extern bpa_log_tcp_t bpa_log_tcp;

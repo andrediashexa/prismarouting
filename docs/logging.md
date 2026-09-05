@@ -90,7 +90,37 @@ Premissas explicitas, para ordem de grandeza e nao precisao:
 Guarda de 1 ano no dinamico fica na casa de dezenas de GB, nao de dezenas
 de TB. E o argumento comercial do BPA.
 
-## Transporte
+## Transporte: TCP implementado
+
+`bpa logging tcp <coletor> [port <n>]`. A infraestrutura do VPP so fala UDP,
+entao a mensagem IPFIX e montada a mao - o formato e simples e nao vale
+torcer o exportador de UDP para caber.
+
+Decisoes:
+
+- **socket nao bloqueante**: coletor lento nao pode travar a thread principal
+- **transbordo em disco** quando o coletor cai; se nem isso for possivel, o
+  descarte e **contado**, nunca silencioso
+- **o transbordo e prepen­dido** na volta, nao anexado: uma alocacao tem que
+  chegar antes da sua liberacao, ou o coletor monta um historico impossivel
+- **toda conexao nova comeca pelo template**, tambem prependido: o que estava
+  represado ja esta no buffer, e sem o template na frente o coletor descarta
+
+### O limite honesto do TCP
+
+Verificado em `lab/ipfix-tcp.sh`: com o coletor derrubado no meio, os
+registros ficam represados e chegam decodificados na reconexao. Mas TCP nao
+da entrega garantida de ponta a ponta - bytes aceitos pelo buffer do socket
+contam como enviados e podem se perder se a conexao morrer em seguida. No
+teste, dois registros emitidos no instante da queda ficaram nessa faixa.
+
+Garantia real exigiria confirmacao no nivel de aplicacao, que o IPFIX sobre
+TCP nao tem. O que o TCP entrega e muito melhor que UDP - nada de perda
+silenciosa sob congestionamento, e a queda do coletor deixa de custar
+registro - mas nao e absoluto, e o `show bpa logging` mostra os contadores
+para que a diferenca seja visivel em vez de suposta.
+
+### Alternativas da norma
 
 A RFC 7011 admite SCTP, TCP e UDP.
 
@@ -100,9 +130,8 @@ A RFC 7011 admite SCTP, TCP e UDP.
 - **TCP**: entrega confiavel, ao custo de bloquear quando o coletor cai.
 - **SCTP**: o que a norma prefere, com pouca adocao pratica no Brasil.
 
-Proposta: TCP como padrao para o log de alocacao, com buffer em disco local
-quando o coletor estiver inacessivel. Log de compliance nao pode ter perda
-silenciosa. UDP fica disponivel para quem so quer telemetria.
+Implementado: TCP com buffer em disco. UDP fica disponivel para quem so quer
+telemetria, e os dois podem estar ligados ao mesmo tempo.
 
 ## Trilha de configuracao: implementada
 
@@ -186,8 +215,6 @@ foi assim que a ordem virou visivel em vez de "sumiram registros".
 - [x] Fila por thread no dataplane, drenada pelo processo
 - [x] Teste de ponta a ponta com coletor decodificando (`lab/ipfix.sh`),
       conferindo que toda alocacao tem sua liberacao correspondente
-- [ ] Transporte TCP com buffer local; hoje so UDP, que perde registro sob
-      congestionamento - e perder um `natEvent 17` recria a lacuna descrita
-      acima
+- [x] Transporte TCP com buffer local e transbordo em disco
 - [ ] Trilha de configuracao append-only e `show bpa pool history`
 - [ ] Escolha de coletor por CLI propria, hoje herdada do exportador do VPP
