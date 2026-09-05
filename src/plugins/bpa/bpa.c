@@ -126,6 +126,8 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 
   vlib_worker_thread_barrier_release (bm->vlib_main);
 
+  bpa_audit ("add", p, 0);
+
   if (pool_index)
     *pool_index = p - bm->pools;
   return 0;
@@ -145,6 +147,7 @@ bpa_pool_del (u8 *name)
   vlib_worker_thread_barrier_sync (bm->vlib_main);
 
   p = pool_elt_at_index (bm->pools, q[0]);
+  bpa_audit ("del", p, 0);
   {
     u32 i;
     for (i = 0; i < vec_len (bm->per_thread); i++)
@@ -207,6 +210,8 @@ bpa_init (vlib_main_t *vm)
   bm->vnet_main = vnet_get_main ();
   bm->pool_by_name = hash_create_vec (0, sizeof (u8), sizeof (uword));
   bm->log_class = vlib_log_register_class ("bpa", 0);
+  bm->audit_path = format (0, "/var/log/hexarouting/config-history.log%c", 0);
+  vec_dec_len (bm->audit_path, 1);
 
   {
     ip4_main_t *im = &ip4_main;

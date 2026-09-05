@@ -104,15 +104,33 @@ Proposta: TCP como padrao para o log de alocacao, com buffer em disco local
 quando o coletor estiver inacessivel. Log de compliance nao pode ter perda
 silenciosa. UDP fica disponivel para quem so quer telemetria.
 
-## Trilha de configuracao (vale para os dois modos)
+## Trilha de configuracao: implementada
 
-No deterministico a configuracao **e** o log. Entao toda mudanca de pool
-precisa de registro persistente e datado: prefixos, `block_size`, faixa de
-portas, politica. Sem isso, uma consulta sobre uma data anterior a ultima
-mudanca de configuracao responde com a formula errada.
+No deterministico a configuracao **e** o log. Toda mudanca de pool vai para
+um arquivo append-only, datada em UTC, com a definicao completa:
 
-Formato proposto: um arquivo append-only assinado, com o mesmo carimbo de
-tempo UTC do IPFIX, mais um comando `show bpa pool history`.
+```
+2026-09-05T02:07:58Z add pool provedor-a inside 100.64.0.0+1024 \
+  outside 45.170.16.0+64 outside 200.150.0.0+256 block 512 \
+  ports 1024-65535 policy interleaved mode deterministic
+2026-09-05T02:08:00Z del pool provedor-a ...
+2026-09-05T02:08:01Z add pool provedor-a ... block 1024 ...
+```
+
+A pergunta que isso responde: *qual era o bloco do provedor-a na data do
+oficio?* Sem a trilha, a formula **atual** responderia com o bloco atual para
+uma data em que o pool usava outro - e apontaria o assinante errado com toda
+a confianca.
+
+O registro traz a definicao inteira, nao um diff, para poder ser lido sem
+depender de mais nada. Ha `fsync` a cada escrita: log de compliance nao pode
+ficar so no cache de pagina.
+
+Cada entrada tambem vai para o log do VPP. Um arquivo local sobrevive a um
+reboot, nao a uma perda de disco; quem leva a serio manda o log do VPP para
+syslog remoto, e ai a trilha sai da caixa.
+
+`show bpa pool history` le a trilha; `bpa audit-path` muda o caminho.
 
 ## Carimbo de tempo
 

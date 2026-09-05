@@ -219,4 +219,4 @@ para desenvolvimento e teste funcional, nao para carga.
       instalador e ISO - ver [appliance.md](appliance.md)
 - [ ] HA / failover entre caixas
 - [ ] Transporte TCP para o log IPFIX
-- [ ] Trilha de configuracao datada
+- [x] Trilha de configuracao datada (`show bpa pool history`)

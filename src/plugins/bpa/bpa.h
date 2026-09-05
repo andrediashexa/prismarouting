@@ -28,6 +28,7 @@ typedef struct
   bpa_divisor_t workers; /* spreads subscribers over the workers */
 
   vlib_log_class_t log_class; /* aparece em "show logging" */
+  u8 *audit_path;	      /* trilha de configuracao datada */
 
   u16 msg_id_base;
   vlib_main_t *vlib_main;
@@ -43,6 +44,8 @@ extern vlib_node_registration_t bpa_out2in_handoff_node;
 /* Enfileira um evento de log do dataplane. Sem lock: a fila e da thread. */
 void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
 			  u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id);
+
+void bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only);
 
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
