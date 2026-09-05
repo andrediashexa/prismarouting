@@ -69,3 +69,12 @@ while off + 16 <= len(d):
         if src != "200.150.0.17": ok = False; print("  FALHA")
 print(f"\n{'OS DOIS FRAGMENTOS TRADUZIDOS' if ok and n==2 else f'PROBLEMA: {n} fragmentos'}")
 EOF
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+TR=$(vppctl show trace)
+expect_in "the non-first fragment was recognised" "[non-first fragment]" "$TR"
+expect_not_in "it did not open a phantom session" "12346 -> " "$TR"
+expect_in "reassembly feature is on the interface" "ip4-sv-reassembly-feature" "$(vppctl show interface features pg0)"
+verdict

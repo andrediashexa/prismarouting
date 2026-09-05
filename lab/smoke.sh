@@ -19,3 +19,12 @@ vppctl bpa pool provedor-b inside 100.64.0.0/16 \
 vppctl bpa pool provedor-c inside 100.64.0.0/16 inside 10.50.0.0/16 \
   outside 191.240.8.0/23 outside 191.240.10.0/24 block 1024
 vppctl show bpa pool
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+P=$(vppctl show bpa pool)
+expect_in "provedor-a was created" "pool provedor-a" "$P"
+expect_in "adjacent prefixes were merged" "191.240.8.0+768" "$P"
+expect_in "fragmented pool kept three ranges" "3 range(s)" "$P"
+verdict

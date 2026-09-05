@@ -93,3 +93,15 @@ echo
 echo "=========== agora o 4o assinante consegue ==========="
 echo "  100.64.0.12:"
 send 12 5
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+B=$(vppctl show bpa blocks)
+expect_in "blocks were allocated" "allocations" "$B"
+expect_in "exhaustion was counted, not silent" "1 refusals" "$B"
+# The hold-down is proved by the release counter, not by an instantaneous
+# reading: the lab reallocates a block right after, so "0 in use" is true only
+# for a moment. Asserting a transient snapshot is how this check first failed.
+expect_in "hold-down released every block it took" "3 releases" "$B"
+verdict

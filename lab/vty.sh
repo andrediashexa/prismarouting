@@ -57,7 +57,10 @@ ip netns exec peer /usr/lib/frr/bgpd  -d -N peer -A 127.0.0.1 -f /etc/frr/peer/b
 sleep 2
 
 echo "=========== CGNAT pela VTY ==========="
-$HX -c "configure terminal" \
+# Under the candidate model nothing reaches the device until "commit".
+# This lab used to end at "exit", which now discards the candidate - the
+# check that caught it is the reason each lab states its own verdict.
+$HX -c "configure" \
     -c "cgnat pool provedor-a" \
     -c "inside 100.64.0.0/22" \
     -c "outside 200.150.0.0/24" \
@@ -68,19 +71,18 @@ $HX -c "configure terminal" \
     -c "exit" \
     -c "cgnat interface pg0 inside" \
     -c "cgnat timeout udp 300" \
-    -c "exit"
+    -c "commit"
 echo "  -- o dataplane recebeu?"
 vppctl show bpa pool | sed 's/^/    /'
 
 echo
 echo "=========== ROTEAMENTO pela MESMA VTY ==========="
-$HX -c "configure terminal" \
+$HX -c "configure" \
     -c "router bgp 65000" \
     -c "bgp router-id 10.0.0.1" \
     -c "no bgp ebgp-requires-policy" \
     -c "neighbor 10.0.0.2 remote-as 65001" \
-    -c "exit" \
-    -c "exit"
+    -c "commit"
 echo "  -- o FRR recebeu?"
 vtysh -c "show run" 2>/dev/null | grep -A4 "router bgp" | sed 's/^/    /'
 
@@ -97,18 +99,18 @@ $HX -c "show running-config" 2>/dev/null | grep -vE "^(Building|Current|frr vers
 
 echo
 echo "=========== pool invalido tem que ser recusado e NAO entrar na config ==========="
-$HX -c "configure terminal" \
+$HX -c "configure" \
     -c "cgnat pool ruim" \
     -c "inside 100.64.0.0/22" \
     -c "outside 10.0.0.0/24" \
     -c "exit" \
-    -c "exit" 2>&1 | sed 's/^/  /'
+    -c "commit" 2>&1 | sed 's/^/  /'
 echo "  -- 'ruim' aparece na running-config? (nao deve)"
 $HX -c "show running-config" 2>/dev/null | grep -c "cgnat pool ruim" | sed 's/^/    ocorrencias: /'
 
 echo
 echo "=========== write memory e recarga ==========="
-$HX -c "write memory" 2>&1 | head -2 | sed 's/^/  /'
+$HX -c "save" 2>&1 | head -2 | sed 's/^/  /'
 echo "  -- arquivo gravado:"
 cat "$HEXA_CONFIG" | sed 's/^/    /'
 echo "  -- apagando o pool do dataplane e recarregando do arquivo"
@@ -116,3 +118,13 @@ vppctl bpa pool provedor-a del
 vppctl show bpa pool | head -1 | sed 's/^/    antes: /'
 $HX --load "$HEXA_CONFIG"
 vppctl show bpa pool | head -2 | sed 's/^/    depois: /'
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+R=$($HX -c "show running-config" 2>/dev/null)
+expect_in "CGNAT is in the running config" "cgnat pool" "$R"
+expect_in "routing is in the same running config" "router bgp 65000" "$R"
+expect_not_in "the refused pool stayed out" "cgnat pool ruim" "$R"
+expect "the BGP route reached the VPP FIB" sh -c "vppctl show ip fib 203.0.113.0/24 | grep -q '^203.0.113.0/24'"
+verdict

@@ -72,3 +72,12 @@ vppctl show trace | grep -E "BPA out2in" | sed 's/^/  /'
 echo
 echo "  pacotes sem sessao (deve ser 0):"
 vppctl show errors | grep -iE "sem sessao|bloco nao alocado" | sed 's/^/    /' || echo "    nenhum"
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+ERR=$(vppctl show errors)
+expect_not_in "every reply found its owning worker" "no session for destination" "$ERR"
+expect_not_in "no block was left unallocated on return" "block not allocated" "$ERR"
+expect_in "blocks came from both worker slices" "thread 2" "$(vppctl show bpa blocks)"
+verdict

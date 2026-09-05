@@ -48,3 +48,13 @@ echo "  data em que o pool ainda usava 512 - e apontaria o assinante errado."
 echo
 echo "=== tambem foi para o log do VPP (pode ir a syslog remoto) ==="
 vppctl show logging | grep -c "pool provedor" | sed 's/^/  linhas: /'
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+H=$(vppctl show bpa pool history)
+expect_in "an add was recorded" "add pool provedor-a" "$H"
+expect_in "a del was recorded" "del pool provedor-a" "$H"
+expect_in "entries are dated in UTC" "Z add" "$H"
+expect "the trail survives on disk" test -s /var/log/hexarouting/config-history.log
+verdict

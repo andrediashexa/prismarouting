@@ -83,3 +83,12 @@ echo "  --- recebido apos a reconexao (saida crua) ---"
 cat /tmp/c2.out | sed 's/^/    /'
 echo
 vppctl show bpa logging | grep -A5 "transporte TCP" | sed 's/^/  /'
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+C2=$(cat /tmp/c2.out)
+expect_in "records arrived after the collector came back" "LIBERACAO" "$C2"
+expect_in "the template was resent on reconnect" "TEMPLATE 256" "$C2"
+expect_not_in "nothing was left pending" "270 pendentes" "$(vppctl show bpa logging)"
+verdict

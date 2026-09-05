@@ -4,6 +4,7 @@
 # Proves the full cycle: edit a candidate, review the diff, validate, commit,
 # then roll back to the previous revision and confirm the device followed.
 set -u
+. /src/lab/verdict.sh
 mkdir -p /run/vpp /vpp_plugins /etc/hexarouting /var/run/frr /etc/frr
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
@@ -89,3 +90,10 @@ $HX -c "configure" -c "cgnat pool alpha" -c "block-size 500" -c "exit" \
     -c "commit check" 2>&1 | grep -vE "entering" | sed 's/^/  /'
 echo "  -- device untouched:"
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
+
+echo
+echo "=========== VERDICT ==========="
+R=$(vppctl show bpa pool)
+expect_in "rollback took the device back to the earlier block size" "512 ports" "$R"
+expect_in "two revisions are on record" "1 commit(s) ago" "$($HX -c 'show rollback' 2>&1)"
+verdict

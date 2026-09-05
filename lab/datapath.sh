@@ -100,3 +100,14 @@ vppctl packet-generator enable >/dev/null
 sleep 1
 echo "esperado: mesma porta 1536 devolvida ao pool e realocada"
 vppctl show trace | grep "BPA in2out" | sed 's/^/  /'
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+ERR=$(vppctl show errors)
+expect_in "packets were translated in both directions" "packets translated" "$ERR"
+expect_in "an unsolicited inbound packet was refused" "no session for destination" "$ERR"
+expect_in "sessions were created" "sessions created" "$ERR"
+# after expiry the port went back to the pool and was handed out again
+expect_in "the freed port was reallocated" "200.150.0.17:1536" "$(vppctl show trace)"
+verdict

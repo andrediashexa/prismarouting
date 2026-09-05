@@ -83,3 +83,10 @@ until vppctl show bpa session | grep -q "^total: 1 sessoes" || [ "$n" -ge 15 ]; 
 done
 echo "  apos ${n}s: $(vppctl show bpa session | tail -1)"
 echo "  (a sessao UDP do teste 1 permanece; a TCP saiu pelo RST)"
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+expect "the translated ICMP error passed every checksum" sh -c "python3 /src/lab/checkicmp.py /tmp/cap.pcap 200.150.0.17 100.64.0.5 12345 >/dev/null 2>&1"
+expect_in "RST released the port" "total: 1 sessions" "$(vppctl show bpa session)"
+verdict

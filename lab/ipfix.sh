@@ -103,3 +103,13 @@ grep "IP " /tmp/tcpdump.out 2>/dev/null | awk '{print $NF}' | sort | uniq -c | s
 echo
 echo "=========== O QUE O COLETOR RECEBEU E DECODIFICOU ==========="
 cat /tmp/collector.out
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+C=$(cat /tmp/collector.out)
+expect_in "the collector decoded the template" "TEMPLATE 256" "$C"
+expect_in "allocations arrived" "ALOCACAO" "$C"
+expect_in "de-allocations arrived" "LIBERACAO" "$C"
+expect_in "every allocation had its release" "Toda alocacao teve sua liberacao" "$C"
+verdict

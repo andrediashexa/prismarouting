@@ -49,3 +49,13 @@ echo "  o pool 'ruim' entrou? (nao deve)"
 vppctl show bpa pool | grep -c "pool ruim" | sed 's/^/    ocorrencias: /'
 echo "  e a razao detalhada foi para o log:"
 vppctl show logging 2>/dev/null | grep -i "block size" | tail -1 | sed 's/^/    /'
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+OK=$(vat2 -p /vat2_plugins bpa_pool_dump '{}' 2>&1)
+expect_in "the pool created through the API is listed" "via-api" "$OK"
+BAD=$(vat2 -p /vat2_plugins bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
+expect_not_in "an invalid pool returns an error code" '"retval":\t0' "$BAD"
+expect_not_in "and is not created" "pool z " "$(vppctl show bpa pool)"
+verdict

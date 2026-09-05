@@ -157,3 +157,12 @@ for pfx in 203.0.113.0/24 198.18.0.0/24 198.19.0.0/24; do
   printf '  %-16s ' "$pfx"
   vppctl show ip fib "$pfx" 2>/dev/null | grep -oE "ipv4 via [0-9.]+ [a-z0-9-]+" | head -1 || echo "AUSENTE"
 done
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+for pfx in 203.0.113.0/24 198.18.0.0/24 198.19.0.0/24; do
+  expect "$pfx reached the VPP FIB" sh -c "vppctl show ip fib $pfx | grep -q '^$pfx'"
+done
+expect "IS-IS adjacency is up" sh -c "vtysh -c 'show isis neighbor' 2>/dev/null | grep -qi up"
+verdict

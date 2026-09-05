@@ -49,3 +49,11 @@ ip route add 10.99.0.0/24 via 10.0.0.2 dev vppctl0 2>&1
 echo "rota no Linux:"; ip route show 10.99.0.0/24 | sed 's/^/  /'
 sleep 2
 echo "FIB do VPP:"; vppctl show ip fib 10.99.0.0/24 | grep -E "10.99|via|unicast" | head -6 | sed 's/^/  /'
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+expect "the TAP exists in Linux" ip link show vppctl0
+expect "lcp-sync propagated the address" sh -c "ip -4 addr show vppctl0 | grep -q 10.0.0.1"
+expect "linux_nl carried the route into the VPP FIB" sh -c "vppctl show ip fib 10.99.0.0/24 | grep -q '^10.99.0.0/24'"
+verdict

@@ -82,3 +82,12 @@ vppctl show trace | grep -E "BPA (handoff|out2in)" | sed 's/^/  /'
 echo
 echo "=== contadores ==="
 vppctl show errors | grep -iE "bpa-" | sed 's/^/  /'
+
+echo
+echo "=========== VERDICT ==========="
+. /src/lab/verdict.sh
+ERR=$(vppctl show errors)
+expect_in "in2out handed packets to other workers" "packets handed to another worker" "$ERR"
+expect_not_in "every reply found its session" "no session for destination" "$ERR"
+expect_in "out2in translated" "packets translated" "$ERR"
+verdict
