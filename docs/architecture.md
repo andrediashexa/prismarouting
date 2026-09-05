@@ -1,7 +1,9 @@
-# hxcgnat — arquitetura
+# HexaRouting — arquitetura
 
-CGNAT com BPA (Bloco de Portas Alocadas) sobre VPP/DPDK.
+Roteador em software com CGNAT BPA sobre VPP/DPDK, plano de controle em FRR.
 Alvo: 100 Gbps+, 200k+ assinantes, appliance completo.
+
+O plano de roteamento e da VTY esta em [routing.md](routing.md).
 
 ## Decisoes tomadas
 
@@ -12,6 +14,8 @@ Alvo: 100 Gbps+, 200k+ assinantes, appliance completo.
 | D3 | Politica de mapeamento padrao | `interleaved` | shift-only nas duas direcoes + menor blast radius de blacklist |
 | D4 | Sharding entre workers | handoff do VPP, por indice de assinante | garante que in2out e out2in do mesmo assinante caiam no mesmo worker |
 | D5 | Enderecamento do pool | conjunto de prefixos nao contiguos | e produto para varios provedores, e nenhum tem IPv4 num bloco unico alinhado |
+| D6 | Plano de controle | FRR sobre `linux_cp`/`linux_nl` | os dois plugins ja vem no VPP 26.06; FRR nao precisa saber que o VPP existe |
+| D7 | Configuracao | VTY unica, `hexad` como daemon do `vtysh` | operador de provedor espera `configure terminal` e `write memory` cobrindo roteamento e CGNAT juntos |
 
 ## D5: por que o pool nao pode ser um prefixo so
 
@@ -134,11 +138,20 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Tabela de sessao (bihash) por worker + expiracao com timeouts configuraveis
 - [x] Handoff entre workers, verificado com 2 workers (`lab/handoff.sh`)
 - [ ] Alocador dinamico de blocos + timers de bloco
+- [ ] **Roteamento: OSPF, IS-IS e BGP via FRR** - ver [routing.md](routing.md).
+      `linux_cp` espelha interface como TAP, `linux_nl` traz as rotas para a
+      FIB do VPP. IS-IS por ultimo: nao roda sobre IP, entao e ele que
+      valida o punt de quadro L2
+- [ ] **Validar pool contra endereco local** - se um pool publico contiver o
+      endereco de peering, o `bpa-out2in` traduz o proprio BGP e a sessao cai
+      sem explicacao. Recusar na criacao do pool e pular destino local no node
+- [ ] **VTY unica (`hexad`)** - daemon no estilo FRR registrado no `vtysh`,
+      para `show running-config` mostrar roteamento e CGNAT na mesma saida
 - [ ] **Exportacao de log BPA via IPFIX/NetFlow, so alocacoes** - ver
       [logging.md](logging.md). RFC 8158 `natEvent` 16 e 17. Depende do modo
       dinamico, que e quem gera os eventos. Liberacao (17) e obrigatoria:
       logar so alocacao faz uma consulta judicial apontar assinante errado
       na lacuna entre liberar e realocar
 - [ ] Trilha de configuracao append-only - e o "log" do modo deterministico
-- [ ] CLI e API binaria
+- [ ] API binaria do plugin, para a VTY e para automacao
 - [ ] Appliance: ISO, tuning de kernel, systemd, HA

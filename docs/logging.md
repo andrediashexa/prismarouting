@@ -34,7 +34,7 @@ valores de `natEvent` feitos exatamente para BPA:
 
 ### Template do registro (Tabela 21 da RFC 8158)
 
-| IE | Nome | Bits | Obrigatorio | Conteudo no hxcgnat |
+| IE | Nome | Bits | Obrigatorio | Conteudo no hexarouting |
 |---:|------|-----:|-------------|---------------------|
 | 323 | timeStamp | 64 | sim | instante do evento, UTC |
 | 230 | natEvent | 8 | sim | 16 ou 17 |

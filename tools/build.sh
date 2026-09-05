@@ -6,7 +6,7 @@
 set -e
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-IMAGE=${IMAGE:-hxcgnat-dev:26.06}
+IMAGE=${IMAGE:-hexarouting-dev:26.06}
 TARGET=${1:-plugin}
 
 if ! docker ps >/dev/null 2>&1; then

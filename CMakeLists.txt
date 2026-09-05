@@ -1,7 +1,7 @@
 # Build out-of-tree do plugin bpa. Use build/Dockerfile.dev, que ja traz
 # o vpp-dev na versao fixada.
 cmake_minimum_required(VERSION 3.13)
-project(hxcgnat VERSION 0.1 LANGUAGES C)
+project(hexarouting VERSION 0.1 LANGUAGES C)
 
 find_package(VPP REQUIRED)
 
