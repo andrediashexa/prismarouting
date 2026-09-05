@@ -237,7 +237,8 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Exportacao de log BPA via IPFIX, so alocacoes (RFC 8158 `natEvent`
       16, 17 e 12), verificada com coletor decodificando (`lab/ipfix.sh`)
 - [ ] Trilha de configuracao append-only - e o "log" do modo deterministico
-- [ ] API binaria do plugin, para a VTY e para automacao
+- [x] API binaria do plugin (`bpa.api`), com codigo de retorno de verdade
+- [ ] Migrar o `hexash` da CLI para a API binaria
 - [x] Appliance: tuning de boot calculado do hardware, unidades systemd,
       instalador e ISO - ver [appliance.md](appliance.md)
 - [x] Fragmentacao, via reassembly virtual raso

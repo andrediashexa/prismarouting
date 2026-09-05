@@ -1,5 +1,6 @@
 add_vpp_plugin(bpa
   SOURCES
+  bpa_api.c
   bpa.c
   bpa_pool.c
   bpa_dyn.c
@@ -11,4 +12,7 @@ add_vpp_plugin(bpa
   bpa_handoff.c
   bpa_out2in.c
   bpa_cli.c
+
+  API_FILES
+  bpa.api
 )

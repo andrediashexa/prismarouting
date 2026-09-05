@@ -6,4 +6,7 @@ project(hexarouting VERSION 0.1 LANGUAGES C)
 find_package(VPP REQUIRED)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/bpa)
+# O vppapigen gera os headers em ${CMAKE_BINARY_DIR}/src/plugins/bpa/, e o
+# codigo os inclui como <bpa/bpa.api_enum.h>: o diretorio pai e que entra.
+include_directories(${CMAKE_BINARY_DIR}/src/plugins)
 add_subdirectory(src/plugins/bpa)

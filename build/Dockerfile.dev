@@ -37,9 +37,10 @@ RUN curl -s https://deb.frrouting.org/frr/keys.gpg -o /usr/share/keyrings/frrout
         frr=${FRR_VERSION} frr-pythontools=${FRR_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
-# Ferramentas de lab: inspecao dos TAPs criados pelo linux_cp
+# python3-ply: o vppapigen precisa dele para compilar o .api do plugin.
+# Ferramentas de lab: inspecao dos TAPs criados pelo linux_cp.
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
-        iproute2 iputils-ping tcpdump procps \
+        python3-ply iproute2 iputils-ping tcpdump procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
