@@ -117,7 +117,12 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Nodes in2out / out2in, com traducao verificada por injecao de pacote
 - [x] Tabela de sessao (bihash) por worker + expiracao com timeouts configuraveis
 - [ ] **Handoff entre workers** - obrigatorio antes de habilitar multiplos workers
-- [ ] Alocador dinamico de blocos
-- [ ] Exportador de log (syslog / IPFIX)
+- [ ] Alocador dinamico de blocos + timers de bloco
+- [ ] **Exportacao de log BPA via IPFIX/NetFlow, so alocacoes** - ver
+      [logging.md](logging.md). RFC 8158 `natEvent` 16 e 17. Depende do modo
+      dinamico, que e quem gera os eventos. Liberacao (17) e obrigatoria:
+      logar so alocacao faz uma consulta judicial apontar assinante errado
+      na lacuna entre liberar e realocar
+- [ ] Trilha de configuracao append-only - e o "log" do modo deterministico
 - [ ] CLI e API binaria
 - [ ] Appliance: ISO, tuning de kernel, systemd, HA
