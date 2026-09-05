@@ -11,6 +11,30 @@ Alvo: 100 Gbps+, 200k+ assinantes, appliance completo.
 | D2 | Modos de BPA | deterministico **e** dinamico, por pool | deterministico da log zero; dinamico economiza IPv4 |
 | D3 | Politica de mapeamento padrao | `interleaved` | shift-only nas duas direcoes + menor blast radius de blacklist |
 | D4 | Sharding entre workers | handoff do VPP, por indice de assinante | garante que in2out e out2in do mesmo assinante caiam no mesmo worker |
+| D5 | Enderecamento do pool | conjunto de prefixos nao contiguos | e produto para varios provedores, e nenhum tem IPv4 num bloco unico alinhado |
+
+## D5: por que o pool nao pode ser um prefixo so
+
+A alocacao IPv4 de um provedor real e fragmentada: um /22 do LACNIC, um /24
+comprado, um /23 herdado de aquisicao. Exigir um prefixo unico e alinhado
+inviabilizaria o produto na maioria das instalacoes.
+
+Entao `inside` e `outside` sao **conjuntos** de prefixos, apresentados ao
+algoritmo como um espaco de indices denso `[0, count)`. A traducao
+endereco <-> indice fica isolada em `bpa_addr_set_t`:
+
+- faixas ordenadas por endereco, busca binaria nas duas direcoes
+- caminho rapido para o caso de faixa unica, que e o mais comum
+- prefixos adjacentes sao fundidos, o que encurta a busca no datapath
+- prefixos sobrepostos sao **recusados**: sobreposicao quebra a bijecao
+  endereco <-> indice, e bijecao quebrada significa um assinante sendo
+  logado como outro - erro regulatorio, nao apenas bug
+
+Consequencia: `outside.count` deixou de ser potencia de dois, entao a
+otimizacao shift-only da politica interleaved nao vale sempre. O datapath
+usa o reciprocal ja existente (multiply-shift) e cai no shift quando o
+divisor por acaso e potencia de dois. `ref/check_magic.py` prova o
+reciprocal exato para 1074 divisores arbitrarios ate 266 milhoes.
 
 ## O problema central: sharding
 
@@ -80,6 +104,7 @@ para desenvolvimento e teste funcional, nao para carga.
 - [x] Nucleo em C do mapeamento, conferido contra o modelo (`make test`)
 - [x] Alocador de portas por assinante (`bpa_ports.h`)
 - [x] Plugin carrega no VPP 26.06 com CLI de pools
+- [x] Pools de prefixos nao contiguos, para alocacao IPv4 real de provedor
 - [ ] Nodes in2out / out2in / handoff
 - [ ] Tabela de sessao (bihash) + timers
 - [ ] Alocador dinamico de blocos

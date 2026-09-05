@@ -2,7 +2,11 @@
  * bpa_pool.h - BPA (Bloco de Portas Alocadas) address/port mapping.
  *
  * Reference implementation and test vectors live in ref/bpa_model.py.
- * Any change here must keep ref/validate.py passing.
+ * Any change here must keep ref/validate.py and `make test` passing.
+ *
+ * Address sets are built from possibly non-contiguous prefixes: no provider
+ * holds its IPv4 in one aligned block, so assuming a single prefix would
+ * rule out most deployments. Everything downstream works on a dense index.
  */
 
 #ifndef __included_bpa_pool_h__
@@ -18,6 +22,11 @@
 #include <vnet/ip/ip4_packet.h>
 #endif
 
+/* Ranges are inlined in the pool, so no allocation sits on the datapath.
+ * A provider with more than this many separate prefixes is rejected with a
+ * clear error rather than silently truncated. */
+#define BPA_MAX_RANGES 256
+
 typedef enum
 {
   BPA_POLICY_INTERLEAVED = 0, /* neighbours spread across public IPs (default) */
@@ -32,13 +41,31 @@ typedef enum
 
 typedef struct
 {
+  u32 base;	 /* first address, host order */
+  u32 count;	 /* addresses in this range */
+  u32 first_idx; /* dense index of `base` within the set */
+} bpa_range_t;
+
+/*
+ * A set of addresses presented as a dense index space [0, count).
+ * Ranges are sorted by base, which - because first_idx is assigned in that
+ * same order - makes them sorted by first_idx too. One binary search serves
+ * both directions.
+ */
+typedef struct
+{
+  bpa_range_t ranges[BPA_MAX_RANGES];
+  u32 n_ranges;
+  u32 count;
+} bpa_addr_set_t;
+
+typedef struct
+{
   u8 *name;
 
-  /* configuration */
-  u32 inside_base;  /* host order */
-  u32 outside_base; /* host order */
-  u32 inside_count;
-  u32 outside_count; /* always a power of two: it is a prefix */
+  bpa_addr_set_t inside;
+  bpa_addr_set_t outside;
+
   u16 port_min;
   u16 port_max;
   u16 block_size; /* power of two */
@@ -48,22 +75,28 @@ typedef struct
   /* derived */
   u32 port_count;
   u32 blocks_per_ip;
-  u32 capacity; /* outside_count * blocks_per_ip */
+  u32 capacity; /* outside.count * blocks_per_ip */
 
-  /* precomputed shifts; valid because outside_count and block_size
-   * are both powers of two. This is what keeps the datapath free of
-   * integer division in the INTERLEAVED policy. */
-  u8 log2_outside;
-  u8 log2_block;
-  u32 outside_mask; /* outside_count - 1 */
+  u8 log2_block; /* block_size is a power of two */
 
-  /* reciprocal for BLOCKED policy, where blocks_per_ip is not a power
-   * of two (e.g. 126, 63). Avoids a hardware divide in the datapath. */
-  u64 bpi_magic;
-  u8 bpi_shift;
+  /*
+   * Single divisor for the policy split:
+   *   INTERLEAVED -> outside.count   (blk_idx = sub / d, pub_idx = sub % d)
+   *   BLOCKED     -> blocks_per_ip   (pub_idx = sub / d, blk_idx = sub % d)
+   *
+   * With fragmented pools the divisor is an arbitrary number, so the
+   * datapath uses a precomputed reciprocal instead of a hardware divide.
+   * When the divisor happens to be a power of two we shift instead.
+   * ref/check_magic.py proves the reciprocal exact for every divisor below
+   * BPA_MAX_CAPACITY.
+   */
+  u32 divisor;
+  u64 div_magic;
+  u8 div_shift;
+  u8 div_log2;	 /* valid only when div_is_pow2 */
+  u8 div_is_pow2;
 } bpa_pool_t;
 
-/* Result of an inside->outside lookup. */
 typedef struct
 {
   u32 sub_idx;
@@ -75,59 +108,165 @@ typedef struct
 } bpa_block_t;
 
 clib_error_t *bpa_pool_init (bpa_pool_t *p);
+clib_error_t *bpa_addr_set_build (bpa_addr_set_t *s, const u32 *bases,
+				  const u32 *counts, u32 n);
 
-/* Fast unsigned divide by pool->blocks_per_ip without a hardware divide. */
-static_always_inline u32
-bpa_div_bpi (const bpa_pool_t *p, u32 n)
+/* ------------------------------------------------------------------ */
+/* address set lookups                                                */
+
+/* Dense index of `addr`, or -1 when it is not in the set. */
+static_always_inline int
+bpa_set_index_of (const bpa_addr_set_t *s, u32 addr, u32 *idx)
 {
-  return (u32) (((u64) n * p->bpi_magic) >> p->bpi_shift);
+  u32 lo = 0, hi;
+
+  if (PREDICT_FALSE (s->n_ranges == 0))
+    return -1;
+  hi = s->n_ranges - 1;
+
+  /* the common deployment has a single contiguous range */
+  if (PREDICT_TRUE (s->n_ranges == 1))
+    {
+      u32 off = addr - s->ranges[0].base;
+      if (PREDICT_FALSE (off >= s->ranges[0].count))
+	return -1;
+      *idx = off;
+      return 0;
+    }
+
+  while (lo <= hi)
+    {
+      u32 mid = lo + (hi - lo) / 2;
+      const bpa_range_t *r = &s->ranges[mid];
+
+      if (addr < r->base)
+	{
+	  if (mid == 0)
+	    break;
+	  hi = mid - 1;
+	}
+      else if (addr - r->base >= r->count)
+	lo = mid + 1;
+      else
+	{
+	  *idx = r->first_idx + (addr - r->base);
+	  return 0;
+	}
+    }
+  return -1;
 }
 
-/*
- * inside -> outside. Pure arithmetic, no state, no memory access.
- * Returns 0 on success, non-zero if the subscriber is outside the pool.
- */
+/* Address at dense index `idx`, or -1 when out of range. */
 static_always_inline int
-bpa_forward (const bpa_pool_t *p, u32 ip_priv, bpa_block_t *b)
+bpa_set_addr_of (const bpa_addr_set_t *s, u32 idx, u32 *addr)
 {
-  u32 sub_idx = ip_priv - p->inside_base;
+  u32 lo = 0, hi = s->n_ranges - 1;
 
-  if (PREDICT_FALSE (sub_idx >= p->inside_count || sub_idx >= p->capacity))
+  if (PREDICT_FALSE (idx >= s->count))
     return -1;
+
+  if (PREDICT_TRUE (s->n_ranges == 1))
+    {
+      *addr = s->ranges[0].base + idx;
+      return 0;
+    }
+
+  while (lo <= hi)
+    {
+      u32 mid = lo + (hi - lo) / 2;
+      const bpa_range_t *r = &s->ranges[mid];
+
+      if (idx < r->first_idx)
+	{
+	  if (mid == 0)
+	    break;
+	  hi = mid - 1;
+	}
+      else if (idx - r->first_idx >= r->count)
+	lo = mid + 1;
+      else
+	{
+	  *addr = r->base + (idx - r->first_idx);
+	  return 0;
+	}
+    }
+  return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* policy split                                                        */
+
+/* Unsigned divide by pool->divisor without a hardware divide. */
+static_always_inline u32
+bpa_div (const bpa_pool_t *p, u32 n)
+{
+  if (PREDICT_TRUE (p->div_is_pow2))
+    return n >> p->div_log2;
+  return (u32) (((u64) n * p->div_magic) >> p->div_shift);
+}
+
+static_always_inline void
+bpa_split (const bpa_pool_t *p, u32 sub_idx, u32 *pub_idx, u32 *blk_idx)
+{
+  u32 q = bpa_div (p, sub_idx);
+  u32 r = sub_idx - q * p->divisor;
 
   if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
     {
-      /* shift-only: outside_count is a power of two */
-      b->pub_idx = sub_idx & p->outside_mask;
-      b->blk_idx = sub_idx >> p->log2_outside;
+      *blk_idx = q; /* divisor is outside.count */
+      *pub_idx = r;
     }
   else
     {
-      b->pub_idx = bpa_div_bpi (p, sub_idx);
-      b->blk_idx = sub_idx - b->pub_idx * p->blocks_per_ip;
+      *pub_idx = q; /* divisor is blocks_per_ip */
+      *blk_idx = r;
     }
+}
+
+static_always_inline u32
+bpa_join (const bpa_pool_t *p, u32 pub_idx, u32 blk_idx)
+{
+  if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
+    return blk_idx * p->divisor + pub_idx;
+  return pub_idx * p->divisor + blk_idx;
+}
+
+/* ------------------------------------------------------------------ */
+/* translation                                                         */
+
+/* inside -> outside. Returns 0 on success. */
+static_always_inline int
+bpa_forward (const bpa_pool_t *p, u32 ip_priv, bpa_block_t *b)
+{
+  u32 sub_idx;
+
+  if (PREDICT_FALSE (bpa_set_index_of (&p->inside, ip_priv, &sub_idx)))
+    return -1;
+  if (PREDICT_FALSE (sub_idx >= p->capacity))
+    return -1;
+
+  bpa_split (p, sub_idx, &b->pub_idx, &b->blk_idx);
+
+  if (PREDICT_FALSE (bpa_set_addr_of (&p->outside, b->pub_idx, &b->ip_pub)))
+    return -1;
 
   b->sub_idx = sub_idx;
-  b->ip_pub = p->outside_base + b->pub_idx;
   b->port_lo = p->port_min + b->blk_idx * p->block_size;
   b->port_hi = b->port_lo + p->block_size - 1;
   return 0;
 }
 
 /*
- * outside -> inside. Also pure arithmetic: this is why the deterministic
- * mode needs no session lookup on the return path, and why it can run
- * with zero allocation logging.
- *
- * Returns 0 on success and writes the private address (host order).
+ * outside -> inside. Arithmetic plus two binary searches over small arrays,
+ * with no session lookup at all. This is why the deterministic mode needs
+ * no allocation logging and why the return path shards cleanly.
  */
 static_always_inline int
 bpa_reverse (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *ip_priv)
 {
-  u32 pub_idx = ip_pub - p->outside_base;
-  u32 blk_idx, sub_idx;
+  u32 pub_idx, blk_idx, sub_idx;
 
-  if (PREDICT_FALSE (pub_idx >= p->outside_count))
+  if (PREDICT_FALSE (bpa_set_index_of (&p->outside, ip_pub, &pub_idx)))
     return -1;
   if (PREDICT_FALSE (port < p->port_min || port > p->port_max))
     return -1;
@@ -136,16 +275,9 @@ bpa_reverse (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *ip_priv)
   if (PREDICT_FALSE (blk_idx >= p->blocks_per_ip))
     return -1;
 
-  if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
-    sub_idx = (blk_idx << p->log2_outside) | pub_idx;
-  else
-    sub_idx = pub_idx * p->blocks_per_ip + blk_idx;
+  sub_idx = bpa_join (p, pub_idx, blk_idx);
 
-  if (PREDICT_FALSE (sub_idx >= p->inside_count))
-    return -1;
-
-  *ip_priv = p->inside_base + sub_idx;
-  return 0;
+  return bpa_set_addr_of (&p->inside, sub_idx, ip_priv);
 }
 
 /*

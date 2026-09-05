@@ -19,17 +19,27 @@ def magic_for(d):
     m = ((1 << (32 + l)) + d - 1) // d
     return m, 32 + l
 
-# Todo blocks_per_ip alcancavel: port_count/block_size com block_size pot. de 2
+# O divisor do datapath depende da politica:
+#   interleaved -> outside.count, que agora e a soma de faixas arbitrarias
+#   blocked     -> blocks_per_ip
+# Com pools fragmentados o divisor deixou de ser bem-comportado, entao
+# testamos qualquer valor plausivel, nao so os alinhados.
+import random
 divisors = set()
 for port_min in (1024, 2048, 4096):
     port_count = 65535 - port_min + 1
     bs = 1
     while bs <= port_count:
-        if port_count // bs >= 1:
-            divisors.add(port_count // bs)
+        divisors.add(port_count // bs)
         bs <<= 1
-divisors = sorted(d for d in divisors if d >= 1)
-print(f"testando {len(divisors)} valores de blocks_per_ip: {divisors[:12]}...\n")
+divisors.update(range(1, 600))                    # pools publicos pequenos
+divisors.update([2**k for k in range(0, 28)])     # potencias de dois
+divisors.update([2**k - 1 for k in range(1, 28)]) # vizinhos hostis
+divisors.update([2**k + 1 for k in range(1, 28)])
+rnd = random.Random(7)
+divisors.update(rnd.randrange(1, 1 << 28) for _ in range(400))
+divisors = sorted(d for d in divisors if 1 <= d < (1 << 28))
+print(f"testando {len(divisors)} divisores, de {min(divisors)} a {max(divisors):,}\n")
 
 overflow_worst = 0
 for d in divisors:
