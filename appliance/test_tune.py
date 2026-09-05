@@ -23,7 +23,8 @@ def w(path, content):
     with open(path, "w") as f:
         f.write(str(content) + "\n")
 
-def build(root, sockets, cores_per_socket, threads, nic_node=None):
+def build(root, sockets, cores_per_socket, threads, nic_node=None,
+          hugepages_1g=0, isolated=""):
     """
     Numeracao tipica do Linux: primeiro todos os primeiros threads, depois
     todos os segundos. Com 2 sockets x 8 cores x 2 threads, a irma da cpu0
@@ -47,6 +48,9 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None):
           ",".join(map(str, sorted(cpus))))
     if nic_node is not None:
         w(f"{root}/sys/class/net/eth0/device/numa_node", nic_node)
+    w(f"{root}/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages",
+      hugepages_1g)
+    w(f"{root}/sys/devices/system/cpu/isolated", isolated)
     return node_cpus
 
 def run(root, *args):
@@ -142,6 +146,42 @@ with tempfile.TemporaryDirectory() as root:
                     "# hugepages de 1G:").split()[0])
     check(big > small, f"500k assinantes ({big}G) deveria pedir mais que 10k ({small}G)")
     print(f"  10k assinantes -> {small}G ; 500k -> {big}G")
+
+print("\n=== primeiro boot: kernel ainda sem hugepage nem isolcpus ===")
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_1g=0, isolated="")
+    out = run(root, "--interface", "eth0")
+    check("PRIMEIRO BOOT" in out, "deveria detectar que o kernel nao esta tunado")
+    check("MODO DE PRIMEIRO BOOT" in out, "startup.conf deveria sair conservador")
+    check("corelist-workers" not in out,
+          "nao pode pinar worker sem isolcpus: o VPP tomaria os cores do SO")
+    check("default-hugepage" not in out,
+          "nao pode exigir hugepage que nao existe: poe o VPP em loop de reinicio")
+    check("page-size 4k" in out, "deveria cair para paginas de 4k")
+    # e a linha do GRUB continua pedindo o tuning para o boot seguinte
+    check("isolcpus=1-7" in out, "o GRUB ainda deve pedir isolcpus para o proximo boot")
+    check("hugepages=" in out, "o GRUB ainda deve pedir hugepages para o proximo boot")
+    print("  config conservadora agora, GRUB pedindo o tuning para o proximo boot")
+
+print("\n=== boot seguinte: kernel ja tunado ===")
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_1g=6, isolated="1-7")
+    out = run(root, "--interface", "eth0")
+    check("PRIMEIRO BOOT" not in out, "nao deveria mais estar em primeiro boot")
+    check("corelist-workers 1-7" in out, "deveria pinar os workers")
+    check("default-hugepage" in out, "deveria usar hugepages")
+    print("  config completa: pinning e hugepages")
+
+print("\n=== hugepages reservadas mas isolcpus ausente: ainda conservador ===")
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_1g=6, isolated="")
+    out = run(root, "--interface", "eth0")
+    check("PRIMEIRO BOOT" in out,
+          "sem isolcpus, pinar worker faz o VPP competir com o SO")
+    print("  meio caminho ainda e tratado como nao tunado")
 
 print(f"\n{'TODOS OS TESTES PASSARAM' if not fail else str(fail) + ' FALHAS'}")
 sys.exit(1 if fail else 0)

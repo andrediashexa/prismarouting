@@ -23,6 +23,30 @@ exatamente ali que as decisoes importam. Um dos casos monta 2 sockets x 8
 cores x 2 threads com a NIC no no 1 e confere que nenhum worker caiu no no 0
 e que nenhuma irma SMT ficou fora do isolamento.
 
+## Primeiro boot: o tuning ainda nao vale
+
+Encontrado ao bootar a ISO em QEMU, e nao antes: `isolcpus` e hugepages vem
+da linha de comando do kernel, entao **so entram em vigor no boot seguinte**.
+A primeira versao gerava um `startup.conf` exigindo `default-hugepage` que
+ainda nao existia, e o VPP entrava em loop de reinicio - o que quebraria toda
+primeira inicializacao depois de instalar.
+
+Agora o `hexarouting-tune` le o estado real do kernel:
+
+```
+/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+/sys/devices/system/cpu/isolated
+```
+
+Enquanto os dois nao estiverem no lugar, o `startup.conf` sai conservador:
+sem pinning, paginas de 4k, heap menor. Funciona em qualquer lugar e nao
+rende - mas sobe. A linha do GRUB continua pedindo o tuning completo para o
+boot seguinte, e ai o mesmo comando passa a gerar a config completa.
+
+Meio caminho tambem conta como nao tunado: hugepages reservadas sem
+`isolcpus` ainda sai conservador, porque pinar worker sem isolamento faz o
+VPP competir com o proprio sistema.
+
 ## Servicos
 
 ```

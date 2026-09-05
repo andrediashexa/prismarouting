@@ -63,6 +63,22 @@ def fmt_list(cpus):
     return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
 
 
+def hugepages_1g_reserved(root):
+    """Hugepages de 1G efetivamente reservadas AGORA."""
+    v = read(os.path.join(
+        root, "sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages"), "0")
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def isolated_now(root):
+    """CPUs que o kernel esta isolando AGORA."""
+    return parse_list(read(os.path.join(
+        root, "sys/devices/system/cpu/isolated"), ""))
+
+
 class Topology:
     def __init__(self, root="/"):
         self.root = root
@@ -148,7 +164,22 @@ def plan(topo, ifname, subscribers, max_workers=None):
     buffers_gb = max(1, (len(workers) + 3) // 4)
     hugepages_1g = session_gb + buffers_gb + 1  # +1 de folga para a main heap
 
+    reserved = hugepages_1g_reserved(topo.root)
+    isolated_active = isolated_now(topo.root)
+
+    # O tuning so entra em vigor no boot seguinte: isolcpus e hugepages vem
+    # da linha de comando do kernel. Emitir agora um startup.conf que exige
+    # hugepage que ainda nao existe poe o VPP em loop de reinicio - e isso
+    # quebra toda primeira inicializacao depois de instalar. Enquanto o
+    # kernel nao estiver tunado, o config sai conservador: sem pinning e sem
+    # hugepage. Funciona em qualquer lugar, so nao rende.
+    tuned_now = (reserved >= 1 and set(isolated) <= set(isolated_active)
+                 and bool(isolated))
+
     return {
+        "tuned_now": tuned_now,
+        "hugepages_reserved": reserved,
+        "isolated_active": isolated_active,
         "node": node,
         "nic_note": nic_note,
         "os_cpus": os_cpus,
@@ -175,6 +206,33 @@ def render_grub(p):
 
 
 def render_vpp(p):
+    if not p["tuned_now"]:
+        # Primeiro boot: o kernel ainda nao reservou hugepage nem isolou CPU.
+        return (
+            "# Gerado por hexarouting-tune. Nao editar a mao.\n"
+            "#\n"
+            "# MODO DE PRIMEIRO BOOT. O kernel ainda nao esta tunado:\n"
+            f"#   hugepages de 1G reservadas: {p['hugepages_reserved']}\n"
+            f"#   CPUs isoladas: {fmt_list(p['isolated_active']) or '(nenhuma)'}\n"
+            "#\n"
+            "# Config conservadora, sem pinning e sem hugepage: funciona em\n"
+            "# qualquer lugar e nao poe o VPP em loop de reinicio. Reinicie\n"
+            "# para que isolcpus e hugepages entrem em vigor; no boot seguinte\n"
+            "# este arquivo passa a sair com o tuning completo.\n"
+            "cpu {\n"
+            "  # sem workers ate o kernel isolar CPU\n"
+            "}\n\n"
+            "buffers {\n"
+            "  buffers-per-numa 16384\n"
+            "  default data-size 2048\n"
+            "  page-size 4k\n"
+            "}\n\n"
+            "memory {\n"
+            "  main-heap-size 512M\n"
+            "  main-heap-page-size 4k\n"
+            "}\n"
+        )
+
     if not p["workers"]:
         cpu = "  # sem workers: caixa pequena, tudo na main thread\n"
     else:
@@ -217,8 +275,10 @@ def main():
     print(f"# sistema operacional e main do VPP: {fmt_list(p['os_cpus'])}")
     print(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
     print(f"# isolados: {fmt_list(p['isolated']) or '(nenhum)'}")
-    print(f"# hugepages de 1G: {p['hugepages_1g']} "
-          f"(dimensionado para {p['subscribers']} assinantes)")
+    print(f"# hugepages de 1G: {p['hugepages_1g']} pedidas "
+          f"(dimensionado para {p['subscribers']} assinantes), "
+          f"{p['hugepages_reserved']} reservadas agora")
+    print(f"# estado: {'kernel tunado, config completa' if p['tuned_now'] else 'PRIMEIRO BOOT, config conservadora ate reiniciar'}")
     print()
     print("### /etc/default/grub.d/hexarouting.cfg")
     print(grub)
