@@ -81,6 +81,39 @@ sg docker -c 'docker exec hexa-vpp vppctl show errors'
 Pega: o que so aparece com trafego de verdade - TCP completo, TLS,
 concorrencia, limites do outro lado da internet.
 
+## Acessando a VTY
+
+Com o lab de pe:
+
+```sh
+sh tools/vty.sh                     # sessao interativa
+sh tools/vty.sh -c "show cgnat pool"  # um comando e sai
+```
+
+Dentro dela, roteamento e CGNAT na mesma sessao:
+
+```
+hexarouting# configure terminal
+hexarouting(config)# cgnat pool provedor-a
+hexarouting(config-cgnat-pool)# inside 100.64.0.0/22
+hexarouting(config-cgnat-pool)# outside 198.19.24.0/24
+hexarouting(config-cgnat-pool)# block-size 512
+hexarouting(config-cgnat-pool)# exit
+hexarouting(config)# router bgp 65000
+hexarouting(config)# neighbor 10.95.172.129 remote-as 65001
+hexarouting(config)# exit
+hexarouting# show running-config
+hexarouting# write memory
+```
+
+Comandos de CGNAT vao para o plugin no VPP; qualquer outra coisa e repassada
+ao `vtysh` do FRR com o contexto preservado. O `show running-config` le a
+configuracao do **dataplane**, nao da memoria da shell - cada invocacao e um
+processo novo.
+
+Limites desta primeira versao: sem `?` e sem completacao por tab. Historico e
+edicao de linha vem do readline.
+
 ## 4. Appliance (ISO)
 
 ```sh
