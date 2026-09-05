@@ -25,7 +25,41 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.2.0.
+Nothing merged since v0.2.1.
+
+## 0.2.1 — the VTY starts
+
+**Anyone running 0.2.0 should replace it.** The ISO published with 0.2.0 boots,
+forwards and passes its self-test, but `hexash` — the VTY, the way an operator
+configures the box — did not start at all.
+
+### Fixed
+
+* **`hexash` was never installed completely.** `install.sh` copied
+  `src/hexash/hexash.py` to `/usr/bin/hexash` and nothing else, while
+  `hexash.py` does `from config import Config, Pool`. Every installed box and
+  every ISO since the configuration model was added shipped a VTY that raised
+  `ModuleNotFoundError` on start.
+
+  Both files now install into `/usr/lib/hexarouting/`, reached through a
+  launcher at `/usr/bin/hexash` rather than a symlink: how Python derives
+  `sys.path[0]` for a symlinked script has changed between releases, and an
+  appliance should not depend on which one it got.
+
+### Why no test caught it
+
+Three tests stood around the failure and none went through it. The labs run
+`hexash` from the source tree, where `config.py` happens to sit beside it;
+`test_startup_conf.sh` ran `install.sh` but never invoked the VTY; and the ISO
+boot test never logged in.
+
+`test_startup_conf.sh` now runs the **installed** `hexash` and asserts it starts
+and reaches the dataplane. That assertion was verified to catch the original
+defect, by deleting `config.py` from the installed tree and watching it fail.
+
+The gap this closes is not "a missing file". It is that the release was declared
+verified at five levels, correctly for what each level measured, and none of
+them measured whether the product's front door opened.
 
 ## 0.2.0 — foundations
 
