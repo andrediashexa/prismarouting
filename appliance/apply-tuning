@@ -8,6 +8,7 @@
 set -u
 
 GRUBFILE=/etc/default/grub.d/hexarouting.cfg
+VPPCONF=/etc/vpp/startup.conf
 : "${HEXA_DATAPLANE_IF:=}"
 : "${HEXA_SUBSCRIBERS:=200000}"
 

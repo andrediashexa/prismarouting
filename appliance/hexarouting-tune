@@ -260,6 +260,8 @@ def main():
     ap.add_argument("--subscribers", type=int, default=200000)
     ap.add_argument("--max-workers", type=int)
     ap.add_argument("--sysfs-root", default="/")
+    ap.add_argument("--vpp-base", default="/etc/hexarouting/vpp-base.conf",
+                    help="base do startup.conf, concatenada com o tuning")
     ap.add_argument("--write", action="store_true",
                     help="grava em /etc/default/grub.d e /etc/vpp")
     a = ap.parse_args()
@@ -282,18 +284,33 @@ def main():
     print()
     print("### /etc/default/grub.d/hexarouting.cfg")
     print(grub)
-    print("### /etc/vpp/startup.conf.d/tuning.conf")
+    print("### stanzas acrescentadas a /etc/vpp/startup.conf")
     print(vpp)
 
     if a.write:
-        for path, content in (
-            ("/etc/default/grub.d/hexarouting.cfg", grub),
-            ("/etc/vpp/startup.conf.d/tuning.conf", vpp),
-        ):
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as f:
-                f.write(content)
-            print(f"gravado {path}", file=sys.stderr)
+        os.makedirs("/etc/default/grub.d", exist_ok=True)
+        with open("/etc/default/grub.d/hexarouting.cfg", "w") as f:
+            f.write(grub)
+        print("gravado /etc/default/grub.d/hexarouting.cfg", file=sys.stderr)
+
+        # O startup.conf do VPP nao tem include: escrever num startup.conf.d
+        # nao faz nada, e o tuning inteiro fica inerte sem nenhum sinal - a
+        # caixa sobe, encaminha, e rende metade. Entao geramos o arquivo que
+        # o VPP realmente le, concatenando a base editavel pelo operador.
+        base = ""
+        if os.path.exists(a.vpp_base):
+            with open(a.vpp_base) as f:
+                base = f.read().rstrip() + "\n\n"
+        else:
+            print(f"aviso: base {a.vpp_base} nao existe; gerando so o tuning",
+                  file=sys.stderr)
+        os.makedirs("/etc/vpp", exist_ok=True)
+        with open("/etc/vpp/startup.conf", "w") as f:
+            f.write("# GERADO por hexarouting-tune a partir de "
+                    f"{a.vpp_base}. Nao editar a mao.\n\n")
+            f.write(base)
+            f.write(vpp)
+        print("gravado /etc/vpp/startup.conf", file=sys.stderr)
     return 0
 
 

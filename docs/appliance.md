@@ -47,6 +47,26 @@ Meio caminho tambem conta como nao tunado: hugepages reservadas sem
 `isolcpus` ainda sai conservador, porque pinar worker sem isolamento faz o
 VPP competir com o proprio sistema.
 
+## O startup.conf do VPP nao tem include
+
+Encontrado ao investigar por que o VPP reiniciava na ISO: o
+`/etc/vpp/startup.conf` do pacote nao tem diretiva de include, e o VPP nao
+suporta nenhuma. A primeira versao gravava o tuning em
+`/etc/vpp/startup.conf.d/tuning.conf`, que **nunca foi lido**.
+
+O efeito e o pior possivel para um produto: nao ha erro, nao ha aviso, a
+caixa sobe e encaminha. Ela so rende metade, e ninguem tem como saber por que.
+
+Agora o `hexarouting-tune` gera o arquivo que o VPP realmente le,
+concatenando `/etc/hexarouting/vpp-base.conf` - editavel pelo operador, com
+`unix`, `plugins`, `linux-cp` - com as stanzas `cpu`, `buffers` e `memory`
+que ele calcula. A base nao deve conter essas tres, para nao duplicar.
+
+`appliance/test_startup_conf.sh` fecha o buraco de teste que permitiu isso:
+gera a configuracao, **sobe o VPP com ela**, confere que os plugins
+carregaram, que o processo continua vivo e que da para criar pool. Roda com
+`make test-appliance`.
+
 ## Servicos
 
 ```

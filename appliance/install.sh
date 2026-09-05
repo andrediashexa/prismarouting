@@ -39,6 +39,9 @@ install -d -m 0755 "$DESTDIR/etc/hexarouting"
 install -d -m 0755 "$DESTDIR/etc/vpp/startup.conf.d"
 [ -f "$DESTDIR/etc/hexarouting/tune.env" ] || \
   install -m 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
+[ -f "$DESTDIR/etc/hexarouting/vpp-base.conf" ] || \
+  install -m 0644 "$REPO/appliance/etc/vpp-base.conf" \
+    "$DESTDIR/etc/hexarouting/vpp-base.conf"
 [ -f "$DESTDIR/etc/hexarouting/hexarouting.conf" ] || \
   printf '!\n! HexaRouting\n!\n' > "$DESTDIR/etc/hexarouting/hexarouting.conf"
 
