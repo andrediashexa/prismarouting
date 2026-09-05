@@ -13,7 +13,10 @@ pass=0; fail=0; ran=0
 
 for f in "$REPO"/lab/*.sh; do
   n=$(basename "$f" .sh)
-  case "$n" in hw-lab|hw-vpp|boot-iso) continue ;; esac
+  # verdict.sh nao e lab, e a biblioteca de asserts que os labs carregam.
+  # Contado como "ran", ele deixa o resumo com um numero que nunca zera - e o
+  # dia em que um lab de verdade ficar sem verdict, ninguem repara.
+  case "$n" in hw-lab|hw-vpp|boot-iso|verdict) continue ;; esac
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
 
   out=$(timeout 300 sh "$REPO/tools/lab.sh" "$n" 2>&1)
