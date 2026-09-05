@@ -10,6 +10,8 @@ mkdir -p /run/vpp /vpp_plugins /etc/hexarouting /var/run/frr /etc/frr
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
+. /src/lab/lib.sh
+use_binary_api
 export HEXA_ROLLBACK=/tmp/rollback HEXA_CONFIG=/tmp/hexarouting.conf
 rm -rf /tmp/rollback
 
@@ -96,4 +98,18 @@ echo "=========== VERDICT ==========="
 R=$(vppctl show bpa pool)
 expect_in "rollback took the device back to the earlier block size" "512 ports" "$R"
 expect_in "two revisions are on record" "1 commit(s) ago" "$($HX -c 'show rollback' 2>&1)"
+
+# --- a commit the dataplane refuses must FAIL ---
+# This is the case that could not pass before the binary API: vppctl exits 0
+# even when the command failed, so commit reported success while the dataplane
+# held none of the configuration. The public prefix below collides with a local
+# address, which the device refuses - and the candidate must survive it, or the
+# operator loses the edit they were trying to correct.
+BADC=$($HX -c "configure" -c "cgnat pool doomed" -c "inside 100.64.32.0/22" \
+             -c "outside 10.0.0.0/30" -c "block-size 500" -c "exit" -c "commit" 2>&1)
+echo "$BADC" | tail -3 | sed 's/^/  /'
+expect_in "a refused commit says so" "error" "$BADC"
+expect_in "and names the pool" "doomed" "$BADC"
+expect_not_in "and does not claim success" "commit complete" "$BADC"
+expect_not_in "and the pool is not in the dataplane" "pool doomed" "$(vppctl show bpa pool)"
 verdict

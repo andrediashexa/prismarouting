@@ -37,6 +37,24 @@ else
 fi
 install -D -m 0644 "$SO" "$DESTDIR$PLUGIN_DIR/bpa_plugin.so"
 
+# The vat2 plugin is what lets anything outside VPP speak the binary API for
+# this plugin - which is how hexash learns that a configuration was refused
+# rather than applied. Without it, vat2 answers "No such command" and the
+# control plane is back to parsing CLI text.
+VAT2_DIR=${VAT2_DIR:-/usr/lib/x86_64-linux-gnu/vat2_plugins}
+if [ -f "$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so" ]; then
+  VSO="$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+elif [ -f /vat2_plugins/bpa_test_plugin_bpa_plugin.so ]; then
+  VSO=/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+else
+  VSO=""
+fi
+if [ -n "$VSO" ]; then
+  install -D -m 0644 "$VSO" "$DESTDIR$VAT2_DIR/bpa_test_plugin_bpa_plugin.so"
+else
+  echo "warning: no vat2 plugin; the binary API will not be reachable" >&2
+fi
+
 say "systemd"
 for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"

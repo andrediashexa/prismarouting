@@ -56,6 +56,32 @@ class Pool:
         parts += ["policy", self.policy, "mode", self.mode]
         return " ".join(parts)
 
+    def api_args(self, is_add=True) -> dict:
+        """
+        The same pool as binary-API arguments.
+
+        Kept next to device_command() on purpose: the two describe one pool in
+        two languages, and a field added to one and forgotten in the other is a
+        setting the operator configures and the dataplane never receives.
+        """
+        port_min, port_max = 1024, 65535
+        if self.ports:
+            parts = self.ports.replace("-", " ").split()
+            if len(parts) == 2:
+                port_min, port_max = int(parts[0]), int(parts[1])
+        return {
+            "is_add": bool(is_add),
+            "name": self.name,
+            "block_size": int(self.block_size),
+            "port_min": port_min,
+            "port_max": port_max,
+            "policy": f"BPA_API_POLICY_{self.policy.upper()}",
+            "mode": f"BPA_API_MODE_{self.mode.upper()}",
+            "n_inside": len(self.inside),
+            "n_prefixes": len(self.inside) + len(self.outside),
+            "prefixes": list(self.inside) + list(self.outside),
+        }
+
     def __eq__(self, other):
         return isinstance(other, Pool) and self.lines() == other.lines()
 
