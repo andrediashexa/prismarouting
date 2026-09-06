@@ -25,7 +25,91 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.7.0.
+Nothing merged since v0.8.0.
+
+## 0.8.0 — the first number, and a level of testing that was not testing
+
+Every performance claim in this repository was untested, and the level of the
+test suite that says "real hardware, real traffic" had almost certainly never
+carried a packet. Both are answered here, and neither answer is the one that
+was expected.
+
+### Added
+
+* **`lab/throughput.sh`** ([#28](https://github.com/andrediashexa/hexarouting/issues/28)).
+  It does **not** produce a bits-per-second figure — that needs a NIC DPDK
+  drives natively, and #28 stays open for it. What it measures is the part that
+  does not depend on the NIC: how many CPU clocks a packet spends inside the
+  translation nodes, from VPP's own per-node accounting.
+
+  | | clocks/packet |
+  |---|---|
+  | `ip4-input` | 21–26 |
+  | `ip4-lookup` | 20–23 |
+  | **`bpa-in2out`** | **456**, now 396 |
+
+  Flat across 64, 128, 512 and 1500 bytes, so a per-packet cost and not a
+  per-byte one. At 2400 MHz that is about **25 cores** spent in that one node
+  for 100 Gbps of 64-byte frames, before the driver or the IP stack. The target
+  stated at the outset was 100 Gbps; this is the first measurement that says
+  anything about whether it is reachable, and it says the per-packet cost has
+  to come down by a large factor first
+  ([#63](https://github.com/andrediashexa/hexarouting/issues/63)).
+* **The hardware lab proves the path instead of describing it**
+  ([#64](https://github.com/andrediashexa/hexarouting/issues/64)).
+  `make hw-up`, `make hw-lab`, `make hw-vpp` — the last one pings and fetches
+  over TLS from a subscriber address to the real Internet and checks the public
+  address and port block against `ref/bpa_model.py`.
+
+### Changed
+
+* **The hairpin lookup is skipped for destinations that cannot be ours.** Every
+  translated packet used to scan the pools asking "is this one of mine", each
+  doing a binary search, for a case that almost never happens. A two-compare
+  window over all public addresses answers "definitely not" first: **456 → 396
+  clocks per packet**. It is a superset test — never "yes", only "no" or
+  "maybe" — so it can dismiss a non-hairpin early but cannot hide a real one.
+
+### Fixed
+
+* **The hardware lab never carried a packet.** `hw-lab.sh` flushes the peer's
+  address, which deletes the route that sends test traffic into the CGNAT, and
+  the script then *printed that route as something to type by hand*. Every run
+  destroyed it; following the printed instructions worked and running the lab
+  did not; nothing said which.
+* **VPP invented a MAC** for the interface and answered ARP with it, so the
+  peer sent every frame to an address the NIC drops. The kernel device's MAC is
+  used now.
+* **`hw-vpp.sh` did not stop the previous VPP.** A second run added the CGNAT
+  feature to the same arc twice and every `create` that already existed failed
+  quietly — so a change to the script took no effect while it still reported
+  success.
+
+### What a green test can hide
+
+Two of these are worth repeating because they are the same mistake in different
+places, and the labs only caught them because each was run with the feature
+removed:
+
+* **The throughput harness measured a drop path.** The pool was created with an
+  outside range overlapping the generator interface's own address, so it was
+  refused; the command's output went to `/dev/null`; every packet took a drop
+  path; and the table reported the cost of *failing* to translate as the cost
+  of translating. It now checks the pool exists and asserts the session count
+  grew.
+* **A green ping proved nothing in the hardware lab.** With the peer's route
+  missing the ping still passes — it leaves through the peer's default gateway,
+  something upstream translates it, and it comes back while this CGNAT never
+  sees a packet. Session counts are read before and after and the difference is
+  asserted.
+
+### Known gaps
+
+Bits per second still needs a real NIC
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)). There is no HA
+([#6](https://github.com/andrediashexa/hexarouting/issues/6)) and no
+authorization in the VTY
+([#35](https://github.com/andrediashexa/hexarouting/issues/35)).
 
 ## 0.7.0 — the two things an operator does before carrying traffic
 
