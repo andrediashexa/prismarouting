@@ -122,6 +122,96 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   return s;
 }
 
+/*
+ * Return quarantined ports whose hold-down has passed.
+ *
+ * The queue is in time order because every entry gets the same hold-down, so
+ * the drain stops at the first entry that is not ready instead of scanning.
+ * Budgeted like the expiry walk: a burst of releases must not stall the
+ * process node.
+ *
+ * The head advances rather than the vector being shifted; it is reset when the
+ * queue empties, which is the common case between bursts.
+ */
+static u32
+bpa_quarantine_drain (bpa_per_thread_t *pt, f64 now, u32 budget)
+{
+  bpa_quarantine_t *q;
+  bpa_sub_t *sub;
+  u32 done = 0;
+  uword *h;
+
+  while (done < budget && pt->quarantine_head < vec_len (pt->quarantine))
+    {
+      q = vec_elt_at_index (pt->quarantine, pt->quarantine_head);
+      if (q->until > now)
+	break;
+
+      /*
+       * The subscriber may have gone away while the port waited - its block
+       * released, its bitmap reclaimed. Then there is nothing to give back,
+       * and that is not an error.
+       */
+      h = hash_get (pt->sub_by_idx, q->sub_idx);
+      if (h)
+	{
+	  sub = pool_elt_at_index (pt->subs, h[0]);
+	  bpa_portmap_free (&sub->map, q->port_off);
+	}
+      pt->quarantine_head++;
+      done++;
+    }
+
+  if (pt->quarantine_head >= vec_len (pt->quarantine))
+    {
+      vec_reset_length (pt->quarantine);
+      pt->quarantine_head = 0;
+    }
+  return done;
+}
+
+/*
+ * Hand a port back, after its hold-down.
+ *
+ * Immediately when the hold-down is zero, so a deployment that does not want
+ * it pays nothing - not even the queue.
+ */
+static void
+bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u16 port_off, f64 now)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_quarantine_t *q;
+  bpa_sub_t *sub;
+  uword *h;
+
+  if (bm->timeouts.port_holddown == 0)
+    {
+      h = hash_get (pt->sub_by_idx, sub_idx);
+      if (h)
+	{
+	  sub = pool_elt_at_index (pt->subs, h[0]);
+	  bpa_portmap_free (&sub->map, port_off);
+	}
+      return;
+    }
+
+  /*
+   * Full queue: release the oldest entry now rather than refuse this one.
+   * Withholding ports until the drain catches up exhausts the block, which
+   * is a worse failure than the collision the hold-down prevents.
+   */
+  if (vec_len (pt->quarantine) - pt->quarantine_head >= BPA_QUARANTINE_MAX)
+    {
+      bpa_quarantine_drain (pt, now + 1e9, 1);
+      pt->n_quarantine_early++;
+    }
+
+  vec_add2 (pt->quarantine, q, 1);
+  q->sub_idx = sub_idx;
+  q->port_off = port_off;
+  q->until = now + (f64) bm->timeouts.port_holddown;
+}
+
 void
 bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 {
@@ -141,7 +231,7 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
   if (q)
     {
       sub = pool_elt_at_index (pt->subs, q[0]);
-      bpa_portmap_free (&sub->map, s->port_off);
+      bpa_port_release (pt, s->sub_idx, s->port_off, now);
       if (sub->n_sessions)
 	sub->n_sessions--;
 
@@ -175,6 +265,7 @@ u32
 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 		 u32 budget)
 {
+  bpa_main_t *bm = &bpa_main;
   u32 checked = 0, freed = 0;
   u32 cursor = pt->expire_cursor;
   u32 cap = vec_len (pt->sessions);
@@ -193,7 +284,17 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
       if (!pool_is_free_index (pt->sessions, cursor))
 	{
 	  bpa_session_t *s = pool_elt_at_index (pt->sessions, cursor);
-	  if (now - s->last_heard > (f64) bpa_session_timeout (s, t))
+	  /* The pool is the unit of policy, so the lifetime comes from the
+	   * session's own pool with the global as the fallback. A pool that
+	   * was deleted while its sessions were still open falls back
+	   * entirely, which expires them rather than stranding them. */
+	  bpa_timeouts_t et = *t;
+	  if (!pool_is_free_index (bm->pools, s->pool_index))
+	    {
+	      bpa_pool_t *sp = pool_elt_at_index (bm->pools, s->pool_index);
+	      et = bpa_timeouts_resolve (&sp->timeouts, t);
+	    }
+	  if (now - s->last_heard > (f64) bpa_session_timeout (s, &et))
 	    {
 	      bpa_session_free (pt, s, now);
 	      freed++;
@@ -205,6 +306,10 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
 
   pt->expire_cursor = cursor;
   pt->n_expired += freed;
+
+  /* Ports come back on the same pass that frees sessions: a separate timer
+   * would be one more thing to get wrong, and the budget already bounds it. */
+  bpa_quarantine_drain (pt, now, budget);
   return freed;
 }
 

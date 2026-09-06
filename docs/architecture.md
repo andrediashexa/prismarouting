@@ -151,6 +151,33 @@ support as "the Internet stopped" with nothing obvious in the dataplane. The
 implementation **MUST** release on RST and **MUST** leave the long timeout on
 FIN.
 
+**Half-open sessions.** A session that sent SYN and never established gets its
+own lifetime, twenty seconds by default against the transitory timeout's four
+minutes. A host scanning the internet produces one of these per probe; held for
+the transitory timeout they exhaust the subscriber's own block, and the
+complaint reaches support as "the internet stopped" from a dataplane that looks
+healthy. The implementation **MUST** keep the two states apart.
+
+**Port hold-down.** A released port **SHOULD NOT** be handed out again
+immediately: a delayed segment from the connection that just ended can land on
+the new one, which the subscriber sees as a connection reset nobody can
+reproduce. Four seconds by default, and zero disables it entirely.
+
+The obvious implementation — a release timestamp per port — costs 32x the
+memory: the bitmap is 64 bytes for a 512-port block and timestamps would be
+2 KB, some 400 MB across 200k subscribers, to solve something that lasts
+seconds. Instead the released port goes on a per-worker queue whose cost is
+proportional to session **churn**, which is what the hold-down window is
+actually about. The queue is bounded, and on overflow ports are released early
+and **counted**: withholding ports until the drain catches up would exhaust the
+block, which is a worse failure than the collision being avoided.
+
+**Timeouts are per pool.** The pool is the unit an operator sells, so it is the
+unit of policy; a provider serving business and residential customers from one
+box needs different lifetimes. Zero in any field means inherit the global, and
+the running configuration emits only the overrides — emitting inherited values
+would turn every global change into a diff against every pool.
+
 **ICMP errors.** ICMP errors carry the original packet embedded, and it is the
 embedded packet that identifies the session. Without translating it, PMTUD's
 *fragmentation needed* never reaches the subscriber: the TCP connection hangs

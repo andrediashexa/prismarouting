@@ -27,6 +27,57 @@
  * clear error rather than silently truncated. */
 #define BPA_MAX_RANGES 256
 
+#define BPA_TIMEOUT_UDP		300
+#define BPA_TIMEOUT_ICMP	60
+#define BPA_TIMEOUT_TCP_TRANS	240
+#define BPA_TIMEOUT_TCP_ESTAB	7440
+/*
+ * A session that sent SYN and never established. Separate from transitory,
+ * and much shorter: one infected host scanning the internet holds a port per
+ * probe for the transitory timeout, exhausts its own block, and reaches
+ * support as "the internet stopped" with a healthy dataplane.
+ */
+#define BPA_TIMEOUT_TCP_SYN	20
+/*
+ * Seconds a released port stays out of circulation.
+ *
+ * A port freed and immediately handed out again can collide with a delayed
+ * segment from the connection that just ended, which the subscriber sees as a
+ * connection reset that nobody can reproduce. Short enough to cost no
+ * measurable capacity: at 512 ports and a session per second, four seconds
+ * withholds under 1% of a block.
+ */
+#define BPA_PORT_HOLDDOWN	4
+
+typedef struct
+{
+  u32 udp;
+  u32 icmp;
+  u32 tcp_trans;
+  u32 tcp_estab;
+  u32 tcp_syn;
+  u32 port_holddown;
+} bpa_timeouts_t;
+
+/*
+ * A pool may override any of these; zero means "inherit the global value".
+ * Resolved off the fast path - the datapath only stamps last_heard, and the
+ * expiry walk is the single caller that needs a number.
+ */
+static_always_inline bpa_timeouts_t
+bpa_timeouts_resolve (const bpa_timeouts_t *pool, const bpa_timeouts_t *global)
+{
+  bpa_timeouts_t r;
+  r.udp = pool->udp ? pool->udp : global->udp;
+  r.icmp = pool->icmp ? pool->icmp : global->icmp;
+  r.tcp_trans = pool->tcp_trans ? pool->tcp_trans : global->tcp_trans;
+  r.tcp_estab = pool->tcp_estab ? pool->tcp_estab : global->tcp_estab;
+  r.tcp_syn = pool->tcp_syn ? pool->tcp_syn : global->tcp_syn;
+  r.port_holddown = pool->port_holddown ? pool->port_holddown
+					: global->port_holddown;
+  return r;
+}
+
 typedef enum
 {
   BPA_POLICY_INTERLEAVED = 0, /* neighbours spread across public IPs (default) */
@@ -101,6 +152,10 @@ typedef struct
   u16 block_size; /* power of two */
   bpa_policy_t policy;
   bpa_mode_t mode;
+
+  /* Per-pool session lifetimes. Zero in any field means inherit the global.
+   * The pool is the unit an operator sells, so it is the unit of policy. */
+  bpa_timeouts_t timeouts;
 
   /* derived */
   u32 port_count;

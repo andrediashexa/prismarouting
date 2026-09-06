@@ -30,18 +30,6 @@
  * these: shorter timeouts recycle ports faster and fit more subscribers per
  * public IP, at the cost of breaking long idle connections.
  */
-#define BPA_TIMEOUT_UDP		300
-#define BPA_TIMEOUT_ICMP	60
-#define BPA_TIMEOUT_TCP_TRANS	240
-#define BPA_TIMEOUT_TCP_ESTAB	7440
-
-typedef struct
-{
-  u32 udp;
-  u32 icmp;
-  u32 tcp_trans;
-  u32 tcp_estab;
-} bpa_timeouts_t;
 
 /*
  * Minimal TCP state, just enough not to hold a port for nothing.
@@ -88,6 +76,30 @@ typedef struct
   u32 n_sessions; /* when this hits zero the bitmap can be reclaimed */
 } bpa_sub_t;
 
+/*
+ * A port waiting out its hold-down.
+ *
+ * A per-port release timestamp would be the obvious design and costs 32x the
+ * memory: the bitmap is 64 bytes for a 512-port block, and timestamps would
+ * be 2 KB - 400 MB across 200k subscribers, to solve a problem that lasts
+ * seconds. This queue costs memory proportional to session CHURN instead,
+ * which is what the hold-down window is actually about.
+ */
+typedef struct
+{
+  u32 sub_idx;
+  u16 port_off;
+  f64 until;
+} bpa_quarantine_t;
+
+/*
+ * Bounded. If churn outruns the drain, ports are released early and counted
+ * rather than withheld: refusing to release ports exhausts the subscriber's
+ * block, which is a worse failure than the delayed-segment collision the
+ * hold-down exists to avoid.
+ */
+#define BPA_QUARANTINE_MAX 65536
+
 typedef struct
 {
   bpa_session_t *sessions;	  /* pool */
@@ -98,6 +110,9 @@ typedef struct
   uword *sub_by_idx;		  /* sub_idx -> index into subs */
   bpa_log_event_t *log_queue; /* queued by the dataplane, drained by the process */
   u64 log_dropped;
+  bpa_quarantine_t *quarantine;   /* ports waiting out their hold-down */
+  u32 quarantine_head;            /* drained from the front, FIFO by time */
+  u64 n_quarantine_early;         /* released before their time, counted */
   u32 n_expired;
   u32 expire_cursor;	  /* budgeted walk resumes here */
   u8 initialised;
@@ -134,6 +149,10 @@ bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
       return 0; /* RST: no reason to hold the port */
     case BPA_TCP_ESTAB:
       return t->tcp_estab;
+    case BPA_TCP_INIT:
+      /* SYN sent, never established. A scan produces one of these per probe
+       * and they must not be held for the transitory timeout. */
+      return t->tcp_syn;
     default:
       return t->tcp_trans;
     }
