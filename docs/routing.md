@@ -439,6 +439,76 @@ they have to be, or a rollback could not restore a password. So:
   crackable offline at the attacker's leisure.
 * The audit trail records that credentials changed, not what they changed to.
 
+### SNMP: the CGNAT as the NMS sees it
+
+Every ISP already has an NMS, and it is where somebody actually looks. A CGNAT
+whose only observability is `vppctl` on the box is a CGNAT nobody watches until
+a customer calls.
+
+```
+snmp enabled yes
+snmp listen-address 10.0.0.1
+snmp port 161
+snmp enterprise-number 65535
+snmp community <read-only community>
+snmp-user nms
+ auth sha <passphrase>
+ priv aes <passphrase>
+ exit
+```
+
+**Read-only, twice.** The generated `snmpd.conf` contains `rocommunity` and
+`rouser` and never `rwcommunity`, and the agent itself answers every SET with
+`not-writable`. Configuration belongs to the VTY, where it is validated,
+committed and rollback-able; an SNMP SET that reconfigures a CGNAT is an outage
+one typo away.
+
+**No stale numbers.** If the dataplane is not answering, the agent serves
+*nothing* rather than the values it last saw. A monitoring system that keeps
+reporting yesterday's numbers through an outage hides it; one that reports a gap
+shows it. The liveness check therefore runs on **every** poll, before the cache
+is consulted — caching it too is the obvious saving and it is exactly the bug
+the lab caught, with SNMP still reporting a subscriber after the dataplane had
+been killed.
+
+#### What is served, and the one thing that is not
+
+From **RFC 4008**, `natDefTimeouts` (`.1.3.6.1.2.1.123.1.1`) — six objects that
+map exactly onto this box's timeouts, so an existing NMS reads them with no
+custom template. The rest of RFC 4008 is per-interface or per-binding: this box
+tracks neither shape, and per-binding would mean walking the session table,
+which no `show` here is allowed to do.
+
+The numbers an operator actually watches — subscribers holding blocks, ports
+used against ports held, subscribers at 90% of their block, port refusals,
+packets dropped — have **no standard OID**. They live under the operator's own
+**IANA Private Enterprise Number**, and there is no default and cannot be one:
+an OID under somebody else's PEN is a lie about who the object belongs to, and
+it collides the day that organisation uses the same subtree.
+
+> **Until `snmp enterprise-number` is set, that half is dark.** Registration is
+> free, takes days to weeks, and the request names the company rather than the
+> software — so it is the maintainer's to make, not something this code can do.
+
+| OID under `.1.3.6.1.4.1.<PEN>.1` | Meaning |
+|---|---|
+| `.1.0` | subscribers holding a block right now |
+| `.2.0` | ports allocated across all of them |
+| `.3.0` | ports in the blocks currently held |
+| `.4.0` | subscribers at 90% of their blocks or more |
+| `.5.0` | times a subscriber was refused a port |
+| `.6.0` | packets the CGNAT did not pass |
+
+Community strings and v3 passphrases are passwords on the wire, so they are
+handled like the SSH credentials above: never printed by `show running-config`,
+and in files readable only by root.
+
+**Not covered:** the SNMPv3 handshake is exercised only as far as
+configuration — that the user is granted read-only access and created in
+net-snmp's store. A poll authenticated with v3 is not asserted end to end.
+`IF-MIB` counters for the VPP interfaces are not served at all; the kernel does
+not see those NICs, so `snmpd` has nothing to report about them.
+
 ### Commands for the question an operator arrives with
 
 The first five `show cgnat` commands report aggregates — *"thread 0: 3 sessions,

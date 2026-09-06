@@ -80,6 +80,7 @@ sh tools/lab.sh vty-pool       # per-pool settings from the VTY to the dataplane
 sh tools/lab.sh two-pools      # two pools, a subscriber at the same index in each
 sh tools/lab.sh troubleshoot   # the show commands, checked against the model
 sh tools/lab.sh vty-ssh        # the SSH daemon and accounts, and the lockout
+sh tools/lab.sh snmp           # a real snmpget against a real snmpd
 sh tools/lab.sh api            # binary API
 sh tools/lab.sh commit         # candidate, commit, rollback
 sh tools/lab.sh audit          # dated configuration trail
@@ -106,6 +107,7 @@ The most instructive to run:
 | `two-pools` | The only lab that configures more than one pool — which is why nothing caught subscribers of two pools sharing one set of port bitmaps |
 | `troubleshoot` | Uses `ref/bpa_model.py` as the oracle, so the show commands cannot agree with the plugin by sharing its arithmetic |
 | `vty-ssh` | Produces the lockout — a change leaving nobody able to log in — and watches the commit refuse it |
+| `snmp` | Kills the dataplane mid-run and asserts the agent serves *nothing* rather than the numbers it last saw |
 
 Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An
