@@ -227,6 +227,7 @@ typedef struct
  */
 typedef struct
 {
+  u32 pool_index;
   u32 sub_idx;
   u16 port_off;
   /* Which of the subscriber's blocks the port belongs to. A subscriber can
@@ -235,6 +236,23 @@ typedef struct
   u8 blk_idx;
   f64 until;
 } bpa_quarantine_t;
+
+/*
+ * Key for the per-subscriber record.
+ *
+ * BOTH halves, and the second one is not decoration. sub_idx is an index
+ * within ONE pool's inside set, so it is unique per pool and not globally:
+ * keyed on sub_idx alone, subscriber 5 of pool A and subscriber 5 of pool B
+ * hashed to the same entry and shared one set of port bitmaps and one list of
+ * blocks. A subscriber of pool B was then translated onto pool A's public
+ * address and logged against pool A's block - a wrong answer to a court
+ * order, produced with full confidence (issue #57).
+ */
+static_always_inline uword
+bpa_sub_key (u32 pool_index, u32 sub_idx)
+{
+  return ((uword) pool_index << 32) | (uword) sub_idx;
+}
 
 /*
  * Bounded. If churn outruns the drain, ports are released early and counted
@@ -380,9 +398,9 @@ bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 				   u16 port_priv, u8 proto, f64 now);
 
 /* Extended blocks: how many a subscriber holds, and attaching one more. */
-u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 sub_idx);
-void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx,
-		     const bpa_block_t *b);
+u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx);
+void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
+		     u32 sub_idx, const bpa_block_t *b);
 /*
  * Reserve a consecutive public port pair, RTP even, and open the two mappings
  * an ALG has just announced. `want_ip_pub` is the public address the control

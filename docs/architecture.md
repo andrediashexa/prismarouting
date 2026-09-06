@@ -188,6 +188,35 @@ Missing that is a leak with no symptom until it matters: the extension stays
 owned forever, is never reaped, and shows up only as a pool that slowly stops
 having free blocks.
 
+### One subscriber record per pool, not per index
+
+A subscriber's port bitmaps live in a per-worker table keyed by
+`bpa_sub_key (pool_index, sub_idx)`. **Both halves**, because `sub_idx` is an
+index within one pool's inside set and is therefore unique per pool and not
+globally.
+
+Keyed on `sub_idx` alone — which is how it was until v0.6.0 — subscriber 5 of
+pool A and subscriber 5 of pool B hashed to the same record and shared one set
+of bitmaps and one list of blocks. `bpa_session_create()` then allocated from
+whichever block had a free port, which could be the other pool's. Measured:
+
+```
+BPA in2out 100.64.0.5:40000 -> 200.150.0.17:1536   (pool A, correct)
+BPA in2out 10.0.0.5:40000   -> 200.150.0.17:1537   (pool B, on pool A's address)
+```
+
+The address is the visible half. The serious half is the log: a `natEvent 16`
+naming pool A's block for a subscriber of pool B is the record an operator
+hands to a court, and nothing about it looks wrong.
+
+Every user of the key had to change together — session create and free, the
+extended-block helpers, and the port hold-down queue, which stores a subscriber
+to give a port back to **later** and would otherwise have returned it to the
+wrong bitmap.
+
+It went unseen because every lab configured exactly one pool, where the key is
+unique by accident. `lab/two-pools.sh` is the one that does not.
+
 ## Memory
 
 | Structure | Sizing | Notes |
