@@ -137,14 +137,24 @@ NAT unless the NAT rewrites the payload too.
 | **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | High |
 | **PPTP / GRE** | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
 | **SIP** | VoIP registers but has no audio, or one-way audio. The single most expensive support call an ISP receives. | High |
-| **RTSP** | IP cameras and some streaming boxes. | Medium |
+| **RTSP** | IP cameras and some streaming boxes. | Medium — **built**, [#43](https://github.com/andrediashexa/hexarouting/issues/43) |
 | **TFTP** | Provisioning of some CPE. | Low |
 | **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | Medium |
 
-Each ALG **MUST** be individually switchable per pool, and **SHOULD** default
-to off except FTP and SIP: an ALG that rewrites a payload it misparsed is
-worse than no ALG, because it corrupts traffic that would otherwise merely
-fail to connect.
+Each ALG **MUST** be individually switchable per pool, and a malformed or
+unexpected payload **MUST** leave the packet untouched and increment a counter:
+an ALG that rewrites a payload it misparsed is worse than no ALG, because it
+corrupts traffic that would otherwise merely fail to connect.
+
+The defaults were decided on
+[#14](https://github.com/andrediashexa/hexarouting/issues/14) and are the
+reverse of what this section originally said. Every ALG built here is **on**
+except **SIP**, which is off and whose enabling **MUST** be a deliberate act:
+VoIP providers routinely tell customers to disable SIP ALG on their CPE,
+because one that misparses SDP produces one-way audio and registrations that
+drop — failures harder to diagnose than the ones it prevents, and modern SIP
+solves NAT traversal from the endpoint. H.323, MGCP, SCCP, MSRPC, NetBIOS,
+IRC/DCC, TFTP and DNS are **not** being built; the reasoning is on #14.
 
 ### 2.4 EIM/EIF — already endpoint-independent; the gap is choice, S — [#15](https://github.com/andrediashexa/hexarouting/issues/15)
 

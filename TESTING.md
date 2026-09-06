@@ -51,6 +51,7 @@ against `ref/bpa_model.py`, which is the executable specification: any
 divergence **MUST** break the build.
 
 Catches: mapping arithmetic, block collisions, port allocator behaviour,
+consecutive even-aligned media port pairs, the RTSP parser's refusals,
 `isolcpus` and hugepage computation, command-tree completion.
 
 ## 2. Dataplane labs — minutes, inside the container
@@ -62,6 +63,7 @@ sh tools/lab.sh handoff        # sharding across 2 workers
 sh tools/lab.sh dynamic        # dynamic mode and block hold-down
 sh tools/lab.sh frag           # IP fragments
 sh tools/lab.sh icmp-tcp       # ICMP errors (PMTUD) and TCP state
+sh tools/lab.sh rtsp           # the RTSP ALG, asserted on the captured packet
 sh tools/lab.sh routing        # BGP, OSPF and IS-IS into the VPP FIB
 sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
@@ -85,6 +87,7 @@ The most instructive to run:
 | `frag` | The byte-order bug that created phantom sessions |
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
+| `rtsp` | Reads the rewritten `Transport:` header out of the wire, and `BPA_RTSP_OFF=1 sh tools/lab.sh rtsp` drops 11 of its 18 assertions |
 
 ## 3. Real hardware — two VMs, real Internet
 

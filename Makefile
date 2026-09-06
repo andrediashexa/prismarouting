@@ -5,10 +5,12 @@ BUILD  := .build
 .PHONY: test test-appliance test-iso test-install iso hw-up hw-vpp hw-down \
         model vectors clean
 
-test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports
+test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp
 	@$(BUILD)/test_bpa
 	@echo
 	@$(BUILD)/test_bpa_ports
+	@echo
+	@$(BUILD)/test_bpa_rtsp
 	@echo
 	@python3 appliance/test_tune.py
 	@echo
@@ -35,6 +37,14 @@ $(BUILD)/test_bpa_ports: test/test_bpa_ports.c src/plugins/bpa/bpa_ports.h \
                          test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_ports.c
+
+# The RTSP parser is the half of the ALG that decides whether to touch a
+# payload at all, so it is built standalone: the refusal cases are what keep
+# it from corrupting a stream, and they must not need a running VPP to run.
+$(BUILD)/test_bpa_rtsp: test/test_bpa_rtsp.c src/plugins/bpa/bpa_rtsp.h \
+                        test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rtsp.c
 
 # Tests that need VPP, so they run in the build container.
 test-appliance:

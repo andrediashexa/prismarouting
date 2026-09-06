@@ -135,6 +135,58 @@ main (void)
     printf ("  double free and out-of-range free ignored\n");
   }
 
+  printf ("\n=== consecutive pairs for RTP/RTCP ===\n");
+  {
+    u32 i, got = 0, bad_parity = 0, bad_pair = 0;
+    int off;
+
+    /*
+     * RTP conventionally uses an even port with RTCP on the one above
+     * (RFC 3550 s11), and camera firmware assumes it. A pair that is
+     * consecutive but starts odd fails as "no video", which nobody
+     * attributes to the NAT - so the parity is asserted, not just the
+     * adjacency.
+     */
+    bpa_portmap_init (&pm, 512, storage);
+    for (;;)
+      {
+	off = bpa_portmap_alloc_pair (&pm, 0 /* port_lo even */);
+	if (off < 0)
+	  break;
+	if (off & 1)
+	  bad_parity++;
+	if (!bpa_portmap_is_used (&pm, (u16) off)
+	    || !bpa_portmap_is_used (&pm, (u16) (off + 1)))
+	  bad_pair++;
+	got++;
+	if (got > 512)
+	  break; /* runaway guard */
+      }
+    CHECK (got == 256, "512-port block gave %u pairs, expected 256", got);
+    CHECK (bad_parity == 0, "%u pairs started on an odd offset", bad_parity);
+    CHECK (bad_pair == 0, "%u pairs did not mark both ports", bad_pair);
+    CHECK (pm.n_free == 0, "n_free after exhausting by pairs = %u", pm.n_free);
+
+    /* A block whose first port is odd needs odd OFFSETS to land the RTP port
+     * on an even public port. Getting this backwards hands out an odd RTP
+     * port on exactly the pools that need it most. */
+    bpa_portmap_init (&pm, 64, storage);
+    off = bpa_portmap_alloc_pair (&pm, 1 /* port_lo odd */);
+    CHECK (off == 1, "odd-based block gave offset %d, expected 1", off);
+
+    /* A single free port between two used ones is not a pair. */
+    bpa_portmap_init (&pm, 64, storage);
+    for (i = 0; i < 64; i++)
+      (void) bpa_portmap_alloc (&pm, (int) i);
+    bpa_portmap_free (&pm, 10);
+    CHECK (bpa_portmap_alloc_pair (&pm, 0) == -1,
+	   "handed out a pair with only one free port");
+    bpa_portmap_free (&pm, 11);
+    CHECK (bpa_portmap_alloc_pair (&pm, 0) == 10,
+	   "did not reuse the freed pair at 10");
+    printf ("  pairs are consecutive, even-aligned and accounted for\n");
+  }
+
   printf ("\n=== the tail is never handed out (32-port block in a 64-bit word) ===\n");
   {
     u32 i, bad = 0;

@@ -11,6 +11,7 @@
 #include "bpa.h"
 #include "bpa_l4.h"
 #include "bpa_log.h"
+#include "bpa_alg.h"
 
 typedef struct
 {
@@ -50,7 +51,16 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   _ (NO_BLOCK, "no free block in dynamic pool")                            \
   _ (TRUNCATED, "truncated packet")                                            \
   _ (HAIRPINNED, "packets hairpinned to another subscriber")                   \
-  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")
+  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")           \
+  /* "show errors" truncates the reason at 35 characters, so every string
+   * below is short enough to survive it. The first version was not, and the
+   * lab's assertions on the counters could not match what was printed - the
+   * counter was right and the only way to read it was wrong. */              \
+  _ (RTSP_REWRITTEN, "RTSP Transport headers rewritten")                       \
+  _ (RTSP_UNPARSED, "RTSP Transport not understood")                           \
+  _ (RTSP_PARTIAL, "RTSP message spans segments")                              \
+  _ (RTSP_NO_ROOM, "RTSP rewrite would not fit")                               \
+  _ (RTSP_NO_PORTS, "RTSP media port pair unavailable")
 
 typedef enum
 {
@@ -152,6 +162,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0;
   u32 n_hairpin = 0;
+  u32 n_rtsp = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -283,6 +294,10 @@ VLIB_NODE_FN (bpa_in2out_node)
 
     translate:
       s->last_heard = now;
+      /* A mapping an ALG predicted has now been used, so it goes back on the
+       * protocol's own lifetime. Left as an expectation it would expire in a
+       * minute in the middle of a call. */
+      s->is_expect = 0;
       /* Remembered on every outbound packet, not only at creation: a session
        * that moves to a new remote must be able to hear the new one reply.
        * Free under endpoint-independent filtering, which never reads it. */
@@ -292,6 +307,67 @@ VLIB_NODE_FN (bpa_in2out_node)
 
       bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub);
       n_translated++;
+
+      /*
+       * RTSP ALG, subscriber -> internet.
+       *
+       * Runs after the address rewrite, so the checksum it recomputes covers
+       * the pseudo-header the packet will actually travel with, and before the
+       * sequence correction, because the correction point it records is in the
+       * sender's own coordinates.
+       *
+       * The pool is re-fetched here: on the fast path above, `p` is only set
+       * when the session was created by this packet.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0))
+	{
+	  tcp_header_t *tcp = l4h;
+	  bpa_pool_t *sp = pool_is_free_index (bm->pools, s->pool_index)
+			     ? 0
+			     : pool_elt_at_index (bm->pools, s->pool_index);
+
+	  if (sp && !(sp->algs_off & BPA_ALG_RTSP)
+	      && clib_net_to_host_u16 (tcp->dst_port) == BPA_RTSP_PORT)
+	    {
+	      u32 s_index = s - pt->sessions;
+
+	      switch (bpa_rtsp_in2out (vm, b[0], ip, tcp, pt, sp, s_index, now))
+		{
+		case BPA_ALG_DONE:
+		  n_rtsp++;
+		  break;
+		case BPA_ALG_UNPARSED:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_UNPARSED, 1);
+		  break;
+		case BPA_ALG_PARTIAL:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_PARTIAL, 1);
+		  break;
+		case BPA_ALG_NO_ROOM:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_NO_ROOM, 1);
+		  break;
+		case BPA_ALG_NO_PORTS:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_NO_PORTS, 1);
+		  break;
+		default:
+		  break;
+		}
+	      /* Opening the media sessions may have reallocated the pool. */
+	      s = pool_elt_at_index (pt->sessions, s_index);
+	    }
+
+	  /* Every later segment of a connection an ALG has rewritten, in
+	   * either direction. Zero on every session no ALG has touched. */
+	  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
+			     | s->adj[BPA_DIR_OUT].off_before
+			     | s->adj[BPA_DIR_IN].off_after
+			     | s->adj[BPA_DIR_IN].off_before))
+	    bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_OUT],
+				&s->adj[BPA_DIR_IN]);
+	}
 
       /*
        * Hairpinning (RFC 4787 REQ-9): one subscriber reaching another through
@@ -372,6 +448,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_HAIRPINNED, n_hairpin);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_RTSP_REWRITTEN, n_rtsp);
   return frame->n_vectors;
 }
 

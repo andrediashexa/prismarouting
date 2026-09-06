@@ -25,7 +25,7 @@ LAB=$1
 [ -f "$REPO/lab/$LAB.sh" ] || { echo "lab '$LAB' does not exist" >&2; exit 1; }
 
 if ! docker ps >/dev/null 2>&1; then
-  exec sg docker -c "IMAGE='$IMAGE' '$0' '$LAB'"
+  exec sg docker -c "IMAGE='$IMAGE' BPA_RTSP_OFF='${BPA_RTSP_OFF:-}' '$0' '$LAB'"
 fi
 
 # --device=/dev/kvm quando existir: boot de ISO em segundos em vez de minutos
@@ -33,6 +33,7 @@ KVM=""
 [ -w /dev/kvm ] && KVM="--device=/dev/kvm"
 
 exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
+  -e BPA_RTSP_OFF="${BPA_RTSP_OFF:-}" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "apt-get update -qq >/dev/null 2>&1
          apt-get install -y -qq qemu-system-x86 openssh-client iptables tcpdump >/dev/null 2>&1

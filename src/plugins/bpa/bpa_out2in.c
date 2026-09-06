@@ -15,6 +15,7 @@
 
 #include "bpa.h"
 #include "bpa_l4.h"
+#include "bpa_alg.h"
 
 typedef struct
 {
@@ -55,7 +56,12 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   _ (BLOCK_FREE, "block not allocated to any subscriber")                      \
   _ (ICMP_ERROR, "ICMP errors translated")                                     \
   _ (ICMP_MALFORMED, "truncated or malformed ICMP error")                      \
-  _ (TRUNCATED, "truncated packet")
+  _ (TRUNCATED, "truncated packet")                                            \
+  /* Kept under the 35 characters "show errors" prints; see bpa_in2out.c. */  \
+  _ (RTSP_REWRITTEN, "RTSP Transport replies rewritten")                       \
+  _ (RTSP_UNPARSED, "RTSP reply not understood")                               \
+  _ (RTSP_PARTIAL, "RTSP reply spans segments")                                \
+  _ (RTSP_NO_ROOM, "RTSP reply rewrite would not fit")
 
 typedef enum
 {
@@ -209,7 +215,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_icmp_err = 0;
+  u32 n_translated = 0, n_icmp_err = 0, n_rtsp = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -353,11 +359,60 @@ VLIB_NODE_FN (bpa_out2in_node)
 
       matched = 1;
       s->last_heard = now;
+      /* The media an ALG announced has arrived: it is a flow now, not a
+       * prediction, so it stops living on the short expectation timer. */
+      s->is_expect = 0;
       if (proto == BPA_PROTO_TCP)
 	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
 
       bpa_rewrite_dst (ip, l4h, (u8) proto, s->ip_priv, s->port_priv);
       n_translated++;
+
+      /*
+       * RTSP ALG, internet -> subscriber: the reply that echoes client_port.
+       *
+       * Same ordering as in2out - after the address rewrite so the checksum
+       * covers the final pseudo-header, before the sequence correction so the
+       * correction point is recorded in the server's own coordinates.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0))
+	{
+	  tcp_header_t *tcp = l4h;
+	  bpa_pool_t *sp = pool_elt_at_index (bm->pools, pool_index);
+
+	  if (!(sp->algs_off & BPA_ALG_RTSP)
+	      && clib_net_to_host_u16 (tcp->src_port) == BPA_RTSP_PORT)
+	    {
+	      switch (bpa_rtsp_out2in (vm, b[0], ip, tcp, pt, s))
+		{
+		case BPA_ALG_DONE:
+		  n_rtsp++;
+		  break;
+		case BPA_ALG_UNPARSED:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_RTSP_UNPARSED, 1);
+		  break;
+		case BPA_ALG_PARTIAL:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_RTSP_PARTIAL, 1);
+		  break;
+		case BPA_ALG_NO_ROOM:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_RTSP_NO_ROOM, 1);
+		  break;
+		default:
+		  break;
+		}
+	    }
+
+	  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
+			     | s->adj[BPA_DIR_OUT].off_before
+			     | s->adj[BPA_DIR_IN].off_after
+			     | s->adj[BPA_DIR_IN].off_before))
+	    bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_IN],
+				&s->adj[BPA_DIR_OUT]);
+	}
+
       vnet_feature_next_u16 (&next[0], b[0]);
 
     trace:
@@ -384,6 +439,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_TRANSLATED, n_translated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_ICMP_ERROR, n_icmp_err);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_RTSP_REWRITTEN, n_rtsp);
   return frame->n_vectors;
 }
 

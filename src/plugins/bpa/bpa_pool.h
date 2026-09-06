@@ -48,6 +48,20 @@
  * withholds under 1% of a block.
  */
 #define BPA_PORT_HOLDDOWN	4
+/*
+ * An ALG expectation that never sees a packet.
+ *
+ * When an RTSP SETUP announces its media ports, two mappings are opened before
+ * anything has used them. If the media never arrives - the client gave up, the
+ * server refused, the SETUP was retried with different ports - those two ports
+ * would otherwise sit on the UDP timeout, five minutes each, out of a 512-port
+ * block. A camera reconnecting in a loop turns that into exhaustion of its own
+ * subscriber's block, which reaches support as "the internet stopped".
+ *
+ * Short, because an expectation that is going to be used is used within a
+ * round trip of the SETUP reply.
+ */
+#define BPA_TIMEOUT_ALG_EXPECT	60
 
 typedef struct
 {
@@ -57,6 +71,7 @@ typedef struct
   u32 tcp_estab;
   u32 tcp_syn;
   u32 port_holddown;
+  u32 alg_expect;
 } bpa_timeouts_t;
 
 /*
@@ -75,6 +90,7 @@ bpa_timeouts_resolve (const bpa_timeouts_t *pool, const bpa_timeouts_t *global)
   r.tcp_syn = pool->tcp_syn ? pool->tcp_syn : global->tcp_syn;
   r.port_holddown = pool->port_holddown ? pool->port_holddown
 					: global->port_holddown;
+  r.alg_expect = pool->alg_expect ? pool->alg_expect : global->alg_expect;
   return r;
 }
 
@@ -106,6 +122,18 @@ typedef enum
   BPA_FILTER_ENDPOINT_INDEPENDENT = 0,
   BPA_FILTER_ADDRESS_DEPENDENT,
 } bpa_filter_t;
+
+/*
+ * Application-level gateways, as a bitmask of the ones that are OFF.
+ *
+ * The negation is deliberate. The ALGs this box ships default to ON (issue
+ * #14), so zero has to mean "all on": a pool is created from a zeroed struct
+ * in more than one place - the CLI, the binary API - and every one of them
+ * would otherwise have to remember to restate the default. Storing what is
+ * disabled makes "not configured" and "default" the same value, which is the
+ * only way a memset pool can be correct by construction.
+ */
+#define BPA_ALG_RTSP (1 << 0)
 
 /*
  * Precomputed reciprocal, so the datapath never issues a hardware divide.
@@ -170,6 +198,7 @@ typedef struct
   bpa_policy_t policy;
   bpa_mode_t mode;
   bpa_filter_t filter;
+  u8 algs_off; /* bitmask of BPA_ALG_*; zero means every ALG is on */
 
   /* Per-pool session lifetimes. Zero in any field means inherit the global.
    * The pool is the unit an operator sells, so it is the unit of policy. */
