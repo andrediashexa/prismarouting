@@ -11,8 +11,12 @@ and needed a test rather than a feature.
 
 What is still missing is now the second tier: the customer who needs a port
 **in**, bounds on the customer who takes too much, seeing a pool fill before it
-fills, and the fact that **throughput has never been measured**
-([#28](https://github.com/andrediashexa/hexarouting/issues/28)). The rest is
+fills, and **performance**. Throughput in bits per second still needs a real
+NIC ([#28](https://github.com/andrediashexa/hexarouting/issues/28)), but the
+per-packet CPU cost is measured: `bpa-in2out` spends **456 clocks per packet**
+where the nodes around it spend 20–35, which is about 29 cores for 100 Gbps of
+64-byte frames before anything else runs
+([#63](https://github.com/andrediashexa/hexarouting/issues/63)). The rest is
 ordered by the cost of not having it.
 
 Every "delivered" below points at the release it shipped in, and every one of
@@ -254,7 +258,7 @@ of the logging obligation. If the scope ever changes, that is where to start.
 
 | Item | Why | Effort |
 |---|---|---|
-| **Throughput measurement on real NICs** | Every performance claim in this repository is currently untested. `TESTING.md` says so, and it should stop being true before anyone quotes 100 Gbps. | M |
+| **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: 456 clocks in `bpa-in2out`, about 29 cores for 100 Gbps of 64-byte frames. Bits per second still needs an E810 or CX6 — [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it, and [#63](https://github.com/andrediashexa/hexarouting/issues/63) is the cost itself. | M |
 | **Symmetric RSS** | The handoff works, but symmetric hashing would put both directions on the right worker before the handoff, saving the extra enqueue. | M |
 | **RFC 4787 / 5382 conformance suite** | Turns section 1's claims into assertions. | M |
 | **Sustained-load soak test** | Session table behaviour under churn over hours is not covered. Exhaustion bugs show up at hour six, not minute six. | M |

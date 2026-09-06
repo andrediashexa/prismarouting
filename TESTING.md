@@ -81,6 +81,7 @@ sh tools/lab.sh two-pools      # two pools, a subscriber at the same index in ea
 sh tools/lab.sh troubleshoot   # the show commands, checked against the model
 sh tools/lab.sh vty-ssh        # the SSH daemon and accounts, and the lockout
 sh tools/lab.sh snmp           # a real snmpget against a real snmpd
+sh tools/lab.sh throughput     # CPU clocks per packet, from VPP's own accounting
 sh tools/lab.sh api            # binary API
 sh tools/lab.sh commit         # candidate, commit, rollback
 sh tools/lab.sh audit          # dated configuration trail
@@ -108,6 +109,7 @@ The most instructive to run:
 | `troubleshoot` | Uses `ref/bpa_model.py` as the oracle, so the show commands cannot agree with the plugin by sharing its arithmetic |
 | `vty-ssh` | Produces the lockout — a change leaving nobody able to log in — and watches the commit refuse it |
 | `snmp` | Kills the dataplane mid-run and asserts the agent serves *nothing* rather than the numbers it last saw |
+| `throughput` | Prints the conditions above the numbers, and asserts the packets were **translated** rather than dropped — its first version measured a drop path and reported it as the cost of translating |
 
 Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An
@@ -240,6 +242,16 @@ installation.
 ## What is not tested
 
 * **HA / failover** — analysed in [docs/ha.md](docs/ha.md), not implemented.
-* **Throughput** — the labs measure correctness, not performance. A throughput
-  number on virtio says nothing about 100 Gbps; that requires an E810 or CX6 on
-  real hardware.
+* **Bits per second** — still. A throughput number taken on virtio measures the
+  hypervisor, and reaching 100 Gbps needs an E810 or CX6 driven natively
+  ([#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for
+  it).
+
+  What **is** measured now is the part that does not depend on the NIC:
+  `sh tools/lab.sh throughput` reports how many CPU clocks a packet spends
+  inside the translation nodes, taken from VPP's own per-node accounting. On a
+  Xeon E5-2680 v4 at 2400 MHz, `bpa-in2out` costs **456 clocks per packet**
+  against 21–26 for `ip4-input` — 5.26 Mpps per core in that node alone, which
+  is about **29 cores** for 100 Gbps of 64-byte frames before the driver or the
+  IP stack. That is
+  [#63](https://github.com/andrediashexa/hexarouting/issues/63).
