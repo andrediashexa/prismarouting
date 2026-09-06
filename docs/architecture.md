@@ -750,12 +750,17 @@ out: with the right address and the wrong session.
 - [x] Dynamic block allocator with hold-down and per-worker partitioning
 - [x] Fragment handling via shallow virtual reassembly
 - [x] TCP state and ICMP error translation
-- [x] FTP ALG, switchable per pool ([#42](https://github.com/andrediashexa/hexarouting/issues/42))
+- [x] Per-pool timeouts, half-open TCP state and port hold-down ([#12](https://github.com/andrediashexa/hexarouting/issues/12))
+- [x] Extended blocks per subscriber, with a cap ([#13](https://github.com/andrediashexa/hexarouting/issues/13))
+- [x] Hairpinning, subscriber to subscriber ([#16](https://github.com/andrediashexa/hexarouting/issues/16))
+- [x] Full cone by default, with the restricted cone as a per-pool choice ([#15](https://github.com/andrediashexa/hexarouting/issues/15), [#50](https://github.com/andrediashexa/hexarouting/issues/50))
+- [x] FTP, RTSP and PPTP/GRE ALGs, switchable per pool ([#42](https://github.com/andrediashexa/hexarouting/issues/42), [#43](https://github.com/andrediashexa/hexarouting/issues/43), [#44](https://github.com/andrediashexa/hexarouting/issues/44))
 - [x] IPFIX export over UDP and TCP ([logging.md](logging.md))
 - [x] Dated configuration trail
 - [x] Single VTY (`hexash`) with completion and contextual help
 - [x] Binary API with real return codes
-- [x] Appliance: boot tuning, systemd units, installer, ISO ([appliance.md](appliance.md))
+- [x] Appliance: boot tuning, systemd units, ISO ([appliance.md](appliance.md))
+- [x] The ISO is an installation medium: no credentials, guided `install` ([#52](https://github.com/andrediashexa/hexarouting/issues/52))
 - [ ] **HA / failover** — analysed in [ha.md](ha.md), not implemented
 - [ ] Migrate `hexash` from the CLI to the binary API
 

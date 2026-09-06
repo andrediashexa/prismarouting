@@ -2,17 +2,23 @@
 
 ## TL;DR
 
-HexaRouting translates, logs and routes today. What is still missing is mostly
-the part that decides whether an operator gets support calls: session lifetime
-control, block sizing under pressure, protocols that carry addresses inside
-their payload (ALG), and the NAT behaviour that decides whether peer-to-peer
-applications work at all.
+HexaRouting translates, logs and routes, and as of **v0.5.0** the four items the
+maintainer originally named are all delivered: session lifetime control
+(v0.4.0), block sizing under pressure (v0.4.0), the ALGs that matter for a
+residential CGNAT (v0.5.0), and the NAT behaviour that decides whether
+peer-to-peer applications work — which turned out to be satisfied by the design
+and needed a test rather than a feature.
 
-Two of the four items the maintainer named are **already satisfied by the
-current design** — endpoint-independent mapping and filtering fall out of the
-session key, not from a feature — and this document says so with the evidence
-rather than promising to build them again. The rest is ordered by the cost of
-not having it.
+What is still missing is now the second tier: the customer who needs a port
+**in**, bounds on the customer who takes too much, seeing a pool fill before it
+fills, and the fact that **throughput has never been measured**
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)). The rest is
+ordered by the cost of not having it.
+
+Every "delivered" below points at the release it shipped in, and every one of
+them has a lab that fails when the feature is removed. A roadmap that says
+something is missing when it shipped is worse than no roadmap, because it is
+the document people check instead of the code.
 
 > The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**,
 > **SHOULD NOT**, **RECOMMENDED**, **MAY** and **OPTIONAL** in this document
@@ -35,31 +41,32 @@ not having it.
 
 ```mermaid
 flowchart TD
-    subgraph now["Working today"]
+    subgraph now["Delivered"]
         A["deterministic and dynamic BPA"]
         B["TCP state, ICMP errors, fragments"]
         C["IPFIX block logging + audit trail"]
-        D["EIM + EIF by construction"]
+        D["full cone: EIM + EIF + hairpinning"]
+        I["per-pool timeouts, half-open, hold-down"]
+        J["extended blocks with a cap"]
+        E["FTP, RTSP and PPTP/GRE ALGs"]
+        K["filtering mode: full or restricted cone"]
     end
     subgraph calls["Prevents support calls"]
-        E["ALG"]
-        F["hairpinning"]
+        E2["SIP, TFTP and ESP ALGs"]
         G["PCP / port forwarding"]
         H["per-subscriber limits"]
     end
     subgraph control["Operator control"]
-        I["per-pool timeouts"]
-        J["block step and extended blocks"]
-        K["filtering mode: EIF or address-dependent"]
-        L["NAT bypass lists"]
+        J2["block stride and block-size ranges"]
+        L["NAT bypass lists, pool selection"]
+        U["utilisation, ahead of exhaustion"]
     end
-    subgraph exit["The way out of CGNAT"]
-        M["NAT64 / DS-Lite / MAP-E"]
+    subgraph unknown["Not measured"]
+        P["throughput on real NICs"]
     end
     now --> calls
     now --> control
-    control --> exit
-    calls --> exit
+    now --> unknown
 ```
 
 ## 1. Already satisfied, with evidence
@@ -85,47 +92,45 @@ choice, not about implementing it.
 
 ## 2. The four items requested
 
-### 2.1 TCP timeout control — partly present, S — [#12](https://github.com/andrediashexa/hexarouting/issues/12)
+### 2.1 TCP timeout control — delivered in v0.4.0 — [#12](https://github.com/andrediashexa/hexarouting/issues/12)
 
-`bpa timeouts` already sets `udp`, `icmp`, `tcp-transitory` and
-`tcp-established` (`bpa_cli.c`), and TCP state is tracked well enough to
-release a port on RST (`bpa_tcp_track()`). What is missing:
+* **Per-pool timeouts.** `bpa timeouts` sets the global values and every pool
+  may override any of them; zero inherits. The pool is the unit an operator
+  sells, so it is the unit of policy.
+* **A separate lifetime for half-open sessions.** SYN sent, never established,
+  20 seconds by default. One infected host scanning the internet used to hold a
+  port per probe for the transitory timeout, exhaust its own block, and reach
+  support as "the internet stopped" from a dataplane that looked healthy.
+* **Port hold-down after close.** A released port waits before being handed out
+  again, so a delayed segment from the connection that just ended cannot land on
+  the new one — a reset nobody can reproduce.
+* **A GRE lifetime** for PPTP calls, and a short **ALG-expectation** lifetime
+  for media mappings that are announced and never used, both added in v0.5.0.
 
-* Timeouts are **global**, not per pool. A provider serving business and
-  residential customers from one box needs different lifetimes.
-* There is no separate lifetime for a **half-open** session (SYN sent, never
-  established). A scan or a SYN flood from one infected host currently holds
-  ports for the transitory timeout.
-* RFC 5382 sets minimums an implementation **SHOULD** honour: 2 hours 4
-  minutes for established, 4 minutes for transitory. The defaults **MUST** be
-  checked against those, and an operator setting something shorter **SHOULD**
-  be told what breaks.
-* No **port hold-down after close**: a port released and immediately reused
-  can collide with a delayed segment from the previous connection. A short
-  quarantine costs a little capacity and removes a whole class of "random
-  connection resets".
+What did **not** ship with it: RFC 5382 sets minimums an implementation
+**SHOULD** honour, and nothing warns an operator who goes below them. That is
+[#54](https://github.com/andrediashexa/hexarouting/issues/54).
 
-### 2.2 BPA step control — missing, M — [#13](https://github.com/andrediashexa/hexarouting/issues/13)
+### 2.2 BPA step control — extended blocks delivered in v0.4.0 — [#13](https://github.com/andrediashexa/hexarouting/issues/13)
 
-Today a subscriber gets exactly one block, sized by `block-size`. Real
-deployments need more:
+**Extended blocks** shipped: a subscriber that fills its block is given another,
+bounded by a per-pool `max-blocks`, and each one produces its own RFC 8158
+`natEvent 16` so the log stays complete. That is what turns "the internet
+stopped for one customer" into a logged, bounded event, and the cap is what
+stops one infected host consuming the pool everybody else needs.
 
-* **Extended blocks**: when a subscriber exhausts its block, allocate a
-  second one instead of dropping. This is what turns "the internet stopped
-  for one customer" into a logged, bounded event. It **MUST** be bounded by a
-  per-subscriber maximum, and each additional block **MUST** produce its own
-  natEvent 16 so the log stays complete.
-* **Block step**: control the stride between the blocks a subscriber holds.
-  Contiguous blocks make the log smaller and the audit simpler; strided
-  blocks spread a subscriber over the port space.
-* **Per-pool block size ranges** rather than one fixed size, so a pool can
-  start small per subscriber and grow only for those who need it.
+Only in **dynamic** mode. A deterministic pool has no spare block by
+construction — the formula assigns every block to some subscriber, so a block
+handed out as an extension is one taken from somebody else, and their mapping
+breaks with no error anywhere. Carving out a reserve re-maps every existing
+subscriber, which is [#39](https://github.com/andrediashexa/hexarouting/issues/39)
+and depends on the capacity-change procedure
+([#23](https://github.com/andrediashexa/hexarouting/issues/23)).
 
-The mapping core already computes over a dense index space, so extended
-blocks are an allocator change plus a log change, not a redesign. The
-deterministic mode **MUST NOT** silently gain a second block: in that mode the
-proof is the formula, and a block that is not derivable from it **MUST** be
-logged like a dynamic one.
+Still missing, now tracked as
+[#55](https://github.com/andrediashexa/hexarouting/issues/55): the **stride**
+between the blocks one subscriber holds, and **per-pool block-size ranges** so a
+pool can start subscribers small and grow only those who need it.
 
 ### 2.3 ALG — FTP, RTSP and PPTP built; SIP, TFTP and ESP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
@@ -172,18 +177,27 @@ single byte is touched. Without it PPTP does not work for anyone rather than
 failing only on a collision, so "off by default" would ship a CGNAT that breaks
 every PPTP subscriber until an operator discovers the switch.
 
-### 2.4 EIM/EIF — already endpoint-independent; the gap is choice, S — [#15](https://github.com/andrediashexa/hexarouting/issues/15)
+### 2.4 EIM/EIF — delivered in v0.4.0 and v0.5.0 — [#15](https://github.com/andrediashexa/hexarouting/issues/15), [#50](https://github.com/andrediashexa/hexarouting/issues/50)
 
-See section 1. What remains:
+This box is a **full-cone NAT** by default: endpoint-independent mapping
+(REQ-1), endpoint-independent filtering (REQ-8) and hairpinning (REQ-9). See
+[architecture.md](architecture.md#full-cone-and-the-other-option).
 
-* A per-pool **filtering mode**: endpoint-independent (today's behaviour) or
-  address-dependent, where only the remote address the subscriber contacted
-  may reply. Address-dependent filtering removes unsolicited inbound at the
-  cost of breaking some peer-to-peer applications; that is the operator's
+* **Per-pool filtering mode**, `bpa filter <pool> <mode>`, changed in place so
+  switching does not disconnect anyone. `address-dependent` accepts replies only
+  from the remote the subscriber contacted; that removes unsolicited inbound at
+  the cost of breaking some peer-to-peer applications, which is the operator's
   trade-off, not ours.
-* **Conformance evidence**: an RFC 4787 / RFC 5382 test in the labs, so the
-  claim in section 1 is asserted by something that can fail, rather than by
-  a comment about a hash key.
+* **Conformance evidence.** `lab/nat-behaviour.sh` asserts the mapping on
+  packets, and asserts full cone by delivering a packet from a host the
+  subscriber has never spoken to and reading the subscriber's own address and
+  port off the wire. Running it as
+  `sh tools/lab.sh nat-behaviour address-dependent` selects the restricted cone,
+  where those assertions **MUST** fail — an assertion that passes under both
+  modes is not testing filtering.
+
+The claim used to rest on a reading of a hash key. It now rests on a test that
+can fail.
 
 ## 3. Proposed additions
 
@@ -194,7 +208,7 @@ is committed until the maintainer says so.
 
 | Item | Symptom without it | Effort |
 |---|---|---|
-| **Hairpinning** (RFC 4787 REQ-9) | Two subscribers behind the same CGNAT cannot reach each other through the public address. Breaks self-hosted services, some games, and cameras accessed by their public address from inside the network. | M |
+| **Hairpinning** (RFC 4787 REQ-9) — *delivered, v0.4.0, [#16](https://github.com/andrediashexa/hexarouting/issues/16)* | Two subscribers behind the same CGNAT could not reach each other through the public address. Broke self-hosted services, some games, and cameras accessed by their public address from inside the network. | M |
 | **Static port forwarding** | The operator has no answer for the customer who needs an inbound port. Today the answer is "buy a public IP", which is a lost sale when the provider has none. | S |
 | **PCP (RFC 6887)** | The CPE cannot ask for its own mapping, so every port request becomes a ticket. PCP turns a support call into a protocol exchange. | L |
 | **Per-subscriber session and rate limits** | One infected host opens thousands of sessions, exhausts its block, and the *neighbour* sharing the public address is unaffected — but the infected subscriber calls support, and there is no counter to point at. Limits also cap the damage of a scan. | M |
@@ -214,22 +228,27 @@ is committed until the maintainer says so.
 | Item | Why | Effort |
 |---|---|---|
 | **NAT bypass lists** | Some destinations must see the real source: internal servers, CDN caches, government portals, the operator's own management network. | S |
-| **Pool selection by ACL or VRF** | Today a pool is chosen by inside prefix. Multi-VRF and per-service selection need more. The session table already reserves a word for a VRF id. | M |
-| **Per-pool timeouts and ALG switches** | Follows from 2.1 and 2.3: the unit of policy should be the pool, because that is the unit an operator sells. | S |
-| **Port block utilisation observability** | An operator needs to see block utilisation *before* exhaustion. `natEvent 12` reports the failure; a histogram predicts it. | S |
+| **Pool selection by ACL or VRF** | Today a pool is chosen by inside prefix. Multi-VRF and per-service selection need more. The session table's second key word **used to be** reserved for a VRF id; the PPTP ALG spends it on the remote address, so this now needs a wider key or a packed encoding ([#26](https://github.com/andrediashexa/hexarouting/issues/26)). | M |
+| **Per-pool timeouts and ALG switches** — *delivered, v0.4.0 and v0.5.0* | The unit of policy is the pool, because that is the unit an operator sells. Reachable through `vppctl`; **not** through the VTY, which drops pool sub-lines it does not know ([#47](https://github.com/andrediashexa/hexarouting/issues/47)). | S |
+| **Port block utilisation observability** | An operator needs to see block utilisation *before* exhaustion. `natEvent 12` reports the failure; a histogram predicts it. `show bpa blocks` reports blocks in use and refusals per pool, which is a start and not the histogram ([#27](https://github.com/andrediashexa/hexarouting/issues/27)). | S |
 | **uRPF on the inside** | Without it a spoofed source is translated and logged as a subscriber who did not send it — a wrong answer to a court order, produced with full confidence. | S |
 
-### 3.4 The way out of CGNAT
+### 3.4 The way out of CGNAT — **out of scope**, by decision
 
-CGNAT is a bridge, not a destination. The product that only does CGNAT is
-selling the bridge and not the far side.
+CGNAT is a bridge, not a destination, and a product that only does CGNAT is
+selling the bridge and not the far side. That argument still stands. It is not
+this product's argument to act on.
 
-| Item | Why | Effort |
-|---|---|---|
-| **NAT64 + DNS64** (RFC 6146/6147) | IPv6-only access networks with IPv4 reachability. Reuses this plugin's session table and much of its logging. | L |
-| **DS-Lite AFTR** (RFC 6333) | IPv4 over an IPv6 access network, keeping IPv4 service without IPv4 addressing in the access. | L |
-| **MAP-E / MAP-T** (RFC 7597/7599) | Stateless or nearly stateless, which removes the session table from the data path entirely — and with it most of the logging obligation. Closest in spirit to deterministic BPA. | L |
-| **464XLAT** | The client-side counterpart that makes IPv6-only access work with IPv4-only applications. | M |
+The maintainer scoped this project to **CGNAT only**, and
+[#31](https://github.com/andrediashexa/hexarouting/issues/31) was closed on that
+basis. NAT64+DNS64 (RFC 6146/6147), DS-Lite (RFC 6333), MAP-E/MAP-T (RFC
+7597/7599) and 464XLAT are **not planned here**.
+
+The decision is recorded rather than deleted because the reasoning is worth
+keeping: each of these is an L, each would reuse this plugin's session table and
+much of its logging, and MAP-E in particular is close in spirit to deterministic
+BPA — it removes the session table from the datapath entirely, and with it most
+of the logging obligation. If the scope ever changes, that is where to start.
 
 ### 3.5 Performance and correctness assurance
 
