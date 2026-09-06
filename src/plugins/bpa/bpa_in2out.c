@@ -9,6 +9,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_ftp.h"
 #include "bpa_l4.h"
 #include "bpa_log.h"
 
@@ -50,7 +51,11 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   _ (NO_BLOCK, "no free block in dynamic pool")                            \
   _ (TRUNCATED, "truncated packet")                                            \
   _ (HAIRPINNED, "packets hairpinned to another subscriber")                   \
-  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")
+  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")           \
+  _ (FTP_REWRITTEN, "FTP ALG payloads rewritten")                              \
+  _ (FTP_UNTOUCHED, "FTP payloads left untouched (malformed or unsupported)")  \
+  _ (FTP_NO_PORT, "FTP data connection could not get a public port")           \
+  _ (FTP_SEQ, "TCP sequence numbers shifted after an FTP rewrite")
 
 typedef enum
 {
@@ -152,6 +157,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0;
   u32 n_hairpin = 0;
+  u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -294,6 +300,50 @@ VLIB_NODE_FN (bpa_in2out_node)
       n_translated++;
 
       /*
+       * FTP ALG. Runs on the already-translated packet, so the address it
+       * writes into the payload is the one the subscriber now appears to
+       * have.
+       *
+       * The rewrite comes BEFORE the sequence shift on purpose. The rewrite
+       * records its own length change against the sequence number the
+       * subscriber sent, and shifting first would record it against a number
+       * the subscriber never used - after which every later segment of that
+       * connection is renumbered from the wrong origin.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0
+			 && bpa_ftp_is_control (l4h, s)))
+	{
+	  if (!pool_is_free_index (bm->pools, s->pool_index))
+	    {
+	      bpa_pool_t *fp = pool_elt_at_index (bm->pools, s->pool_index);
+
+	      if (fp->alg_ftp == BPA_ALG_ON)
+		switch (bpa_ftp_in2out (vm, b[0], ip, pt, fp, &s, now))
+		  {
+		  case BPA_FTP_REWRITTEN:
+		    n_ftp++;
+		    break;
+		  case BPA_FTP_UNTOUCHED:
+		    n_ftp_untouched++;
+		    break;
+		  case BPA_FTP_NO_PORT:
+		    n_ftp_noport++;
+		    break;
+		  case BPA_FTP_NOTHING:
+		    break;
+		  }
+	    }
+
+	  /*
+	   * Applied even when the ALG is off for the pool: a connection this
+	   * box already lengthened must keep being renumbered, or turning the
+	   * knob off stalls the very sessions the operator was trying to stop
+	   * interfering with.
+	   */
+	  n_ftp_seq += bpa_ftp_seq_in2out (l4h, s);
+	}
+
+      /*
        * Hairpinning (RFC 4787 REQ-9): one subscriber reaching another through
        * its public address.
        *
@@ -372,6 +422,15 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_HAIRPINNED, n_hairpin);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_FTP_REWRITTEN, n_ftp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_FTP_UNTOUCHED,
+			       n_ftp_untouched);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_FTP_NO_PORT, n_ftp_noport);
+  vlib_node_increment_counter (vm, node->node_index, BPA_IN2OUT_ERROR_FTP_SEQ,
+			       n_ftp_seq);
   return frame->n_vectors;
 }
 

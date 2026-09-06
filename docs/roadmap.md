@@ -127,14 +127,19 @@ deterministic mode **MUST NOT** silently gain a second block: in that mode the
 proof is the formula, and a block that is not derivable from it **MUST** be
 logged like a dynamic one.
 
-### 2.3 ALG — missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
+### 2.3 ALG — FTP built, the rest missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
 Protocols that carry an address or port inside the payload break behind any
 NAT unless the NAT rewrites the payload too.
 
+**FTP is built** ([#42](https://github.com/andrediashexa/hexarouting/issues/42)),
+switchable with `bpa alg <pool> ftp <on|off>` and on by default; the design and
+what it deliberately refuses to do are in
+[architecture.md](architecture.md#application-level-gateways).
+
 | ALG | Symptom without it | Priority |
 |---|---|---|
-| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | High |
+| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | Built |
 | **PPTP / GRE** | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
 | **SIP** | VoIP registers but has no audio, or one-way audio. The single most expensive support call an ISP receives. | High |
 | **RTSP** | IP cameras and some streaming boxes. | Medium |

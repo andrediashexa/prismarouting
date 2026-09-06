@@ -34,6 +34,13 @@ format_bpa_proto (u8 *s, va_list *args)
 }
 
 u8 *
+format_bpa_alg (u8 *s, va_list *args)
+{
+  u32 a = va_arg (*args, u32);
+  return format (s, "%s", a == BPA_ALG_OFF ? "off" : "on");
+}
+
+u8 *
 format_bpa_mode (u8 *s, va_list *args)
 {
   bpa_mode_t m = va_arg (*args, int);
@@ -90,6 +97,11 @@ format_bpa_pool (u8 *s, va_list *args)
 	      format_white_space, indent + 2, p->capacity, usable);
   s = format (s, "\n%Udivisor      %u (%s)", format_white_space, indent + 2,
 	      p->div.d, p->div.is_pow2 ? "shift" : "reciprocal");
+  /* Printed whether on or off. An operator diagnosing active FTP needs to see
+   * the switch, and a line that only appears when it is off reads as an
+   * absent feature rather than an enabled one. */
+  s = format (s, "\n%Ualg          ftp %U", format_white_space, indent + 2,
+	      format_bpa_alg, p->alg_ftp);
   return s;
 }
 
@@ -178,6 +190,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       else if (unformat (line_input, "max-blocks %u", &maxb))
 	cfg.max_blocks = (u8) maxb;
+      else if (unformat (line_input, "alg ftp on"))
+	cfg.alg_ftp = BPA_ALG_ON;
+      else if (unformat (line_input, "alg ftp off"))
+	cfg.alg_ftp = BPA_ALG_OFF;
       else if (unformat (line_input, "filter endpoint-independent"))
 	cfg.filter = BPA_FILTER_ENDPOINT_INDEPENDENT;
       else if (unformat (line_input, "filter address-dependent"))
@@ -259,6 +275,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "outside <pfx>/<len> [outside <pfx>/<len> ...] "
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
+    "[alg ftp on|off] "
     "[check] | bpa pool <name> del",
   .function = bpa_pool_add_command_fn,
 };
@@ -458,6 +475,78 @@ VLIB_CLI_COMMAND (bpa_filter_command, static) = {
   .path = "bpa filter",
   .short_help = "bpa filter <pool> <endpoint-independent|address-dependent>",
   .function = bpa_filter_command_fn,
+};
+
+/*
+ * Turn an ALG on or off for a pool, in place.
+ *
+ * Same reason as "bpa filter": recreating the pool to change one setting
+ * drops every session it holds, and an operator who has just been told the
+ * FTP ALG is mangling a customer's transfer needs to switch it off on a box
+ * that is carrying traffic.
+ *
+ * Sessions the ALG already lengthened keep being renumbered afterwards - the
+ * datapath decides that from the session, not from this switch - so turning
+ * it off stops new rewrites without breaking the connections it already
+ * touched.
+ */
+static clib_error_t *
+bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
+		    vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  bpa_pool_t *p;
+  u8 *name = 0;
+  u8 value;
+  int found = 0;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (0, "usage: bpa alg <pool> ftp <on|off>");
+
+  if (!unformat (line_input, "%v", &name))
+    {
+      error = clib_error_return (0, "missing pool name");
+      goto done;
+    }
+  if (!unformat (line_input, "ftp"))
+    {
+      error = clib_error_return (0, "expected an ALG name (ftp)");
+      goto done;
+    }
+  if (unformat (line_input, "on"))
+    value = BPA_ALG_ON;
+  else if (unformat (line_input, "off"))
+    value = BPA_ALG_OFF;
+  else
+    {
+      error = clib_error_return (0, "expected on or off");
+      goto done;
+    }
+
+  pool_foreach (p, bm->pools)
+    if (vec_len (p->name) == vec_len (name)
+	&& !memcmp (p->name, name, vec_len (name)))
+      {
+	p->alg_ftp = value;
+	found = 1;
+	break;
+      }
+
+  if (!found)
+    error = clib_error_return (0, "no such pool '%v'", name);
+
+done:
+  vec_free (name);
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_alg_command, static) = {
+  .path = "bpa alg",
+  .short_help = "bpa alg <pool> ftp <on|off>",
+  .function = bpa_alg_command_fn,
 };
 
 static clib_error_t *
@@ -760,6 +849,11 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, " max-blocks %u\n", p->max_blocks);
       if (p->filter != BPA_FILTER_ENDPOINT_INDEPENDENT)
 	s = format (s, " filter address-dependent\n");
+      /* Only the override: the FTP ALG is on by default, so emitting "alg ftp
+       * on" for every pool would put a line in every running configuration
+       * that says nothing. */
+      if (p->alg_ftp == BPA_ALG_OFF)
+	s = format (s, " alg ftp off\n");
       s = format (s, " exit\n");
     }
 

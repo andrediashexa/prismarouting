@@ -312,6 +312,149 @@ Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
 place, because the point of offering the choice is that an operator can make it
 on a box carrying traffic.
 
+## Application-level gateways
+
+A protocol that puts an address or a port **inside its payload** breaks behind
+any NAT unless the NAT rewrites the payload too. The failures do not look like
+NAT failures to the subscriber, which is why they become long support calls.
+
+Each ALG **MUST** be switchable per pool, and each **MUST** count what it
+rewrote, so that "the ALG is off" and "the ALG saw nothing" are
+distinguishable from the outside. A malformed or unexpected payload **MUST**
+leave the packet untouched and increment a counter: an ALG that rewrites what
+it misparsed corrupts traffic that would otherwise merely fail to connect,
+which is a worse outcome than the one it exists to prevent.
+
+| ALG | Default | State |
+|---|---|---|
+| FTP (RFC 959 `PORT`/`227`, RFC 2428 `EPRT`/`229`) | on | built |
+| PPTP/GRE, RTSP, IPsec ESP passthrough | on | not built |
+| SIP | **off** | not built |
+
+The reasoning behind that list — including why SIP is built off, and which
+conventional ALGs are deliberately not built at all — is recorded on
+[issue #14](https://github.com/andrediashexa/hexarouting/issues/14).
+
+### FTP
+
+`bpa alg <pool> ftp <on|off>`, on by default, changeable on a box carrying
+traffic.
+
+Active FTP does not work through a NAT without it. The client tells the server
+"connect back to me at this address and port", in ASCII, and the address is a
+private one. The control connection stays perfectly healthy while the data
+connection is attempted against something nobody can route to: the subscriber
+sees a directory listing that hangs forever, and nothing in the CGNAT looks
+wrong. Passive FTP survives without an ALG; active FTP is still how a lot of
+industrial and legacy equipment moves files.
+
+```mermaid
+sequenceDiagram
+    participant C as client 100.64.0.5
+    participant N as HexaRouting
+    participant S as server
+    C->>N: PORT 100,64,0,5,1,1
+    Note over N: allocate 200.150.0.17:1537 from the subscriber's own block
+    Note over N: install the session that will accept the data connection
+    N->>S: PORT 200,150,0,17,6,1
+    Note over N: the payload grew by 2 bytes
+    C->>N: next command, seq 1021
+    N->>S: same command, seq 1023
+    S->>N: SYN to 200.150.0.17:1537
+    N->>C: SYN to 100.64.0.5:257
+    S->>N: ack 1031
+    N->>C: ack 1029
+```
+
+**Only the `in2out` direction is ever rewritten.** Only there does the payload
+carry an address that belongs to the inside. A `227` arriving from a server on
+the internet announces *that server's* address, which the subscriber can
+already reach; rewriting it would break a session that works. The direction
+therefore decides which keyword is looked for: a segment towards port 21 is a
+client's, so `PORT` and `EPRT`; a segment from port 21 is that subscriber's own
+FTP server replying, so `227` and `229`.
+
+**The announced address MUST match the session's own private address.** A
+client announcing somebody else's address is either behind a second NAT — where
+rewriting would point the data connection at the wrong host on our inside — or
+is attempting an FTP bounce. Both leave the packet exactly as it arrived.
+
+**The data connection is expected, not guessed.** Rewriting the payload
+installs a session for `(public address, allocated port)` so that the inbound
+connection is accepted, using a port from the subscriber's **own block** — so
+the mapping stays derivable and nobody else's block is touched. The session is
+created half-open, so an announcement the server never answers expires on the
+half-open timer (twenty seconds by default) and costs exactly what a scan probe
+costs. Its remembered remote stays empty, and address-dependent filtering skips
+the check when it is: the subscriber asked to be connected *to*, so the
+connection is solicited even though nothing outbound preceded it, and the
+filtering mode **MUST NOT** silently defeat the ALG.
+
+#### Sequence numbers are the part that bites
+
+Rewriting an ASCII address changes the **length** of the payload. Every byte
+the subscriber sends after that point therefore sits at a different offset in
+the stream than the subscriber believes, and every acknowledgement the server
+returns is in the lengthened numbering.
+
+The implementation **MUST** shift the sequence number of every later segment in
+the subscriber's direction, and **MUST** shift the acknowledgement of every
+segment coming back. Without it the control connection stalls a few commands
+after the rewrite — long enough after the `PORT` that the failure does not look
+like FTP, and does not look like NAT either.
+
+The session remembers where the last rewrite happened and the drift on each
+side of it, so a retransmission of data sent *before* the rewrite still gets the
+offset that was in force when it was first sent. Only the two most recent
+offsets are kept; a retransmission older than the last-but-one rewrite would get
+the wrong one, which on a control connection whose rewrites are seconds apart is
+data the sender has already given up on. TCP **SACK** blocks are **not**
+adjusted — stated because a reader deserves to know where this stops rather
+than assume it was handled.
+
+The correction survives the switch: `bpa alg <pool> ftp off` stops new rewrites
+but the datapath keeps renumbering sessions it already lengthened, because
+otherwise turning the knob off would break exactly the connections the operator
+was trying to stop interfering with.
+
+That state costs **eight bytes on every session**, FTP or not — `sizeof
+(bpa_session_t)` goes from 40 to 48. A side table keyed on the session index
+would have avoided it and would have needed its own lifecycle hanging off
+`bpa_session_free()`; this project has already learned that a second thing to
+keep in step is a second thing to get wrong.
+
+#### What it refuses to do
+
+* It rewrites **at most the first line** of a segment. FTP is strictly
+  request/response, so a command is a segment, and searching further into a
+  payload is how an ALG ends up rewriting a byte sequence that happened to
+  appear inside a file name. A keyword found on a **later** line leaves the
+  packet untouched and increments the counter, so the case is visible rather
+  than silent.
+* It demands the exact grammar and a **CRLF** terminator. RFC 959 defines the
+  control connection as Telnet NVT, where a line ends in CRLF; accepting a bare
+  LF would mean guessing about a payload that is already not what the protocol
+  says it should be.
+* `EPRT` with address family 2 (IPv6) is left alone and counted. A v4 CGNAT has
+  nothing to put there.
+* A segment split across buffers is left alone.
+
+#### Checksums, and why the lab reads the packet
+
+Both checksums are recomputed from scratch on a rewritten segment rather than
+updated incrementally. The payload changed length, so an incremental update
+would have to fold in every moved byte, and the ICMP work already proved what a
+wrong checksum costs here: the receiver drops the packet in silence while every
+counter reports success. One short command is not worth the risk of getting
+that arithmetic wrong.
+
+`lab/ftp-alg.sh` therefore asserts on the **captured packet** — both checksums,
+the IP total length against the bytes actually on the wire, the rewritten
+payload byte for byte, the shifted sequence and acknowledgement numbers, and the
+data connection arriving at the subscriber. `sh tools/lab.sh ftp-alg off` runs
+the same lab with the ALG switched off and **MUST** fail; twelve of its
+assertions drop, which is what makes the other run mean something.
+
 ## Fragments
 
 A non-first fragment carries no L4 header and therefore no port to match a
@@ -347,6 +490,7 @@ out: with the right address and the wrong session.
 - [x] Dynamic block allocator with hold-down and per-worker partitioning
 - [x] Fragment handling via shallow virtual reassembly
 - [x] TCP state and ICMP error translation
+- [x] FTP ALG, switchable per pool ([#42](https://github.com/andrediashexa/hexarouting/issues/42))
 - [x] IPFIX export over UDP and TCP ([logging.md](logging.md))
 - [x] Dated configuration trail
 - [x] Single VTY (`hexash`) with completion and contextual help

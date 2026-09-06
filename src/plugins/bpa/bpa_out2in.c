@@ -14,6 +14,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_ftp.h"
 #include "bpa_l4.h"
 
 typedef struct
@@ -55,7 +56,8 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   _ (BLOCK_FREE, "block not allocated to any subscriber")                      \
   _ (ICMP_ERROR, "ICMP errors translated")                                     \
   _ (ICMP_MALFORMED, "truncated or malformed ICMP error")                      \
-  _ (TRUNCATED, "truncated packet")
+  _ (TRUNCATED, "truncated packet")                                            \
+  _ (FTP_ACK, "TCP acknowledgements shifted after an FTP rewrite")
 
 typedef enum
 {
@@ -209,7 +211,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_icmp_err = 0;
+  u32 n_translated = 0, n_icmp_err = 0, n_ftp_ack = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -358,6 +360,19 @@ VLIB_NODE_FN (bpa_out2in_node)
 
       bpa_rewrite_dst (ip, l4h, (u8) proto, s->ip_priv, s->port_priv);
       n_translated++;
+
+      /*
+       * The remote acknowledges the subscriber's stream as the FTP ALG
+       * lengthened it. The subscriber only knows its own numbering, so the
+       * acknowledgement is shifted back here. Without it the subscriber sees
+       * bytes it never sent acknowledged, and the control connection stalls a
+       * few commands after the rewrite - which does not look like FTP, and
+       * does not look like NAT either.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0
+			 && (s->alg & BPA_ALG_FTP_SEQ)))
+	n_ftp_ack += bpa_ftp_ack_out2in (l4h, s);
+
       vnet_feature_next_u16 (&next[0], b[0]);
 
     trace:
@@ -384,6 +399,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_TRANSLATED, n_translated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_ICMP_ERROR, n_icmp_err);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_FTP_ACK, n_ftp_ack);
   return frame->n_vectors;
 }
 

@@ -62,6 +62,8 @@ sh tools/lab.sh handoff        # sharding across 2 workers
 sh tools/lab.sh dynamic        # dynamic mode and block hold-down
 sh tools/lab.sh frag           # IP fragments
 sh tools/lab.sh icmp-tcp       # ICMP errors (PMTUD) and TCP state
+sh tools/lab.sh ftp-alg        # FTP ALG: payload rewrite and sequence shift
+sh tools/lab.sh ftp-alg off    # the same lab with the ALG off: MUST fail
 sh tools/lab.sh routing        # BGP, OSPF and IS-IS into the VPP FIB
 sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
@@ -85,6 +87,7 @@ The most instructive to run:
 | `frag` | The byte-order bug that created phantom sessions |
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
+| `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch twelve assertions drop |
 
 ## 3. Real hardware — two VMs, real Internet
 

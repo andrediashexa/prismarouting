@@ -65,6 +65,9 @@ typedef struct
   u8 blk_idx;	 /* which of the subscriber's blocks that offset is in */
   u8 proto;	 /* bpa_proto_t */
   u8 tcp_state; /* bpa_tcp_state_t */
+  /* Which ALG state this session carries; see bpa_ftp.h. Lives in padding
+   * the struct already had, so it costs nothing per session. */
+  u8 alg;
   u32 sub_idx;
   u32 pool_index;
   /*
@@ -81,6 +84,24 @@ typedef struct
    * and the drops are counted so an operator can see if it ever bites.
    */
   u32 remote;
+  /*
+   * ALG sequence correction, in the subscriber -> internet direction, which
+   * is the only one whose payload this box ever lengthens.
+   *
+   * `alg_seq_pos` is where the last rewrite happened, in the subscriber's own
+   * numbering; the two offsets are the drift on each side of it, so a
+   * retransmission from before the rewrite is still shifted by what was in
+   * force when it was first sent.
+   *
+   * Eight bytes on every session, FTP or not, which is what a side table
+   * keyed on the session index would have avoided. It is not worth it: the
+   * table would need its own lifecycle hanging off bpa_session_free(), and
+   * this project has already learned that a second thing to keep in step is
+   * a second thing to get wrong. 16-bit offsets keep the cost to one word.
+   */
+  u32 alg_seq_pos;
+  i16 alg_off_before;
+  i16 alg_off_after;
   f64 last_heard;
 } bpa_session_t;
 
