@@ -11,6 +11,10 @@
 # lets a lab be run with the feature it tests switched off, which is the only
 # way to know the lab can fail at all.
 #
+# Anything after the lab name reaches the lab as its arguments. That is what
+# lets a lab be run with the feature it tests switched off, which is the only
+# way to know the lab can fail at all.
+#
 # On this machine the docker group only takes effect in a new login, so we
 # re-exec through "sg docker" when the socket denies access.
 set -eu

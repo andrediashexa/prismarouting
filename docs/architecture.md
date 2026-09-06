@@ -285,6 +285,25 @@ is **dropped**, not forwarded. Forwarding it would put a packet addressed to
 our own public range back on the wire, and it is counted separately from a
 successful hairpin so the two are distinguishable.
 
+## Full cone, and the other option
+
+**This box is a full-cone NAT out of the box.** That is three properties
+together, and all three are present:
+
+| Property | RFC 4787 | Where it comes from |
+|---|---|---|
+| Endpoint-independent **mapping** — one internal socket keeps one external port whoever it talks to | REQ-1 | the `in2out` key is `(private address, private port, protocol)` and carries no remote |
+| Endpoint-independent **filtering** — any host may reach an open mapping | REQ-8 | the default mode below; the `out2in` key carries no remote either |
+| **Hairpinning** — one subscriber reaching another through its public address | REQ-9 | its own section above |
+
+None of that is a claim to be taken on trust. `lab/nat-behaviour.sh` asserts
+each of them on packets, and asserts the third by delivering a packet from a
+host the subscriber has never spoken to and reading the subscriber's own
+address and port off the wire. Running it as
+`sh tools/lab.sh nat-behaviour address-dependent` selects the restricted cone
+instead, and those assertions **MUST** fail there — an assertion that passes
+under both modes is not testing filtering.
+
 ## Filtering: who may reply
 
 A mapping accepts inbound packets under one of two rules (RFC 4787 REQ-8), set
@@ -297,8 +316,8 @@ per pool with `bpa filter <pool> <mode>`:
 
 The default is what this implementation has always done, and not by intent
 expressed anywhere: the `out2in` key is `(public ip, public port, protocol)`
-and carries no remote address, so any host may reach an open mapping. That is a
-full-cone NAT. Which of the two an operator wants is their trade, not ours.
+and carries no remote address, so any host may reach an open mapping. Which of
+the two an operator wants is their trade, not ours.
 
 The check is **not** in the key, deliberately. Putting the remote address in
 the lookup key would give one subscriber a different external port per
