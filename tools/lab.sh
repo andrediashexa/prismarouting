@@ -5,6 +5,7 @@
 #   sh tools/lab.sh datapath       runs lab/datapath.sh
 #   sh tools/lab.sh boot-iso       boots the ISO (which must already be built)
 #   sh tools/lab.sh ftp-alg off    passes "off" through to the lab
+#   sh tools/lab.sh pptp off       the same, for the PPTP lab
 #
 # Anything after the lab name reaches the lab as its arguments. That is what
 # lets a lab be run with the feature it tests switched off, which is the only
@@ -17,7 +18,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=${IMAGE:-hexarouting-dev:26.06}
 
 if [ $# -eq 0 ]; then
-  echo "labs disponiveis:"
+  echo "available labs:"
   for f in "$REPO"/lab/*.sh; do
     n=$(basename "$f" .sh)
     d=$(sed -n '2s/^# //p' "$f")
@@ -35,7 +36,7 @@ if ! docker ps >/dev/null 2>&1; then
   exec sg docker -c "IMAGE='$IMAGE' '$0' '$LAB' $LAB_ARGV"
 fi
 
-# --device=/dev/kvm quando existir: boot de ISO em segundos em vez de minutos
+# --device=/dev/kvm when it exists: an ISO boots in seconds instead of minutes
 KVM=""
 [ -w /dev/kvm ] && KVM="--device=/dev/kvm"
 

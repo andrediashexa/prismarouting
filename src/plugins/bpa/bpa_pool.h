@@ -62,6 +62,18 @@
  * round trip of the SETUP reply.
  */
 #define BPA_TIMEOUT_ALG_EXPECT	60
+/*
+ * A PPTP call's GRE mapping, idle.
+ *
+ * There is no RFC floor for this - RFC 4787 and RFC 5382 cover UDP and TCP.
+ * The number comes from what the traffic looks like: a live PPTP tunnel
+ * carries PPP, and PPP sends LCP echoes on the order of every 30 seconds, so
+ * an idle mapping means a tunnel that is genuinely gone. Half an hour is long
+ * enough that a tunnel surviving a brief outage keeps its Call ID, and short
+ * enough that a subscriber who reconnects all day does not accumulate dead
+ * calls in a 512-port block.
+ */
+#define BPA_TIMEOUT_GRE		1800
 
 typedef struct
 {
@@ -70,6 +82,7 @@ typedef struct
   u32 tcp_trans;
   u32 tcp_estab;
   u32 tcp_syn;
+  u32 gre;
   u32 port_holddown;
   u32 alg_expect;
 } bpa_timeouts_t;
@@ -88,6 +101,7 @@ bpa_timeouts_resolve (const bpa_timeouts_t *pool, const bpa_timeouts_t *global)
   r.tcp_trans = pool->tcp_trans ? pool->tcp_trans : global->tcp_trans;
   r.tcp_estab = pool->tcp_estab ? pool->tcp_estab : global->tcp_estab;
   r.tcp_syn = pool->tcp_syn ? pool->tcp_syn : global->tcp_syn;
+  r.gre = pool->gre ? pool->gre : global->gre;
   r.port_holddown = pool->port_holddown ? pool->port_holddown
 					: global->port_holddown;
   r.alg_expect = pool->alg_expect ? pool->alg_expect : global->alg_expect;

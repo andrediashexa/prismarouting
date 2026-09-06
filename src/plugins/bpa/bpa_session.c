@@ -319,6 +319,126 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 }
 
 /*
+ * A PPTP call.
+ *
+ * Almost bpa_session_create(), and deliberately not it: the two directions of
+ * a GRE mapping are not keyed the same way, and only the inbound one can be
+ * installed here. See bpa_key_gre() for why.
+ *
+ * The subscriber must already exist. It does: this is only ever called from
+ * the PPTP ALG, on a control connection that is itself a translated session,
+ * so a block was allocated before the call request was ever sent.
+ */
+bpa_session_t *
+bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
+			u32 pool_index, u32 sub_idx, u32 ip_pub, u16 call_id,
+			u32 remote, f64 now)
+{
+  clib_bihash_kv_16_8_t kv;
+  bpa_session_t *s;
+  bpa_sub_t *sub;
+  bpa_subblock_t *sb = 0;
+  u32 blk_idx;
+  int off = -1;
+  uword *q;
+
+  q = hash_get (pt->sub_by_idx, sub_idx);
+  if (!q)
+    return 0;
+  sub = pool_elt_at_index (pt->subs, q[0]);
+
+  /*
+   * Only blocks on the control connection's own public address, and this is
+   * a protocol requirement rather than tidiness: a PPTP server ties the GRE
+   * flow to the address the control connection came from. A subscriber
+   * holding a second block on a different public address (issue #13) whose
+   * call was placed from there would build a tunnel the server discards.
+   *
+   * No port preservation. The subscriber's Call ID is not a port and lands
+   * inside the block only by coincidence; keeping it would buy nothing and
+   * would make two calls that chose the same Call ID contend for one offset.
+   */
+  for (blk_idx = 0; blk_idx < vec_len (sub->blocks); blk_idx++)
+    {
+      sb = vec_elt_at_index (sub->blocks, blk_idx);
+      if (sb->blk.ip_pub != ip_pub)
+	continue;
+      off = bpa_portmap_alloc (&sb->map, -1);
+      if (off >= 0)
+	break;
+    }
+  if (off < 0 || sb == 0)
+    return 0; /* no room on that address: the tunnel does not come up */
+
+  pool_get_zero (pt->sessions, s);
+  s->ip_pub = sb->blk.ip_pub;
+  s->port_priv = call_id;
+  s->port_off = (u16) off;
+  s->blk_idx = (u8) blk_idx;
+  s->port_pub = sb->blk.port_lo + (u16) off;
+  s->proto = BPA_PROTO_GRE;
+  s->gre_state = BPA_GRE_CALLING;
+  s->sub_idx = sub_idx;
+  s->pool_index = pool_index;
+  s->remote = remote;
+  s->last_heard = now;
+
+  if (bpa_set_addr_of (&p->inside, sub_idx, &s->ip_priv))
+    {
+      bpa_portmap_free (&sb->map, (u16) off);
+      pool_put (pt->sessions, s);
+      return 0;
+    }
+
+  sub->n_sessions++;
+
+  /* Inbound: the server will send GRE carrying the Call ID we just handed
+   * out, and it came from the block, so the pre-check and the handoff find
+   * the right subscriber without knowing anything about PPTP. */
+  bpa_key (&kv, s->ip_pub, s->port_pub, BPA_PROTO_GRE);
+  kv.value = s - pt->sessions;
+  clib_bihash_add_del_16_8 (&pt->out2in, &kv, 1);
+
+  /* The ALG's own handle on this call, so a retransmitted call request maps
+   * to the same Call ID instead of allocating a second one. */
+  bpa_key_gre (&kv, s->ip_priv, call_id, remote, BPA_GRE_KEY_ALG);
+  kv.value = s - pt->sessions;
+  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+
+  return s;
+}
+
+/*
+ * The server answered with its own Call ID, which is what the subscriber's
+ * outbound GRE packets will carry from now on. Only now can the outbound
+ * direction be keyed at all.
+ */
+void
+bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
+			     u16 peer_call_id)
+{
+  clib_bihash_kv_16_8_t kv;
+
+  if (s->gre_state == BPA_GRE_ESTABLISHED)
+    {
+      if (s->peer_call_id == peer_call_id)
+	return;
+      /* A second reply naming a different Call ID: drop the stale key rather
+       * than leave the table pointing at a call that no longer exists. */
+      bpa_key_gre (&kv, s->ip_priv, s->peer_call_id, s->remote,
+		   BPA_GRE_KEY_DATA);
+      clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+    }
+
+  s->peer_call_id = peer_call_id;
+  s->gre_state = BPA_GRE_ESTABLISHED;
+
+  bpa_key_gre (&kv, s->ip_priv, peer_call_id, s->remote, BPA_GRE_KEY_DATA);
+  kv.value = s - pt->sessions;
+  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+}
+
+/*
  * Return quarantined ports whose hold-down has passed.
  *
  * The queue is in time order because every entry gets the same hold-down, so
@@ -423,8 +543,25 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
   bpa_sub_t *sub;
   uword *q;
 
-  bpa_key (&kv, s->ip_priv, s->port_priv, s->proto);
-  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+  /* GRE holds two inbound-table entries under keys of its own shape, and
+   * removing them with bpa_key() would silently leave both behind - the
+   * session would be gone while the table still pointed at it. */
+  if (PREDICT_FALSE (s->proto == BPA_PROTO_GRE))
+    {
+      bpa_key_gre (&kv, s->ip_priv, s->port_priv, s->remote, BPA_GRE_KEY_ALG);
+      clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+      if (s->gre_state == BPA_GRE_ESTABLISHED)
+	{
+	  bpa_key_gre (&kv, s->ip_priv, s->peer_call_id, s->remote,
+		       BPA_GRE_KEY_DATA);
+	  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+	}
+    }
+  else
+    {
+      bpa_key (&kv, s->ip_priv, s->port_priv, s->proto);
+      clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+    }
 
   bpa_key (&kv, s->ip_pub, s->port_pub, s->proto);
   clib_bihash_add_del_16_8 (&pt->out2in, &kv, 0);

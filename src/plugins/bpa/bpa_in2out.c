@@ -13,6 +13,7 @@
 #include "bpa_l4.h"
 #include "bpa_log.h"
 #include "bpa_alg.h"
+#include "bpa_pptp.h"
 
 typedef struct
 {
@@ -65,7 +66,13 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   _ (RTSP_UNPARSED, "RTSP Transport not understood")                           \
   _ (RTSP_PARTIAL, "RTSP message spans segments")                              \
   _ (RTSP_NO_ROOM, "RTSP rewrite would not fit")                               \
-  _ (RTSP_NO_PORTS, "RTSP media port pair unavailable")
+  _ (RTSP_NO_PORTS, "RTSP media port pair unavailable")                      \
+  _ (GRE_NOT_ENHANCED, "GRE that is not the enhanced GRE of RFC 2637")         \
+  _ (GRE_NO_CALL, "GRE for a call the control channel never announced")        \
+  _ (PPTP_MANGLED, "PPTP control messages rewritten")                          \
+  _ (PPTP_UNKNOWN, "PPTP message about an unknown call")                       \
+  _ (PPTP_NO_CALL_ID, "PPTP call refused: no free entry in the block")         \
+  _ (PPTP_MALFORMED, "malformed or split PPTP control message")
 
 typedef enum
 {
@@ -106,6 +113,18 @@ bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
   /* A non-first fragment: there is no port to rewrite, and the L4 checksum
    * lives in the first fragment. Only the address changes. */
   if (PREDICT_FALSE (l4h == 0))
+    {
+      ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
+      return;
+    }
+
+  /*
+   * GRE going out carries the Call ID the SERVER assigned, and the server
+   * expects to see it come back unchanged. Only the address is ours to
+   * rewrite here - the Call ID this box allocated appears in the other
+   * direction, which is where bpa_rewrite_dst() puts it.
+   */
+  if (proto == BPA_PROTO_GRE)
     {
       ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
       return;
@@ -169,6 +188,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
   u32 n_rtsp = 0;
+  u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_nocid = 0, n_pptp_bad = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -199,7 +219,35 @@ VLIB_NODE_FN (bpa_in2out_node)
 
       if (PREDICT_FALSE (bpa_l4_src (b[0], ip, proto, &port_priv, &l4h)))
 	{
-	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_TRUNCATED];
+	  /* Plain GRE has no per-flow identifier, so several subscribers
+	   * behind one address cannot be told apart and it is dropped rather
+	   * than sent out with a source nobody can reply to. Saying which of
+	   * the two happened is the whole value of a separate counter. */
+	  b[0]->error =
+	    node->errors[proto == BPA_PROTO_GRE
+			   ? BPA_IN2OUT_ERROR_GRE_NOT_ENHANCED
+			   : BPA_IN2OUT_ERROR_TRUNCATED];
+	  goto trace;
+	}
+
+      /*
+       * GRE is keyed by the server's Call ID together with the server's
+       * address, and the mapping is only ever created by the PPTP ALG on the
+       * control connection. No session here means data arrived for a call
+       * that was never announced - or was announced while the ALG was off.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_GRE))
+	{
+	  bpa_key_gre (&kv, src_host, port_priv,
+		       clib_net_to_host_u32 (ip->dst_address.as_u32),
+		       BPA_GRE_KEY_DATA);
+	  if (PREDICT_TRUE (
+		clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0))
+	    {
+	      s = pool_elt_at_index (pt->sessions, value.value);
+	      goto translate;
+	    }
+	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_GRE_NO_CALL];
 	  goto trace;
 	}
 
@@ -309,7 +357,42 @@ VLIB_NODE_FN (bpa_in2out_node)
        * Free under endpoint-independent filtering, which never reads it. */
       s->remote = clib_net_to_host_u32 (ip->dst_address.as_u32);
       if (proto == BPA_PROTO_TCP)
-	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
+	{
+	  tcp_header_t *tcp = l4h;
+
+	  bpa_tcp_track (s, tcp->flags);
+
+	  /*
+	   * The PPTP control channel. Rewritten BEFORE the address and port,
+	   * because both fixes are incremental on the same checksum and the
+	   * ALG has to read the payload as the subscriber wrote it.
+	   */
+	  if (PREDICT_FALSE (
+		clib_net_to_host_u16 (tcp->dst_port) == BPA_PPTP_PORT
+		&& !pool_is_free_index (bm->pools, s->pool_index)
+		&& bpa_alg_on (
+		  pool_elt_at_index (bm->pools, s->pool_index)->alg,
+		  BPA_ALG_PPTP)))
+	    {
+	      switch (bpa_pptp_out (pt, b[0], tcp, s, now))
+		{
+		case BPA_PPTP_MANGLED:
+		  n_pptp++;
+		  break;
+		case BPA_PPTP_UNKNOWN:
+		  n_pptp_unknown++;
+		  break;
+		case BPA_PPTP_NO_CALL_ID:
+		  n_pptp_nocid++;
+		  break;
+		case BPA_PPTP_MALFORMED:
+		  n_pptp_bad++;
+		  break;
+		default:
+		  break;
+		}
+	    }
+	}
 
       bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub);
       n_translated++;
@@ -509,6 +592,14 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       n_ftp_seq);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_RTSP_REWRITTEN, n_rtsp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_MANGLED, n_pptp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_UNKNOWN, n_pptp_unknown);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_NO_CALL_ID, n_pptp_nocid);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_MALFORMED, n_pptp_bad);
   return frame->n_vectors;
 }
 

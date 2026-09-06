@@ -614,6 +614,88 @@ rtsp` runs it against a pool with the ALG disabled, where 11 of its 18
 assertions fail. The parser's refusals are unit-tested without VPP in
 `test/test_bpa_rtsp.c`, and the port-pair allocator in `test/test_bpa_ports.c`.
 
+### PPTP, and the Call ID problem
+
+PPTP splits itself in two: a TCP control connection on port 1723, and the
+payload in GRE packets. GRE has no ports. What tells one tunnel from another is
+a 16-bit **Call ID** that each end picks for itself and announces over the
+control connection.
+
+That is exactly what a CGNAT cannot allow. Windows and most routers pick Call
+IDs from the bottom of the range, so two subscribers behind one public address
+both choosing `1` is not a corner case - it is the normal case. Without an ALG
+the inbound GRE for the two tunnels is indistinguishable, and in fact worse:
+the Call ID falls outside every port block, so the arithmetic pre-check rejects
+it and **no** PPTP tunnel works at all, collision or not.
+
+So the Call ID is rewritten the way a source port is rewritten, and allocated
+**from the same port block**. That is not tidiness. It means the inbound
+arithmetic pre-check, the worker handoff and the RFC 8158 log all handle a PPTP
+call without knowing that PPTP exists.
+
+```mermaid
+sequenceDiagram
+    participant S as Subscriber 100.64.0.5
+    participant B as HexaRouting
+    participant P as PPTP server
+    S->>B: TCP 1723, Outgoing-Call-Request, Call ID 1
+    Note over B: allocate 3585 from the subscriber's block
+    B->>P: Outgoing-Call-Request, Call ID 3585
+    P->>B: Outgoing-Call-Reply, Call ID 36865, Peer's Call ID 3585
+    Note over B: learn 36865; now both directions are keyed
+    B->>S: Outgoing-Call-Reply, Peer's Call ID 1
+    S->>B: GRE, Call ID 36865
+    B->>P: GRE, Call ID 36865 (unchanged: it is the server's)
+    P->>B: GRE, Call ID 3585
+    B->>S: GRE, Call ID 1
+```
+
+The rewrite never changes a length, so no TCP sequence number has to be
+adjusted - which removes the hardest part of writing an ALG, and the part most
+implementations get wrong.
+
+### Two keys that are not each other's mirror
+
+Inbound is ordinary. The packet carries the Call ID this box handed out, so
+`(public address, Call ID)` finds the call, and the ordinary session key
+already builds that.
+
+Outbound is not. The packet carries the Call ID the **server** assigned, which
+this box did not choose and cannot make unique: a subscriber with two PPTP
+tunnels up - an ordinary home worker - can perfectly well meet two servers that
+both picked the same value. So the outbound key carries the remote address in
+the second key word.
+
+That word was reserved for a VRF id, and GRE spends it. When VRF lands
+([#26](https://github.com/andrediashexa/hexarouting/issues/26)) this key needs
+a wider hash or a packed encoding. It is written down here rather than
+discovered then.
+
+A third key exists purely for the ALG, found by the subscriber's *own* Call ID,
+so that a retransmitted call request maps to the Call ID already allocated
+instead of burning a second one.
+
+### Where it stops, deliberately
+
+* **Plain GRE (RFC 2784) is not translated.** It has no per-flow identifier at
+  all, so several subscribers behind one address cannot be told apart. It is
+  dropped under its own counter, not under "truncated packet": the two are
+  different problems and pointing at the wrong one costs an afternoon.
+* **Incoming calls are not handled.** `Incoming-Call-Request` only appears when
+  the subscriber is acting as a dial-in concentrator, which nothing behind a
+  CGNAT can be - the call would have to reach it first, and there is no mapping
+  until it does.
+* **A control message split across TCP segments is counted, not parsed.**
+  Reassembling would mean holding subscriber payload in the dataplane, and
+  every PPTP implementation in use sends one small message per segment.
+* **Fragmented GRE is dropped.** Shallow virtual reassembly recovers TCP and
+  UDP ports from the first fragment; it does not parse GRE, and reading the
+  fields it left behind would look up a key built from another protocol's data.
+* **`Call-Disconnect-Notify` is read against the RFC.** RFC 2637 says its Call
+  ID is the one the *server* assigned; deployed servers put the subscriber's
+  there, and Linux's `nf_nat_pptp` has treated it as a peer Call ID for twenty
+  years. Following the text would break against the servers that exist.
+
 ## Fragments
 
 A non-first fragment carries no L4 header and therefore no port to match a

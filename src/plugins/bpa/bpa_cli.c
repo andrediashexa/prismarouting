@@ -28,6 +28,8 @@ format_bpa_proto (u8 *s, va_list *args)
       return format (s, "udp");
     case BPA_PROTO_ICMP:
       return format (s, "icmp");
+    case BPA_PROTO_GRE:
+      return format (s, "gre");
     default:
       return format (s, "proto-%u", p);
     }
@@ -135,6 +137,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   cfg.policy = BPA_POLICY_INTERLEAVED;
   cfg.mode = BPA_MODE_DETERMINISTIC;
+  cfg.alg = BPA_ALG_DEFAULT;
 
   if (!unformat_user (input, unformat_line_input, line_input))
     return clib_error_return (0, "expected pool name");
@@ -196,6 +199,16 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	cfg.timeouts.tcp_trans = tv;
       else if (unformat (line_input, "timeout tcp-established %u", &tv))
 	cfg.timeouts.tcp_estab = tv;
+      /* "alg <name> off" in a candidate configuration. Only the departures
+       * from the default are ever written out, so a configuration file does
+       * not grow a line per ALG per pool. */
+#define _(sym, nm, desc)                                                      \
+  else if (unformat (line_input, "alg " nm " off")) cfg.alg &= ~BPA_ALG_##sym; \
+  else if (unformat (line_input, "alg " nm " on")) cfg.alg |= BPA_ALG_##sym;
+      foreach_bpa_alg
+#undef _
+      else if (unformat (line_input, "timeout gre %u", &tv))
+	cfg.timeouts.gre = tv;
       else if (unformat (line_input, "timeout port-holddown %u", &tv))
 	cfg.timeouts.port_holddown = tv;
       else if (unformat (line_input, "timeout alg-expect %u", &tv))
@@ -572,6 +585,8 @@ bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	else
 	  p->alg &= ~which;
 	p->alg_set |= which;
+	vlib_cli_output (vm, "%v: %U", p->name, format_bpa_alg,
+			 p->alg);
 	found = 1;
 	break;
       }
@@ -592,6 +607,37 @@ VLIB_CLI_COMMAND (bpa_alg_command, static) = {
 };
 
 static clib_error_t *
+bpa_show_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			 vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+
+  if (pool_elts (bm->pools) == 0)
+    {
+      vlib_cli_output (vm, "no pools configured");
+      return 0;
+    }
+
+  pool_foreach (p, bm->pools)
+    {
+      vlib_cli_output (vm, "%v", p->name);
+#define _(sym, nm, desc)                                                      \
+  vlib_cli_output (vm, "  %-6s %-3s  %s", nm,                                 \
+		   (p->alg & BPA_ALG_##sym) ? "on" : "off", desc);
+      foreach_bpa_alg
+#undef _
+    }
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_alg_command, static) = {
+  .path = "show bpa alg",
+  .short_help = "show bpa alg",
+  .function = bpa_show_alg_command_fn,
+};
+
+static clib_error_t *
 bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
 {
@@ -604,10 +650,12 @@ bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       vlib_cli_output (vm,
 		       "udp %u  icmp %u  tcp-syn %u  tcp-transitory %u  "
-		       "tcp-established %u  port-holddown %u  alg-expect %u",
+		       "tcp-established %u  gre %u  port-holddown %u  "
+		       "alg-expect %u",
 		       bm->timeouts.udp, bm->timeouts.icmp,
 		       bm->timeouts.tcp_syn, bm->timeouts.tcp_trans,
-		       bm->timeouts.tcp_estab, bm->timeouts.port_holddown,
+		       bm->timeouts.tcp_estab, bm->timeouts.gre,
+		       bm->timeouts.port_holddown,
 		       bm->timeouts.alg_expect);
       return 0;
     }
@@ -624,6 +672,8 @@ bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	bm->timeouts.tcp_estab = v;
       else if (unformat (line_input, "tcp-syn %u", &v))
 	bm->timeouts.tcp_syn = v;
+      else if (unformat (line_input, "gre %u", &v))
+	bm->timeouts.gre = v;
       else if (unformat (line_input, "port-holddown %u", &v))
 	bm->timeouts.port_holddown = v;
       else if (unformat (line_input, "alg-expect %u", &v))
@@ -642,8 +692,9 @@ bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
 VLIB_CLI_COMMAND (bpa_timeouts_command, static) = {
   .path = "bpa timeouts",
-  .short_help = "bpa timeouts [udp <s>] [icmp <s>] [tcp-transitory <s>] "
-		"[tcp-established <s>] [port-holddown <s>] [alg-expect <s>]",
+  .short_help = "bpa timeouts [udp <s>] [icmp <s>] [tcp-syn <s>] "
+		"[tcp-transitory <s>] [tcp-established <s>] [gre <s>] "
+		"[port-holddown <s>] [alg-expect <s>]",
   .function = bpa_timeouts_command_fn,
 };
 
@@ -726,7 +777,7 @@ bpa_holddown_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
 VLIB_CLI_COMMAND (bpa_holddown_command, static) = {
   .path = "bpa block-holddown",
-  .short_help = "bpa block-holddown [<segundos>]",
+  .short_help = "bpa block-holddown [<seconds>]",
   .function = bpa_holddown_command_fn,
 };
 
@@ -883,6 +934,14 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, " timeout icmp %u\n", p->timeouts.icmp);
       if (p->timeouts.tcp_syn)
 	s = format (s, " timeout tcp-syn %u\n", p->timeouts.tcp_syn);
+      if (p->timeouts.gre)
+	s = format (s, " timeout gre %u\n", p->timeouts.gre);
+#define _(sym, nm, desc)                                                      \
+  if ((p->alg & BPA_ALG_##sym) != (BPA_ALG_DEFAULT & BPA_ALG_##sym))          \
+    s = format (s, " alg %s %s\n", nm,                                       \
+		(p->alg & BPA_ALG_##sym) ? "on" : "off");
+      foreach_bpa_alg
+#undef _
       if (p->timeouts.tcp_trans)
 	s = format (s, " timeout tcp-transitory %u\n", p->timeouts.tcp_trans);
       if (p->timeouts.tcp_estab)
