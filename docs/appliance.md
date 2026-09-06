@@ -223,32 +223,90 @@ boot.
 
 ## Installing to disk
 
-The ISO boots a live system and `hexarouting-install <disk>` writes it to a
-disk. The boot menu offers it as **HexaRouting (install to disk)**.
+The ISO is an **installation medium**, not an appliance you log into. It boots
+with no credentials at all, runs the product so you can look at it, and offers
+one command that turns it into a box somebody owns.
 
 ```
-hexarouting-install /dev/sda
+HexaRouting VTY 0.5.0
+
+This is the installation medium: nothing here survives a reboot.
+Type 'install' to install HexaRouting onto a disk.
+
+hexarouting> install
 ```
 
-It **MUST NOT** touch a disk it was not given, and **MUST NOT** proceed without
-confirmation. The confirmation is the disk path typed back, not a yes/no — a
-yes/no is answered reflexively, and an installer that guesses its target
-destroys a machine that was already doing something. It also refuses the medium
-it booted from.
+`install` exists in the VTY **only when the box is running from the medium**.
+On an installed appliance it is not in the command tree and the installer
+refuses to run: a command that overwrites the disk should not be one TAB
+away from `interface` on a router carrying traffic.
 
-Unattended installs, for labs and for the boot test, come from the kernel
+### Everything is asked before anything is written
+
+| Question | Refused when |
+|---|---|
+| Target disk | not a block device, or the medium this system booted from |
+| Hostname | it contains characters a hostname may not have |
+| Timezone | there is no such zone in `/usr/share/zoneinfo` |
+| Root password | it is empty, or the two entries do not match |
+
+Then a summary, then the disk path typed back — a yes/no is answered
+reflexively, and an installer that guesses its target destroys a machine that
+was already doing something. Then it installs and **reboots**, after saying to
+remove the medium.
+
+Asking first is not cosmetic. It used to ask for the password **last**, after
+GRUB was already written, so an install that was abandoned at the prompt left a
+bootable disk carrying whatever password the image had.
+
+### The medium carries no credentials
+
+The live image's root account is **locked** and `ssh.service` is **masked** on
+it. Console autologin does not authenticate, so nothing is lost.
+
+This replaced a real exposure. The image used to ship `root:hexarouting` with
+`PermitRootLogin yes`, and `openssh-server` is installed — so a booted ISO on a
+network was remotely rootable with a password printed in the release notes.
+Worse, it did not stay on the medium: the installer unpacks the live squashfs
+onto the target **including `/etc/shadow`**, so an install that was aborted,
+that failed late, or that ran unattended left a bootable disk with that
+password on it.
+
+The failure direction is now the safe one. An install that dies halfway leaves
+a disk whose root account is locked — a box that has to be reinstalled, rather
+than a box anyone on the network can log into. `PermitRootLogin yes` and the
+enabled `ssh.service` are written by the installer **onto the target**, where
+they are a decision about the box being built rather than a property of the
+medium.
+
+### Unattended installs
+
+For labs, for the boot test and for PXE, the answers come from the kernel
 command line:
 
 | Parameter | Effect |
 |---|---|
-| `hexarouting.install` | prompt for the disk on the console |
-| `hexarouting.install=/dev/vda` | install onto that disk, still confirming |
-| `hexarouting.yes` | skip the confirmation, then **power off** |
+| `hexarouting.install` | prompt for everything on the console |
+| `hexarouting.install=/dev/vda` | that disk, still asking for the rest |
+| `hexarouting.hostname=<name>` | answer the hostname question |
+| `hexarouting.timezone=<zone>` | answer the timezone question |
+| `hexarouting.password=<pw>` | answer the root password question |
+| `hexarouting.yes` | skip the confirmations, then **power off** |
+
+`hexarouting.password` has a real cost: the kernel command line is
+world-readable in `/proc/cmdline` for the life of the booted system. It does
+not survive onto the installed box — that system has its own command line — but
+anyone logged into the medium while it installs can read it. For a hands-on
+install, leave it out and answer the prompt.
 
 The power-off is not a convenience. Without it the machine sits at a login
 prompt until the harness kills it and the completion message is truncated
 mid-line — which is how the first version reported a finished install as a
 failure.
+
+`HEXA_INSTALL_CHECK=1` collects and validates the answers and writes nothing,
+which is how `test/test_installer.sh` covers every refusal above in
+milliseconds instead of a boot cycle each.
 
 ### What it took to make this work
 
@@ -342,8 +400,11 @@ why, with evidence.
 
 ## Logging into the appliance
 
-The ISO boots straight into the VTY: the console is autologged in and root's
-login shell is `/usr/bin/hexash-login`, which starts `hexash`.
+The ISO boots straight into the VTY: the console is autologged in — the root
+account is locked, so there is nothing to authenticate against — and root's
+login shell is `/usr/bin/hexash-login`, which starts `hexash`. On an
+**installed** box there is no autologin and the password is the one given
+during the install.
 
 | Situation | What happens |
 |---|---|
@@ -371,9 +432,10 @@ set. On an existing Debian the machine may have other jobs, and silently
 replacing root's shell is the kind of surprise an operator discovers at the
 worst moment.
 
-Console autologin is set by the **ISO only**. On an installed box it would mean
-physical or IPMI access equals full access with no password, which is the
-operator's decision rather than our default.
+Console autologin is set by the **ISO only**, and the installer removes it from
+the target. On an installed box it would mean physical or IPMI access equals
+full access with no password, which is the operator's decision rather than our
+default.
 
 ## What is still missing
 

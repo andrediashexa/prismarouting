@@ -79,7 +79,13 @@ sh tools/build.sh image     # build container, VPP pinned to 26.06
 sh tools/build.sh plugin    # compile the plugin
 make test                   # core tests
 sh tools/lab.sh datapath    # packet-level translation
+make iso                    # the installation medium
 ```
+
+The ISO is an installation medium, not an appliance: it boots with no
+credentials, and `install` in the VTY asks for the disk, hostname, timezone and
+root password before it writes anything. See
+[docs/appliance.md](docs/appliance.md#installing-to-disk).
 
 ## Status
 

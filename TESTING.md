@@ -42,7 +42,7 @@ flowchart LR
 ## 1. Core — seconds, nothing installed
 
 ```sh
-make test      # BPA mapping, port allocator, boot tuning, VTY command tree
+make test      # BPA mapping, port allocator, boot tuning, VTY, installer answers
 make model     # validates the reference model itself
 ```
 
@@ -52,7 +52,9 @@ divergence **MUST** break the build.
 
 Catches: mapping arithmetic, block collisions, port allocator behaviour,
 consecutive even-aligned media port pairs, the RTSP parser's refusals,
-`isolcpus` and hugepage computation, command-tree completion.
+`isolcpus` and hugepage computation, command-tree completion, and every answer
+the installer must refuse — each of those is a disk that has to stay untouched,
+and reaching one in a virtual machine costs a whole boot cycle.
 
 ## 2. Dataplane labs — minutes, inside the container
 

@@ -106,8 +106,26 @@ done
 say "box identity"
 echo hexarouting > "$ROOT/etc/hostname"
 printf '127.0.0.1 localhost\n127.0.1.1 hexarouting\n' > "$ROOT/etc/hosts"
-chroot "$ROOT" /bin/sh -c "echo 'root:hexarouting' | chpasswd"
-echo "PermitRootLogin yes" > "$ROOT/etc/ssh/sshd_config.d/hexarouting.conf"
+
+# NO CREDENTIALS ON THE LIVE IMAGE.
+#
+# This used to set 'root:hexarouting' and permit root over SSH. Both travelled
+# onto the disk: hexarouting-install unpacks this squashfs, /etc/shadow and
+# all, and only asked for a password at the very end - so an install that was
+# aborted, that failed late, or that ran from the kernel command line left a
+# BOOTABLE disk with a password printed in the release notes.
+#
+# The account is locked instead. Console autologin does not authenticate, so
+# nothing is lost on the live image, and the failure direction is now the safe
+# one: an install that dies halfway leaves a disk nobody can log into rather
+# than a disk anyone can. hexarouting-install sets the real password, from an
+# answer the operator gave before it wrote anything.
+say "locking the live image's root account"
+chroot "$ROOT" passwd -l root >/dev/null
+# Masked, not merely disabled: with a locked account sshd could not
+# authenticate anyway, and masking leaves no listener to reason about. The
+# installer unmasks it on the target and writes the sshd policy there.
+chroot "$ROOT" systemctl mask ssh.service >/dev/null 2>&1 || true
 
 say "squashfs"
 chroot "$ROOT" /bin/sh -c "apt-get clean; rm -rf /var/lib/apt/lists/*"
@@ -135,11 +153,11 @@ say "bootloader"
 cat > "$WORK/iso/boot/grub/grub.cfg" <<'EOF'
 set default=0
 set timeout=5
-menuentry "HexaRouting" {
+menuentry "HexaRouting installer - start, then type 'install'" {
     linux /live/vmlinuz boot=live components quiet
     initrd /live/initrd
 }
-menuentry "HexaRouting (install to disk)" {
+menuentry "HexaRouting installer - go straight to the questions" {
     linux /live/vmlinuz boot=live components hexarouting.install
     initrd /live/initrd
 }

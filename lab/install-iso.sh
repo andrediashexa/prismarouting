@@ -15,7 +15,16 @@ DISK=${DISK:-/tmp/hexa-disk.qcow2}
 SIZE=${DISK_SIZE:-8G}
 LOG=${LOGCOPY:-/src/install-console.log}
 
+# The answers the installer must ask for. They are given here rather than typed
+# at the prompt because a test that sends keystrokes at the right moment tests
+# the timing of the keystrokes - and because the point of the assertions below
+# is that these exact values reach the disk.
+NEW_HOST=${NEW_HOST:-cgnat-lab}
+NEW_TZ=${NEW_TZ:-America/Sao_Paulo}
+NEW_PW=${NEW_PW:-lab-secret-42}
+
 [ -f "$ISO" ] || { echo "no ISO at $ISO"; exit 1; }
+fail=0
 
 if [ -w /dev/kvm ]; then
   ACCEL="-enable-kvm -cpu host"
@@ -28,7 +37,18 @@ fi
 mkdir -p /mnt/iso /tmp/bf
 mount -o loop,ro "$ISO" /mnt/iso
 cp /mnt/iso/live/vmlinuz /mnt/iso/live/initrd /tmp/bf/
+# The live image must carry no usable credentials. Read its /etc/shadow out of
+# the squashfs before anything else touches it - this is the file that used to
+# travel onto the disk with a published password in it.
+rm -rf /tmp/sq
+if ! unsquashfs -d /tmp/sq -no-progress /mnt/iso/live/filesystem.squashfs \
+       etc/shadow > /tmp/unsq.log 2>&1; then
+  echo "  could not read the live image's /etc/shadow:"
+  tail -3 /tmp/unsq.log | sed 's/^/    /'
+fi
+LIVE_ROOT=$(grep "^root:" /tmp/sq/etc/shadow 2>/dev/null | cut -d: -f2)
 umount /mnt/iso
+echo "live image root entry: '${LIVE_ROOT:-<unreadable>}'"
 
 rm -f "$DISK"
 qemu-img create -f qcow2 "$DISK" "$SIZE" >/dev/null
@@ -41,7 +61,9 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -drive file="$DISK",format=qcow2,if=virtio \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
-           hexarouting.install=/dev/vda hexarouting.yes" \
+           hexarouting.install=/dev/vda hexarouting.yes \
+           hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
+           hexarouting.password=$NEW_PW" \
   > /tmp/install.log 2>&1
 
 sed 's/\x1b\[[0-9;]*m//g' /tmp/install.log > /tmp/install-clean.log
@@ -76,6 +98,92 @@ fi
 echo "  install reported success"
 
 echo
+echo "=========== WHAT LANDED ON THE DISK ==========="
+# Read the installed filesystem directly. Booting it and logging in would be
+# the other way to prove the password, and it would mean sending keystrokes at
+# a login prompt at the right moment - the thing this lab exists not to do.
+DISK_FAIL=0
+# Mounted by byte offset, not through /dev/loop0p2.
+#
+# "losetup -P" attaches the image and the partition nodes never appear: the
+# kernel creates them, udev publishes them, and there is no udev in this
+# container. The first version of this check used them, could not read
+# anything back, and reported it as though the install had gone wrong - so
+# every step below says what happened rather than swallowing it.
+qemu-img convert -O raw "$DISK" /tmp/hexa-disk.raw 2>&1 | sed 's/^/  qemu-img: /'
+ls -l /tmp/hexa-disk.raw 2>&1 | sed 's/^/  /'
+sfdisk -J /tmp/hexa-disk.raw > /tmp/parts.json 2>/tmp/sfdisk-j.log \
+  || sed 's/^/  sfdisk: /' /tmp/sfdisk-j.log
+START=$(python3 -c '
+import json, sys
+t = json.load(open("/tmp/parts.json"))["partitiontable"]
+print(max(t["partitions"], key=lambda p: p["size"])["start"])
+' 2>/tmp/parse.log) || sed 's/^/  parse: /' /tmp/parse.log
+echo "  root partition starts at sector ${START:-?}"
+mkdir -p /tmp/target
+if [ -n "$START" ] \
+   && mount -o loop,ro,offset=$((START * 512)) /tmp/hexa-disk.raw /tmp/target \
+        2>/tmp/mount.log; then
+  INST_ROOT=$(grep "^root:" /tmp/target/etc/shadow 2>/dev/null | cut -d: -f2)
+  INST_HOST=$(cat /tmp/target/etc/hostname 2>/dev/null || true)
+  INST_TZ=$(cat /tmp/target/etc/timezone 2>/dev/null || true)
+  echo "  hostname  ${INST_HOST:-<none>}"
+  echo "  timezone  ${INST_TZ:-<none>}"
+  echo "  root      $(printf '%s' "${INST_ROOT:-<none>}" | cut -c1-12)..."
+  PW_OK=$(python3 -W ignore - "$INST_ROOT" "$NEW_PW" <<'PY'
+# crypt goes away in Python 3.13; the container is Debian 12 (3.11). When the
+# base image moves, this becomes passlib or a call to "openssl passwd".
+import crypt, sys
+h, pw = sys.argv[1], sys.argv[2]
+print("yes" if h.startswith("$") and crypt.crypt(pw, h) == h else "no")
+PY
+)
+  umount /tmp/target
+else
+  echo "  [FAIL] could not read the installed filesystem back"
+  echo "         root partition starts at sector '${START:-?}'"
+  sed 's/^/         /' /tmp/mount.log 2>/dev/null | head -3
+  DISK_FAIL=1
+fi
+
+if [ "$DISK_FAIL" = 0 ]; then
+  # THE assertion. Everything else about this install can be right and the box
+  # can still ship with the password whoever built the image chose.
+  if [ "${PW_OK:-no}" = yes ]; then
+    echo "  [ ok ] the root password on disk is the one the installer was given"
+  else
+    echo "  [FAIL] the installed root password is NOT the answer given"
+    fail=1
+  fi
+  if [ -n "${INST_ROOT:-}" ] && [ "${INST_ROOT:-}" != "${LIVE_ROOT:-x}" ]; then
+    echo "  [ ok ] and it is not the entry the live image carried"
+  else
+    echo "  [FAIL] the installed shadow entry is the live image's"
+    fail=1
+  fi
+  case "${LIVE_ROOT:-}" in
+    ""|"!"*|"*") echo "  [ ok ] the live image itself carries no usable password" ;;
+    *) echo "  [FAIL] the live image has a usable root password: an ISO on a"
+       echo "         network is rootable by anyone who has read the release"
+       fail=1 ;;
+  esac
+  if [ "${INST_HOST:-}" = "$NEW_HOST" ]; then
+    echo "  [ ok ] the hostname answer reached the disk"
+  else
+    echo "  [FAIL] hostname is '${INST_HOST:-}', expected '$NEW_HOST'"
+    fail=1
+  fi
+  if [ "${INST_TZ:-}" = "$NEW_TZ" ]; then
+    echo "  [ ok ] the timezone answer reached the disk"
+  else
+    echo "  [FAIL] timezone is '${INST_TZ:-}', expected '$NEW_TZ'"
+    fail=1
+  fi
+else
+  fail=1
+fi
+
+echo
 echo "=========== PHASE 2: boot the disk, ISO detached ==========="
 # The SAME memory as phase 1, deliberately.
 #
@@ -96,7 +204,6 @@ sed 's/\x1b\[[0-9;]*m//g' /tmp/disk.log > /tmp/disk-clean.log
 cat /tmp/disk-clean.log >> "$LOG" 2>/dev/null || true
 sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log | head -40
 
-fail=0
 up=1
 # "Came up and failed its checks" and "never said anything" are different
 # failures needing different work, and reporting the first as the second sent

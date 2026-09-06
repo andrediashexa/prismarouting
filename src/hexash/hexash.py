@@ -148,6 +148,21 @@ COMMIT = {
     "comment": ("record a note with this commit", "<text>"),
 }
 
+# The live installation medium, and the installer it carries.
+#
+# "install" appears in the VTY only when the box is running FROM that medium.
+# Offering it on an installed appliance is offering to overwrite the box the
+# operator is logged into, and a command that destroys a running router should
+# not be one keystroke of TAB completion away from "interface".
+LIVE_SQUASHFS = os.environ.get(
+    "HEXA_LIVE_SQUASHFS", "/run/live/medium/live/filesystem.squashfs")
+INSTALLER = os.environ.get("HEXA_INSTALLER", "/usr/sbin/hexarouting-install")
+
+
+def running_from_live_medium():
+    return os.path.exists(LIVE_SQUASHFS) and os.access(INSTALLER, os.X_OK)
+
+
 TREE = {
     "operational": {
         "configure": ("edit the candidate configuration", None),
@@ -175,6 +190,10 @@ TREE = {
     },
     "pool": CGNAT_POOL,
 }
+
+if running_from_live_medium():
+    TREE["operational"]["install"] = (
+        "install HexaRouting onto a disk on this machine", None)
 
 
 def tree_walk(mode, words):
@@ -686,11 +705,36 @@ class Shell:
             return
         print("back in the HexaRouting VTY")
 
+    def do_install(self):
+        """
+        Hand the console to the installer.
+
+        Only from the live medium. On an installed box the command is not in
+        the tree at all, and this refuses anyway: the two checks answer
+        different questions - whether the operator can find it, and whether it
+        can run - and a box that only had the first would be one stale TREE
+        away from offering to overwrite itself.
+
+        Spawned as a child, like the shell escape, so that an installer the
+        operator abandons returns to the VTY rather than logging them out.
+        """
+        if not running_from_live_medium():
+            self.err("this box is not running from the installation medium; "
+                     "'install' only exists there")
+            return
+        try:
+            subprocess.call([INSTALLER])
+        except OSError as e:
+            self.err(f"cannot start {INSTALLER}: {e}")
+
     def do_operational(self, line):
         w = line.split()
         # Checked before the command tree, so it works without appearing in it.
         if w[:2] == ["start", "shell"]:
             self.start_shell()
+            return True
+        if w[0] == "install":
+            self.do_install()
             return True
         if w[0] in ("configure", "conf"):
             self.candidate = self.running_config()
@@ -1005,6 +1049,15 @@ class Shell:
             print(f"HexaRouting VTY {hexarouting_version()}")
             print("'?' for help, TAB to complete, 'configure' to edit, "
                   "'exit' to leave.")
+            # An installer nobody can find is not an installer. This medium
+            # boots with no credentials and nothing on it survives a reboot,
+            # so the one thing an operator needs to be told is the word that
+            # changes that.
+            if running_from_live_medium():
+                print()
+                print("This is the installation medium: nothing here survives "
+                      "a reboot.")
+                print("Type 'install' to install HexaRouting onto a disk.")
             print()
         while True:
             try:

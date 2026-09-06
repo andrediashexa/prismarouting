@@ -1,13 +1,23 @@
 #!/bin/sh
 # Runs the installer when the kernel command line asks for it.
 #
-#   hexarouting.install            prompt for the disk on the console
-#   hexarouting.install=/dev/vda   install onto that disk, still confirming
-#   hexarouting.yes                skip the confirmation (unattended, for tests)
+#   hexarouting.install             prompt for everything on the console
+#   hexarouting.install=/dev/vda    that disk, still asking for the rest
+#   hexarouting.hostname=<name>     answer the hostname question
+#   hexarouting.timezone=<zone>     answer the timezone question
+#   hexarouting.password=<pw>       answer the root password question
+#   hexarouting.yes                 skip the confirmations
 #
 # The kernel command line is the hook rather than typing into the console,
 # because a test that drives an installer by sending keystrokes at the right
 # moment tests the timing of the keystrokes.
+#
+# hexarouting.password is a real feature for automated and PXE installs, and it
+# has a real cost: the kernel command line is world-readable in /proc/cmdline
+# for the life of the booted system. On the INSTALLED system that does not
+# apply - the installer's own command line does not survive the reboot - but
+# anyone logged into the live medium while it installs can read it. For a
+# hands-on install, leave it out and answer the prompt.
 set -u
 cmdline=$(cat /proc/cmdline 2>/dev/null || echo "")
 
@@ -19,39 +29,40 @@ esac
 disk=""
 for tok in $cmdline; do
   case "$tok" in
-    hexarouting.install=*) disk=${tok#hexarouting.install=} ;;
-    hexarouting.yes) HEXA_INSTALL_YES=1; export HEXA_INSTALL_YES ;;
+    hexarouting.install=*)  disk=${tok#hexarouting.install=} ;;
+    hexarouting.hostname=*) HEXA_HOSTNAME=${tok#hexarouting.hostname=};      export HEXA_HOSTNAME ;;
+    hexarouting.timezone=*) HEXA_TIMEZONE=${tok#hexarouting.timezone=};      export HEXA_TIMEZONE ;;
+    hexarouting.password=*) HEXA_ROOT_PASSWORD=${tok#hexarouting.password=}; export HEXA_ROOT_PASSWORD ;;
+    hexarouting.yes)        HEXA_INSTALL_YES=1; export HEXA_INSTALL_YES ;;
   esac
 done
 
 exec >/dev/console 2>&1 </dev/console
-echo
-echo "=============== HexaRouting: install to disk ==============="
-if [ -z "$disk" ]; then
-  lsblk -dno NAME,SIZE,MODEL 2>/dev/null | sed 's/^/  \/dev\//'
-  printf "Disk to install onto (blank to skip): "
-  read -r disk
-  [ -n "$disk" ] || { echo "skipped"; exit 0; }
-fi
 
-/usr/sbin/hexarouting-install "$disk"
+# This path reports its own outcome and powers off, so it takes the reboot into
+# its own hands.
+HEXA_INSTALL_NO_REBOOT=1; export HEXA_INSTALL_NO_REBOOT
+
+/usr/sbin/hexarouting-install ${disk:+"$disk"}
 rc=$?
 
 if [ "${HEXA_INSTALL_YES:-0}" != 1 ]; then
+  # A hands-on install from the command line: the installer already said what
+  # happened, and the operator is sitting there.
   exit $rc
 fi
 
 # Unattended: say so and power off.
 #
 # Both halves matter. The marker is printed only on success, so a failed
-# install cannot be mistaken for a finished one. The poweroff is what makes
-# the marker reliable at all: without it the machine sits at a login prompt
-# until the harness times out and kills it mid-line - which is exactly how
-# this was first seen, with the console reading "HexaRouting inst".
+# install cannot be mistaken for a finished one. The poweroff is what makes the
+# marker reliable at all: without it the machine sits at a login prompt until
+# the harness times out and kills it mid-line - which is exactly how this was
+# first seen, with the console reading "HexaRouting inst".
 if [ "$rc" = 0 ]; then
-  echo "HexaRouting installed to $disk"
+  echo "HexaRouting installed to ${disk:-the chosen disk}"
 else
-  echo "HexaRouting install FAILED on $disk (status $rc)"
+  echo "HexaRouting install FAILED on ${disk:-the chosen disk} (status $rc)"
 fi
 sync
 sleep 1
