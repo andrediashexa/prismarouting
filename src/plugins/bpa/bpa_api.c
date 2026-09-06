@@ -86,7 +86,28 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
   cfg.port_max = clib_net_to_host_u16 (mp->port_max);
   cfg.policy = (bpa_policy_t) mp->policy;
   cfg.mode = (bpa_mode_t) mp->mode;
-  cfg.alg = BPA_ALG_DEFAULT;
+  cfg.filter = (bpa_filter_t) mp->filter;
+  cfg.max_blocks = mp->max_blocks;
+
+  /*
+   * Two masks, as the pool stores them: what is enabled, and what the caller
+   * actually stated an opinion about. A client that sends zero for both - one
+   * written before these fields existed - gets the shipped defaults from
+   * bpa_pool_init(), which is why the defaults are resolved there and not
+   * assumed here.
+   */
+  cfg.alg = clib_net_to_host_u32 (mp->alg);
+  cfg.alg_set = clib_net_to_host_u32 (mp->alg_set);
+
+  cfg.timeouts.udp = clib_net_to_host_u32 (mp->timeouts.udp);
+  cfg.timeouts.icmp = clib_net_to_host_u32 (mp->timeouts.icmp);
+  cfg.timeouts.tcp_syn = clib_net_to_host_u32 (mp->timeouts.tcp_syn);
+  cfg.timeouts.tcp_trans = clib_net_to_host_u32 (mp->timeouts.tcp_transitory);
+  cfg.timeouts.tcp_estab = clib_net_to_host_u32 (mp->timeouts.tcp_established);
+  cfg.timeouts.gre = clib_net_to_host_u32 (mp->timeouts.gre);
+  cfg.timeouts.port_holddown =
+    clib_net_to_host_u32 (mp->timeouts.port_holddown);
+  cfg.timeouts.alg_expect = clib_net_to_host_u32 (mp->timeouts.alg_expect);
 
   e = bpa_pool_add (&cfg, 0);
 
@@ -147,6 +168,18 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   mp->port_max = clib_host_to_net_u16 (p->port_max);
   mp->policy = (vl_api_bpa_policy_t) p->policy;
   mp->mode = (vl_api_bpa_mode_t) p->mode;
+  mp->filter = (vl_api_bpa_filter_t) p->filter;
+  mp->max_blocks = p->max_blocks;
+  mp->alg = clib_host_to_net_u32 (p->alg);
+  mp->timeouts.udp = clib_host_to_net_u32 (p->timeouts.udp);
+  mp->timeouts.icmp = clib_host_to_net_u32 (p->timeouts.icmp);
+  mp->timeouts.tcp_syn = clib_host_to_net_u32 (p->timeouts.tcp_syn);
+  mp->timeouts.tcp_transitory = clib_host_to_net_u32 (p->timeouts.tcp_trans);
+  mp->timeouts.tcp_established = clib_host_to_net_u32 (p->timeouts.tcp_estab);
+  mp->timeouts.gre = clib_host_to_net_u32 (p->timeouts.gre);
+  mp->timeouts.port_holddown =
+    clib_host_to_net_u32 (p->timeouts.port_holddown);
+  mp->timeouts.alg_expect = clib_host_to_net_u32 (p->timeouts.alg_expect);
   mp->blocks_per_ip = clib_host_to_net_u32 (p->blocks_per_ip);
   mp->capacity = clib_host_to_net_u32 (p->capacity);
   mp->inside_count = clib_host_to_net_u32 (p->inside.count);

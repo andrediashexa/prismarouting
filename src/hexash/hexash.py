@@ -117,6 +117,28 @@ CGNAT_POOL = {
         "interleaved": ("neighbours on distinct public addresses", None),
         "blocked": ("neighbours on the same public address", None),
     }),
+    "timeout": ("session lifetimes for this pool; absent inherits the global", {
+        "udp": ("seconds", ARG_NUM),
+        "icmp": ("seconds", ARG_NUM),
+        "tcp-syn": ("seconds, half-open TCP", ARG_NUM),
+        "gre": ("seconds, a PPTP call's GRE mapping", ARG_NUM),
+        "tcp-transitory": ("seconds", ARG_NUM),
+        "tcp-established": ("seconds", ARG_NUM),
+        "port-holddown": ("seconds a released port waits", ARG_NUM),
+        "alg-expect": ("seconds an announced media port waits", ARG_NUM),
+    }),
+    "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "filter": ("which inbound packets a mapping accepts (RFC 4787 REQ-8)", {
+        "endpoint-independent": ("anyone may reach an open mapping "
+                                 "(full cone, the default)", None),
+        "address-dependent": ("only the remote the subscriber contacted "
+                              "(restricted cone)", None),
+    }),
+    "alg": ("application-level gateways for this pool", {
+        "ftp": ("FTP PORT/EPRT and the 227/229 replies", "<on|off>"),
+        "rtsp": ("RTSP Transport client_port", "<on|off>"),
+        "pptp": ("PPTP control channel and its GRE data channel", "<on|off>"),
+    }),
     "mode": ("how the block is assigned", {
         "deterministic": ("by formula, no allocation logging", None),
         "dynamic": ("on demand, with allocation logging", None),
@@ -393,11 +415,25 @@ class Shell:
     # ---------------------------------------------------------- device
 
     def running_config(self) -> Config:
-        """The configuration actually in effect, read from the device."""
+        """
+        The configuration actually in effect, read from the device.
+
+        A line the model cannot hold is announced rather than dropped, and the
+        reason is not tidiness. The candidate is built FROM this object, so a
+        setting lost here is a setting the next commit removes from the device:
+        an operator who set something with vppctl and then committed an
+        unrelated change through the VTY had it silently reverted. That is what
+        issue #47 turned out to be.
+        """
         cfg = Config()
         rc, out = self.dp.run("show bpa config")
         if rc == 0 and out.strip():
             cfg = Config.parse(out)
+        if cfg.unknown:
+            self.err("the dataplane reports configuration this VTY does not "
+                     "model; committing would REMOVE it:")
+            for lineno, text, why in cfg.unknown:
+                print(f"    line {lineno}: {text}    ({why})")
         cfg.mtus = self.device_mtus()
         cfg.routing = self.frr.running()
         return cfg
@@ -609,6 +645,17 @@ class Shell:
             self.err("no candidate configuration")
             return
         running = self.running_config()
+
+        # Refused, not warned about. A candidate carrying a line nobody can
+        # apply would be committed as though it had been, and the operator
+        # would find out from the consequence.
+        if self.candidate.unknown or running.unknown:
+            self.err("refusing to commit: there are configuration lines this "
+                     "VTY does not understand")
+            for lineno, text, why in (self.candidate.unknown
+                                      + running.unknown):
+                print(f"    line {lineno}: {text}    ({why})")
+            return
 
         if args and args[0] == "check":
             if self.apply(self.candidate, check_only=True):
@@ -857,11 +904,44 @@ class Shell:
                 if w[1] not in ("deterministic", "dynamic"):
                     raise ValueError("mode must be deterministic or dynamic")
                 p.mode = w[1]
+            elif w[0] == "timeout":
+                if w[1] not in Pool.TIMEOUTS:
+                    raise ValueError("timeout must be one of "
+                                     + ", ".join(Pool.TIMEOUTS))
+                p.timeouts[w[1]] = int(w[2])
+            elif w[0] == "max-blocks":
+                if int(w[1]) < 1:
+                    raise ValueError("max-blocks must be at least 1")
+                p.max_blocks = int(w[1])
+            elif w[0] == "filter":
+                if w[1] not in Pool.FILTERS:
+                    raise ValueError("filter must be one of "
+                                     + ", ".join(Pool.FILTERS))
+                p.filter = w[1]
+            elif w[0] == "alg":
+                if w[1] not in Pool.ALG_BITS:
+                    raise ValueError("alg must be one of "
+                                     + ", ".join(Pool.ALG_BITS))
+                if w[2] not in ("on", "off", "enable", "disable"):
+                    raise ValueError("alg must be on or off")
+                p.algs[w[1]] = w[2] in ("on", "enable")
             elif w[0] == "no" and len(w) > 2:
                 if w[1] == "inside" and w[2] in p.inside:
                     p.inside.remove(w[2])
                 elif w[1] == "outside" and w[2] in p.outside:
                     p.outside.remove(w[2])
+                # "no timeout udp" and "no alg ftp" drop the OVERRIDE, which
+                # is not the same as setting it to something: the pool goes
+                # back to inheriting, and the line disappears from the
+                # configuration instead of appearing with a default in it.
+                elif w[1] == "timeout":
+                    p.timeouts.pop(w[2], None)
+                elif w[1] == "alg":
+                    p.algs.pop(w[2], None)
+            elif w[0] == "no" and len(w) > 1 and w[1] == "max-blocks":
+                p.max_blocks = 0
+            elif w[0] == "no" and len(w) > 1 and w[1] == "filter":
+                p.filter = "endpoint-independent"
             else:
                 self.err(f"unknown statement in pool mode: {w[0]}")
         except (IndexError, ValueError) as e:
@@ -1019,11 +1099,25 @@ class Shell:
         return handler(line)
 
     def load(self, path):
-        """Apply a saved configuration file to the device."""
+        """
+        Apply a saved configuration file to the device.
+
+        This runs at boot, unattended, which is exactly why it refuses rather
+        than trimming: a file with one line this VTY cannot hold would
+        otherwise be applied minus that line, on a box nobody is watching, and
+        the difference between the file on disk and the running configuration
+        would be discovered later by somebody reading both.
+        """
         if not os.path.exists(path):
             return
         with open(path) as f:
             target = Config.parse(f.read())
+        if target.unknown:
+            self.err(f"{path}: refusing to load, these lines are not "
+                     "understood:")
+            for lineno, text, why in target.unknown:
+                print(f"    line {lineno}: {text}    ({why})")
+            return
         if self.apply(target):
             self.rb.push(target.text(), "loaded from file")
 

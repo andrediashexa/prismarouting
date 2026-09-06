@@ -12,21 +12,24 @@ import sys
 
 sys.path.insert(0, "/src/src/hexash")
 import vppapi  # noqa: E402
-
-BASE = {
-    "port_min": 1024,
-    "port_max": 65535,
-    "policy": "BPA_API_POLICY_INTERLEAVED",
-    "mode": "BPA_API_MODE_DETERMINISTIC",
-    "n_inside": 1,
-    "n_prefixes": 2,
-}
+from config import Pool  # noqa: E402
 
 
 def add(api, name, block_size, prefixes):
-    args = dict(BASE, is_add=True, name=name, block_size=block_size,
-                prefixes=prefixes)
-    return api.call("bpa_pool_add_del", args)
+    """
+    Built through Pool.api_args(), not from a dict written out here.
+
+    A second copy of the argument list drifts from the first: when the API
+    gained the per-pool settings, the hand-written copy in this file kept
+    sending the old shape and vat2 refused to convert it. lab/api.sh spells
+    the wire format out on purpose; this half must instead exercise exactly
+    what hexash sends.
+    """
+    p = Pool(name)
+    p.block_size = str(block_size)
+    p.inside = list(prefixes[:1])
+    p.outside = list(prefixes[1:])
+    return api.call("bpa_pool_add_del", p.api_args())
 
 
 api = vppapi.Vat2()

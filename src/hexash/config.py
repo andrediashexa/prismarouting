@@ -23,6 +23,20 @@ class Pool:
 
     FIELDS = ("block-size", "ports", "policy", "mode")
 
+    # Order matters: lines() has to emit these in the SAME order as the
+    # device's own "show bpa config", or the running configuration and a
+    # candidate built from it differ on every commit for no reason.
+    TIMEOUTS = ("udp", "icmp", "tcp-syn", "gre", "tcp-transitory",
+                "tcp-established", "port-holddown", "alg-expect")
+    FILTERS = ("endpoint-independent", "address-dependent")
+
+    # Mirrors foreach_bpa_alg in bpa_pool.h, in the same order and with the
+    # same bits. A pool a VTY cannot express is a pool an operator cannot
+    # configure, so this list and that macro have to be kept in step; the lab
+    # asserts a round trip through the dataplane, which is what catches it.
+    ALG_BITS = {"ftp": 1 << 0, "rtsp": 1 << 1, "pptp": 1 << 2}
+    ALG_DEFAULT_ON = ("ftp", "rtsp", "pptp")
+
     def __init__(self, name: str):
         self.name = name
         self.inside: list[str] = []
@@ -31,6 +45,13 @@ class Pool:
         self.ports = ""                 # "" means the device default
         self.policy = "interleaved"
         self.mode = "deterministic"
+        # Overrides only. An absent entry means "inherit", which is what the
+        # device means by zero, so emitting the inherited value would turn a
+        # global change into a diff against every pool.
+        self.timeouts: dict[str, int] = {}
+        self.max_blocks = 0             # 0 means the device default of one
+        self.filter = "endpoint-independent"
+        self.algs: dict[str, bool] = {}  # only where the operator chose
 
     def lines(self) -> list[str]:
         out = [f"cgnat pool {self.name}"]
@@ -41,6 +62,16 @@ class Pool:
             out.append(f" ports {self.ports}")
         out.append(f" policy {self.policy}")
         out.append(f" mode {self.mode}")
+        for t in self.TIMEOUTS:
+            if t in self.timeouts:
+                out.append(f" timeout {t} {self.timeouts[t]}")
+        if self.max_blocks > 1:
+            out.append(f" max-blocks {self.max_blocks}")
+        if self.filter != "endpoint-independent":
+            out.append(f" filter {self.filter}")
+        for a in self.ALG_BITS:
+            if a in self.algs:
+                out.append(f" alg {a} {'on' if self.algs[a] else 'off'}")
         out.append(" exit")
         return out
 
@@ -54,6 +85,16 @@ class Pool:
         if self.ports:
             parts += ["ports", self.ports.replace(" ", "-")]
         parts += ["policy", self.policy, "mode", self.mode]
+        for t in self.TIMEOUTS:
+            if t in self.timeouts:
+                parts += ["timeout", t, str(self.timeouts[t])]
+        if self.max_blocks > 1:
+            parts += ["max-blocks", str(self.max_blocks)]
+        if self.filter != "endpoint-independent":
+            parts += ["filter", self.filter]
+        for a in self.ALG_BITS:
+            if a in self.algs:
+                parts += ["alg", a, "on" if self.algs[a] else "off"]
         return " ".join(parts)
 
     def api_args(self, is_add=True) -> dict:
@@ -69,6 +110,27 @@ class Pool:
             parts = self.ports.replace("-", " ").split()
             if len(parts) == 2:
                 port_min, port_max = int(parts[0]), int(parts[1])
+        # Two masks, as the dataplane stores them: what is enabled, and what
+        # the operator actually chose. Anything not chosen is left to
+        # bpa_pool_init(), so a pool that says nothing about ALGs gets the
+        # documented defaults rather than "all off".
+        alg = alg_set = 0
+        for name, bit in self.ALG_BITS.items():
+            on = self.algs.get(name, name in self.ALG_DEFAULT_ON)
+            if on:
+                alg |= bit
+            if name in self.algs:
+                alg_set |= bit
+
+        api_t = {"udp": "udp", "icmp": "icmp", "tcp-syn": "tcp_syn",
+                 "tcp-transitory": "tcp_transitory",
+                 "tcp-established": "tcp_established", "gre": "gre",
+                 "port-holddown": "port_holddown",
+                 "alg-expect": "alg_expect"}
+        timeouts = {v: 0 for v in api_t.values()}
+        for k, v in self.timeouts.items():
+            timeouts[api_t[k]] = int(v)
+
         return {
             "is_add": bool(is_add),
             "name": self.name,
@@ -77,6 +139,12 @@ class Pool:
             "port_max": port_max,
             "policy": f"BPA_API_POLICY_{self.policy.upper()}",
             "mode": f"BPA_API_MODE_{self.mode.upper()}",
+            "filter": "BPA_API_FILTER_"
+                      + self.filter.upper().replace("-", "_"),
+            "max_blocks": int(self.max_blocks),
+            "alg": alg,
+            "alg_set": alg_set,
+            "timeouts": timeouts,
             "n_inside": len(self.inside),
             "n_prefixes": len(self.inside) + len(self.outside),
             "prefixes": list(self.inside) + list(self.outside),
@@ -90,6 +158,10 @@ class Config:
     """A complete device configuration."""
 
     def __init__(self):
+        # Lines the model did not understand, as (line number, text, why).
+        # Never discarded: a configuration that is accepted and silently
+        # trimmed is a configuration that lies about the running box.
+        self.unknown: list[tuple[int, str, str]] = []
         self.pools: dict[str, Pool] = {}
         self.interfaces: dict[str, str] = {}   # name -> inside|outside
         # MTU is deliberately its own map, not a field of the CGNAT interface
@@ -123,7 +195,7 @@ class Config:
         section = "cgnat"
         pool = None
         iface = None
-        for raw in text.splitlines():
+        for lineno, raw in enumerate(text.splitlines(), 1):
             line = raw.rstrip()
             if not line.strip():
                 continue
@@ -138,34 +210,61 @@ class Config:
                 continue
 
             s = line.strip()
-            if s.startswith("cgnat pool "):
-                pool = Pool(s.split()[2])
+            if s.startswith("cgnat pool"):
+                w = s.split()
+                if len(w) < 3:
+                    cfg.unknown.append((lineno, s, "a pool needs a name"))
+                    continue
+                pool = Pool(w[2])
                 cfg.pools[pool.name] = pool
             elif pool is not None and line.startswith(" "):
-                cfg._pool_line(pool, s)
+                why = cfg._pool_line(pool, s)
+                if why:
+                    cfg.unknown.append((lineno, s, why))
                 if s == "exit":
                     pool = None
             elif s.startswith("cgnat interface "):
                 w = s.split()
-                if len(w) >= 4:
+                if len(w) < 4:
+                    cfg.unknown.append(
+                        (lineno, s, "expected: cgnat interface <name> "
+                                    "<inside|outside>"))
+                elif w[3] not in ("inside", "outside"):
+                    cfg.unknown.append(
+                        (lineno, s, f"'{w[3]}': expected inside or outside"))
+                else:
                     cfg.interfaces[w[2]] = w[3]
             elif s.startswith("interface "):
                 iface = s.split()[1]
             elif iface is not None and line.startswith(" "):
                 w = s.split()
-                if w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
-                    cfg.mtus[iface] = int(w[1])
                 if s == "exit":
                     iface = None
+                elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
+                    cfg.mtus[iface] = int(w[1])
+                else:
+                    cfg.unknown.append(
+                        (lineno, s, "an interface understands 'mtu <n>'"))
             elif s.startswith("cgnat "):
                 cfg.globals.append(s)
+            else:
+                cfg.unknown.append((lineno, s, "not a CGNAT statement"))
         return cfg
 
     @staticmethod
-    def _pool_line(pool: Pool, s: str) -> None:
+    def _pool_line(pool: Pool, s: str):
+        """
+        Apply one line of a pool block. Returns None, or why it was refused.
+
+        Every branch that does not match falls through to a refusal. It used to
+        fall through to nothing at all: `filter`, `max-blocks`, the per-pool
+        timeouts and the ALG switches were accepted at the prompt, accepted at
+        commit, and never reached the dataplane - four merged features that did
+        not exist through the interface an operator actually uses (issue #47).
+        """
         w = s.split()
         if not w:
-            return
+            return None
         if w[0] == "inside" and len(w) > 1:
             pool.inside.append(w[1])
         elif w[0] == "outside" and len(w) > 1:
@@ -175,9 +274,41 @@ class Config:
         elif w[0] == "ports" and len(w) > 2:
             pool.ports = f"{w[1]} {w[2]}"
         elif w[0] == "policy" and len(w) > 1:
+            if w[1] not in ("interleaved", "blocked"):
+                return f"policy '{w[1]}': expected interleaved or blocked"
             pool.policy = w[1]
         elif w[0] == "mode" and len(w) > 1:
+            if w[1] not in ("deterministic", "dynamic"):
+                return f"mode '{w[1]}': expected deterministic or dynamic"
             pool.mode = w[1]
+        elif w[0] == "timeout" and len(w) > 2:
+            if w[1] not in Pool.TIMEOUTS:
+                return (f"timeout '{w[1]}': expected one of "
+                        + ", ".join(Pool.TIMEOUTS))
+            if not w[2].isdigit():
+                return f"timeout {w[1]}: '{w[2]}' is not a number of seconds"
+            pool.timeouts[w[1]] = int(w[2])
+        elif w[0] == "max-blocks" and len(w) > 1:
+            if not w[1].isdigit() or int(w[1]) < 1:
+                return f"max-blocks '{w[1]}': expected a number of at least 1"
+            pool.max_blocks = int(w[1])
+        elif w[0] == "filter" and len(w) > 1:
+            if w[1] not in Pool.FILTERS:
+                return (f"filter '{w[1]}': expected one of "
+                        + ", ".join(Pool.FILTERS))
+            pool.filter = w[1]
+        elif w[0] == "alg" and len(w) > 2:
+            if w[1] not in Pool.ALG_BITS:
+                return (f"alg '{w[1]}': expected one of "
+                        + ", ".join(Pool.ALG_BITS))
+            if w[2] not in ("on", "off", "enable", "disable"):
+                return f"alg {w[1]} '{w[2]}': expected on or off"
+            pool.algs[w[1]] = w[2] in ("on", "enable")
+        elif w[0] == "exit":
+            pass
+        else:
+            return f"'{s}' is not something a pool understands"
+        return None
 
     # ------------------------------------------------------------ diff
 

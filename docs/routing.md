@@ -314,6 +314,50 @@ Requirements:
 `commit confirmed` exists for the change that cuts your own access. If the
 operator cannot type `commit` again, the box returns on its own.
 
+### The model refuses what it cannot hold
+
+`Config.parse` used to drop, in silence, any line inside a `pool` block it did
+not recognise. That looks like a small gap and was not one, because **the
+candidate is built from the running configuration**:
+
+```
+configure          → candidate = parse(show bpa config)   ← the line is lost here
+… unrelated edit …
+commit             → the pool is replaced with the candidate ← and removed here
+```
+
+An operator who set something with `vppctl` and then committed **any**
+unrelated change through the VTY had that setting silently reverted. It applied
+to every per-pool setting the project had merged: the timeouts
+([#12](https://github.com/andrediashexa/hexarouting/issues/12)), `max-blocks`
+([#13](https://github.com/andrediashexa/hexarouting/issues/13)), the filtering
+mode ([#15](https://github.com/andrediashexa/hexarouting/issues/15)) and the ALG
+switches ([#14](https://github.com/andrediashexa/hexarouting/issues/14)). Each
+of those has a lab that passes, because each lab drives `vppctl` directly.
+
+Two rules now, and the first is the general one:
+
+* **Nothing is dropped in silence.** A line the model cannot hold is recorded
+  with its number and the reason. `commit` and `--load` **refuse**; reading the
+  device's running configuration **warns**, because a VTY that cannot start
+  against a slightly newer dataplane is worse than one that says what it does
+  not understand.
+* **Every per-pool setting the dataplane accepts, the model carries** — through
+  `lines()` in the same order the device emits them, through
+  `device_command()`, and through `api_args()`. The binary API gained the
+  fields to carry them (`bpa.api` 0.2.0); before that they had no way to reach
+  the dataplane at all.
+
+The order in `lines()` is not cosmetic. It has to match `show bpa config`
+exactly, or the running configuration and a candidate built from it differ on
+every commit for no reason.
+
+`lab/vty-pool.sh` sets each of them through the VTY and asks **the dataplane**
+whether they arrived, then makes a setting with `vppctl`, commits an unrelated
+change through the VTY, and asserts the setting survived. Asking `hexash`
+whether `hexash` stored something proves nothing — that is exactly what the old
+code did successfully.
+
 ### Rolling back routing, not just CGNAT
 
 A rollback that restored CGNAT and left routing untouched would leave the box
