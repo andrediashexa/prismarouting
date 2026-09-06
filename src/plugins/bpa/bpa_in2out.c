@@ -234,6 +234,42 @@ VLIB_NODE_FN (bpa_in2out_node)
 
       s = bpa_session_create (pt, p, pool_index, &blk, port_priv, (u8) proto,
 			      now);
+
+      /*
+       * Every block this subscriber holds is full. Give it another, if the
+       * pool allows more and there is one to give.
+       *
+       * Only in dynamic mode. A deterministic pool has no spare block by
+       * construction - the formula assigns every block to some subscriber, so
+       * any block handed out here is one taken from somebody else, and their
+       * mapping would break with no error anywhere. That needs a reserve
+       * carved out of capacity, which changes the mapping for everyone and is
+       * therefore its own change (issue #39).
+       */
+      if (PREDICT_FALSE (s == 0 && p->mode == BPA_MODE_DYNAMIC
+			 && bpa_sub_n_blocks (pt, sub_idx) < p->max_blocks))
+	{
+	  u32 w, nw;
+	  int is_new = 0;
+	  bpa_block_t ext;
+
+	  bpa_worker_id (bm, thread_index, &w, &nw);
+	  if (pool_index < vec_len (pt->dyn)
+	      && bpa_dyn_acquire_extra (vec_elt_at_index (pt->dyn, pool_index),
+					p, sub_idx, w, nw, &ext, &is_new) == 0)
+	    {
+	      bpa_sub_extend (pt, p, sub_idx, &ext);
+	      /* An extension is not derivable from anything, in either mode.
+	       * A block the log does not record cannot be attributed to
+	       * anyone, which is the whole point of recording blocks. */
+	      bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_ALLOC, src_host,
+				   ext.ip_pub, ext.port_lo, ext.port_hi,
+				   pool_index);
+	      s = bpa_session_create (pt, p, pool_index, &ext, port_priv,
+				      (u8) proto, now);
+	    }
+	}
+
       if (PREDICT_FALSE (s == 0))
 	{
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_BLOCK_EXHAUSTED];

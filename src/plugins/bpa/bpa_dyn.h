@@ -40,6 +40,13 @@
 
 #define BPA_NO_BLOCK ((u32) ~0)
 
+/* A subscriber's extension block: which local block, and whose it is. */
+typedef struct
+{
+  u32 sub_idx;
+  u32 local;
+} bpa_dyn_extra_t;
+
 typedef struct
 {
   u32 *owner;	    /* local idx -> sub_idx, BPA_NO_BLOCK when free */
@@ -48,10 +55,23 @@ typedef struct
   uword *by_sub;    /* sub_idx -> local idx + 1, so 0 means "none" */
   u32 n_local;	    /* blocks in this worker's slice */
   u32 n_alloc;	    /* currently held */
-  u64 n_allocations;/* lifetime; becomes natEvent 16 count */
+  u64 n_allocations;
+  u64 n_extensions;   /* blocks handed out as extensions *//* lifetime; becomes natEvent 16 count */
   u64 n_releases;   /* lifetime; becomes natEvent 17 count */
   u64 n_exhausted;  /* allocation refused; becomes natEvent 12 */
   u8 active;
+  /*
+   * Extension blocks: (subscriber, local block) pairs beyond the one in
+   * by_sub. Kept as a list rather than widening by_sub because extensions are
+   * rare - only subscribers that filled a block have one - and because
+   * releasing them has to be driven from the same reap that releases primary
+   * blocks, which scans owner[] anyway.
+   *
+   * Without this, an extension would be owned but never marked idle, and
+   * never released: a leak that only shows up as a pool that slowly stops
+   * having free blocks.
+   */
+  bpa_dyn_extra_t *extras;
 } bpa_dyn_t;
 
 clib_error_t *bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker,
@@ -73,6 +93,15 @@ typedef struct
  */
 int bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
 		     u32 worker, u32 n_workers, bpa_block_t *b, int *is_new);
+
+/*
+ * Another block for a subscriber that already has one. Separate from
+ * bpa_dyn_acquire because that one returns the existing block when the
+ * subscriber is known, which is exactly the wrong answer here.
+ */
+int bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
+			   u32 worker, u32 n_workers, bpa_block_t *b,
+			   int *is_new);
 
 /* Subscriber's last session ended: start the hold-down. */
 void bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now);
