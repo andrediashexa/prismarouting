@@ -170,6 +170,12 @@ printf '%s\n' "$OFFOUT" | sed 's/^/  /'
 OFFAFTER=$(errc "FTP ALG payloads rewritten")
 echo "  rewrite counter with the ALG off: $OFFBEFORE -> $OFFAFTER"
 CFG=$(vppctl show bpa config)
+# Counted, not merely found. Two branches each added the ALG block to this
+# emitter and the merge kept both, so "alg ftp off" came out TWICE - which a
+# grep for its presence cannot see, and which puts a duplicate line into every
+# saved configuration the VTY reads back.
+ALG_LINES=$(printf '%s\n' "$CFG" | grep -c "alg ftp off")
+echo "  'alg ftp off' in the running configuration: $ALG_LINES time(s)"
 SHOWPOOL=$(vppctl show bpa pool)
 vppctl bpa alg lab ftp on >/dev/null
 
@@ -225,6 +231,8 @@ expect "and it is counted, so it is not silent" test "$AFTER" -gt "$BEFORE"
 expect_in "with the ALG off the payload is untouched" \
   "payload='PORT 100,64,0,10,1,1\\r\\n'" "$OFFOUT"
 expect "and nothing is counted as rewritten" test "$OFFAFTER" = "$OFFBEFORE"
+expect "the running configuration records it exactly once, not twice" \
+  test "${ALG_LINES:-0}" -eq 1
 expect_in "the running configuration records the pool's ALG being off" \
   "alg ftp off" "$CFG"
 expect_in "and show bpa pool reports the switch either way" "alg          ftp" \

@@ -936,12 +936,6 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, " timeout tcp-syn %u\n", p->timeouts.tcp_syn);
       if (p->timeouts.gre)
 	s = format (s, " timeout gre %u\n", p->timeouts.gre);
-#define _(sym, nm, desc)                                                      \
-  if ((p->alg & BPA_ALG_##sym) != (BPA_ALG_DEFAULT & BPA_ALG_##sym))          \
-    s = format (s, " alg %s %s\n", nm,                                       \
-		(p->alg & BPA_ALG_##sym) ? "on" : "off");
-      foreach_bpa_alg
-#undef _
       if (p->timeouts.tcp_trans)
 	s = format (s, " timeout tcp-transitory %u\n", p->timeouts.tcp_trans);
       if (p->timeouts.tcp_estab)
