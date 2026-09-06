@@ -9,8 +9,11 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_ftp.h"
 #include "bpa_l4.h"
 #include "bpa_log.h"
+#include "bpa_alg.h"
+#include "bpa_pptp.h"
 
 typedef struct
 {
@@ -50,7 +53,26 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   _ (NO_BLOCK, "no free block in dynamic pool")                            \
   _ (TRUNCATED, "truncated packet")                                            \
   _ (HAIRPINNED, "packets hairpinned to another subscriber")                   \
-  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")
+  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")           \
+  _ (FTP_REWRITTEN, "FTP ALG payloads rewritten")                              \
+  _ (FTP_UNTOUCHED, "FTP payloads left untouched (malformed or unsupported)")  \
+  _ (FTP_NO_PORT, "FTP data connection could not get a public port")           \
+  _ (FTP_SEQ, "TCP sequence numbers shifted after an FTP rewrite")         \
+  /* "show errors" truncates the reason at 35 characters, so every string
+   * below is short enough to survive it. The first version was not, and the
+   * lab's assertions on the counters could not match what was printed - the
+   * counter was right and the only way to read it was wrong. */              \
+  _ (RTSP_REWRITTEN, "RTSP Transport headers rewritten")                       \
+  _ (RTSP_UNPARSED, "RTSP Transport not understood")                           \
+  _ (RTSP_PARTIAL, "RTSP message spans segments")                              \
+  _ (RTSP_NO_ROOM, "RTSP rewrite would not fit")                               \
+  _ (RTSP_NO_PORTS, "RTSP media port pair unavailable")                      \
+  _ (GRE_NOT_ENHANCED, "GRE that is not the enhanced GRE of RFC 2637")         \
+  _ (GRE_NO_CALL, "GRE for a call the control channel never announced")        \
+  _ (PPTP_MANGLED, "PPTP control messages rewritten")                          \
+  _ (PPTP_UNKNOWN, "PPTP message about an unknown call")                       \
+  _ (PPTP_NO_CALL_ID, "PPTP call refused: no free entry in the block")         \
+  _ (PPTP_MALFORMED, "malformed or split PPTP control message")
 
 typedef enum
 {
@@ -91,6 +113,18 @@ bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
   /* A non-first fragment: there is no port to rewrite, and the L4 checksum
    * lives in the first fragment. Only the address changes. */
   if (PREDICT_FALSE (l4h == 0))
+    {
+      ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
+      return;
+    }
+
+  /*
+   * GRE going out carries the Call ID the SERVER assigned, and the server
+   * expects to see it come back unchanged. Only the address is ours to
+   * rewrite here - the Call ID this box allocated appears in the other
+   * direction, which is where bpa_rewrite_dst() puts it.
+   */
+  if (proto == BPA_PROTO_GRE)
     {
       ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
       return;
@@ -152,6 +186,9 @@ VLIB_NODE_FN (bpa_in2out_node)
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0;
   u32 n_hairpin = 0;
+  u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
+  u32 n_rtsp = 0;
+  u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_nocid = 0, n_pptp_bad = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -182,7 +219,35 @@ VLIB_NODE_FN (bpa_in2out_node)
 
       if (PREDICT_FALSE (bpa_l4_src (b[0], ip, proto, &port_priv, &l4h)))
 	{
-	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_TRUNCATED];
+	  /* Plain GRE has no per-flow identifier, so several subscribers
+	   * behind one address cannot be told apart and it is dropped rather
+	   * than sent out with a source nobody can reply to. Saying which of
+	   * the two happened is the whole value of a separate counter. */
+	  b[0]->error =
+	    node->errors[proto == BPA_PROTO_GRE
+			   ? BPA_IN2OUT_ERROR_GRE_NOT_ENHANCED
+			   : BPA_IN2OUT_ERROR_TRUNCATED];
+	  goto trace;
+	}
+
+      /*
+       * GRE is keyed by the server's Call ID together with the server's
+       * address, and the mapping is only ever created by the PPTP ALG on the
+       * control connection. No session here means data arrived for a call
+       * that was never announced - or was announced while the ALG was off.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_GRE))
+	{
+	  bpa_key_gre (&kv, src_host, port_priv,
+		       clib_net_to_host_u32 (ip->dst_address.as_u32),
+		       BPA_GRE_KEY_DATA);
+	  if (PREDICT_TRUE (
+		clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0))
+	    {
+	      s = pool_elt_at_index (pt->sessions, value.value);
+	      goto translate;
+	    }
+	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_GRE_NO_CALL];
 	  goto trace;
 	}
 
@@ -283,15 +348,159 @@ VLIB_NODE_FN (bpa_in2out_node)
 
     translate:
       s->last_heard = now;
+      /* A mapping an ALG predicted has now been used, so it goes back on the
+       * protocol's own lifetime. Left as an expectation it would expire in a
+       * minute in the middle of a call. */
+      s->is_expect = 0;
       /* Remembered on every outbound packet, not only at creation: a session
        * that moves to a new remote must be able to hear the new one reply.
        * Free under endpoint-independent filtering, which never reads it. */
       s->remote = clib_net_to_host_u32 (ip->dst_address.as_u32);
       if (proto == BPA_PROTO_TCP)
-	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
+	{
+	  tcp_header_t *tcp = l4h;
+
+	  bpa_tcp_track (s, tcp->flags);
+
+	  /*
+	   * The PPTP control channel. Rewritten BEFORE the address and port,
+	   * because both fixes are incremental on the same checksum and the
+	   * ALG has to read the payload as the subscriber wrote it.
+	   */
+	  if (PREDICT_FALSE (
+		clib_net_to_host_u16 (tcp->dst_port) == BPA_PPTP_PORT
+		&& !pool_is_free_index (bm->pools, s->pool_index)
+		&& bpa_alg_on (
+		  pool_elt_at_index (bm->pools, s->pool_index)->alg,
+		  BPA_ALG_PPTP)))
+	    {
+	      switch (bpa_pptp_out (pt, b[0], tcp, s, now))
+		{
+		case BPA_PPTP_MANGLED:
+		  n_pptp++;
+		  break;
+		case BPA_PPTP_UNKNOWN:
+		  n_pptp_unknown++;
+		  break;
+		case BPA_PPTP_NO_CALL_ID:
+		  n_pptp_nocid++;
+		  break;
+		case BPA_PPTP_MALFORMED:
+		  n_pptp_bad++;
+		  break;
+		default:
+		  break;
+		}
+	    }
+	}
 
       bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub);
       n_translated++;
+
+      /*
+       * FTP ALG. Runs on the already-translated packet, so the address it
+       * writes into the payload is the one the subscriber now appears to
+       * have.
+       *
+       * The rewrite comes BEFORE the sequence shift on purpose. The rewrite
+       * records its own length change against the sequence number the
+       * subscriber sent, and shifting first would record it against a number
+       * the subscriber never used - after which every later segment of that
+       * connection is renumbered from the wrong origin.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0
+			 && bpa_ftp_is_control (l4h, s)))
+	{
+	  if (!pool_is_free_index (bm->pools, s->pool_index))
+	    {
+	      bpa_pool_t *fp = pool_elt_at_index (bm->pools, s->pool_index);
+
+	      if (bpa_alg_on (fp->alg, BPA_ALG_FTP))
+		switch (bpa_ftp_in2out (vm, b[0], ip, pt, fp, &s, now))
+		  {
+		  case BPA_FTP_REWRITTEN:
+		    n_ftp++;
+		    break;
+		  case BPA_FTP_UNTOUCHED:
+		    n_ftp_untouched++;
+		    break;
+		  case BPA_FTP_NO_PORT:
+		    n_ftp_noport++;
+		    break;
+		  case BPA_FTP_NOTHING:
+		    break;
+		  }
+	    }
+
+	  /*
+	   * Applied even when the ALG is off for the pool: a connection this
+	   * box already lengthened must keep being renumbered, or turning the
+	   * knob off stalls the very sessions the operator was trying to stop
+	   * interfering with.
+	   */
+	  n_ftp_seq += bpa_ftp_seq_in2out (l4h, s);
+	}
+
+      /*
+       * RTSP ALG, subscriber -> internet.
+       *
+       * Runs after the address rewrite, so the checksum it recomputes covers
+       * the pseudo-header the packet will actually travel with, and before the
+       * sequence correction, because the correction point it records is in the
+       * sender's own coordinates.
+       *
+       * The pool is re-fetched here: on the fast path above, `p` is only set
+       * when the session was created by this packet.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0))
+	{
+	  tcp_header_t *tcp = l4h;
+	  bpa_pool_t *sp = pool_is_free_index (bm->pools, s->pool_index)
+			     ? 0
+			     : pool_elt_at_index (bm->pools, s->pool_index);
+
+	  if (sp && bpa_alg_on (sp->alg, BPA_ALG_RTSP)
+	      && clib_net_to_host_u16 (tcp->dst_port) == BPA_RTSP_PORT)
+	    {
+	      u32 s_index = s - pt->sessions;
+
+	      switch (bpa_rtsp_in2out (vm, b[0], ip, tcp, pt, sp, s_index, now))
+		{
+		case BPA_ALG_DONE:
+		  n_rtsp++;
+		  break;
+		case BPA_ALG_UNPARSED:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_UNPARSED, 1);
+		  break;
+		case BPA_ALG_PARTIAL:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_PARTIAL, 1);
+		  break;
+		case BPA_ALG_NO_ROOM:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_NO_ROOM, 1);
+		  break;
+		case BPA_ALG_NO_PORTS:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_RTSP_NO_PORTS, 1);
+		  break;
+		default:
+		  break;
+		}
+	      /* Opening the media sessions may have reallocated the pool. */
+	      s = pool_elt_at_index (pt->sessions, s_index);
+	    }
+
+	  /* Every later segment of a connection an ALG has rewritten, in
+	   * either direction. Zero on every session no ALG has touched. */
+	  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
+			     | s->adj[BPA_DIR_OUT].off_before
+			     | s->adj[BPA_DIR_IN].off_after
+			     | s->adj[BPA_DIR_IN].off_before))
+	    bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_OUT],
+				&s->adj[BPA_DIR_IN]);
+	}
 
       /*
        * Hairpinning (RFC 4787 REQ-9): one subscriber reaching another through
@@ -372,6 +581,25 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_HAIRPINNED, n_hairpin);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_FTP_REWRITTEN, n_ftp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_FTP_UNTOUCHED,
+			       n_ftp_untouched);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_FTP_NO_PORT, n_ftp_noport);
+  vlib_node_increment_counter (vm, node->node_index, BPA_IN2OUT_ERROR_FTP_SEQ,
+			       n_ftp_seq);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_RTSP_REWRITTEN, n_rtsp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_MANGLED, n_pptp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_UNKNOWN, n_pptp_unknown);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_NO_CALL_ID, n_pptp_nocid);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_PPTP_MALFORMED, n_pptp_bad);
   return frame->n_vectors;
 }
 

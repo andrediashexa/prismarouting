@@ -19,6 +19,9 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
 {
   vl_api_bpa_pool_add_del_reply_t *rmp;
   bpa_pool_t cfg = { 0 };
+  /* The binary API has no ALG field yet, so a pool created through it gets
+   * the defaults. Adding one is an API change and belongs with the ALG work
+   * as a whole, not to whichever ALG lands first. */
   clib_error_t *e = 0;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   u8 *name;
@@ -83,6 +86,7 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
   cfg.port_max = clib_net_to_host_u16 (mp->port_max);
   cfg.policy = (bpa_policy_t) mp->policy;
   cfg.mode = (bpa_mode_t) mp->mode;
+  cfg.alg = BPA_ALG_DEFAULT;
 
   e = bpa_pool_add (&cfg, 0);
 

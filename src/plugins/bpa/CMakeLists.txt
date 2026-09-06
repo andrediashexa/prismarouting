@@ -11,6 +11,8 @@ add_vpp_plugin(bpa
   bpa_in2out.c
   bpa_handoff.c
   bpa_out2in.c
+  bpa_ftp.c
+  bpa_pptp.c
   bpa_cli.c
 
   API_FILES

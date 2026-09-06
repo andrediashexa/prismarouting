@@ -127,24 +127,52 @@ deterministic mode **MUST NOT** silently gain a second block: in that mode the
 proof is the formula, and a block that is not derivable from it **MUST** be
 logged like a dynamic one.
 
-### 2.3 ALG — missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
+### 2.3 ALG — FTP built, the rest missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
 Protocols that carry an address or port inside the payload break behind any
 NAT unless the NAT rewrites the payload too.
 
+**FTP is built** ([#42](https://github.com/andrediashexa/hexarouting/issues/42)),
+switchable with `bpa alg <pool> ftp <on|off>` and on by default; the design and
+what it deliberately refuses to do are in
+[architecture.md](architecture.md#application-level-gateways).
+
 | ALG | Symptom without it | Priority |
 |---|---|---|
-| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | High |
+| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | Built |
 | **PPTP / GRE** | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
+| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | High |
+| **PPTP / GRE** — *done, [#44](https://github.com/andrediashexa/hexarouting/issues/44)* | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
 | **SIP** | VoIP registers but has no audio, or one-way audio. The single most expensive support call an ISP receives. | High |
-| **RTSP** | IP cameras and some streaming boxes. | Medium |
+| **RTSP** | IP cameras and some streaming boxes. | Medium — **built**, [#43](https://github.com/andrediashexa/hexarouting/issues/43) |
 | **TFTP** | Provisioning of some CPE. | Low |
 | **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | Medium |
 
+Each ALG **MUST** be individually switchable per pool, and a malformed or
+unexpected payload **MUST** leave the packet untouched and increment a counter:
+an ALG that rewrites a payload it misparsed is worse than no ALG, because it
+corrupts traffic that would otherwise merely fail to connect.
+
+The defaults were decided on
+[#14](https://github.com/andrediashexa/hexarouting/issues/14) and are the
+reverse of what this section originally said. Every ALG built here is **on**
+except **SIP**, which is off and whose enabling **MUST** be a deliberate act:
+VoIP providers routinely tell customers to disable SIP ALG on their CPE,
+because one that misparses SDP produces one-way audio and registrations that
+drop — failures harder to diagnose than the ones it prevents, and modern SIP
+solves NAT traversal from the endpoint. H.323, MGCP, SCCP, MSRPC, NetBIOS,
+IRC/DCC, TFTP and DNS are **not** being built; the reasoning is on #14.
 Each ALG **MUST** be individually switchable per pool, and **SHOULD** default
-to off except FTP and SIP: an ALG that rewrites a payload it misparsed is
-worse than no ALG, because it corrupts traffic that would otherwise merely
-fail to connect.
+to off unless its parse is cheap to make safe: an ALG that rewrites a payload
+it misparsed is worse than no ALG, because it corrupts traffic that would
+otherwise merely fail to connect.
+
+FTP, SIP and PPTP default **on**. For PPTP the departure is deliberate and
+narrow: its rewrite changes no length, so no sequence number moves, and every
+message is guarded by a 32-bit magic cookie and its own length field before a
+single byte is touched. Without it PPTP does not work for anyone rather than
+failing only on a collision, so "off by default" would ship a CGNAT that breaks
+every PPTP subscriber until an operator discovers the switch.
 
 ### 2.4 EIM/EIF — already endpoint-independent; the gap is choice, S — [#15](https://github.com/andrediashexa/hexarouting/issues/15)
 

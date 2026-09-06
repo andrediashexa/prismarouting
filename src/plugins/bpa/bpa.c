@@ -256,7 +256,9 @@ bpa_init (vlib_main_t *vm)
   bm->timeouts.tcp_trans = BPA_TIMEOUT_TCP_TRANS;
   bm->timeouts.tcp_estab = BPA_TIMEOUT_TCP_ESTAB;
   bm->timeouts.tcp_syn = BPA_TIMEOUT_TCP_SYN;
+  bm->timeouts.gre = BPA_TIMEOUT_GRE;
   bm->timeouts.port_holddown = BPA_PORT_HOLDDOWN;
+  bm->timeouts.alg_expect = BPA_TIMEOUT_ALG_EXPECT;
   bm->block_holddown = BPA_BLOCK_HOLDDOWN;
   bm->hash_buckets = BPA_HASH_BUCKETS_DEFAULT;
   bm->hash_memory = BPA_HASH_MEMORY_DEFAULT;

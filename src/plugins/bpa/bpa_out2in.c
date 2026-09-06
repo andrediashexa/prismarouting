@@ -14,7 +14,10 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_ftp.h"
 #include "bpa_l4.h"
+#include "bpa_alg.h"
+#include "bpa_pptp.h"
 
 typedef struct
 {
@@ -55,7 +58,17 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   _ (BLOCK_FREE, "block not allocated to any subscriber")                      \
   _ (ICMP_ERROR, "ICMP errors translated")                                     \
   _ (ICMP_MALFORMED, "truncated or malformed ICMP error")                      \
-  _ (TRUNCATED, "truncated packet")
+  _ (TRUNCATED, "truncated packet")                                            \
+  _ (FTP_ACK, "TCP acknowledgements shifted after an FTP rewrite")         \
+  /* Kept under the 35 characters "show errors" prints; see bpa_in2out.c. */  \
+  _ (RTSP_REWRITTEN, "RTSP Transport replies rewritten")                       \
+  _ (RTSP_UNPARSED, "RTSP reply not understood")                               \
+  _ (RTSP_PARTIAL, "RTSP reply spans segments")                                \
+  _ (RTSP_NO_ROOM, "RTSP reply rewrite would not fit")                       \
+  _ (GRE_NOT_ENHANCED, "GRE that is not the enhanced GRE of RFC 2637")         \
+  _ (PPTP_MANGLED, "PPTP control messages rewritten")                          \
+  _ (PPTP_UNKNOWN, "PPTP message about an unknown call")                       \
+  _ (PPTP_MALFORMED, "malformed or split PPTP control message")
 
 typedef enum
 {
@@ -209,7 +222,8 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_icmp_err = 0;
+  u32 n_translated = 0, n_icmp_err = 0, n_ftp_ack = 0, n_rtsp = 0;
+  u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -271,7 +285,13 @@ VLIB_NODE_FN (bpa_out2in_node)
 
       if (PREDICT_FALSE (bpa_l4_dst (b[0], ip, proto, &port_pub, &l4h)))
 	{
-	  b[0]->error = node->errors[BPA_OUT2IN_ERROR_TRUNCATED];
+	  /* Plain GRE arriving at a shared public address identifies no
+	   * subscriber, so there is nobody to give it to. Counted apart from
+	   * a truncated packet, which is a different problem entirely. */
+	  b[0]->error =
+	    node->errors[proto == BPA_PROTO_GRE
+			   ? BPA_OUT2IN_ERROR_GRE_NOT_ENHANCED
+			   : BPA_OUT2IN_ERROR_TRUNCATED];
 	  goto trace;
 	}
 
@@ -353,11 +373,101 @@ VLIB_NODE_FN (bpa_out2in_node)
 
       matched = 1;
       s->last_heard = now;
+      /* The media an ALG announced has arrived: it is a flow now, not a
+       * prediction, so it stops living on the short expectation timer. */
+      s->is_expect = 0;
       if (proto == BPA_PROTO_TCP)
-	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
+	{
+	  tcp_header_t *tcp = l4h;
+
+	  bpa_tcp_track (s, tcp->flags);
+
+	  /* The server's half of the PPTP control channel: it names the Call
+	   * ID this box handed out, and the subscriber only understands its
+	   * own. */
+	  if (PREDICT_FALSE (
+		clib_net_to_host_u16 (tcp->src_port) == BPA_PPTP_PORT
+		&& bpa_alg_on (
+		  pool_elt_at_index (bm->pools, pool_index)->alg,
+		  BPA_ALG_PPTP)))
+	    {
+	      switch (bpa_pptp_in (pt, b[0], tcp, s, now))
+		{
+		case BPA_PPTP_MANGLED:
+		  n_pptp++;
+		  break;
+		case BPA_PPTP_UNKNOWN:
+		  n_pptp_unknown++;
+		  break;
+		case BPA_PPTP_MALFORMED:
+		  n_pptp_bad++;
+		  break;
+		default:
+		  break;
+		}
+	    }
+	}
 
       bpa_rewrite_dst (ip, l4h, (u8) proto, s->ip_priv, s->port_priv);
       n_translated++;
+
+      /*
+       * The remote acknowledges the subscriber's stream as the FTP ALG
+       * lengthened it. The subscriber only knows its own numbering, so the
+       * acknowledgement is shifted back here. Without it the subscriber sees
+       * bytes it never sent acknowledged, and the control connection stalls a
+       * few commands after the rewrite - which does not look like FTP, and
+       * does not look like NAT either.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0
+			 && (s->alg & BPA_ALG_FTP_SEQ)))
+	n_ftp_ack += bpa_ftp_ack_out2in (l4h, s);
+
+      /*
+       * RTSP ALG, internet -> subscriber: the reply that echoes client_port.
+       *
+       * Same ordering as in2out - after the address rewrite so the checksum
+       * covers the final pseudo-header, before the sequence correction so the
+       * correction point is recorded in the server's own coordinates.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0))
+	{
+	  tcp_header_t *tcp = l4h;
+	  bpa_pool_t *sp = pool_elt_at_index (bm->pools, pool_index);
+
+	  if (bpa_alg_on (sp->alg, BPA_ALG_RTSP)
+	      && clib_net_to_host_u16 (tcp->src_port) == BPA_RTSP_PORT)
+	    {
+	      switch (bpa_rtsp_out2in (vm, b[0], ip, tcp, pt, s))
+		{
+		case BPA_ALG_DONE:
+		  n_rtsp++;
+		  break;
+		case BPA_ALG_UNPARSED:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_RTSP_UNPARSED, 1);
+		  break;
+		case BPA_ALG_PARTIAL:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_RTSP_PARTIAL, 1);
+		  break;
+		case BPA_ALG_NO_ROOM:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_RTSP_NO_ROOM, 1);
+		  break;
+		default:
+		  break;
+		}
+	    }
+
+	  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
+			     | s->adj[BPA_DIR_OUT].off_before
+			     | s->adj[BPA_DIR_IN].off_after
+			     | s->adj[BPA_DIR_IN].off_before))
+	    bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_IN],
+				&s->adj[BPA_DIR_OUT]);
+	}
+
       vnet_feature_next_u16 (&next[0], b[0]);
 
     trace:
@@ -384,6 +494,16 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_TRANSLATED, n_translated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_ICMP_ERROR, n_icmp_err);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_FTP_ACK, n_ftp_ack);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_RTSP_REWRITTEN, n_rtsp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_PPTP_MANGLED, n_pptp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_PPTP_UNKNOWN, n_pptp_unknown);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_PPTP_MALFORMED, n_pptp_bad);
   return frame->n_vectors;
 }
 

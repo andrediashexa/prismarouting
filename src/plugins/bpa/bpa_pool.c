@@ -173,6 +173,13 @@ bpa_pool_init (bpa_pool_t *p)
   if (p->max_blocks == 0)
     p->max_blocks = 1;
 
+  /*
+   * The documented defaults, except where the operator said otherwise. A pool
+   * that states no opinion gets what the documentation promises rather than
+   * the behaviour of an uninitialised field.
+   */
+  p->alg = (BPA_ALG_DEFAULT & ~p->alg_set) | (p->alg & p->alg_set);
+
   p->log2_block = bpa_log2_exact (p->block_size);
 
   /* One divisor drives the policy split; see bpa_split(). */
