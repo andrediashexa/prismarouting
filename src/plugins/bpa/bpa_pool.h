@@ -108,6 +108,25 @@ typedef enum
 } bpa_filter_t;
 
 /*
+ * Per-pool ALG switches.
+ *
+ * Zero is "not configured" rather than a legal setting, so that a pool built
+ * from a zeroed structure - which is how both the CLI and the binary API
+ * build one - gets the documented default instead of whatever zero happens to
+ * mean. bpa_pool_init() resolves it, the same way it resolves max_blocks.
+ *
+ * FTP defaults to ON: the parse is small enough to make strict, and active
+ * FTP does not work at all without it. Every ALG whose parse is ambiguous
+ * enough to misfire defaults to off; see docs/architecture.md.
+ */
+typedef enum
+{
+  BPA_ALG_DEFAULT = 0,
+  BPA_ALG_ON,
+  BPA_ALG_OFF,
+} bpa_alg_t;
+
+/*
  * Precomputed reciprocal, so the datapath never issues a hardware divide.
  * Used for the pool policy split and for spreading subscribers over workers.
  * ref/check_magic.py proves it exact for every divisor below BPA_MAX_CAPACITY.
@@ -186,6 +205,9 @@ typedef struct
    * complaint for an outage.
    */
   u8 max_blocks;
+
+  /* ALG switches, one per protocol. bpa_alg_t, not a bool: see above. */
+  u8 alg_ftp;
 
   /* derived */
   u32 port_count;

@@ -56,6 +56,7 @@ clib_error_t *bpa_pool_del (u8 *name);
 format_function_t format_bpa_pool;
 format_function_t format_bpa_policy;
 format_function_t format_bpa_mode;
+format_function_t format_bpa_alg;
 format_function_t format_bpa_proto;
 
 /*
