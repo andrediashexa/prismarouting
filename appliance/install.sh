@@ -112,7 +112,12 @@ install -D -m 0644 "$REPO/appliance/etc/sysctl.conf" \
     "$DESTDIR/etc/sysctl.d/99-hexarouting.conf"
 
 say "configuration"
-install -d -m 0755 "$DESTDIR/etc/hexarouting"
+# 0700, not 0755. Since accounts became part of the configuration (#45) this
+# directory holds password hashes - in hexarouting.conf and in every rollback
+# revision under it - and a world-readable copy hands every local account an
+# offline cracking target.
+install -d -m 0700 "$DESTDIR/etc/hexarouting"
+install -d -m 0700 "$DESTDIR/etc/hexarouting/rollback"
 [ -f "$DESTDIR/etc/hexarouting/tune.env" ] || \
   install -m 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
 [ -f "$DESTDIR/etc/hexarouting/vpp-base.conf" ] || \
@@ -120,6 +125,7 @@ install -d -m 0755 "$DESTDIR/etc/hexarouting"
     "$DESTDIR/etc/hexarouting/vpp-base.conf"
 [ -f "$DESTDIR/etc/hexarouting/hexarouting.conf" ] || \
   printf '!\n! HexaRouting\n!\n' > "$DESTDIR/etc/hexarouting/hexarouting.conf"
+chmod 0600 "$DESTDIR/etc/hexarouting/hexarouting.conf"
 
 say "documentation"
 for d in architecture routing logging; do

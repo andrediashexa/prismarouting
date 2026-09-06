@@ -23,6 +23,8 @@ import tempfile
 import time
 
 from config import Config, Pool
+from system import (System, User, can_anyone_log_in, redact,
+                    validate_ssh, SSH_FIELDS)
 import vppapi
 
 readline = None
@@ -229,12 +231,33 @@ TREE = {
             "isis": ("IS-IS", ARG_WORD),
         }),
         "interface": ("interface configuration", ARG_WORD),
+        "ssh": ("the SSH daemon", {
+            "port": ("TCP port", ARG_NUM),
+            "listen-address": ("address to listen on", ARG_WORD),
+            "permit-root-login": ("whether root may log in over SSH", {
+                "yes": ("password or key", None),
+                "no": ("not at all", None),
+                "prohibit-password": ("key only", None),
+                "forced-commands-only": ("only forced commands", None)}),
+            "password-authentication": ("whether a password may be used", {
+                "yes": ("allowed", None), "no": ("keys only", None)}),
+        }),
+        "user": ("an account that may log in", ARG_WORD),
         "commit": ("apply the candidate configuration", COMMIT),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "show": ("display information", SHOW),
         "exit": ("leave configuration mode", None),
     },
     "pool": CGNAT_POOL,
+    "user": {
+        "ssh-key": ("an authorized public key, as it appears in "
+                    "authorized_keys", "<type> <key> [comment]"),
+        "password": ("a crypt hash, never a plaintext password "
+                     "(openssl passwd -6)", "<hash>"),
+        "no": ("remove", {"ssh-key": ("remove a key", "<key>"),
+                          "password": ("remove the password", None)}),
+        "exit": ("leave the user", None),
+    },
 }
 
 if running_from_live_medium():
@@ -394,8 +417,18 @@ class Rollback:
             return "".join(l for l in fh if not l.startswith("# "))
 
     def push(self, text, comment=""):
-        """Store a new revision 0, shifting the others down."""
+        """
+        Store a new revision 0, shifting the others down.
+
+        Root-only, for the same reason as the saved configuration: a rollback
+        revision is a complete configuration, and since accounts joined it that
+        includes password hashes.
+        """
         os.makedirs(self.path, exist_ok=True)
+        try:
+            os.chmod(self.path, 0o700)
+        except OSError:
+            pass
         oldest = self._file(self.keep - 1)
         if os.path.exists(oldest):
             os.unlink(oldest)
@@ -407,16 +440,22 @@ class Rollback:
             if comment:
                 fh.write(f"# {comment}\n")
             fh.write(text)
+        try:
+            os.chmod(self._file(0), 0o600)
+        except OSError:
+            pass
 
 
 class Shell:
     def __init__(self):
+        self.sys = System()
         self.dp = Vpp()
         self.api = vppapi.Vat2()
         self.frr = Frr()
         self.rb = Rollback()
-        self.mode = "operational"      # operational | config | pool
-        self.pool = None               # Pool being edited
+        self.mode = "operational"      # operational | config | pool | user
+        self.pool = None               # pool being edited
+        self.user = None               # user being edited
         self.candidate = None          # Config being edited
         self.frr_ctx = []              # FRR block context inside config mode
         self.failed = 0
@@ -430,6 +469,8 @@ class Shell:
             return "hexarouting> "
         if self.mode == "pool":
             return "hexarouting# [edit cgnat pool] "
+        if self.mode == "user":
+            return "hexarouting# [edit user] "
         return "hexarouting# [edit] "
 
     def err(self, msg):
@@ -459,6 +500,10 @@ class Shell:
             for lineno, text, why in cfg.unknown:
                 print(f"    line {lineno}: {text}    ({why})")
         cfg.mtus = self.device_mtus()
+        # Read from the box, not from what this VTY last wrote: the same
+        # reason the CGNAT half is read back from the dataplane.
+        cfg.ssh = self.sys.read_ssh()
+        cfg.users = self.sys.read_users()
         cfg.routing = self.frr.running()
         return cfg
 
@@ -533,6 +578,27 @@ class Shell:
 
         if check_only:
             ok = True
+            # THE refusal this feature exists for. A configuration nobody can
+            # log in with is not a valid configuration: it is the mistake an
+            # operator makes once, from the other side of the country, and
+            # cannot undo. Checked against the CANDIDATE, because that is what
+            # would be in force afterwards.
+            why = validate_ssh(target.ssh)
+            if why:
+                self.err(why)
+                ok = False
+            # Refused only when THIS CHANGE is what causes it. A box that
+            # already has nobody able to log in over SSH - freshly installed,
+            # reached by console - must still be able to commit a CGNAT
+            # change; refusing there would be a VTY that cannot be used on the
+            # box it was just installed on.
+            if (not can_anyone_log_in(target.ssh, target.users)
+                    and can_anyone_log_in(running.ssh, running.users)):
+                self.err("this change locks everybody out: no account could "
+                         "log in over SSH afterwards")
+                print("    give an account an authorized key, or allow "
+                      "password authentication for one that has a password")
+                ok = False
             for pool in d["pool_add"] + d["pool_replace"]:
                 if not pool.inside or not pool.outside:
                     self.err(f"pool '{pool.name}': inside and outside required")
@@ -588,6 +654,25 @@ class Shell:
             if rc:
                 print(out)
                 self.err(f"interface {ifname} refused by the dataplane")
+                return False
+
+        # The box's own configuration, after the dataplane and before
+        # routing: an SSH change costs the operator their session if it is
+        # wrong, and doing it while the CGNAT half is half-applied would leave
+        # nobody able to finish the job.
+        if d["ssh_changed"]:
+            ok, msg = self.sys.write_ssh(target.ssh)
+            if not ok:
+                self.err(f"ssh: {msg}")
+                return False
+            if msg:
+                print(f"ssh: {msg}")
+        if d["users_changed"]:
+            ok, msgs = self.sys.apply_users(target.users, running.users)
+            for m in msgs:
+                print(f"  {m}")
+            if not ok:
+                self.err("accounts were not fully applied")
                 return False
 
         # MTU on BOTH sides. docs/routing.md records the failure: the TAP
@@ -692,6 +777,12 @@ class Shell:
 
         confirm_min = 0
         comment = ""
+        # A change to SSH or to accounts is the one change that can cost the
+        # operator the session they are typing it in. It is therefore applied
+        # as "commit confirmed" whether or not they asked, and the VTY says so
+        # - choosing it silently would be a surprise in the other direction.
+        d0 = running.delta_to(self.candidate)
+        touches_access = d0["ssh_changed"] or d0["users_changed"]
         if args and args[0] == "confirmed":
             try:
                 confirm_min = int(args[1]) if len(args) > 1 else 10
@@ -700,6 +791,13 @@ class Shell:
                 return
         elif args and args[0] == "comment":
             comment = " ".join(args[1:]).strip('"')
+
+        if touches_access and not confirm_min:
+            confirm_min = 10
+            print("this commit changes SSH or accounts, which can cut off the "
+                  "session you are using")
+            print("applying it as 'commit confirmed 10': it reverts on its own "
+                  "unless you enter 'commit' again from a session that works")
 
         if not self.apply(self.candidate, check_only=True):
             self.err("candidate did not pass validation; nothing applied")
@@ -862,6 +960,28 @@ class Shell:
         if line.startswith("no cgnat pool "):
             self.candidate.pools.pop(w[3], None)
             return True
+        if w[0] == "ssh":
+            if len(w) < 3:
+                self.err("usage: ssh <setting> <value>")
+                return True
+            why = validate_ssh({w[1]: " ".join(w[2:])})
+            if why:
+                self.err(why)
+            else:
+                self.candidate.ssh[w[1]] = " ".join(w[2:])
+            return True
+        if w[0] == "user" and len(w) > 1:
+            self.user = self.candidate.users.get(w[1]) or User(w[1])
+            self.candidate.users[w[1]] = self.user
+            self.mode = "user"
+            return True
+        if w[:2] == ["no", "user"] and len(w) > 2:
+            if w[2] == "root":
+                self.err("root cannot be removed; restrict it with "
+                         "'ssh permit-root-login' instead")
+            else:
+                self.candidate.users.pop(w[2], None)
+            return True
         if line.startswith("cgnat interface "):
             if len(w) < 4 or w[3] not in ("inside", "outside"):
                 self.err("usage: cgnat interface <interface> <inside|outside>")
@@ -902,6 +1022,35 @@ class Shell:
         self.candidate.routing.append(line)
         if line.startswith(("router ", "interface ", "vrf ", "route-map ")):
             self.frr_ctx.append(line)
+        return True
+
+    def do_user(self, line):
+        w = line.split()
+        u = self.user
+        if w[0] in ("exit", "end"):
+            self.mode = "config"
+            self.user = None
+            return True
+        if w[0] == "ssh-key" and len(w) > 1:
+            key = " ".join(w[1:])
+            if key not in u.keys:
+                u.keys.append(key)
+        elif w[0] == "password" and len(w) > 1:
+            # A crypt hash, never a plaintext password: plaintext in
+            # /etc/shadow does not fail loudly, it produces an account whose
+            # password simply never matches.
+            if not w[1].startswith("$") or w[1].count("$") < 3:
+                self.err("expected a crypt hash (openssl passwd -6), not a "
+                         "plaintext password")
+            else:
+                u.password = w[1]
+        elif w[:2] == ["no", "ssh-key"] and len(w) > 2:
+            key = " ".join(w[2:])
+            u.keys = [k for k in u.keys if k != key and not k.startswith(key)]
+        elif w[:2] == ["no", "password"]:
+            u.password = ""
+        else:
+            self.err(f"unknown statement in user mode: {w[0]}")
         return True
 
     def do_pool(self, line):
@@ -998,13 +1147,13 @@ class Shell:
             self.show_compare()
             return
         if line == "show configuration":
-            print((self.candidate or self.running_config()).text(), end="")
+            self.print_config(self.candidate or self.running_config())
             return
         if line == "show rollback":
             self.show_rollback()
             return
         if line in ("show running-config", "show run"):
-            print(self.running_config().text(), end="")
+            self.print_config(self.running_config())
             return
         if line == "show version":
             self.show_version()
@@ -1012,6 +1161,19 @@ class Shell:
         rc, out = self.frr.show(line)
         if out:
             print(out)
+
+    @staticmethod
+    def print_config(cfg):
+        """
+        A configuration with the password hashes taken out.
+
+        Display only. The stored file and every rollback revision keep the real
+        value - a rollback that cannot restore a password is not a rollback -
+        which is why those files must not be world-readable. A hash on a screen
+        shared during an incident is a hash that has left the building, and it
+        is crackable offline at the attacker's leisure.
+        """
+        print("\n".join(redact(cfg.text().splitlines())))
 
     def show_version(self):
         """
@@ -1045,12 +1207,23 @@ class Shell:
                   + (f"  {comment}" if comment else ""))
 
     def save_running(self):
+        """
+        Write the running configuration to disk, readable only by root.
+
+        The mode is not housekeeping. Since accounts became part of the
+        configuration this file carries password hashes and public keys, so a
+        world-readable copy hands every local account an offline cracking
+        target. Set on every write rather than at creation, because a file
+        that already exists keeps whatever mode it was given.
+        """
         d = os.path.dirname(CONFIG_PATH)
         try:
             if d:
                 os.makedirs(d, exist_ok=True)
+                os.chmod(d, 0o700)
             with open(CONFIG_PATH, "w") as f:
                 f.write(self.running_config().text())
+            os.chmod(CONFIG_PATH, 0o600)
         except OSError as e:
             self.err(f"cannot write {CONFIG_PATH}: {e}")
             return
@@ -1128,7 +1301,8 @@ class Shell:
         self.check_confirm_timeout()
         handler = {"operational": self.do_operational,
                    "config": self.do_config,
-                   "pool": self.do_pool}[self.mode]
+                   "pool": self.do_pool,
+                   "user": self.do_user}[self.mode]
         return handler(line)
 
     def load(self, path):
