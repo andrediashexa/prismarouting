@@ -25,7 +25,89 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.6.0.
+Nothing merged since v0.7.0.
+
+## 0.7.0 — the two things an operator does before carrying traffic
+
+Log in as somebody other than root, and point the NMS at it. Both were the
+last configuration on the box that `commit` and `rollback` did not cover.
+
+### Added
+
+* **The SSH daemon and the accounts, in the configuration**
+  ([#45](https://github.com/andrediashexa/hexarouting/issues/45)). `ssh port`,
+  `listen-address`, `permit-root-login`, `password-authentication`, and
+  `user <name>` with authorized keys or a crypt-hashed password. Accounts are
+  **real POSIX accounts**, not a private database: an appliance that invents its
+  own accounts is one whose accounts nobody deprovisions when somebody leaves.
+  The login shell is the marker, so there is no separate list to keep in step.
+* **Three guards against the lockout**, because SSH is the one configuration
+  that can strand an operator on the other side of the country. `commit check`
+  refuses a change that leaves nobody able to log in — only when *that change*
+  causes it. Any change under `ssh` or `user` is applied as `commit confirmed`
+  whether or not it was asked for, and the VTY says so. `sshd -t` validates
+  before the daemon is reloaded and the previous file is put back if it
+  refuses; it fails **closed**, because refusing a valid change costs a retry
+  and accepting an invalid one costs the box.
+* **An SNMP agent** ([#46](https://github.com/andrediashexa/hexarouting/issues/46)),
+  read-only twice over — the generated `snmpd.conf` carries `rocommunity` and
+  `rouser` and never `rwcommunity`, and the agent answers every SET with
+  `not-writable`. It serves RFC 4008's `natDefTimeouts`, which map exactly, so
+  an existing NMS reads them with no custom template.
+* **No stale numbers.** If the dataplane is not answering, the agent serves
+  *nothing* rather than what it last saw. A monitoring system that keeps
+  reporting yesterday's numbers through an outage hides it; one that reports a
+  gap shows it.
+
+### Changed
+
+* `hexarouting.conf` and every rollback revision are now **root-only**, set by
+  the installer and again on every write. They carry password hashes — they
+  have to, or a rollback could not restore a password.
+* `show running-config` prints `password <set, not shown>` and redacts
+  community strings and v3 passphrases. A hash on a screen shared during an
+  incident is a hash that has left the building.
+* The ISO now carries `snmpd`.
+
+### Not delivered, and why
+
+* **The enterprise half of the SNMP MIB is dark until you register a PEN.**
+  The numbers an operator actually watches — subscribers holding blocks, ports
+  used, subscribers near their limit, refusals, drops — have no standard OID.
+  They live under the operator's own IANA Private Enterprise Number, and there
+  is no default and cannot be one: an OID under somebody else's PEN is a lie
+  about who the object belongs to. Set `snmp enterprise-number` once you have
+  it; registration is free and takes days to weeks, and the request names the
+  company rather than the software.
+* **The SNMPv3 handshake is exercised only as far as configuration** — that the
+  user is granted read-only access and created in net-snmp's store. A poll
+  authenticated with v3 is not asserted end to end.
+* **`IF-MIB` counters for the VPP interfaces are not served.** The kernel does
+  not see those NICs, so `snmpd` has nothing to report about them.
+
+### Five defects the labs found
+
+Four in the SNMP agent, one of them the exact trap its own docstring warns
+about: `show bpa timeouts` is not a command, `vppctl` exited 0 and printed an
+error, and the agent served nothing — indistinguishable from a dataplane that
+is down. The request loop mixed file iteration with `readline()`, so every
+request returned NONE. The enterprise OID was read from the wrong field of the
+`view` line, leaving that subtree silently dark. And the liveness check sat
+*inside* the ten-second cache, so the first ten seconds of an outage were
+served as though nothing had happened — measured, with SNMP still reporting a
+subscriber after the dataplane had been killed.
+
+The fifth: `SnmpDaemon.read()` used `systemctl is-active` as the truth about
+whether SNMP was *configured*, which on a system systemd is not managing made
+the next commit delete the configuration the previous one had just written.
+
+### Known gaps
+
+Unchanged: throughput has never been measured
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)), there is no HA
+([#6](https://github.com/andrediashexa/hexarouting/issues/6)), and the VTY has
+no authorization — who exists is now configurable, what they may do is not
+([#35](https://github.com/andrediashexa/hexarouting/issues/35)).
 
 ## 0.6.0 — the box you can install, and the questions you can ask it
 
