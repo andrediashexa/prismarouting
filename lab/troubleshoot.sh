@@ -1,0 +1,131 @@
+#!/bin/sh
+# The show commands an operator arrives with, driven from the VTY.
+#
+# The oracle is ref/bpa_model.py, not the plugin. A test that asks the
+# implementation what it should have said agrees with any mistake in it; the
+# model is the executable specification and it does not share the plugin's
+# arithmetic.
+#
+# Every command here is run through hexash rather than vppctl. An operator who
+# has to drop to the dataplane CLI to troubleshoot is one for whom this VTY is
+# decoration.
+set -u
+. /src/lab/verdict.sh
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting
+(cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
+  mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
+}
+cd /src
+. /src/lab/lib.sh
+use_binary_api
+
+HX="python3 /src/src/hexash/hexash.py"
+SUB=100.64.0.5
+vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
+vppctl create packet-generator interface pg0 >/dev/null
+vppctl create packet-generator interface pg1 >/dev/null
+vppctl set interface state pg0 up; vppctl set interface state pg1 up
+vppctl set interface ip address pg0 100.64.3.254/22
+vppctl bpa pool nb inside 100.64.0.0/22 outside 200.150.0.16/30 block 512
+vppctl set interface bpa in2out pg0
+vppctl set interface bpa out2in pg1
+
+# What the specification says this subscriber must get.
+EXPECT=$(python3 - "$SUB" <<'PY'
+import sys
+sys.path.insert(0, "/src/ref")
+from bpa_model import PoolConfig
+p = PoolConfig("nb", ["100.64.0.0/22"], ["200.150.0.16/30"], block_size=512)
+f = p.forward(sys.argv[1])
+print(f["ip_pub"], f["port_lo"], f["port_hi"])
+PY
+)
+E_IP=$(echo "$EXPECT" | cut -d' ' -f1)
+E_LO=$(echo "$EXPECT" | cut -d' ' -f2)
+E_HI=$(echo "$EXPECT" | cut -d' ' -f3)
+echo "the model says $SUB -> $E_IP ports $E_LO-$E_HI"
+
+send() {  # <source> <sport>
+  vppctl packet-generator delete t >/dev/null 2>&1
+  vppctl packet-generator new "name t limit 1 node ip4-input interface pg0 \
+      size 60-60 data { UDP: $1 -> 8.8.8.8 UDP: $2 -> 53 incrementing 8 }"
+  vppctl packet-generator enable >/dev/null; sleep 0.3
+  vppctl packet-generator delete t >/dev/null 2>&1
+}
+
+echo
+echo "=========== 1. traffic from one subscriber, and one that has no pool ==========="
+for pp in 40000 40001 40002; do send "$SUB" $pp; done
+send 100.64.0.9 40000
+send 192.0.2.7 40000          # outside every inside prefix: must be dropped
+
+echo
+echo "=========== 2. show cgnat subscriber ==========="
+SUBOUT=$($HX -c "show cgnat subscriber $SUB" 2>&1)
+printf '%s\n' "$SUBOUT" | sed 's/^/  /'
+
+echo
+echo "=========== 3. show cgnat translation, the inverse ==========="
+TR=$($HX -c "show cgnat translation $E_IP $E_LO" 2>&1)
+printf '%s\n' "$TR" | sed 's/^/  /'
+
+echo
+echo "=========== 3b. the same question against a DYNAMIC pool ==========="
+# The two answers do not carry the same weight as evidence, and the command
+# has to say which one it is giving. A dynamic block belonged to somebody else
+# yesterday; only the RFC 8158 log says whom.
+vppctl bpa pool dyn inside 10.0.0.0/24 outside 203.0.113.16/30 block 512 mode dynamic
+vppctl set ip neighbor pg0 10.0.0.5 02:00:00:00:02:05 >/dev/null 2>&1
+vppctl clear trace >/dev/null; vppctl trace add pg-input 3 >/dev/null
+send 10.0.0.5 40000
+DPUB=$(vppctl show trace | grep -m1 "BPA in2out 10.0.0.5" | grep -oE "> [0-9.]+:[0-9]+" | tail -1 | cut -d' ' -f2)
+echo "  dynamic pool gave 10.0.0.5 -> ${DPUB:-nothing}"
+DTR=$($HX -c "show cgnat translation ${DPUB%%:*} ${DPUB##*:}" 2>&1)
+printf '%s\n' "$DTR" | sed 's/^/  /'
+
+echo
+echo "=========== 4. show cgnat top ==========="
+TOP=$($HX -c "show cgnat top" 2>&1)
+printf '%s\n' "$TOP" | sed 's/^/  /'
+
+echo
+echo "=========== 5. show cgnat drops ==========="
+DROPS=$($HX -c "show cgnat drops" 2>&1)
+printf '%s\n' "$DROPS" | sed 's/^/  /'
+DROP_SECTION=$(printf '%s\n' "$DROPS" | sed -n '/packets that did not get through/,/everything else/p')
+
+echo
+echo "=========== VERDICT ==========="
+expect_in "the subscriber view names the public address the model predicts" \
+  "$E_IP" "$SUBOUT"
+expect_in "and the port range the model predicts" "$E_LO-$E_HI" "$SUBOUT"
+expect_in "and the three sessions it actually opened" "sessions 3" "$SUBOUT"
+expect_in "a subscriber in no pool is refused by name" \
+  "not inside any configured pool" "$($HX -c 'show cgnat subscriber 192.0.2.7' 2>&1)"
+
+expect_in "the translation inverts back to the subscriber" "$SUB" "$TR"
+# The point of the command: the two sources are not equal as evidence.
+expect_in "and says the answer comes from the formula" "FORMULA" "$TR"
+expect_in "which holds for a past instant, and says so" "past or present" "$TR"
+
+expect "the dynamic subscriber was translated at all" test -n "${DPUB:-}"
+expect_in "a dynamic answer says it is dynamic" "DYNAMIC" "$DTR"
+expect_in "and refuses to be read as evidence about the past" \
+  "NOW ONLY" "$DTR"
+expect_not_in "so it must not claim the formula" "FORMULA" "$DTR"
+
+expect_in "top lists the busiest subscriber" "$SUB" "$TOP"
+expect_in "with the ports it holds" "3/512" "$TOP"
+
+expect_in "drops names the packet with no pool" "no pool for source address" \
+  "$DROP_SECTION"
+# The reason this command exists rather than "show errors": VPP counts a
+# success and a drop as the same kind of thing, and during an incident they
+# are not.
+expect_not_in "and does NOT count translated packets as drops" \
+  "packets translated" "$DROP_SECTION"
+expect_in "which are still reported, under their own heading" \
+  "packets translated" "$DROPS"
+verdict

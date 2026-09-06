@@ -4,6 +4,7 @@
 #include <vnet/ip/ip.h>
 
 #include "bpa.h"
+#include "bpa_errors.h"
 #include "bpa_log.h"
 #include <vnet/ip/reass/ip4_sv_reass.h>
 
@@ -450,6 +451,504 @@ VLIB_CLI_COMMAND (bpa_show_session_command, static) = {
   .path = "show bpa session",
   .short_help = "show bpa session",
   .function = bpa_show_session_command_fn,
+};
+
+/*
+ * Troubleshooting commands.
+ *
+ * The five that existed before report aggregates: "thread 0: 3 sessions, 2
+ * active subscribers". That is enough to know the box is working and useless
+ * for the question an operator actually arrives with, which is always about
+ * one customer - "100.64.0.5 says nothing works" - or its inverse, "who was
+ * behind this address and port".
+ *
+ * None of these walks the session table. Everything below reads the
+ * per-subscriber record, which has one entry per active subscriber rather than
+ * one per session, or answers by arithmetic. A "show" that stalls forwarding
+ * is worse than no "show".
+ */
+
+/* Which worker owns a subscriber, as a thread index. */
+static u32
+bpa_sub_thread (const bpa_main_t *bm, u32 sub_idx)
+{
+  if (bm->n_workers == 0)
+    return 0;
+  return bpa_owner_worker (&bm->workers, sub_idx) + 1;
+}
+
+static bpa_sub_t *
+bpa_sub_find (bpa_main_t *bm, u32 pool_index, u32 sub_idx,
+	      bpa_per_thread_t **pt_out)
+{
+  u32 ti = bpa_sub_thread (bm, sub_idx);
+  bpa_per_thread_t *pt;
+  uword *q;
+
+  if (ti >= vec_len (bm->per_thread))
+    return 0;
+  pt = vec_elt_at_index (bm->per_thread, ti);
+  if (!pt->initialised)
+    return 0;
+  q = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
+  if (!q)
+    return 0;
+  if (pt_out)
+    *pt_out = pt;
+  return pool_elt_at_index (pt->subs, q[0]);
+}
+
+static clib_error_t *
+bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
+				vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  ip4_address_t addr;
+  u32 pool_index, sub_idx, i;
+  bpa_pool_t *p;
+  bpa_sub_t *sub;
+  bpa_block_t blk;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (0, "usage: show bpa subscriber <inside-address>");
+  if (!unformat (line_input, "%U", unformat_ip4_address, &addr))
+    {
+      error = clib_error_return (0, "expected an inside IPv4 address");
+      goto done;
+    }
+
+  {
+    u32 host = clib_net_to_host_u32 (addr.as_u32);
+
+    if (bpa_pool_by_inside (bm, host, &pool_index, &sub_idx))
+      {
+	error = clib_error_return (
+	  0, "%U is not inside any configured pool", format_ip4_address, &addr);
+	goto done;
+      }
+    p = pool_elt_at_index (bm->pools, pool_index);
+
+    vlib_cli_output (vm, "subscriber %U   pool %v, index %u, worker thread %u",
+		     format_ip4_address, &addr, p->name, sub_idx,
+		     bpa_sub_thread (bm, sub_idx));
+
+    /*
+     * In deterministic mode the block is knowable whether or not the
+     * subscriber has ever sent a packet, and saying so matters: "no state on
+     * this box" and "no block for this subscriber" are different answers.
+     */
+    if (p->mode == BPA_MODE_DETERMINISTIC)
+      {
+	if (bpa_forward (p, host, &blk) == 0)
+	  {
+	    ip4_address_t pub;
+	    pub.as_u32 = clib_host_to_net_u32 (blk.ip_pub);
+	    vlib_cli_output (vm, "  the formula gives it %U ports %u-%u",
+			     format_ip4_address, &pub, blk.port_lo,
+			     blk.port_hi);
+	  }
+	else
+	  vlib_cli_output (vm, "  BEYOND CAPACITY: the pool has no block for "
+			       "this address, so it is not translated at all");
+      }
+
+    sub = bpa_sub_find (bm, pool_index, sub_idx, 0);
+    if (!sub)
+      {
+	vlib_cli_output (vm, "  no live state: this subscriber holds no "
+			     "block and has no sessions on this box");
+	goto done;
+      }
+
+    for (i = 0; i < vec_len (sub->blocks); i++)
+      {
+	bpa_subblock_t *sb = vec_elt_at_index (sub->blocks, i);
+	u32 used = sb->map.n_ports - sb->map.n_free;
+	ip4_address_t pub;
+
+	pub.as_u32 = clib_host_to_net_u32 (sb->blk.ip_pub);
+	vlib_cli_output (
+	  vm, "  block %u  %U  ports %u-%u   %u of %u in use (%u%%), %u free%s",
+	  i, format_ip4_address, &pub, sb->blk.port_lo,
+	  sb->blk.port_hi, used, sb->map.n_ports,
+	  sb->map.n_ports ? (used * 100) / sb->map.n_ports : 0, sb->map.n_free,
+	  i ? "   (extension)" : "");
+      }
+    vlib_cli_output (vm, "  sessions %u   port refusals %u", sub->n_sessions,
+		     sub->n_refused);
+    if (sub->n_refused)
+      vlib_cli_output (vm, "  refusals are not a box fault: this subscriber "
+			   "asked for more ports than its block holds");
+  }
+
+done:
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_show_subscriber_command, static) = {
+  .path = "show bpa subscriber",
+  .short_help = "show bpa subscriber <inside-address>",
+  .function = bpa_show_subscriber_command_fn,
+};
+
+/*
+ * The inverse, and the one a court order or an abuse report asks.
+ *
+ * It says WHERE the answer comes from, because the two sources do not carry
+ * the same weight. The formula answers for any instant, past or present, as
+ * long as the pool has not been resized. A dynamic allocation answers for
+ * NOW - the block was somebody else's yesterday, and only the RFC 8158 log
+ * says whose.
+ */
+static clib_error_t *
+bpa_show_translation_command_fn (vlib_main_t *vm, unformat_input_t *input,
+				 vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  ip4_address_t addr, priv;
+  u32 pool_index, block_idx, sub_idx, port = 0, ip_priv = 0;
+  bpa_pool_t *p;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (
+      0, "usage: show bpa translation <public-address> <port>");
+  if (!unformat (line_input, "%U %u", unformat_ip4_address, &addr, &port))
+    {
+      error = clib_error_return (0, "expected a public address and a port");
+      goto done;
+    }
+  if (port > 65535)
+    {
+      error = clib_error_return (0, "port %u is out of range", port);
+      goto done;
+    }
+
+  {
+    u32 host = clib_net_to_host_u32 (addr.as_u32);
+
+    if (bpa_pool_by_outside (bm, host, &pool_index))
+      {
+	error = clib_error_return (0, "%U is not a public address of any pool",
+				   format_ip4_address, &addr);
+	goto done;
+      }
+    p = pool_elt_at_index (bm->pools, pool_index);
+
+    if (bpa_reverse_sub (p, host, (u16) port, &block_idx))
+      {
+	vlib_cli_output (vm, "%U:%u belongs to pool %v but to no block: the "
+			     "port is outside the pool's usable range, so "
+			     "nothing was ever translated here",
+			 format_ip4_address, &addr, port, p->name);
+	goto done;
+      }
+
+    if (p->mode == BPA_MODE_DETERMINISTIC)
+      {
+	if (bpa_set_addr_of (&p->inside, block_idx, &ip_priv))
+	  {
+	    error = clib_error_return (0, "block %u has no subscriber address",
+				       block_idx);
+	    goto done;
+	  }
+	priv.as_u32 = clib_host_to_net_u32 (ip_priv);
+	vlib_cli_output (vm, "%U:%u  ->  %U", format_ip4_address, &addr, port,
+			 format_ip4_address, &priv);
+	vlib_cli_output (vm, "  pool %v, block %u, DETERMINISTIC", p->name,
+			 block_idx);
+	vlib_cli_output (
+	  vm, "  from the FORMULA. It holds for any instant, past or present, "
+	      "as long as this pool's addresses and block size have not "
+	      "changed since. No allocation record is involved.");
+	goto done;
+      }
+
+    /* Dynamic: the answer is about now, and saying otherwise would be a
+     * wrong answer to a court order given with full confidence. */
+    {
+      u32 ti = 0, w, nw, found = 0;
+
+      for (ti = 0; ti < vec_len (bm->per_thread); ti++)
+	{
+	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, ti);
+
+	  if (!pt->initialised || pool_index >= vec_len (pt->dyn))
+	    continue;
+	  bpa_worker_id (bm, ti, &w, &nw);
+	  if (bpa_dyn_owner (vec_elt_at_index (pt->dyn, pool_index), block_idx,
+			     nw, &sub_idx))
+	    continue;
+	  if (bpa_set_addr_of (&p->inside, sub_idx, &ip_priv))
+	    continue;
+	  found = 1;
+	  break;
+	}
+
+      if (!found)
+	{
+	  vlib_cli_output (vm, "%U:%u  ->  nobody, right now", format_ip4_address,
+			   &addr, port);
+	  vlib_cli_output (vm, "  pool %v, block %u, DYNAMIC: no subscriber "
+			       "holds this block at the moment", p->name,
+			   block_idx);
+	}
+      else
+	{
+	  priv.as_u32 = clib_host_to_net_u32 (ip_priv);
+	  vlib_cli_output (vm, "%U:%u  ->  %U", format_ip4_address, &addr,
+			   port, format_ip4_address, &priv);
+	  vlib_cli_output (vm, "  pool %v, block %u, DYNAMIC", p->name,
+			   block_idx);
+	}
+      vlib_cli_output (
+	vm, "  this answers for NOW ONLY. The block belonged to somebody else "
+	    "before and will again; for a past instant read the RFC 8158 log, "
+	    "which records when each block was assigned and released.");
+    }
+  }
+
+done:
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_show_translation_command, static) = {
+  .path = "show bpa translation",
+  .short_help = "show bpa translation <public-address> <port>",
+  .function = bpa_show_translation_command_fn,
+};
+
+/* One row of "show bpa top". */
+typedef struct
+{
+  u32 ip_priv;
+  u32 pct;
+  u32 used;
+  u32 total;
+  u32 n_blocks;
+  u32 n_refused;
+  u32 pool_index;
+} bpa_top_t;
+
+static int
+bpa_top_cmp (void *a, void *b)
+{
+  bpa_top_t *x = a, *y = b;
+  if (x->pct != y->pct)
+    return (int) y->pct - (int) x->pct;
+  return (int) y->used - (int) x->used;
+}
+
+/*
+ * The subscribers closest to running out.
+ *
+ * This is the question that prevents the support call rather than answering
+ * it: natEvent 12 reports exhaustion, which is to say it reports that somebody
+ * has already lost traffic.
+ *
+ * Walks the per-subscriber table, which holds one entry per ACTIVE SUBSCRIBER
+ * - not one per session. On a box with 200k subscribers and millions of
+ * sessions those differ by three orders of magnitude.
+ */
+static clib_error_t *
+bpa_show_top_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			 vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  unformat_input_t _line_input, *line_input = &_line_input;
+  bpa_top_t *rows = 0, *r;
+  u32 want = 10, ti, i;
+
+  if (unformat_user (input, unformat_line_input, line_input))
+    {
+      (void) unformat (line_input, "%u", &want);
+      unformat_free (line_input);
+    }
+  if (want == 0)
+    want = 10;
+
+  for (ti = 0; ti < vec_len (bm->per_thread); ti++)
+    {
+      bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, ti);
+      uword key, value;
+
+      if (!pt->initialised)
+	continue;
+      /* clang-format off */
+      hash_foreach (key, value, pt->sub_by_idx,
+      ({
+	u32 pool_index = (u32) (key >> 32);
+	u32 sub_idx = (u32) key;
+	bpa_sub_t *sub;
+	u32 used = 0, total = 0, ip_priv = 0;
+
+	if (pool_is_free_index (bm->pools, pool_index))
+	  continue;
+	sub = pool_elt_at_index (pt->subs, value);
+	for (i = 0; i < vec_len (sub->blocks); i++)
+	  {
+	    bpa_subblock_t *sb = vec_elt_at_index (sub->blocks, i);
+	    used += sb->map.n_ports - sb->map.n_free;
+	    total += sb->map.n_ports;
+	  }
+	if (total == 0)
+	  continue;
+	if (bpa_set_addr_of (&pool_elt_at_index (bm->pools, pool_index)->inside,
+			     sub_idx, &ip_priv))
+	  continue;
+	vec_add2 (rows, r, 1);
+	r->ip_priv = ip_priv;
+	r->used = used;
+	r->total = total;
+	r->pct = (used * 100) / total;
+	r->n_blocks = vec_len (sub->blocks);
+	r->n_refused = sub->n_refused;
+	r->pool_index = pool_index;
+      }));
+      /* clang-format on */
+    }
+
+  if (vec_len (rows) == 0)
+    {
+      vlib_cli_output (vm, "no subscriber holds a block right now");
+      return 0;
+    }
+
+  vec_sort_with_function (rows, bpa_top_cmp);
+  vlib_cli_output (vm, "%-16s %-12s %11s %5s %7s %9s", "subscriber", "pool",
+		   "ports", "full", "blocks", "refusals");
+  for (i = 0; i < vec_len (rows) && i < want; i++)
+    {
+      ip4_address_t a;
+      bpa_pool_t *p = pool_elt_at_index (bm->pools, rows[i].pool_index);
+
+      a.as_u32 = clib_host_to_net_u32 (rows[i].ip_priv);
+      vlib_cli_output (vm, "%-16U %-12v %5u/%-5u %4u%% %7u %9u",
+		       format_ip4_address, &a, p->name, rows[i].used,
+		       rows[i].total, rows[i].pct, rows[i].n_blocks,
+		       rows[i].n_refused);
+    }
+  vlib_cli_output (vm, "%u subscriber(s) holding blocks", vec_len (rows));
+  vec_free (rows);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_top_command, static) = {
+  .path = "show bpa top",
+  .short_help = "show bpa top [<n>]",
+  .function = bpa_show_top_command_fn,
+};
+
+/*
+ * Why packets were dropped, under names an operator recognises.
+ *
+ * "show errors" already carries these numbers, mixed in with every other node
+ * in the box and truncated at 35 characters. This is the same data with only
+ * the CGNAT nodes in it, summed across workers, and with the zero rows left
+ * out - during an incident the interesting line is the one that is not zero.
+ */
+/* Which counters mean a packet did not get through; see bpa_errors.h. */
+static u8 bpa_in2out_is_drop[] = {
+#define _(sym, drop, str) drop,
+  foreach_bpa_in2out_error
+#undef _
+};
+
+static u8 bpa_out2in_is_drop[] = {
+#define _(sym, drop, str) drop,
+  foreach_bpa_out2in_error
+#undef _
+};
+
+static u64
+bpa_counter_total (vlib_main_t *vm, vlib_node_t *n, u32 i)
+{
+  u64 total = 0;
+  u32 t;
+
+  /* Summed across workers: a per-thread number answers a question nobody
+   * asked, and a subscriber is only on one worker anyway. */
+  for (t = 0; t < vlib_get_n_threads (); t++)
+    {
+      vlib_main_t *tvm = vlib_get_main_by_index (t);
+
+      if (!tvm)
+	continue;
+      if (n->error_heap_index + i < vec_len (tvm->error_main.counters))
+	total += tvm->error_main.counters[n->error_heap_index + i];
+    }
+  return total;
+}
+
+static void
+bpa_show_drops_node (vlib_main_t *vm, u32 node_index, const char *label,
+		     const u8 *is_drop, u32 n_is_drop)
+{
+  vlib_node_t *n = vlib_get_node (vm, node_index);
+  u32 i, dropped = 0, other = 0;
+
+  vlib_cli_output (vm, "%s", label);
+
+  /* Drops first, and alone under their own heading. "show errors" lists
+   * "packets translated" beside "no pool for source address" as though they
+   * were the same kind of thing; during an incident they are not. */
+  for (i = 0; i < n->n_errors; i++)
+    {
+      u64 total;
+
+      if (i >= n_is_drop || !is_drop[i])
+	continue;
+      total = bpa_counter_total (vm, n, i);
+      if (total == 0)
+	continue;
+      if (!dropped++)
+	vlib_cli_output (vm, "  packets that did not get through");
+      /* The description lives in the global error heap rather than on the
+       * node: vlib_node_t carries only where its block starts. */
+      vlib_cli_output (vm, "  %12Lu  %s", total,
+		       vm->error_main.counters_heap[n->error_heap_index + i]
+			 .desc);
+    }
+  if (!dropped)
+    vlib_cli_output (vm, "  nothing dropped");
+
+  for (i = 0; i < n->n_errors; i++)
+    {
+      u64 total;
+
+      if (i < n_is_drop && is_drop[i])
+	continue;
+      total = bpa_counter_total (vm, n, i);
+      if (total == 0)
+	continue;
+      if (!other++)
+	vlib_cli_output (vm, "  everything else it counted");
+      vlib_cli_output (vm, "  %12Lu  %s", total,
+		       vm->error_main.counters_heap[n->error_heap_index + i]
+			 .desc);
+    }
+}
+
+static clib_error_t *
+bpa_show_drops_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			   vlib_cli_command_t *cmd)
+{
+  bpa_show_drops_node (vm, bpa_in2out_node.index, "bpa-in2out",
+		       bpa_in2out_is_drop, ARRAY_LEN (bpa_in2out_is_drop));
+  bpa_show_drops_node (vm, bpa_out2in_node.index, "bpa-out2in",
+		       bpa_out2in_is_drop, ARRAY_LEN (bpa_out2in_is_drop));
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_drops_command, static) = {
+  .path = "show bpa drops",
+  .short_help = "show bpa drops",
+  .function = bpa_show_drops_command_fn,
 };
 
 /*
