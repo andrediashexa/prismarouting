@@ -25,7 +25,89 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.5.0.
+Nothing merged since v0.6.0.
+
+## 0.6.0 — the box you can install, and the questions you can ask it
+
+Two of the four changes here are things the previous release got wrong, and one
+of them produced a wrong answer to a court order with full confidence.
+
+### Fixed
+
+* **Two pools no longer share subscriber state**
+  ([#57](https://github.com/andrediashexa/hexarouting/issues/57)). The
+  per-worker subscriber table was keyed on the subscriber's index **within its
+  own pool**, which is unique per pool and not globally, so subscriber 5 of each
+  pool shared one set of port bitmaps and one list of blocks. Measured: a
+  subscriber of a pool whose public range is `203.0.113.16/30` left on another
+  pool's `200.150.0.17`. The wrong address is the visible half; the serious half
+  is that the `natEvent 16` named the wrong pool's block, and that is the record
+  handed to a court. Two customers could also be handed the same block. Unseen
+  because every lab configured exactly one pool. **If you run more than one
+  pool, upgrade.**
+* **The ISO carried a known root password onto the disk**
+  ([#52](https://github.com/andrediashexa/hexarouting/issues/52)). The image
+  shipped `root:hexarouting` with `PermitRootLogin yes` and `openssh-server`
+  enabled, and the installer unpacked `/etc/shadow` from the live filesystem,
+  asking for a password only at the very end — after GRUB. An install aborted at
+  that prompt, failing late, or run unattended left a bootable system carrying
+  it.
+* **hexash silently dropped pool settings it did not know**
+  ([#47](https://github.com/andrediashexa/hexarouting/issues/47)). Because the
+  candidate configuration is built *from* the running one, a setting the model
+  could not hold was lost on the way in and **removed on the way out**: setting
+  something with `vppctl` and then committing any unrelated change through the
+  VTY silently reverted it. It applied to the timeouts, `max-blocks`, the
+  filtering mode and the ALG switches — every per-pool setting shipped so far.
+* **`show bpa config` printed every ALG override twice.** Two branches added the
+  block to the same emitter and the v0.5.0 merge kept both, so every saved
+  configuration on a box with an ALG override carried a duplicated line.
+* **`docs/roadmap.md` described five shipped features as missing**, and still
+  proposed the IPv6 transition work the maintainer had taken out of scope.
+
+### Added
+
+* **The ISO is an installation medium.** No credentials at all — the root
+  account is locked and `ssh.service` masked — and `install` in the VTY asks for
+  the disk, hostname, timezone and root password **before it writes anything**,
+  then reboots. `install` exists only when the box is running from the medium.
+  An install that dies halfway now leaves a disk nobody can log into rather than
+  one anyone can.
+* **Four show commands for the question people actually arrive with**
+  ([#40](https://github.com/andrediashexa/hexarouting/issues/40)):
+  `show cgnat subscriber <ip>`, `show cgnat translation <ip> <port>`,
+  `show cgnat top [n]` and `show cgnat drops`. `translation` states whether its
+  answer comes from the formula — which holds for any past instant — or from a
+  dynamic allocation, which holds for **now only**. None of them walks the
+  session table.
+* **Every per-pool setting reachable from the VTY**, with the binary API grown
+  to carry them (`bpa.api` **0.2.0**: `filter`, `max_blocks`, `alg`, `alg_set`
+  and a `bpa_timeouts` typedef). Unknown configuration lines are now named with
+  their line number; `commit` and `--load` refuse rather than trimming.
+* **An ASCII banner on an interactive login**
+  ([#41](https://github.com/andrediashexa/hexarouting/issues/41)), 59 columns of
+  plain ASCII, absent whenever output is not a terminal.
+* **Per-subscriber port-refusal counting**, on the failure path only. "Is it the
+  box or is it them" is not answerable from a pool-wide counter.
+
+### Not delivered, and why
+
+* **`show cgnat top` is not the histogram
+  ([#27](https://github.com/andrediashexa/hexarouting/issues/27)) asks for.** It
+  ranks subscribers by how full their blocks are, which answers the same
+  question for a human reading a screen; a distribution and a threshold alarm
+  are what an NMS needs, and they remain open.
+* **The two TCP sequence-adjustment mechanisms are still two**
+  ([#48](https://github.com/andrediashexa/hexarouting/issues/48)).
+
+### Known gaps
+
+Unchanged and still ahead of the additions: throughput has never been measured
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)), there is no HA
+([#6](https://github.com/andrediashexa/hexarouting/issues/6)), no authorization
+in the VTY ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), and
+the audit trail records what changed but not who
+([#34](https://github.com/andrediashexa/hexarouting/issues/34)).
 
 ## 0.5.0 — the protocols that break quietly
 
