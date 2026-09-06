@@ -9,10 +9,11 @@ English, opens with a
 TL;DR, uses RFC 2119 keywords for anything normative, answers 5W2H, and draws
 its diagrams in Mermaid. A feature too large for one issue is split into
 sub-issues, and their branches are cut from the parent issue's branch — not
-from `master`. Merges happen when the maintainer asks, and every merge is a
-release: a version bump, an annotated tag, a changelog entry and a published
-GitHub Release. The project stays on `0.x.x` until the maintainer declares it
-production-ready.
+from `master`. Merges happen when the maintainer asks — except fixes that
+change no behaviour, which merge on sight and ride in the next release — and
+every merge is a release: a version bump, an annotated tag, a changelog entry
+and a published GitHub Release. The project stays on `0.x.x` until the
+maintainer declares it production-ready.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY** and **OPTIONAL** in this
@@ -181,8 +182,10 @@ diff.
 
 ### Every merge is a release
 
-A merge into `master` happens only when the maintainer asks for it, and when
-it happens it **MUST** produce all four of:
+A merge into `master` happens only when the maintainer asks for it — with one
+standing exception, below.
+
+When it happens it **MUST** produce all four of:
 
 1. **A version bump** in `VERSION`, which is the single source of truth. No
    version string is hardcoded anywhere else.
@@ -207,6 +210,34 @@ flowchart LR
     E --> F["GitHub Release<br/>same note, plus artifacts"]
     F --> G["close the issues"]
 ```
+
+### The standing exception: small fixes
+
+A change that **does not alter behaviour** MAY be merged without asking:
+
+* a wrong or misleading string — an error message, a hint, a usage line;
+* a typo, in code comments, documentation or output;
+* a missing dependency, path or file in a build or install script;
+* documentation that contradicts the code it describes.
+
+Everything else needs the maintainer. In particular a change **MUST NOT** be
+merged under this exception if it alters what the software does, changes a
+default, touches the datapath, or adds anything an operator could configure.
+"It is only a few lines" is not the test — the test is whether a running box
+behaves differently afterwards.
+
+This exception exists because the alternative is worse. The fix that prompted
+it was a hint in `tools/vty.sh` naming a command that does not do what the hint
+says, and holding that behind a round trip means the next reader hits the same
+dead end for no reason.
+
+**A fix merged this way does not cut a release.** It rides in the next tagged
+one, listed in the changelog under *Fixed*. Otherwise a corrected typo would
+produce a version, and a version number that moves for a typo tells an operator
+nothing about whether they should upgrade.
+
+Builds from `master` between releases are still identifiable: the version stamp
+carries the commit, so `0.4.0 (70cc707)` is visibly not the `0.4.0` tag.
 
 The tag is created **after** the merge commit exists, and points at it. A tag
 that predates its own content is worse than no tag. The release is published
