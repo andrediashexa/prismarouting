@@ -245,6 +245,41 @@ it. Translating with a wrong checksum is worse than not translating: the
 subscriber's stack discards the packet, PMTUD stays broken, and the counter
 claims success.
 
+## Hairpinning
+
+Two subscribers behind the same CGNAT reaching each other through a public
+address (RFC 4787 REQ-9).
+
+Without it the packet is translated correctly on the way out and then routed to
+an address this box itself owns, with nothing to send it back in. The symptom is
+specific and hard to attribute: a camera that answers from the street and not
+from next door, a self-hosted service that works for everyone except the
+neighbours, a game that hosts a match for everyone but the players on the same
+ISP.
+
+```mermaid
+sequenceDiagram
+    participant A as A (100.64.0.5)
+    participant N as HexaRouting
+    participant B as B (100.64.0.6)
+    A->>N: 100.64.0.5:40000 → 200.150.0.18:1536
+    Note over N: in2out: source → 200.150.0.17:1536
+    Note over N: destination is ours → look up B's mapping
+    N->>B: 200.150.0.17:1536 → 100.64.0.6:5060
+    Note over B: A appears external, as REQ-9 requires
+```
+
+Both translations happen in one pass through `in2out`: the source on the way
+out, and then the destination straight back in. The source is already A's
+**public** address by then, which is what REQ-9 requires — B **MUST** see A as
+external. Presenting A's private address would leak the inside topology and
+break B's reply path, because B would answer to an address it cannot route to.
+
+A packet aimed at one of our public addresses with **no** session on that port
+is **dropped**, not forwarded. Forwarding it would put a packet addressed to
+our own public range back on the wire, and it is counted separately from a
+successful hairpin so the two are distinguishable.
+
 ## Filtering: who may reply
 
 A mapping accepts inbound packets under one of two rules (RFC 4787 REQ-8), set

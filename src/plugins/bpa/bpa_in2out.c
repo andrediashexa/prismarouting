@@ -48,7 +48,9 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
   _ (OVER_CAPACITY, "subscriber beyond pool capacity")                  \
   _ (BLOCK_EXHAUSTED, "port block exhausted")                             \
   _ (NO_BLOCK, "no free block in dynamic pool")                            \
-  _ (TRUNCATED, "truncated packet")
+  _ (TRUNCATED, "truncated packet")                                            \
+  _ (HAIRPINNED, "packets hairpinned to another subscriber")                   \
+  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")
 
 typedef enum
 {
@@ -149,6 +151,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0;
+  u32 n_hairpin = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -289,6 +292,56 @@ VLIB_NODE_FN (bpa_in2out_node)
 
       bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub);
       n_translated++;
+
+      /*
+       * Hairpinning (RFC 4787 REQ-9): one subscriber reaching another through
+       * its public address.
+       *
+       * Without this the packet leaves here correctly translated and is then
+       * routed to an address this box itself owns, with nothing to send it
+       * back in. The symptom is specific and hard to attribute: a camera that
+       * answers from the street and not from next door, a service that works
+       * for everyone except the neighbours.
+       *
+       * The source is already A's PUBLIC address at this point, which is what
+       * REQ-9 requires - B must see A as external. Presenting A's private
+       * address would leak the inside topology and break B's reply path,
+       * because B would answer to an address it cannot route to.
+       */
+      {
+	u32 hp_dst = clib_net_to_host_u32 (ip->dst_address.as_u32);
+	u32 hp_pool;
+
+	if (PREDICT_FALSE (bpa_pool_by_outside (bm, hp_dst, &hp_pool) == 0))
+	  {
+	    clib_bihash_kv_16_8_t hkv;
+	    u16 hp_port = 0;
+
+	    if (bpa_l4_dst (b[0], ip, (u8) proto, &hp_port, &l4h))
+	      goto hp_done;
+
+	    bpa_key (&hkv, hp_dst, hp_port, (u8) proto);
+	    if (clib_bihash_search_16_8 (&pt->out2in, &hkv, &hkv) == 0)
+	      {
+		bpa_session_t *peer =
+		  pool_elt_at_index (pt->sessions, hkv.value);
+		bpa_rewrite_dst (ip, l4h, (u8) proto, peer->ip_priv,
+				 peer->port_priv);
+		peer->last_heard = now;
+		n_hairpin++;
+	      }
+	    else
+	      {
+		/* The address is ours but nothing is listening on that port.
+		 * Dropped rather than forwarded: sending it on would put a
+		 * packet addressed to our own public range back on the wire. */
+		b[0]->error = node->errors[BPA_IN2OUT_ERROR_HAIRPIN_NO_PEER];
+		goto trace;
+	      }
+	  }
+      hp_done:;
+      }
+
       vnet_feature_next_u16 (&next[0], b[0]);
 
     trace:
@@ -317,6 +370,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_TRANSLATED, n_translated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_HAIRPINNED, n_hairpin);
   return frame->n_vectors;
 }
 
