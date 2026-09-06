@@ -63,7 +63,8 @@ test-appliance:
 hw-up:
 	@sg docker -c "docker rm -f hexa-vpp >/dev/null 2>&1; \
 	    docker run -d --name hexa-vpp --privileged --network=host \
-	      -v $$(pwd):/src -w /src hexarouting-dev:26.06 sleep infinity" >/dev/null
+	      -v $$(pwd):/src -v $$HOME/.ssh:/root/.ssh:ro \
+	      -w /src hexarouting-dev:26.06 sleep infinity" >/dev/null
 	@echo "hexa-vpp is up. Remember: make hw-down when you are finished."
 
 hw-vpp:
