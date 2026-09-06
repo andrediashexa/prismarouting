@@ -49,6 +49,7 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   _ (TRANSLATED, "packets translated")                                        \
   _ (NOT_OURS, "destination outside public pools")                             \
   _ (NO_SESSION, "no session for destination")                                 \
+  _ (FILTERED, "dropped by address-dependent filtering")                       \
   _ (UNSUPPORTED, "unsupported protocol")                                  \
   _ (OUT_OF_BLOCK, "port outside every block")                            \
   _ (BLOCK_FREE, "block not allocated to any subscriber")                      \
@@ -394,7 +395,28 @@ VLIB_NODE_FN (bpa_out2in_node)
 	  goto trace;
 	}
 
+      /*
+       * Address-dependent filtering: a mapping only accepts replies from the
+       * remote the subscriber actually contacted (RFC 4787 REQ-8).
+       *
+       * Checked here rather than in the key, because the key IS the mapping:
+       * putting the remote in it would give one subscriber a different
+       * external port per destination, which is endpoint-DEPENDENT mapping
+       * and breaks the peer-to-peer applications this product exists to keep
+       * working. Filtering and mapping are separate decisions and this only
+       * changes the first.
+       */
       s = pool_elt_at_index (pt->sessions, value.value);
+      if (PREDICT_FALSE (pool_elt_at_index (bm->pools, pool_index)->filter
+			   == BPA_FILTER_ADDRESS_DEPENDENT
+			 && s->remote != 0
+			 && s->remote != clib_net_to_host_u32 (
+			      ip->src_address.as_u32)))
+	{
+	  b[0]->error = node->errors[BPA_OUT2IN_ERROR_FILTERED];
+	  goto trace;
+	}
+
       matched = 1;
       s->last_heard = now;
       if (proto == BPA_PROTO_TCP)

@@ -158,6 +158,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	cfg.mode = BPA_MODE_DETERMINISTIC;
       else if (unformat (line_input, "mode dynamic"))
 	cfg.mode = BPA_MODE_DYNAMIC;
+      else if (unformat (line_input, "filter endpoint-independent"))
+	cfg.filter = BPA_FILTER_ENDPOINT_INDEPENDENT;
+      else if (unformat (line_input, "filter address-dependent"))
+	cfg.filter = BPA_FILTER_ADDRESS_DEPENDENT;
       else if (!name && unformat (line_input, "%v", &name))
 	;
       else
@@ -369,6 +373,71 @@ VLIB_CLI_COMMAND (bpa_show_session_command, static) = {
   .path = "show bpa session",
   .short_help = "show bpa session",
   .function = bpa_show_session_command_fn,
+};
+
+/*
+ * Change a pool's filtering mode in place.
+ *
+ * Separate from "bpa pool", which creates, because recreating a pool to change
+ * one setting drops every session it holds - and the whole point of choosing
+ * between endpoint-independent and address-dependent filtering is that an
+ * operator can decide, on a box carrying traffic, without disconnecting the
+ * subscribers whose behaviour is being changed.
+ */
+static clib_error_t *
+bpa_filter_command_fn (vlib_main_t *vm, unformat_input_t *input,
+		       vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  bpa_filter_t f;
+  bpa_pool_t *p;
+  u8 *name = 0;
+  int found = 0;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (0, "usage: bpa filter <pool> "
+				"<endpoint-independent|address-dependent>");
+
+  if (!unformat (line_input, "%v", &name))
+    {
+      error = clib_error_return (0, "missing pool name");
+      goto done;
+    }
+  if (unformat (line_input, "endpoint-independent"))
+    f = BPA_FILTER_ENDPOINT_INDEPENDENT;
+  else if (unformat (line_input, "address-dependent"))
+    f = BPA_FILTER_ADDRESS_DEPENDENT;
+  else
+    {
+      error = clib_error_return (0, "expected endpoint-independent or "
+				    "address-dependent");
+      goto done;
+    }
+
+  pool_foreach (p, bm->pools)
+    if (vec_len (p->name) == vec_len (name)
+	&& !memcmp (p->name, name, vec_len (name)))
+      {
+	p->filter = f;
+	found = 1;
+	break;
+      }
+
+  if (!found)
+    error = clib_error_return (0, "no such pool '%v'", name);
+
+done:
+  vec_free (name);
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_filter_command, static) = {
+  .path = "bpa filter",
+  .short_help = "bpa filter <pool> <endpoint-independent|address-dependent>",
+  .function = bpa_filter_command_fn,
 };
 
 static clib_error_t *
@@ -645,6 +714,8 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, " ports %u %u\n", p->port_min, p->port_max);
       s = format (s, " policy %U\n", format_bpa_policy, p->policy);
       s = format (s, " mode %U\n", format_bpa_mode, p->mode);
+      if (p->filter != BPA_FILTER_ENDPOINT_INDEPENDENT)
+	s = format (s, " filter address-dependent\n");
       s = format (s, " exit\n");
     }
 
