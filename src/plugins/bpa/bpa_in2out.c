@@ -315,7 +315,8 @@ VLIB_NODE_FN (bpa_in2out_node)
        * therefore its own change (issue #39).
        */
       if (PREDICT_FALSE (s == 0 && p->mode == BPA_MODE_DYNAMIC
-			 && bpa_sub_n_blocks (pt, sub_idx) < p->max_blocks))
+			 && bpa_sub_n_blocks (pt, pool_index, sub_idx)
+			      < p->max_blocks))
 	{
 	  u32 w, nw;
 	  int is_new = 0;
@@ -326,7 +327,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 	      && bpa_dyn_acquire_extra (vec_elt_at_index (pt->dyn, pool_index),
 					p, sub_idx, w, nw, &ext, &is_new) == 0)
 	    {
-	      bpa_sub_extend (pt, p, sub_idx, &ext);
+	      bpa_sub_extend (pt, p, pool_index, sub_idx, &ext);
 	      /* An extension is not derivable from anything, in either mode.
 	       * A block the log does not record cannot be attributed to
 	       * anyone, which is the whole point of recording blocks. */

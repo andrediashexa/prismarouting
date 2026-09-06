@@ -77,6 +77,7 @@ sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
 sh tools/lab.sh vty            # the VTY configuring routing and CGNAT
 sh tools/lab.sh vty-pool       # per-pool settings from the VTY to the dataplane
+sh tools/lab.sh two-pools      # two pools, a subscriber at the same index in each
 sh tools/lab.sh api            # binary API
 sh tools/lab.sh commit         # candidate, commit, rollback
 sh tools/lab.sh audit          # dated configuration trail
@@ -100,6 +101,7 @@ The most instructive to run:
 | `rtsp` | Reads the rewritten `Transport:` header out of the wire, and `BPA_RTSP_OFF=1 sh tools/lab.sh rtsp` drops 11 of its 18 assertions |
 | `pptp` | Two subscribers choose the same Call ID and both tunnels work |
 | `vty-pool` | Sets a pool setting with `vppctl`, commits something unrelated through the VTY, and proves the first one survived |
+| `two-pools` | The only lab that configures more than one pool — which is why nothing caught subscribers of two pools sharing one set of port bitmaps |
 
 Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An

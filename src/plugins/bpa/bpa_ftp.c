@@ -403,7 +403,7 @@ bpa_ftp_expect (bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t *ctl,
    * otherwise build a subscriber around the all-zero block below, which is a
    * block belonging to somebody else.
    */
-  if (bpa_sub_n_blocks (pt, ctl->sub_idx) == 0)
+  if (bpa_sub_n_blocks (pt, ctl->pool_index, ctl->sub_idx) == 0)
     return 0;
 
   blk.sub_idx = ctl->sub_idx;

@@ -49,23 +49,26 @@ bpa_sub_add_block (bpa_sub_t *sub, const bpa_pool_t *p, const bpa_block_t *b)
 
 /* Returns the subscriber's port state, creating it on first use. */
 static bpa_sub_t *
-bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, const bpa_block_t *b)
+bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
+	     const bpa_block_t *b)
 {
+  uword key = bpa_sub_key (pool_index, b->sub_idx);
   bpa_sub_t *sub;
   uword *q;
 
-  q = hash_get (pt->sub_by_idx, b->sub_idx);
+  q = hash_get (pt->sub_by_idx, key);
   if (q)
     return pool_elt_at_index (pt->subs, q[0]);
 
   pool_get_zero (pt->subs, sub);
   bpa_sub_add_block (sub, p, b);
-  hash_set (pt->sub_by_idx, b->sub_idx, sub - pt->subs);
+  hash_set (pt->sub_by_idx, key, sub - pt->subs);
   return sub;
 }
 
 static void
-bpa_sub_put (bpa_per_thread_t *pt, u32 sub_idx, bpa_sub_t *sub)
+bpa_sub_put (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+	     bpa_sub_t *sub)
 {
   bpa_subblock_t *sb;
 
@@ -75,7 +78,7 @@ bpa_sub_put (bpa_per_thread_t *pt, u32 sub_idx, bpa_sub_t *sub)
   vec_foreach (sb, sub->blocks)
     clib_mem_free (sb->map.bits);
   vec_free (sub->blocks);
-  hash_unset (pt->sub_by_idx, sub_idx);
+  hash_unset (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
   pool_put (pt->subs, sub);
 }
 
@@ -85,9 +88,9 @@ bpa_sub_put (bpa_per_thread_t *pt, u32 sub_idx, bpa_sub_t *sub)
  * before giving up on the packet.
  */
 u32
-bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 sub_idx)
+bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx)
 {
-  uword *q = hash_get (pt->sub_by_idx, sub_idx);
+  uword *q = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
   if (!q)
     return 0;
   return vec_len (pool_elt_at_index (pt->subs, q[0])->blocks);
@@ -101,10 +104,10 @@ bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 sub_idx)
  * modes answer that differently and only the caller knows which it is.
  */
 void
-bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx,
-		const bpa_block_t *b)
+bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
+		u32 sub_idx, const bpa_block_t *b)
 {
-  uword *q = hash_get (pt->sub_by_idx, sub_idx);
+  uword *q = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
   if (!q)
     return;
   bpa_sub_add_block (pool_elt_at_index (pt->subs, q[0]), p, b);
@@ -180,7 +183,7 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
   if (priv_lo == 0 || priv_lo == 65535)
     return -1;
 
-  q = hash_get (pt->sub_by_idx, sub_idx);
+  q = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
   if (!q)
     return -1;
   sub = pool_elt_at_index (pt->subs, q[0]);
@@ -277,7 +280,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   u32 blk_idx;
   int off = -1, preferred;
 
-  sub = bpa_sub_get (pt, p, b);
+  sub = bpa_sub_get (pt, p, pool_index, b);
 
   /*
    * Try the blocks the subscriber already holds, oldest first. Port
@@ -302,7 +305,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
    */
   if (off < 0)
     {
-      bpa_sub_put (pt, b->sub_idx, sub);
+      bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
     }
 
@@ -311,7 +314,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   if (s == 0)
     {
       bpa_portmap_free (&sb->map, (u16) off);
-      bpa_sub_put (pt, b->sub_idx, sub);
+      bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
     }
 
@@ -342,7 +345,7 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
   int off = -1;
   uword *q;
 
-  q = hash_get (pt->sub_by_idx, sub_idx);
+  q = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
   if (!q)
     return 0;
   sub = pool_elt_at_index (pt->subs, q[0]);
@@ -468,7 +471,8 @@ bpa_quarantine_drain (bpa_per_thread_t *pt, f64 now, u32 budget)
        * released, its bitmap reclaimed. Then there is nothing to give back,
        * and that is not an error.
        */
-      h = hash_get (pt->sub_by_idx, q->sub_idx);
+      h = hash_get (pt->sub_by_idx,
+		    bpa_sub_key (q->pool_index, q->sub_idx));
       if (h)
 	{
 	  sub = pool_elt_at_index (pt->subs, h[0]);
@@ -495,8 +499,8 @@ bpa_quarantine_drain (bpa_per_thread_t *pt, f64 now, u32 budget)
  * it pays nothing - not even the queue.
  */
 static void
-bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u8 blk_idx, u16 port_off,
-		  f64 now)
+bpa_port_release (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+		  u8 blk_idx, u16 port_off, f64 now)
 {
   bpa_main_t *bm = &bpa_main;
   bpa_quarantine_t *q;
@@ -505,7 +509,7 @@ bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u8 blk_idx, u16 port_off,
 
   if (bm->timeouts.port_holddown == 0)
     {
-      h = hash_get (pt->sub_by_idx, sub_idx);
+      h = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
       if (h)
 	{
 	  sub = pool_elt_at_index (pt->subs, h[0]);
@@ -528,6 +532,7 @@ bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u8 blk_idx, u16 port_off,
     }
 
   vec_add2 (pt->quarantine, q, 1);
+  q->pool_index = pool_index;
   q->sub_idx = sub_idx;
   q->port_off = port_off;
   q->blk_idx = blk_idx;
@@ -566,7 +571,7 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
   bpa_key (&kv, s->ip_pub, s->port_pub, s->proto);
   clib_bihash_add_del_16_8 (&pt->out2in, &kv, 0);
 
-  q = hash_get (pt->sub_by_idx, s->sub_idx);
+  q = hash_get (pt->sub_by_idx, bpa_sub_key (s->pool_index, s->sub_idx));
   if (q)
     {
       sub = pool_elt_at_index (pt->subs, q[0]);
@@ -574,7 +579,8 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
        * (#12), and it has to name the block it came from (#13), because a
        * subscriber can now hold several and freeing an offset into the wrong
        * bitmap would hand out a port that is still in use. */
-      bpa_port_release (pt, s->sub_idx, s->blk_idx, s->port_off, now);
+      bpa_port_release (pt, s->pool_index, s->sub_idx, s->blk_idx,
+			s->port_off, now);
       if (sub->n_sessions)
 	sub->n_sessions--;
 
@@ -594,7 +600,7 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 			  s->sub_idx, now);
 	}
 
-      bpa_sub_put (pt, s->sub_idx, sub);
+      bpa_sub_put (pt, s->pool_index, s->sub_idx, sub);
     }
 
   pool_put (pt->sessions, s);
