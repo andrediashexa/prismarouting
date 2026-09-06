@@ -62,6 +62,7 @@ typedef struct
   u16 port_priv; /* host order; ICMP echo id for BPA_PROTO_ICMP */
   u16 port_pub;
   u16 port_off;	 /* offset within the block, needed to free the port */
+  u8 blk_idx;	 /* which of the subscriber's blocks that offset is in */
   u8 proto;	 /* bpa_proto_t */
   u8 tcp_state; /* bpa_tcp_state_t */
   u32 sub_idx;
@@ -69,11 +70,31 @@ typedef struct
   f64 last_heard;
 } bpa_session_t;
 
-/* Per-subscriber port bitmap plus its backing storage. */
+/*
+ * One port block held by a subscriber, with its bitmap.
+ *
+ * A subscriber usually holds exactly one. It gets a second only in dynamic
+ * mode, when the first fills and the per-subscriber cap allows it - a
+ * deterministic pool has no spare block to give, because the formula already
+ * assigns every block to somebody (see issue #39).
+ */
 typedef struct
 {
+  bpa_block_t blk;   /* public address and port range */
   bpa_portmap_t map;
-  u32 n_sessions; /* when this hits zero the bitmap can be reclaimed */
+} bpa_subblock_t;
+
+/*
+ * Per-subscriber port state.
+ *
+ * blocks[0] is the block the subscriber started with; anything after it is an
+ * extension. The vector is the common case of length one, so the extra
+ * indirection costs an allocation the subscriber already needed.
+ */
+typedef struct
+{
+  bpa_subblock_t *blocks;
+  u32 n_sessions; /* when this hits zero the bitmaps can be reclaimed */
 } bpa_sub_t;
 
 /*
@@ -89,6 +110,10 @@ typedef struct
 {
   u32 sub_idx;
   u16 port_off;
+  /* Which of the subscriber's blocks the port belongs to. A subscriber can
+   * hold more than one, and freeing an offset into the wrong bitmap would
+   * hand out a port that is still in use. */
+  u8 blk_idx;
   f64 until;
 } bpa_quarantine_t;
 
@@ -190,6 +215,11 @@ clib_error_t *bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index);
 bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 				   u32 pool_index, const bpa_block_t *b,
 				   u16 port_priv, u8 proto, f64 now);
+
+/* Extended blocks: how many a subscriber holds, and attaching one more. */
+u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 sub_idx);
+void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx,
+		     const bpa_block_t *b);
 void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);

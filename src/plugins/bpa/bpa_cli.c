@@ -103,6 +103,8 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 len = 0;
   u32 block = 512, port_min = 1024, port_max = 65535;
   u32 tv = 0;
+
+  u32 maxb = 0;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   bpa_pool_t cfg = { 0 };
   u8 *name = 0;
@@ -173,6 +175,9 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	cfg.timeouts.tcp_estab = tv;
       else if (unformat (line_input, "timeout port-holddown %u", &tv))
 	cfg.timeouts.port_holddown = tv;
+
+      else if (unformat (line_input, "max-blocks %u", &maxb))
+	cfg.max_blocks = (u8) maxb;
       else if (!name && unformat (line_input, "%v", &name))
 	;
       else
@@ -451,7 +456,7 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
   pool_foreach (p, bm->pools)
     {
       u32 pi = p - bm->pools;
-      u64 total = 0, alloc = 0, allocs = 0, rels = 0, exh = 0;
+      u64 total = 0, alloc = 0, allocs = 0, rels = 0, exh = 0, exts = 0;
 
       if (p->mode != BPA_MODE_DYNAMIC)
 	continue;
@@ -471,20 +476,21 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	    continue;
 
 	  vlib_cli_output (vm,
-			   "  thread %u: %u/%u blocks in use, %Lu allocations, "
-			   "%Lu releases, %Lu refusals",
+			   "  thread %u: %u/%u blocks in use, %Lu allocations "
+			   "(%Lu extensions), %Lu releases, %Lu refusals",
 			   i, d->n_alloc, d->n_local, d->n_allocations,
-			   d->n_releases, d->n_exhausted);
+			   d->n_extensions, d->n_releases, d->n_exhausted);
 	  total += d->n_local;
 	  alloc += d->n_alloc;
 	  allocs += d->n_allocations;
+	  exts += d->n_extensions;
 	  rels += d->n_releases;
 	  exh += d->n_exhausted;
 	}
       vlib_cli_output (vm,
-		       "  total: %Lu/%Lu in use, %Lu allocations, %Lu "
-		       "releases, %Lu refusals",
-		       alloc, total, allocs, rels, exh);
+		       "  total: %Lu/%Lu in use, %Lu allocations "
+		       "(%Lu extensions), %Lu releases, %Lu refusals",
+		       alloc, total, allocs, exts, rels, exh);
     }
 
   if (!any)
@@ -680,6 +686,9 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, " timeout tcp-established %u\n", p->timeouts.tcp_estab);
       if (p->timeouts.port_holddown)
 	s = format (s, " timeout port-holddown %u\n", p->timeouts.port_holddown);
+
+      if (p->max_blocks > 1)
+	s = format (s, " max-blocks %u\n", p->max_blocks);
       s = format (s, " exit\n");
     }
 

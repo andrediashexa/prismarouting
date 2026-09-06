@@ -165,6 +165,14 @@ bpa_pool_init (bpa_pool_t *p)
       (unsigned long long) capacity, BPA_MAX_CAPACITY);
   p->capacity = (u32) capacity;
 
+  /*
+   * One block per subscriber unless the operator asks otherwise, which is the
+   * behaviour every existing configuration already has. A cap of one keeps
+   * this feature entirely inert until it is chosen.
+   */
+  if (p->max_blocks == 0)
+    p->max_blocks = 1;
+
   p->log2_block = bpa_log2_exact (p->block_size);
 
   /* One divisor drives the policy split; see bpa_split(). */

@@ -157,6 +157,18 @@ typedef struct
    * The pool is the unit an operator sells, so it is the unit of policy. */
   bpa_timeouts_t timeouts;
 
+  /*
+   * How many blocks one subscriber may hold. 1 is the historical behaviour:
+   * fill the block and be dropped. Above 1, a subscriber whose blocks are all
+   * full is given another - which turns "the internet stopped for one
+   * customer" into a logged, bounded event.
+   *
+   * Bounded on purpose. Without a cap one infected host consumes the pool
+   * that every other subscriber needs, and the operator trades a customer
+   * complaint for an outage.
+   */
+  u8 max_blocks;
+
   /* derived */
   u32 port_count;
   u32 blocks_per_ip;

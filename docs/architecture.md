@@ -127,6 +127,62 @@ mode `block_idx == sub_idx`, so one line of code serves both modes.
 * Oversubscription is measured **per worker**, not globally. One slice **MAY**
   exhaust while another still has free blocks.
 
+## Extended blocks
+
+A subscriber that fills its block is dropped, and `natEvent 12` says so. That is
+correct and terrible: one customer's internet stops while the box is healthy and
+the neighbours are unaffected.
+
+With `max-blocks` above 1, a subscriber whose blocks are all full is given
+another. The cap matters as much as the extension: without one, an infected host
+consumes the pool every other subscriber needs, and the operator has traded a
+customer complaint for an outage.
+
+Every extension **MUST** be logged as `natEvent 16`, and its release as
+`natEvent 17`. An extension is not derivable from anything — not from the
+formula, not from the first block — so a block the log does not record cannot be
+attributed to anyone, which is the entire reason blocks are logged.
+
+### Only in dynamic mode, and why
+
+Dynamic pools have spare blocks by construction: `bpa_dyn_acquire()` draws from
+a free list, so handing out a second block is the same operation as the first.
+
+Deterministic pools have none. `capacity = outside.count * blocks_per_ip` and
+`bpa_forward()` assigns **every** block to some subscriber. A block handed out
+as an extension is a block the formula gives to somebody else, and giving it
+away breaks their mapping with no error anywhere — the exact failure the
+deterministic proof exists to prevent.
+
+Making it work there needs a reserve held out of the formula, which reduces
+capacity, which re-maps every existing subscriber. That is
+[#39](https://github.com/andrediashexa/hexarouting/issues/39), and it depends on
+the documented procedure for a capacity change
+([#23](https://github.com/andrediashexa/hexarouting/issues/23)) — not something
+to arrive as a side effect of a feature about something else.
+
+```mermaid
+flowchart TD
+    A["subscriber's blocks all full"] --> B{"mode?"}
+    B -->|dynamic| C{"blocks held &lt; max-blocks?"}
+    B -->|deterministic| D["drop, natEvent 12<br/>no spare block exists"]
+    C -->|yes| E{"free block in the pool?"}
+    C -->|no| F["drop: the cap is the cap"]
+    E -->|yes| G["extend, log natEvent 16"]
+    E -->|no| H["drop, natEvent 12"]
+```
+
+### Releasing them
+
+An extension is owned by the subscriber like any other block, but it does not
+live in the allocator's `by_sub` map, which names the first one. It is tracked
+in a separate list so that going idle marks **all** of a subscriber's blocks,
+not just the first.
+
+Missing that is a leak with no symptom until it matters: the extension stays
+owned forever, is never reaped, and shows up only as a pool that slowly stops
+having free blocks.
+
 ## Memory
 
 | Structure | Sizing | Notes |

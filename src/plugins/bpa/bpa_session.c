@@ -35,37 +35,79 @@ bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
   return 0;
 }
 
-/* Returns the subscriber's port bitmap, creating it on first use. */
+/* Adds one block to a subscriber, with its own bitmap. */
+static void
+bpa_sub_add_block (bpa_sub_t *sub, const bpa_pool_t *p, const bpa_block_t *b)
+{
+  u32 n_words = (p->block_size + 63) / 64;
+  bpa_subblock_t *sb;
+
+  vec_add2 (sub->blocks, sb, 1);
+  sb->blk = *b;
+  bpa_portmap_init (&sb->map, p->block_size, clib_mem_alloc (n_words * sizeof (u64)));
+}
+
+/* Returns the subscriber's port state, creating it on first use. */
 static bpa_sub_t *
-bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx)
+bpa_sub_get (bpa_per_thread_t *pt, const bpa_pool_t *p, const bpa_block_t *b)
 {
   bpa_sub_t *sub;
   uword *q;
-  u64 *bits;
-  u32 n_words;
 
-  q = hash_get (pt->sub_by_idx, sub_idx);
+  q = hash_get (pt->sub_by_idx, b->sub_idx);
   if (q)
     return pool_elt_at_index (pt->subs, q[0]);
 
-  n_words = (p->block_size + 63) / 64;
-  bits = clib_mem_alloc (n_words * sizeof (u64));
-
   pool_get_zero (pt->subs, sub);
-  bpa_portmap_init (&sub->map, p->block_size, bits);
-  hash_set (pt->sub_by_idx, sub_idx, sub - pt->subs);
+  bpa_sub_add_block (sub, p, b);
+  hash_set (pt->sub_by_idx, b->sub_idx, sub - pt->subs);
   return sub;
 }
 
 static void
 bpa_sub_put (bpa_per_thread_t *pt, u32 sub_idx, bpa_sub_t *sub)
 {
+  bpa_subblock_t *sb;
+
   if (sub->n_sessions)
     return;
 
-  clib_mem_free (sub->map.bits);
+  vec_foreach (sb, sub->blocks)
+    clib_mem_free (sb->map.bits);
+  vec_free (sub->blocks);
   hash_unset (pt->sub_by_idx, sub_idx);
   pool_put (pt->subs, sub);
+}
+
+/*
+ * How many blocks this subscriber already holds, and whether another is
+ * allowed. Used by the datapath to decide whether to ask for an extension
+ * before giving up on the packet.
+ */
+u32
+bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 sub_idx)
+{
+  uword *q = hash_get (pt->sub_by_idx, sub_idx);
+  if (!q)
+    return 0;
+  return vec_len (pool_elt_at_index (pt->subs, q[0])->blocks);
+}
+
+/*
+ * Attach an extra block to a subscriber that already exists.
+ *
+ * Only ever called after the caller has obtained a block it is entitled to
+ * hand out. Nothing here checks where the block came from, because the two
+ * modes answer that differently and only the caller knows which it is.
+ */
+void
+bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx,
+		const bpa_block_t *b)
+{
+  uword *q = hash_get (pt->sub_by_idx, sub_idx);
+  if (!q)
+    return;
+  bpa_sub_add_block (pool_elt_at_index (pt->subs, q[0]), p, b);
 }
 
 bpa_session_t *
@@ -75,27 +117,45 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   clib_bihash_kv_16_8_t kv;
   bpa_session_t *s;
   bpa_sub_t *sub;
-  int off, preferred = -1;
+  bpa_subblock_t *sb = 0;
+  u32 blk_idx;
+  int off = -1, preferred;
 
-  sub = bpa_sub_get (pt, p, b->sub_idx);
+  sub = bpa_sub_get (pt, p, b);
 
-  /* Port preservation: keep the original source port when it happens to
-   * fall inside this subscriber's block and is still free. */
-  if (port_priv >= b->port_lo && port_priv <= b->port_hi)
-    preferred = port_priv - b->port_lo;
+  /*
+   * Try the blocks the subscriber already holds, oldest first. Port
+   * preservation only applies to the block whose range contains the original
+   * port, which is normally the first.
+   */
+  for (blk_idx = 0; blk_idx < vec_len (sub->blocks); blk_idx++)
+    {
+      sb = vec_elt_at_index (sub->blocks, blk_idx);
+      preferred = -1;
+      if (port_priv >= sb->blk.port_lo && port_priv <= sb->blk.port_hi)
+	preferred = port_priv - sb->blk.port_lo;
+      off = bpa_portmap_alloc (&sb->map, preferred);
+      if (off >= 0)
+	break;
+    }
 
-  off = bpa_portmap_alloc (&sub->map, preferred);
+  /*
+   * Every block full. The caller decides whether an extension is possible -
+   * it owns the free list in dynamic mode, and knows there is none in
+   * deterministic mode. Here we only report that another block is needed.
+   */
   if (off < 0)
     {
       bpa_sub_put (pt, b->sub_idx, sub);
-      return 0; /* block exhausted */
+      return 0;
     }
 
   pool_get_zero (pt->sessions, s);
-  s->ip_pub = b->ip_pub;
+  s->ip_pub = sb->blk.ip_pub;
   s->port_priv = port_priv;
   s->port_off = (u16) off;
-  s->port_pub = b->port_lo + (u16) off;
+  s->blk_idx = (u8) blk_idx;
+  s->port_pub = sb->blk.port_lo + (u16) off;
   s->proto = proto;
   s->sub_idx = b->sub_idx;
   s->pool_index = pool_index;
@@ -103,7 +163,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 
   if (bpa_set_addr_of (&p->inside, b->sub_idx, &s->ip_priv))
     {
-      bpa_portmap_free (&sub->map, (u16) off);
+      bpa_portmap_free (&sb->map, (u16) off);
       pool_put (pt->sessions, s);
       bpa_sub_put (pt, b->sub_idx, sub);
       return 0;
@@ -156,7 +216,9 @@ bpa_quarantine_drain (bpa_per_thread_t *pt, f64 now, u32 budget)
       if (h)
 	{
 	  sub = pool_elt_at_index (pt->subs, h[0]);
-	  bpa_portmap_free (&sub->map, q->port_off);
+	  if (q->blk_idx < vec_len (sub->blocks))
+	    bpa_portmap_free (&vec_elt_at_index (sub->blocks, q->blk_idx)->map,
+			      q->port_off);
 	}
       pt->quarantine_head++;
       done++;
@@ -177,7 +239,8 @@ bpa_quarantine_drain (bpa_per_thread_t *pt, f64 now, u32 budget)
  * it pays nothing - not even the queue.
  */
 static void
-bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u16 port_off, f64 now)
+bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u8 blk_idx, u16 port_off,
+		  f64 now)
 {
   bpa_main_t *bm = &bpa_main;
   bpa_quarantine_t *q;
@@ -190,7 +253,9 @@ bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u16 port_off, f64 now)
       if (h)
 	{
 	  sub = pool_elt_at_index (pt->subs, h[0]);
-	  bpa_portmap_free (&sub->map, port_off);
+	  if (blk_idx < vec_len (sub->blocks))
+	    bpa_portmap_free (&vec_elt_at_index (sub->blocks, blk_idx)->map,
+			      port_off);
 	}
       return;
     }
@@ -209,6 +274,7 @@ bpa_port_release (bpa_per_thread_t *pt, u32 sub_idx, u16 port_off, f64 now)
   vec_add2 (pt->quarantine, q, 1);
   q->sub_idx = sub_idx;
   q->port_off = port_off;
+  q->blk_idx = blk_idx;
   q->until = now + (f64) bm->timeouts.port_holddown;
 }
 
@@ -231,7 +297,11 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
   if (q)
     {
       sub = pool_elt_at_index (pt->subs, q[0]);
-      bpa_port_release (pt, s->sub_idx, s->port_off, now);
+      /* Both changes at once: the port goes through the hold-down queue
+       * (#12), and it has to name the block it came from (#13), because a
+       * subscriber can now hold several and freeing an offset into the wrong
+       * bitmap would hand out a port that is still in use. */
+      bpa_port_release (pt, s->sub_idx, s->blk_idx, s->port_off, now);
       if (sub->n_sessions)
 	sub->n_sessions--;
 
