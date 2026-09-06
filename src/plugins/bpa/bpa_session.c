@@ -305,6 +305,10 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
    */
   if (off < 0)
     {
+      /* Recorded before the subscriber can be reclaimed: this is the number
+       * "show bpa subscriber" reports, and it is the difference between "the
+       * customer is at their limit" and "the customer is idle". */
+      sub->n_refused++;
       bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
     }

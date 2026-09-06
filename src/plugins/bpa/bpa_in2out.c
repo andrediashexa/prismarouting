@@ -9,6 +9,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_errors.h"
 #include "bpa_ftp.h"
 #include "bpa_l4.h"
 #include "bpa_log.h"
@@ -43,47 +44,16 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
 		 t->is_frag ? " [non-first fragment]" : "");
 }
 
-#define foreach_bpa_in2out_error                                              \
-  _ (TRANSLATED, "packets translated")                                        \
-  _ (SESSION_NEW, "sessions created")                                          \
-  _ (NO_POOL, "no pool for source address")                           \
-  _ (UNSUPPORTED, "unsupported protocol")                                  \
-  _ (OVER_CAPACITY, "subscriber beyond pool capacity")                  \
-  _ (BLOCK_EXHAUSTED, "port block exhausted")                             \
-  _ (NO_BLOCK, "no free block in dynamic pool")                            \
-  _ (TRUNCATED, "truncated packet")                                            \
-  _ (HAIRPINNED, "packets hairpinned to another subscriber")                   \
-  _ (HAIRPIN_NO_PEER, "hairpin to a public address with no session")           \
-  _ (FTP_REWRITTEN, "FTP ALG payloads rewritten")                              \
-  _ (FTP_UNTOUCHED, "FTP payloads left untouched (malformed or unsupported)")  \
-  _ (FTP_NO_PORT, "FTP data connection could not get a public port")           \
-  _ (FTP_SEQ, "TCP sequence numbers shifted after an FTP rewrite")         \
-  /* "show errors" truncates the reason at 35 characters, so every string
-   * below is short enough to survive it. The first version was not, and the
-   * lab's assertions on the counters could not match what was printed - the
-   * counter was right and the only way to read it was wrong. */              \
-  _ (RTSP_REWRITTEN, "RTSP Transport headers rewritten")                       \
-  _ (RTSP_UNPARSED, "RTSP Transport not understood")                           \
-  _ (RTSP_PARTIAL, "RTSP message spans segments")                              \
-  _ (RTSP_NO_ROOM, "RTSP rewrite would not fit")                               \
-  _ (RTSP_NO_PORTS, "RTSP media port pair unavailable")                      \
-  _ (GRE_NOT_ENHANCED, "GRE that is not the enhanced GRE of RFC 2637")         \
-  _ (GRE_NO_CALL, "GRE for a call the control channel never announced")        \
-  _ (PPTP_MANGLED, "PPTP control messages rewritten")                          \
-  _ (PPTP_UNKNOWN, "PPTP message about an unknown call")                       \
-  _ (PPTP_NO_CALL_ID, "PPTP call refused: no free entry in the block")         \
-  _ (PPTP_MALFORMED, "malformed or split PPTP control message")
-
 typedef enum
 {
-#define _(sym, str) BPA_IN2OUT_ERROR_##sym,
+#define _(sym, drop, str) BPA_IN2OUT_ERROR_##sym,
   foreach_bpa_in2out_error
 #undef _
     BPA_IN2OUT_N_ERROR,
 } bpa_in2out_error_t;
 
 static char *bpa_in2out_error_strings[] = {
-#define _(sym, str) str,
+#define _(sym, drop, str) str,
   foreach_bpa_in2out_error
 #undef _
 };

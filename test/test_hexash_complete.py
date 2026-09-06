@@ -38,7 +38,10 @@ print(f"  {sorted(o)}")
 
 print("\n=== 'show cgnat ' goes one level deeper ===")
 o, _, _ = opts("operational", "show cgnat ")
-check(o == {"pool", "session", "blocks", "logging", "history"}, f"got {o}")
+# Written out rather than derived from the tree: a test that reads the same
+# structure the code reads would agree with any mistake in it.
+check(o == {"pool", "session", "blocks", "logging", "history",
+            "subscriber", "translation", "top", "drops"}, f"got {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== a partial prefix completes ===")

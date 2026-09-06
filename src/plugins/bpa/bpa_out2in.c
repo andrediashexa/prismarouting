@@ -14,6 +14,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_errors.h"
 #include "bpa_ftp.h"
 #include "bpa_l4.h"
 #include "bpa_alg.h"
@@ -48,38 +49,16 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
 		 format_bpa_proto, t->proto);
 }
 
-#define foreach_bpa_out2in_error                                              \
-  _ (TRANSLATED, "packets translated")                                        \
-  _ (NOT_OURS, "destination outside public pools")                             \
-  _ (NO_SESSION, "no session for destination")                                 \
-  _ (FILTERED, "dropped by address-dependent filtering")                       \
-  _ (UNSUPPORTED, "unsupported protocol")                                  \
-  _ (OUT_OF_BLOCK, "port outside every block")                            \
-  _ (BLOCK_FREE, "block not allocated to any subscriber")                      \
-  _ (ICMP_ERROR, "ICMP errors translated")                                     \
-  _ (ICMP_MALFORMED, "truncated or malformed ICMP error")                      \
-  _ (TRUNCATED, "truncated packet")                                            \
-  _ (FTP_ACK, "TCP acknowledgements shifted after an FTP rewrite")         \
-  /* Kept under the 35 characters "show errors" prints; see bpa_in2out.c. */  \
-  _ (RTSP_REWRITTEN, "RTSP Transport replies rewritten")                       \
-  _ (RTSP_UNPARSED, "RTSP reply not understood")                               \
-  _ (RTSP_PARTIAL, "RTSP reply spans segments")                                \
-  _ (RTSP_NO_ROOM, "RTSP reply rewrite would not fit")                       \
-  _ (GRE_NOT_ENHANCED, "GRE that is not the enhanced GRE of RFC 2637")         \
-  _ (PPTP_MANGLED, "PPTP control messages rewritten")                          \
-  _ (PPTP_UNKNOWN, "PPTP message about an unknown call")                       \
-  _ (PPTP_MALFORMED, "malformed or split PPTP control message")
-
 typedef enum
 {
-#define _(sym, str) BPA_OUT2IN_ERROR_##sym,
+#define _(sym, drop, str) BPA_OUT2IN_ERROR_##sym,
   foreach_bpa_out2in_error
 #undef _
     BPA_OUT2IN_N_ERROR,
 } bpa_out2in_error_t;
 
 static char *bpa_out2in_error_strings[] = {
-#define _(sym, str) str,
+#define _(sym, drop, str) str,
   foreach_bpa_out2in_error
 #undef _
 };

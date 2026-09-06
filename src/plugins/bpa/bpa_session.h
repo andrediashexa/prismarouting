@@ -214,6 +214,15 @@ typedef struct
 {
   bpa_subblock_t *blocks;
   u32 n_sessions; /* when this hits zero the bitmaps can be reclaimed */
+  /*
+   * Times this subscriber asked for a port and was refused.
+   *
+   * Counted here rather than per pool because the question an operator
+   * arrives with is about one customer: "is this the box, or is it them?".
+   * A pool-wide counter cannot answer it. Written only on the failure path,
+   * so the fast path pays nothing.
+   */
+  u32 n_refused;
 } bpa_sub_t;
 
 /*

@@ -380,6 +380,46 @@ This mirrors `vtysh`: the daemon knows its configuration, not the shell. A
 useful side effect is that a public range merged from adjacent prefixes is
 decomposed back into CIDR on output, so the saved configuration can be reread.
 
+### Commands for the question an operator arrives with
+
+The first five `show cgnat` commands report aggregates — *"thread 0: 3 sessions,
+2 active subscribers"*. That is enough to know the box is working and useless
+for the question people actually arrive with, which is always about one
+customer.
+
+| Command | The question |
+|---|---|
+| `show cgnat subscriber <ip>` | "100.64.0.5 says nothing works" — public address, blocks, ports used and free, sessions, and whether it has been refused a port |
+| `show cgnat translation <ip> <port>` | "who was behind this address and port" — the question a court order or an abuse report asks |
+| `show cgnat top [n]` | which subscribers are closest to running out — the question that prevents the call instead of answering it |
+| `show cgnat drops` | why packets did not get through |
+
+Two properties are load-bearing.
+
+**`translation` says where its answer comes from.** In deterministic mode the
+answer is arithmetic and holds for any instant, past or present, as long as the
+pool has not been resized. In dynamic mode it holds for **now only** — the block
+belonged to somebody else yesterday, and only the RFC 8158 log says whom. The
+command prints which of the two it is giving, because handing a court the second
+as though it were the first is a wrong answer delivered with confidence.
+
+**`drops` separates a drop from a success.** VPP registers every node counter as
+an "error", so `show errors` lists *"packets translated"* beside *"no pool for
+source address"* as though they were the same kind of thing. `bpa_errors.h`
+tags each counter with whether it means a packet was lost, in the same list as
+its description so the two cannot drift, and this command prints the drops under
+their own heading first.
+
+None of them walks the session table. `subscriber` and `top` read the
+per-subscriber record — one entry per active subscriber rather than one per
+session, which on a real box differ by three orders of magnitude — and
+`translation` answers by arithmetic. A `show` that stalls forwarding is worse
+than no `show`.
+
+`lab/troubleshoot.sh` checks them against `ref/bpa_model.py` rather than against
+the plugin: a test that asks the implementation what it should have said agrees
+with any mistake in it.
+
 ### The banner, and where it must not appear
 
 An interactive login opens with an ASCII wordmark above the version line. On a

@@ -78,6 +78,15 @@ ARG_WORD = "<word>"
 ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
+    # The four that answer an operator's question rather than reporting a
+    # counter. Every one of them takes its answer from the dataplane, so they
+    # work from here as well as from vppctl - an operator who has to drop to
+    # the dataplane CLI to troubleshoot is one for whom this VTY is decoration.
+    "subscriber": ("everything about one subscriber", "<inside-address>"),
+    "translation": ("who was behind a public address and port",
+                    "<public-address> <port>"),
+    "top": ("subscribers closest to exhausting their blocks", "[<n>]"),
+    "drops": ("why packets did not get through", None),
     "pool": ("configured CGNAT pools", None),
     "session": ("active sessions per thread", None),
     "blocks": ("blocks allocated in dynamic mode", None),
@@ -972,10 +981,19 @@ class Shell:
             "show cgnat blocks": "show bpa blocks",
             "show cgnat logging": "show bpa logging",
             "show cgnat history": "show bpa pool history",
+            "show cgnat drops": "show bpa drops",
         }
         if line in m:
             self.vpp(m[line])
             return
+        # The ones that carry an argument. Matched by prefix so the argument
+        # travels through untouched; hexash is not the place to re-validate an
+        # address the dataplane is about to parse anyway.
+        for pfx in ("show cgnat subscriber", "show cgnat translation",
+                    "show cgnat top"):
+            if line == pfx or line.startswith(pfx + " "):
+                self.vpp("show bpa" + line[len("show cgnat"):])
+                return
         if line in ("show configuration compare", "show configuration | compare"):
             self.show_compare()
             return
