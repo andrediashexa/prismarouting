@@ -81,4 +81,78 @@ bpa_l4_dst (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, u16 *port,
   return bpa_l4_id (b, ip, proto, 1, port, l4h);
 }
 
+/*
+ * Rewrite the destination address and port, fixing both checksums.
+ *
+ * Shared because two nodes need it: out2in on the way in, and in2out for
+ * hairpinned traffic, which is translated twice in one pass - source on the
+ * way out, destination straight back in.
+ */
+static_always_inline void
+bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
+		 u16 new_port)
+{
+  u32 old_addr = clib_net_to_host_u32 (ip->dst_address.as_u32);
+  ip_csum_t sum;
+
+  if (old_addr != new_addr)
+    {
+      sum = ip->checksum;
+      sum = ip_csum_update (sum, ip->dst_address.as_u32,
+			    clib_host_to_net_u32 (new_addr), ip4_header_t,
+			    dst_address);
+      ip->checksum = ip_csum_fold (sum);
+    }
+
+  /* A non-first fragment: there is no port to rewrite, and the L4 checksum
+   * lives in the first fragment. Only the address changes. */
+  if (PREDICT_FALSE (l4h == 0))
+    {
+      ip->dst_address.as_u32 = clib_host_to_net_u32 (new_addr);
+      return;
+    }
+
+  if (proto == BPA_PROTO_ICMP)
+    {
+      icmp46_header_t *icmp = l4h;
+      u16 *id = (u16 *) (icmp + 1);
+      sum = icmp->checksum;
+      sum = ip_csum_update (sum, id[0], clib_host_to_net_u16 (new_port),
+			    icmp_echo_header_t, identifier);
+      icmp->checksum = ip_csum_fold (sum);
+      id[0] = clib_host_to_net_u16 (new_port);
+    }
+  else if (proto == BPA_PROTO_TCP)
+    {
+      tcp_header_t *tcp = l4h;
+      sum = tcp->checksum;
+      sum = ip_csum_update (sum, ip->dst_address.as_u32,
+			    clib_host_to_net_u32 (new_addr), ip4_header_t,
+			    dst_address);
+      sum = ip_csum_update (sum, tcp->dst_port,
+			    clib_host_to_net_u16 (new_port), tcp_header_t,
+			    dst_port);
+      tcp->checksum = ip_csum_fold (sum);
+      tcp->dst_port = clib_host_to_net_u16 (new_port);
+    }
+  else
+    {
+      udp_header_t *udp = l4h;
+      if (udp->checksum)
+	{
+	  sum = udp->checksum;
+	  sum = ip_csum_update (sum, ip->dst_address.as_u32,
+				clib_host_to_net_u32 (new_addr), ip4_header_t,
+				dst_address);
+	  sum = ip_csum_update (sum, udp->dst_port,
+				clib_host_to_net_u16 (new_port),
+				udp_header_t, dst_port);
+	  udp->checksum = ip_csum_fold (sum);
+	}
+      udp->dst_port = clib_host_to_net_u16 (new_port);
+    }
+
+  ip->dst_address.as_u32 = clib_host_to_net_u32 (new_addr);
+}
+
 #endif /* __included_bpa_l4_h__ */
