@@ -8,6 +8,7 @@
 #include <vnet/ip/ip.h>
 #include <vnet/feature/feature.h>
 
+#include "bpa_alg.h"
 #include "bpa_pool.h"
 #include "bpa_ports.h"
 #include "bpa_session.h"
@@ -29,7 +30,7 @@ typedef struct
   u32 n_workers;
   bpa_divisor_t workers; /* spreads subscribers over the workers */
 
-  vlib_log_class_t log_class; /* aparece em "show logging" */
+  vlib_log_class_t log_class; /* shows up in "show logging" */
   u8 *audit_path;	      /* dated configuration trail */
 
   u16 msg_id_base;
@@ -43,7 +44,7 @@ extern vlib_node_registration_t bpa_out2in_node;
 extern vlib_node_registration_t bpa_in2out_handoff_node;
 extern vlib_node_registration_t bpa_out2in_handoff_node;
 
-/* Enfileira um evento de log do dataplane. Sem lock: a fila e da thread. */
+/* Queues a log event from the dataplane. No lock: the queue is per-thread. */
 void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
 			  u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id);
 
@@ -57,6 +58,7 @@ format_function_t format_bpa_pool;
 format_function_t format_bpa_policy;
 format_function_t format_bpa_mode;
 format_function_t format_bpa_proto;
+format_function_t format_bpa_alg;
 
 /*
  * Pool selection. A single box serves one provider, so pools are few and a
@@ -127,6 +129,8 @@ bpa_proto_of (u8 ip_proto)
       return BPA_PROTO_UDP;
     case IP_PROTOCOL_ICMP:
       return BPA_PROTO_ICMP;
+    case IP_PROTOCOL_GRE:
+      return BPA_PROTO_GRE;
     default:
       return -1;
     }

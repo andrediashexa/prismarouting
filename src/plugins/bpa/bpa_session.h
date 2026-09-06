@@ -52,8 +52,32 @@ typedef enum
   BPA_PROTO_TCP = 0,
   BPA_PROTO_UDP,
   BPA_PROTO_ICMP,
+  /*
+   * GRE, and only the enhanced GRE of RFC 2637 - the one PPTP carries its
+   * payload in. Its Call ID stands in for a port everywhere below.
+   *
+   * Plain GRE (RFC 2784) has no per-flow identifier at all, so several
+   * subscribers behind one public address cannot be told apart and it is not
+   * translated. That is a property of the protocol, not a gap here.
+   */
+  BPA_PROTO_GRE,
   BPA_N_PROTO,
 } bpa_proto_t;
+
+/*
+ * How far a PPTP call has got. Only meaningful for BPA_PROTO_GRE.
+ *
+ * A call is created by the Outgoing-Call-Request going out, when only the
+ * subscriber's own Call ID is known. The server's Call ID arrives in the
+ * reply, and until it does there is no way to key the outbound direction -
+ * so the two directions become usable at different moments, and the state
+ * says which.
+ */
+typedef enum
+{
+  BPA_GRE_CALLING = 0, /* request sent, no reply yet: inbound only */
+  BPA_GRE_ESTABLISHED, /* the server's Call ID is known: both directions */
+} bpa_gre_state_t;
 
 typedef struct
 {
@@ -81,6 +105,14 @@ typedef struct
    * and the drops are counted so an operator can see if it ever bites.
    */
   u32 remote;
+  /*
+   * BPA_PROTO_GRE only: the Call ID the PPTP server assigned, which is what
+   * the subscriber's outbound GRE packets carry. Valid once gre_state is
+   * BPA_GRE_ESTABLISHED; the subscriber's own Call ID lives in port_priv and
+   * the one this box handed out lives in port_pub, exactly as ports do.
+   */
+  u16 peer_call_id;
+  u8 gre_state;
   f64 last_heard;
 } bpa_session_t;
 
@@ -169,6 +201,42 @@ bpa_key (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto)
   kv->key[1] = 0;
 }
 
+/*
+ * A GRE mapping needs two keys that are not each other's mirror, so it gets
+ * its own key builder.
+ *
+ * Inbound is ordinary: the packet carries the Call ID this box handed out, so
+ * (public address, that Call ID) finds it, and bpa_key() above already builds
+ * that - the Call ID comes out of the subscriber's port block like a port, so
+ * the arithmetic pre-check and the worker handoff work on it unchanged.
+ *
+ * Outbound is not: the packet carries the Call ID the SERVER assigned, which
+ * this box did not choose and cannot make unique. Two servers picking the
+ * same value for the same subscriber is entirely possible - a subscriber
+ * with two PPTP tunnels up is an ordinary home worker - so the remote address
+ * goes into the second key word to separate them.
+ *
+ * `role` separates the two entries the ALG keeps in the same table: the data
+ * key, found by the server's Call ID, and the lookup key the ALG itself uses,
+ * found by the subscriber's own Call ID. Without it a subscriber whose own
+ * Call ID happened to equal the server's would overwrite one with the other.
+ *
+ * The second key word was reserved for a VRF id. GRE spends it. When VRF
+ * lands (issue #26) this key needs a wider hash or a packed encoding, and
+ * that is written down here rather than discovered then.
+ */
+#define BPA_GRE_KEY_DATA 0 /* keyed by the server's Call ID  */
+#define BPA_GRE_KEY_ALG	 1 /* keyed by the subscriber's own */
+
+static_always_inline void
+bpa_key_gre (clib_bihash_kv_16_8_t *kv, u32 addr, u16 call_id, u32 remote,
+	     u8 role)
+{
+  kv->key[0] = (u64) addr | ((u64) call_id << 32)
+	       | ((u64) BPA_PROTO_GRE << 48) | ((u64) role << 56);
+  kv->key[1] = remote;
+}
+
 static_always_inline u32
 bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
 {
@@ -178,6 +246,8 @@ bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
       return t->udp;
     case BPA_PROTO_ICMP:
       return t->icmp;
+    case BPA_PROTO_GRE:
+      return t->gre;
     default:
       break;
     }
@@ -234,6 +304,21 @@ bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 sub_idx);
 void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx,
 		     const bpa_block_t *b);
+/*
+ * A PPTP call, created by the ALG when the subscriber asks for one. Takes the
+ * subscriber's own Call ID and returns a session whose port_pub is the Call ID
+ * this box will present to the internet - allocated out of the subscriber's
+ * port block, so it is logged, reversible and worker-local like every other
+ * port. The subscriber MUST already hold a block; the PPTP control connection
+ * that carried the request is the proof that it does.
+ */
+bpa_session_t *bpa_session_create_gre (bpa_per_thread_t *pt,
+				       const bpa_pool_t *p, u32 pool_index,
+				       u32 sub_idx, u32 ip_pub, u16 call_id,
+				       u32 remote, f64 now);
+/* The server answered: the outbound direction can be keyed now. */
+void bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
+				  u16 peer_call_id);
 void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);

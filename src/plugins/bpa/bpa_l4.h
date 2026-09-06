@@ -15,6 +15,29 @@
 #include "bpa_session.h"
 
 /*
+ * Enhanced GRE, RFC 2637 section 4.1. The Call ID sits in the low half of the
+ * Key field and is what stands in for a port here.
+ *
+ *   byte 0  C R K S s Recur      - K (0x20) MUST be set, C and R MUST be 0
+ *   byte 1  A Flags Ver          - Ver MUST be 1
+ *   bytes 2-3  Protocol Type     - 0x880B
+ *   bytes 4-5  Key high: payload length
+ *   bytes 6-7  Key low:  Call ID
+ */
+#define BPA_GRE_FLAG_KEY     0x20
+#define BPA_GRE_PROTO_PPP    0x880b
+#define BPA_GRE_CALL_ID_OFF  6
+
+/* Is this the enhanced GRE that PPTP uses? Anything else is not translatable
+ * behind a shared address and the caller must say so in its own counter. */
+static_always_inline int
+bpa_gre_is_enhanced (const u8 *g)
+{
+  return (g[0] & BPA_GRE_FLAG_KEY) && (g[1] & 0x07) == 1
+	 && clib_net_to_host_u16 (((const u16 *) g)[1]) == BPA_GRE_PROTO_PPP;
+}
+
+/*
  * Returns 0 and the L4 id; -1 when the packet is not translatable.
  *
  * `*l4h` comes out zero when the packet carries no L4 header - the case of a
@@ -32,6 +55,14 @@ bpa_l4_id (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, int want_dst,
 
   if (PREDICT_FALSE (vnet_buffer (b)->ip.reass.is_non_first_fragment))
     {
+      /*
+       * Shallow virtual reassembly recovers TCP and UDP ports from the first
+       * fragment. It does not parse GRE, so there is no Call ID to recover
+       * and the fields it left behind belong to some other protocol. Reading
+       * them would look up a key built from whatever happened to be there.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_GRE))
+	return -1;
       *l4h = 0; /* no L4 here: only the address will be rewritten */
       /* Reassembly stores the port in network order. Reading it as host
        * order returns the value byte-swapped - 12345 (0x3039) becomes
@@ -48,6 +79,17 @@ bpa_l4_id (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, int want_dst,
     return -1;
 
   *l4h = p;
+
+  if (proto == BPA_PROTO_GRE)
+    {
+      /* The Call ID identifies the call in both directions - it is always the
+       * receiver's, so which end sent the packet does not change where it is
+       * read from, exactly as with an ICMP echo identifier. */
+      if (PREDICT_FALSE (!bpa_gre_is_enhanced (p)))
+	return -1;
+      *port = clib_net_to_host_u16 (((u16 *) p)[BPA_GRE_CALL_ID_OFF / 2]);
+      return 0;
+    }
 
   if (proto == BPA_PROTO_ICMP)
     {
@@ -134,6 +176,14 @@ bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
 			    dst_port);
       tcp->checksum = ip_csum_fold (sum);
       tcp->dst_port = clib_host_to_net_u16 (new_port);
+    }
+  else if (proto == BPA_PROTO_GRE)
+    {
+      /* Enhanced GRE carries no checksum of its own (RFC 2637 requires the C
+       * bit to be zero), and the IP checksum was already fixed above, so the
+       * Call ID is a plain two-byte store. */
+      ((u16 *) l4h)[BPA_GRE_CALL_ID_OFF / 2] =
+	clib_host_to_net_u16 (new_port);
     }
   else
     {

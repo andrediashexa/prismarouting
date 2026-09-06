@@ -15,6 +15,7 @@
 
 #include "bpa.h"
 #include "bpa_l4.h"
+#include "bpa_pptp.h"
 
 typedef struct
 {
@@ -55,7 +56,11 @@ format_bpa_out2in_trace (u8 *s, va_list *args)
   _ (BLOCK_FREE, "block not allocated to any subscriber")                      \
   _ (ICMP_ERROR, "ICMP errors translated")                                     \
   _ (ICMP_MALFORMED, "truncated or malformed ICMP error")                      \
-  _ (TRUNCATED, "truncated packet")
+  _ (TRUNCATED, "truncated packet")                                            \
+  _ (GRE_NOT_ENHANCED, "GRE that is not the enhanced GRE of RFC 2637")         \
+  _ (PPTP_MANGLED, "PPTP control messages rewritten")                          \
+  _ (PPTP_UNKNOWN, "PPTP message about an unknown call")                       \
+  _ (PPTP_MALFORMED, "malformed or split PPTP control message")
 
 typedef enum
 {
@@ -210,6 +215,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_icmp_err = 0;
+  u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -271,7 +277,13 @@ VLIB_NODE_FN (bpa_out2in_node)
 
       if (PREDICT_FALSE (bpa_l4_dst (b[0], ip, proto, &port_pub, &l4h)))
 	{
-	  b[0]->error = node->errors[BPA_OUT2IN_ERROR_TRUNCATED];
+	  /* Plain GRE arriving at a shared public address identifies no
+	   * subscriber, so there is nobody to give it to. Counted apart from
+	   * a truncated packet, which is a different problem entirely. */
+	  b[0]->error =
+	    node->errors[proto == BPA_PROTO_GRE
+			   ? BPA_OUT2IN_ERROR_GRE_NOT_ENHANCED
+			   : BPA_OUT2IN_ERROR_TRUNCATED];
 	  goto trace;
 	}
 
@@ -354,7 +366,36 @@ VLIB_NODE_FN (bpa_out2in_node)
       matched = 1;
       s->last_heard = now;
       if (proto == BPA_PROTO_TCP)
-	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
+	{
+	  tcp_header_t *tcp = l4h;
+
+	  bpa_tcp_track (s, tcp->flags);
+
+	  /* The server's half of the PPTP control channel: it names the Call
+	   * ID this box handed out, and the subscriber only understands its
+	   * own. */
+	  if (PREDICT_FALSE (
+		clib_net_to_host_u16 (tcp->src_port) == BPA_PPTP_PORT
+		&& bpa_alg_on (
+		  pool_elt_at_index (bm->pools, pool_index)->alg,
+		  BPA_ALG_PPTP)))
+	    {
+	      switch (bpa_pptp_in (pt, b[0], tcp, s, now))
+		{
+		case BPA_PPTP_MANGLED:
+		  n_pptp++;
+		  break;
+		case BPA_PPTP_UNKNOWN:
+		  n_pptp_unknown++;
+		  break;
+		case BPA_PPTP_MALFORMED:
+		  n_pptp_bad++;
+		  break;
+		default:
+		  break;
+		}
+	    }
+	}
 
       bpa_rewrite_dst (ip, l4h, (u8) proto, s->ip_priv, s->port_priv);
       n_translated++;
@@ -384,6 +425,12 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_TRANSLATED, n_translated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_ICMP_ERROR, n_icmp_err);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_PPTP_MANGLED, n_pptp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_PPTP_UNKNOWN, n_pptp_unknown);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_PPTP_MALFORMED, n_pptp_bad);
   return frame->n_vectors;
 }
 

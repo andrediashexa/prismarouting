@@ -135,16 +135,23 @@ NAT unless the NAT rewrites the payload too.
 | ALG | Symptom without it | Priority |
 |---|---|---|
 | **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | High |
-| **PPTP / GRE** | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
+| **PPTP / GRE** — *done, [#44](https://github.com/andrediashexa/hexarouting/issues/44)* | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
 | **SIP** | VoIP registers but has no audio, or one-way audio. The single most expensive support call an ISP receives. | High |
 | **RTSP** | IP cameras and some streaming boxes. | Medium |
 | **TFTP** | Provisioning of some CPE. | Low |
 | **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | Medium |
 
 Each ALG **MUST** be individually switchable per pool, and **SHOULD** default
-to off except FTP and SIP: an ALG that rewrites a payload it misparsed is
-worse than no ALG, because it corrupts traffic that would otherwise merely
-fail to connect.
+to off unless its parse is cheap to make safe: an ALG that rewrites a payload
+it misparsed is worse than no ALG, because it corrupts traffic that would
+otherwise merely fail to connect.
+
+FTP, SIP and PPTP default **on**. For PPTP the departure is deliberate and
+narrow: its rewrite changes no length, so no sequence number moves, and every
+message is guarded by a 32-bit magic cookie and its own length field before a
+single byte is touched. Without it PPTP does not work for anyone rather than
+failing only on a collision, so "off by default" would ship a CGNAT that breaks
+every PPTP subscriber until an operator discovers the switch.
 
 ### 2.4 EIM/EIF — already endpoint-independent; the gap is choice, S — [#15](https://github.com/andrediashexa/hexarouting/issues/15)
 

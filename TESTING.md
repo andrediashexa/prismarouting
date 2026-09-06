@@ -62,6 +62,10 @@ sh tools/lab.sh handoff        # sharding across 2 workers
 sh tools/lab.sh dynamic        # dynamic mode and block hold-down
 sh tools/lab.sh frag           # IP fragments
 sh tools/lab.sh icmp-tcp       # ICMP errors (PMTUD) and TCP state
+sh tools/lab.sh hairpin        # one subscriber reaching another (RFC 4787 REQ-9)
+sh tools/lab.sh nat-behaviour  # RFC 4787 mapping and filtering
+sh tools/lab.sh extblocks      # a second block for a subscriber that fills one
+sh tools/lab.sh pptp           # PPTP call IDs and GRE (also: pptp off)
 sh tools/lab.sh routing        # BGP, OSPF and IS-IS into the VPP FIB
 sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
@@ -85,6 +89,11 @@ The most instructive to run:
 | `frag` | The byte-order bug that created phantom sessions |
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
+| `pptp` | Two subscribers choose the same Call ID and both tunnels work |
+
+Several labs take an argument that runs them with the feature switched off, so
+the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An
+assertion that passes with the feature removed was never testing the feature.
 
 ## 3. Real hardware — two VMs, real Internet
 
