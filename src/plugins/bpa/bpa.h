@@ -20,6 +20,20 @@ typedef struct
   bpa_per_thread_t *per_thread; /* one per vlib worker */
   bpa_timeouts_t timeouts;
   u32 block_holddown; /* seconds a block stays reserved after going idle */
+  /*
+   * The lowest and highest public address across ALL pools, in host order.
+   *
+   * A hairpin pre-filter, and nothing else. Every translated packet has to ask
+   * "is this destination one of ours", and answering it properly means a scan
+   * over pools each doing a binary search - paid on every packet, for a case
+   * that is rare. Two compares against this window answer "definitely not"
+   * for almost all traffic; anything inside it still goes through the real
+   * lookup, so the filter can never hide a hairpin. Recomputed whenever a pool
+   * is added or removed.
+   */
+  u32 outside_lo;
+  u32 outside_hi;
+
   u32 hash_buckets;   /* session table sizing */
   u32 hash_memory;
 
@@ -52,6 +66,7 @@ void bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only);
 clib_error_t *bpa_pool_validate (bpa_pool_t *cfg);
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
+void bpa_outside_window_update (void);
 
 format_function_t format_bpa_pool;
 format_function_t format_bpa_policy;
@@ -79,6 +94,20 @@ bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 *pool_index, u32 *sub_idx)
 	}
     }
   return -1;
+}
+
+/*
+ * Could this address possibly be one of ours? Two compares.
+ *
+ * A superset test on purpose: it says "definitely not" or "maybe", never
+ * "yes". Everything it lets through is checked properly by
+ * bpa_pool_by_outside(), so a hairpin cannot be missed - only a non-hairpin
+ * can be dismissed early, which is the whole point.
+ */
+static_always_inline int
+bpa_maybe_outside (const bpa_main_t *bm, u32 addr)
+{
+  return addr >= bm->outside_lo && addr <= bm->outside_hi;
 }
 
 static_always_inline int

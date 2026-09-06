@@ -81,6 +81,7 @@ sh tools/lab.sh two-pools      # two pools, a subscriber at the same index in ea
 sh tools/lab.sh troubleshoot   # the show commands, checked against the model
 sh tools/lab.sh vty-ssh        # the SSH daemon and accounts, and the lockout
 sh tools/lab.sh snmp           # a real snmpget against a real snmpd
+sh tools/lab.sh throughput     # CPU clocks per packet, from VPP's own accounting
 sh tools/lab.sh api            # binary API
 sh tools/lab.sh commit         # candidate, commit, rollback
 sh tools/lab.sh audit          # dated configuration trail
@@ -108,6 +109,7 @@ The most instructive to run:
 | `troubleshoot` | Uses `ref/bpa_model.py` as the oracle, so the show commands cannot agree with the plugin by sharing its arithmetic |
 | `vty-ssh` | Produces the lockout — a change leaving nobody able to log in — and watches the commit refuse it |
 | `snmp` | Kills the dataplane mid-run and asserts the agent serves *nothing* rather than the numbers it last saw |
+| `throughput` | Prints the conditions above the numbers, and asserts the packets were **translated** rather than dropped — its first version measured a drop path and reported it as the cost of translating |
 
 Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An
@@ -115,60 +117,30 @@ assertion that passes with the feature removed was never testing the feature.
 
 ## 3. Real hardware — two VMs, real Internet
 
+```sh
+make hw-up      # a privileged host-network container, holds ~4 GB
+make hw-lab     # addresses and routes on BOTH machines
+make hw-vpp     # starts VPP and PROVES the path, end to end
+make hw-down    # when you are finished
+```
+
 Topology in `lab/hw-lab.sh`. Requires both VMs and key-based root access to the
-peer.
+peer, which `make hw-up` mounts into the container.
 
-```mermaid
-flowchart LR
-    P["peer<br/>100.64.0.5/6/7<br/>ens19 10.95.172.129/31"] -->|"/31 link"| H
-    subgraph H["HexaRouting"]
-        V["VPP + bpa<br/>198.19.24.0/24"]
-    end
-    H -->|"tap → Linux → ens18"| I["Internet"]
-```
+`make hw-vpp` used to end by printing what to type. It now runs the test and
+says pass or fail: a ping and a TLS fetch from a subscriber address through to
+the real Internet, with the public address and port block checked against
+`ref/bpa_model.py` rather than against the plugin.
 
-```sh
-sh tools/lab.sh hw-lab          # host side: addresses, routes, forwarding
-make hw-up                      # starts the long-lived hexa-vpp container
-make hw-vpp                     # brings VPP up inside it
-```
+**A green ping is not enough, and the lab says so.** Session counts are read
+before and after the traffic and the difference is asserted — because with the
+peer's route to the test destination missing, the traffic leaves through its
+*default* gateway instead, gets translated by something upstream, and comes
+back. The ping is green and this CGNAT never saw a packet. That is measured,
+not hypothetical: it is what the lab did for a long time.
 
-The `hexa-vpp` container **outlives the command that started it** — that is the
-point, since `hexash` and `vppctl` talk to a VPP running inside it. It is also
-why it **MUST** be removed when the session is over:
-
-```sh
-make hw-down                    # stops it and frees its memory
-```
-
-One of these was left running for thirteen hours holding roughly 4 GB, and got
-an unrelated `make test-install` killed by the OOM killer — a failure that
-looked like the test needing more memory and was not. Until this section
-existed, nothing in the repository created the container and nothing removed
-it.
-
-Then, on the peer:
-
-```sh
-ip route replace 1.1.1.1/32 via 10.95.172.128 dev ens19
-ping -c4 -I 100.64.0.5 1.1.1.1
-curl --interface 100.64.0.5 https://1.1.1.1/
-```
-
-Expected, checked against `ref/bpa_model.py`:
-
-```
-100.64.0.5 -> 198.19.24.5    ports 1024-1535
-100.64.0.6 -> 198.19.24.6
-100.64.0.7 -> 198.19.24.7
-```
-
-Catches: what only appears with real traffic — full TCP, TLS, concurrency, and
-limits imposed by the other end of the Internet.
-
-> **Note.** A load test against a public endpoint can hit that endpoint's
-> per-IP connection limit rather than any CGNAT limit. Separate the two by
-> repeating with a load that fits inside one block.
+Catches: everything the container labs cannot — a real driver, a real MAC
+layer, real TCP with TLS, and the routing on both sides of the box.
 
 ## Accessing the VTY
 
@@ -240,6 +212,16 @@ installation.
 ## What is not tested
 
 * **HA / failover** — analysed in [docs/ha.md](docs/ha.md), not implemented.
-* **Throughput** — the labs measure correctness, not performance. A throughput
-  number on virtio says nothing about 100 Gbps; that requires an E810 or CX6 on
-  real hardware.
+* **Bits per second** — still. A throughput number taken on virtio measures the
+  hypervisor, and reaching 100 Gbps needs an E810 or CX6 driven natively
+  ([#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for
+  it).
+
+  What **is** measured now is the part that does not depend on the NIC:
+  `sh tools/lab.sh throughput` reports how many CPU clocks a packet spends
+  inside the translation nodes, taken from VPP's own per-node accounting. On a
+  Xeon E5-2680 v4 at 2400 MHz, `bpa-in2out` costs **456 clocks per packet**
+  against 21–26 for `ip4-input` — 5.26 Mpps per core in that node alone, which
+  is about **29 cores** for 100 Gbps of 64-byte frames before the driver or the
+  IP stack. That is
+  [#63](https://github.com/andrediashexa/hexarouting/issues/63).
