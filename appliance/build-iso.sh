@@ -53,14 +53,14 @@ debootstrap --arch=amd64 --variant=minbase \
   --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,iproute2,ifupdown,openssh-server,python3,less,vim-tiny \
   "$SUITE" "$ROOT" "$MIRROR"
 
-say "repositorios de VPP e FRR"
+say "VPP and FRR repositories"
 chroot "$ROOT" /bin/sh -c "
   curl -s https://packagecloud.io/install/repositories/fdio/release/script.deb.sh | bash
   curl -s https://deb.frrouting.org/frr/keys.gpg -o /usr/share/keyrings/frrouting.gpg
   echo 'deb [signed-by=/usr/share/keyrings/frrouting.gpg] https://deb.frrouting.org/frr bookworm frr-stable' > /etc/apt/sources.list.d/frr.list
 "
 
-say "VPP $VPP_VERSION e FRR $FRR_VERSION"
+say "VPP $VPP_VERSION and FRR $FRR_VERSION"
 chroot "$ROOT" /bin/sh -c "
   export DEBIAN_FRONTEND=noninteractive VPP_INSTALL_SKIP_SYSCTL=1
   apt-get update -qq

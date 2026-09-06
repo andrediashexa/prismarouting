@@ -127,24 +127,22 @@ deterministic mode **MUST NOT** silently gain a second block: in that mode the
 proof is the formula, and a block that is not derivable from it **MUST** be
 logged like a dynamic one.
 
-### 2.3 ALG — FTP built, the rest missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
+### 2.3 ALG — FTP, RTSP and PPTP built; SIP, TFTP and ESP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
 Protocols that carry an address or port inside the payload break behind any
 NAT unless the NAT rewrites the payload too.
 
-**FTP is built** ([#42](https://github.com/andrediashexa/hexarouting/issues/42)),
-switchable with `bpa alg <pool> ftp <on|off>` and on by default; the design and
-what it deliberately refuses to do are in
+**FTP, RTSP and PPTP/GRE are built** (v0.5.0), switchable per pool with
+`bpa alg <pool> <name> <on|off>` and on by default. The design of each, and
+what each deliberately refuses to do, is in
 [architecture.md](architecture.md#application-level-gateways).
 
 | ALG | Symptom without it | Priority |
 |---|---|---|
-| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | Built |
-| **PPTP / GRE** | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
-| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | High |
-| **PPTP / GRE** — *done, [#44](https://github.com/andrediashexa/hexarouting/issues/44)* | VPNs to older corporate concentrators simply do not connect. GRE has no ports, so the session key needs the call ID. | High |
+| **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | **Built**, [#42](https://github.com/andrediashexa/hexarouting/issues/42) |
+| **RTSP** | IP cameras and some streaming boxes: works on the LAN, black frame from outside. | **Built**, [#43](https://github.com/andrediashexa/hexarouting/issues/43) |
+| **PPTP / GRE** | VPNs to older corporate concentrators do not connect at all. GRE has no ports, so the Call ID has to play the part one plays. | **Built**, [#44](https://github.com/andrediashexa/hexarouting/issues/44) |
 | **SIP** | VoIP registers but has no audio, or one-way audio. The single most expensive support call an ISP receives. | High |
-| **RTSP** | IP cameras and some streaming boxes. | Medium — **built**, [#43](https://github.com/andrediashexa/hexarouting/issues/43) |
 | **TFTP** | Provisioning of some CPE. | Low |
 | **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | Medium |
 
@@ -269,7 +267,7 @@ an annotated tag, a changelog entry and a published GitHub Release.
 | **v0.2.0** | Foundations already built | [#1](https://github.com/andrediashexa/hexarouting/issues/1) comments in English, [#2](https://github.com/andrediashexa/hexarouting/issues/2) MTU in the VTY, [#10](https://github.com/andrediashexa/hexarouting/issues/10) versioning, [#11](https://github.com/andrediashexa/hexarouting/issues/11) this roadmap | Three of these sit finished in branches. Merging them first means every later release is tagged, changelogged and readable by whoever inherits it. |
 | **v0.3.0** | A control plane that reports failure | [#3](https://github.com/andrediashexa/hexarouting/issues/3), [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5) hexash on the binary API | Everything after this adds configuration. Adding it on top of a `commit` that cannot tell success from failure means each new feature inherits a control plane that lies. This is the one ordering constraint that is not negotiable. |
 | **v0.4.0** | Subscriber experience | [#12](https://github.com/andrediashexa/hexarouting/issues/12) per-pool timeouts and half-open state, [#13](https://github.com/andrediashexa/hexarouting/issues/13) extended blocks | The two things an operator notices in the first month: ports held by dead connections, and one customer cut off while the pool is half empty. |
-| **v0.5.0** | Application compatibility | [#14](https://github.com/andrediashexa/hexarouting/issues/14) ALG, [#15](https://github.com/andrediashexa/hexarouting/issues/15) filtering mode and conformance, [#16](https://github.com/andrediashexa/hexarouting/issues/16) hairpinning | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. |
+| **v0.5.0** — *released* | Application compatibility | [#42](https://github.com/andrediashexa/hexarouting/issues/42) FTP, [#43](https://github.com/andrediashexa/hexarouting/issues/43) RTSP and [#44](https://github.com/andrediashexa/hexarouting/issues/44) PPTP/GRE ALGs; [#50](https://github.com/andrediashexa/hexarouting/issues/50) full cone asserted. [#15](https://github.com/andrediashexa/hexarouting/issues/15) and [#16](https://github.com/andrediashexa/hexarouting/issues/16) landed earlier, in v0.4.0. | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. SIP, TFTP and ESP remain open under [#14](https://github.com/andrediashexa/hexarouting/issues/14). |
 | **v0.6.0** | Inbound and protection | [#17](https://github.com/andrediashexa/hexarouting/issues/17) port forwarding, [#18](https://github.com/andrediashexa/hexarouting/issues/18) per-subscriber limits, [#19](https://github.com/andrediashexa/hexarouting/issues/19) MSS clamping, [#24](https://github.com/andrediashexa/hexarouting/issues/24) uRPF, [#25](https://github.com/andrediashexa/hexarouting/issues/25) bypass lists, [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection, [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation | Answers for the customer who needs a port in, and bounds on the customer who takes too many. |
 | **v0.7.0** | Compliance | [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog, [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity, [#22](https://github.com/andrediashexa/hexarouting/issues/22) trail integrity, [#23](https://github.com/andrediashexa/hexarouting/issues/23) pool-resize procedure | The log already exists and is correct. This release makes it usable by the systems and the people who have to act on it. |
 | **v0.8.0** | High availability | [#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9) | Deliberately after correctness. HA over a CGNAT with known gaps replicates the gaps. |

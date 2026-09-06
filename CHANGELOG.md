@@ -25,7 +25,116 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.4.0.
+Nothing merged since v0.5.0.
+
+## 0.5.0 — the protocols that break quietly
+
+Three application-level gateways, and a claim about this NAT's shape that
+stopped being a claim.
+
+Every ALG here exists for the same reason: a protocol puts an address or an
+identifier **inside its payload** and then expects the peer to use it. The
+failures that follow are the expensive kind — the connection establishes, the
+exchange succeeds, and the thing the exchange was about silently does not
+happen. Nothing in the CGNAT looks wrong while it happens.
+
+### Added
+
+* **FTP ALG** ([#42](https://github.com/andrediashexa/hexarouting/issues/42)). `PORT`, `EPRT` and the `227`/`229` replies are
+  rewritten with the subscriber's public address and a port from its **own**
+  block, so the mapping stays derivable. The announced data connection is
+  installed as a session before it arrives, half-open so an announcement the
+  server never answers costs what a scan probe costs. Sequence numbers are
+  shifted in one direction and acknowledgements back in the other — without
+  that the control connection stalls a few commands *after* the rewrite, which
+  looks like neither FTP nor NAT.
+* **RTSP ALG** ([#43](https://github.com/andrediashexa/hexarouting/issues/43)). The `Transport:` header of a `SETUP` names the
+  ports the client wants its media on. Behind the CGNAT those are private, so
+  the server sends RTP to a public port belonging to nobody: the IP camera that
+  works on the LAN and shows a black frame from outside. A consecutive,
+  RTP-even port pair is reserved from the subscriber's own block, on the same
+  public address as the control connection.
+* **PPTP and GRE ALG** ([#44](https://github.com/andrediashexa/hexarouting/issues/44)). GRE has no ports; what tells one tunnel
+  from another is a 16-bit Call ID each end picks for itself, and Windows and
+  most routers pick from the bottom of the range. Two subscribers behind one
+  public address both choosing `1` is the normal case, not a corner case.
+  **Without this, PPTP did not work at all** — not merely on a collision: the
+  Call ID falls outside every port block, so the inbound arithmetic pre-check
+  rejected it before any lookup. GRE is now a protocol of its own and the Call
+  ID is allocated from the subscriber's block and rewritten like a source port,
+  which is what lets the pre-check, the worker handoff and the RFC 8158 log
+  handle a PPTP call without knowing PPTP exists.
+* **`show bpa alg`**, and per-pool ALG switches changeable on a box carrying
+  traffic: `bpa alg <pool> <ftp|rtsp|pptp> <on|off>`. An operator who suspects
+  an ALG of corrupting a stream needs to switch it off without disconnecting
+  everybody, or the switch is unusable at the moment it is needed.
+* **A GRE idle timeout and an ALG-expectation timeout**, global and per pool.
+  The second is short by design: a media mapping nothing ever uses would
+  otherwise sit on the UDP timeout, and a camera reconnecting in a loop turns
+  that into exhaustion of its own subscriber's block.
+
+### Changed
+
+* **One ALG registry.** The three ALGs were built in parallel and arrived with
+  three different switch designs. `foreach_bpa_alg` now names each one once and
+  the CLI, the running configuration, `show bpa pool` and `show bpa alg` are
+  generated from it. The pool carries two masks — what is enabled, and what the
+  operator has actually stated an opinion about — so a pool built from a zeroed
+  structure gets the documented defaults without every creation path restating
+  them, and an ALG that ships **off** stays expressible.
+* **All three ALGs default on**, against the roadmap's blanket "default off".
+  The departure is argued per ALG in `docs/roadmap.md` rather than made
+  silently: each of these three has a parse that can be made strict, and each
+  is a protocol that does not work at all without its ALG.
+* **`tools/lab.sh` passes its arguments to the lab.** That is what lets a lab be
+  run with the feature it tests switched off, which is the only way to know the
+  lab can fail at all.
+
+### Fixed
+
+* **Full-cone NAT is now asserted rather than reasoned about**
+  ([#50](https://github.com/andrediashexa/hexarouting/issues/50)). The behaviour was already there and already the default;
+  the lab sent an unsolicited packet from an uninvited remote to an open
+  mapping, stored the result in a variable and never mentioned it in the
+  verdict. A change that turned the default into a restricted cone would have
+  broken every peer-to-peer application behind this box and passed the whole
+  suite.
+* **`lab/nat-behaviour.sh` was asserting on packets that reached nobody.** `pg1`
+  had no address, so IPv4 was not enabled on the interface inbound packets
+  arrive on and a correctly translated packet died in `ip4-not-enabled` *after*
+  the NAT had done its work — counter said "translated", subscriber received
+  nothing.
+* The last Portuguese comments and output strings in the plugin and in
+  `tools/lab.sh`.
+
+### Not delivered, and why
+
+* **SIP, TFTP and IPsec ESP passthrough.** Still open under
+  [#14](https://github.com/andrediashexa/hexarouting/issues/14). SIP is the most expensive support call an ISP receives and
+  also the ALG most likely to misparse, which is why it is not being rushed in
+  beside three others.
+* **The two sequence-adjustment mechanisms were not merged into one**
+  ([#48](https://github.com/andrediashexa/hexarouting/issues/48)). FTP and RTSP each brought one and they are the same idea
+  twice. Folding two well-tested mechanisms together during a merge, with no
+  test that would catch a mistake, is how a merge breaks two working features
+  at once. A connection is either FTP or RTSP, so the duplication costs bytes
+  rather than correctness.
+* **Incoming PPTP calls, split control messages and fragmented GRE.** Each is
+  named in `docs/architecture.md` with the reason. A subscriber behind a CGNAT
+  cannot receive an unsolicited call in the first place.
+
+### Known gaps
+
+One is new and worse than it looks: **`hexash` silently drops any `pool`
+sub-line its model does not know** ([#47](https://github.com/andrediashexa/hexarouting/issues/47)). That is not a gap in one
+feature — it means `filter` ([#15](https://github.com/andrediashexa/hexarouting/issues/15)), `max-blocks` ([#13](https://github.com/andrediashexa/hexarouting/issues/13)) and the
+per-pool timeouts ([#12](https://github.com/andrediashexa/hexarouting/issues/12)) do not exist through the VTY, which is the
+interface an operator actually uses. Their labs pass because they drive
+`vppctl` directly.
+
+Otherwise unchanged: throughput is not measured ([#28](https://github.com/andrediashexa/hexarouting/issues/28)), there is no HA
+([#6](https://github.com/andrediashexa/hexarouting/issues/6)), no authorization in the VTY ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), and the audit trail
+records what changed but not who ([#34](https://github.com/andrediashexa/hexarouting/issues/34)).
 
 ## 0.4.0 — what the subscriber notices
 
