@@ -67,6 +67,20 @@ typedef struct
   u8 tcp_state; /* bpa_tcp_state_t */
   u32 sub_idx;
   u32 pool_index;
+  /*
+   * The remote address this session last spoke to, in host order.
+   *
+   * Unused under endpoint-independent filtering, which is the default and
+   * which does not care who replies. Under address-dependent filtering it is
+   * the thing being filtered on.
+   *
+   * ONE address, not a set. A source port reused toward two remotes will only
+   * accept replies from the more recent one - an approximation, stated here
+   * because a reader deserves to know where it stops. Tracking the set would
+   * mean per-remote state on a datapath whose whole point is not having any,
+   * and the drops are counted so an operator can see if it ever bites.
+   */
+  u32 remote;
   f64 last_heard;
 } bpa_session_t;
 

@@ -67,9 +67,14 @@ flowchart TD
 These are stated here because two of them were asked for as if missing. A
 claim about current behaviour is worth nothing without the code that shows it.
 
+**These are now asserted, not read.** `lab/nat-behaviour.sh` measures them
+against a running dataplane; the evidence column below points at code because
+that is where the property comes from, but a change that breaks it fails a test
+rather than shipping.
+
 | Behaviour | Why it already holds | Evidence |
 |---|---|---|
-| **Endpoint-Independent Mapping** (RFC 4787 REQ-1) | The `in2out` session key is `(private ip, private port, protocol)`. The remote address is not part of it, so one internal socket always maps to the same external port regardless of destination. | `bpa_key()` in `src/plugins/bpa/bpa_session.h` |
+| **Endpoint-Independent Mapping** (RFC 4787 REQ-1) | The `in2out` session key is `(private ip, private port, protocol)`. The remote address is not part of it, so one internal socket always maps to the same external port regardless of destination. | Measured: one socket reaching 8.8.8.8 then 1.1.1.1 keeps one public port (`lab/nat-behaviour.sh`) |
 | **Endpoint-Independent Filtering** (RFC 4787 REQ-8, full-cone) | The `out2in` key is `(public ip, public port, protocol)`. Any external host may reach an open mapping. | same key function, `bpa_out2in.c` |
 | **Paired address pooling** (RFC 4787 REQ-2) | A subscriber's public address comes from `bpa_forward()`, a function of the subscriber index alone. It cannot vary between sessions. | `bpa_pool.h`, `ref/bpa_model.py` |
 | **Port preservation where possible** | The allocator honours the original port when it is inside the block and free. | `bpa_ports.h`, `test/test_bpa_ports.c` |

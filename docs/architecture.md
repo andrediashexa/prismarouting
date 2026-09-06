@@ -245,6 +245,38 @@ it. Translating with a wrong checksum is worse than not translating: the
 subscriber's stack discards the packet, PMTUD stays broken, and the counter
 claims success.
 
+## Filtering: who may reply
+
+A mapping accepts inbound packets under one of two rules (RFC 4787 REQ-8), set
+per pool with `bpa filter <pool> <mode>`:
+
+| Mode | Who may reach an open mapping | Cost |
+|---|---|---|
+| `endpoint-independent` (default) | anyone | unsolicited traffic reaches the subscriber |
+| `address-dependent` | only the remote the subscriber contacted | some peer-to-peer applications stop working |
+
+The default is what this implementation has always done, and not by intent
+expressed anywhere: the `out2in` key is `(public ip, public port, protocol)`
+and carries no remote address, so any host may reach an open mapping. That is a
+full-cone NAT. Which of the two an operator wants is their trade, not ours.
+
+The check is **not** in the key, deliberately. Putting the remote address in
+the lookup key would give one subscriber a different external port per
+destination — endpoint-*dependent* mapping — and break exactly the peer-to-peer
+applications this product exists to keep working. Filtering and mapping are
+separate decisions and only the first changes here.
+
+The session remembers **one** remote address, refreshed on every outbound
+packet. A source port reused toward two remotes will therefore only accept
+replies from the more recent one. That is an approximation, stated because a
+reader deserves to know where it stops: tracking the set would mean per-remote
+state on a datapath whose whole point is not having any, and the drops are
+counted so an operator can see whether it ever bites.
+
+Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
+place, because the point of offering the choice is that an operator can make it
+on a box carrying traffic.
+
 ## Fragments
 
 A non-first fragment carries no L4 header and therefore no port to match a

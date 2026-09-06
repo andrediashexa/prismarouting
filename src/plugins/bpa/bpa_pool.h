@@ -91,6 +91,23 @@ typedef enum
 } bpa_mode_t;
 
 /*
+ * Which inbound packets a mapping accepts (RFC 4787 REQ-8).
+ *
+ * ENDPOINT_INDEPENDENT is what this implementation has always done, and not by
+ * intent expressed anywhere: the out2in key is (public ip, public port,
+ * protocol) and carries no remote address, so any host may reach an open
+ * mapping. That is a full-cone NAT, which peer-to-peer applications need and
+ * which also lets unsolicited traffic through.
+ *
+ * Which of those an operator wants is their trade, not ours.
+ */
+typedef enum
+{
+  BPA_FILTER_ENDPOINT_INDEPENDENT = 0,
+  BPA_FILTER_ADDRESS_DEPENDENT,
+} bpa_filter_t;
+
+/*
  * Precomputed reciprocal, so the datapath never issues a hardware divide.
  * Used for the pool policy split and for spreading subscribers over workers.
  * ref/check_magic.py proves it exact for every divisor below BPA_MAX_CAPACITY.
@@ -152,6 +169,7 @@ typedef struct
   u16 block_size; /* power of two */
   bpa_policy_t policy;
   bpa_mode_t mode;
+  bpa_filter_t filter;
 
   /* Per-pool session lifetimes. Zero in any field means inherit the global.
    * The pool is the unit an operator sells, so it is the unit of policy. */

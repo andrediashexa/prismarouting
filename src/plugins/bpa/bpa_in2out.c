@@ -280,6 +280,10 @@ VLIB_NODE_FN (bpa_in2out_node)
 
     translate:
       s->last_heard = now;
+      /* Remembered on every outbound packet, not only at creation: a session
+       * that moves to a new remote must be able to hear the new one reply.
+       * Free under endpoint-independent filtering, which never reads it. */
+      s->remote = clib_net_to_host_u32 (ip->dst_address.as_u32);
       if (proto == BPA_PROTO_TCP)
 	bpa_tcp_track (s, ((tcp_header_t *) l4h)->flags);
 
