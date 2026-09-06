@@ -93,6 +93,46 @@ bpa_pool_validate (bpa_pool_t *cfg)
   return bpa_pool_init (&probe);
 }
 
+/*
+ * Recompute the hairpin pre-filter window: the lowest and highest public
+ * address any pool holds.
+ *
+ * Called under the worker barrier, from the two places that change the set of
+ * pools. Empty when there are no pools, which makes the filter reject
+ * everything - correct, because with no pool there is nothing to hairpin to.
+ */
+void
+bpa_outside_window_update (void)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 lo = ~0u, hi = 0;
+  bpa_pool_t *p;
+  u32 i;
+
+  pool_foreach (p, bm->pools)
+    {
+      for (i = 0; i < p->outside.n_ranges; i++)
+	{
+	  u32 base = p->outside.ranges[i].base;
+	  u32 last = base + p->outside.ranges[i].count - 1;
+
+	  if (base < lo)
+	    lo = base;
+	  if (last > hi)
+	    hi = last;
+	}
+    }
+
+  if (lo == ~0u)
+    {
+      bm->outside_lo = 1;   /* an empty window: lo > hi rejects everything */
+      bm->outside_hi = 0;
+      return;
+    }
+  bm->outside_lo = lo;
+  bm->outside_hi = hi;
+}
+
 clib_error_t *
 bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 {
@@ -125,6 +165,7 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 
   p->name = vec_dup (cfg->name);
   hash_set_mem (bm->pool_by_name, p->name, p - bm->pools);
+  bpa_outside_window_update ();
 
   if (p->mode == BPA_MODE_DYNAMIC)
     {
@@ -189,6 +230,7 @@ bpa_pool_del (u8 *name)
   hash_unset_mem (bm->pool_by_name, p->name);
   vec_free (p->name);
   pool_put (bm->pools, p);
+  bpa_outside_window_update ();
 
   vlib_worker_thread_barrier_release (bm->vlib_main);
   return 0;

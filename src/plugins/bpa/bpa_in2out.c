@@ -492,7 +492,12 @@ VLIB_NODE_FN (bpa_in2out_node)
 	u32 hp_dst = clib_net_to_host_u32 (ip->dst_address.as_u32);
 	u32 hp_pool;
 
-	if (PREDICT_FALSE (bpa_pool_by_outside (bm, hp_dst, &hp_pool) == 0))
+	/* Two compares before the real lookup. The lookup is a scan over
+	 * pools, each doing a binary search, and it ran on EVERY translated
+	 * packet for a case that is rare. The window is a superset, so
+	 * anything that could be a hairpin still reaches the lookup. */
+	if (PREDICT_FALSE (bpa_maybe_outside (bm, hp_dst)
+			   && bpa_pool_by_outside (bm, hp_dst, &hp_pool) == 0))
 	  {
 	    clib_bihash_kv_16_8_t hkv;
 	    u16 hp_port = 0;
