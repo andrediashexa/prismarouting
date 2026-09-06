@@ -25,7 +25,66 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.3.0.
+Nothing merged since v0.4.0.
+
+## 0.4.0 — what the subscriber notices
+
+Four changes an operator meets in the first month of running a CGNAT, and one
+claim that stopped being a claim.
+
+### Added
+
+* **Hairpinning** ([#16](https://github.com/andrediashexa/hexarouting/issues/16)). Two subscribers behind the same CGNAT can now
+  reach each other through a public address (RFC 4787 REQ-9). Without it the
+  packet was translated correctly and then routed to an address this box owns,
+  with nothing to send it back in — a camera that answers from the street and
+  not from next door, a service that works for everyone except the neighbours.
+  B sees A's **public** address, as REQ-9 requires: presenting the private one
+  would leak the inside topology and break B's reply path.
+* **Extended blocks** ([#13](https://github.com/andrediashexa/hexarouting/issues/13)). A subscriber that fills its block is given
+  another, up to `max-blocks`, instead of being dropped. The cap matters as much
+  as the extension — without one an infected host consumes the pool everyone
+  else needs.
+* **Per-pool timeouts** ([#12](https://github.com/andrediashexa/hexarouting/issues/12)). The pool is the unit an operator sells,
+  so it is the unit of policy. Zero inherits the global.
+* **A separate timer for half-open TCP sessions.** A host scanning the internet
+  produces one SYN-without-establish per probe; held for the transitory timeout
+  they exhaust the subscriber's own block, and the complaint arrives as "the
+  internet stopped" from a dataplane that looks healthy.
+* **Port hold-down.** A released port waits before being handed out again, so a
+  delayed segment from the connection that just ended cannot land on the new
+  one — a reset nobody can reproduce.
+* **Address-dependent filtering, per pool** ([#15](https://github.com/andrediashexa/hexarouting/issues/15)), switchable in place
+  with `bpa filter` so changing it does not disconnect anyone.
+
+### Changed
+
+* **The claim that this NAT is endpoint-independent is now measured.**
+  `docs/roadmap.md` asserted it and offered a hash key as evidence — a correct
+  reading, and still only a reading. `lab/nat-behaviour.sh` drives one internal
+  socket to two remotes and checks it keeps one public port. That test passes on
+  the previous release too, which is the point: it confirms behaviour rather
+  than proving new work, and a change that breaks it now fails a test.
+
+### Not delivered, and why
+
+* **Extended blocks in deterministic mode.** That mode has no spare block by
+  construction: `capacity = outside.count * blocks_per_ip` and the formula
+  assigns every block to some subscriber, so a block handed out as an extension
+  is one taken from somebody else, breaking their mapping with no error
+  anywhere. It needs a reserve carved out of capacity, which re-maps every
+  existing subscriber — [#39](https://github.com/andrediashexa/hexarouting/issues/39), and it depends on the documented
+  procedure for a capacity change ([#23](https://github.com/andrediashexa/hexarouting/issues/23)).
+* **Hairpinning was exercised with UDP.** TCP and ICMP take the same code path,
+  but taking the same path is not the same as being tested, and that is exactly
+  the assumption this project keeps getting caught by.
+
+### Known gaps
+
+Unchanged and still ahead of the additions: throughput is not measured
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)), there is no HA ([#6](https://github.com/andrediashexa/hexarouting/issues/6)), no ALG ([#14](https://github.com/andrediashexa/hexarouting/issues/14)), no
+authorization in the VTY ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), and the audit trail records what
+changed but not who ([#34](https://github.com/andrediashexa/hexarouting/issues/34)).
 
 ## 0.3.0 — a control plane that reports failure, and an ISO that installs
 
