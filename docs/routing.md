@@ -380,6 +380,65 @@ This mirrors `vtysh`: the daemon knows its configuration, not the shell. A
 useful side effect is that a public range merged from adjacent prefixes is
 decomposed back into CIDR on output, so the saved configuration can be reread.
 
+### The SSH daemon and the accounts, in the configuration
+
+The last configuration on the box that `commit` and `rollback` did not cover.
+It is now in the candidate like everything else:
+
+```
+ssh port 22
+ssh listen-address 0.0.0.0
+ssh permit-root-login prohibit-password
+ssh password-authentication no
+user noc
+ ssh-key ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... noc@laptop
+ exit
+```
+
+Accounts are **real POSIX accounts**, not a private database — an appliance that
+invents its own accounts is one whose accounts nobody deprovisions when somebody
+leaves. A user created here gets the VTY as its login shell, which is also how
+the VTY knows which accounts are its own: the shell is the marker, so there is
+no list to keep in step.
+
+A password is the alternative to a key, and it is given as a **crypt hash**
+(`openssl passwd -6`), never as plaintext. Plaintext in `/etc/shadow` does not
+fail loudly; it produces an account whose password simply never matches.
+
+#### The lockout, and the three things that stand between it and you
+
+This is the one configuration that can strand the operator on the other side of
+the country, so it has three guards rather than one.
+
+1. **`commit check` refuses a change that leaves nobody able to log in.**
+   Refused only when *this change* causes it: a box that already has nobody able
+   to reach it over SSH — freshly installed, reached by console — must still be
+   able to commit a CGNAT change. Console access is deliberately not counted as
+   an escape; "you still have the console" is not an answer at 2am for a box in
+   somebody else's datacentre.
+2. **Any change under `ssh` or `user` is applied as `commit confirmed`,** whether
+   or not the operator asked, and the VTY says so. It reverts on its own unless
+   confirmed from a session that still works.
+3. **`sshd -t` validates the generated file before the daemon is reloaded,** and
+   the previous file is put back if it refuses. A syntax error that stops sshd
+   starting is the same lockout by another route. It fails **closed**: refusing
+   a valid change costs an operator a retry, accepting an invalid one costs them
+   the box. `/run/sshd` is created first, because `sshd -t` refuses to run at all
+   without its privilege-separation directory and that would reject a perfectly
+   good change for a reason that has nothing to do with it.
+
+#### Secrets
+
+Password hashes are in `hexarouting.conf` and in every rollback revision —
+they have to be, or a rollback could not restore a password. So:
+
+* `/etc/hexarouting` and everything under it is **root-only**, set by the
+  installer and again on every write.
+* `show running-config` prints `password <set, not shown>`. A hash on a screen
+  shared during an incident is a hash that has left the building, and it is
+  crackable offline at the attacker's leisure.
+* The audit trail records that credentials changed, not what they changed to.
+
 ### Commands for the question an operator arrives with
 
 The first five `show cgnat` commands report aggregates — *"thread 0: 3 sessions,

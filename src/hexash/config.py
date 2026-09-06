@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import difflib
 
+from system import SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh
+
 CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
 ROUTING_HEADER = "! routing"
 CGNAT_HEADER = "! cgnat"
@@ -169,6 +171,13 @@ class Config:
         # at all. docs/routing.md records why it must never be inherited - an
         # unaligned MTU stalls OSPF in Exchange with no log saying why.
         self.mtus: dict[str, int] = {}         # name -> MTU
+        # The box's own configuration: the SSH daemon and the accounts that
+        # may log in. Not CGNAT and not routing, but committed and rolled back
+        # with both - it used to be the only configuration on the appliance
+        # that `commit` did not cover, which made it the one change nobody
+        # could undo cleanly.
+        self.ssh: dict = dict(SSH_DEFAULTS)
+        self.users: dict = {}
         self.globals: list[str] = []           # other cgnat statements
         self.routing: list[str] = []           # verbatim FRR statements
 
@@ -184,6 +193,10 @@ class Config:
             out.append(f"interface {ifname}")
             out.append(f" mtu {self.mtus[ifname]}")
             out.append(" exit")
+        for k in SSH_FIELDS:
+            out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
+        for name in sorted(self.users):
+            out += self.users[name].lines()
         out += sorted(self.globals)
         out.append(ROUTING_HEADER)
         out += self.routing
@@ -195,6 +208,7 @@ class Config:
         section = "cgnat"
         pool = None
         iface = None
+        user = None
         for lineno, raw in enumerate(text.splitlines(), 1):
             line = raw.rstrip()
             if not line.strip():
@@ -210,6 +224,33 @@ class Config:
                 continue
 
             s = line.strip()
+            if s.startswith("ssh "):
+                w = s.split(None, 2)
+                if len(w) < 3:
+                    cfg.unknown.append((lineno, s, "expected: ssh <setting> <value>"))
+                else:
+                    why = validate_ssh({w[1]: w[2]})
+                    if why:
+                        cfg.unknown.append((lineno, s, why))
+                    else:
+                        cfg.ssh[w[1]] = w[2]
+                continue
+            if s.startswith("user "):
+                w = s.split()
+                if len(w) < 2:
+                    cfg.unknown.append((lineno, s, "a user needs a name"))
+                    continue
+                user = User(w[1])
+                cfg.users[user.name] = user
+                pool = iface = None
+                continue
+            if user is not None and line.startswith(" "):
+                why = cfg._user_line(user, s)
+                if why:
+                    cfg.unknown.append((lineno, s, why))
+                if s == "exit":
+                    user = None
+                continue
             if s.startswith("cgnat pool"):
                 w = s.split()
                 if len(w) < 3:
@@ -250,6 +291,33 @@ class Config:
             else:
                 cfg.unknown.append((lineno, s, "not a CGNAT statement"))
         return cfg
+
+    @staticmethod
+    def _user_line(user: User, s: str):
+        """One line of a user block. Returns None, or why it was refused."""
+        w = s.split(None, 1)
+        if not w:
+            return None
+        if w[0] == "ssh-key" and len(w) > 1:
+            # Not parsed further on purpose: an authorized_keys line has
+            # options, comments and key types this VTY has no business
+            # having an opinion about. sshd is the thing that validates it.
+            user.keys.append(w[1].strip())
+        elif w[0] == "password" and len(w) > 1:
+            h = w[1].strip()
+            # A crypt(3) hash, never a plaintext password. Storing plaintext
+            # in /etc/shadow does not fail loudly - it produces an account
+            # whose password simply never matches.
+            if not h.startswith("$") or h.count("$") < 3:
+                return ("password: expected a crypt hash such as "
+                        "$y$... or $6$... (openssl passwd -6), not a plaintext "
+                        "password")
+            user.password = h
+        elif w[0] == "exit":
+            pass
+        else:
+            return f"'{s}' is not something a user block understands"
+        return None
 
     @staticmethod
     def _pool_line(pool: Pool, s: str):
@@ -352,7 +420,16 @@ class Config:
         # cannot undo is not a rollback.
         mtu_del = [k for k in self.mtus if k not in other.mtus]
 
+        # Reported as one flag rather than a delta: the SSH daemon takes its
+        # configuration whole, and an account is created or it is not.
+        ssh_changed = self.ssh != other.ssh
+        users_changed = (sorted(self.users) != sorted(other.users)
+                         or any(self.users[k] != other.users[k]
+                                for k in self.users if k in other.users))
+
         return {
+            "ssh_changed": ssh_changed,
+            "users_changed": users_changed,
             "pool_add": add,
             "pool_remove": remove,
             "pool_replace": replace,
