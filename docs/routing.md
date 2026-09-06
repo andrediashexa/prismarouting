@@ -380,6 +380,24 @@ This mirrors `vtysh`: the daemon knows its configuration, not the shell. A
 useful side effect is that a public range merged from adjacent prefixes is
 decomposed back into CIDR on output, so the saved configuration can be reread.
 
+### The banner, and where it must not appear
+
+An interactive login opens with an ASCII wordmark above the version line. On a
+serial console, mid-incident, with several boxes open in several terminals, an
+operator wants to know which product they are looking at before reading
+anything else.
+
+Plain ASCII, 59 columns, six lines: a racked box is reached through a BMC whose
+console is 80 columns of whatever font it decided on, box-drawing characters
+render as noise there, and a banner that wraps is worse than none.
+
+It **MUST NOT** appear when stdout is not a terminal. `hexash -c` and piped
+commands are how every lab and every script drives this VTY, and a banner
+prepended to their output breaks the parsing.
+
+The version line stays: the banner identifies the product, the version
+identifies the build, and an operator on the phone needs the second.
+
 ### Completion and help
 
 Tab completes; `?` lists the valid options at the cursor with a description:

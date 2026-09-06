@@ -176,6 +176,21 @@ COMMIT = {
 # Offering it on an installed appliance is offering to overwrite the box the
 # operator is logged into, and a command that destroys a running router should
 # not be one keystroke of TAB completion away from "interface".
+# Identifies the product before anything else on the screen.
+#
+# Plain ASCII, 59 columns, six lines. A racked box is reached by serial console
+# and that console is 80 columns of whatever font the BMC decided on; box
+# drawing characters render as noise there, and a banner that wraps is worse
+# than none. It also has to leave room for the version, the hint, and - on the
+# installation medium - the line telling the operator to type "install", which
+# is the one thing on that screen nobody can afford to miss.
+BANNER = r"""  _   _                 ____              _   _
+ | | | | _____  ____ _ |  _ \ ___  _   _| |_(_)_ __   __ _
+ | |_| |/ _ \ \/ / _` || |_) / _ \| | | | __| | '_ \ / _` |
+ |  _  |  __/>  < (_| ||  _ < (_) | |_| | |_| | | | | (_| |
+ |_| |_|\___/_/\_\__,_||_| \_\___/ \__,_|\__|_|_| |_|\__, |
+                                                     |___/ """
+
 LIVE_SQUASHFS = os.environ.get(
     "HEXA_LIVE_SQUASHFS", "/run/live/medium/live/filesystem.squashfs")
 INSTALLER = os.environ.get("HEXA_INSTALLER", "/usr/sbin/hexarouting-install")
@@ -1139,7 +1154,12 @@ class Shell:
                 pass
         # Shown only on a terminal: piping commands in must not have a banner
         # prepended to the output, or every script that parses it breaks.
+        # Only on a terminal. "hexash -c" is used by scripts and by every
+        # lab, and a banner prepended to parsed output breaks them - the
+        # version line already had to learn this, which is why the guard was
+        # here before the banner was.
         if sys.stdin.isatty():
+            print(BANNER)
             print(f"HexaRouting VTY {hexarouting_version()}")
             print("'?' for help, TAB to complete, 'configure' to edit, "
                   "'exit' to leave.")
