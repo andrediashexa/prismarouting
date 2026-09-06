@@ -23,8 +23,9 @@ import tempfile
 import time
 
 from config import Config, Pool
-from system import (System, User, can_anyone_log_in, redact,
-                    validate_ssh, SSH_FIELDS)
+from system import (System, SnmpDaemon, SnmpUser, User,
+                    can_anyone_log_in, redact, snmp_redact,
+                    validate_snmp, validate_ssh, SSH_FIELDS)
 import vppapi
 
 readline = None
@@ -243,12 +244,26 @@ TREE = {
                 "yes": ("allowed", None), "no": ("keys only", None)}),
         }),
         "user": ("an account that may log in", ARG_WORD),
+        "snmp": ("the SNMP agent, read-only by construction", {
+            "enabled": ("run the agent", {"yes": ("", None), "no": ("", None)}),
+            "listen-address": ("address to listen on", ARG_WORD),
+            "port": ("UDP port", ARG_NUM),
+            "enterprise-number": ("your organisation's IANA Private "
+                                  "Enterprise Number", ARG_NUM),
+            "community": ("an SNMPv2c community, read-only", ARG_WORD),
+        }),
+        "snmp-user": ("an SNMPv3 user", ARG_WORD),
         "commit": ("apply the candidate configuration", COMMIT),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "show": ("display information", SHOW),
         "exit": ("leave configuration mode", None),
     },
     "pool": CGNAT_POOL,
+    "snmp-user": {
+        "auth": ("authentication protocol and passphrase", "<sha|md5> <pass>"),
+        "priv": ("privacy protocol and passphrase", "<aes|des> <pass>"),
+        "exit": ("leave the user", None),
+    },
     "user": {
         "ssh-key": ("an authorized public key, as it appears in "
                     "authorized_keys", "<type> <key> [comment]"),
@@ -449,6 +464,7 @@ class Rollback:
 class Shell:
     def __init__(self):
         self.sys = System()
+        self.snmp = SnmpDaemon()
         self.dp = Vpp()
         self.api = vppapi.Vat2()
         self.frr = Frr()
@@ -456,6 +472,7 @@ class Shell:
         self.mode = "operational"      # operational | config | pool | user
         self.pool = None               # pool being edited
         self.user = None               # user being edited
+        self.snmp_user = None          # SNMP v3 user being edited
         self.candidate = None          # Config being edited
         self.frr_ctx = []              # FRR block context inside config mode
         self.failed = 0
@@ -471,6 +488,8 @@ class Shell:
             return "hexarouting# [edit cgnat pool] "
         if self.mode == "user":
             return "hexarouting# [edit user] "
+        if self.mode == "snmp-user":
+            return "hexarouting# [edit snmp user] "
         return "hexarouting# [edit] "
 
     def err(self, msg):
@@ -504,6 +523,7 @@ class Shell:
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
         cfg.users = self.sys.read_users()
+        cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
         return cfg
 
@@ -667,6 +687,14 @@ class Shell:
                 return False
             if msg:
                 print(f"ssh: {msg}")
+        if d["snmp_changed"]:
+            ok, msg = self.snmp.apply(target.snmp, target.snmp_communities,
+                                      target.snmp_users)
+            if not ok:
+                self.err(f"snmp: {msg}")
+                return False
+            if msg:
+                print(f"snmp: {msg}")
         if d["users_changed"]:
             ok, msgs = self.sys.apply_users(target.users, running.users)
             for m in msgs:
@@ -960,6 +988,32 @@ class Shell:
         if line.startswith("no cgnat pool "):
             self.candidate.pools.pop(w[3], None)
             return True
+        if w[:2] == ["snmp", "community"] and len(w) > 2:
+            if w[2] not in self.candidate.snmp_communities:
+                self.candidate.snmp_communities.append(w[2])
+            return True
+        if w[:3] == ["no", "snmp", "community"] and len(w) > 3:
+            self.candidate.snmp_communities = [
+                c for c in self.candidate.snmp_communities if c != w[3]]
+            return True
+        if w[0] == "snmp-user" and len(w) > 1:
+            self.snmp_user = self.candidate.snmp_users.get(w[1]) or SnmpUser(w[1])
+            self.candidate.snmp_users[w[1]] = self.snmp_user
+            self.mode = "snmp-user"
+            return True
+        if w[:2] == ["no", "snmp-user"] and len(w) > 2:
+            self.candidate.snmp_users.pop(w[2], None)
+            return True
+        if w[0] == "snmp":
+            if len(w) < 3:
+                self.err("usage: snmp <setting> <value>")
+                return True
+            why = validate_snmp({w[1]: " ".join(w[2:])})
+            if why:
+                self.err(why)
+            else:
+                self.candidate.snmp[w[1]] = " ".join(w[2:])
+            return True
         if w[0] == "ssh":
             if len(w) < 3:
                 self.err("usage: ssh <setting> <value>")
@@ -1022,6 +1076,19 @@ class Shell:
         self.candidate.routing.append(line)
         if line.startswith(("router ", "interface ", "vrf ", "route-map ")):
             self.frr_ctx.append(line)
+        return True
+
+    def do_snmp_user(self, line):
+        w = line.split()
+        u = self.snmp_user
+        if w[0] in ("exit", "end"):
+            self.mode = "config"
+            self.snmp_user = None
+        elif w[0] in ("auth", "priv") and len(w) > 2:
+            setattr(u, w[0], " ".join(w[1:]))
+        else:
+            self.err("a v3 user takes 'auth <protocol> <passphrase>' and "
+                     "'priv <protocol> <passphrase>'")
         return True
 
     def do_user(self, line):
@@ -1173,7 +1240,7 @@ class Shell:
         shared during an incident is a hash that has left the building, and it
         is crackable offline at the attacker's leisure.
         """
-        print("\n".join(redact(cfg.text().splitlines())))
+        print("\n".join(snmp_redact(redact(cfg.text().splitlines()))))
 
     def show_version(self):
         """
@@ -1302,7 +1369,8 @@ class Shell:
         handler = {"operational": self.do_operational,
                    "config": self.do_config,
                    "pool": self.do_pool,
-                   "user": self.do_user}[self.mode]
+                   "user": self.do_user,
+                   "snmp-user": self.do_snmp_user}[self.mode]
         return handler(line)
 
     def load(self, path):

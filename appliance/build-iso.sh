@@ -50,7 +50,7 @@ mkdir -p "$ROOT" "$WORK/iso/live" "$WORK/iso/boot/grub"
 
 say "debootstrap $SUITE"
 debootstrap --arch=amd64 --variant=minbase \
-  --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,iproute2,ifupdown,openssh-server,python3,less,vim-tiny \
+  --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,iproute2,ifupdown,openssh-server,snmpd,python3,less,vim-tiny \
   "$SUITE" "$ROOT" "$MIRROR"
 
 say "VPP and FRR repositories"

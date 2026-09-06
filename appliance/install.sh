@@ -37,6 +37,8 @@ install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/hexarout
 install -D -m 0755 "$REPO/appliance/hexarouting-install" "$DESTDIR/usr/sbin/hexarouting-install"
 install -D -m 0755 "$REPO/appliance/install-from-cmdline" "$DESTDIR/usr/lib/hexarouting/install-from-cmdline"
 install -D -m 0755 "$REPO/tools/ipfix_collector.py"   "$DESTDIR/usr/lib/hexarouting/ipfix-collector"
+install -D -m 0755 "$REPO/appliance/hexarouting-snmp-agent" \
+    "$DESTDIR/usr/lib/hexarouting/snmp-agent"
 
 say "dataplane plugin"
 if [ -f "$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so" ]; then

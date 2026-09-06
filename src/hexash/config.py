@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import difflib
 
-from system import SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh
+from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
+                    SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
 
 CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
 ROUTING_HEADER = "! routing"
@@ -178,6 +179,9 @@ class Config:
         # could undo cleanly.
         self.ssh: dict = dict(SSH_DEFAULTS)
         self.users: dict = {}
+        self.snmp: dict = dict(SNMP_DEFAULTS)
+        self.snmp_communities: list = []
+        self.snmp_users: dict = {}
         self.globals: list[str] = []           # other cgnat statements
         self.routing: list[str] = []           # verbatim FRR statements
 
@@ -197,6 +201,14 @@ class Config:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
         for name in sorted(self.users):
             out += self.users[name].lines()
+        for k in SNMP_FIELDS:
+            v = self.snmp.get(k, SNMP_DEFAULTS[k])
+            if v != "":
+                out.append(f"snmp {k} {v}")
+        for c in self.snmp_communities:
+            out.append(f"snmp community {c}")
+        for name in sorted(self.snmp_users):
+            out += self.snmp_users[name].lines()
         out += sorted(self.globals)
         out.append(ROUTING_HEADER)
         out += self.routing
@@ -209,6 +221,7 @@ class Config:
         pool = None
         iface = None
         user = None
+        snmp_user = None
         for lineno, raw in enumerate(text.splitlines(), 1):
             line = raw.rstrip()
             if not line.strip():
@@ -224,6 +237,45 @@ class Config:
                 continue
 
             s = line.strip()
+            if s.startswith("snmp-user "):
+                w = s.split()
+                if len(w) < 2:
+                    cfg.unknown.append((lineno, s, "an snmp user needs a name"))
+                    continue
+                snmp_user = SnmpUser(w[1])
+                cfg.snmp_users[snmp_user.name] = snmp_user
+                pool = iface = user = None
+                continue
+            if snmp_user is not None and line.startswith(" "):
+                w = s.split()
+                if s == "exit":
+                    snmp_user = None
+                elif w[0] in ("auth", "priv") and len(w) > 2:
+                    setattr(snmp_user, w[0], " ".join(w[1:]))
+                else:
+                    cfg.unknown.append(
+                        (lineno, s, "an snmp user understands 'auth <proto> "
+                                    "<passphrase>' and 'priv <proto> "
+                                    "<passphrase>'"))
+                continue
+            if s.startswith("snmp community "):
+                w = s.split()
+                if len(w) < 3:
+                    cfg.unknown.append((lineno, s, "expected: snmp community <name>"))
+                elif w[2] not in cfg.snmp_communities:
+                    cfg.snmp_communities.append(w[2])
+                continue
+            if s.startswith("snmp "):
+                w = s.split(None, 2)
+                if len(w) < 3:
+                    cfg.unknown.append((lineno, s, "expected: snmp <setting> <value>"))
+                else:
+                    why = validate_snmp({w[1]: w[2]})
+                    if why:
+                        cfg.unknown.append((lineno, s, why))
+                    else:
+                        cfg.snmp[w[1]] = w[2]
+                continue
             if s.startswith("ssh "):
                 w = s.split(None, 2)
                 if len(w) < 3:
@@ -423,11 +475,18 @@ class Config:
         # Reported as one flag rather than a delta: the SSH daemon takes its
         # configuration whole, and an account is created or it is not.
         ssh_changed = self.ssh != other.ssh
+        snmp_changed = (self.snmp != other.snmp
+                        or self.snmp_communities != other.snmp_communities
+                        or sorted(self.snmp_users) != sorted(other.snmp_users)
+                        or any(self.snmp_users[k] != other.snmp_users[k]
+                               for k in self.snmp_users
+                               if k in other.snmp_users))
         users_changed = (sorted(self.users) != sorted(other.users)
                          or any(self.users[k] != other.users[k]
                                 for k in self.users if k in other.users))
 
         return {
+            "snmp_changed": snmp_changed,
             "ssh_changed": ssh_changed,
             "users_changed": users_changed,
             "pool_add": add,
