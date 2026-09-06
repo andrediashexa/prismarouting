@@ -14,6 +14,9 @@ vppctl show api message-table 2>/dev/null | grep -i bpa | head -6 | sed 's/^/  /
 
 echo
 echo "=== criando um pool pela API binaria ==="
+# Every field spelled out, including the ones hexash would fill in. That is
+# the point of this lab: it drives the WIRE FORMAT, not hexash's model of it,
+# so a field added to one and forgotten in the other is caught here.
 vat2 -p /vat2_plugins bpa_pool_add_del '{
   "is_add": true,
   "name": "via-api",
@@ -22,6 +25,13 @@ vat2 -p /vat2_plugins bpa_pool_add_del '{
   "port_max": 65535,
   "policy": "BPA_API_POLICY_INTERLEAVED",
   "mode": "BPA_API_MODE_DETERMINISTIC",
+  "filter": "BPA_API_FILTER_ENDPOINT_INDEPENDENT",
+  "max_blocks": 0,
+  "alg": 0,
+  "alg_set": 0,
+  "timeouts": {"udp": 0, "icmp": 0, "tcp_syn": 0, "tcp_transitory": 0,
+               "tcp_established": 0, "gre": 0, "port_holddown": 0,
+               "alg_expect": 0},
   "n_inside": 1,
   "n_prefixes": 3,
   "prefixes": ["100.64.0.0/22", "200.150.0.0/24", "45.170.16.0/26"]
@@ -42,6 +52,13 @@ vat2 -p /vat2_plugins bpa_pool_add_del '{
   "is_add": true, "name": "bad", "block_size": 500,
   "port_min": 1024, "port_max": 65535,
   "policy": "BPA_API_POLICY_INTERLEAVED", "mode": "BPA_API_MODE_DETERMINISTIC",
+  "filter": "BPA_API_FILTER_ENDPOINT_INDEPENDENT",
+  "max_blocks": 0,
+  "alg": 0,
+  "alg_set": 0,
+  "timeouts": {"udp": 0, "icmp": 0, "tcp_syn": 0, "tcp_transitory": 0,
+               "tcp_established": 0, "gre": 0, "port_holddown": 0,
+               "alg_expect": 0},
   "n_inside": 1, "n_prefixes": 2,
   "prefixes": ["10.0.0.0/24", "203.0.113.0/24"]
 }' 2>&1 | sed 's/^/  /'
@@ -55,7 +72,7 @@ echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 OK=$(vat2 -p /vat2_plugins bpa_pool_dump '{}' 2>&1)
 expect_in "the pool created through the API is listed" "via-api" "$OK"
-BAD=$(vat2 -p /vat2_plugins bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
+BAD=$(vat2 -p /vat2_plugins bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","filter":"BPA_API_FILTER_ENDPOINT_INDEPENDENT","max_blocks":0,"alg":0,"alg_set":0,"timeouts":{"udp":0,"icmp":0,"tcp_syn":0,"tcp_transitory":0,"tcp_established":0,"gre":0,"port_holddown":0,"alg_expect":0},"n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
 expect_not_in "an invalid pool returns an error code" '"retval":\t0' "$BAD"
 expect_not_in "and is not created" "pool z " "$(vppctl show bpa pool)"
 

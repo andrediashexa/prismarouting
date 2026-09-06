@@ -6,7 +6,14 @@
  * first reworded message. Here there are real return codes.
  */
 
-option version = "0.1.0";
+/*
+ * 0.2.0 adds the per-pool settings that already existed on the CLI and had no
+ * way to reach the dataplane through the API: filtering mode, max-blocks, the
+ * ALG switches and the per-pool timeouts. Without them a VTY built on this API
+ * could accept those lines and silently drop them, which is exactly what it
+ * did (issue #47).
+ */
+option version = "0.2.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -23,10 +30,37 @@ enum bpa_mode : u8
   BPA_API_MODE_DYNAMIC = 1,
 };
 
+enum bpa_filter : u8
+{
+  BPA_API_FILTER_ENDPOINT_INDEPENDENT = 0,
+  BPA_API_FILTER_ADDRESS_DEPENDENT = 1,
+};
+
+/** \brief Per-pool session lifetimes. Zero in any field inherits the global
+    value, which is why zero is not a legal setting rather than a short one. */
+typedef bpa_timeouts
+{
+  u32 udp;
+  u32 icmp;
+  u32 tcp_syn;
+  u32 tcp_transitory;
+  u32 tcp_established;
+  u32 gre;
+  u32 port_holddown;
+  u32 alg_expect;
+};
+
 /** \brief Creates or removes a BPA CGNAT pool.
     @param is_add - 1 creates, 0 removes
     @param name - pool name
     @param block_size - ports per block, a power of two
+    @param filter - which inbound packets a mapping accepts (RFC 4787 REQ-8)
+    @param max_blocks - how many blocks one subscriber may hold; 0 means one
+    @param alg - bitmask of the ALGs enabled for this pool
+    @param alg_set - which bits of alg the operator actually chose; the rest
+                     take the shipped default, so a caller that does not care
+                     sends zero for both and gets the documented behaviour
+    @param timeouts - per-pool lifetimes; zero in a field inherits the global
     @param n_inside - how many of the prefixes below are inside ones
     @param prefixes - the inside ones first, then the public ones
 */
@@ -42,6 +76,13 @@ autoreply define bpa_pool_add_del
   u16 port_max;
   vl_api_bpa_policy_t policy;
   vl_api_bpa_mode_t mode;
+  vl_api_bpa_filter_t filter;
+  u8 max_blocks;
+  u32 alg;
+  u32 alg_set;
+  vl_api_bpa_timeouts_t timeouts;
+  /* The variable-length array is last, as the API requires: anything added
+   * later goes above this line. */
   u8 n_inside;
   u8 n_prefixes;
   vl_api_prefix_t prefixes[n_prefixes];
@@ -75,6 +116,10 @@ define bpa_pool_details
   u16 port_max;
   vl_api_bpa_policy_t policy;
   vl_api_bpa_mode_t mode;
+  vl_api_bpa_filter_t filter;
+  u8 max_blocks;
+  u32 alg;
+  vl_api_bpa_timeouts_t timeouts;
   u32 blocks_per_ip;
   u32 capacity;
   u32 inside_count;
