@@ -190,5 +190,73 @@ check(repo_version.startswith("0."),
       "declares it production-ready (CONTRIBUTING.md, section 5)")
 print(f"  version read: {hexash.hexarouting_version()}")
 
+
+print("\n=== the banner: on a terminal, and nowhere else ===")
+# The absence half matters more than the presence half. "hexash -c" is how
+# every lab and every script drives this VTY, and a banner prepended to their
+# output breaks the parsing - which is the reason the version line was already
+# guarded before the banner existed.
+import subprocess as _sp
+
+_HX = _os.path.join(_os.path.dirname(_os.path.abspath(hexash.__file__)),
+                    "hexash.py")
+_env = dict(_os.environ, HEXA_VERSION_FILE="/does/not/exist/VERSION")
+
+# Commands PIPED IN, not "-c". This is the path that can actually leak: "-c"
+# never enters repl() at all, so a test built on it passes whatever the guard
+# does - which is what the first version of this check did, and it went on
+# passing with the banner printed unconditionally.
+_p = _sp.run([sys.executable, _HX], input="show version\nexit\n",
+             capture_output=True, text=True, timeout=30, env=_env)
+_piped = _p.stdout + _p.stderr
+check("\\___/" not in _piped,
+      f"banner art leaked into piped output: {_piped[:120]!r}")
+check("HexaRouting VTY" not in _piped,
+      "the version line must not reach a pipe either")
+print("  piped commands carry no banner")
+
+_p2 = _sp.run([sys.executable, _HX, "-c", "show version"],
+              capture_output=True, text=True, timeout=30, env=_env)
+check("\\___/" not in (_p2.stdout + _p2.stderr),
+      "banner art leaked into 'hexash -c' output")
+print("  and neither does 'hexash -c'")
+
+
+def _on_a_pty():
+    """Run hexash on a real terminal and return what it printed."""
+    import pty as _pty, time as _time
+    m, sl = _pty.openpty()
+    pid = _os.fork()
+    if pid == 0:
+        _os.close(m)
+        for fd in (0, 1, 2):
+            _os.dup2(sl, fd)
+        _os.execve(sys.executable, [sys.executable, _HX], _env)
+    _os.close(sl)
+    _time.sleep(1.5)
+    _os.write(m, b"exit\n")
+    _time.sleep(0.8)
+    _os.set_blocking(m, False)
+    try:
+        data = _os.read(m, 1 << 16)
+    except BlockingIOError:
+        data = b""
+    _os.waitpid(pid, 0)
+    _os.close(m)
+    return data.decode(errors="replace")
+
+
+_tty = _on_a_pty()
+check("\\___/" in _tty, "the banner must appear on a terminal")
+check("HexaRouting VTY" in _tty,
+      "the version line must survive the banner: the banner identifies the "
+      "product, the version identifies the build, and an operator on the "
+      "phone needs the second")
+_widest = max((len(l) for l in _tty.split("\n")), default=0)
+check(_widest <= 80,
+      f"a line is {_widest} columns; a racked box has an 80-column serial "
+      "console and a banner that wraps is worse than none")
+print(f"  banner shown on a terminal, widest line {_widest} columns")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
