@@ -40,6 +40,7 @@ KVM=""
 [ -w /dev/kvm ] && KVM="--device=/dev/kvm"
 
 exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
+  -e BPA_RTSP_OFF="${BPA_RTSP_OFF:-}" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "apt-get update -qq >/dev/null 2>&1
          apt-get install -y -qq qemu-system-x86 openssh-client iptables tcpdump >/dev/null 2>&1

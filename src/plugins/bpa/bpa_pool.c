@@ -174,13 +174,11 @@ bpa_pool_init (bpa_pool_t *p)
     p->max_blocks = 1;
 
   /*
-   * On unless the operator says otherwise. Active FTP does not work at all
-   * without it, and a pool that never states an opinion should get the
-   * behaviour the documentation promises rather than the behaviour of an
-   * uninitialised byte.
+   * The documented defaults, except where the operator said otherwise. A pool
+   * that states no opinion gets what the documentation promises rather than
+   * the behaviour of an uninitialised field.
    */
-  if (p->alg_ftp == BPA_ALG_DEFAULT)
-    p->alg_ftp = BPA_ALG_ON;
+  p->alg = (BPA_ALG_DEFAULT & ~p->alg_set) | (p->alg & p->alg_set);
 
   p->log2_block = bpa_log2_exact (p->block_size);
 

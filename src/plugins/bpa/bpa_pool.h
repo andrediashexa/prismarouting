@@ -48,6 +48,20 @@
  * withholds under 1% of a block.
  */
 #define BPA_PORT_HOLDDOWN	4
+/*
+ * An ALG expectation that never sees a packet.
+ *
+ * When an RTSP SETUP announces its media ports, two mappings are opened before
+ * anything has used them. If the media never arrives - the client gave up, the
+ * server refused, the SETUP was retried with different ports - those two ports
+ * would otherwise sit on the UDP timeout, five minutes each, out of a 512-port
+ * block. A camera reconnecting in a loop turns that into exhaustion of its own
+ * subscriber's block, which reaches support as "the internet stopped".
+ *
+ * Short, because an expectation that is going to be used is used within a
+ * round trip of the SETUP reply.
+ */
+#define BPA_TIMEOUT_ALG_EXPECT	60
 
 typedef struct
 {
@@ -57,6 +71,7 @@ typedef struct
   u32 tcp_estab;
   u32 tcp_syn;
   u32 port_holddown;
+  u32 alg_expect;
 } bpa_timeouts_t;
 
 /*
@@ -75,6 +90,7 @@ bpa_timeouts_resolve (const bpa_timeouts_t *pool, const bpa_timeouts_t *global)
   r.tcp_syn = pool->tcp_syn ? pool->tcp_syn : global->tcp_syn;
   r.port_holddown = pool->port_holddown ? pool->port_holddown
 					: global->port_holddown;
+  r.alg_expect = pool->alg_expect ? pool->alg_expect : global->alg_expect;
   return r;
 }
 
@@ -108,23 +124,63 @@ typedef enum
 } bpa_filter_t;
 
 /*
- * Per-pool ALG switches.
+ * Application-level gateways, per pool.
  *
- * Zero is "not configured" rather than a legal setting, so that a pool built
- * from a zeroed structure - which is how both the CLI and the binary API
- * build one - gets the documented default instead of whatever zero happens to
- * mean. bpa_pool_init() resolves it, the same way it resolves max_blocks.
+ * Per pool because the pool is the unit an operator sells: a residential pool
+ * and a business pool are not the same customer and need not want the same
+ * rewriting. One registry, so that adding an ALG means adding one line here
+ * and the CLI, the running configuration and "show bpa alg" follow.
  *
- * FTP defaults to ON: the parse is small enough to make strict, and active
- * FTP does not work at all without it. Every ALG whose parse is ambiguous
- * enough to misfire defaults to off; see docs/architecture.md.
+ * Two masks, not one. `alg` is what is enabled; `alg_set` is what the
+ * operator has actually stated an opinion about. A pool is built from a
+ * zeroed structure in more than one place - the CLI, the binary API - and
+ * neither should have to remember to restate the defaults. bpa_pool_init()
+ * resolves the two, the same way it resolves max_blocks, so "not configured"
+ * and "the documented default" are the same value by construction, and an
+ * ALG that ships OFF by default is expressible rather than a special case.
  */
+#define foreach_bpa_alg                                                       \
+  _ (FTP, "ftp", "FTP PORT/EPRT and the 227/229 replies")                     \
+  _ (RTSP, "rtsp", "RTSP Transport client_port, and the media pair it needs") \
+  _ (PPTP, "pptp", "PPTP control channel and its GRE data channel")
+
 typedef enum
 {
-  BPA_ALG_DEFAULT = 0,
-  BPA_ALG_ON,
-  BPA_ALG_OFF,
+#define _(sym, nm, desc) BPA_ALG_BIT_##sym,
+  foreach_bpa_alg
+#undef _
+    BPA_N_ALG,
+} bpa_alg_bit_t;
+
+typedef enum
+{
+#define _(sym, nm, desc) BPA_ALG_##sym = 1 << BPA_ALG_BIT_##sym,
+  foreach_bpa_alg
+#undef _
 } bpa_alg_t;
+
+/*
+ * What ships on.
+ *
+ * All three, and each for its own reason rather than by a blanket rule. The
+ * general rule stands - an ALG that misparses corrupts traffic that would
+ * otherwise merely fail, so an ambiguous parse defaults off - and these three
+ * are the ones whose parse can be made strict:
+ *
+ *   FTP  - active FTP does not work at all without it;
+ *   RTSP - the black frame nobody blames on the CGNAT;
+ *   PPTP - its rewrite changes no length, so no sequence number moves, and
+ *          every message is guarded by a magic cookie and its own length
+ *          field. Without it PPTP fails for everyone, not only on collision.
+ */
+#define BPA_ALG_DEFAULT (BPA_ALG_FTP | BPA_ALG_RTSP | BPA_ALG_PPTP)
+
+static_always_inline int
+bpa_alg_on (u32 enabled, u32 bit)
+{
+  return (enabled & bit) != 0;
+}
+
 
 /*
  * Precomputed reciprocal, so the datapath never issues a hardware divide.
@@ -206,8 +262,10 @@ typedef struct
    */
   u8 max_blocks;
 
-  /* ALG switches, one per protocol. bpa_alg_t, not a bool: see above. */
-  u8 alg_ftp;
+  /* Which ALGs run here, and which of those the operator actually chose.
+   * Resolved once by bpa_pool_init(); see the registry above. */
+  u32 alg;
+  u32 alg_set;
 
   /* derived */
   u32 port_count;

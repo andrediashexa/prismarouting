@@ -51,6 +51,7 @@ against `ref/bpa_model.py`, which is the executable specification: any
 divergence **MUST** break the build.
 
 Catches: mapping arithmetic, block collisions, port allocator behaviour,
+consecutive even-aligned media port pairs, the RTSP parser's refusals,
 `isolcpus` and hugepage computation, command-tree completion.
 
 ## 2. Dataplane labs — minutes, inside the container
@@ -64,6 +65,8 @@ sh tools/lab.sh frag           # IP fragments
 sh tools/lab.sh icmp-tcp       # ICMP errors (PMTUD) and TCP state
 sh tools/lab.sh ftp-alg        # FTP ALG: payload rewrite and sequence shift
 sh tools/lab.sh ftp-alg off    # the same lab with the ALG off: MUST fail
+sh tools/lab.sh rtsp           # the RTSP ALG, asserted on the captured packet
+sh tools/lab.sh pptp           # PPTP call IDs and GRE (also: pptp off)
 sh tools/lab.sh routing        # BGP, OSPF and IS-IS into the VPP FIB
 sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
@@ -88,6 +91,7 @@ The most instructive to run:
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
 | `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch twelve assertions drop |
+| `rtsp` | Reads the rewritten `Transport:` header out of the wire, and `BPA_RTSP_OFF=1 sh tools/lab.sh rtsp` drops 11 of its 18 assertions |
 
 ## 3. Real hardware — two VMs, real Internet
 

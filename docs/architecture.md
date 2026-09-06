@@ -9,6 +9,11 @@ directions shard across workers without a lock. In **dynamic** mode blocks are
 allocated on demand and every allocation is logged, trading log volume for
 IPv4 savings.
 
+Protocols that carry a transport address in their payload get an
+**application-level gateway**, switchable per pool, which rewrites the payload
+and never guesses: anything it does not fully parse is passed through and
+counted.
+
 The Python model in `ref/` is the specification; the C implementation is
 checked against it on every build.
 
@@ -328,8 +333,26 @@ which is a worse outcome than the one it exists to prevent.
 | ALG | Default | State |
 |---|---|---|
 | FTP (RFC 959 `PORT`/`227`, RFC 2428 `EPRT`/`229`) | on | built |
-| PPTP/GRE, RTSP, IPsec ESP passthrough | on | not built |
+| RTSP (RFC 2326 `Transport:`) | on | built |
+| PPTP/GRE (RFC 2637) | on | built |
+| IPsec ESP passthrough | on | not built |
 | SIP | **off** | not built |
+
+One registry drives all of them: adding an ALG is one line in
+`foreach_bpa_alg`, and the CLI, the running configuration and `show bpa alg`
+follow from it.
+
+```
+bpa pool <name> ... [alg <ftp|rtsp|pptp> on|off]
+bpa alg <pool> <ftp|rtsp|pptp> <on|off>       # in place, keeps sessions
+show bpa alg
+```
+
+The pool stores two masks: what is enabled, and which of those the operator has
+actually stated an opinion about. A pool built from a zeroed structure — by the
+CLI or by the binary API — therefore gets the documented defaults without every
+creation path restating them, and an ALG that ships **off** stays expressible
+rather than becoming a special case.
 
 The reasoning behind that list — including why SIP is built off, and which
 conventional ALGs are deliberately not built at all — is recorded on
@@ -454,6 +477,142 @@ payload byte for byte, the shifted sequence and acknowledgement numbers, and the
 data connection arriving at the subscriber. `sh tools/lab.sh ftp-alg off` runs
 the same lab with the ALG switched off and **MUST** fail; twelve of its
 assertions drop, which is what makes the other run mean something.
+
+### RTSP (RFC 2326)
+
+**On by default.** [#43](https://github.com/andrediashexa/hexarouting/issues/43)
+
+The `Transport:` header of a `SETUP` names the ports the client wants its media
+on. Behind the CGNAT those are private ports: the server sends RTP to the
+subscriber's public address on a port that belongs to nobody, the control
+connection reports success, and the video never arrives. This is the IP camera
+or streaming box that works on the LAN and shows a black frame from outside —
+a support call that is never attributed to the CGNAT.
+
+```mermaid
+sequenceDiagram
+    participant C as client 100.64.0.5
+    participant N as HexaRouting
+    participant S as server (internet)
+    C->>N: SETUP ... client_port=6970-6971
+    Note over N: reserve 10514-10515 in the subscriber's block<br/>open two UDP mappings, RTP even
+    N->>S: SETUP ... client_port=10514-10515
+    S->>N: 200 OK ... client_port=10514-10515;server_port=9000-9001
+    Note over N: restore the client's own pair<br/>server_port is the server's, untouched
+    N->>C: 200 OK ... client_port=6970-6971;server_port=9000-9001
+    S->>N: RTP to 200.150.0.17:10514
+    N->>C: RTP to 100.64.0.5:6970
+```
+
+What it does:
+
+| | |
+|---|---|
+| Matches | TCP with port **554** on the server side, in either direction |
+| Rewrites | `client_port` in the `SETUP` request, and the echo of it in the `200` reply |
+| Reserves | two **consecutive** public ports with the **RTP port even** |
+| Opens | two UDP mappings, so the announced media is accepted when it arrives |
+| Corrects | TCP sequence and acknowledgement numbers, because the rewrite changes the payload length |
+
+Constraints worth stating, because each one is a decision:
+
+* The allocated ports **MUST** be consecutive with the RTP port even
+  (RFC 3550 §11). Clients that assume the convention — and much camera
+  firmware does — fail when it is broken, and they fail as "no video".
+* The pair **MUST** come from a block on the **same public address** as the
+  control connection. The header carries only ports; the peer takes the address
+  from the connection it is answering, so a pair taken from another block of
+  the same subscriber would be announced and never reachable.
+* Only port **554** is matched. Cameras are also found on 8554 and other ad-hoc
+  ports, and those are deliberately not matched: the only thing that says "this
+  stream is RTSP" without guessing is the well-known port. An operator who
+  needs another one needs a knob, not a heuristic.
+* `server_port` is **NOT** rewritten. It names the server's own ports, which
+  are on the public side and already reachable. See the note below on the
+  direction this ALG can and cannot help.
+* A folded `Transport:` header, a single `client_port` with no range, a range
+  that is not two consecutive ports, a message whose header block does not end
+  in this segment — every one of them leaves the packet untouched and
+  increments its own counter.
+
+**Which direction this helps.** The subscriber has to be the RTSP *client*.
+That covers the common deployments: a viewer or streaming box behind the CGNAT,
+and a camera that publishes to a cloud recorder, because a publishing camera is
+still the party that opens the connection and still sends `client_port`. It
+does **NOT** make a camera behind the CGNAT reachable from the internet: that
+connection is inbound and unsolicited, so it is dropped before any RTSP is
+seen. Reaching an inbound camera needs a port forward
+([#3.1](roadmap.md), static port forwarding), not an ALG.
+
+### Sequence numbers, and why the failure arrives late
+
+Rewriting `client_port=6970-6971` as `client_port=10514-10515` makes the
+payload two bytes longer. Every byte the client sends afterwards is therefore
+two further along the stream than the client believes, and every acknowledgement
+coming back counts two bytes the client never sent.
+
+Uncorrected, this does not fail at the rewrite. The control connection carries
+on for a message or two and then stalls, and what reaches support is "the
+camera stops after a few seconds", with nothing pointing at the header that was
+edited.
+
+Each session therefore carries a correction per direction, holding the offset,
+the previous offset, and the sequence number of the segment that was rewritten:
+
+* A segment **after** that point is moved by the new offset.
+* The rewritten segment itself, and any **retransmission** of it, is moved by
+  the previous one. A single running total gets that case wrong by exactly the
+  length of the rewrite, and a retransmitted `SETUP` is not a rare event on a
+  camera with a poor uplink.
+* A retransmitted `SETUP` is also rewritten to the **same** public pair it got
+  the first time. Refusing it would put the subscriber's private ports on the
+  wire, and the server believes the last thing it read.
+
+Only the most recent correction is remembered. A stream rewritten twice and
+then retransmitting from before the *first* rewrite is still wrong; the
+alternative is a per-session list of correction points on a datapath whose
+whole point is not having any, and RTSP is request/response with a small
+window, so the exposure is one message.
+
+### Announced ports that are never used
+
+A `SETUP` opens two mappings before anything has used them. If the media never
+arrives — the client gave up, the server refused, the `SETUP` was retried with
+different ports — those two ports would otherwise sit out the full UDP timeout.
+A camera reconnecting in a loop turns that into exhaustion of its own
+subscriber's block, which reaches support as "the internet stopped" with a
+healthy dataplane.
+
+An unused expectation therefore expires on `alg-expect` (60 s by default,
+per-pool or global, `bpa timeouts alg-expect <s>`). The first packet in either
+direction puts the mapping back on the protocol's own lifetime.
+
+### Counters
+
+`show errors` names them per node, and `show bpa pool` prints whether the ALG
+is on — both are needed, because a zero counter means nothing on its own.
+
+| Node | Counter | Meaning |
+|---|---|---|
+| `bpa-in2out` | RTSP Transport headers rewritten | a `SETUP` was rewritten |
+| `bpa-in2out` | RTSP Transport not understood | the header exists and was refused |
+| `bpa-in2out` | RTSP message spans segments | the header block does not end here |
+| `bpa-in2out` | RTSP rewrite would not fit | the longer payload exceeds the buffer |
+| `bpa-in2out` | RTSP media port pair unavailable | no even-aligned free pair in the block |
+| `bpa-out2in` | RTSP Transport replies rewritten | a `200` reply was restored |
+| `bpa-out2in` | RTSP reply not understood | the echoed ports match no mapping |
+| `bpa-out2in` | RTSP reply spans segments | as above, inbound |
+| `bpa-out2in` | RTSP reply rewrite would not fit | as above, inbound |
+
+Reason strings are kept under **35 characters**: `show errors` truncates there,
+and a counter whose name cannot be read whole is a counter no script can match.
+
+Evidence: `lab/rtsp.sh`, which asserts on the captured packet — the rewritten
+pair, its parity, both checksums, the IP length, the delivered media, and the
+sequence numbers of the segments that follow. `BPA_RTSP_OFF=1 sh tools/lab.sh
+rtsp` runs it against a pool with the ALG disabled, where 11 of its 18
+assertions fail. The parser's refusals are unit-tested without VPP in
+`test/test_bpa_rtsp.c`, and the port-pair allocator in `test/test_bpa_ports.c`.
 
 ## Fragments
 

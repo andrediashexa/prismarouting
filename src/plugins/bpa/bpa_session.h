@@ -55,6 +55,45 @@ typedef enum
   BPA_N_PROTO,
 } bpa_proto_t;
 
+/*
+ * Direction of a TCP stream within one session. Two, because an ALG that
+ * rewrites a payload changes the length of ONE direction, and the other
+ * direction's acknowledgements have to be moved by the same amount the other
+ * way.
+ */
+#define BPA_DIR_OUT 0 /* subscriber -> internet */
+#define BPA_DIR_IN  1 /* internet -> subscriber */
+#define BPA_N_DIR   2
+
+/*
+ * Sequence-number correction for one direction of a TCP stream.
+ *
+ * Rewriting a payload changes its length, so every byte after the rewrite sits
+ * at a different offset in the stream than the sender thinks. Left
+ * uncorrected, the control connection does not fail at the rewrite: it stalls
+ * some seconds later, when the peer acknowledges a byte count that never
+ * matches, and the failure looks unrelated to the ALG that caused it.
+ *
+ * Two generations rather than one running total, so a RETRANSMISSION of the
+ * segment that was rewritten - which carries a sequence number from before the
+ * correction - is moved by the delta that applied to it at the time, not by
+ * the new one. A single cumulative offset gets that case wrong by exactly the
+ * length of the rewrite, and a retransmitted SETUP is not a rare event on a
+ * camera with a poor uplink.
+ *
+ * Only the most recent correction is remembered. A stream rewritten twice and
+ * then retransmitting from before the FIRST rewrite is still wrong; the
+ * alternative is a per-session list of correction points on a datapath whose
+ * whole point is not having any, and RTSP is request/response with a small
+ * window, so the exposure is one message.
+ */
+typedef struct
+{
+  i32 off_before;     /* delta up to and including correction_pos */
+  i32 off_after;      /* delta strictly after it */
+  u32 correction_pos; /* original sequence number of the rewritten segment */
+} bpa_seq_adj_t;
+
 typedef struct
 {
   u32 ip_priv;	 /* host order */
@@ -103,6 +142,19 @@ typedef struct
   i16 alg_off_before;
   i16 alg_off_after;
   f64 last_heard;
+
+  /* Payload rewrites on this connection, one correction per direction. Both
+   * stay zero on every session no ALG has touched, which is nearly all of
+   * them, and the datapath tests them with a single OR. */
+  bpa_seq_adj_t adj[BPA_N_DIR];
+
+  /*
+   * An ALG expectation: a media mapping opened because a control message
+   * announced it, before anything used it. It goes back on the normal timers
+   * the moment a packet arrives; until then it expires on a much shorter one,
+   * so ports announced and never used do not sit out the full UDP timeout.
+   */
+  u8 is_expect;
 } bpa_session_t;
 
 /*
@@ -193,6 +245,12 @@ bpa_key (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto)
 static_always_inline u32
 bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
 {
+  /* An announced media port nothing has used yet. Checked first because it
+   * overrides the protocol's own lifetime for exactly as long as the mapping
+   * is a prediction rather than a flow. */
+  if (PREDICT_FALSE (s->is_expect))
+    return t->alg_expect;
+
   switch (s->proto)
     {
     case BPA_PROTO_UDP:
@@ -255,6 +313,21 @@ bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 sub_idx);
 void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 sub_idx,
 		     const bpa_block_t *b);
+/*
+ * Reserve a consecutive public port pair, RTP even, and open the two mappings
+ * an ALG has just announced. `want_ip_pub` is the public address the control
+ * connection already presents: the media must arrive on the SAME address,
+ * because the header carries only ports and the peer takes the address from
+ * the connection it is answering. A pair taken from a block on another public
+ * address of the same subscriber would be announced and never reachable.
+ *
+ * Returns 0 and the low public port. Both sessions are created as
+ * expectations.
+ */
+int bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
+			  u32 pool_index, u32 sub_idx, u32 want_ip_pub,
+			  u16 priv_lo, u8 proto, f64 now, u16 *pub_lo);
+
 void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);
