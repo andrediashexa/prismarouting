@@ -14,8 +14,13 @@ if ! docker ps >/dev/null 2>&1; then
 fi
 
 docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" || {
+  # Naming the wrong command is worse than naming none: "sh tools/lab.sh hw-lab"
+  # configures addresses and routes on the host and does not create this
+  # container, so following the hint produced the same error again.
   echo "container '$CONTAINER' is not running." >&2
-  echo "start the lab with: sh tools/lab.sh hw-lab   (see TESTING.md)" >&2
+  echo "  make hw-up     # create it" >&2
+  echo "  make hw-vpp    # start VPP inside it" >&2
+  echo "  make hw-down   # when you are finished (it holds ~4 GB)" >&2
   exit 1
 }
 
