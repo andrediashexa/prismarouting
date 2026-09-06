@@ -30,10 +30,13 @@ TRANSIT_VPP=169.254.99.1
 TRANSIT_LINUX=169.254.99.2
 POOL_IN=100.64.0.0/22
 POOL_OUT=198.19.24.0/24
+# Somewhere on the real internet, reached through the CGNAT. A single host
+# route: the peer must keep its own default for management.
+TEST_DEST=${TEST_DEST:-1.1.1.1}
 
 say() { echo "==> $*"; }
 
-say "peer: link /31 e assinantes RFC 6598"
+say "peer: the /31 link, the RFC 6598 subscribers and the route in"
 ssh -o BatchMode=yes "$PEER" "
   ip addr flush dev ens19
   ip addr add $LINK_PEER/31 dev ens19
@@ -41,6 +44,15 @@ ssh -o BatchMode=yes "$PEER" "
   # subscribers: extra addresses, so several leave through distinct blocks
   for h in 5 6 7; do ip addr add 100.64.0.\$h/32 dev ens19 2>/dev/null; done
   sysctl -qw net.ipv4.ip_forward=1
+  # The route that sends test traffic INTO the CGNAT.
+  #
+  # Installed here rather than printed as a suggestion, because 'ip addr flush'
+  # above deletes it: flushing an address removes every route that depended on
+  # it. So each run of this script destroyed the route and then told the
+  # operator to re-add it by hand. Whoever forgot got a peer that sent the test
+  # traffic out its DEFAULT gateway instead - which looks, from the HexaRouting
+  # side, exactly like a dataplane that receives nothing.
+  ip route replace $TEST_DEST via $LINK_LOCAL dev ens19
 "
 
 say "HexaRouting: Linux hands ens19 to VPP and forwards the public block"
@@ -62,4 +74,4 @@ for r in "-i vppwan -o ens18" "-i ens18 -o vppwan"; do
   iptables -C FORWARD $r -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 $r -j ACCEPT
 done
 
-say "ready to start VPP: sh lab/hw-vpp.sh"
+say "ready: now 'make hw-vpp', which starts VPP and verifies the path"

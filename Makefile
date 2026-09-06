@@ -2,7 +2,7 @@
 CFLAGS ?= -O2 -Wall -Wextra -Werror -DBPA_STANDALONE
 BUILD  := .build
 
-.PHONY: test test-appliance test-iso test-install iso hw-up hw-vpp hw-down \
+.PHONY: test test-appliance test-iso test-install iso hw-up hw-lab hw-vpp hw-down \
         model vectors clean
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp
@@ -65,7 +65,16 @@ hw-up:
 	    docker run -d --name hexa-vpp --privileged --network=host \
 	      -v $$(pwd):/src -v $$HOME/.ssh:/root/.ssh:ro \
 	      -w /src hexarouting-dev:26.06 sleep infinity" >/dev/null
+	@sg docker -c "docker exec hexa-vpp sh -c 'apt-get update -qq >/dev/null 2>&1; \
+	    apt-get install -y -qq iproute2 iptables openssh-client tcpdump \
+	      >/dev/null 2>&1'"
 	@echo "hexa-vpp is up. Remember: make hw-down when you are finished."
+
+# The topology: addresses and routes on both machines. Separate from hw-vpp
+# because it touches the PEER, and because getting it wrong is what made the
+# lab look like a dataplane fault for a long time.
+hw-lab:
+	@sg docker -c "docker exec hexa-vpp sh /src/lab/hw-lab.sh"
 
 hw-vpp:
 	@sg docker -c "docker exec hexa-vpp sh /src/lab/hw-vpp.sh"

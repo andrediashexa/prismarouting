@@ -117,60 +117,30 @@ assertion that passes with the feature removed was never testing the feature.
 
 ## 3. Real hardware — two VMs, real Internet
 
+```sh
+make hw-up      # a privileged host-network container, holds ~4 GB
+make hw-lab     # addresses and routes on BOTH machines
+make hw-vpp     # starts VPP and PROVES the path, end to end
+make hw-down    # when you are finished
+```
+
 Topology in `lab/hw-lab.sh`. Requires both VMs and key-based root access to the
-peer.
+peer, which `make hw-up` mounts into the container.
 
-```mermaid
-flowchart LR
-    P["peer<br/>100.64.0.5/6/7<br/>ens19 10.95.172.129/31"] -->|"/31 link"| H
-    subgraph H["HexaRouting"]
-        V["VPP + bpa<br/>198.19.24.0/24"]
-    end
-    H -->|"tap → Linux → ens18"| I["Internet"]
-```
+`make hw-vpp` used to end by printing what to type. It now runs the test and
+says pass or fail: a ping and a TLS fetch from a subscriber address through to
+the real Internet, with the public address and port block checked against
+`ref/bpa_model.py` rather than against the plugin.
 
-```sh
-sh tools/lab.sh hw-lab          # host side: addresses, routes, forwarding
-make hw-up                      # starts the long-lived hexa-vpp container
-make hw-vpp                     # brings VPP up inside it
-```
+**A green ping is not enough, and the lab says so.** Session counts are read
+before and after the traffic and the difference is asserted — because with the
+peer's route to the test destination missing, the traffic leaves through its
+*default* gateway instead, gets translated by something upstream, and comes
+back. The ping is green and this CGNAT never saw a packet. That is measured,
+not hypothetical: it is what the lab did for a long time.
 
-The `hexa-vpp` container **outlives the command that started it** — that is the
-point, since `hexash` and `vppctl` talk to a VPP running inside it. It is also
-why it **MUST** be removed when the session is over:
-
-```sh
-make hw-down                    # stops it and frees its memory
-```
-
-One of these was left running for thirteen hours holding roughly 4 GB, and got
-an unrelated `make test-install` killed by the OOM killer — a failure that
-looked like the test needing more memory and was not. Until this section
-existed, nothing in the repository created the container and nothing removed
-it.
-
-Then, on the peer:
-
-```sh
-ip route replace 1.1.1.1/32 via 10.95.172.128 dev ens19
-ping -c4 -I 100.64.0.5 1.1.1.1
-curl --interface 100.64.0.5 https://1.1.1.1/
-```
-
-Expected, checked against `ref/bpa_model.py`:
-
-```
-100.64.0.5 -> 198.19.24.5    ports 1024-1535
-100.64.0.6 -> 198.19.24.6
-100.64.0.7 -> 198.19.24.7
-```
-
-Catches: what only appears with real traffic — full TCP, TLS, concurrency, and
-limits imposed by the other end of the Internet.
-
-> **Note.** A load test against a public endpoint can hit that endpoint's
-> per-IP connection limit rather than any CGNAT limit. Separate the two by
-> repeating with a load that fits inside one block.
+Catches: everything the container labs cannot — a real driver, a real MAC
+layer, real TCP with TLS, and the routing on both sides of the box.
 
 ## Accessing the VTY
 
