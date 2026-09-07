@@ -25,7 +25,58 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.12.0.
+Nothing merged since v0.13.0.
+
+## 0.13.0 — traffic that must not be translated
+
+Some destinations have to see the real source address: the operator's own
+management network, an internal server, a CDN cache that accounts by client
+address, a government portal that refuses shared addresses. And some sources
+must not be translated at all — a customer with their own public address on the
+same access VLAN. Without a way to say so, the only way to exempt traffic was to
+keep it out of the pool entirely, which is not always possible.
+
+### Added
+
+* **NAT bypass lists** ([#25](https://github.com/andrediashexa/hexarouting/issues/25)):
+
+  ```
+  cgnat pool residential
+   bypass destination 10.0.0.0/8
+   bypass source 100.64.1.0/24
+   exit
+  ```
+
+  A bypassed packet takes **no port, creates no session and writes no log
+  record**. `lab/bypass.sh` asserts both halves — the source read off the
+  **captured** packet, and the session count before and after — because a
+  bypass implemented after the allocation looks identical on the wire and
+  passes the first half alone.
+
+  The lists are `bpa_addr_set_t`, the structure the pool's own prefixes already
+  use: inline, so a lookup is a binary search over a small array and never an
+  allocation. The check runs after the session lookup has missed and the pool
+  is known; a bypassed flow therefore pays that lookup on every packet, which
+  is the stated price of allocating nothing for it.
+
+  Lists are replaced entire rather than edited prefix by prefix — merging means
+  the stored set no longer remembers what was typed — and applied in place, so
+  exempting a destination does not disconnect the pool.
+
+### Fixed
+
+* `bpa_addr_set_build()` refuses an empty set, correctly for a pool's own
+  prefixes and wrongly for a bypass list, where empty is the normal state.
+  Building it unconditionally made **every** `bpa pool` command fail. Found by
+  the new lab on its first run.
+
+### Changed
+
+* **Binary API 0.6.0** adds `bpa_bypass_set`.
+* **`docs/roadmap.md` carries the plan for everything that remains**, written
+  after reading all 26 open issues rather than their titles: seven phases
+  ordered by what each item costs while it is absent, and the four dependencies
+  that reading them turned up.
 
 ## 0.12.0 — bounding one customer without touching the others
 
