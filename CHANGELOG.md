@@ -25,7 +25,107 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.8.0.
+Nothing merged since v0.9.0.
+
+## 0.9.0 — an answer for the customer who needs a port in
+
+The answer to a subscriber who needs to be reached from outside was "buy a
+public address" — a lost sale exactly when the provider has none, which is the
+reason the CGNAT is there. There is a table for it now, and the whole of this
+release is about making that table impossible to contradict.
+
+### Added
+
+* **Static port forwarding**
+  ([#17](https://github.com/andrediashexa/hexarouting/issues/17)). One inbound
+  port pinned to one subscriber's socket, per pool:
+
+  ```
+  cgnat pool residential
+   forward tcp 6200 to 100.64.0.5 80
+   exit
+  ```
+
+  and, on a box already carrying traffic and without redefining the pool,
+  `bpa forward residential tcp 6200 to 100.64.0.5 80`. Also `show bpa forward`,
+  and `bpa_forward_add_del` in binary API **0.3.0** — a message of its own,
+  because `bpa_pool_add_del` already ends in its variable-length prefix array
+  and because a forward has to be addable to a pool that is carrying traffic.
+
+  The operator states the public **port** and never the public **address**. The
+  address is the subscriber's own, the one the pool's arithmetic assigns it: a
+  subscriber receiving on one address and sending from another is not paired
+  (RFC 4787 REQ-2), and `bpa_reverse()` recovers the subscriber from
+  `(public address, port)` with no lookup, which is what makes the return path
+  shard and the deterministic mode auditable. A forward anywhere else would be
+  a mapping the formula cannot produce, and every later reader of the
+  configuration trail would compute the wrong subscriber for exactly those
+  ports.
+
+  So the port **MUST** be inside that subscriber's own block, and one that is
+  not is refused naming the subscriber whose block it would have taken:
+
+  ```
+  public port 2048 belongs to 100.64.0.9's block, not to 100.64.0.5's.
+  100.64.0.5 holds 200.150.0.17:1536-2047
+  ```
+
+  **Deterministic pools only.** In dynamic mode a block belongs to whoever
+  holds it now and is released when that subscriber goes idle, so a pinned port
+  would follow the block to the next customer — still working, reaching
+  somebody else, which is worse than not working. Refused with that reason, and
+  tracked as [#67](https://github.com/andrediashexa/hexarouting/issues/67).
+
+  The port is **reserved, not checked**: it is marked used in the subscriber's
+  bitmap when the block is created, so the allocator is never told it exists
+  and no allocation path — port preservation, an ALG's media pair, an ordinary
+  new flow — can reach it. A test on each of those paths would have been three
+  places to remember instead of one. Two consequences follow: the bitmap has no
+  protocol dimension, so a port forwarded for TCP is reserved for UDP as well;
+  and a forwarded session does not hand its port back when it expires, because
+  the port belongs to the configuration rather than to the session.
+
+* **`lab/forward.sh`**, and `sh tools/lab.sh forward off` runs it with no
+  forward configured, where **ten** of its twenty checks must fail. One of them
+  passed in both modes at first — the session from an earlier section still
+  held the port — so the lab now closes that session and asserts the table is
+  empty before the forward is configured.
+
+### Fixed
+
+* **A forward stated on a `bpa pool` line reached the dataplane with a zero
+  public address.** Validation *completes* a forward as well as checking it —
+  the public address and the port offset are derived there and nowhere else —
+  and it was validating a copy and storing the original. It reserved nothing,
+  translated nothing, and appeared in `show bpa config` exactly as if it
+  worked.
+* **`/var/log/hexarouting` was created by no installer.** The plugin opens the
+  configuration trail with `O_CREAT` and cannot create the directory above it,
+  so the trail existed in every lab — where the lab happens to make the
+  directory — and on no installed box. In deterministic mode that trail is the
+  record of which pool definition was in force at a given instant, which is
+  what makes an answer to a court order defensible.
+
+### Changed
+
+* **The configuration trail records a pool's forwards**, and `forward-add` and
+  `forward-del` are recorded like any other pool change. A forward is the one
+  part of a deterministic pool the formula cannot reproduce; a trail that
+  omitted it would answer for that port with the subscriber the formula names,
+  who is the wrong one.
+* **`docs/roadmap.md`**: the release table said v0.6.0 through v0.8.0 would be
+  inbound features, compliance and HA. They were the appliance, its installer,
+  SSH, accounts, SNMP and the first performance measurement. The table now says
+  what happened and renumbers what has not.
+
+### Not in this release
+
+* **PCP** ([#32](https://github.com/andrediashexa/hexarouting/issues/32)) — this
+  is the manual table PCP would automate, and #17 was its stated dependency.
+  What PCP still has to bring is on that issue.
+* **Forwards on dynamic pools**
+  ([#67](https://github.com/andrediashexa/hexarouting/issues/67)) — they need
+  the block pinned, which is its own change with its own logging obligations.
 
 ## 0.8.0 — the first number, and a level of testing that was not testing
 
