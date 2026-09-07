@@ -25,7 +25,49 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.15.0.
+Nothing merged since v0.16.0.
+
+## 0.16.0 — the number that trades one failure for another
+
+Shortening a timeout is the first thing anybody reaches for when a pool fills,
+and it works: ports recycle faster and more subscribers fit on one public
+address. What it also does is cut connections that are **idle rather than
+finished** — an SSH session left open over lunch, a database pool, a sensor
+that speaks once an hour. Those come back weeks later as *"it disconnects at
+random"*, which nobody attributes to a number changed in another month.
+
+### Added
+
+* **A warning when a timeout is set below the floor its RFC asks for**
+  ([#54](https://github.com/andrediashexa/hexarouting/issues/54)):
+
+  | Timeout | Floor | Reference |
+  |---|---|---|
+  | `udp` | 120 s | RFC 4787 REQ-5 |
+  | `icmp` | 60 s | RFC 5508 REQ-2 |
+  | `tcp-transitory` | 240 s | RFC 5382 REQ-5 |
+  | `tcp-established` | 7440 s | RFC 5382 REQ-5 |
+
+  The value is **applied**: these are SHOULDs, an operator may have a reason,
+  and a box that refuses is less useful than the one they are replacing. The
+  message says so in as many words. It names the RFC, the floor and what
+  breaks, and reaches both the operator who set it and the log — because the
+  person who shortens a timeout and the person diagnosing the disconnections
+  six weeks later are not the same person. Once per change, never per packet.
+
+  A value **at** the floor says nothing at all: a warning that always fires is
+  one an operator learns to skip, and that is asserted rather than assumed.
+
+* **`show bpa timeouts`**, which did not exist — the SNMP agent had already
+  been caught assuming it did. Marks every value under its floor, globally and
+  per pool with the overrides resolved, so the state is visible to somebody who
+  did not know to ask.
+
+The floors, their references and their consequences are **one list** in
+`bpa_pool.h`. The command that sets a timeout, the warning it prints and
+`show bpa timeouts` read the same list; through the VTY, `hexash` reads the
+marks back from the device rather than recomputing them in Python, which would
+be a second thing to keep in step.
 
 ## 0.15.0 — an account that can look without being able to change
 
