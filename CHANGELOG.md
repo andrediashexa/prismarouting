@@ -25,7 +25,69 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.9.0.
+Nothing merged since v0.10.0.
+
+## 0.10.0 — the check that keeps the log from being confidently wrong
+
+A packet arriving on an inside interface with a source the sender does not own
+is translated like any other, takes a port out of that address's block, and is
+attributed to that subscriber by arithmetic for as long as anyone cares to ask.
+The record is indistinguishable from a true one. This release adds the check
+that refuses it, and — just as deliberately — a test that says where the check
+stops.
+
+### Added
+
+* **uRPF on an interface** ([#24](https://github.com/andrediashexa/hexarouting/issues/24)),
+  in the committed configuration, **off by default**:
+
+  ```
+  interface ens19
+   urpf strict
+   exit
+  ```
+
+  `strict` requires the source to route back out the interface the packet
+  arrived on; `loose` only that it route somewhere. Off by default because
+  turning it on where return paths are asymmetric drops traffic that was being
+  forwarded correctly a moment earlier, with no symptom except that some things
+  stop — a decision that belongs to whoever knows the topology.
+
+  The check itself is **not reimplemented**. VPP's `ip4-rx-urpf-strict` and
+  `ip4-rx-urpf-loose` already run ahead of `bpa-in2out` on the same arc, so a
+  refused packet never reaches the translator: no port is taken from the block
+  it was aimed at and no session exists to be attributed to anyone. What was
+  missing was that nothing here could turn it on **as configuration** — it
+  could be set with `vppctl` and lost at the next reboot, appeared in no
+  running configuration, and no `commit` or `rollback` covered it.
+
+* **`show bpa urpf`** — one line per interface, `<name> <mode>`. VPP answers
+  this per interface in a page of human-shaped text, and the VTY reads it back
+  on every commit to know whether its own change took effect, because `vppctl`
+  exits 0 having printed a parse error.
+
+* **`lab/urpf.sh`**, which measures the **harm first**: with nothing enabled, a
+  subscriber's address injected on a second inside interface — where its route
+  does not point — is translated and creates a session. Only then is the check
+  turned on. `sh tools/lab.sh urpf off` fails the six checks that claim uRPF
+  does anything.
+
+### Where it stops, and why that is a test
+
+**One subscriber spoofing its neighbour is not caught.** Every subscriber of a
+pool is reachable out the same inside interface, so the FIB answers "yes, that
+way" for the victim's address exactly as it does for the attacker's. The lab
+sends a neighbour's address on the right interface and **requires** it to be
+translated, so anyone who later believes uRPF closes that hole is contradicted
+by a failing test rather than by a paragraph. Closing it needs the address
+bound to the subscriber it was issued to
+([#21](https://github.com/andrediashexa/hexarouting/issues/21)), or the access
+network refusing the spoof before the packet arrives.
+
+The two failures are also counted apart, which the lab asserts:
+`ip4-rx-urpf-strict: uRPF Drop` is a spoof or a misconfiguration;
+`bpa-in2out: no pool for source address` is an address this box does not
+translate, which is ordinary on a shared link.
 
 ## 0.9.0 — an answer for the customer who needs a port in
 
