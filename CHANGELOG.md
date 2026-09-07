@@ -25,7 +25,60 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.13.0.
+Nothing merged since v0.14.0.
+
+## 0.14.0 — a setting an operator can change with somebody on the phone
+
+Every per-pool setting had an in-place command on the dataplane, and none of
+them worked through the VTY. `hexash` replaced any pool whose configuration
+text differed, so a commit that changed one ALG switch, one timeout, one
+filtering mode or the MSS clamp tore the pool down and built it again —
+disconnecting every subscriber on it. That is worst for exactly the settings an
+operator reaches for during an incident.
+
+### Changed
+
+* **A per-pool setting changes in place**
+  ([#69](https://github.com/andrediashexa/hexarouting/issues/69)). A pool now
+  has two kinds of setting and the distinction lives in one place:
+
+  | | |
+  |---|---|
+  | **the mapping** — prefixes, block size, port range, policy, mode | every session on the pool is invalid the moment these change, so the pool is rebuilt and its sessions go with it |
+  | **everything else** — filtering mode, ALG switches, `max-blocks`, per-pool timeouts, the MSS clamp, and the bounds, forwards and bypass lists that already had their own calls | none of these change what a port means, so none needs the pool rebuilt |
+
+  `bpa_pool_settings_set()` takes exactly the second list, under **one** worker
+  barrier, and the VTY sends it as **one** message — five separate messages
+  would be five chances to leave a pool half-changed.
+
+### Fixed
+
+* **Deleting a pool did not free its sessions.** Left behind they outlive the
+  definition that produced them, and since VPP reuses the pool index a pool
+  created afterwards inherited sessions carrying the **old** arithmetic: a
+  subscriber still translated onto a public port that the new mapping assigns
+  to somebody else, with nothing anywhere saying so. Found while building the
+  lab for #69, whose own acceptance criteria already claimed those sessions
+  went with the pool.
+
+### Added
+
+* **`lab/in-place.sh`**, which measures both directions on a pool carrying
+  traffic: five settings in one commit with every session kept and no `del
+  pool` in the trail, then a block-size change with the sessions dropped and
+  the pool rebuilt. The second half is what makes the first mean anything.
+
+### Filed, not fixed
+
+* [#73](https://github.com/andrediashexa/hexarouting/issues/73) — two pools may
+  claim the same inside prefix, and the first silently wins.
+* [#74](https://github.com/andrediashexa/hexarouting/issues/74) —
+  `show bpa subscriber` can report *no live state* while the session table
+  holds that subscriber's sessions. Not reproducible in isolation yet.
+
+### Changed
+
+* **Binary API 0.7.0** adds `bpa_pool_settings_set`.
 
 ## 0.13.0 — traffic that must not be translated
 
