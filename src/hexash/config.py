@@ -108,12 +108,15 @@ class Pool:
         The pool as configuration text.
 
         `in_place=False` gives only the part of a pool that can be changed
-        ONLY by recreating it. What it leaves out - the static forwards and the
-        per-subscriber bounds - has a dataplane call of its own, and each is
-        excluded for the same reason: applying it must not redefine the pool,
-        because redefining it drops every session it holds. A whole subscriber
-        base disconnected to give one customer an inbound port, or to cap one
-        infected host, is not a change anyone would ask for.
+        ONLY by recreating it: the prefixes, the block size, the port range,
+        the policy and the mode. Those change the MAPPING, and every session on
+        the pool is invalid the moment they change.
+
+        Everything else is left out, because the dataplane can change it on a
+        pool that is carrying traffic and redefining the pool to do so would
+        drop every session it holds. A whole subscriber base disconnected to
+        turn off one ALG, cap one infected host or give one customer an inbound
+        port is not a change anyone would ask for (issue #69).
         """
         out = [f"cgnat pool {self.name}"]
         out += [f" inside {p}" for p in self.inside]
@@ -123,11 +126,12 @@ class Pool:
             out.append(f" ports {self.ports}")
         out.append(f" policy {self.policy}")
         out.append(f" mode {self.mode}")
-        for t in self.TIMEOUTS:
-            if t in self.timeouts:
-                out.append(f" timeout {t} {self.timeouts[t]}")
-        if self.max_blocks > 1:
-            out.append(f" max-blocks {self.max_blocks}")
+        if in_place:
+            for t in self.TIMEOUTS:
+                if t in self.timeouts:
+                    out.append(f" timeout {t} {self.timeouts[t]}")
+            if self.max_blocks > 1:
+                out.append(f" max-blocks {self.max_blocks}")
         if in_place:
             out += [f" bypass source {p}" for p in sorted(self.bypass_src)]
             out += [f" bypass destination {p}"
@@ -136,13 +140,15 @@ class Pool:
             out.append(f" max-sessions {self.max_sessions}")
         if in_place and self.max_rate:
             out.append(f" max-session-rate {self.max_rate}")
-        if self.tcp_mss:
-            out.append(f" tcp-mss {self.tcp_mss}")
-        if self.filter != "endpoint-independent":
-            out.append(f" filter {self.filter}")
-        for a in self.ALG_BITS:
-            if a in self.algs:
-                out.append(f" alg {a} {'on' if self.algs[a] else 'off'}")
+        if in_place:
+            if self.tcp_mss:
+                out.append(f" tcp-mss {self.tcp_mss}")
+            if self.filter != "endpoint-independent":
+                out.append(f" filter {self.filter}")
+            for a in self.ALG_BITS:
+                if a in self.algs:
+                    out.append(
+                        f" alg {a} {'on' if self.algs[a] else 'off'}")
         if in_place:
             for proto, pub, ip, priv in sorted(self.forwards,
                                                key=self._fwd_key):
@@ -196,6 +202,42 @@ class Pool:
             "is_destination": bool(is_dst),
             "n_prefixes": len(prefixes),
             "prefixes": sorted(prefixes),
+        }
+
+    def settings_api_args(self) -> dict:
+        """
+        Every setting the device can change without recreating the pool.
+
+        Sent whole rather than as a diff: the dataplane takes them together
+        under one worker barrier, and a pool half-way between two settings is a
+        pool behaving as neither.
+        """
+        api_t = {"udp": "udp", "icmp": "icmp", "tcp-syn": "tcp_syn",
+                 "tcp-transitory": "tcp_transitory",
+                 "tcp-established": "tcp_established", "gre": "gre",
+                 "port-holddown": "port_holddown",
+                 "alg-expect": "alg_expect"}
+        timeouts = {v: 0 for v in api_t.values()}
+        for k, v in self.timeouts.items():
+            timeouts[api_t[k]] = int(v)
+
+        alg = alg_set = 0
+        for name, bit in self.ALG_BITS.items():
+            if self.algs.get(name, name in self.ALG_DEFAULT_ON):
+                alg |= bit
+            if name in self.algs:
+                alg_set |= bit
+
+        return {
+            "name": self.name,
+            "filter": "BPA_API_FILTER_"
+                      + self.filter.upper().replace("-", "_"),
+            "max_blocks": int(self.max_blocks),
+            "alg": alg,
+            "alg_set": alg_set,
+            "tcp_mss": 0 if self.tcp_mss in ("", "auto") else int(self.tcp_mss),
+            "tcp_mss_auto": self.tcp_mss == "auto",
+            "timeouts": timeouts,
         }
 
     def limits_api_args(self) -> dict:
@@ -664,6 +706,16 @@ class Config:
         recreated = {p.name for p in add} | {p.name for p in replace}
         # A pool being created or recreated arrives with both bounds at zero,
         # so anything the candidate asks for is a change.
+        # Settings the dataplane can change in place. A pool being created or
+        # recreated already carries them, so only a pool that stays needs the
+        # separate call.
+        settings_set = {}
+        for name, pool in other.pools.items():
+            if name in recreated:
+                continue
+            if self.pools[name].settings_api_args() != pool.settings_api_args():
+                settings_set[name] = pool
+
         # Each list is replaced entire, so the delta is "these two lists
         # differ" rather than a set of additions and removals.
         bypass_set = []
@@ -731,6 +783,7 @@ class Config:
             "fwd_add": fwd_add,
             "fwd_del": fwd_del,
             "limits_set": limits_set,
+            "settings_set": settings_set,
             "bypass_set": bypass_set,
             "if_add": if_add,
             "if_remove": if_del,

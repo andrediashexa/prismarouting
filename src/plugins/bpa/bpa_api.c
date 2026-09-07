@@ -132,6 +132,42 @@ done:
 }
 
 static void
+vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
+{
+  vl_api_bpa_pool_settings_set_reply_t *rmp;
+  bpa_timeouts_t t = { 0 };
+  clib_error_t *e;
+  u8 *name;
+  int rv = 0;
+
+  name = format (0, "%s", mp->name);
+
+  t.udp = clib_net_to_host_u32 (mp->timeouts.udp);
+  t.icmp = clib_net_to_host_u32 (mp->timeouts.icmp);
+  t.tcp_syn = clib_net_to_host_u32 (mp->timeouts.tcp_syn);
+  t.tcp_trans = clib_net_to_host_u32 (mp->timeouts.tcp_transitory);
+  t.tcp_estab = clib_net_to_host_u32 (mp->timeouts.tcp_established);
+  t.gre = clib_net_to_host_u32 (mp->timeouts.gre);
+  t.port_holddown = clib_net_to_host_u32 (mp->timeouts.port_holddown);
+  t.alg_expect = clib_net_to_host_u32 (mp->timeouts.alg_expect);
+
+  e = bpa_pool_settings_set (name, (bpa_filter_t) mp->filter, mp->max_blocks,
+			     clib_net_to_host_u32 (mp->alg),
+			     clib_net_to_host_u32 (mp->alg_set),
+			     clib_net_to_host_u16 (mp->tcp_mss),
+			     mp->tcp_mss_auto, &t);
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+
+  vec_free (name);
+  REPLY_MACRO (VL_API_BPA_POOL_SETTINGS_SET_REPLY);
+}
+
+static void
 vl_api_bpa_bypass_set_t_handler (vl_api_bpa_bypass_set_t *mp)
 {
   vl_api_bpa_bypass_set_reply_t *rmp;
