@@ -1167,6 +1167,61 @@ VLIB_CLI_COMMAND (bpa_forward_command, static) = {
   .function = bpa_forward_command_fn,
 };
 
+/*
+ * Which interfaces have unicast RPF turned on, and in which mode.
+ *
+ * uRPF is VPP's own feature and this plugin does not own it - "set urpf ip4 rx
+ * <off|loose|strict> <interface>" enables it. What is missing there is a way to
+ * ask, in one call, what is currently on: VPP answers per interface, in a page
+ * of human-shaped text, and the VTY has to read the answer back on every commit
+ * to know whether its own change took effect.
+ *
+ * It is reported here rather than left out because on a CGNAT it is not an
+ * ordinary interface setting: without it a spoofed source is translated and
+ * attributed to a subscriber who did not send the packet, and the record that
+ * says so is indistinguishable from a true one. See docs/architecture.md.
+ *
+ * One line per interface, "<name> <mode>", which is what a machine reads and
+ * what an operator can also make sense of.
+ */
+static clib_error_t *
+bpa_show_urpf_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			  vlib_cli_command_t *cmd)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_sw_interface_t *si;
+  u32 n = 0;
+
+  pool_foreach (si, vnm->interface_main.sw_interfaces)
+    {
+      const char *mode = 0;
+
+      if (vnet_feature_is_enabled ("ip4-unicast", "ip4-rx-urpf-strict",
+				   si->sw_if_index) == 1)
+	mode = "strict";
+      else if (vnet_feature_is_enabled ("ip4-unicast", "ip4-rx-urpf-loose",
+					si->sw_if_index) == 1)
+	mode = "loose";
+
+      if (!mode)
+	continue;
+
+      vlib_cli_output (vm, "%U %s", format_vnet_sw_if_index_name, vnm,
+		       si->sw_if_index, mode);
+      n++;
+    }
+
+  if (n == 0)
+    vlib_cli_output (vm, "no interface has uRPF enabled");
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_urpf_command, static) = {
+  .path = "show bpa urpf",
+  .short_help = "show bpa urpf",
+  .function = bpa_show_urpf_command_fn,
+};
+
 static clib_error_t *
 bpa_show_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			     vlib_cli_command_t *cmd)

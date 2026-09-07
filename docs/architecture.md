@@ -19,6 +19,10 @@ forward**: one inbound port pinned to one of its sockets, on its own public
 address and inside its own block, reserved so the allocator can never hand it
 to anything else.
 
+**uRPF**, off by default, refuses a source that does not route back the way it
+came — the difference between a log that is answerable and one that is
+confidently wrong.
+
 The Python model in `ref/` is the specification; the C implementation is
 checked against it on every build.
 
@@ -369,6 +373,71 @@ counted so an operator can see whether it ever bites.
 Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
 place, because the point of offering the choice is that an operator can make it
 on a box carrying traffic.
+
+## Spoofed sources, and what the record can promise
+
+Every other correctness property here exists to make the log answerable. This
+one protects it from being confidently **wrong**.
+
+A packet arriving on an inside interface with a source address the sender does
+not own is translated like any other, allocated a port out of that address's
+block, and — in deterministic mode — attributed to that subscriber by
+arithmetic for as long as anyone cares to ask. The record is indistinguishable
+from a true one, because nothing in the system knows the difference.
+
+**Unicast RPF** is the check: the source address **MUST** route back the way the
+packet came. It is VPP's own feature, not reimplemented here, enabled per
+interface and **off by default**:
+
+```
+interface ens19
+ urpf strict
+ exit
+```
+
+| Mode | Accepts | Use |
+|---|---|---|
+| `strict` | the source's route points out the interface the packet arrived on | the inside interface of a CGNAT |
+| `loose` | the source has a route anywhere | asymmetric topologies, where strict would drop traffic that is being forwarded correctly |
+| absent (default) | anything | |
+
+Off by default deliberately: turning it on in a topology where return paths are
+asymmetric drops traffic that was working a moment earlier, and it does so
+silently — there is no symptom except that some things stop. That decision
+belongs to whoever knows the topology.
+
+It runs **before** `bpa-in2out` on the `ip4-unicast` arc, so a refused packet
+never reaches the translator: no port is taken from the block it was aimed at,
+and no session exists to be attributed to anyone. Its drops are counted by
+`ip4-rx-urpf-strict`, which is a different counter from
+`bpa-in2out: no pool for source address` — one is an attack or a
+misconfiguration, the other is an address this box does not translate.
+
+### Where it stops, and why that matters
+
+**A subscriber spoofing its neighbour is not caught.** In the ordinary
+topology every subscriber of a pool is reachable out the same inside
+interface, so the FIB answers "yes, that way" for the victim's address exactly
+as it does for the attacker's. Strict uRPF passes it, and the mapping is
+attributed to the neighbour.
+
+That is the boundary of what a **route** check can see, and it is not a gap
+that a better uRPF closes. Catching it needs the address bound to the
+subscriber it was issued to — RADIUS or DHCP correlation
+([#21](https://github.com/andrediashexa/hexarouting/issues/21)) — or the access
+network refusing the spoof before the packet reaches this box, which is where
+it is cheapest to do.
+
+What uRPF does catch is everything from outside the subscriber space injected
+on an inside link, and traffic from one access link claiming addresses that
+belong to another. On a box with more than one inside interface that is most
+of it.
+
+`lab/urpf.sh` measures the harm first, with nothing enabled, and then the
+protection. The limit above is **asserted** rather than described: the lab
+sends a neighbour's address on the right interface and requires it to be
+translated, so the boundary is a test that would fail if someone ever claimed
+otherwise.
 
 ## Static port forwarding
 

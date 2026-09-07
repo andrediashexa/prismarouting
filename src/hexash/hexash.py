@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 
-from config import Config, Pool
+from config import Config, Pool, URPF_MODES
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, redact, snmp_redact,
                     validate_snmp, validate_ssh, SSH_FIELDS)
@@ -117,6 +117,11 @@ SHOW = {
 # the TAP's 9000 and spend an afternoon on an OSPF adjacency stuck in Exchange.
 INTERFACE_BLOCK = {
     "mtu": ("MTU, on both the dataplane interface and its TAP", "<576-9216>"),
+    "urpf": ("drop packets whose source does not route back this way", {
+        "strict": ("the source MUST route back out this interface", None),
+        "loose": ("the source MUST have a route somewhere", None),
+        "off": ("no check (the default)", None),
+    }),
     "exit": ("leave the interface", None),
 }
 
@@ -524,6 +529,7 @@ class Shell:
             for lineno, text, why in cfg.unknown:
                 print(f"    line {lineno}: {text}    ({why})")
         cfg.mtus = self.device_mtus()
+        cfg.urpf = self.device_urpf()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
@@ -531,6 +537,28 @@ class Shell:
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
         return cfg
+
+    def device_urpf(self) -> dict:
+        """
+        Which interfaces have unicast RPF on, and in which mode.
+
+        Read from the dataplane, never remembered: the VTY is a short-lived
+        process and the device is the source of truth. One command rather than
+        "show interface features" per interface, because running_config() is
+        called on every commit and every show.
+
+        Unlike MTU, only the interfaces that HAVE it are reported. Off is the
+        absence of the feature and not a value the device holds, so listing
+        every interface as "off" would put a line in the configuration for
+        something nobody configured.
+        """
+        rc, out = self.dp.run("show bpa urpf")
+        modes = {}
+        for line in (out or "").splitlines():
+            w = line.split()
+            if len(w) == 2 and w[1] in ("strict", "loose"):
+                modes[w[0]] = w[1]
+        return modes
 
     def device_mtus(self) -> dict:
         """
@@ -761,6 +789,32 @@ class Shell:
                          f"mtu {mtu}")
                 return False
             self.set_host_mtu(ifname, mtu)
+        # uRPF before the MTU changes and after the CGNAT ones, which is
+        # arbitrary except in one respect: it MUST be applied before the box
+        # starts carrying the traffic the operator turned it on for, and a
+        # commit is the only moment that is knowable.
+        for ifname, mode in d["urpf_set"].items():
+            self.dp.run(f"set urpf ip4 rx {mode} {ifname}")
+        for ifname in d["urpf_del"]:
+            self.dp.run(f"set urpf ip4 rx off {ifname}")
+        if d["urpf_set"] or d["urpf_del"]:
+            # Read back rather than trust the exit status, for the reason the
+            # MTU path does: vppctl exits 0 having printed a parse error, and
+            # a uRPF that was asked for and never applied is worse than one
+            # that was never asked for - the operator believes the box is
+            # dropping spoofed sources and it is translating them.
+            have = self.device_urpf()
+            for ifname, mode in d["urpf_set"].items():
+                if have.get(ifname) != mode:
+                    self.err(f"interface {ifname}: the dataplane did not take "
+                             f"urpf {mode}")
+                    return False
+            for ifname in d["urpf_del"]:
+                if ifname in have:
+                    self.err(f"interface {ifname}: uRPF is still on after "
+                             "being removed")
+                    return False
+
         for ifname in d["mtu_del"]:
             # No stored default to restore: the driver's own value is whatever
             # the interface reports before we touch it, so removal is reported
@@ -1108,6 +1162,23 @@ class Shell:
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:2] == ["no", "mtu"]):
             self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
+            return True
+
+        # `urpf` is the device's too, for the same reason as `mtu`: the check
+        # has to run on the packet path, and FRR does not own that.
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "urpf"):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 2 or w[1] not in URPF_MODES:
+                self.err("usage: urpf <" + "|".join(URPF_MODES) + ">")
+            elif w[1] == "off":
+                self.candidate.urpf.pop(ifname, None)
+            else:
+                self.candidate.urpf[ifname] = w[1]
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:2] == ["no", "urpf"]):
+            self.candidate.urpf.pop(self.frr_ctx[-1].split()[1], None)
             return True
 
         # anything else is routing: staged in the candidate, applied on commit

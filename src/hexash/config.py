@@ -17,6 +17,12 @@ from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
 
 CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
+
+# Unicast RPF modes, as VPP names them. "off" is accepted in configuration text
+# so that an operator can write the absence explicitly, but it is stored as the
+# absence of an entry: a configuration that lists every default would diff
+# against every device that changes one.
+URPF_MODES = ("strict", "loose", "off")
 ROUTING_HEADER = "! routing"
 CGNAT_HEADER = "! cgnat"
 
@@ -220,6 +226,12 @@ class Config:
         # at all. docs/routing.md records why it must never be inherited - an
         # unaligned MTU stalls OSPF in Exchange with no log saying why.
         self.mtus: dict[str, int] = {}         # name -> MTU
+        # Unicast RPF, per interface: name -> "strict" | "loose". Absent means
+        # off, which is the default and deliberately so - turning it on where
+        # the topology is asymmetric drops traffic that was being forwarded a
+        # moment ago, and it does so silently. docs/architecture.md says what
+        # it protects and, just as important, what it does not.
+        self.urpf: dict[str, str] = {}
         # The box's own configuration: the SSH daemon and the accounts that
         # may log in. Not CGNAT and not routing, but committed and rolled back
         # with both - it used to be the only configuration on the appliance
@@ -241,9 +253,12 @@ class Config:
             out += self.pools[name].lines()
         for ifname in sorted(self.interfaces):
             out.append(f"cgnat interface {ifname} {self.interfaces[ifname]}")
-        for ifname in sorted(self.mtus):
+        for ifname in sorted(set(self.mtus) | set(self.urpf)):
             out.append(f"interface {ifname}")
-            out.append(f" mtu {self.mtus[ifname]}")
+            if ifname in self.mtus:
+                out.append(f" mtu {self.mtus[ifname]}")
+            if ifname in self.urpf:
+                out.append(f" urpf {self.urpf[ifname]}")
             out.append(" exit")
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
@@ -383,9 +398,19 @@ class Config:
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
+                elif w[0] == "urpf" and len(w) > 1:
+                    if w[1] not in URPF_MODES:
+                        cfg.unknown.append(
+                            (lineno, s, f"urpf '{w[1]}': expected one of "
+                                        + ", ".join(URPF_MODES)))
+                    elif w[1] == "off":
+                        cfg.urpf.pop(iface, None)
+                    else:
+                        cfg.urpf[iface] = w[1]
                 else:
                     cfg.unknown.append(
-                        (lineno, s, "an interface understands 'mtu <n>'"))
+                        (lineno, s, "an interface understands 'mtu <n>' and "
+                                    "'urpf <strict|loose|off>'"))
             elif s.startswith("cgnat "):
                 cfg.globals.append(s)
             else:
@@ -559,6 +584,12 @@ class Config:
                   if self.interfaces.get(k) != v}
         if_del = [k for k in self.interfaces if k not in other.interfaces]
         mtu_set = {k: v for k, v in other.mtus.items() if self.mtus.get(k) != v}
+        urpf_set = {k: v for k, v in other.urpf.items()
+                    if self.urpf.get(k) != v}
+        # Removing the statement has to turn uRPF off on the device, not leave
+        # the last committed mode running. A rollback that cannot undo is not a
+        # rollback - the same reason mtu_del exists.
+        urpf_del = [k for k in self.urpf if k not in other.urpf]
         # Removing the statement has to put the interface back to the driver
         # default, not leave the last committed value behind. A rollback that
         # cannot undo is not a rollback.
@@ -590,6 +621,8 @@ class Config:
             "if_remove": if_del,
             "mtu_set": mtu_set,
             "mtu_del": mtu_del,
+            "urpf_set": urpf_set,
+            "urpf_del": urpf_del,
             "globals": [g for g in other.globals if g not in self.globals],
             "routing_changed": self.routing != other.routing,
         }
