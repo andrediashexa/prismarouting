@@ -8,3 +8,10 @@ test/bpa_vectors.h
 hexarouting.iso
 boot-console.log
 install-console.log
+
+# Core dumps. VPP is configured with full-coredump in the labs, so a crash in
+# a probe drops a 60 MB file in the working directory - and one of them got as
+# far as a pushed branch before anybody noticed.
+core
+core.*
+vpp-core*
