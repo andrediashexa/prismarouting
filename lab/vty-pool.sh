@@ -120,6 +120,24 @@ BADF=$($HX -c "configure" -c "cgnat pool fwd" \
 printf '%s\n' "$BADF" | sed 's/^/  /'
 
 echo
+echo "=========== 7. a timeout under the floor its RFC sets ==========="
+echo "accepted, because the operator may have a reason - and never silently."
+FLOOR_SET=$(vppctl bpa timeouts tcp-established 600 2>&1)
+printf '%s\n' "$FLOOR_SET" | sed 's/^/  /'
+FLOOR_SHOW=$(vppctl show bpa timeouts)
+printf '%s\n' "$FLOOR_SHOW" | sed -n '1,6p' | sed 's/^/  /'
+echo "  the value was applied, not refused:"
+vppctl show bpa timeouts | grep tcp-established | head -1 | sed 's/^/    /'
+echo "  and back at the floor there is nothing to say:"
+FLOOR_OK=$(vppctl bpa timeouts tcp-established 7440 2>&1)
+printf '%s\n' "${FLOOR_OK:-  (silence)}" | sed 's/^/  /'
+echo "  through the VTY, where the operator cannot see the dataplane log:"
+VTY_WARN=$($HX -c "configure" -c "cgnat pool lab" -c "timeout udp 30" \
+    -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$VTY_WARN" | sed 's/^/  /'
+LOGGED=$(vppctl show logging 2>/dev/null | grep -c "below the")
+
+echo
 echo "=========== VERDICT ==========="
 expect_in "the dataplane has the pool" "cgnat pool lab" "$CFG"
 expect_in "max-blocks reached the dataplane" "max-blocks 3" "$CFG"
@@ -156,4 +174,18 @@ expect "a forward in another subscriber's block fails the check" \
   test "$BADFRC" -ne 0
 expect_in "and the check names the subscriber it would have taken it from" \
   "10.0.0.61" "$BADF"
+
+# Issue #54. Accepted, and never silently.
+expect_in "a timeout under the floor names the RFC" "RFC 5382" "$FLOOR_SET"
+expect_in "and the floor it is under" "7440" "$FLOOR_SET"
+expect_in "and what breaks below it" "idle but live connection" "$FLOOR_SET"
+expect_in "and says it was applied rather than refused" \
+  "not a refusal" "$FLOOR_SET"
+expect_in "show bpa timeouts marks it" "BELOW the floor" "$FLOOR_SHOW"
+# A warning that always fires is one an operator learns to skip.
+expect_not_in "a value at the floor says nothing" "below the" "$FLOOR_OK"
+expect_in "the VTY relays the warning to whoever committed it" \
+  "BELOW the floor" "$VTY_WARN"
+expect "and the log has it for whoever reads it weeks later" \
+  test "${LOGGED:-0}" -ge 1
 verdict

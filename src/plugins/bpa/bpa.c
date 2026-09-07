@@ -485,6 +485,57 @@ bpa_auto_mss_update (void)
  * expire anything early: both take effect on what happens next, which is what
  * an operator changing a setting on a live box is asking for.
  */
+/*
+ * Says that a timeout is under its floor, to the operator who set it and to
+ * the log.
+ *
+ * Both, because they are not the same person: the one who shortens a timeout
+ * when a pool fills sees the CLI, and the one diagnosing "it disconnects at
+ * random" six weeks later has the log.
+ */
+typedef struct
+{
+  vlib_main_t *vm;
+  u8 *pool;
+} bpa_floor_ctx_t;
+
+static void
+bpa_floor_warn (void *ctxp, const char *name, u32 value, u32 floor,
+		const char *rfc, const char *breaks)
+{
+  bpa_floor_ctx_t *ctx = ctxp;
+  u8 *where = ctx->pool ? format (0, " on pool %v", ctx->pool) : 0;
+
+  if (ctx->vm)
+    {
+      vlib_cli_output (ctx->vm,
+		       "warning: %s %u%v is below the %u seconds %s asks for",
+		       name, value, where, floor, rfc);
+      vlib_cli_output (ctx->vm, "         under it, expect %s", breaks);
+      vlib_cli_output (ctx->vm,
+		       "         the value is applied; this is a warning, "
+		       "not a refusal");
+    }
+  vlib_log_warn (bpa_main.log_class,
+		 "timeout %s set to %u%v, below the %u seconds %s asks for: "
+		 "expect %s",
+		 name, value, where, floor, rfc, breaks);
+  vec_free (where);
+}
+
+/*
+ * One entry point for "this timeout is under its floor", so the CLI, the API
+ * and the pool creation path cannot warn differently - or one of them forget.
+ * `vm` may be null, and then only the log hears about it.
+ */
+void
+bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
+{
+  bpa_floor_ctx_t ctx = { .vm = vm, .pool = pool };
+
+  bpa_timeouts_check (t, bpa_floor_warn, &ctx);
+}
+
 clib_error_t *
 bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 		       u32 alg_set, u16 tcp_mss, u8 tcp_mss_auto,
@@ -516,6 +567,11 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
   p->tcp_mss_auto = tcp_mss_auto;
   p->timeouts = *timeouts;
   vlib_worker_thread_barrier_release (bm->vlib_main);
+
+  /* The VTY changes per-pool timeouts here, so this is where that change is
+   * warned about. No vlib_main_t: the operator is at the other end of an API
+   * call, and hexash relays it from "show bpa timeouts". */
+  bpa_timeouts_warn (0, timeouts, p->name);
 
   bpa_audit ("settings", p, 0);
   return 0;

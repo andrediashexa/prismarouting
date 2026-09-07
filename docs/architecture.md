@@ -495,6 +495,42 @@ anyway; enhanced GRE for PPTP is handled — a subscriber whose PPTP server sits
 on a bypassed destination has a control channel that was never translated, so
 the data channel is bypassed rather than dropped as a call that went missing.
 
+## Timeouts, and the floors the RFCs set
+
+Shortening a timeout is the first thing anybody reaches for when a pool fills,
+and it works: ports recycle faster and more subscribers fit on one public
+address. What it also does is cut connections that are **idle rather than
+finished** — an SSH session left open over lunch, a database pool, a sensor
+that speaks once an hour — and those come back weeks later as *"it disconnects
+at random"*, which nobody attributes to a number changed in another month.
+
+| Timeout | Floor | Reference | What goes wrong below it |
+|---|---|---|---|
+| `udp` | 120 s | RFC 4787 REQ-5 | a mapping closing while an application still believes it is there |
+| `icmp` | 60 s | RFC 5508 REQ-2 | an echo reply arriving after its mapping closed — reads as packet loss on every path test |
+| `tcp-transitory` | 240 s | RFC 5382 REQ-5 | a half-closed connection dropped before its peer finishes closing it |
+| `tcp-established` | 7440 s | RFC 5382 REQ-5 | an idle but live connection cut |
+
+These are **SHOULD**s, and this box treats them as such: a value below a floor
+is **accepted**. An operator may have a reason, and one that refuses is less
+useful than the box they are replacing. What it will not do is accept one
+silently.
+
+The warning names the RFC, the floor and what breaks, and it goes to **both**
+the operator who set it and the log — because the person who shortens a timeout
+when a pool fills and the person diagnosing the random disconnections six weeks
+later are not the same person. It fires **once per change**, never per packet
+or per session.
+
+`show bpa timeouts` marks every value under its floor, globally and per pool
+with the overrides resolved, so the state is visible to somebody who did not
+know to ask. And a value **at** the floor says nothing at all: a warning that
+always fires is one an operator learns to skip.
+
+The floors, their references and their consequences are one list in
+`bpa_pool.h`, so the command that sets a timeout, the warning it prints and
+`show bpa timeouts` cannot disagree about what the floor is or why it exists.
+
 ## Per-subscriber bounds
 
 One infected host opens thousands of sessions and exhausts **its own** block.

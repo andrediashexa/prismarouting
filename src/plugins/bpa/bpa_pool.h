@@ -88,6 +88,68 @@ typedef struct
 } bpa_timeouts_t;
 
 /*
+ * The floors the RFCs set, and what going under each one costs.
+ *
+ * They are SHOULDs, not MUSTs, and this box treats them that way: a value
+ * below a floor is ACCEPTED, because an operator may have a reason and a box
+ * that refuses is less useful than the one they are replacing. What it will
+ * not do is accept one silently.
+ *
+ * Shortening a timeout is the first thing anybody reaches for when a pool
+ * fills, and it works - ports recycle faster and more subscribers fit on one
+ * public address. What it also does is cut connections that are idle rather
+ * than finished, and those come back weeks later as "it disconnects at
+ * random", which nobody attributes to a number changed in another month.
+ *
+ * One list, so the command that sets a timeout, the warning it prints and
+ * "show bpa timeouts" cannot disagree about what the floor is or why.
+ *
+ * _ (field, name, floor seconds, reference, what breaks under it)
+ */
+#define foreach_bpa_timeout_floor                                             \
+  _ (udp, "udp", 120, "RFC 4787 REQ-5",                                       \
+     "a UDP mapping closing while an application still believes it is "       \
+     "there - DNS retries, SIP registrations, games reconnecting")            \
+  _ (icmp, "icmp", 60, "RFC 5508 REQ-2",                                      \
+     "an echo reply arriving after its mapping closed, which reads as "       \
+     "packet loss on every path test through this box")                       \
+  _ (tcp_trans, "tcp-transitory", 240, "RFC 5382 REQ-5",                      \
+     "a half-closed connection dropped before its peer finishes closing it")  \
+  _ (tcp_estab, "tcp-established", 7440, "RFC 5382 REQ-5",                    \
+     "an idle but live connection cut - an SSH session left open over "       \
+     "lunch, a database pool, a sensor that speaks once an hour")
+
+/*
+ * Reports every value below its floor, once per breach.
+ *
+ * Called where a timeout is CHANGED, never on the datapath: a warning per
+ * packet is a warning nobody reads and a log nobody can keep.
+ */
+typedef void (*bpa_floor_report_t) (void *ctx, const char *name, u32 value,
+				    u32 floor, const char *rfc,
+				    const char *breaks);
+
+static_always_inline u32
+bpa_timeouts_check (const bpa_timeouts_t *t, bpa_floor_report_t cb, void *ctx)
+{
+  u32 n = 0;
+
+  /* Zero means "inherit the global", not "zero seconds", so it is not a
+   * breach: the value that will actually be used was checked where the global
+   * was set. */
+#define _(field, name, floor, rfc, breaks)                                    \
+  if (t->field != 0 && t->field < (floor))                                    \
+    {                                                                         \
+      n++;                                                                    \
+      if (cb)                                                                 \
+	cb (ctx, name, t->field, (floor), rfc, breaks);                       \
+    }
+  foreach_bpa_timeout_floor
+#undef _
+  return n;
+}
+
+/*
  * A pool may override any of these; zero means "inherit the global value".
  * Resolved off the fast path - the datapath only stamps last_heard, and the
  * expiry walk is the single caller that needs a number.

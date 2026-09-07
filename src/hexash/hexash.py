@@ -921,6 +921,19 @@ class Shell:
         # routing: an SSH change costs the operator their session if it is
         # wrong, and doing it while the CGNAT half is half-applied would leave
         # nobody able to finish the job.
+        # A timeout under the floor its RFC sets is applied and warned
+        # about, and the warning has to reach the person who set it - who is
+        # at the far end of an API call and sees none of the dataplane's log.
+        # Read back from the device rather than recomputed here: the floors
+        # and the reasons live in one place, and a second copy in Python would
+        # be a second thing to keep in step.
+        if d["settings_set"] or any(p.timeouts for p in d["pool_add"]
+                                    + d["pool_replace"]) or d["globals"]:
+            rc, out = self.dp.run("show bpa timeouts")
+            for line in (out or "").splitlines():
+                if "BELOW" in line:
+                    print(f"warning:{line.rstrip()}")
+
         if d["ssh_changed"]:
             ok, msg = self.sys.write_ssh(target.ssh)
             if not ok:

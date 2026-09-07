@@ -115,6 +115,12 @@ clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 void bpa_outside_window_update (void);
 void bpa_auto_mss_update (void);
+/*
+ * Warns about every timeout below the floor its RFC sets. `vm` may be null,
+ * and then only the log hears it. Called where a timeout CHANGES, never on the
+ * datapath.
+ */
+void bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool);
 
 format_function_t format_bpa_pool;
 format_function_t format_bpa_policy;

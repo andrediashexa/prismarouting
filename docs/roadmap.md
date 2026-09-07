@@ -327,7 +327,7 @@ schedule is the one produced after the work.
 |---|---|
 | [#69](https://github.com/andrediashexa/hexarouting/issues/69) in-place per-pool settings through the VTY — *delivered, v0.14.0* | Every setting added **after** this inherits the right behaviour for nothing. Turning on a mitigation during an incident no longer tears down the pool. |
 | [#35](https://github.com/andrediashexa/hexarouting/issues/35) roles in the VTY — *delivered, v0.15.0* | Read-only, CGNAT operator and administrator, mapped onto system groups and checked where the change is applied. The boundary it does **not** draw — every role still needs the VPP CLI socket, which is total control — is [#76](https://github.com/andrediashexa/hexarouting/issues/76). |
-| [#54](https://github.com/andrediashexa/hexarouting/issues/54) warn below the RFC 5382 floors | Small and isolated, and it is the first setting an operator reaches for when a pool fills. It trades one failure for another without saying which. |
+| [#54](https://github.com/andrediashexa/hexarouting/issues/54) warn below the RFC floors — *delivered, v0.16.0* | Accepted and never silent: the warning names the RFC, the floor and what breaks, reaches the operator and the log, and `show bpa timeouts` marks the state for somebody who did not know to ask. |
 | [#76](https://github.com/andrediashexa/hexarouting/issues/76) the VTY off the VPP CLI socket | Roles bound what the VTY will do, not what an account can reach. Also carries the appliance plumbing a non-root operator needs. |
 
 #### Phase 2 — finish protection and control
