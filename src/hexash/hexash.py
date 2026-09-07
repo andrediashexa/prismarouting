@@ -637,7 +637,7 @@ class Shell:
         # to know which pools made it.
         if (d["pool_add"] or d["pool_replace"] or d["pool_remove"]
                 or d["fwd_add"] or d["fwd_del"] or d["limits_set"]
-                or d["bypass_set"]):
+                or d["bypass_set"] or d["settings_set"]):
             state, msg = self.api.available()
             if state != vppapi.OK:
                 self.err(f"cannot reach the dataplane: {msg}")
@@ -723,6 +723,17 @@ class Shell:
                 # which one the dataplane refused. "commit failed" sends the
                 # operator to read the whole candidate.
                 self.err(f"pool '{pool.name}': {r.reason}")
+                return False
+
+        # The settings the dataplane can change in place, before the lists
+        # and the bounds: they are the ones an operator changes while looking
+        # at a live problem, and a commit that applied them last would leave
+        # them behind whatever else in the same commit failed.
+        for name, pool in d["settings_set"].items():
+            r = self.api_call("bpa_pool_settings_set",
+                              pool.settings_api_args())
+            if not r.ok:
+                self.err(f"pool '{name}': settings: {r.reason}")
                 return False
 
         # The bypass lists first: they only ever let traffic past

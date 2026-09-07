@@ -325,7 +325,7 @@ schedule is the one produced after the work.
 
 | Issue | Why it goes first |
 |---|---|
-| [#69](https://github.com/andrediashexa/hexarouting/issues/69) in-place per-pool settings through the VTY | Every setting added **after** this inherits the right behaviour for nothing; every one added before needs retrofitting. Five already have the defect. Today, turning on a mitigation during an incident tears down the pool. |
+| [#69](https://github.com/andrediashexa/hexarouting/issues/69) in-place per-pool settings through the VTY — *delivered, v0.14.0* | Every setting added **after** this inherits the right behaviour for nothing. Turning on a mitigation during an incident no longer tears down the pool. |
 | [#35](https://github.com/andrediashexa/hexarouting/issues/35) roles in the VTY | Not hardening. **Anyone in the `vpp` group can delete a pool today** — disconnecting every subscriber behind it — or change a block size, which re-maps everyone at once. That is open now. |
 | [#54](https://github.com/andrediashexa/hexarouting/issues/54) warn below the RFC 5382 floors | Small and isolated, and it is the first setting an operator reaches for when a pool fills. It trades one failure for another without saying which. |
 

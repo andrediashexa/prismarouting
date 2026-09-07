@@ -470,6 +470,57 @@ bpa_auto_mss_update (void)
  *
  * An empty list is how a bypass is removed.
  */
+/*
+ * Every per-pool setting that can be changed without recreating the pool.
+ *
+ * One entry point rather than five, because the list of settings that are safe
+ * to change in place is a fact about the pool and belongs in one place. The
+ * ones NOT here are the ones that change the mapping - the prefixes, the block
+ * size, the port range, the policy and the mode - and those still require the
+ * pool to be rebuilt, because every session on it is invalid the moment they
+ * change.
+ *
+ * Sessions already open keep whatever was done to them. Turning an ALG off
+ * does not close the mappings it opened, and shortening a timeout does not
+ * expire anything early: both take effect on what happens next, which is what
+ * an operator changing a setting on a live box is asking for.
+ */
+clib_error_t *
+bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
+		       u32 alg_set, u16 tcp_mss, u8 tcp_mss_auto,
+		       const bpa_timeouts_t *timeouts)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  uword *q;
+
+  q = hash_get_mem (bm->pool_by_name, name);
+  if (!q)
+    return clib_error_return (0, "no such pool '%v'", name);
+
+  if (tcp_mss && (tcp_mss < BPA_MSS_MIN || tcp_mss > BPA_MSS_MAX))
+    return clib_error_return (
+      0, "tcp-mss %u is outside %u-%u", tcp_mss, BPA_MSS_MIN, BPA_MSS_MAX);
+
+  p = pool_elt_at_index (bm->pools, q[0]);
+
+  /* Under the barrier: the datapath reads the filtering mode, the ALG mask and
+   * the clamp on the packet path, and a half-applied set of them is a pool
+   * behaving as neither the old configuration nor the new one. */
+  vlib_worker_thread_barrier_sync (bm->vlib_main);
+  p->filter = filter;
+  p->max_blocks = max_blocks ? max_blocks : 1;
+  p->alg = alg;
+  p->alg_set = alg_set;
+  p->tcp_mss = tcp_mss;
+  p->tcp_mss_auto = tcp_mss_auto;
+  p->timeouts = *timeouts;
+  vlib_worker_thread_barrier_release (bm->vlib_main);
+
+  bpa_audit ("settings", p, 0);
+  return 0;
+}
+
 clib_error_t *
 bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
 		u32 n)
@@ -644,10 +695,39 @@ bpa_pool_del (u8 *name)
   p = pool_elt_at_index (bm->pools, q[0]);
   bpa_audit ("del", p, 0);
   {
+    f64 now = vlib_time_now (bm->vlib_main);
     u32 i;
+
     for (i = 0; i < vec_len (bm->per_thread); i++)
       {
 	bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+
+	/*
+	 * Every session this pool owned, freed with it.
+	 *
+	 * Left behind, they outlive the definition that produced them: VPP
+	 * reuses the pool index, so a pool created afterwards inherits
+	 * sessions carrying the OLD arithmetic - a subscriber still
+	 * translated onto a public port that the new mapping assigns to
+	 * somebody else, with nothing anywhere saying so. Redefining a pool
+	 * is meant to invalidate its sessions; until this loop existed, it
+	 * only invalidated the reasoning about them.
+	 *
+	 * Indices are collected before anything is freed: bpa_session_free()
+	 * also reclaims the subscriber record, and mutating a pool while
+	 * iterating it is how a walk starts reading freed memory.
+	 */
+	u32 *doomed = 0, *ix;
+	bpa_session_t *s;
+
+	pool_foreach (s, pt->sessions)
+	  if (s->pool_index == q[0])
+	    vec_add1 (doomed, s - pt->sessions);
+
+	vec_foreach (ix, doomed)
+	  bpa_session_free (pt, pool_elt_at_index (pt->sessions, *ix), now);
+	vec_free (doomed);
+
 	if (q[0] < vec_len (pt->dyn))
 	  bpa_dyn_free (vec_elt_at_index (pt->dyn, q[0]));
       }

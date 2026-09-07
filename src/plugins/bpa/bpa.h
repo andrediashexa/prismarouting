@@ -97,6 +97,15 @@ clib_error_t *bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add,
  */
 clib_error_t *bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate);
 /*
+ * The per-pool settings that can change without recreating the pool: the
+ * filtering mode, the block cap, the ALG switches, the MSS clamp and the
+ * lifetimes. Everything that changes the MAPPING is deliberately absent.
+ */
+clib_error_t *bpa_pool_settings_set (u8 *name, bpa_filter_t filter,
+				     u8 max_blocks, u32 alg, u32 alg_set,
+				     u16 tcp_mss, u8 tcp_mss_auto,
+				     const bpa_timeouts_t *timeouts);
+/*
  * Replaces one of a pool's bypass lists, entire. An empty list removes the
  * bypass; see the definition for why it is not per prefix.
  */

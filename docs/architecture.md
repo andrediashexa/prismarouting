@@ -385,6 +385,50 @@ Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
 place, because the point of offering the choice is that an operator can make it
 on a box carrying traffic.
 
+## What can change without rebuilding the pool
+
+A pool has two kinds of setting, and the difference is not cosmetic.
+
+**The mapping** — the inside and outside prefixes, the block size, the port
+range, the policy and the mode. Change any of these and every session on the
+pool is invalid at that instant: the arithmetic that produced its public
+address and port no longer produces the same answer. So the pool is deleted and
+built again, and its sessions go with it. `bpa_pool_del()` frees them
+explicitly; left behind, they would outlive the definition that produced them,
+and since VPP reuses the pool index a pool created afterwards would inherit
+sessions carrying the **old** arithmetic — a subscriber still translated onto a
+public port the new mapping assigns to somebody else.
+
+**Everything else** — the filtering mode, the ALG switches, `max-blocks`, the
+per-pool timeouts, the MSS clamp, the per-subscriber bounds, the static
+forwards and the bypass lists. None of these change what a port means, so none
+of them needs the pool rebuilt, and rebuilding it to apply one would disconnect
+every subscriber on it.
+
+That distinction lives in one place: `bpa_pool_settings_set()` takes exactly
+the settings that are safe to change in place, under a single worker barrier,
+and the VTY sends them as one message. What is absent from that function is
+absent on purpose.
+
+### Why it matters more than it sounds
+
+The settings in the second list are the ones an operator changes **during an
+incident**: an ALG that is mangling a customer's transfer, a clamp turned on
+because some sites do not load, a cap on a subscriber that is scanning. Every
+one of those is a change made with somebody on the phone, and a change that
+disconnects the pool to take effect is a change nobody can afford to make.
+
+Sessions already open keep what was done to them. Turning an ALG off does not
+close the mappings it opened, and shortening a timeout does not expire anything
+early: the change applies to what happens next, which is what an operator
+asking for it means.
+
+`lab/in-place.sh` measures both directions on a pool carrying traffic — five
+settings changed in one commit with every session kept, and then a block-size
+change with the sessions dropped and the pool rebuilt. The second half is what
+makes the first mean anything: without it, "kept every session" would also pass
+on a box that never drops a session for any reason.
+
 ## Traffic that is not translated
 
 Some destinations have to see the real source address: the operator's own
