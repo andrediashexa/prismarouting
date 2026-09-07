@@ -154,7 +154,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_new = 0;
+  u32 n_translated = 0, n_new = 0, n_forwarded = 0;
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
   u32 n_rtsp = 0;
@@ -270,8 +270,32 @@ VLIB_NODE_FN (bpa_in2out_node)
 				 pool_index);
 	}
 
-      s = bpa_session_create (pt, p, pool_index, &blk, port_priv, (u8) proto,
-			      now);
+      /*
+       * A configured forward on this subscriber's own socket.
+       *
+       * Consulted before the allocator, not after it. The forwarded public
+       * port is reserved and the allocator would hand out a different one,
+       * and then the subscriber's outbound traffic would leave on one port
+       * while the operator's forward pointed at another - one socket with two
+       * public ports, which is also what endpoint-independent mapping forbids
+       * (RFC 4787 REQ-1).
+       */
+      if (PREDICT_FALSE (vec_len (p->statics) != 0))
+	{
+	  const bpa_static_t *sf =
+	    bpa_static_by_priv (p, &blk, src_host, port_priv, (u8) proto);
+
+	  if (sf)
+	    {
+	      s = bpa_session_static_open (pt, p, pool_index, sf, now);
+	      if (s)
+		n_forwarded++;
+	    }
+	}
+
+      if (PREDICT_TRUE (s == 0))
+	s = bpa_session_create (pt, p, pool_index, &blk, port_priv,
+				(u8) proto, now);
 
       /*
        * Every block this subscriber holds is full. Give it another, if the
@@ -555,6 +579,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_TRANSLATED, n_translated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_FORWARDED, n_forwarded);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_HAIRPINNED, n_hairpin);
   vlib_node_increment_counter (vm, node->node_index,

@@ -129,6 +129,39 @@ done:
 }
 
 static void
+vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
+{
+  vl_api_bpa_forward_add_del_reply_t *rmp;
+  bpa_static_t sf = { 0 };
+  ip4_address_t priv;
+  clib_error_t *e;
+  u8 *name;
+  int rv = 0;
+
+  name = format (0, "%s", mp->name);
+  ip4_address_decode (mp->ip_priv, &priv);
+
+  sf.proto = (mp->proto == BPA_API_FWD_UDP) ? BPA_PROTO_UDP : BPA_PROTO_TCP;
+  sf.ip_priv = clib_net_to_host_u32 (priv.as_u32);
+  sf.port_pub = clib_net_to_host_u16 (mp->port_pub);
+  sf.port_priv = clib_net_to_host_u16 (mp->port_priv);
+
+  /* Removing is identified by the public port and the protocol alone; the
+   * private fields above are ignored on that path. */
+  e = bpa_static_add_del (name, &sf, mp->is_add, 0);
+  if (e)
+    {
+      /* The detailed message goes to the log; the client gets a code. */
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+
+  vec_free (name);
+  REPLY_MACRO (VL_API_BPA_FORWARD_ADD_DEL_REPLY);
+}
+
+static void
 vl_api_bpa_interface_add_del_feature_t_handler (
   vl_api_bpa_interface_add_del_feature_t *mp)
 {

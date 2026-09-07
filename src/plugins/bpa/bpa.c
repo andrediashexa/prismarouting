@@ -65,6 +65,259 @@ bpa_check_local_overlap (const bpa_addr_set_t *outside, u8 *name)
 }
 
 /*
+ * Where a forward is refused, and why each refusal exists.
+ *
+ * `sf` is completed rather than only checked: ip_pub and port_off are derived
+ * from the pool arithmetic, and deriving them here means the one place that
+ * decides a forward is legal is also the one place that says what it means.
+ *
+ * `p` MUST already be through bpa_pool_init(): every test below reads a
+ * derived field.
+ */
+static clib_error_t *
+bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
+{
+  ip4_address_t priv, pub;
+  bpa_block_t blk;
+  u32 other = 0;
+
+  priv.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
+
+  /*
+   * Deterministic only, and not from lack of effort.
+   *
+   * In dynamic mode a block belongs to whoever currently holds it, and it is
+   * released when that subscriber goes idle. A port pinned inside one would
+   * follow the block to the next subscriber - the forward would keep working
+   * and start reaching a different customer, which is worse than not working.
+   * Pinning the block itself is a feature of its own, not a detail of this
+   * one.
+   */
+  if (p->mode != BPA_MODE_DETERMINISTIC)
+    return clib_error_return (
+      0,
+      "pool '%v' is in dynamic mode: a forwarded port would follow the block "
+      "to whichever subscriber holds it next, so forwards are accepted only "
+      "on a deterministic pool",
+      p->name);
+
+  if (sf->proto != BPA_PROTO_TCP && sf->proto != BPA_PROTO_UDP)
+    return clib_error_return (0, "only tcp and udp can be forwarded");
+
+  if (sf->port_pub == 0 || sf->port_priv == 0)
+    return clib_error_return (0, "port 0 is not a port");
+
+  if (sf->port_pub < p->port_min || sf->port_pub > p->port_max)
+    return clib_error_return (
+      0, "public port %u is outside pool '%v', which translates %u-%u",
+      sf->port_pub, p->name, p->port_min, p->port_max);
+
+  if (bpa_forward (p, sf->ip_priv, &blk))
+    return clib_error_return (
+      0, "%U is not a subscriber of pool '%v', or is beyond its capacity of "
+	 "%u",
+      format_ip4_address, &priv, p->name, p->capacity);
+
+  /*
+   * The port has to be in this subscriber's own block.
+   *
+   * Anywhere else it is somebody's - the formula assigns every block to some
+   * subscriber - and taking it would translate that customer onto a port this
+   * box is also sending elsewhere. Naming who holds it turns "refused" into
+   * something the operator can act on.
+   */
+  if (sf->port_pub < blk.port_lo || sf->port_pub > blk.port_hi)
+    {
+      pub.as_u32 = clib_host_to_net_u32 (blk.ip_pub);
+      if (bpa_reverse (p, blk.ip_pub, sf->port_pub, &other) == 0)
+	{
+	  ip4_address_t o;
+
+	  o.as_u32 = clib_host_to_net_u32 (other);
+	  return clib_error_return (
+	    0,
+	    "public port %u belongs to %U's block, not to %U's. %U holds "
+	    "%U:%u-%u",
+	    sf->port_pub, format_ip4_address, &o, format_ip4_address, &priv,
+	    format_ip4_address, &priv, format_ip4_address, &pub, blk.port_lo,
+	    blk.port_hi);
+	}
+      return clib_error_return (
+	0, "public port %u is not in %U's block, which is %U:%u-%u",
+	sf->port_pub, format_ip4_address, &priv, format_ip4_address, &pub,
+	blk.port_lo, blk.port_hi);
+    }
+
+  sf->ip_pub = blk.ip_pub;
+  sf->port_off = (u16) (sf->port_pub - blk.port_lo);
+  return 0;
+}
+
+/* Where a forward belongs in a vector ordered by (public port, protocol). */
+static u32
+bpa_static_position (const bpa_pool_t *p, const bpa_static_t *sf)
+{
+  u32 n = vec_len (p->statics);
+  u32 i = bpa_static_lower (p->statics, n, sf->port_pub);
+
+  while (i < n && p->statics[i].port_pub == sf->port_pub
+	 && p->statics[i].proto < sf->proto)
+    i++;
+  return i;
+}
+
+/*
+ * Two forwards that cannot both hold.
+ *
+ * One public port serves one socket, and one subscriber socket answers on one
+ * public port - the second is endpoint-independent mapping (RFC 4787 REQ-1),
+ * which the rest of this box already guarantees and a second forward on the
+ * same socket would quietly break.
+ */
+static clib_error_t *
+bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
+{
+  ip4_address_t a;
+  u32 i;
+
+  vec_foreach_index (i, p->statics)
+    {
+      const bpa_static_t *o = &p->statics[i];
+
+      if (o->proto != sf->proto)
+	continue;
+      if (o->port_pub == sf->port_pub)
+	{
+	  a.as_u32 = clib_host_to_net_u32 (o->ip_priv);
+	  return clib_error_return (
+	    0, "public port %u is already forwarded to %U:%u", sf->port_pub,
+	    format_ip4_address, &a, o->port_priv);
+	}
+      if (o->ip_priv == sf->ip_priv && o->port_priv == sf->port_priv)
+	{
+	  a.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
+	  return clib_error_return (
+	    0, "%U:%u is already forwarded from public port %u",
+	    format_ip4_address, &a, sf->port_priv, o->port_pub);
+	}
+    }
+  return 0;
+}
+
+/*
+ * Validates the forwards a candidate pool carries, against that pool.
+ *
+ * Runs on a copy that has been through bpa_pool_init(), so a forward is judged
+ * by the block sizing and address sets the operator is about to commit, not by
+ * the ones currently running.
+ */
+static clib_error_t *
+bpa_statics_validate (bpa_pool_t *p, bpa_static_t *in)
+{
+  bpa_static_t *seen = 0;
+  clib_error_t *e = 0;
+  u32 i;
+
+  vec_foreach_index (i, in)
+    {
+      bpa_static_t sf = in[i];
+
+      p->statics = seen;
+      e = bpa_static_validate (p, &sf);
+      if (!e)
+	e = bpa_static_conflict (p, &sf);
+      if (e)
+	break;
+      /*
+       * Written back, because bpa_static_validate() COMPLETES a forward as
+       * well as checking it: ip_pub and port_off are derived here and nowhere
+       * else. Validating a copy and storing the original left every forward
+       * given on a "bpa pool" line with a zero public address, which reserves
+       * nothing and translates nothing - a forward the configuration shows
+       * and the dataplane does not have.
+       */
+      in[i] = sf;
+      vec_add1 (seen, sf);
+    }
+
+  p->statics = 0;
+  vec_free (seen);
+  return e;
+}
+
+/*
+ * Adds or removes one static port forward on a running pool.
+ *
+ * `is_check` validates and changes nothing, which is what a commit check
+ * needs: a forward is refused for reasons - the port is in another
+ * subscriber's block, the address is not in the pool - that an operator must
+ * be told before the commit rather than after it.
+ */
+clib_error_t *
+bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  clib_error_t *e;
+  uword *q;
+  u32 i, pool_index;
+
+  q = hash_get_mem (bm->pool_by_name, name);
+  if (!q)
+    return clib_error_return (0, "no such pool '%v'", name);
+
+  pool_index = q[0];
+  p = pool_elt_at_index (bm->pools, pool_index);
+
+  /*
+   * Removing is identified by the public port and the protocol, and nothing
+   * else: that pair is what a forward IS. The private side is not asked for -
+   * an operator removing a forward should not have to remember which port it
+   * pointed at - so this runs before the validation below, which is about
+   * whether a forward may be created.
+   */
+  if (!is_add)
+    {
+      const bpa_static_t *have = bpa_static_by_pub (p, sf->port_pub, sf->proto);
+      bpa_static_t gone;
+
+      if (!have)
+	return clib_error_return (0, "%U port %u is not forwarded",
+				  format_bpa_proto, sf->proto, sf->port_pub);
+      if (is_check)
+	return 0;
+
+      gone = *have;
+      i = have - p->statics;
+      /* Workers read p->statics on the datapath; mutate it under the
+       * barrier, and do the session surgery inside the same one. */
+      vlib_worker_thread_barrier_sync (bm->vlib_main);
+      bpa_static_uninstall (pool_index, &gone);
+      vec_delete (p->statics, 1, i);
+      vlib_worker_thread_barrier_release (bm->vlib_main);
+      bpa_audit ("forward-del", p, 0);
+      return 0;
+    }
+
+  e = bpa_static_validate (p, sf);
+  if (e)
+    return e;
+
+  e = bpa_static_conflict (p, sf);
+  if (e || is_check)
+    return e;
+
+  i = bpa_static_position (p, sf);
+  vlib_worker_thread_barrier_sync (bm->vlib_main);
+  vec_insert_elts (p->statics, sf, 1, i);
+  bpa_static_install (pool_index, &p->statics[i]);
+  vlib_worker_thread_barrier_release (bm->vlib_main);
+
+  bpa_audit ("forward-add", p, 0);
+  return 0;
+}
+
+/*
  * Every check bpa_pool_add() performs, without creating anything.
  *
  * Exists so a configuration can be validated before it is applied. Without
@@ -90,7 +343,17 @@ bpa_pool_validate (bpa_pool_t *cfg)
 
   /* run the derived-value computation on a copy, so nothing is retained */
   probe = *cfg;
-  return bpa_pool_init (&probe);
+  probe.statics = 0;
+  e = bpa_pool_init (&probe);
+  if (e)
+    return e;
+
+  /*
+   * The forwards last, because every reason to refuse one is a fact about the
+   * pool that only exists after bpa_pool_init() has computed it: the block a
+   * subscriber holds, the pool's capacity, the port range.
+   */
+  return bpa_statics_validate (&probe, cfg->statics);
 }
 
 /*
@@ -163,7 +426,19 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
       return e;
     }
 
+  /* Validated against the pool as initialised, then owned by it. A pool
+   * created with a forward it would refuse is a pool whose configuration and
+   * behaviour disagree from the first packet. */
+  e = bpa_statics_validate (p, cfg->statics);
+  if (e)
+    {
+      pool_put (bm->pools, p);
+      vlib_worker_thread_barrier_release (bm->vlib_main);
+      return e;
+    }
+
   p->name = vec_dup (cfg->name);
+  p->statics = vec_dup (cfg->statics);
   hash_set_mem (bm->pool_by_name, p->name, p - bm->pools);
   bpa_outside_window_update ();
 
@@ -187,6 +462,7 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 	    {
 	      hash_unset_mem (bm->pool_by_name, p->name);
 	      vec_free (p->name);
+	      vec_free (p->statics);
 	      pool_put (bm->pools, p);
 	      vlib_worker_thread_barrier_release (bm->vlib_main);
 	      return e;
@@ -229,6 +505,7 @@ bpa_pool_del (u8 *name)
   }
   hash_unset_mem (bm->pool_by_name, p->name);
   vec_free (p->name);
+  vec_free (p->statics);
   pool_put (bm->pools, p);
   bpa_outside_window_update ();
 

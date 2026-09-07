@@ -147,6 +147,35 @@ bpa_portmap_alloc_pair (bpa_portmap_t *pm, u32 parity)
   return -1;
 }
 
+/*
+ * Take one specific offset, or say it was already taken.
+ *
+ * Not bpa_portmap_alloc(pm, off): that one treats the offset as a PREFERENCE
+ * and hands out a different port when it is busy, which is right for port
+ * preservation and wrong for a static forward - a forward that lands on
+ * another port is not a forward. Idempotent, because the same public port may
+ * be forwarded for TCP and for UDP and the bitmap has no protocol dimension.
+ *
+ * Returns 0 when it took the offset, 1 when it was already taken, -1 when it
+ * is not in the block.
+ */
+static_always_inline int
+bpa_portmap_reserve (bpa_portmap_t *pm, u16 off)
+{
+  u64 mask;
+
+  if (PREDICT_FALSE (off >= pm->n_ports))
+    return -1;
+
+  mask = 1ull << (off & 63);
+  if (pm->bits[off >> 6] & mask)
+    return 1;
+
+  pm->bits[off >> 6] |= mask;
+  pm->n_free--;
+  return 0;
+}
+
 static_always_inline void
 bpa_portmap_free (bpa_portmap_t *pm, u16 off)
 {

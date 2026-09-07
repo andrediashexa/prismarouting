@@ -18,6 +18,7 @@
 #define foreach_bpa_in2out_error \
   _ (TRANSLATED, 0, "packets translated") \
   _ (SESSION_NEW, 0, "sessions created") \
+  _ (FORWARDED, 0, "sessions opened from a static port forward") \
   _ (NO_POOL, 1, "no pool for source address") \
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OVER_CAPACITY, 1, "subscriber beyond pool capacity") \
@@ -46,6 +47,7 @@
   _ (TRANSLATED, 0, "packets translated") \
   _ (NOT_OURS, 0, "destination outside public pools") \
   _ (NO_SESSION, 1, "no session for destination") \
+  _ (FORWARDED, 0, "sessions opened from a static port forward") \
   _ (FILTERED, 1, "dropped by address-dependent filtering") \
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OUT_OF_BLOCK, 1, "port outside every block") \

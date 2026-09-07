@@ -119,6 +119,32 @@ format_bpa_pool (u8 *s, va_list *args)
   return s;
 }
 
+/*
+ * One "forward" clause of a pool definition.
+ *
+ * Only the range checks unformat cannot make. Everything else a forward can be
+ * refused for - the subscriber, the block, a collision with another forward -
+ * needs the pool's derived values and is checked by bpa_pool_validate() once
+ * the whole definition has been read.
+ */
+static clib_error_t *
+bpa_static_clause (bpa_pool_t *cfg, u8 proto, u32 port_pub,
+		   const ip4_address_t *priv, u32 port_priv)
+{
+  bpa_static_t sf = { 0 };
+
+  if (port_pub == 0 || port_pub > 65535 || port_priv == 0
+      || port_priv > 65535)
+    return clib_error_return (0, "forward: port out of range");
+
+  sf.proto = proto;
+  sf.ip_priv = clib_net_to_host_u32 (priv->as_u32);
+  sf.port_pub = (u16) port_pub;
+  sf.port_priv = (u16) port_priv;
+  vec_add1 (cfg->statics, sf);
+  return 0;
+}
+
 static clib_error_t *
 bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -145,6 +171,8 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
     {
+      u32 fwd_pub = 0, fwd_priv = 0;
+
       if (unformat (line_input, "del"))
 	is_del = 1;
       else if (unformat (line_input, "check"))
@@ -235,6 +263,29 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   }
       foreach_bpa_alg
 #undef _
+      /*
+       * A forward stated as part of the pool definition. This is the shape a
+       * candidate configuration takes, and the only shape "check" can
+       * validate: a forward is judged against the pool's block sizing and
+       * address sets, and for a pool that does not exist yet those are on
+       * this line and nowhere else.
+       */
+      else if (unformat (line_input, "forward tcp %u to %U %u", &fwd_pub,
+			 unformat_ip4_address, &addr, &fwd_priv))
+	{
+	  error = bpa_static_clause (&cfg, BPA_PROTO_TCP, fwd_pub, &addr,
+				     fwd_priv);
+	  if (error)
+	    goto done;
+	}
+      else if (unformat (line_input, "forward udp %u to %U %u", &fwd_pub,
+			 unformat_ip4_address, &addr, &fwd_priv))
+	{
+	  error = bpa_static_clause (&cfg, BPA_PROTO_UDP, fwd_pub, &addr,
+				     fwd_priv);
+	  if (error)
+	    goto done;
+	}
       else if (unformat (line_input, "filter endpoint-independent"))
 	cfg.filter = BPA_FILTER_ENDPOINT_INDEPENDENT;
       else if (unformat (line_input, "filter address-dependent"))
@@ -304,6 +355,8 @@ done:
   vec_free (in_c);
   vec_free (out_b);
   vec_free (out_c);
+  /* bpa_pool_add() takes its own copy, exactly as it does for the name. */
+  vec_free (cfg.statics);
   vec_free (name);
   unformat_free (line_input);
   return error;
@@ -317,6 +370,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
     "[alg <ftp|rtsp|pptp> on|off] "
+    "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
     "[check] | bpa pool <name> del",
   .function = bpa_pool_add_command_fn,
 };
@@ -1017,6 +1071,151 @@ VLIB_CLI_COMMAND (bpa_filter_command, static) = {
 };
 
 /*
+ * A static port forward, added to or removed from a running pool.
+ *
+ * The public ADDRESS is not asked for and cannot be given: it is the
+ * subscriber's own, the one the pool's arithmetic assigns. See bpa_static_t.
+ */
+static clib_error_t *
+bpa_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  bpa_static_t sf = { 0 };
+  ip4_address_t priv = { 0 };
+  u32 port_pub = 0, port_priv = 0;
+  int is_del = 0, is_check = 0, have_proto = 0, have_pub = 0, have_to = 0;
+  u8 *name = 0;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (
+      0, "usage: bpa forward <pool> <tcp|udp> <public-port> "
+	 "to <private-ip> <private-port>");
+
+  if (!unformat (line_input, "%v", &name))
+    {
+      error = clib_error_return (0, "missing pool name");
+      goto done;
+    }
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "tcp"))
+	sf.proto = BPA_PROTO_TCP, have_proto = 1;
+      else if (unformat (line_input, "udp"))
+	sf.proto = BPA_PROTO_UDP, have_proto = 1;
+      else if (unformat (line_input, "to %U %u", unformat_ip4_address, &priv,
+			 &port_priv))
+	have_to = 1;
+      else if (unformat (line_input, "del"))
+	is_del = 1;
+      else if (unformat (line_input, "check"))
+	is_check = 1;
+      else if (!have_pub && unformat (line_input, "%u", &port_pub))
+	have_pub = 1;
+      else
+	{
+	  error = clib_error_return (0, "unknown input '%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+
+  if (!have_proto || !have_pub)
+    {
+      error = clib_error_return (0, "a protocol and a public port are "
+				    "required");
+      goto done;
+    }
+  if (!is_del && !have_to)
+    {
+      error = clib_error_return (0, "missing 'to <private-ip> "
+				    "<private-port>'");
+      goto done;
+    }
+  if (port_pub == 0 || port_pub > 65535 || (!is_del && (port_priv == 0
+						       || port_priv > 65535)))
+    {
+      error = clib_error_return (0, "port out of range");
+      goto done;
+    }
+
+  sf.ip_priv = clib_net_to_host_u32 (priv.as_u32);
+  sf.port_pub = (u16) port_pub;
+  sf.port_priv = (u16) port_priv;
+
+  /* Deleting names the public port and nothing else, because that pair is
+   * what a forward is. The private side is accepted and ignored, so that
+   * removing one can be the add command with "del" on the end - which is what
+   * an operator with the line in their history will type. */
+  error = bpa_static_add_del (name, &sf, !is_del, is_check);
+  if (!error && is_check)
+    vlib_cli_output (vm, "forward is valid");
+
+done:
+  vec_free (name);
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_forward_command, static) = {
+  .path = "bpa forward",
+  .short_help = "bpa forward <pool> <tcp|udp> <public-port> to <private-ip> "
+		"<private-port> [check] | bpa forward <pool> <tcp|udp> "
+		"<public-port> del",
+  .function = bpa_forward_command_fn,
+};
+
+static clib_error_t *
+bpa_show_forward_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			     vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  u8 *want = 0;
+  u32 total = 0;
+
+  unformat (input, "%v", &want);
+
+  pool_foreach (p, bm->pools)
+    {
+      ip4_address_t pub, priv;
+      u32 i;
+
+      if (want && (vec_len (want) != vec_len (p->name)
+		   || memcmp (want, p->name, vec_len (want))))
+	continue;
+      if (vec_len (p->statics) == 0)
+	continue;
+
+      vlib_cli_output (vm, "pool %v", p->name);
+      vec_foreach_index (i, p->statics)
+	{
+	  const bpa_static_t *sf = &p->statics[i];
+
+	  pub.as_u32 = clib_host_to_net_u32 (sf->ip_pub);
+	  priv.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
+	  vlib_cli_output (vm, "  %U %U:%u -> %U:%u", format_bpa_proto,
+			   sf->proto, format_ip4_address, &pub, sf->port_pub,
+			   format_ip4_address, &priv, sf->port_priv);
+	  total++;
+	}
+    }
+
+  if (total == 0)
+    vlib_cli_output (vm, "no forwards configured");
+  vec_free (want);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_forward_command, static) = {
+  .path = "show bpa forward",
+  .short_help = "show bpa forward [<pool>]",
+  .function = bpa_show_forward_command_fn,
+};
+
+/*
  * Turn an ALG on or off for a pool, in place.
  *
  * Separate from "bpa pool" for the same reason "bpa filter" is: recreating a
@@ -1456,6 +1655,18 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
     s = format (s, " alg %s %s\n", nm, (p->alg & BPA_ALG_##sym) ? "on" : "off");
       foreach_bpa_alg
 #undef _
+      /* An inbound mapping the configuration does not show is a mapping
+       * nobody can account for later. Emitted in the vector's own order,
+       * which is by public port, so the running configuration is stable. */
+      vec_foreach_index (i, p->statics)
+	{
+	  ip4_address_t priv;
+
+	  priv.as_u32 = clib_host_to_net_u32 (p->statics[i].ip_priv);
+	  s = format (s, " forward %U %u to %U %u\n", format_bpa_proto,
+		      p->statics[i].proto, p->statics[i].port_pub,
+		      format_ip4_address, &priv, p->statics[i].port_priv);
+	}
       s = format (s, " exit\n");
     }
 

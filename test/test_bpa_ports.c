@@ -187,6 +187,51 @@ main (void)
     printf ("  pairs are consecutive, even-aligned and accounted for\n");
   }
 
+  printf ("\n=== a reserved port is never handed out ===\n");
+  {
+    int off;
+    u32 i, bad = 0;
+
+    /* What a static port forward does to a block: one offset taken out of
+     * the allocator's reach for as long as the configuration says so. */
+    bpa_portmap_init (&pm, 64, storage);
+    CHECK (bpa_portmap_reserve (&pm, 20) == 0, "reserving a free port failed");
+    CHECK (pm.n_free == 63, "n_free is %u after one reservation", pm.n_free);
+
+    /* Idempotent: the same public port may be forwarded for TCP and for UDP,
+     * and the bitmap has no protocol dimension. A second reservation must not
+     * take a second port out of the count. */
+    CHECK (bpa_portmap_reserve (&pm, 20) == 1,
+	   "a second reservation of the same port did not report it taken");
+    CHECK (pm.n_free == 63, "n_free is %u after reserving twice", pm.n_free);
+
+    /* Port preservation asks for exactly that offset and must be refused it,
+     * which is the case bpa_portmap_alloc's "preferred" argument gets wrong
+     * on its own: it silently hands out a different port instead. */
+    off = bpa_portmap_alloc (&pm, 20);
+    CHECK (off >= 0 && off != 20,
+	   "the allocator returned the reserved offset (%d)", off);
+
+    /* And it is still out of reach when the block is drained. */
+    while (bpa_portmap_alloc (&pm, -1) >= 0)
+      ;
+    CHECK (bpa_portmap_is_used (&pm, 20) == 1,
+	   "the reserved offset was handed out while draining the block");
+
+    bpa_portmap_free (&pm, 20);
+    CHECK (bpa_portmap_is_used (&pm, 20) == 0,
+	   "the reservation could not be lifted");
+
+    CHECK (bpa_portmap_reserve (&pm, 64) == -1,
+	   "reserving an offset outside the block was accepted");
+
+    for (i = 0; i < 64; i++)
+      if (i != 20 && !bpa_portmap_is_used (&pm, (u16) i))
+	bad++;
+    CHECK (bad == 0, "%u ports went missing around the reservation", bad);
+    printf ("  reserved once, refused to preservation, and given back\n");
+  }
+
   printf ("\n=== the tail is never handed out (32-port block in a 64-bit word) ===\n");
   {
     u32 i, bad = 0;

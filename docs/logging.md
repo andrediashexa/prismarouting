@@ -189,6 +189,20 @@ subscriber with full confidence.
 
 * Records **MUST** carry the whole definition, not a diff, so they can be read
   without further context.
+* Records **MUST** carry the pool's **static port forwards**, and the
+  operations that change one are recorded like any other pool change:
+
+  ```
+  2026-09-06T21:41:03Z forward-add pool residential inside 100.64.0.0+1024 \
+    outside 200.150.0.16+4 block 512 ports 1024-65535 policy interleaved \
+    mode deterministic forward tcp/6200->100.64.0.5:80
+  ```
+
+  A forward is the one part of a deterministic pool that the formula **cannot**
+  reproduce. Everything else in a record exists so that the mapping can be
+  recomputed; a forwarded port is a mapping that was decided rather than
+  computed, so a trail that omitted it would answer for that port with the
+  subscriber the formula names — who is the wrong one, with full confidence.
 * Each write **MUST** be `fsync`ed: a compliance log **MUST NOT** live only in
   the page cache.
 * Entries are also sent to VPP's log. A local file survives a reboot, not a disk
@@ -196,6 +210,10 @@ subscriber with full confidence.
   remote syslog so the trail leaves the box.
 
 `show bpa pool history` reads the trail; `bpa audit-path` changes its location.
+The plugin opens the file with `O_CREAT` and cannot create the directory above
+it, so `/var/log/hexarouting` is created by the installer — without it the trail
+is missing on exactly the boxes that need it, and the failure is a line in
+VPP's log that nobody is looking for.
 
 ## State
 

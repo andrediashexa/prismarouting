@@ -11,7 +11,7 @@
 # the device never heard about it.
 set -u
 . /src/lab/verdict.sh
-mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting
+mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting /var/log/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -81,6 +81,45 @@ BAD=$($HX --load /tmp/bad.conf 2>&1); BADRC=$?
 printf '%s\n' "$BAD" | sed 's/^/  /'
 
 echo
+echo "=========== 5. a static port forward, through the VTY ==========="
+# A deterministic pool of its own: forwards are refused on a dynamic one, and
+# pool 'lab' above is dynamic.
+#
+#   10.0.0.5 is subscriber 5 of this pool -> 203.0.113.17, block 1088-1151
+$HX -c "configure" \
+    -c "cgnat pool fwd" \
+    -c "inside 10.0.0.0/24" \
+    -c "outside 203.0.113.16/30" \
+    -c "block-size 64" \
+    -c "forward tcp 1100 to 10.0.0.5 80" \
+    -c "exit" \
+    -c "commit" 2>&1 | sed 's/^/  /'
+TRAIL=/var/log/hexarouting/config-history.log
+MARK=$(wc -l < $TRAIL 2>/dev/null || echo 0)
+# A second forward, on a pool that already exists. This one must NOT redefine
+# the pool: redefining it drops every session it holds, which is the whole
+# subscriber base disconnected to give one customer an inbound port.
+$HX -c "configure" -c "cgnat pool fwd" \
+    -c "forward udp 1101 to 10.0.0.5 53" -c "exit" -c "commit" 2>&1 |
+  sed 's/^/  /'
+FWD=$(vppctl show bpa forward)
+CFG2=$(vppctl show bpa config)
+NEW=$(tail -n +$((MARK + 1)) $TRAIL 2>/dev/null)
+printf '%s\n' "$FWD" | sed 's/^/  /'
+echo "  what the trail recorded for the second commit:"
+printf '%s\n' "$NEW" | sed 's/^/    /'
+
+echo
+echo "=========== 6. a forward the device would refuse ==========="
+# 2000 is in subscriber 61's block, not subscriber 5's. The check has to say
+# so BEFORE the commit: after it, the operator has an inbound port that
+# belongs to a customer who did not ask for one.
+BADF=$($HX -c "configure" -c "cgnat pool fwd" \
+           -c "forward tcp 2000 to 10.0.0.5 80" \
+           -c "exit" -c "commit check" 2>&1); BADFRC=$?
+printf '%s\n' "$BADF" | sed 's/^/  /'
+
+echo
 echo "=========== VERDICT ==========="
 expect_in "the dataplane has the pool" "cgnat pool lab" "$CFG"
 expect_in "max-blocks reached the dataplane" "max-blocks 3" "$CFG"
@@ -100,4 +139,21 @@ expect "and the commit that had to survive it did take effect" \
 expect "loading a file with an unknown line fails" test "$BADRC" -ne 0
 expect_in "and says which line, by number" "line 8" "$BAD"
 expect_in "and what it did not understand" "wibble" "$BAD"
+
+expect_in "a forward typed into the VTY reached the dataplane" \
+  "203.0.113.17:1100 -> 10.0.0.5:80" "$FWD"
+expect_in "a forward added to an existing pool reached it too" \
+  "203.0.113.17:1101 -> 10.0.0.5:53" "$FWD"
+expect_in "and both are in the running configuration" \
+  " forward tcp 1100 to 10.0.0.5 80" "$CFG2"
+expect_in "adding one was recorded in the configuration trail" \
+  "forward-add pool fwd" "$NEW"
+# The one that matters: a pool carrying traffic must not be torn down to add
+# an inbound port for one customer.
+expect_not_in "and the pool was not deleted and recreated to do it" \
+  "del pool fwd" "$NEW"
+expect "a forward in another subscriber's block fails the check" \
+  test "$BADFRC" -ne 0
+expect_in "and the check names the subscriber it would have taken it from" \
+  "10.0.0.61" "$BADF"
 verdict

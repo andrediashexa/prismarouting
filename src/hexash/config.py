@@ -55,8 +55,28 @@ class Pool:
         self.max_blocks = 0             # 0 means the device default of one
         self.filter = "endpoint-independent"
         self.algs: dict[str, bool] = {}  # only where the operator chose
+        # Static port forwards, as (proto, public port, private ip, private
+        # port). Sorted the way the device sorts them - by public port, TCP
+        # before UDP - because these lines are compared against the device's
+        # own "show bpa config" and any other order is a diff on every commit.
+        self.forwards: list[tuple[str, int, str, int]] = []
 
-    def lines(self) -> list[str]:
+    FWD_PROTOS = ("tcp", "udp")
+
+    @staticmethod
+    def _fwd_key(f):
+        return (f[1], Pool.FWD_PROTOS.index(f[0]))
+
+    def lines(self, forwards=True) -> list[str]:
+        """
+        The pool as configuration text.
+
+        `forwards=False` gives the part of a pool that can only be changed by
+        recreating it. The forwards are excluded from that comparison on
+        purpose: adding one must not redefine the pool, because redefining it
+        drops every session it holds - the whole subscriber base of that pool
+        disconnected to give one customer an inbound port.
+        """
         out = [f"cgnat pool {self.name}"]
         out += [f" inside {p}" for p in self.inside]
         out += [f" outside {p}" for p in self.outside]
@@ -75,6 +95,10 @@ class Pool:
         for a in self.ALG_BITS:
             if a in self.algs:
                 out.append(f" alg {a} {'on' if self.algs[a] else 'off'}")
+        if forwards:
+            for proto, pub, ip, priv in sorted(self.forwards,
+                                               key=self._fwd_key):
+                out.append(f" forward {proto} {pub} to {ip} {priv}")
         out.append(" exit")
         return out
 
@@ -98,7 +122,31 @@ class Pool:
         for a in self.ALG_BITS:
             if a in self.algs:
                 parts += ["alg", a, "on" if self.algs[a] else "off"]
+        # Included here and NOT in api_args(): this command is what `commit
+        # check` sends, and a forward can only be judged against the pool it
+        # belongs to - for a pool that does not exist yet, that pool is this
+        # line. Applying them is a separate message; see forward_api_args().
+        for proto, pub, ip, priv in sorted(self.forwards, key=self._fwd_key):
+            parts += ["forward", proto, str(pub), "to", ip, str(priv)]
         return " ".join(parts)
+
+    def forward_api_args(self, fwd, is_add=True) -> dict:
+        proto, pub, ip, priv = fwd
+        return {
+            "is_add": bool(is_add),
+            "name": self.name,
+            "proto": "BPA_API_FWD_" + proto.upper(),
+            "port_pub": int(pub),
+            "port_priv": int(priv),
+            "ip_priv": ip,
+        }
+
+    def forward_command(self, fwd, is_add=True, check=False) -> str:
+        proto, pub, ip, priv = fwd
+        if not is_add:
+            return f"bpa forward {self.name} {proto} {pub} del"
+        tail = " check" if check else ""
+        return f"bpa forward {self.name} {proto} {pub} to {ip} {priv}{tail}"
 
     def api_args(self, is_add=True) -> dict:
         """
@@ -424,6 +472,34 @@ class Config:
             if w[2] not in ("on", "off", "enable", "disable"):
                 return f"alg {w[1]} '{w[2]}': expected on or off"
             pool.algs[w[1]] = w[2] in ("on", "enable")
+        elif w[0] == "forward":
+            # forward <tcp|udp> <public-port> to <private-ip> <private-port>
+            if len(w) != 6 or w[3] != "to":
+                return ("forward: expected 'forward <tcp|udp> <public-port> "
+                        "to <private-ip> <private-port>'")
+            if w[1] not in Pool.FWD_PROTOS:
+                return (f"forward '{w[1]}': expected one of "
+                        + ", ".join(Pool.FWD_PROTOS))
+            for p in (w[2], w[5]):
+                if not p.isdigit() or not 1 <= int(p) <= 65535:
+                    return f"forward: '{p}' is not a port"
+            # The device decides whether the address is a subscriber of this
+            # pool and whether the port is in its block; it is the only thing
+            # that knows the pool arithmetic. Refusing a malformed address
+            # here is not that check - it is the one the device would report
+            # as a parse error a commit later.
+            octets = w[4].split(".")
+            if len(octets) != 4 or not all(
+                    o.isdigit() and int(o) < 256 for o in octets):
+                return f"forward: '{w[4]}' is not an IPv4 address"
+            # Refused rather than deduplicated. Silently dropping the second
+            # line leaves a configuration whose text does not round-trip, and
+            # the device refuses it for the same reason: one public port
+            # serves one socket.
+            if any(f[0] == w[1] and f[1] == int(w[2]) for f in pool.forwards):
+                return (f"forward {w[1]} {w[2]}: this pool already forwards "
+                        "that port")
+            pool.forwards.append((w[1], int(w[2]), w[4], int(w[5])))
         elif w[0] == "exit":
             pass
         else:
@@ -457,11 +533,27 @@ class Config:
         for name, pool in other.pools.items():
             if name not in self.pools:
                 add.append(pool)
-            elif self.pools[name] != pool:
+            elif self.pools[name].lines(forwards=False) != pool.lines(
+                    forwards=False):
                 replace.append(pool)
         for name in self.pools:
             if name not in other.pools:
                 remove.append(name)
+
+        # Forwards are applied on top of the pool, not inside it. A pool that
+        # is being created or recreated arrives with none, so everything the
+        # candidate asks for is an addition; a pool that stays gets only the
+        # difference, and its sessions survive.
+        recreated = {p.name for p in add} | {p.name for p in replace}
+        fwd_add, fwd_del = [], []
+        for name, pool in other.pools.items():
+            have = (set() if name in recreated
+                    else set(self.pools[name].forwards))
+            want = set(pool.forwards)
+            fwd_del += [(pool, f) for f in sorted(have - want,
+                                                  key=Pool._fwd_key)]
+            fwd_add += [(pool, f) for f in sorted(want - have,
+                                                  key=Pool._fwd_key)]
 
         if_add = {k: v for k, v in other.interfaces.items()
                   if self.interfaces.get(k) != v}
@@ -492,6 +584,8 @@ class Config:
             "pool_add": add,
             "pool_remove": remove,
             "pool_replace": replace,
+            "fwd_add": fwd_add,
+            "fwd_del": fwd_del,
             "if_add": if_add,
             "if_remove": if_del,
             "mtu_set": mtu_set,

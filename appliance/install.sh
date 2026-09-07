@@ -120,6 +120,13 @@ say "configuration"
 # offline cracking target.
 install -d -m 0700 "$DESTDIR/etc/hexarouting"
 install -d -m 0700 "$DESTDIR/etc/hexarouting/rollback"
+# The configuration trail. The plugin opens it with O_CREAT and cannot create
+# the directory, so without this the trail exists in every lab - where the lab
+# happens to make the directory - and on no installed box. In deterministic
+# mode that trail is the record of which pool definition was in force at a
+# given instant, which is what makes an answer to a court order defensible.
+# 0750: it names subscribers and their public addresses.
+install -d -m 0750 "$DESTDIR/var/log/hexarouting"
 [ -f "$DESTDIR/etc/hexarouting/tune.env" ] || \
   install -m 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
 [ -f "$DESTDIR/etc/hexarouting/vpp-base.conf" ] || \

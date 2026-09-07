@@ -64,6 +64,16 @@ void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
 void bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only);
 
 clib_error_t *bpa_pool_validate (bpa_pool_t *cfg);
+/*
+ * One static port forward, added to or removed from a pool that already
+ * exists. `is_check` validates and changes nothing.
+ *
+ * Separate from bpa_pool_add() for the reason "bpa filter" and "bpa alg" are:
+ * recreating a pool to add a forward would drop every session it holds, and an
+ * operator adding a forward for one customer must not disconnect the rest.
+ */
+clib_error_t *bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add,
+				  int is_check);
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 void bpa_outside_window_update (void);
