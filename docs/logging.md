@@ -215,6 +215,29 @@ it, so `/var/log/hexarouting` is created by the installer — without it the tra
 is missing on exactly the boxes that need it, and the failure is a line in
 VPP's log that nobody is looking for.
 
+## What the record cannot know
+
+The trail says which pool definition was in force. The formula says which
+subscriber address held a public address and port at that instant. Neither says
+whether the packet that created the mapping really came from that subscriber.
+
+A spoofed source is translated like any other and attributed by the same
+arithmetic, and the resulting answer names a person who sent nothing — with the
+same confidence as every true answer, because nothing downstream can tell them
+apart. That is a different failure from a missing record: a gap is visible, and
+this is not.
+
+**uRPF** on the inside interfaces is the cheapest part of the defence and it is
+**off by default**, so a deployment that has not turned it on **SHOULD** assume
+the record is only as trustworthy as the access network beneath it. It runs
+before the translator, so a refused packet takes no port and creates no
+mapping; see
+[architecture.md](architecture.md#spoofed-sources-and-what-the-record-can-promise),
+including what it does **not** catch — one subscriber spoofing another on the
+same interface, which no route check can see and which needs the address bound
+to the subscriber it was issued to
+([#21](https://github.com/andrediashexa/hexarouting/issues/21)).
+
 ## State
 
 - [x] RFC 8158 template via `flow_report.h`
