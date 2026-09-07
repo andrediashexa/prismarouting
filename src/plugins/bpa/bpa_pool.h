@@ -311,6 +311,24 @@ typedef struct
   u32 alg_set;
 
   /*
+   * Traffic that leaves untranslated.
+   *
+   * Some destinations have to see the real source: the operator's own
+   * management network, an internal server, a CDN cache that accounts by
+   * client address, a government portal that refuses shared addresses. And
+   * some sources must not be translated at all - a customer with their own
+   * public address on the same access VLAN.
+   *
+   * The same structure the address sets use, for the reason the issue gives:
+   * it is inline, so a lookup costs a binary search over a small array and
+   * never an allocation. Building them through bpa_addr_set_build() also means
+   * adjacent prefixes merge exactly as they do for a pool's own ranges, so the
+   * search sees one range where an operator typed four.
+   */
+  bpa_addr_set_t bypass_src;
+  bpa_addr_set_t bypass_dst;
+
+  /*
    * Per-subscriber bounds. Zero is unlimited in both, which is the default and
    * the point: an upgrade must not start refusing traffic that worked
    * yesterday.
@@ -456,6 +474,31 @@ bpa_set_addr_of (const bpa_addr_set_t *s, u32 idx, u32 *addr)
 	}
     }
   return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* bypass                                                              */
+
+/*
+ * Does this packet leave untranslated?
+ *
+ * Consulted only when the session lookup has already missed, which is where it
+ * belongs: bypassed traffic never has a session, so a packet that matched one
+ * cannot be bypassed. The cost of that placement is stated rather than hidden
+ * - a bypassed flow pays the pool lookup on every packet, because there is no
+ * session for it to hit. That is the price of not allocating anything for it,
+ * and the issue asks for exactly that trade.
+ */
+static_always_inline int
+bpa_is_bypassed (const bpa_pool_t *p, u32 src, u32 dst)
+{
+  u32 idx;
+
+  if (PREDICT_TRUE (p->bypass_src.count == 0 && p->bypass_dst.count == 0))
+    return 0;
+
+  return bpa_set_index_of (&p->bypass_src, src, &idx) == 0
+	 || bpa_set_index_of (&p->bypass_dst, dst, &idx) == 0;
 }
 
 /* ------------------------------------------------------------------ */

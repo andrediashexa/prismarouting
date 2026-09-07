@@ -96,6 +96,12 @@ clib_error_t *bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add,
  * either is unlimited.
  */
 clib_error_t *bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate);
+/*
+ * Replaces one of a pool's bypass lists, entire. An empty list removes the
+ * bypass; see the definition for why it is not per prefix.
+ */
+clib_error_t *bpa_bypass_set (u8 *name, int is_dst, const u32 *bases,
+			      const u32 *counts, u32 n);
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 void bpa_outside_window_update (void);

@@ -145,6 +145,11 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_NUM),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "bypass": ("prefixes that leave untranslated", {
+        "source": ("a source that must keep its own address", ARG_PREFIX),
+        "destination": ("a destination that must see the real source",
+                        ARG_PREFIX),
+    }),
     "max-sessions": ("most sessions one subscriber may hold at once; 0 is "
                      "unlimited", ARG_NUM),
     "max-session-rate": ("most new sessions per second, per subscriber; 0 is "
@@ -631,7 +636,8 @@ class Shell:
         # the old configuration nor the new one, and the operator with no way
         # to know which pools made it.
         if (d["pool_add"] or d["pool_replace"] or d["pool_remove"]
-                or d["fwd_add"] or d["fwd_del"] or d["limits_set"]):
+                or d["fwd_add"] or d["fwd_del"] or d["limits_set"]
+                or d["bypass_set"]):
             state, msg = self.api.available()
             if state != vppapi.OK:
                 self.err(f"cannot reach the dataplane: {msg}")
@@ -717,6 +723,16 @@ class Shell:
                 # which one the dataplane refused. "commit failed" sends the
                 # operator to read the whole candidate.
                 self.err(f"pool '{pool.name}': {r.reason}")
+                return False
+
+        # The bypass lists first: they only ever let traffic past
+        # untranslated, so applying them before anything else cannot leave a
+        # half-applied change translating what the operator just exempted.
+        for pool, is_dst in d["bypass_set"]:
+            r = self.api_call("bpa_bypass_set", pool.bypass_api_args(is_dst))
+            if not r.ok:
+                side = "destination" if is_dst else "source"
+                self.err(f"pool '{pool.name}': bypass {side}: {r.reason}")
                 return False
 
         # The per-subscriber bounds, before the forwards and before routing:
@@ -1278,6 +1294,10 @@ class Shell:
                 if int(w[1]) < 1:
                     raise ValueError("max-blocks must be at least 1")
                 p.max_blocks = int(w[1])
+            elif w[0] == "bypass":
+                why = Config._pool_line(p, " ".join(w))
+                if why:
+                    raise ValueError(why)
             elif w[0] in ("max-sessions", "max-session-rate"):
                 if int(w[1]) < 0:
                     raise ValueError(f"{w[0]} cannot be negative")
@@ -1334,6 +1354,16 @@ class Shell:
                 p.max_blocks = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "tcp-mss":
                 p.tcp_mss = ""
+            elif w[0] == "no" and len(w) > 2 and w[1] == "bypass":
+                # "no bypass source 10.0.0.0/8", or "no bypass source" to
+                # clear the list.
+                lst = (p.bypass_dst if w[2] == "destination"
+                       else p.bypass_src)
+                if len(w) > 3:
+                    if w[3] in lst:
+                        lst.remove(w[3])
+                else:
+                    lst.clear()
             elif w[0] == "no" and len(w) > 1 and w[1] == "max-sessions":
                 p.max_sessions = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "max-session-rate":

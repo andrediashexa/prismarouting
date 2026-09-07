@@ -23,6 +23,9 @@ to anything else.
 came — the difference between a log that is answerable and one that is
 confidently wrong.
 
+**Bypass lists** let named sources and destinations through untranslated,
+taking no port and creating no session.
+
 **Per-subscriber bounds** cap how many sessions one subscriber may hold and how
 fast it may open them, so an infected host is bounded and its neighbours are
 not — and so the operator has a counter to point at.
@@ -381,6 +384,72 @@ counted so an operator can see whether it ever bites.
 Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
 place, because the point of offering the choice is that an operator can make it
 on a box carrying traffic.
+
+## Traffic that is not translated
+
+Some destinations have to see the real source address: the operator's own
+management network, an internal server, a CDN cache that accounts by client
+address, a government portal that refuses shared addresses. And some sources
+must not be translated at all — a customer with their own public address on the
+same access VLAN as everybody else.
+
+Without a way to say so, the only way to exempt traffic is to keep it out of
+the pool entirely, which is not always possible.
+
+```
+cgnat pool residential
+ bypass destination 10.0.0.0/8
+ bypass source 100.64.1.0/24
+ exit
+```
+
+### It allocates nothing
+
+A bypassed packet takes **no port, creates no session and writes no log
+record**. That is the whole requirement: a bypass implemented after the
+allocation would look identical on the wire and consume a port per flow for
+traffic the operator asked not to translate.
+
+`lab/bypass.sh` asserts both halves — the source on the **captured** packet and
+the session count before and after — because the first half alone passes on a
+bypass that allocates first.
+
+### Where the check runs, and what it costs
+
+After the session lookup has missed and the pool is known. Bypassed traffic has
+no session, so a packet that matched one cannot be bypassed, and putting the
+check earlier would mean a pool lookup on every packet — paid by traffic that
+is not bypassed, which is nearly all of it.
+
+The cost is stated rather than hidden: **a bypassed flow reaches that point on
+every packet** and pays the pool lookup each time, because there is nothing
+cached for it. That is the price of allocating nothing, and it is the trade the
+feature exists to make.
+
+The lists themselves are `bpa_addr_set_t`, the same structure the pool's own
+prefixes use: inline in the pool, so a lookup is a binary search over a small
+array and never an allocation. Adjacent prefixes merge exactly as they do for
+the pool's own ranges, so the search sees one range where an operator typed
+four.
+
+### Replaced entire, not edited
+
+`bpa bypass <pool> <destination|source> <prefix> …` sets a list; `none` empties
+it. Not one prefix at a time, because merging means the stored set no longer
+remembers which prefixes were typed, and *remove one of them* from a merged
+range has no honest answer. Setting the list entire has one, and it is what a
+candidate configuration produces anyway.
+
+The change is applied in place, so exempting a destination does not disconnect
+the pool.
+
+### The one hole, and why it is small
+
+The check runs where the CGNAT decides to translate, which is the path for TCP,
+UDP and ICMP. Plain GRE has no per-flow identifier and is never translated
+anyway; enhanced GRE for PPTP is handled — a subscriber whose PPTP server sits
+on a bypassed destination has a control channel that was never translated, so
+the data channel is bypassed rather than dropped as a call that went missing.
 
 ## Per-subscriber bounds
 

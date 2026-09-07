@@ -45,6 +45,19 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
 	      p->port_min, p->port_max, format_bpa_policy, p->policy,
 	      format_bpa_mode, p->mode);
 
+  for (i = 0; i < p->bypass_src.n_ranges; i++)
+    {
+      a.as_u32 = clib_host_to_net_u32 (p->bypass_src.ranges[i].base);
+      s = format (s, " bypass-src %U+%u", format_ip4_address, &a,
+		  p->bypass_src.ranges[i].count);
+    }
+  for (i = 0; i < p->bypass_dst.n_ranges; i++)
+    {
+      a.as_u32 = clib_host_to_net_u32 (p->bypass_dst.ranges[i].base);
+      s = format (s, " bypass-dst %U+%u", format_ip4_address, &a,
+		  p->bypass_dst.ranges[i].count);
+    }
+
   if (p->max_sessions || p->max_rate)
     s = format (s, " limits sessions %u rate %u", p->max_sessions,
 		p->max_rate);

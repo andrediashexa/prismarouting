@@ -41,7 +41,13 @@
  * (issue #69). An operator caps one infected subscriber; the neighbours do
  * not get disconnected for it.
  */
-option version = "0.5.0";
+/*
+ * 0.6.0 adds bpa_bypass_set: prefixes that leave untranslated. It carries the
+ * WHOLE list, because the sets merge adjacent prefixes and "remove one of
+ * them" from a merged range has no honest answer - and because a candidate
+ * configuration produces the whole list anyway.
+ */
+option version = "0.6.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -117,6 +123,22 @@ autoreply define bpa_pool_add_del
   /* The variable-length array is last, as the API requires: anything added
    * later goes above this line. */
   u8 n_inside;
+  u8 n_prefixes;
+  vl_api_prefix_t prefixes[n_prefixes];
+};
+
+/** \brief Replaces one of a pool's bypass lists, entire.
+    @param name - the pool
+    @param is_destination - true for the destination list, false for the source
+    @param prefixes - the whole list; empty removes the bypass
+*/
+autoreply define bpa_bypass_set
+{
+  u32 client_index;
+  u32 context;
+
+  string name[64];
+  bool is_destination;
   u8 n_prefixes;
   vl_api_prefix_t prefixes[n_prefixes];
 };

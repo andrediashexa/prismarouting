@@ -23,6 +23,7 @@ typedef struct
   u16 port_priv, port_pub;
   u8 proto;
   u8 created;
+  u8 bypassed;
   u8 is_frag;
   u16 reass_port;
 } bpa_in2out_trace_t;
@@ -37,6 +38,13 @@ format_bpa_in2out_trace (u8 *s, va_list *args)
 
   priv.as_u32 = clib_host_to_net_u32 (t->ip_priv);
   pub.as_u32 = clib_host_to_net_u32 (t->ip_pub);
+
+  /* Said in words, because "-> 0.0.0.0:0" is what an untranslated packet
+   * would otherwise look like in a trace, and that reads as a failure. */
+  if (t->bypassed)
+    return format (s, "BPA in2out %U:%u proto %U bypassed, not translated",
+		   format_ip4_address, &priv, t->port_priv, format_bpa_proto,
+		   t->proto);
 
   return format (s, "BPA in2out %U:%u -> %U:%u proto %U%s%s",
 		 format_ip4_address, &priv, t->port_priv, format_ip4_address,
@@ -145,6 +153,38 @@ bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
   ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
 }
 
+/*
+ * Lets a packet past untranslated, and says so.
+ *
+ * Returns 1 when the packet was bypassed, which the caller turns into "hand it
+ * to the next feature" - no session, no port, no log record. A bypass that
+ * allocates first is not a bypass.
+ */
+static_always_inline int
+bpa_bypass_packet (bpa_main_t *bm, bpa_per_thread_t *pt, u32 pool_index,
+		   u32 src, u32 dst, u32 *n_src, u32 *n_dst)
+{
+  const bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
+  u32 idx;
+
+  if (PREDICT_TRUE (p->bypass_src.count == 0 && p->bypass_dst.count == 0))
+    return 0;
+
+  /* Counted apart: "this customer is not translated" and "this destination is
+   * not translated" are different configurations, and an operator looking at
+   * one number cannot tell which of them is in force. */
+  if (bpa_set_index_of (&p->bypass_src, src, &idx) == 0)
+    (*n_src)++;
+  else if (bpa_set_index_of (&p->bypass_dst, dst, &idx) == 0)
+    (*n_dst)++;
+  else
+    return 0;
+
+  if (PREDICT_TRUE (pool_index < vec_len (pt->n_bypassed)))
+    pt->n_bypassed[pool_index]++;
+  return 1;
+}
+
 VLIB_NODE_FN (bpa_in2out_node)
 (vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
 {
@@ -156,6 +196,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_new = 0, n_forwarded = 0, n_mss = 0;
+  u32 n_bypass_src = 0, n_bypass_dst = 0;
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
   u32 n_rtsp = 0;
@@ -176,7 +217,7 @@ VLIB_NODE_FN (bpa_in2out_node)
       u32 pool_index = 0, sub_idx = 0, src_host;
       u16 port_priv = 0;
       bpa_create_why_t why = BPA_CREATE_OK;
-      int proto, created = 0;
+      int proto, created = 0, bypassed = 0;
 
       next[0] = BPA_IN2OUT_NEXT_DROP;
       /* captured before any rewrite: the trace must show the pre-NAT source */
@@ -219,6 +260,20 @@ VLIB_NODE_FN (bpa_in2out_node)
 	      s = pool_elt_at_index (pt->sessions, value.value);
 	      goto translate;
 	    }
+	  /* Before calling it a missing call: a subscriber whose PPTP server
+	   * is on a bypassed destination has a control channel that was never
+	   * translated, so there is no call here to find and never will be. */
+	  if (PREDICT_FALSE (
+		bpa_pool_by_inside (bm, src_host, &pool_index, &sub_idx) == 0
+		&& bpa_bypass_packet (
+		  bm, pt, pool_index, src_host,
+		  clib_net_to_host_u32 (ip->dst_address.as_u32), &n_bypass_src,
+		  &n_bypass_dst)))
+	    {
+	      bypassed = 1;
+	      vnet_feature_next_u16 (&next[0], b[0]);
+	      goto trace;
+	    }
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_GRE_NO_CALL];
 	  goto trace;
 	}
@@ -234,6 +289,25 @@ VLIB_NODE_FN (bpa_in2out_node)
 	    bpa_pool_by_inside (bm, src_host, &pool_index, &sub_idx)))
 	{
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_NO_POOL];
+	  goto trace;
+	}
+
+      /*
+       * Untranslated traffic, decided before anything is allocated.
+       *
+       * Here rather than earlier because the pool is only known now, and a
+       * pool lookup on every packet would be paid by traffic that is not
+       * bypassed - which is nearly all of it. A bypassed flow has no session
+       * to hit, so it reaches this point on every packet and pays the lookup
+       * each time; that is the cost of allocating nothing for it.
+       */
+      if (PREDICT_FALSE (bpa_bypass_packet (bm, pt, pool_index, src_host,
+					    clib_net_to_host_u32 (
+					      ip->dst_address.as_u32),
+					    &n_bypass_src, &n_bypass_dst)))
+	{
+	  bypassed = 1;
+	  vnet_feature_next_u16 (&next[0], b[0]);
 	  goto trace;
 	}
 
@@ -597,6 +671,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 	    vlib_add_trace (vm, node, b[0], sizeof (*t));
 	  t->proto = (u8) (proto < 0 ? 0 : proto);
 	  t->created = created;
+	  t->bypassed = bypassed;
 	  t->ip_priv = src_host;
 	  t->port_priv = port_priv;
 	  t->ip_pub = s ? s->ip_pub : 0;
@@ -618,6 +693,10 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_FORWARDED, n_forwarded);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_BYPASS_SRC, n_bypass_src);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_BYPASS_DST, n_bypass_dst);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_MSS_CLAMPED, n_mss);
   vlib_node_increment_counter (vm, node->node_index,
