@@ -25,7 +25,51 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.16.0.
+Nothing merged since v0.17.0.
+
+## 0.17.0 — seeing a pool fill, before it has filled
+
+RFC 8158 `natEvent 12` reports port exhaustion, which is to say it reports the
+moment a customer **started losing traffic**. By the time it fires the support
+call is already in the queue.
+
+### Added
+
+* **Utilisation as a distribution**
+  ([#27](https://github.com/andrediashexa/hexarouting/issues/27)).
+  `show bpa pool` reports the shape rather than a number:
+
+  ```
+  utilisation  2 subscriber(s) holding a block
+     75-89%  1
+        100%  1
+  alarm at     75% of a subscriber's block
+  ```
+
+  With 200k subscribers a pool reads as half empty while a thousand customers
+  sit at their limit, and an average says nothing about either. `show bpa top`
+  remains the other half — the histogram says *how many*, `top` says *which*.
+
+* **`utilisation-alarm <percent>`** per pool, off by default. One line when a
+  subscriber's blocks reach the threshold, naming it, how full it is and what
+  it is ahead of — and then **nothing more**, however much further it fills.
+
+  That is the design and not an optimisation: a line per allocation past the
+  threshold is a log nobody can keep and an alarm nobody reads, and the
+  subscriber that trips it is by definition the one allocating fastest. Ten
+  points of hysteresis clear the flag so a subscriber sitting on the threshold
+  does not produce a line every time a port is freed and taken.
+
+  Evaluated where a port is **taken** and nowhere else. Utilisation only rises
+  there; it falls on the release path, and the flag is cleared on the next
+  allocation rather than by touching that path. Nothing is counted per packet
+  and the session table is never walked.
+
+### Changed
+
+* **Binary API 0.8.0** adds `util_alarm` to `bpa_pool_settings_set`, so turning
+  the alarm on does not rebuild the pool and disconnect the subscribers it
+  exists to watch.
 
 ## 0.16.0 — the number that trades one failure for another
 
