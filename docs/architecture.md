@@ -26,6 +26,10 @@ confidently wrong.
 **Bypass lists** let named sources and destinations through untranslated,
 taking no port and creating no session.
 
+**Utilisation observability** shows the pool filling as a distribution, and
+raises one alarm per subscriber that crosses a threshold — ahead of the
+exhaustion event, which only reports that a customer has already lost traffic.
+
 **Per-subscriber bounds** cap how many sessions one subscriber may hold and how
 fast it may open them, so an infected host is bounded and its neighbours are
 not — and so the operator has a counter to point at.
@@ -494,6 +498,66 @@ UDP and ICMP. Plain GRE has no per-flow identifier and is never translated
 anyway; enhanced GRE for PPTP is handled — a subscriber whose PPTP server sits
 on a bypassed destination has a control channel that was never translated, so
 the data channel is bypassed rather than dropped as a call that went missing.
+
+## Seeing a pool fill, before it has filled
+
+RFC 8158 `natEvent 12` reports port exhaustion — which is to say it reports the
+moment a customer **started losing traffic**. By the time it fires, the support
+call is already in the queue.
+
+Two things are needed instead, and they answer different questions.
+
+### The histogram, because a mean hides the answer
+
+`show bpa pool` reports the distribution of block utilisation:
+
+```
+utilisation  2 subscriber(s) holding a block
+   75-89%  1
+      100%  1
+alarm at     75% of a subscriber's block
+```
+
+With 200k subscribers a pool reads as half empty while a thousand customers sit
+at their limit, and an average says nothing about either. What an operator
+needs is the **shape**: how many subscribers are near the end of their block,
+and whether that number is moving.
+
+It is walked in the show command, over the per-subscriber port bitmaps the
+allocator maintains anyway. Nothing is counted per packet and the session table
+is never touched.
+
+`show bpa top` remains the other half of the answer — the histogram says *how
+many*, and `show bpa top` says *which*.
+
+### The alarm, once per crossing
+
+```
+cgnat pool residential
+ utilisation-alarm 75
+ exit
+```
+
+Off by default. When a subscriber's blocks reach the threshold, one line is
+logged naming the subscriber, how full it is and what it is ahead of. Then
+nothing more, however much further it fills.
+
+That last part is the design, not an optimisation. A line per allocation past
+the threshold is a log nobody can keep and an alarm nobody reads — and the
+subscriber that trips it is, by definition, the one allocating fastest.
+Ten points of hysteresis clear the flag, so a subscriber sitting exactly on the
+threshold does not produce a line every time a port is freed and taken again.
+
+**Evaluated where a port is taken, and nowhere else.** Utilisation only rises
+there; it falls on the release path, and the flag is cleared on the next
+allocation rather than by touching that path at all. The cost is that a
+subscriber which empties and never allocates again keeps its flag — a bit of
+state and no wrong answer, because the alarm is about a subscriber filling up
+and one that has stopped asking is not filling up.
+
+`lab/utilisation.sh` asserts both halves: the alarm fires once and only once,
+and the histogram **moves when a second subscriber fills** — which is what
+catches a counter that is only ever read for one of them.
 
 ## Timeouts, and the floors the RFCs set
 

@@ -54,7 +54,12 @@
  * one place - and because a VTY that had to send five would have five chances
  * to leave a pool half-changed.
  */
-option version = "0.7.0";
+/*
+ * 0.8.0 adds the utilisation alarm to bpa_pool_settings_set - a threshold at
+ * which a subscriber filling its block is reported, before natEvent 12 reports
+ * that it has already run out.
+ */
+option version = "0.8.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -160,6 +165,7 @@ autoreply define bpa_pool_settings_set
   u32 alg_set;
   u16 tcp_mss;
   bool tcp_mss_auto;
+  u8 util_alarm;
   vl_api_bpa_timeouts_t timeouts;
 };
 

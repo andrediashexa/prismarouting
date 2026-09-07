@@ -155,7 +155,7 @@ vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
 			     clib_net_to_host_u32 (mp->alg),
 			     clib_net_to_host_u32 (mp->alg_set),
 			     clib_net_to_host_u16 (mp->tcp_mss),
-			     mp->tcp_mss_auto, &t);
+			     mp->tcp_mss_auto, mp->util_alarm, &t);
   if (e)
     {
       vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);

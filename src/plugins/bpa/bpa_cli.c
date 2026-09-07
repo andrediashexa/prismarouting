@@ -117,6 +117,69 @@ format_bpa_pool (u8 *s, va_list *args)
    * apart; a line that appears only when off reads as an absent feature. */
   s = format (s, "\n%Ualg          %U", format_white_space, indent + 2,
 	      format_bpa_alg, p->alg);
+  /*
+   * The distribution, not a mean.
+   *
+   * With 200k subscribers a pool can read as half empty while a thousand
+   * customers are at their limit, and the mean says nothing about either. What
+   * an operator needs to see is the shape: how many subscribers are near the
+   * end of their block, and whether that number is moving.
+   *
+   * Walked here, in a show command, over the per-subscriber records the
+   * allocator maintains anyway. Nothing is counted per packet and the session
+   * table is never touched.
+   */
+  {
+    bpa_main_t *bm = &bpa_main;
+    u32 idx = p - bm->pools;
+    u32 bucket[6] = { 0 };
+    u32 ti, live = 0;
+    static const char *label[6] = { "  0-24%", " 25-49%", " 50-74%",
+				    " 75-89%", " 90-99%", "    100%" };
+
+    for (ti = 0; ti < vec_len (bm->per_thread); ti++)
+      {
+	bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, ti);
+	uword key, value;
+
+	if (!pt->initialised)
+	  continue;
+	/* clang-format off */
+	hash_foreach (key, value, pt->sub_by_idx,
+	({
+	  u32 used, total, pct;
+	  bpa_sub_t *sub;
+
+	  if ((u32) (key >> 32) != idx)
+	    continue;
+	  sub = pool_elt_at_index (pt->subs, value);
+	  bpa_sub_usage (sub, &used, &total);
+	  if (total == 0)
+	    continue;
+	  pct = (used * 100) / total;
+	  live++;
+	  bucket[pct >= 100 ? 5 : pct >= 90 ? 4 : pct >= 75 ? 3
+		 : pct >= 50   ? 2 : pct >= 25 ? 1 : 0]++;
+	}));
+	/* clang-format on */
+      }
+
+    s = format (s, "\n%Uutilisation  %u subscriber(s) holding a block",
+		format_white_space, indent + 2, live);
+    if (live)
+      {
+	u32 k;
+
+	for (k = 0; k < 6; k++)
+	  if (bucket[k])
+	    s = format (s, "\n%U%s  %u", format_white_space, indent + 4,
+			label[k], bucket[k]);
+      }
+    if (p->util_alarm)
+      s = format (s, "\n%Ualarm at     %u%% of a subscriber's block",
+		  format_white_space, indent + 2, p->util_alarm);
+  }
+
   if (p->bypass_src.count || p->bypass_dst.count)
     {
       bpa_main_t *bm = &bpa_main;
@@ -315,6 +378,16 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  vec_add1 (bys_b, clib_net_to_host_u32 (addr.as_u32)
 			     & ~(vec_elt (bys_c, vec_len (bys_c) - 1) - 1));
 	}
+      else if (unformat (line_input, "utilisation-alarm %u", &mss))
+	{
+	  if (mss < 1 || mss > 100)
+	    {
+	      error = clib_error_return (
+		0, "utilisation-alarm %u: expected 1-100 percent", mss);
+	      goto done;
+	    }
+	  cfg.util_alarm = (u8) mss;
+	}
       else if (unformat (line_input, "max-sessions %u", &cfg.max_sessions))
 	;
       else if (unformat (line_input, "max-session-rate %u", &cfg.max_rate))
@@ -486,6 +559,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
     "[alg <ftp|rtsp|pptp> on|off] "
     "[bypass <destination|source> <pfx>/<len>] "
+    "[utilisation-alarm <percent>] "
     "[max-sessions <n>] [max-session-rate <n>] "
     "[tcp-mss <bytes|auto>] "
     "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
@@ -2127,6 +2201,8 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, "%U", format_bpa_range_as_prefixes,
 		    p->bypass_dst.ranges[i].base,
 		    p->bypass_dst.ranges[i].count, 1, "bypass destination");
+      if (p->util_alarm)
+	s = format (s, " utilisation-alarm %u\n", p->util_alarm);
       if (p->max_sessions)
 	s = format (s, " max-sessions %u\n", p->max_sessions);
       if (p->max_rate)

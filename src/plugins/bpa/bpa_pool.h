@@ -391,6 +391,16 @@ typedef struct
   bpa_addr_set_t bypass_dst;
 
   /*
+   * Raise an alarm when a subscriber's blocks are this full, as a percentage.
+   * Zero is off.
+   *
+   * RFC 8158 natEvent 12 already reports exhaustion, which is to say it
+   * reports the moment a customer started losing traffic - by then the support
+   * call is in the queue. This is the number that fires before that.
+   */
+  u8 util_alarm;
+
+  /*
    * Per-subscriber bounds. Zero is unlimited in both, which is the default and
    * the point: an upgrade must not start refusing traffic that worked
    * yesterday.

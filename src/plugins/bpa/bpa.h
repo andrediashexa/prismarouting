@@ -104,6 +104,7 @@ clib_error_t *bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate);
 clib_error_t *bpa_pool_settings_set (u8 *name, bpa_filter_t filter,
 				     u8 max_blocks, u32 alg, u32 alg_set,
 				     u16 tcp_mss, u8 tcp_mss_auto,
+				     u8 util_alarm,
 				     const bpa_timeouts_t *timeouts);
 /*
  * Replaces one of a pool's bypass lists, entire. An empty list removes the

@@ -539,7 +539,7 @@ bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
 clib_error_t *
 bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 		       u32 alg_set, u16 tcp_mss, u8 tcp_mss_auto,
-		       const bpa_timeouts_t *timeouts)
+		       u8 util_alarm, const bpa_timeouts_t *timeouts)
 {
   bpa_main_t *bm = &bpa_main;
   bpa_pool_t *p;
@@ -552,6 +552,9 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
   if (tcp_mss && (tcp_mss < BPA_MSS_MIN || tcp_mss > BPA_MSS_MAX))
     return clib_error_return (
       0, "tcp-mss %u is outside %u-%u", tcp_mss, BPA_MSS_MIN, BPA_MSS_MAX);
+  if (util_alarm > 100)
+    return clib_error_return (0, "utilisation-alarm %u: expected 1-100 percent",
+			      util_alarm);
 
   p = pool_elt_at_index (bm->pools, q[0]);
 
@@ -565,6 +568,7 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
   p->alg_set = alg_set;
   p->tcp_mss = tcp_mss;
   p->tcp_mss_auto = tcp_mss_auto;
+  p->util_alarm = util_alarm;
   p->timeouts = *timeouts;
   vlib_worker_thread_barrier_release (bm->vlib_main);
 
