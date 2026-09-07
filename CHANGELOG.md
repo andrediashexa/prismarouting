@@ -25,7 +25,74 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.14.0.
+Nothing merged since v0.15.0.
+
+## 0.15.0 — an account that can look without being able to change
+
+There were no roles. Anyone who could log in and belonged to the `vpp` group
+could create a pool, **delete a pool** — disconnecting every subscriber behind
+it — or change a block size, which re-maps every subscriber at once. And there
+was no read-only access, so an operator who only needed to look at sessions had
+to be given the ability to change them.
+
+### Added
+
+* **Roles in the VTY** ([#35](https://github.com/andrediashexa/hexarouting/issues/35)),
+  mapped onto **system groups** rather than a database this appliance keeps of
+  its own — an appliance that invents its own accounts is one whose accounts
+  nobody deprovisions:
+
+  | Group | May change |
+  |---|---|
+  | `hexa-admin` | everything: routing, the box's own configuration, CGNAT |
+  | `hexa-cgnat` | CGNAT configuration only |
+  | neither | read-only |
+
+  The check lives in `Shell.apply()`, which `commit`, `rollback` and `--load`
+  all reach. The gates on `configure` and on the shell escape are convenience:
+  a check that only hides a command from the completion tree is not an
+  authorization check, and `lab/vty.sh` issues the commands directly for that
+  reason.
+
+  Authorization answers **before** validation — a CGNAT operator committing a
+  routing change is told they may not, rather than that FRR is unhealthy, which
+  would be the wrong answer and one they were not entitled to.
+
+  `hexa-admin` is **additive**: it grants the capability, not file access.
+  `/etc/hexarouting` is group-owned by `hexa-cgnat`, so an administrator must
+  be a member of both — otherwise they can apply a change and then fail to
+  record its rollback revision.
+
+### Changed
+
+* **The shell escape is restricted as well as hidden.** `docs/routing.md`
+  already said hiding was not a boundary and pointed at this issue; this is
+  what makes the sentence true. A shell on this box is every capability at
+  once.
+* **`api-segment { gid vpp }`** in the VPP configuration, and
+  `/etc/hexarouting` group-owned and `0770` rather than root-only. Without
+  both, no non-root account can use the binary API or record a rollback
+  revision, and roles would be decorative.
+
+### Fixed
+
+* **A rollback store the account cannot write raised `PermissionError` out of
+  the commit path.** The change is already on the dataplane by then, so the
+  traceback left the operator with a Python stack and no idea whether their
+  commit took effect — it had. It now says exactly that, and that `rollback`
+  will not be able to undo it.
+* `core` is in `.gitignore`. The labs run VPP with `full-coredump`, so a crash
+  in a probe drops a 60 MB file in the working directory — and one of them got
+  as far as a pushed branch before anybody noticed.
+
+### The boundary this does not draw
+
+Every role still needs the **VPP CLI socket**, which is total control of the
+dataplane, so the roles bound what the VTY will do and not what a determined
+account can reach. Written into `docs/routing.md` rather than implied, and
+filed as [#76](https://github.com/andrediashexa/hexarouting/issues/76) —
+finishing what [#3](https://github.com/andrediashexa/hexarouting/issues/3)
+started.
 
 ## 0.14.0 — a setting an operator can change with somebody on the phone
 
