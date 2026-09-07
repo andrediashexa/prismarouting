@@ -25,7 +25,71 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.18.0.
+Nothing merged since v0.19.0.
+
+## 0.19.0 — a change that re-maps subscribers has to be asked for by name
+
+In deterministic mode a subscriber's public address and port block are a
+function of the pool definition. Adding one public prefix changes the divisor,
+which moves every subscriber at that instant and ends every session on the
+pool. Nothing is corrupted and past answers stay resolvable, but every customer
+is disconnected at once and the box reports nothing unusual — because nothing
+unusual happened. It did what it was told.
+
+### Added
+
+* **`commit` refuses a change that re-maps existing subscribers**
+  ([#23](https://github.com/andrediashexa/hexarouting/issues/23)), and says in
+  numbers what it would do:
+
+  ```
+  error: this change re-maps subscribers that already have mappings
+      240 of 256 subscribers change public address or port block; 0 hold live state right now
+      100.64.64.16 moves from 203.0.113.0:1536-2047 to 203.0.113.0:2048-3071
+      if that is what you mean, type: commit remap
+  ```
+
+  The count comes from the dataplane, which holds both definitions and runs the
+  same arithmetic it would run afterwards — not from a second implementation of
+  the mapping in the VTY. `commit check` reports it without applying anything.
+  Sessions currently held are counted separately: the mapping moves for
+  everybody, but the customers cut off are the ones with live state.
+
+* **A rollback that re-maps is refused too.** Undoing a change that moved every
+  subscriber moves them all a second time, so `rollback` is not a way round the
+  acknowledgement.
+
+* **[docs/pool-resize.md](docs/pool-resize.md)** — what moves and what does
+  not, how to measure it before committing, the procedure that costs an outage,
+  and the migration that costs none: add capacity as a second pool rather than
+  growing the first. It also records what is deliberately not offered and why.
+
+### Fixed
+
+* Two labs were quietly measuring nothing once the refusal existed:
+  `lab/commit.sh` section 4 changed a block size that was no longer being
+  applied, leaving the rollback assertion after it passing for the wrong
+  reason, and `lab/in-place.sh` section 3 — the control proving that a mapping
+  change *does* drop sessions — had become a no-op, which would have left
+  "in-place changes keep every session" passing on a box that never dropped a
+  session for any reason. Both now ask for the re-mapping by name and assert
+  the refusal on the way.
+
+* An assertion in `lab/commit.sh` read the revision history at verdict time
+  rather than at the moment it was about.
+
+* Two labs were found to have quietly stopped applying their own changes once
+  the gate existed, which is how a control fails: not by failing, but by
+  passing for the wrong reason. Both were caught by running the suite.
+
+### Internal
+
+* [#83](https://github.com/andrediashexa/hexarouting/issues/83) added to the
+  roadmap: the ISO installer does everything right up to the moment the disk is
+  written, and nothing after it — no management address, no home for the log
+  that is not the root filesystem, no mirror, and no check that the disk it
+  just wrote will boot.
+
 
 ## 0.18.0 — two tenants, one private range
 
