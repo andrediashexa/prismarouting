@@ -53,8 +53,13 @@ vppctl show bpa pool | head -2 | sed 's/^/    /'
 
 echo
 echo "=========== 4. a second commit, changing the block size ==========="
+# "commit remap" and not "commit": changing a block size moves every
+# subscriber that has a mapping, and since #23 that has to be asked for by
+# name. This section is about rollback, not about the refusal - but it cannot
+# skip past it, and a lab that quietly failed to apply its own change would
+# leave the assertion below passing for the wrong reason.
 $HX -c "configure" -c "cgnat pool alpha" -c "block-size 1024" -c "exit" \
-    -c "commit comment \"wider blocks\"" 2>&1 | sed 's/^/  /'
+    -c "commit remap comment \"wider blocks\"" 2>&1 | sed 's/^/  /'
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
 
 echo
@@ -63,7 +68,14 @@ $HX -c "show rollback" 2>&1 | sed 's/^/  /'
 
 echo
 echo "=========== 6. rollback 1 returns to the previous revision ==========="
-$HX -c "configure" -c "rollback 1" -c "show configuration compare" -c "commit" 2>&1 | sed 's/^/  /'
+# "commit remap" again, and for the same reason: undoing a change that moved
+# every subscriber moves them all a second time. A rollback is not exempt from
+# being a re-mapping - it is one - and an operator who typed the acknowledgement
+# on the way in should type it on the way out.
+ROLLBACK_OUT=$($HX -c "configure" -c "rollback 1" \
+    -c "show configuration compare" -c "commit" 2>&1)
+echo "$ROLLBACK_OUT" | tail -4 | sed 's/^/  /'
+$HX -c "configure" -c "rollback 1" -c "commit remap" 2>&1 | sed 's/^/  /'
 echo "  -- device followed the rollback:"
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
 
@@ -92,12 +104,21 @@ $HX -c "configure" -c "cgnat pool alpha" -c "block-size 500" -c "exit" \
     -c "commit check" 2>&1 | grep -vE "entering" | sed 's/^/  /'
 echo "  -- device untouched:"
 vppctl show bpa pool | grep -E "block " | sed 's/^/    /'
+# Captured here, not read at verdict time: the sections after this one commit
+# again, and an assertion about the revision history has to measure the moment
+# it is about rather than whatever the lab did afterwards.
+ROLLBACK_LIST=$($HX -c 'show rollback' 2>&1)
 
 echo
 echo "=========== VERDICT ==========="
 R=$(vppctl show bpa pool)
 expect_in "rollback took the device back to the earlier block size" "512 ports" "$R"
-expect_in "two revisions are on record" "1 commit(s) ago" "$($HX -c 'show rollback' 2>&1)"
+# A rollback that undoes a re-mapping is itself one, and is refused until it
+# is asked for by name. Without this, "rollback" would be the way round the
+# acknowledgement.
+expect_in "a rollback that re-maps is refused too" \
+  "re-maps subscribers" "$ROLLBACK_OUT"
+expect_in "two revisions are on record" "1 commit(s) ago" "$ROLLBACK_LIST"
 
 # --- MTU: committed, then rolled back to the value that was there before ---
 # The hard half of the acceptance criteria. A rollback that can add a statement
@@ -131,4 +152,37 @@ expect_in "a refused commit says so" "error" "$BADC"
 expect_in "and names the pool" "doomed" "$BADC"
 expect_not_in "and does not claim success" "commit complete" "$BADC"
 expect_not_in "and the pool is not in the dataplane" "pool doomed" "$(vppctl show bpa pool)"
+
+# --- a change that re-maps existing subscribers must be asked for by name ---
+#
+# The sharpest edge in the design: in deterministic mode a subscriber's public
+# address and port block are a function of the pool definition, so adding one
+# public prefix moves every subscriber at that instant and ends every session
+# on the pool. The box reports nothing unusual afterwards, because nothing
+# unusual happened - it did what it was told. See docs/pool-resize.md.
+vppctl bpa pool resize inside 100.64.64.0/24 outside 203.0.113.0/28 block 512 \
+  >/dev/null
+REMAP=$($HX -c "configure" -c "cgnat pool resize" -c "block-size 1024" \
+            -c "exit" -c "commit" 2>&1)
+echo "$REMAP" | tail -6 | sed 's/^/  /'
+BLOCK_MID=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0-9]*" | head -1)
+NAMED=$($HX -c "configure" -c "cgnat pool resize" -c "block-size 1024" \
+            -c "exit" -c "commit remap" 2>&1)
+echo "$NAMED" | tail -2 | sed 's/^/  /'
+BLOCK_AFTER=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0-9]*" | head -1)
+# And a change that moves nobody must not ask for anything.
+QUIET=$($HX -c "configure" -c "cgnat pool resize" -c "alg rtsp off" \
+            -c "exit" -c "commit" 2>&1)
+
+expect_in "a re-mapping change is refused" "re-maps subscribers" "$REMAP"
+expect_in "and says how many move" "subscribers change public address" "$REMAP"
+expect_in "and shows one of them moving" "moves from" "$REMAP"
+expect_in "and says what to type" "commit remap" "$REMAP"
+expect "and nothing was applied" test "$BLOCK_MID" = "block        512"
+expect_in "asked for by name, it applies" "commit complete" "$NAMED"
+expect "and the dataplane took it" test "$BLOCK_AFTER" = "block        1024"
+# A refusal that fires on every commit is one an operator routes around.
+expect_not_in "a change that moves nobody is not questioned" \
+  "re-maps subscribers" "$QUIET"
+expect_in "and commits normally" "commit complete" "$QUIET"
 verdict

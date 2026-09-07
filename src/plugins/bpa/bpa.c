@@ -403,6 +403,62 @@ bpa_check_pool_overlap (const bpa_pool_t *cfg)
 }
 
 /*
+ * How many subscribers a proposed pool would move, and where two of them go.
+ *
+ * This is the sharpest edge in the whole design. In deterministic mode a
+ * subscriber's public address and port block are a function of the pool
+ * definition, so ADDING ONE PUBLIC PREFIX changes the divisor and re-maps
+ * EVERY subscriber at that instant. Every session breaks, every mapping moves,
+ * and the box reports nothing unusual because nothing unusual happened: it is
+ * doing exactly what it was told.
+ *
+ * The audit trail keeps past answers resolvable - it records which definition
+ * was in force - so this is not a correctness problem. It is an outage the
+ * operator has to be told about BEFORE it happens, in numbers rather than in
+ * documentation they will read afterwards.
+ *
+ * Counted rather than reasoned about: an operator asked to trust "this changes
+ * the mapping" will believe the box is being cautious. Told "1024 of 1024
+ * subscribers move, and 100.64.0.5 goes from 200.150.0.17:1536-2047 to
+ * 200.150.0.33:2048-2559", they know what they are about to do.
+ *
+ * `now` MUST already be through bpa_pool_init(); `cfg` is a candidate that has
+ * been through it on a copy.
+ */
+u32
+bpa_pool_remap_count (const bpa_pool_t *now, const bpa_pool_t *cfg,
+		      u32 *n_total, u32 *example, u32 max_examples)
+{
+  u32 moved = 0, seen = 0, i;
+  u32 usable = now->inside.count < now->capacity ? now->inside.count
+						 : now->capacity;
+
+  *n_total = usable;
+  for (i = 0; i < usable; i++)
+    {
+      bpa_block_t a, b;
+      u32 addr;
+
+      if (bpa_set_addr_of (&now->inside, i, &addr))
+	continue;
+      seen++;
+      if (bpa_forward (now, addr, &a))
+	continue;
+      /* An address the new definition does not serve at all has moved as
+       * surely as one that moved somewhere else. */
+      if (bpa_forward (cfg, addr, &b) || a.ip_pub != b.ip_pub
+	  || a.port_lo != b.port_lo)
+	{
+	  if (moved < max_examples)
+	    example[moved] = addr;
+	  moved++;
+	}
+    }
+  (void) seen;
+  return moved;
+}
+
+/*
  * Every check bpa_pool_add() performs, without creating anything.
  *
  * Exists so a configuration can be validated before it is applied. Without

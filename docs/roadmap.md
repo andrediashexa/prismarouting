@@ -351,10 +351,12 @@ which today disqualifies the product from deployments for a reason unrelated to
 the CGNAT; and [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity in the log, which is what makes
 a record name a person instead of an address.
 
-[#23](https://github.com/andrediashexa/hexarouting/issues/23) belongs **before** both. It is the sharpest edge in the design and
-it is undocumented, with no warning at `commit`: adding one public prefix
-changes the divisor and re-maps every subscriber at that instant. An operator
-who learns that from the consequence learns it during an outage.
+[#23](https://github.com/andrediashexa/hexarouting/issues/23) — *delivered,
+v0.19.0*. It was the sharpest edge in the design and it was undocumented, with
+no warning at `commit`. Now `commit` refuses a change that re-maps existing
+subscribers until it is asked for by name, saying how many move and where two
+of them go, and [pool-resize.md](pool-resize.md) carries the procedure —
+including the migration that costs no outage.
 
 #### Phase 4 — capacity, which depends on #23
 

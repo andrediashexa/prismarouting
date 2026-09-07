@@ -568,7 +568,101 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       error = bpa_pool_validate (&cfg);
       if (!error)
-	vlib_cli_output (vm, "pool '%v' is valid", name);
+	{
+	  bpa_main_t *bm = &bpa_main;
+	  uword *q;
+
+	  vlib_cli_output (vm, "pool '%v' is valid", name);
+
+	  /*
+	   * If a pool of this name is running, say what replacing it would do
+	   * to the subscribers on it. In numbers and with examples: an
+	   * operator told "this changes the mapping" hears the box being
+	   * cautious, and an operator told "1024 of 1024 subscribers move,
+	   * and 100.64.0.5 goes from here to there" knows what they are
+	   * about to do.
+	   */
+	  q = hash_get_mem (bm->pool_by_name, name);
+	  if (q)
+	    {
+	      bpa_pool_t *now = pool_elt_at_index (bm->pools, q[0]);
+	      bpa_pool_t probe = cfg;
+	      u32 example[2], total = 0, moved;
+
+	      probe.statics = 0;
+	      if (!bpa_pool_init (&probe) && now->mode == BPA_MODE_DETERMINISTIC
+		  && probe.mode == BPA_MODE_DETERMINISTIC)
+		{
+		  moved = bpa_pool_remap_count (now, &probe, &total, example,
+						ARRAY_LEN (example));
+		  if (moved)
+		    {
+		      u32 k;
+
+		      u32 ti, live = 0;
+
+		      /* How many of them are holding state right now. The
+		       * mapping changes for all of them either way - a past
+		       * log record was computed with the old definition - but
+		       * what an operator wants to know first is how many
+		       * customers are about to be cut off. */
+		      for (ti = 0; ti < vec_len (bm->per_thread); ti++)
+			{
+			  bpa_per_thread_t *pt =
+			    vec_elt_at_index (bm->per_thread, ti);
+			  uword key, value;
+
+			  if (!pt->initialised)
+			    continue;
+			  /* clang-format off */
+			  hash_foreach (key, value, pt->sub_by_idx,
+			  ({
+			    (void) value;
+			    if ((u32) (key >> 32) == q[0])
+			      live++;
+			  }));
+			  /* clang-format on */
+			}
+
+		      vlib_cli_output (
+			vm,
+			"remap: %u of %u subscribers change public address or "
+			"port block; %u hold live state right now",
+			moved, total, live);
+		      for (k = 0; k < moved && k < ARRAY_LEN (example); k++)
+			{
+			  bpa_block_t a, b;
+			  ip4_address_t pa, pb, pv;
+
+			  if (bpa_forward (now, example[k], &a))
+			    continue;
+			  pv.as_u32 = clib_host_to_net_u32 (example[k]);
+			  pa.as_u32 = clib_host_to_net_u32 (a.ip_pub);
+			  if (bpa_forward (&probe, example[k], &b))
+			    {
+			      vlib_cli_output (
+				vm, "remap:   %U was %U:%u-%u, now served by "
+				    "no block at all",
+				format_ip4_address, &pv, format_ip4_address,
+				&pa, a.port_lo, a.port_hi);
+			      continue;
+			    }
+			  pb.as_u32 = clib_host_to_net_u32 (b.ip_pub);
+			  vlib_cli_output (
+			    vm, "remap:   %U moves from %U:%u-%u to %U:%u-%u",
+			    format_ip4_address, &pv, format_ip4_address, &pa,
+			    a.port_lo, a.port_hi, format_ip4_address, &pb,
+			    b.port_lo, b.port_hi);
+			}
+		      vlib_cli_output (
+			vm, "remap: every session on this pool ends when it is "
+			    "applied. Past answers stay resolvable - the "
+			    "configuration trail records which definition was "
+			    "in force - but the subscribers do not.");
+		    }
+		}
+	    }
+	}
     }
   else
     error = bpa_pool_add (&cfg, 0);
