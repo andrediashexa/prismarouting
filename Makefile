@@ -5,16 +5,23 @@ BUILD  := .build
 .PHONY: test test-appliance test-iso test-install iso hw-up hw-lab hw-vpp hw-down \
         model vectors clean
 
-test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp
+test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
+      $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp
 	@$(BUILD)/test_bpa
 	@echo
 	@$(BUILD)/test_bpa_ports
 	@echo
 	@$(BUILD)/test_bpa_rtsp
 	@echo
+	@$(BUILD)/test_bpa_mss
+	@echo
+	@$(BUILD)/test_bpa_ftp
+	@echo
 	@python3 appliance/test_tune.py
 	@echo
 	@python3 test/test_hexash_complete.py
+	@echo
+	@python3 test/test_hexash_config.py
 	@echo
 	@sh test/test_version_stamp.sh
 	@echo
@@ -47,6 +54,20 @@ $(BUILD)/test_bpa_rtsp: test/test_bpa_rtsp.c src/plugins/bpa/bpa_rtsp.h \
                         test/bpa_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rtsp.c
+
+# The MSS clamp and the FTP sequence shift: arithmetic on a TCP header whose
+# failure mode is silent - the peer drops the segment and the connection hangs
+# exactly as it did before, with a counter claiming the fix was applied. Built
+# standalone for the same reason the RTSP parser is.
+$(BUILD)/test_bpa_mss: test/test_bpa_mss.c src/plugins/bpa/bpa_mss.h \
+                       test/bpa_shim.h test/bpa_tcp_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_mss.c
+
+$(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
+                       test/bpa_shim.h test/bpa_tcp_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_ftp.c
 
 # Tests that need VPP, so they run in the build container.
 test-appliance:

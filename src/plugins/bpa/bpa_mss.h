@@ -25,7 +25,16 @@
 #ifndef __included_bpa_mss_h__
 #define __included_bpa_mss_h__
 
+/* Standalone so that test/test_bpa_mss.c can reach it without VPP. The
+ * clamp is arithmetic on an option list whose failure mode is silent - the
+ * peer drops the segment and the connection hangs exactly as it did before -
+ * so its refusals have to be assertable without a container. Same reason
+ * bpa_ports.h and bpa_rtsp.h carry this. */
+#ifdef BPA_STANDALONE
+#include "bpa_tcp_shim.h"
+#else
 #include <vnet/tcp/tcp_packet.h>
+#endif
 
 /* An IPv4 header and a TCP header, both without options: what an MSS is
  * measured against, so an MTU minus this is the largest MSS that fits. */

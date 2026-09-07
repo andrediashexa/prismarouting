@@ -30,12 +30,21 @@
 #ifndef __included_bpa_ftp_h__
 #define __included_bpa_ftp_h__
 
+/* Standalone so that test/test_bpa_ftp.c can reach the sequence arithmetic
+ * without VPP. Only the pure half is available under it: the payload rewriter
+ * below needs a vlib buffer and belongs to the labs. The shift does not, and
+ * it is serial-number arithmetic - the kind that is right for years and then
+ * wrong for one connection that lived long enough to wrap. */
+#ifdef BPA_STANDALONE
+#include "bpa_tcp_shim.h"
+#else
 #include <vlib/vlib.h>
 #include <vnet/ip/ip4_packet.h>
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa_pool.h"
 #include "bpa_session.h"
+#endif
 
 #define BPA_FTP_CONTROL_PORT 21
 
@@ -181,9 +190,11 @@ bpa_ftp_ack_out2in (tcp_header_t *tcp, const bpa_session_t *s)
  * pointer: the write landed in freed memory, every later segment left
  * unshifted, and no counter said anything.
  */
+#ifndef BPA_STANDALONE
 bpa_ftp_result_t bpa_ftp_in2out (vlib_main_t *vm, vlib_buffer_t *b,
 				 ip4_header_t *ip, bpa_per_thread_t *pt,
 				 const bpa_pool_t *p, bpa_session_t **sp,
 				 f64 now);
+#endif
 
 #endif /* __included_bpa_ftp_h__ */
