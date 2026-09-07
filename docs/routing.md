@@ -163,9 +163,11 @@ that fails to start would otherwise leave nobody able to reach the box.
 `start shell` opens a real shell as a child of the VTY; leaving it returns to
 the VTY rather than logging out. It appears in neither tab completion nor `?`.
 
-* The escape is hidden, **not** restricted. Anyone who can log in can run it.
-  It **MUST NOT** be described as a security control; authorization is
-  [#35](https://github.com/andrediashexa/hexarouting/issues/35).
+* The escape is hidden **and** restricted: administrators only. Hiding was
+  never the boundary — the role check is
+  ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), and it is
+  what makes that sentence true rather than a hope. A shell on this box is
+  every capability at once.
 * A shell **MUST** remain reachable. Recovery, `tcpdump`, and reading a log the
   VTY does not expose all need one, and an appliance that makes them impossible
   gets a permanent hole opened by the first operator who needs one.
@@ -596,6 +598,63 @@ release and start suggesting commands that no longer exist.
 * `hexash` is written in Python. It is an interactive control-plane shell,
   outside any packet path; C would take three times the code for the same
   result.
+
+### Roles: what each account may change
+
+Two capabilities, mapped onto **system groups** rather than a database this
+appliance keeps of its own. An appliance that invents its own accounts is an
+appliance whose accounts nobody deprovisions when somebody leaves.
+
+| Group | May change |
+|---|---|
+| `hexa-admin` | everything: routing, the box's own configuration, CGNAT |
+| `hexa-cgnat` | CGNAT configuration only |
+| neither | nothing — read-only |
+
+`root` has both, because root can talk to the dataplane socket directly and
+pretending otherwise would be theatre.
+
+**`hexa-admin` is additive.** It grants the capability; it does not grant file
+access. `/etc/hexarouting` is group-owned by `hexa-cgnat`, so **an
+administrator MUST also be a member of `hexa-cgnat`** — otherwise they can
+apply a change and then fail to record its rollback revision.
+
+#### Where the check lives
+
+At the point where the change is applied, in `Shell.apply()`, which `commit`,
+`rollback` and `--load` all reach. The gates on `configure` and on the shell
+escape are convenience. A check that only hides a command from the completion
+tree is not an authorization check, and `lab/vty.sh` issues the commands
+directly rather than through the tree for exactly that reason.
+
+Authorization answers **before** validation. A CGNAT operator committing a
+routing change is told they may not, not that FRR is unhealthy — which would
+be both the wrong answer and one they were not entitled to.
+
+#### What granting a role also grants
+
+The configuration is one document. An account that may configure reads the
+running configuration to build its candidate, and that document contains the
+**password hashes** of every local account and the SNMP credentials. There is
+no CGNAT-only view of it. Granting `hexa-cgnat` therefore grants sight of
+those, and the directory is group-owned rather than world-readable for that
+reason.
+
+#### The boundary this does not draw
+
+Every role needs to reach the dataplane, and `hexash` still drives some
+operations over the **VPP CLI socket** — interface attachment, uRPF, MTU, the
+`check` path. Reaching that socket is total control of the dataplane. So a
+read-only account that can run the VTY at all can, today, also run `vppctl`
+directly.
+
+Closing that means finishing what
+[#3](https://github.com/andrediashexa/hexarouting/issues/3) started: moving the
+last CLI-driven operations onto the binary API, after which the CLI socket can
+be root-only. It is
+[#76](https://github.com/andrediashexa/hexarouting/issues/76), and until it is
+done the roles bound what the **VTY** will do, not what a determined account
+can reach.
 
 ## FRR version
 

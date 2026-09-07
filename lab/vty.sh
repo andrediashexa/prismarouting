@@ -123,6 +123,81 @@ $HX --load "$HEXA_CONFIG"
 vppctl show bpa pool | head -2 | sed 's/^/    depois: /'
 
 echo
+echo "=========== roles: what each account may change ==========="
+# Real accounts in real groups, run as themselves. No environment variable
+# that says "pretend I am read-only": a security check with a test-only way
+# past it is a security check with a way past it.
+groupadd -f hexa-admin 2>/dev/null
+groupadd -f hexa-cgnat 2>/dev/null
+for u in ro cg adm; do
+  id "$u" >/dev/null 2>&1 || useradd -M -s /bin/sh "$u" 2>/dev/null
+done
+usermod -aG hexa-cgnat cg 2>/dev/null
+usermod -aG hexa-admin adm 2>/dev/null
+# The dataplane socket is group-owned by vpp; every role needs to reach it to
+# read anything at all. That membership is what a read-only account MUST NOT
+# also give it - see docs/routing.md and issue #76.
+# One user per call: "usermod -aG vpp ro cg adm" adds only the first, and the
+# rest silently do not get the group - which looks exactly like an
+# authorization refusal three commands later.
+for u in ro cg adm; do usermod -aG vpp "$u" 2>/dev/null; done
+# The dataplane API socket and FRR's own socket are the two things every role
+# has to reach before authorization is even the question. Granting them here
+# is what makes the checks below measure AUTHORIZATION rather than file
+# permissions.
+chmod 0777 /run/vpp 2>/dev/null
+chmod 0666 /run/vpp/api.sock /run/vpp/cli.sock 2>/dev/null
+for g in frr frrvty; do usermod -aG "$g" ro 2>/dev/null; usermod -aG "$g" cg 2>/dev/null; usermod -aG "$g" adm 2>/dev/null; done
+chmod -R a+rX /etc/frr 2>/dev/null
+# "api-segment { gid vpp }" group-owns /dev/shm/vpe-api and NOT
+# /dev/shm/global_vm, which a client maps as well - so a non-root API call
+# fails with svm_region_map(mmap open): Permission denied. Corrected here and
+# filed as #76: an appliance where only root can use the binary API is an
+# appliance where roles are decorative.
+chgrp vpp /dev/shm/global_vm 2>/dev/null
+chmod 0660 /dev/shm/global_vm 2>/dev/null
+# An account that may configure has to be able to write the rollback store and
+# the saved configuration. Both hold the whole configuration, password hashes
+# included, so granting the capability grants sight of them - which is why the
+# directory is group-owned rather than world-anything. Also #76.
+chgrp -R hexa-cgnat /etc/hexarouting 2>/dev/null
+chmod 0770 /etc/hexarouting 2>/dev/null
+mkdir -p /etc/hexarouting/rollback
+chgrp hexa-cgnat /etc/hexarouting/rollback 2>/dev/null
+chmod 0770 /etc/hexarouting/rollback 2>/dev/null
+# hexa-cgnat owns the configuration directory and hexa-admin is ADDITIVE on
+# top of it: an administrator is a member of both. Owning it with hexa-admin
+# instead would have handed the cgnat operator administrator rights, which is
+# the opposite of the point.
+usermod -aG hexa-cgnat adm 2>/dev/null
+chmod 0644 /etc/hexarouting/hexarouting.conf 2>/dev/null
+as() { u=$1; shift; su -s /bin/sh -c "HEXA_CONFIG=$HEXA_CONFIG python3 /src/src/hexash/hexash.py $*" "$u" 2>&1; }
+
+echo "  -- read-only account tries to configure"
+RO_CONF=$(as ro -c "'configure'")
+printf '%s\n' "$RO_CONF" | sed 's/^/    /'
+echo "  -- read-only account tries to commit a pool, command issued directly"
+RO_COMMIT=$(as ro -c "'configure'" -c "'cgnat pool nope'" -c "'inside 192.168.0.0/24'" -c "'outside 198.51.100.64/30'" -c "'exit'" -c "'commit'")
+printf '%s\n' "$RO_COMMIT" | sed 's/^/    /'
+echo "  -- read-only account tries the hidden shell escape"
+RO_SHELL=$(as ro -c "'start shell'")
+printf '%s\n' "$RO_SHELL" | sed 's/^/    /'
+echo "  -- read-only account can still look"
+RO_SHOW=$(as ro -c "'show running-config'")
+printf '%s\n' "$RO_SHOW" | sed 's/^/    /'
+echo "  -- cgnat operator changes a pool setting"
+CG_OK=$(as cg -c "'configure'" -c "'cgnat pool provider-a'" -c "'alg rtsp off'" -c "'exit'" -c "'commit'")
+printf '%s\n' "$CG_OK" | sed 's/^/    /'
+echo "  -- cgnat operator tries to change routing"
+CG_ROUTE=$(as cg -c "'configure'" -c "'router bgp 65000'" -c "'exit'" -c "'commit'")
+printf '%s\n' "$CG_ROUTE" | sed 's/^/    /'
+echo "  -- and tries the shell"
+CG_SHELL=$(as cg -c "'start shell'")
+printf '%s\n' "$CG_SHELL" | sed 's/^/    /'
+ALG_AFTER=$(vppctl show bpa config | grep -c "alg rtsp off")
+POOL_AFTER=$(vppctl show bpa pool | grep -c "pool nope")
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 R=$($HX -c "show running-config" 2>/dev/null)
@@ -130,4 +205,22 @@ expect_in "CGNAT is in the running config" "cgnat pool" "$R"
 expect_in "routing is in the same running config" "router bgp 65000" "$R"
 expect_not_in "the refused pool stayed out" "cgnat pool bad" "$R"
 expect "the BGP route reached the VPP FIB" sh -c "vppctl show ip fib 203.0.113.0/24 | grep -q '^203.0.113.0/24'"
+
+# Issue #35. The refusals are asserted at the point of application, with the
+# commands issued directly rather than through the completion tree.
+expect_in "a read-only account cannot enter configuration mode" \
+  "permission denied" "$RO_CONF"
+expect_in "and cannot commit a pool" "permission denied" "$RO_COMMIT"
+expect "and the pool it tried to create does not exist" \
+  test "${POOL_AFTER:-1}" -eq 0
+expect_in "and cannot reach a shell" "permission denied" "$RO_SHELL"
+# The other half: a role that refuses everything is not a role, it is a broken
+# VTY. Read-only must still be able to read.
+expect_in "but can still read the running configuration" \
+  "cgnat pool" "$RO_SHOW"
+
+expect_in "a cgnat operator can change a pool" "commit complete" "$CG_OK"
+expect "and the change reached the dataplane" test "${ALG_AFTER:-0}" -ge 1
+expect_in "but cannot change routing" "permission denied" "$CG_ROUTE"
+expect_in "and cannot reach a shell either" "permission denied" "$CG_SHELL"
 verdict

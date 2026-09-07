@@ -114,12 +114,36 @@ install -D -m 0644 "$REPO/appliance/etc/sysctl.conf" \
     "$DESTDIR/etc/sysctl.d/99-hexarouting.conf"
 
 say "configuration"
-# 0700, not 0755. Since accounts became part of the configuration (#45) this
-# directory holds password hashes - in hexarouting.conf and in every rollback
-# revision under it - and a world-readable copy hands every local account an
-# offline cracking target.
-install -d -m 0700 "$DESTDIR/etc/hexarouting"
-install -d -m 0700 "$DESTDIR/etc/hexarouting/rollback"
+# Group-readable, never world-readable. Since accounts became part of the
+# configuration (#45) this directory holds password hashes - in
+# hexarouting.conf and in every rollback revision under it - and a
+# world-readable copy hands every local account an offline cracking target.
+# The group is a role group, so seeing them requires being trusted to change
+# the configuration in the first place (#35).
+# The two roles the VTY understands. Created here rather than documented as a
+# step somebody must remember: an authorization model whose groups do not exist
+# is one where every account falls back to read-only and the operator concludes
+# the box is broken. Empty until somebody is added to them; root always has
+# both.
+for g in hexa-admin hexa-cgnat; do
+  if [ -z "${DESTDIR:-}" ]; then
+    getent group "$g" >/dev/null 2>&1 || groupadd --system "$g" 2>/dev/null || true
+  fi
+done
+
+# 0770 and group-owned, not 0700: an account that may configure has to write
+# the rollback store and the saved configuration, and both hold the whole
+# configuration - password hashes included. Granting the capability grants
+# sight of them, which is why the group is a role group and not "users".
+#
+# hexa-cgnat owns it and hexa-admin is ADDITIVE on top: an administrator is a
+# member of both. Owning it with hexa-admin instead would leave a CGNAT
+# operator unable to record a rollback revision for the change it just made.
+install -d -m 0770 "$DESTDIR/etc/hexarouting"
+install -d -m 0770 "$DESTDIR/etc/hexarouting/rollback"
+if [ -z "${DESTDIR:-}" ] && getent group hexa-cgnat >/dev/null 2>&1; then
+  chgrp hexa-cgnat /etc/hexarouting /etc/hexarouting/rollback 2>/dev/null || true
+fi
 # The configuration trail. The plugin opens it with O_CREAT and cannot create
 # the directory, so without this the trail exists in every lab - where the lab
 # happens to make the directory - and on no installed box. In deterministic
@@ -134,7 +158,12 @@ install -d -m 0750 "$DESTDIR/var/log/hexarouting"
     "$DESTDIR/etc/hexarouting/vpp-base.conf"
 [ -f "$DESTDIR/etc/hexarouting/hexarouting.conf" ] || \
   printf '!\n! HexaRouting\n!\n' > "$DESTDIR/etc/hexarouting/hexarouting.conf"
-chmod 0600 "$DESTDIR/etc/hexarouting/hexarouting.conf"
+# 0660 for the same reason as the directory: an account that may configure
+# saves it, and it holds hashes. Never world-readable.
+chmod 0660 "$DESTDIR/etc/hexarouting/hexarouting.conf"
+if [ -z "${DESTDIR:-}" ] && getent group hexa-cgnat >/dev/null 2>&1; then
+  chgrp hexa-cgnat "$DESTDIR/etc/hexarouting/hexarouting.conf" 2>/dev/null || true
+fi
 
 say "documentation"
 for d in architecture routing logging; do

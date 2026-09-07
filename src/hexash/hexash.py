@@ -230,6 +230,92 @@ LIVE_SQUASHFS = os.environ.get(
 INSTALLER = os.environ.get("HEXA_INSTALLER", "/usr/sbin/hexarouting-install")
 
 
+# ---------------------------------------------------------------- roles
+#
+# Two capabilities, mapped onto system groups rather than a database of this
+# appliance's own. An appliance that invents its own accounts is an appliance
+# whose accounts nobody deprovisions when somebody leaves.
+#
+#   hexa-admin   everything: routing, the box's own configuration, and CGNAT
+#   hexa-cgnat   CGNAT configuration only
+#   neither      read-only
+#
+# root has both, because root can talk to the dataplane socket directly and
+# pretending otherwise would be theatre.
+CAP_CGNAT = "cgnat"
+CAP_ALL = "configure"
+
+GROUP_ADMIN = "hexa-admin"
+GROUP_CGNAT = "hexa-cgnat"
+
+
+def capabilities():
+    """
+    What the invoking account is allowed to change.
+
+    Read from the system's group membership at the moment the VTY starts, and
+    never from anything this program stores: the answer has to be the one the
+    system would give, or deprovisioning an account here does not deprovision
+    it.
+    """
+    if os.geteuid() == 0:
+        return {CAP_ALL, CAP_CGNAT}
+
+    names = set()
+    try:
+        import grp
+        import pwd
+
+        user = pwd.getpwuid(os.geteuid()).pw_name
+        names = {g.gr_name for g in grp.getgrall()
+                 if user in g.gr_mem}
+        names.add(grp.getgrgid(pwd.getpwnam(user).pw_gid).gr_name)
+    except Exception:
+        # An account the system cannot describe gets nothing. Failing open
+        # here would mean a broken NSS turns into full configuration rights.
+        return set()
+
+    caps = set()
+    if GROUP_ADMIN in names:
+        caps |= {CAP_ALL, CAP_CGNAT}
+    if GROUP_CGNAT in names:
+        caps.add(CAP_CGNAT)
+    return caps
+
+
+# Which half of the configuration each part of a delta belongs to. Written as
+# data rather than a chain of ifs, so a delta key added later and forgotten
+# here is visible as an absence instead of silently needing nothing.
+DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
+               "limits_set", "bypass_set", "fwd_add", "fwd_del", "if_add",
+               "if_remove", "globals")
+DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
+               "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del")
+
+
+def cap_needed(delta):
+    """
+    The capability a change requires, or None when it changes nothing.
+
+    Anything outside CGNAT needs the full capability, because the rest of the
+    configuration is routing, the accounts that may log in, and the SSH and
+    SNMP daemons - none of which a CGNAT operator was given.
+    """
+    if any(delta.get(k) for k in DELTA_ADMIN):
+        return CAP_ALL
+    if any(delta.get(k) for k in DELTA_CGNAT):
+        return CAP_CGNAT
+    return None
+
+
+def role_name(caps):
+    if CAP_ALL in caps:
+        return "administrator"
+    if CAP_CGNAT in caps:
+        return "cgnat operator"
+    return "read-only"
+
+
 def running_from_live_medium():
     return os.path.exists(LIVE_SQUASHFS) and os.access(INSTALLER, os.X_OK)
 
@@ -416,6 +502,16 @@ class Frr:
         return p.returncode, ((p.stdout or "") + (p.stderr or "")).rstrip()
 
 
+class RollbackUnavailable(Exception):
+    """
+    The revision store could not be written.
+
+    Its own exception because the caller has to say something specific: the
+    configuration IS applied and only the ability to undo it is missing, which
+    is a different sentence from "the commit failed".
+    """
+
+
 class Rollback:
     """
     Committed revisions on disk.
@@ -461,11 +557,15 @@ class Rollback:
         revision is a complete configuration, and since accounts joined it that
         includes password hashes.
         """
-        os.makedirs(self.path, exist_ok=True)
+        # A store this account cannot write is reported, not raised. By the
+        # time a revision is recorded the change is already on the dataplane,
+        # so a traceback here would leave the operator looking at a Python
+        # stack with no idea whether their commit took effect - and it did.
         try:
+            os.makedirs(self.path, exist_ok=True)
             os.chmod(self.path, 0o700)
-        except OSError:
-            pass
+        except OSError as e:
+            raise RollbackUnavailable(f"{self.path}: {e.strerror}") from None
         oldest = self._file(self.keep - 1)
         if os.path.exists(oldest):
             os.unlink(oldest)
@@ -491,6 +591,7 @@ class Shell:
         self.api = vppapi.Vat2()
         self.frr = Frr()
         self.rb = Rollback()
+        self.caps = capabilities()
         self.mode = "operational"      # operational | config | pool | user
         self.pool = None               # pool being edited
         self.user = None               # user being edited
@@ -513,6 +614,22 @@ class Shell:
         if self.mode == "snmp-user":
             return "hexarouting# [edit snmp user] "
         return "hexarouting# [edit] "
+
+    def require(self, cap, what):
+        """
+        Refuses `what` unless the account holds `cap`, and says which role it
+        has rather than only that it may not.
+        """
+        if cap in self.caps:
+            return True
+        self.err(f"{what}: permission denied for a {role_name(self.caps)} "
+                 "account")
+        if not self.caps:
+            print(f"    membership of {GROUP_CGNAT} allows CGNAT "
+                  f"configuration, {GROUP_ADMIN} allows everything")
+        else:
+            print(f"    this change needs {GROUP_ADMIN}")
+        return False
 
     def err(self, msg):
         print(f"error: {msg}")
@@ -630,6 +747,21 @@ class Shell:
         """
         running = self.running_config()
         d = running.delta_to(target)
+
+        # THE authorization check, here because this is where the change is
+        # applied. The gates on `configure` and on the shell escape are
+        # convenience: a check that only hides a command from the tree is not
+        # an authorization check, and this function is reached by `commit`, by
+        # `rollback` and by --load alike.
+        #
+        # Checked on a check-only run too, and deliberately: the answer to
+        # "may I" must come before the answer to "would it work". Otherwise a
+        # cgnat operator committing a routing change is told that FRR is
+        # unhealthy - which is both the wrong answer and one they were not
+        # entitled to.
+        need = cap_needed(d)
+        if need and not self.require(need, "commit"):
+            return False
 
         # Asked once, before anything is touched. Discovering the dataplane is
         # unreachable halfway through leaves the box in a state that is neither
@@ -972,7 +1104,12 @@ class Shell:
             self.apply(Config.parse(backup))
             return
 
-        self.rb.push(self.candidate.text(), comment)
+        try:
+            self.rb.push(self.candidate.text(), comment)
+        except RollbackUnavailable as e:
+            self.err("the change is applied, but no rollback revision could "
+                     f"be recorded: {e}")
+            print("    'rollback' will not be able to undo this commit")
         print("commit complete")
 
         if confirm_min:
@@ -1016,9 +1153,11 @@ class Shell:
         """
         Hidden escape to a real shell.
 
-        Deliberately absent from TREE, so neither completion nor `?` offers it.
-        Hidden, not restricted: anyone who can log in can run it, and the
-        authorization boundary is roles in the VTY, not obscurity. It exists
+        Deliberately absent from TREE, so neither completion nor `?` offers
+        it - and, since roles exist, RESTRICTED as well: a shell on this box is
+        every capability at once, so administrators only. Hiding it was never
+        the boundary; this check is what makes the sentence above true rather
+        than a hope. It exists
         because recovery, tcpdump and reading a log the VTY does not expose all
         need a shell, and an appliance that makes those impossible gets one
         opened permanently by the first operator who needs one.
@@ -1026,6 +1165,8 @@ class Shell:
         Spawned as a child rather than exec'd: leaving the shell has to come
         back to the VTY, not log the operator out.
         """
+        if not self.require(CAP_ALL, "start shell"):
+            return
         shell = os.environ.get("HEXA_SHELL") or "/bin/bash"
         if not os.path.exists(shell):
             shell = "/bin/sh"
@@ -1054,6 +1195,8 @@ class Shell:
             self.err("this box is not running from the installation medium; "
                      "'install' only exists there")
             return
+        if not self.require(CAP_ALL, "install"):
+            return
         try:
             subprocess.call([INSTALLER])
         except OSError as e:
@@ -1069,6 +1212,12 @@ class Shell:
             self.do_install()
             return True
         if w[0] in ("configure", "conf"):
+            if not self.caps:
+                self.err("configure: permission denied for a read-only "
+                         "account")
+                print(f"    membership of {GROUP_CGNAT} allows CGNAT "
+                      f"configuration, {GROUP_ADMIN} allows everything")
+                return True
             self.candidate = self.running_config()
             self.mode = "config"
             print("entering configuration mode")
@@ -1593,7 +1742,11 @@ class Shell:
                 print(f"    line {lineno}: {text}    ({why})")
             return
         if self.apply(target):
-            self.rb.push(target.text(), "loaded from file")
+            try:
+                self.rb.push(target.text(), "loaded from file")
+            except RollbackUnavailable as e:
+                self.err("loaded, but no rollback revision could be "
+                         f"recorded: {e}")
 
     def repl(self):
         global readline
