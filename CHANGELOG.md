@@ -25,7 +25,72 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.10.0.
+Nothing merged since v0.11.0.
+
+## 0.11.0 — the ticket that does not look like NAT
+
+A subscriber on PPPoE has 1492 bytes of usable MTU and nothing tells the far
+end. The remote sends full-sized segments, they are dropped where the path
+narrows, and path MTU discovery — which exists for exactly this — is routinely
+broken by somebody filtering ICMP. What reaches support is **"some sites do not
+load"**: not slowly, they hang, and it looks nothing like an MTU problem to
+anyone taking the call.
+
+### Added
+
+* **TCP MSS clamping** ([#19](https://github.com/andrediashexa/hexarouting/issues/19)):
+
+  ```
+  cgnat pool residential
+   tcp-mss 1400
+   exit
+  ```
+
+  or `tcp-mss auto`, off by default, and `bpa tcp-mss` changes it on a running
+  pool. Applied to `SYN` **and** `SYN/ACK`, because the option announces what
+  the *sender is willing to receive*: clamping the subscriber's `SYN` limits
+  what the internet sends back, and clamping the server's `SYN/ACK` limits what
+  the subscriber sends out. Doing one leaves half the path unprotected.
+
+  `auto` resolves to the **smallest** IPv4 MTU among the CGNAT's interfaces,
+  less 40 — not the egress one, because the node clamps *before* the forwarding
+  lookup and does not yet know which interface the packet will leave by. The
+  minimum errs safely: a clamp smaller than necessary costs throughput, a
+  larger one protects nothing. Recomputed as interfaces and MTUs change, and
+  `show bpa pool` prints the resolved number rather than the word.
+
+  It never raises an MSS that is already smaller, never inserts an option into
+  a `SYN` that has none, never touches a segment outside the handshake, and
+  refuses values below 536 (RFC 1122 §4.2.2.6) or above 9000 — a typo such as
+  `tcp-mss 14` would otherwise break every connection through the box.
+
+* **`lab/mss.sh`**, which reads every value off a **captured packet** and
+  asserts both checksums on the same bytes. A wrong checksum fails silently:
+  the peer drops the segment, the connection hangs exactly as it did before,
+  and the counter here says it was fixed. `sh tools/lab.sh mss off` fails the
+  six checks that claim a clamp was applied.
+
+### Changed
+
+* **The rules now say that the issue is the record of the work**
+  (`CONTRIBUTING.md` §2). A design decision the issue did not anticipate, a
+  measurement and its conditions, a limit the change deliberately does not
+  cross, and anything found on the way that belongs to a different issue all go
+  back to the issue as they happen; closing carries the acceptance criteria,
+  ticked, with what the evidence was. An issue closed with "done" is an issue
+  whose reasoning was thrown away.
+* **Binary API 0.4.0** changes the layout of `bpa_pool_add_del` and
+  `bpa_pool_details`. A client built against 0.3.0 must be rebuilt.
+  `lab/api.sh` pins that shape and is what caught it.
+
+### Known, and filed rather than hidden
+
+* `bpa tcp-mss` changes the clamp **in place** and keeps every session; doing
+  the same through the VTY replaces the pool and drops them all. That is true
+  of every per-pool setting today and is
+  [#69](https://github.com/andrediashexa/hexarouting/issues/69). The caveat is
+  in `docs/architecture.md`, because it is worth knowing before answering a
+  support call with a commit.
 
 ## 0.10.0 — the check that keeps the log from being confidently wrong
 
