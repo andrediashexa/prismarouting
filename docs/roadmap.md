@@ -335,7 +335,7 @@ schedule is the one produced after the work.
 | Issue | Note |
 |---|---|
 | [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation as a histogram, with a threshold — *delivered, v0.17.0* | `show bpa pool` reports the distribution, and `utilisation-alarm <percent>` logs once per subscriber crossing it — ahead of `natEvent 12`, which only fires once the customer has already lost traffic. |
-| [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection by ACL and VRF | Carries a hidden cost: the session key's second word was reserved for a VRF id and the PPTP ALG spent it on the remote address. This needs a wider key or a packed encoding — datapath work, not configuration. |
+| [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection by ACL and VRF | Split: [#79](https://github.com/andrediashexa/hexarouting/issues/79) VRF — *delivered, v0.18.0*, with the packed key the PPTP ALG made necessary; [#80](https://github.com/andrediashexa/hexarouting/issues/80) ACL remains, and should wait for a deployment that needs it. |
 
 #### Phase 3 — compliance, and it is a sequence
 

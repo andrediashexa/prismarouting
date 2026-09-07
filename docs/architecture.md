@@ -499,6 +499,85 @@ anyway; enhanced GRE for PPTP is handled — a subscriber whose PPTP server sits
 on a bypassed destination has a control channel that was never translated, so
 the data channel is bypassed rather than dropped as a call that went missing.
 
+## Two tenants, one private range
+
+A provider does not choose what private addresses its customers' CPE hands
+out. Two tenants on one box will use `100.64.0.0/22`, and before a pool could
+name a VRF there was nothing to say which of them a packet belonged to:
+`bpa_pool_by_inside()` returned the **first** pool that claimed the address, so
+one tenant was translated by the other's pool and the second pool translated
+nothing.
+
+```
+cgnat pool tenant-a
+ inside 100.64.0.0/22
+ outside 200.150.0.16/30
+ vrf 1
+ exit
+cgnat pool tenant-b
+ inside 100.64.0.0/22
+ outside 200.150.0.32/30
+ vrf 2
+ exit
+```
+
+Absent, a pool serves every VRF — which is what every configuration written
+before this existed means, and is a different answer from VRF 0.
+
+### The session key had to change, and why that was not free
+
+`bpa_key()` built `(private address, private port, protocol)` and left the
+second word of the 16-byte key at zero. The comment there said it was reserved
+for a VRF id. It was — and the PPTP ALG had already spent it on the remote
+address, which is what separates two servers that chose the same Call ID.
+
+So the two are **packed**, not chosen between: the remote in the low half of
+the second word, the FIB index in the high half.
+
+The key also split in two, because the private side and the public side never
+identified the same thing and only looked alike while the second word was
+unused:
+
+| | Key | Needs the VRF |
+|---|---|---|
+| `bpa_key_in` | private address, private port, protocol, **VRF** | yes — two tenants may use one address |
+| `bpa_key_out` | public address, public port, protocol | no — a public address belongs to exactly one pool |
+
+The qualifier is the **packet's** VRF, not the pool's. It has to be: the
+session lookup happens before the pool is known, so the key must be buildable
+from the packet alone. `vlib_buffer_get_ip4_fib_index()` is one vector element
+on a buffer the node already holds, and it is read on the same path that was
+already going to look the pool up.
+
+### Which way the reply goes
+
+A session carries the VRF its subscriber's traffic arrived in, and the reply is
+forwarded in it. Without that the reply is looked up in the FIB of the
+interface it arrived on — the outside one — and on a box where inside and
+outside are different VRFs it is dropped for having no route, which reads as
+the CGNAT failing to translate rather than a lookup in the wrong table.
+
+`outside-vrf` names the VRF translated traffic leaves by, when it differs from
+the subscriber's. It is stored on the session rather than read from the pool
+per packet: the answer cannot change for the life of a session.
+
+### Overlapping selectors are refused, not resolved
+
+Two pools claiming one inside address is not something the datapath can
+resolve, so it is refused when the pool is created — naming the pool it
+collides with. A **VRF is what makes an overlap legitimate**, so the refusal
+applies only when both pools could answer for the same packet: when at least
+one serves every VRF, or both name the same one.
+
+Public addresses are compared regardless of VRF. The return path finds a pool
+by public address and has no VRF to separate two answers, so two pools sharing
+one is refused outright.
+
+That is also
+[#73](https://github.com/andrediashexa/hexarouting/issues/73): before this,
+a second pool claiming a served range was accepted, appeared in `show`, and
+translated nothing.
+
 ## Seeing a pool fill, before it has filled
 
 RFC 8158 `natEvent 12` reports port exhaustion — which is to say it reports the

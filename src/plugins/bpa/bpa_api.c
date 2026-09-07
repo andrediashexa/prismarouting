@@ -7,6 +7,7 @@
 #include <vnet/format_fns.h>
 
 #include "bpa.h"
+#include <vnet/fib/fib_table.h>
 
 #include <bpa/bpa.api_enum.h>
 #include <bpa/bpa.api_types.h>
@@ -28,6 +29,10 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
   int rv = 0, i;
 
   name = format (0, "%s", mp->name);
+  /* Not zero: zero is VRF 0, and a client that says nothing must not bind the
+   * pool to it. */
+  cfg.fib_index = cfg.vrf_id = ~0u;
+  cfg.out_fib_index = cfg.out_vrf_id = ~0u;
 
   if (!mp->is_add)
     {
@@ -111,6 +116,27 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
 
   cfg.tcp_mss = clib_net_to_host_u16 (mp->tcp_mss);
   cfg.tcp_mss_auto = mp->tcp_mss_auto;
+
+  cfg.vrf_id = clib_net_to_host_u32 (mp->vrf_id);
+  cfg.out_vrf_id = clib_net_to_host_u32 (mp->out_vrf_id);
+  if (cfg.vrf_id != ~0u)
+    {
+      cfg.fib_index = fib_table_find (FIB_PROTOCOL_IP4, cfg.vrf_id);
+      if (cfg.fib_index == ~0u)
+	{
+	  rv = VNET_API_ERROR_NO_SUCH_FIB;
+	  goto done;
+	}
+    }
+  if (cfg.out_vrf_id != ~0u)
+    {
+      cfg.out_fib_index = fib_table_find (FIB_PROTOCOL_IP4, cfg.out_vrf_id);
+      if (cfg.out_fib_index == ~0u)
+	{
+	  rv = VNET_API_ERROR_NO_SUCH_FIB;
+	  goto done;
+	}
+    }
 
   e = bpa_pool_add (&cfg, 0);
 

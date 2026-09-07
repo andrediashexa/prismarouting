@@ -134,6 +134,22 @@ typedef struct
   u32 sub_idx;
   u32 pool_index;
   /*
+   * The VRF this subscriber's traffic arrived in, so the reply can be sent
+   * back into it and the private-side key can be rebuilt when the session is
+   * freed. Without it, freeing a session would delete the wrong key - or none
+   * at all - and the table would keep an entry pointing at reclaimed memory.
+   */
+  u32 fib_index;
+  /*
+   * The VRF translated traffic leaves by, when the pool names one. ~0 leaves
+   * the packet where it was.
+   *
+   * On the session rather than read from the pool, because the alternative is
+   * a pool lookup on every translated packet to answer a question that cannot
+   * change for the life of the session.
+   */
+  u32 out_fib_index;
+  /*
    * The remote address this session last spoke to, in host order.
    *
    * Unused under endpoint-independent filtering, which is the default and
@@ -345,12 +361,36 @@ typedef struct
 } bpa_per_thread_t;
 
 /*
- * Session key. bihash_16_8 keys are two u64 words; we use one and leave the
- * second for a future VRF id, which is what a multi-tenant deployment would
- * need. Keeping the slot reserved now costs nothing.
+ * The two session keys, and they are not the same key.
+ *
+ * They were the same function while the second word was unused, which made it
+ * easy to forget that the private side and the public side identify different
+ * things. They are separate now because only one of them needs the VRF:
+ *
+ *   IN  (private address, private port, protocol, VRF)
+ *   OUT (public address, public port, protocol)
+ *
+ * The private side needs the VRF because two tenants may use the same private
+ * address, and without it one subscriber is translated onto the other's
+ * mapping - silently, which is the failure this product exists to prevent.
+ *
+ * The public side does not, because a public address belongs to exactly one
+ * pool: two pools sharing one would make the return path ambiguous, and that
+ * is refused when the pool is created.
+ *
+ * The VRF is the packet's FIB index, which is available before the pool is
+ * known - and it has to be, because the session lookup happens first. That is
+ * the whole reason this qualifier is the packet's and not the pool's.
  */
 static_always_inline void
-bpa_key (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto)
+bpa_key_in (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto, u32 fib)
+{
+  kv->key[0] = (u64) addr | ((u64) port << 32) | ((u64) proto << 48);
+  kv->key[1] = fib;
+}
+
+static_always_inline void
+bpa_key_out (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto)
 {
   kv->key[0] = (u64) addr | ((u64) port << 32) | ((u64) proto << 48);
   kv->key[1] = 0;
@@ -385,11 +425,15 @@ bpa_key (clib_bihash_kv_16_8_t *kv, u32 addr, u16 port, u8 proto)
 
 static_always_inline void
 bpa_key_gre (clib_bihash_kv_16_8_t *kv, u32 addr, u16 call_id, u32 remote,
-	     u8 role)
+	     u8 role, u32 fib)
 {
   kv->key[0] = (u64) addr | ((u64) call_id << 32)
 	       | ((u64) BPA_PROTO_GRE << 48) | ((u64) role << 56);
-  kv->key[1] = remote;
+  /* Packed, not chosen between: the remote address is what separates two
+   * servers that picked the same Call ID, and the VRF is what separates two
+   * tenants that use the same private address. Both are needed and both fit,
+   * the remote in the low half and the FIB index in the high one. */
+  kv->key[1] = (u64) remote | ((u64) fib << 32);
 }
 
 static_always_inline u32
@@ -493,7 +537,7 @@ typedef enum
 
 bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 				   u32 pool_index, const bpa_block_t *b,
-				   u16 port_priv, u8 proto, f64 now,
+				   u16 port_priv, u8 proto, u32 fib, f64 now,
 				   bpa_create_kind_t kind,
 				   bpa_create_why_t *why);
 
@@ -533,7 +577,8 @@ void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
  */
 int bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 			  u32 pool_index, u32 sub_idx, u32 want_ip_pub,
-			  u16 priv_lo, u8 proto, f64 now, u16 *pub_lo);
+			  u16 priv_lo, u8 proto, u32 fib, f64 now,
+			  u16 *pub_lo);
 
 /*
  * A PPTP call, created by the ALG when the subscriber asks for one. Takes the
@@ -546,7 +591,7 @@ int bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 bpa_session_t *bpa_session_create_gre (bpa_per_thread_t *pt,
 				       const bpa_pool_t *p, u32 pool_index,
 				       u32 sub_idx, u32 ip_pub, u16 call_id,
-				       u32 remote, f64 now);
+				       u32 remote, u32 fib, f64 now);
 /* The server answered: the outbound direction can be keyed now. */
 void bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
 				  u16 peer_call_id);

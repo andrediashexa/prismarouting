@@ -88,7 +88,13 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
       if (is_in2out)
 	{
 	  u32 src = clib_net_to_host_u32 (ip->src_address.as_u32);
-	  matched = (bpa_pool_by_inside (bm, src, &pool_index, &sub_idx) == 0);
+	  /* The handoff has to agree with in2out about which pool owns this
+	   * source, VRF included: otherwise a packet is sent to the worker one
+	   * pool would own it on, and translated there by another. */
+	  matched = (bpa_pool_by_inside (bm, src,
+					 vlib_buffer_get_ip4_fib_index (b[0]),
+					 &pool_index, &sub_idx)
+		     == 0);
 	}
       else
 	{

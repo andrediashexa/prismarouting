@@ -102,11 +102,12 @@ pptp_payload (vlib_buffer_t *b, tcp_header_t *tcp, u32 *len)
 
 /* The GRE session this call request already created, if it is a retransmit. */
 static bpa_session_t *
-pptp_find_by_own (bpa_per_thread_t *pt, u32 ip_priv, u16 call_id, u32 remote)
+pptp_find_by_own (bpa_per_thread_t *pt, u32 ip_priv, u16 call_id, u32 remote,
+		  u32 fib)
 {
   clib_bihash_kv_16_8_t kv, value;
 
-  bpa_key_gre (&kv, ip_priv, call_id, remote, BPA_GRE_KEY_ALG);
+  bpa_key_gre (&kv, ip_priv, call_id, remote, BPA_GRE_KEY_ALG, fib);
   if (clib_bihash_search_16_8 (&pt->in2out, &kv, &value))
     return 0;
   return pool_elt_at_index (pt->sessions, value.value);
@@ -128,7 +129,7 @@ pptp_find_by_ours (bpa_per_thread_t *pt, const bpa_session_t *ctrl,
   clib_bihash_kv_16_8_t kv, value;
   bpa_session_t *s;
 
-  bpa_key (&kv, ctrl->ip_pub, call_id, BPA_PROTO_GRE);
+  bpa_key_out (&kv, ctrl->ip_pub, call_id, BPA_PROTO_GRE);
   if (clib_bihash_search_16_8 (&pt->out2in, &kv, &value))
     return 0;
   s = pool_elt_at_index (pt->sessions, value.value);
@@ -173,7 +174,8 @@ pptp_out_message (bpa_per_thread_t *pt, tcp_header_t *tcp, u8 *msg, u32 len,
 
   own = clib_net_to_host_u16 (cid[0]);
 
-  call = pptp_find_by_own (pt, ctrl->ip_priv, own, ctrl->remote);
+  call = pptp_find_by_own (pt, ctrl->ip_priv, own, ctrl->remote,
+			   ctrl->fib_index);
   if (call == 0)
     {
       if (type != PPTP_OUT_CALL_REQUEST)
@@ -189,7 +191,8 @@ pptp_out_message (bpa_per_thread_t *pt, tcp_header_t *tcp, u8 *msg, u32 len,
       p = pool_elt_at_index (bm->pools, ctrl->pool_index);
 
       call = bpa_session_create_gre (pt, p, ctrl->pool_index, ctrl->sub_idx,
-				     ctrl->ip_pub, own, ctrl->remote, now);
+				     ctrl->ip_pub, own, ctrl->remote,
+				     ctrl->fib_index, now);
       if (PREDICT_FALSE (call == 0))
 	{
 	  /*

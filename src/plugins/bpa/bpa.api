@@ -59,7 +59,16 @@
  * which a subscriber filling its block is reported, before natEvent 12 reports
  * that it has already run out.
  */
-option version = "0.8.0";
+/*
+ * 0.9.0 adds the VRF a pool serves, and the one its translated traffic leaves
+ * by. On bpa_pool_add_del and not on the settings message, because changing
+ * which VRF a pool serves changes which subscribers it maps - every session on
+ * it is invalid at that instant, exactly like a change of prefix.
+ *
+ * ~0 means "every VRF", which is what every configuration written before this
+ * existed means. Zero is VRF 0 and is a different answer.
+ */
+option version = "0.9.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -110,6 +119,10 @@ typedef bpa_timeouts
     @param tcp_mss - clamp the MSS option of a handshake to this; 0 is off
     @param tcp_mss_auto - derive the clamp from the interface MTUs instead,
                           in which case tcp_mss is ignored
+    @param vrf_id - the VRF whose subscribers this pool serves; ~0 is every
+                    VRF, which is what a configuration that says nothing means
+    @param out_vrf_id - the VRF translated traffic leaves by; ~0 leaves it
+                        where it was
     @param n_inside - how many of the prefixes below are inside ones
     @param prefixes - the inside ones first, then the public ones
 */
@@ -132,6 +145,8 @@ autoreply define bpa_pool_add_del
   vl_api_bpa_timeouts_t timeouts;
   u16 tcp_mss;
   bool tcp_mss_auto;
+  u32 vrf_id;
+  u32 out_vrf_id;
   /* The variable-length array is last, as the API requires: anything added
    * later goes above this line. */
   u8 n_inside;
