@@ -311,6 +311,18 @@ typedef struct
   u32 alg_set;
 
   /*
+   * TCP MSS clamping. Zero is off, which is the default: a clamp is a change
+   * to somebody else's handshake and an operator asks for it.
+   *
+   * `tcp_mss_auto` derives the value from the interface MTUs instead of the
+   * operator naming one; the resolved number is not stored here, because an
+   * MTU can change under a running box and a clamp derived from a stale one
+   * is a clamp that quietly does nothing.
+   */
+  u16 tcp_mss;
+  u8 tcp_mss_auto;
+
+  /*
    * Static port forwards, sorted by (port_pub, proto).
    *
    * ONE ordering, and everything reads it through the same binary search: the

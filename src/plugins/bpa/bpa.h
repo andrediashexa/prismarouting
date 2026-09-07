@@ -34,6 +34,23 @@ typedef struct
   u32 outside_lo;
   u32 outside_hi;
 
+  /*
+   * The MSS a pool set to "auto" clamps to: the smallest IPv4 MTU among the
+   * interfaces this CGNAT runs on, less an IP and a TCP header.
+   *
+   * The SMALLEST, not the egress one. A segment governed by a clamped MSS
+   * crosses both an inside and an outside interface of this box, and the node
+   * that clamps runs before the forwarding lookup, so which interface it will
+   * leave by is not yet known. Taking the minimum is the conservative answer
+   * and the only one available at that point; a clamp that is smaller than it
+   * needs to be costs some throughput, and one that is larger protects
+   * nothing.
+   *
+   * Recomputed when an interface joins or leaves the CGNAT, and once a second
+   * by the expiry process, because an MTU can change under a running box.
+   */
+  u16 auto_mss;
+
   u32 hash_buckets;   /* session table sizing */
   u32 hash_memory;
 
@@ -77,6 +94,7 @@ clib_error_t *bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add,
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 void bpa_outside_window_update (void);
+void bpa_auto_mss_update (void);
 
 format_function_t format_bpa_pool;
 format_function_t format_bpa_policy;

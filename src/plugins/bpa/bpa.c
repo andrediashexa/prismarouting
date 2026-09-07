@@ -6,6 +6,7 @@
 #include <vnet/ip/ip_interface.h>
 
 #include "bpa.h"
+#include "bpa_mss.h"
 
 bpa_main_t bpa_main;
 
@@ -394,6 +395,55 @@ bpa_outside_window_update (void)
     }
   bm->outside_lo = lo;
   bm->outside_hi = hi;
+}
+
+/*
+ * Recomputes the MSS a pool set to "auto" clamps to.
+ *
+ * Cheap and called often rather than hooked to an MTU change: the box has a
+ * handful of interfaces, and a callback that fires on every MTU change
+ * anywhere in VPP is a subscription to somebody else's lifecycle for a number
+ * that is one loop to recompute.
+ */
+void
+bpa_auto_mss_update (void)
+{
+  bpa_main_t *bm = &bpa_main;
+  vnet_main_t *vnm = bm->vnet_main;
+  vnet_sw_interface_t *si;
+  u32 min = ~0u;
+
+  if (!vnm)
+    return;
+
+  pool_foreach (si, vnm->interface_main.sw_interfaces)
+    {
+      u32 idx = si->sw_if_index, mtu;
+      int on = 0;
+
+      /* The handoff variants are the same interface carrying the same
+       * traffic; a box with workers would otherwise report no CGNAT
+       * interfaces at all and leave "auto" resolving to nothing. */
+      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out", idx) == 1;
+      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out-handoff", idx)
+	    == 1;
+      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in", idx) == 1;
+      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in-handoff", idx)
+	    == 1;
+      if (!on)
+	continue;
+
+      mtu = vnet_sw_interface_get_mtu (vnm, idx, VNET_MTU_IP4);
+      if (mtu && mtu < min)
+	min = mtu;
+    }
+
+  /* No CGNAT interface yet, or an MTU smaller than the headers themselves:
+   * zero, which the datapath reads as "do not clamp". Inventing a number
+   * here would be a clamp nobody configured. */
+  bm->auto_mss = (min == ~0u || min <= BPA_MSS_OVERHEAD)
+		   ? 0
+		   : (u16) (min - BPA_MSS_OVERHEAD);
 }
 
 clib_error_t *

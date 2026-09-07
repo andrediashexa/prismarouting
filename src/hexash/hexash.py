@@ -145,6 +145,9 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_NUM),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "tcp-mss": ("lower the MSS of handshakes so segments fit the path", {
+        "auto": ("derive it from the CGNAT interfaces' MTUs", None),
+    }),
     "forward": ("pin an inbound port to one subscriber; the public address is "
                 "the subscriber's own", {
         "tcp": ("public port, then 'to <private-ip> <private-port>'", ARG_NUM),
@@ -1262,6 +1265,11 @@ class Shell:
                 if int(w[1]) < 1:
                     raise ValueError("max-blocks must be at least 1")
                 p.max_blocks = int(w[1])
+            elif w[0] == "tcp-mss":
+                why = Pool.check_mss(w[1])
+                if why:
+                    raise ValueError(why)
+                p.tcp_mss = w[1]
             elif w[0] == "filter":
                 if w[1] not in Pool.FILTERS:
                     raise ValueError("filter must be one of "
@@ -1304,6 +1312,8 @@ class Shell:
                                           and str(f[1]) == w[3])]
             elif w[0] == "no" and len(w) > 1 and w[1] == "max-blocks":
                 p.max_blocks = 0
+            elif w[0] == "no" and len(w) > 1 and w[1] == "tcp-mss":
+                p.tcp_mss = ""
             elif w[0] == "no" and len(w) > 1 and w[1] == "filter":
                 p.filter = "endpoint-independent"
             else:

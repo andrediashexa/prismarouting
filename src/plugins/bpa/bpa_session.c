@@ -935,6 +935,11 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 
       now = vlib_time_now (vm);
 
+      /* An MTU can change under a running box, and a pool clamping to "auto"
+       * would then be clamping to a number that describes the path it used to
+       * be on. One loop over a handful of interfaces, once an interval. */
+      bpa_auto_mss_update ();
+
       vlib_worker_thread_barrier_sync (vm);
       for (i = 0; i < vec_len (bm->per_thread); i++)
 	{

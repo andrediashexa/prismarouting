@@ -14,6 +14,7 @@
 #include "bpa_l4.h"
 #include "bpa_log.h"
 #include "bpa_alg.h"
+#include "bpa_mss.h"
 #include "bpa_pptp.h"
 
 typedef struct
@@ -154,7 +155,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_new = 0, n_forwarded = 0;
+  u32 n_translated = 0, n_new = 0, n_forwarded = 0, n_mss = 0;
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
   u32 n_rtsp = 0;
@@ -356,6 +357,26 @@ VLIB_NODE_FN (bpa_in2out_node)
 	  tcp_header_t *tcp = l4h;
 
 	  bpa_tcp_track (s, tcp->flags);
+
+	  /*
+	   * MSS clamping, on the handshake only.
+	   *
+	   * Before the address rewrite or after it makes no difference: both
+	   * are incremental updates of the same checksum field, and neither
+	   * reads what the other wrote.
+	   */
+	  if (PREDICT_FALSE ((tcp->flags & TCP_FLAG_SYN) != 0))
+	    {
+	      const bpa_pool_t *mp =
+		pool_elt_at_index (bm->pools, s->pool_index);
+	      u16 mss = mp->tcp_mss_auto ? bm->auto_mss : mp->tcp_mss;
+
+	      if (mss)
+		n_mss += bpa_tcp_mss_clamp (
+		  tcp, (u8 *) vlib_buffer_get_current (b[0])
+			 + b[0]->current_length,
+		  mss);
+	    }
 
 	  /*
 	   * The PPTP control channel. Rewritten BEFORE the address and port,
@@ -581,6 +602,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_FORWARDED, n_forwarded);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_MSS_CLAMPED, n_mss);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_HAIRPINNED, n_hairpin);
   vlib_node_increment_counter (vm, node->node_index,

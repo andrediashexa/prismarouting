@@ -20,7 +20,19 @@
  * because a forward has to be addable to a pool that is carrying traffic,
  * which redefining the pool is not.
  */
-option version = "0.3.0";
+/*
+ * 0.4.0 adds the TCP MSS clamp to bpa_pool_add_del and bpa_pool_details: a
+ * scalar pair, which is why it fits above the variable-length prefix array
+ * where those messages already say later additions must go.
+ *
+ * It CHANGES THE LAYOUT of both messages, so a client built against 0.3.0
+ * must be rebuilt - the CRC will not match. That is allowed while the project
+ * is on 0.x and is called out here rather than discovered by a client that
+ * silently stops working. lab/api.sh pins the JSON shape of the message and
+ * is the thing that fails when this happens, which is how this one was
+ * caught.
+ */
+option version = "0.4.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -68,6 +80,9 @@ typedef bpa_timeouts
                      take the shipped default, so a caller that does not care
                      sends zero for both and gets the documented behaviour
     @param timeouts - per-pool lifetimes; zero in a field inherits the global
+    @param tcp_mss - clamp the MSS option of a handshake to this; 0 is off
+    @param tcp_mss_auto - derive the clamp from the interface MTUs instead,
+                          in which case tcp_mss is ignored
     @param n_inside - how many of the prefixes below are inside ones
     @param prefixes - the inside ones first, then the public ones
 */
@@ -88,6 +103,8 @@ autoreply define bpa_pool_add_del
   u32 alg;
   u32 alg_set;
   vl_api_bpa_timeouts_t timeouts;
+  u16 tcp_mss;
+  bool tcp_mss_auto;
   /* The variable-length array is last, as the API requires: anything added
    * later goes above this line. */
   u8 n_inside;
@@ -160,6 +177,8 @@ define bpa_pool_details
   u8 max_blocks;
   u32 alg;
   vl_api_bpa_timeouts_t timeouts;
+  u16 tcp_mss;
+  bool tcp_mss_auto;
   u32 blocks_per_ip;
   u32 capacity;
   u32 inside_count;
