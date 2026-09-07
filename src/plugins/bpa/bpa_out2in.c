@@ -202,6 +202,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_icmp_err = 0, n_ftp_ack = 0, n_rtsp = 0;
+  u32 n_forwarded = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
 
   from = vlib_frame_vector_args (frame);
@@ -323,10 +324,36 @@ VLIB_NODE_FN (bpa_out2in_node)
       bpa_key (&kv, dst_host, port_pub, (u8) proto);
       if (PREDICT_FALSE (clib_bihash_search_16_8 (&pt->out2in, &kv, &value)))
 	{
-	  /* No session: unsolicited inbound. Correct NAT behaviour is drop. */
-	  b[0]->error = node->errors[BPA_OUT2IN_ERROR_NO_SESSION];
-	  goto trace;
+	  bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
+	  const bpa_static_t *sf = 0;
+
+	  /*
+	   * Unsolicited inbound, which a NAT drops - unless the operator has
+	   * said this port belongs to a subscriber. That is the whole feature:
+	   * the mapping exists because it was configured, not because the
+	   * subscriber sent something first.
+	   *
+	   * The forward is trusted only when it agrees with the arithmetic
+	   * above, which resolved this public port to a subscriber
+	   * independently. They can only disagree if the pool was redefined
+	   * under a forward that survived it, and translating on the older of
+	   * two answers is how a customer receives another customer's traffic.
+	   */
+	  if (PREDICT_FALSE (vec_len (p->statics) != 0))
+	    sf = bpa_static_by_pub (p, port_pub, (u8) proto);
+
+	  if (PREDICT_FALSE (sf != 0 && sf->ip_priv == ip_priv))
+	    s = bpa_session_static_open (pt, p, pool_index, sf, now);
+
+	  if (PREDICT_TRUE (s == 0))
+	    {
+	      b[0]->error = node->errors[BPA_OUT2IN_ERROR_NO_SESSION];
+	      goto trace;
+	    }
+	  n_forwarded++;
 	}
+      else
+	s = pool_elt_at_index (pt->sessions, value.value);
 
       /*
        * Address-dependent filtering: a mapping only accepts replies from the
@@ -338,10 +365,16 @@ VLIB_NODE_FN (bpa_out2in_node)
        * and breaks the peer-to-peer applications this product exists to keep
        * working. Filtering and mapping are separate decisions and this only
        * changes the first.
+       *
+       * A forwarded mapping is exempt. This mode asks "did this subscriber
+       * contact you first", and for a configured forward the answer is no by
+       * design - the operator has already decided. Left in the filter, a
+       * forwarded port would work for whoever the subscriber last replied to
+       * and silently for nobody else.
        */
-      s = pool_elt_at_index (pt->sessions, value.value);
       if (PREDICT_FALSE (pool_elt_at_index (bm->pools, pool_index)->filter
 			   == BPA_FILTER_ADDRESS_DEPENDENT
+			 && !s->is_static
 			 && s->remote != 0
 			 && s->remote != clib_net_to_host_u32 (
 			      ip->src_address.as_u32)))
@@ -473,6 +506,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_TRANSLATED, n_translated);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_ICMP_ERROR, n_icmp_err);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_FORWARDED, n_forwarded);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_FTP_ACK, n_ftp_ack);
   vlib_node_increment_counter (vm, node->node_index,

@@ -187,6 +187,18 @@ typedef struct
    * so ports announced and never used do not sit out the full UDP timeout.
    */
   u8 is_expect;
+
+  /*
+   * This mapping came from a configured port forward, not from traffic.
+   *
+   * It expires like any other session - there is nothing to gain from holding
+   * a table entry for a port nobody is using - and the difference is what
+   * happens to the PORT when it does: an ordinary session hands it back to the
+   * allocator, and a forwarded one must not, because the port belongs to the
+   * configuration and giving it to the next flow would break the forward
+   * between two connections.
+   */
+  u8 is_static;
 } bpa_session_t;
 
 /*
@@ -440,6 +452,28 @@ bpa_session_t *bpa_session_create_gre (bpa_per_thread_t *pt,
 /* The server answered: the outbound direction can be keyed now. */
 void bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
 				  u16 peer_call_id);
+/*
+ * The session a configured port forward describes, opened on first use.
+ *
+ * Called from both directions on a session miss - inbound because that is what
+ * a forward is for, outbound because the subscriber may speak first from the
+ * forwarded socket and must get the forwarded port when it does. The port is
+ * already reserved in the subscriber's bitmap, so this takes it rather than
+ * asking the allocator for one.
+ */
+bpa_session_t *bpa_session_static_open (bpa_per_thread_t *pt,
+					const bpa_pool_t *p, u32 pool_index,
+					const bpa_static_t *sf, f64 now);
+
+/*
+ * A forward added to or removed from a pool that is already carrying traffic.
+ *
+ * Both run on the main thread under the worker barrier: they walk every
+ * worker's session table, and the datapath must not be in it at the time.
+ */
+void bpa_static_install (u32 pool_index, const bpa_static_t *sf);
+void bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf);
+
 void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);

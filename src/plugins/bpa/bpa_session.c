@@ -35,16 +35,35 @@ bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index)
   return 0;
 }
 
-/* Adds one block to a subscriber, with its own bitmap. */
+/*
+ * Adds one block to a subscriber, with its own bitmap.
+ *
+ * Any port this block holds that the operator has forwarded is marked used
+ * before the block is handed to anybody. That is the whole of "a forwarded
+ * port MUST be reserved": the allocator is never told about it, so there is no
+ * path by which it can be given to another flow - not a check that could be
+ * forgotten on one of the paths that allocate.
+ */
 static void
 bpa_sub_add_block (bpa_sub_t *sub, const bpa_pool_t *p, const bpa_block_t *b)
 {
   u32 n_words = (p->block_size + 63) / 64;
   bpa_subblock_t *sb;
+  u32 i, n;
 
   vec_add2 (sub->blocks, sb, 1);
   sb->blk = *b;
   bpa_portmap_init (&sb->map, p->block_size, clib_mem_alloc (n_words * sizeof (u64)));
+
+  n = vec_len (p->statics);
+  if (PREDICT_TRUE (n == 0))
+    return;
+
+  /* The forwards of one block are a run in a vector sorted by public port. */
+  for (i = bpa_static_lower (p->statics, n, b->port_lo);
+       i < n && p->statics[i].port_pub <= b->port_hi; i++)
+    if (p->statics[i].ip_pub == b->ip_pub)
+      bpa_portmap_reserve (&sb->map, p->statics[i].port_off);
 }
 
 /* Returns the subscriber's port state, creating it on first use. */
@@ -582,9 +601,15 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
       /* Both changes at once: the port goes through the hold-down queue
        * (#12), and it has to name the block it came from (#13), because a
        * subscriber can now hold several and freeing an offset into the wrong
-       * bitmap would hand out a port that is still in use. */
-      bpa_port_release (pt, s->pool_index, s->sub_idx, s->blk_idx,
-			s->port_off, now);
+       * bitmap would hand out a port that is still in use.
+       *
+       * Except a forwarded port, which is configuration rather than an
+       * allocation. Handing it back would let the next flow take it while the
+       * customer is between two connections, and the forward would then be
+       * silently pointed at somebody else's traffic. */
+      if (PREDICT_TRUE (!s->is_static))
+	bpa_port_release (pt, s->pool_index, s->sub_idx, s->blk_idx,
+			  s->port_off, now);
       if (sub->n_sessions)
 	sub->n_sessions--;
 
@@ -608,6 +633,218 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
     }
 
   pool_put (pt->sessions, s);
+}
+
+/*
+ * The session a configured port forward describes.
+ *
+ * Almost bpa_session_create(), and deliberately not it: that one asks the
+ * allocator for a port, and here the port is already decided and already
+ * reserved. Everything else - the subscriber record, the block, both hash
+ * insertions - is the same, which is why bpa_session_bind() exists.
+ */
+bpa_session_t *
+bpa_session_static_open (bpa_per_thread_t *pt, const bpa_pool_t *p,
+			 u32 pool_index, const bpa_static_t *sf, f64 now)
+{
+  bpa_session_t *s;
+  bpa_sub_t *sub;
+  bpa_subblock_t *sb = 0;
+  bpa_block_t blk;
+  u32 blk_idx;
+
+  /* The forward was validated against this arithmetic when it was
+   * configured. If it disagrees now the pool has been redefined underneath
+   * it, and translating on a stale mapping is worse than not translating. */
+  if (PREDICT_FALSE (bpa_forward (p, sf->ip_priv, &blk)))
+    return 0;
+
+  sub = bpa_sub_get (pt, p, pool_index, &blk);
+
+  for (blk_idx = 0; blk_idx < vec_len (sub->blocks); blk_idx++)
+    {
+      bpa_subblock_t *c = vec_elt_at_index (sub->blocks, blk_idx);
+
+      if (c->blk.ip_pub == sf->ip_pub && sf->port_pub >= c->blk.port_lo
+	  && sf->port_pub <= c->blk.port_hi)
+	{
+	  sb = c;
+	  break;
+	}
+    }
+  if (PREDICT_FALSE (sb == 0))
+    {
+      bpa_sub_put (pt, pool_index, blk.sub_idx, sub);
+      return 0;
+    }
+
+  /* Reserved at block creation, so this normally reports "already taken".
+   * It is called anyway for the one case it is not: a block created before
+   * this forward existed, on a box that was already carrying traffic. */
+  bpa_portmap_reserve (&sb->map, sf->port_off);
+
+  s = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx, sf->port_off,
+			sf->port_priv, sf->proto, now);
+  if (PREDICT_FALSE (s == 0))
+    {
+      bpa_sub_put (pt, pool_index, blk.sub_idx, sub);
+      return 0;
+    }
+
+  s->is_static = 1;
+  return s;
+}
+
+/*
+ * Drops queued hold-downs for one port.
+ *
+ * A port freed a moment ago is in the quarantine, and the drain will clear its
+ * bit when the hold-down expires. If a forward has since reserved that bit,
+ * the drain would hand the operator's forwarded port to the next flow, seconds
+ * after it was configured and with nothing to see. Cancelled by making the
+ * entry name a pool index no subscriber can be found under, which the drain
+ * already treats as "the subscriber went away".
+ */
+static void
+bpa_quarantine_cancel (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+		       u8 blk_idx, u16 port_off)
+{
+  u32 i;
+
+  for (i = pt->quarantine_head; i < vec_len (pt->quarantine); i++)
+    {
+      bpa_quarantine_t *q = vec_elt_at_index (pt->quarantine, i);
+
+      if (q->pool_index == pool_index && q->sub_idx == sub_idx
+	  && q->blk_idx == blk_idx && q->port_off == port_off)
+	q->pool_index = ~0u;
+    }
+}
+
+/* The subscriber's block that contains a forwarded port, or 0. */
+static bpa_subblock_t *
+bpa_static_block (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx,
+		  const bpa_static_t *sf, u32 *blk_idx)
+{
+  bpa_sub_t *sub;
+  uword *h;
+  u32 i;
+
+  h = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, sub_idx));
+  if (!h)
+    return 0;
+
+  sub = pool_elt_at_index (pt->subs, h[0]);
+  for (i = 0; i < vec_len (sub->blocks); i++)
+    {
+      bpa_subblock_t *sb = vec_elt_at_index (sub->blocks, i);
+
+      if (sb->blk.ip_pub == sf->ip_pub && sf->port_pub >= sb->blk.port_lo
+	  && sf->port_pub <= sb->blk.port_hi)
+	{
+	  *blk_idx = i;
+	  return sb;
+	}
+    }
+  return 0;
+}
+
+/* Frees the session under `kv`, if there is one. */
+static void
+bpa_session_free_key (bpa_per_thread_t *pt, clib_bihash_16_8_t *h,
+		      clib_bihash_kv_16_8_t *kv, f64 now)
+{
+  clib_bihash_kv_16_8_t value;
+
+  if (clib_bihash_search_16_8 (h, kv, &value) == 0)
+    bpa_session_free (pt, pool_elt_at_index (pt->sessions, value.value), now);
+}
+
+/*
+ * A forward configured on a pool that is already carrying traffic.
+ *
+ * Two mappings can be standing in its way, and both lose: whatever holds the
+ * public port, because the operator has just said who that port belongs to,
+ * and whatever the subscriber's own socket is mapped to, because after this it
+ * must be mapped to the forwarded port and one socket cannot have two. Each is
+ * a single connection, dropped at the moment an operator configures a forward
+ * for that customer.
+ *
+ * Doing nothing instead was the alternative, and it fails silently: the
+ * forward is accepted, reported by "show", and does not work until whatever
+ * held the port happens to expire.
+ */
+void
+bpa_static_install (u32 pool_index, const bpa_static_t *sf)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
+  f64 now = vlib_time_now (bm->vlib_main);
+  clib_bihash_kv_16_8_t kv;
+  bpa_block_t blk;
+  u32 i;
+
+  if (bpa_forward (p, sf->ip_priv, &blk))
+    return;
+
+  for (i = 0; i < vec_len (bm->per_thread); i++)
+    {
+      bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+      bpa_subblock_t *sb;
+      u32 blk_idx;
+
+      if (!pt->initialised)
+	continue;
+
+      bpa_key (&kv, sf->ip_pub, sf->port_pub, sf->proto);
+      bpa_session_free_key (pt, &pt->out2in, &kv, now);
+      bpa_key (&kv, sf->ip_priv, sf->port_priv, sf->proto);
+      bpa_session_free_key (pt, &pt->in2out, &kv, now);
+
+      sb = bpa_static_block (pt, pool_index, blk.sub_idx, sf, &blk_idx);
+      if (!sb)
+	continue;
+
+      /* Order matters: the frees above may have queued this very port for
+       * hold-down, and the reservation has to outlive the drain. */
+      bpa_quarantine_cancel (pt, pool_index, blk.sub_idx, (u8) blk_idx,
+			     sf->port_off);
+      bpa_portmap_reserve (&sb->map, sf->port_off);
+    }
+}
+
+/* The mirror: the port goes back to the allocator it was withheld from. */
+void
+bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
+  f64 now = vlib_time_now (bm->vlib_main);
+  clib_bihash_kv_16_8_t kv;
+  bpa_block_t blk;
+  u32 i;
+
+  if (bpa_forward (p, sf->ip_priv, &blk))
+    return;
+
+  for (i = 0; i < vec_len (bm->per_thread); i++)
+    {
+      bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+      bpa_subblock_t *sb;
+      u32 blk_idx;
+
+      if (!pt->initialised)
+	continue;
+
+      /* Freed first: a static session does not release its port, so the
+       * bitmap is cleared here and not by the free. */
+      bpa_key (&kv, sf->ip_pub, sf->port_pub, sf->proto);
+      bpa_session_free_key (pt, &pt->out2in, &kv, now);
+
+      sb = bpa_static_block (pt, pool_index, blk.sub_idx, sf, &blk_idx);
+      if (sb)
+	bpa_portmap_free (&sb->map, sf->port_off);
+    }
 }
 
 /*

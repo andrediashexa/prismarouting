@@ -14,6 +14,11 @@ Protocols that carry a transport address in their payload get an
 and never guesses: anything it does not fully parse is passed through and
 counted.
 
+A subscriber who needs to be reached from outside gets a **static port
+forward**: one inbound port pinned to one of its sockets, on its own public
+address and inside its own block, reserved so the allocator can never hand it
+to anything else.
+
 The Python model in `ref/` is the specification; the C implementation is
 checked against it on every build.
 
@@ -364,6 +369,126 @@ counted so an operator can see whether it ever bites.
 Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
 place, because the point of offering the choice is that an operator can make it
 on a box carrying traffic.
+
+## Static port forwarding
+
+A subscriber behind CGNAT cannot be reached from outside, and some of them need
+to be: a camera, a small server, a game console the customer set up themselves.
+The operator's answer used to be "buy a public address", which is a lost sale
+precisely when the provider has none — which is why the CGNAT is there.
+
+A **forward** pins one inbound port to one subscriber's socket:
+
+```
+bpa forward <pool> <tcp|udp> <public-port> to <private-ip> <private-port>
+```
+
+and in a candidate configuration, inside the pool block:
+
+```
+cgnat pool residential
+ forward tcp 6200 to 100.64.0.5 80
+ exit
+```
+
+### The public address is not a choice
+
+The operator states the public **port** and never the public **address**: the
+address is the subscriber's own, the one `bpa_forward()` assigns it.
+
+Two reasons, and both are properties the rest of the box already guarantees:
+
+* **Paired address pooling** (RFC 4787 REQ-2). A subscriber that received
+  traffic on one address and sent from another is not paired, and applications
+  that check where a reply came from would see two different peers.
+* **The reverse arithmetic**. `bpa_reverse()` recovers the subscriber from
+  `(public address, port)` without a lookup, and that is what makes the return
+  path shard cleanly and the deterministic mode auditable. A forward on some
+  other address would be a mapping the formula cannot produce, and every
+  reader of the trail would compute the wrong answer for exactly those ports.
+
+So the public port **MUST** fall inside the block that the pool assigns to that
+subscriber, and a forward is refused when it does not — naming the subscriber
+whose block it would have taken:
+
+```
+public port 2048 belongs to 100.64.0.9's block, not to 100.64.0.5's.
+100.64.0.5 holds 200.150.0.17:1536-2047
+```
+
+The operator finds the block with `show bpa subscriber <address>`.
+
+### Deterministic pools only
+
+A forward on a **dynamic** pool is refused. There, a block belongs to whoever
+holds it now and is released when that subscriber goes idle, so a pinned port
+would follow the block to the next subscriber: the forward would keep working
+and start reaching a different customer, which is worse than not working.
+Pinning a block to a subscriber is a feature of its own, not a detail of this
+one.
+
+### Reservation, and why it is not a check
+
+A forwarded port is marked **used in the subscriber's bitmap when the block is
+created**, before anything is allocated from it. The allocator is therefore
+never told the port exists, and there is no path — port preservation, an ALG's
+media pair, an ordinary new flow — by which it can be handed out. The
+alternative was a test on each allocation path, which is three places to
+remember instead of one.
+
+The bitmap has no protocol dimension, so a port forwarded for TCP is reserved
+for UDP as well. That is deliberate: two mappings on one public port would be
+two different subscribers reachable at the same address and port.
+
+For the same reason a forwarded session does **not** release its port when it
+expires. The port belongs to the configuration, not to the session, and giving
+it back would let the next flow take it while the customer is between two
+connections.
+
+Adding a forward to a pool that is already carrying traffic takes the port from
+whatever holds it: one session, dropped at the moment an operator configures a
+forward for that customer. The alternative — accepting the forward and waiting
+for the port to fall free — is a forward that is configured, reported by
+`show`, and silently does nothing.
+
+### Both directions
+
+The forward table is consulted on a session **miss**, in both directions:
+
+* **Inbound** because that is what a forward is for: with no session, an
+  unsolicited packet on a forwarded port opens the mapping instead of being
+  dropped.
+* **Outbound** because the subscriber may speak first from the forwarded
+  socket. Without that, its own traffic would be given an ordinary dynamic
+  port and the customer would be reachable on one port while sending from
+  another — which is also what endpoint-independent mapping forbids.
+
+A forwarded mapping is exempt from `address-dependent` filtering. That mode
+asks "did this subscriber contact you first", and for a configured forward the
+answer is no by design; left in the filter, a forwarded port would work for
+whoever the subscriber last replied to and silently for nobody else.
+
+### What it costs the datapath
+
+Nothing measurable on a pool with no forwards: one `vec_len` test, on the
+session-creation path only. On a pool that has them, one binary search over a
+vector sorted by public port — also only when the session lookup missed. The
+forwards of one block are a contiguous run in that ordering, which is what lets
+the same search serve the inbound lookup, the outbound lookup and the bitmap
+reservation from one vector instead of three indexes.
+
+### In the record
+
+Every add and every removal is written to the configuration trail with the
+complete pool definition, forwards included. A forward is the one part of a
+pool that the formula **cannot** reproduce: everything else in deterministic
+mode can be recomputed from the pool definition, and a forwarded port cannot.
+A trail that omitted them would answer a court order confidently and wrongly
+for exactly those ports. See [logging.md](logging.md).
+
+`lab/forward.sh` asserts the behaviour on packets, and
+`sh tools/lab.sh forward off` runs the same lab with no forward configured,
+where ten of its checks **MUST** fail.
 
 ## Application-level gateways
 

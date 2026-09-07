@@ -140,6 +140,11 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_NUM),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "forward": ("pin an inbound port to one subscriber; the public address is "
+                "the subscriber's own", {
+        "tcp": ("public port, then 'to <private-ip> <private-port>'", ARG_NUM),
+        "udp": ("public port, then 'to <private-ip> <private-port>'", ARG_NUM),
+    }),
     "filter": ("which inbound packets a mapping accepts (RFC 4787 REQ-8)", {
         "endpoint-independent": ("anyone may reach an open mapping "
                                  "(full cone, the default)", None),
@@ -590,7 +595,8 @@ class Shell:
         # unreachable halfway through leaves the box in a state that is neither
         # the old configuration nor the new one, and the operator with no way
         # to know which pools made it.
-        if d["pool_add"] or d["pool_replace"] or d["pool_remove"]:
+        if (d["pool_add"] or d["pool_replace"] or d["pool_remove"]
+                or d["fwd_add"] or d["fwd_del"]):
             state, msg = self.api.available()
             if state != vppapi.OK:
                 self.err(f"cannot reach the dataplane: {msg}")
@@ -640,6 +646,20 @@ class Shell:
                     print(out)
                     self.err(f"pool '{pool.name}' would be refused")
                     ok = False
+            # A forward on a pool that is NOT being redefined. The ones on a
+            # pool that is were just checked with it, as part of the same
+            # definition - which is the only way to check a forward against a
+            # pool that does not exist on the device yet.
+            recreated = {p.name for p in d["pool_add"] + d["pool_replace"]}
+            for pool, fwd in d["fwd_add"]:
+                if pool.name in recreated:
+                    continue
+                rc, out = self.dp.run(pool.forward_command(fwd, check=True))
+                if rc:
+                    print(out)
+                    self.err(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
+                             "would be refused")
+                    ok = False
             if target.routing or running.routing:
                 rc, out = self.frr.reload(target.routing, check_only=True)
                 if rc:
@@ -662,6 +682,24 @@ class Shell:
                 # which one the dataplane refused. "commit failed" sends the
                 # operator to read the whole candidate.
                 self.err(f"pool '{pool.name}': {r.reason}")
+                return False
+
+        # Removals first: a forward moved from one public port to another is
+        # a removal and an addition, and doing the addition first would be
+        # refused for colliding with the entry it is replacing.
+        for pool, fwd in d["fwd_del"]:
+            r = self.api_call("bpa_forward_add_del",
+                              pool.forward_api_args(fwd, is_add=False))
+            if not r.ok and r.state != vppapi.REFUSED:
+                self.err(f"pool '{pool.name}': removing forward "
+                         f"{fwd[0]} {fwd[1]}: {r.reason}")
+                return False
+        for pool, fwd in d["fwd_add"]:
+            r = self.api_call("bpa_forward_add_del",
+                              pool.forward_api_args(fwd))
+            if not r.ok:
+                self.err(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
+                         f"to {fwd[2]} {fwd[3]}: {r.reason}")
                 return False
 
         for ifname in d["if_remove"]:
@@ -1165,6 +1203,15 @@ class Shell:
                 if w[2] not in ("on", "off", "enable", "disable"):
                     raise ValueError("alg must be on or off")
                 p.algs[w[1]] = w[2] in ("on", "enable")
+            elif w[0] == "forward":
+                # Parsed by the model rather than here. This block and
+                # Config._pool_line() both accept pool statements - one typed,
+                # one read from a file - and a statement that means two
+                # different things depending on how it arrived is a defect
+                # waiting for someone to load their own saved configuration.
+                why = Config._pool_line(p, " ".join(w))
+                if why:
+                    raise ValueError(why)
             elif w[0] == "no" and len(w) > 2:
                 if w[1] == "inside" and w[2] in p.inside:
                     p.inside.remove(w[2])
@@ -1178,6 +1225,12 @@ class Shell:
                     p.timeouts.pop(w[2], None)
                 elif w[1] == "alg":
                     p.algs.pop(w[2], None)
+                # "no forward tcp 1100": the public port and protocol identify
+                # it, which is the pair the dataplane keys on.
+                elif w[1] == "forward" and len(w) > 3:
+                    p.forwards = [f for f in p.forwards
+                                  if not (f[0] == w[2]
+                                          and str(f[1]) == w[3])]
             elif w[0] == "no" and len(w) > 1 and w[1] == "max-blocks":
                 p.max_blocks = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "filter":

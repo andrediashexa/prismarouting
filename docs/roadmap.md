@@ -9,14 +9,19 @@ residential CGNAT (v0.5.0), and the NAT behaviour that decides whether
 peer-to-peer applications work — which turned out to be satisfied by the design
 and needed a test rather than a feature.
 
-What is still missing is now the second tier: the customer who needs a port
-**in**, bounds on the customer who takes too much, seeing a pool fill before it
-fills, and **performance**. Throughput in bits per second still needs a real
-NIC ([#28](https://github.com/andrediashexa/hexarouting/issues/28)), but the
-per-packet CPU cost is measured: `bpa-in2out` spends **456 clocks per packet**
-where the nodes around it spend 20–35, which is about 29 cores for 100 Gbps of
-64-byte frames before anything else runs
-([#63](https://github.com/andrediashexa/hexarouting/issues/63)). The rest is
+The customer who needs a port **in** is answered as of v0.9.0: a
+[static port forward](architecture.md#static-port-forwarding) pins one inbound
+port to one subscriber's socket, inside that subscriber's own block and
+reserved so the allocator can never hand it to anyone else
+([#17](https://github.com/andrediashexa/hexarouting/issues/17)). What is still
+missing is the rest of the second tier: bounds on the customer who takes too
+much, seeing a pool fill before it fills, and **performance**. Throughput in
+bits per second still needs a real NIC
+([#28](https://github.com/andrediashexa/hexarouting/issues/28)), but the
+per-packet CPU cost is measured: `bpa-in2out` spends **395 clocks per packet**
+where the nodes around it spend 20–35, and the bisection on
+[#63](https://github.com/andrediashexa/hexarouting/issues/63) says half of what
+remains is checksum arithmetic that only NIC offload removes. The rest is
 ordered by the cost of not having it.
 
 Every "delivered" below points at the release it shipped in, and every one of
@@ -54,10 +59,11 @@ flowchart TD
         J["extended blocks with a cap"]
         E["FTP, RTSP and PPTP/GRE ALGs"]
         K["filtering mode: full or restricted cone"]
+        F["static port forwards"]
     end
     subgraph calls["Prevents support calls"]
         E2["SIP, TFTP and ESP ALGs"]
-        G["PCP / port forwarding"]
+        G["PCP: the CPE asks for its own"]
         H["per-subscriber limits"]
     end
     subgraph control["Operator control"]
@@ -213,7 +219,7 @@ is committed until the maintainer says so.
 | Item | Symptom without it | Effort |
 |---|---|---|
 | **Hairpinning** (RFC 4787 REQ-9) — *delivered, v0.4.0, [#16](https://github.com/andrediashexa/hexarouting/issues/16)* | Two subscribers behind the same CGNAT could not reach each other through the public address. Broke self-hosted services, some games, and cameras accessed by their public address from inside the network. | M |
-| **Static port forwarding** | The operator has no answer for the customer who needs an inbound port. Today the answer is "buy a public IP", which is a lost sale when the provider has none. | S |
+| **Static port forwarding** — *delivered, v0.9.0, [#17](https://github.com/andrediashexa/hexarouting/issues/17)* | The operator had no answer for the customer who needs an inbound port, other than "buy a public IP" — a lost sale exactly when the provider has none. `forward <tcp\|udp> <public-port> to <private-ip> <private-port>`, on the subscriber's own public address, inside its own block, and refused with the reason when it is not. Deterministic pools only: on a dynamic pool the block moves, and the forward would follow it to another customer. | S |
 | **PCP (RFC 6887)** | The CPE cannot ask for its own mapping, so every port request becomes a ticket. PCP turns a support call into a protocol exchange. | L |
 | **Per-subscriber session and rate limits** | One infected host opens thousands of sessions, exhausts its block, and the *neighbour* sharing the public address is unaffected — but the infected subscriber calls support, and there is no counter to point at. Limits also cap the damage of a scan. | M |
 | **MSS clamping** | With PPPoE upstream, large packets are dropped and "some sites do not load" — the same symptom as broken PMTUD, from a different cause. | S |
@@ -258,7 +264,7 @@ of the logging obligation. If the scope ever changes, that is where to start.
 
 | Item | Why | Effort |
 |---|---|---|
-| **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: 456 clocks in `bpa-in2out`, about 29 cores for 100 Gbps of 64-byte frames. Bits per second still needs an E810 or CX6 — [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it, and [#63](https://github.com/andrediashexa/hexarouting/issues/63) is the cost itself. | M |
+| **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: 395 clocks in `bpa-in2out` after the hairpin pre-filter, about 25 cores for 100 Gbps of 64-byte frames. Bits per second still needs an E810 or CX6 — [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it, and [#63](https://github.com/andrediashexa/hexarouting/issues/63) is the cost itself. | M |
 | **Symmetric RSS** | The handoff works, but symmetric hashing would put both directions on the right worker before the handoff, saving the extra enqueue. | M |
 | **RFC 4787 / 5382 conformance suite** | Turns section 1's claims into assertions. | M |
 | **Sustained-load soak test** | Session table behaviour under churn over hours is not covered. Exhaustion bugs show up at hour six, not minute six. | M |
@@ -291,7 +297,8 @@ an annotated tag, a changelog entry and a published GitHub Release.
 | **v0.3.0** | A control plane that reports failure | [#3](https://github.com/andrediashexa/hexarouting/issues/3), [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5) hexash on the binary API | Everything after this adds configuration. Adding it on top of a `commit` that cannot tell success from failure means each new feature inherits a control plane that lies. This is the one ordering constraint that is not negotiable. |
 | **v0.4.0** | Subscriber experience | [#12](https://github.com/andrediashexa/hexarouting/issues/12) per-pool timeouts and half-open state, [#13](https://github.com/andrediashexa/hexarouting/issues/13) extended blocks | The two things an operator notices in the first month: ports held by dead connections, and one customer cut off while the pool is half empty. |
 | **v0.5.0** — *released* | Application compatibility | [#42](https://github.com/andrediashexa/hexarouting/issues/42) FTP, [#43](https://github.com/andrediashexa/hexarouting/issues/43) RTSP and [#44](https://github.com/andrediashexa/hexarouting/issues/44) PPTP/GRE ALGs; [#50](https://github.com/andrediashexa/hexarouting/issues/50) full cone asserted. [#15](https://github.com/andrediashexa/hexarouting/issues/15) and [#16](https://github.com/andrediashexa/hexarouting/issues/16) landed earlier, in v0.4.0. | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. SIP, TFTP and ESP remain open under [#14](https://github.com/andrediashexa/hexarouting/issues/14). |
-| **v0.6.0** | Inbound and protection | [#17](https://github.com/andrediashexa/hexarouting/issues/17) port forwarding, [#18](https://github.com/andrediashexa/hexarouting/issues/18) per-subscriber limits, [#19](https://github.com/andrediashexa/hexarouting/issues/19) MSS clamping, [#24](https://github.com/andrediashexa/hexarouting/issues/24) uRPF, [#25](https://github.com/andrediashexa/hexarouting/issues/25) bypass lists, [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection, [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation | Answers for the customer who needs a port in, and bounds on the customer who takes too many. |
+| **v0.6.0 to v0.8.0** — *released* | Not what this table said | The appliance and its installer, SSH and local accounts, SNMP, the first performance measurement and a hardware lab that carries packets. | The order below was written before the first ISO was installed by hand. Three releases went to making the box installable and observable, which is the reordering the plan itself says to expect. |
+| **v0.9.0** | Inbound and protection | [#17](https://github.com/andrediashexa/hexarouting/issues/17) port forwarding — *done*, [#18](https://github.com/andrediashexa/hexarouting/issues/18) per-subscriber limits, [#19](https://github.com/andrediashexa/hexarouting/issues/19) MSS clamping, [#24](https://github.com/andrediashexa/hexarouting/issues/24) uRPF, [#25](https://github.com/andrediashexa/hexarouting/issues/25) bypass lists, [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection, [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation | Answers for the customer who needs a port in, and bounds on the customer who takes too many. |
 | **v0.7.0** | Compliance | [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog, [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity, [#22](https://github.com/andrediashexa/hexarouting/issues/22) trail integrity, [#23](https://github.com/andrediashexa/hexarouting/issues/23) pool-resize procedure | The log already exists and is correct. This release makes it usable by the systems and the people who have to act on it. |
 | **v0.8.0** | High availability | [#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9) | Deliberately after correctness. HA over a CGNAT with known gaps replicates the gaps. |
 | **v0.9.0** | Performance, measured | [#28](https://github.com/andrediashexa/hexarouting/issues/28) throughput on real NICs, [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS, [#30](https://github.com/andrediashexa/hexarouting/issues/30) soak test | Before this release the performance numbers do not exist. After it they do, with their conditions. |

@@ -13,7 +13,14 @@
  * could accept those lines and silently drop them, which is exactly what it
  * did (issue #47).
  */
-option version = "0.2.0";
+/*
+ * 0.3.0 adds bpa_forward_add_del: static port forwards. A separate message
+ * rather than fields on bpa_pool_add_del, because that message already ends in
+ * the variable-length prefix array and only one of those can be last - and
+ * because a forward has to be addable to a pool that is carrying traffic,
+ * which redefining the pool is not.
+ */
+option version = "0.3.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -86,6 +93,39 @@ autoreply define bpa_pool_add_del
   u8 n_inside;
   u8 n_prefixes;
   vl_api_prefix_t prefixes[n_prefixes];
+};
+
+/** \brief Which protocols have a port to pin. Values match bpa_proto_t. */
+enum bpa_fwd_proto : u8
+{
+  BPA_API_FWD_TCP = 0,
+  BPA_API_FWD_UDP = 1,
+};
+
+/** \brief Adds or removes a static port forward.
+    @param is_add - 1 adds, 0 removes
+    @param name - the pool the forward belongs to
+    @param proto - tcp or udp; nothing else has a port to forward
+    @param port_pub - the public port, which MUST be inside the block the pool
+                      assigns to ip_priv. The public ADDRESS is not a
+                      parameter: it is the subscriber's own, because a
+                      subscriber that answered on an address it never sends
+                      from would break paired address pooling (RFC 4787 REQ-2)
+    @param ip_priv - the subscriber
+    @param port_priv - the port on the subscriber; ignored when removing,
+                       which is identified by the public port alone
+*/
+autoreply define bpa_forward_add_del
+{
+  u32 client_index;
+  u32 context;
+
+  bool is_add;
+  string name[64];
+  vl_api_bpa_fwd_proto_t proto;
+  u16 port_pub;
+  u16 port_priv;
+  vl_api_ip4_address_t ip_priv;
 };
 
 /** \brief Enables or disables CGNAT on an interface. */

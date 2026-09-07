@@ -246,6 +246,35 @@ typedef struct
   u32 count;
 } bpa_addr_set_t;
 
+/*
+ * A static port forward: one inbound port pinned to one subscriber's socket.
+ *
+ * Called "forward" everywhere an operator can see, and `bpa_static_t` here,
+ * because bpa_forward() already means the inside -> outside arithmetic and two
+ * things called forward in one file is how a reader is lost.
+ *
+ * The public ADDRESS is not stored as a choice: it is the subscriber's own,
+ * the one bpa_forward() gives it. Letting the operator name a different one
+ * would break paired address pooling (RFC 4787 REQ-2) - the subscriber would
+ * answer on an address it never sends from - and would make the deterministic
+ * reverse arithmetic disagree with the session table. So the operator states
+ * the public PORT, and it MUST fall inside that subscriber's own block; a port
+ * in someone else's block is refused rather than quietly taken from them.
+ *
+ * ip_pub and port_off are derived, not configured. They are stored because
+ * every reader of this table needs both and recomputing them means repeating
+ * bpa_forward() on a path that already has the answer.
+ */
+typedef struct
+{
+  u32 ip_priv;	 /* host order */
+  u32 ip_pub;	 /* host order; derived - the subscriber's own address */
+  u16 port_pub;
+  u16 port_priv;
+  u16 port_off;	 /* port_pub - block.port_lo, the bit reserved in the map */
+  u8 proto;	 /* bpa_proto_t; TCP or UDP, the only two with ports to pin */
+} bpa_static_t;
+
 typedef struct
 {
   u8 *name;
@@ -280,6 +309,18 @@ typedef struct
    * Resolved once by bpa_pool_init(); see the registry above. */
   u32 alg;
   u32 alg_set;
+
+  /*
+   * Static port forwards, sorted by (port_pub, proto).
+   *
+   * ONE ordering, and everything reads it through the same binary search: the
+   * out2in lookup wants an exact public port, the in2out lookup and the
+   * bitmap reservation both want the run of forwards inside one block's port
+   * range, and a run in a sorted vector is where a binary search lands. A
+   * second index keyed the other way was the obvious alternative and would be
+   * a second thing to keep in step.
+   */
+  bpa_static_t *statics;
 
   /* derived */
   u32 port_count;
@@ -391,6 +432,89 @@ bpa_set_addr_of (const bpa_addr_set_t *s, u32 idx, u32 *addr)
     }
   return -1;
 }
+
+/* ------------------------------------------------------------------ */
+/* static port forwards                                                */
+
+/*
+ * Not in the standalone build. A forward is configuration laid over the
+ * mapping, not part of it: ref/bpa_model.py specifies the arithmetic, and the
+ * unit test compiles this header against a shim that has no VPP vectors
+ * because it has no configuration to hold.
+ */
+#ifndef BPA_STANDALONE
+
+/*
+ * Index of the first forward whose public port is >= `port`, or vec_len when
+ * there is none. The three callers below are the whole interface; nothing
+ * indexes this vector directly, because its ordering is an implementation
+ * detail of exactly this search.
+ */
+static_always_inline u32
+bpa_static_lower (const bpa_static_t *v, u32 n, u16 port)
+{
+  u32 lo = 0, hi = n;
+
+  while (lo < hi)
+    {
+      u32 mid = lo + (hi - lo) / 2;
+
+      if (v[mid].port_pub < port)
+	lo = mid + 1;
+      else
+	hi = mid;
+    }
+  return lo;
+}
+
+/*
+ * The forward that owns (public port, protocol), or 0.
+ *
+ * Consulted on the out2in path only when the session lookup missed, which is
+ * unsolicited inbound traffic: a forwarded port that is in use answers from
+ * the session table like any other mapping.
+ */
+static_always_inline const bpa_static_t *
+bpa_static_by_pub (const bpa_pool_t *p, u16 port_pub, u8 proto)
+{
+  u32 n = vec_len (p->statics);
+  u32 i = bpa_static_lower (p->statics, n, port_pub);
+
+  for (; i < n && p->statics[i].port_pub == port_pub; i++)
+    if (p->statics[i].proto == proto)
+      return &p->statics[i];
+  return 0;
+}
+
+/*
+ * The forward that pins (subscriber socket, protocol), or 0.
+ *
+ * Searched over the block's port range rather than by private port, because
+ * the vector is ordered by public port and a forward always sits inside its
+ * own subscriber's block. The run is short - the forwards of one subscriber -
+ * so the scan is bounded by what one customer was given, not by the pool.
+ *
+ * Consulted on the in2out path only when the session lookup missed. Without
+ * it a subscriber who sends FROM the forwarded socket gets an ordinary
+ * dynamic port, and the mapping the operator configured is then contradicted
+ * by the subscriber's own traffic.
+ */
+static_always_inline const bpa_static_t *
+bpa_static_by_priv (const bpa_pool_t *p, const bpa_block_t *b, u32 ip_priv,
+		    u16 port_priv, u8 proto)
+{
+  u32 n = vec_len (p->statics);
+  u32 i = bpa_static_lower (p->statics, n, b->port_lo);
+
+  for (; i < n && p->statics[i].port_pub <= b->port_hi; i++)
+    if (p->statics[i].ip_priv == ip_priv
+	&& p->statics[i].port_priv == port_priv
+	&& p->statics[i].proto == proto)
+      return &p->statics[i];
+  return 0;
+}
+
+#endif /* BPA_STANDALONE */
 
 /* ------------------------------------------------------------------ */
 /* policy split                                                        */

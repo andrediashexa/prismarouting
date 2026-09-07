@@ -44,6 +44,23 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
   s = format (s, " block %u ports %u-%u policy %U mode %U", p->block_size,
 	      p->port_min, p->port_max, format_bpa_policy, p->policy,
 	      format_bpa_mode, p->mode);
+
+  /*
+   * The forwards, in full.
+   *
+   * They are the one part of a pool that is NOT derivable from the formula:
+   * everything else here lets a reader recompute who held an address and port
+   * at a given instant, and a forwarded port is an exception the arithmetic
+   * cannot produce. A trail that omits them answers a court order confidently
+   * and wrongly for exactly those ports.
+   */
+  for (i = 0; i < vec_len (p->statics); i++)
+    {
+      a.as_u32 = clib_host_to_net_u32 (p->statics[i].ip_priv);
+      s = format (s, " forward %U/%u->%U:%u", format_bpa_proto,
+		  p->statics[i].proto, p->statics[i].port_pub,
+		  format_ip4_address, &a, p->statics[i].port_priv);
+    }
   return s;
 }
 
