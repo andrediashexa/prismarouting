@@ -25,7 +25,65 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.20.0.
+Nothing merged since v0.21.0.
+
+## 0.21.0 — the trail says who, not only what
+
+The configuration trail carried the complete pool definition, dated in UTC,
+append-only and `fsync`ed — and nothing identifying a person. It said *"the
+pool changed at 14:32 on the 10th"* and could not say who changed it. That is
+the difference between a log and an audit trail: a log records events, an audit
+trail records accountable actions.
+
+### Added
+
+* **Operator identity on every trail entry**
+  ([#34](https://github.com/andrediashexa/hexarouting/issues/34)):
+
+  ```
+  2026-09-07T22:59Z limits pool provider-b by marina uid 1001 via api inside ...
+  2026-09-07T22:59Z limits pool provider-b by unattributed via cli inside ...
+  ```
+
+  Captured from the request at the moment the change is **applied**, and
+  cleared immediately after, so an entry can only ever carry the identity of
+  the request that produced it.
+
+  The identity travels in each message because the transport leaves no
+  alternative: `hexash` reaches the dataplane through vat2, one process per
+  call, so there is no connection to attach it to — and shared memory carries
+  no peer credentials the plugin could read instead. Five mutating messages
+  gained `audit_user` and `audit_uid`, which **changes their layout**; a client
+  built against 0.9.0 must be rebuilt.
+
+* **An entry that cannot be attributed says so**, and a change typed at the VPP
+  CLI is distinguished from an API client that sent nothing. Omitting the field
+  would make either indistinguishable from an entry written before this
+  existed.
+
+* `SUDO_USER` is preferred over the effective account: an operator who runs the
+  VTY under `sudo` is root by the time the call is made, and a trail recording
+  `root` for all of them has recorded nothing. The uid goes on the line as well
+  — `marina uid 0` says marina acting as root, which neither field says alone.
+
+### Fixed
+
+* Two paths that would have produced **false attribution**, which is worse than
+  none: `bpa_main` starts zeroed, so every change made at the VPP CLI would
+  have been recorded as uid 0 — root; and a field a client does not send
+  arrives as zero on the wire, which is a real uid. Both now resolve to
+  unattributed.
+
+### Known limit
+
+The client asserts its own identity and the plugin cannot check it. Anyone who
+can reach the API can already reconfigure the box, so the trail records which
+operator did what among people trusted to be there — it is not evidence against
+them. Kernel-verified identity needs the socket transport
+([#76](https://github.com/andrediashexa/hexarouting/issues/76)); tamper-evidence
+is [#22](https://github.com/andrediashexa/hexarouting/issues/22). Both are
+stated in `docs/logging.md`.
+
 
 ## 0.20.0 — the cheapest test level was red, and the silent code had no test
 
