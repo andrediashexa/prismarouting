@@ -322,6 +322,15 @@ typedef struct
   u64 n_quarantine_early;         /* released before their time, counted */
   u32 n_expired;
   u32 expire_cursor;	  /* budgeted walk resumes here */
+  /*
+   * Packets this worker let past untranslated, indexed by pool index.
+   *
+   * Per thread and not on the pool, because the pool is shared across workers
+   * and a counter written by all of them on the datapath is a cache line every
+   * worker fights over. Summed when somebody asks. Sized when a pool is added,
+   * so the datapath never grows a vector.
+   */
+  u64 *n_bypassed;
   u8 initialised;
 } bpa_per_thread_t;
 

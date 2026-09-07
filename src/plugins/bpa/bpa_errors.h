@@ -21,6 +21,8 @@
   _ (FORWARDED, 0, "sessions opened from a static port forward") \
   _ (MSS_CLAMPED, 0, "TCP MSS options lowered to fit the path") \
   _ (NO_POOL, 1, "no pool for source address") \
+  _ (BYPASS_SRC, 0, "packets from a bypassed source, left untranslated") \
+  _ (BYPASS_DST, 0, "packets to a bypassed destination, left untranslated") \
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OVER_CAPACITY, 1, "subscriber beyond pool capacity") \
   _ (BLOCK_EXHAUSTED, 1, "port block exhausted") \

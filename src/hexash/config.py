@@ -84,6 +84,11 @@ class Pool:
         # Per-subscriber bounds. Zero is unlimited in both.
         self.max_sessions = 0
         self.max_rate = 0
+        # Prefixes that leave untranslated. Kept sorted, because the device
+        # prints them in address order and these lines are compared against
+        # its own output.
+        self.bypass_src: list[str] = []
+        self.bypass_dst: list[str] = []
         self.filter = "endpoint-independent"
         self.algs: dict[str, bool] = {}  # only where the operator chose
         # Static port forwards, as (proto, public port, private ip, private
@@ -123,6 +128,10 @@ class Pool:
                 out.append(f" timeout {t} {self.timeouts[t]}")
         if self.max_blocks > 1:
             out.append(f" max-blocks {self.max_blocks}")
+        if in_place:
+            out += [f" bypass source {p}" for p in sorted(self.bypass_src)]
+            out += [f" bypass destination {p}"
+                    for p in sorted(self.bypass_dst)]
         if in_place and self.max_sessions:
             out.append(f" max-sessions {self.max_sessions}")
         if in_place and self.max_rate:
@@ -156,6 +165,10 @@ class Pool:
                 parts += ["timeout", t, str(self.timeouts[t])]
         if self.max_blocks > 1:
             parts += ["max-blocks", str(self.max_blocks)]
+        for p in sorted(self.bypass_src):
+            parts += ["bypass", "source", p]
+        for p in sorted(self.bypass_dst):
+            parts += ["bypass", "destination", p]
         if self.max_sessions:
             parts += ["max-sessions", str(self.max_sessions)]
         if self.max_rate:
@@ -174,6 +187,16 @@ class Pool:
         for proto, pub, ip, priv in sorted(self.forwards, key=self._fwd_key):
             parts += ["forward", proto, str(pub), "to", ip, str(priv)]
         return " ".join(parts)
+
+    def bypass_api_args(self, is_dst: bool) -> dict:
+        """One list, entire: the device replaces it rather than editing it."""
+        prefixes = self.bypass_dst if is_dst else self.bypass_src
+        return {
+            "name": self.name,
+            "is_destination": bool(is_dst),
+            "n_prefixes": len(prefixes),
+            "prefixes": sorted(prefixes),
+        }
 
     def limits_api_args(self) -> dict:
         """Both bounds, always together: the device takes them as a pair."""
@@ -534,6 +557,14 @@ class Config:
             if not w[1].isdigit() or int(w[1]) < 1:
                 return f"max-blocks '{w[1]}': expected a number of at least 1"
             pool.max_blocks = int(w[1])
+        elif w[0] == "bypass" and len(w) > 2:
+            if w[1] not in ("source", "destination"):
+                return f"bypass '{w[1]}': expected source or destination"
+            if "/" not in w[2]:
+                return f"bypass {w[1]}: '{w[2]}' is not a prefix"
+            lst = pool.bypass_dst if w[1] == "destination" else pool.bypass_src
+            if w[2] not in lst:
+                lst.append(w[2])
         elif w[0] in ("max-sessions", "max-session-rate") and len(w) > 1:
             if not w[1].isdigit():
                 return f"{w[0]}: '{w[1]}' is not a number"
@@ -633,6 +664,18 @@ class Config:
         recreated = {p.name for p in add} | {p.name for p in replace}
         # A pool being created or recreated arrives with both bounds at zero,
         # so anything the candidate asks for is a change.
+        # Each list is replaced entire, so the delta is "these two lists
+        # differ" rather than a set of additions and removals.
+        bypass_set = []
+        for name, pool in other.pools.items():
+            have_s, have_d = (([], []) if name in recreated
+                              else (self.pools[name].bypass_src,
+                                    self.pools[name].bypass_dst))
+            if sorted(have_s) != sorted(pool.bypass_src):
+                bypass_set.append((pool, False))
+            if sorted(have_d) != sorted(pool.bypass_dst):
+                bypass_set.append((pool, True))
+
         limits_set = {}
         for name, pool in other.pools.items():
             have = ((0, 0) if name in recreated
@@ -688,6 +731,7 @@ class Config:
             "fwd_add": fwd_add,
             "fwd_del": fwd_del,
             "limits_set": limits_set,
+            "bypass_set": bypass_set,
             "if_add": if_add,
             "if_remove": if_del,
             "mtu_set": mtu_set,

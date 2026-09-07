@@ -117,6 +117,27 @@ format_bpa_pool (u8 *s, va_list *args)
    * apart; a line that appears only when off reads as an absent feature. */
   s = format (s, "\n%Ualg          %U", format_white_space, indent + 2,
 	      format_bpa_alg, p->alg);
+  if (p->bypass_src.count || p->bypass_dst.count)
+    {
+      bpa_main_t *bm = &bpa_main;
+      u64 n = 0;
+      u32 i;
+
+      /* Summed across workers: the counter is per thread so no two of them
+       * fight over a cache line to increment it. */
+      for (i = 0; i < vec_len (bm->per_thread); i++)
+	{
+	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+	  u32 idx = p - bm->pools;
+
+	  if (idx < vec_len (pt->n_bypassed))
+	    n += pt->n_bypassed[idx];
+	}
+      s = format (s, "\n%Ubypass       %u source and %u destination "
+		     "address(es), %llu packets left untranslated",
+		  format_white_space, indent + 2, p->bypass_src.count,
+		  p->bypass_dst.count, n);
+    }
   s = format (s, "\n%Uper subscriber", format_white_space, indent + 2);
   if (p->max_sessions)
     s = format (s, "  at most %u sessions", p->max_sessions);
@@ -180,6 +201,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   u32 maxb = 0;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
+  u32 *bys_b = 0, *bys_c = 0, *byd_b = 0, *byd_c = 0;
   bpa_pool_t cfg = { 0 };
   u8 *name = 0;
   int is_del = 0, is_check = 0;
@@ -267,6 +289,32 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       else if (unformat (line_input, "max-blocks %u", &maxb))
 	cfg.max_blocks = (u8) maxb;
+      else if (unformat (line_input, "bypass destination %U/%d",
+			 unformat_ip4_address, &addr, &len))
+	{
+	  if (len > 32)
+	    {
+	      error = clib_error_return (
+		0, "bypass destination prefix length %u invalid", len);
+	      goto done;
+	    }
+	  vec_add1 (byd_c, 1u << (32 - len));
+	  vec_add1 (byd_b, clib_net_to_host_u32 (addr.as_u32)
+			     & ~(vec_elt (byd_c, vec_len (byd_c) - 1) - 1));
+	}
+      else if (unformat (line_input, "bypass source %U/%d",
+			 unformat_ip4_address, &addr, &len))
+	{
+	  if (len > 32)
+	    {
+	      error = clib_error_return (
+		0, "bypass source prefix length %u invalid", len);
+	      goto done;
+	    }
+	  vec_add1 (bys_c, 1u << (32 - len));
+	  vec_add1 (bys_b, clib_net_to_host_u32 (addr.as_u32)
+			     & ~(vec_elt (bys_c, vec_len (bys_c) - 1) - 1));
+	}
       else if (unformat (line_input, "max-sessions %u", &cfg.max_sessions))
 	;
       else if (unformat (line_input, "max-session-rate %u", &cfg.max_rate))
@@ -376,6 +424,24 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   error = bpa_addr_set_build (&cfg.outside, out_b, out_c, vec_len (out_b));
   if (error)
     goto done;
+  /* Only when there is something to build. An empty address set is an error
+   * for a pool's own prefixes - a pool with no addresses translates nothing -
+   * and it is the NORMAL state of a bypass list. Building it unconditionally
+   * made every "bpa pool" command fail, which the lab found on its first run. */
+  if (vec_len (bys_b))
+    {
+      error = bpa_addr_set_build (&cfg.bypass_src, bys_b, bys_c,
+				  vec_len (bys_b));
+      if (error)
+	goto done;
+    }
+  if (vec_len (byd_b))
+    {
+      error = bpa_addr_set_build (&cfg.bypass_dst, byd_b, byd_c,
+				  vec_len (byd_b));
+      if (error)
+	goto done;
+    }
 
   cfg.name = name;
   cfg.port_min = (u16) port_min;
@@ -396,6 +462,10 @@ done:
   vec_free (in_c);
   vec_free (out_b);
   vec_free (out_c);
+  vec_free (bys_b);
+  vec_free (bys_c);
+  vec_free (byd_b);
+  vec_free (byd_c);
   /* bpa_pool_add() takes its own copy, exactly as it does for the name. */
   vec_free (cfg.statics);
   vec_free (name);
@@ -411,6 +481,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
     "[alg <ftp|rtsp|pptp> on|off] "
+    "[bypass <destination|source> <pfx>/<len>] "
     "[max-sessions <n>] [max-session-rate <n>] "
     "[tcp-mss <bytes|auto>] "
     "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
@@ -1096,6 +1167,89 @@ VLIB_CLI_COMMAND (bpa_show_drops_command, static) = {
  * command that silently keeps whichever half you did not mention is a command
  * whose effect depends on what was there before.
  */
+/*
+ * Replaces one of a pool's bypass lists, in place.
+ *
+ * The WHOLE list, because bpa_addr_set_build() merges adjacent prefixes into
+ * ranges: after building, the set no longer remembers which prefixes were
+ * typed, and "remove one of them" from a merged range has no honest answer.
+ * Setting the list entire has one, and it is what a candidate configuration
+ * produces anyway.
+ *
+ * "none" empties it, which is how a bypass is removed.
+ */
+static clib_error_t *
+bpa_bypass_command_fn (vlib_main_t *vm, unformat_input_t *input,
+		       vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  ip4_address_t addr;
+  u32 *bases = 0, *counts = 0;
+  u32 len = 0;
+  u8 *name = 0;
+  int is_dst = -1;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (
+      0, "usage: bpa bypass <pool> <destination|source> <pfx>/<len> ... | none");
+
+  if (!unformat (line_input, "%v", &name))
+    {
+      error = clib_error_return (0, "missing pool name");
+      goto done;
+    }
+  if (unformat (line_input, "destination"))
+    is_dst = 1;
+  else if (unformat (line_input, "source"))
+    is_dst = 0;
+  else
+    {
+      error = clib_error_return (0, "expected destination or source");
+      goto done;
+    }
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "none"))
+	continue;
+      if (unformat (line_input, "%U/%d", unformat_ip4_address, &addr, &len))
+	{
+	  if (len > 32)
+	    {
+	      error = clib_error_return (0, "prefix length %u invalid", len);
+	      goto done;
+	    }
+	  vec_add1 (counts, 1u << (32 - len));
+	  vec_add1 (bases, clib_net_to_host_u32 (addr.as_u32)
+			     & ~(vec_elt (counts, vec_len (counts) - 1) - 1));
+	  continue;
+	}
+      error = clib_error_return (0, "unknown input '%U'",
+				 format_unformat_error, line_input);
+      goto done;
+    }
+
+  error = bpa_bypass_set (name, is_dst, bases, counts, vec_len (bases));
+  if (!error)
+    vlib_cli_output (vm, "pool %v: %u %s prefix(es) bypassed", name,
+		     vec_len (bases), is_dst ? "destination" : "source");
+
+done:
+  vec_free (bases);
+  vec_free (counts);
+  vec_free (name);
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_bypass_command, static) = {
+  .path = "bpa bypass",
+  .short_help = "bpa bypass <pool> <destination|source> <pfx>/<len> [...] "
+		"| none",
+  .function = bpa_bypass_command_fn,
+};
+
 static clib_error_t *
 bpa_limits_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       vlib_cli_command_t *cmd)
@@ -1907,6 +2061,14 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       if (p->max_blocks > 1)
 	s = format (s, " max-blocks %u\n", p->max_blocks);
+      for (i = 0; i < p->bypass_src.n_ranges; i++)
+	s = format (s, "%U", format_bpa_range_as_prefixes,
+		    p->bypass_src.ranges[i].base,
+		    p->bypass_src.ranges[i].count, 1, "bypass source");
+      for (i = 0; i < p->bypass_dst.n_ranges; i++)
+	s = format (s, "%U", format_bpa_range_as_prefixes,
+		    p->bypass_dst.ranges[i].base,
+		    p->bypass_dst.ranges[i].count, 1, "bypass destination");
       if (p->max_sessions)
 	s = format (s, " max-sessions %u\n", p->max_sessions);
       if (p->max_rate)

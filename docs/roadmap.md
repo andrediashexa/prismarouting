@@ -237,7 +237,7 @@ is committed until the maintainer says so.
 
 | Item | Why | Effort |
 |---|---|---|
-| **NAT bypass lists** | Some destinations must see the real source: internal servers, CDN caches, government portals, the operator's own management network. | S |
+| **NAT bypass lists** — *delivered, v0.13.0, [#25](https://github.com/andrediashexa/hexarouting/issues/25)* | Some destinations must see the real source: internal servers, CDN caches, government portals, the operator's own management network. `bypass source` and `bypass destination` per pool, replaced entire and applied in place. A bypassed packet takes no port, creates no session and writes no record — asserted from the captured packet **and** from the session count, because the first half alone passes on a bypass that allocates first. | S |
 | **Pool selection by ACL or VRF** | Today a pool is chosen by inside prefix. Multi-VRF and per-service selection need more. The session table's second key word **used to be** reserved for a VRF id; the PPTP ALG spends it on the remote address, so this now needs a wider key or a packed encoding ([#26](https://github.com/andrediashexa/hexarouting/issues/26)). | M |
 | **Per-pool timeouts and ALG switches** — *delivered, v0.4.0 and v0.5.0* | The unit of policy is the pool, because that is the unit an operator sells. Reachable through `vppctl`; **not** through the VTY, which drops pool sub-lines it does not know ([#47](https://github.com/andrediashexa/hexarouting/issues/47)). | S |
 | **Port block utilisation observability** | An operator needs to see block utilisation *before* exhaustion. `natEvent 12` reports the failure; a histogram predicts it. `show cgnat top` now ranks subscribers by how full their blocks are and `show cgnat subscriber` reports one in detail ([#40](https://github.com/andrediashexa/hexarouting/issues/40), v0.6.0); the histogram and the threshold alarm remain ([#27](https://github.com/andrediashexa/hexarouting/issues/27)). | S |
@@ -307,12 +307,101 @@ promises about order that the work then rearranged. What the plan is for is the
 | **v0.10.0** — *released* | The log, protected | [#24](https://github.com/andrediashexa/hexarouting/issues/24) uRPF on an interface | A spoofed source translated and attributed to a subscriber who sent nothing is the one failure the record cannot show as a failure. |
 | **v0.11.0** — *released* | The ticket that does not look like NAT | [#19](https://github.com/andrediashexa/hexarouting/issues/19) MSS clamping | "Some sites do not load", from a path narrower than the handshake agreed to. |
 | **v0.12.0** — *released* | Bounding one customer | [#18](https://github.com/andrediashexa/hexarouting/issues/18) per-subscriber session and rate limits | The infected host that exhausts its own block, and the counter the operator points at when it calls. |
-| *next* | Protection and control | [#25](https://github.com/andrediashexa/hexarouting/issues/25) bypass lists, [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection, [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation | Bounds on the customer who takes too much, and the controls an operator needs before a pool fills. |
+| **v0.13.0** — *released* | Traffic that must not be translated | [#25](https://github.com/andrediashexa/hexarouting/issues/25) bypass lists | The destinations that have to see the real source, and the sources that must keep their own address. |
+| *next* | Protection and control | [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection, [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation | Bounds on the customer who takes too much, and the controls an operator needs before a pool fills. |
 | *then* | Compliance | [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog, [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity, [#22](https://github.com/andrediashexa/hexarouting/issues/22) trail integrity, [#23](https://github.com/andrediashexa/hexarouting/issues/23) pool-resize procedure | The log already exists and is correct. This makes it usable by the systems and the people who have to act on it. |
 | *then* | High availability | [#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9) | Deliberately after correctness. HA over a CGNAT with known gaps replicates the gaps. |
 | *then* | Performance, measured | [#28](https://github.com/andrediashexa/hexarouting/issues/28) throughput on real NICs, [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS, [#30](https://github.com/andrediashexa/hexarouting/issues/30) soak test | The per-packet cost is measured ([#63](https://github.com/andrediashexa/hexarouting/issues/63)); bits per second is not, and needs a NIC DPDK drives natively. |
 | *not planned* | The way out of CGNAT | [#31](https://github.com/andrediashexa/hexarouting/issues/31) NAT64, DS-Lite, MAP-E/MAP-T, 464XLAT | **Out of scope by decision** — see section 3.4. The row is kept because the reasoning is worth keeping, not because the work is scheduled. |
 | *backlog* | | [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP, [#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on dynamic pools | PCP's dependency is met now that #17 has shipped; it earns its cost once manual forwards become a volume. #67 is what a dynamic pool needs before it can hold one at all. |
+
+### The plan for what remains
+
+Written after reading every open issue rather than their titles, and ordered by
+what each one costs while it is absent. Phases, not dates — the only honest
+schedule is the one produced after the work.
+
+#### Phase 1 — pay the debt before it multiplies
+
+| Issue | Why it goes first |
+|---|---|
+| [#69](https://github.com/andrediashexa/hexarouting/issues/69) in-place per-pool settings through the VTY | Every setting added **after** this inherits the right behaviour for nothing; every one added before needs retrofitting. Five already have the defect. Today, turning on a mitigation during an incident tears down the pool. |
+| [#35](https://github.com/andrediashexa/hexarouting/issues/35) roles in the VTY | Not hardening. **Anyone in the `vpp` group can delete a pool today** — disconnecting every subscriber behind it — or change a block size, which re-maps everyone at once. That is open now. |
+| [#54](https://github.com/andrediashexa/hexarouting/issues/54) warn below the RFC 5382 floors | Small and isolated, and it is the first setting an operator reaches for when a pool fills. It trades one failure for another without saying which. |
+
+#### Phase 2 — finish protection and control
+
+| Issue | Note |
+|---|---|
+| [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation as a histogram, with a threshold | The most operational value left. `natEvent 12` fires when the customer has **already** lost traffic, and a mean says nothing: with 200k subscribers a pool looks half empty with a thousand at their limit. |
+| [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection by ACL and VRF | Carries a hidden cost: the session key's second word was reserved for a VRF id and the PPTP ALG spent it on the remote address. This needs a wider key or a packed encoding — datapath work, not configuration. |
+
+#### Phase 3 — compliance, and it is a sequence
+
+[#35](https://github.com/andrediashexa/hexarouting/issues/35) so an identity exists → [#34](https://github.com/andrediashexa/hexarouting/issues/34) so the trail records **who**
+changed the configuration and not only what → [#22](https://github.com/andrediashexa/hexarouting/issues/22) so the trail cannot
+be edited afterwards. The trail is append-only and `fsync`ed, so it survives a
+reboot and a crash; it does not survive editing, which means it proves what
+happened only to somebody who already trusts the operator — and it exists to be
+shown to somebody who does not.
+
+Alongside, and independent of each other: [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog beside IPFIX,
+which today disqualifies the product from deployments for a reason unrelated to
+the CGNAT; and [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity in the log, which is what makes
+a record name a person instead of an address.
+
+[#23](https://github.com/andrediashexa/hexarouting/issues/23) belongs **before** both. It is the sharpest edge in the design and
+it is undocumented, with no warning at `commit`: adding one public prefix
+changes the divisor and re-maps every subscriber at that instant. An operator
+who learns that from the consequence learns it during an outage.
+
+#### Phase 4 — capacity, which depends on #23
+
+| Issue | Why it waits |
+|---|---|
+| [#39](https://github.com/andrediashexa/hexarouting/issues/39) a reserve of blocks in deterministic mode | Carving a reserve **reduces capacity**, which changes `blocks_per_ip`, which re-maps every subscriber — the hazard #23 documents. Today a deterministic subscriber that fills its block is simply dropped while the box is healthy. |
+| [#55](https://github.com/andrediashexa/hexarouting/issues/55) stride and per-pool block-size ranges | Block-size ranges have the same blast radius. The stride half is independent and small. |
+
+#### Phase 5 — applications
+
+[#48](https://github.com/andrediashexa/hexarouting/issues/48) first: two TCP sequence-adjustment mechanisms do the same job and
+are carried by every session. A third ALG that lengthens a payload — **SIP** —
+would have to pick one, and half of any reader's mental model would then be
+wrong.
+
+Then [#14](https://github.com/andrediashexa/hexarouting/issues/14) SIP, the most expensive support call an ISP takes;
+[#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on dynamic pools, which needs the block pinned; and
+[#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP last — now unblocked, since it depends on #17 and should be
+bounded by #18, both delivered.
+
+#### Phase 6 — high availability
+
+[#9](https://github.com/andrediashexa/hexarouting/issues/9) **first**: the failover lab has to be written before the
+implementation and observed to fail on `master`. Written afterwards it would be
+shaped by the implementation instead of by the requirement. Then [#7](https://github.com/andrediashexa/hexarouting/issues/7)
+VRRP coherent with `linux_cp`, and [#8](https://github.com/andrediashexa/hexarouting/issues/8) configuration equality between
+peers — the one part of HA that cannot wait, because in deterministic mode two
+peers with different configuration fail **silently**: the failover maps
+subscribers to the wrong blocks and both boxes log nothing.
+
+#### Phase 7 — performance, which needs hardware
+
+[#28](https://github.com/andrediashexa/hexarouting/issues/28) on a real NIC unblocks [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS and what
+remains of [#63](https://github.com/andrediashexa/hexarouting/issues/63), whose only real remedy is checksum offload.
+[#30](https://github.com/andrediashexa/hexarouting/issues/30) the soak test can run earlier but pays most on a stable base — it
+catches the leak that appears at hour six.
+
+#### Outside the queue
+
+[#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13, blocked upstream with measured evidence: fd.io
+publishes no trixie suite. Revisit when they do.
+
+#### If only three were possible
+
+[#35](https://github.com/andrediashexa/hexarouting/issues/35), [#23](https://github.com/andrediashexa/hexarouting/issues/23) and [#69](https://github.com/andrediashexa/hexarouting/issues/69). The first two are not features —
+they are things that are already wrong and that only announce themselves by
+causing damage. The third is what stops the debt growing with every issue added
+after it.
 
 ### Dependencies that actually constrain the order
 
@@ -337,6 +426,17 @@ flowchart LR
 * **#28 before #29.** Symmetric RSS is an optimisation. Optimising before the
   harness exists means the improvement is asserted rather than measured, which
   is how this project has been wrong before.
+* **#23 before #39 and before the block-size half of #55.** Both change a
+  pool's capacity, and changing capacity re-maps every existing subscriber. A
+  change with that blast radius must not arrive as a side effect of a feature
+  about something else.
+* **#48 before the SIP ALG in #14.** A third mechanism that lengthens a payload
+  would have to choose between the two sequence-adjustment implementations that
+  already exist, and whichever it chose, the other would become dead weight
+  nobody dares remove.
+* **#9 before #7 and #8.** The failover lab is the acceptance test for HA and
+  MUST be observed to fail before the implementation exists; written
+  afterwards, it tests what was built rather than what was required.
 
 Everything else is a preference and may be reordered on demand from a real
 deployment. A provider blocked on SIP moves #14 forward; that is a better

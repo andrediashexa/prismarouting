@@ -459,6 +459,58 @@ bpa_auto_mss_update (void)
  * outage of its own - the subscriber comes back under the cap within a
  * timeout, and until then it holds what it already had.
  */
+/*
+ * Replaces one of a pool's bypass lists.
+ *
+ * The whole list, not one prefix at a time. bpa_addr_set_build() merges
+ * adjacent prefixes into ranges, so what is stored no longer remembers which
+ * prefixes an operator typed - and removing "one of them" from a merged range
+ * is a question with no honest answer. Setting the list entire has one, and it
+ * is also what a candidate configuration naturally produces.
+ *
+ * An empty list is how a bypass is removed.
+ */
+clib_error_t *
+bpa_bypass_set (u8 *name, int is_dst, const u32 *bases, const u32 *counts,
+		u32 n)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_addr_set_t built = { 0 };
+  clib_error_t *e;
+  bpa_pool_t *p;
+  uword *q;
+
+  q = hash_get_mem (bm->pool_by_name, name);
+  if (!q)
+    return clib_error_return (0, "no such pool '%v'", name);
+
+  /* Built before the barrier and copied inside it: a half-built set on a
+   * running datapath would bypass whatever the partial ranges happened to
+   * cover.
+   *
+   * An empty list is legal here and is how a bypass is removed, so it is not
+   * handed to bpa_addr_set_build() - which refuses an empty set, correctly,
+   * for a pool's own prefixes. The zeroed set below has count 0, which
+   * bpa_is_bypassed() reads as "nothing is bypassed". */
+  if (n)
+    {
+      e = bpa_addr_set_build (&built, bases, counts, n);
+      if (e)
+	return e;
+    }
+
+  p = pool_elt_at_index (bm->pools, q[0]);
+  vlib_worker_thread_barrier_sync (bm->vlib_main);
+  if (is_dst)
+    p->bypass_dst = built;
+  else
+    p->bypass_src = built;
+  vlib_worker_thread_barrier_release (bm->vlib_main);
+
+  bpa_audit (is_dst ? "bypass-destination" : "bypass-source", p, 0);
+  return 0;
+}
+
 clib_error_t *
 bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate)
 {
@@ -527,6 +579,16 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
   p->name = vec_dup (cfg->name);
   p->statics = vec_dup (cfg->statics);
   hash_set_mem (bm->pool_by_name, p->name, p - bm->pools);
+
+  /* Sized here so the datapath never grows a vector: every worker gets a slot
+   * for this pool before any packet can reach it. */
+  {
+    u32 i;
+
+    for (i = 0; i < vec_len (bm->per_thread); i++)
+      vec_validate (vec_elt_at_index (bm->per_thread, i)->n_bypassed,
+		    p - bm->pools);
+  }
   bpa_outside_window_update ();
 
   if (p->mode == BPA_MODE_DYNAMIC)

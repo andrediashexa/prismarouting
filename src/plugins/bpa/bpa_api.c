@@ -132,6 +132,51 @@ done:
 }
 
 static void
+vl_api_bpa_bypass_set_t_handler (vl_api_bpa_bypass_set_t *mp)
+{
+  vl_api_bpa_bypass_set_reply_t *rmp;
+  u32 *bases = 0, *counts = 0;
+  clib_error_t *e = 0;
+  u8 *name;
+  int rv = 0, i;
+
+  name = format (0, "%s", mp->name);
+
+  for (i = 0; i < mp->n_prefixes; i++)
+    {
+      ip_prefix_t p;
+      u32 count;
+
+      ip_prefix_decode2 (&mp->prefixes[i], &p);
+      if (ip_prefix_version (&p) != AF_IP4 || ip_prefix_len (&p) > 32)
+	{
+	  rv = VNET_API_ERROR_INVALID_VALUE;
+	  goto done;
+	}
+      count = 1u << (32 - ip_prefix_len (&p));
+      vec_add1 (counts, count);
+      vec_add1 (bases,
+		clib_net_to_host_u32 (ip_prefix_v4 (&p).as_u32) & ~(count - 1));
+    }
+
+  e = bpa_bypass_set (name, mp->is_destination, bases, counts,
+		      vec_len (bases));
+
+done:
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      if (!rv)
+	rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+  vec_free (bases);
+  vec_free (counts);
+  vec_free (name);
+  REPLY_MACRO (VL_API_BPA_BYPASS_SET_REPLY);
+}
+
+static void
 vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
 {
   vl_api_bpa_limits_set_reply_t *rmp;
