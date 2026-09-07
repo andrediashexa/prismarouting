@@ -64,8 +64,21 @@ class FakeVpp:
         return 0, ""
 
 
-def shell_with(api, running_text=""):
+def shell_with(api, running_text="", caps=None):
+    """
+    A Shell with the capability it is being tested under stated OUTRIGHT.
+
+    Shell() reads the invoking account's real group membership (#35). Left
+    alone, every apply below is refused before it reaches the code this file is
+    about, and the result is a suite that fails on any developer machine whose
+    account is not root - which is what happened between v0.15.0 and here.
+
+    Stating it also makes the grant visible: `caps=set()` below asserts the
+    gate still refuses, so handing out capabilities here cannot quietly turn a
+    real check off.
+    """
     sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT} if caps is None else caps
     sh.api = api
     sh.dp = FakeVpp()
     sh.frr = type("F", (), {"available": lambda self: False,
@@ -132,6 +145,26 @@ sh.apply(target_with("fine", "100.64.0.0/22", "200.150.0.16/30"), check_only=Tru
 writes = [m for m, a in api.calls if m == "bpa_pool_add_del"]
 check(writes == [], f"commit check must write nothing, sent: {writes}")
 print(f"  writes during check: {len(writes)}")
+
+print("\n=== a read-only account is refused, and nothing is sent ===")
+# The other half of stating capabilities above. Without this, granting them in
+# shell_with() would be indistinguishable from removing the check entirely -
+# every test in this file would pass on a build where anyone can commit.
+api = FakeApi()
+sh = shell_with(api, caps=set())
+ok = sh.apply(target_with("fine", "100.64.0.0/22", "200.150.0.16/30"))
+check(ok is False, "a read-only account must not be able to commit")
+check(api.calls == [], f"and nothing may reach the dataplane: {api.calls}")
+print(f"  apply -> {ok}, calls made: {len(api.calls)}")
+
+print("\n=== a cgnat operator may change a pool ===")
+# And the role in between: the capability the change actually needs, not the
+# one that happens to allow everything.
+api = FakeApi()
+sh = shell_with(api, caps={hexash.CAP_CGNAT})
+ok = sh.apply(target_with("fine", "100.64.0.0/22", "200.150.0.16/30"))
+check(ok is True, "a cgnat operator must be able to change a pool")
+print(f"  apply -> {ok}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

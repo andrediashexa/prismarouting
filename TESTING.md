@@ -42,9 +42,16 @@ flowchart LR
 ## 1. Core — seconds, nothing installed
 
 ```sh
-make test      # BPA mapping, port allocator, boot tuning, VTY, installer answers
+make test      # BPA mapping, port allocator, MSS clamp, FTP sequence shift,
+               # boot tuning, VTY, candidate model, installer answers
 make model     # validates the reference model itself
 ```
+
+`make test` MUST pass on an ordinary developer account. It reads no system
+state — a test that needed the invoking account to be root, or in the
+HexaRouting groups, is a test that is red on every machine but one, and a
+suite nobody can run green is a suite whose next real failure is
+indistinguishable from the noise it already prints.
 
 Requires no root, no VPP and no network. The C implementation is checked
 against `ref/bpa_model.py`, which is the executable specification: any
@@ -55,6 +62,20 @@ consecutive even-aligned media port pairs, the RTSP parser's refusals,
 `isolcpus` and hugepage computation, command-tree completion, and every answer
 the installer must refuse — each of those is a disk that has to stay untouched,
 and reaching one in a virtual machine costs a whole boot cycle.
+
+Also at this level, and for the same reason — the failure is **silent**, so no
+lab is going to notice it:
+
+| Test | What it pins |
+|---|---|
+| `test_bpa_mss.c` | The MSS clamp: that it only ever **lowers**, that it declines a malformed option list, a length byte pointing outside the header and a data offset that lies — and that the incremental checksum equals a full recomputation. Getting that wrong makes the peer drop the segment, so the connection hangs exactly as it did before clamping while a counter reports the fix was applied. |
+| `test_bpa_ftp.c` | The FTP sequence shift: `bpa_seq_after` across the 2^32 boundary, a retransmission of data sent **before** a rewrite, and a control connection rewritten twice. No lab is going to send four gigabytes to reach the wrap. |
+| `test_hexash_config.py` | Which changes rebuild a pool and which apply in place. Classified as a table, with an assertion that the table **covers every field a pool has** — so a field added later is a failure rather than a silent default. |
+
+Each assertion in those three was run against deliberately broken code and
+required to fail before being kept. An assertion that has never failed has not
+been shown to test anything, which is the defect class this project keeps
+hitting — see `CONTRIBUTING.md`.
 
 ## 2. Dataplane labs — minutes, inside the container
 
