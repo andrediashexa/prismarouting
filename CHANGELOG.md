@@ -25,7 +25,73 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.17.0.
+Nothing merged since v0.18.0.
+
+## 0.18.0 — two tenants, one private range
+
+A provider does not choose what private addresses its customers' CPE hands out.
+Two tenants on one box will use `100.64.0.0/22`, and before a pool could name a
+VRF there was nothing to say which of them a packet belonged to: the first pool
+that claimed the address answered for both, and the second translated nothing
+while appearing in `show` and accepting configuration.
+
+### Added
+
+* **Pool selection by VRF**
+  ([#79](https://github.com/andrediashexa/hexarouting/issues/79)):
+
+  ```
+  cgnat pool tenant-a
+   inside 100.64.0.0/22
+   outside 200.150.0.16/30
+   vrf 1
+   exit
+  ```
+
+  Absent, a pool serves every VRF — what every configuration written before
+  this existed means, and a **different answer from VRF 0**. `outside-vrf`
+  names the VRF translated traffic leaves by.
+
+* **Overlapping selectors are refused**, naming the pool they collide with.
+  A VRF is what makes an inside overlap legitimate, so the refusal applies only
+  when both pools could answer for the same packet. Public addresses are
+  compared regardless of VRF: the return path finds a pool by public address
+  and has no VRF to separate two answers. That closes
+  [#73](https://github.com/andrediashexa/hexarouting/issues/73).
+
+### Changed
+
+* **The session key carries the VRF, and split in two.** Its second word was
+  reserved for a VRF id and
+  [#44](https://github.com/andrediashexa/hexarouting/issues/44) had already
+  spent it on the remote address that separates two PPTP servers choosing the
+  same Call ID — so the two are **packed**, not chosen between.
+
+  | | Key | VRF |
+  |---|---|---|
+  | `bpa_key_in` | private address, port, protocol, VRF | yes |
+  | `bpa_key_out` | public address, port, protocol | no |
+
+  The qualifier is the **packet's** VRF, because the session lookup happens
+  before the pool is known. One vector element on a buffer the node already
+  holds — a packet on an existing session pays nothing.
+
+* **A session carries the VRF its subscriber's traffic arrived in**, and the
+  reply is forwarded in it. Otherwise the reply is looked up in the outside
+  interface's table and dropped for having no route, which reads as a
+  translation failure rather than a lookup in the wrong table.
+
+* **Binary API 0.9.0** adds `vrf_id` and `out_vrf_id` to `bpa_pool_add_del` —
+  that message and not the settings one, because changing which VRF a pool
+  serves changes which subscribers it maps, exactly like a change of prefix.
+
+### Fixed
+
+* **`lab/smoke.sh` was three pools of which only one translated.** It created
+  `provedor-a` with `inside 100.64.0.0/12` and two more claiming
+  `100.64.0.0/16` — inside the first. The other two existed, accepted
+  configuration and did nothing. #73 was living in the project's own smoke test
+  since the beginning, and the refusal added here is what found it.
 
 ## 0.17.0 — seeing a pool fill, before it has filled
 
