@@ -39,6 +39,25 @@ class Pool:
                 "tcp-established", "port-holddown", "alg-expect")
     FILTERS = ("endpoint-independent", "address-dependent")
 
+    # Mirrors BPA_MSS_MIN and BPA_MSS_MAX in bpa_mss.h. The device refuses
+    # outside this range too; refusing here as well is what makes the reason
+    # arrive at the prompt rather than a commit later.
+    MSS_MIN, MSS_MAX = 536, 9000
+
+    @staticmethod
+    def check_mss(v: str):
+        """None if `v` is a legal clamp, otherwise why it is not."""
+        if v == "auto":
+            return None
+        if not v.isdigit():
+            return f"tcp-mss '{v}': expected a size in bytes, or auto"
+        if not Pool.MSS_MIN <= int(v) <= Pool.MSS_MAX:
+            return (f"tcp-mss {v}: expected {Pool.MSS_MIN}-{Pool.MSS_MAX}. "
+                    "Below the MSS every IPv4 host must accept (RFC 1122) the "
+                    "clamp is legal and useless; above a jumbo frame it "
+                    "describes no path.")
+        return None
+
     # Mirrors foreach_bpa_alg in bpa_pool.h, in the same order and with the
     # same bits. A pool a VTY cannot express is a pool an operator cannot
     # configure, so this list and that macro have to be kept in step; the lab
@@ -59,6 +78,9 @@ class Pool:
         # global change into a diff against every pool.
         self.timeouts: dict[str, int] = {}
         self.max_blocks = 0             # 0 means the device default of one
+        # TCP MSS clamp: "" is off, "auto" derives it from the interface
+        # MTUs, anything else is the number of bytes.
+        self.tcp_mss = ""
         self.filter = "endpoint-independent"
         self.algs: dict[str, bool] = {}  # only where the operator chose
         # Static port forwards, as (proto, public port, private ip, private
@@ -96,6 +118,8 @@ class Pool:
                 out.append(f" timeout {t} {self.timeouts[t]}")
         if self.max_blocks > 1:
             out.append(f" max-blocks {self.max_blocks}")
+        if self.tcp_mss:
+            out.append(f" tcp-mss {self.tcp_mss}")
         if self.filter != "endpoint-independent":
             out.append(f" filter {self.filter}")
         for a in self.ALG_BITS:
@@ -123,6 +147,8 @@ class Pool:
                 parts += ["timeout", t, str(self.timeouts[t])]
         if self.max_blocks > 1:
             parts += ["max-blocks", str(self.max_blocks)]
+        if self.tcp_mss:
+            parts += ["tcp-mss", self.tcp_mss]
         if self.filter != "endpoint-independent":
             parts += ["filter", self.filter]
         for a in self.ALG_BITS:
@@ -199,6 +225,8 @@ class Pool:
             "filter": "BPA_API_FILTER_"
                       + self.filter.upper().replace("-", "_"),
             "max_blocks": int(self.max_blocks),
+            "tcp_mss": 0 if self.tcp_mss in ("", "auto") else int(self.tcp_mss),
+            "tcp_mss_auto": self.tcp_mss == "auto",
             "alg": alg,
             "alg_set": alg_set,
             "timeouts": timeouts,
@@ -485,6 +513,11 @@ class Config:
             if not w[1].isdigit() or int(w[1]) < 1:
                 return f"max-blocks '{w[1]}': expected a number of at least 1"
             pool.max_blocks = int(w[1])
+        elif w[0] == "tcp-mss" and len(w) > 1:
+            why = Pool.check_mss(w[1])
+            if why:
+                return why
+            pool.tcp_mss = w[1]
         elif w[0] == "filter" and len(w) > 1:
             if w[1] not in Pool.FILTERS:
                 return (f"filter '{w[1]}': expected one of "

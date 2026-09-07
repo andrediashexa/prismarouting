@@ -289,9 +289,51 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
   return -1;
 }
 
+/*
+ * One token out of the subscriber's creation-rate bucket.
+ *
+ * Refilled by elapsed time rather than on a timer, so a subscriber that has
+ * been quiet costs nothing to keep: the bucket is only ever touched when it
+ * asks for a session. Capped at one second's worth, which is the burst the
+ * operator is agreeing to when they set the rate.
+ *
+ * Returns 0 when there was no token, which is a refusal.
+ */
+static_always_inline int
+bpa_rate_take (bpa_sub_t *sub, u32 rate, f64 now)
+{
+  f32 fill = (f32) rate;
+
+  /* First ask: start full, so a subscriber is not refused for the accident of
+   * having its record created a moment ago. */
+  if (PREDICT_FALSE (sub->rate_last == 0.))
+    {
+      sub->rate_last = now;
+      sub->tokens = fill;
+    }
+  else
+    {
+      f64 dt = now - sub->rate_last;
+
+      if (dt > 0.)
+	{
+	  sub->rate_last = now;
+	  sub->tokens += (f32) (dt * (f64) rate);
+	  if (sub->tokens > fill)
+	    sub->tokens = fill;
+	}
+    }
+
+  if (sub->tokens < 1.f)
+    return 0;
+  sub->tokens -= 1.f;
+  return 1;
+}
+
 bpa_session_t *
 bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
-		    const bpa_block_t *b, u16 port_priv, u8 proto, f64 now)
+		    const bpa_block_t *b, u16 port_priv, u8 proto, f64 now,
+		    bpa_create_kind_t kind, bpa_create_why_t *why)
 {
   bpa_session_t *s;
   bpa_sub_t *sub;
@@ -299,7 +341,33 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   u32 blk_idx;
   int off = -1, preferred;
 
+  *why = BPA_CREATE_OK;
   sub = bpa_sub_get (pt, p, pool_index, b);
+
+  /*
+   * The per-subscriber bounds, before a port is taken.
+   *
+   * Here rather than in the caller because the subscriber record is already
+   * resolved at this point: checking in the datapath node would mean a second
+   * lookup for a number that is one dereference away. A packet on an existing
+   * session never reaches this function at all.
+   */
+  if (PREDICT_FALSE (kind == BPA_CREATE_TRAFFIC && p->max_sessions
+		     && sub->n_sessions >= p->max_sessions))
+    {
+      sub->n_refused_sessions++;
+      *why = BPA_CREATE_OVER_SESSIONS;
+      bpa_sub_put (pt, pool_index, b->sub_idx, sub);
+      return 0;
+    }
+  if (PREDICT_FALSE (kind == BPA_CREATE_TRAFFIC && p->max_rate
+		     && !bpa_rate_take (sub, p->max_rate, now)))
+    {
+      sub->n_refused_rate++;
+      *why = BPA_CREATE_OVER_RATE;
+      bpa_sub_put (pt, pool_index, b->sub_idx, sub);
+      return 0;
+    }
 
   /*
    * Try the blocks the subscriber already holds, oldest first. Port
@@ -328,6 +396,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
        * "show bpa subscriber" reports, and it is the difference between "the
        * customer is at their limit" and "the customer is idle". */
       sub->n_refused++;
+      *why = BPA_CREATE_NO_PORT;
       bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
     }
@@ -337,6 +406,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   if (s == 0)
     {
       bpa_portmap_free (&sb->map, (u16) off);
+      *why = BPA_CREATE_NO_PORT;
       bpa_sub_put (pt, pool_index, b->sub_idx, sub);
       return 0;
     }
@@ -934,6 +1004,11 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 	continue;
 
       now = vlib_time_now (vm);
+
+      /* An MTU can change under a running box, and a pool clamping to "auto"
+       * would then be clamping to a number that describes the path it used to
+       * be on. One loop over a handful of interfaces, once an interval. */
+      bpa_auto_mss_update ();
 
       vlib_worker_thread_barrier_sync (vm);
       for (i = 0; i < vec_len (bm->per_thread); i++)

@@ -109,6 +109,9 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
     clib_net_to_host_u32 (mp->timeouts.port_holddown);
   cfg.timeouts.alg_expect = clib_net_to_host_u32 (mp->timeouts.alg_expect);
 
+  cfg.tcp_mss = clib_net_to_host_u16 (mp->tcp_mss);
+  cfg.tcp_mss_auto = mp->tcp_mss_auto;
+
   e = bpa_pool_add (&cfg, 0);
 
 done:
@@ -204,6 +207,8 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   mp->filter = (vl_api_bpa_filter_t) p->filter;
   mp->max_blocks = p->max_blocks;
   mp->alg = clib_host_to_net_u32 (p->alg);
+  mp->tcp_mss = clib_host_to_net_u16 (p->tcp_mss);
+  mp->tcp_mss_auto = p->tcp_mss_auto;
   mp->timeouts.udp = clib_host_to_net_u32 (p->timeouts.udp);
   mp->timeouts.icmp = clib_host_to_net_u32 (p->timeouts.icmp);
   mp->timeouts.tcp_syn = clib_host_to_net_u32 (p->timeouts.tcp_syn);

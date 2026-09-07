@@ -23,6 +23,10 @@ to anything else.
 came — the difference between a log that is answerable and one that is
 confidently wrong.
 
+**MSS clamping**, also off by default, lowers the handshake so that segments
+fit the narrowest link on the path, which removes the "some sites do not load"
+ticket that broken PMTUD produces.
+
 The Python model in `ref/` is the specification; the C implementation is
 checked against it on every build.
 
@@ -373,6 +377,92 @@ counted so an operator can see whether it ever bites.
 Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
 place, because the point of offering the choice is that an operator can make it
 on a box carrying traffic.
+
+## MSS clamping
+
+A subscriber on a PPPoE access network has 1492 bytes of usable MTU, less once
+a tunnel is in the way. Nothing tells the far end that. The remote announces an
+MSS derived from **its** link, sends full-sized segments, and they are dropped
+where the path narrows. Path MTU discovery exists to fix exactly this and is
+routinely broken by somebody filtering ICMP along the way.
+
+What the subscriber reports is that **some sites do not load** — not slowly,
+they hang. It looks nothing like an MTU problem to anyone taking the call, and
+it is one of the longest tickets an ISP has.
+
+Clamping the MSS option of the handshake removes the category:
+
+```
+cgnat pool residential
+ tcp-mss 1400
+ exit
+```
+
+or `tcp-mss auto`, and off by default — a clamp rewrites somebody else's
+handshake, so an operator asks for it.
+
+### Both directions, and why
+
+The MSS option announces what the **sender is willing to receive**. So the two
+directions clamp different things, and only doing one leaves half the path
+unprotected:
+
+| Clamped | Limits | Which link it protects |
+|---|---|---|
+| the subscriber's `SYN` | what the internet sends **to** the subscriber | the inbound path |
+| the server's `SYN/ACK` | what the subscriber sends **out** | the outbound path |
+
+A `SYN` arriving from the internet rather than a `SYN/ACK` is an inbound
+connection to a [static port forward](#static-port-forwarding), and wants
+clamping for the same reason.
+
+### What `auto` resolves to
+
+The **smallest** IPv4 MTU among the interfaces this CGNAT runs on, less 40 for
+an IP and a TCP header.
+
+The smallest, not the egress one, because the node that clamps runs **before**
+the forwarding lookup: which interface the packet will leave by is not yet
+known there. A segment governed by a clamped MSS crosses both an inside and an
+outside interface of this box anyway, so the minimum is the honest answer — and
+the error it can make is the safe one. A clamp smaller than necessary costs
+some throughput; a clamp larger than necessary protects nothing.
+
+It is recomputed when an interface joins or leaves the CGNAT, and once a second
+by the process node that already walks the session table, because an MTU can
+change under a running box and a clamp derived from a stale one is a clamp that
+quietly does nothing. `show bpa pool` prints the **resolved** number, not the
+word `auto`, for the same reason.
+
+### What it deliberately does not do
+
+* **It never raises.** An MSS already below the clamp is left alone; raising it
+  would announce a segment size the sender never agreed to receive, which is
+  not clamping.
+* **It never inserts an option.** A `SYN` with no MSS option means the sender
+  accepts the 536-byte default, which is already smaller than any clamp worth
+  setting. There is nothing to fix.
+* **It touches only the handshake.** An `ACK` carrying an MSS-shaped option is
+  left alone; rewriting mid-connection changes bytes the peer already has a
+  checksum for.
+* **Below `536` and above `9000` are refused.** 536 is the MSS every IPv4 host
+  must accept (RFC 1122 §4.2.2.6); below it the clamp is legal and useless, and
+  a typo such as `tcp-mss 14` would quietly break every connection through the
+  box.
+
+Turning the clamp on with `bpa tcp-mss` changes it **in place** and keeps every
+session. Turning it on through the VTY does not: `hexash` replaces any pool
+whose configuration text differs, so the commit tears the pool down and rebuilds
+it. That is true of every per-pool setting today and is tracked as
+[#69](https://github.com/andrediashexa/hexarouting/issues/69) — worth knowing
+before answering a support call with a commit.
+
+The TCP checksum is updated incrementally against the two bytes that changed.
+It has to be exact: a wrong checksum fails **silently** — the peer drops the
+segment and the connection hangs exactly as it did before clamping, while a
+counter here says the problem was fixed. `lab/mss.sh` therefore reads every
+value off a **captured packet** and asserts both checksums on the same bytes,
+never off the trace.
 
 ## Spoofed sources, and what the record can promise
 

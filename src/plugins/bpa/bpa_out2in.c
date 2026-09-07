@@ -18,6 +18,7 @@
 #include "bpa_ftp.h"
 #include "bpa_l4.h"
 #include "bpa_alg.h"
+#include "bpa_mss.h"
 #include "bpa_pptp.h"
 
 typedef struct
@@ -202,7 +203,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
   u32 n_translated = 0, n_icmp_err = 0, n_ftp_ack = 0, n_rtsp = 0;
-  u32 n_forwarded = 0;
+  u32 n_forwarded = 0, n_mss = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
 
   from = vlib_frame_vector_args (frame);
@@ -394,6 +395,24 @@ VLIB_NODE_FN (bpa_out2in_node)
 
 	  bpa_tcp_track (s, tcp->flags);
 
+	  /* The other half of the clamp: a SYN/ACK announces what the server
+	   * will receive, so this is the one that limits what the SUBSCRIBER
+	   * sends. A SYN arriving here rather than a SYN/ACK is an inbound
+	   * connection to a static port forward, and wants clamping for the
+	   * same reason. */
+	  if (PREDICT_FALSE ((tcp->flags & TCP_FLAG_SYN) != 0))
+	    {
+	      const bpa_pool_t *mp =
+		pool_elt_at_index (bm->pools, pool_index);
+	      u16 mss = mp->tcp_mss_auto ? bm->auto_mss : mp->tcp_mss;
+
+	      if (mss)
+		n_mss += bpa_tcp_mss_clamp (
+		  tcp, (u8 *) vlib_buffer_get_current (b[0])
+			 + b[0]->current_length,
+		  mss);
+	    }
+
 	  /* The server's half of the PPTP control channel: it names the Call
 	   * ID this box handed out, and the subscriber only understands its
 	   * own. */
@@ -508,6 +527,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_ICMP_ERROR, n_icmp_err);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_FORWARDED, n_forwarded);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_MSS_CLAMPED, n_mss);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_FTP_ACK, n_ftp_ack);
   vlib_node_increment_counter (vm, node->node_index,

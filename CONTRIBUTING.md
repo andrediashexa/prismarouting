@@ -91,6 +91,29 @@ An issue MUST be kept current. When the design changes mid-flight, the issue
 is edited or a comment is added; the divergence MUST NOT live only in the
 branch. An issue MUST NOT be closed until its documentation is merged.
 
+### The issue is the record of the work
+
+The issue — not the commit message, not the pull request, not this
+conversation — is where someone looks a year later to find out what was
+decided and why. So the work MUST be written back to it as it happens:
+
+* **A design decision that the issue did not anticipate** MUST be added as a
+  comment, with the reasoning and what was rejected. "The public address is
+  not a parameter" and "auto is the minimum, not the egress MTU" are answers
+  somebody will need again.
+* **A measurement** MUST be recorded on the issue, with its conditions. A
+  number in a terminal that scrolled away was not measured.
+* **A refusal or a limit** MUST be stated on the issue: what the change
+  deliberately does not do, and what would be needed to do it. A limit
+  discovered later, by a reader who assumed otherwise, costs far more than
+  the sentence that would have prevented it.
+* **Anything found on the way that is not this issue** MUST become its own
+  issue, linked from this one, rather than a paragraph nobody will find.
+* **Closing** MUST carry the acceptance criteria, ticked, with what the
+  evidence was — and the release it shipped in.
+
+An issue closed with "done" is an issue whose reasoning was thrown away.
+
 Bug fixes, refactors and chores SHOULD also get an issue. They MAY be
 committed directly to a branch named for the fix when the change is smaller
 than the issue describing it would be — a typo, a missing dependency — but

@@ -19,10 +19,13 @@
   _ (TRANSLATED, 0, "packets translated") \
   _ (SESSION_NEW, 0, "sessions created") \
   _ (FORWARDED, 0, "sessions opened from a static port forward") \
+  _ (MSS_CLAMPED, 0, "TCP MSS options lowered to fit the path") \
   _ (NO_POOL, 1, "no pool for source address") \
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OVER_CAPACITY, 1, "subscriber beyond pool capacity") \
   _ (BLOCK_EXHAUSTED, 1, "port block exhausted") \
+  _ (OVER_SESSIONS, 1, "subscriber at its concurrent session cap") \
+  _ (OVER_RATE, 1, "subscriber opening sessions faster than allowed") \
   _ (NO_BLOCK, 1, "no free block in dynamic pool") \
   _ (TRUNCATED, 1, "truncated packet") \
   _ (HAIRPINNED, 0, "packets hairpinned to another subscriber") \
@@ -48,6 +51,7 @@
   _ (NOT_OURS, 0, "destination outside public pools") \
   _ (NO_SESSION, 1, "no session for destination") \
   _ (FORWARDED, 0, "sessions opened from a static port forward") \
+  _ (MSS_CLAMPED, 0, "TCP MSS options lowered to fit the path") \
   _ (FILTERED, 1, "dropped by address-dependent filtering") \
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OUT_OF_BLOCK, 1, "port outside every block") \

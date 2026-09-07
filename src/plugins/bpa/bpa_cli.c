@@ -4,6 +4,7 @@
 #include <vnet/ip/ip.h>
 
 #include "bpa.h"
+#include "bpa_mss.h"
 #include "bpa_errors.h"
 #include "bpa_log.h"
 #include <vnet/ip/reass/ip4_sv_reass.h>
@@ -116,6 +117,18 @@ format_bpa_pool (u8 *s, va_list *args)
    * apart; a line that appears only when off reads as an absent feature. */
   s = format (s, "\n%Ualg          %U", format_white_space, indent + 2,
 	      format_bpa_alg, p->alg);
+  /* The RESOLVED number for "auto", not the word: an operator turning
+   * clamping on wants to know what it came out as, and "auto" alone would
+   * make a wrong MTU somewhere else look like a working clamp. */
+  if (p->tcp_mss_auto)
+    s = format (s, "\n%Utcp-mss      auto -> %u%s", format_white_space,
+		indent + 2, bpa_main.auto_mss,
+		bpa_main.auto_mss ? "" : " (no CGNAT interface has an MTU)");
+  else if (p->tcp_mss)
+    s = format (s, "\n%Utcp-mss      %u", format_white_space, indent + 2,
+		p->tcp_mss);
+  else
+    s = format (s, "\n%Utcp-mss      off", format_white_space, indent + 2);
   return s;
 }
 
@@ -153,7 +166,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   clib_error_t *error = 0;
   ip4_address_t addr;
   u32 len = 0;
-  u32 block = 512, port_min = 1024, port_max = 65535;
+  u32 block = 512, port_min = 1024, port_max = 65535, mss = 0;
   u32 tv = 0;
 
   u32 maxb = 0;
@@ -245,6 +258,21 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       else if (unformat (line_input, "max-blocks %u", &maxb))
 	cfg.max_blocks = (u8) maxb;
+      else if (unformat (line_input, "tcp-mss auto"))
+	cfg.tcp_mss_auto = 1;
+      else if (unformat (line_input, "tcp-mss %u", &mss))
+	{
+	  if (mss < BPA_MSS_MIN || mss > BPA_MSS_MAX)
+	    {
+	      error = clib_error_return (
+		0, "tcp-mss %u is outside %u-%u: below the MSS every IPv4 "
+		   "host must accept (RFC 1122) the clamp is legal and "
+		   "useless, and above a jumbo frame it describes no path",
+		mss, BPA_MSS_MIN, BPA_MSS_MAX);
+	      goto done;
+	    }
+	  cfg.tcp_mss = (u16) mss;
+	}
       /* "alg <name> on|off" in a candidate configuration. alg_set records
        * that an opinion was stated, so bpa_pool_init() leaves it alone
        * instead of resolving it back to the default. */
@@ -370,6 +398,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
     "[alg <ftp|rtsp|pptp> on|off] "
+    "[tcp-mss <bytes|auto>] "
     "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
     "[check] | bpa pool <name> del",
   .function = bpa_pool_add_command_fn,
@@ -467,6 +496,10 @@ bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
     if (rv)
       error = clib_error_return (0, "vnet_feature_enable_disable failed: %d",
 				 rv);
+    else
+      /* The set of interfaces the CGNAT runs on has just changed, and that
+       * set is what "tcp-mss auto" is the minimum over. */
+      bpa_auto_mss_update ();
   }
 
 done:
@@ -1014,6 +1047,85 @@ VLIB_CLI_COMMAND (bpa_show_drops_command, static) = {
  * operator can decide, on a box carrying traffic, without disconnecting the
  * subscribers whose behaviour is being changed.
  */
+/*
+ * Change a pool's MSS clamp in place.
+ *
+ * Separate from "bpa pool" for the reason "bpa filter" and "bpa alg" are:
+ * recreating a pool to change one setting drops every session it holds. An
+ * operator turning clamping on is answering "some sites do not load" on a box
+ * that is carrying traffic, and disconnecting everybody to do it would trade
+ * one complaint for an outage.
+ *
+ * Existing connections keep whatever MSS they negotiated. There is nothing to
+ * fix retroactively: the option is only in the handshake, and a connection
+ * that is already suffering the black hole will be reopened by whatever is
+ * suffering it.
+ */
+static clib_error_t *
+bpa_mss_command_fn (vlib_main_t *vm, unformat_input_t *input,
+		    vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  u32 mss = 0;
+  u8 *name = 0;
+  int is_auto = 0, is_off = 0, found = 0;
+  bpa_pool_t *p;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (0, "usage: bpa tcp-mss <pool> <bytes|auto|off>");
+
+  if (!unformat (line_input, "%v", &name))
+    {
+      error = clib_error_return (0, "missing pool name");
+      goto done;
+    }
+  if (unformat (line_input, "auto"))
+    is_auto = 1;
+  else if (unformat (line_input, "off") || unformat (line_input, "0"))
+    is_off = 1;
+  else if (!unformat (line_input, "%u", &mss))
+    {
+      error = clib_error_return (0, "expected a size in bytes, auto, or off");
+      goto done;
+    }
+
+  if (!is_auto && !is_off && (mss < BPA_MSS_MIN || mss > BPA_MSS_MAX))
+    {
+      error = clib_error_return (
+	0, "tcp-mss %u is outside %u-%u: below the MSS every IPv4 host must "
+	   "accept (RFC 1122) the clamp is legal and useless, and above a "
+	   "jumbo frame it describes no path",
+	mss, BPA_MSS_MIN, BPA_MSS_MAX);
+      goto done;
+    }
+
+  pool_foreach (p, bm->pools)
+    if (vec_len (p->name) == vec_len (name)
+	&& !memcmp (p->name, name, vec_len (name)))
+      {
+	p->tcp_mss_auto = is_auto;
+	p->tcp_mss = is_auto || is_off ? 0 : (u16) mss;
+	found = 1;
+	break;
+      }
+
+  if (!found)
+    error = clib_error_return (0, "no such pool '%v'", name);
+  else if (is_auto && bm->auto_mss == 0)
+    /* Not an error: the pool is configured and will clamp the moment an
+     * interface joins the CGNAT. Silence here would look like it was
+     * working. */
+    vlib_cli_output (vm, "note: no CGNAT interface has an MTU yet, so 'auto' "
+			 "clamps nothing until one does");
+
+done:
+  vec_free (name);
+  unformat_free (line_input);
+  return error;
+}
+
 static clib_error_t *
 bpa_filter_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       vlib_cli_command_t *cmd)
@@ -1063,6 +1175,12 @@ done:
   unformat_free (line_input);
   return error;
 }
+
+VLIB_CLI_COMMAND (bpa_mss_command, static) = {
+  .path = "bpa tcp-mss",
+  .short_help = "bpa tcp-mss <pool> <bytes|auto|off>",
+  .function = bpa_mss_command_fn,
+};
 
 VLIB_CLI_COMMAND (bpa_filter_command, static) = {
   .path = "bpa filter",
@@ -1700,6 +1818,10 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       if (p->max_blocks > 1)
 	s = format (s, " max-blocks %u\n", p->max_blocks);
+      if (p->tcp_mss_auto)
+	s = format (s, " tcp-mss auto\n");
+      else if (p->tcp_mss)
+	s = format (s, " tcp-mss %u\n", p->tcp_mss);
       if (p->filter != BPA_FILTER_ENDPOINT_INDEPENDENT)
 	s = format (s, " filter address-dependent\n");
       /* Only the departures from the default: emitting a line per ALG per

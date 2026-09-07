@@ -14,6 +14,7 @@
 #include "bpa_l4.h"
 #include "bpa_log.h"
 #include "bpa_alg.h"
+#include "bpa_mss.h"
 #include "bpa_pptp.h"
 
 typedef struct
@@ -154,7 +155,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_new = 0, n_forwarded = 0;
+  u32 n_translated = 0, n_new = 0, n_forwarded = 0, n_mss = 0;
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
   u32 n_rtsp = 0;
@@ -174,6 +175,7 @@ VLIB_NODE_FN (bpa_in2out_node)
       void *l4h = 0;
       u32 pool_index = 0, sub_idx = 0, src_host;
       u16 port_priv = 0;
+      bpa_create_why_t why = BPA_CREATE_OK;
       int proto, created = 0;
 
       next[0] = BPA_IN2OUT_NEXT_DROP;
@@ -295,7 +297,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 
       if (PREDICT_TRUE (s == 0))
 	s = bpa_session_create (pt, p, pool_index, &blk, port_priv,
-				(u8) proto, now);
+				(u8) proto, now, BPA_CREATE_TRAFFIC, &why);
 
       /*
        * Every block this subscriber holds is full. Give it another, if the
@@ -308,7 +310,13 @@ VLIB_NODE_FN (bpa_in2out_node)
        * carved out of capacity, which changes the mapping for everyone and is
        * therefore its own change (issue #39).
        */
-      if (PREDICT_FALSE (s == 0 && p->mode == BPA_MODE_DYNAMIC
+      /*
+       * Another block, only when the block was the problem. After a cap
+       * refusal an extension would hand a block to the very subscriber the
+       * operator has just told the box to bound.
+       */
+      if (PREDICT_FALSE (s == 0 && why == BPA_CREATE_NO_PORT
+			 && p->mode == BPA_MODE_DYNAMIC
 			 && bpa_sub_n_blocks (pt, pool_index, sub_idx)
 			      < p->max_blocks))
 	{
@@ -329,13 +337,22 @@ VLIB_NODE_FN (bpa_in2out_node)
 				   ext.ip_pub, ext.port_lo, ext.port_hi,
 				   pool_index);
 	      s = bpa_session_create (pt, p, pool_index, &ext, port_priv,
-				      (u8) proto, now);
+				      (u8) proto, now, BPA_CREATE_TRAFFIC,
+				      &why);
 	    }
 	}
 
       if (PREDICT_FALSE (s == 0))
 	{
-	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_BLOCK_EXHAUSTED];
+	  /* Three different answers for the operator: buy the customer more
+	   * ports, raise their cap, or go and look at their machine. One
+	   * counter for all three would say none of them. */
+	  b[0]->error =
+	    node->errors[why == BPA_CREATE_OVER_SESSIONS
+			   ? BPA_IN2OUT_ERROR_OVER_SESSIONS
+			 : why == BPA_CREATE_OVER_RATE
+			   ? BPA_IN2OUT_ERROR_OVER_RATE
+			   : BPA_IN2OUT_ERROR_BLOCK_EXHAUSTED];
 	  goto trace;
 	}
       created = 1;
@@ -356,6 +373,26 @@ VLIB_NODE_FN (bpa_in2out_node)
 	  tcp_header_t *tcp = l4h;
 
 	  bpa_tcp_track (s, tcp->flags);
+
+	  /*
+	   * MSS clamping, on the handshake only.
+	   *
+	   * Before the address rewrite or after it makes no difference: both
+	   * are incremental updates of the same checksum field, and neither
+	   * reads what the other wrote.
+	   */
+	  if (PREDICT_FALSE ((tcp->flags & TCP_FLAG_SYN) != 0))
+	    {
+	      const bpa_pool_t *mp =
+		pool_elt_at_index (bm->pools, s->pool_index);
+	      u16 mss = mp->tcp_mss_auto ? bm->auto_mss : mp->tcp_mss;
+
+	      if (mss)
+		n_mss += bpa_tcp_mss_clamp (
+		  tcp, (u8 *) vlib_buffer_get_current (b[0])
+			 + b[0]->current_length,
+		  mss);
+	    }
 
 	  /*
 	   * The PPTP control channel. Rewritten BEFORE the address and port,
@@ -581,6 +618,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_SESSION_NEW, n_new);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_FORWARDED, n_forwarded);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_MSS_CLAMPED, n_mss);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_HAIRPINNED, n_hairpin);
   vlib_node_increment_counter (vm, node->node_index,

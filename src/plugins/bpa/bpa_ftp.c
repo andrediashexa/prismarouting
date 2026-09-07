@@ -407,8 +407,16 @@ bpa_ftp_expect (bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t *ctl,
     return 0;
 
   blk.sub_idx = ctl->sub_idx;
-  return bpa_session_create (pt, p, ctl->pool_index, &blk, port_priv,
-			     BPA_PROTO_TCP, now);
+  /* An announced data connection, not traffic asking for a mapping: the
+   * control connection that announced it already passed the subscriber's
+   * bounds, and refusing this half would break the transfer rather than bound
+   * anything. See bpa_create_kind_t. */
+  {
+    bpa_create_why_t why;
+
+    return bpa_session_create (pt, p, ctl->pool_index, &blk, port_priv,
+			       BPA_PROTO_TCP, now, BPA_CREATE_ALG, &why);
+  }
 }
 
 /* ------------------------------------------------------------- rewriting */

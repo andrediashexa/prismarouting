@@ -311,6 +311,31 @@ typedef struct
   u32 alg_set;
 
   /*
+   * Per-subscriber bounds. Zero is unlimited in both, which is the default and
+   * the point: an upgrade must not start refusing traffic that worked
+   * yesterday.
+   *
+   * `max_sessions` caps what one subscriber holds at once. `max_rate` caps how
+   * fast it may open new ones, which is the one that bounds a scan - a host
+   * that opens and abandons sessions at line rate stays under any concurrent
+   * cap while consuming the block as fast as the timers release it.
+   */
+  u32 max_sessions;
+  u32 max_rate;
+
+  /*
+   * TCP MSS clamping. Zero is off, which is the default: a clamp is a change
+   * to somebody else's handshake and an operator asks for it.
+   *
+   * `tcp_mss_auto` derives the value from the interface MTUs instead of the
+   * operator naming one; the resolved number is not stored here, because an
+   * MTU can change under a running box and a clamp derived from a stale one
+   * is a clamp that quietly does nothing.
+   */
+  u16 tcp_mss;
+  u8 tcp_mss_auto;
+
+  /*
    * Static port forwards, sorted by (port_pub, proto).
    *
    * ONE ordering, and everything reads it through the same binary search: the
