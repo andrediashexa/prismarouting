@@ -117,6 +117,15 @@ format_bpa_pool (u8 *s, va_list *args)
    * apart; a line that appears only when off reads as an absent feature. */
   s = format (s, "\n%Ualg          %U", format_white_space, indent + 2,
 	      format_bpa_alg, p->alg);
+  s = format (s, "\n%Uper subscriber", format_white_space, indent + 2);
+  if (p->max_sessions)
+    s = format (s, "  at most %u sessions", p->max_sessions);
+  else
+    s = format (s, "  sessions unlimited");
+  if (p->max_rate)
+    s = format (s, ", %u new per second", p->max_rate);
+  else
+    s = format (s, ", rate unlimited");
   /* The RESOLVED number for "auto", not the word: an operator turning
    * clamping on wants to know what it came out as, and "auto" alone would
    * make a wrong MTU somewhere else look like a working clamp. */
@@ -258,6 +267,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       else if (unformat (line_input, "max-blocks %u", &maxb))
 	cfg.max_blocks = (u8) maxb;
+      else if (unformat (line_input, "max-sessions %u", &cfg.max_sessions))
+	;
+      else if (unformat (line_input, "max-session-rate %u", &cfg.max_rate))
+	;
       else if (unformat (line_input, "tcp-mss auto"))
 	cfg.tcp_mss_auto = 1;
       else if (unformat (line_input, "tcp-mss %u", &mss))
@@ -398,6 +411,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
     "[alg <ftp|rtsp|pptp> on|off] "
+    "[max-sessions <n>] [max-session-rate <n>] "
     "[tcp-mss <bytes|auto>] "
     "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
     "[check] | bpa pool <name> del",
@@ -663,11 +677,25 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  sb->map.n_ports ? (used * 100) / sb->map.n_ports : 0, sb->map.n_free,
 	  i ? "   (extension)" : "");
       }
-    vlib_cli_output (vm, "  sessions %u   port refusals %u", sub->n_sessions,
-		     sub->n_refused);
+    vlib_cli_output (vm,
+		     "  sessions %u   refusals: ports %u, session cap %u, "
+		     "rate cap %u",
+		     sub->n_sessions, sub->n_refused,
+		     sub->n_refused_sessions, sub->n_refused_rate);
+    /* Three counters because they need three different answers, and the
+     * operator arrives at this command with one customer's address and the
+     * question "is it the box or is it them". */
     if (sub->n_refused)
-      vlib_cli_output (vm, "  refusals are not a box fault: this subscriber "
-			   "asked for more ports than its block holds");
+      vlib_cli_output (vm, "  port refusals are not a box fault: this "
+			   "subscriber asked for more ports than its block "
+			   "holds");
+    if (sub->n_refused_sessions)
+      vlib_cli_output (vm, "  session-cap refusals: the cap is doing its job, "
+			   "or it is too low for this customer");
+    if (sub->n_refused_rate)
+      vlib_cli_output (vm, "  rate-cap refusals: this host is opening "
+			   "sessions faster than the pool allows, which is "
+			   "usually an infection rather than a customer");
   }
 
 done:
@@ -1061,6 +1089,67 @@ VLIB_CLI_COMMAND (bpa_show_drops_command, static) = {
  * that is already suffering the black hole will be reopened by whatever is
  * suffering it.
  */
+/*
+ * A pool's per-subscriber bounds, in place.
+ *
+ * Both are given together, and omitting one sets it to unlimited, because a
+ * command that silently keeps whichever half you did not mention is a command
+ * whose effect depends on what was there before.
+ */
+static clib_error_t *
+bpa_limits_command_fn (vlib_main_t *vm, unformat_input_t *input,
+		       vlib_cli_command_t *cmd)
+{
+  unformat_input_t _line_input, *line_input = &_line_input;
+  clib_error_t *error = 0;
+  u32 max_sessions = 0, max_rate = 0;
+  u8 *name = 0;
+
+  if (!unformat_user (input, unformat_line_input, line_input))
+    return clib_error_return (
+      0, "usage: bpa limits <pool> [max-sessions <n>] [max-session-rate <n>]");
+
+  if (!unformat (line_input, "%v", &name))
+    {
+      error = clib_error_return (0, "missing pool name");
+      goto done;
+    }
+
+  while (unformat_check_input (line_input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (line_input, "max-sessions %u", &max_sessions))
+	;
+      else if (unformat (line_input, "max-session-rate %u", &max_rate))
+	;
+      else if (unformat (line_input, "none"))
+	max_sessions = max_rate = 0;
+      else
+	{
+	  error = clib_error_return (0, "unknown input '%U'",
+				     format_unformat_error, line_input);
+	  goto done;
+	}
+    }
+
+  error = bpa_limits_set (name, max_sessions, max_rate);
+  if (!error)
+    vlib_cli_output (vm, "pool %v: sessions %s, rate %s", name,
+		     max_sessions ? "capped" : "unlimited",
+		     max_rate ? "capped" : "unlimited");
+
+done:
+  vec_free (name);
+  unformat_free (line_input);
+  return error;
+}
+
+VLIB_CLI_COMMAND (bpa_limits_command, static) = {
+  .path = "bpa limits",
+  .short_help =
+    "bpa limits <pool> [max-sessions <n>] [max-session-rate <n>] | none",
+  .function = bpa_limits_command_fn,
+};
+
 static clib_error_t *
 bpa_mss_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		    vlib_cli_command_t *cmd)
@@ -1818,6 +1907,10 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       if (p->max_blocks > 1)
 	s = format (s, " max-blocks %u\n", p->max_blocks);
+      if (p->max_sessions)
+	s = format (s, " max-sessions %u\n", p->max_sessions);
+      if (p->max_rate)
+	s = format (s, " max-session-rate %u\n", p->max_rate);
       if (p->tcp_mss_auto)
 	s = format (s, " tcp-mss auto\n");
       else if (p->tcp_mss)

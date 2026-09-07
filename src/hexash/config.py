@@ -81,6 +81,9 @@ class Pool:
         # TCP MSS clamp: "" is off, "auto" derives it from the interface
         # MTUs, anything else is the number of bytes.
         self.tcp_mss = ""
+        # Per-subscriber bounds. Zero is unlimited in both.
+        self.max_sessions = 0
+        self.max_rate = 0
         self.filter = "endpoint-independent"
         self.algs: dict[str, bool] = {}  # only where the operator chose
         # Static port forwards, as (proto, public port, private ip, private
@@ -95,15 +98,17 @@ class Pool:
     def _fwd_key(f):
         return (f[1], Pool.FWD_PROTOS.index(f[0]))
 
-    def lines(self, forwards=True) -> list[str]:
+    def lines(self, in_place=True) -> list[str]:
         """
         The pool as configuration text.
 
-        `forwards=False` gives the part of a pool that can only be changed by
-        recreating it. The forwards are excluded from that comparison on
-        purpose: adding one must not redefine the pool, because redefining it
-        drops every session it holds - the whole subscriber base of that pool
-        disconnected to give one customer an inbound port.
+        `in_place=False` gives only the part of a pool that can be changed
+        ONLY by recreating it. What it leaves out - the static forwards and the
+        per-subscriber bounds - has a dataplane call of its own, and each is
+        excluded for the same reason: applying it must not redefine the pool,
+        because redefining it drops every session it holds. A whole subscriber
+        base disconnected to give one customer an inbound port, or to cap one
+        infected host, is not a change anyone would ask for.
         """
         out = [f"cgnat pool {self.name}"]
         out += [f" inside {p}" for p in self.inside]
@@ -118,6 +123,10 @@ class Pool:
                 out.append(f" timeout {t} {self.timeouts[t]}")
         if self.max_blocks > 1:
             out.append(f" max-blocks {self.max_blocks}")
+        if in_place and self.max_sessions:
+            out.append(f" max-sessions {self.max_sessions}")
+        if in_place and self.max_rate:
+            out.append(f" max-session-rate {self.max_rate}")
         if self.tcp_mss:
             out.append(f" tcp-mss {self.tcp_mss}")
         if self.filter != "endpoint-independent":
@@ -125,7 +134,7 @@ class Pool:
         for a in self.ALG_BITS:
             if a in self.algs:
                 out.append(f" alg {a} {'on' if self.algs[a] else 'off'}")
-        if forwards:
+        if in_place:
             for proto, pub, ip, priv in sorted(self.forwards,
                                                key=self._fwd_key):
                 out.append(f" forward {proto} {pub} to {ip} {priv}")
@@ -147,6 +156,10 @@ class Pool:
                 parts += ["timeout", t, str(self.timeouts[t])]
         if self.max_blocks > 1:
             parts += ["max-blocks", str(self.max_blocks)]
+        if self.max_sessions:
+            parts += ["max-sessions", str(self.max_sessions)]
+        if self.max_rate:
+            parts += ["max-session-rate", str(self.max_rate)]
         if self.tcp_mss:
             parts += ["tcp-mss", self.tcp_mss]
         if self.filter != "endpoint-independent":
@@ -161,6 +174,14 @@ class Pool:
         for proto, pub, ip, priv in sorted(self.forwards, key=self._fwd_key):
             parts += ["forward", proto, str(pub), "to", ip, str(priv)]
         return " ".join(parts)
+
+    def limits_api_args(self) -> dict:
+        """Both bounds, always together: the device takes them as a pair."""
+        return {
+            "name": self.name,
+            "max_sessions": int(self.max_sessions),
+            "max_rate": int(self.max_rate),
+        }
 
     def forward_api_args(self, fwd, is_add=True) -> dict:
         proto, pub, ip, priv = fwd
@@ -513,6 +534,13 @@ class Config:
             if not w[1].isdigit() or int(w[1]) < 1:
                 return f"max-blocks '{w[1]}': expected a number of at least 1"
             pool.max_blocks = int(w[1])
+        elif w[0] in ("max-sessions", "max-session-rate") and len(w) > 1:
+            if not w[1].isdigit():
+                return f"{w[0]}: '{w[1]}' is not a number"
+            if w[0] == "max-sessions":
+                pool.max_sessions = int(w[1])
+            else:
+                pool.max_rate = int(w[1])
         elif w[0] == "tcp-mss" and len(w) > 1:
             why = Pool.check_mss(w[1])
             if why:
@@ -591,8 +619,8 @@ class Config:
         for name, pool in other.pools.items():
             if name not in self.pools:
                 add.append(pool)
-            elif self.pools[name].lines(forwards=False) != pool.lines(
-                    forwards=False):
+            elif self.pools[name].lines(in_place=False) != pool.lines(
+                    in_place=False):
                 replace.append(pool)
         for name in self.pools:
             if name not in other.pools:
@@ -603,6 +631,15 @@ class Config:
         # candidate asks for is an addition; a pool that stays gets only the
         # difference, and its sessions survive.
         recreated = {p.name for p in add} | {p.name for p in replace}
+        # A pool being created or recreated arrives with both bounds at zero,
+        # so anything the candidate asks for is a change.
+        limits_set = {}
+        for name, pool in other.pools.items():
+            have = ((0, 0) if name in recreated
+                    else (self.pools[name].max_sessions,
+                          self.pools[name].max_rate))
+            if have != (pool.max_sessions, pool.max_rate):
+                limits_set[name] = pool
         fwd_add, fwd_del = [], []
         for name, pool in other.pools.items():
             have = (set() if name in recreated
@@ -650,6 +687,7 @@ class Config:
             "pool_replace": replace,
             "fwd_add": fwd_add,
             "fwd_del": fwd_del,
+            "limits_set": limits_set,
             "if_add": if_add,
             "if_remove": if_del,
             "mtu_set": mtu_set,

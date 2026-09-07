@@ -132,6 +132,28 @@ done:
 }
 
 static void
+vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
+{
+  vl_api_bpa_limits_set_reply_t *rmp;
+  clib_error_t *e;
+  u8 *name;
+  int rv = 0;
+
+  name = format (0, "%s", mp->name);
+  e = bpa_limits_set (name, clib_net_to_host_u32 (mp->max_sessions),
+		      clib_net_to_host_u32 (mp->max_rate));
+  if (e)
+    {
+      vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+      clib_error_free (e);
+      rv = VNET_API_ERROR_INVALID_VALUE;
+    }
+
+  vec_free (name);
+  REPLY_MACRO (VL_API_BPA_LIMITS_SET_REPLY);
+}
+
+static void
 vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
 {
   vl_api_bpa_forward_add_del_reply_t *rmp;
@@ -209,6 +231,8 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   mp->alg = clib_host_to_net_u32 (p->alg);
   mp->tcp_mss = clib_host_to_net_u16 (p->tcp_mss);
   mp->tcp_mss_auto = p->tcp_mss_auto;
+  mp->max_sessions = clib_host_to_net_u32 (p->max_sessions);
+  mp->max_rate = clib_host_to_net_u32 (p->max_rate);
   mp->timeouts.udp = clib_host_to_net_u32 (p->timeouts.udp);
   mp->timeouts.icmp = clib_host_to_net_u32 (p->timeouts.icmp);
   mp->timeouts.tcp_syn = clib_host_to_net_u32 (p->timeouts.tcp_syn);

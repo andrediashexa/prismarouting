@@ -23,6 +23,10 @@ to anything else.
 came — the difference between a log that is answerable and one that is
 confidently wrong.
 
+**Per-subscriber bounds** cap how many sessions one subscriber may hold and how
+fast it may open them, so an infected host is bounded and its neighbours are
+not — and so the operator has a counter to point at.
+
 **MSS clamping**, also off by default, lowers the handshake so that segments
 fit the narrowest link on the path, which removes the "some sites do not load"
 ticket that broken PMTUD produces.
@@ -377,6 +381,78 @@ counted so an operator can see whether it ever bites.
 Changing the mode **MUST NOT** drop sessions — `bpa filter` changes it in
 place, because the point of offering the choice is that an operator can make it
 on a box carrying traffic.
+
+## Per-subscriber bounds
+
+One infected host opens thousands of sessions and exhausts **its own** block.
+The neighbours sharing its public address are unaffected, which is the whole
+point of allocating a block per subscriber — and it is also why the operator
+has nothing to point at when that customer calls. The CGNAT gets blamed for an
+infection on the far side of the access network.
+
+Two bounds, per pool, **zero meaning unlimited** so an upgrade refuses nothing
+that worked yesterday:
+
+```
+cgnat pool residential
+ max-sessions 512
+ max-session-rate 50
+ exit
+```
+
+| Bound | What it stops |
+|---|---|
+| `max-sessions` | one subscriber holding more mappings than it was sold |
+| `max-session-rate` | a scan, which stays under any concurrent cap while consuming the block as fast as the timers release it |
+
+### Where the check runs
+
+In `bpa_session_create()`, immediately after the subscriber record is resolved
+and **before a port is taken**. That costs nothing on the fast path: a packet
+that matches an existing session never reaches this function, and the record
+holding `n_sessions` was already looked up to allocate from.
+
+### The rate is a token bucket
+
+Not a one-second window. A window lets a scanner spend two windows' worth of
+budget across the boundary, which is exactly the burst the bound exists to
+stop. The bucket holds one second's worth, so the allowed burst is a number the
+operator agreed to rather than an artefact of when the clock ticked. It is
+refilled by elapsed time when the subscriber asks, so a quiet subscriber costs
+nothing to keep.
+
+### Three refusals, three answers
+
+`show bpa subscriber <address>` — the command an operator reaches for with one
+customer's address and the question *is it the box or is it them*:
+
+```
+sessions 4   refusals: ports 0, session cap 6, rate cap 0
+```
+
+| Counter | Means | What to do |
+|---|---|---|
+| ports | the subscriber's block is full | sell it more ports, or raise `max-blocks` |
+| session cap | it is at the configured cap | the cap is working, or is too low for this customer |
+| rate cap | it is opening sessions faster than allowed | usually an infection, not a customer |
+
+One counter for all three would answer none of them. The datapath counts them
+apart too, so `show errors` distinguishes a bounded subscriber from an
+exhausted block.
+
+### What the bounds do not refuse
+
+A mapping opened by an **ALG** on behalf of a control connection — an FTP data
+connection, an announced media port, a PPTP call — is never refused by either
+bound. An announced port that does not work is the failure an ALG exists to
+prevent, and a subscriber cannot reach thousands of them without first opening
+thousands of control connections, which the bounds *do* see. They still count
+toward the concurrent total, because they occupy a port like anything else:
+exempt from being refused, not from being counted.
+
+A cap also never closes a session that already exists. It bounds what may be
+created; tearing down mappings that predate it would make setting a cap an
+outage of its own.
 
 ## MSS clamping
 
