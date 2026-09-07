@@ -24,8 +24,6 @@
   _ (UNSUPPORTED, 1, "unsupported protocol") \
   _ (OVER_CAPACITY, 1, "subscriber beyond pool capacity") \
   _ (BLOCK_EXHAUSTED, 1, "port block exhausted") \
-  _ (OVER_SESSIONS, 1, "subscriber at its concurrent session cap") \
-  _ (OVER_RATE, 1, "subscriber opening sessions faster than allowed") \
   _ (NO_BLOCK, 1, "no free block in dynamic pool") \
   _ (TRUNCATED, 1, "truncated packet") \
   _ (HAIRPINNED, 0, "packets hairpinned to another subscriber") \

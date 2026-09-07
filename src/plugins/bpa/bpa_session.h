@@ -227,30 +227,6 @@ typedef struct
   bpa_subblock_t *blocks;
   u32 n_sessions; /* when this hits zero the bitmaps can be reclaimed */
   /*
-   * Token bucket for the creation rate, in sessions per second.
-   *
-   * A bucket rather than a one-second window: a window lets a scanner spend
-   * two windows' worth of budget across the boundary, which is exactly the
-   * burst the limit exists to bound. The bucket holds one second's worth, so
-   * the allowed burst is a stated number and not an artefact of when the
-   * clock ticked.
-   *
-   * Two words on a structure there is one of per subscriber per worker, on a
-   * path that is already allocating a port.
-   */
-  f64 rate_last;
-  f32 tokens;
-
-  /*
-   * Refusals, kept apart because they need different answers from the
-   * operator. A full block means the customer needs more ports; a cap hit
-   * means the cap is doing its job, or is too low for that customer; a rate
-   * refusal usually means an infection.
-   */
-  u32 n_refused_sessions;
-  u32 n_refused_rate;
-
-  /*
    * Times this subscriber asked for a port and was refused.
    *
    * Counted here rather than per pool because the question an operator
@@ -438,45 +414,9 @@ bpa_tcp_track (bpa_session_t *s, u8 flags)
 #define BPA_HASH_MEMORY_DEFAULT	 (16 << 20)
 
 clib_error_t *bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index);
-/*
- * Why a session could not be created. The caller needs to know: a full block
- * may be answerable with another block, and a cap never is - trying an
- * extension after a cap refusal would hand out a block to a subscriber the
- * operator has just told the box to bound.
- */
-typedef enum
-{
-  BPA_CREATE_OK = 0,
-  BPA_CREATE_NO_PORT,	    /* every block this subscriber holds is full */
-  BPA_CREATE_OVER_SESSIONS, /* at its concurrent cap */
-  BPA_CREATE_OVER_RATE,	    /* opening them faster than allowed */
-} bpa_create_why_t;
-
-/*
- * Who is asking for the mapping.
- *
- * TRAFFIC is a packet from the subscriber, and the per-subscriber bounds apply
- * to it. ALG is a mapping opened on behalf of a control connection that has
- * already passed those bounds - an FTP data connection, an announced media
- * port - and it is NOT refused by them: an announced port that does not work
- * is the failure an ALG exists to prevent, and the subscriber cannot open
- * thousands of sessions this way without first opening thousands of control
- * connections, which the bounds do see.
- *
- * It still counts toward the concurrent total, because it occupies a port like
- * anything else.
- */
-typedef enum
-{
-  BPA_CREATE_TRAFFIC = 0,
-  BPA_CREATE_ALG,
-} bpa_create_kind_t;
-
 bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 				   u32 pool_index, const bpa_block_t *b,
-				   u16 port_priv, u8 proto, f64 now,
-				   bpa_create_kind_t kind,
-				   bpa_create_why_t *why);
+				   u16 port_priv, u8 proto, f64 now);
 
 /* Extended blocks: how many a subscriber holds, and attaching one more. */
 u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx);
