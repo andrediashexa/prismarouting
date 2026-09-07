@@ -145,6 +145,10 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_NUM),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "max-sessions": ("most sessions one subscriber may hold at once; 0 is "
+                     "unlimited", ARG_NUM),
+    "max-session-rate": ("most new sessions per second, per subscriber; 0 is "
+                         "unlimited", ARG_NUM),
     "tcp-mss": ("lower the MSS of handshakes so segments fit the path", {
         "auto": ("derive it from the CGNAT interfaces' MTUs", None),
     }),
@@ -627,7 +631,7 @@ class Shell:
         # the old configuration nor the new one, and the operator with no way
         # to know which pools made it.
         if (d["pool_add"] or d["pool_replace"] or d["pool_remove"]
-                or d["fwd_add"] or d["fwd_del"]):
+                or d["fwd_add"] or d["fwd_del"] or d["limits_set"]):
             state, msg = self.api.available()
             if state != vppapi.OK:
                 self.err(f"cannot reach the dataplane: {msg}")
@@ -713,6 +717,15 @@ class Shell:
                 # which one the dataplane refused. "commit failed" sends the
                 # operator to read the whole candidate.
                 self.err(f"pool '{pool.name}': {r.reason}")
+                return False
+
+        # The per-subscriber bounds, before the forwards and before routing:
+        # they only ever refuse, so applying them early cannot break a change
+        # that is still half-applied.
+        for name, pool in d["limits_set"].items():
+            r = self.api_call("bpa_limits_set", pool.limits_api_args())
+            if not r.ok:
+                self.err(f"pool '{name}': limits: {r.reason}")
                 return False
 
         # Removals first: a forward moved from one public port to another is
@@ -1265,6 +1278,13 @@ class Shell:
                 if int(w[1]) < 1:
                     raise ValueError("max-blocks must be at least 1")
                 p.max_blocks = int(w[1])
+            elif w[0] in ("max-sessions", "max-session-rate"):
+                if int(w[1]) < 0:
+                    raise ValueError(f"{w[0]} cannot be negative")
+                if w[0] == "max-sessions":
+                    p.max_sessions = int(w[1])
+                else:
+                    p.max_rate = int(w[1])
             elif w[0] == "tcp-mss":
                 why = Pool.check_mss(w[1])
                 if why:
@@ -1314,6 +1334,10 @@ class Shell:
                 p.max_blocks = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "tcp-mss":
                 p.tcp_mss = ""
+            elif w[0] == "no" and len(w) > 1 and w[1] == "max-sessions":
+                p.max_sessions = 0
+            elif w[0] == "no" and len(w) > 1 and w[1] == "max-session-rate":
+                p.max_rate = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "filter":
                 p.filter = "endpoint-independent"
             else:

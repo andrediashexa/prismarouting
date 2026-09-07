@@ -32,7 +32,16 @@
  * is the thing that fails when this happens, which is how this one was
  * caught.
  */
-option version = "0.4.0";
+/*
+ * 0.5.0 adds bpa_limits_set: the per-subscriber bounds. A message of its own
+ * and NOT fields on bpa_pool_add_del, for two reasons the 0.4.0 note above
+ * makes concrete - adding scalars there changes the layout and every client
+ * must be rebuilt, and a setting that only arrives with a pool definition can
+ * only be changed by recreating the pool, which drops every session on it
+ * (issue #69). An operator caps one infected subscriber; the neighbours do
+ * not get disconnected for it.
+ */
+option version = "0.5.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -112,6 +121,23 @@ autoreply define bpa_pool_add_del
   vl_api_prefix_t prefixes[n_prefixes];
 };
 
+/** \brief Sets a pool's per-subscriber bounds. Zero is unlimited in both, and
+    both are always sent: a message that keeps whichever half was omitted has
+    an effect that depends on what was there before.
+    @param name - the pool
+    @param max_sessions - concurrent sessions one subscriber may hold
+    @param max_rate - new sessions per second, per subscriber
+*/
+autoreply define bpa_limits_set
+{
+  u32 client_index;
+  u32 context;
+
+  string name[64];
+  u32 max_sessions;
+  u32 max_rate;
+};
+
 /** \brief Which protocols have a port to pin. Values match bpa_proto_t. */
 enum bpa_fwd_proto : u8
 {
@@ -179,6 +205,8 @@ define bpa_pool_details
   vl_api_bpa_timeouts_t timeouts;
   u16 tcp_mss;
   bool tcp_mss_auto;
+  u32 max_sessions;
+  u32 max_rate;
   u32 blocks_per_ip;
   u32 capacity;
   u32 inside_count;

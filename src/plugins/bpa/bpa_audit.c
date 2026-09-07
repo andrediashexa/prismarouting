@@ -45,6 +45,10 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
 	      p->port_min, p->port_max, format_bpa_policy, p->policy,
 	      format_bpa_mode, p->mode);
 
+  if (p->max_sessions || p->max_rate)
+    s = format (s, " limits sessions %u rate %u", p->max_sessions,
+		p->max_rate);
+
   /*
    * The forwards, in full.
    *

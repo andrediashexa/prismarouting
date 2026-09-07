@@ -446,6 +446,43 @@ bpa_auto_mss_update (void)
 		   : (u16) (min - BPA_MSS_OVERHEAD);
 }
 
+/*
+ * The per-subscriber bounds of a pool, changed in place.
+ *
+ * In place because of when an operator sets them: looking at one infected
+ * subscriber, on a box carrying everybody else. Recreating the pool to apply a
+ * cap would disconnect every neighbour to bound one customer, which trades a
+ * complaint for an outage (issue #69 is the general case).
+ *
+ * Sessions already open are not closed. A cap is a bound on what may be
+ * created, and tearing down mappings that predate it would make setting it an
+ * outage of its own - the subscriber comes back under the cap within a
+ * timeout, and until then it holds what it already had.
+ */
+clib_error_t *
+bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  uword *q;
+
+  q = hash_get_mem (bm->pool_by_name, name);
+  if (!q)
+    return clib_error_return (0, "no such pool '%v'", name);
+
+  p = pool_elt_at_index (bm->pools, q[0]);
+
+  /* Two words the session-creation path reads on a worker; mutate them under
+   * the barrier so no creation sees one old and one new. */
+  vlib_worker_thread_barrier_sync (bm->vlib_main);
+  p->max_sessions = max_sessions;
+  p->max_rate = max_rate;
+  vlib_worker_thread_barrier_release (bm->vlib_main);
+
+  bpa_audit ("limits", p, 0);
+  return 0;
+}
+
 clib_error_t *
 bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 {

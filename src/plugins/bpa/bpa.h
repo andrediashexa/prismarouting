@@ -91,6 +91,11 @@ clib_error_t *bpa_pool_validate (bpa_pool_t *cfg);
  */
 clib_error_t *bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add,
 				  int is_check);
+/*
+ * A pool's per-subscriber bounds, changed without recreating it. Zero in
+ * either is unlimited.
+ */
+clib_error_t *bpa_limits_set (u8 *name, u32 max_sessions, u32 max_rate);
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 void bpa_outside_window_update (void);
