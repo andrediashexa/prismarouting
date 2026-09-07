@@ -174,9 +174,61 @@ BLOCK_AFTER=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0
 QUIET=$($HX -c "configure" -c "cgnat pool resize" -c "alg rtsp off" \
             -c "exit" -c "commit" 2>&1)
 
+# --- the arithmetic, against the specification rather than against itself ---
+MOVED=$(printf '%s\n' "$REMAP" | grep -o "[0-9]* of [0-9]* subscribers" | head -1)
+MODEL_MOVED=$(python3 - <<'PY'
+import ipaddress, sys
+sys.path.insert(0, "/src/ref")
+from bpa_model import PoolConfig
+a = PoolConfig("resize", ["100.64.64.0/24"], ["203.0.113.0/28"], block_size=512)
+b = PoolConfig("resize", ["100.64.64.0/24"], ["203.0.113.0/28"], block_size=1024)
+base = int(ipaddress.IPv4Address("100.64.64.0"))
+def key(p, v):
+    f = p.forward(v)
+    return f["ip_pub"], f["port_lo"]
+n = sum(1 for i in range(a.inside_count)
+        if key(a, base + i) != key(b, base + i))
+print("%d of %d subscribers" % (n, a.inside_count))
+PY
+)
+# Whichever subscriber the box chose to show, the model is asked whether that
+# claim is true - so the check survives the box picking a different example.
+EX=$(printf '%s\n' "$REMAP" |
+     grep -oE "[0-9.]+ moves from [0-9.]+:[0-9]+-[0-9]+ to [0-9.]+:[0-9]+-[0-9]+" |
+     head -1)
+EX_OK=$(python3 - "$EX" <<'PY'
+import ipaddress, re, sys
+sys.path.insert(0, "/src/ref")
+from bpa_model import PoolConfig
+m = re.match(r"(\S+) moves from (\S+):(\d+)-(\d+) to (\S+):(\d+)-(\d+)$",
+             sys.argv[1] if len(sys.argv) > 1 else "")
+if not m:
+    print("no: the box printed no example to check"); raise SystemExit
+sub, oip, olo, ohi, nip, nlo, nhi = m.groups()
+a = PoolConfig("resize", ["100.64.64.0/24"], ["203.0.113.0/28"], block_size=512)
+b = PoolConfig("resize", ["100.64.64.0/24"], ["203.0.113.0/28"], block_size=1024)
+want = []
+for p in (a, b):
+    f = p.forward(sub)
+    want.append((f["ip_pub"], str(f["port_lo"]), str(f["port_hi"])))
+got = [(oip, olo, ohi), (nip, nlo, nhi)]
+print("yes" if want == got else "no: model says %s, box says %s" % (want, got))
+PY
+)
+echo "  model: $MODEL_MOVED / box: $MOVED"
+echo "  example checks out: $EX_OK"
+
 expect_in "a re-mapping change is refused" "re-maps subscribers" "$REMAP"
 expect_in "and says how many move" "subscribers change public address" "$REMAP"
 expect_in "and shows one of them moving" "moves from" "$REMAP"
+# The number and the example, checked against ref/bpa_model.py rather than
+# against themselves. "says how many move" passes on any number at all; the
+# oracle is what makes it 240 and not 239, and it computes the mapping from
+# the specification instead of asking the implementation what it did.
+expect "and the count is the one the model computes" \
+  test "$MOVED" = "$MODEL_MOVED"
+expect "and the subscriber it names moves exactly where the model says" \
+  test "$EX_OK" = yes
 expect_in "and says what to type" "commit remap" "$REMAP"
 expect "and nothing was applied" test "$BLOCK_MID" = "block        512"
 expect_in "asked for by name, it applies" "commit complete" "$NAMED"

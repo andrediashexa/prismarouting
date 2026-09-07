@@ -358,6 +358,29 @@ subscribers until it is asked for by name, saying how many move and where two
 of them go, and [pool-resize.md](pool-resize.md) carries the procedure —
 including the migration that costs no outage.
 
+#### Installation — blocked by nothing, paid on every box
+
+[#83](https://github.com/andrediashexa/hexarouting/issues/83) — the installer
+gets the hard parts right already: it asks everything before it writes
+anything, refuses to finish without a root password the operator supplied, and
+will not overwrite the medium it booted from. What it does not do is everything
+that happens **after** the disk is written.
+
+It never asks about the network, so an install ends with somebody still in
+front of the console or making a second trip to the cage — and management is
+the one interface that MUST NOT be handed to VPP, which makes it the one the
+installer could safely configure. It makes a single ext4 root and nothing else,
+so the allocation log — which in dynamic mode **is** the connection record the
+Marco Civil requires for a year — shares a filesystem with everything the box
+needs to keep working, and fills it. There is no mirror, so one disk failure on
+a box under a retention obligation loses the records themselves, which is a
+different class of loss from downtime. And nothing verifies the disk that was
+just written: the selftest runs on the live medium, before the install, so the
+failure mode is a box reporting success and then booting to a `grub>` prompt.
+
+Nothing blocks this and nothing depends on it, which is exactly why it keeps
+being deferred. The management address alone is paid on every single install.
+
 #### Phase 4 — capacity, which depends on #23
 
 | Issue | Why it waits |
