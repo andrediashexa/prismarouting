@@ -995,6 +995,14 @@ bpa_init (vlib_main_t *vm)
   bm->log_class = vlib_log_register_class ("bpa", 0);
   bm->audit_path = format (0, "/var/log/hexarouting/config-history.log%c", 0);
   vec_dec_len (bm->audit_path, 1);
+  /*
+   * Explicitly, because zero is a real uid. bpa_main starts zeroed, so
+   * without this every change made before an API request ever arrived would
+   * be recorded as "by uid 0" - root - which is not merely missing
+   * attribution, it is FALSE attribution, and a trail that names the wrong
+   * person is worse than one that names nobody.
+   */
+  bm->actor_uid = ~0u;
 
   {
     ip4_main_t *im = &ip4_main;

@@ -1,7 +1,16 @@
 #!/bin/sh
 # Dated configuration trail: the "proof" behind deterministic mode.
+#
+#   sh tools/lab.sh audit        with the identity travelling
+#   sh tools/lab.sh audit off    without it - the identity checks MUST fail
+#
+# The trail said WHAT changed and when, and could not say WHO (#34). The half
+# that is easy to get wrong is the negative one: an entry that could not be
+# attributed has to SAY so, because an entry that silently omits the field is
+# indistinguishable from one where nobody was accountable.
 set -u
-mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
+MODE=${1:-on}
+mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
@@ -25,6 +34,53 @@ echo "  removido provider-a"
 sleep 1
 vppctl bpa pool provider-a inside 100.64.0.0/22 outside 200.150.0.0/24 block 1024 >/dev/null
 echo "  recreated provider-a with a different block"
+
+echo
+echo "=== a change through the VTY, which knows who is asking ==="
+# VPP runs as root. If the plugin recorded its own process, every line would
+# say uid 0 - so the lab drives the VTY as somebody who is NOT root and
+# demands that name on the line. That is the assertion that separates "the
+# identity travelled with the request" from "the box wrote down whoever it
+# happened to be running as".
+. /src/lab/lib.sh
+use_binary_api
+HX="python3 /src/src/hexash/hexash.py"
+if [ "$MODE" = off ]; then
+  echo "  MODE=off: the VTY sends no identity. Every check below that names an"
+  echo "  operator MUST fail."
+  HX_ENV=""
+else
+  HX_ENV="SUDO_USER=marina"
+fi
+env $HX_ENV $HX -c "configure" -c "cgnat pool provider-b" \
+    -c "max-sessions 4000" -c "exit" -c "commit" 2>&1 | tail -2 | sed 's/^/  /'
+VTY_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.log | tail -1)
+printf '%s\n' "$VTY_LINE" | sed 's/^/  /'
+
+echo
+echo "=== and one typed at the VPP CLI, which does not ==="
+# There is no session to ask, so there is no operator to name. The line has to
+# say that rather than leave the field off.
+vppctl bpa limits provider-b max-sessions 5000 >/dev/null
+CLI_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.log | tail -1)
+printf '%s\n' "$CLI_LINE" | sed 's/^/  /'
+
+echo
+echo "=== an API client that sends no identity ==="
+# Not the same situation as the CLI, and not recorded as if it were: the
+# request came through the API and carried nothing.
+# Output shown, not discarded: a lab that hides the result of its own command
+# reports "no trail entry" for a call that never ran, which is what the first
+# version of this section did.
+# Empty name, uid zero - which is what a client that fills in nothing sends,
+# because vat2 requires every field to be present. Zero is a REAL uid: root.
+# Recording this as root would be false attribution, so it must come out
+# unattributed.
+vat2 -p /vat2_plugins bpa_limits_set \
+  '{"name":"provider-b","max_sessions":6000,"max_rate":0,"audit_user":"","audit_uid":0}' \
+  2>&1 | sed 's/^/  /'
+BARE_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.log | tail -1)
+printf '%s\n' "$BARE_LINE" | sed 's/^/  /'
 
 echo
 echo "=========== A TRILHA ==========="
@@ -57,4 +113,29 @@ expect_in "an add was recorded" "add pool provider-a" "$H"
 expect_in "a del was recorded" "del pool provider-a" "$H"
 expect_in "entries are dated in UTC" "Z add" "$H"
 expect "the trail survives on disk" test -s /var/log/hexarouting/config-history.log
+
+# --- who changed it (#34) ---
+#
+# The identity of the CALLER, not of the VPP process. VPP is root here, so a
+# line naming marina can only have come from the request.
+expect_in "a change through the VTY names the operator" "by marina" "$VTY_LINE"
+expect_not_in "and not the account the dataplane runs as" "by root" "$VTY_LINE"
+expect_in "and says it arrived over the API" "via api" "$VTY_LINE"
+
+# The negative half, and the one that matters. Silence here would read exactly
+# like a trail written before any of this existed.
+expect_in "a change with no identity says so, rather than omitting it" \
+  "by unattributed" "$CLI_LINE"
+expect_in "and says it did not come through the API" "via cli" "$CLI_LINE"
+expect_not_in "an unattributed change is not credited to root" "by uid 0" \
+  "$CLI_LINE"
+
+expect_in "an API client that sends nothing is unattributed too" \
+  "by unattributed" "$BARE_LINE"
+expect_in "but is not confused with a change typed at the console" "via api" \
+  "$BARE_LINE"
+
+# Entries written before any of this existed still read back.
+expect_in "older entries without an identity are still listed" \
+  "add pool provider-b" "$H"
 verdict

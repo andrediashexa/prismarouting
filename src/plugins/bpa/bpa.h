@@ -63,6 +63,24 @@ typedef struct
   vlib_log_class_t log_class; /* shows up in "show logging" */
   u8 *audit_path;	      /* dated configuration trail */
 
+  /*
+   * Who asked for the change being applied right now.
+   *
+   * Set by the API handler from what the client sent, immediately before the
+   * change is made, and cleared immediately after - so an entry can only ever
+   * be attributed to the request that produced it. A change that arrives by
+   * any other route finds this empty and is recorded as unattributed, which
+   * is the honest answer and a visible one: an entry that silently omitted
+   * the field would be indistinguishable from one where nobody was
+   * accountable (issue #34).
+   *
+   * A single slot rather than one per thread: API handlers run on the main
+   * thread under the worker barrier, one at a time.
+   */
+  u8 *actor_user;  /* the account the client named, or 0 */
+  u32 actor_uid;   /* the uid it was running as, or ~0 */
+  u8 actor_is_api; /* the change arrived over the binary API */
+
   u16 msg_id_base;
   vlib_main_t *vlib_main;
   vnet_main_t *vnet_main;
@@ -77,6 +95,17 @@ extern vlib_node_registration_t bpa_out2in_handoff_node;
 /* Queues a log event from the dataplane. No lock: the queue is per-thread. */
 void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
 			  u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id);
+
+/*
+ * Who is asking, for the duration of one API request.
+ *
+ * Set before the change and cleared after it, so that an entry can only carry
+ * the identity of the request that produced it - not of whichever request
+ * happened to run last. `user` may be empty and `uid` may be ~0; both absent
+ * is recorded as unattributed rather than left off the line.
+ */
+void bpa_actor_set (const char *user, u32 uid);
+void bpa_actor_clear (void);
 
 void bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only);
 

@@ -126,6 +126,30 @@ typedef bpa_timeouts
     @param n_inside - how many of the prefixes below are inside ones
     @param prefixes - the inside ones first, then the public ones
 */
+/*
+ * 0.10.0 adds audit_user and audit_uid to every message that CHANGES
+ * something. The configuration trail recorded what changed and when, and
+ * could not say who: bpa_audit.c had no getuid, no SUDO_USER, nothing
+ * identifying a person (issue #34).
+ *
+ * Fields on each message rather than state on the connection, because hexash
+ * reaches the dataplane through vat2 - one process per call - so there is no
+ * connection to attach an identity to. Fixed-size and placed above the
+ * variable-length arrays, where this file already says later additions must
+ * go.
+ *
+ * What this is NOT: proof. The client asserts its own identity, and the
+ * transport in use is shared memory, which carries no peer credentials for
+ * the plugin to check it against. Anyone who can reach this API can already
+ * reconfigure the box, so the trail is not a defence against them - it is the
+ * record of which operator did what among operators who are trusted to be on
+ * the box at all, which is what an audit trail is. Making it evidence against
+ * its own author is issue #22, from the other side.
+ *
+ * It CHANGES THE LAYOUT of five messages, so a client built against 0.9.0
+ * must be rebuilt. lab/api.sh pins the JSON shape and is what fails when this
+ * happens.
+ */
 autoreply define bpa_pool_add_del
 {
   u32 client_index;
@@ -149,6 +173,9 @@ autoreply define bpa_pool_add_del
   u32 out_vrf_id;
   /* The variable-length array is last, as the API requires: anything added
    * later goes above this line. */
+  /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
   u8 n_inside;
   u8 n_prefixes;
   vl_api_prefix_t prefixes[n_prefixes];
@@ -182,6 +209,9 @@ autoreply define bpa_pool_settings_set
   bool tcp_mss_auto;
   u8 util_alarm;
   vl_api_bpa_timeouts_t timeouts;
+  /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
 };
 
 /** \brief Replaces one of a pool's bypass lists, entire.
@@ -196,6 +226,9 @@ autoreply define bpa_bypass_set
 
   string name[64];
   bool is_destination;
+  /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
   u8 n_prefixes;
   vl_api_prefix_t prefixes[n_prefixes];
 };
@@ -215,6 +248,9 @@ autoreply define bpa_limits_set
   string name[64];
   u32 max_sessions;
   u32 max_rate;
+  /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
 };
 
 /** \brief Which protocols have a port to pin. Values match bpa_proto_t. */
@@ -248,6 +284,9 @@ autoreply define bpa_forward_add_del
   u16 port_pub;
   u16 port_priv;
   vl_api_ip4_address_t ip_priv;
+  /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
 };
 
 /** \brief Enables or disables CGNAT on an interface. */

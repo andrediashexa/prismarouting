@@ -81,6 +81,77 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
   return s;
 }
 
+/*
+ * Who asked, as it goes on the line.
+ *
+ * Three shapes, and the third is the one that matters: an entry that could not
+ * be attributed says so. Leaving the field off instead would make it
+ * indistinguishable from an entry written before this existed - and from one
+ * where nobody was accountable.
+ *
+ *   by alice uid 1001 via api      the client named an account
+ *   by uid 1001 via api            it sent only a number
+ *   by unattributed via api        it sent neither
+ *   by unattributed via cli        it did not come through the API at all,
+ *                                  which is what a change typed at the VPP
+ *                                  CLI looks like: there is no operator to
+ *                                  name, because there is no session to ask.
+ */
+static u8 *
+bpa_audit_format_actor (u8 *s)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  if (bm->actor_user && vec_len (bm->actor_user))
+    {
+      s = format (s, " by %v", bm->actor_user);
+      if (bm->actor_uid != ~0u)
+	s = format (s, " uid %u", bm->actor_uid);
+    }
+  else if (bm->actor_uid != ~0u)
+    s = format (s, " by uid %u", bm->actor_uid);
+  else
+    s = format (s, " by unattributed");
+
+  return format (s, " via %s", bm->actor_is_api ? "api" : "cli");
+}
+
+void
+bpa_actor_set (const char *user, u32 uid)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  vec_free (bm->actor_user);
+  if (user && user[0])
+    bm->actor_user = format (0, "%s", user);
+
+  /*
+   * A field a client did not send arrives as ZERO, and zero is a real uid:
+   * root. Taken at face value, every client that sends nothing would be
+   * recorded as the most privileged account on the box - not missing
+   * attribution but FALSE attribution, which is the one outcome worse than
+   * none.
+   *
+   * The NAME is what says an identity was supplied. A client that sends one
+   * is attributed by it, uid 0 included - hexash resolves the account even
+   * when it is root, so a genuine root operator still appears as "root uid
+   * 0". A client that sends neither a name nor a non-zero uid is recorded as
+   * unattributed, which is the honest reading of an empty message.
+   */
+  bm->actor_uid = (!bm->actor_user && uid == 0) ? ~0u : uid;
+  bm->actor_is_api = 1;
+}
+
+void
+bpa_actor_clear (void)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  vec_free (bm->actor_user);
+  bm->actor_uid = ~0u;
+  bm->actor_is_api = 0;
+}
+
 void
 bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
 {
@@ -96,6 +167,10 @@ bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
   line = format (0, "%04d-%02d-%02dT%02d:%02d:%02dZ %s pool %v",
 		 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
 		 tm.tm_min, tm.tm_sec, op, p ? p->name : name_only);
+  /* Before the definition, not after it: the definition is open-ended - it
+   * grows a field with every feature - and an identity at the end of a line
+   * of unknown length is one a reader has to go looking for. */
+  line = bpa_audit_format_actor (line);
   if (p)
     line = bpa_audit_format_pool (line, p);
 

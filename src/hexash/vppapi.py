@@ -49,6 +49,53 @@ RETVAL_NAMES = {
 }
 
 
+# The messages that CHANGE something. Only these carry an identity: a dump
+# that named an operator would put a line in nobody's trail and invite the
+# reader to think reading was recorded too.
+WRITE_MESSAGES = frozenset({
+    "bpa_pool_add_del",
+    "bpa_pool_settings_set",
+    "bpa_bypass_set",
+    "bpa_limits_set",
+    "bpa_forward_add_del",
+})
+
+
+def identity():
+    """
+    Who to record for a change made now: (name, uid).
+
+    Read from the system at the moment of the call, never from anything this
+    program stores - the same rule capabilities() follows, and for the same
+    reason.
+
+    SUDO_USER first, because it is the answer to the question being asked. An
+    operator who runs this under sudo is root by the time the call is made,
+    and a trail that records "root" for every one of them has recorded
+    nothing: root is the account nobody is. The effective uid goes on the line
+    as well rather than instead, so "alice uid 0" says what actually happened
+    - alice, acting as root - which neither field says on its own.
+
+    This is an assertion, not proof. sudo sets SUDO_USER and a person can set
+    it themselves; the plugin cannot check it, because hexash reaches the
+    dataplane over shared memory, which carries no peer credentials. Anyone
+    who can make this call can already reconfigure the box, so the trail is
+    the record of which operator did what among people trusted to be there -
+    not evidence against them. That is issue #22, from the other side.
+    """
+    uid = os.geteuid()
+    name = os.environ.get("SUDO_USER", "")
+    if not name:
+        try:
+            import pwd
+            name = pwd.getpwuid(uid).pw_name
+        except Exception:
+            # An account the system cannot describe is recorded as the number
+            # it is, rather than guessed at.
+            name = ""
+    return name, uid
+
+
 class Reply:
     """The result of one API call."""
 
@@ -67,13 +114,16 @@ class Reply:
 
 
 class Vat2:
-    def __init__(self, vat2=None, vppctl=None, runner=None):
+    def __init__(self, vat2=None, vppctl=None, runner=None, identity=identity):
         self.vat2 = vat2 or VAT2
         self.vppctl = vppctl or VPPCTL
         # Injected so the outcomes can be tested without a running VPP. The
         # three failure paths are the ones that matter and the hardest to
         # produce on demand.
         self._run = runner or self._subprocess
+        # Injected for the same reason the runner is: a test asserting what
+        # goes on the wire must not depend on which account runs it.
+        self._identity = identity
 
     @staticmethod
     def _subprocess(argv, timeout=10):
@@ -118,6 +168,14 @@ class Vat2:
     # ------------------------------------------------------------- calling
 
     def call(self, message, args, timeout=15):
+        if message in WRITE_MESSAGES:
+            # Added here and not in the argument builders in config.py: those
+            # are COMPARED to work out what changed, and an identity inside
+            # them would make every commit by a different operator look like a
+            # configuration change to every pool.
+            name, uid = self._identity()
+            args = dict(args, audit_user=name, audit_uid=uid)
+
         rc, out, err = self._run(
             [self.vat2, message, json.dumps(args)], timeout=timeout)
 

@@ -126,5 +126,63 @@ check(r.state == vppapi.BAD_REPLY,
       f"unreadable output is a version mismatch, not a dead socket: {r.state}")
 print(f"  {r.state}: {r.reason}")
 
+print("\n=== a change carries who asked; a read does not ===")
+# The trail records accountable ACTIONS. Attaching an operator to a dump would
+# put a name against reading, which is not what the record is for and not what
+# it says.
+sent = []
+
+
+def recording(argv, timeout=10):
+    sent.append(json.loads(argv[2]) if len(argv) > 2 else {})
+    return (0, '{"retval": 0}', "")
+
+
+api = vppapi.Vat2(runner=recording, identity=lambda: ("marina", 1001))
+api.call("bpa_pool_add_del", {"name": "lab", "is_add": True})
+check(sent[-1].get("audit_user") == "marina",
+      f"a write must name the operator: {sent[-1]}")
+check(sent[-1].get("audit_uid") == 1001,
+      f"and carry the uid: {sent[-1]}")
+api.call("bpa_pool_dump", {})
+check("audit_user" not in sent[-1],
+      f"a read must not: {sent[-1]}")
+print(f"  write: {sorted(k for k in sent[0] if k.startswith('audit'))}, "
+      f"read: {sorted(k for k in sent[-1] if k.startswith('audit'))}")
+
+print("\n=== every message that changes something is on the list ===")
+# The list is what decides whether a change is attributable at all. A message
+# added to the plugin and forgotten here writes an unattributed entry, and
+# nothing anywhere says it should have had a name.
+mutating = {"bpa_pool_add_del", "bpa_pool_settings_set", "bpa_bypass_set",
+            "bpa_limits_set", "bpa_forward_add_del"}
+check(vppapi.WRITE_MESSAGES == mutating,
+      f"the write list has drifted: {sorted(vppapi.WRITE_MESSAGES ^ mutating)}")
+print(f"  {len(vppapi.WRITE_MESSAGES)} write messages")
+
+print("\n=== sudo: the person, not the account they became ===")
+# An operator who runs this under sudo IS root by the time the call is made.
+# A trail that records "root" for every one of them has recorded nothing:
+# root is the account nobody is.
+saved = os.environ.get("SUDO_USER")
+try:
+    os.environ["SUDO_USER"] = "marina"
+    name, uid = vppapi.identity()
+    check(name == "marina", f"sudo must name the person who ran it: {name}")
+    check(uid == os.geteuid(),
+          "and the uid it is acting as, so the line says both")
+    print(f"  under sudo: {name} uid {uid}")
+
+    os.environ.pop("SUDO_USER", None)
+    name, uid = vppapi.identity()
+    check(name != "", "without sudo the account name is still resolved")
+    check(uid == os.geteuid(), "and the uid is the real one")
+    print(f"  without:    {name} uid {uid}")
+finally:
+    if saved is None:
+        os.environ.pop("SUDO_USER", None)
+    else:
+        os.environ["SUDO_USER"] = saved
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
