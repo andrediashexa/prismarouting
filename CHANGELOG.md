@@ -25,7 +25,73 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.11.0.
+Nothing merged since v0.12.0.
+
+## 0.12.0 — bounding one customer without touching the others
+
+One infected host opens thousands of sessions and exhausts **its own** block.
+The neighbours sharing its public address are unaffected — that is the point of
+a block per subscriber — and it is also why the operator has nothing to point
+at when that customer calls, so the CGNAT gets blamed for an infection on the
+far side of the access network.
+
+### Added
+
+* **Per-subscriber session and rate limits**
+  ([#18](https://github.com/andrediashexa/hexarouting/issues/18)):
+
+  ```
+  cgnat pool residential
+   max-sessions 512
+   max-session-rate 50
+   exit
+  ```
+
+  Zero is unlimited in both, so an upgrade refuses nothing that worked
+  yesterday. `bpa limits` changes them on a running pool.
+
+  Checked in `bpa_session_create()`, right after the subscriber record is
+  resolved and **before a port is taken** — nothing is added to the fast path,
+  because a packet matching an existing session never reaches the function and
+  the record was already looked up in order to allocate from it.
+
+  The rate is a **token bucket**, not a one-second window: a window lets a
+  scanner spend two windows' worth of budget across the boundary, which is
+  exactly the burst the bound exists to stop. The bucket holds one second's
+  worth, so the allowed burst is a number the operator agreed to.
+
+* **Three refusal counters, per subscriber**, in `show bpa subscriber` and on
+  the node — block full, session cap, rate cap. They need three different
+  answers: sell the customer more ports, raise the cap or accept it is doing
+  its job, or go and look at the machine. One counter for all three would
+  answer none of them.
+
+* **`lab/limits.sh`**, whose central check is **isolation**: a subscriber past
+  its cap is refused while a second subscriber on the *same public address*
+  carries on. A cap that bounded the pool rather than the customer would pass
+  every other check in that lab and fail exactly that one.
+  `sh tools/lab.sh limits off` fails 11 checks.
+
+### What the bounds deliberately do not do
+
+* **They never refuse a mapping an ALG opens** for a control connection that
+  already passed them — an FTP data connection, an announced media port, a PPTP
+  call. An announced port that does not work is the failure an ALG exists to
+  prevent, and a subscriber cannot reach thousands of them without first
+  opening thousands of control connections, which the bounds *do* see. They
+  still **count** toward the concurrent total, because they occupy a port like
+  anything else.
+* **They never close a session that already exists.** A cap bounds what may be
+  created; tearing down mappings that predate it would make setting a cap an
+  outage of its own.
+
+### Changed
+
+* **Binary API 0.5.0** adds `bpa_limits_set` — a message of its own rather than
+  fields on `bpa_pool_add_del`, so that capping one infected subscriber does
+  not recreate the pool and disconnect its neighbours
+  ([#69](https://github.com/andrediashexa/hexarouting/issues/69)). Measured in
+  the lab: 25 sessions before the commit, 25 after.
 
 ## 0.11.0 — the ticket that does not look like NAT
 
