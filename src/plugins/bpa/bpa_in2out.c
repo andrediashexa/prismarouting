@@ -215,6 +215,10 @@ VLIB_NODE_FN (bpa_in2out_node)
       bpa_block_t blk;
       void *l4h = 0;
       u32 pool_index = 0, sub_idx = 0, src_host;
+      /* The VRF the packet arrived in. Read here rather than after the pool
+       * is chosen, because the session lookup happens first and its key needs
+       * it: one vector element, on the same buffer the node already has. */
+      u32 fib_index = vlib_buffer_get_ip4_fib_index (b[0]);
       u16 port_priv = 0;
       bpa_create_why_t why = BPA_CREATE_OK;
       int proto, created = 0, bypassed = 0;
@@ -253,7 +257,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 	{
 	  bpa_key_gre (&kv, src_host, port_priv,
 		       clib_net_to_host_u32 (ip->dst_address.as_u32),
-		       BPA_GRE_KEY_DATA);
+		       BPA_GRE_KEY_DATA, fib_index);
 	  if (PREDICT_TRUE (
 		clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0))
 	    {
@@ -264,7 +268,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 	   * is on a bypassed destination has a control channel that was never
 	   * translated, so there is no call here to find and never will be. */
 	  if (PREDICT_FALSE (
-		bpa_pool_by_inside (bm, src_host, &pool_index, &sub_idx) == 0
+		bpa_pool_by_inside (bm, src_host, fib_index, &pool_index,
+				    &sub_idx) == 0
 		&& bpa_bypass_packet (
 		  bm, pt, pool_index, src_host,
 		  clib_net_to_host_u32 (ip->dst_address.as_u32), &n_bypass_src,
@@ -278,7 +283,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 	  goto trace;
 	}
 
-      bpa_key (&kv, src_host, port_priv, (u8) proto);
+      bpa_key_in (&kv, src_host, port_priv, (u8) proto, fib_index);
       if (clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0)
 	{
 	  s = pool_elt_at_index (pt->sessions, value.value);
@@ -286,7 +291,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 	}
 
       if (PREDICT_FALSE (
-	    bpa_pool_by_inside (bm, src_host, &pool_index, &sub_idx)))
+	    bpa_pool_by_inside (bm, src_host, fib_index, &pool_index,
+				&sub_idx)))
 	{
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_NO_POOL];
 	  goto trace;
@@ -371,7 +377,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 
       if (PREDICT_TRUE (s == 0))
 	s = bpa_session_create (pt, p, pool_index, &blk, port_priv,
-				(u8) proto, now, BPA_CREATE_TRAFFIC, &why);
+				(u8) proto, fib_index, now,
+				BPA_CREATE_TRAFFIC, &why);
 
       /*
        * Every block this subscriber holds is full. Give it another, if the
@@ -411,8 +418,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 				   ext.ip_pub, ext.port_lo, ext.port_hi,
 				   pool_index);
 	      s = bpa_session_create (pt, p, pool_index, &ext, port_priv,
-				      (u8) proto, now, BPA_CREATE_TRAFFIC,
-				      &why);
+				      (u8) proto, fib_index, now,
+				      BPA_CREATE_TRAFFIC, &why);
 	    }
 	}
 
@@ -499,6 +506,13 @@ VLIB_NODE_FN (bpa_in2out_node)
 		}
 	    }
 	}
+
+      /* Out by the pool's outside VRF, where it names one. Read from the
+       * session rather than the pool: the answer cannot change for the life
+       * of the session, and looking it up per packet would be a pool lookup
+       * on the translated path to learn something already known. */
+      if (PREDICT_FALSE (s->out_fib_index != ~0u))
+	vnet_buffer (b[0])->sw_if_index[VLIB_TX] = s->out_fib_index;
 
       bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub);
       n_translated++;
@@ -640,7 +654,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 	    if (bpa_l4_dst (b[0], ip, (u8) proto, &hp_port, &l4h))
 	      goto hp_done;
 
-	    bpa_key (&hkv, hp_dst, hp_port, (u8) proto);
+	    bpa_key_out (&hkv, hp_dst, hp_port, (u8) proto);
 	    if (clib_bihash_search_16_8 (&pt->out2in, &hkv, &hkv) == 0)
 	      {
 		bpa_session_t *peer =

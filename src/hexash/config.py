@@ -73,6 +73,11 @@ class Pool:
         self.ports = ""                 # "" means the device default
         self.policy = "interleaved"
         self.mode = "deterministic"
+        # The VRF this pool serves, and the one translated traffic leaves by.
+        # "" means every VRF, which is what a configuration that says nothing
+        # has always meant - and is a different answer from VRF 0.
+        self.vrf = ""
+        self.outside_vrf = ""
         # Overrides only. An absent entry means "inherit", which is what the
         # device means by zero, so emitting the inherited value would turn a
         # global change into a diff against every pool.
@@ -129,6 +134,13 @@ class Pool:
             out.append(f" ports {self.ports}")
         out.append(f" policy {self.policy}")
         out.append(f" mode {self.mode}")
+        # Not behind `in_place`: changing which VRF a pool serves changes which
+        # subscribers it maps, so every session on it is invalid - exactly like
+        # a change of prefix, and it rebuilds the pool for the same reason.
+        if self.vrf != "":
+            out.append(f" vrf {self.vrf}")
+        if self.outside_vrf != "":
+            out.append(f" outside-vrf {self.outside_vrf}")
         if in_place:
             for t in self.TIMEOUTS:
                 if t in self.timeouts:
@@ -171,6 +183,10 @@ class Pool:
         if self.ports:
             parts += ["ports", self.ports.replace(" ", "-")]
         parts += ["policy", self.policy, "mode", self.mode]
+        if self.vrf != "":
+            parts += ["vrf", self.vrf]
+        if self.outside_vrf != "":
+            parts += ["outside-vrf", self.outside_vrf]
         for t in self.TIMEOUTS:
             if t in self.timeouts:
                 parts += ["timeout", t, str(self.timeouts[t])]
@@ -315,6 +331,10 @@ class Pool:
             "port_min": port_min,
             "port_max": port_max,
             "policy": f"BPA_API_POLICY_{self.policy.upper()}",
+            # 4294967295 is ~0: "every VRF". Zero would be VRF 0.
+            "vrf_id": 4294967295 if self.vrf == "" else int(self.vrf),
+            "out_vrf_id": (4294967295 if self.outside_vrf == ""
+                           else int(self.outside_vrf)),
             "mode": f"BPA_API_MODE_{self.mode.upper()}",
             "filter": "BPA_API_FILTER_"
                       + self.filter.upper().replace("-", "_"),
@@ -592,6 +612,13 @@ class Config:
             if w[1] not in ("interleaved", "blocked"):
                 return f"policy '{w[1]}': expected interleaved or blocked"
             pool.policy = w[1]
+        elif w[0] in ("vrf", "outside-vrf") and len(w) > 1:
+            if not w[1].isdigit():
+                return f"{w[0]} '{w[1]}': expected a VRF id"
+            if w[0] == "vrf":
+                pool.vrf = w[1]
+            else:
+                pool.outside_vrf = w[1]
         elif w[0] == "mode" and len(w) > 1:
             if w[1] not in ("deterministic", "dynamic"):
                 return f"mode '{w[1]}': expected deterministic or dynamic"

@@ -146,8 +146,8 @@ bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
     return -1;
 
   inner_src = clib_net_to_host_u32 (inner->src_address.as_u32);
-  bpa_key (&kv, inner_src, clib_net_to_host_u16 (inner_port[0]),
-	   (u8) inner_proto);
+  bpa_key_out (&kv, inner_src, clib_net_to_host_u16 (inner_port[0]),
+	       (u8) inner_proto);
   if (PREDICT_FALSE (clib_bihash_search_16_8 (&pt->out2in, &kv, &value)))
     return -1;
 
@@ -322,7 +322,7 @@ VLIB_NODE_FN (bpa_out2in_node)
 	  }
       }
 
-      bpa_key (&kv, dst_host, port_pub, (u8) proto);
+      bpa_key_out (&kv, dst_host, port_pub, (u8) proto);
       if (PREDICT_FALSE (clib_bihash_search_16_8 (&pt->out2in, &kv, &value)))
 	{
 	  bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
@@ -438,6 +438,17 @@ VLIB_NODE_FN (bpa_out2in_node)
 		}
 	    }
 	}
+
+      /*
+       * Back into the VRF the subscriber's traffic came from.
+       *
+       * Without this the reply is looked up in the FIB of the interface it
+       * arrived on - the outside one - and on a box where inside and outside
+       * are different VRFs it is dropped for having no route, which looks
+       * like the CGNAT failing to translate rather than a lookup in the wrong
+       * table.
+       */
+      vnet_buffer (b[0])->sw_if_index[VLIB_TX] = s->fib_index;
 
       bpa_rewrite_dst (ip, l4h, (u8) proto, s->ip_priv, s->port_priv);
       n_translated++;

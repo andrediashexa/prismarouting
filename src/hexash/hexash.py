@@ -175,6 +175,10 @@ CGNAT_POOL = {
         "rtsp": ("RTSP Transport client_port", "<on|off>"),
         "pptp": ("PPTP control channel and its GRE data channel", "<on|off>"),
     }),
+    "vrf": ("the VRF whose subscribers this pool serves; absent means every "
+            "VRF", ARG_NUM),
+    "outside-vrf": ("the VRF translated traffic leaves by; absent leaves it "
+                    "where it was", ARG_NUM),
     "mode": ("how the block is assigned", {
         "deterministic": ("by formula, no allocation logging", None),
         "dynamic": ("on demand, with allocation logging", None),
@@ -1456,6 +1460,10 @@ class Shell:
                 if w[1] not in ("interleaved", "blocked"):
                     raise ValueError("policy must be interleaved or blocked")
                 p.policy = w[1]
+            elif w[0] in ("vrf", "outside-vrf"):
+                why = Config._pool_line(p, " ".join(w))
+                if why:
+                    raise ValueError(why)
             elif w[0] == "mode":
                 if w[1] not in ("deterministic", "dynamic"):
                     raise ValueError("mode must be deterministic or dynamic")

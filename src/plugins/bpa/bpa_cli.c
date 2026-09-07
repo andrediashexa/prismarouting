@@ -8,6 +8,7 @@
 #include "bpa_errors.h"
 #include "bpa_log.h"
 #include <vnet/ip/reass/ip4_sv_reass.h>
+#include <vnet/fib/fib_table.h>
 
 u8 *
 format_bpa_policy (u8 *s, va_list *args)
@@ -96,6 +97,13 @@ format_bpa_pool (u8 *s, va_list *args)
 
   s = format (s, "pool %v [%U / %U]", p->name, format_bpa_mode, p->mode,
 	      format_bpa_policy, p->policy);
+  if (p->vrf_id != ~0u)
+    s = format (s, "\n%Uvrf          %u%s", format_white_space, indent + 2,
+		p->vrf_id,
+		p->out_vrf_id != ~0u ? "" : " (translated traffic stays in it)");
+  if (p->out_vrf_id != ~0u)
+    s = format (s, "\n%Uoutside vrf  %u", format_white_space, indent + 2,
+		p->out_vrf_id);
   s = format (s, "\n%Uinside       %U (%u addresses, %u range(s))",
 	      format_white_space, indent + 2, format_bpa_addr_set, &p->inside,
 	      p->inside.count, p->inside.n_ranges);
@@ -259,7 +267,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   clib_error_t *error = 0;
   ip4_address_t addr;
   u32 len = 0;
-  u32 block = 512, port_min = 1024, port_max = 65535, mss = 0;
+  u32 block = 512, port_min = 1024, port_max = 65535, mss = 0, vrf = 0;
   u32 tv = 0;
 
   u32 maxb = 0;
@@ -272,6 +280,11 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   cfg.policy = BPA_POLICY_INTERLEAVED;
   cfg.mode = BPA_MODE_DETERMINISTIC;
   cfg.alg = BPA_ALG_DEFAULT;
+  /* Not zero: zero is VRF 0, and "no VRF stated" has to be a different
+   * answer from "the default VRF" or every existing pool would silently
+   * become bound to one. */
+  cfg.fib_index = cfg.vrf_id = ~0u;
+  cfg.out_fib_index = cfg.out_vrf_id = ~0u;
 
   if (!unformat_user (input, unformat_line_input, line_input))
     return clib_error_return (0, "expected pool name");
@@ -378,6 +391,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  vec_add1 (bys_b, clib_net_to_host_u32 (addr.as_u32)
 			     & ~(vec_elt (bys_c, vec_len (bys_c) - 1) - 1));
 	}
+      else if (unformat (line_input, "vrf %u", &vrf))
+	cfg.vrf_id = vrf;
+      else if (unformat (line_input, "outside-vrf %u", &vrf))
+	cfg.out_vrf_id = vrf;
       else if (unformat (line_input, "utilisation-alarm %u", &mss))
 	{
 	  if (mss < 1 || mss > 100)
@@ -516,6 +533,32 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	goto done;
     }
 
+  /* A VRF id is what an operator types; a FIB index is what the datapath
+   * compares. Resolved here so that a VRF which does not exist is refused
+   * while somebody is still looking at the command, rather than becoming a
+   * pool that quietly matches nothing. */
+  if (cfg.vrf_id != ~0u)
+    {
+      cfg.fib_index = fib_table_find (FIB_PROTOCOL_IP4, cfg.vrf_id);
+      if (cfg.fib_index == ~0u)
+	{
+	  error = clib_error_return (
+	    0, "vrf %u does not exist; create it before a pool selects on it",
+	    cfg.vrf_id);
+	  goto done;
+	}
+    }
+  if (cfg.out_vrf_id != ~0u)
+    {
+      cfg.out_fib_index = fib_table_find (FIB_PROTOCOL_IP4, cfg.out_vrf_id);
+      if (cfg.out_fib_index == ~0u)
+	{
+	  error = clib_error_return (0, "outside-vrf %u does not exist",
+				     cfg.out_vrf_id);
+	  goto done;
+	}
+    }
+
   cfg.name = name;
   cfg.port_min = (u16) port_min;
   cfg.port_max = (u16) port_max;
@@ -559,6 +602,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
     "[alg <ftp|rtsp|pptp> on|off] "
     "[bypass <destination|source> <pfx>/<len>] "
+    "[vrf <id>] [outside-vrf <id>] "
     "[utilisation-alarm <percent>] "
     "[max-sessions <n>] [max-session-rate <n>] "
     "[tcp-mss <bytes|auto>] "
@@ -772,7 +816,10 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
   {
     u32 host = clib_net_to_host_u32 (addr.as_u32);
 
-    if (bpa_pool_by_inside (bm, host, &pool_index, &sub_idx))
+    /* No packet, so no VRF: this reports the first pool that claims the
+     * address. On a box with one VRF that is the only pool; on a box with
+     * several an operator has to say which tenant, and that is issue #81. */
+    if (bpa_pool_by_inside (bm, host, ~0u, &pool_index, &sub_idx))
       {
 	error = clib_error_return (
 	  0, "%U is not inside any configured pool", format_ip4_address, &addr);
@@ -2201,6 +2248,10 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, "%U", format_bpa_range_as_prefixes,
 		    p->bypass_dst.ranges[i].base,
 		    p->bypass_dst.ranges[i].count, 1, "bypass destination");
+      if (p->vrf_id != ~0u)
+	s = format (s, " vrf %u\n", p->vrf_id);
+      if (p->out_vrf_id != ~0u)
+	s = format (s, " outside-vrf %u\n", p->out_vrf_id);
       if (p->util_alarm)
 	s = format (s, " utilisation-alarm %u\n", p->util_alarm);
       if (p->max_sessions)

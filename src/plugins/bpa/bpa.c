@@ -318,6 +318,90 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
   return 0;
 }
 
+/* Do two address ranges have any address in common? */
+static_always_inline int
+bpa_ranges_overlap (const bpa_range_t *a, const bpa_range_t *b)
+{
+  return (u64) a->base < (u64) b->base + b->count
+	 && (u64) b->base < (u64) a->base + a->count;
+}
+
+/*
+ * Refuses a pool that would make selection ambiguous.
+ *
+ * Two pools claiming one inside address is not an error the datapath can
+ * resolve: bpa_pool_by_inside() returns the FIRST that matches, so the second
+ * pool exists, accepts configuration and translates nothing - and nothing says
+ * so (issue #73). Two pools sharing a PUBLIC address is worse, because the
+ * return path keys on it and has no VRF to separate them.
+ *
+ * A VRF is what makes an inside overlap legitimate: two tenants may use the
+ * same private range, and that is the case this exists to allow rather than to
+ * forbid. So an inside overlap is refused only when both pools could answer
+ * for the same packet - when at least one of them is bound to no VRF, or both
+ * are bound to the same one.
+ */
+static clib_error_t *
+bpa_check_pool_overlap (const bpa_pool_t *cfg)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  u32 i, j;
+
+  pool_foreach (p, bm->pools)
+    {
+      int same_name = vec_len (p->name) == vec_len (cfg->name)
+		      && !memcmp (p->name, cfg->name, vec_len (cfg->name));
+
+      /* A pool being replaced does not overlap itself. */
+      if (same_name)
+	continue;
+
+      /* Public addresses are compared whatever the VRFs are: out2in keys on
+       * the public address alone, so two pools sharing one are two answers to
+       * the same question. */
+      for (i = 0; i < cfg->outside.n_ranges; i++)
+	for (j = 0; j < p->outside.n_ranges; j++)
+	  if (bpa_ranges_overlap (&cfg->outside.ranges[i],
+				  &p->outside.ranges[j]))
+	    {
+	      ip4_address_t a;
+
+	      a.as_u32 = clib_host_to_net_u32 (cfg->outside.ranges[i].base);
+	      return clib_error_return (
+		0,
+		"public address %U is already in pool '%v'. Two pools cannot "
+		"share one: the return path finds a pool by public address "
+		"and would have two answers",
+		format_ip4_address, &a, p->name);
+	    }
+
+      if (p->fib_index != ~0u && cfg->fib_index != ~0u
+	  && p->fib_index != cfg->fib_index)
+	continue;
+
+      for (i = 0; i < cfg->inside.n_ranges; i++)
+	for (j = 0; j < p->inside.n_ranges; j++)
+	  if (bpa_ranges_overlap (&cfg->inside.ranges[i], &p->inside.ranges[j]))
+	    {
+	      ip4_address_t a;
+
+	      a.as_u32 = clib_host_to_net_u32 (cfg->inside.ranges[i].base);
+	      return clib_error_return (
+		0,
+		"inside address %U is already served by pool '%v'%s. The "
+		"first pool that claims an address answers for it, so the "
+		"second would translate nothing and say nothing - bind them "
+		"to different VRFs, or give them different ranges",
+		format_ip4_address, &a, p->name,
+		(p->fib_index == ~0u || cfg->fib_index == ~0u)
+		  ? " (one of them serves every VRF)"
+		  : " in the same VRF");
+	    }
+    }
+  return 0;
+}
+
 /*
  * Every check bpa_pool_add() performs, without creating anything.
  *
@@ -339,6 +423,9 @@ bpa_pool_validate (bpa_pool_t *cfg)
    * not a check.
    */
   e = bpa_check_local_overlap (&cfg->outside, cfg->name);
+  if (e)
+    return e;
+  e = bpa_check_pool_overlap (cfg);
   if (e)
     return e;
 
@@ -659,6 +746,9 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
     return clib_error_return (0, "pool already exists");
 
   e = bpa_check_local_overlap (&cfg->outside, cfg->name);
+  if (e)
+    return e;
+  e = bpa_check_pool_overlap (cfg);
   if (e)
     return e;
 

@@ -391,6 +391,29 @@ typedef struct
   bpa_addr_set_t bypass_dst;
 
   /*
+   * The VRF this pool serves, as a FIB index. ~0 means every VRF, which is
+   * what every configuration written before this existed means.
+   *
+   * A pool bound to a VRF is how one inside prefix can be served by two pools
+   * for two tenants. Without it they would be two pools claiming the same
+   * range, and the first one would answer for both (issue #73).
+   *
+   * `vrf_id` is what the operator typed; `fib_index` is what the FIB calls it.
+   * Both are kept because the first is the only one worth printing and the
+   * second is the only one worth comparing.
+   */
+  u32 fib_index;
+  u32 vrf_id;
+
+  /*
+   * The VRF translated traffic leaves by, when it differs from the
+   * subscriber's. ~0 leaves the packet where it was, which is what a
+   * single-VRF box wants and what every existing configuration gets.
+   */
+  u32 out_fib_index;
+  u32 out_vrf_id;
+
+  /*
    * Raise an alarm when a subscriber's blocks are this full, as a percentage.
    * Zero is off.
    *

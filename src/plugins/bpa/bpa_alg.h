@@ -247,7 +247,7 @@ bpa_rtsp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
     return BPA_ALG_NO_ROOM;
 
   if (bpa_alg_reserve_pair (pt, p, s->pool_index, s->sub_idx, s->ip_pub, cp.lo,
-			    BPA_PROTO_UDP, now, &pub_lo))
+			    BPA_PROTO_UDP, s->fib_index, now, &pub_lo))
     return BPA_ALG_NO_PORTS;
   s = pool_elt_at_index (pt->sessions, s_index); /* the pool may have moved */
 
@@ -296,10 +296,10 @@ bpa_rtsp_out2in (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
       return BPA_ALG_NOOP;
     }
 
-  bpa_key (&kv, s->ip_pub, cp.lo, BPA_PROTO_UDP);
+  bpa_key_out (&kv, s->ip_pub, cp.lo, BPA_PROTO_UDP);
   if (clib_bihash_search_16_8 (&pt->out2in, &kv, &v0))
     return BPA_ALG_UNPARSED;
-  bpa_key (&kv, s->ip_pub, cp.hi, BPA_PROTO_UDP);
+  bpa_key_out (&kv, s->ip_pub, cp.hi, BPA_PROTO_UDP);
   if (clib_bihash_search_16_8 (&pt->out2in, &kv, &v1))
     return BPA_ALG_UNPARSED;
 

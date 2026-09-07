@@ -136,12 +136,26 @@ format_function_t format_bpa_alg;
  * many pools this becomes an mtrie.
  */
 static_always_inline int
-bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 *pool_index, u32 *sub_idx)
+bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index,
+		    u32 *sub_idx)
 {
   bpa_pool_t *p;
 
   pool_foreach (p, bm->pools)
     {
+      /*
+       * A pool bound to a VRF answers only for that one, which is what lets
+       * two pools serve the same inside prefix for two tenants.
+       *
+       * ~0 means "every VRF" on the POOL - what a configuration written
+       * before this existed means - and "any VRF" in the QUERY, which is what
+       * a show command asks, having no packet and therefore no VRF. Both,
+       * because neither a pool nor a question should have to lie about which
+       * it means: without the second, a show command would report that a
+       * VRF-bound pool's subscriber belongs to no pool at all.
+       */
+      if (fib != ~0u && p->fib_index != ~0u && p->fib_index != fib)
+	continue;
       if (bpa_set_index_of (&p->inside, addr, sub_idx) == 0)
 	{
 	  *pool_index = p - bm->pools;

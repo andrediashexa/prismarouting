@@ -145,7 +145,7 @@ bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 static bpa_session_t *
 bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		  bpa_sub_t *sub, const bpa_subblock_t *sb, u32 blk_idx,
-		  u16 off, u16 port_priv, u8 proto, f64 now)
+		  u16 off, u16 port_priv, u8 proto, u32 fib, f64 now)
 {
   clib_bihash_kv_16_8_t kv;
   bpa_session_t *s;
@@ -159,6 +159,11 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   s->proto = proto;
   s->sub_idx = sb->blk.sub_idx;
   s->pool_index = pool_index;
+  /* Set before the key is built from it, which is the only ordering that
+   * matters here: a session keyed in one VRF and freed in another leaves an
+   * entry pointing at reclaimed memory. */
+  s->fib_index = fib;
+  s->out_fib_index = p->out_fib_index;
   s->last_heard = now;
 
   if (bpa_set_addr_of (&p->inside, sb->blk.sub_idx, &s->ip_priv))
@@ -169,11 +174,11 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 
   sub->n_sessions++;
 
-  bpa_key (&kv, s->ip_priv, s->port_priv, proto);
+  bpa_key_in (&kv, s->ip_priv, s->port_priv, proto, s->fib_index);
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
 
-  bpa_key (&kv, s->ip_pub, s->port_pub, proto);
+  bpa_key_out (&kv, s->ip_pub, s->port_pub, proto);
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->out2in, &kv, 1);
 
@@ -192,7 +197,7 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 int
 bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 		      u32 pool_index, u32 sub_idx, u32 want_ip_pub,
-		      u16 priv_lo, u8 proto, f64 now, u16 *pub_lo)
+		      u16 priv_lo, u8 proto, u32 fib, f64 now, u16 *pub_lo)
 {
   clib_bihash_kv_16_8_t kv, value;
   bpa_sub_t *sub;
@@ -220,13 +225,13 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
    * sent to an address that means nothing - the exact failure this ALG
    * exists to prevent, reachable by one lost packet.
    */
-  bpa_key (&kv, ip_priv, priv_lo, proto);
+  bpa_key_in (&kv, ip_priv, priv_lo, proto, fib);
   if (clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0)
     {
       bpa_session_t *m0 = pool_elt_at_index (pt->sessions, value.value);
       bpa_session_t *m1;
 
-      bpa_key (&kv, ip_priv, (u16) (priv_lo + 1), proto);
+      bpa_key_in (&kv, ip_priv, (u16) (priv_lo + 1), proto, fib);
       if (clib_bihash_search_16_8 (&pt->in2out, &kv, &value))
 	return -1; /* half a pair: not something to announce */
       m1 = pool_elt_at_index (pt->sessions, value.value);
@@ -243,7 +248,7 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 
   /* The low port is free and the high one is not. Allocating a fresh pair
    * would announce a low port whose neighbour belongs to another flow. */
-  bpa_key (&kv, ip_priv, (u16) (priv_lo + 1), proto);
+  bpa_key_in (&kv, ip_priv, (u16) (priv_lo + 1), proto, fib);
   if (clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0)
     return -1;
 
@@ -261,9 +266,10 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
 	continue;
 
       s0 = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx, (u16) off,
-			     priv_lo, proto, now);
+			     priv_lo, proto, fib, now);
       s1 = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx,
-			     (u16) (off + 1), (u16) (priv_lo + 1), proto, now);
+			     (u16) (off + 1), (u16) (priv_lo + 1), proto, fib,
+			     now);
       if (s0 == 0 || s1 == 0)
 	{
 	  /* Only reachable when the subscriber index stopped resolving, which
@@ -332,8 +338,8 @@ bpa_rate_take (bpa_sub_t *sub, u32 rate, f64 now)
 
 bpa_session_t *
 bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
-		    const bpa_block_t *b, u16 port_priv, u8 proto, f64 now,
-		    bpa_create_kind_t kind, bpa_create_why_t *why)
+		    const bpa_block_t *b, u16 port_priv, u8 proto, u32 fib,
+		    f64 now, bpa_create_kind_t kind, bpa_create_why_t *why)
 {
   bpa_session_t *s;
   bpa_sub_t *sub;
@@ -440,7 +446,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
     }
 
   s = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx, (u16) off,
-			port_priv, proto, now);
+			port_priv, proto, fib, now);
   if (s == 0)
     {
       bpa_portmap_free (&sb->map, (u16) off);
@@ -466,7 +472,7 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 bpa_session_t *
 bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
 			u32 pool_index, u32 sub_idx, u32 ip_pub, u16 call_id,
-			u32 remote, f64 now)
+			u32 remote, u32 fib, f64 now)
 {
   clib_bihash_kv_16_8_t kv;
   bpa_session_t *s;
@@ -514,6 +520,8 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
   s->gre_state = BPA_GRE_CALLING;
   s->sub_idx = sub_idx;
   s->pool_index = pool_index;
+  s->fib_index = fib;
+  s->out_fib_index = p->out_fib_index;
   s->remote = remote;
   s->last_heard = now;
 
@@ -529,13 +537,14 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
   /* Inbound: the server will send GRE carrying the Call ID we just handed
    * out, and it came from the block, so the pre-check and the handoff find
    * the right subscriber without knowing anything about PPTP. */
-  bpa_key (&kv, s->ip_pub, s->port_pub, BPA_PROTO_GRE);
+  bpa_key_out (&kv, s->ip_pub, s->port_pub, BPA_PROTO_GRE);
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->out2in, &kv, 1);
 
   /* The ALG's own handle on this call, so a retransmitted call request maps
    * to the same Call ID instead of allocating a second one. */
-  bpa_key_gre (&kv, s->ip_priv, call_id, remote, BPA_GRE_KEY_ALG);
+  bpa_key_gre (&kv, s->ip_priv, call_id, remote, BPA_GRE_KEY_ALG,
+	       s->fib_index);
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
 
@@ -560,14 +569,15 @@ bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
       /* A second reply naming a different Call ID: drop the stale key rather
        * than leave the table pointing at a call that no longer exists. */
       bpa_key_gre (&kv, s->ip_priv, s->peer_call_id, s->remote,
-		   BPA_GRE_KEY_DATA);
+		   BPA_GRE_KEY_DATA, s->fib_index);
       clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
     }
 
   s->peer_call_id = peer_call_id;
   s->gre_state = BPA_GRE_ESTABLISHED;
 
-  bpa_key_gre (&kv, s->ip_priv, peer_call_id, s->remote, BPA_GRE_KEY_DATA);
+  bpa_key_gre (&kv, s->ip_priv, peer_call_id, s->remote, BPA_GRE_KEY_DATA,
+	       s->fib_index);
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
 }
@@ -684,22 +694,23 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
    * session would be gone while the table still pointed at it. */
   if (PREDICT_FALSE (s->proto == BPA_PROTO_GRE))
     {
-      bpa_key_gre (&kv, s->ip_priv, s->port_priv, s->remote, BPA_GRE_KEY_ALG);
+      bpa_key_gre (&kv, s->ip_priv, s->port_priv, s->remote, BPA_GRE_KEY_ALG,
+		   s->fib_index);
       clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
       if (s->gre_state == BPA_GRE_ESTABLISHED)
 	{
 	  bpa_key_gre (&kv, s->ip_priv, s->peer_call_id, s->remote,
-		       BPA_GRE_KEY_DATA);
+		       BPA_GRE_KEY_DATA, s->fib_index);
 	  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
 	}
     }
   else
     {
-      bpa_key (&kv, s->ip_priv, s->port_priv, s->proto);
+      bpa_key_in (&kv, s->ip_priv, s->port_priv, s->proto, s->fib_index);
       clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
     }
 
-  bpa_key (&kv, s->ip_pub, s->port_pub, s->proto);
+  bpa_key_out (&kv, s->ip_pub, s->port_pub, s->proto);
   clib_bihash_add_del_16_8 (&pt->out2in, &kv, 0);
 
   q = hash_get (pt->sub_by_idx, bpa_sub_key (s->pool_index, s->sub_idx));
@@ -792,7 +803,8 @@ bpa_session_static_open (bpa_per_thread_t *pt, const bpa_pool_t *p,
   bpa_portmap_reserve (&sb->map, sf->port_off);
 
   s = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx, sf->port_off,
-			sf->port_priv, sf->proto, now);
+			sf->port_priv, sf->proto,
+			(p->fib_index == ~0u) ? 0 : p->fib_index, now);
   if (PREDICT_FALSE (s == 0))
     {
       bpa_sub_put (pt, pool_index, blk.sub_idx, sub);
@@ -891,6 +903,12 @@ bpa_static_install (u32 pool_index, const bpa_static_t *sf)
   clib_bihash_kv_16_8_t kv;
   bpa_block_t blk;
   u32 i;
+  /* A forward is configured against a pool, not observed on a packet, so the
+   * VRF in its private-side key is the pool's. A pool that serves every VRF
+   * keys at 0, which is what its subscribers' traffic keys at on a box with
+   * one - and on a box with several, such a pool is the configuration the
+   * overlap check tells the operator not to have. */
+  u32 key_fib = (p->fib_index == ~0u) ? 0 : p->fib_index;
 
   if (bpa_forward (p, sf->ip_priv, &blk))
     return;
@@ -904,9 +922,9 @@ bpa_static_install (u32 pool_index, const bpa_static_t *sf)
       if (!pt->initialised)
 	continue;
 
-      bpa_key (&kv, sf->ip_pub, sf->port_pub, sf->proto);
+      bpa_key_out (&kv, sf->ip_pub, sf->port_pub, sf->proto);
       bpa_session_free_key (pt, &pt->out2in, &kv, now);
-      bpa_key (&kv, sf->ip_priv, sf->port_priv, sf->proto);
+      bpa_key_in (&kv, sf->ip_priv, sf->port_priv, sf->proto, key_fib);
       bpa_session_free_key (pt, &pt->in2out, &kv, now);
 
       sb = bpa_static_block (pt, pool_index, blk.sub_idx, sf, &blk_idx);
@@ -946,7 +964,7 @@ bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf)
 
       /* Freed first: a static session does not release its port, so the
        * bitmap is cleared here and not by the free. */
-      bpa_key (&kv, sf->ip_pub, sf->port_pub, sf->proto);
+      bpa_key_out (&kv, sf->ip_pub, sf->port_pub, sf->proto);
       bpa_session_free_key (pt, &pt->out2in, &kv, now);
 
       sb = bpa_static_block (pt, pool_index, blk.sub_idx, sf, &blk_idx);

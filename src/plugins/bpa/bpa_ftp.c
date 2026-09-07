@@ -389,7 +389,7 @@ bpa_ftp_expect (bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t *ctl,
   clib_bihash_kv_16_8_t kv, value;
   bpa_block_t blk = { 0 };
 
-  bpa_key (&kv, ctl->ip_priv, port_priv, BPA_PROTO_TCP);
+  bpa_key_in (&kv, ctl->ip_priv, port_priv, BPA_PROTO_TCP, ctl->fib_index);
   if (clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0)
     {
       bpa_session_t *d = pool_elt_at_index (pt->sessions, value.value);
@@ -415,7 +415,8 @@ bpa_ftp_expect (bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t *ctl,
     bpa_create_why_t why;
 
     return bpa_session_create (pt, p, ctl->pool_index, &blk, port_priv,
-			       BPA_PROTO_TCP, now, BPA_CREATE_ALG, &why);
+			       BPA_PROTO_TCP, ctl->fib_index, now,
+			       BPA_CREATE_ALG, &why);
   }
 }
 
