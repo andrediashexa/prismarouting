@@ -150,6 +150,8 @@ CGNAT_POOL = {
         "destination": ("a destination that must see the real source",
                         ARG_PREFIX),
     }),
+    "utilisation-alarm": ("log once when a subscriber's block reaches this "
+                          "percentage, ahead of exhaustion", "<1-100>"),
     "max-sessions": ("most sessions one subscriber may hold at once; 0 is "
                      "unlimited", ARG_NUM),
     "max-session-rate": ("most new sessions per second, per subscriber; 0 is "
@@ -1471,6 +1473,10 @@ class Shell:
                 why = Config._pool_line(p, " ".join(w))
                 if why:
                     raise ValueError(why)
+            elif w[0] == "utilisation-alarm":
+                why = Config._pool_line(p, " ".join(w))
+                if why:
+                    raise ValueError(why)
             elif w[0] in ("max-sessions", "max-session-rate"):
                 if int(w[1]) < 0:
                     raise ValueError(f"{w[0]} cannot be negative")
@@ -1537,6 +1543,8 @@ class Shell:
                         lst.remove(w[3])
                 else:
                     lst.clear()
+            elif w[0] == "no" and len(w) > 1 and w[1] == "utilisation-alarm":
+                p.util_alarm = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "max-sessions":
                 p.max_sessions = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "max-session-rate":

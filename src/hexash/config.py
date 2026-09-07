@@ -81,6 +81,9 @@ class Pool:
         # TCP MSS clamp: "" is off, "auto" derives it from the interface
         # MTUs, anything else is the number of bytes.
         self.tcp_mss = ""
+        # Raise an alarm when a subscriber's block is this full, in percent.
+        # Zero is off.
+        self.util_alarm = 0
         # Per-subscriber bounds. Zero is unlimited in both.
         self.max_sessions = 0
         self.max_rate = 0
@@ -136,6 +139,8 @@ class Pool:
             out += [f" bypass source {p}" for p in sorted(self.bypass_src)]
             out += [f" bypass destination {p}"
                     for p in sorted(self.bypass_dst)]
+        if in_place and self.util_alarm:
+            out.append(f" utilisation-alarm {self.util_alarm}")
         if in_place and self.max_sessions:
             out.append(f" max-sessions {self.max_sessions}")
         if in_place and self.max_rate:
@@ -175,6 +180,8 @@ class Pool:
             parts += ["bypass", "source", p]
         for p in sorted(self.bypass_dst):
             parts += ["bypass", "destination", p]
+        if self.util_alarm:
+            parts += ["utilisation-alarm", str(self.util_alarm)]
         if self.max_sessions:
             parts += ["max-sessions", str(self.max_sessions)]
         if self.max_rate:
@@ -237,6 +244,7 @@ class Pool:
             "alg_set": alg_set,
             "tcp_mss": 0 if self.tcp_mss in ("", "auto") else int(self.tcp_mss),
             "tcp_mss_auto": self.tcp_mss == "auto",
+            "util_alarm": int(self.util_alarm),
             "timeouts": timeouts,
         }
 
@@ -607,6 +615,11 @@ class Config:
             lst = pool.bypass_dst if w[1] == "destination" else pool.bypass_src
             if w[2] not in lst:
                 lst.append(w[2])
+        elif w[0] == "utilisation-alarm" and len(w) > 1:
+            if not w[1].isdigit() or not 1 <= int(w[1]) <= 100:
+                return (f"utilisation-alarm '{w[1]}': expected a percentage "
+                        "between 1 and 100")
+            pool.util_alarm = int(w[1])
         elif w[0] in ("max-sessions", "max-session-rate") and len(w) > 1:
             if not w[1].isdigit():
                 return f"{w[0]}: '{w[1]}' is not a number"

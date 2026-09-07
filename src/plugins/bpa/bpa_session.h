@@ -227,6 +227,16 @@ typedef struct
   bpa_subblock_t *blocks;
   u32 n_sessions; /* when this hits zero the bitmaps can be reclaimed */
   /*
+   * Whether this subscriber has already been reported as near its limit.
+   *
+   * One bit, so the alarm fires once per crossing rather than once per port.
+   * A log line per allocation past the threshold is a log nobody can keep and
+   * an alarm nobody reads - and the subscriber that trips it is, by
+   * definition, the one allocating fastest.
+   */
+  u8 alarmed;
+
+  /*
    * Token bucket for the creation rate, in sessions per second.
    *
    * A bucket rather than a one-second window: a window lets a scanner spend
@@ -489,6 +499,25 @@ bpa_session_t *bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p,
 
 /* Extended blocks: how many a subscriber holds, and attaching one more. */
 u32 bpa_sub_n_blocks (bpa_per_thread_t *pt, u32 pool_index, u32 sub_idx);
+
+/*
+ * How full a subscriber's blocks are, across all of them.
+ *
+ * Summed from the port bitmaps, which the allocator maintains anyway, so
+ * nothing new is counted per packet and the session table is never walked.
+ */
+static_always_inline void
+bpa_sub_usage (const bpa_sub_t *sub, u32 *used, u32 *total)
+{
+  const bpa_subblock_t *sb;
+
+  *used = *total = 0;
+  vec_foreach (sb, sub->blocks)
+    {
+      *total += sb->map.n_ports;
+      *used += sb->map.n_ports - sb->map.n_free;
+    }
+}
 void bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 		     u32 sub_idx, const bpa_block_t *b);
 /*

@@ -401,6 +401,44 @@ bpa_session_create (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
       return 0;
     }
 
+  /*
+   * The fill alarm, evaluated where a port is TAKEN and nowhere else.
+   *
+   * Utilisation only rises here, so this is the only place a crossing can
+   * happen; it falls on the release path, and the flag is cleared on the next
+   * allocation rather than by touching that path. The cost is that a
+   * subscriber which empties and never allocates again keeps its flag, which
+   * costs a bit and no correctness: the alarm is about a subscriber filling
+   * up, and one that has stopped asking is not filling up.
+   */
+  if (PREDICT_FALSE (p->util_alarm != 0))
+    {
+      u32 used, total, pct;
+
+      bpa_sub_usage (sub, &used, &total);
+      pct = total ? (used * 100) / total : 0;
+
+      if (!sub->alarmed && pct >= p->util_alarm)
+	{
+	  ip4_address_t a;
+
+	  sub->alarmed = 1;
+	  a.as_u32 = clib_host_to_net_u32 (b->ip_pub);
+	  vlib_log_warn (bpa_main.log_class,
+			 "subscriber %u of pool %v is %u%% through its "
+			 "%u ports on %U: past the %u%% alarm. RFC 8158 "
+			 "natEvent 12 would only report this once the "
+			 "customer had already started losing traffic.",
+			 b->sub_idx, p->name, pct, total, format_ip4_address,
+			 &a, p->util_alarm);
+	}
+      /* Ten points of hysteresis, so a subscriber sitting on the threshold
+       * does not produce a line every time a port is freed and taken. */
+      else if (sub->alarmed
+	       && pct + 10 < p->util_alarm)
+	sub->alarmed = 0;
+    }
+
   s = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx, (u16) off,
 			port_priv, proto, now);
   if (s == 0)
