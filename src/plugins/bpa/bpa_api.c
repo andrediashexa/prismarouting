@@ -28,6 +28,9 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
   u8 *name;
   int rv = 0, i;
 
+  /* Before the change, cleared after it: an entry can then only ever carry
+   * the identity of the request that produced it. */
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
   name = format (0, "%s", mp->name);
   /* Not zero: zero is VRF 0, and a client that says nothing must not bind the
    * pool to it. */
@@ -154,6 +157,7 @@ done:
   vec_free (out_b);
   vec_free (out_c);
   vec_free (name);
+  bpa_actor_clear ();
   REPLY_MACRO (VL_API_BPA_POOL_ADD_DEL_REPLY);
 }
 
@@ -166,6 +170,9 @@ vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
   u8 *name;
   int rv = 0;
 
+  /* Before the change, cleared after it: an entry can then only ever carry
+   * the identity of the request that produced it. */
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
   name = format (0, "%s", mp->name);
 
   t.udp = clib_net_to_host_u32 (mp->timeouts.udp);
@@ -190,6 +197,7 @@ vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
     }
 
   vec_free (name);
+  bpa_actor_clear ();
   REPLY_MACRO (VL_API_BPA_POOL_SETTINGS_SET_REPLY);
 }
 
@@ -202,6 +210,9 @@ vl_api_bpa_bypass_set_t_handler (vl_api_bpa_bypass_set_t *mp)
   u8 *name;
   int rv = 0, i;
 
+  /* Before the change, cleared after it: an entry can then only ever carry
+   * the identity of the request that produced it. */
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
   name = format (0, "%s", mp->name);
 
   for (i = 0; i < mp->n_prefixes; i++)
@@ -235,6 +246,7 @@ done:
   vec_free (bases);
   vec_free (counts);
   vec_free (name);
+  bpa_actor_clear ();
   REPLY_MACRO (VL_API_BPA_BYPASS_SET_REPLY);
 }
 
@@ -246,6 +258,9 @@ vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
   u8 *name;
   int rv = 0;
 
+  /* Before the change, cleared after it: an entry can then only ever carry
+   * the identity of the request that produced it. */
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
   name = format (0, "%s", mp->name);
   e = bpa_limits_set (name, clib_net_to_host_u32 (mp->max_sessions),
 		      clib_net_to_host_u32 (mp->max_rate));
@@ -257,6 +272,7 @@ vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
     }
 
   vec_free (name);
+  bpa_actor_clear ();
   REPLY_MACRO (VL_API_BPA_LIMITS_SET_REPLY);
 }
 
@@ -270,6 +286,9 @@ vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
   u8 *name;
   int rv = 0;
 
+  /* Before the change, cleared after it: an entry can then only ever carry
+   * the identity of the request that produced it. */
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
   name = format (0, "%s", mp->name);
   ip4_address_decode (mp->ip_priv, &priv);
 
@@ -290,6 +309,7 @@ vl_api_bpa_forward_add_del_t_handler (vl_api_bpa_forward_add_del_t *mp)
     }
 
   vec_free (name);
+  bpa_actor_clear ();
   REPLY_MACRO (VL_API_BPA_FORWARD_ADD_DEL_REPLY);
 }
 

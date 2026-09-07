@@ -339,8 +339,13 @@ schedule is the one produced after the work.
 
 #### Phase 3 — compliance, and it is a sequence
 
-[#35](https://github.com/andrediashexa/hexarouting/issues/35) so an identity exists → [#34](https://github.com/andrediashexa/hexarouting/issues/34) so the trail records **who**
-changed the configuration and not only what → [#22](https://github.com/andrediashexa/hexarouting/issues/22) so the trail cannot
+[#35](https://github.com/andrediashexa/hexarouting/issues/35) so an identity exists — *delivered, v0.15.0* → [#34](https://github.com/andrediashexa/hexarouting/issues/34) so the trail records **who**
+changed the configuration and not only what — *delivered, v0.21.0*: every entry
+carries `by <account> uid <n> via api`, captured from the request at the moment
+the change is applied, and an entry that cannot be attributed **says so** rather
+than omitting the field. It is an assertion and not proof — the transport is
+shared memory, which carries no peer credentials — which is exactly why the
+next one matters → [#22](https://github.com/andrediashexa/hexarouting/issues/22) so the trail cannot
 be edited afterwards. The trail is append-only and `fsync`ed, so it survives a
 reboot and a crash; it does not survive editing, which means it proves what
 happened only to somebody who already trusts the operator — and it exists to be

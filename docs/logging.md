@@ -175,11 +175,11 @@ In deterministic mode the configuration **is** the log. Every pool change is
 appended to a file, dated in UTC, with the complete definition:
 
 ```
-2026-09-05T02:07:58Z add pool provedor-a inside 100.64.0.0+1024 \
-  outside 45.170.16.0+64 outside 200.150.0.0+256 block 512 \
-  ports 1024-65535 policy interleaved mode deterministic
-2026-09-05T02:08:00Z del pool provedor-a ...
-2026-09-05T02:08:01Z add pool provedor-a ... block 1024 ...
+2026-09-05T02:07:58Z add pool provedor-a by marina uid 1001 via api \
+  inside 100.64.0.0+1024 outside 45.170.16.0+64 outside 200.150.0.0+256 \
+  block 512 ports 1024-65535 policy interleaved mode deterministic
+2026-09-05T02:08:00Z del pool provedor-a by marina uid 1001 via api ...
+2026-09-05T02:08:01Z add pool provedor-a by unattributed via cli ... block 1024 ...
 ```
 
 The question this answers: *what block size was in effect on the date named in
@@ -203,6 +203,51 @@ subscriber with full confidence.
   recomputed; a forwarded port is a mapping that was decided rather than
   computed, so a trail that omitted it would answer for that port with the
   subscriber the formula names — who is the wrong one, with full confidence.
+### Who changed it
+
+An entry that cannot say **who** is a log, not an audit trail: a log records
+events, an audit trail records accountable actions. The proof offered for
+deterministic mode is "the algorithm plus the configuration in force at that
+instant" — and if the configuration itself is disputed, a record nobody can
+attribute is one that anybody with an interest can question
+([#34](https://github.com/andrediashexa/hexarouting/issues/34)).
+
+Every entry carries one of four forms:
+
+| On the line | What it means |
+|---|---|
+| `by marina uid 1001 via api` | the VTY named an account and the uid it was acting as |
+| `by marina uid 0 via api` | marina, **acting as root** — which neither field says on its own |
+| `by uid 1001 via api` | the system could not name the account; the number is what is known |
+| `by unattributed via cli` | typed at the VPP CLI, where there is no session to ask |
+| `by unattributed via api` | an API client that sent no identity |
+
+* The identity **MUST** be captured when the change is **applied**, not when
+  the line is written. It is set from the request immediately before the change
+  and cleared immediately after, so an entry can only ever carry the identity
+  of the request that produced it.
+* An entry that cannot be attributed **MUST** say so. Omitting the field would
+  make it indistinguishable from an entry written before this existed — and
+  from one where nobody was accountable.
+* A field a client does not send arrives as **zero**, and zero is a real uid:
+  root. A request carrying neither a name nor a non-zero uid is therefore
+  recorded as unattributed rather than credited to the most privileged account
+  on the box. False attribution is the one outcome worse than none.
+* `SUDO_USER` is preferred over the effective account, because an operator who
+  runs the VTY under `sudo` **is** root by the time the call is made, and a
+  trail that records `root` for every one of them has recorded nothing.
+
+**What this is not: proof.** The client asserts its own identity, and the
+transport in use is shared memory, which carries no peer credentials for the
+plugin to check it against. Anyone who can reach the API can already
+reconfigure the box, so the trail is not a defence against them — it is the
+record of which operator did what among people trusted to be there at all,
+which is what an audit trail is. Kernel-verified identity would need the socket
+transport ([#76](https://github.com/andrediashexa/hexarouting/issues/76)); making the
+trail evidence against its own author is
+[#22](https://github.com/andrediashexa/hexarouting/issues/22), the same problem
+from the other side.
+
 * Each write **MUST** be `fsync`ed: a compliance log **MUST NOT** live only in
   the page cache.
 * Entries are also sent to VPP's log. A local file survives a reboot, not a disk
@@ -244,7 +289,7 @@ to the subscriber it was issued to
 - [x] `natEvent` 16 on allocation, 17 on release, 12 on exhaustion
 - [x] Per-thread queue in the dataplane, drained by a process
 - [x] TCP transport with disk spill
-- [x] Dated configuration trail
+- [x] Dated configuration trail, carrying the operator who made the change
 - [x] End-to-end test with a decoding collector (`lab/ipfix.sh`,
       `lab/ipfix-tcp.sh`), confirming every allocation has its matching release
 - [ ] Collector selection via a dedicated CLI; today the UDP path inherits
