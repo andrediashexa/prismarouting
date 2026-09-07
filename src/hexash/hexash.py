@@ -205,7 +205,10 @@ CGNAT_CONFIG = {
 }
 
 COMMIT = {
-    "check": ("validate the candidate without applying it", None),
+    "check": ("validate the candidate without applying it, and report which "
+              "subscribers a change would re-map", None),
+    "remap": ("apply a change that moves existing subscribers to new public "
+              "addresses and port blocks", None),
     "confirmed": ("apply, and roll back unless confirmed", "<1-60> minutes"),
     "comment": ("record a note with this commit", "<text>"),
 }
@@ -598,6 +601,10 @@ class Shell:
         self.frr = Frr()
         self.rb = Rollback()
         self.caps = capabilities()
+        # Lines the dataplane returned about subscribers changing mapping,
+        # refilled by every check. A commit that would move them is refused
+        # until the operator says so in as many words.
+        self.remap = []
         self.mode = "operational"      # operational | config | pool | user
         self.pool = None               # pool being edited
         self.user = None               # user being edited
@@ -753,6 +760,7 @@ class Shell:
         """
         running = self.running_config()
         d = running.delta_to(target)
+        self.remap = []
 
         # THE authorization check, here because this is where the change is
         # applied. The gates on `configure` and on the shell escape are
@@ -825,6 +833,12 @@ class Shell:
                     print(out)
                     self.err(f"pool '{pool.name}' would be refused")
                     ok = False
+                # What replacing this pool would do to the subscribers on it.
+                # Reported by the dataplane, which has both definitions and
+                # the arithmetic - rather than recomputed here, which would be
+                # a second implementation of the mapping in the VTY.
+                self.remap += [l for l in (out or "").splitlines()
+                               if l.startswith("remap:")]
             # A forward on a pool that is NOT being redefined. The ones on a
             # pool that is were just checked with it, as part of the same
             # definition - which is the only way to check a forward against a
@@ -1063,7 +1077,7 @@ class Shell:
             self.dp.run("bpa session-table " + " ".join(w[2:]))
 
     def do_commit(self, args):
-        """commit [check | confirmed <min> | comment <text>]"""
+        """commit [check | remap | confirmed <min> | comment <text>]"""
         if self.candidate is None:
             self.err("no candidate configuration")
             return
@@ -1084,6 +1098,34 @@ class Shell:
             if self.apply(self.candidate, check_only=True):
                 print("configuration check succeeds")
             return
+
+        # A change that re-maps existing subscribers is refused until it is
+        # asked for by name.
+        #
+        # Not a warning printed on the way past: in deterministic mode a
+        # subscriber's public address and port block are a function of the
+        # pool definition, so adding one public prefix moves every subscriber
+        # at that instant and ends every session on the pool. The box reports
+        # nothing unusual afterwards, because nothing unusual happened - it did
+        # what it was told. An operator learning that from the consequence
+        # learns it during an outage.
+        # "remap" is a prefix rather than the whole word, so it combines with
+        # comment and confirmed: an operator who has to acknowledge a
+        # re-mapping should not lose the ability to record why.
+        remap_ok = bool(args) and args[0] == "remap"
+        if remap_ok:
+            args = args[1:]
+
+        if not remap_ok:
+            self.apply(self.candidate, check_only=True)
+            if self.remap:
+                self.err("this change re-maps subscribers that already have "
+                         "mappings")
+                for line in self.remap:
+                    print("    " + line[len("remap:"):].strip())
+                print("    if that is what you mean, type: commit remap")
+                return
+            self.remap = []
 
         if running.is_same(self.candidate):
             print("no changes to commit")

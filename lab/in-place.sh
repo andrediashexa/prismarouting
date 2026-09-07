@@ -98,8 +98,16 @@ echo "is invalid the moment it changes. The same measurement, and it has to"
 echo "come out the other way - otherwise section 2 was measuring nothing."
 MARK2=$(wc -l < $TRAIL 2>/dev/null || echo 0)
 MAP_BEFORE=$(sess)
+# Since #23 this is refused until it is asked for by name. The refusal is
+# asserted below rather than stepped over: a control that quietly stopped
+# applying its own change would leave section 2 passing on a box that never
+# dropped a session for any reason at all.
+REFUSED=$($HX -c "configure" -c "cgnat pool live" -c "block-size 1024" \
+              -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$REFUSED" | tail -4 | sed 's/^/  /'
+REFUSED_AFTER=$(sess)
 $HX -c "configure" -c "cgnat pool live" -c "block-size 1024" \
-    -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
+    -c "exit" -c "commit remap" 2>&1 | tail -2 | sed 's/^/  /'
 MAP_AFTER=$(sess)
 MAP_TRAIL=$(tail -n +$((MARK2 + 1)) $TRAIL 2>/dev/null)
 echo "  sessions before: $MAP_BEFORE, after: $MAP_AFTER"
@@ -122,6 +130,10 @@ expect_in "and the MSS clamp" " tcp-mss 1400" "$CONF"
 
 # The other direction. Without it, "kept every session" would also pass on a
 # box that never drops a session for any reason at all.
+expect_in "a mapping change is refused until it is named" \
+  "re-maps subscribers" "$REFUSED"
+expect "and until then it drops nothing" \
+  test "${REFUSED_AFTER:-0}" -eq "${MAP_BEFORE:-99}"
 expect "a mapping change does drop them" \
   test "${MAP_AFTER:-99}" -lt "${MAP_BEFORE:-0}"
 expect_in "and does recreate the pool" "del pool live" "$MAP_TRAIL"

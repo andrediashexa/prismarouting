@@ -499,6 +499,36 @@ anyway; enhanced GRE for PPTP is handled — a subscriber whose PPTP server sits
 on a bypassed destination has a control channel that was never translated, so
 the data channel is bypassed rather than dropped as a call that went missing.
 
+## Changing a pool that is carrying traffic
+
+A subscriber's public address and port block are a **function of the pool
+definition**, so changing the definition changes the function: adding one
+public prefix moves every subscriber at that instant and ends every session on
+the pool. Nothing is corrupted and past answers stay resolvable — the
+configuration trail records which definition was in force — but every customer
+is disconnected at once, and the box reports nothing unusual because nothing
+unusual happened.
+
+`commit` refuses such a change until it is asked for by name, and says in
+numbers what it would do:
+
+```
+error: this change re-maps subscribers that already have mappings
+    240 of 256 subscribers change public address or port block; 0 hold live
+    state right now
+    100.64.64.16 moves from 203.0.113.0:1536-2047 to 203.0.113.0:2048-3071
+    if that is what you mean, type: commit remap
+```
+
+The count comes from the **dataplane**, which holds both definitions and runs
+the same arithmetic it would run afterwards — not from a second implementation
+of the mapping in the VTY. A **rollback of a re-mapping change is itself one**
+and needs the same acknowledgement; otherwise `rollback` would be the way round
+it.
+
+The whole procedure — what moves, what does not, and the migration that costs
+no outage at all — is [pool-resize.md](pool-resize.md).
+
 ## Two tenants, one private range
 
 A provider does not choose what private addresses its customers' CPE hands
