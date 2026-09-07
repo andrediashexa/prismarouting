@@ -25,7 +25,64 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.19.0.
+Nothing merged since v0.20.0.
+
+## 0.20.0 — the cheapest test level was red, and the silent code had no test
+
+`make test` is level 1 of the pyramid in `TESTING.md`, the one that "runs
+before every commit". It had been failing since v0.15.0 on any machine whose
+account is not root — which is worse than the three failures it printed: a
+suite nobody can run green is a suite whose next real failure is
+indistinguishable from the noise it already prints.
+
+### Fixed
+
+* **`make test` passes on an ordinary developer account**
+  ([#85](https://github.com/andrediashexa/hexarouting/issues/85)).
+  `test_hexash_apply.py` builds a `Shell`, whose constructor reads the invoking
+  account's real group membership (#35). The test now states the role it runs
+  under — and asserts that a read-only account **is** refused, so granting
+  capabilities in the fixture cannot be mistaken for deleting the check.
+
+* Three junk files committed at the repository root, fragments of a shell
+  heredoc that were interpreted as filenames.
+
+### Added
+
+* **`test/test_bpa_mss.c`** — the TCP MSS clamp, 47 checks. That it only ever
+  **lowers**; a SYN with no option; NOOP and EOL padding; a zero and a
+  too-small length byte; a length pointing outside the header; an MSS option
+  cut short by the data offset, where the bytes rewritten would be payload; a
+  data offset past the end of the packet and one below the minimum header.
+  Every checksum is compared against a full independent recomputation, never
+  against the incremental arithmetic that produced it.
+
+* **`test/test_bpa_ftp.c`** — the FTP sequence shift, 63 checks. `bpa_seq_after`
+  across the 2^32 boundary, which exists because plain `>` is wrong there and
+  no lab is going to send four gigabytes to find out; a retransmission of data
+  sent **before** a rewrite; a control connection rewritten **twice**; and
+  `bpa_ftp_is_control` for the subscriber's own FTP server, where the port is
+  read off the session because `in2out` has already replaced the one in the
+  header.
+
+* **`test/test_hexash_config.py`** — which changes rebuild a pool and which
+  apply in place, as a table, plus an assertion that the table **covers every
+  field a pool has**. A field added later is then a failure rather than a
+  silent default, and the default decides whether an operator loses their
+  subscribers.
+
+* `test/bpa_tcp_shim.h`, the same standalone pattern `bpa_ports.h` and
+  `bpa_rtsp.h` already use. `bpa_mss.h` and `bpa_ftp.h` gained the
+  `BPA_STANDALONE` guard; no behaviour change in the VPP build.
+
+### Method
+
+Every new assertion was run against deliberately broken code and required to
+fail before being kept — 18 mutations. Three were not caught on the first
+attempt, and each was a real hole: an MSS case that did not exercise the bound
+it was named after, an FTP acknowledgement path whose subtraction was
+unobservable because every case ran with zero drift, and a mutation harness
+that mutated a file nothing compiled.
 
 ## 0.19.0 — a change that re-maps subscribers has to be asked for by name
 
