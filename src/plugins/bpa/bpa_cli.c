@@ -457,6 +457,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   else
     error = bpa_pool_add (&cfg, 0);
 
+  /* After it is applied, never instead of applying it. */
+  if (!error)
+    bpa_timeouts_warn (vm, &cfg.timeouts, name);
+
 done:
   vec_free (in_b);
   vec_free (in_c);
@@ -1751,6 +1755,55 @@ VLIB_CLI_COMMAND (bpa_show_alg_command, static) = {
   .function = bpa_show_alg_command_fn,
 };
 
+/*
+ * Every timeout the box will actually use, with the ones under their floor
+ * marked. The mark matters as much as the number: an operator who does not
+ * know to ask cannot find out that a value is unusual.
+ */
+static void
+bpa_timeouts_show (vlib_main_t *vm, const bpa_timeouts_t *t, const char *what)
+{
+  vlib_cli_output (vm, "%s", what);
+#define _(field, name, floor, rfc, breaks)                                    \
+  vlib_cli_output (vm, "  %-16s %6u%s", name, t->field,                       \
+		   (t->field != 0 && t->field < (floor))                      \
+		     ? "   BELOW the floor " rfc " asks for"                  \
+		     : "");
+  foreach_bpa_timeout_floor
+#undef _
+  /* The three with no floor in any RFC, printed so the command shows the
+   * whole picture rather than only what happens to be governed. */
+  vlib_cli_output (vm, "  %-16s %6u", "tcp-syn", t->tcp_syn);
+  vlib_cli_output (vm, "  %-16s %6u", "gre", t->gre);
+  vlib_cli_output (vm, "  %-16s %6u", "port-holddown", t->port_holddown);
+  vlib_cli_output (vm, "  %-16s %6u", "alg-expect", t->alg_expect);
+}
+
+static clib_error_t *
+bpa_show_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			      vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+
+  bpa_timeouts_show (vm, &bm->timeouts, "global");
+  pool_foreach (p, bm->pools)
+    {
+      bpa_timeouts_t eff = bpa_timeouts_resolve (&p->timeouts, &bm->timeouts);
+      u8 *what = format (0, "pool %v (overrides resolved)%c", p->name, 0);
+
+      bpa_timeouts_show (vm, &eff, (char *) what);
+      vec_free (what);
+    }
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_show_timeouts_command, static) = {
+  .path = "show bpa timeouts",
+  .short_help = "show bpa timeouts",
+  .function = bpa_show_timeouts_command_fn,
+};
+
 static clib_error_t *
 bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 vlib_cli_command_t *cmd)
@@ -1799,6 +1852,11 @@ bpa_timeouts_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  break;
 	}
     }
+
+  /* Applied first, warned about second: the operator asked for it and may
+   * have a reason. Once per change, which is what this function is. */
+  if (!error)
+    bpa_timeouts_warn (vm, &bm->timeouts, 0);
 
   unformat_free (line_input);
   return error;
