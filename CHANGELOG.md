@@ -25,7 +25,45 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.28.0.
+Nothing merged since v0.29.0.
+
+## 0.29.0 — the VTY offers what the box has
+
+`interface <TAB>` answered `<word>`: true, and useless. It told the operator
+what they already knew and sent them to `vppctl` or `ip link` in another
+window — the two tools this VTY exists to keep them out of — at the first
+argument.
+
+### Added
+
+* **Completion of live values**
+  ([#98](https://github.com/andrediashexa/hexarouting/issues/98)) wherever the
+  tree takes a name:
+
+  ```
+  hexarouting# [edit] interface ?
+    host-veth-vpp             interface (up)
+    pg0                       interface (up)
+    tap4096                   interface (up)
+  ```
+
+  Interfaces come from the dataplane with their state; pools, accounts and
+  SNMP users come from the **candidate**, so they complete what is being
+  edited rather than only what is committed. `local0` is never offered — it is
+  VPP's own loopback and configures nothing.
+
+  A source that cannot answer offers nothing and leaves the hint in place: a
+  VTY that becomes unusable when the dataplane is down is a VTY that cannot be
+  used to fix it.
+
+* **`show this`** — the configuration of the hierarchy being edited and nothing
+  above it, in every level the VTY has. It shows the **candidate**: somebody in
+  the middle of an edit asking "what is here" is asking about what they are
+  building.
+
+  Inside `cgnat pool residential` there was previously no way to see what that
+  pool holds without leaving and printing the whole box.
+
 
 ## 0.28.0 — the suite in a quarter of the time, and the release as one command
 
