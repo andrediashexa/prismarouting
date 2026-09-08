@@ -25,7 +25,44 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.37.0.
+Nothing merged since v0.38.0.
+
+## 0.38.0 — the dataplane took whatever NIC it found
+
+One defect ([#123](https://github.com/andrediashexa/hexarouting/issues/123)),
+found on a box installed from the v0.37.0 medium that came up unreachable.
+
+### Fixed
+
+* **The appliance handed VPP the management interface.** It shipped
+  `HEXA_DATAPLANE_IF=eth0`, which does not exist on a Debian 12 box with
+  predictable interface names. The tuner could not resolve a PCI address and
+  generated `dpdk { dev default { ... } }` — no allowlist, no `no-pci` — so
+  VPP's DPDK plugin probed and claimed what it could bind. On a single-NIC box
+  that is the management interface, and the box left the network the moment
+  the dataplane started.
+
+  The installer never asks which interface carries subscriber traffic and
+  nothing else writes that setting, so this was the ordinary case rather than
+  the exception.
+
+  **Unknown now means claim nothing.** The two outcomes are not symmetric: a
+  box with no dataplane interface is recoverable by logging in over the
+  network; a box that ate its own management is recoverable by walking to it.
+
+  The interface carrying the default route is refused even when named, and the
+  refusal is printed. The setting ships empty. The boot self-test says the box
+  has no dataplane interface and names the file to edit, because a box that
+  forwards nothing looks like a box that is working.
+
+  **Recovering a box already in this state:** set `HEXA_DATAPLANE_IF` in
+  `/etc/hexarouting/tune.env`, or add `no-pci` to the `dpdk {}` block in
+  `/etc/vpp/startup.conf`, then **reboot** — DPDK bound the NIC to a userspace
+  driver and stopping VPP does not reliably hand it back to the kernel.
+
+  A test was holding the defect in place: `test_tune.py` asserted `"dev
+  default" in out`, which reads as a harmless fallback and was the behaviour
+  that removed boxes from the network.
 
 ## 0.37.0 — the medium never carried the binary API
 
