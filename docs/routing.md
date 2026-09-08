@@ -27,6 +27,91 @@ is explicitly enabled.
 | **How** | `linux_cp` mirrors interfaces; `linux_nl` listens to netlink; `hexash` forwards routing commands to `vtysh`. |
 | **How much** | No measurable dataplane cost: punt only affects protocol packets, not transit. |
 
+## The table you can see is not always the table that forwards
+
+Three tables hold routes and only one of them moves packets:
+
+```mermaid
+flowchart LR
+    RIB["FRR's RIB<br/>what FRR decided"] --> K["kernel FIB<br/>what FRR installed"]
+    K -->|"netlink / linux_nl"| VFIB["VPP FIB<br/>what forwards"]
+```
+
+`show ip route` in `vtysh` answers from the **first**. That is the command an
+operator reaches for when traffic is not flowing, and it is the table where the
+route is present and correct on a box that is dropping the traffic. Nothing in
+that output says the FIB was ever asked.
+
+So the VTY has its own:
+
+```
+hexarouting> show route
+  Destination          Next hop          Interface    Kind
+  0.0.0.0/0            10.0.0.2          host-veth-vpp forward
+  203.0.113.0/24       10.0.0.2          host-veth-vpp forward
+  10.0.0.0/24          connected         host-veth-vpp connected
+
+  3 entries carrying traffic
+```
+
+It reads **VPP's FIB**. `show route verbose` reads both and marks every prefix
+where they disagree, with the count and what it means — two lists side by side
+and a reader left to compare them is not an answer.
+
+### What it deliberately does not show
+
+* **Per-neighbour adjacencies.** VPP creates a `/32` for every resolved
+  neighbour, whose only next hop is its own address. On a box with a dozen
+  neighbours they are most of the table, and a routing table that is mostly ARP
+  is a routing table nobody reads. `verbose` shows them, marked `neighbour`.
+* **Housekeeping entries** — the drops and local addresses VPP creates per
+  interface address. Also in `verbose`, marked for what they are.
+
+### What it deliberately does not flag
+
+* **A local address.** Traffic to it is received, not dropped. Calling that
+  "not forwarding" is wrong.
+* **A route through an interface VPP does not own.** On a real box that is the
+  management port, which **MUST NOT** be handed to VPP — so every route through
+  it is in FRR and absent from the FIB, correctly and permanently. Flagging
+  those would leave a standing alarm on every machine, and an alarm that is
+  always on is one nobody reads.
+
+The VPP column reports **what VPP holds** — `forward`, `connected`, `local`,
+`neighbour`, `drop` or `absent` — rather than yes/no. A prefix VPP is
+explicitly dropping and a prefix VPP has never heard of are different
+situations with different causes, and reporting both as "no" is a false
+statement in the one table whose job is to settle a disagreement.
+
+## Static routes
+
+```
+hexarouting# [edit] ip route 0.0.0.0/0 200.150.0.1
+hexarouting# [edit] commit
+```
+
+Staged in the candidate and applied by `frr-reload` like every other routing
+statement, so it is committed and rolled back the same way — and a rollback
+removes it from the **FIB**, which is the only place that matters.
+
+`commit check` refuses a next hop that is on no connected network:
+
+```
+error: ip route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
+    the route would be accepted and never reach the forwarding table
+```
+
+Accepted, such a route sits in FRR and never reaches the FIB — the exact
+failure `show route verbose` exists to find afterwards, and cheaper to say at
+the prompt than to have somebody find during an outage.
+
+**On FRR 10 a static route is configured through `mgmtd` and served by
+`staticd`.** Without them `vtysh` answers `mgmtd is not running` to every
+`ip route`, which is how one can be typed, accepted and never exist.
+`frrinit.sh` starts both on an installed box; anything that starts FRR daemons
+by hand has to start them too — `lab/routing.sh` did not, and that is what this
+was found by.
+
 ## Components
 
 | Piece | Role |

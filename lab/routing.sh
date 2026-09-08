@@ -85,9 +85,21 @@ router isis HEXA
  is-type level-2-only
 EOF
 chown -R frr:frr /var/run/frr /etc/frr
+# These are the daemons THIS LAB arranges, not what the product ships: an
+# installed box inherits Debian's /etc/frr/daemons, where bgpd, ospfd and isisd
+# are all "no" (#99). Starting them by hand here is what let that go unnoticed,
+# so it is said out loud rather than left as a list somebody skims.
 for d in zebra bgpd ospfd isisd; do
   /usr/lib/frr/$d -d -A 127.0.0.1 -f /etc/frr/$d.conf
 done
+# mgmtd and staticd: on FRR 10 a static route is configured through mgmtd and
+# served by staticd, and without them vtysh answers "mgmtd is not running" to
+# every "ip route" - which is how a static route can be typed, accepted and
+# never exist. frrinit.sh starts both on a real box; a lab that starts daemons
+# by hand has to know that.
+/usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
+/usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
+sleep 1
 
 # ---------------- upstream ----------------
 mkdir -p /var/run/frr/peer /etc/frr/peer
@@ -184,4 +196,106 @@ expect "the MTU is in the running configuration"   sh -c "$HX -c 'show running-c
 # just broke.
 $HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1500" -c "exit" \
     -c "commit" >/dev/null 2>&1 || true
+
+# --- the forwarding table, and telling it apart from FRR's (#95) ---
+#
+# Everything above asserts on "vppctl show ip fib" directly, because that is
+# the table that forwards. This section asserts that the VTY says the same
+# thing - and that when the two tables disagree, it says WHICH.
+echo
+echo "=========== show route ==========="
+SHOW_ROUTE=$($HX -c "show route" 2>&1)
+printf '%s\n' "$SHOW_ROUTE" | head -12 | sed 's/^/  /'
+
+echo
+echo "=========== a static route through the VTY ==========="
+# 10.0.0.2 is the peer, on the connected /24, so this one is legitimate.
+$HX -c "configure" -c "ip route 192.168.77.0/24 10.0.0.2" -c "commit" \
+  > /tmp/staticroute.log 2>&1 || true
+cat /tmp/staticroute.log | sed 's/^/  commit: /'
+echo "  --- what FRR holds now ---"
+vtysh -c "show running-config" 2>/dev/null | grep -E "^ip route" | sed 's/^/    /'
+echo "  --- frr-reload present? ---"
+ls -l /usr/lib/frr/frr-reload.py 2>&1 | sed 's/^/    /'
+sleep 3
+echo "  FRR:  $(vtysh -c 'show ip route 192.168.77.0/24' 2>/dev/null | grep -c 192.168.77) line(s)"
+echo "  VPP:  $(vppctl show ip fib 192.168.77.0/24 2>/dev/null | grep -c '^192.168.77.0/24') entry"
+STATIC_FIB=$(vppctl show ip fib 192.168.77.0/24 2>/dev/null | grep -c "^192.168.77.0/24")
+STATIC_VTY=$($HX -c "show route" 2>&1 | grep -c "192.168.77.0/24")
+
+echo
+echo "=========== rollback removes it from the FIB ==========="
+# A rollback that leaves the route forwarding is not a rollback, and FRR's
+# answer cannot tell you: it is the FIB that has to lose it.
+$HX -c "configure" -c "rollback 1" -c "commit" > /tmp/rbroute.log 2>&1 || true
+sleep 3
+ROLLED_FIB=$(vppctl show ip fib 192.168.77.0/24 2>/dev/null | grep -c "^192.168.77.0/24")
+echo "  after rollback, in the VPP FIB: $ROLLED_FIB"
+
+echo
+echo "=========== a next hop on no connected network is refused ==========="
+# Accepted, it would sit in FRR and never reach the FIB - the exact failure
+# 'show route verbose' exists to find afterwards. Cheaper to say so here.
+BADNH=$($HX -c "configure" -c "ip route 10.55.0.0/16 172.31.99.1" \
+            -c "commit check" 2>&1)
+printf '%s\n' "$BADNH" | tail -3 | sed 's/^/  /'
+
+echo
+echo "=========== show route verbose on a HEALTHY box ==========="
+#
+# The assertion here is that it says NOTHING is wrong, and that is the harder
+# half. A route in FRR and not in the FIB is asserted in test/test_routes.py
+# against a synthetic table, where the fault can be stated exactly.
+#
+# It is NOT staged here, and the attempt is worth recording: a static route
+# added through FRR reaches the FIB by way of linux_nl, and taking it out of
+# the FIB with "vppctl ip route del" does not hold - linux_nl puts it back.
+# Producing a genuine divergence live means breaking that sync, and a lab that
+# fakes the fault it is testing for proves nothing about the real one.
+#
+# What this box WILL have is routes FRR holds through interfaces VPP does not
+# own - here the container's eth0, on a real appliance the management port that
+# MUST NOT be handed to VPP. Those are permanently in FRR and permanently
+# absent from the FIB, correctly. Reporting them would put standing alarms on
+# every box, and an alarm that is always on is one nobody reads.
+VERBOSE=$($HX -c "show route verbose" 2>&1)
+printf '%s\n' "$VERBOSE" | sed 's/^/  /'
+echo "  --- what FRR holds that VPP does not own ---"
+vtysh -c "show ip route json" 2>/dev/null \
+  | tr ',' '\n' | grep -o '"interfaceName":"[^"]*"' | sort -u | sed 's/^/    /'
+
+expect "the VTY lists the learned routes from the FIB" \
+  sh -c "printf '%s' \"$SHOW_ROUTE\" | grep -q '203.0.113.0/24'"
+expect "and all three of them" \
+  sh -c "printf '%s' \"$SHOW_ROUTE\" | grep -qc '198.1[89]'"
+# The housekeeping VPP creates per interface address must not be in there, or
+# the three routes that matter are lost among a dozen entries nobody asked for.
+expect_not_in "without the per-neighbour adjacencies" "10.0.0.2/32" "$SHOW_ROUTE"
+
+expect "a static route committed through the VTY reaches the FIB" \
+  test "${STATIC_FIB:-0}" -ge 1
+expect "and the VTY reports it" test "${STATIC_VTY:-0}" -ge 1
+expect "rolling it back removes it from the FIB" test "${ROLLED_FIB:-1}" -eq 0
+
+expect_in "an unreachable next hop is refused at commit check" \
+  "on no connected network" "$BADNH"
+expect_in "and says what would have happened" \
+  "never reach the forwarding table" "$BADNH"
+
+# Crying wolf is the failure mode of a command like this. A route through an
+# interface VPP does not own - the management port on a real box - is in FRR
+# and absent from the FIB for ever, correctly, and flagging it would leave a
+# standing alarm on every machine.
+expect_in "a healthy box reports no disagreement" \
+  "every route FRR holds is in the forwarding table" "$VERBOSE"
+expect_not_in "and does not flag routes off the dataplane" \
+  "NOT forwarding" "$VERBOSE"
+# The learned routes must be in there with their real next hop, or "no
+# disagreement" would also be true of a comparison that found nothing at all.
+expect_in "while still listing what the FIB holds" "203.0.113.0/24" "$VERBOSE"
+expect_in "with the next hop it forwards to" "10.0.0.2" "$VERBOSE"
+# A local address is the box itself. Traffic to it is received, not dropped,
+# and calling that "not forwarding" is simply wrong.
+expect_in "a local address is not reported as a failure" "local" "$VERBOSE"
+
 verdict

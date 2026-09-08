@@ -26,6 +26,7 @@ from config import Config, Pool, URPF_MODES
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, redact, snmp_redact,
                     validate_snmp, validate_ssh, SSH_FIELDS)
+import routes
 import vppapi
 
 readline = None
@@ -103,6 +104,9 @@ SHOW = {
         "compare": ("differences against the running configuration", None)}),
     "running-config": ("configuration in effect, CGNAT and routing", None),
     "rollback": ("committed revisions available", None),
+    "route": ("the forwarding table (what actually moves packets)", {
+        "verbose": ("compare it against FRR's table and mark disagreements",
+                    None)}),
     "ip": ("IP information (FRR)", None),
     "bgp": ("BGP information (FRR)", None),
     "isis": ("IS-IS information (FRR)", None),
@@ -343,6 +347,8 @@ TREE = {
             "cgnat": ("remove CGNAT configuration", {
                 "pool": ("remove a pool", ARG_WORD),
                 "interface": ("disable CGNAT on an interface", ARG_WORD)})}),
+        "ip": ("IP configuration", {
+            "route": ("a static route", "<prefix> <next-hop|interface>")}),
         "router": ("routing protocols (FRR)", {
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", None),
@@ -812,6 +818,24 @@ class Shell:
                 print("    give an account an authorized key, or allow "
                       "password authentication for one that has a password")
                 ok = False
+            # A static route whose next hop is on no connected network is
+            # accepted by FRR, installed, and silently inert: FRR holds it, the
+            # FIB never gets it, and "show ip route" looks correct. It is the
+            # exact failure `show route verbose` exists to find afterwards, and
+            # it is cheaper to say so at the prompt (#95).
+            if d["routing_changed"] and target.routing:
+                rc_fib, fib_text = self.dp.run("show ip fib")
+                if rc_fib == 0 and fib_text.strip():
+                    fibs = routes.parse_fib(fib_text)
+                    table = fibs.get(0, {})
+                    for stmt, nexthop in routes.unreachable_next_hops(
+                            target.routing, table):
+                        self.err(f"{stmt}: {nexthop} is on no connected "
+                                 "network")
+                        print("    the route would be accepted and never "
+                              "reach the forwarding table")
+                        ok = False
+
             for pool in d["pool_add"] + d["pool_replace"]:
                 if not pool.inside or not pool.outside:
                     self.err(f"pool '{pool.name}': inside and outside required")
@@ -1644,6 +1668,10 @@ class Shell:
         if line == "show version":
             self.show_version()
             return
+        _w = line.split()
+        if _w[:2] == ["show", "route"]:
+            self.show_route(_w[2:])
+            return
         rc, out = self.frr.show(line)
         if out:
             print(out)
@@ -1660,6 +1688,105 @@ class Shell:
         is crackable offline at the attacker's leisure.
         """
         print("\n".join(snmp_redact(redact(cfg.text().splitlines()))))
+
+    def show_route(self, args):
+        """
+        The forwarding table, and on request the two tables behind it.
+
+        `show ip route` in vtysh answers from FRR's RIB. That is the command an
+        operator reaches for when traffic is not flowing, and it is the table
+        where the route is present and correct on a box that is dropping the
+        traffic - because the table that forwards is VPP's FIB, and FRR's
+        answer says nothing about whether the route ever got there.
+        """
+        verbose = "verbose" in args
+        wanted = [a for a in args if a != "verbose"]
+
+        rc, out = self.dp.run("show ip fib")
+        if rc != 0 or not out.strip():
+            self.err("cannot read the forwarding table: the dataplane is not "
+                     "answering")
+            return
+        tables = routes.parse_fib(out)
+
+        rib = {}
+        if verbose:
+            # Only asked for when it is going to be used. A box may run CGNAT
+            # with no routing daemon at all, and `show route` must not depend
+            # on one being there.
+            rrc, rout = self.frr.show("show ip route json")
+            rib = routes.parse_rib(rout) if rrc == 0 else {}
+            # Which interfaces VPP owns, so routes through the management
+            # interface are not reported as faults for ever.
+            _, lcp = self.dp.run("show lcp")
+            self._vpp_hosts = routes.vpp_host_interfaces(lcp)
+            if not rib:
+                print("  (FRR did not answer; showing the forwarding table "
+                      "alone)")
+
+        for vrf in sorted(tables):
+            table = tables[vrf]
+            if len(tables) > 1:
+                print(f"VRF {vrf}")
+
+            if verbose:
+                self._route_rows_verbose(table, rib, wanted)
+            else:
+                self._route_rows(table, wanted)
+
+    def _route_rows(self, table, wanted):
+        rows = routes.forwarding(table)
+        if wanted:
+            rows = {p: e for p, e in rows.items()
+                    if any(p.startswith(x) or x.startswith(p.split("/")[0])
+                           for x in wanted)}
+        if not rows:
+            print("  no matching entry in the forwarding table")
+            return
+
+        print(f"  {'Destination':<20} {'Next hop':<17} {'Interface':<12} Kind")
+        for prefix in sorted(rows, key=routes._sort_key):
+            e = rows[prefix]
+            via, iface = e["via"][0] if e["via"] else ("-", "-")
+            print(f"  {prefix:<20} {via:<17} {iface:<12} {e['kind']}")
+            for via, iface in e["via"][1:]:
+                print(f"  {'':<20} {via:<17} {iface:<12} (also)")
+        print(f"\n  {len(rows)} entr{'y' if len(rows) == 1 else 'ies'} "
+              "carrying traffic")
+
+    def _route_rows_verbose(self, table, rib, wanted):
+        rows = routes.compare(table, rib, getattr(self, "_vpp_hosts", None))
+        if wanted:
+            rows = [r for r in rows
+                    if any(r[0].startswith(x) or x.startswith(r[0].split("/")[0])
+                           for x in wanted)]
+        if not rows:
+            print("  no matching entry in either table")
+            return
+
+        print(f"  {'Destination':<20} {'FRR':<5} {'VPP':<10} "
+              f"{'Next hop':<17} {'Interface':<12}")
+        missing = []
+        for prefix, in_rib, in_fib, kind, via, iface in rows:
+            mark = ""
+            if in_rib and not in_fib:
+                mark = "  ** in FRR, NOT forwarding"
+                missing.append(prefix)
+            print(f"  {prefix:<20} {'yes' if in_rib else '-':<5} "
+                  f"{kind:<10} {via:<17} {iface:<12}{mark}")
+
+        if missing:
+            # The whole reason this command exists. Two lists side by side and
+            # a reader left to compare them is not an answer.
+            print(f"\n  {len(missing)} prefix{'' if len(missing) == 1 else 'es'} "
+                  "in FRR's table and not in the forwarding table.")
+            print("  Traffic to " + ("it" if len(missing) == 1 else "them")
+                  + " is dropped. FRR installs routes into the kernel and")
+            print("  linux_nl carries them into VPP; a route that stops half "
+                  "way leaves")
+            print("  both halves looking healthy on their own.")
+        else:
+            print("\n  every route FRR holds is in the forwarding table")
 
     def show_version(self):
         """
