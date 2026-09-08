@@ -5,7 +5,10 @@ __pycache__/
 .build/
 test/bpa_vectors.h
 .build-vpp/
-hexarouting.iso
+# Both the old name and the versioned one. Narrowing this to the versioned
+# pattern alone un-ignored the image already on disk under the old name, and
+# "git add -A" committed 321 MB before GitHub refused the push (#91).
+hexarouting*.iso
 boot-console.log
 install-console.log
 

@@ -8,7 +8,11 @@ set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${WORK:-/tmp/hexa-iso}
-OUT=${OUT:-$REPO/hexarouting.iso}
+# The name carries the version, so the file keeps its identity once it is off
+# the release page. tools/version-stamp.sh owns the calculation - a second
+# copy of it here would drift, and the drift would only show up as an ISO
+# whose name disagrees with the version inside it.
+OUT=${OUT:-$REPO/$(sh "$REPO/tools/version-stamp.sh" --filename "$REPO")}
 SUITE=bookworm
 MIRROR=http://deb.debian.org/debian
 VPP_VERSION=${VPP_VERSION:-26.06-release}

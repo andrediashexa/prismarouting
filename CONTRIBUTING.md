@@ -241,6 +241,19 @@ When it happens it **MUST** produce all five of:
    A release whose ISO does not boot **MUST NOT** be published. Fix it, or
    say in the note that this version ships as source only and why.
 
+   **The image's filename MUST carry the version**: `hexarouting-0.23.0.iso`,
+   never `hexarouting.iso`. A file keeps its name and loses its context the
+   moment it is downloaded, copied to a USB stick or handed to somebody at a
+   site, and two images with the same name are indistinguishable at exactly
+   the moment it matters — when an operator is deciding which one to install.
+
+   `tools/version-stamp.sh --filename` produces the name, and is the only
+   place that calculation lives. The bare `hexarouting-<version>.iso` is
+   reserved for the tree that **is** the release: clean, and standing exactly
+   on the tag for the version it claims. Any other tree adds its commit, and a
+   dirty one says so — because the image nobody must mistake for a release is
+   the one somebody built from uncommitted changes.
+
 ```mermaid
 flowchart LR
     A["maintainer asks<br/>for a merge"] --> B["bump VERSION"]

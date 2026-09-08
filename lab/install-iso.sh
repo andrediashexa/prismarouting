@@ -10,7 +10,7 @@
 # applies isolcpus and hugepages, so its self-test comes up OUT of first-boot
 # mode. On the live ISO that path is dead code by construction.
 set -u
-ISO=${ISO:-/src/hexarouting.iso}
+ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 DISK=${DISK:-/tmp/hexa-disk.qcow2}
 SIZE=${DISK_SIZE:-8G}
 LOG=${LOGCOPY:-/src/install-console.log}
