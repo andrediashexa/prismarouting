@@ -2416,6 +2416,17 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
     s = format (s, "cgnat block-holddown %u\n", bm->block_holddown);
   if (bpa_log_main.enabled)
     s = format (s, "cgnat logging enable\n");
+  /*
+   * The TCP collector, which used to be applied and never reported back. The
+   * running configuration is read from the box, so an omission here is not a
+   * cosmetic one: saving the configuration and reloading it produced a box
+   * that looked identical and exported nothing, and a rollback could not
+   * restore a destination that was never in the revision. Nothing said so.
+   * https://github.com/andrediashexa/hexarouting/issues/116
+   */
+  if (bpa_log_tcp.enabled)
+    s = format (s, "cgnat logging tcp %U port %u\n", format_ip4_address,
+		&bpa_log_tcp.collector, bpa_log_tcp.port);
 
   if (s)
     {
