@@ -416,6 +416,17 @@ class Config:
         # would be two things to keep in step, and they would disagree.
         # Absent means table 0, which is the default and needs no statement.
         self.vrfs: dict[str, int] = {}
+        # The MAC the interface answers to, when it is not the one the card
+        # came with. Read back from the dataplane, so a box that was never
+        # told carries nothing here.
+        self.macs: dict[str, str] = {}
+        # Interfaces where router advertisements are suppressed.
+        #
+        # VPP sends RAs every 200 seconds on any interface holding an IPv6
+        # address - measured, not assumed. On a subscriber-facing port that
+        # advertises the box as a default router, which is a second gateway
+        # for subscribers who get their prefix by DHCPv6-PD.
+        self.ra_suppressed: set = set()
         # Present means shut down. Absent means up, which is the default and
         # the state of every interface nobody has touched, so recording the
         # absence would make every box look configured.
@@ -472,10 +483,15 @@ class Config:
         for ifname in sorted(set(self.mtus) | set(self.urpf)
                              | set(self.descriptions) | set(self.admin_down)
                              | set(self.addresses) | set(self.vlans)
-                             | set(self.vrfs)):
+                             | set(self.vrfs) | set(self.macs)
+                             | set(self.ra_suppressed)):
             out.append(f"interface {ifname}")
             # Description first: it is what the interface IS, and a reader
             # scanning a long configuration for one port finds it by name.
+            if ifname in self.macs:
+                out.append(f" mac-address {self.macs[ifname]}")
+            if ifname in self.ra_suppressed:
+                out.append(" ipv6 nd suppress-ra")
             if ifname in self.vrfs:
                 out.append(f" vrf {self.vrfs[ifname]}")
             if ifname in self.vlans:
@@ -663,6 +679,18 @@ class Config:
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
+                elif w[0] == "mac-address" and len(w) > 1:
+                    if len(w[1].split(":")) != 6:
+                        cfg.unknown.append(
+                            (lineno, s, f"'{w[1]}' is not a MAC address"))
+                    else:
+                        cfg.macs[iface] = w[1].lower()
+                elif s == "no mac-address":
+                    cfg.macs.pop(iface, None)
+                elif s == "ipv6 nd suppress-ra":
+                    cfg.ra_suppressed.add(iface)
+                elif s == "no ipv6 nd suppress-ra":
+                    cfg.ra_suppressed.discard(iface)
                 elif w[0] == "vrf" and len(w) > 1 and w[1].isdigit():
                     if int(w[1]):
                         cfg.vrfs[iface] = int(w[1])
@@ -991,6 +1019,10 @@ class Config:
                                if a not in have]
             if have - want:
                 addr_del[k] = sorted(have - want)
+        mac_set = {k: v for k, v in other.macs.items()
+                   if self.macs.get(k) != v}
+        ra_on = sorted(other.ra_suppressed - self.ra_suppressed)
+        ra_off = sorted(self.ra_suppressed - other.ra_suppressed)
         desc_set = {k: v for k, v in other.descriptions.items()
                     if self.descriptions.get(k) != v}
         desc_del = [k for k in self.descriptions if k not in other.descriptions]
@@ -1039,6 +1071,9 @@ class Config:
             "bypass_set": bypass_set,
             "if_add": if_add,
             "if_remove": if_del,
+            "mac_set": mac_set,
+            "ra_on": ra_on,
+            "ra_off": ra_off,
             "vrf_set": vrf_set,
             "subif_add": subif_add,
             "subif_del": subif_del,

@@ -148,11 +148,15 @@ INTERFACE_BLOCK = {
     "description": ("what this interface is for", "<text>"),
     "vlan": ("VLAN tag, on a sub-interface", "<1-4094> [inner <1-4094>]"),
     "vrf": ("the routing table this interface's addresses live in", ARG_NUM),
+    "mac-address": ("the MAC this interface answers to", "<xx:xx:xx:xx:xx:xx>"),
     "ipv4": ("IPv4 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
     }),
     "ipv6": ("IPv6 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
+        "nd": ("neighbour discovery", {
+            "suppress-ra": ("stop advertising this box as a router", None),
+        }),
     }),
     "shutdown": ("take the interface administratively down", None),
     "mtu": ("MTU, on both the dataplane interface and its TAP", "<576-9216>"),
@@ -340,7 +344,8 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
-               "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set")
+               "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
+               "mac_set", "ra_on", "ra_off")
 
 
 def cap_needed(delta):
@@ -765,6 +770,7 @@ class Shell:
         cfg.addresses = self.device_addresses()
         cfg.vlans = self.device_vlans()
         cfg.vrfs = self.device_vrfs()
+        cfg.macs = self.device_macs()
         cfg.admin_down = self.device_admin_down()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
@@ -817,6 +823,27 @@ class Shell:
                 "outer": row.get("sub_outer_vlan_id") or row.get("sub_id"),
                 "inner": inner,
             }
+        return out
+
+    def device_macs(self) -> dict:
+        """
+        The MAC each interface answers to, from sw_interface_dump.
+
+        Every interface has one, so this reports them all - the same choice
+        the MTU makes, and for the same reason: "explicitly configured" is not
+        a property the dataplane can answer, and inventing the distinction
+        would mean the VTY remembering things between invocations.
+        """
+        r = self.api.dump("sw_interface_dump",
+                          {"sw_if_index": 0xFFFFFFFF,
+                           "name_filter_valid": False, "name_filter": ""})
+        if r.state != vppapi.OK:
+            return {}
+        out = {}
+        for row in r.fields.get("rows", []):
+            mac = (row.get("l2_address") or "").lower()
+            if mac and mac != "00:00:00:00:00:00":
+                out[row["interface_name"]] = mac
         return out
 
     def device_vrfs(self) -> dict:
@@ -1049,6 +1076,48 @@ class Shell:
                     continue
                 subprocess.run(["ip", "link", "set", "dev", name,
                                 "up" if up else "down"], capture_output=True)
+        return True
+
+    def set_mac(self, ifname, mac):
+        """The MAC on the dataplane interface. The TAP keeps its own."""
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("sw_interface_set_mac_address",
+                          {"sw_if_index": idx, "mac_address": mac})
+        if r.state != vppapi.OK:
+            self.err(f"interface {ifname}: could not set {mac}: {r.reason}")
+            return False
+        return True
+
+    def set_ra_suppress(self, ifname, suppress):
+        """
+        Stop, or resume, advertising this box as a router on an interface.
+
+        VPP sends RAs every 200 seconds on any interface holding an IPv6
+        address - measured on a running dataplane, not assumed. On a
+        subscriber-facing port that makes the box a default router for
+        everybody behind it, which is a second gateway for subscribers who get
+        their prefix by DHCPv6-PD.
+
+        `is_no` undoes a previous configuration rather than meaning "not
+        suppressed", so resuming is is_no on the suppression, not suppress=0.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("sw_interface_ip6nd_ra_config",
+                          {"sw_if_index": idx, "suppress": 1,
+                           "is_no": not suppress, "managed": 0, "other": 0,
+                           "ll_option": 0, "send_unicast": 0, "cease": 0,
+                           "default_router": 0, "max_interval": 0,
+                           "min_interval": 0, "lifetime": 0,
+                           "initial_count": 0, "initial_interval": 0})
+        if r.state != vppapi.OK:
+            self.err(f"interface {ifname}: router advertisements: {r.reason}")
+            return False
         return True
 
     def set_vrf(self, ifname, table):
@@ -1591,6 +1660,16 @@ class Shell:
                 if not self.set_address(ifname, a, True):
                     return False
 
+        for ifname, mac in d["mac_set"].items():
+            if not self.set_mac(ifname, mac):
+                return False
+        for ifname in d["ra_on"]:
+            if not self.set_ra_suppress(ifname, True):
+                return False
+        for ifname in d["ra_off"]:
+            if not self.set_ra_suppress(ifname, False):
+                return False
+
         for ifname, text in d["desc_set"].items():
             if not self.set_description(ifname, text):
                 return False
@@ -2099,6 +2178,24 @@ class Shell:
             self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
             return True
 
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "mac-address"):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 2 or len(w[1].split(":")) != 6:
+                self.err("usage: mac-address <xx:xx:xx:xx:xx:xx>")
+            else:
+                self.candidate.macs[ifname] = w[1].lower()
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:3] == ["ipv6", "nd", "suppress-ra"]):
+            self.candidate.ra_suppressed.add(self.frr_ctx[-1].split()[1])
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:4] == ["no", "ipv6", "nd", "suppress-ra"]):
+            self.candidate.ra_suppressed.discard(
+                self.frr_ctx[-1].split()[1])
+            return True
+
         # `vrf` moves the interface between routing tables. The device's, and
         # not something FRR can be told about after the fact.
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
@@ -2548,6 +2645,51 @@ class Shell:
         # better than printing it twice under two names.
         self.print_config(cfg)
 
+    def show_one_interface(self, name, ifaces):
+        """
+        Everything the box knows about one interface, for a fault report.
+
+        The counters are the point. The rest of this is available from the
+        table; "up, and dropping" is not, and it is what the operator was
+        calling about.
+        """
+        e = ifaces[name]
+        print(f"  {name}")
+        print(f"    state       {e['state']}")
+        print(f"    mtu         {e['mtu']}")
+        print(f"    addresses   {', '.join(e['addresses']) or '-'}")
+        if e["host"]:
+            print(f"    linux       {e['host']}")
+        vrf = self.device_vrfs().get(name)
+        print(f"    vrf         {vrf if vrf else '0 (default)'}")
+        mac = self.device_macs().get(name)
+        if mac:
+            print(f"    mac         {mac}")
+        desc = self.device_descriptions().get(name)
+        if desc:
+            print(f"    description {desc}")
+        urpf = self.device_urpf().get(name)
+        print(f"    urpf        {urpf or 'off'}")
+
+        rc, feat = self.dp.run(f"show interface features {name}")
+        if rc == 0:
+            on = "in2out" if "bpa-in2out" in feat else (
+                 "out2in" if "bpa-out2in" in feat else None)
+            print(f"    cgnat       {on or 'not attached'}")
+
+        # Straight from the dataplane, uninterpreted. A counter this VTY
+        # summarised would be a counter an operator could not compare with
+        # what `vppctl` says, and during a fault they will look at both.
+        rc, one = self.dp.run(f"show interface {name}")
+        if rc == 0:
+            rows = [l.rstrip() for l in one.splitlines()[1:] if l.strip()]
+            if len(rows) > 1:
+                print("    counters")
+                for line in rows[1:]:
+                    print(f"      {line.strip()}")
+            else:
+                print("    counters    all zero")
+
     def show_interfaces(self, args):
         """
         The dataplane's interfaces.
@@ -2580,6 +2722,24 @@ class Shell:
                       if any(_starts(n, w) for w in wanted)}
             if not ifaces:
                 print("  no interface matches")
+                return
+            # One interface named, and nothing else asked for: the operator is
+            # looking at a fault, not taking an inventory. A summary answers
+            # "is the link up"; a fault needs the counters, and "up" and "up
+            # and dropping four percent of what arrives" look identical in a
+            # table.
+            # An EXACT name wins over the prefix filter. `show interface pg0`
+            # on a box that also has pg0.100 matches both by prefix, so
+            # "exactly one match" never fired for any interface that has
+            # sub-interfaces - which is every interface an ISP terminates
+            # subscribers on.
+            exact = [n for n in ifaces
+                     if any(n.lower() == a.lower() for a in wanted)]
+            one = exact[0] if len(exact) == 1 else (
+                next(iter(ifaces)) if len(ifaces) == 1 else None)
+            if one and not any(
+                    a in ("description", "descr", "brief") for a in args):
+                self.show_one_interface(one, ifaces)
                 return
 
         has_host = any(e["host"] for e in ifaces.values())
