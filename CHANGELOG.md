@@ -25,7 +25,40 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.34.0.
+Nothing merged since v0.35.0.
+
+## 0.35.0 — the compliance log was timestamped from VPP's boot
+
+One defect ([#117](https://github.com/andrediashexa/hexarouting/issues/117)),
+in the transport that exists because losing a record is not acceptable.
+
+### Fixed
+
+* **TCP log records carried seconds since VPP started, not the time of day.**
+  The collector decoded allocations as happening at `00:00:05`. The UDP
+  exporter, carrying the same events, decoded `14:04:43`.
+
+  Records from different boots were **not orderable** — the clock returns to
+  zero on restart, so the log ran backwards. The two transports could not
+  corroborate each other, which is the only reason to run both. And a request
+  naming a time of day, which is every request this log exists to answer,
+  could not be resolved at all.
+
+  `bpa_log_emit()` is now the single fan-out point and reads the wall clock
+  itself rather than taking it as a parameter: the bug was a caller passing
+  the clock it had at hand. `bpa_session.c` reached both exporters directly
+  and now goes through that one function. `bpa_log_tcp_service()` keeps the
+  monotonic clock, which is right for scheduling a reconnection and wrong for
+  a record.
+
+  The lab counted records, spill and replay across a collector outage and
+  never looked at the time inside the record — which the collector had been
+  printing as `00:00:05` on every run. Both IPFIX labs now assert the record's
+  timestamp against the box's clock, an assertion whose error equals the
+  machine's uptime and so cannot pass by accident.
+
+  **Upgrade note:** a log already collected over TCP can be repaired if the
+  box's boot time is known. Nothing recovers the ordering across a restart.
 
 ## 0.34.0 — a name the box does not have, and a field VPP does not print
 
