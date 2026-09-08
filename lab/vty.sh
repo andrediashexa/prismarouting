@@ -225,6 +225,16 @@ print("THIS:", out.getvalue().replace("\n", " | "))
 sh.feed("exit")
 opts, _, _ = sh._options("cgnat pool ", False)
 print("POOLS:", " ".join(sorted(opts)))
+# The prompt has to name WHICH interface, and show this has to show what that
+# interface holds - both against a real dataplane (#108).
+ifname = sorted(sh.dyn_interfaces())[0]
+sh.feed("interface " + ifname)
+print("PROMPT:", sh.prompt().strip())
+sh.feed("mtu 1500")
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show this")
+print("IFACE_THIS:", out.getvalue().replace("\n", " | "))
 PYEOF
 )
 printf '%s\n' "$COMP" | sed 's/^/  /'
@@ -269,6 +279,13 @@ expect_not_in "and not VPP's own loopback, which configures nothing" \
 expect_in "pool completion names the pool being edited" "POOLS: lab" "$COMP"
 expect_in "show this prints the hierarchy being edited" \
   "cgnat pool lab" "$COMP"
+# The prompt must name the subject, not only the kind: "[edit cgnat pool]" is
+# the same prompt on a box with twenty pools.
+expect_in "the prompt names which interface is being edited" \
+  "edit interface" "$COMP"
+# An empty "show this" is worse than no command: somebody who runs it and sees
+# nothing concludes the block is empty and configures accordingly.
+expect_in "and show this in an interface is not empty" "mtu 1500" "$COMP"
 expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
 
 verdict

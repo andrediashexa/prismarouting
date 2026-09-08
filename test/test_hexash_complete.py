@@ -400,5 +400,86 @@ check("not in configuration mode" in out.getvalue(),
       f"outside configuration mode it says so: {out.getvalue()!r}")
 print("  operational mode: refused with the reason")
 
+print("\n=== leaving a block says nothing and lands in config mode ===")
+#
+# This is the assertion whose absence let a regression ship in v0.29.0. Adding
+# "show this" to the sub-modes put the guard INSIDE the exit branch of
+# do_user, leaving "self.user = None; return True" as dead code after a
+# return - so leaving a user changed the mode AND printed "unknown statement
+# in user mode: exit". do_snmp_user was split the same way and fell through to
+# "a v3 user takes ...".
+#
+# The whole suite passed. Nothing left a block and checked that NOTHING was
+# printed, which is the shape of the bug: an operation that works and
+# complains while working.
+sh = shell_with_box()
+sh.feed("configure")
+for block in ("user noc", "snmp-user alice", "cgnat pool p",
+              "interface TenGigabitEthernet0/8/0"):
+    sh.feed(block)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.feed("exit")
+    said = out.getvalue().strip()
+    check(said == "", f"leaving '{block}' printed: {said!r}")
+    check(sh.mode == "config",
+          f"leaving '{block}' left mode {sh.mode!r}, not config")
+print("  four blocks entered and left, in silence")
+
+print("\n=== the prompt names the hierarchy AND its subject ===")
+#
+# "[edit cgnat pool]" is the same prompt on a box with twenty pools: it says
+# the operator is in a pool, not which one, and that is the question they have.
+#
+# Blocks entered by an ARGUMENT moved nothing at all, so nothing on the screen
+# said the next statement would land on GigabitEthernet0/12/0 - and an
+# "mtu 1500" typed one block later than intended went to the wrong interface
+# with no warning (#108).
+sh = shell_with_box()
+check(sh.prompt().endswith("> "), f"operational mode is a > prompt: {sh.prompt()}")
+sh.feed("configure")
+check(sh.prompt() == "hexarouting# [edit] ", f"top of config: {sh.prompt()!r}")
+
+sh.feed("cgnat pool residential")
+check("cgnat pool residential" in sh.prompt(),
+      f"a pool names the pool: {sh.prompt()!r}")
+sh.feed("exit")
+
+sh.feed("interface TenGigabitEthernet0/8/0")
+check("interface TenGigabitEthernet0/8/0" in sh.prompt(),
+      f"an interface names the interface: {sh.prompt()!r}")
+print(f"  {sh.prompt().strip()}")
+
+# An 80-column serial console is what a racked box is seen through.
+for probe in ("cgnat pool residential", "interface TenGigabitEthernet0/8/0"):
+    pass
+check(len(sh.prompt()) <= 60,
+      f"the prompt is {len(sh.prompt())} columns; a racked box has 80 and a "
+      f"prompt that pushes the cursor off the line is worse than a vague one")
+sh.feed("exit")
+
+sh.feed("user noc")
+check("user noc" in sh.prompt(), f"a user names the account: {sh.prompt()!r}")
+sh.feed("exit")
+
+print("\n=== show this inside an interface is not empty ===")
+# It printed the header and stopped, because an interface's mtu and urpf are
+# staged in Config.mtus and Config.urpf while this branch looked only at
+# Config.routing. An operator who runs it and sees nothing concludes the block
+# is empty and configures accordingly - which makes an empty answer worse than
+# no command at all.
+sh.feed("interface TenGigabitEthernet0/8/0")
+sh.feed("mtu 9000")
+sh.feed("urpf strict")
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show this")
+text = out.getvalue()
+check("interface TenGigabitEthernet0/8/0" in text,
+      f"the interface is named: {text!r}")
+check("mtu 9000" in text, f"and its MTU is shown: {text!r}")
+check("urpf strict" in text, f"and its uRPF: {text!r}")
+print("  " + text.strip().replace("\n", " / "))
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

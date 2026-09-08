@@ -647,16 +647,47 @@ class Shell:
 
     # ---------------------------------------------------------- prompt
 
+    def where(self):
+        """
+        The hierarchy being edited, as words - "cgnat pool residential".
+
+        It names the SUBJECT, not only the kind. "[edit cgnat pool]" is the
+        same prompt on a box with twenty pools: it tells the operator they are
+        in a pool and not which one, which is the question they have (#108).
+
+        Blocks entered by an argument - an interface, an FRR block - are in
+        here too. They moved nothing before, so nothing on the screen said the
+        next statement would land on GigabitEthernet0/12/0, and an `mtu 1500`
+        typed one block later than intended went to the wrong interface with
+        no warning.
+        """
+        if self.mode == "pool" and self.pool is not None:
+            return f"cgnat pool {self.pool.name}"
+        if self.mode == "user" and self.user is not None:
+            return f"user {self.user.name}"
+        if self.mode == "snmp-user" and self.snmp_user is not None:
+            return f"snmp user {self.snmp_user.name}"
+        if self.frr_ctx:
+            # Nested blocks show both, innermost last, so the reader can see
+            # what contains what.
+            return " / ".join(self.frr_ctx)
+        return ""
+
+    #: An 80-column serial console is what a racked box is seen through, and a
+    #: prompt that pushes the cursor off the line is worse than a vague one.
+    PROMPT_MAX = 44
+
     def prompt(self):
         if self.mode == "operational":
             return "hexarouting> "
-        if self.mode == "pool":
-            return "hexarouting# [edit cgnat pool] "
-        if self.mode == "user":
-            return "hexarouting# [edit user] "
-        if self.mode == "snmp-user":
-            return "hexarouting# [edit snmp user] "
-        return "hexarouting# [edit] "
+        where = self.where()
+        if not where:
+            return "hexarouting# [edit] "
+        if len(where) > self.PROMPT_MAX:
+            # Keep the END: the innermost block is where the next statement
+            # lands, and it is the half worth the space.
+            where = "..." + where[-(self.PROMPT_MAX - 3):]
+        return f"hexarouting# [edit {where}] "
 
     def require(self, cap, what):
         """
@@ -1513,16 +1544,15 @@ class Shell:
     def do_snmp_user(self, line):
         w = line.split()
         u = self.snmp_user
-        if w[0] in ("exit", "end"):
-            self.mode = "config"
-            self.snmp_user = None
         # "show this" is most useful exactly here, and each sub-mode
         # dispatches its own lines - so without this it is refused in the one
         # place it exists for.
         if w[0] == "show":
             self.show_or_pass(line)
             return True
-
+        if w[0] in ("exit", "end"):
+            self.mode = "config"
+            self.snmp_user = None
         elif w[0] in ("auth", "priv") and len(w) > 2:
             setattr(u, w[0], " ".join(w[1:]))
         else:
@@ -1533,15 +1563,14 @@ class Shell:
     def do_user(self, line):
         w = line.split()
         u = self.user
-        if w[0] in ("exit", "end"):
-            self.mode = "config"
         # "show this" is most useful exactly here, and each sub-mode
         # dispatches its own lines - so without this it is refused in the one
         # place it exists for.
         if w[0] == "show":
             self.show_or_pass(line)
             return True
-
+        if w[0] in ("exit", "end"):
+            self.mode = "config"
             self.user = None
             return True
         if w[0] == "ssh-key" and len(w) > 1:
@@ -1790,11 +1819,27 @@ class Shell:
             print("\n".join(self.snmp_user.lines()))
             return
 
-        # An FRR block, entered by an argument rather than a keyword the tree
-        # can walk into. Its lines are the ones staged under it.
+        # A block entered by an argument rather than a keyword the tree can
+        # walk into.
         if self.frr_ctx:
             block = self.frr_ctx[-1]
             print(block)
+
+            # An interface's own settings are staged in cfg.mtus and cfg.urpf,
+            # NOT in cfg.routing. This branch was written for FRR blocks and
+            # never saw the fields the VTY models itself, so it printed the
+            # header and stopped - reporting a hierarchy that plainly had an
+            # MTU as empty (#108).
+            #
+            # An operator who runs "show this" and sees nothing concludes the
+            # block is empty and configures accordingly, which makes an empty
+            # answer worse than no command at all.
+            if block.startswith("interface "):
+                ifname = block.split(None, 1)[1]
+                if ifname in cfg.mtus:
+                    print(f" mtu {cfg.mtus[ifname]}")
+                if ifname in cfg.urpf:
+                    print(f" urpf {cfg.urpf[ifname]}")
             started = False
             for line in cfg.routing:
                 if line == block:

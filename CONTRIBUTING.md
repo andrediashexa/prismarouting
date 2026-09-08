@@ -74,6 +74,34 @@ Where each rule binds:
 A document that describes a decision SHOULD state what was rejected and why.
 The reason a knob exists is worth more than the knob's name.
 
+### The wiki is part of the work
+
+Every task **MUST** end by asking whether the wiki needs a page changed or a
+page written, and the answer **MUST** be recorded on the issue — including when
+it is *no*, and why.
+
+* `PADRAO-DOCUMENTACAO.md` governs how a wiki page is written. Read it before
+  writing one; it is not the same standard as this file.
+* `wiki/` is a read-only mirror of the live wiki, refreshed with
+  `WIKI_HOST=<host> sh tools/wiki-pull.sh`. Read it to see what is already
+  documented. **Editing it changes nothing** — the next pull overwrites it, and
+  Outline is where a page is actually edited.
+
+**The repository is authoritative about the product; the wiki is a usage layer
+on top of it.** `docs/`, `README.md` and `TESTING.md` say what the software
+does and why. A wiki page says how somebody uses it. Where they disagree the
+repository is right and the page is stale, which is a defect in the page.
+
+That is also why a change here often needs a page there and never the reverse:
+a behaviour this repository changes can leave a wiki page describing a machine
+that no longer exists. `show route`, the disk menu, the records volume — each
+of those made a documented procedure wrong the moment it merged.
+
+**The wiki is public on the internet.** Credentials, keys, tokens, SNMP
+communities, management addresses and internal machine names **MUST NOT** go
+into it, marked or not — and **MUST NOT** go into this repository either, which
+is why `tools/wiki-pull.sh` takes its host from the environment and keeps none.
+
 ## 2. Issues
 
 Every feature MUST have an issue, opened **before** the work starts.

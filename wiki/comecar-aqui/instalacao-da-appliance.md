@@ -1,0 +1,125 @@
+# Instalação da appliance
+
+A ISO é um **meio de instalação**, não uma appliance para uso direto. Ela dá boot sem credencial nenhuma, roda o produto para inspeção, e oferece um comando que a transforma em uma máquina com dono.
+
+```mermaid
+flowchart TD
+    A["boot pela ISO"] --> B["VTY do meio de instalação"]
+    B --> C["digitar <code>install</code>"]
+    C --> D["escolher o disco<br/><i>menu por letras, maior primeiro<br/>o disco de boot nunca aparece</i>"]
+    D --> E["hostname · fuso · senha de root"]
+    E --> F{"confirmar com a palavra<br/><code>yes</code>"}
+    F -->|"Enter ou y não valem"| F
+    F -->|yes| G["escreve no disco"]
+    G --> H["reiniciar sem a mídia"]
+```
+
+
+:::info
+Nenhum byte é escrito antes de **todas** as respostas estarem coletadas e válidas.
+
+:::
+
+## Instalando
+
+Dê boot pela ISO. O console cai direto na VTY:
+
+```
+HexaRouting VTY 0.25.0
+
+This is the installation medium: nothing here survives a reboot.
+Type 'install' to install HexaRouting onto a disk.
+
+hexarouting> install
+```
+
+O comando `install` existe na VTY **somente quando a máquina está rodando a partir do meio**. Em uma appliance já instalada ele não está na árvore de comandos e o instalador se recusa a rodar — um comando que sobrescreve o disco não deve ficar a um TAB de distância de `interface` num roteador em produção.
+
+## Escolha do disco
+
+Os discos aparecem em lista com letras, **maior primeiro**, com tamanho e modelo. O padrão (Enter) é o maior, porque é o disco que alguém colocou na máquina para segurar o sistema — o pendrive de 32 GB usado no boot não é.
+
+```
+Disks on this machine:
+  a) /dev/sdb         932G  WD Black 1TB   <- default, the largest
+  b) /dev/sda          32G  KINGSTON SA400
+
+Install onto which disk (letter, or a device path) [a]:
+```
+
+Duas garantias:
+
+* **O meio de onde o sistema deu boot nunca aparece na lista.** É justamente o disco que alguém com pressa escolhe, e sobrescrevê-lo falha no meio do caminho deixando os dois sistemas inutilizáveis.
+* **Um caminho de dispositivo continua sendo aceito.** Scripts têm caminhos e pessoas têm hábitos.
+
+A confirmação repete o disco com tamanho e modelo, e é respondida com a palavra `yes`:
+
+```
+  About to ERASE /dev/sdb  932G WD Black 1TB
+  Everything on it is lost. This cannot be undone.
+  Type 'yes' to install:
+```
+
+Enter vazio não é resposta. `y` também não. **Um disco não pode ser destruído segurando a tecla Enter.**
+
+## Tudo é perguntado antes de qualquer escrita
+
+| Pergunta | Recusada quando |
+|----------|-----------------|
+| Disco alvo | não é dispositivo de bloco, ou é o meio de onde o sistema deu boot |
+| Hostname | contém caracteres que um hostname não pode ter |
+| Fuso horário | não existe essa zona em `/usr/share/zoneinfo` |
+| Senha de root | está vazia, ou as duas digitações não conferem |
+
+Nenhum byte é escrito no disco antes de todas as respostas estarem coletadas e válidas.
+
+## Instalação não assistida
+
+Para laboratório, teste de boot e PXE, as respostas vêm da linha de comando do kernel:
+
+| Parâmetro | Efeito |
+|-----------|--------|
+| `hexarouting.install` | pergunta tudo no console |
+| `hexarouting.install=/dev/vda` | usa esse disco, ainda perguntando o resto |
+| `hexarouting.hostname=<nome>` | responde a pergunta do hostname |
+| `hexarouting.timezone=<zona>` | responde a pergunta do fuso |
+| `hexarouting.password=<senha>` | responde a pergunta da senha de root |
+| `hexarouting.yes` | pula as confirmações e depois **desliga a máquina** |
+
+
+:::warning
+**Atenção com** `**hexarouting.password**`**\*\*\*\*:** a linha de comando do kernel fica legível para todos em `/proc/cmdline` durante toda a vida do sistema que deu boot. Ela não sobrevive para a máquina instalada, mas qualquer um logado no meio durante a instalação consegue lê-la. Para instalação presencial, deixe de fora e responda no prompt.
+
+:::
+
+O desligamento ao final não é conveniência: sem ele a máquina fica num prompt de login até o harness matá-la, e a mensagem de conclusão sai truncada.
+
+`HEXA_INSTALL_CHECK=1` coleta e valida as respostas sem escrever nada — é como os testes cobrem todas as recusas em milissegundos em vez de um ciclo de boot cada.
+
+## Construindo a ISO
+
+```sh
+make iso            # gera a mídia de instalação
+make test-iso       # dá boot na ISO e exige que o self-test diga "ready"
+make test-install   # instala em disco vazio e dá boot nesse disco sem a ISO
+```
+
+O segundo boot em `test-install` é a asserção que importa: uma imagem live não prova instalação.
+
+# Como conferir
+
+Depois do primeiro boot sem a mídia:
+
+* o console mostra o relatório do self-test;
+* `show version` responde com a versão do HexaRouting, do VPP e do FRR;
+* você consegue entrar com a senha definida durante a instalação.
+
+
+:::success
+Self-test dizendo pronto e `show version` respondendo: a instalação está válida. O próximo passo é [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+
+:::
+
+# Ver também
+
+* [Acesso, login e papéis](/doc/acesso-login-e-papeis-VcE7gIbI1U) — onde você cai ao entrar, e quem pode o quê
