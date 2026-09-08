@@ -185,6 +185,31 @@ else
   say "         route and answer, and every pool commit will fail."
 fi
 
+# --- which NIC the dataplane was given ---
+#
+# Said out loud because the failure it replaces was silent. The box used to
+# ship HEXA_DATAPLANE_IF=eth0, which does not exist under predictable interface
+# names, and the tuner then generated a DPDK stanza with no device allowlist -
+# so VPP claimed whatever NIC it found, which on a single-NIC box is the
+# management one. The operator learned about it by losing the session (#123).
+#
+# Now nothing is claimed unless it is named, which is safe and is also easy to
+# not notice: a box that forwards nothing looks like a box that is working.
+if grep -q "no-pci" /etc/vpp/startup.conf 2>/dev/null; then
+  say "  [warn] no dataplane interface: VPP was given no NIC to forward on"
+  say "         set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the"
+  say "         interface carrying subscriber traffic, then restart"
+  say "         hexarouting-tune and vpp. The management interface is refused"
+  say "         even if named there."
+elif grep -q "dev 0000:" /etc/vpp/startup.conf 2>/dev/null; then
+  ok "dataplane NIC: $(grep -o 'dev 0000:[0-9a-f:.]*' /etc/vpp/startup.conf \
+| head -1 | cut -d' ' -f2)"
+else
+  bad "the dataplane may claim any NIC it finds, including this box's"
+  say "         management interface. /etc/vpp/startup.conf names no device"
+  say "         and does not say no-pci."
+fi
+
 # --- where the connection records live ---
 #
 # In dynamic mode the allocation log IS the record the Marco Civil requires to
