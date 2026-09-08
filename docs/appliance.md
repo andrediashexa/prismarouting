@@ -192,6 +192,58 @@ Tuning runs on **every** boot, with no sentinel, so a change in `tune.env` or a
 NIC swap is honoured. `apply-tuning` avoids the cost of `update-grub` by
 comparing before regenerating.
 
+## Which NIC the dataplane is allowed to claim
+
+The appliance shipped `HEXA_DATAPLANE_IF=eth0`. On Debian 12 with predictable
+interface names that interface does not exist, so `hexarouting-tune` could not
+resolve a PCI address and generated
+
+```
+dpdk {
+  dev default { num-rx-queues 1 }
+}
+```
+
+No allowlist and no `no-pci`. VPP's DPDK plugin then probes and claims what it
+can bind — on a single-NIC box, the management interface. The operator learned
+about it by losing the session
+([#123](https://github.com/andrediashexa/hexarouting/issues/123)). Nothing
+asked, and the installer never asks which interface carries subscriber
+traffic, so this was the ordinary case rather than the exception.
+
+**Unknown MUST mean claim nothing.** The two outcomes are not symmetric:
+
+| | recoverable by |
+|---|---|
+| no dataplane interface | logging in over the network and setting one |
+| the dataplane ate the management interface | walking to the console |
+
+So the tuner now emits `dpdk { no-pci }` when it cannot resolve a device, the
+setting ships **empty**, and the boot self-test says the box has no dataplane
+interface and names the file to edit. A box that forwards nothing looks like a
+box that is working, so it has to be said out loud.
+
+**The default route is refused even when named.** An interface can carry
+subscriber traffic *and* the default route only on a box with one NIC, and
+such a box cannot run this product anyway — so this overrides the setting
+rather than warning about it. The refusal is printed:
+
+```
+REFUSED to give 'eth0' to the dataplane: it carries the default route,
+and the box would lose management. No device is claimed
+```
+
+The test that had to change is the finding worth keeping. `test_tune.py`
+asserted:
+
+```python
+check("dev default" in out, "should still size the queue on the default")
+```
+
+It read as a harmless fallback and it was the defect, written down and
+guarded. **A test can hold a bug in place**, and this one did — passing on
+every run while the behaviour it protected removed boxes from the network.
+
 ## Boot self-test
 
 A racked appliance is seen over serial console or IPMI, not `journalctl`. If

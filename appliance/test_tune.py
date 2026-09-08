@@ -272,8 +272,17 @@ with tempfile.TemporaryDirectory() as root:
           hugepages_1g=6, isolated="1-3")
     out = run(root, "--interface", "eth0")
     check("dev 0000:" not in out, "must not invent a PCI address")
-    check("dev default" in out, "should still size the queue on the default")
-    print("  falls back to dev default")
+    # This used to assert "dev default" - sizing the queues on the default
+    # rather than naming a device. That reads as a harmless fallback and is
+    # not one: with no device named, VPP's DPDK plugin probes and claims
+    # whatever it can bind, which on a single-NIC box is the management
+    # interface. The box left the network the moment the dataplane started
+    # (#123). The test asserted the behaviour that caused it.
+    check("no-pci" in out,
+          "an unresolvable NIC must claim nothing, not everything")
+    check("dev default" not in out,
+          "and must not leave DPDK probing for a device to take")
+    print("  claims no device")
 
 print("\n=== C-states and THP off by default ===")
 with tempfile.TemporaryDirectory() as root:
@@ -334,6 +343,67 @@ check("governor" in out, f"apply-tuning should report the governor; output was {
 check(r.returncode == 0, f"apply-tuning must not fail here (rc={r.returncode})")
 print("  normal system: behaviour preserved, governor reported")
 _sh.rmtree(fakebin, ignore_errors=True)
+
+# --- which NIC the dataplane is allowed to claim (#123) ---
+#
+# The shipped default was HEXA_DATAPLANE_IF=eth0, which does not exist on a
+# Debian 12 box with predictable names. The tuner could not resolve it, emitted
+# "dev default" with no allowlist, and VPP took whatever NIC it found - the
+# management one. Not knowing which NIC carries traffic made it take ALL of
+# them, when it must take NONE.
+print("\n=== an unidentified dataplane NIC must claim no device ===")
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          hugepages_1g=8, isolated="1-3")
+    out = run(root, "--interface", "ens18")   # no such interface in the tree
+    check("no-pci" in out,
+          "an unresolvable NIC must produce 'no-pci', so nothing is claimed")
+    check("dev default" not in out,
+          "and must NOT leave DPDK probing for whatever it can bind")
+    print("  " + (field(out, "# dataplane NIC PCI address:") or "(none)"))
+
+print("\n=== no interface named at all: same answer ===")
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          hugepages_1g=8, isolated="1-3")
+    out = run(root)
+    check("no-pci" in out, "an empty setting must claim nothing either")
+    check("dev default" not in out, "and must not fall back to probing")
+
+print("\n=== the interface carrying the default route is refused ===")
+# Even when it is named on purpose. Handing VPP the management path does not
+# degrade the box, it removes it: the operator loses SSH the instant the
+# dataplane starts, and gets it back by walking to a console.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          hugepages_1g=8, isolated="1-3")
+    os.makedirs(f"{root}/proc/net", exist_ok=True)
+    with open(f"{root}/proc/net/route", "w") as f:
+        f.write("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n")
+        f.write("eth0\t00000000\t0102A8C0\t0003\t0\t0\t0\t00000000\n")
+    out = run(root, "--interface", "eth0")
+    check("no-pci" in out,
+          "the management interface must not be handed to the dataplane")
+    check("REFUSED" in out,
+          "and the refusal must be stated, not silent")
+    print("  " + field(out, "# "))
+
+print("\n=== a NIC that is not the default route is still claimed ===")
+# The refusal must not become "never claim anything", which would be the same
+# defect pointing the other way: a box that cannot forward is also a box that
+# does not work.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_1g=8, isolated="1-3")
+    os.makedirs(f"{root}/proc/net", exist_ok=True)
+    with open(f"{root}/proc/net/route", "w") as f:
+        f.write("Iface\tDestination\tGateway\tFlags\n")
+        f.write("ens19\t00000000\t0102A8C0\t0003\n")
+    out = run(root, "--interface", "eth0")
+    check("no-pci" not in out,
+          "a data NIC that is not the management path must still be claimed")
+    check("dev 0000:" in out,
+          f"and named by PCI address: {field(out, '# dataplane NIC PCI address:')}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

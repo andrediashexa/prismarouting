@@ -343,6 +343,27 @@ if [ "$up" = 1 ]; then
   fi
 fi
 
+# Which NIC the dataplane was allowed to claim (#123).
+#
+# An installed box used to generate a DPDK stanza with no device allowlist,
+# because the shipped HEXA_DATAPLANE_IF named an interface that does not exist
+# under predictable names. VPP then took whatever it found - the management
+# interface - and the box left the network the moment the dataplane started.
+#
+# Either it names a device or it claims none. An open probe is neither.
+if [ "$up" = 1 ]; then
+  if grep -q "no dataplane interface" /tmp/disk-clean.log \
+     || grep -q "dataplane NIC: 0000:" /tmp/disk-clean.log; then
+    echo "  [ ok ] the dataplane claims a named NIC, or none at all"
+  else
+    echo "  [FAIL] the dataplane may claim any NIC it finds, including the"
+    echo "         management interface this box is reached over"
+    grep -A2 "may claim any NIC" /tmp/disk-clean.log | head -3 \
+      | sed 's/^/         /'
+    fail=1
+  fi
+fi
+
 # Did the tuning survive the install?
 #
 # The evidence is the KERNEL COMMAND LINE, not the profile. isolcpus and the
