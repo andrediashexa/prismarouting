@@ -25,7 +25,45 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.27.0.
+Nothing merged since v0.28.0.
+
+## 0.28.0 — the suite in a quarter of the time, and the release as one command
+
+### Changed
+
+* **The lab suite runs several labs at a time**
+  ([#100](https://github.com/andrediashexa/hexarouting/issues/100)):
+  **~35 minutes to 12m45s** at `LAB_JOBS=5`, on 8 cores.
+
+  Measured before this existed, the series run sat at **load 1.18 across 8
+  cores with an ISO build running alongside it**. The suite is not
+  compute-bound and never was: each lab starts VPP, sleeps for packets to
+  cross, and waits on timeouts.
+
+  **Two runs produced identical verdicts**, which is the condition rather than
+  a bonus — a parallel suite that is not reproducible has replaced a slow
+  answer with an unreliable one. Attribution is asserted with a deliberately
+  failing lab while five are in flight.
+
+  The plugin is built **once** before any lab starts: `/src/.build-vpp` is the
+  only shared writable state, and 36 labs each ran `ninja` in it.
+
+### Added
+
+* **`make release-gate`** — clone at the tag, build the plugin, build the
+  medium, boot it, and refuse anything that is not the tagged tree. The
+  procedure as one command, after it was got wrong three times in one evening
+  and every one was caught by a rule rather than by attention. It refuses a tag
+  that does not exist, a tag whose tree has a disagreeing `VERSION`, any
+  `-dirty` or `-unverified` name, and a medium that builds and does not boot.
+
+### Fixed
+
+* In the suite runner: `rc` taken after the `printf` that writes the log is the
+  **printf's** status. Every lab would have recorded 0, and one that exited
+  non-zero without printing a failure marker would have been reported as
+  passing — the exact defect this suite exists to catch, inside the suite.
+
 
 ## 0.27.0 — the daemons the VTY offers actually run
 
