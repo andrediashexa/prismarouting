@@ -166,6 +166,30 @@ else
   bad "FRR not responding"
 fi
 
+# --- where the connection records live ---
+#
+# In dynamic mode the allocation log IS the record the Marco Civil requires to
+# be kept for a year. It has its own filesystem so that a full log cannot stop
+# the box working (#83) - and fstab mounts it "nofail", because a box that
+# will not boot because that volume is missing is a box nobody can log into to
+# find out why.
+#
+# Which means something has to say so, or the box comes up quietly writing
+# records onto the root filesystem, which is the arrangement this replaced.
+if [ -d /var/log/hexarouting ]; then
+  rec_src=$(findmnt -no SOURCE --target /var/log/hexarouting 2>/dev/null)
+  root_src=$(findmnt -no SOURCE --target / 2>/dev/null)
+  if [ -n "$rec_src" ] && [ "$rec_src" != "$root_src" ]; then
+    ok "records on their own filesystem: $rec_src, $(df -h /var/log/hexarouting 2>/dev/null | awk 'NR==2{print $4" free of "$2}')"
+  elif [ -f /run/live/medium/live/filesystem.squashfs ]; then
+    say "  [info] live medium: records are not persisted anyway"
+  else
+    say "  [warn] connection records are on the ROOT filesystem"
+    say "         a log that fills will stop this box writing its own"
+    say "         configuration. Check that /var/log/hexarouting is mounted."
+  fi
+fi
+
 # --- the unit that APPLIES the configuration ---
 #
 # The self-test measured the dataplane, the routing, the tuning and the VTY,

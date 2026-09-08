@@ -23,7 +23,7 @@
 #
 # Non-interactive answers, for automated installs and for the lab:
 #
-#   HEXA_DISK, HEXA_HOSTNAME, HEXA_TIMEZONE, HEXA_ROOT_PASSWORD
+#   HEXA_DISK, HEXA_HOSTNAME, HEXA_TIMEZONE, HEXA_ROOT_PASSWORD, HEXA_LOG_GB
 #   HEXA_INSTALL_YES=1        skip the confirmations
 #   HEXA_INSTALL_CHECK=1      collect and validate, write nothing, exit
 #   HEXA_INSTALL_NO_REBOOT=1  finish without rebooting
@@ -235,6 +235,77 @@ fi
 [ -f "/usr/share/zoneinfo/$TIMEZONE" ] \
   || die "unknown timezone '$TIMEZONE' (see /usr/share/zoneinfo)"
 
+# ------------------------------------------------------- 3b. the log volume
+#
+# In dynamic mode the allocation log IS the connection record the Marco Civil
+# requires this box to keep for a year. Put on the root filesystem it shares
+# space with everything the box needs to keep working - so a log that fills
+# stops the box writing its configuration, its trail, and anything else,
+# because it was busy recording who connected to what (#83).
+#
+# It gets its own filesystem. Then a full log volume is a full log volume.
+#
+# The default is arithmetic, not a guess, and the arithmetic is shown: docs/
+# logging.md measures ~80 MB/day for 200k subscribers in dynamic mode, so a
+# year is ~29 GB. A box in deterministic mode logs no allocations at all and
+# needs almost none of this - which is why it is a question rather than a
+# constant.
+# The size of the disk, if it can be had. blockdev needs privileges the check
+# mode deliberately does not have, so this can legitimately be unknown - and a
+# bound against an unknown size is not a bound. The SHAPE of the answer is
+# always checked; the fit only when the size is known, and it says so when it
+# is not.
+# /sys first: it is world-readable, so the size is known in CHECK MODE too -
+# and a check that skipped the fit because it lacked privileges would be more
+# permissive than the real run, which this file already says a check must
+# never be. blockdev is the fallback for anything /sys does not describe.
+_sysblk="/sys/block/$(basename "$DISK")/size"
+if [ -r "$_sysblk" ]; then
+  DISK_MB=$(( $(cat "$_sysblk") / 2048 ))
+else
+  DISK_MB=$(( $(blockdev --getsize64 "$DISK" 2>/dev/null || echo 0) / 1048576 ))
+fi
+SYSTEM_MB=8192   # the system, VPP and FRR. Never leave root less than this.
+LOG_DEFAULT=30
+if [ "$DISK_MB" -gt 0 ]; then
+  MAX_LOG=$(( DISK_MB - 512 - SYSTEM_MB ))
+  [ "$MAX_LOG" -lt 0 ] && MAX_LOG=0
+  [ "$LOG_DEFAULT" -gt $(( MAX_LOG / 1024 )) ] && LOG_DEFAULT=$(( MAX_LOG / 1024 ))
+  [ "$LOG_DEFAULT" -lt 1 ] && LOG_DEFAULT=1
+else
+  MAX_LOG=""
+fi
+
+if [ -z "${HEXA_LOG_GB:-}" ] && [ "$ASSUME_YES" = 1 ]; then
+  # An unattended install must not stop at a prompt. It has no console to
+  # answer from, and a question nobody can answer is an install that hangs -
+  # which is what the first version of this did, on a lab that had answered
+  # every other question on the kernel command line.
+  LOG_GB=$LOG_DEFAULT
+  say "records: $LOG_GB GB (unattended; pass hexarouting.log-gb= to choose)"
+elif [ -z "${HEXA_LOG_GB:-}" ]; then
+  echo
+  echo "  Connection records go on their own filesystem, so that a full log"
+  echo "  cannot stop the box working. One year at 200k subscribers in dynamic"
+  echo "  mode is about 29 GB (see docs/logging.md); deterministic mode logs"
+  echo "  no allocations and needs almost none."
+  if [ -n "$MAX_LOG" ]; then
+    echo "  This disk is $(( DISK_MB / 1024 )) GB; at most $(( MAX_LOG / 1024 )) GB can go to records."
+  else
+    echo "  The size of $DISK could not be read, so the fit is not checked."
+  fi
+  LOG_GB=$(ask "Gigabytes for connection records" "$LOG_DEFAULT")
+else
+  LOG_GB=$HEXA_LOG_GB
+fi
+case "$LOG_GB" in
+  ""|*[!0-9]*) die "the log size must be a whole number of gigabytes, got '$LOG_GB'" ;;
+esac
+[ "$LOG_GB" -ge 1 ] || die "the log needs at least 1 GB of its own"
+if [ -n "$MAX_LOG" ] && [ "$(( LOG_GB * 1024 ))" -gt "$MAX_LOG" ]; then
+  die "$LOG_GB GB of records leaves the system less than $(( SYSTEM_MB / 1024 )) GB on a $(( DISK_MB / 1024 )) GB disk"
+fi
+
 # --------------------------------------------------------- 4. root password
 #
 # Refused, not defaulted. A first boot that never asks for a password is a
@@ -317,13 +388,16 @@ say "partitioning $DISK (UEFI=$EFI)"
 # instead of sitting there. A partitioner that can hang silently is worse than
 # one that fails: the operator has no idea whether the disk was touched.
 command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
+# Records LAST, so growing the disk later grows the partition that fills.
 if [ "$EFI" = 1 ]; then
   LAYOUT="label: gpt
 ,512M,U
+,$(( DISK_MB - 512 - LOG_GB * 1024 ))M,L
 ,,L"
 else
   LAYOUT="label: dos
 ,512M,c,*
+,$(( DISK_MB - 512 - LOG_GB * 1024 ))M,L
 ,,L"
 fi
 printf '%s\n' "$LAYOUT" | timeout 90 sfdisk --lock=no --wipe=always \
@@ -340,14 +414,16 @@ command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
 sleep 2
 
 case "$DISK" in
-  *nvme*|*mmcblk*) P1="${DISK}p1"; P2="${DISK}p2" ;;
-  *)               P1="${DISK}1";  P2="${DISK}2"  ;;
+  *nvme*|*mmcblk*) P1="${DISK}p1"; P2="${DISK}p2"; P3="${DISK}p3" ;;
+  *)               P1="${DISK}1";  P2="${DISK}2";  P3="${DISK}3"  ;;
 esac
 [ -b "$P2" ] || die "partitioning did not produce $P2"
+[ -b "$P3" ] || die "partitioning did not produce $P3 for the records"
 
 say "formatting"
 mkfs.vfat -F32 "$P1" >/dev/null
 mkfs.ext4 -q -F -L hexarouting "$P2" >/dev/null
+mkfs.ext4 -q -F -L hexa-records "$P3" >/dev/null
 
 say "copying the system"
 rm -rf "$MNT"; mkdir -p "$MNT"
@@ -368,11 +444,17 @@ mkdir -p "$MNT/boot/efi"
 say "fstab"
 ROOT_UUID=$(blkid -s UUID -o value "$P2")
 EFI_UUID=$(blkid -s UUID -o value "$P1" 2>/dev/null || true)
+LOG_UUID=$(blkid -s UUID -o value "$P3")
 {
   echo "UUID=$ROOT_UUID / ext4 errors=remount-ro 0 1"
   [ "$EFI" = 1 ] && [ -n "$EFI_UUID" ] && \
     echo "UUID=$EFI_UUID /boot/efi vfat umask=0077 0 1"
+  # nofail: a box that will not boot because the RECORDS volume is missing is
+  # a box that cannot be logged into to find out why. It must come up and
+  # complain, which the self-test does.
+  echo "UUID=$LOG_UUID /var/log/hexarouting ext4 defaults,nofail 0 2"
 } > "$MNT/etc/fstab"
+mkdir -p "$MNT/var/log/hexarouting"
 
 # The live system boots with live-boot and logs in with no password, which an
 # installed system must not do. Leaving these behind produces a box that mounts

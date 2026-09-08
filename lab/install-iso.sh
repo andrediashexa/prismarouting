@@ -12,7 +12,14 @@
 set -u
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 DISK=${DISK:-/tmp/hexa-disk.qcow2}
-SIZE=${DISK_SIZE:-8G}
+# 40G, not 8G. The installer reserves 8 GB for the system before it will give
+# any of the disk to connection records (#83), so an 8 GB disk is one the
+# installer correctly refuses - it found that out by refusing this lab. qcow2
+# is sparse: a 40 GB disk that holds 3 GB costs 3 GB.
+#
+# It is also closer to honest. An appliance nobody would deploy on 8 GB is not
+# a useful thing to prove installs on 8 GB.
+SIZE=${DISK_SIZE:-40G}
 LOG=${LOGCOPY:-/src/install-console.log}
 
 # The answers the installer must ask for. They are given here rather than typed
@@ -62,6 +69,7 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   -drive file="$DISK",format=qcow2,if=virtio \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
            hexarouting.install=/dev/vda hexarouting.yes \
+           hexarouting.log-gb=2 \
            hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
            hexarouting.password=$NEW_PW" \
   > /tmp/install.log 2>&1
@@ -272,6 +280,24 @@ fi
 if ! grep -q "\[ ok \] VTY starts" /tmp/disk-clean.log; then
   echo "  [FAIL] the VTY did not start on the installed system"
   fail=1
+fi
+
+# The connection records must be on their OWN filesystem (#83).
+#
+# The assertion is not that a partition exists - it is that the records and the
+# root are DIFFERENT filesystems, which is the property that matters: a log
+# that fills must not take down the box that is writing it.
+if [ "$up" = 1 ]; then
+  if grep -q "records on their own filesystem" /tmp/disk-clean.log; then
+    echo "  [ ok ] connection records are on their own filesystem"
+    grep -o "records on their own filesystem.*" /tmp/disk-clean.log | head -1 \
+      | sed 's/^/         /'
+  else
+    echo "  [FAIL] connection records share a filesystem with the root"
+    grep -A2 "records are on the ROOT" /tmp/disk-clean.log | head -3 \
+      | sed 's/^/         /'
+    fail=1
+  fi
 fi
 
 # The routing daemons the VTY OFFERS, asserted on the INSTALLED box.

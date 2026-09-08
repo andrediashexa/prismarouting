@@ -77,6 +77,24 @@ echo
 ok()  { echo "  [ ok ] $*"; }
 bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
 
+echo "=== the log volume: sizes the installer must refuse ==="
+# The one question whose wrong answer is not destructive but is permanent: a
+# box installed with the records on a 1 GB volume fills it in twelve days at
+# the rate docs/logging.md measures, and the fix is a reinstall.
+run 1 "a log size that is not a number" $OK HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_LOG_GB=lots
+# The MESSAGE, not just the refusal. Without the shape check the number still
+# gets refused - by the shell failing to compare "lots" against 1 - and the
+# operator is shown an arithmetic error instead of what they typed wrong.
+case "$LAST_OUT" in
+  *"whole number of gigabytes"*) ok "and says what a size looks like" ;;
+  *) bad "refused with a shell error rather than a reason: $LAST_OUT" ;;
+esac
+run 1 "a log size of zero" $OK HEXA_ROOT_PASSWORD=s3cr3t HEXA_LOG_GB=0
+# 8 TB of records on any disk this test can see leaves the system nothing.
+run 1 "a log that leaves the system no room" $OK HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_LOG_GB=8192
+
 echo "=== the disk menu: a letter, or Enter for the largest ==="
 #
 # The one question in this program where a wrong answer destroys something.
