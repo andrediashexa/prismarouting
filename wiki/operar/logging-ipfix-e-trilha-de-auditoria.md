@@ -19,7 +19,7 @@ Isso só se sustenta enquanto se souber **qual** configuração estava em vigor.
 
 ## A trilha de configuração
 
-Implementada em `bpa_audit.c`. Propriedades que não são acidentais:
+Propriedades que não são acidentais:
 
 * **Append-only** — nada é reescrito.
 * `**fsync**` **a cada entrada** — sobrevive a queda de energia.
@@ -55,7 +55,7 @@ show cgnat blocks        blocos atualmente alocados
 
 Com UDP, a pergunta *"o coletor recebeu?"* não tem resposta — e a pergunta que realmente importa é **"o que acontece quando o coletor cai?"**. Com UDP, a resposta é silêncio: registros de retenção legal desaparecem sem que nada indique.
 
-O laboratório `ipfix-tcp` testa exatamente isso: mata o coletor e verifica o comportamento.
+É exatamente esse o caso que o produto verifica: derrubar o coletor e conferir o que acontece com os registros.
 
 # O formato do registro (RFC 8158)
 
@@ -134,16 +134,6 @@ Entradas escritas antes da corrente existir continuam legíveis e são reportada
 # O que é recusado
 
 **Log por fluxo não existe e não vai existir.** É precisamente o que o BPA foi feito para evitar. Um CGNAT registrando cada fluxo gera volume que nenhum provedor consegue guardar por um ano de forma útil.
-
-# Laboratórios relacionados
-
-```sh
-sh tools/lab.sh audit       # a trilha de configuração
-sh tools/lab.sh ipfix       # exportação, com um coletor decodificando
-sh tools/lab.sh ipfix-tcp   # transporte TCP, incluindo a queda do coletor
-```
-
-Há também um coletor de referência em `tools/ipfix_collector.py`, usado pelos laboratórios para decodificar o que foi exportado.
 
 # Ver também
 

@@ -132,18 +132,6 @@ Com `hexarouting.yes` e sem `hexarouting.log-gb`, o instalador toma o padrão **
 
 O desligamento ao final não é conveniência: sem ele a máquina fica num prompt de login até o harness matá-la, e a mensagem de conclusão sai truncada.
 
-`HEXA_INSTALL_CHECK=1` coleta e valida as respostas sem escrever nada — é como os testes cobrem todas as recusas em milissegundos em vez de um ciclo de boot cada.
-
-## Construindo a ISO
-
-```sh
-make iso            # gera a mídia de instalação
-make test-iso       # dá boot na ISO e exige que o self-test diga "ready"
-make test-install   # instala em disco vazio e dá boot nesse disco sem a ISO
-```
-
-O segundo boot em `test-install` é a asserção que importa: uma imagem live não prova instalação.
-
 # Como conferir
 
 Depois do primeiro boot sem a mídia:

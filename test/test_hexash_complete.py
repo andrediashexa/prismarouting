@@ -470,6 +470,105 @@ for block in ("user noc", "snmp-user alice", "cgnat pool p",
           f"leaving '{block}' left mode {sh.mode!r}, not config")
 print("  four blocks entered and left, in silence")
 
+print("\n=== an interface this box does not have is refused ===")
+#
+# "interface Ten0" - a typo for TenGigabitEthernet0/8/0 - created an FRR stanza
+# for something that is not there: it committed cleanly, appeared in the
+# running configuration, and did nothing (#105).
+#
+# #112 made the wrong name much harder to type. It did not make it impossible:
+# a runbook, a copy-paste or a habit still types it.
+def commit_check(sh):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.feed("commit check")
+    return out.getvalue()
+
+
+def shell_with_frr(dp_rc=0):
+    sh = shell_with_box(dp_rc=dp_rc)
+    sh.frr = type("F", (), {"available": lambda s: False,
+                            "running": lambda s: [],
+                            "show": lambda s, c: (1, ""),
+                            "reload": lambda s, l, check_only=False: (0, "")})()
+    return sh
+
+
+sh = shell_with_frr()
+sh.feed("configure")
+sh.feed("interface Ten0")
+sh.feed("mtu 1500")
+sh.feed("exit")
+text = commit_check(sh)
+check("no such interface" in text, f"a name the box does not have is refused: {text!r}")
+# The refusal lists what the box DOES have. It already knows - the same source
+# the completion uses - and an operator told only "no" has to go and look.
+check("TenGigabitEthernet0/8/0" in text,
+      f"and the refusal says what it does have: {text!r}")
+check("would commit and do nothing" in text,
+      "and what would have happened without the refusal")
+print("  " + text.strip().splitlines()[0])
+
+sh = shell_with_frr()
+sh.feed("configure")
+sh.feed("interface TenGigabitEthernet0/8/0")
+sh.feed("mtu 1500")
+sh.feed("exit")
+check("no such interface" not in commit_check(sh),
+      "an interface the box has is not refused")
+
+# The CGNAT form names an interface too, and was equally able to enable CGNAT
+# on a name the dataplane never heard of.
+sh = shell_with_frr()
+sh.feed("configure")
+sh.feed("cgnat interface Gig9 inside")
+check("no such interface" in commit_check(sh),
+      "'cgnat interface' is checked the same way")
+
+# Skipped, not failed. A VTY that cannot commit while the dataplane is down
+# cannot be used to fix it.
+sh = shell_with_frr(dp_rc=1)
+sh.feed("configure")
+sh.feed("interface Ten0")
+sh.feed("mtu 1500")
+sh.feed("exit")
+check("no such interface" not in commit_check(sh),
+      "with the dataplane unreachable the check is skipped, not failed")
+print("  dataplane down -> skipped, and the commit is not blocked")
+
+# --load runs at boot, unattended, which is when a silently inert stanza is
+# least likely to be noticed. It is refused THE SAME WAY, and refused WHOLE:
+# applying a file statement by statement until one fails leaves the box holding
+# half of it, on a machine nobody is watching.
+import tempfile  # noqa: E402
+
+def load_text(sh, body):
+    f = tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False)
+    f.write(body)
+    f.close()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.load(f.name)
+    os.unlink(f.name)
+    return out.getvalue()
+
+
+text = load_text(shell_with_frr(),
+                 "!\ninterface Ten0\n mtu 1500\n exit\n")
+check("no such interface" in text,
+      f"--load refuses an interface the box does not have: {text!r}")
+check("refusing to load" in text,
+      "and refuses the WHOLE file rather than applying part of it")
+
+# The gap this found: an interface name in a config FILE lives in cfg.mtus, not
+# in cfg.routing or cfg.interfaces. A check that looked at only those two
+# passed every file that sets an MTU - which is most of them.
+text = load_text(shell_with_frr(),
+                 "!\ninterface TenGigabitEthernet0/8/0\n mtu 1500\n exit\n")
+check("no such interface" not in text,
+      f"and does not refuse one the box has: {text!r}")
+print("  --load: refused whole, and only when the name is wrong")
+
 print("\n=== show interface answers from the dataplane ===")
 #
 # It used to be handed to vtysh, which answers from FRR's view - and FRR sees

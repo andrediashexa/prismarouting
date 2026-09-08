@@ -163,6 +163,33 @@ A coluna **Linux** traz o par do `linux_cp`, porque esse é o nome que o FRR e o
 * Com o dataplane fora, ele diz que não conseguiu perguntar. Uma tabela vazia
   leria como *"esta caixa não tem interfaces"*, que é afirmação bem diferente.
 
+## Um nome de interface que não existe é recusado
+
+```
+error: interface Ten0: this box has no such interface
+    it has: GigabitEthernet0/12/0, TenGigabitEthernet0/8/0, local0
+    the statement would commit and do nothing
+```
+
+`interface Ten0` — um erro de digitação de `TenGigabitEthernet0/8/0` — criava
+uma estrofe no FRR para algo que não está lá: commitava limpo, aparecia na
+configuração em vigor e não fazia nada
+([#105](https://github.com/andrediashexa/hexarouting/issues/105)).
+
+A recusa **lista o que a caixa tem**, porque ela já sabe — é a mesma fonte da
+completação — e quem recebe só um "não" tem de ir procurar.
+
+Vale para as quatro formas de nomear uma interface: o bloco do FRR, o
+`cgnat interface`, e as declarações `mtu` e `urpf`, que o VTY modela por fora
+da seção de roteamento.
+
+* **`hexash --load` recusa o arquivo inteiro**, e não statement a statement.
+  Isso roda no boot, sem ninguém olhando, e aplicar metade de um arquivo deixa
+  a caixa segurando metade dele.
+* **Com o dataplane inalcançável a checagem é pulada, não reprovada.** Um VTY
+  que não consegue commitar enquanto o dataplane está fora é um VTY que não
+  serve para consertá-lo.
+
 ## `show this`
 
 The configuration of the hierarchy being edited, and nothing above it:
@@ -320,6 +347,30 @@ Two details that cost time to find:
   status. Until MTU moves to the binary API alongside the pool operations
   ([#3](https://github.com/andrediashexa/hexarouting/issues/3)), verifying the
   effect is the only honest check.
+
+A third, found late: **the Linux half was never being set at all**
+([#114](https://github.com/andrediashexa/hexarouting/issues/114)). The code
+looked for a `host` field in `show lcp`. VPP prints
+
+```
+itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+```
+
+There is no such field. The parse found nothing and returned — which is also
+what it correctly does on a box that has no TAP for that interface, so the
+failure was invisible. Meanwhile `lcp-sync` is on by default and VPP mirrors
+the MTU onto the TAP by itself, so the lab's assertion that the TAP had the
+right MTU passed. It was measuring VPP, not this code.
+
+It was settled by turning `lcp-sync` off and committing again. The TAP did not
+move. Two rules come out of it, and they cost a release each to learn:
+
+* **Parse what the box prints, captured, not what you remember it printing.**
+  A positional parse breaks on the next VPP version silently, by finding
+  nothing.
+* **An assertion that cannot fail is not an assertion.** The lab now turns
+  `lcp-sync` off before checking the TAP, so it can only pass if `hexash` did
+  the work.
 
 The running configuration reports the MTU of **every** interface the dataplane
 has, not only the ones somebody typed. "Explicitly configured" is not a
@@ -895,5 +946,5 @@ happens to carry.
 - [x] Pool validated against local addresses, both directions
 - [x] `hexash` with completion and contextual help
 - [x] Candidate/commit/rollback covering CGNAT and routing
-- [ ] MTU as an explicit interface parameter in the VTY
+- [x] MTU as an explicit interface parameter in the VTY, on both sides of the pair
 - [ ] Migrate configuration writes to the binary API

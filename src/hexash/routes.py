@@ -332,13 +332,43 @@ def parse_interfaces(show_interface: str, show_addr: str = "",
         if m and current in out:
             out[current]["addresses"].append(m.group(1))
 
-    # The Linux side of a linux_cp pair. That name is what FRR and "ip" use,
-    # so an operator moving between the two needs both in one place.
-    for line in (show_lcp or "").splitlines():
-        w = line.split()
-        for i, tok in enumerate(w):
-            if tok == "host" and i + 1 < len(w):
-                for name in out:
-                    if name in line:
-                        out[name]["host"] = w[i + 1].rstrip(",")
+    for name, names in lcp_pairs(show_lcp).items():
+        if name in out:
+            out[name]["host"] = " ".join(n for n in names if n != name)
     return out
+
+
+def lcp_pairs(show_lcp: str) -> dict:
+    """
+    Every name each linux_cp pair answers to, keyed by each of them.
+
+    A pair prints as one line:
+
+        itf-pair: [0] host-veth-vpp tap4096 vppctl0 5 type tap
+
+    and all three names refer to the same interface. FRR and `ip` configure by
+    the Linux one, the dataplane by its own, and a configuration naming either
+    is correct - so a check that knew only VPP's names would refuse every FRR
+    interface stanza on every box that has linux_cp, which is every box that
+    routes. lab/routing.sh caught exactly that.
+
+    Read as "every name on the line" rather than by position. The field order
+    is a VPP implementation detail that has already differed between the two
+    labs in this repository, and a positional parse is a parse that breaks on
+    the next version - quietly, by finding nothing.
+    """
+    pairs = {}
+    for line in (show_lcp or "").splitlines():
+        if "itf-pair" not in line:
+            continue
+        names = []
+        for tok in line.split():
+            tok = tok.strip(",")
+            if tok in ("itf-pair:", "type", "tap", "tun"):
+                continue
+            if tok.startswith("[") or tok.isdigit():
+                continue
+            names.append(tok)
+        for n in names:
+            pairs[n] = names
+    return pairs

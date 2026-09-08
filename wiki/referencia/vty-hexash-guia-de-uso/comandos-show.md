@@ -2,6 +2,8 @@
 
 # Comandos show
 
+# Comandos show
+
 Os comandos `show` funcionam nos modos operacional **e** de configuração.
 
 ## `show cgnat`
@@ -48,6 +50,30 @@ hexarouting> show route
 Quando o tráfego não passa e a rota parece certa, `show route verbose` é o comando: ele compara as duas tabelas e diz qual prefixo está numa e não na outra.
 
 :::
+
+## `show interface` — as do dataplane
+
+```
+hexarouting> show interface
+  Interface                  State  MTU    Address             Linux
+  GigabitEthernet0/12/0      up     9000   203.0.113.1/24      tap0
+  TenGigabitEthernet0/8/0    up     1500   -                   -
+  local0                     down   0      -                   -
+```
+
+Responde pelo **dataplane**, com estado, MTU, endereços e o par do `linux_cp`. Esse último porque é o nome que o FRR e o `ip` usam, e quem transita entre as duas ferramentas precisa dos dois lado a lado.
+
+
+:::warning
+Este comando já foi repassado ao `vtysh`, que enxerga apenas o que o `linux_cp` espelhou. Numa caixa com uma `GigabitEthernet0/12/0` configurada, a resposta era `lo` — a lista sem as interfaces que carregam o tráfego.
+
+É a mesma armadilha do `show ip route`: a pergunta respondida pelo lado errado.
+
+:::
+
+`local0` é o loopback interno do VPP. Aparece na lista — esconder o que o dataplane reporta seria o comando decidindo o que você pode ver — mas não é oferecido na completação, porque não configura nada.
+
+Pedir `description` diz por que não existe essa coluna, em vez de deixar alguém procurando uma que nunca vem. A visão do FRR continua em `show ip interface`.
 
 ## `show this` — o que há na hierarquia em que estou
 

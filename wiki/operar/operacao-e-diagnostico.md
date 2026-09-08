@@ -6,7 +6,7 @@ As regras que evitam incidente, a ordem em que a máquina sobe, e por onde come�
 
 ## A interface de gerência não vai para o VPP
 
-O DPDK tira a NIC do Linux. Entregue ao VPP a porta pela qual você administra a máquina e ela fica **inalcançável** — e inalcançável é inconsertável remotamente. Nas máquinas de laboratório essa interface é a `ens18`.
+O DPDK tira a NIC do Linux. Entregue ao VPP a porta pela qual você administra a máquina e ela fica **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece em `cgnat interface`.
 
 ## Mudança remota vai com rede de segurança
 
@@ -67,7 +67,7 @@ Três desfechos, ditos de formas diferentes: uma espera curta o bastante para ni
 
 
 :::info
-O limite de 60 segundos é generoso de propósito: o VPP responde em 5 a 21 segundos numa VM de laboratório sem hugepages e com um worker, e uma caixa com 32 GB de hugepages e dezesseis workers demora mais.
+O limite de 60 segundos é generoso de propósito: o VPP responde em 5 a 21 segundos numa VM sem hugepages e com um worker, e uma caixa com 32 GB de hugepages e dezesseis workers demora mais.
 
 :::
 
@@ -117,7 +117,7 @@ flowchart TD
 
 `**vppctl**` **sai com código 0 mesmo quando falha.** Não trate o código de retorno dele como prova. A VTY usa a API binária justamente por isso.
 
-**Um contador não é evidência.** Um ALG incrementa o contador dele tendo a reescrita saído certa ou não. Confira o pacote, não o contador — é a razão de os laboratórios olharem captura em vez de estatística.
+**Um contador não é evidência.** Um ALG incrementa o contador dele tendo a reescrita saído certa ou não. Confira o pacote, não o contador.
 
 # Ausências conhecidas
 

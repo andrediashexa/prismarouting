@@ -7,7 +7,6 @@ O que existe e o que cada coisa faz. Consulta, não leitura corrida — venha pa
 | [VTY hexash — guia de uso](/doc/vty-hexash-guia-de-uso-h6sDAK8Dsh) | Modos, prompts e a árvore de comandos completa |
 | [Multi-tenant com VRF](/doc/multi-tenant-com-vrf-3PDsWxfy6D) | Dois clientes usando a mesma faixa privada na mesma caixa |
 | [Timeouts e os pisos das RFCs](/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf) | Quanto vive cada sessão, e o que quebra abaixo do piso |
-| [Dataplane — comandos vppctl e API](/doc/dataplane-comandos-vppctl-e-api-NGEar02P0x) | O que a VTY manda por baixo, e a API binária |
 
 A referência da VTY é subdividida por assunto: comandos `show`, configuração de CGNAT, configuração de pool, o ciclo de `commit`, e a parte de roteamento e sistema.
 
