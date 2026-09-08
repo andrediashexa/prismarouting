@@ -382,10 +382,12 @@ own documentation claims BGP, OSPF and IS-IS. What hid it is that
 disagree about what is running, and the lab is the optimistic one.
 
 **2. [#100](https://github.com/andrediashexa/hexarouting/issues/100) — the lab
-suite runs 35 labs in series on a machine at 15% load.** Second because it is a
-multiplier: every release after it pays ~35 minutes, and everything below this
-line is a release. Measured at load 1.18 across 8 cores while the suite *and* an
-ISO build were running, so this is a queue and not a workload.
+suite runs 35 labs in series on a machine at 15% load** — *delivered, v0.28.0*.
+**35 minutes to 12m45s**, with identical verdicts across two runs, which was
+the condition rather than a bonus. It also brought `make release-gate`: the
+release procedure as one command, after the same person got it wrong three
+times in one evening and every one was caught by a rule rather than by
+attention.
 
 **3. [#98](https://github.com/andrediashexa/hexarouting/issues/98) — the VTY
 does not complete what the box knows.** `interface <TAB>` offers `<word>`, so

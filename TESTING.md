@@ -78,7 +78,67 @@ required to fail before being kept. An assertion that has never failed has not
 been shown to test anything, which is the defect class this project keeps
 hitting — see `CONTRIBUTING.md`.
 
+## Cutting a release
+
+```sh
+make release-gate TAG=v0.26.0     # or with HEAD on the tag, just: make release-gate
+```
+
+`CONTRIBUTING.md` section 5 requires every release to ship an installation
+medium that has been **built and booted**. This is that procedure as one
+command, and it exists because as a sequence somebody retypes, it gets retyped
+wrong. In one evening the same person got it wrong three times, and **every one
+was caught by a rule rather than by attention**:
+
+| What went wrong | What caught it |
+|---|---|
+| built from the working tree, carrying uncommitted work from the next issue | the filename rule — stamped `-dirty` |
+| built with no plugin, because a clean tree has no `.build-vpp` | `build-iso.sh` refused |
+| built from a git **worktree**, whose `.git` is a pointer to a repository the build container does not have mounted | the filename rule — stamped `-unverified` |
+
+The gate **clones** the repository at the tag, so uncommitted work cannot
+contaminate the image at all — the first mistake is now structurally
+impossible rather than merely detected. It then refuses:
+
+* a tag that does not exist;
+* a tag on a tree whose `VERSION` disagrees with it — a `v0.27.0` tag on a
+  `0.26.0` tree produces an image called `0.26.0` published under `0.27.0`;
+* any image whose name carries `-dirty` or `-unverified`;
+* a medium that builds and does not boot, or boots and does not report ready.
+
+`RELEASE_GATE_CHECK_ONLY=1` runs the checks and builds nothing, so they can be
+exercised without a 321 MB image — a check that can only be reached by building
+one is a check nobody reaches.
+
 ## 2. Dataplane labs — minutes, inside the container
+
+The whole suite runs several labs at a time:
+
+```sh
+sh tools/run-all-labs.sh          # 4 at a time
+LAB_JOBS=5 sh tools/run-all-labs.sh
+```
+
+Measured on 8 cores and 32 GB: **~35 minutes in series, 12m45s at
+`LAB_JOBS=5`**, and the two parallel runs produced identical verdicts. That
+last part is the condition, not a bonus — a parallel suite that is not
+reproducible has replaced a slow answer with an unreliable one, and 35 honest
+minutes beat 13 that sometimes lie.
+
+The suite is not compute-bound and never was: each lab starts VPP, sleeps for
+packets to cross, and waits on timeouts. Measured before this existed, the
+series run sat at load 1.18 across 8 cores **with an ISO build running
+alongside it**. It was a queue, not a workload.
+
+What makes it safe is that `tools/lab.sh` gives each lab its own container
+**without** `--network=host`, so the fixed `veth` and `netns` names in
+`routing`, `lcp`, `ipfix`, `ipfix-tcp` and `vty` cannot collide. The one piece
+of shared writable state is `/src/.build-vpp`, where 36 labs each run `ninja` —
+so the plugin is built **once, before any lab starts**, and no lab is the one
+that happens to build it.
+
+Output is captured per lab and printed whole, in list order. Interleaved output
+from five labs at once is not a report.
 
 ```sh
 sh tools/lab.sh                # list every lab with a one-line description

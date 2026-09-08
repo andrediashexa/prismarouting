@@ -247,6 +247,11 @@ When it happens it **MUST** produce all five of:
    site, and two images with the same name are indistinguishable at exactly
    the moment it matters — when an operator is deciding which one to install.
 
+   `make release-gate` is the whole procedure — clone at the tag, build the
+   plugin, build the medium, boot it — and it **MUST** be what cuts a release.
+   Done by hand it goes wrong: three times in one evening, each caught by a
+   rule rather than by attention. See `TESTING.md`.
+
    `tools/version-stamp.sh --filename` produces the name, and is the only
    place that calculation lives. The bare `hexarouting-<version>.iso` is
    reserved for the tree that **is** the release: clean, and standing exactly
