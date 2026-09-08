@@ -25,7 +25,55 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.36.0.
+Nothing merged since v0.37.0.
+
+## 0.37.0 — the medium never carried the binary API
+
+Two defects in the installation medium, one hiding behind the other
+([#119](https://github.com/andrediashexa/hexarouting/issues/119),
+[#121](https://github.com/andrediashexa/hexarouting/issues/121)).
+
+### Fixed
+
+* **The ISO had never carried the vat2 plugin.** `build-iso.sh` copied the VPP
+  plugin into the image and not the vat2 one; `install.sh` found neither of
+  the two paths it looks in, printed a warning and carried on — a line that
+  was in the build log of every release since the beginning.
+
+  `hexash` creates and changes pools over that API. The appliance booted,
+  answered, routed, ran its self-test and reported ready, and **could not be
+  configured to do CGNAT at all**. Every lab that drives the API places the
+  plugin by hand, describing that as "what install.sh does on a real box",
+  which is why nothing noticed.
+
+  The build now refuses without it and asserts afterwards on the file
+  `install.sh` was supposed to place. The boot self-test reports whether the
+  API is registered — read-only, because it runs at every boot on a production
+  box.
+
+* **`hexarouting.service` failed on the first boot of every install.** The
+  installer writes the default configuration as three comment lines, and
+  `hexash --load` read that as a complete configuration saying "no SSH
+  access", on a box that has SSH access from the root password the installer
+  just took. The lockout check refused it, correctly. An empty file is not a
+  configuration that removes everything; it is a configuration nobody has
+  written yet.
+
+  `Config` counts the statements it parsed and `load()` returns when there
+  were none — counted, not inferred from the fields, so a file setting a value
+  that happens to be the default is still checked like any other.
+
+  **This was introduced in v0.34.0** and is present in v0.34.0, v0.35.0 and
+  v0.36.0. Before that change `load()` applied without checking first, so the
+  empty file was a no-op.
+
+### Changed
+
+* **The release gate installs the medium to a disk and boots the disk**, with
+  the medium detached. A live image booting proves the medium is bootable and
+  does not prove it produces a working appliance; both defects above lived in
+  the gap between those two claims. `CONTRIBUTING.md` rule 5 is now "built,
+  booted, INSTALLED and booted again".
 
 ## 0.36.0 — applied, and never reported back
 
