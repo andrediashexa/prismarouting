@@ -244,6 +244,53 @@ configuration. It did not, and a box whose configuration was never applied
 reported itself ready to the one person standing at the console
 ([#94](https://github.com/andrediashexa/hexarouting/issues/94)).
 
+## The wait before the configuration is applied
+
+`hexarouting.service` waits for VPP to accept commands before applying the
+configuration: systemd considers `vpp.service` started as soon as the process
+exists, while the CLI socket and the plugins take longer, and applying
+configuration before that fails intermittently.
+
+The wait is legitimate. What was not is the screen — systemd prints
+
+```
+[  **] Job hexarouting.service/start running (22s / no limit)
+```
+
+and *"no limit"* is its phrasing for a unit with no timeout. On a box somebody
+is watching for the first time that reads as **"this is not going to finish"**,
+with nothing to say what is being waited for
+([#97](https://github.com/andrediashexa/hexarouting/issues/97)).
+
+Three outcomes, and they **MUST** be told apart:
+
+```
+  waiting for the dataplane to accept commands
+  (VPP is up; its CLI socket and plugins take a moment longer)
+  still waiting: 5s of at most 60s
+  the dataplane answered after 5s
+```
+
+* **A wait short enough that nobody noticed says nothing at all.** A message
+  about a wait that did not happen teaches the reader that these messages are
+  noise, and then the one that matters is noise too. Nothing is printed for the
+  first three seconds.
+* **A wait that ends normally leaves no warning behind.** An expected wait
+  reported as a problem is how operators learn to ignore a console.
+* **A wait that reaches the timeout says so, and says what it cost:** *"the
+  CGNAT configuration has NOT been applied"*. The event alone leaves the
+  operator to work out the consequence.
+
+A wait that announces itself and then goes quiet is, on a console,
+indistinguishable from having hung — so `lab/boot-iso.sh` fails a boot where
+the wait was announced and never concluded.
+
+**The 60-second bound is deliberate.** VPP answers in about 5–21 seconds on the
+lab VM, which has no hugepage pool to reserve and one worker to start. A box
+with 32 GB of hugepages and sixteen workers takes longer, and a bound fitted to
+the lab would fail the appliance. Raising it costs a slow boot; lowering it
+costs a box that gives up on a dataplane that was coming.
+
 ## Installing to disk
 
 The ISO is an **installation medium**, not an appliance you log into. It boots

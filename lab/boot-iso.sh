@@ -115,6 +115,35 @@ if grep -q "HexaRouting ready" /tmp/clean.log; then
       exit 1
     fi
     echo "  the report finishes before the prompt is drawn"
+
+    # The boot wait (#97). systemd prints "(22s / no limit)" while
+    # hexarouting.service waits for VPP's CLI socket, and "no limit" reads as
+    # "this is not going to finish" to somebody watching their first boot.
+    echo
+    echo "=========== the wait, explained or not ==========="
+    if grep -q "waiting for the dataplane" /tmp/clean.log; then
+      grep -E "waiting for the dataplane|still waiting|dataplane answered" \
+        /tmp/clean.log | head -4 | sed 's/^/  /'
+      if grep -q "dataplane answered after" /tmp/clean.log; then
+        echo "  the wait said what it was for AND that it ended"
+      else
+        echo
+        echo "=========== THE WAIT NEVER SAID IT ENDED ==========="
+        echo "  It announced itself and then went quiet, which on a console"
+        echo "  is indistinguishable from having hung."
+        exit 1
+      fi
+    else
+      echo "  the dataplane answered before anyone could notice: nothing said"
+    fi
+    # An expected wait reported as a problem is how operators learn to ignore
+    # a console.
+    if grep -q "VPP did not answer within" /tmp/clean.log; then
+      echo
+      echo "=========== THE DATAPLANE NEVER ANSWERED ==========="
+      grep -A2 "VPP did not answer" /tmp/clean.log | head -3 | sed 's/^/  /'
+      exit 1
+    fi
     exit 0
   fi
   echo

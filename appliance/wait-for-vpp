@@ -1,16 +1,72 @@
 #!/bin/sh
-# Espera o VPP aceitar comandos. O systemd considera o vpp.service iniciado
-# as soon as the process starts, but the CLI socket and the plugins take a
-# moment longer: applying configuration before that fails intermittently.
+# Wait for VPP to accept commands, and say so while waiting.
+#
+# systemd considers vpp.service started as soon as the process exists, but the
+# CLI socket and the plugins take longer: applying configuration before that
+# fails intermittently. So hexarouting.service waits here first.
+#
+# The wait is legitimate. What was not is the screen. systemd prints
+#
+#   [  **] Job hexarouting.service/start running (22s / no limit)
+#
+# and "no limit" is its phrasing for a unit with no timeout. On a box somebody
+# is watching for the first time that reads as "this is not going to finish",
+# with nothing to say what is being waited for or how long it may take (#97).
+#
+# So this writes to the CONSOLE, where the person is, rather than to the
+# journal, which they cannot reach yet.
+#
+# THE BOUND. Measured on the lab VM, VPP answers in ~21 seconds from a cold
+# boot. 60 is not a round number chosen for comfort: it is about three times
+# the observed wait, and the observation is from a virtual machine with no
+# hugepage pool to reserve and one worker to start. A box with 32 GB of
+# hugepages and sixteen workers takes longer, and a bound that fitted the lab
+# would fail the appliance. Raising it costs a slow boot; lowering it costs a
+# box that gives up on a dataplane that was coming.
 set -u
 TIMEOUT=${1:-30}
+OUT=${HEXA_WAIT_OUT:-/dev/console}
+
+# Nothing is printed for the first few seconds. A boot where VPP answers
+# straight away should be silent: a message about a wait that did not happen
+# teaches the reader that these messages are noise.
+QUIET=${HEXA_WAIT_QUIET:-3}
+
+# Appends. With ">" every line truncates what came before - invisible on
+# /dev/console, where truncation means nothing, and total on anything else.
+# Pointed at a file, only the last line survived.
+say() { echo "$@" >> "$OUT" 2>/dev/null || true; }
+
 n=0
+announced=0
 until vppctl show version >/dev/null 2>&1; do
   n=$((n + 1))
   if [ "$n" -ge "$TIMEOUT" ]; then
+    # A timeout and a wait that ended because VPP answered are different
+    # outcomes needing different actions, and they must not read the same.
+    say "  [FAIL] VPP did not answer within ${TIMEOUT}s."
+    say "         The CGNAT configuration has NOT been applied."
+    say "         Try: systemctl status vpp.service"
     echo "VPP did not respond within ${TIMEOUT}s" >&2
     exit 1
   fi
+  if [ "$n" -ge "$QUIET" ]; then
+    if [ "$announced" = 0 ]; then
+      say "  waiting for the dataplane to accept commands"
+      say "  (VPP is up; its CLI socket and plugins take a moment longer)"
+      announced=1
+    fi
+    # Every five seconds after that. Often enough to show it is alive,
+    # rarely enough not to become the boot log.
+    if [ "$(( n % 5 ))" = 0 ]; then
+      say "  still waiting: ${n}s of at most ${TIMEOUT}s"
+    fi
+  fi
   sleep 1
 done
+
+# Only when something was said. A wait that ended before anybody noticed it
+# leaves no trace, so an expected wait is never reported as a problem - which
+# is how operators learn to ignore a console.
+[ "$announced" = 1 ] && say "  the dataplane answered after ${n}s"
 exit 0
