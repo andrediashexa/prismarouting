@@ -25,7 +25,58 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.31.0.
+Nothing merged since v0.32.0.
+
+## 0.32.0 — the prompt says where you are
+
+Reported from a real session:
+
+```
+hexarouting# [edit] interface GigabitEthernet0/12/0
+hexarouting# [edit] show this
+interface GigabitEthernet0/12/0
+hexarouting# [edit]
+```
+
+### Fixed
+
+* **The prompt names the hierarchy and its subject**
+  ([#108](https://github.com/andrediashexa/hexarouting/issues/108)):
+  `[edit cgnat pool residential]`, `[edit interface TenGigabitEthernet0/8/0]`.
+  Entering an interface moved nothing at all, so an `mtu 1500` typed one block
+  later than intended went to the wrong interface with no warning.
+
+* **`show this` inside an interface shows its MTU and uRPF.** It printed the
+  header and stopped, because those are staged in `Config.mtus` and
+  `Config.urpf` while that branch only looked at `Config.routing`. An empty
+  answer is worse than no command: somebody who runs it and sees nothing
+  concludes the block is empty.
+
+* **Leaving a user or an SNMP user no longer prints an error.** A regression in
+  v0.29.0: the `show` guard landed inside the `exit` branch, leaving dead code
+  after a `return`. The whole suite passed — nothing left a block and checked
+  that *nothing* was printed.
+
+* **The parallel lab suite reports as it goes.** It judged every lab after the
+  last one finished, so it printed nothing for twelve minutes — the same
+  complaint [#97](https://github.com/andrediashexa/hexarouting/issues/97) fixed
+  on the boot console.
+
+### Added
+
+* **The wiki is part of the work** — a rule in `CONTRIBUTING.md` §1 and
+  invariant 1.9 of `docs/context.md`. Every task ends by asking whether a wiki
+  page needs writing or changing, and the answer goes on the issue **including
+  when it is no**.
+
+* `wiki/`, a read-only mirror of the live wiki, refreshed with
+  `tools/wiki-pull.sh`. The repository stays authoritative about the product;
+  the wiki is a usage layer on top of it. No address or credential is kept.
+
+  Applying the rule immediately found the wiki teaching **`show ip route`** —
+  FRR's RIB, the table where a route looks correct on a box that is dropping
+  the traffic. Public since v0.26.0. Four pages updated.
+
 
 ## 0.31.0 — the boot wait says what it is waiting for
 
