@@ -346,10 +346,12 @@ the change is applied, and an entry that cannot be attributed **says so** rather
 than omitting the field. It is an assertion and not proof — the transport is
 shared memory, which carries no peer credentials — which is exactly why the
 next one matters → [#22](https://github.com/andrediashexa/hexarouting/issues/22) so the trail cannot
-be edited afterwards. The trail is append-only and `fsync`ed, so it survives a
-reboot and a crash; it does not survive editing, which means it proves what
-happened only to somebody who already trusts the operator — and it exists to be
-shown to somebody who does not.
+be edited afterwards — *delivered, v0.23.0*: each entry is chained to the
+previous one by a SHA-256 digest, `show bpa pool history verify` names the first
+entry where the chain breaks, and alteration, removal from the middle and
+truncation are told apart. What it does **not** do is stop somebody who owns the
+box from rewriting the trail and recomputing every digest; the copy that makes
+it evidence is the one in the remote syslog, which the entries already reach.
 
 Alongside, and independent of each other: [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog beside IPFIX,
 which today disqualifies the product from deployments for a reason unrelated to
