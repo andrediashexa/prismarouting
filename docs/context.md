@@ -133,9 +133,16 @@ wiki at `hexarouting.hexanetworks.com.br` says how somebody *uses* it, and
 `wiki/` here is a read-only mirror so it can be read and diffed without leaving
 the repository — editing that mirror changes nothing.
 
-Where the two disagree, the repository is right and the wiki page is stale.
+The wiki is a **draft**: still being written, and known to contain errors about
+the purpose of the project and about how deterministic mode relates to BPA. It
+is not a source — never answer a question about the product from it.
+
+Where the two disagree, the repository is right and the wiki page is a defect.
 Every task asks whether a page needs writing or changing, and records the
 answer on the issue even when it is no.
+
+The wiki is currently being audited against this repository; the brief for
+that is [wiki-audit.md](wiki-audit.md).
 
 *Authoritative:* `PADRAO-DOCUMENTACAO.md` for how a page is written,
 [CONTRIBUTING.md](../CONTRIBUTING.md) section 1 for when.

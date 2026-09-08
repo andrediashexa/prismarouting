@@ -9,6 +9,21 @@ Refresh it with `WIKI_HOST=<host> sh tools/wiki-pull.sh`. No address or
 credential is kept here — `PADRAO-DOCUMENTACAO.md` says those never go into the
 wiki, and the same applies to the repository that mirrors it.
 
+## The wiki is under construction, and is known to be wrong in places
+
+The maintainer's words: it is **not the base of truth**, it is still being
+built, and it **contains errors about the purpose of the project** — including
+about deterministic CGNAT and its relationship to BPA.
+
+So this directory is a mirror of a draft. Reading a page here tells you what
+the wiki currently says, not what is true. When a page and `docs/` disagree,
+`docs/` is right and the page is a defect to be fixed — not evidence of
+anything.
+
+That matters most for whoever reads this next, human or otherwise: **do not
+answer a question about the product from these files.** `docs/`, `README.md`
+and `TESTING.md` answer it; these pages are the thing being corrected.
+
 ## What this is not
 
 **It is not where the wiki is edited.** Outline is the live copy and the one
