@@ -25,7 +25,50 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.38.1.
+Nothing merged since v0.39.0.
+
+## 0.39.0 — roles reach the dataplane
+
+Progress on [#76](https://github.com/andrediashexa/hexarouting/issues/76),
+which stays open: the global settings and the `check` path still go over the
+CLI socket.
+
+### Fixed
+
+* **Roles were decorative on a real appliance.** `api-segment { gid vpp }`
+  group-owns `/dev/shm/vpe-api` and not `/dev/shm/global_vm`; a client maps
+  both, so a non-root account got `svm_region_map: Permission denied` and the
+  VTY reported a timeout it could not explain. Every operator would have had
+  to be root — the thing roles exist to stop.
+
+  `lab/vty.sh` had been correcting this by hand since roles were built, which
+  is the same shape as #119: a lab arranging an environment the product never
+  produced. It is now a drop-in on `vpp.service`, asserted on the installed
+  box, which is the only place the unit file is exercised at all.
+
+  The boot self-test proves the property rather than the mode bits — not root,
+  in the `vpp` group, can call — using `setpriv` so that nothing has to be
+  created to test it.
+
+### Changed
+
+* **Three operations left the VPP CLI socket** for the binary API: attaching
+  and detaching CGNAT on an interface (`bpa_interface_add_del_feature`, a
+  message that already existed and was not being used), MTU
+  (`sw_interface_set_mtu`) and uRPF (`urpf_update`). Both new message shapes
+  were captured from a running dataplane rather than assumed, and both keep
+  their read-back: `retval 0` says the message was accepted, not that the
+  driver took the value.
+
+  Twenty-eight CLI uses became twenty-three. Every remaining read is `show`
+  passthrough, which is meant to stay.
+
+### Known gap found here
+
+* [#124](https://github.com/andrediashexa/hexarouting/issues/124) — attaching
+  CGNAT to an interface is not recorded in the audit trail. It was a `vppctl`
+  call before, so it was never attributable; moving it to the API made the gap
+  visible rather than creating it.
 
 ## 0.38.1 — the gate refused 0.38.0, correctly
 
