@@ -293,6 +293,43 @@ sub-interface is created with `TWO_TAGS` and without `EXACT_MATCH`, which means
 it also matches frames carrying **more** than two tags. Documented rather than
 silently shipped.
 
+### An interface in a VRF
+
+```
+interface GigabitEthernet0/12/0
+  vrf 7
+  ipv4 address 10.7.0.1/24
+  exit
+```
+
+Numeric, the same way a pool's `vrf` is numeric. Two ways to name the same
+table would be two things to keep in step, and they would disagree. Table 0 is
+the default and needs no statement, so it is not written for every port on
+every box.
+
+Pools have carried a VRF since v0.18.0 and there was no way to put an
+**interface** in one, so the feature was half-built: the pool named a table
+nothing could be bound to
+([#132](https://github.com/andrediashexa/hexarouting/issues/132)).
+
+**VPP refuses to move an interface that still holds addresses** — `retval
+-114`. It does not silently clear them, which is what this issue was written
+expecting; the behaviour was measured rather than assumed, and the assumption
+was wrong. The practical consequence is the same either way: the move is
+**remove, move, re-add**, as one operation.
+
+So an interface whose VRF changes is taken out of the ordinary address delta
+and has its addresses applied once, inside the move. Treating it as two
+independent deltas produces the refusal; doing the move first and the
+addresses second produces a port that is briefly in the new table with nothing
+on it.
+
+The lab asserts the address is in that table and **not** in the default one,
+then moves the interface to a second VRF and asserts the address followed and
+left the first. That second pair is what catches a commit that moves the
+interface and leaves its addresses behind — which reports success and produces
+a port in the right table with nothing on it.
+
 ### What the lab asserts, and why the second one is the point
 
 ```

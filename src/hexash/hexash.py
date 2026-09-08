@@ -147,6 +147,7 @@ SHOW = {
 INTERFACE_BLOCK = {
     "description": ("what this interface is for", "<text>"),
     "vlan": ("VLAN tag, on a sub-interface", "<1-4094> [inner <1-4094>]"),
+    "vrf": ("the routing table this interface's addresses live in", ARG_NUM),
     "ipv4": ("IPv4 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
     }),
@@ -339,7 +340,7 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
-               "addr_add", "addr_del", "subif_add", "subif_del")
+               "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set")
 
 
 def cap_needed(delta):
@@ -763,6 +764,7 @@ class Shell:
         cfg.descriptions = self.device_descriptions()
         cfg.addresses = self.device_addresses()
         cfg.vlans = self.device_vlans()
+        cfg.vrfs = self.device_vrfs()
         cfg.admin_down = self.device_admin_down()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
@@ -816,6 +818,31 @@ class Shell:
                 "inner": inner,
             }
         return out
+
+    def device_vrfs(self) -> dict:
+        """
+        The routing table each interface's addresses live in.
+
+        One call per interface, because sw_interface_dump does not carry it.
+        Table 0 is left out: it is the default, every untouched interface is
+        in it, and recording it would put a `vrf 0` line under every port on
+        every box.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return {}
+        found = {}
+        for name in routes.parse_interfaces(out):
+            if name == "local0":
+                continue
+            idx = self.api.interface_index(name)
+            if idx is None:
+                continue
+            r = self.api_call("sw_interface_get_table",
+                              {"sw_if_index": idx, "is_ipv6": False})
+            if r.state == vppapi.OK and r.fields.get("vrf_id"):
+                found[name] = int(r.fields["vrf_id"])
+        return found
 
     def device_addresses(self) -> dict:
         """
@@ -1022,6 +1049,32 @@ class Shell:
                     continue
                 subprocess.run(["ip", "link", "set", "dev", name,
                                 "up" if up else "down"], capture_output=True)
+        return True
+
+    def set_vrf(self, ifname, table):
+        """
+        Put an interface in a routing table, creating the table if needed.
+
+        Creating a table that already exists returns 0, so this does not have
+        to ask first - and asking first would be two calls that can disagree
+        between them.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        if table:
+            self.api_call("ip_table_add_del",
+                          {"is_add": True,
+                           "table": {"table_id": table, "is_ip6": False,
+                                     "name": f"vrf{table}"}})
+        r = self.api_call("sw_interface_set_table",
+                          {"sw_if_index": idx, "is_ipv6": False,
+                           "vrf_id": table})
+        if r.state != vppapi.OK:
+            self.err(f"interface {ifname}: could not move it to vrf {table}: "
+                     f"{r.reason}")
+            return False
         return True
 
     def create_subif(self, ifname, tag):
@@ -1504,6 +1557,26 @@ class Shell:
         for ifname, tag in d["subif_add"].items():
             if not self.create_subif(ifname, tag):
                 return False
+
+        # Moving an interface between routing tables, addresses and all.
+        #
+        # VPP REFUSES to move an interface that still holds addresses - retval
+        # -114 - so this is remove, move, add, in that order, as one operation.
+        # Doing it as two independent deltas produces the refusal, and doing
+        # the move first and the addresses second produces an interface that
+        # is briefly in the new table with nothing on it.
+        #
+        # The interfaces here are excluded from the ordinary address delta, so
+        # their addresses are applied once, here, and not twice.
+        for ifname, (table, had, want) in d["vrf_set"].items():
+            for a in had:
+                if not self.set_address(ifname, a, False):
+                    return False
+            if not self.set_vrf(ifname, table):
+                return False
+            for a in want:
+                if not self.set_address(ifname, a, True):
+                    return False
 
         # Addresses before everything except the admin state, and removals
         # before additions: an operator replacing 10.0.0.1/24 with
@@ -2024,6 +2097,23 @@ class Shell:
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:2] == ["no", "mtu"]):
             self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
+            return True
+
+        # `vrf` moves the interface between routing tables. The device's, and
+        # not something FRR can be told about after the fact.
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "vrf"):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 2 or not w[1].isdigit():
+                self.err("usage: vrf <table>")
+            elif int(w[1]):
+                self.candidate.vrfs[ifname] = int(w[1])
+            else:
+                self.candidate.vrfs.pop(ifname, None)
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:2] == ["no", "vrf"]):
+            self.candidate.vrfs.pop(self.frr_ctx[-1].split()[1], None)
             return True
 
         # `vlan` creates the sub-interface. It is the device's for the same

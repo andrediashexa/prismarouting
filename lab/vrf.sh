@@ -145,4 +145,38 @@ expect_in "two pools cannot share a public address" \
 expect_in "a VRF that does not exist is refused" "does not exist" "$R_NOVRF"
 expect_in "the VRF is in the running configuration" " vrf 1" "$CONF"
 
+# --- an interface in a VRF, through the VTY (#132) ---
+#
+# Pools have carried a VRF since v0.18.0 and there was no way to put an
+# INTERFACE in one, so the feature was half-built: the pool named a table
+# nothing could be bound to.
+#
+# The sequence matters. VPP REFUSES to move an interface that still holds
+# addresses - retval -114, not a silent clear - so the VTY has to remove,
+# move, and re-add. The second assertion below is the one that catches a
+# commit that does the move without the addresses: it fails by construction
+# if nothing re-applies them.
+. /src/lab/lib.sh
+use_binary_api
+HX="python3 /src/src/hexash/hexash.py"
+vppctl create packet-generator interface pg9 >/dev/null
+vppctl set interface state pg9 up
+
+echo
+echo "=========== an interface in a VRF ==========="
+$HX -c "configure" -c "interface pg9" -c "vrf 7"     -c "ipv4 address 10.7.0.1/24" -c "exit" -c "commit" 2>&1 | sed 's/^/  /'
+echo "  table 7:"; vppctl show ip fib table 7 10.7.0.0/24 2>&1 | head -2 | sed 's/^/    /'
+expect_in "the address is in the VRF's own table" "10.7.0.0/24"   "$(vppctl show ip fib table 7 10.7.0.0/24 2>&1)"
+expect_not_in "and not in the default table" "10.7.0.0/24"   "$(vppctl show ip fib table 0 10.7.0.0/24 2>&1)"
+expect_in "the VTY reads the interface's VRF back from the box" "vrf 7"   "$($HX -c 'show running-config' | sed -n '/^interface pg9$/,/^ exit$/p')"
+
+echo
+echo "=========== moving it to another VRF ==========="
+# The address must FOLLOW. A commit that moves the interface and leaves its
+# addresses behind produces a port in the right table with nothing on it, and
+# reports success.
+$HX -c "configure" -c "interface pg9" -c "vrf 8" -c "exit" -c "commit"     2>&1 | sed 's/^/  /'
+expect_in "the address followed the interface into the new table"   "10.7.0.0/24" "$(vppctl show ip fib table 8 10.7.0.0/24 2>&1)"
+expect_not_in "and left the old one" "10.7.0.0/24"   "$(vppctl show ip fib table 7 10.7.0.0/24 2>&1)"
+
 verdict
