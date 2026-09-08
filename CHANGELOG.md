@@ -25,7 +25,52 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.43.0.
+Nothing merged since v0.44.0.
+
+## 0.44.0 — the interface is a first-class object
+
+Last of [#128](https://github.com/andrediashexa/hexarouting/issues/128)
+([#133](https://github.com/andrediashexa/hexarouting/issues/133)). The
+interface block went from `mtu` and `urpf` to ten statements over five
+releases.
+
+### Added
+
+* **`mac-address`** on an interface. It matters on a card swap: the upstream's
+  ARP cache, DHCP reservations and any L2 filtering all key on it.
+* **`ipv6 nd suppress-ra`**. VPP advertises this box as a router **by
+  default** — measured on a running dataplane: an interface holding an IPv6
+  address sends a router advertisement every 200 seconds with a 600-second
+  lifetime. On a subscriber-facing port that is a second default gateway for
+  every subscriber who gets their prefix by DHCPv6-PD.
+
+  **The default is unchanged.** Changing how the product behaves by default is
+  a decision for the maintainer, not something the commit that adds the knob
+  should do quietly. It is written down now, so it is a known default rather
+  than an accident — which is what it was.
+* **`show interface <name>`** in detail: state, MTU, addresses, the `linux_cp`
+  pair, VRF, MAC, description, uRPF, whether CGNAT is attached, and the
+  counters. The counters are printed uninterpreted, because during a fault the
+  operator will also look at `vppctl`.
+
+### Fixed
+
+* **An exact interface name now wins over the prefix filter.** `show interface
+  pg0` on a box that also has `pg0.100` matched both, so the detailed view
+  never fired for any interface with sub-interfaces — which is every interface
+  an ISP terminates subscribers on.
+
+### Worth recording
+
+The counter assertion in the lab named one counter, `rx packets`. The box
+under test had moved `rx bytes` and `punt` off zero and not that one, so a
+**working** box failed the test. It asserts the property now — that the report
+does not say "all zero".
+
+That is the fourth assertion in this phase written against the shape of an
+answer rather than what has to be true of it. The others: a hardcoded list of
+interface statements, twice, and `grep -A2` on a configuration block that grew
+a line.
 
 ## 0.43.0 — an interface can be put in a VRF
 
