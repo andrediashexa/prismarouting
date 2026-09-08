@@ -113,6 +113,22 @@ it is *no*, and why.
   `WIKI_HOST=<host> sh tools/wiki-pull.sh`. Read it to see what is already
   documented. **Editing it changes nothing** — the next pull overwrites it, and
   Outline is where a page is actually edited.
+* **Pull immediately before editing, and publish with
+  `tools/wiki-push.sh`**, which refuses to overwrite a page that changed after
+  the pull. Other people write the wiki at the same time: a page built from a
+  snapshot of unknown age discards whoever made the change in between.
+
+  That guard exists because of a near miss. Four pages were updated, the mirror
+  was never refreshed, and a later edit was built from the stale copy — while
+  the maintainer was renaming a category and removing pages. Nothing was lost,
+  and only because the stale text failed to match, not because anything
+  noticed.
+* **Read what a category is FOR before adding to it.** A page can be
+  well-written, accurate, and still the wrong page. `make release-gate` was
+  added to a wiki page about builds and testing, which was removed days later
+  as the wiki narrowed to what an operator does — that content belongs in
+  `TESTING.md`, which a customer never reads. Filling a gap a grep found is not
+  the same as answering a question a reader has.
 
 **The wiki is a draft and is known to be wrong in places** — including about
 the purpose of the project and about deterministic mode's relationship to BPA.

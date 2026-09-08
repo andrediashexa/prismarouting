@@ -1,4 +1,4 @@
-# Entender e desenvolver
+# Entender o produto
 
 Por que o produto é assim. Leia quando precisar decidir arquitetura, avaliar se o BPA atende ao seu caso, ou mexer no código.
 

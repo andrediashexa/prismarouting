@@ -400,6 +400,50 @@ check("not in configuration mode" in out.getvalue(),
       f"outside configuration mode it says so: {out.getvalue()!r}")
 print("  operational mode: refused with the reason")
 
+print("\n=== inside a block, only what is valid there ===")
+#
+# A block entered by an ARGUMENT is still mode "config", so the tree walk
+# returned the whole configuration tree: fifteen options inside an interface,
+# of which three are valid. Offering the level above invites somebody to type
+# "cgnat pool" inside an interface and find out afterwards what that meant
+# (#112).
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("interface TenGigabitEthernet0/8/0")
+opts, _, _ = sh._options("", False)
+check(set(opts) == {"mtu", "urpf", "exit", "show"},
+      f"an interface offers its own statements: {sorted(opts)}")
+print(f"  interface -> {sorted(opts)}")
+sh.feed("exit")
+
+sh.feed("router bgp 65001")
+opts, _, _ = sh._options("", False)
+check(set(opts) == {"exit", "show"},
+      f"an FRR block offers what this VTY knows, and no more: {sorted(opts)}")
+# Offering BGP statements would be a guess presented as a grammar.
+check("cgnat" not in opts and "interface" not in opts,
+      "and never the level above")
+print(f"  router bgp -> {sorted(opts)}")
+sh.feed("exit")
+
+# The blocks the tree knows about were always right; this is the check that
+# they stayed right.
+sh.feed("cgnat pool p")
+opts, _, _ = sh._options("", False)
+check("inside" in opts and "cgnat" not in opts,
+      f"a pool still offers its own tree: {sorted(opts)[:6]}")
+sh.feed("exit")
+
+print("\n=== completion ignores case, and inserts the box's spelling ===")
+# Interface names are GigabitEthernet0/12/0. Requiring the capital G before
+# completion helps is completion that only works for somebody who already
+# knows the answer.
+for typed in ("ten", "TEN", "TenGig", "tengigabitethernet0/8"):
+    opts, _, _ = sh._options("interface " + typed, True)
+    check(list(opts) == ["TenGigabitEthernet0/8/0"],
+          f"'{typed}' must complete to the real name, got {sorted(opts)}")
+print("  ten / TEN / TenGig / tengigabitethernet0/8 -> TenGigabitEthernet0/8/0")
+
 print("\n=== leaving a block says nothing and lands in config mode ===")
 #
 # This is the assertion whose absence let a regression ship in v0.29.0. Adding
@@ -425,6 +469,51 @@ for block in ("user noc", "snmp-user alice", "cgnat pool p",
     check(sh.mode == "config",
           f"leaving '{block}' left mode {sh.mode!r}, not config")
 print("  four blocks entered and left, in silence")
+
+print("\n=== show interface answers from the dataplane ===")
+#
+# It used to be handed to vtysh, which answers from FRR's view - and FRR sees
+# only what linux_cp has mirrored. On a box with a GigabitEthernet0/12/0
+# configured, "show interface description" answered "lo" (#112). Same shape as
+# "show ip route" answering from the RIB.
+sh = shell_with_box()
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show interface")
+text = out.getvalue()
+check("TenGigabitEthernet0/8/0" in text and "host-veth-vpp" in text,
+      f"the dataplane's interfaces are listed: {text!r}")
+check("up" in text, "with their state")
+# local0 is listed - hiding an interface the dataplane reports would be the
+# command deciding what the operator may see - while not being offered for
+# completion, because it configures nothing.
+check("local0" in text, "including VPP's own loopback, which it does report")
+print("  " + [l for l in text.splitlines() if "TenGig" in l][0].strip())
+
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show interface description")
+check("no per-interface description" in out.getvalue(),
+      "asking for descriptions says why there is no such column, rather than "
+      "leaving somebody looking for one that is never coming")
+
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show interface tengig")
+check("TenGigabitEthernet0/8/0" in out.getvalue()
+      and "host-veth-vpp" not in out.getvalue(),
+      f"a name filters, ignoring case: {out.getvalue()!r}")
+
+# An empty table reads as "this box has no interfaces", which is a different
+# and much more alarming statement than "I could not ask".
+sh_down = shell_with_box(dp_rc=1)
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh_down.feed("show interface")
+check("not answering" in out.getvalue(),
+      f"a dead dataplane says so rather than printing an empty table: "
+      f"{out.getvalue()!r}")
+print("  dataplane down -> says it could not ask")
 
 print("\n=== the prompt names the hierarchy AND its subject ===")
 #

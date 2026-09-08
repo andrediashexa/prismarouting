@@ -1,5 +1,7 @@
 # Comandos show
 
+# Comandos show
+
 Os comandos `show` funcionam nos modos operacional **e** de configuração.
 
 ## `show cgnat`
@@ -21,6 +23,49 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 `show cgnat translation` é o comando que responde uma ordem judicial: dado um IP público, uma porta e um instante, quem era o assinante.
 
 `show cgnat history` é o outro lado disso no modo determinístico — qual configuração estava em vigor naquela data, e quem a colocou lá.
+
+## `show route` — a tabela que encaminha
+
+| Comando | Mostra |
+|---------|--------|
+| `show route` | a tabela de encaminhamento do VPP: o que esta caixa realmente faz com um pacote |
+| `show route verbose` | a FIB do VPP e a RIB do FRR lado a lado, **marcando onde discordam** |
+| `show route <prefixo>` | o mesmo, para um destino |
+
+```
+hexarouting> show route
+  Destination          Next hop          Interface      Kind
+  0.0.0.0/0            200.150.0.1       TenGig0/8/0    forward
+  200.150.0.0/24       connected         TenGig0/8/0    connected
+
+  2 entries carrying traffic
+```
+
+
+:::warning
+`show ip route` responde pela tabela do **FRR**, não pela que encaminha. Numa caixa que está descartando o tráfego, a rota aparece presente e correta ali.
+
+Quando o tráfego não passa e a rota parece certa, `show route verbose` é o comando: ele compara as duas tabelas e diz qual prefixo está numa e não na outra.
+
+:::
+
+## `show this` — o que há na hierarquia em que estou
+
+Dentro de um bloco de configuração, mostra o que aquele bloco tem e nada acima dele:
+
+```
+hexarouting# [edit cgnat pool residential] show this
+cgnat pool residential
+ inside 100.64.0.0/22
+ outside 200.150.0.16/30
+ block-size 512
+ tcp-mss 1400
+ exit
+```
+
+Mostra a **candidata**, não a configuração em vigor: quem está no meio de uma edição pergunta sobre o que está construindo.
+
+O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface TenGigabitEthernet0/8/0]` — para que a próxima declaração não caia no bloco errado.
 
 ## `show` — restante
 
@@ -45,6 +90,7 @@ Os `show` de roteamento são repassados ao `vtysh` do FRR, então a sintaxe comp
 |---------|---------|
 | "assinante sem internet" | `show cgnat subscriber <ip-interno>` |
 | "pacotes sumindo" | `show cgnat drops` |
+| "a rota está lá e o tráfego não passa" | `show route verbose` |
 | "de quem era esse IP:porta?" | `show cgnat translation <ip> <porta>` |
 | "o pool vai encher?" | `show cgnat top` |
 | "o coletor está recebendo?" | `show cgnat logging` |

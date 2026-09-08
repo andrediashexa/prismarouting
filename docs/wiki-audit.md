@@ -88,6 +88,12 @@ It is markdown, greppable, and diffable against the last pull.
 
 ### Writing
 
+**Pull first, then push with `tools/wiki-push.sh`.** It refuses to publish over
+a document that changed after the mirror was pulled. The wiki is being written
+by people right now — a category was renamed and two pages removed during the
+work that produced this brief — and an edit built from an old snapshot
+discards whoever made the change in between.
+
 **Through the API, never the database.** Outline keeps revisions, a search
 index and collaborative state; writing document rows underneath it corrupts all
 three silently.
@@ -127,7 +133,11 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
-Four pages were updated on 2026-09-08 against v0.32.0:
+Six pages were updated on 2026-09-08 against v0.32.0 and v0.33.0. One of them,
+*Build, testes e laboratórios*, **was removed from the wiki shortly
+afterwards** when the category *Entender e desenvolver* became *Entender o
+produto* — developer content leaving a wiki that is for operators. Read that as
+a warning about direction: the edit was accurate and it was the wrong page.
 
 | Page | What was wrong or missing |
 |---|---|

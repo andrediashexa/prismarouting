@@ -1,5 +1,7 @@
 # Roteamento, SSH, usuários e SNMP
 
+# Roteamento, SSH, usuários e SNMP
+
 Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças exigem a capacidade de **administrador** (`hexa-admin` ou root).
 
 # Roteamento (FRR)
@@ -8,25 +10,80 @@ Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças ex
 router bgp <AS>
 router ospf
 router isis <nome>
+ip route <prefixo> <próximo-salto>
 ```
 
-O roteamento é do FRR, alcançado pelo TAP do `linux_cp`. Depois de entrar no protocolo, a sintaxe é a do FRR. Da mesma forma, os `show` de roteamento são repassados ao `vtysh`:
+O roteamento é do FRR, alcançado pelo TAP do `linux_cp`. Depois de entrar no protocolo, a sintaxe é a do FRR.
+
+Uma rota estática não precisa de protocolo nenhum e é a primeira coisa que se configura numa caixa nova:
 
 ```
-show ip route
-show bgp summary
-show isis neighbor
-show interface
-show logging
+configure
+ip route 0.0.0.0/0 200.150.0.1
+commit
 ```
 
-As rotas aprendidas chegam à FIB do VPP — é o que o laboratório `routing` verifica.
+`commit check` recusa um próximo salto que não está em nenhuma rede conectada:
+
+```
+error: ip route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
+    the route would be accepted and never reach the forwarding table
+```
+
+Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
+
+## Ver a tabela: `show route`, não `show ip route`
+
+Três tabelas guardam rotas nesta caixa e só uma encaminha pacote:
+
+```mermaid
+flowchart LR
+    RIB["RIB do FRR<br/>o que o FRR decidiu"] --> K["FIB do kernel<br/>o que o FRR instalou"]
+    K -->|"netlink / linux_nl"| VFIB["FIB do VPP<br/>o que encaminha"]
+```
+
+| Comando | Responde a partir de | Use quando |
+|---------|----------------------|------------|
+| `show route` | **FIB do VPP**       | é a pergunta normal: o que esta caixa encaminha |
+| `show route verbose` | as duas, comparadas  | o tráfego não passa e a rota "está lá" |
+| `show route <prefixo>` | as duas, para um destino | investigar um destino específico |
+| `show ip route` | RIB do FRR (repassado ao `vtysh`) | conferir o que o FRR decidiu, não o que a caixa faz |
+
+```
+hexarouting> show route
+  Destination          Next hop          Interface      Kind
+  0.0.0.0/0            200.150.0.1       TenGig0/8/0    forward
+  203.0.113.0/24       200.150.0.1       TenGig0/8/0    forward
+  200.150.0.0/24       connected         TenGig0/8/0    connected
+
+  3 entries carrying traffic
+```
 
 
 :::warning
-**A MTU do TAP é 9000.** Uma interface que herda esse valor sem que o outro lado concorde produz adjacência OSPF travada em Exchange. Ajuste com `mtu` dentro do bloco `interface`.
+`show ip route` responde pela tabela do FRR. Numa caixa que está descartando o tráfego, a rota aparece **presente e correta** ali — porque quem encaminha é a FIB do VPP, e a resposta do FRR não diz nada sobre a rota ter chegado lá.
+
+Quando o tráfego não passa e a rota parece certa, use `show route verbose`: ele compara as duas e marca onde discordam.
 
 :::
+
+A coluna VPP diz o que o VPP **tem** — `forward`, `connected`, `local`, `neighbour`, `drop` ou `absent` — e não sim/não. Um prefixo que o VPP descarta de propósito e um que ele nunca ouviu falar são situações diferentes, com causas diferentes.
+
+Endereços locais e rotas por interfaces que o VPP não possui — a de gerência, por exemplo — **não** são marcadas como discordância. Elas estão no FRR e ausentes da FIB corretamente e para sempre.
+
+## Quais daemons rodam
+
+`zebra`, `mgmtd` e `staticd` sobem sempre. `bgpd`, `ospfd` e `isisd` são habilitados pelo instalador — o pacote do Debian os traz desligados, e uma caixa instalada sem isso oferecia os três no VTY sem rodar nenhum.
+
+`commit check` recusa um `router <protocolo>` cujo daemon não está de pé:
+
+```
+error: router bgp 65001: bgpd is not running
+    the statement would commit and reach nothing. Enable bgpd in
+    /etc/frr/daemons and restart frr
+```
+
+O autoteste de boot informa quais estão respondendo.
 
 # Três armadilhas de roteamento
 

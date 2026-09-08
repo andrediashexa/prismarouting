@@ -36,7 +36,9 @@ configure
 
 
 :::info
-A diferença entre um operador que ouve *"isso muda o mapeamento"* e um que ouve *"1024 de 1024 assinantes se movem, e 100.64.0.5 sai de 200.150.0.17:1536-2047 para 200.150.0.33:2048-2559"* é saber o que está prestes a fazer. Registre esse número no chamado de mudança: **é o número de clientes que vão ligar.**
+A diferença entre um operador que ouve *"isso muda o mapeamento"* e um que ouve *"1024 de 1024 assinantes se movem, e 100.64.0.5 sai de 200.150.0.17:1536-2047 para 200.150.0.33:2048-2559"* é saber o que está prestes a fazer.
+
+Registre esse número no chamado de mudança: **é o número de clientes que vão ligar.**
 
 :::
 

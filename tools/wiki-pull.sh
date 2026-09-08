@@ -88,7 +88,13 @@ if saved:
     saved = re.sub(r"Snapshot taken .*", "Snapshot taken %s, %d pages."
                    % (stamp, n[0]), saved, count=1)
     open(keep, "w").write(saved)
-print("%d pages" % n[0])
+# The high-water mark of what this pull saw. tools/wiki-push.sh refuses to
+# publish over a document that changed after it - the mirror is a snapshot,
+# and editing from a snapshot of unknown age is how somebody else's work gets
+# overwritten.
+newest = max((d.get("updatedAt") or "") for d in docs) if docs else ""
+open(os.path.join(root, ".pulled"), "w").write(newest + "\n")
+print("%d pages, newest change %s" % (n[0], newest))
 PYEOF
 
 echo "==> done. 'git diff wiki/' shows what changed since the last pull."

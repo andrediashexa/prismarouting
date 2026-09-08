@@ -54,6 +54,23 @@ Duas decisões que valem entender:
 
 `hexarouting.service` espera o VPP **aceitar comandos** antes de aplicar configuração: o systemd considera o `vpp.service` iniciado assim que o processo sobe, mas o socket da CLI e os plugins demoram mais um pouco, e aplicar antes disso falha de forma intermitente.
 
+Essa espera **se explica no console**, que é onde a pessoa está:
+
+```
+waiting for the dataplane to accept commands
+(VPP is up; its CLI socket and plugins take a moment longer)
+still waiting: 5s of at most 60s
+the dataplane answered after 5s
+```
+
+Três desfechos, ditos de formas diferentes: uma espera curta o bastante para ninguém notar **não diz nada**; uma que termina normalmente **não deixa aviso**; e um estouro de tempo diz o que custou — *a configuração de CGNAT NÃO foi aplicada*.
+
+
+:::info
+O limite de 60 segundos é generoso de propósito: o VPP responde em 5 a 21 segundos numa VM de laboratório sem hugepages e com um worker, e uma caixa com 32 GB de hugepages e dezesseis workers demora mais.
+
+:::
+
 O tuning roda em todo boot justamente para que uma mudança em `tune.env` ou uma troca de NIC seja honrada.
 
 # Diagnóstico
