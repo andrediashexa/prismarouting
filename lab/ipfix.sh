@@ -113,4 +113,19 @@ expect_in "the collector decoded the template" "TEMPLATE 256" "$C"
 expect_in "allocations arrived" "ALLOCATION" "$C"
 expect_in "de-allocations arrived" "DEALLOCATION" "$C"
 expect_in "every allocation had its release" "Every allocation had its matching" "$C"
+
+# The record's own timestamp, against the box's clock.
+#
+# A record stamped from VPP's boot clock reads as a plausible time of day and
+# is not one, so counting records will never catch it. The skew grows with the
+# machine's uptime, which is what makes this assertion impossible to satisfy by
+# accident: it fails harder the longer the box has been running.
+# https://github.com/andrediashexa/hexarouting/issues/117
+worst_skew() {
+  printf '%s\n' "$1" | sed -n 's/.*skew=\([+-]*[0-9]*\)s.*/\1/p' |
+    tr -d '+-' | sort -n | tail -1
+}
+SKEW=$(worst_skew "$C")
+expect "the record carries the time of day, not time since boot (worst skew ${SKEW:-none}s)" \
+  test "${SKEW:-99999}" -lt 120
 verdict

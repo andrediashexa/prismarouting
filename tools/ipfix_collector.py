@@ -42,6 +42,11 @@ def emit(tid, body, late=False):
         ev = EVENT.get(rec.get("natEvent"), rec.get("natEvent"))
         ts = rec.get("observationTimeMilliseconds", 0) / 1000.0
         tag = " (reprocessed)" if late else ""
+        # The epoch value as well as the readable one. A record stamped from
+        # VPP's boot clock reads "00:00:05", which looks like a time and is
+        # not one; the lab needs a number it can subtract from the box's own
+        # clock to tell the two apart.
+        print(f"  skew={time.time() - ts:+.0f}s")
         print(f"  {time.strftime('%H:%M:%S', time.gmtime(ts))} "
               f"{ev:11} {rec.get('sourceIPv4Address')} -> "
               f"{rec.get('postNATSourceIPv4Address')} "

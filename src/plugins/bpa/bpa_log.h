@@ -59,10 +59,23 @@ extern bpa_log_main_t bpa_log_main;
 
 clib_error_t *bpa_log_enable (int enable);
 
-/* Actually emits. May only be called from process context. */
-void bpa_log_block_event (vlib_main_t *vm, u32 thread_index, u8 event,
-			  u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
-			  u32 pool_id);
+/*
+ * Emits on every enabled transport. The single fan-out point: a caller that
+ * reaches one exporter directly will sooner or later reach only that one.
+ *
+ * It reads the wall clock itself rather than taking it as a parameter,
+ * because taking it as a parameter is how the compliance log came to carry
+ * "00:00:05" instead of the time of day - vlib_time_now() counts from when
+ * VPP started, and it was the value at hand at both call sites.
+ */
+void bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub,
+		   u16 port_lo, u16 port_hi, u32 pool_id);
+
+/* Actually emits over UDP. May only be called from process context.
+ * wall is seconds since the UNIX epoch, not since VPP started. */
+void bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall,
+			  u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
+			  u16 port_hi, u32 pool_id);
 
 /*
  * Export over TCP, for when losing a record is not acceptable.
@@ -91,8 +104,11 @@ extern bpa_log_tcp_t bpa_log_tcp;
 
 clib_error_t *bpa_log_tcp_enable (ip4_address_t *collector, u16 port,
 				  int enable);
-void bpa_log_tcp_record (f64 now, u8 event, u32 ip_priv, u32 ip_pub,
+/* wall is seconds since the UNIX epoch. */
+void bpa_log_tcp_record (f64 wall, u8 event, u32 ip_priv, u32 ip_pub,
 			 u16 port_lo, u16 port_hi, u32 pool_id);
+/* now is vlib_time_now(): monotonic, which is what scheduling a retry wants
+ * and what a timestamp on a record does not. */
 void bpa_log_tcp_service (f64 now);
 
 /* Drains every thread's queue. Called under the barrier. */

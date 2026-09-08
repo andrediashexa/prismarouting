@@ -1100,13 +1100,13 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		    continue;
 		  bpa_dyn_block_addr (p, rel[k].block_idx, &blk);
 
-		  /* runs on the main thread, so the IPFIX buffer is that thread's */
-		  bpa_log_block_event (vm, vm->thread_index,
-				       BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
-				       blk.ip_pub, blk.port_lo, blk.port_hi, j);
-		  bpa_log_tcp_record (now, BPA_NAT_EVENT_BLOCK_DEALLOC,
-				      ip_priv, blk.ip_pub, blk.port_lo,
-				      blk.port_hi, j);
+		  /* runs on the main thread, so the IPFIX buffer is that
+		   * thread's. One call, not one per transport: this site used
+		   * to name UDP and TCP itself, which is how a third exporter
+		   * gets added in one place and forgotten in the other - and
+		   * how it came to hand vlib_time_now() to a record. */
+		  bpa_log_emit (vm, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
+				blk.ip_pub, blk.port_lo, blk.port_hi, j);
 		}
 	    }
 	}
