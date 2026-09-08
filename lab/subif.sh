@@ -86,6 +86,36 @@ expect "a frame with a different tag did NOT land on it" \
   test "${AFTER:-0}" -eq "${BEFORE:-0}"
 
 echo
+echo "=========== the detailed view of one interface ==========="
+# Traffic has already been through pg0 by now, so the counters are not zero.
+# A report that only ever shows zeros is a report nobody can use during a
+# fault, and it passes every test that does not create a packet first.
+DETAIL=$($HX -c "show interface pg0")
+echo "$DETAIL" | sed 's/^/  /'
+expect_in "naming one interface gives the detailed view, not the table" \
+  "counters" "$DETAIL"
+expect_in "it reports the VRF" "vrf" "$DETAIL"
+expect_in "and the uRPF mode" "urpf" "$DETAIL"
+expect_in "and whether CGNAT is attached" "cgnat" "$DETAIL"
+# The property, not a counter name. Asserting "rx packets" tied the test to
+# which counters VPP happens to have moved off zero - this box had "rx bytes"
+# and "punt" - and a test that names one counter fails when the box is working
+# and reports a different one.
+expect_not_in "and the counters are real, not all zero" \
+  "all zero" "$DETAIL"
+expect_in "with at least one of them shown" "rx bytes" "$DETAIL"
+
+echo
+echo "=========== a MAC set through the VTY ==========="
+$HX -c "configure" -c "interface pg0" -c "mac-address 02:aa:bb:cc:dd:ee" \
+    -c "exit" -c "commit" > /tmp/mac.log 2>&1 || true
+tail -2 /tmp/mac.log | sed 's/^/  commit: /'
+expect_in "the dataplane answers to the new MAC" "02:aa:bb:cc:dd:ee" \
+  "$($HX -c 'show interface pg0')"
+expect_in "and the VTY reads it back from the box" "02:aa:bb:cc:dd:ee" \
+  "$($HX -c 'show running-config' | sed -n '/^interface pg0$/,/^ exit$/p')"
+
+echo
 echo "=========== removing it through the VTY ==========="
 $HX -c "configure" -c "no interface pg0.100" -c "commit" 2>&1 | sed 's/^/  /'
 IFACES=$(vppctl show interface | awk '{print $1}')

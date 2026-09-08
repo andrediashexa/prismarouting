@@ -363,6 +363,63 @@ defect surfaced immediately.
 interface stanzas the VTY stages itself, and the check path and the apply path
 share it so they cannot drift.
 
+### MAC, router advertisements, and one interface in detail
+
+```
+interface GigabitEthernet0/12/0
+  mac-address 02:aa:bb:cc:dd:ee
+  ipv6 nd suppress-ra
+  exit
+```
+
+`mac-address` matters on a card swap: the upstream's ARP cache, DHCP
+reservations and any L2 filtering all key on it.
+
+**VPP advertises this box as a router by default.** Measured on a running
+dataplane, not assumed: an interface holding an IPv6 address sends a router
+advertisement every 200 seconds, with a 600-second lifetime. On a
+subscriber-facing port that is a second default gateway for every subscriber
+who gets their prefix by DHCPv6-PD.
+
+`ipv6 nd suppress-ra` stops it. The **default is unchanged** — VPP's, which is
+to advertise — because changing it is a decision about how the product behaves
+and belongs to the maintainer, not to the commit that made the knob exist. It
+is written down here so it is a known default rather than an accident, which
+is what it was.
+
+`is_no` in `sw_interface_ip6nd_ra_config` undoes a previous configuration
+rather than meaning "not suppressed", so resuming advertisements is `is_no` on
+the suppression and not `suppress = 0`.
+
+### `show interface <name>`
+
+```
+pg0
+  state       up
+  mtu         9000
+  addresses   10.0.0.1/24
+  linux       vppwan0
+  vrf         0 (default)
+  mac         02:fe:c1:ed:07:aa
+  urpf        off
+  cgnat       not attached
+  counters
+    rx bytes                     120
+    punt                           2
+```
+
+A summary answers "is the link up". A fault report needs the counters: *up*
+and *up and dropping four percent of what arrives* look identical in a table,
+and the second is what the operator was calling about. The counters are
+printed **uninterpreted**, because during a fault the operator will also look
+at `vppctl`, and a number this VTY had summarised would be one they could not
+compare.
+
+**An exact name wins over the prefix filter.** `show interface pg0` on a box
+that also has `pg0.100` matches both by prefix, so "exactly one match" never
+fired for any interface with sub-interfaces — which is every interface an ISP
+terminates subscribers on.
+
 ### Two things this cost, both worth keeping
 
 **The VTY had a catch-all that sent unrecognised interface statements to FRR.**
