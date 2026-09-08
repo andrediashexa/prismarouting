@@ -69,6 +69,22 @@ Premissas explícitas, para ordem de grandeza e não para precisão: 200 mil ass
 | NAT por fluxo (referência) | \~40 milhões  | \~2,4 GB         | dezenas de TB |
 | BPA determinístico | 0             | 0                | 0      |
 
+## Os registros têm sistema de arquivos próprio
+
+Em modo dinâmico o log de alocação **é** o registro de conexão que o Marco Civil exige guardar por um ano. Por isso o instalador cria três partições — ESP, raiz e `/var/log/hexarouting` — em vez de deixar tudo junto.
+
+
+:::warning
+Compartilhando o sistema de arquivos com o resto, um log que enche impede a máquina de gravar a própria configuração e a própria trilha, porque ela está ocupada registrando quem se conectou a quê. Com volume próprio, um log cheio é só um log cheio.
+
+:::
+
+O tamanho padrão é aritmético e a conta aparece na tela: \~80 MB por dia para 200 mil assinantes em modo dinâmico, ou cerca de **29 GB por ano**. Modo determinístico não registra alocação nenhuma e quase não precisa de espaço — que é por que isso é uma pergunta e não uma constante. A raiz nunca fica com menos de 8 GB.
+
+Em instalação não assistida, `hexarouting.log-gb=` responde essa pergunta na linha de comando do kernel.
+
+O volume é montado com `nofail`: uma máquina que não dá boot porque o volume de registros sumiu é uma máquina em que ninguém consegue entrar para descobrir o porquê. Por isso o self-test de boot **reporta onde os registros estão** — sem isso, uma caixa cujo volume não montou sobe caladinha gravando na raiz.
+
 Essa tabela é o argumento comercial do BPA em uma linha: guardar um ano de registros passa de dezenas de terabytes para dezenas de gigabytes — ou para nada.
 
 # Como conferir

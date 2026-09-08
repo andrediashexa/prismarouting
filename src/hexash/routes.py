@@ -287,3 +287,58 @@ def unreachable_next_hops(routing: list, table: dict) -> list:
         if not any(_covers(p, nexthop) for p in connected):
             bad.append((line.strip(), nexthop))
     return bad
+
+
+# ------------------------------------------------------------- interfaces
+
+_ADDR_IF = re.compile(r"^(\S+) \((up|dn)\):")
+_ADDR_L3 = re.compile(r"^\s+L3 (\S+)")
+
+
+def parse_interfaces(show_interface: str, show_addr: str = "",
+                     show_lcp: str = "") -> dict:
+    """
+    The dataplane's interfaces: {name: {state, mtu, addresses, host}}.
+
+    `show interface` in the VTY used to be handed to vtysh, which answers from
+    FRR's view - and FRR sees only what linux_cp has mirrored. An operator
+    asking what interfaces this box has was shown a list missing the ones that
+    carry traffic; on a box with a GigabitEthernet0/12/0 configured, the answer
+    was "lo".
+
+    That is the same shape as `show ip route` answering from the RIB.
+    """
+    out = {}
+    for line in (show_interface or "").splitlines():
+        w = line.split()
+        # The header is not indented and neither is a name; continuation lines
+        # are, and the header starts with "Name".
+        if not w or line[0].isspace() or w[0] == "Name":
+            continue
+        out[w[0]] = {
+            "state": w[2] if len(w) > 2 else "?",
+            "mtu": (w[3].split("/")[0] if len(w) > 3 else "?"),
+            "addresses": [],
+            "host": "",
+        }
+
+    current = None
+    for line in (show_addr or "").splitlines():
+        m = _ADDR_IF.match(line)
+        if m:
+            current = m.group(1)
+            continue
+        m = _ADDR_L3.match(line)
+        if m and current in out:
+            out[current]["addresses"].append(m.group(1))
+
+    # The Linux side of a linux_cp pair. That name is what FRR and "ip" use,
+    # so an operator moving between the two needs both in one place.
+    for line in (show_lcp or "").splitlines():
+        w = line.split()
+        for i, tok in enumerate(w):
+            if tok == "host" and i + 1 < len(w):
+                for name in out:
+                    if name in line:
+                        out[name]["host"] = w[i + 1].rstrip(",")
+    return out

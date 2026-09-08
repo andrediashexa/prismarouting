@@ -134,7 +134,8 @@ SHOW = {
     "ip": ("IP information (FRR)", None),
     "bgp": ("BGP information (FRR)", None),
     "isis": ("IS-IS information (FRR)", None),
-    "interface": ("interfaces (FRR)", None),
+    "interface": ("interfaces on the dataplane, with state and addresses",
+                  ARG_INTERFACE),
     "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
 }
@@ -425,6 +426,21 @@ TREE = {
 if running_from_live_medium():
     TREE["operational"]["install"] = (
         "install HexaRouting onto a disk on this machine", None)
+
+
+def _starts(candidate, prefix):
+    """
+    Does `candidate` begin with `prefix`, ignoring case?
+
+    Interface names are GigabitEthernet0/12/0 and TenGigabitEthernet0/8/0.
+    Requiring the capital G before completion will help is completion that only
+    works for somebody who already knows the answer (#112).
+
+    The candidate is returned unchanged by the caller, so what gets inserted is
+    always the box's own spelling - completing "gig" to "gig" would be worse
+    than not completing.
+    """
+    return candidate.lower().startswith(prefix.lower())
 
 
 def tree_walk(mode, words):
@@ -1768,6 +1784,9 @@ class Shell:
         if _w[:2] == ["show", "this"]:
             self.show_this()
             return
+        if _w[:2] == ["show", "interface"]:
+            self.show_interfaces(_w[2:])
+            return
         if _w[:2] == ["show", "route"]:
             self.show_route(_w[2:])
             return
@@ -1855,6 +1874,65 @@ class Shell:
         # which is what `show configuration` already prints, and saying so is
         # better than printing it twice under two names.
         self.print_config(cfg)
+
+    def show_interfaces(self, args):
+        """
+        The dataplane's interfaces.
+
+        This used to be handed to vtysh, which answers from FRR's view - and
+        FRR sees only what linux_cp has mirrored. An operator asking what
+        interfaces this box has was shown a list missing the ones that carry
+        traffic: on a box with a GigabitEthernet0/12/0 configured, the answer
+        was "lo" (#112).
+
+        Same shape as `show ip route` answering from the RIB. The FRR view is
+        still reachable - `show ip interface`, and anything else vtysh knows -
+        because sometimes that IS the question.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0 or not out.strip():
+            # An empty table reads as "this box has no interfaces", which is a
+            # different and much more alarming statement than "I could not
+            # ask".
+            self.err("cannot read the interfaces: the dataplane is not "
+                     "answering")
+            return
+        _, addr = self.dp.run("show interface addr")
+        _, lcp = self.dp.run("show lcp")
+        ifaces = routes.parse_interfaces(out, addr, lcp)
+
+        wanted = [a for a in args if a not in ("description", "descr", "brief")]
+        if wanted:
+            ifaces = {n: e for n, e in ifaces.items()
+                      if any(_starts(n, w) for w in wanted)}
+            if not ifaces:
+                print("  no interface matches")
+                return
+
+        has_host = any(e["host"] for e in ifaces.values())
+        head = f"  {'Interface':<26} {'State':<6} {'MTU':<6} {'Address':<20}"
+        print(head + ("Linux" if has_host else ""))
+        for name in sorted(ifaces):
+            e = ifaces[name]
+            addrs = e["addresses"] or ["-"]
+            print(f"  {name:<26} {e['state']:<6} {e['mtu']:<6} "
+                  f"{addrs[0]:<20}{e['host'] or ('-' if has_host else '')}")
+            for extra in addrs[1:]:
+                print(f"  {'':<26} {'':<6} {'':<6} {extra:<20}")
+
+        # local0 is VPP's own loopback and configures nothing. It IS listed -
+        # hiding an interface the dataplane reports would be this command
+        # deciding what the operator may see - but it is not offered for
+        # completion, and the difference is worth stating rather than leaving
+        # as an inconsistency somebody has to work out.
+        print(f"\n  {len(ifaces)} interface(s) on the dataplane")
+
+        if any(a in ("description", "descr") for a in args):
+            # They asked for descriptions and got a table without them. Saying
+            # nothing would leave somebody looking for a column that is never
+            # coming.
+            print("  the dataplane carries no per-interface description; "
+                  "FRR's view is 'show ip interface'")
 
     def show_route(self, args):
         """
@@ -2076,7 +2154,7 @@ class Shell:
             values = getattr(self, name)()
         except Exception:
             return {}
-        return {k: v for k, v in values.items() if k.startswith(prefix)}
+        return {k: v for k, v in values.items() if _starts(k, prefix)}
 
     def _options(self, line, ending_word):
         words = line.split()
@@ -2085,24 +2163,34 @@ class Shell:
             prefix = words[-1]
             words = words[:-1]
         node, hint = tree_walk(self.mode, words)
-        # Inside an interface block the tree has nothing more to say: the block
-        # was entered through an argument. What the device itself handles there
-        # is offered here, and the rest still goes to FRR.
-        if (not words and self.frr_ctx
-                and self.frr_ctx[-1].startswith("interface ")):
-            merged = {k: v[0] for k, v in INTERFACE_BLOCK.items()
-                      if k.startswith(prefix)}
-            if node:
-                merged.update({k: v[0] for k, v in node.items()
-                               if k.startswith(prefix)})
-            return merged, hint, prefix
+
+        # A block entered by an ARGUMENT is still mode "config", so the tree
+        # walk returns the whole configuration tree - fifteen options inside an
+        # interface, of which three are valid there. Offering the level above
+        # invites somebody to type "cgnat pool" inside an interface and find
+        # out afterwards what that meant (#112).
+        #
+        # The blocks the tree knows about were always right: a pool offers its
+        # own, a user its own. Only these needed narrowing.
+        if not words and self.frr_ctx:
+            block = self.frr_ctx[-1]
+            if block.startswith("interface "):
+                opts = dict(INTERFACE_BLOCK)
+            else:
+                # An FRR block. This VTY does not model its statements, so
+                # offering any would be a guess presented as a grammar.
+                opts = {"exit": ("leave the block", None)}
+            opts["show"] = ("display information", None)
+            return ({k: v[0] for k, v in opts.items() if _starts(k, prefix)},
+                    hint, prefix)
+
         if node is None:
             # The tree knows a name goes here; the box knows which names.
             dyn = self.dynamic_options(hint, prefix)
             if dyn:
                 return dyn, hint, prefix
             return {}, hint, prefix
-        opts = {k: v[0] for k, v in node.items() if k.startswith(prefix)}
+        opts = {k: v[0] for k, v in node.items() if _starts(k, prefix)}
         return opts, hint, prefix
 
     def complete(self, text, state):

@@ -107,10 +107,61 @@ the first argument ([#98](https://github.com/andrediashexa/hexarouting/issues/98
 
 `local0` is never offered: it is VPP's own loopback and configures nothing.
 
+Dentro de um bloco, `?` oferece **apenas o que vale ali**:
+
+```
+hexarouting# [edit interface GigabitEthernet0/12/0] ?
+  exit   leave the interface
+  mtu    MTU, on both the dataplane interface and its TAP
+  show   display information
+  urpf   drop packets whose source does not route back this way
+```
+
+Antes oferecia a árvore de configuração inteira — quinze opções, das quais três
+valiam ali. Oferecer o nível de cima convida alguém a digitar `cgnat pool`
+dentro de uma interface e descobrir depois o que aquilo significou.
+
+Um bloco do FRR oferece `exit` e `show` e nada mais: este VTY não modela as
+declarações do FRR, e oferecer algumas seria **um palpite apresentado como
+gramática**.
+
+A completação **ignora maiúsculas e minúsculas** e sempre insere a grafia da
+máquina — `ten`, `TEN` e `TenGig` completam todos para
+`TenGigabitEthernet0/8/0`. Exigir a capitalização certa antes de ajudar é
+completação que só funciona para quem já sabe a resposta.
+
 **A source that cannot answer offers nothing and says so.** A VTY that becomes
 unusable when the dataplane is down is a VTY that cannot be used to fix it — so
 a dead or missing source leaves the `<interface>` hint in place and completes
 nothing, rather than hanging or raising.
+
+## `show interface` — as do dataplane
+
+```
+hexarouting> show interface
+  Interface                  State  MTU    Address             Linux
+  GigabitEthernet0/12/0      up     9000   203.0.113.1/24      tap0
+  TenGigabitEthernet0/8/0    up     1500   -                   -
+  local0                     down   0      -                   -
+```
+
+Responde pelo **dataplane**. Antes era repassado ao `vtysh`, que enxerga só o
+que o `linux_cp` espelhou — numa caixa com uma `GigabitEthernet0/12/0`
+configurada, a resposta era `lo`
+([#112](https://github.com/andrediashexa/hexarouting/issues/112)). É a mesma
+forma do `show ip route` respondendo pela RIB.
+
+A coluna **Linux** traz o par do `linux_cp`, porque esse é o nome que o FRR e o
+`ip` usam.
+
+* `local0` **aparece** — esconder uma interface que o dataplane reporta seria
+  este comando decidindo o que o operador pode ver — mas **não é oferecida na
+  completação**, porque não configura nada.
+* Pedir `description` diz por que não existe essa coluna, em vez de deixar
+  alguém procurando uma que nunca vem. A visão do FRR continua em
+  `show ip interface`.
+* Com o dataplane fora, ele diz que não conseguiu perguntar. Uma tabela vazia
+  leria como *"esta caixa não tem interfaces"*, que é afirmação bem diferente.
 
 ## `show this`
 

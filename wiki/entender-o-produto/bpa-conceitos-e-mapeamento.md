@@ -33,11 +33,11 @@ Com `blocked`, vizinhos ficam no mesmo endereço público — útil quando se qu
 
 
 :::warning
-**O mapeamento é aritmético, não uma tabela.**
+**O mapeamento é aritmético, não uma tabela.** Não existe registro de alocação para consultar — e isso significa que **mudar a definição do pool muda a função**.
 
 :::
 
-Não existe registro de alocação para consultar. Isso é o ponto inteiro do BPA — e significa que **mudar a definição do pool muda a função**.
+Não ter tabela é o ponto inteiro do modo determinístico: é o que dispensa o log de alocação e, junto com isso, o que deixa as duas direções de tráfego serem fatiadas entre workers sem lock nenhum.
 
 Acrescentar um prefixo público move **todos** os assinantes naquele instante e encerra todas as sessões do pool. Nada é corrompido, respostas passadas continuam resolvíveis, mas:
 
@@ -52,15 +52,22 @@ O estado de sessão e o bitmap de portas por assinante são **por worker e sem l
 
 O `bpa_handoff.c` resolve isso. O laboratório `handoff` prova que funciona.
 
-# Modo determinístico vs dinâmico
+# BPA é a técnica; determinístico e dinâmico são os modos dela
 
-|     | Determinístico | Dinâmico (PBA) |
-|-----|----------------|----------------|
-| Como o bloco é atribuído | por fórmula    | sob demanda    |
-| Log de alocação | **nenhum**     | um registro IPFIX por bloco |
+Esta distinção é a que mais se perde, e perdê-la leva a conclusões erradas sobre o produto:
+
+* **BPA** — *Bloco de Portas Alocadas* — é a **técnica**: um bloco contíguo de portas por assinante, em vez de um registro por fluxo.
+* **Determinístico** e **dinâmico** são os **dois modos dentro do BPA**. Os dois alocam por bloco; o que muda é *como* o bloco é atribuído.
+
+A escolha é entre os dois modos. Nunca entre "BPA" e um deles — não existe um sem o outro, e nenhum dos dois é uma técnica diferente do BPA.
+
+|     | Modo determinístico | Modo dinâmico |
+|-----|---------------------|---------------|
+| Como o bloco é atribuído | por fórmula         | sob demanda   |
+| Log de alocação | **nenhum**          | um registro IPFIX por bloco |
 | Endereços públicos necessários | todos os assinantes precisam caber | sobreassinatura possível |
 | Prova para autoridade | algoritmo + configuração vigente (trilha) | os registros IPFIX |
-| Blocos estendidos | não            | sim — assinante que enche o bloco recebe outro |
+| Blocos estendidos | não                 | sim — assinante que enche o bloco recebe outro |
 
 200 mil assinantes em determinístico com blocos de 512 portas exigem um `/21` público. Em dinâmico com sobreassinatura, bem menos.
 

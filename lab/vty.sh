@@ -235,6 +235,20 @@ out = io.StringIO()
 with contextlib.redirect_stdout(out):
     sh.feed("show this")
 print("IFACE_THIS:", out.getvalue().replace("\n", " | "))
+sh.feed("exit")
+# What "?" offers inside a block, against a real box (#112).
+sh.feed("interface " + ifname)
+o, _, _ = sh._options("", False)
+print("IN_BLOCK:", " ".join(sorted(o)))
+sh.feed("exit")
+# Case-insensitive completion of a real interface name.
+o, _, _ = sh._options("interface " + ifname[:4].lower(), True)
+print("LOWER:", " ".join(sorted(o)))
+# show interface must answer from the dataplane, not from FRR.
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show interface")
+print("SHOW_IF:", out.getvalue().replace("\n", " | "))
 PYEOF
 )
 printf '%s\n' "$COMP" | sed 's/^/  /'
@@ -272,8 +286,14 @@ expect_in "and cannot reach a shell either" "permission denied" "$CG_SHELL"
 # keep them out of - at the first argument.
 expect_in "interface completion names a real dataplane interface" \
   "pg0" "$COMP"
+# The INTERFACES line, not the whole blob. This assertion meant "completion
+# does not offer local0" and never said which line it was about, so a listing
+# that mentions local0 elsewhere - correctly, because the dataplane reports it -
+# made it fail. An assertion that does not name what it is about is one that
+# breaks for reasons that have nothing to do with it.
+COMP_IFACES=$(printf '%s\n' "$COMP" | sed -n 's/^ *INTERFACES: *//p')
 expect_not_in "and not VPP's own loopback, which configures nothing" \
-  "local0" "$COMP"
+  "local0" "$COMP_IFACES"
 # The pool exists only in the CANDIDATE at that moment, so this also proves
 # the source is the configuration being edited and not the committed one.
 expect_in "pool completion names the pool being edited" "POOLS: lab" "$COMP"
@@ -286,6 +306,27 @@ expect_in "the prompt names which interface is being edited" \
 # An empty "show this" is worse than no command: somebody who runs it and sees
 # nothing concludes the block is empty and configures accordingly.
 expect_in "and show this in an interface is not empty" "mtu 1500" "$COMP"
+
+# --- what the operator can find out from the prompt (#112) ---
+# Inside a block, only what is valid there. Offering the level above invites
+# somebody to type "cgnat pool" inside an interface.
+expect_in "inside an interface, '?' offers its own statements" \
+  "IN_BLOCK: exit mtu show urpf" "$COMP"
+# Completion that needs the right case is completion for somebody who already
+# knows the answer.
+# A lowercase prefix must complete to SOMETHING, and to a name the dataplane
+# actually has - checked against the interfaces line rather than a list built
+# by a second parse of vppctl output, which is how the first version of this
+# ended up comparing against counter columns.
+COMP_LOWER=$(printf '%s\n' "$COMP" | sed -n 's/^ *LOWER: *//p')
+expect "a lowercase prefix completes a real interface name" \
+  sh -c "[ -n \"$COMP_LOWER\" ]"
+expect_in "and completes to a name the dataplane has" \
+  "$COMP_LOWER" "$COMP_IFACES"
+# show interface answered from FRR, which sees only what linux_cp mirrored -
+# so a box with dataplane interfaces reported "lo".
+expect_in "show interface reports the dataplane's interfaces" "pg0" "$COMP"
+expect_in "with their state" "up" "$COMP"
 expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
 
 verdict
