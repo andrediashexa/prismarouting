@@ -25,7 +25,66 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.24.0.
+Nothing merged since v0.25.0.
+
+## 0.25.0 — the first five minutes with the box
+
+Three defects reported from a real boot on real hardware, and a fourth found
+underneath them.
+
+### Fixed
+
+* **`hexarouting.service` failed on the first boot of every install**
+  ([#94](https://github.com/andrediashexa/hexarouting/issues/94)), for as long
+  as the appliance has existed. `install.sh` writes `!\n! HexaRouting\n!` as
+  the default configuration and the parser did not treat `!` as a comment, so
+  `hexash --load` refused the file and exited non-zero.
+
+  The banner this project writes was a syntax error to the parser this project
+  reads.
+
+* **The self-test reported `HexaRouting ready.` anyway.** It measured the
+  dataplane, the routing, the tuning and the VTY, and never the unit whose job
+  is to **apply** the configuration. It now checks that unit, and prints the
+  last thing it said when it has failed — "failed" with no reason sends whoever
+  is standing at the console to a journal they may not be able to reach yet.
+
+  Each defect hid the other. Fixing either alone would have left the other
+  standing.
+
+* **The console looked hung until Enter was pressed**
+  ([#93](https://github.com/andrediashexa/hexarouting/issues/93)). The
+  self-test writes to `/dev/console` and the getty draws the VTY prompt on the
+  same screen, with nothing ordering them. The getty is now ordered after the
+  self-test **and** the installer, so an unattended install owns the console
+  instead of running behind a login prompt.
+
+* `boot_disk()` printed two lines when `PKNAME` was empty, so the medium the
+  system booted from was offered in the install menu.
+
+### Changed
+
+* **The disk is chosen from a lettered menu**, largest first, with size and
+  model. Enter takes the largest; a device path still works; the boot medium is
+  never offered.
+
+  ```
+  Disks on this machine:
+    a) /dev/sdb         932G  WD Black 1TB   <- default, the largest
+    b) /dev/sda          32G  KINGSTON SA400
+  ```
+
+* **The confirmation no longer asks for the device path a second time.** It
+  repeats the disk back with its size and model and takes the word `yes`. The
+  property the old prompt protected is kept — a disk cannot be destroyed by
+  holding down the return key — without a second transcription of the string a
+  typo destroys.
+
+* `tools/lab.sh` gives the ISO labs room for the virtual machine they boot, and
+  installs the tools they need. It capped the container at 5 GB for an 8 GB VM,
+  and did not install `sfdisk` although the Makefile's own target does — so one
+  lab gave two answers depending on which command ran it.
+
 
 ## 0.24.0 — the image says which version it is
 
