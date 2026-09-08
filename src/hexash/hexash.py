@@ -87,6 +87,21 @@ VPP_ERROR = re.compile(r"^(unknown input\b|[a-z][a-z0-9 _-]*: \S)")
 ARG_PREFIX = "<A.B.C.D/M>"
 ARG_NUM = "<1-65535>"
 ARG_WORD = "<word>"
+
+# Places where the grammar knows a WORD goes here and the BOX knows which
+# words. "<word>" is true and useless: it tells the operator what they already
+# knew, and sends them to vppctl or "ip link" in another window to find out the
+# rest - the two tools this VTY exists to keep them out of, at the first
+# argument (#98).
+#
+# Each of these is offered by a method on Shell, named in DYNAMIC below. A
+# source that cannot answer - the dataplane down, no candidate yet - offers
+# nothing and says so, rather than hanging or raising: a VTY that cannot be
+# used while the dataplane is down is a VTY that cannot be used to fix it.
+ARG_INTERFACE = "<interface>"
+ARG_POOL = "<pool>"
+ARG_USER = "<user>"
+ARG_SNMP_USER = "<snmp-user>"
 ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
@@ -112,6 +127,7 @@ SHOW = {
         "compare": ("differences against the running configuration", None)}),
     "running-config": ("configuration in effect, CGNAT and routing", None),
     "rollback": ("committed revisions available", None),
+    "this": ("the configuration of the hierarchy you are in", None),
     "route": ("the forwarding table (what actually moves packets)", {
         "verbose": ("compare it against FRR's table and mark disagreements",
                     None)}),
@@ -199,7 +215,7 @@ CGNAT_POOL = {
 }
 
 CGNAT_CONFIG = {
-    "pool": ("create or edit a pool", ARG_WORD),
+    "pool": ("create or edit a pool", ARG_POOL),
     "interface": ("enable CGNAT on an interface", "<interface> inside|outside"),
     "timeout": ("session lifetimes", {
         "udp": ("seconds", ARG_NUM),
@@ -353,8 +369,8 @@ TREE = {
         "cgnat": ("CGNAT configuration", CGNAT_CONFIG),
         "no": ("remove configuration", {
             "cgnat": ("remove CGNAT configuration", {
-                "pool": ("remove a pool", ARG_WORD),
-                "interface": ("disable CGNAT on an interface", ARG_WORD)})}),
+                "pool": ("remove a pool", ARG_POOL),
+                "interface": ("disable CGNAT on an interface", ARG_INTERFACE)})}),
         "ip": ("IP configuration", {
             "route": ("a static route", "<prefix> <next-hop|interface>")}),
         "router": ("routing protocols (FRR)", {
@@ -362,7 +378,7 @@ TREE = {
             "ospf": ("OSPF", None),
             "isis": ("IS-IS", ARG_WORD),
         }),
-        "interface": ("interface configuration", ARG_WORD),
+        "interface": ("interface configuration", ARG_INTERFACE),
         "ssh": ("the SSH daemon", {
             "port": ("TCP port", ARG_NUM),
             "listen-address": ("address to listen on", ARG_WORD),
@@ -374,7 +390,7 @@ TREE = {
             "password-authentication": ("whether a password may be used", {
                 "yes": ("allowed", None), "no": ("keys only", None)}),
         }),
-        "user": ("an account that may log in", ARG_WORD),
+        "user": ("an account that may log in", ARG_USER),
         "snmp": ("the SNMP agent, read-only by construction", {
             "enabled": ("run the agent", {"yes": ("", None), "no": ("", None)}),
             "listen-address": ("address to listen on", ARG_WORD),
@@ -383,7 +399,7 @@ TREE = {
                                   "Enterprise Number", ARG_NUM),
             "community": ("an SNMPv2c community, read-only", ARG_WORD),
         }),
-        "snmp-user": ("an SNMPv3 user", ARG_WORD),
+        "snmp-user": ("an SNMPv3 user", ARG_SNMP_USER),
         "commit": ("apply the candidate configuration", COMMIT),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "show": ("display information", SHOW),
@@ -1500,6 +1516,13 @@ class Shell:
         if w[0] in ("exit", "end"):
             self.mode = "config"
             self.snmp_user = None
+        # "show this" is most useful exactly here, and each sub-mode
+        # dispatches its own lines - so without this it is refused in the one
+        # place it exists for.
+        if w[0] == "show":
+            self.show_or_pass(line)
+            return True
+
         elif w[0] in ("auth", "priv") and len(w) > 2:
             setattr(u, w[0], " ".join(w[1:]))
         else:
@@ -1512,6 +1535,13 @@ class Shell:
         u = self.user
         if w[0] in ("exit", "end"):
             self.mode = "config"
+        # "show this" is most useful exactly here, and each sub-mode
+        # dispatches its own lines - so without this it is refused in the one
+        # place it exists for.
+        if w[0] == "show":
+            self.show_or_pass(line)
+            return True
+
             self.user = None
             return True
         if w[0] == "ssh-key" and len(w) > 1:
@@ -1543,6 +1573,13 @@ class Shell:
             self.mode = "config"
             self.pool = None
             return True
+        # "show this" is most useful exactly here, and each sub-mode
+        # dispatches its own lines - so without this it is refused in the one
+        # place it exists for.
+        if w[0] == "show":
+            self.show_or_pass(line)
+            return True
+
         try:
             if w[0] == "inside":
                 p.inside.append(w[1])
@@ -1699,6 +1736,9 @@ class Shell:
             self.show_version()
             return
         _w = line.split()
+        if _w[:2] == ["show", "this"]:
+            self.show_this()
+            return
         if _w[:2] == ["show", "route"]:
             self.show_route(_w[2:])
             return
@@ -1718,6 +1758,58 @@ class Shell:
         is crackable offline at the attacker's leisure.
         """
         print("\n".join(snmp_redact(redact(cfg.text().splitlines()))))
+
+    def show_this(self):
+        """
+        The configuration of the hierarchy being edited, and nothing above it.
+
+        Inside `cgnat pool residential` there was no way to see what that pool
+        holds without leaving and running `show configuration`, which prints
+        the whole box. On a machine with twenty pools that is a screen of
+        configuration to find the eight lines being edited (#98).
+
+        It shows the CANDIDATE. Somebody in the middle of an edit asking "what
+        is here" is asking about what they are building, and answering with
+        what is committed would answer a question they did not ask.
+        """
+        cfg = self.candidate
+        if cfg is None:
+            self.err("show this: not in configuration mode")
+            print("    'show running-config' shows what is in effect")
+            return
+
+        if self.mode == "pool" and self.pool is not None:
+            print("\n".join(cfg.pools[self.pool.name].lines()
+                             if self.pool.name in cfg.pools
+                             else self.pool.lines()))
+            return
+        if self.mode == "user" and self.user is not None:
+            print("\n".join(self.user.lines()))
+            return
+        if self.mode == "snmp-user" and self.snmp_user is not None:
+            print("\n".join(self.snmp_user.lines()))
+            return
+
+        # An FRR block, entered by an argument rather than a keyword the tree
+        # can walk into. Its lines are the ones staged under it.
+        if self.frr_ctx:
+            block = self.frr_ctx[-1]
+            print(block)
+            started = False
+            for line in cfg.routing:
+                if line == block:
+                    started = True
+                    continue
+                if started:
+                    if line and not line[0].isspace():
+                        break
+                    print(line)
+            return
+
+        # At the top of configuration mode, "this" is the whole candidate -
+        # which is what `show configuration` already prints, and saying so is
+        # better than printing it twice under two names.
+        self.print_config(cfg)
 
     def show_route(self, args):
         """
@@ -1874,6 +1966,73 @@ class Shell:
 
     # ---------------------------------------------------------- completion
 
+    # ------------------------------------------------- what the box knows
+
+    def dyn_interfaces(self):
+        """
+        The interfaces this box has, from the dataplane.
+
+        Naming one that does not exist creates an FRR stanza for an interface
+        that is not there: it commits cleanly and does nothing, and nothing
+        says so.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0 or not out.strip():
+            return {}
+        names = {}
+        for line in out.splitlines():
+            w = line.split()
+            # The name is in the first column and the header is not indented;
+            # continuation lines are.
+            if not w or line[0].isspace() or w[0] in ("Name",):
+                continue
+            if w[0] == "local0":
+                continue  # VPP's own loopback: nothing to configure on it
+            state = w[2] if len(w) > 2 else ""
+            names[w[0]] = f"interface ({state})" if state else "interface"
+        return names
+
+    def dyn_pools(self):
+        """Pools in the candidate, or in the running configuration."""
+        cfg = self.candidate or self.running_config()
+        return {name: "CGNAT pool" for name in cfg.pools}
+
+    def dyn_users(self):
+        cfg = self.candidate or self.running_config()
+        return {name: "account" for name in cfg.users}
+
+    def dyn_snmp_users(self):
+        cfg = self.candidate or self.running_config()
+        return {name: "SNMPv3 user" for name in cfg.snmp_users}
+
+    #: hint -> the method that answers it. Kept as data so a marker added to
+    #: the tree without a source here shows up as an absence rather than
+    #: silently going back to being a bare "<word>".
+    DYNAMIC = {
+        ARG_INTERFACE: "dyn_interfaces",
+        ARG_POOL: "dyn_pools",
+        ARG_USER: "dyn_users",
+        ARG_SNMP_USER: "dyn_snmp_users",
+    }
+
+    def dynamic_options(self, hint, prefix):
+        """
+        The values behind an argument hint, or nothing when they cannot be had.
+
+        Never raises. A source that cannot answer - the dataplane down, FRR not
+        running, no candidate - offers nothing, because a VTY that becomes
+        unusable when the dataplane is down is a VTY that cannot be used to fix
+        it.
+        """
+        name = self.DYNAMIC.get(hint)
+        if not name:
+            return {}
+        try:
+            values = getattr(self, name)()
+        except Exception:
+            return {}
+        return {k: v for k, v in values.items() if k.startswith(prefix)}
+
     def _options(self, line, ending_word):
         words = line.split()
         prefix = ""
@@ -1893,6 +2052,10 @@ class Shell:
                                if k.startswith(prefix)})
             return merged, hint, prefix
         if node is None:
+            # The tree knows a name goes here; the box knows which names.
+            dyn = self.dynamic_options(hint, prefix)
+            if dyn:
+                return dyn, hint, prefix
             return {}, hint, prefix
         opts = {k: v[0] for k, v in node.items() if k.startswith(prefix)}
         return opts, hint, prefix

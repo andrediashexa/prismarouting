@@ -6,6 +6,8 @@ They exercise the command tree with no terminal: what readline would do when
 completing or asking for help comes from _options(), and that is what is
 checked here.
 """
+import contextlib
+import io
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
 import hexash
@@ -260,6 +262,143 @@ check(_widest <= 80,
       f"a line is {_widest} columns; a racked box has an 80-column serial "
       "console and a banner that wraps is worse than none")
 print(f"  banner shown on a terminal, widest line {_widest} columns")
+
+print("\n=== the tree knows a name goes here; the box knows which names ===")
+#
+# "<word>" is true and useless. It tells the operator what they already knew
+# and sends them to vppctl or "ip link" in another window - the two tools this
+# VTY exists to keep them out of - at the first argument (#98).
+#
+IFACES = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+host-veth-vpp                     1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+TenGigabitEthernet0/8/0           3      up          9000/0/0/0
+"""
+
+
+def shell_with_box(iface_text=IFACES, dp_rc=0):
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    def run(_self, cmd):
+        if cmd.startswith("show interface"):
+            return dp_rc, iface_text
+        return 0, ""          # anything else: a box with nothing configured
+
+    sh.dp = type("D", (), {"TRACE": False, "run": run})()
+    sh.frr = type("F", (), {"available": lambda s: False,
+                            "running": lambda s: [],
+                            "show": lambda s, c: (1, "")})()
+    return sh
+
+
+sh = shell_with_box()
+sh.feed("configure")
+opts, hint, _ = sh._options("interface ", False)
+check("host-veth-vpp" in opts and "TenGigabitEthernet0/8/0" in opts,
+      f"interfaces must come from the dataplane: {sorted(opts)}")
+check("local0" not in opts,
+      "VPP's own loopback is not something to configure")
+check("up" in opts.get("host-veth-vpp", ""),
+      f"and the state is worth showing: {opts.get('host-veth-vpp')}")
+print(f"  interface -> {sorted(opts)}")
+
+opts, _, _ = sh._options("interface Ten", True)
+check(list(opts) == ["TenGigabitEthernet0/8/0"],
+      f"a prefix narrows to one: {sorted(opts)}")
+# A single match must COMPLETE. Offering one option and making the operator
+# type it is completion that did not complete.
+check(len(opts) == 1, "and a single match is a single match")
+print(f"  interface Ten -> {sorted(opts)}")
+
+print("\n=== names the CANDIDATE knows ===")
+sh.feed("cgnat pool residential")
+sh.feed("inside 100.64.0.0/22")
+sh.feed("exit")
+sh.feed("cgnat pool business")
+sh.feed("exit")
+opts, _, _ = sh._options("cgnat pool ", False)
+check(set(opts) == {"residential", "business"},
+      f"pools come from the candidate being edited: {sorted(opts)}")
+opts, _, _ = sh._options("no cgnat pool ", False)
+check(set(opts) == {"residential", "business"},
+      f"and from the removal branch too: {sorted(opts)}")
+print(f"  cgnat pool -> {sorted(opts)}")
+
+print("\n=== a source that cannot answer offers nothing, and does not raise ===")
+# A VTY that becomes unusable when the dataplane is down is a VTY that cannot
+# be used to fix it.
+sh = shell_with_box(dp_rc=1)
+sh.feed("configure")
+opts, hint, _ = sh._options("interface ", False)
+check(opts == {}, f"nothing is offered: {opts}")
+check(hint == "<interface>",
+      f"and the hint still says what goes here: {hint}")
+print(f"  dataplane down -> options {opts}, hint {hint}")
+
+# Every marker in the tree must have a source. One added without it silently
+# goes back to being a bare "<word>", which is the state this issue is about.
+# rc=1 is a dataplane that ANSWERED with an error. The other case is a source
+# that RAISES - and the guard around it is tested directly rather than by
+# pretending the whole VTY survives a dataplane that throws, because it does
+# not: running_config() calls the same interface listing, so "configure" would
+# go down before completion was ever reached.
+#
+# What is being asserted is narrow and true: completion swallows a source that
+# raises, so a broken source cannot take the prompt down with it.
+sh = hexash.Shell()
+sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+sh.dyn_interfaces = lambda: (_ for _ in ()).throw(
+    OSError("no such file or directory: /run/vpp/cli.sock"))
+try:
+    opts = sh.dynamic_options(hexash.ARG_INTERFACE, "")
+    check(opts == {}, f"a source that raises offers nothing: {opts}")
+    print("  a source that raises -> offered nothing, no traceback")
+except Exception as e:
+    check(False, f"completion must not propagate a broken source: {e!r}")
+
+print("\n=== every dynamic marker has a source ===")
+markers = {hexash.ARG_INTERFACE, hexash.ARG_POOL, hexash.ARG_USER,
+           hexash.ARG_SNMP_USER}
+check(set(hexash.Shell.DYNAMIC) == markers,
+      f"markers without a source: {sorted(markers - set(hexash.Shell.DYNAMIC))}")
+for marker, method in hexash.Shell.DYNAMIC.items():
+    check(hasattr(hexash.Shell, method),
+          f"{marker} names {method}, which does not exist")
+print(f"  {len(markers)} markers, all sourced")
+
+print("\n=== show this ===")
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("cgnat pool residential")
+sh.feed("inside 100.64.0.0/22")
+sh.feed("tcp-mss 1400")
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show this")
+text = out.getvalue()
+check("cgnat pool residential" in text and "tcp-mss 1400" in text,
+      f"the pool being edited is shown: {text!r}")
+check("business" not in text,
+      "and nothing above it: 'this' is the hierarchy, not the box")
+print("  inside a pool: " + text.strip().replace("\n", " / "))
+
+# It shows the CANDIDATE. Somebody mid-edit asking "what is here" is asking
+# about what they are building; answering with what is committed answers a
+# question they did not ask.
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("exit")
+    sh.feed("show this")
+check("cgnat pool residential" in out.getvalue(),
+      "at the top of config mode it is the whole candidate")
+
+sh2 = shell_with_box()
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh2.feed("show this")
+check("not in configuration mode" in out.getvalue(),
+      f"outside configuration mode it says so: {out.getvalue()!r}")
+print("  operational mode: refused with the reason")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

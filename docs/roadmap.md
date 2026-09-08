@@ -390,7 +390,7 @@ times in one evening and every one was caught by a rule rather than by
 attention.
 
 **3. [#98](https://github.com/andrediashexa/hexarouting/issues/98) — the VTY
-does not complete what the box knows.** `interface <TAB>` offers `<word>`, so
+does not complete what the box knows** — *delivered, v0.29.0*. `interface <TAB>` offers `<word>`, so
 the operator leaves the VTY for `vppctl` or `ip link` — the two tools it exists
 to keep them out of — at the first argument. And there is no `show this` to see
 the hierarchy being edited. Large, and paid every single day someone uses the

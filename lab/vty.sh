@@ -198,6 +198,37 @@ ALG_AFTER=$(vppctl show bpa config | grep -c "alg rtsp off")
 POOL_AFTER=$(vppctl show bpa pool | grep -c "pool nope")
 
 echo
+echo "=========== the box's own names, offered by the VTY (#98) ==========="
+# The tree knows a name goes here; the box knows which names. Asserted against
+# a REAL dataplane, because the value of this is that it reflects the machine -
+# a stub would prove the plumbing and not the answer.
+IFACE_LIST=$(vppctl show interface | awk 'NR>1 && $1 !~ /^ / {print $1}' | tr '\n' ' ')
+echo "  the dataplane has: $IFACE_LIST"
+COMP=$(python3 - <<'PYEOF'
+import sys
+sys.path.insert(0, "/src/src/hexash")
+import hexash
+sh = hexash.Shell()
+sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+sh.feed("configure")
+opts, hint, _ = sh._options("interface ", False)
+print("INTERFACES:", " ".join(sorted(opts)))
+print("HINT:", hint)
+sh.feed("cgnat pool lab")
+sh.feed("inside 100.64.0.0/22")
+sh.feed("outside 200.150.0.16/30")
+import io, contextlib
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show this")
+print("THIS:", out.getvalue().replace("\n", " | "))
+sh.feed("exit")
+opts, _, _ = sh._options("cgnat pool ", False)
+print("POOLS:", " ".join(sorted(opts)))
+PYEOF
+)
+printf '%s\n' "$COMP" | sed 's/^/  /'
+
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 R=$($HX -c "show running-config" 2>/dev/null)
@@ -223,4 +254,21 @@ expect_in "a cgnat operator can change a pool" "commit complete" "$CG_OK"
 expect "and the change reached the dataplane" test "${ALG_AFTER:-0}" -ge 1
 expect_in "but cannot change routing" "permission denied" "$CG_ROUTE"
 expect_in "and cannot reach a shell either" "permission denied" "$CG_SHELL"
+
+# --- the VTY offers what the box has (#98) ---
+#
+# Before this, "interface <TAB>" answered "<word>" and the operator went to
+# vppctl or "ip link" in another window - the two tools this VTY exists to
+# keep them out of - at the first argument.
+expect_in "interface completion names a real dataplane interface" \
+  "pg0" "$COMP"
+expect_not_in "and not VPP's own loopback, which configures nothing" \
+  "local0" "$COMP"
+# The pool exists only in the CANDIDATE at that moment, so this also proves
+# the source is the configuration being edited and not the committed one.
+expect_in "pool completion names the pool being edited" "POOLS: lab" "$COMP"
+expect_in "show this prints the hierarchy being edited" \
+  "cgnat pool lab" "$COMP"
+expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
+
 verdict
