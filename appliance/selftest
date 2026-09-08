@@ -145,6 +145,23 @@ fi
 # --- plano de controle ---
 if vtysh -c "show version" >/dev/null 2>&1; then
   ok "FRR responding"
+  # WHICH daemons, not merely that FRR answers. zebra, mgmtd and staticd are
+  # started unconditionally by frrinit.sh, so "FRR responding" is true on a box
+  # that cannot run a single routing protocol - which is what it was, before
+  # the installer enabled them (#99). A box that cannot run BGP should say so
+  # before somebody configures BGP on it.
+  daemons=$(vtysh -c "show daemons" 2>/dev/null | tr -s ' ')
+  missing=""
+  for d in bgpd ospfd isisd; do
+    case " $daemons " in *" $d "*) ;; *) missing="$missing $d" ;; esac
+  done
+  if [ -n "$missing" ]; then
+    say "  [warn] routing daemons not running:$missing"
+    say "         the VTY offers these protocols and they would commit and"
+    say "         reach nothing. Enable them in /etc/frr/daemons."
+  else
+    ok "routing daemons up:$(printf '%s' "$daemons" | tr -d '\n')"
+  fi
 else
   bad "FRR not responding"
 fi

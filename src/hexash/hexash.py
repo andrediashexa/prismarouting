@@ -38,6 +38,14 @@ VPPCTL = os.environ.get("VPPCTL", "vppctl")
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 
+# Which FRR daemon serves each "router" statement. Written as data rather than
+# guessed from the keyword, because the two only look alike: "router ospf" is
+# served by ospfd, and "router isis" by isisd, but the mapping is a fact about
+# FRR and not about the word.
+ROUTER_DAEMON = {"bgp": "bgpd", "ospf": "ospfd", "ospf6": "ospf6d",
+                 "isis": "isisd", "rip": "ripd", "eigrp": "eigrpd",
+                 "babel": "babeld", "pim": "pimd"}
+
 # One source of truth, written by the build. A version compiled into the code
 # drifts from the tag the moment someone forgets to edit it, and a box that
 # misreports its version sends every later investigation the wrong way.
@@ -818,6 +826,28 @@ class Shell:
                 print("    give an account an authorized key, or allow "
                       "password authentication for one that has a password")
                 ok = False
+            # A "router <protocol>" statement for a daemon that is not
+            # running commits cleanly and reaches nothing. The box ships with
+            # bgpd, ospfd and isisd disabled unless the installer enabled them
+            # (#99), and vtysh answers "bgpd is not running" while frr-reload
+            # still returns 0 - so the commit reports success for configuration
+            # that went nowhere.
+            if d["routing_changed"]:
+                rc_d, daemons = self.frr.show("show daemons")
+                if rc_d == 0 and daemons.strip():
+                    running_daemons = set(daemons.split())
+                    for line in target.routing:
+                        w = line.split()
+                        if len(w) < 2 or w[0] != "router":
+                            continue
+                        need = ROUTER_DAEMON.get(w[1])
+                        if need and need not in running_daemons:
+                            self.err(f"{line.strip()}: {need} is not running")
+                            print(f"    the statement would commit and reach "
+                                  f"nothing. Enable {need} in "
+                                  "/etc/frr/daemons and restart frr")
+                            ok = False
+
             # A static route whose next hop is on no connected network is
             # accepted by FRR, installed, and silently inert: FRR holds it, the
             # FIB never gets it, and "show ip route" looks correct. It is the

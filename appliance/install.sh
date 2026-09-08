@@ -165,6 +165,31 @@ if [ -z "${DESTDIR:-}" ] && getent group hexa-cgnat >/dev/null 2>&1; then
   chgrp hexa-cgnat "$DESTDIR/etc/hexarouting/hexarouting.conf" 2>/dev/null || true
 fi
 
+# ------------------------------------------------------------ routing daemons
+#
+# The Debian package ships /etc/frr/daemons with bgpd=no, ospfd=no and
+# isisd=no. frrinit.sh always starts zebra, mgmtd and staticd, so a box
+# installed without this runs the dataplane, the VTY, and static routes - and
+# none of the routing protocols.
+#
+# The VTY offers all three. "?" lists them, TAB completes them, "commit"
+# accepts them, and the daemon is not there. This project's own documentation
+# claims BGP, OSPF and IS-IS (#99).
+#
+# Enabled here rather than left to the distribution default, because inheriting
+# a default for something the product claims to support is exactly how it went
+# unnoticed: lab/routing.sh starts these daemons by hand, so the lab proved a
+# control plane the shipped box did not have.
+say "routing daemons"
+for d in bgpd ospfd isisd; do
+  if grep -qE "^$d=" "$DESTDIR/etc/frr/daemons" 2>/dev/null; then
+    sed -i "s/^$d=no$/$d=yes/" "$DESTDIR/etc/frr/daemons"
+  else
+    echo "$d=yes" >> "$DESTDIR/etc/frr/daemons"
+  fi
+done
+grep -E "^(bgpd|ospfd|isisd)=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
+
 say "documentation"
 for d in architecture routing logging; do
   install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/hexarouting/$d.md"
