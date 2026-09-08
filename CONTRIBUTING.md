@@ -87,6 +87,12 @@ it is *no*, and why.
   documented. **Editing it changes nothing** — the next pull overwrites it, and
   Outline is where a page is actually edited.
 
+**The wiki is a draft and is known to be wrong in places** — including about
+the purpose of the project and about deterministic mode's relationship to BPA.
+It is not a source. A claim about the product is checked against `docs/`, never
+against a wiki page, and a page that disagrees with `docs/` is a defect in the
+page.
+
 **The repository is authoritative about the product; the wiki is a usage layer
 on top of it.** `docs/`, `README.md` and `TESTING.md` say what the software
 does and why. A wiki page says how somebody uses it. Where they disagree the
