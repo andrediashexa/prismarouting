@@ -25,7 +25,25 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.38.0.
+Nothing merged since v0.38.1.
+
+## 0.38.1 — the gate refused 0.38.0, correctly
+
+**v0.38.0 was tagged and never published.** `make release-gate` built the
+medium, booted it, and the box reported itself NOT ready. That is the outcome
+the rule exists to produce, so the tag stays and the release does not.
+
+### Fixed
+
+* **The NIC check added in 0.38.0 failed every live medium.** Without
+  hugepages the tuner disables the DPDK plugin outright — the first-boot
+  profile, because the EAL fails without them and `vpp.service` would
+  restart-loop. So `startup.conf` names no device *and* carries no `no-pci`,
+  and the new check read that as "may claim any NIC it finds".
+
+  No DPDK means no device can be claimed by anything. That is the safe case
+  and had to be told apart from "DPDK is on and nothing is named", which is
+  the dangerous one.
 
 ## 0.38.0 — the dataplane took whatever NIC it found
 
