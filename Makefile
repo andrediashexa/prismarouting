@@ -28,6 +28,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 	@echo
 	@python3 test/test_routes.py
 	@echo
+	@sh test/test_boot_wait.sh
+	@echo
 	@sh test/test_version_stamp.sh
 	@echo
 	@python3 test/test_vppapi.py

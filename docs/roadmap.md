@@ -405,7 +405,7 @@ a filesystem with everything the box needs to keep working. Then the mirror,
 then verifying the disk that was just written.
 
 **5. [#97](https://github.com/andrediashexa/hexarouting/issues/97) — the
-twenty-three second wait** with nothing on the console saying what is being
+twenty-three second wait** — *delivered, v0.31.0*. with nothing on the console saying what is being
 waited for. Smallest, and last, because it is cosmetic next to the four above —
 but it is on the first screen anybody sees.
 
