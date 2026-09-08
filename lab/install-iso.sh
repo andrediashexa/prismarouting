@@ -322,6 +322,27 @@ if [ "$up" = 1 ]; then
     fail=1
   fi
 fi
+# The binary API, asserted on the INSTALLED box (#119).
+#
+# hexash creates a pool over that API. The ISO never carried the vat2 plugin
+# that registers it, so an installed appliance could route and answer and never
+# be configured to do CGNAT at all. Ten labs hid this by placing the plugin by
+# hand, describing that as "what install.sh does on a real box".
+#
+# Asserted here, on the disk that was actually installed, for the same reason
+# the routing daemons are.
+if [ "$up" = 1 ]; then
+  if grep -q "binary API registered" /tmp/disk-clean.log; then
+    echo "  [ ok ] the installed box can configure a pool"
+  else
+    echo "  [FAIL] the installed box cannot configure a pool: the binary API"
+    echo "         is not registered"
+    grep -A2 "binary API NOT registered" /tmp/disk-clean.log | head -3 \
+      | sed 's/^/         /'
+    fail=1
+  fi
+fi
+
 # Did the tuning survive the install?
 #
 # The evidence is the KERNEL COMMAND LINE, not the profile. isolcpus and the

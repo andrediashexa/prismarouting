@@ -208,6 +208,73 @@ The restart counter matters more than it looks. A service flapping in a loop
 can be "active" at the instant one looks, and `systemctl status` will say so.
 Only `NRestarts` tells the story.
 
+### It also checks that a pool could be created
+
+Not by creating one — this runs at every boot on a production box — but by
+asking whether the binary API is registered.
+
+`hexash` creates and changes pools over the binary API, carried by a vat2
+plugin. `appliance/build-iso.sh` copied the VPP plugin into the image and
+**never the vat2 one**, so `install.sh` found neither of the two paths it
+looks in, printed
+
+```
+warning: no vat2 plugin; the binary API will not be reachable
+```
+
+and carried on. That line was in the build log of **every release**
+([#119](https://github.com/andrediashexa/hexarouting/issues/119)). The
+appliance booted, answered, routed, ran its self-test — and could not be
+configured to do CGNAT at all.
+
+Three rules come out of it:
+
+* A medium that cannot produce a working box **MUST NOT** build. `build-iso.sh`
+  now resolves the vat2 plugin up front and refuses without it, and asserts
+  afterwards on the file `install.sh` was supposed to place — not on the copy
+  it staged, which would pass whether the install step still worked or not.
+* A warning in a build log **MUST NOT** stand in for a check. This one was
+  printed on every release for months and read by nobody.
+* A lab that arranges the product's environment by hand **MUST** say which
+  real step it is standing in for, and that claim **MUST** be true.
+  `lab/lib.sh` said it was doing "what install.sh does on a real box". It was
+  not, and the sentence was the only place the assumption was written down.
+
+### And behind it, a second one
+
+Fixing that let the box get far enough to fail differently
+([#121](https://github.com/andrediashexa/hexarouting/issues/121)):
+
+```
+[FAIL] hexarouting.service FAILED: the CGNAT configuration was not applied
+        error: this change locks everybody out: no account could log in over SSH afterwards
+        error: /etc/hexarouting/hexarouting.conf: refusing to load
+```
+
+`install.sh` writes the default configuration as three comment lines. Read as
+a complete configuration that says "no SSH access" — and the box **does** have
+SSH access, from the root password the installer just took — so the lockout
+check saw a change that would take it away, and refused. Correctly. The error
+was upstream: **an empty file is not a configuration that removes everything,
+it is a configuration nobody has written yet.**
+
+`Config` now counts the statements it parsed, and `hexash --load` returns when
+there were none. Counted rather than inferred from the fields: `ssh` and
+`snmp` start as copies of their defaults, so a file setting one of them to its
+default value would look identical to a file that said nothing — and a file
+that states something **MUST** be checked like any other, even when what it
+states is the default.
+
+Two things worth keeping from this:
+
+* **Defects hide behind each other.** #121 was unreachable while #119 stopped
+  the box earlier, in the same unit, with a different message. A test that
+  stops at the first failure reports one defect and implies there is one.
+* This is the **second** time this unit failed on the first boot of every
+  install. The first was #94, where `!` was not read as a comment. The comment
+  recording it sits eight lines above the code that mis-read the same file
+  again. A comment is a record, not a guard rail.
+
 ## Installation
 
 ```sh

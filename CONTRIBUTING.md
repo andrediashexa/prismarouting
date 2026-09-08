@@ -300,9 +300,23 @@ When it happens it **MUST** produce all five of:
    release notes **MUST NOT** be generated from the commit list: a list of
    commits describes the work, and what a reader needs is what changed for
    them.
-5. **An installation medium, built and booted.** `make test-iso` builds the
-   ISO from the tagged tree and boots it, demanding the self-test report
-   ready. The release note **MUST** record that it did.
+5. **An installation medium, built, booted, INSTALLED and booted again.**
+   `make test-iso` builds the ISO from the tagged tree and boots it, demanding
+   the self-test report ready. `make test-install` then installs it to a disk
+   and boots **that**, with the medium detached. The release note **MUST**
+   record that both happened.
+
+   The second boot is not a formality. A live image booting proves the medium
+   is bootable; it does not prove the medium produces a working appliance, and
+   those are different claims. Two defects lived in that gap for the life of
+   the project and were found the first time this ran: the ISO had never
+   carried the vat2 plugin, so an installed box had no binary API and could
+   not be configured to do CGNAT at all
+   ([#119](https://github.com/andrediashexa/hexarouting/issues/119)); and
+   behind it, `hexarouting.service` failed on the first boot of every install
+   ([#121](https://github.com/andrediashexa/hexarouting/issues/121)). Neither
+   was visible from a live boot. They were also hiding each other — the second
+   could not be seen until the first was fixed.
 
    Building it is not enough on its own, and the distinction is the whole
    point: an ISO that builds and does not boot is an artifact reporting
@@ -325,7 +339,8 @@ When it happens it **MUST** produce all five of:
    the moment it matters — when an operator is deciding which one to install.
 
    `make release-gate` is the whole procedure — clone at the tag, build the
-   plugin, build the medium, boot it — and it **MUST** be what cuts a release.
+   plugin, build the medium, boot it, install it to a disk and boot the disk —
+   and it **MUST** be what cuts a release.
    Done by hand it goes wrong: three times in one evening, each caught by a
    rule rather than by attention. See `TESTING.md`.
 
@@ -344,7 +359,8 @@ flowchart LR
     D --> E["annotated tag vX.Y.Z<br/>message = release note"]
     E --> F["GitHub Release<br/>same note, plus artifacts"]
     F --> H["make test-iso<br/>built AND booted"]
-    H --> G["close the issues"]
+    H --> H2["make test-install<br/>installed AND booted again"]
+    H2 --> G["close the issues"]
 ```
 
 ### The standing exception: small fixes
