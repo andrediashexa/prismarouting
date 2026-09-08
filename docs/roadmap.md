@@ -365,6 +365,67 @@ subscribers until it is asked for by name, saying how many move and where two
 of them go, and [pool-resize.md](pool-resize.md) carries the procedure —
 including the migration that costs no outage.
 
+#### What using the appliance turned up, and the order to fix it
+
+Everything in this section was found in one sitting, by booting the ISO and
+installing it rather than by reading the code. That is worth saying because it
+is the pattern: the labs proved the dataplane for months while the box lied
+about itself on the console, and no amount of packet-level testing was going to
+find that.
+
+**1. [#99](https://github.com/andrediashexa/hexarouting/issues/99) — an
+installed box ships with `bgpd`, `ospfd` and `isisd` disabled.** First because
+it is the most severe and among the cheapest: the VTY offers all three, `?`
+lists them, `commit` accepts them, and the daemon is not running. The product's
+own documentation claims BGP, OSPF and IS-IS. What hid it is that
+`lab/routing.sh` starts those daemons **by hand** — the lab and the product
+disagree about what is running, and the lab is the optimistic one.
+
+**2. [#100](https://github.com/andrediashexa/hexarouting/issues/100) — the lab
+suite runs 35 labs in series on a machine at 15% load.** Second because it is a
+multiplier: every release after it pays ~35 minutes, and everything below this
+line is a release. Measured at load 1.18 across 8 cores while the suite *and* an
+ISO build were running, so this is a queue and not a workload.
+
+**3. [#98](https://github.com/andrediashexa/hexarouting/issues/98) — the VTY
+does not complete what the box knows.** `interface <TAB>` offers `<word>`, so
+the operator leaves the VTY for `vppctl` or `ip link` — the two tools it exists
+to keep them out of — at the first argument. And there is no `show this` to see
+the hierarchy being edited. Large, and paid every single day someone uses the
+box.
+
+**4. [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the
+installer**, with the management address dropped from its scope. What remains
+is led by the **log volume**: in dynamic mode the allocation log *is* the
+connection record the Marco Civil requires for a year, and it currently shares
+a filesystem with everything the box needs to keep working. Then the mirror,
+then verifying the disk that was just written.
+
+**5. [#97](https://github.com/andrediashexa/hexarouting/issues/97) — the
+twenty-three second wait** with nothing on the console saying what is being
+waited for. Smallest, and last, because it is cosmetic next to the four above —
+but it is on the first screen anybody sees.
+
+#### Seeing what the box is actually doing
+
+[#95](https://github.com/andrediashexa/hexarouting/issues/95) — *delivered,
+v0.26.0*. `show route` reads the **VPP FIB**, and `show route verbose` compares
+it against FRR's table and marks the disagreements. `show ip route` in vtysh
+answers from FRR, which is the table where a route looks correct on a box that
+is dropping the traffic.
+
+Static routes are configurable and discoverable, and `commit check` refuses a
+next hop on no connected network rather than accepting a route that would never
+reach the FIB.
+
+Two things this turned up, both filed rather than folded in:
+[#99](https://github.com/andrediashexa/hexarouting/issues/99), that an
+installed box ships with bgpd, ospfd and isisd **disabled** while the VTY
+offers all three — hidden because the routing lab starts them by hand; and
+[#98](https://github.com/andrediashexa/hexarouting/issues/98), that the VTY
+completes keywords and stops at the first argument, so `interface <TAB>` offers
+`<word>` instead of the interfaces this box has.
+
 #### The first five minutes with the box
 
 Three defects reported from a real boot on real hardware, and one found while
