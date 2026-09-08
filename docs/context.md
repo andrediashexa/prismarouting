@@ -8,7 +8,7 @@ diverge from the first with no way to tell which one is stale. It states the
 handful of facts that make the rest legible, and says which file is
 **authoritative** for each one.
 
-Ten invariants, a map of what question each part answers, and a reading order
+Eleven invariants, a map of what question each part answers, and a reading order
 per task. Roughly fifteen minutes.
 
 > The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** in this document
@@ -147,7 +147,18 @@ that is [wiki-audit.md](wiki-audit.md).
 *Authoritative:* `PADRAO-DOCUMENTACAO.md` for how a page is written,
 [CONTRIBUTING.md](../CONTRIBUTING.md) section 1 for when.
 
-### 1.10 The issue is the record of the work
+### 1.10 What GitHub shows is documentation too
+
+`README.md` is the landing page and for most readers the only page. The
+repository's About — description, website, topics — is documentation as well,
+and the website is the wiki. Every task asks whether it made any of them wrong.
+
+A README goes stale by describing a **smaller product than the one that now
+exists**, which is harder to notice than a false statement.
+
+*Authoritative:* [CONTRIBUTING.md](../CONTRIBUTING.md) section 1.
+
+### 1.11 The issue is the record of the work
 
 Design decisions, measurements **with their conditions**, limits and incidental
 findings go back to the issue as they happen. Closing carries the acceptance

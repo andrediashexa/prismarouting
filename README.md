@@ -12,9 +12,11 @@ to the exact public addresses the reference model predicts, ICMP and HTTPS
 flowing, BGP/OSPF/IS-IS routes reaching the VPP FIB.
 
 ```sh
-make test              # 3 seconds, no root, no VPP required
-sh tools/lab.sh        # list the 17 executable labs
+make test              # 15 suites in seconds, no root, no VPP required
+sh tools/lab.sh        # list the labs
+sh tools/run-all-labs.sh   # the whole dataplane suite, several at a time
 sh tools/vty.sh        # open the VTY
+make release-gate      # build the installation medium from a tag and boot it
 ```
 
 ## 5W2H
@@ -61,6 +63,10 @@ docs/logging.md        BPA log export over IPFIX (RFC 8158)
 docs/appliance.md      boot tuning, systemd, install, ISO
 docs/roadmap.md        what a CGNAT still needs, and why each item matters
 docs/ha.md             high-availability analysis (NOT implemented)
+docs/context.md        start here: the invariants, the map, the reading order
+docs/wiki-audit.md     the brief for auditing the wiki against this repository
+PADRAO-DOCUMENTACAO.md how a wiki page is written (not the same as CONTRIBUTING)
+wiki/                  read-only mirror of the wiki, refreshed by tools/wiki-pull.sh
 ref/                   executable reference model of BPA, in Python
 src/plugins/bpa/       the VPP CGNAT plugin
 src/hexash/            the VTY
@@ -69,6 +75,19 @@ lab/                   executable labs, from packet injection to real traffic
 appliance/             boot tuning, systemd units, installer, ISO builder
 tools/                 build and lab helpers
 ```
+
+## Documentation
+
+| Where | What it is |
+|---|---|
+| [docs/context.md](docs/context.md) | **Start here.** The invariants, a map of what question each part answers, and a reading order per task. |
+| `docs/`, `README.md`, `TESTING.md` | **Authoritative about the product.** What it does and why. |
+| <https://hexarouting.hexanetworks.com.br> | The wiki: how somebody *uses* it. A usage layer, and currently a **draft** — see below. |
+
+The wiki is public and still being written. It is **not** a source: where a page
+disagrees with `docs/`, the page is a defect. `wiki/` here is a read-only mirror
+so its pages can be read and diffed without leaving the repository;
+[docs/wiki-audit.md](docs/wiki-audit.md) is the brief for correcting it.
 
 ## Getting started
 
@@ -106,8 +125,10 @@ stays on `0.x.x` until it is declared ready for production; see
 | Dataplane (translation, handoff, dynamic mode, fragments, ICMP errors, TCP state) | Verified with injected and real traffic |
 | Routing (BGP, OSPF, IS-IS) | Verified — routes reach the VPP FIB |
 | IPFIX logging (UDP and TCP) | Verified with a decoding collector |
-| VTY (`hexash`) | Working, with tab completion and contextual `?` |
-| Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready |
+| VTY (`hexash`) | Candidate/`commit`/`rollback`, roles, `show route` against the FIB, `show this`, and completion of live values — interfaces from the dataplane, pools from the candidate |
+| Configuration trail | Attributable and tamper-evident: every entry names the operator and is chained by SHA-256 |
+| Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready; every release is built from its tag and booted before publishing |
+| Connection records | On their own filesystem, so a full log cannot stop the box working |
 | **HA / failover** | **NOT implemented** — see [docs/ha.md](docs/ha.md) |
 | **Throughput** | **NOT measured** — every performance figure is untested; see [#28](https://github.com/andrediashexa/hexarouting/issues/28) |
 

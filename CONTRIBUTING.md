@@ -74,6 +74,33 @@ Where each rule binds:
 A document that describes a decision SHOULD state what was rejected and why.
 The reason a knob exists is worth more than the knob's name.
 
+### What GitHub shows is documentation too
+
+`README.md` is the landing page: for most people it is the **only** page they
+read, and it is read by people deciding whether this product is worth their
+time. Every task **MUST** end by asking whether it made the README wrong, and
+the answer goes on the issue like any other.
+
+A README goes stale in a particular way — not by saying something false on the
+day it was written, but by describing a smaller product than the one that now
+exists. `sh tools/lab.sh # list the 17 executable labs` was true once; it
+counted 41 files and 35 suite labs by the time anybody noticed.
+
+The repository's **About** carries three things, and they are documentation:
+
+| | |
+|---|---|
+| description | one line, what the product is |
+| website | <https://hexarouting.hexanetworks.com.br> — the wiki, as the external documentation |
+| topics | what somebody would search for to find this |
+
+They **MUST** stay true. A topic that is not a claim this project makes does not
+belong there.
+
+Release notes are covered by section 5 and are not optional: a tag is a
+pointer, and a release is where an operator who does not clone the repository
+reads what changed.
+
 ### The wiki is part of the work
 
 Every task **MUST** end by asking whether the wiki needs a page changed or a
