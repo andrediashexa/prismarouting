@@ -254,6 +254,78 @@ Three details that are decisions, not accidents:
   every address" would drop the adjacency and the management path together.
   The lab adds two, removes one, and asserts the other two survived.
 
+### Sub-interfaces and VLANs
+
+```
+interface GigabitEthernet0/12/0.100
+  vlan 100
+  ipv4 address 100.64.0.1/22
+  exit
+
+interface GigabitEthernet0/12/0.200
+  vlan 200 inner 10
+  exit
+```
+
+`no interface <name>.<n>` removes one, and takes what was on it — an address
+left behind would describe a port that does not exist.
+
+**The suffix must equal the outer tag.** VPP names a sub-interface after its
+`sub_id`, so accepting `Gi0/12/0.7` with `vlan 100` would produce a box calling
+it `Gi0/12/0.100` while the configuration called it `.7` — and the running
+configuration is read from the box. The two names have to be the same name.
+
+Sub-interfaces are created **before** anything can be put on them and destroyed
+**after** everything has been taken off, which is why they are their own part
+of the delta rather than another dictionary keyed by interface name.
+
+The interface-existence check from
+[#105](https://github.com/andrediashexa/hexarouting/issues/105) had to learn
+about them: a sub-interface the configuration **creates** is not one the box is
+missing, and without that the check refused the very commit that would have
+brought it into existence. A sub-interface whose *parent* is absent is a
+different error and says so.
+
+**`exact-match` cannot be set.** `create_subif` takes a bitfield, and `vat2`
+can only send one flag name of one — an integer segfaults it
+([#136](https://github.com/andrediashexa/hexarouting/issues/136)). So a QinQ
+sub-interface is created with `TWO_TAGS` and without `EXACT_MATCH`, which means
+it also matches frames carrying **more** than two tags. Documented rather than
+silently shipped.
+
+### What the lab asserts, and why the second one is the point
+
+```
+pg0.100 rx: 0 -> 1     [ ok ] the tagged frame landed on the sub-interface
+pg0.100 rx: 1 -> 1     [ ok ] a frame with a different tag did NOT land on it
+```
+
+Frames are injected at `ethernet-input`, not `ip4-input`, because the whole
+question is whether the L2 tag steers the frame onto the right sub-interface
+and injecting at L3 skips exactly that. Without the second assertion, a
+sub-interface that swallowed every frame regardless of tag would pass
+everything else in the lab.
+
+### A box with no FRR could not configure an interface
+
+Writing that lab found it. Entering an interface block stages `interface
+<name>` as an FRR stanza, so **every** commit touching an interface triggered
+routing validation — and on a box where FRR is not running, that failed and
+rolled back the whole commit, CGNAT half included
+([#137](https://github.com/andrediashexa/hexarouting/issues/137)).
+
+`Frr.available()` existed, said *"A box may run CGNAT with no routing"* in its
+own docstring, and was never called.
+
+No lab caught it because **every lab that drives `hexash` also starts FRR**.
+The product's own supported configuration — CGNAT without routing — was not one
+any test ran. `lab/subif.sh` does not need FRR, so it did not start it, and the
+defect surfaced immediately.
+
+`real_routing()` now tells apart the statements an operator wrote from the
+interface stanzas the VTY stages itself, and the check path and the apply path
+share it so they cannot drift.
+
 ### Two things this cost, both worth keeping
 
 **The VTY had a catch-all that sent unrecognised interface statements to FRR.**

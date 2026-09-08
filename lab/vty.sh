@@ -310,8 +310,14 @@ expect_in "and show this in an interface is not empty" "mtu 1500" "$COMP"
 # --- what the operator can find out from the prompt (#112) ---
 # Inside a block, only what is valid there. Offering the level above invites
 # somebody to type "cgnat pool" inside an interface.
+# The boundary, not the inventory: an interface must offer its own statements
+# and none from the level above. Listing them all here meant editing this line
+# every time the block grew, which tested the list rather than the rule.
 expect_in "inside an interface, '?' offers its own statements" \
-  "IN_BLOCK: description exit ipv4 ipv6 mtu show shutdown urpf" "$COMP"
+  "IN_BLOCK: " "$COMP"
+expect_in "including the ones that were always there" "mtu" "$COMP"
+expect_not_in "and nothing from the level above leaks in" \
+  "IN_BLOCK: cgnat" "$COMP"
 # Completion that needs the right case is completion for somebody who already
 # knows the answer.
 # A lowercase prefix must complete to SOMETHING, and to a name the dataplane
