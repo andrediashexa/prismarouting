@@ -83,6 +83,42 @@ explicitly dropping and a prefix VPP has never heard of are different
 situations with different causes, and reporting both as "no" is a false
 statement in the one table whose job is to settle a disagreement.
 
+## Which daemons run
+
+`frrinit.sh` starts `zebra`, `mgmtd` and `staticd` unconditionally. Everything
+else is a line in `/etc/frr/daemons`, and Debian ships `bgpd=no`, `ospfd=no`
+and `isisd=no`.
+
+So a box installed without changing that runs the dataplane, the VTY and static
+routes, and **not one routing protocol** — while the VTY offers all three, `?`
+lists them and `commit` accepts them
+([#99](https://github.com/andrediashexa/hexarouting/issues/99)).
+
+`appliance/install.sh` therefore enables them explicitly. Inheriting a
+distribution default for something this product claims to support is how it
+went unnoticed for as long as it did — and what hid it is that `lab/routing.sh`
+starts those daemons **by hand**, so the lab proved a control plane the shipped
+box did not have. `lab/install-iso.sh` now asserts them on the installed disk,
+which is the only place the question means anything.
+
+`commit check` refuses a `router <protocol>` statement whose daemon is not
+running:
+
+```
+error: router bgp 65001: bgpd is not running
+    the statement would commit and reach nothing. Enable bgpd in
+    /etc/frr/daemons and restart frr
+```
+
+That refusal exists because the silence is not otherwise guaranteed: `vtysh`
+prints `bgpd is not running` while `frr-reload.py` still returns 0, which is
+how a commit reports success for configuration that reached nothing.
+
+The boot self-test reports which routing daemons are answering, as a warning
+rather than a failure — a box deliberately running fewer daemons is a
+legitimate deployment, and a box that cannot run BGP should say so before
+somebody configures BGP on it.
+
 ## Static routes
 
 ```

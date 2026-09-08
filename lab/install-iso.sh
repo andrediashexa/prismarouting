@@ -273,6 +273,29 @@ if ! grep -q "\[ ok \] VTY starts" /tmp/disk-clean.log; then
   echo "  [FAIL] the VTY did not start on the installed system"
   fail=1
 fi
+
+# The routing daemons the VTY OFFERS, asserted on the INSTALLED box.
+#
+# This is the assertion that was missing, and its absence is what let #99 ship:
+# lab/routing.sh proves BGP, OSPF and IS-IS by starting those daemons BY HAND,
+# so the lab and the product disagreed about what runs and the lab was the
+# optimistic one. Debian's /etc/frr/daemons has all three as "no", and
+# frrinit.sh starts only zebra, mgmtd and staticd - so an installed box ran the
+# dataplane, the VTY and static routes, and not one routing protocol.
+#
+# Checked here, on the disk that was actually installed, because that is the
+# only place the question means anything.
+if [ "$up" = 1 ]; then
+  if grep -q "routing daemons up:" /tmp/disk-clean.log; then
+    echo "  [ ok ] the installed box runs the daemons the VTY offers"
+    grep -o "routing daemons up:.*" /tmp/disk-clean.log | head -1 | sed 's/^/         /'
+  else
+    echo "  [FAIL] the installed box is missing routing daemons the VTY offers"
+    grep -A2 "routing daemons not running" /tmp/disk-clean.log | head -3 \
+      | sed 's/^/         /'
+    fail=1
+  fi
+fi
 # Did the tuning survive the install?
 #
 # The evidence is the KERNEL COMMAND LINE, not the profile. isolcpus and the
