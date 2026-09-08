@@ -208,7 +208,7 @@ diff.
 A merge into `master` happens only when the maintainer asks for it — with one
 standing exception, below.
 
-When it happens it **MUST** produce all four of:
+When it happens it **MUST** produce all five of:
 
 1. **A version bump** in `VERSION`, which is the single source of truth. No
    version string is hardcoded anywhere else.
@@ -223,6 +223,23 @@ When it happens it **MUST** produce all four of:
    release notes **MUST NOT** be generated from the commit list: a list of
    commits describes the work, and what a reader needs is what changed for
    them.
+5. **An installation medium, built and booted.** `make test-iso` builds the
+   ISO from the tagged tree and boots it, demanding the self-test report
+   ready. The release note **MUST** record that it did.
+
+   Building it is not enough on its own, and the distinction is the whole
+   point: an ISO that builds and does not boot is an artifact reporting
+   success without verifying effect, which is the defect class this project
+   is organised against. `make iso` produces a file; only `make test-iso`
+   produces evidence.
+
+   This exists because the product **is** the appliance. Every release before
+   this rule was verified as source — 35 labs and the unit suite — and
+   verified as a bootable medium only when somebody thought to check. A
+   release nobody can install is not a release; it is a tag.
+
+   A release whose ISO does not boot **MUST NOT** be published. Fix it, or
+   say in the note that this version ships as source only and why.
 
 ```mermaid
 flowchart LR
@@ -231,7 +248,8 @@ flowchart LR
     C --> D["merge into master"]
     D --> E["annotated tag vX.Y.Z<br/>message = release note"]
     E --> F["GitHub Release<br/>same note, plus artifacts"]
-    F --> G["close the issues"]
+    F --> H["make test-iso<br/>built AND booted"]
+    H --> G["close the issues"]
 ```
 
 ### The standing exception: small fixes

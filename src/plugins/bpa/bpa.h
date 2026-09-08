@@ -77,6 +77,22 @@ typedef struct
    * A single slot rather than one per thread: API handlers run on the main
    * thread under the worker barrier, one at a time.
    */
+  /*
+   * The hash chain over the trail (issue #22).
+   *
+   * `audit_head` is the digest of the last entry written, `audit_seq` its
+   * sequence number. Both are recovered from the file at startup, so a
+   * restart continues the chain rather than starting a second one.
+   *
+   * They are also what makes TRUNCATION detectable at all. Removing entries
+   * from the END of the file leaves a chain that verifies perfectly - every
+   * remaining link is genuine - so a file cannot report its own truncation.
+   * Only something that remembers where the chain had got to can, which is
+   * what these two fields are for.
+   */
+  u8 audit_head[32];
+  u64 audit_seq;
+
   u8 *actor_user;  /* the account the client named, or 0 */
   u32 actor_uid;   /* the uid it was running as, or ~0 */
   u8 actor_is_api; /* the change arrived over the binary API */
@@ -106,6 +122,13 @@ void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
  */
 void bpa_actor_set (const char *user, u32 uid);
 void bpa_actor_clear (void);
+
+/*
+ * Recover the hash chain's head from the trail on disk, at startup. A restart
+ * that did not do this would begin a second chain, and every verification
+ * afterwards would report a break at the restart.
+ */
+void bpa_audit_recover (void);
 
 void bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only);
 

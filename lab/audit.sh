@@ -106,6 +106,55 @@ echo "=== it also went to VPP's log (which can ship to remote syslog) ==="
 vppctl show logging | grep -c "pool provedor" | sed 's/^/  linhas: /'
 
 echo
+echo "=========== the chain (#22) ==========="
+TRAIL=/var/log/hexarouting/config-history.log
+CLEAN=$(vppctl show bpa pool history verify)
+printf '%s\n' "$CLEAN" | sed 's/^/  /'
+
+# Every check below runs against a COPY, with audit-path pointed at it: a lab
+# that corrupts the trail it is testing has nothing left to test.
+echo
+echo "=== one byte changed in the middle ==="
+cp $TRAIL /tmp/altered.log
+# The CONTENT, not the digest: an attacker who edits the record fixes the
+# record, not the checksum they did not know was there.
+sed -i '2s/block 2048/block 9999/' /tmp/altered.log
+vppctl bpa audit-path /tmp/altered.log >/dev/null
+ALTERED=$(vppctl show bpa pool history verify)
+printf '%s\n' "$ALTERED" | sed 's/^/  /'
+
+echo
+echo "=== an entry removed from the middle ==="
+cp $TRAIL /tmp/removed.log
+sed -i '3d' /tmp/removed.log
+vppctl bpa audit-path /tmp/removed.log >/dev/null
+REMOVED=$(vppctl show bpa pool history verify)
+printf '%s\n' "$REMOVED" | sed 's/^/  /'
+
+echo
+echo "=== entries removed from the END ==="
+# The case a file cannot report about itself: every remaining link is genuine,
+# so the chain verifies. Only something that remembers what it wrote can tell.
+cp $TRAIL /tmp/truncated.log
+sed -i '$d' /tmp/truncated.log
+sed -i '$d' /tmp/truncated.log
+vppctl bpa audit-path /tmp/truncated.log >/dev/null
+TRUNCATED=$(vppctl show bpa pool history verify)
+printf '%s\n' "$TRUNCATED" | sed 's/^/  /'
+
+echo
+echo "=== a trail written before the chain existed ==="
+printf '2026-01-01T00:00:00Z add pool old inside 10.0.0.0+256 block 512\n' \
+  > /tmp/legacy.log
+printf '2026-01-02T00:00:00Z del pool old inside 10.0.0.0+256 block 512\n' \
+  >> /tmp/legacy.log
+vppctl bpa audit-path /tmp/legacy.log >/dev/null
+LEGACY=$(vppctl show bpa pool history verify)
+printf '%s\n' "$LEGACY" | sed 's/^/  /'
+LEGACY_READ=$(vppctl show bpa pool history)
+vppctl bpa audit-path $TRAIL >/dev/null
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 H=$(vppctl show bpa pool history)
@@ -138,4 +187,35 @@ expect_in "but is not confused with a change typed at the console" "via api" \
 # Entries written before any of this existed still read back.
 expect_in "older entries without an identity are still listed" \
   "add pool provider-b" "$H"
+
+# --- the chain (#22) ---
+expect_in "a clean trail verifies" "chain intact" "$CLEAN"
+expect_in "and reports the head, which is what a remote copy is compared to" \
+  "head  seq" "$CLEAN"
+# A chain that verifies proves the file was not edited. It does not prove it is
+# the same file, and saying so is the difference between a proof and a claim.
+expect_in "and says what that does not prove" "not that it is the same file" \
+  "$CLEAN"
+
+expect_in "an altered entry is detected" "BROKEN" "$ALTERED"
+expect_in "and named, rather than reported as 'somewhere'" \
+  "does not match its own digest" "$ALTERED"
+expect_in "and the altered text is shown" "9999" "$ALTERED"
+expect_not_in "an altered trail is not reported as intact" "chain intact" \
+  "$ALTERED"
+
+expect_in "an entry removed from the middle is detected" "BROKEN" "$REMOVED"
+expect_in "and diagnosed as a removal, not as an alteration" \
+  "removed from the middle" "$REMOVED"
+
+# The three cases have to be TOLD APART. A verifier that says "broken" for all
+# of them leaves the operator to guess what happened to their evidence.
+expect_in "truncation is detected" "TRUNCATED" "$TRUNCATED"
+expect_in "and diagnosed as a removal from the end" "removed from the end" \
+  "$TRUNCATED"
+expect_not_in "and not confused with an alteration" "does not match its own" \
+  "$TRUNCATED"
+
+expect_in "a pre-chain trail says it is not covered" "no digest" "$LEGACY"
+expect_in "and is still readable" "add pool old" "$LEGACY_READ"
 verdict

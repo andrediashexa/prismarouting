@@ -248,6 +248,72 @@ trail evidence against its own author is
 [#22](https://github.com/andrediashexa/hexarouting/issues/22), the same problem
 from the other side.
 
+### Tamper-evidence
+
+Each entry carries a sequence number and a SHA-256 digest over **the previous
+digest and its own text**. Changing a byte changes that entry's digest and
+every digest after it, so an alteration cannot be made to verify by fixing up
+the line it is on.
+
+```
+show bpa pool history verify
+  7 entries checked, chain intact
+  head  seq 7 sha256 4e98de83…81f4
+  a chain that verifies proves the file was not edited, not that it is the
+  same file: compare this digest with the copy in your remote syslog
+```
+
+Three ways a trail can be wrong, and they **MUST** be told apart — a verifier
+that answers "broken" to all of them leaves the operator guessing what happened
+to their evidence:
+
+| What was done | What is reported |
+|---|---|
+| an entry's text was changed | `BROKEN at entry 2` — the whole entry, and that it does not match its own digest |
+| an entry was removed from the middle | `BROKEN before entry 4` — the sequence jumps from 2 to 4 |
+| entries were removed from the end | `TRUNCATED: the file ends at entry 5 and this dataplane wrote up to 7` |
+
+The **sequence is checked before the digest**, and that order is the diagnosis.
+Removing an entry also breaks the digest of the entry that followed it, so a
+verifier that checked the hash first would report every removal as an
+alteration — of the innocent line after the gap, sending whoever is
+investigating to a line nobody touched.
+
+Entries written before the chain existed remain readable and are reported as
+**not covered** rather than counted as clean. A file with no chained entries at
+all is reported as `no chained entries: nothing here is covered` — never as
+intact, because losing the chain entirely is the first thing anyone would try.
+
+The chain's head is recovered from the file at startup, so a restart continues
+one chain rather than beginning a second. Without that, every verification
+after a restart would report a break at the restart, and an alarm that is
+always on is an alarm that is off.
+
+#### What it proves, and what it does not
+
+It detects a trail that was **edited**, and names where. That is the case it
+exists for: a record that can be quietly corrected proves what happened only to
+somebody who already trusts the operator, and it exists to be shown to somebody
+who does not.
+
+It does **not** stop somebody with write access to the file *and* this
+algorithm from rewriting the trail and recomputing every digest. Nothing kept
+only on the box can — an attacker who owns the box owns the evidence on it.
+
+What makes the chain evidence against its own author is a copy of the digests
+somewhere that author does not control, and **that copy already exists**: every
+entry, digest included, is also sent to VPP's log, which deployments that take
+this seriously forward to a remote syslog. Comparing the head digest against
+yesterday's remote copy is what turns *"the file verifies"* into *"the file is
+the same one"*. Operators who need the trail to be evidence **SHOULD** forward
+the log off the box; without that, the chain catches accident and casual
+editing and not a determined administrator.
+
+Truncation at the end is the sharpest case: the remaining links are all
+genuine, so the file verifies. It is caught only by comparing against what the
+running dataplane remembers writing — and after a restart that followed a
+truncation, only the remote copy can tell.
+
 * Each write **MUST** be `fsync`ed: a compliance log **MUST NOT** live only in
   the page cache.
 * Entries are also sent to VPP's log. A local file survives a reboot, not a disk
@@ -290,6 +356,7 @@ to the subscriber it was issued to
 - [x] Per-thread queue in the dataplane, drained by a process
 - [x] TCP transport with disk spill
 - [x] Dated configuration trail, carrying the operator who made the change
+- [x] Hash-chained and verifiable, with the limits of that stated above
 - [x] End-to-end test with a decoding collector (`lab/ipfix.sh`,
       `lab/ipfix-tcp.sh`), confirming every allocation has its matching release
 - [ ] Collector selection via a dedicated CLI; today the UDP path inherits

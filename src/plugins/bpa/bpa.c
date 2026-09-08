@@ -1004,6 +1004,14 @@ bpa_init (vlib_main_t *vm)
    */
   bm->actor_uid = ~0u;
 
+  /*
+   * Where the chain had got to. Without this a restart starts a second chain
+   * and every verification afterwards reports a break at the restart, which
+   * trains whoever runs it to ignore the answer - and an alarm that is always
+   * on is an alarm that is off.
+   */
+  bpa_audit_recover ();
+
   {
     ip4_main_t *im = &ip4_main;
     ip4_add_del_interface_address_callback_t cb = {
