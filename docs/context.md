@@ -8,7 +8,7 @@ diverge from the first with no way to tell which one is stale. It states the
 handful of facts that make the rest legible, and says which file is
 **authoritative** for each one.
 
-Nine invariants, a map of what question each part answers, and a reading order
+Ten invariants, a map of what question each part answers, and a reading order
 per task. Roughly fifteen minutes.
 
 > The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** in this document
@@ -126,7 +126,21 @@ called out rather than discovered.
 
 *Authoritative:* [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-### 1.9 The issue is the record of the work
+### 1.9 The wiki is a usage layer, not a second design
+
+`docs/`, `README.md` and `TESTING.md` are authoritative about the product. The
+wiki at `hexarouting.hexanetworks.com.br` says how somebody *uses* it, and
+`wiki/` here is a read-only mirror so it can be read and diffed without leaving
+the repository — editing that mirror changes nothing.
+
+Where the two disagree, the repository is right and the wiki page is stale.
+Every task asks whether a page needs writing or changing, and records the
+answer on the issue even when it is no.
+
+*Authoritative:* `PADRAO-DOCUMENTACAO.md` for how a page is written,
+[CONTRIBUTING.md](../CONTRIBUTING.md) section 1 for when.
+
+### 1.10 The issue is the record of the work
 
 Design decisions, measurements **with their conditions**, limits and incidental
 findings go back to the issue as they happen. Closing carries the acceptance

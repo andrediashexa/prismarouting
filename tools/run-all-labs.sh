@@ -59,6 +59,45 @@ for f in "$REPO"/lab/*.sh; do
 done
 
 # Run them, at most $JOBS at a time, each into its own file.
+#
+# Judged BATCH BY BATCH rather than all at the end. Judging everything after
+# the last lab finished meant twelve minutes in which the suite printed
+# nothing at all - and a long-running thing that says nothing is
+# indistinguishable from one that has hung, which is the same complaint #97
+# fixed on the boot console. It was introduced here three hours after being
+# fixed there.
+#
+# Order is still fixed: batches run in list order and each batch is judged in
+# list order, so the summary reads the same however the labs finish.
+# One lab's verdict. Called as each batch finishes, so the suite shows progress
+# instead of going quiet for twelve minutes.
+report() {
+  _n=$1; _out=$2; _rc=$3
+  # The lab's exit status is the verdict. Grepping its output for the word
+  # "error" made FRR's startup chatter look like a failing test.
+  if [ "$_rc" -eq 0 ] && printf '%s' "$_out" | grep -q "LAB PASSED"; then
+    printf '  %-18s pass\n' "$_n"; pass=$((pass+1))
+  elif printf '%s' "$_out" | grep -q "LAB FAILED"; then
+    printf '  %-18s FAIL\n' "$_n"
+    printf '%s' "$_out" | grep -E "\[FAIL\]" | head -3 | sed 's/^/     /'
+    fail=$((fail+1))
+  elif [ "$_rc" -ne 0 ]; then
+    printf '  %-18s FAIL (exit %s)\n' "$_n" "$_rc"; fail=$((fail+1))
+  else
+    printf '  %-18s ran (no verdict yet)\n' "$_n"; ran=$((ran+1))
+  fi
+}
+
+judge_batch() {
+  for n in $BATCH; do
+    out=$(cat "$OUT/$n.out" 2>/dev/null || true)
+    rc=$(cat "$OUT/$n.rc" 2>/dev/null || echo 1)
+    report "$n" "$out" "$rc"
+  done
+  BATCH=""
+}
+
+BATCH=""
 running=0
 for n in $LABS; do
   (
@@ -70,33 +109,17 @@ for n in $LABS; do
     printf '%s\n' "$out" > "$OUT/$n.out"
     echo "$rc" > "$OUT/$n.rc"
   ) &
+  BATCH="$BATCH $n"
   running=$((running + 1))
   if [ "$running" -ge "$JOBS" ]; then
     wait
+    judge_batch
     running=0
   fi
 done
 wait
+judge_batch
 
-# Judged afterwards, in list order, so the summary reads the same however the
-# labs happened to finish.
-for n in $LABS; do
-  out=$(cat "$OUT/$n.out" 2>/dev/null || true)
-  rc=$(cat "$OUT/$n.rc" 2>/dev/null || echo 1)
-  # The lab's exit status is the verdict. Grepping its output for the word
-  # "error" made FRR's startup chatter look like a failing test.
-  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "LAB PASSED"; then
-    printf '  %-18s pass\n' "$n"; pass=$((pass+1))
-  elif printf '%s' "$out" | grep -q "LAB FAILED"; then
-    printf '  %-18s FAIL\n' "$n"
-    printf '%s' "$out" | grep -E "\[FAIL\]" | head -3 | sed 's/^/     /'
-    fail=$((fail+1))
-  elif [ "$rc" -ne 0 ]; then
-    printf '  %-18s FAIL (exit %s)\n' "$n" "$rc"; fail=$((fail+1))
-  else
-    printf '  %-18s ran (no verdict yet)\n' "$n"; ran=$((ran+1))
-  fi
-done
 echo
 echo "  pass=$pass  fail=$fail  ran=$ran"
 [ "$fail" -eq 0 ]

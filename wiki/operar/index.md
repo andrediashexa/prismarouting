@@ -1,0 +1,28 @@
+# Operar
+
+O que fazer com a máquina já em produção: tarefas do dia a dia, diagnóstico quando algo quebra, e a guarda de registros que a lei exige.
+
+| Página | Responde |
+|--------|----------|
+| [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) | Tarefas concretas, com os comandos na ordem |
+| [Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt) | Por onde começar quando alguém reclama, e a ordem de boot |
+| [Quando o bloco de um assinante enche](/doc/quando-o-bloco-de-um-assinante-enche-kb1sJTtCKx) | As três recusas, blocos estendidos e limites por assinante |
+| [Comportamento NAT e compatibilidade](/doc/comportamento-nat-e-compatibilidade-8eYzcDTnmJ) | Se jogo, câmera e peer-to-peer funcionam atrás deste CGNAT |
+| [Protocolos e ALGs](/doc/protocolos-e-algs-vZjaCcHaN7) | O que atravessa sozinho, o que precisa de ALG e o que não é suportado |
+| [Encaminhamento de porta](/doc/encaminhamento-de-porta-epIZfdmzU3) | Abrir uma porta de entrada sem vender um endereço público |
+| [uRPF e origens forjadas](/doc/urpf-e-origens-forjadas-1Mb4LB6Dhf) | A defesa que impede o log de ficar confiantemente errado |
+| [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u) | O caminho que custa uma parada e o que não custa |
+| [Monitoramento e SNMP](/doc/monitoramento-e-snmp-YGn85RpUAb) | O que a sua NMS enxerga, e o que falta para enxergar tudo |
+| [Logging IPFIX e trilha de auditoria](/doc/logging-ipfix-e-trilha-de-auditoria-lREEjJu1Bq) | O formato do registro, e como provar que a trilha não foi editada |
+
+# As três regras que evitam incidente
+
+
+1. **A interface de gerência não vai para o CGNAT.** Entregá-la ao DPDK deixa a máquina inalcançável remotamente.
+2. **Mudança remota vai com** `**commit confirmed**`**.** Se cortar o próprio acesso, a máquina se recupera sozinha.
+3. `**commit**` **não é** `**save**`**.** O primeiro faz valer agora; o segundo faz sobreviver ao boot.
+
+# Ver também
+
+* [Comandos show](/doc/comandos-show-YlNji1X5W4) — a referência dos comandos de diagnóstico
+* [Configuração de pool](/doc/configuracao-de-pool-btyS572Ih6) — quais campos derrubam sessão e quais não
