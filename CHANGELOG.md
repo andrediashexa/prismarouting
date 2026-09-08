@@ -25,7 +25,39 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.35.0.
+Nothing merged since v0.36.0.
+
+## 0.36.0 — applied, and never reported back
+
+One omission ([#116](https://github.com/andrediashexa/hexarouting/issues/116))
+in the configuration the box reports about itself.
+
+### Fixed
+
+* **`cgnat logging tcp <collector>` was absent from the running
+  configuration.** It reached the dataplane and never reached `show bpa
+  config`, therefore not `show running-config` either.
+
+  The running configuration is read back from the box, not remembered, so this
+  was not cosmetic. An operator auditing a box could not see where the
+  compliance log was being sent; a rollback could not restore a destination
+  that was never in the revision; and saving the configuration and reloading
+  it produced a box that looked identical and **exported nothing over TCP**,
+  with nothing reporting the difference.
+
+  The lab now does the round trip: save the configuration, turn the exporter
+  off, prove it is off, reload the saved configuration and see the collector
+  return. A configuration that cannot be reloaded into the same box is not a
+  configuration.
+
+### Known issue found here
+
+* Driving that reload surfaced
+  [#119](https://github.com/andrediashexa/hexarouting/issues/119): **the ISO
+  has never carried the vat2 plugin**, so on an installed appliance the binary
+  API is unreachable and a CGNAT pool cannot be configured at all. Every lab
+  that touches the API places the plugin by hand first, which is why nothing
+  had noticed. Fix in progress.
 
 ## 0.35.0 — the compliance log was timestamped from VPP's boot
 
