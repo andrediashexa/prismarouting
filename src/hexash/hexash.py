@@ -827,6 +827,67 @@ class Shell:
             print(f"[api] {message} {args}", file=sys.stderr)
         return self.api.call(message, args)
 
+    def set_cgnat_feature(self, ifname, direction, is_add):
+        """
+        Attach or detach CGNAT on an interface, over the binary API.
+
+        This used to be `vppctl set interface bpa in2out|out2in <if>`, so an
+        account that could attach an interface needed the VPP CLI socket - and
+        an account with that socket can run `bpa pool <name> del` and
+        disconnect every subscriber behind it. The roles bound what the VTY
+        would do, not what the account could reach (#76).
+
+        The name-to-index translation used to happen inside vppctl. It happens
+        here now, because the API message takes an index and the operator
+        types a name.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            # Distinct from "the dataplane refused it": the interface is not
+            # there at all, and saying "refused" would send somebody looking at
+            # the CGNAT configuration for a name that was mistyped.
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("bpa_interface_add_del_feature",
+                          {"is_add": bool(is_add),
+                           "is_inside": direction == "inside",
+                           "sw_if_index": idx})
+        if r.state != vppapi.OK:
+            verb = "attach CGNAT to" if is_add else "detach CGNAT from"
+            self.err(f"could not {verb} {ifname}: {r.reason}")
+            return False
+        return True
+
+    # VPP's own enum, not a string this VTY invents. "off" is a real mode
+    # rather than the absence of one, which is why removing uRPF is the same
+    # call with a different value instead of a second code path.
+    URPF_MODE = {
+        "strict": "URPF_API_MODE_STRICT",
+        "loose": "URPF_API_MODE_LOOSE",
+        "off": "URPF_API_MODE_OFF",
+    }
+
+    def set_urpf(self, ifname, mode):
+        """
+        uRPF on an interface, over the binary API rather than `vppctl set urpf`
+        (#76).
+
+        Input direction only: this checks the source of packets ARRIVING on the
+        interface, which is what "the source must route back this way" means.
+        Applying it on output would drop nothing an operator asked to drop.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("urpf_update",
+                          {"is_input": True, "sw_if_index": idx,
+                           "mode": self.URPF_MODE[mode], "af": "ADDRESS_IP4"})
+        if r.state != vppapi.OK:
+            self.err(f"interface {ifname}: urpf {mode}: {r.reason}")
+            return False
+        return True
+
     def apply(self, target: Config, check_only=False) -> bool:
         """
         Converge the device onto `target`. Returns True on success.
@@ -1092,15 +1153,11 @@ class Shell:
                 return False
 
         for ifname in d["if_remove"]:
-            direction = running.interfaces[ifname]
-            k = "in2out" if direction == "inside" else "out2in"
-            self.dp.run(f"set interface bpa {k} {ifname} del")
+            if not self.set_cgnat_feature(ifname, running.interfaces[ifname],
+                                          False):
+                return False
         for ifname, direction in d["if_add"].items():
-            k = "in2out" if direction == "inside" else "out2in"
-            rc, out = self.dp.run(f"set interface bpa {k} {ifname}")
-            if rc:
-                print(out)
-                self.err(f"interface {ifname} refused by the dataplane")
+            if not self.set_cgnat_feature(ifname, direction, True):
                 return False
 
         # The box's own configuration, after the dataplane and before
@@ -1149,15 +1206,28 @@ class Shell:
         # in the log saying why. Setting only the TAP leaves the packet path -
         # the VPP interface - unchanged, which is the half that matters.
         for ifname, mtu in d["mtu_set"].items():
-            # "mtu packet" sets the L3 MTU, which is what OSPF compares in
-            # Database Description packets. Plain "set interface mtu" changes
-            # the hardware max frame size, which most drivers refuse - and
-            # refuse while vppctl still exits 0, so the failure was invisible.
-            self.dp.run(f"set interface mtu packet {mtu} {ifname}")
-            # Read back rather than trust the exit status. vppctl returns 0
-            # even when the command printed "Unsupported", which is the whole
-            # reason the pool path moved to the binary API. Until MTU follows
-            # it, verifying the effect is the only honest check.
+            # Over the binary API, so that setting an MTU no longer needs the
+            # VPP CLI socket - and an account with that socket can do anything
+            # on this box, including deleting a pool (#76).
+            #
+            # mtu[0] is the L3 MTU, which is what OSPF compares in Database
+            # Description packets. The CLI equivalent was "set interface mtu
+            # PACKET <n>": plain "set interface mtu" changes the hardware max
+            # frame size, which most drivers refuse - and refused while vppctl
+            # still exited 0, so the failure was invisible. The array here says
+            # which one is meant without depending on a keyword.
+            idx = self.api.interface_index(ifname)
+            if idx is None:
+                self.err(f"interface {ifname}: the dataplane does not have it")
+                return False
+            r = self.api_call("sw_interface_set_mtu",
+                              {"sw_if_index": idx, "mtu": [mtu, 0, 0, 0]})
+            if r.state != vppapi.OK:
+                self.err(f"interface {ifname}: mtu {mtu}: {r.reason}")
+                return False
+            # Still read back. retval 0 means the message was accepted, not
+            # that the driver took the value, and this is the assertion that
+            # actually protects the OSPF adjacency.
             if self.device_mtus().get(ifname) != mtu:
                 self.err(f"interface {ifname}: the dataplane did not take "
                          f"mtu {mtu}")
@@ -1168,9 +1238,11 @@ class Shell:
         # starts carrying the traffic the operator turned it on for, and a
         # commit is the only moment that is knowable.
         for ifname, mode in d["urpf_set"].items():
-            self.dp.run(f"set urpf ip4 rx {mode} {ifname}")
+            if not self.set_urpf(ifname, mode):
+                return False
         for ifname in d["urpf_del"]:
-            self.dp.run(f"set urpf ip4 rx off {ifname}")
+            if not self.set_urpf(ifname, "off"):
+                return False
         if d["urpf_set"] or d["urpf_del"]:
             # Read back rather than trust the exit status, for the reason the
             # MTU path does: vppctl exits 0 having printed a parse error, and

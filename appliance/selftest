@@ -185,6 +185,38 @@ else
   say "         route and answer, and every pool commit will fail."
 fi
 
+# --- can anybody but root use that API? ---
+#
+# Roles (#35) bound what the VTY will do. They are decorative if every operator
+# still has to be root to reach the dataplane, and worse than decorative: the
+# box would report a boundary it does not have.
+#
+# "api-segment { gid vpp }" group-owns /dev/shm/vpe-api and NOT
+# /dev/shm/global_vm, which a client maps as well. A drop-in on vpp.service
+# fixes the second one after the dataplane starts. Asserted by actually making
+# a call as a non-root account, not by reading the mode bits: the mode being
+# right is the thing that was meant to make the call work, and checking the
+# means instead of the end is how a permission comes to be set correctly and
+# still not be enough. https://github.com/andrediashexa/hexarouting/issues/76
+#
+# Read-only, and it creates nothing: --dump-apis lists what is registered, and
+# setpriv drops to an unprivileged uid with the vpp group added rather than
+# needing an account to exist. A fresh appliance has no operator accounts yet -
+# the operator makes those - so testing "as a real user" would mean the product
+# creating an account for the benefit of its own test, which is the tail wagging
+# the dog. What matters is the property: not root, in the vpp group, can call.
+VPPGID=$(getent group vpp 2>/dev/null | cut -d: -f3)
+if [ -z "$VPPGID" ]; then
+  bad "there is no 'vpp' group, so the API cannot be shared with anybody"
+elif setpriv --reuid 65534 --regid 65534 --groups "$VPPGID" \
+       vat2 --dump-apis >/dev/null 2>&1; then
+  ok "the binary API works for a non-root account, so roles mean something"
+else
+  bad "the binary API is root-only: every operator would have to be root"
+  say "         /dev/shm/global_vm is $(stat -c '%U:%G %a' /dev/shm/global_vm \
+2>/dev/null || echo 'not there'), and it must be group vpp, mode 660"
+fi
+
 # --- which NIC the dataplane was given ---
 #
 # Said out loud because the failure it replaces was silent. The box used to

@@ -74,6 +74,11 @@ for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.servi
          hexarouting-installer.service; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
+# A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
+# dataplane starts, including a restart nobody ordered, and ordering a separate
+# unit after vpp.service would put it in the wrong place on exactly that path.
+install -D -m 0644 "$REPO/appliance/systemd/vpp-api-access.conf" \
+  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-api-access.conf"
 
 say "login shell"
 install -D -m 0755 "$REPO/appliance/hexash-login" "$DESTDIR/usr/bin/hexash-login"

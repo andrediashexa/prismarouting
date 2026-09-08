@@ -58,6 +58,12 @@ WRITE_MESSAGES = frozenset({
     "bpa_bypass_set",
     "bpa_limits_set",
     "bpa_forward_add_del",
+    # bpa_interface_add_del_feature is NOT here, and that is a gap rather than
+    # a decision: attaching or detaching CGNAT on an interface is a change with
+    # operational consequence - detaching stops translation for everyone behind
+    # it - and the trail should name who did it. The message has no audit_user
+    # or audit_uid fields, so putting it on this list would send fields the
+    # dataplane does not define. Filed as #124.
 })
 
 
@@ -213,6 +219,63 @@ class Vat2:
         if detail:
             reason += f" ({detail})"
         return Reply(REFUSED, retval=retval, reason=reason, fields=payload)
+
+    def dump(self, message, args, timeout=15):
+        """
+        A dump answers with an ARRAY of details, not with one reply object.
+
+        call() reads a single object from the first "{", which is right for a
+        reply and wrong here: it would read the first entry and then fail on
+        the text after it. Captured from a running dataplane rather than
+        assumed - the shape is
+
+            [{"_msgname": "sw_interface_details", "sw_if_index": 0, ...},
+             {"_msgname": "sw_interface_details", "sw_if_index": 1, ...}]
+
+        An empty dump is a legitimate answer and comes back as an empty list,
+        which is not the same as a failure and must not be reported as one.
+        """
+        rc, out, err = self._run(
+            [self.vat2, message, json.dumps(args)], timeout=timeout)
+
+        if rc == 127:
+            return Reply(NO_CLIENT, reason=err.strip() or "vat2 not found")
+
+        text = (out or "") + (err or "")
+        if "No such command" in text:
+            return Reply(NO_PLUGIN, reason=(
+                f"the dataplane does not know '{message}'"))
+
+        start = (out or "").find("[")
+        if start < 0:
+            last = text.strip().splitlines()[-1] if text.strip() else ""
+            return Reply(NOT_RUNNING,
+                         reason=last or "no reply from the dataplane")
+        try:
+            rows = json.loads(out[start:])
+        except ValueError:
+            return Reply(BAD_REPLY,
+                         reason="unreadable dump from the dataplane")
+        return Reply(OK, fields={"rows": rows})
+
+    def interface_index(self, name):
+        """
+        The sw_if_index for an interface name, or None.
+
+        The dataplane's messages take an index and the operator types a name.
+        That translation used to happen inside `vppctl set interface ...`,
+        which is exactly the CLI access this is taking away, so it has to
+        happen here instead.
+        """
+        r = self.dump("sw_interface_dump",
+                      {"sw_if_index": 0xFFFFFFFF,
+                       "name_filter_valid": False, "name_filter": ""})
+        if r.state != OK:
+            return None
+        for row in r.fields.get("rows", []):
+            if row.get("interface_name") == name:
+                return row.get("sw_if_index")
+        return None
 
     @staticmethod
     def _parse(out):
