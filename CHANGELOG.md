@@ -25,7 +25,47 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.30.0.
+Nothing merged since v0.31.0.
+
+## 0.31.0 — the boot wait says what it is waiting for
+
+```
+[  **] Job hexarouting.service/start running (22s / no limit)
+```
+
+`no limit` is systemd's phrasing for a unit with no timeout. On a box somebody
+is watching for the first time, that reads as *"this is not going to finish"*,
+with nothing to say what is being waited for.
+
+### Changed
+
+* **The wait explains itself on the console**
+  ([#97](https://github.com/andrediashexa/hexarouting/issues/97)), where the
+  person is, rather than in the journal they cannot reach yet:
+
+  ```
+  waiting for the dataplane to accept commands
+  (VPP is up; its CLI socket and plugins take a moment longer)
+  still waiting: 5s of at most 60s
+  the dataplane answered after 5s
+  ```
+
+  Three outcomes, told apart: a wait short enough that nobody noticed says
+  **nothing**; a wait that ends normally leaves **no warning behind**; and a
+  timeout says what it cost — *the CGNAT configuration has NOT been applied*.
+
+  `lab/boot-iso.sh` fails a boot where the wait announced itself and never
+  concluded. On a console that is indistinguishable from having hung.
+
+  The 60-second bound stays, justified in the file rather than reduced: VPP
+  answers in 5–21 s on a lab VM with no hugepage pool and one worker, and a
+  box with 32 GB of hugepages and sixteen workers takes longer.
+
+### Fixed
+
+* `wait-for-vpp` truncated its own output on every line — invisible on
+  `/dev/console`, total anywhere else.
+
 
 ## 0.30.0 — the connection records get their own filesystem
 
