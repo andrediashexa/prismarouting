@@ -195,7 +195,16 @@ fi
 #
 # Now nothing is claimed unless it is named, which is safe and is also easy to
 # not notice: a box that forwards nothing looks like a box that is working.
-if grep -q "no-pci" /etc/vpp/startup.conf 2>/dev/null; then
+if grep -q "plugin dpdk_plugin.so { disable }" /etc/vpp/startup.conf 2>/dev/null
+then
+  # No DPDK at all, so no device can be claimed by anything. This is the
+  # first-boot profile: without hugepages the EAL fails and VPP exits, so the
+  # tuner turns the plugin off until a reboot has reserved them. Safe, and it
+  # has to be told apart from "DPDK is on and no device is named", which is the
+  # dangerous case below - the first version of this check conflated them and
+  # failed every live medium.
+  say "  [info] DPDK is off until hugepages exist; no NIC can be claimed yet"
+elif grep -q "no-pci" /etc/vpp/startup.conf 2>/dev/null; then
   say "  [warn] no dataplane interface: VPP was given no NIC to forward on"
   say "         set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the"
   say "         interface carrying subscriber traffic, then restart"
