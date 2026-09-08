@@ -311,7 +311,7 @@ expect_in "and show this in an interface is not empty" "mtu 1500" "$COMP"
 # Inside a block, only what is valid there. Offering the level above invites
 # somebody to type "cgnat pool" inside an interface.
 expect_in "inside an interface, '?' offers its own statements" \
-  "IN_BLOCK: exit mtu show urpf" "$COMP"
+  "IN_BLOCK: description exit mtu show shutdown urpf" "$COMP"
 # Completion that needs the right case is completion for somebody who already
 # knows the answer.
 # A lowercase prefix must complete to SOMETHING, and to a name the dataplane

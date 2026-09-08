@@ -145,6 +145,8 @@ SHOW = {
 # walk into - and an operator who cannot discover `mtu` with `?` will inherit
 # the TAP's 9000 and spend an afternoon on an OSPF adjacency stuck in Exchange.
 INTERFACE_BLOCK = {
+    "description": ("what this interface is for", "<text>"),
+    "shutdown": ("take the interface administratively down", None),
     "mtu": ("MTU, on both the dataplane interface and its TAP", "<576-9216>"),
     "urpf": ("drop packets whose source does not route back this way", {
         "strict": ("the source MUST route back out this interface", None),
@@ -328,7 +330,8 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "limits_set", "bypass_set", "fwd_add", "fwd_del", "if_add",
                "if_remove", "globals")
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
-               "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del")
+               "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del",
+               "desc_set", "desc_del", "admin_down", "admin_up")
 
 
 def cap_needed(delta):
@@ -749,6 +752,8 @@ class Shell:
                 print(f"    line {lineno}: {text}    ({why})")
         cfg.mtus = self.device_mtus()
         cfg.urpf = self.device_urpf()
+        cfg.descriptions = self.device_descriptions()
+        cfg.admin_down = self.device_admin_down()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
@@ -756,6 +761,47 @@ class Shell:
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
         return cfg
+
+    def device_descriptions(self) -> dict:
+        """
+        The description of every interface, from the dataplane's own tags.
+
+        VPP stores a tag per interface and returns it in sw_interface_dump, so
+        this is read back from the box like the MTU and the uRPF mode - not
+        remembered by the VTY between invocations, which it deliberately does
+        not do.
+        """
+        r = self.api.dump("sw_interface_dump",
+                          {"sw_if_index": 0xFFFFFFFF,
+                           "name_filter_valid": False, "name_filter": ""})
+        if r.state != vppapi.OK:
+            return {}
+        out = {}
+        for row in r.fields.get("rows", []):
+            tag = (row.get("tag") or "").strip()
+            if tag:
+                out[row["interface_name"]] = tag
+        return out
+
+    def device_admin_down(self) -> set:
+        """
+        The interfaces that are administratively down.
+
+        Read from `show interface`, not from sw_interface_dump: the dump
+        returns the flags as an enum vat2 renders as "Invalid ENUM", so the
+        one field that would answer this is the one that does not survive the
+        JSON. Captured from a running dataplane rather than assumed.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return set()
+        # local0 is excluded for the same reason device_mtus() excludes it: it
+        # is not an interface anybody configures, it is always down, and
+        # reporting it would put "shutdown" in the running configuration of
+        # every box on earth - which is also how a test asserting " shutdown"
+        # came to pass on a box where nothing had been shut down.
+        return {name for name, info in routes.parse_interfaces(out).items()
+                if info.get("state") == "down" and name != "local0"}
 
     def device_urpf(self) -> dict:
         """
@@ -866,6 +912,74 @@ class Shell:
         "loose": "URPF_API_MODE_LOOSE",
         "off": "URPF_API_MODE_OFF",
     }
+
+    def set_admin(self, ifname, up):
+        """
+        Administrative state, on the dataplane interface AND its TAP.
+
+        Setting only the VPP side leaves FRR holding adjacencies over a port
+        that has stopped forwarding: the neighbour stays "up" until its own
+        dead timer fires, and traffic is black-holed in the meantime. That is
+        the same split this project has already shipped twice with the MTU, so
+        it is done here rather than discovered later.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        # Admin down is the ABSENCE of IF_STATUS_API_FLAG_ADMIN_UP, and the
+        # natural way to say that - flags: 0 - makes vat2 SEGFAULT. It parses
+        # the field as an enum name and cannot render the empty set.
+        #
+        # So down is expressed by sending the one other flag in the type.
+        # VPP reads only ADMIN_UP out of this message; LINK_UP is not settable
+        # here and is ignored. The value therefore means exactly "admin down",
+        # and it is written this way because the obvious encoding crashes the
+        # client, not because it reads well.
+        r = self.api_call("sw_interface_set_flags",
+                          {"sw_if_index": idx,
+                           "flags": ("IF_STATUS_API_FLAG_ADMIN_UP" if up
+                                     else "IF_STATUS_API_FLAG_LINK_UP")})
+        if r.state != vppapi.OK:
+            self.err(f"interface {ifname}: "
+                     f"{'no shutdown' if up else 'shutdown'}: {r.reason}")
+            return False
+        # The Linux side of the pair, by every name it answers to.
+        rc, lcp_out = self.dp.run("show lcp")
+        if rc == 0:
+            for name in routes.lcp_pairs(lcp_out).get(ifname, []):
+                if name == ifname:
+                    continue
+                subprocess.run(["ip", "link", "set", "dev", name,
+                                "up" if up else "down"], capture_output=True)
+        return True
+
+    def set_description(self, ifname, text):
+        """
+        The description, kept as the dataplane's interface tag so that it can
+        be read back from the box, and mirrored to the Linux side as the
+        interface alias so that `ip -d link` and FRR agree with the VTY.
+
+        An empty string removes it.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("sw_interface_tag_add_del",
+                          {"is_add": bool(text), "sw_if_index": idx,
+                           "tag": text or ""})
+        if r.state != vppapi.OK:
+            self.err(f"interface {ifname}: description: {r.reason}")
+            return False
+        rc, lcp_out = self.dp.run("show lcp")
+        if rc == 0:
+            for name in routes.lcp_pairs(lcp_out).get(ifname, []):
+                if name == ifname:
+                    continue
+                subprocess.run(["ip", "link", "set", "dev", name,
+                                "alias", text or ""], capture_output=True)
+        return True
 
     def set_urpf(self, ifname, mode):
         """
@@ -1200,6 +1314,25 @@ class Shell:
                 self.err("accounts were not fully applied")
                 return False
 
+        # Shut down FIRST, bring up LAST, with everything else in between.
+        #
+        # An interface being taken down should stop carrying traffic before its
+        # configuration is changed underneath it, and one being brought up
+        # should come up already configured rather than forwarding for the few
+        # milliseconds it takes to apply the rest. Neither ordering is
+        # observable in a lab that changes one thing at a time, which is
+        # exactly why it is decided here rather than left to the dictionary.
+        for ifname in d["admin_down"]:
+            if not self.set_admin(ifname, False):
+                return False
+
+        for ifname, text in d["desc_set"].items():
+            if not self.set_description(ifname, text):
+                return False
+        for ifname in d["desc_del"]:
+            if not self.set_description(ifname, ""):
+                return False
+
         # MTU on BOTH sides. docs/routing.md records the failure: the TAP
         # created by linux_cp comes up at 9000, OSPF compares MTU in Database
         # Description packets, and the adjacency stops at Exchange with nothing
@@ -1260,6 +1393,10 @@ class Shell:
                     self.err(f"interface {ifname}: uRPF is still on after "
                              "being removed")
                     return False
+
+        for ifname in d["admin_up"]:
+            if not self.set_admin(ifname, True):
+                return False
 
         for ifname in d["mtu_del"]:
             # No stored default to restore: the driver's own value is whatever
@@ -1661,6 +1798,38 @@ class Shell:
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:2] == ["no", "mtu"]):
             self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
+            return True
+
+        # `description` and `shutdown` are the device's, for the same reason as
+        # `mtu`. Without these two branches they fell through to the catch-all
+        # at the bottom and were staged as FRR statements - and FRR ACCEPTS
+        # both words inside an interface stanza, so nothing errored. The
+        # description reached FRR's configuration and never the dataplane, and
+        # `shutdown` never reached anything that forwards packets.
+        #
+        # It passed a lab, too: the assertion read `show running-config`, which
+        # includes FRR's half, so it matched the copy that had gone to the
+        # wrong place. Three assertions in that lab were vacuous for this
+        # reason.
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "description"):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 2:
+                self.err("usage: description <text>")
+            else:
+                self.candidate.descriptions[ifname] = line.strip().split(None, 1)[1]
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:2] == ["no", "description"]):
+            self.candidate.descriptions.pop(self.frr_ctx[-1].split()[1], None)
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "shutdown"):
+            self.candidate.admin_down.add(self.frr_ctx[-1].split()[1])
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:2] == ["no", "shutdown"]):
+            self.candidate.admin_down.discard(self.frr_ctx[-1].split()[1])
             return True
 
         # `urpf` is the device's too, for the same reason as `mtu`: the check

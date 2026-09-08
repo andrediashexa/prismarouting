@@ -374,6 +374,17 @@ class Config:
         # moment ago, and it does so silently. docs/architecture.md says what
         # it protects and, just as important, what it does not.
         self.urpf: dict[str, str] = {}
+        # What the interface is for, and whether it is administratively up.
+        #
+        # The description lives in the DATAPLANE, as a VPP interface tag, and
+        # is read back from there like everything else here - not remembered by
+        # this VTY. A description only the VTY knows is one that disagrees with
+        # every other tool on the box.
+        self.descriptions: dict[str, str] = {}   # name -> text
+        # Present means shut down. Absent means up, which is the default and
+        # the state of every interface nobody has touched, so recording the
+        # absence would make every box look configured.
+        self.admin_down: set = set()
         # The box's own configuration: the SSH daemon and the accounts that
         # may log in. Not CGNAT and not routing, but committed and rolled back
         # with both - it used to be the only configuration on the appliance
@@ -423,8 +434,15 @@ class Config:
             out += self.pools[name].lines()
         for ifname in sorted(self.interfaces):
             out.append(f"cgnat interface {ifname} {self.interfaces[ifname]}")
-        for ifname in sorted(set(self.mtus) | set(self.urpf)):
+        for ifname in sorted(set(self.mtus) | set(self.urpf)
+                             | set(self.descriptions) | set(self.admin_down)):
             out.append(f"interface {ifname}")
+            # Description first: it is what the interface IS, and a reader
+            # scanning a long configuration for one port finds it by name.
+            if ifname in self.descriptions:
+                out.append(f" description {self.descriptions[ifname]}")
+            if ifname in self.admin_down:
+                out.append(" shutdown")
             if ifname in self.mtus:
                 out.append(f" mtu {self.mtus[ifname]}")
             if ifname in self.urpf:
@@ -588,6 +606,17 @@ class Config:
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
+                elif w[0] == "description" and len(w) > 1:
+                    # Everything after the keyword, spaces included. Splitting
+                    # on words would turn "uplink para o transito" into
+                    # "uplink" and lose the rest without saying so.
+                    cfg.descriptions[iface] = s.split(None, 1)[1]
+                elif s == "no description":
+                    cfg.descriptions.pop(iface, None)
+                elif s == "shutdown":
+                    cfg.admin_down.add(iface)
+                elif s == "no shutdown":
+                    cfg.admin_down.discard(iface)
                 elif w[0] == "urpf" and len(w) > 1:
                     if w[1] not in URPF_MODES:
                         cfg.unknown.append(
@@ -599,7 +628,8 @@ class Config:
                         cfg.urpf[iface] = w[1]
                 else:
                     cfg.unknown.append(
-                        (lineno, s, "an interface understands 'mtu <n>' and "
+                        (lineno, s, "an interface understands 'description "
+                                    "<text>', 'shutdown', 'mtu <n>' and "
                                     "'urpf <strict|loose|off>'"))
             elif s.startswith("cgnat "):
                 cfg.globals.append(s)
@@ -836,6 +866,15 @@ class Config:
         if_add = {k: v for k, v in other.interfaces.items()
                   if self.interfaces.get(k) != v}
         if_del = [k for k in self.interfaces if k not in other.interfaces]
+        desc_set = {k: v for k, v in other.descriptions.items()
+                    if self.descriptions.get(k) != v}
+        desc_del = [k for k in self.descriptions if k not in other.descriptions]
+        # Both directions, and both are changes. Shutting a port and bringing
+        # one back are equally consequential, and a delta that only carried one
+        # of them would make rollback able to shut interfaces and not reopen
+        # them.
+        admin_down = sorted(other.admin_down - self.admin_down)
+        admin_up = sorted(self.admin_down - other.admin_down)
         mtu_set = {k: v for k, v in other.mtus.items() if self.mtus.get(k) != v}
         urpf_set = {k: v for k, v in other.urpf.items()
                     if self.urpf.get(k) != v}
@@ -875,6 +914,10 @@ class Config:
             "bypass_set": bypass_set,
             "if_add": if_add,
             "if_remove": if_del,
+            "desc_set": desc_set,
+            "desc_del": desc_del,
+            "admin_down": admin_down,
+            "admin_up": admin_up,
             "mtu_set": mtu_set,
             "mtu_del": mtu_del,
             "urpf_set": urpf_set,

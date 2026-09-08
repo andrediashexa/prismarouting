@@ -321,4 +321,61 @@ expect_in "with the next hop it forwards to" "10.0.0.2" "$VERBOSE"
 # and calling that "not forwarding" is simply wrong.
 expect_in "a local address is not reported as a failure" "local" "$VERBOSE"
 
+# --- description and administrative state (#129) ---
+#
+# Every assertion here reads the DATAPLANE, not `show running-config`.
+#
+# The first version of this section read the running configuration, which
+# includes FRR's half - and `description` and `shutdown` were falling through
+# the VTY into FRR, which accepts both words inside an interface stanza. So the
+# assertions matched the copy that had gone to the wrong place and passed while
+# nothing reached the interface. Three of them were vacuous.
+#
+# The tag comes back from sw_interface_dump and the state from `show
+# interface`, so a value only FRR knows cannot satisfy either.
+echo "=========== description and shutdown ==========="
+tag_of() { vat2 sw_interface_dump '{"sw_if_index":4294967295,"name_filter_valid":false,"name_filter":""}' 2>/dev/null | python3 -c '
+import json,sys
+for r in json.load(sys.stdin):
+    if r["interface_name"] == "host-veth-vpp":
+        print((r.get("tag") or "").strip())
+'; }
+state_of() { vppctl show interface host-veth-vpp | awk 'NR==2 {print $3}'; }
+
+$HX -c "configure" -c "interface host-veth-vpp" \
+    -c "description uplink para o transito" -c "exit" -c "commit" \
+    > /tmp/desc.log 2>&1 || true
+tail -2 /tmp/desc.log | sed 's/^/  commit: /'
+echo "  dataplane tag: '$(tag_of)'"
+expect_in "the description is on the dataplane interface itself" \
+  "uplink para o transito" "$(tag_of)"
+expect "and reached the TAP, so ip and FRR agree with the VTY" \
+  sh -c "ip -d link show vppwan0 | grep -q 'alias uplink para o transito'"
+# It must NOT have been staged as an FRR statement. That is where it was going,
+# and FRR accepting it silently is what made the failure invisible.
+expect_not_in "and it was not handed to FRR instead" \
+  "description uplink" "$(vtysh -c 'show running-config' 2>/dev/null)"
+
+# Shut it, and assert the STATE COLUMN rather than grepping the whole output
+# for the word "down" - which matches half a dozen unrelated lines and passes
+# whatever happens.
+$HX -c "configure" -c "interface host-veth-vpp" -c "shutdown" -c "exit" \
+    -c "commit" > /tmp/shut.log 2>&1 || true
+tail -2 /tmp/shut.log | sed 's/^/  commit: /'
+echo "  dataplane state: $(state_of)"
+expect "the dataplane interface is administratively down" \
+  test "$(state_of)" = "down"
+expect "and so is its TAP, so FRR stops holding the adjacency up" \
+  sh -c "ip link show vppwan0 | grep -q 'state DOWN'"
+expect_in "shutdown is in the running configuration, for THIS interface" \
+  "host-veth-vpp" "$($HX -c 'show running-config' | grep -B4 '^ shutdown' | head -8)"
+
+$HX -c "configure" -c "interface host-veth-vpp" -c "no shutdown" -c "exit" \
+    -c "commit" > /tmp/noshut.log 2>&1 || true
+echo "  dataplane state: $(state_of)"
+expect "no shutdown brought the dataplane interface back" \
+  test "$(state_of)" = "up"
+expect_not_in "and the running configuration stopped saying shutdown" \
+  " shutdown" "$($HX -c 'show running-config')"
+
 verdict

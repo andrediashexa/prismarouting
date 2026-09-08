@@ -411,7 +411,7 @@ sh = shell_with_box()
 sh.feed("configure")
 sh.feed("interface TenGigabitEthernet0/8/0")
 opts, _, _ = sh._options("", False)
-check(set(opts) == {"mtu", "urpf", "exit", "show"},
+check(set(opts) == {"description", "shutdown", "mtu", "urpf", "exit", "show"},
       f"an interface offers its own statements: {sorted(opts)}")
 print(f"  interface -> {sorted(opts)}")
 sh.feed("exit")
