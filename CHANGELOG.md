@@ -25,7 +25,54 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.25.0.
+Nothing merged since v0.26.0.
+
+## 0.26.0 — the table you can see is not always the table that forwards
+
+`show ip route` in vtysh answers from FRR's RIB. The table that forwards is
+VPP's FIB. An operator debugging *"the traffic is not flowing"* was being shown
+the table where the route is present and correct, on a box that is dropping it.
+
+### Added
+
+* **`show route`** ([#95](https://github.com/andrediashexa/hexarouting/issues/95)),
+  reading the **VPP FIB**:
+
+  ```
+  Destination          Next hop          Interface      Kind
+  0.0.0.0/0            10.0.0.2          host-veth-vpp  forward
+  203.0.113.0/24       10.0.0.2          host-veth-vpp  forward
+  10.0.0.0/24          connected         host-veth-vpp  connected
+  ```
+
+* **`show route verbose`**, which reads both tables, marks every prefix where
+  they disagree, and says what the disagreement means. The VPP column reports
+  what VPP **holds** — `forward`, `connected`, `local`, `neighbour`, `drop`,
+  `absent` — rather than yes/no: a prefix VPP is explicitly dropping and one it
+  has never heard of are different situations with different causes.
+
+* **`ip route` in the configuration tree**, discoverable, committed and rolled
+  back like every other statement — and `commit check` refuses a next hop on no
+  connected network, which would otherwise sit in FRR and never reach the FIB.
+
+### What it deliberately does not flag
+
+A **local address** — traffic to it is received, not dropped — and routes
+through an **interface VPP does not own**, which on a real box is the
+management port that must never be handed to VPP. The first version marked five
+such prefixes on a healthy box. An alarm that is always on is an alarm that is
+off.
+
+### Found on the way
+
+* [#99](https://github.com/andrediashexa/hexarouting/issues/99): an installed
+  box ships with `bgpd`, `ospfd` and `isisd` **disabled** while the VTY offers
+  all three — hidden because `lab/routing.sh` starts them by hand.
+* [#98](https://github.com/andrediashexa/hexarouting/issues/98): the VTY
+  completes keywords and stops at the first argument.
+* [#100](https://github.com/andrediashexa/hexarouting/issues/100): the lab
+  suite runs 35 labs in series on a machine at 15% load.
+
 
 ## 0.25.0 — the first five minutes with the box
 
