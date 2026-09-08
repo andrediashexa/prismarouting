@@ -83,6 +83,58 @@ explicitly dropping and a prefix VPP has never heard of are different
 situations with different causes, and reporting both as "no" is a false
 statement in the one table whose job is to settle a disagreement.
 
+## The VTY offers what the box has
+
+`?` and TAB complete keywords from the command tree. Where the tree takes a
+**name**, the tree knows only that a word goes there — the box knows which
+words:
+
+```
+hexarouting# [edit] interface ?
+  host-veth-vpp             interface (up)
+  pg0                       interface (up)
+  TenGigabitEthernet0/8/0   interface (up)
+```
+
+Interfaces come from the dataplane; pools, accounts and SNMP users come from
+the **candidate**, so they complete what is being edited rather than only what
+is committed.
+
+Before this, `interface <TAB>` answered `<word>` — true and useless. It told
+the operator what they already knew and sent them to `vppctl` or `ip link` in
+another window, which are the two tools this VTY exists to keep them out of, at
+the first argument ([#98](https://github.com/andrediashexa/hexarouting/issues/98)).
+
+`local0` is never offered: it is VPP's own loopback and configures nothing.
+
+**A source that cannot answer offers nothing and says so.** A VTY that becomes
+unusable when the dataplane is down is a VTY that cannot be used to fix it — so
+a dead or missing source leaves the `<interface>` hint in place and completes
+nothing, rather than hanging or raising.
+
+## `show this`
+
+The configuration of the hierarchy being edited, and nothing above it:
+
+```
+hexarouting# [edit cgnat pool] show this
+cgnat pool residential
+ inside 100.64.0.0/22
+ outside 200.150.0.16/30
+ block-size 512
+ tcp-mss 1400
+ exit
+```
+
+It shows the **candidate**. Somebody in the middle of an edit asking *"what is
+here"* is asking about what they are building; answering with what is committed
+would answer a question they did not ask.
+
+It works in every level the VTY has — a pool, a user, an SNMP user and an FRR
+block — which required letting `show` reach the sub-modes: each dispatches its
+own lines, and without that the command was refused in the one place it exists
+for.
+
 ## Which daemons run
 
 `frrinit.sh` starts `zebra`, `mgmtd` and `staticd` unconditionally. Everything
