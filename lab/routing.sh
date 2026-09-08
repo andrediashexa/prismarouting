@@ -184,13 +184,36 @@ expect "IS-IS adjacency is up" sh -c "vtysh -c 'show isis neighbor' 2>/dev/null 
 # that it lands on the VPP interface AND its TAP. Setting only the TAP leaves
 # the packet path untouched, which is the half that matters and the half a
 # quick test would miss.
+# Printed before anything parses it. Two things in the product read this
+# output - set_host_mtu and the interface-existence check - and a parse
+# written against a remembered format is a parse that finds nothing, in
+# silence, on the day VPP reorders a field.
+echo "  the linux_cp pair, as VPP prints it:"
+vppctl show lcp | sed 's/^/    /'
+
 HX="python3 /src/src/hexash/hexash.py"
 $HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1400" -c "exit" \
     -c "commit" > /tmp/mtu.log 2>&1 || true
 tail -3 /tmp/mtu.log | sed 's/^/  commit: /'
 expect "the dataplane interface took the committed MTU"   sh -c "vppctl show interface host-veth-vpp | grep -q 1400"
 expect "and so did its TAP" sh -c "ip link show vppwan0 | grep -q 'mtu 1400'"
-expect "the MTU is in the running configuration"   sh -c "$HX -c 'show running-config' | grep -q 'mtu 1400'"
+
+# The assertion above does not prove the product did it. lcp-sync is on by
+# default, so VPP mirrors an MTU change onto the TAP by itself, and the
+# assertion passes whether set_host_mtu works or is dead code. Turning the
+# feature off is the only way to tell the two apart - and this repository has
+# already shipped one parser that found nothing quietly.
+vppctl lcp lcp-sync off
+ip link set dev vppwan0 mtu 1500
+$HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1450" -c "exit" \
+    -c "commit" > /tmp/mtu2.log 2>&1 || true
+tail -2 /tmp/mtu2.log | sed 's/^/  commit: /'
+expect "with lcp-sync off, the dataplane still took the MTU" \
+  sh -c "vppctl show interface host-veth-vpp | grep -q 1450"
+expect "with lcp-sync off, the TAP took it too - so hexash moved it, not VPP" \
+  sh -c "ip link show vppwan0 | grep -q 'mtu 1450'"
+vppctl lcp lcp-sync on
+expect "the MTU is in the running configuration"   sh -c "$HX -c 'show running-config' | grep -q 'mtu 1450'"
 
 # Put it back, or the OSPF assertions above would be checking a link this test
 # just broke.

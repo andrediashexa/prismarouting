@@ -889,6 +889,55 @@ class Shell:
                 print("    give an account an authorized key, or allow "
                       "password authentication for one that has a password")
                 ok = False
+            # An interface this box does not have.
+            #
+            # "interface Ten0" - a typo for TenGigabitEthernet0/8/0 - creates
+            # an FRR stanza for something that is not there. It commits
+            # cleanly, appears in the running configuration, and does nothing.
+            # Same for "cgnat interface", which enables CGNAT on a name the
+            # dataplane never heard of (#105).
+            #
+            # #112 made the wrong name much harder to type, since "?" and TAB
+            # now offer the interfaces the box has. It did not make it
+            # impossible: a runbook, a copy-paste or a habit still types it.
+            rc_i, iface_out = self.dp.run("show interface")
+            if rc_i == 0 and iface_out.strip():
+                # BOTH names. A linux_cp pair has a VPP name and a Linux one,
+                # and both are real: FRR configures by the Linux name, the
+                # dataplane by its own. Checking only VPP's would refuse every
+                # FRR interface stanza on every box that has linux_cp - which
+                # is every box that routes - and lab/routing.sh caught exactly
+                # that, on "interface vppwan0".
+                _, lcp_out = self.dp.run("show lcp")
+                have = set(routes.parse_interfaces(iface_out))
+                # Every name every pair answers to. All of them are real.
+                for names in routes.lcp_pairs(lcp_out).values():
+                    have.update(names)
+                # Every place an interface name can be staged, which is four
+                # and not one: the CGNAT feature, an FRR block, and the mtu and
+                # urpf dictionaries the VTY models itself. A check that looked
+                # at only the first two passed a file whose interface name
+                # lives in mtus - which is every file that sets an MTU, and is
+                # how this was found.
+                named = set(target.interfaces)
+                named |= set(target.mtus)
+                named |= set(target.urpf)
+                for line in target.routing:
+                    w = line.split()
+                    if len(w) == 2 and w[0] == "interface":
+                        named.add(w[1])
+                for name in sorted(named - have):
+                    self.err(f"interface {name}: this box has no such "
+                             "interface")
+                    print("    it has: " + ", ".join(sorted(have)))
+                    print("    (a linux_cp pair answers to both its dataplane "
+                          "name and its Linux one)")
+                    print("    the statement would commit and do nothing")
+                    ok = False
+            # With the dataplane unreachable the check is SKIPPED, not failed.
+            # A VTY that cannot commit while the dataplane is down cannot be
+            # used to fix it.
+
             # A "router <protocol>" statement for a daemon that is not
             # running commits cleanly and reaches nothing. The box ships with
             # bgpd, ospfd and isisd disabled unless the installer enabled them
@@ -1163,19 +1212,27 @@ class Shell:
         The Linux side of a linux_cp pair. Best effort: a box with no TAP for
         this interface is a legitimate configuration, and failing the commit
         over it would refuse a valid change.
+
+        Every other name the pair answers to is tried, rather than the one in a
+        fixed column. The parse this replaced looked for a literal "host" token
+        and read the field after it; VPP prints
+
+            itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+
+        and there is no such token, so it found nothing - which is
+        indistinguishable from the legitimate no-TAP case above, and so was
+        never noticed. lcp-sync was mirroring the MTU onto the TAP by itself
+        and the lab assertion was crediting this function for VPP's work. The
+        lab now turns lcp-sync off before asserting.
         """
-        rc, out = self.dp.run(f"show lcp")
-        host = ""
-        for line in (out or "").splitlines():
-            if ifname in line:
-                parts = line.split()
-                for i, tok in enumerate(parts):
-                    if tok == "host" and i + 1 < len(parts):
-                        host = parts[i + 1]
-        if not host:
+        rc, out = self.dp.run("show lcp")
+        if rc != 0:
             return
-        subprocess.run(["ip", "link", "set", "dev", host, "mtu", str(mtu)],
-                       capture_output=True)
+        for name in routes.lcp_pairs(out).get(ifname, []):
+            if name == ifname:
+                continue
+            subprocess.run(["ip", "link", "set", "dev", name, "mtu", str(mtu)],
+                           capture_output=True)
 
     def apply_global(self, line):
         w = line.split()
@@ -2265,6 +2322,20 @@ class Shell:
             for lineno, text, why in target.unknown:
                 print(f"    line {lineno}: {text}    ({why})")
             return
+
+        # Checked before it is applied, and refused whole if the check refuses.
+        #
+        # This runs at boot, unattended. Without it a file the VTY would refuse
+        # at the prompt is applied anyway, statement by statement, until
+        # something fails part way - and the box comes up holding half of it,
+        # on a machine nobody is watching. That is the same argument the
+        # refusal above makes about lines this VTY cannot read (#105).
+        before = self.failed
+        if not self.apply(target, check_only=True):
+            self.err(f"{path}: refusing to load, the check above says why")
+            return
+        self.failed = before
+
         if self.apply(target):
             try:
                 self.rb.push(target.text(), "loaded from file")

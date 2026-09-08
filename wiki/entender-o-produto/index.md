@@ -1,13 +1,12 @@
 # Entender o produto
 
-Por que o produto é assim. Leia quando precisar decidir arquitetura, avaliar se o BPA atende ao seu caso, ou mexer no código.
+Por que o produto é assim. Leia quando precisar decidir arquitetura ou avaliar se o BPA atende ao seu caso.
 
 | Página | Responde |
 |--------|----------|
 | [HexaRouting — visão geral](/doc/hexarouting-visao-geral-cNtWoccoy5) | O que é o produto, do que é feito e o que ainda não existe |
 | [BPA — conceitos e mapeamento](/doc/bpa-conceitos-e-mapeamento-uh9nF6sRaa) | A aritmética que substitui a tabela de alocação |
 | [Alta disponibilidade](/doc/alta-disponibilidade-Zc1pBKocic) | O que o modo determinístico já dá, e o que falta para failover |
-| [Build, testes e laboratórios](/doc/build-testes-e-laboratorios-Z6I6w1ngfu) | Como compilar, e os quatro níveis de teste |
 
 # A ideia em uma frase
 

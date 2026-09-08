@@ -63,7 +63,7 @@ A construir:
 1. Integração com `keepalived` ou o VRRP do FRR, coerente com o `linux_cp`.
 2. Verificação de que as duas caixas carregam a **mesma** configuração de pool.
 3. Um `show bpa ha` comparando um hash de configuração entre os pares.
-4. Um laboratório com duas instâncias e uma falha forçada, confirmando que o assinante mantém endereço e bloco.
+4. Uma verificação com duas instâncias e uma falha forçada, confirmando que o assinante mantém endereço e bloco.
 
 
 :::warning

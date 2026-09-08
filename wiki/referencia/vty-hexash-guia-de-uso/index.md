@@ -1,5 +1,7 @@
 # VTY hexash — guia de uso
 
+# VTY hexash — guia de uso
+
 `hexash` é a VTY única do HexaRouting: configura CGNAT **e** roteamento pela mesma interface, com modelo de configuração candidata no estilo Juniper — você edita, revisa e só então aplica com `commit`.
 
 ```mermaid
@@ -133,3 +135,29 @@ O `mtu` aqui existe porque um operador que não descobre `mtu` com `?` herda os 
 
 * [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — a VTY aplicada do começo ao fim
 * [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — tarefas prontas, sem precisar montar do zero
+
+## O que o `?` oferece
+
+Dentro de um bloco, apenas o que vale ali:
+
+```
+hexarouting# [edit interface GigabitEthernet0/12/0] ?
+  exit   leave the interface
+  mtu    MTU, on both the dataplane interface and its TAP
+  show   display information
+  urpf   drop packets whose source does not route back this way
+```
+
+Um bloco do FRR oferece `exit` e `show` e nada mais — este VTY não modela as declarações do FRR, e oferecer algumas seria um palpite apresentado como gramática. Depois disso, vale a sintaxe do FRR.
+
+Onde a árvore espera um **nome**, quem responde é a caixa: interfaces vêm do dataplane com o estado, e pools, contas e usuários SNMP vêm da **candidata** — completam o que está sendo editado, não só o que já foi commitado.
+
+A completação **ignora maiúsculas e minúsculas** e insere sempre a grafia da máquina: `ten`, `TEN` e `TenGig` completam todos para `TenGigabitEthernet0/8/0`.
+
+
+:::info
+Uma fonte que não responde — o dataplane fora, por exemplo — não oferece nada e deixa a dica `<interface>` no lugar. Um VTY que fica inutilizável quando o dataplane cai é um VTY que não serve para consertá-lo.
+
+:::
+
+O prompt nomeia onde você está, inclusive qual pool ou qual interface: `[edit interface TenGigabitEthernet0/8/0]`. Sem isso, uma declaração digitada um bloco depois do pretendido cai na interface errada, sem aviso.

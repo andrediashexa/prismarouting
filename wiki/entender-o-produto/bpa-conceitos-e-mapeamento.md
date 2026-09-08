@@ -50,7 +50,7 @@ Por isso o `commit` recusa mudanças assim até que sejam pedidas pelo nome, com
 
 O estado de sessão e o bitmap de portas por assinante são **por worker e sem lock**. Isso só é seguro se **as duas direções de um assinante chegarem ao mesmo worker** — e o RSS da NIC não dá essa garantia: a saída faz hash no endereço privado, a entrada no público.
 
-O `bpa_handoff.c` resolve isso. O laboratório `handoff` prova que funciona.
+O equipamento resolve isso encaminhando o pacote ao worker dono do assinante, antes de traduzir — e isso é verificado sobre pacotes reais, não sobre contadores.
 
 # BPA é a técnica; determinístico e dinâmico são os modos dela
 
@@ -75,7 +75,7 @@ A escolha é entre os dois modos. Nunca entre "BPA" e um deles — não existe u
 
 O `bypass` faz um prefixo sair sem tradução — e, o que importa tanto quanto, **sem alocar nada**.
 
-Essa segunda metade é a que costuma ser implementada errada: um bypass posto *depois* da alocação passa no teste "saiu sem tradução" e falha em "não alocou nada", consumindo bloco de um assinante que nunca precisou dele. O laboratório `bypass` verifica as duas coisas.
+A segunda metade é a que costuma faltar em outros equipamentos: um bypass aplicado *depois* da alocação sai sem tradução, mas já consumiu uma porta do bloco de um assinante que nunca precisou dela. Aqui as duas propriedades são verificadas sobre o pacote.
 
 # O que muda sem reconstruir o pool
 

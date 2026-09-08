@@ -68,7 +68,7 @@ Um payload malformado ou inesperado **deixa o pacote intocado** e incrementa um 
 
 O motivo é direto: um ALG que reescreve um payload que interpretou errado é pior do que ALG nenhum, porque corrompe tráfego que apenas deixaria de conectar.
 
-Por isso os laboratórios de ALG conferem o **pacote capturado**, e não o contador — um ALG incrementa o contador dele tendo a reescrita saído certa ou não.
+Por isso a verificação de um ALG olha o **pacote capturado**, e não o contador — um ALG incrementa o contador dele tendo a reescrita saído certa ou não.
 
 # Diagnóstico
 

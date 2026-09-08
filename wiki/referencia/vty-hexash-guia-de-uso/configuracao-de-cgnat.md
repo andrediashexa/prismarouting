@@ -50,7 +50,7 @@ hexarouting# [edit] cgnat interface TenGigabitEthernet0/0/1 outside
 
 
 :::warning
-**Nunca entregue ao VPP a interface de gerência.** O DPDK tira a NIC do Linux. Entregue a porta pela qual você administra a máquina e ela fica inalcançável — e inalcançável é inconsertável remotamente. Nas máquinas de laboratório essa interface é a `ens18`.
+**Nunca entregue ao VPP a interface de gerência.** O DPDK tira a NIC do Linux. Entregue a porta pela qual você administra a máquina e ela fica inalcançável — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece em `cgnat interface`.
 
 :::
 

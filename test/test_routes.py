@@ -186,5 +186,43 @@ check([r[0] for r in rows] == sorted((r[0] for r in rows),
 print(f"  {len(rows)} prefixes across both tables, "
       f"{sum(1 for r in rows if r[1] and not r[2])} disagreeing")
 
+# --- the linux_cp pair, pinned to what VPP actually prints ---
+# Captured from a running box, not remembered. Two things in the product read
+# this output, and both of them fail by finding nothing rather than by raising,
+# which is the failure that reaches production quietly.
+LCP = """Linux-CP Interface Pairs:
+itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+itf-pair: [1] host-veth-mgmt tap4097 vppmgmt0 6 type tap
+"""
+
+pairs = routes.lcp_pairs(LCP)
+check("host-veth-vpp" in pairs, "the pair is found by its dataplane name")
+check("vppwan0" in pairs, "and by its Linux name")
+check("tap4096" in pairs, "and by its TAP name")
+check(pairs["vppwan0"] == pairs["host-veth-vpp"],
+      "every name on a line resolves to the same set of names")
+check("vppwan0" in pairs["host-veth-vpp"],
+      "so the Linux side of a dataplane interface is reachable from it")
+check(len(pairs["host-veth-vpp"]) == 3,
+      f"three names, no stray tokens: {pairs['host-veth-vpp']}")
+check("tap" not in pairs and "type" not in pairs,
+      "the trailing 'type tap' is not mistaken for an interface")
+check(pairs["host-veth-mgmt"] != pairs["host-veth-vpp"],
+      "two pairs stay two pairs")
+
+# The parse this replaced looked for a literal 'host' token and read the next
+# field. There is no such token. It is kept here as a test rather than a
+# comment because 'this cannot work' is a claim, and a claim about a parse is
+# worth the four lines it takes to hold it to account.
+positional = [ln.split()[ln.split().index("host") + 1]
+              for ln in LCP.splitlines()
+              if "host" in ln.split()]
+check(positional == [],
+      "the old positional parse finds nothing at all in this output")
+
+check(routes.lcp_pairs("") == {}, "no output is no pairs, not a crash")
+check(routes.lcp_pairs("Linux-CP Interface Pairs:\n") == {},
+      "a header with no pairs is no pairs")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

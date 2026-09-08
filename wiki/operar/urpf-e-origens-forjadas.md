@@ -57,7 +57,7 @@ Esse é o limite do que uma verificação **de rota** consegue enxergar, e não 
 
 O que o uRPF **pega** é tudo que vem de fora do espaço de assinantes injetado num enlace interno, e tráfego de um enlace de acesso reivindicando endereços que pertencem a outro. Numa caixa com mais de uma interface interna, isso é a maior parte.
 
-O laboratório `urpf` mede o dano primeiro, sem nada habilitado, e depois a proteção. O limite acima é **asseverado**, não apenas descrito: o laboratório envia o endereço de um vizinho pela interface certa e **exige** que ele seja traduzido, para que a fronteira seja um teste que falharia se alguém um dia afirmasse o contrário.
+Esse limite é **verificado**, não apenas descrito: a verificação envia o endereço de um vizinho pela interface certa e exige que ele seja traduzido — de modo que a fronteira falharia como teste se alguém um dia afirmasse o contrário.
 
 # Como conferir
 

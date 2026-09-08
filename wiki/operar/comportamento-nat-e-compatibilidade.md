@@ -12,7 +12,7 @@ São três propriedades, e as três estão presentes:
 | Filtragem independente do destino | REQ-8    | qualquer host pode alcançar um mapeamento aberto |
 | Hairpinning | REQ-9    | um assinante alcança outro pelo endereço público |
 
-Isso não é promessa: o laboratório `nat-behaviour` verifica cada uma **em cima do pacote**, e a terceira entregando um pacote vindo de um host com quem o assinante nunca falou.
+Isso não é promessa: cada uma é verificada **em cima do pacote**, e a terceira entregando um pacote vindo de um host com quem o assinante nunca falou.
 
 # Hairpinning: o sintoma que ninguém atribui ao CGNAT
 

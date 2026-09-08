@@ -1,23 +1,30 @@
 #!/bin/sh
 # Refresh the local mirror of the wiki under wiki/.
 #
-#   WIKI_HOST=<host> sh tools/wiki-pull.sh
+#   WIKI_TOKEN=... sh tools/wiki-pull.sh
 #
 # The wiki (Outline) is the live copy and the one people read. This mirror
 # exists so the pages can be read, searched and diffed from inside the
 # repository - not as a second place to edit them. Editing a file under wiki/
 # changes nothing: the next pull overwrites it.
 #
-# NO CREDENTIALS LIVE HERE. The host comes from WIKI_HOST and the connection
-# uses whatever ssh is already configured to use. PADRAO-DOCUMENTACAO.md says
-# passwords, keys, management addresses and internal machine names never go
-# into the wiki; the same applies to the repository that mirrors it.
+# NO CREDENTIALS LIVE HERE. WIKI_TOKEN and WIKI_URL come from the environment.
+# PADRAO-DOCUMENTACAO.md says passwords, keys, management addresses and
+# internal machine names never go into the wiki; the same applies to the
+# repository that mirrors it.
+#
+# This reads over Outline's HTTP API. It used to ssh in as root and query
+# Postgres directly, which meant refreshing a read-only mirror required the
+# machine's root password - the widest possible credential for the narrowest
+# possible job. An API token scoped to one account does the same work, is
+# revocable from the web interface without touching the host, and cannot be
+# reused to log in anywhere.
 set -eu
 
-HOST=${WIKI_HOST:-}
-[ -n "$HOST" ] || {
-  echo "error: set WIKI_HOST to the machine running Outline." >&2
-  echo "       No address is kept in this repository on purpose." >&2
+URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
+[ -n "${WIKI_TOKEN:-}" ] || {
+  echo "error: set WIKI_TOKEN to an Outline API token." >&2
+  echo "       No token or address is kept in this repository on purpose." >&2
   exit 1
 }
 
@@ -25,15 +32,53 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-echo "==> reading published documents from $HOST"
-ssh -o ConnectTimeout=10 "root@$HOST" 'docker exec outline-postgres psql -U outline -d outline -At -c "
-select json_agg(row_to_json(d)) from (
-  select doc.id, doc.\"parentDocumentId\" as parent, doc.title, doc.text,
-         c.name as collection, doc.\"updatedAt\"
-  from documents doc left join collections c on c.id = doc.\"collectionId\"
-  where doc.\"deletedAt\" is null and doc.\"publishedAt\" is not null
-  order by c.name, doc.\"parentDocumentId\" nulls first, doc.title
-) d;"' > "$TMP/docs.json"
+echo "==> reading published documents over the API"
+api() {
+  curl -sk --max-time 30 -X POST "$URL/api/$1" \
+    -H "Authorization: Bearer $WIKI_TOKEN" \
+    -H "Content-Type: application/json" -d "$2"
+}
+
+api collections.list '{"limit":100}' > "$TMP/collections.json"
+: > "$TMP/pages.json"
+off=0
+while : ; do
+  api documents.list "{\"limit\":100,\"offset\":$off}" > "$TMP/page.json"
+  cat "$TMP/page.json" >> "$TMP/pages.json"
+  printf '\n' >> "$TMP/pages.json"
+  more=$(python3 -c "
+import json,sys
+r=json.load(open('$TMP/page.json'))
+p=r.get('pagination') or {}
+print(1 if p.get('offset',0)+p.get('limit',0) < p.get('total',0) else 0)")
+  [ "$more" = "1" ] || break
+  off=$((off + 100))
+done
+
+python3 - "$TMP" <<'PYEOF' > "$TMP/docs.json"
+import json, sys
+tmp = sys.argv[1]
+names = {c["id"]: c["name"]
+         for c in json.load(open(tmp + "/collections.json"))["data"]}
+docs = []
+for line in open(tmp + "/pages.json"):
+    line = line.strip()
+    if not line:
+        continue
+    for d in json.loads(line)["data"]:
+        # A draft is not documentation and a deleted page is not either.
+        # Mirroring them would put text in the repository that nobody reading
+        # the wiki can see.
+        if not d.get("publishedAt") or d.get("deletedAt"):
+            continue
+        docs.append({"id": d["id"], "parent": d.get("parentDocumentId"),
+                     "title": d["title"], "text": d.get("text") or "",
+                     "collection": names.get(d.get("collectionId")),
+                     "updatedAt": d["updatedAt"]})
+docs.sort(key=lambda d: (d["collection"] or "", d["parent"] or "",
+                         d["title"]))
+json.dump(docs, sys.stdout)
+PYEOF
 
 [ -s "$TMP/docs.json" ] || { echo "error: nothing came back" >&2; exit 1; }
 
