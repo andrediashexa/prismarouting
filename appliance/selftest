@@ -217,6 +217,40 @@ else
 2>/dev/null || echo 'not there'), and it must be group vpp, mode 660"
 fi
 
+# --- which NIC the dataplane was given ---
+#
+# Said out loud because the failure it replaces was silent. The box used to
+# ship HEXA_DATAPLANE_IF=eth0, which does not exist under predictable interface
+# names, and the tuner then generated a DPDK stanza with no device allowlist -
+# so VPP claimed whatever NIC it found, which on a single-NIC box is the
+# management one. The operator learned about it by losing the session (#123).
+#
+# Now nothing is claimed unless it is named, which is safe and is also easy to
+# not notice: a box that forwards nothing looks like a box that is working.
+if grep -q "plugin dpdk_plugin.so { disable }" /etc/vpp/startup.conf 2>/dev/null
+then
+  # No DPDK at all, so no device can be claimed by anything. This is the
+  # first-boot profile: without hugepages the EAL fails and VPP exits, so the
+  # tuner turns the plugin off until a reboot has reserved them. Safe, and it
+  # has to be told apart from "DPDK is on and no device is named", which is the
+  # dangerous case below - the first version of this check conflated them and
+  # failed every live medium.
+  say "  [info] DPDK is off until hugepages exist; no NIC can be claimed yet"
+elif grep -q "no-pci" /etc/vpp/startup.conf 2>/dev/null; then
+  say "  [warn] no dataplane interface: VPP was given no NIC to forward on"
+  say "         set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the"
+  say "         interface carrying subscriber traffic, then restart"
+  say "         hexarouting-tune and vpp. The management interface is refused"
+  say "         even if named there."
+elif grep -q "dev 0000:" /etc/vpp/startup.conf 2>/dev/null; then
+  ok "dataplane NIC: $(grep -o 'dev 0000:[0-9a-f:.]*' /etc/vpp/startup.conf \
+| head -1 | cut -d' ' -f2)"
+else
+  bad "the dataplane may claim any NIC it finds, including this box's"
+  say "         management interface. /etc/vpp/startup.conf names no device"
+  say "         and does not say no-pci."
+fi
+
 # --- where the connection records live ---
 #
 # In dynamic mode the allocation log IS the record the Marco Civil requires to
