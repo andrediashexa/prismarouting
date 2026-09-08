@@ -2,7 +2,8 @@
 CFLAGS ?= -O2 -Wall -Wextra -Werror -DBPA_STANDALONE
 BUILD  := .build
 
-.PHONY: test test-appliance test-iso test-install iso hw-up hw-lab hw-vpp hw-down \
+.PHONY: test test-appliance test-iso test-install iso release-gate \
+        hw-up hw-lab hw-vpp hw-down \
         model vectors clean
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
@@ -134,6 +135,13 @@ test-iso: iso
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 >/dev/null 2>&1; \
 	    BOOT_SECS=$${BOOT_SECS:-240} sh /src/lab/boot-iso.sh)
+
+# The release medium, built from the TAG and booted. CONTRIBUTING.md section 5
+# requires both; this is that procedure as one command, because as a sequence
+# somebody retypes it gets retyped wrong - three times in one evening, each
+# caught by a rule rather than by attention. tools/release-gate.sh says which.
+release-gate:
+	@sh tools/release-gate.sh $(TAG)
 
 # Validates the reference model itself.
 model:
