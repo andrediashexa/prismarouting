@@ -25,7 +25,41 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.32.0.
+Nothing merged since v0.33.0.
+
+## 0.33.0 — only what is valid here, in any case, from the right side
+
+Three defects in how the operator finds out what they can type
+([#112](https://github.com/andrediashexa/hexarouting/issues/112)).
+
+### Fixed
+
+* **`?` inside a block offered the whole configuration tree** — fifteen options
+  inside an interface, of which three were valid; thirteen inside `router bgp`,
+  none of which were BGP. Offering the level above invites somebody to type
+  `cgnat pool` inside an interface and find out afterwards what that meant.
+
+  An FRR block now offers `exit` and `show` and nothing else: this VTY does not
+  model FRR's statements, and offering some would be a guess presented as a
+  grammar.
+
+* **Completion was case-sensitive.** `ten`, `TEN` and `TenGig` now all complete
+  to `TenGigabitEthernet0/8/0`, and it always inserts the box's own spelling.
+
+* **`show interface` answered from FRR**, which sees only what `linux_cp` has
+  mirrored — so on a box with a `GigabitEthernet0/12/0` configured, `show
+  interface description` answered `lo`. It now reports the dataplane's
+  interfaces with state, MTU, addresses and the `linux_cp` pair, and says so
+  when the dataplane cannot be asked rather than printing an empty table.
+
+### Added
+
+* `tools/wiki-push.sh`, which **refuses to publish over a wiki page that
+  changed after the mirror was pulled**. Four pages had been updated, the
+  mirror was never refreshed, and a later edit was built from the stale copy —
+  while the wiki was being reorganised. Nothing was lost, and only because the
+  stale text failed to match.
+
 
 ## 0.32.0 — the prompt says where you are
 
