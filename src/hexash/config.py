@@ -411,6 +411,11 @@ class Config:
         # what has to happen first at commit and what the existence check may
         # refuse.
         self.vlans: dict[str, dict] = {}
+        # The routing table an interface's addresses live in. Numeric, the
+        # same way a pool's `vrf` is numeric: two ways to name the same table
+        # would be two things to keep in step, and they would disagree.
+        # Absent means table 0, which is the default and needs no statement.
+        self.vrfs: dict[str, int] = {}
         # Present means shut down. Absent means up, which is the default and
         # the state of every interface nobody has touched, so recording the
         # absence would make every box look configured.
@@ -466,10 +471,13 @@ class Config:
             out.append(f"cgnat interface {ifname} {self.interfaces[ifname]}")
         for ifname in sorted(set(self.mtus) | set(self.urpf)
                              | set(self.descriptions) | set(self.admin_down)
-                             | set(self.addresses) | set(self.vlans)):
+                             | set(self.addresses) | set(self.vlans)
+                             | set(self.vrfs)):
             out.append(f"interface {ifname}")
             # Description first: it is what the interface IS, and a reader
             # scanning a long configuration for one port finds it by name.
+            if ifname in self.vrfs:
+                out.append(f" vrf {self.vrfs[ifname]}")
             if ifname in self.vlans:
                 t = self.vlans[ifname]
                 out.append(f" vlan {t['outer']}" +
@@ -655,6 +663,13 @@ class Config:
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
+                elif w[0] == "vrf" and len(w) > 1 and w[1].isdigit():
+                    if int(w[1]):
+                        cfg.vrfs[iface] = int(w[1])
+                    else:
+                        cfg.vrfs.pop(iface, None)
+                elif s == "no vrf":
+                    cfg.vrfs.pop(iface, None)
                 elif w[0] == "vlan" and len(w) > 1 and w[1].isdigit():
                     tag = {"outer": int(w[1]), "inner": None}
                     if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
@@ -943,6 +958,18 @@ class Config:
         if_add = {k: v for k, v in other.interfaces.items()
                   if self.interfaces.get(k) != v}
         if_del = [k for k in self.interfaces if k not in other.interfaces]
+        # An interface whose VRF changes has its addresses re-applied as part
+        # of the move, so it is kept OUT of the ordinary address delta below.
+        # VPP refuses to move an interface that still holds addresses - retval
+        # -114 - so the sequence is remove, move, add, and treating it as two
+        # independent deltas would produce exactly the refusal.
+        vrf_set = {}
+        for k in set(self.vrfs) | set(other.vrfs):
+            if self.vrfs.get(k, 0) != other.vrfs.get(k, 0):
+                vrf_set[k] = (other.vrfs.get(k, 0),
+                              list(self.addresses.get(k, [])),
+                              list(other.addresses.get(k, [])))
+
         # Sub-interfaces are created and destroyed, not merely configured, so
         # they are their own part of the delta and are applied around
         # everything else: created before anything can be put on them, and
@@ -956,7 +983,7 @@ class Config:
         # not free - it briefly removes it, and on the interface carrying the
         # session that is a disconnection nobody asked for.
         addr_add, addr_del = {}, {}
-        for k in set(self.addresses) | set(other.addresses):
+        for k in (set(self.addresses) | set(other.addresses)) - set(vrf_set):
             have = set(self.addresses.get(k, []))
             want = set(other.addresses.get(k, []))
             if want - have:
@@ -1012,6 +1039,7 @@ class Config:
             "bypass_set": bypass_set,
             "if_add": if_add,
             "if_remove": if_del,
+            "vrf_set": vrf_set,
             "subif_add": subif_add,
             "subif_del": subif_del,
             "addr_add": addr_add,
