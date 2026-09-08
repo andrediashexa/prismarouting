@@ -25,7 +25,60 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.33.0.
+Nothing merged since v0.34.0.
+
+## 0.34.0 — a name the box does not have, and a field VPP does not print
+
+Two parses written against a remembered format instead of a captured one
+([#105](https://github.com/andrediashexa/hexarouting/issues/105),
+[#114](https://github.com/andrediashexa/hexarouting/issues/114)).
+
+### Fixed
+
+* **An interface name the box does not have is refused at commit.** `interface
+  Ten0` — one typo away from `TenGigabitEthernet0/8/0` — committed clean,
+  appeared in the running configuration, and did nothing. The refusal lists
+  what the box does have, because it already knows: it is the same source the
+  completion answers from, and an operator handed only a "no" has to go
+  looking.
+
+  It covers all four places a name is staged: the FRR block, `cgnat
+  interface`, and the `mtu` and `urpf` statements the VTY models outside the
+  routing section. The first version of the check covered two of them, and
+  every file that set an MTU passed unchecked.
+
+  `hexash --load` refuses the **whole file** rather than statement by
+  statement. It runs at boot with nobody watching, and applying half a file
+  leaves the box holding half a configuration. With the dataplane unreachable
+  the check is skipped, not failed — a VTY that cannot commit while the
+  dataplane is down is a VTY that cannot be used to fix it.
+
+* **`set_host_mtu()` had never run.** It looked for a `host` field in `show
+  lcp`; VPP prints `itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap`
+  and there is no such field, so the parse found nothing and returned —
+  which is also what it correctly does on a box with no TAP, so the failure
+  was invisible. `lcp-sync` is on by default and VPP was mirroring the MTU
+  onto the TAP by itself, which is why the lab's assertion passed. **The
+  assertion was measuring VPP, not this code.**
+
+  Settled by turning `lcp-sync` off and committing again, at which point the
+  TAP did not move. The lab now does exactly that before asserting, so it can
+  only pass if `hexash` did the work. Both parses read every name on the pair
+  line rather than the one in a fixed column; field order is a VPP
+  implementation detail that has already differed between two labs here.
+
+  Boxes running with `lcp-sync` at its default were correct by accident. A box
+  with it turned off had a dataplane MTU and a Linux MTU that disagreed,
+  silently.
+
+### Changed
+
+* **`tools/wiki-pull.sh` reads over the API instead of ssh-ing in as root** to
+  query Postgres. Refreshing a read-only mirror required the machine's root
+  password: the widest possible credential for the narrowest possible job. A
+  token scoped to one account does the same work, is revocable from the web
+  interface without touching the host, and cannot be reused to log in
+  anywhere.
 
 ## 0.33.0 — only what is valid here, in any case, from the right side
 
