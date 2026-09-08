@@ -13,7 +13,7 @@
 # rest down with it. It was not VPP being greedy: it was killed with 19 MB
 # resident.
 set -u
-ISO=${ISO:-/src/hexarouting.iso}
+ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 SRC=${SRC:-/src}
 
 # An ISO older than the sources does not test what you changed. It has already

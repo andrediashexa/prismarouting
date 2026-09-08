@@ -49,6 +49,59 @@ case "$out" in
   *) bad "with no git it should say so, got '$out'" ;;
 esac
 
+echo
+echo "=== the ISO filename carries the version ==="
+# A file called hexarouting.iso on a USB stick says nothing about what it is,
+# and two of them are indistinguishable at exactly the moment it matters.
+d2=$(mktemp -d); echo "0.9.9" > "$d2/VERSION"
+git -C "$d2" init -q 2>/dev/null
+git -C "$d2" config user.email t@t; git -C "$d2" config user.name t
+git -C "$d2" add -A >/dev/null 2>&1; git -C "$d2" commit -qm x >/dev/null 2>&1
+
+echo "--- a clean tree standing on its tag: the release name ---"
+git -C "$d2" tag -a v0.9.9 -m r >/dev/null 2>&1
+out=$(sh "$STAMP" --filename "$d2")
+case "$out" in
+  "hexarouting-0.9.9.iso") ok "$out" ;;
+  *) bad "the released tree must produce the bare versioned name, got '$out'" ;;
+esac
+
+echo "--- a clean tree that is NOT the release: names its commit ---"
+# One commit past the tag is a different image with the same version. Sharing
+# the release's filename is how it gets installed instead of the release.
+echo x > "$d2/other"; git -C "$d2" add -A >/dev/null 2>&1
+git -C "$d2" commit -qm y >/dev/null 2>&1
+out=$(sh "$STAMP" --filename "$d2")
+case "$out" in
+  "hexarouting-0.9.9-"*.iso)
+    [ "${out#*dirty}" = "$out" ] && ok "$out" || bad "a clean tree marked dirty: $out" ;;
+  "hexarouting-0.9.9.iso")
+    bad "a tree that is not the release took the release's name: $out" ;;
+  *) bad "expected a versioned name with a commit, got '$out'" ;;
+esac
+
+echo "--- a dirty tree has to say so ---"
+# The image nobody must mistake for a release is the one built from
+# uncommitted changes.
+echo "0.9.9-wip" > "$d2/VERSION"
+out=$(sh "$STAMP" --filename "$d2")
+case "$out" in
+  *dirty.iso) ok "$out" ;;
+  *) bad "a dirty build produced '$out': it does not declare itself" ;;
+esac
+
+echo "--- every form still carries the version ---"
+for form in "$d" "$d2"; do
+  out=$(sh "$STAMP" --filename "$form")
+  v=$(cat "$form/VERSION")
+  case "$out" in
+    *"$v"*) ;;
+    *) bad "'$out' does not contain the version '$v'" ;;
+  esac
+done
+ok "the version is in the name in every case"
+
+rm -rf "$d2"
 rm -rf "$d" "$empty"
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
