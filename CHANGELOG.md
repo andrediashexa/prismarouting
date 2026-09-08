@@ -25,7 +25,50 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.29.0.
+Nothing merged since v0.30.0.
+
+## 0.30.0 — the connection records get their own filesystem
+
+In dynamic mode the allocation log **is** the connection record the Marco Civil
+requires this box to keep for a year. It shared a filesystem with everything
+the box needs to keep working — so a log that fills stopped the box writing its
+own configuration, its trail and anything else, because it was busy recording
+who connected to what.
+
+### Changed
+
+* **The installer makes three partitions**
+  ([#83](https://github.com/andrediashexa/hexarouting/issues/83), in part):
+  ESP, root, and `/var/log/hexarouting`. Given its own filesystem, a full log
+  volume is a full log volume.
+
+  The default size is arithmetic and the arithmetic is on the screen: ~80 MB a
+  day for 200k subscribers in dynamic mode, so a year is about 29 GB.
+  Deterministic mode logs no allocations at all and needs almost none — which
+  is why it is a question and not a constant. The root is never left less than
+  8 GB.
+
+  Mounted `nofail`: a box that will not boot because the records volume is
+  missing is a box nobody can log into to find out why. The boot self-test
+  therefore reports where the records are — without that, a box whose volume
+  failed to mount comes up quietly writing them onto the root filesystem.
+
+* `hexarouting.log-gb=` on the kernel command line, and with `hexarouting.yes`
+  and no value the installer takes the default **and says so**. An unattended
+  install has no console to answer from, and a question nobody can answer is an
+  install that hangs.
+
+### Fixed
+
+* The disk size is read from `/sys/block/<disk>/size`, which is world-readable,
+  so the fit is checked in `HEXA_INSTALL_CHECK` mode too. A check that skipped
+  it for want of privileges would be more permissive than the real run.
+
+### Still open on #83
+
+The disk mirror, and verifying the disk that was just written before the
+installer reports success.
+
 
 ## 0.29.0 — the VTY offers what the box has
 
