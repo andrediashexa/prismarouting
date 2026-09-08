@@ -25,7 +25,39 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.42.0.
+Nothing merged since v0.43.0.
+
+## 0.43.0 — an interface can be put in a VRF
+
+Fourth of [#128](https://github.com/andrediashexa/hexarouting/issues/128)
+([#132](https://github.com/andrediashexa/hexarouting/issues/132)).
+
+### Added
+
+* **`vrf <table>` inside an interface block.** Numeric, the same way a pool's
+  `vrf` is numeric — two ways to name the same table would be two things to
+  keep in step, and they would disagree. Table 0 is the default and is not
+  written, so no box grows a `vrf 0` line under every port.
+
+  Pools have carried a VRF since v0.18.0 and there was no way to put an
+  **interface** in one, so the feature was half-built: the pool named a table
+  nothing could be bound to.
+
+  An interface whose VRF changes has its addresses re-applied inside the move.
+  VPP **refuses** to move an interface that still holds addresses (`retval
+  -114`), so the sequence is remove, move, re-add, as one operation. Doing it
+  as two independent deltas produces the refusal; doing the move first and the
+  addresses second produces a port briefly in the new table with nothing on
+  it.
+
+### A correction
+
+The issue that asked for this stated, as fact, that binding an interface to a
+VRF **clears** its addresses. It does not — VPP refuses the operation. The
+behaviour was measured while implementing it and the claim in the issue was
+wrong. The required sequence happens to be the same either way, but "clears
+silently" and "refuses" lead to different code, so the record is corrected
+rather than left standing.
 
 ## 0.42.0 — sub-interfaces, and a box with no FRR
 
