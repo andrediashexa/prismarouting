@@ -411,9 +411,22 @@ sh = shell_with_box()
 sh.feed("configure")
 sh.feed("interface TenGigabitEthernet0/8/0")
 opts, _, _ = sh._options("", False)
-check(set(opts) == {"description", "shutdown", "ipv4", "ipv6", "mtu",
-                    "urpf", "exit", "show"},
-      f"an interface offers its own statements: {sorted(opts)}")
+# Asserted as a PROPERTY, not as a list. A hardcoded set here had to be edited
+# every time the interface block legitimately grew, which is a test that
+# reports "you added a feature" and not "you broke something" - it failed three
+# times in a row for exactly that reason while nothing was wrong.
+#
+# What matters is the boundary: everything offered belongs to the block, and
+# nothing from the level above leaks in. Two statements are named explicitly so
+# the assertion cannot be satisfied by an empty offer.
+from hexash import INTERFACE_BLOCK                              # noqa: E402
+check(set(opts) <= set(INTERFACE_BLOCK) | {"show"},
+      f"an interface offers only its own statements: "
+      f"{sorted(set(opts) - set(INTERFACE_BLOCK) - {'show'})}")
+check({"mtu", "urpf"} <= set(opts),
+      f"and it does offer them: {sorted(opts)}")
+check(not ({"cgnat", "user", "commit", "rollback"} & set(opts)),
+      f"and nothing from the level above leaks in: {sorted(opts)}")
 print(f"  interface -> {sorted(opts)}")
 sh.feed("exit")
 

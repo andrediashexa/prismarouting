@@ -404,6 +404,13 @@ class Config:
         # more than one address per family is ordinary on a router, and the
         # order is what an operator reads back to check their own work.
         self.addresses: dict[str, list] = {}     # name -> ["a.b.c.d/n", ...]
+        # Sub-interfaces: name -> {"outer": int, "inner": int|None}.
+        #
+        # Kept apart from the other maps because this one CREATES the
+        # interface rather than configuring one that exists, which changes
+        # what has to happen first at commit and what the existence check may
+        # refuse.
+        self.vlans: dict[str, dict] = {}
         # Present means shut down. Absent means up, which is the default and
         # the state of every interface nobody has touched, so recording the
         # absence would make every box look configured.
@@ -459,10 +466,14 @@ class Config:
             out.append(f"cgnat interface {ifname} {self.interfaces[ifname]}")
         for ifname in sorted(set(self.mtus) | set(self.urpf)
                              | set(self.descriptions) | set(self.admin_down)
-                             | set(self.addresses)):
+                             | set(self.addresses) | set(self.vlans)):
             out.append(f"interface {ifname}")
             # Description first: it is what the interface IS, and a reader
             # scanning a long configuration for one port finds it by name.
+            if ifname in self.vlans:
+                t = self.vlans[ifname]
+                out.append(f" vlan {t['outer']}" +
+                           (f" inner {t['inner']}" if t["inner"] else ""))
             if ifname in self.descriptions:
                 out.append(f" description {self.descriptions[ifname]}")
             for a in self.addresses.get(ifname, []):
@@ -624,6 +635,18 @@ class Config:
                         (lineno, s, f"'{w[3]}': expected inside or outside"))
                 else:
                     cfg.interfaces[w[2]] = w[3]
+            elif s.startswith("no interface "):
+                # Removing a sub-interface removes everything on it: the
+                # interface is going away, and leaving its address or MTU
+                # behind would describe a port that does not exist.
+                gone = s.split()[2]
+                cfg.vlans.pop(gone, None)
+                cfg.addresses.pop(gone, None)
+                cfg.mtus.pop(gone, None)
+                cfg.urpf.pop(gone, None)
+                cfg.descriptions.pop(gone, None)
+                cfg.admin_down.discard(gone)
+                cfg.interfaces.pop(gone, None)
             elif s.startswith("interface "):
                 iface = s.split()[1]
             elif iface is not None and line.startswith(" "):
@@ -632,6 +655,21 @@ class Config:
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
+                elif w[0] == "vlan" and len(w) > 1 and w[1].isdigit():
+                    tag = {"outer": int(w[1]), "inner": None}
+                    if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+                        tag["inner"] = int(w[3])
+                    elif len(w) != 2:
+                        cfg.unknown.append(
+                            (lineno, s, "expected: vlan <id> [inner <id>]"))
+                        continue
+                    if "." not in iface:
+                        cfg.unknown.append(
+                            (lineno, s, f"'{iface}' is not a sub-interface; "
+                                        "a VLAN tag belongs to one, named "
+                                        "<parent>.<n>"))
+                    else:
+                        cfg.vlans[iface] = tag
                 elif w[0] in ("ipv4", "ipv6") and w[1:2] == ["address"] \
                         and len(w) > 2:
                     why = _address_family_error(w[0], w[2])
@@ -905,6 +943,14 @@ class Config:
         if_add = {k: v for k, v in other.interfaces.items()
                   if self.interfaces.get(k) != v}
         if_del = [k for k in self.interfaces if k not in other.interfaces]
+        # Sub-interfaces are created and destroyed, not merely configured, so
+        # they are their own part of the delta and are applied around
+        # everything else: created before anything can be put on them, and
+        # destroyed after everything has been taken off.
+        subif_add = {k: v for k, v in other.vlans.items()
+                     if self.vlans.get(k) != v}
+        subif_del = [k for k in self.vlans if k not in other.vlans]
+
         # Addresses compared per interface, as sets, so that adding one does
         # not re-apply the others: re-applying an address VPP already has is
         # not free - it briefly removes it, and on the interface carrying the
@@ -966,6 +1012,8 @@ class Config:
             "bypass_set": bypass_set,
             "if_add": if_add,
             "if_remove": if_del,
+            "subif_add": subif_add,
+            "subif_del": subif_del,
             "addr_add": addr_add,
             "addr_del": addr_del,
             "desc_set": desc_set,

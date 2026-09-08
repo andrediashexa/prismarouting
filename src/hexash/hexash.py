@@ -146,6 +146,7 @@ SHOW = {
 # the TAP's 9000 and spend an afternoon on an OSPF adjacency stuck in Exchange.
 INTERFACE_BLOCK = {
     "description": ("what this interface is for", "<text>"),
+    "vlan": ("VLAN tag, on a sub-interface", "<1-4094> [inner <1-4094>]"),
     "ipv4": ("IPv4 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
     }),
@@ -338,7 +339,7 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
-               "addr_add", "addr_del")
+               "addr_add", "addr_del", "subif_add", "subif_del")
 
 
 def cap_needed(delta):
@@ -761,6 +762,7 @@ class Shell:
         cfg.urpf = self.device_urpf()
         cfg.descriptions = self.device_descriptions()
         cfg.addresses = self.device_addresses()
+        cfg.vlans = self.device_vlans()
         cfg.admin_down = self.device_admin_down()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
@@ -789,6 +791,30 @@ class Shell:
             tag = (row.get("tag") or "").strip()
             if tag:
                 out[row["interface_name"]] = tag
+        return out
+
+    def device_vlans(self) -> dict:
+        """
+        The sub-interfaces the dataplane has, and the tags they match.
+
+        From sw_interface_dump, which carries sub_id and the two VLAN ids. A
+        sub-interface with no tags is not one this VTY models, so it is left
+        out rather than reported as something it is not.
+        """
+        r = self.api.dump("sw_interface_dump",
+                          {"sw_if_index": 0xFFFFFFFF,
+                           "name_filter_valid": False, "name_filter": ""})
+        if r.state != vppapi.OK:
+            return {}
+        out = {}
+        for row in r.fields.get("rows", []):
+            if not row.get("sub_number_of_tags"):
+                continue
+            inner = row.get("sub_inner_vlan_id") or None
+            out[row["interface_name"]] = {
+                "outer": row.get("sub_outer_vlan_id") or row.get("sub_id"),
+                "inner": inner,
+            }
         return out
 
     def device_addresses(self) -> dict:
@@ -938,6 +964,25 @@ class Shell:
         "off": "URPF_API_MODE_OFF",
     }
 
+    @staticmethod
+    def real_routing(lines):
+        """
+        The routing statements an operator actually wrote.
+
+        Entering an interface block stages `interface <name>` as an FRR
+        stanza, and the statements inside it that this VTY owns - mtu, urpf,
+        addresses, vlan - never reach FRR at all. So a candidate that only
+        configures an interface has a non-empty routing section containing
+        nothing FRR needs to be told about.
+
+        Without this distinction a CGNAT-only box could not commit an
+        interface MTU: FRR is not running, the reload fails, and the whole
+        commit is rolled back including the half that had nothing to do with
+        routing (#137).
+        """
+        return [l for l in lines
+                if l.split()[0:1] != ["interface"] and not l.startswith(" ")]
+
     def set_admin(self, ifname, up):
         """
         Administrative state, on the dataplane interface AND its TAP.
@@ -977,6 +1022,50 @@ class Shell:
                     continue
                 subprocess.run(["ip", "link", "set", "dev", name,
                                 "up" if up else "down"], capture_output=True)
+        return True
+
+    def create_subif(self, ifname, tag):
+        """
+        Create a sub-interface on its parent.
+
+        Single-tag goes through create_vlan_subif, which needs no flags.
+        QinQ goes through create_subif, whose sub_if_flags is a bitfield -
+        and vat2 can only send ONE name of a bitfield, so TWO_TAGS is sent
+        without EXACT_MATCH. See #136: the consequence is that a QinQ
+        sub-interface also matches frames carrying MORE than two tags, which
+        is documented rather than silently shipped.
+        """
+        parent = ifname.rsplit(".", 1)[0]
+        idx = self.api.interface_index(parent)
+        if idx is None:
+            self.err(f"interface {ifname}: its parent {parent} is not on "
+                     "this box")
+            return False
+        if tag["inner"]:
+            r = self.api_call("create_subif",
+                              {"sw_if_index": idx, "sub_id": tag["outer"],
+                               "sub_if_flags": "SUB_IF_API_FLAG_TWO_TAGS",
+                               "outer_vlan_id": tag["outer"],
+                               "inner_vlan_id": tag["inner"]})
+        else:
+            r = self.api_call("create_vlan_subif",
+                              {"sw_if_index": idx, "vlan_id": tag["outer"]})
+        if r.state != vppapi.OK:
+            self.err(f"could not create {ifname}: {r.reason}")
+            return False
+        return True
+
+    def delete_subif(self, ifname):
+        """Remove a sub-interface. Its parent is left alone."""
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            # Already gone. Not an error: the outcome asked for is the
+            # outcome there is.
+            return True
+        r = self.api_call("delete_subif", {"sw_if_index": idx})
+        if r.state != vppapi.OK:
+            self.err(f"could not delete {ifname}: {r.reason}")
+            return False
         return True
 
     def set_address(self, ifname, prefix, is_add):
@@ -1142,9 +1231,27 @@ class Shell:
                 # at only the first two passed a file whose interface name
                 # lives in mtus - which is every file that sets an MTU, and is
                 # how this was found.
+                # A sub-interface the configuration CREATES is not one the
+                # box is missing. Without this the check refuses every new
+                # sub-interface - the commit that would have brought it into
+                # existence - which is a check that makes the feature it
+                # guards impossible to use.
+                have |= set(target.vlans)
                 named = set(target.interfaces)
                 named |= set(target.mtus)
                 named |= set(target.urpf)
+                named |= set(target.addresses)
+                named |= set(target.descriptions)
+                named |= set(target.admin_down)
+                # And a sub-interface whose PARENT is not on the box is a
+                # different error, worth its own sentence: the tag is fine and
+                # the port it was meant to sit on is not there.
+                for sub in sorted(target.vlans):
+                    parent = sub.rsplit(".", 1)[0]
+                    if parent not in have:
+                        self.err(f"interface {sub}: its parent {parent} is "
+                                 "not on this box")
+                        ok = False
                 for line in target.routing:
                     w = line.split()
                     if len(w) == 2 and w[0] == "interface":
@@ -1242,10 +1349,28 @@ class Shell:
                     self.err(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
                              "would be refused")
                     ok = False
+            # Only when FRR can answer. A box may run CGNAT with no routing -
+            # Frr.available() has said so in its docstring since it was
+            # written, and was never called, so validation ran unconditionally
+            # and a CGNAT-only appliance could not commit an interface MTU.
+            #
+            # Entering an interface block stages `interface <name>` as an FRR
+            # stanza, so target.routing is non-empty for every interface
+            # change: setting an address on a box without FRR failed the whole
+            # commit, CGNAT half included (#137).
             if target.routing or running.routing:
-                rc, out = self.frr.reload(target.routing, check_only=True)
-                if rc:
-                    print(f"routing validation failed: {out}")
+                if self.frr.available():
+                    rc, out = self.frr.reload(target.routing, check_only=True)
+                    if rc:
+                        print(f"routing validation failed: {out}")
+                        ok = False
+                elif self.real_routing(target.routing):
+                    # Routing the operator actually wrote, and nothing to
+                    # check it with. Refused, and named: blaming the
+                    # configuration for a daemon that is not running sends
+                    # somebody to debug the wrong thing.
+                    self.err("routing is configured and FRR is not answering; "
+                             "check 'systemctl status frr'")
                     ok = False
             return ok
 
@@ -1374,6 +1499,12 @@ class Shell:
             if not self.set_admin(ifname, False):
                 return False
 
+        # Sub-interfaces first: nothing can be put on one that does not exist
+        # yet. Removals last, further down, for the mirror-image reason.
+        for ifname, tag in d["subif_add"].items():
+            if not self.create_subif(ifname, tag):
+                return False
+
         # Addresses before everything except the admin state, and removals
         # before additions: an operator replacing 10.0.0.1/24 with
         # 10.0.0.2/24 on the same interface expects one address at the end,
@@ -1459,6 +1590,13 @@ class Shell:
             if not self.set_admin(ifname, True):
                 return False
 
+        # Destroyed after everything has been taken off them: deleting a
+        # sub-interface the dataplane still holds addresses or a CGNAT feature
+        # on leaves dangling references to an interface that is gone.
+        for ifname in d["subif_del"]:
+            if not self.delete_subif(ifname):
+                return False
+
         for ifname in d["mtu_del"]:
             # No stored default to restore: the driver's own value is whatever
             # the interface reports before we touch it, so removal is reported
@@ -1470,11 +1608,18 @@ class Shell:
             self.apply_global(g)
 
         if d["routing_changed"]:
-            rc, out = self.frr.reload(target.routing)
-            if rc:
-                print(out)
-                self.err("routing reload failed")
+            if self.frr.available():
+                rc, out = self.frr.reload(target.routing)
+                if rc:
+                    print(out)
+                    self.err("routing reload failed")
+                    return False
+            elif self.real_routing(target.routing):
+                self.err("routing is configured and FRR is not answering; "
+                         "check 'systemctl status frr'")
                 return False
+            # Otherwise there is nothing here for FRR: interface stanzas whose
+            # contents this VTY applies to the dataplane itself.
         return True
 
     def set_host_mtu(self, ifname, mtu):
@@ -1831,6 +1976,26 @@ class Shell:
             else:
                 self.candidate.interfaces[w[2]] = w[3]
             return True
+        # `no interface <name>` deletes a sub-interface, and with it whatever
+        # was on it. Only a sub-interface: a physical port is not something a
+        # configuration can remove, and accepting the words for one would
+        # promise something the commit cannot deliver.
+        if line.startswith("no interface "):
+            gone = w[2] if len(w) > 2 else ""
+            if "." not in gone:
+                self.err(f"{gone or '<name>'}: only a sub-interface can be "
+                         "removed; a physical port is not created by this "
+                         "configuration")
+                return True
+            self.candidate.vlans.pop(gone, None)
+            self.candidate.addresses.pop(gone, None)
+            self.candidate.mtus.pop(gone, None)
+            self.candidate.urpf.pop(gone, None)
+            self.candidate.descriptions.pop(gone, None)
+            self.candidate.admin_down.discard(gone)
+            self.candidate.interfaces.pop(gone, None)
+            return True
+
         if line.startswith("no cgnat interface "):
             self.candidate.interfaces.pop(w[3], None)
             return True
@@ -1859,6 +2024,37 @@ class Shell:
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:2] == ["no", "mtu"]):
             self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
+            return True
+
+        # `vlan` creates the sub-interface. It is the device's for the same
+        # reason as an address, and more so: FRR cannot create one at all.
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "vlan"):
+            ifname = self.frr_ctx[-1].split()[1]
+            why = None
+            if len(w) < 2 or not w[1].isdigit():
+                why = "usage: vlan <1-4094> [inner <1-4094>]"
+            elif "." not in ifname:
+                why = (f"{ifname} is not a sub-interface; a VLAN tag belongs "
+                       "to one, named <parent>.<n>")
+            elif ifname.rsplit(".", 1)[1] != w[1]:
+                # VPP names a sub-interface after its sub_id, so accepting
+                # `interface Gi0/1.7` with `vlan 100` would produce a box
+                # calling it Gi0/1.100 while the configuration called it
+                # Gi0/1.7 - and the running configuration is read from the
+                # box. The two names have to be the same name.
+                why = (f"{ifname} must carry vlan {ifname.rsplit('.', 1)[1]}: "
+                       "the dataplane names a sub-interface after its tag")
+            if why:
+                self.err(why)
+                return True
+            tag = {"outer": int(w[1]), "inner": None}
+            if len(w) >= 4 and w[2] == "inner" and w[3].isdigit():
+                tag["inner"] = int(w[3])
+            elif len(w) != 2:
+                self.err("usage: vlan <1-4094> [inner <1-4094>]")
+                return True
+            self.candidate.vlans[ifname] = tag
             return True
 
         # Addresses are the device's: they belong to the packet path, and FRR
