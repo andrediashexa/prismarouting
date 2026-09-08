@@ -25,7 +25,54 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.41.0.
+Nothing merged since v0.42.0.
+
+## 0.42.0 — sub-interfaces, and a box with no FRR
+
+Third of [#128](https://github.com/andrediashexa/hexarouting/issues/128)
+([#131](https://github.com/andrediashexa/hexarouting/issues/131)), plus a
+defect its lab uncovered
+([#137](https://github.com/andrediashexa/hexarouting/issues/137)).
+
+### Added
+
+* **Sub-interfaces with VLAN tags.** `interface <parent>.<n>` with `vlan <id>`
+  or `vlan <outer> inner <inner>`, and `no interface <name>` to remove one —
+  taking what was on it, since an address left behind describes a port that
+  does not exist. The whole interface block works inside a sub-interface.
+
+  The suffix must equal the outer tag: VPP names a sub-interface after its
+  `sub_id`, and the running configuration is read from the box, so the two
+  names have to be the same name.
+
+  **`exact-match` cannot be set.** `create_subif` takes a bitfield and `vat2`
+  can send only one flag name of one, while an integer segfaults it
+  ([#136](https://github.com/andrediashexa/hexarouting/issues/136)). QinQ
+  sub-interfaces therefore also match frames carrying more than two tags.
+
+### Fixed
+
+* **A box with no FRR could not configure an interface at all.** Entering an
+  interface block stages `interface <name>` as an FRR stanza, so every commit
+  touching an interface triggered routing validation — and where FRR is not
+  running that failed and rolled back the whole commit, CGNAT half included.
+
+  `Frr.available()` existed, said *"A box may run CGNAT with no routing"* in
+  its own docstring, and was never called. No lab caught it because every lab
+  that drives `hexash` also starts FRR: the product's own supported
+  configuration was not one any test ran.
+
+### Worth recording
+
+`lab/subif.sh` counts packets rather than configuration, injecting at
+`ethernet-input` so the L2 tag actually has to steer the frame. Its second
+assertion is the one it exists for: a frame with a different tag must **not**
+land on the sub-interface.
+
+Two assertions about the interface block hardcoded the list of statements and
+had to be edited three times in a row as the block legitimately grew. They now
+assert the boundary instead — everything offered belongs to the block, nothing
+from the level above leaks in.
 
 ## 0.41.0 — addresses belong to the configuration
 
