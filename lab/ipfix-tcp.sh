@@ -19,6 +19,14 @@ ip netns exec peer ip link set lo up
 ip netns exec peer ip link set veth-out up
 ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
 
+# hexash reaches the dataplane over the binary API, and this lab now drives it
+# to reload a saved configuration. Placed where vat2 looks, which is where a
+# correctly installed box has it - see
+# https://github.com/andrediashexa/hexarouting/issues/119, where it turned out
+# the ISO does not put it there.
+. /src/lab/lib.sh
+use_binary_api
+
 vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl create host-interface name veth-vpp >/dev/null
@@ -106,6 +114,31 @@ worst_skew() {
   printf '%s\n' "$1" | sed -n 's/.*skew=\([+-]*[0-9]*\)s.*/\1/p' |
     tr -d '+-' | sort -n | tail -1
 }
+# --- the configuration can be read back and reloaded ---
+#
+# The collector address was applied and never reported, so the running
+# configuration - which is read from the box, not remembered - did not carry
+# it. Saving and reloading produced a box that looked identical and exported
+# nothing, and nothing said so.
+# https://github.com/andrediashexa/hexarouting/issues/116
+CFG=$(vppctl show bpa config)
+expect_in "the TCP collector is in the running configuration" \
+  "cgnat logging tcp 10.0.0.2 port 4740" "$CFG"
+
+# The round trip is the assertion that matters: reading it back is only useful
+# if what comes back can be fed to the box. Turn the exporter off, hand the
+# box its own saved configuration, and see the collector return.
+printf '%s\n' "$CFG" | grep '^cgnat logging' > /tmp/logging.conf
+vppctl bpa logging tcp disable
+expect_not_in "the exporter really went away first" "10.0.0.2" \
+  "$(vppctl show bpa logging)"
+echo "  the saved configuration being reloaded:"
+sed 's/^/    /' /tmp/logging.conf
+python3 /src/src/hexash/hexash.py --load /tmp/logging.conf > /tmp/reload.log 2>&1
+sed 's/^/    reload: /' /tmp/reload.log
+expect_in "reloading the saved configuration brought the collector back" \
+  "10.0.0.2:4740" "$(vppctl show bpa logging)"
+
 SKEW=$(worst_skew "$(cat /tmp/c1.out /tmp/c2.out)")
 expect "the record carries the time of day, not time since boot (worst skew ${SKEW:-none}s)" \
   test "${SKEW:-99999}" -lt 120
