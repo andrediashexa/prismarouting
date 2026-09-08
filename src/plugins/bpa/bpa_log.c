@@ -166,15 +166,27 @@ bpa_log_flush (vlib_main_t *vm)
  * Drains every queue. Runs under the worker barrier, in process context, which
  * is the only place from which the IPFIX export actually reaches the wire.
  */
-/* Emits on the enabled transports. UDP for telemetry, TCP for the log that
- * cannot lose a record; both may be on at the same time. */
-static void
-bpa_log_emit (vlib_main_t *vm, f64 now, u8 event, u32 ip_priv, u32 ip_pub,
-	      u16 port_lo, u16 port_hi, u32 pool_id)
+/*
+ * Emits on the enabled transports. UDP for telemetry, TCP for the log that
+ * cannot lose a record; both may be on at the same time.
+ *
+ * The wall clock is read HERE, once, and handed to both. It used to be a
+ * parameter, and both call sites passed vlib_time_now() - VPP's clock since
+ * process start - so the TCP exporter stamped allocations "00:00:05" while
+ * the UDP one stamped the same event "14:04:43". A retention log answers
+ * "who held this address at this time", and the two transports have to agree
+ * or neither corroborates the other. See
+ * https://github.com/andrediashexa/hexarouting/issues/117.
+ */
+void
+bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
+	      u16 port_hi, u32 pool_id)
 {
-  bpa_log_block_event (vm, vm->thread_index, event, ip_priv, ip_pub, port_lo,
-		       port_hi, pool_id);
-  bpa_log_tcp_record (now, event, ip_priv, ip_pub, port_lo, port_hi, pool_id);
+  f64 wall = unix_time_now ();
+
+  bpa_log_block_event (vm, vm->thread_index, wall, event, ip_priv, ip_pub,
+		       port_lo, port_hi, pool_id);
+  bpa_log_tcp_record (wall, event, ip_priv, ip_pub, port_lo, port_hi, pool_id);
 }
 
 void
@@ -216,8 +228,8 @@ bpa_log_drain (vlib_main_t *vm)
 	{
 	  bpa_log_event_t *e = vec_elt_at_index (pt->log_queue, j);
 
-	  bpa_log_emit (vm, vlib_time_now (vm), e->event, e->ip_priv,
-			e->ip_pub, e->port_lo, e->port_hi, e->pool_id);
+	  bpa_log_emit (vm, e->event, e->ip_priv, e->ip_pub, e->port_lo,
+			e->port_hi, e->pool_id);
 	}
       vec_reset_length (pt->log_queue);
     }
@@ -227,8 +239,9 @@ bpa_log_drain (vlib_main_t *vm)
 }
 
 void
-bpa_log_block_event (vlib_main_t *vm, u32 thread_index, u8 event, u32 ip_priv,
-		     u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id)
+bpa_log_block_event (vlib_main_t *vm, u32 thread_index, f64 wall, u8 event,
+		     u32 ip_priv, u32 ip_pub, u16 port_lo, u16 port_hi,
+		     u32 pool_id)
 {
   bpa_log_main_t *lm = &bpa_log_main;
   flow_report_main_t *frm = &flow_report_main;
@@ -261,9 +274,12 @@ bpa_log_block_event (vlib_main_t *vm, u32 thread_index, u8 event, u32 ip_priv,
   offset = ptd->next_data_offset;
   d = (u8 *) vlib_buffer_get_current (b0) + offset;
 
-  /* milliseconds since the epoch, on the exporter's own scale */
-  now_ms = (u64) ((frm->unix_time_0 + vlib_time_now (vm) - frm->vlib_time_0)
-		  * 1e3);
+  /* Milliseconds since the epoch, from the instant bpa_log_emit() read - the
+   * same one the TCP exporter stamps, so the same event carries the same time
+   * on both. Computing it again here would drift the two apart by however
+   * long the fan-out took, which is small and is still two answers to one
+   * question. */
+  now_ms = (u64) (wall * 1e3);
 
   clib_memcpy_fast (d, &(u64){ clib_host_to_net_u64 (now_ms) }, 8);
   d += 8;

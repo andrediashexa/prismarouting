@@ -64,13 +64,16 @@ bpa_tcp_put_u32 (u8 **b, u32 v)
 
 /* IPFIX message header (RFC 7011), with the length filled in afterwards. */
 static u32
-bpa_tcp_msg_start (u8 **b, f64 now)
+bpa_tcp_msg_start (u8 **b)
 {
   u32 at = vec_len (*b);
 
   bpa_tcp_put_u16 (b, 10); /* version */
   bpa_tcp_put_u16 (b, 0);  /* tamanho, preenchido em msg_end */
-  bpa_tcp_put_u32 (b, (u32) now);
+  /* RFC 7011 Export Time: seconds since the UNIX epoch. It used to be the
+   * f64 the caller had at hand, which was vlib_time_now() - seconds since VPP
+   * started. Read here, so there is nothing for a caller to get wrong. */
+  bpa_tcp_put_u32 (b, (u32) unix_time_now ());
   bpa_tcp_put_u32 (b, bpa_log_tcp.seq);
   bpa_tcp_put_u32 (b, BPA_TCP_DOMAIN);
   return at;
@@ -92,11 +95,13 @@ bpa_tcp_msg_end (u8 **b, u32 at)
  * reporting "270 bytes sent" and the collector counting zero records.
  */
 static void
+/* now is vlib_time_now(): it only schedules the next template, and the
+ * message's own Export Time is read from the wall clock inside msg_start. */
 bpa_tcp_prepend_template (f64 now)
 {
   u8 *tmp = 0;
   u8 **b = &tmp;
-  u32 at = bpa_tcp_msg_start (b, now);
+  u32 at = bpa_tcp_msg_start (b);
   u32 set_at = vec_len (*b);
   u32 i;
 
@@ -125,7 +130,7 @@ bpa_tcp_prepend_template (f64 now)
 }
 
 void
-bpa_log_tcp_record (f64 now, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
+bpa_log_tcp_record (f64 wall, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
 		    u16 port_hi, u32 pool_id)
 {
   u8 **b = &bpa_log_tcp.outbuf;
@@ -137,12 +142,15 @@ bpa_log_tcp_record (f64 now, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
 
   /* One record per message keeps the code simple; the cost is 20 bytes of
    * header per event, and block events are rare by definition. */
-  at = bpa_tcp_msg_start (b, now);
+  at = bpa_tcp_msg_start (b);
   set_at = vec_len (*b);
   bpa_tcp_put_u16 (b, BPA_TCP_TEMPLATE_ID);
   bpa_tcp_put_u16 (b, 0);
 
-  ms = clib_host_to_net_u64 ((u64) (now * 1e3));
+  /* wall, not vlib_time_now(): this is the instant the event happened, and it
+   * has to be comparable with the UDP exporter's record and with a court
+   * request naming a time of day. */
+  ms = clib_host_to_net_u64 ((u64) (wall * 1e3));
   bpa_tcp_put (b, &ms, 8);
   bpa_tcp_put (b, &event, 1);
   bpa_tcp_put_u32 (b, ip_priv);

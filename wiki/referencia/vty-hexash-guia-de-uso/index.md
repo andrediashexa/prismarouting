@@ -131,6 +131,33 @@ O `mtu` aqui existe porque um operador que não descobre `mtu` com `?` herda os 
 
 :::
 
+## Um nome de interface que não existe é recusado
+
+```
+error: interface Ten0: this box has no such interface
+    it has: GigabitEthernet0/12/0, TenGigabitEthernet0/8/0, local0
+    (a linux_cp pair answers to both its dataplane name and its Linux one)
+    the statement would commit and do nothing
+```
+
+`interface Ten0` — um erro de digitação de `TenGigabitEthernet0/8/0` — commitava limpo, aparecia na configuração em vigor e não fazia nada. A recusa **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
+
+Vale para as quatro formas de nomear uma interface: o bloco do FRR, o `cgnat interface`, e as declarações `mtu` e `urpf`.
+
+
+:::info
+Uma interface do `linux_cp` atende por **mais de um nome** — o do dataplane (`GigabitEthernet0/12/0`) e o do Linux (`vppwan0`). Os dois são aceitos, porque os dois são reais e o FRR usa o segundo.
+
+:::
+
+
+:::warning
+`hexash --load` recusa o **arquivo inteiro**, e não statement a statement. Ele roda no boot, sem ninguém olhando, e aplicar metade de um arquivo deixa a caixa segurando metade dele.
+
+Com o dataplane inalcançável a checagem é **pulada, não reprovada**: uma VTY que não consegue commitar enquanto o dataplane está fora é uma VTY que não serve para consertá-lo.
+
+:::
+
 # Ver também
 
 * [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — a VTY aplicada do começo ao fim

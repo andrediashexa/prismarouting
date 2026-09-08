@@ -138,10 +138,11 @@ congestion, and a collector outage no longer costs records — but it is not
 absolute. `show bpa logging` exposes the counters so the difference is visible
 rather than assumed.
 
-## Two pitfalls found while implementing
+## Three pitfalls found while implementing
 
-Both fail silently, and both cost precisely the earliest records — when nobody
-is watching.
+All three fail silently. The first two cost precisely the earliest records —
+when nobody is watching. The third cost every record on one transport, for
+weeks, while the tests were green.
 
 ### The dataplane cannot emit IPFIX directly
 
@@ -168,6 +169,42 @@ This is silent loss right after enabling logging or restarting the box.
   template and reprocess it when the template appears. `tools/ipfix_collector.py`
   does this, and that is how the ordering became visible instead of looking
   like vanished records.
+
+### The wrong clock reads exactly like a time of day
+
+`vlib_time_now()` counts seconds since VPP started. It is the value at hand
+everywhere in a plugin, it is a plausible `f64` of seconds, and handed to a
+record it produces this:
+
+```
+00:00:05 ALLOCATION   100.64.0.5 -> 200.150.0.16 portas 1024-17407
+```
+
+which reads like a timestamp and is not one. The UDP exporter converted to
+epoch time; the TCP exporter — the transport that exists **because losing a
+record is not acceptable** — did not
+([#117](https://github.com/andrediashexa/hexarouting/issues/117)). The same
+event carried `14:04:43` on one transport and `00:00:05` on the other.
+
+Three consequences, in order of how bad they are:
+
+* Records from different boots are **not orderable**. The clock returns to
+  zero on restart, so the log runs backwards.
+* The two transports **cannot corroborate each other**, which is the only
+  reason to run both.
+* A request naming a time of day — which is every request this log exists to
+  answer — cannot be resolved at all.
+
+Rules that come out of it:
+
+* Event time **MUST** be read from the wall clock, and **MUST** be read once
+  per event at the single fan-out point, so every transport carries the same
+  instant. A timestamp passed in as a parameter is a timestamp some caller
+  will get wrong.
+* `vlib_time_now()` **MAY** be used for scheduling — a reconnection attempt,
+  the next template — and **MUST NOT** be written into a record.
+* A log test **MUST** assert the record's own time against the box's clock.
+  Counting records cannot detect this: the count was right the whole time.
 
 ## Configuration trail
 

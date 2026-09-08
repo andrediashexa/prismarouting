@@ -94,4 +94,19 @@ C2=$(cat /tmp/c2.out)
 expect_in "records arrived after the collector came back" "DEALLOCATION" "$C2"
 expect_in "the template was resent on reconnect" "TEMPLATE 256" "$C2"
 expect_not_in "nothing was left pending" "270 pending" "$(vppctl show bpa logging)"
+
+# The record's own timestamp, against the box's clock.
+#
+# A record stamped from VPP's boot clock reads as a plausible time of day and
+# is not one, so counting records will never catch it. The skew grows with the
+# machine's uptime, which is what makes this assertion impossible to satisfy by
+# accident: it fails harder the longer the box has been running.
+# https://github.com/andrediashexa/hexarouting/issues/117
+worst_skew() {
+  printf '%s\n' "$1" | sed -n 's/.*skew=\([+-]*[0-9]*\)s.*/\1/p' |
+    tr -d '+-' | sort -n | tail -1
+}
+SKEW=$(worst_skew "$(cat /tmp/c1.out /tmp/c2.out)")
+expect "the record carries the time of day, not time since boot (worst skew ${SKEW:-none}s)" \
+  test "${SKEW:-99999}" -lt 120
 verdict
