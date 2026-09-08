@@ -917,19 +917,51 @@ reason.
 
 #### The boundary this does not draw
 
-Every role needs to reach the dataplane, and `hexash` still drives some
-operations over the **VPP CLI socket** — interface attachment, uRPF, MTU, the
-`check` path. Reaching that socket is total control of the dataplane. So a
-read-only account that can run the VTY at all can, today, also run `vppctl`
-directly.
+Every role needs to reach the dataplane, and reaching the **VPP CLI socket** is
+total control of it: an account with that socket can run `bpa pool <name> del`
+and disconnect every subscriber behind it. So the roles bound what the **VTY**
+will do, not what a determined account can reach.
 
-Closing that means finishing what
-[#3](https://github.com/andrediashexa/hexarouting/issues/3) started: moving the
-last CLI-driven operations onto the binary API, after which the CLI socket can
-be root-only. It is
-[#76](https://github.com/andrediashexa/hexarouting/issues/76), and until it is
-done the roles bound what the **VTY** will do, not what a determined account
-can reach.
+Closing it means moving every configuration change onto the binary API, after
+which the socket can be root-only
+([#76](https://github.com/andrediashexa/hexarouting/issues/76)). Where that
+stands:
+
+| operation | how it reaches the dataplane |
+|---|---|
+| pools, forwarding, limits, bypass | binary API |
+| CGNAT attach or detach on an interface | binary API |
+| MTU | binary API (`sw_interface_set_mtu`) |
+| uRPF | binary API (`urpf_update`) |
+| timeouts, block-holddown, logging, session-table | **still the CLI socket** |
+| the `check` path | **still the CLI socket**, and has no API message of its own ([#3](https://github.com/andrediashexa/hexarouting/issues/3)) |
+| every `show` | the CLI socket, read-only, and intended to stay |
+
+Two things had to be true before any of this mattered on a real box, and
+neither was:
+
+* **`api-segment { gid vpp }` group-owns `/dev/shm/vpe-api` and not
+  `/dev/shm/global_vm`**, and a client maps both — so a non-root account got
+  `svm_region_map: Permission denied` and the VTY reported a timeout it could
+  not explain. A drop-in on `vpp.service` fixes the second segment after the
+  dataplane starts. `lab/vty.sh` had been doing exactly that by hand since
+  roles were built: the lab arranged an environment the product never
+  produced.
+* **The ISO did not carry the vat2 plugin at all**
+  ([#119](https://github.com/andrediashexa/hexarouting/issues/119)), so the
+  binary API was unreachable on an installed box no matter who was asking.
+
+The boot self-test now proves the property rather than the mode bits: not
+root, in the `vpp` group, can call. `setpriv` drops to an unprivileged uid
+with that group added, so nothing has to be created — a fresh appliance has no
+operator accounts yet, and having the product create one for the benefit of
+its own test would be the tail wagging the dog.
+
+Attaching CGNAT to an interface is **not yet attributable** in the audit
+trail: the message carries no `audit_user`
+([#124](https://github.com/andrediashexa/hexarouting/issues/124)). It was a
+`vppctl` call before, so it was never attributable — moving it to the API made
+the gap visible rather than creating it.
 
 ## FRR version
 
