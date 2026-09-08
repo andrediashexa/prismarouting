@@ -219,6 +219,41 @@ Applied **down first, up last**, with everything else in between: an interface
 being taken down should stop carrying traffic before its configuration changes
 underneath it, and one being brought up should come up already configured.
 
+### Addresses
+
+```
+interface GigabitEthernet0/12/0
+  ipv4 address 200.150.0.1/24
+  ipv4 address 200.150.1.1/24
+  ipv6 address 2001:db8::1/64
+  exit
+```
+
+Repeatable, with `no ipv4 address <prefix>` removing one. Over
+`sw_interface_add_del_address`, which carries **one prefix field for both
+families** and infers the family from the value. So the VTY checks that the
+keyword and the prefix agree:
+
+```
+error: '10.0.0.1/24' is not an IPv6 prefix
+```
+
+Without that check the dataplane would take `ipv6 address 10.0.0.1/24` and
+quietly configure something nobody wrote.
+
+Three details that are decisions, not accidents:
+
+* **Removals are applied before additions.** An operator replacing
+  `10.0.0.1/24` with `10.0.0.2/24` expects one address at the end, not both for
+  the moment in between.
+* **The delta compares sets**, so adding an address does not re-apply the
+  others. Re-applying is not free — it removes and re-adds — and on the
+  interface carrying the session that is a disconnection nobody asked for.
+* Removing one address **must not** take the others. `del_all` is one field
+  away from the one being set, and "remove this address" turning into "remove
+  every address" would drop the adjacency and the management path together.
+  The lab adds two, removes one, and asserts the other two survived.
+
 ### Two things this cost, both worth keeping
 
 **The VTY had a catch-all that sent unrecognised interface statements to FRR.**
