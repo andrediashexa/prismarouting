@@ -365,6 +365,38 @@ subscribers until it is asked for by name, saying how many move and where two
 of them go, and [pool-resize.md](pool-resize.md) carries the procedure —
 including the migration that costs no outage.
 
+#### Phase 4 — the interface becomes a first-class object
+
+Asked for by the maintainer after using the VTY on a real box. Today an
+interface understands `mtu` and `urpf` and nothing else, so the first thing an
+operator needs — an address — sends them back to `vppctl`, which is the tool
+this VTY exists to keep them out of.
+
+[#128](https://github.com/andrediashexa/hexarouting/issues/128) is the parent.
+
+| Issue | What |
+|---|---|
+| [#129](https://github.com/andrediashexa/hexarouting/issues/129) | `shutdown` / `no shutdown` and `description` |
+| [#130](https://github.com/andrediashexa/hexarouting/issues/130) | IPv4 and IPv6 addresses, secondaries included |
+| [#131](https://github.com/andrediashexa/hexarouting/issues/131) | sub-interfaces and VLAN, QinQ included |
+| [#132](https://github.com/andrediashexa/hexarouting/issues/132) | binding an interface to a VRF |
+| [#133](https://github.com/andrediashexa/hexarouting/issues/133) | MAC, IPv6 RA, and a detailed `show interface` |
+
+**The order is a dependency, not a preference.** Addresses before
+sub-interfaces, because a sub-interface is an interface and inherits the whole
+block. And VRF **before addresses at apply time**, whatever order they were
+written in: binding an interface to a VRF clears the addresses already on it,
+so a commit that applies them as written leaves the interface with no address
+and reports success.
+
+Deliberately out of scope, and said here so it is a decision rather than an
+omission:
+
+* **LACP and bonding** — real, and a phase of its own.
+* **Policing and shaping** — likewise.
+* **Speed, duplex, autonegotiation.** On a DPDK-bound NIC these are driver
+  properties. A knob that silently does nothing is worse than no knob.
+
 #### What using the appliance turned up, and the order to fix it
 
 Everything in this section was found in one sitting, by booting the ISO and

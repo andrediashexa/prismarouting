@@ -190,6 +190,63 @@ da seção de roteamento.
   que não consegue commitar enquanto o dataplane está fora é um VTY que não
   serve para consertá-lo.
 
+## An interface is more than its MTU
+
+```
+hexarouting# [edit interface GigabitEthernet0/12/0] ?
+  description  what this interface is for
+  exit         leave the interface
+  mtu          MTU, on both the dataplane interface and its TAP
+  show         display information
+  shutdown     take the interface administratively down
+  urpf         drop packets whose source does not route back this way
+```
+
+**`description` lives in the dataplane**, as a VPP interface tag returned by
+`sw_interface_dump`, and is mirrored to the Linux side as the interface alias.
+It is therefore read back from the box like the MTU and the uRPF mode, rather
+than remembered between invocations — which this VTY deliberately does not do.
+A description only the VTY knows is a description that disagrees with every
+other tool on the box.
+
+**`shutdown` reaches both sides of the `linux_cp` pair.** Shutting the VPP
+interface alone leaves FRR holding adjacencies over a port that has stopped
+forwarding: the neighbour believes the link is fine until its own dead timer
+fires, and traffic is black-holed in the meantime. Same split as the MTU, and
+this project has now shipped it twice.
+
+Applied **down first, up last**, with everything else in between: an interface
+being taken down should stop carrying traffic before its configuration changes
+underneath it, and one being brought up should come up already configured.
+
+### Two things this cost, both worth keeping
+
+**The VTY had a catch-all that sent unrecognised interface statements to FRR.**
+`mtu` and `urpf` were intercepted by name; everything else fell through to
+`candidate.routing`. So `description` and `shutdown` were staged as FRR
+statements — and **FRR accepts both words inside an interface stanza**, so
+nothing errored. The description reached FRR's configuration and never the
+dataplane; `shutdown` never reached anything that forwards packets.
+
+The lab did not catch it because the assertions read `show running-config`,
+which includes FRR's half. They matched the copy that had gone to the wrong
+place. **Three assertions were vacuous**, and two more passed because `local0`
+is always administratively down, so the running configuration said `shutdown`
+on every box before anybody typed it.
+
+The assertions now read the dataplane: the tag from `sw_interface_dump`, the
+state from the State column of `show interface`, and one that checks the
+description was **not** handed to FRR.
+
+**`flags: 0` segfaults `vat2`.** Administrative down is the absence of
+`IF_STATUS_API_FLAG_ADMIN_UP`, and the natural encoding — an empty flag set,
+written as `0` — crashes the client, which parses the field as an enum name and
+cannot render the empty set. Down is therefore sent as
+`IF_STATUS_API_FLAG_LINK_UP`: VPP reads only `ADMIN_UP` out of this message and
+ignores the rest, so the value means exactly "admin down". It is written that
+way because the obvious encoding crashes the client, not because it reads well,
+and the code says so.
+
 ## `show this`
 
 The configuration of the hierarchy being edited, and nothing above it:
