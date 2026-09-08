@@ -25,7 +25,51 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.23.0.
+Nothing merged since v0.24.0.
+
+## 0.24.0 — the image says which version it is
+
+`hexarouting.iso` says nothing about what it is. A file keeps its name and
+loses its context the moment it leaves the release page — on a USB stick, in a
+downloads folder, handed to somebody at a site — and two of them are
+indistinguishable at exactly the moment it matters, which is when an operator
+is deciding which one to install.
+
+### Changed
+
+* **The installation medium is named `hexarouting-<version>.iso`**
+  ([#91](https://github.com/andrediashexa/hexarouting/issues/91)), and
+  `CONTRIBUTING.md` §5 requires it.
+
+  The bare versioned name is **reserved for the tree that is the release** —
+  clean, and standing exactly on the tag for the version it claims. Anything
+  else says which tree it came from:
+
+  | Tree | Name |
+  |---|---|
+  | clean, on `v0.24.0` | `hexarouting-0.24.0.iso` |
+  | clean, past the tag | `hexarouting-0.24.0-49fc5de.iso` |
+  | dirty | `hexarouting-0.24.0-49fc5de-dirty.iso` |
+
+  That is the same argument one step further: two images of the same version
+  built from different working trees would otherwise share a name, and the one
+  nobody must mistake for a release is precisely the one built from
+  uncommitted changes.
+
+  `tools/version-stamp.sh --filename` is the only place the calculation lives,
+  for the reason that file already gives: a second copy would drift, and the
+  drift would surface as an ISO whose name disagrees with the version inside
+  it. The ISO labs no longer hardcode the name — they ask for it.
+
+### Fixed
+
+* `.gitignore` matches `hexarouting*.iso`, both names. Narrowing it to the
+  versioned pattern alone un-ignored the image already on disk under the old
+  name, and `git add -A` committed 321 MB of it — caught only because GitHub
+  refuses files over 100 MB. A rename that changes what a glob matches is a
+  rename that changes what is ignored, and that is not obvious from either
+  half of the change.
+
 
 ## 0.23.0 — the trail defends itself, and says where it stops
 
