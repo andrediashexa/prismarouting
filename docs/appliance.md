@@ -307,6 +307,53 @@ is `y`. Showing the size and the model does the other half, which re-typing a
 path never did — `/dev/sdb` typed twice is still the wrong disk if it was the
 wrong disk.
 
+### Where the connection records live
+
+The disk is laid out in **three** partitions, not two:
+
+| | |
+|---|---|
+| ESP | 512 MB |
+| root | the rest, minus the records |
+| `/var/log/hexarouting` | what the operator asked for |
+
+In dynamic mode the allocation log **is** the connection record the Marco Civil
+requires this box to keep for a year. On the root filesystem it shares space
+with everything the box needs to keep working — so a log that fills stops the
+box writing its configuration, its trail and anything else, because it was busy
+recording who connected to what
+([#83](https://github.com/andrediashexa/hexarouting/issues/83)).
+
+Given its own filesystem, a full log volume is a full log volume.
+
+The default size is arithmetic rather than a guess, and the arithmetic is on
+the screen: [logging.md](logging.md#volume) measures ~80 MB/day for 200k
+subscribers in dynamic mode, so a year is about 29 GB. **Deterministic mode
+logs no allocations at all** and needs almost none — which is why this is a
+question and not a constant.
+
+```
+  Connection records go on their own filesystem, so that a full log
+  cannot stop the box working. One year at 200k subscribers in dynamic
+  mode is about 29 GB (see docs/logging.md); deterministic mode logs
+  no allocations and needs almost none.
+  This disk is 240 GB; at most 231 GB can go to records.
+Gigabytes for connection records [30]:
+```
+
+The root filesystem is never left less than 8 GB, and a size that would do so
+is refused with the arithmetic rather than accepted and discovered later.
+
+* The volume is mounted **`nofail`**. A box that will not boot because the
+  records volume is missing is a box nobody can log into to find out why — it
+  **MUST** come up and complain instead.
+* Which means the boot self-test **MUST** report where the records are. Without
+  that, a box whose volume failed to mount comes up quietly writing records
+  onto the root filesystem, which is the arrangement this replaced.
+* The size is read from `/sys/block/<disk>/size`, which is world-readable, so
+  the fit is checked in `HEXA_INSTALL_CHECK` mode too. A check that skipped it
+  for want of privileges would be more permissive than the real run.
+
 ### Everything is asked before anything is written
 
 | Question | Refused when |

@@ -397,8 +397,9 @@ the hierarchy being edited. Large, and paid every single day someone uses the
 box.
 
 **4. [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the
-installer**, with the management address dropped from its scope. What remains
-is led by the **log volume**: in dynamic mode the allocation log *is* the
+installer**, with the management address dropped from its scope. The **log
+volume** is *delivered in v0.30.0*; the mirror and verifying the disk that was
+just written remain. It was led by the log volume because: in dynamic mode the allocation log *is* the
 connection record the Marco Civil requires for a year, and it currently shares
 a filesystem with everything the box needs to keep working. Then the mirror,
 then verifying the disk that was just written.

@@ -6,6 +6,7 @@
 #   hexarouting.hostname=<name>     answer the hostname question
 #   hexarouting.timezone=<zone>     answer the timezone question
 #   hexarouting.password=<pw>       answer the root password question
+#   hexarouting.log-gb=<n>          gigabytes for the connection records
 #   hexarouting.yes                 skip the confirmations
 #
 # The kernel command line is the hook rather than typing into the console,
@@ -33,6 +34,7 @@ for tok in $cmdline; do
     hexarouting.hostname=*) HEXA_HOSTNAME=${tok#hexarouting.hostname=};      export HEXA_HOSTNAME ;;
     hexarouting.timezone=*) HEXA_TIMEZONE=${tok#hexarouting.timezone=};      export HEXA_TIMEZONE ;;
     hexarouting.password=*) HEXA_ROOT_PASSWORD=${tok#hexarouting.password=}; export HEXA_ROOT_PASSWORD ;;
+    hexarouting.log-gb=*)   HEXA_LOG_GB=${tok#hexarouting.log-gb=};          export HEXA_LOG_GB ;;
     hexarouting.yes)        HEXA_INSTALL_YES=1; export HEXA_INSTALL_YES ;;
   esac
 done
