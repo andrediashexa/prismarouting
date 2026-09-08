@@ -54,6 +54,7 @@ flowchart LR
 CONTRIBUTING.md        project rules: documentation, issues, branches, releases
 CHANGELOG.md           what changed in each released version
 VERSION                single source of truth for the version
+docs/context.md        start here: the invariants, the map, the reading order
 docs/architecture.md   design decisions, sharding, mapping algorithm
 docs/routing.md        FRR integration, VTY, punt pitfalls
 docs/logging.md        BPA log export over IPFIX (RFC 8158)
@@ -71,7 +72,12 @@ tools/                 build and lab helpers
 
 ## Getting started
 
-See **[TESTING.md](TESTING.md)** for the four testing levels and what class of
+**Start with [docs/context.md](docs/context.md)** — the nine facts that make
+the rest of the repository legible, a map of what question each part answers,
+and a reading order per task. It does not repeat the design; it says which file
+is authoritative for each decision.
+
+Then **[TESTING.md](TESTING.md)** for the four testing levels and what class of
 defect each one catches.
 
 ```sh

@@ -70,6 +70,7 @@ lab is going to notice it:
 |---|---|
 | `test_bpa_mss.c` | The MSS clamp: that it only ever **lowers**, that it declines a malformed option list, a length byte pointing outside the header and a data offset that lies — and that the incremental checksum equals a full recomputation. Getting that wrong makes the peer drop the segment, so the connection hangs exactly as it did before clamping while a counter reports the fix was applied. |
 | `test_bpa_ftp.c` | The FTP sequence shift: `bpa_seq_after` across the 2^32 boundary, a retransmission of data sent **before** a rewrite, and a control connection rewritten twice. No lab is going to send four gigabytes to reach the wrap. |
+| `test_context_map.py` | That every repository path named in `docs/context.md` exists, and that `README.md` still reaches it. A map naming files that are no longer there is worse than no map — it is confidently wrong, and this is the half of it that rots without anyone noticing. |
 | `test_hexash_config.py` | Which changes rebuild a pool and which apply in place. Classified as a table, with an assertion that the table **covers every field a pool has** — so a field added later is a failure rather than a silent default. |
 
 Each assertion in those three was run against deliberately broken code and
