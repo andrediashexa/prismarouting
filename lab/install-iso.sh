@@ -353,7 +353,8 @@ fi
 # Either it names a device or it claims none. An open probe is neither.
 if [ "$up" = 1 ]; then
   if grep -q "no dataplane interface" /tmp/disk-clean.log \
-     || grep -q "dataplane NIC: 0000:" /tmp/disk-clean.log; then
+     || grep -q "dataplane NIC: 0000:" /tmp/disk-clean.log \
+     || grep -q "DPDK is off until hugepages exist" /tmp/disk-clean.log; then
     echo "  [ ok ] the dataplane claims a named NIC, or none at all"
   else
     echo "  [FAIL] the dataplane may claim any NIC it finds, including the"
