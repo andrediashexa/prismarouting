@@ -25,7 +25,71 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.22.0.
+Nothing merged since v0.23.0.
+
+## 0.23.0 — the trail defends itself, and says where it stops
+
+The trail was append-only and `fsync`ed, so it survived a reboot and a crash.
+What it did not survive was **editing**. Nothing detected a line changed or
+removed, which means it proved what happened only to somebody who already
+trusted the operator — and it exists to be shown to somebody who does not.
+
+v0.21.0 made that more urgent rather than less: a trail that names people and
+can still be rewritten invites exactly the dispute it was meant to settle.
+
+### Added
+
+* **A hash chain over the configuration trail**
+  ([#22](https://github.com/andrediashexa/hexarouting/issues/22)). Each entry
+  carries a sequence number and a SHA-256 digest over the previous digest and
+  its own text, so an alteration cannot be made to verify by fixing up the line
+  it is on.
+
+* **`show bpa pool history verify`**, which reports the **first** place the
+  chain breaks and tells three different failures apart:
+
+  | What was done | What is reported |
+  |---|---|
+  | an entry's text changed | `BROKEN at entry 2`, with the entry |
+  | an entry removed from the middle | `BROKEN before entry 4`, the sequence jumps |
+  | entries removed from the end | `TRUNCATED: ends at 5, we wrote 7` |
+
+  The sequence is checked **before** the digest, and that order is the
+  diagnosis: removing an entry also breaks the digest of the entry after it, so
+  checking the hash first reports every removal as an alteration of an innocent
+  line.
+
+* **The chain head is recovered at startup**, so a restart continues one chain
+  instead of beginning a second — otherwise every verification after a restart
+  reports a break at the restart, and an alarm that is always on is off.
+
+* A trail with no chained entries is reported as **not covered**, never as
+  intact: a verifier that answers "clean" to an empty file has been defeated by
+  `rm`.
+
+### Fixed
+
+* `bpa audit-path` built the path with `unformat %v` and never NUL-terminated
+  it before handing it to `open()`, so the plugin opened whatever bytes
+  followed in memory — failing or succeeding depending on the allocator.
+
+### Changed — project rule
+
+* **Every release now builds *and boots* the installation medium**
+  (`CONTRIBUTING.md` §5). The product is the appliance, and every release
+  before this was verified as source and verified as a bootable medium only
+  when somebody thought to check. `make iso` produces a file; only
+  `make test-iso` produces evidence. A release whose ISO does not boot **MUST
+  NOT** be published.
+
+### Known limit
+
+The chain does not stop somebody with write access to the file **and** this
+algorithm from rewriting the trail and recomputing every digest. Nothing kept
+only on the box can. What makes it evidence against its own author is the copy
+of the digests in a remote syslog — which the entries already reach. Stated in
+[docs/logging.md](docs/logging.md).
+
 
 ## 0.22.0 — a page to read first
 
