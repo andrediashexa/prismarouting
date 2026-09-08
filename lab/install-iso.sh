@@ -343,6 +343,28 @@ if [ "$up" = 1 ]; then
   fi
 fi
 
+# Roles are only real if somebody other than root can reach the dataplane (#76).
+#
+# The appliance ships a drop-in on vpp.service that group-owns
+# /dev/shm/global_vm, because "api-segment { gid vpp }" covers /dev/shm/vpe-api
+# and not that one, and a client maps both. lab/vty.sh has been doing this by
+# hand since roles were built - which is the same shape as #119, a lab
+# arranging an environment the product never produced.
+#
+# Asserted here because the drop-in runs under systemd, and the labs start VPP
+# directly: this is the only place the unit file is exercised at all.
+if [ "$up" = 1 ]; then
+  if grep -q "binary API works for a non-root account" /tmp/disk-clean.log; then
+    echo "  [ ok ] a non-root account can use the binary API, so roles bind"
+  else
+    echo "  [FAIL] the binary API is root-only on the installed box: every"
+    echo "         operator would have to be root and roles would be decorative"
+    grep -A1 "binary API is root-only" /tmp/disk-clean.log | head -2 \
+      | sed 's/^/         /'
+    fail=1
+  fi
+fi
+
 # Did the tuning survive the install?
 #
 # The evidence is the KERNEL COMMAND LINE, not the profile. isolcpus and the

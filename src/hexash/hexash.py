@@ -827,6 +827,37 @@ class Shell:
             print(f"[api] {message} {args}", file=sys.stderr)
         return self.api.call(message, args)
 
+    def set_cgnat_feature(self, ifname, direction, is_add):
+        """
+        Attach or detach CGNAT on an interface, over the binary API.
+
+        This used to be `vppctl set interface bpa in2out|out2in <if>`, so an
+        account that could attach an interface needed the VPP CLI socket - and
+        an account with that socket can run `bpa pool <name> del` and
+        disconnect every subscriber behind it. The roles bound what the VTY
+        would do, not what the account could reach (#76).
+
+        The name-to-index translation used to happen inside vppctl. It happens
+        here now, because the API message takes an index and the operator
+        types a name.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            # Distinct from "the dataplane refused it": the interface is not
+            # there at all, and saying "refused" would send somebody looking at
+            # the CGNAT configuration for a name that was mistyped.
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("bpa_interface_add_del_feature",
+                          {"is_add": bool(is_add),
+                           "is_inside": direction == "inside",
+                           "sw_if_index": idx})
+        if r.state != vppapi.OK:
+            verb = "attach CGNAT to" if is_add else "detach CGNAT from"
+            self.err(f"could not {verb} {ifname}: {r.reason}")
+            return False
+        return True
+
     def apply(self, target: Config, check_only=False) -> bool:
         """
         Converge the device onto `target`. Returns True on success.
@@ -1092,15 +1123,11 @@ class Shell:
                 return False
 
         for ifname in d["if_remove"]:
-            direction = running.interfaces[ifname]
-            k = "in2out" if direction == "inside" else "out2in"
-            self.dp.run(f"set interface bpa {k} {ifname} del")
+            if not self.set_cgnat_feature(ifname, running.interfaces[ifname],
+                                          False):
+                return False
         for ifname, direction in d["if_add"].items():
-            k = "in2out" if direction == "inside" else "out2in"
-            rc, out = self.dp.run(f"set interface bpa {k} {ifname}")
-            if rc:
-                print(out)
-                self.err(f"interface {ifname} refused by the dataplane")
+            if not self.set_cgnat_feature(ifname, direction, True):
                 return False
 
         # The box's own configuration, after the dataplane and before
