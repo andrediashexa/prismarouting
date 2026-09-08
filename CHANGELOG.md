@@ -25,7 +25,42 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.21.0.
+Nothing merged since v0.22.0.
+
+## 0.22.0 — a page to read first
+
+The design was recorded in sixteen places, each written for a reader who
+already knew why that file existed. None of them was written **first**, so
+every analysis began by reconstructing the shape: that the mapping is
+arithmetic and therefore that changing a pool definition re-maps every
+subscriber; that the trail is the proof because deterministic mode logs no
+allocations; that a counter is not evidence.
+
+### Added
+
+* **[docs/context.md](docs/context.md)**
+  ([#87](https://github.com/andrediashexa/hexarouting/issues/87)) — nine
+  invariants that are not obvious from any single file, each naming the file
+  that is **authoritative** for it; a map of what question each part answers
+  rather than what it contains; and a reading order per task. Linked from
+  `README.md` as the first stop.
+
+  It deliberately does **not** restate the design. Two descriptions of one
+  architecture diverge, and a reader cannot tell which one is stale.
+
+  It also names what is deliberately absent — HA, throughput figures, per-flow
+  logging, NPTv6, a graceful pool migration, the IANA enterprise number — so an
+  analysis stops reporting decisions as gaps.
+
+* **`test/test_context_map.py`**, in `make test`: every repository path the
+  document names must exist, and `README.md` must still link to it. A map that
+  names files which are no longer there is worse than no map — it is
+  confidently wrong. It fails when it finds fewer than thirty paths, so a
+  broken regex cannot make it pass by finding nothing.
+
+  It does not check that the prose is still true. Nothing can, and the test
+  says so rather than implying more than it does.
+
 
 ## 0.21.0 — the trail says who, not only what
 
