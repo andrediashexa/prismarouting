@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 
-from config import Config, Pool, URPF_MODES
+from config import Config, Pool, URPF_MODES, _address_family_error
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, redact, snmp_redact,
                     validate_snmp, validate_ssh, SSH_FIELDS)
@@ -146,6 +146,12 @@ SHOW = {
 # the TAP's 9000 and spend an afternoon on an OSPF adjacency stuck in Exchange.
 INTERFACE_BLOCK = {
     "description": ("what this interface is for", "<text>"),
+    "ipv4": ("IPv4 addressing", {
+        "address": ("an address on this interface, may repeat", ARG_PREFIX),
+    }),
+    "ipv6": ("IPv6 addressing", {
+        "address": ("an address on this interface, may repeat", ARG_PREFIX),
+    }),
     "shutdown": ("take the interface administratively down", None),
     "mtu": ("MTU, on both the dataplane interface and its TAP", "<576-9216>"),
     "urpf": ("drop packets whose source does not route back this way", {
@@ -331,7 +337,8 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "if_remove", "globals")
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del",
-               "desc_set", "desc_del", "admin_down", "admin_up")
+               "desc_set", "desc_del", "admin_down", "admin_up",
+               "addr_add", "addr_del")
 
 
 def cap_needed(delta):
@@ -753,6 +760,7 @@ class Shell:
         cfg.mtus = self.device_mtus()
         cfg.urpf = self.device_urpf()
         cfg.descriptions = self.device_descriptions()
+        cfg.addresses = self.device_addresses()
         cfg.admin_down = self.device_admin_down()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
@@ -782,6 +790,23 @@ class Shell:
             if tag:
                 out[row["interface_name"]] = tag
         return out
+
+    def device_addresses(self) -> dict:
+        """
+        Every address the dataplane holds, per interface.
+
+        Read from `show interface addr`, the same source `show interface`
+        already reports from, so the running configuration and the operational
+        view cannot disagree about what is on a port.
+        """
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return {}
+        _, addr = self.dp.run("show interface addr")
+        found = routes.parse_interfaces(out, addr)
+        return {name: list(info["addresses"])
+                for name, info in found.items()
+                if info["addresses"] and name != "local0"}
 
     def device_admin_down(self) -> set:
         """
@@ -952,6 +977,29 @@ class Shell:
                     continue
                 subprocess.run(["ip", "link", "set", "dev", name,
                                 "up" if up else "down"], capture_output=True)
+        return True
+
+    def set_address(self, ifname, prefix, is_add):
+        """
+        One address on one interface, over the binary API.
+
+        The message carries a single prefix field for both families and infers
+        the family from the value, which is why the VTY checks that `ipv6
+        address 10.0.0.1/24` is a typo before it gets here: the dataplane would
+        take it.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("sw_interface_add_del_address",
+                          {"sw_if_index": idx, "is_add": bool(is_add),
+                           "del_all": False, "prefix": prefix})
+        if r.state != vppapi.OK:
+            verb = "add" if is_add else "remove"
+            self.err(f"interface {ifname}: could not {verb} {prefix}: "
+                     f"{r.reason}")
+            return False
         return True
 
     def set_description(self, ifname, text):
@@ -1325,6 +1373,19 @@ class Shell:
         for ifname in d["admin_down"]:
             if not self.set_admin(ifname, False):
                 return False
+
+        # Addresses before everything except the admin state, and removals
+        # before additions: an operator replacing 10.0.0.1/24 with
+        # 10.0.0.2/24 on the same interface expects one address at the end,
+        # and adding first would briefly leave the interface holding both.
+        for ifname, addrs in d["addr_del"].items():
+            for a in addrs:
+                if not self.set_address(ifname, a, False):
+                    return False
+        for ifname, addrs in d["addr_add"].items():
+            for a in addrs:
+                if not self.set_address(ifname, a, True):
+                    return False
 
         for ifname, text in d["desc_set"].items():
             if not self.set_description(ifname, text):
@@ -1798,6 +1859,34 @@ class Shell:
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:2] == ["no", "mtu"]):
             self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
+            return True
+
+        # Addresses are the device's: they belong to the packet path, and FRR
+        # sees them only because linux_cp mirrors them onto the TAP.
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] in ("ipv4", "ipv6") and w[1:2] == ["address"]):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 3:
+                self.err(f"usage: {w[0]} address <prefix>")
+            else:
+                why = _address_family_error(w[0], w[2])
+                if why:
+                    self.err(why)
+                else:
+                    self.candidate.addresses.setdefault(ifname, [])
+                    if w[2] not in self.candidate.addresses[ifname]:
+                        self.candidate.addresses[ifname].append(w[2])
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:1] == ["no"] and w[1:2] in (["ipv4"], ["ipv6"])
+                and w[2:3] == ["address"]):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 4:
+                self.err(f"usage: no {w[1]} address <prefix>")
+            elif w[3] in self.candidate.addresses.get(ifname, []):
+                self.candidate.addresses[ifname].remove(w[3])
+            else:
+                self.err(f"{ifname} does not have {w[3]}")
             return True
 
         # `description` and `shutdown` are the device's, for the same reason as

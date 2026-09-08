@@ -353,6 +353,25 @@ class Pool:
         return isinstance(other, Pool) and self.lines() == other.lines()
 
 
+def _address_family_error(keyword: str, prefix: str):
+    """
+    None when the prefix matches the keyword, a sentence when it does not.
+
+    `ipv6 address 10.0.0.1/24` is a typo, not a configuration. VPP would take
+    it - the message carries one prefix field for both families and infers the
+    family from the value - so without this check the box would accept the line
+    and quietly configure something the operator did not write.
+    """
+    is_v6 = ":" in prefix
+    if keyword == "ipv6" and not is_v6:
+        return f"'{prefix}' is not an IPv6 prefix"
+    if keyword == "ipv4" and is_v6:
+        return f"'{prefix}' is not an IPv4 prefix"
+    if "/" not in prefix:
+        return f"'{prefix}' has no prefix length"
+    return None
+
+
 class Config:
     """A complete device configuration."""
 
@@ -381,6 +400,10 @@ class Config:
         # this VTY. A description only the VTY knows is one that disagrees with
         # every other tool on the box.
         self.descriptions: dict[str, str] = {}   # name -> text
+        # Addresses per interface, in the order written. A list and not a set:
+        # more than one address per family is ordinary on a router, and the
+        # order is what an operator reads back to check their own work.
+        self.addresses: dict[str, list] = {}     # name -> ["a.b.c.d/n", ...]
         # Present means shut down. Absent means up, which is the default and
         # the state of every interface nobody has touched, so recording the
         # absence would make every box look configured.
@@ -435,12 +458,15 @@ class Config:
         for ifname in sorted(self.interfaces):
             out.append(f"cgnat interface {ifname} {self.interfaces[ifname]}")
         for ifname in sorted(set(self.mtus) | set(self.urpf)
-                             | set(self.descriptions) | set(self.admin_down)):
+                             | set(self.descriptions) | set(self.admin_down)
+                             | set(self.addresses)):
             out.append(f"interface {ifname}")
             # Description first: it is what the interface IS, and a reader
             # scanning a long configuration for one port finds it by name.
             if ifname in self.descriptions:
                 out.append(f" description {self.descriptions[ifname]}")
+            for a in self.addresses.get(ifname, []):
+                out.append(f" ipv{'6' if ':' in a else '4'} address {a}")
             if ifname in self.admin_down:
                 out.append(" shutdown")
             if ifname in self.mtus:
@@ -606,6 +632,19 @@ class Config:
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
+                elif w[0] in ("ipv4", "ipv6") and w[1:2] == ["address"] \
+                        and len(w) > 2:
+                    why = _address_family_error(w[0], w[2])
+                    if why:
+                        cfg.unknown.append((lineno, s, why))
+                    else:
+                        cfg.addresses.setdefault(iface, [])
+                        if w[2] not in cfg.addresses[iface]:
+                            cfg.addresses[iface].append(w[2])
+                elif w[:2] in (["no", "ipv4"], ["no", "ipv6"]) \
+                        and w[2:3] == ["address"] and len(w) > 3:
+                    if iface in cfg.addresses and w[3] in cfg.addresses[iface]:
+                        cfg.addresses[iface].remove(w[3])
                 elif w[0] == "description" and len(w) > 1:
                     # Everything after the keyword, spaces included. Splitting
                     # on words would turn "uplink para o transito" into
@@ -866,6 +905,19 @@ class Config:
         if_add = {k: v for k, v in other.interfaces.items()
                   if self.interfaces.get(k) != v}
         if_del = [k for k in self.interfaces if k not in other.interfaces]
+        # Addresses compared per interface, as sets, so that adding one does
+        # not re-apply the others: re-applying an address VPP already has is
+        # not free - it briefly removes it, and on the interface carrying the
+        # session that is a disconnection nobody asked for.
+        addr_add, addr_del = {}, {}
+        for k in set(self.addresses) | set(other.addresses):
+            have = set(self.addresses.get(k, []))
+            want = set(other.addresses.get(k, []))
+            if want - have:
+                addr_add[k] = [a for a in other.addresses.get(k, [])
+                               if a not in have]
+            if have - want:
+                addr_del[k] = sorted(have - want)
         desc_set = {k: v for k, v in other.descriptions.items()
                     if self.descriptions.get(k) != v}
         desc_del = [k for k in self.descriptions if k not in other.descriptions]
@@ -914,6 +966,8 @@ class Config:
             "bypass_set": bypass_set,
             "if_add": if_add,
             "if_remove": if_del,
+            "addr_add": addr_add,
+            "addr_del": addr_del,
             "desc_set": desc_set,
             "desc_del": desc_del,
             "admin_down": admin_down,

@@ -140,7 +140,12 @@ else
   $HX -c "configure" -c "interface pg1" -c "urpf loose" -c "exit" \
       -c "commit" 2>&1 | sed 's/^/  /'
   VTY_ON=$(vppctl show bpa urpf)
-  RUNNING=$($HX -c "show running-config" 2>/dev/null | grep -A2 "^interface pg1")
+  # The whole block, not a fixed number of lines after the header. `grep -A2`
+  # was cutting the answer off the moment the interface block grew a statement
+  # - the address line pushed `urpf loose` out of the window and the assertion
+  # failed on a box where uRPF was correctly configured.
+  RUNNING=$($HX -c "show running-config" 2>/dev/null \
+            | sed -n '/^interface pg1$/,/^ exit$/p')
   echo "$VTY_ON" | sed 's/^/  /'
   echo "  what the VTY reads back:"
   echo "$RUNNING" | sed 's/^/    /'

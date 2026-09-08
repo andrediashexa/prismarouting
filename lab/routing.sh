@@ -191,11 +191,19 @@ expect "IS-IS adjacency is up" sh -c "vtysh -c 'show isis neighbor' 2>/dev/null 
 echo "  the linux_cp pair, as VPP prints it:"
 vppctl show lcp | sed 's/^/    /'
 
+# The MTU as a VALUE, from the column that holds it.
+#
+# The assertions here used to be `show interface | grep -q 1500`, which matches
+# any column with that number in it - a counter will do - and passed while the
+# interface sat at 1450. An assertion that can be satisfied by a packet count
+# is not an assertion about the MTU.
+mtu_of() { vppctl show interface host-veth-vpp | awk 'NR==2 {split($4,a,"/"); print a[1]}'; }
+
 HX="python3 /src/src/hexash/hexash.py"
 $HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1400" -c "exit" \
     -c "commit" > /tmp/mtu.log 2>&1 || true
 tail -3 /tmp/mtu.log | sed 's/^/  commit: /'
-expect "the dataplane interface took the committed MTU"   sh -c "vppctl show interface host-veth-vpp | grep -q 1400"
+expect "the dataplane interface took the committed MTU" test "$(mtu_of)" = "1400"
 expect "and so did its TAP" sh -c "ip link show vppwan0 | grep -q 'mtu 1400'"
 
 # The assertion above does not prove the product did it. lcp-sync is on by
@@ -209,16 +217,19 @@ $HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1450" -c "exit" \
     -c "commit" > /tmp/mtu2.log 2>&1 || true
 tail -2 /tmp/mtu2.log | sed 's/^/  commit: /'
 expect "with lcp-sync off, the dataplane still took the MTU" \
-  sh -c "vppctl show interface host-veth-vpp | grep -q 1450"
+  test "$(mtu_of)" = "1450"
 expect "with lcp-sync off, the TAP took it too - so hexash moved it, not VPP" \
   sh -c "ip link show vppwan0 | grep -q 'mtu 1450'"
 vppctl lcp lcp-sync on
+
 expect "the MTU is in the running configuration"   sh -c "$HX -c 'show running-config' | grep -q 'mtu 1450'"
 
-# Put it back, or the OSPF assertions above would be checking a link this test
-# just broke.
-$HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1500" -c "exit" \
-    -c "commit" >/dev/null 2>&1 || true
+
+# The restore that used to be here sent its output to /dev/null and ended in
+# "|| true", so whether it worked was never checked - and it was not working:
+# the interface reached the shutdown test below at 1450 and OSPF stuck in
+# ExStart. It is done above now, with an assertion, which is the difference
+# between putting something back and believing you did.
 
 # --- the forwarding table, and telling it apart from FRR's (#95) ---
 #
@@ -247,6 +258,7 @@ STATIC_FIB=$(vppctl show ip fib 192.168.77.0/24 2>/dev/null | grep -c "^192.168.
 STATIC_VTY=$($HX -c "show route" 2>&1 | grep -c "192.168.77.0/24")
 
 echo
+echo "  mtu before rollback: $(mtu_of)"
 echo "=========== rollback removes it from the FIB ==========="
 # A rollback that leaves the route forwarding is not a rollback, and FRR's
 # answer cannot tell you: it is the FIB that has to lose it.
@@ -333,6 +345,26 @@ expect_in "a local address is not reported as a failure" "local" "$VERBOSE"
 #
 # The tag comes back from sw_interface_dump and the state from `show
 # interface`, so a value only FRR knows cannot satisfy either.
+# Put the MTU back to the peer's, AFTER the rollback test above.
+#
+# Not before it: this is a commit, and a commit pushes a rollback revision.
+# Putting it earlier shifts what `rollback 1` means, and the rollback test
+# above depends on that distance - it silently started restoring the state
+# from before this restore, which put the interface back to 1450.
+#
+# Why it has to happen at all: the peer is at 1500 and OSPF compares MTU in
+# Database Description packets. An adjacency already established survives a
+# change - the comparison only happens while forming one - so 1450 looks
+# harmless until something makes the adjacency re-form, and then it sticks in
+# ExStart forever with nothing in the log saying why. That is Pitfall 1 in
+# docs/routing.md, and the shutdown test below is what made it re-form.
+$HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1500" -c "exit" \
+    -c "commit" > /tmp/mtu3.log 2>&1 || true
+echo "  mtu now: $(mtu_of)"
+expect "the MTU is back to the peer's, so an adjacency can re-form" \
+  test "$(mtu_of)" = "1500"
+
+echo "  mtu before the shutdown test: $(mtu_of)"
 echo "=========== description and shutdown ==========="
 tag_of() { vat2 sw_interface_dump '{"sw_if_index":4294967295,"name_filter_valid":false,"name_filter":""}' 2>/dev/null | python3 -c '
 import json,sys
@@ -377,5 +409,67 @@ expect "no shutdown brought the dataplane interface back" \
   test "$(state_of)" = "up"
 expect_not_in "and the running configuration stopped saying shutdown" \
   " shutdown" "$($HX -c 'show running-config')"
+
+# The real proof that `no shutdown` worked is the adjacency coming back, not
+# the State column saying "up". Waited for, because OSPF takes its hello and
+# dead timers to notice - and asserted, because if it never comes back the
+# shutdown test has broken the box for everything after it.
+n=0
+until vtysh -c 'show ip ospf neighbor' 2>/dev/null | grep -q Full || [ "$n" -ge 60 ]; do
+  sleep 1; n=$((n + 1))
+done
+if ! vtysh -c 'show ip ospf neighbor' 2>/dev/null | grep -q Full; then
+  echo "  --- it did not come back; what the box looks like ---"
+  echo "  vpp:   $(vppctl show interface host-veth-vpp | sed -n 2p)"
+  echo "  linux: $(ip -br link show vppwan0)"
+  echo "  addr:  $(ip -br addr show vppwan0)"
+  vtysh -c 'show ip ospf interface vppwan0' 2>&1 | head -6 | sed 's/^/  ospf:  /'
+  vtysh -c 'show ip ospf neighbor' 2>&1 | head -4 | sed 's/^/  nbr:   /'
+fi
+expect "the OSPF adjacency came back after no shutdown (${n}s)" \
+  sh -c "vtysh -c 'show ip ospf neighbor' | grep -q Full"
+
+# --- addresses (#130) ---
+#
+# The interface already carries 10.0.0.1/24, set by hand at the top of this
+# lab and carrying the OSPF adjacency. A SECOND address is added through the
+# VTY and then removed, which tests the two things that actually break:
+# whether the address reaches the TAP so FRR can see it, and whether removing
+# one takes the others with it.
+echo "=========== addresses ==========="
+addrs_of() { vppctl show interface addr host-veth-vpp | grep -o 'L3 .*' | sed 's/L3 //'; }
+echo "  before: $(addrs_of | tr '\n' ' ')"
+
+$HX -c "configure" -c "interface host-veth-vpp" \
+    -c "ipv4 address 10.9.9.1/24" -c "ipv6 address 2001:db8:9::1/64" \
+    -c "exit" -c "commit" > /tmp/addr.log 2>&1 || true
+tail -2 /tmp/addr.log | sed 's/^/  commit: /'
+echo "  after:  $(addrs_of | tr '\n' ' ')"
+expect_in "the new IPv4 address is on the dataplane" "10.9.9.1/24" "$(addrs_of)"
+expect_in "the IPv6 address too" "2001:db8:9::1/64" "$(addrs_of)"
+expect_in "and the address it already had is still there" "10.0.0.1/24" "$(addrs_of)"
+# FRR sees the TAP, not the dataplane interface. An address that does not
+# reach the TAP is an address no routing protocol can use.
+expect "the address reached the TAP, so FRR can use it" \
+  sh -c "ip addr show vppwan0 | grep -q '10.9.9.1/24'"
+expect "and the IPv6 one did too" \
+  sh -c "ip -6 addr show vppwan0 | grep -q '2001:db8:9::1/64'"
+
+# Removing one MUST NOT take the others. sw_interface_add_del_address has a
+# del_all flag one field away from the one being set here, and "remove this
+# address" turning into "remove every address" would drop the adjacency and
+# the management path on a real box.
+$HX -c "configure" -c "interface host-veth-vpp" \
+    -c "no ipv4 address 10.9.9.1/24" -c "exit" -c "commit" \
+    > /tmp/addrdel.log 2>&1 || true
+echo "  after removal: $(addrs_of | tr '\n' ' ')"
+expect_not_in "the removed address is gone" "10.9.9.1/24" "$(addrs_of)"
+expect_in "and the one that was there before survived" "10.0.0.1/24" "$(addrs_of)"
+expect_in "and so did the IPv6 address" "2001:db8:9::1/64" "$(addrs_of)"
+# Adding and removing a SECONDARY address must not disturb the adjacency,
+# which runs over the primary. This is only meaningful because the adjacency
+# was asserted Full immediately before the address work started.
+expect "the adjacency on the primary address was not disturbed" \
+  sh -c "vtysh -c 'show ip ospf neighbor' | grep -q Full"
 
 verdict
