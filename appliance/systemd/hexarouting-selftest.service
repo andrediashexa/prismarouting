@@ -6,7 +6,19 @@ Wants=hexarouting.service
 # Runs even when hexarouting.service fails: that is precisely when the
 # diagnosis matters.
 DefaultDependencies=no
-After=multi-user.target
+
+# NOT ordered after multi-user.target, deliberately.
+#
+# The console getty is ordered AFTER this unit so that the report is on the
+# screen before the VTY prompt is drawn on top of it (#93). getty.target is
+# pulled in by multi-user.target, so ordering this unit after multi-user.target
+# as well would close a cycle - and systemd breaks a cycle by dropping one of
+# its edges, which would make the console come out right on some boots and
+# wrong on others. Right sometimes is worse than wrong always: it cannot be
+# reproduced and it will be blamed on the hardware.
+#
+# What this unit actually needs is what it already says: VPP and FRR up. It
+# reports on those two and on the VTY, not on the whole target.
 
 [Service]
 Type=oneshot

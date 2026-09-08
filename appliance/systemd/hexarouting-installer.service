@@ -7,7 +7,14 @@ ConditionKernelCommandLine=hexarouting.install
 # breaks a cycle by dropping a job - silently, from the operator's point of
 # view. The first version of this unit did exactly that and was skipped.
 DefaultDependencies=no
-After=multi-user.target hexarouting-selftest.service
+# NOT after multi-user.target: getty.target is pulled in by it, and the
+# console getty is ordered after THIS unit so that an unattended install owns
+# the console instead of printing behind a login prompt (#93). Ordering after
+# multi-user.target as well would close that into a cycle.
+#
+# What this unit needs is the self-test to have finished, which is what it now
+# says.
+After=hexarouting-selftest.service
 Wants=hexarouting-selftest.service
 
 [Service]

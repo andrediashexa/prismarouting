@@ -365,6 +365,38 @@ subscribers until it is asked for by name, saying how many move and where two
 of them go, and [pool-resize.md](pool-resize.md) carries the procedure —
 including the migration that costs no outage.
 
+#### The first five minutes with the box
+
+Three defects reported from a real boot on real hardware, and one found while
+fixing them —
+[#93](https://github.com/andrediashexa/hexarouting/issues/93) and
+[#94](https://github.com/andrediashexa/hexarouting/issues/94), both
+*delivered, v0.25.0*.
+
+The console looked hung: the self-test wrote to `/dev/console` and the getty
+drew the VTY prompt on the same screen with nothing ordering them, so the
+report printed on top of the prompt. The install asked for a device path and
+then asked for it a second time to confirm — the one moment where a typo is
+destructive, transcribed twice.
+
+And underneath both, the one that had been failing on every box since the
+appliance existed: `install.sh` writes `!\n! HexaRouting\n!` as the default
+configuration, the parser did not treat `!` as a comment, so `hexash --load`
+refused the file and `hexarouting.service` **failed on the first boot of every
+install**. The self-test reported `HexaRouting ready.` anyway, because it
+measured the dataplane, the routing, the tuning and the VTY, and never the unit
+whose job is to apply the configuration. Each defect hid the other.
+
+Still open from the same area:
+[#83](https://github.com/andrediashexa/hexarouting/issues/83) the installer's
+missing questions, and
+[#95](https://github.com/andrediashexa/hexarouting/issues/95) — the routing
+table cannot be shown from the VTY and a static route cannot be configured in
+it. The second matters more than it sounds: `show ip route` reaches FRR's RIB,
+and the table that forwards packets is VPP's FIB. An operator debugging *"the
+traffic is not flowing"* is shown the table where the route is present and
+correct, on a box that is dropping it.
+
 #### Installation — blocked by nothing, paid on every box
 
 [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the installer

@@ -221,6 +221,29 @@ After installing, adjust `/etc/hexarouting/tune.env` (dataplane NIC and
 subscriber target) and reboot: `isolcpus` and hugepages only apply on the next
 boot.
 
+## What the console shows on a first boot
+
+The order is fixed and is part of the design: the **self-test finishes, then
+the VTY prompt is drawn**. Both write to `/dev/console`, and when nothing
+ordered them the prompt was drawn first and the report printed on top of it —
+what the operator saw was a wall of text ending in `=====` and no prompt, on a
+box that was working and waiting for input
+([#93](https://github.com/andrediashexa/hexarouting/issues/93)).
+
+`getty@tty1` and `serial-getty@ttyS0` are therefore ordered after
+`hexarouting-selftest.service` **and** after `hexarouting-installer.service`,
+so that an unattended install owns the console rather than running behind a
+login prompt. None of the three may be ordered after `multi-user.target`:
+`getty.target` is pulled in by it, and that closes a cycle — which systemd
+breaks by dropping an edge, making the console come out right on some boots and
+wrong on others. Right sometimes is worse than wrong always: it cannot be
+reproduced, and it gets blamed on the hardware.
+
+The self-test **MUST** check `hexarouting.service`, the unit that applies the
+configuration. It did not, and a box whose configuration was never applied
+reported itself ready to the one person standing at the console
+([#94](https://github.com/andrediashexa/hexarouting/issues/94)).
+
 ## Installing to disk
 
 The ISO is an **installation medium**, not an appliance you log into. It boots
@@ -240,6 +263,49 @@ hexarouting> install
 On an installed appliance it is not in the command tree and the installer
 refuses to run: a command that overwrites the disk should not be one TAB
 away from `interface` on a router carrying traffic.
+
+### Choosing the disk
+
+Disks are offered as a lettered list, largest first, with size and model. The
+default — taken by pressing Enter — is the **largest**, because that is the
+disk somebody put in the machine to hold the system; the 32 GB stick they
+booted from is not it.
+
+```
+Disks on this machine:
+  a) /dev/sdb         932G  WD Black 1TB   <- default, the largest
+  b) /dev/sda          32G  KINGSTON SA400
+
+Install onto which disk (letter, or a device path) [a]:
+```
+
+* The medium the system booted from **MUST NOT** appear in the list. It is
+  exactly the disk somebody in a hurry picks, because it is the one they just
+  plugged in, and overwriting it fails halfway through and leaves neither
+  system usable.
+* A device path is still accepted. Scripts have them and people have habits,
+  and refusing one to enforce a menu would be a menu getting in the way.
+
+The confirmation repeats the disk back **with its size and model**, and is
+answered with the word `yes`:
+
+```
+  About to ERASE /dev/sdb  932G WD Black 1TB
+  Everything on it is lost. This cannot be undone.
+  Type 'yes' to install:
+```
+
+It used to require re-typing the device path. That reasoning was sound as far
+as it went — a yes/no prompt is answered reflexively and typing a device name
+is not — but it bought that by making the operator transcribe the same string
+twice, at the one prompt where a typo is destructive, and a second
+transcription is no more likely to be right than the first.
+
+What that prompt was really protecting is kept: **a disk cannot be destroyed by
+holding down the return key.** A bare Enter is not an answer here, and neither
+is `y`. Showing the size and the model does the other half, which re-typing a
+path never did — `/dev/sdb` typed twice is still the wrong disk if it was the
+wrong disk.
 
 ### Everything is asked before anything is written
 

@@ -149,6 +149,25 @@ else
   bad "FRR not responding"
 fi
 
+# --- the unit that APPLIES the configuration ---
+#
+# The self-test measured the dataplane, the routing, the tuning and the VTY,
+# and never the one unit whose job is to put the configuration INTO the
+# dataplane. So a box whose configuration was never applied reported
+# "HexaRouting ready." to the one person - standing at the console - whose job
+# it is to notice (#94).
+#
+# When it has failed, the reason goes on the screen with it. "Failed" without
+# a reason sends whoever is standing there to a journal they may not be able
+# to reach yet.
+state=$(systemctl is-failed hexarouting.service 2>/dev/null || true)
+if [ "$state" = failed ]; then
+  bad "hexarouting.service FAILED: the CGNAT configuration was not applied"
+  say "        the last thing it said:"
+  journalctl -u hexarouting.service -n 6 --no-pager -o cat 2>/dev/null \
+    | sed 's/^/          /' > "$OUT" 2>/dev/null
+fi
+
 # --- configuracao aplicada ---
 pools=$(vppctl show bpa pool 2>/dev/null | grep -c "^pool ")
 [ -n "$pools" ] || pools=0
