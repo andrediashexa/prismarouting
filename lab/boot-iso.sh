@@ -81,7 +81,40 @@ if grep -q "HexaRouting ready" /tmp/clean.log; then
     echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
     exit 1
   fi
-  if grep -q "hexarouting>" /tmp/clean.log; then
+  # ANCHORED. "hexarouting>" unanchored also matches systemd's own line
+  # "Hostname set to <hexarouting>." - so this check, which is the one that
+  # proves a login LANDS in the VTY, could be satisfied by a boot that never
+  # reached the VTY at all. It has been able to since it was written.
+  if grep -q "^hexarouting>" /tmp/clean.log; then
+    #
+    # ORDER, not merely presence. Both of these were on the console before
+    # #93 and the boot still "passed": the getty drew the VTY prompt first and
+    # the self-test printed on top of it, so what the operator saw was a wall
+    # of text ending in "=====" and no prompt. The box was working and waiting
+    # for input; it looked like it had stopped, and the only way to find out
+    # was to press Enter on a router you have just been handed.
+    #
+    # A check that both strings appear cannot tell those two boots apart.
+    #
+    # The FIRST prompt and the LAST line of the report. Taking the last of
+    # both would pass a boot where the prompt was drawn early and again at the
+    # end - which is the shape of the bug, not the shape of a fix.
+    _sel=$(grep -n "boot self-test" /tmp/clean.log | head -1 | cut -d: -f1)
+    _end=$(grep -n "HexaRouting ready" /tmp/clean.log | tail -1 | cut -d: -f1)
+    _pmt=$(grep -n "^hexarouting>" /tmp/clean.log | head -1 | cut -d: -f1)
+    echo
+    echo "=========== console order ==========="
+    echo "  self-test starts at line $_sel, ends at $_end; the prompt is at $_pmt"
+    if [ -n "$_end" ] && [ -n "$_pmt" ] && [ "$_pmt" -lt "$_end" ]; then
+      echo
+      echo "=========== THE PROMPT WAS BURIED ==========="
+      echo "  The VTY prompt was drawn at line $_pmt and the self-test was"
+      echo "  still printing at line $_end. An operator sees a wall of text"
+      echo "  and no prompt, on a box that is waiting for them."
+      echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
+      exit 1
+    fi
+    echo "  the report finishes before the prompt is drawn"
     exit 0
   fi
   echo

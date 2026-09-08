@@ -9,7 +9,8 @@
 # Four rules this script exists to honour:
 #
 #   - it never touches a disk that was not named,
-#   - it never runs without a confirmation that repeats the disk back,
+#   - it never runs without a confirmation that repeats the disk back, with
+#     its size and model, and that a bare Enter does not answer,
 #   - it never finishes without a root password the operator supplied, and
 #   - it asks everything before it writes anything.
 #
@@ -71,6 +72,98 @@ list_disks() {
   lsblk -dno NAME,SIZE,MODEL 2>/dev/null | sed 's|^|  /dev/|'
 }
 
+# The disk the system booted from, as a whole-disk path. Overwriting it fails
+# halfway through and leaves neither system usable, so it is never offered.
+boot_disk() {
+  _src=$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)
+  [ -n "$_src" ] || return 0
+  # PKNAME is the parent of a partition, and EMPTY when the source is already
+  # a whole disk - an ISO on /dev/sr0. One branch or the other, never both:
+  # the first version printed the empty result too, so this returned two lines
+  # and nothing ever matched it. The boot medium then appeared in the menu,
+  # which is the one disk that must never be offered.
+  _pk=$(lsblk -ndo PKNAME "$_src" 2>/dev/null | head -1)
+  if [ -n "$_pk" ]; then
+    printf '/dev/%s\n' "$_pk"
+  else
+    printf '%s\n' "$_src"
+  fi
+}
+
+# Candidate disks, largest first, one per line: "<path> <bytes> <human> <model>"
+#
+# Largest first because the default is the largest, and the default is the
+# largest because that is the disk somebody put in the machine to hold the
+# system. The 32 GB stick they booted from is not it.
+disk_table() {
+  _boot=$(boot_disk)
+  lsblk -dnbo NAME,SIZE,TYPE,MODEL 2>/dev/null | while read -r n b t rest; do
+    [ "$t" = disk ] || continue
+    _p="/dev/$n"
+    [ "$_p" = "$_boot" ] && continue
+    _h=$(lsblk -dno SIZE "$_p" 2>/dev/null | tr -d ' ')
+    printf '%s %s %s %s\n' "$_p" "$b" "${_h:-?}" "${rest:-unknown}"
+  done | sort -k2 -rn
+}
+
+# a, b, c ... from an index. Twenty-six disks is more than anyone racks; past
+# that the path still works.
+letter_at() {
+  printf '%s' "abcdefghijklmnopqrstuvwxyz" | cut -c"$1"
+}
+
+# Prints the menu and returns the chosen path on stdout.
+choose_disk() {
+  _table=$(disk_table)
+  if [ -z "$_table" ]; then
+    echo "No disk to install onto." >&2
+    echo "  everything on this machine is either the medium you booted from" >&2
+    echo "  or not a whole disk. Attach a disk and start again." >&2
+    return 1
+  fi
+
+  echo "Disks on this machine:" >&2
+  _i=1
+  printf '%s\n' "$_table" | while read -r p b h m; do
+    _l=$(letter_at "$_i")
+    if [ "$_i" = 1 ]; then
+      printf '  %s) %-14s %6s  %s   <- default, the largest\n' "$_l" "$p" "$h" "$m" >&2
+    else
+      printf '  %s) %-14s %6s  %s\n' "$_l" "$p" "$h" "$m" >&2
+    fi
+    _i=$((_i + 1))
+  done
+  echo >&2
+
+  _default=$(printf '%s\n' "$_table" | head -1 | cut -d' ' -f1)
+
+  while : ; do
+    _a=$(ask "Install onto which disk (letter, or a device path)" "a")
+    # A letter picks a line. A path is still accepted: scripts have them,
+    # people have habits, and refusing one to enforce a menu would be a menu
+    # getting in the way.
+    case "$_a" in
+      /dev/*)
+        printf '%s\n' "$_a"
+        return 0 ;;
+      [a-z])
+        _n=$(printf '%s' "abcdefghijklmnopqrstuvwxyz" | tr -d "\n" | \
+             awk -v c="$_a" '{print index($0, c)}')
+        _pick=$(printf '%s\n' "$_table" | sed -n "${_n}p" | cut -d' ' -f1)
+        if [ -n "$_pick" ]; then
+          printf '%s\n' "$_pick"
+          return 0
+        fi
+        echo "  there is no disk '$_a' in that list." >&2 ;;
+      "")
+        printf '%s\n' "$_default"
+        return 0 ;;
+      *)
+        echo "  answer with a letter from the list, or a device path." >&2 ;;
+    esac
+  done
+}
+
 # Check mode validates the ANSWERS and writes nothing, so it neither needs root
 # nor a medium to run from - which is what lets the questions be tested without
 # a virtual machine. Everything it cannot check it reports rather than passing
@@ -80,6 +173,15 @@ blockers=""
 note()  { blockers="$blockers
   - $*"; }
 fatal() { if [ "$CHECK_ONLY" = 1 ]; then note "$*"; else die "$*"; fi }
+
+# A seam, so the disk menu can be tested without installing anything.
+#
+# Sourced with HEXA_INSTALL_LIB=1, this script stops here and the caller gets
+# the functions above and nothing else. The alternative is testing the menu by
+# running an install, which needs real block devices - so it would not be
+# tested, and the one question in this program where a wrong answer destroys
+# something would be the one part with no test.
+[ "${HEXA_INSTALL_LIB:-0}" = 1 ] && return 0
 
 [ "$(id -u)" = 0 ] || fatal "must run as root"
 
@@ -102,9 +204,7 @@ echo
 
 # ------------------------------------------------------------------ 1. disk
 if [ -z "$DISK" ]; then
-  echo "Disks on this machine:"
-  list_disks
-  DISK=$(ask "Install onto which disk" "")
+  DISK=$(choose_disk) || exit 1
 fi
 [ -n "$DISK" ] || die "no disk given"
 [ -b "$DISK" ] || { echo "Available:" >&2; list_disks >&2; \
@@ -179,11 +279,30 @@ if [ "$CHECK_ONLY" = 1 ]; then
 fi
 
 if [ "$ASSUME_YES" != 1 ]; then
-  # The disk is repeated back and has to be typed. A yes/no prompt is answered
-  # reflexively; typing the device name is not.
-  printf "Type the disk path to confirm: "
+  #
+  # The disk is repeated back with what it IS - size and model - and the answer
+  # has to be the word "yes".
+  #
+  # This used to require re-typing the device path. The reasoning was sound as
+  # far as it went: a yes/no prompt is answered reflexively, and typing a
+  # device name is not. But it bought that by making the operator transcribe
+  # the same string twice, which is the one moment in this install where a typo
+  # is destructive - and the second transcription is no more likely to be right
+  # than the first.
+  #
+  # What that prompt was really protecting is that a disk cannot be destroyed
+  # by holding down the return key. That property is kept: a bare Enter is not
+  # an answer here, and neither is "y". Showing the size and the model does the
+  # other half, which re-typing a path never did - "/dev/sdb" typed twice is
+  # still the wrong disk if it was the wrong disk.
+  #
+  _what=$(lsblk -dno SIZE,MODEL "$DISK" 2>/dev/null | sed 's/  */ /g;s/^ *//')
+  echo
+  echo "  About to ERASE $DISK  ${_what:-}"
+  echo "  Everything on it is lost. This cannot be undone."
+  printf "  Type 'yes' to install: "
   read -r answer
-  [ "$answer" = "$DISK" ] || die "not confirmed (got '$answer')"
+  [ "$answer" = "yes" ] || die "not confirmed (got '$answer')"
 fi
 
 EFI=0

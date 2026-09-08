@@ -101,6 +101,24 @@ for tty in ttyS0 tty1; do
   [ "$tty" = tty1 ] && d="$ROOT/etc/systemd/system/getty@$tty.service.d"
   mkdir -p "$d"
   cat > "$d/autologin.conf" <<EOF
+[Unit]
+# The self-test writes to /dev/console and this getty draws the VTY prompt on
+# the same screen. Nothing ordered them, so the prompt was drawn first and the
+# report printed on top of it: what the operator saw was a wall of text ending
+# in "=====" and no prompt, on a machine that was working and waiting for
+# input. It looked like it had stopped, and the only way to find out otherwise
+# was to press Enter on a router you have just been handed (#93).
+#
+# And after the INSTALLER for the same reason one step on: an unattended
+# install writes its progress to the console too. Ordering the getty after the
+# self-test alone made the getty win deterministically where it used to race,
+# so the install ran behind a login prompt and its output was never seen -
+# the lab reported "the installer unit never started" for a unit that had.
+# No Wants= for it: the unit carries a ConditionKernelCommandLine and must
+# stay skipped on a boot that did not ask to install.
+After=hexarouting-selftest.service hexarouting-installer.service
+Wants=hexarouting-selftest.service
+
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin root --noclear %I \$TERM

@@ -79,9 +79,24 @@ if ! grep -q "HexaRouting installed to /dev/vda" /tmp/install-clean.log; then
   if grep -q "Ordering cycle found" /tmp/install-clean.log; then
     echo "  systemd dropped the installer unit to break an ordering cycle:"
     grep -i "ordering cycle" /tmp/install-clean.log | tail -3 | sed 's/^/    /'
-  elif grep -qE "hexarouting-installer|install to disk" /tmp/install-clean.log; then
-    echo "  the unit ran; what it printed:"
-    grep -A6 "install to disk" /tmp/install-clean.log | tail -12 | sed 's/^/    /'
+  elif grep -qE "hexarouting-inst|install to disk" /tmp/install-clean.log; then
+    # "hexarouting-inst", not "hexarouting-installer": systemd truncates a unit
+    # description on the status line - "Starting hexarouting-insta...". Looking
+    # for the full name never matched, so a unit that HAD started was reported
+    # as never having started, and the next person to read that went and
+    # checked ConditionKernelCommandLine, which was correct all along.
+    if grep -q "install to disk" /tmp/install-clean.log; then
+      echo "  the unit ran; what it printed:"
+      grep -A6 "install to disk" /tmp/install-clean.log | tail -12 | sed 's/^/    /'
+    else
+      echo "  the unit STARTED and printed nothing."
+      echo "  Something else owns the console: the installer writes to"
+      echo "  /dev/console, and a getty that reached it first takes the"
+      echo "  screen with a login prompt. Check the ordering between"
+      echo "  getty@/serial-getty@ and hexarouting-installer.service."
+      grep -nE "Started (serial-)?getty|Starting hexarouting-inst" \
+        /tmp/install-clean.log | tail -4 | sed 's/^/    /'
+    fi
   else
     echo "  the installer unit never started at all - check"
     echo "  ConditionKernelCommandLine against the -append line."
@@ -110,6 +125,24 @@ DISK_FAIL=0
 # container. The first version of this check used them, could not read
 # anything back, and reported it as though the install had gone wrong - so
 # every step below says what happened rather than swallowing it.
+# The tools this verification needs, checked BY NAME before it starts.
+#
+# Without this the missing tool surfaced as "could not read the installed
+# filesystem back" - which blames the install for a tool that was never
+# installed in the container, and sends whoever reads it to look at the
+# installer. The same lab passed under "make test-install", whose target
+# happens to apt-get fdisk, and failed under "tools/lab.sh install-iso",
+# whose apt line did not: the same lab, two answers, depending on which
+# command ran it.
+for _t in qemu-img sfdisk; do
+  command -v "$_t" >/dev/null 2>&1 || {
+    echo "  [FAIL] $_t is not installed in this container."
+    echo "         This step reads the installed disk back; it cannot run"
+    echo "         without it, and its absence says nothing about the install."
+    exit 1
+  }
+done
+
 qemu-img convert -O raw "$DISK" /tmp/hexa-disk.raw 2>&1 | sed 's/^/  qemu-img: /'
 ls -l /tmp/hexa-disk.raw 2>&1 | sed 's/^/  /'
 sfdisk -J /tmp/hexa-disk.raw > /tmp/parts.json 2>/tmp/sfdisk-j.log \

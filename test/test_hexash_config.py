@@ -234,5 +234,60 @@ check("RFC 1122" in (config.Pool.check_mss("14") or ""),
 check((config.Pool.MSS_MIN, config.Pool.MSS_MAX) == (536, 9000),
       "the bounds must match bpa_mss.h")
 
+print("\n=== the configuration the installer writes must parse ===")
+#
+# install.sh writes a default hexarouting.conf. hexarouting.service loads it at
+# boot with "hexash --load", and hexash REFUSES a file it does not fully
+# understand - deliberately, because applying a file minus the lines it could
+# not read, on a box nobody is watching, is worse.
+#
+# So the banner the installer writes and the parser that reads it have to
+# agree, and they did not: "!" was not recognised as a comment, the load
+# refused, hexash exited non-zero, and hexarouting.service FAILED on the first
+# boot of every install (#94).
+#
+# The default is read out of install.sh rather than copied here, so that
+# changing one side without the other fails this test instead of a box.
+import re  # noqa: E402
+installer = os.path.join(os.path.dirname(__file__), "..", "appliance",
+                         "install.sh")
+m = re.search(r"printf '([^']+)' > \"\$DESTDIR/etc/hexarouting/hexarouting\.conf\"",
+              open(installer).read())
+check(m is not None,
+      "could not find the default configuration in appliance/install.sh; "
+      "if it moved, this test no longer checks anything")
+if m:
+    default = m.group(1).replace("\\n", "\n")
+    print("  what install.sh writes:")
+    for line in default.splitlines():
+        print(f"    {line!r}")
+    parsed = config.Config.parse(default)
+    check(parsed.unknown == [],
+          f"the installer's own default file does not parse: {parsed.unknown}")
+    check(parsed.pools == {},
+          f"a file of comments must produce no configuration: {parsed.pools}")
+
+print("\n=== '!' is a comment, except where it is a section header ===")
+c = config.Config.parse("""!
+! a comment
+cgnat pool p
+ inside 100.64.0.0/22
+ outside 200.150.0.16/30
+ exit
+!
+! routing
+ip route 0.0.0.0/0 192.0.2.1
+!
+""")
+check(c.unknown == [], f"comments must not be unknown statements: {c.unknown}")
+check("p" in c.pools, "the pool between the comments is still read")
+# FRR uses "!" as a separator and is handed its section verbatim, so those
+# must survive - the comment rule applies to the CGNAT half only.
+check("!" in c.routing,
+      f"routing keeps its own '!' lines, which FRR needs: {c.routing}")
+check("ip route 0.0.0.0/0 192.0.2.1" in c.routing,
+      f"the routing statement is preserved: {c.routing}")
+print(f"  routing section: {c.routing}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

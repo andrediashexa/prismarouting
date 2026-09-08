@@ -44,9 +44,19 @@ fi
 KVM=""
 [ -w /dev/kvm ] && KVM="--device=/dev/kvm"
 
+# The ISO labs boot a virtual machine INSIDE this container, and that VM asks
+# for 8 GB. Under the 5 GB default the cgroup kills it part-way through, which
+# looks like the install failing rather than like the runner refusing to hold
+# it - the lab then reports whatever it could read off a disk that was never
+# flushed. A lab that does not fit in its own runner fails for a reason that
+# has nothing to do with what it tests.
+case "$LAB" in
+  boot-iso|install-iso) LAB_MEM=${LAB_MEM:-10g} ;;
+esac
+
 exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BPA_RTSP_OFF="${BPA_RTSP_OFF:-}" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "apt-get update -qq >/dev/null 2>&1
-         apt-get install -y -qq qemu-system-x86 openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
+         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
          sh /src/lab/$LAB.sh $LAB_ARGV"

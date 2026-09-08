@@ -441,6 +441,24 @@ class Config:
                 cfg.routing.append(line)
                 continue
 
+            # `!` is the comment marker in this file format - the same one FRR
+            # and every configuration written in this style use. The two
+            # section headers above are the only `!` lines that mean anything;
+            # the rest are comments and MUST be ignored.
+            #
+            # They were not, and install.sh writes "!\n! HexaRouting\n!\n" as
+            # the default configuration. So hexash --load refused to load it -
+            # "these lines are not understood" - and exited non-zero, which
+            # made hexarouting.service FAIL ON THE FIRST BOOT OF EVERY INSTALL
+            # (#94). The banner this project ships was a syntax error to the
+            # parser this project ships.
+            #
+            # Routing keeps its own `!` lines: the branch above returns first,
+            # because FRR uses them as separators and frr-reload is given the
+            # section verbatim.
+            if line.lstrip().startswith("!"):
+                continue
+
             s = line.strip()
             if s.startswith("snmp-user "):
                 w = s.split()

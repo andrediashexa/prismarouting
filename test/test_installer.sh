@@ -74,6 +74,135 @@ run 1 "a target that is not a block device: refused" \
     HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t
 
 echo
+ok()  { echo "  [ ok ] $*"; }
+bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
+
+echo "=== the disk menu: a letter, or Enter for the largest ==="
+#
+# The one question in this program where a wrong answer destroys something.
+# Driven against a FAKE lsblk, because the alternative is real block devices -
+# and a test that needs those is a test that does not run.
+#
+fake=$(mktemp -d)
+cat > "$fake/lsblk" <<'LSBLK'
+#!/bin/sh
+# -dnbo NAME,SIZE,TYPE,MODEL : the table disk_table() reads
+# -dno SIZE / SIZE,MODEL     : the human size for one disk
+# -ndo PKNAME <dev>          : the parent of a partition
+for a in "$@"; do case "$a" in
+  -dnbo) MODE=table ;;
+  -ndo)  MODE=pkname ;;
+esac; done
+case "${MODE:-human}" in
+  table)
+    printf 'sda 34359738368 disk KINGSTON SA400
+'
+    printf 'sdb 1000204886016 disk WD Black 1TB
+'
+    printf 'sdc 8589934592 disk SanDisk Cruzer
+'
+    ;;
+  pkname) printf '
+' ;;
+  human)
+    # "-dno SIZE" is one column; "-dno SIZE,MODEL" is two. A fake that
+    # answers both with two columns glues the model onto the size in the
+    # menu - and a fake that renders wrong hides a real formatting bug.
+    case "$*" in
+      *SIZE,MODEL*) _two=1 ;;
+      *) _two=0 ;;
+    esac
+    case "$*" in
+      *sda*) _s=' 32G'; _m='KINGSTON SA400' ;;
+      *sdb*) _s='932G'; _m='WD Black 1TB' ;;
+      *sdc*) _s='  8G'; _m='SanDisk Cruzer' ;;
+      *)     _s='?';    _m='?' ;;
+    esac
+    if [ "$_two" = 1 ]; then echo "$_s $_m"; else echo "$_s"; fi
+    ;;
+esac
+LSBLK
+cat > "$fake/findmnt" <<'FINDMNT'
+#!/bin/sh
+# The medium this system booted from: the 8 GB stick.
+printf '/dev/sdc
+'
+FINDMNT
+chmod +x "$fake/lsblk" "$fake/findmnt"
+
+INST=$(cd "$(dirname "$0")/.." && pwd)/appliance/hexarouting-install
+pick() {  # <answer on stdin> -> the chosen path
+  printf '%s
+' "$1" | (
+    PATH="$fake:$PATH"
+    HEXA_INSTALL_LIB=1
+    export HEXA_INSTALL_LIB
+    . "$INST"
+    choose_disk 2>/dev/null
+  )
+}
+
+out=$(pick "")
+case "$out" in
+  /dev/sdb) ok "Enter alone chose the largest disk: $out" ;;
+  *) bad "Enter alone must choose the largest disk, got '$out'" ;;
+esac
+
+out=$(pick "a")
+case "$out" in
+  /dev/sdb) ok "'a' is the first line, which is the largest: $out" ;;
+  *) bad "'a' must select the first line, got '$out'" ;;
+esac
+
+out=$(pick "b")
+case "$out" in
+  /dev/sda) ok "'b' selects the second: $out" ;;
+  *) bad "'b' must select the second line, got '$out'" ;;
+esac
+
+out=$(pick "/dev/sda")
+case "$out" in
+  /dev/sda) ok "a device path is still accepted: $out" ;;
+  *) bad "a device path must still work, got '$out'" ;;
+esac
+
+# The medium the system booted from must not be offered at all. Overwriting it
+# fails halfway through and leaves neither system usable - and it is exactly
+# the disk somebody in a hurry picks, because it is the one they just plugged
+# in.
+menu=$(printf '
+' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+                      . "$INST"; choose_disk 2>&1 >/dev/null))
+case "$menu" in
+  *sdc*) bad "the boot medium was offered in the menu:
+$menu" ;;
+  *) ok "the boot medium is not in the menu" ;;
+esac
+case "$menu" in
+  *"default, the largest"*) ok "the menu says which one is the default and why" ;;
+  *) bad "the menu must mark the default" ;;
+esac
+
+# The size is its own column. This is here because the first version of the
+# fake lsblk above answered "-dno SIZE" with two columns, which glued the
+# model onto the size - and a menu whose columns run together is a menu an
+# operator misreads at the one prompt where misreading costs a disk.
+case "$menu" in
+  *"932G  WD Black 1TB"*) ok "size and model are separate columns" ;;
+  *) bad "the menu columns run together:
+$menu" ;;
+esac
+
+# A letter nobody offered must not silently become a disk.
+out=$(pick "z
+b")
+case "$out" in
+  /dev/sda) ok "an unoffered letter re-asks rather than guessing: $out" ;;
+  *) bad "'z' then 'b' must end up at the second disk, got '$out'" ;;
+esac
+
+rm -rf "$fake"
+
 echo "=== 'install' exists only on the installation medium ==="
 # A command that overwrites the disk must not be one TAB away from "interface"
 # on a router carrying traffic. The VTY decides that from whether the box is
