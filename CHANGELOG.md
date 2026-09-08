@@ -25,7 +25,40 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.26.0.
+Nothing merged since v0.27.0.
+
+## 0.27.0 — the daemons the VTY offers actually run
+
+An installed box ran `zebra`, `mgmtd` and `staticd` — and **not one routing
+protocol**. The VTY offers BGP, OSPF and IS-IS: `?` lists them, TAB completes
+them, `commit` accepts them, and the daemon was not there.
+
+### Fixed
+
+* **`bgpd`, `ospfd` and `isisd` are enabled on an installed box**
+  ([#99](https://github.com/andrediashexa/hexarouting/issues/99)). `frrinit.sh`
+  starts `zebra`, `mgmtd` and `staticd` unconditionally; everything else is a
+  line in `/etc/frr/daemons`, which Debian ships as `no` and the installer
+  never touched.
+
+  What hid it: `lab/routing.sh` proves all three work **by starting those
+  daemons by hand**. The lab and the product disagreed about what runs, and the
+  lab was the optimistic one.
+
+* **`commit check` refuses a `router <protocol>` statement whose daemon is not
+  running**, naming it. The silence was not otherwise guaranteed: `vtysh`
+  prints `bgpd is not running` while `frr-reload.py` still returns 0, so the
+  commit reported success for configuration that reached nothing.
+
+### Added
+
+* The boot self-test reports which routing daemons answer — as a warning, since
+  a box deliberately running fewer is legitimate, but one that cannot run BGP
+  should say so before somebody configures BGP on it.
+* `lab/install-iso.sh` asserts them **on the installed disk**. That missing
+  assertion is what let this ship: the lab tested a machine it had arranged
+  rather than the machine that gets delivered.
+
 
 ## 0.26.0 — the table you can see is not always the table that forwards
 
