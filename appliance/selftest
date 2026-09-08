@@ -166,6 +166,25 @@ else
   bad "FRR not responding"
 fi
 
+# --- the binary API, which is how a pool gets created ---
+#
+# hexash creates and changes pools over the binary API, not the CLI socket.
+# Without the vat2 plugin that API is not registered and every pool operation
+# fails - so the box runs, answers, routes, and cannot be configured to do the
+# one thing it is for. The ISO shipped without that plugin for the life of the
+# project and said so only as a warning in the build log
+# (https://github.com/andrediashexa/hexarouting/issues/119).
+#
+# Read-only on purpose. This runs at every boot on a production box: it asks
+# whether the API is registered and does not create anything to find out.
+if vat2 --dump-apis 2>/dev/null | grep -q bpa_pool_add_del; then
+  ok "binary API registered, so pools can be configured"
+else
+  bad "binary API NOT registered: no CGNAT pool can be configured here"
+  say "         the vat2 plugin is missing from this install. The box will"
+  say "         route and answer, and every pool commit will fail."
+fi
+
 # --- where the connection records live ---
 #
 # In dynamic mode the allocation log IS the record the Marco Civil requires to

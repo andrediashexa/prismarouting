@@ -289,5 +289,30 @@ check("ip route 0.0.0.0/0 192.0.2.1" in c.routing,
       f"the routing statement is preserved: {c.routing}")
 print(f"  routing section: {c.routing}")
 
+# --- an empty file is not a configuration that removes everything ---
+#
+# This is the text appliance/install.sh writes, byte for byte. Read as a
+# complete configuration it says "no SSH access", and the box it is read on has
+# SSH access the installer just set up - so the lockout check refused it and
+# hexarouting.service failed on the first boot of every install (#121).
+print("\n=== the installer's own default configuration ===")
+INSTALLED_DEFAULT = "!\n! HexaRouting\n!\n"
+check(config.Config.parse(INSTALLED_DEFAULT).is_empty(),
+      "the file install.sh writes holds no statements")
+check(config.Config.parse("").is_empty(), "and neither does an empty file")
+check(config.Config.parse("\n\n   \n").is_empty(), "nor blank lines")
+
+# The distinction that matters, and the one an is_empty() written against the
+# fields gets wrong: ssh and snmp start as copies of their defaults, so a file
+# setting one of them to its default value looks identical to a file that said
+# nothing. It is not nothing - it is a statement, and it MUST be checked like
+# any other.
+check(not config.Config.parse("ssh password-authentication yes\n").is_empty(),
+      "a statement whose value happens to be the default is still a statement")
+check(not config.Config.parse("cgnat logging enable\n").is_empty(),
+      "an ordinary statement is not empty")
+check(not config.Config.parse("! routing\nrouter bgp 65000\n").is_empty(),
+      "a routing section alone is not empty")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

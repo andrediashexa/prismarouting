@@ -2323,6 +2323,18 @@ class Shell:
                 print(f"    line {lineno}: {text}    ({why})")
             return
 
+        # A file with no statements is nothing to apply, and MUST NOT be read
+        # as a configuration that removes what is there. The installer ships
+        # exactly such a file, so this path runs on the first boot of every
+        # new box: the box has SSH access the installer set up, the file does
+        # not mention SSH, and the lockout check correctly saw a change that
+        # would take that access away. hexarouting.service failed, and the
+        # first thing an operator saw on a new appliance was a failed unit
+        # (#121). Returning here rather than weakening the lockout check: the
+        # check is right, the input was not a change.
+        if target.is_empty():
+            return
+
         # Checked before it is applied, and refused whole if the check refuses.
         #
         # This runs at boot, unattended. Without it a file the VTY would refuse

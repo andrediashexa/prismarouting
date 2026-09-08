@@ -48,6 +48,30 @@ else
   exit 1
 fi
 
+# The vat2 plugin, resolved the same way and refused just as hard.
+#
+# It was never copied in at all. install.sh looked for it in two places, found
+# neither inside the chroot, printed a warning and carried on - and that
+# warning has been in the build log of every release since the beginning. The
+# medium therefore shipped without the binary API registered, and hexash
+# creates a pool over that API: the appliance could not be configured to do
+# the one thing it exists for.
+#
+# Nothing caught it because every lab that drives the API calls
+# use_binary_api(), which places this file by hand and describes itself as
+# doing "what install.sh does on a real box". It was not what install.sh was
+# doing on a real box. https://github.com/andrediashexa/hexarouting/issues/119
+if [ -f "$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so" ]; then
+  VAT2_SO="$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+elif [ -f /vat2_plugins/bpa_test_plugin_bpa_plugin.so ]; then
+  VAT2_SO=/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+else
+  echo "bpa_test_plugin_bpa_plugin.so not found; run tools/build.sh plugin" >&2
+  echo "first. Without it the binary API is unreachable and no pool can be" >&2
+  echo "configured on the installed box." >&2
+  exit 1
+fi
+
 ROOT=$WORK/chroot
 rm -rf "$WORK"
 mkdir -p "$ROOT" "$WORK/iso/live" "$WORK/iso/boot/grub"
@@ -79,8 +103,9 @@ chroot "$ROOT" /bin/sh -c "
 say "HexaRouting"
 mkdir -p "$ROOT/src"
 cp -a "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs" "$ROOT/src/"
-mkdir -p "$ROOT/vpp_plugins"
+mkdir -p "$ROOT/vpp_plugins" "$ROOT/vat2_plugins"
 cp "$PLUGIN_SO" "$ROOT/vpp_plugins/"
+cp "$VAT2_SO" "$ROOT/vat2_plugins/"
 # The chroot cannot see the host's .git, so the stamp is computed here and
 # passed in. Without it every ISO would declare itself "unknown".
 if [ -z "${HEXA_VERSION_STAMP:-}" ]; then
@@ -89,6 +114,22 @@ fi
 say "version: $HEXA_VERSION_STAMP"
 chroot "$ROOT" /bin/sh -c "cd /src && HEXA_VERSION_STAMP='$HEXA_VERSION_STAMP' HEXA_VTY_LOGIN=1 sh appliance/install.sh"
 rm -rf "$ROOT/src"
+
+# install.sh warns and carries on when it cannot find the vat2 plugin, which is
+# right for a source install on a box that may not want the API and wrong for a
+# medium. A warning in a build log this long is not a signal; this is.
+#
+# The assertion is on the file install.sh was supposed to place, not on the
+# copy staged above, so it fails if the copy is there and the install step
+# stops putting it in place.
+VAT2_INSTALLED="$ROOT/usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+[ -f "$VAT2_INSTALLED" ] || {
+  echo "the vat2 plugin did not reach the image. The binary API would not be" >&2
+  echo "registered and no CGNAT pool could be configured on the installed" >&2
+  echo "box (#119)." >&2
+  exit 1
+}
+say "binary API: vat2 plugin in place"
 
 # Autologin on the console, for the LIVE image only. A racked appliance is
 # reached by serial console or IPMI, and a live lab image that stops at a login

@@ -386,6 +386,34 @@ class Config:
         self.snmp_users: dict = {}
         self.globals: list[str] = []           # other cgnat statements
         self.routing: list[str] = []           # verbatim FRR statements
+        # How many statements the text actually held. Counted rather than
+        # inferred from the fields: ssh and snmp start as copies of their
+        # defaults, so a file that sets one of them to its default value would
+        # look identical to a file that said nothing - and "said nothing" is
+        # the case this number exists to identify. See is_empty().
+        self.n_statements: int = 0
+
+    def is_empty(self) -> bool:
+        """
+        True when the file held no statements at all - only comments, or
+        nothing.
+
+        An empty file is not a configuration that removes everything; it is a
+        configuration nobody has written yet. The installer ships exactly such
+        a file - "!\n! HexaRouting\n!" - and reading it as removal made
+        `hexash --load` refuse it at the first boot of every fresh install:
+        the box had SSH access from the installer and the file did not mention
+        SSH, so the lockout check saw a change that took the access away.
+        https://github.com/andrediashexa/hexarouting/issues/121
+
+        This asks whether the text held any statement, NOT whether the result
+        differs from the defaults. A file saying `ssh password-authentication
+        yes` states something, even though that is the default value, and a
+        configuration that states something MUST be applied and checked like
+        any other. Comparing against the defaults instead would silently skip
+        it.
+        """
+        return self.n_statements == 0
 
     # ------------------------------------------------------------ text
 
@@ -438,6 +466,7 @@ class Config:
                 section = "cgnat"
                 continue
             if section == "routing":
+                cfg.n_statements += 1
                 cfg.routing.append(line)
                 continue
 
@@ -459,6 +488,7 @@ class Config:
             if line.lstrip().startswith("!"):
                 continue
 
+            cfg.n_statements += 1
             s = line.strip()
             if s.startswith("snmp-user "):
                 w = s.split()

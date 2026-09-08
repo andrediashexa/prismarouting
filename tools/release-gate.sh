@@ -106,8 +106,30 @@ grep -q "HexaRouting ready" "$WORK/boot.log" || {
   exit 1
 }
 
+# The live image booting proves the medium is bootable. It does not prove the
+# medium produces a working appliance, and those are different claims: the live
+# image never runs the installed-box path.
+#
+# Two defects lived in that gap for the life of the project. The ISO never
+# carried the vat2 plugin, so an installed box had no binary API and could not
+# be configured to do CGNAT at all (#119). Behind it, hexarouting.service
+# failed on the first boot of every install (#121). Neither was visible from a
+# live boot, and both were found the first time this ran.
+#
+# So the gate installs to a disk and boots THAT, with the medium detached. The
+# second boot is the assertion; a live image cannot make it.
+echo "==> installing it to a disk and booting the disk"
+( cd "$WORK" && make test-install ) > "$WORK/install.log" 2>&1 || {
+  echo "error: the medium installed and the installed box failed its checks." >&2
+  grep -E "\[FAIL\]" "$WORK/install.log" | head -10 >&2
+  echo "       full console: $WORK/install.log" >&2
+  exit 1
+}
+
 echo
 echo "==> $NAME is ready to publish"
 echo "    $WORK/$NAME"
 echo "    sha256 $(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
 grep -E "^\s+\[ ok \] HexaRouting|HexaRouting ready" "$WORK/boot.log" | sed 's/^/    /'
+grep -E "\[ ok \] the installed box can configure a pool" "$WORK/install.log" \
+  | sed 's/^/    /'
