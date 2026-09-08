@@ -25,7 +25,49 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.39.0.
+Nothing merged since v0.40.0.
+
+## 0.40.0 — an interface can be described and shut down
+
+First of [#128](https://github.com/andrediashexa/hexarouting/issues/128), the
+phase that makes an interface a first-class object
+([#129](https://github.com/andrediashexa/hexarouting/issues/129)).
+
+### Added
+
+* **`description <text>`** inside an interface block. It lives in the
+  dataplane, as a VPP interface tag, and is mirrored to the Linux side as the
+  interface alias — so it is read back from the box like the MTU, and `ip -d
+  link` and FRR agree with the VTY instead of contradicting it.
+* **`shutdown` / `no shutdown`**, over the binary API, reaching **both sides**
+  of the `linux_cp` pair. Shutting the VPP interface alone leaves FRR holding
+  adjacencies over a port that has stopped forwarding. Applied down first and
+  up last, so an interface being taken down stops carrying traffic before its
+  configuration changes underneath it.
+
+### Fixed
+
+* **The VTY was sending unrecognised interface statements to FRR.** `mtu` and
+  `urpf` were intercepted by name and everything else fell through a catch-all
+  into the routing section — and FRR accepts both `description` and `shutdown`
+  inside an interface stanza, so nothing errored and neither reached the
+  dataplane.
+* **`local0` is no longer reported as administratively down.** It always is,
+  so the running configuration said `shutdown` on every box before anybody
+  typed it.
+
+### Worth recording
+
+Five assertions in the first version of this work could not fail: three read
+`show running-config`, which includes FRR's half, so they matched the copy
+that had gone to the wrong place; two matched `local0`. They now read the
+dataplane — the tag from `sw_interface_dump`, the State column from `show
+interface` — and one checks the description was **not** handed to FRR.
+
+`flags: 0` segfaults `vat2`: administrative down is the absence of
+`IF_STATUS_API_FLAG_ADMIN_UP`, and the client cannot render an empty flag set.
+Down is sent as `IF_STATUS_API_FLAG_LINK_UP`, which VPP ignores except for the
+absent `ADMIN_UP`.
 
 ## 0.39.0 — roles reach the dataplane
 
