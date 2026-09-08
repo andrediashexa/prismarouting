@@ -25,7 +25,43 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.40.0.
+Nothing merged since v0.41.0.
+
+## 0.41.0 — addresses belong to the configuration
+
+Second of [#128](https://github.com/andrediashexa/hexarouting/issues/128)
+([#130](https://github.com/andrediashexa/hexarouting/issues/130)).
+
+### Added
+
+* **`ipv4 address` and `ipv6 address`** inside an interface block,
+  repeatable, with `no ipv4 address <prefix>` removing one. Over the binary
+  API, in the running configuration, restored by `rollback`. Until now they
+  were set with `vppctl` and were therefore outside the candidate, the commit,
+  the rollback and the running configuration.
+
+  The keyword and the prefix must agree: `ipv6 address 10.0.0.1/24` is refused
+  as a typo. `sw_interface_add_del_address` carries one prefix field for both
+  families and infers the family from the value, so without the check the
+  dataplane would take it and quietly configure something nobody wrote.
+
+  Removals are applied before additions, and the delta compares sets so that
+  adding one address does not re-apply the others — re-applying removes and
+  re-adds, which on the interface carrying the session is a disconnection
+  nobody asked for.
+
+### Worth recording
+
+Four test defects surfaced while writing this, all in tests rather than in the
+product: an assertion that measured the aftermath of the section above it;
+`grep -q 1500` on `show interface` matching a packet counter while the MTU sat
+at 1450; a lab MTU restore that sent its output to `/dev/null` and had never
+worked; and, once fixed, that restore breaking the rollback test three
+sections away — a commit pushes a rollback revision, so inserting one shifts
+what `rollback 1` means.
+
+`lab/urpf.sh` also captured the interface block with `grep -A2`, so the new
+address line pushed `urpf loose` out of the window. It reads to `exit` now.
 
 ## 0.40.0 — an interface can be described and shut down
 
