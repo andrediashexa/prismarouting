@@ -786,5 +786,42 @@ sh.feed("exit-address-family")
 check(sh.failed > before,
       "and outside an address-family it is refused, not silently obeyed")
 
+# --- the "not checked" marker is DISPLAY ONLY (#144) ---
+#
+# A marker that reached the stored configuration would be appended mid-statement
+# in the file handed to FRR, and FRR is not obliged to accept a comment there.
+# A configuration that cannot be fed back is not a configuration, so this is
+# the check that the marker never leaves the display path.
+print("\n=== the unchecked marker never leaves the display ===")
+from hexash import mark_unchecked                                # noqa: E402
+from config import Config                                        # noqa: E402
+
+policy = [
+    "route-map RM-X permit 10",
+    " match ip address prefix-list PL-A",
+    " set local-preference 200",
+    " set tag 100",
+]
+cfg = Config()
+cfg.routing = list(policy)
+# Marked through the real text, header and all - the same string `show
+# running-config` prints and `save` writes.
+shown = mark_unchecked(cfg.text().splitlines())
+check(any("not checked by this VTY" in l for l in shown),
+      f"the unmodelled statement is marked: {[l for l in shown if 'tag' in l]}")
+check(not any("<-" in l for l in shown if "local-preference" in l),
+      "and a modelled one is not")
+check("not checked" not in cfg.text(),
+      "the marker is not in the text a commit would send")
+# An operator WILL copy what is on their screen into a file, so the displayed
+# text has to parse back to exactly the configuration it was made from, with
+# the marker taken off again.
+again = Config.parse("\n".join(shown))
+check([l.strip() for l in again.routing if l.strip()]
+      == [l.strip() for l in policy if l.strip()],
+      f"the displayed text parses back unchanged: {again.routing}")
+check(not again.unknown,
+      f"and with nothing the VTY cannot read: {again.unknown}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

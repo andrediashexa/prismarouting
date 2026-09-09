@@ -1392,6 +1392,88 @@ checks — is evidence that the VTY configured a BGP session that works, on a bo
 where nothing else did. The prefix is asserted in the **VPP FIB**, not in FRR's
 table: FRR holding a route is a different claim from the box forwarding on it.
 
+## Route-maps
+
+Route-maps are where an ISP's policy lives, and the VTY modelled none of it.
+`match` and `set` now complete, from the box: prefix-lists, AS-path lists,
+community lists, route-maps and neighbours are offered by name, read back from
+FRR rather than from a model kept here.
+
+The clause set modelled is the one an ISP edge uses:
+
+| match | set |
+|---|---|
+| `ip address prefix-list` | `local-preference` |
+| `ip next-hop prefix-list` | `metric` |
+| `ipv6 address prefix-list` | `community` (with `additive`) |
+| `as-path` | `large-community` |
+| `community` | `next-hop` |
+| `large-community` | `as-path prepend` / `exclude` |
+| `metric` | `weight` |
+| `peer` | `origin` |
+
+### What is refused, and what is only said
+
+The split is the point.
+
+**A `deny` clause carrying `set` is refused.** The set never runs — the route is
+denied — so the operator wrote something that reads like policy and is not.
+That one is a mistake every time.
+
+**A `permit` clause with no `match` is reported, not refused.** It permits every
+route. That is a common, deliberate way to end a policy, and it is also exactly
+what "I had not finished typing" looks like. The VTY cannot tell them apart, and
+neither can anyone afterwards — which is why it must be said at `commit`:
+
+```
+warning: route-map RM-TRANSITO-IN permit 20: no 'match': this permits every
+route. If that is meant, it is the end of the policy; if not, the policy is
+unfinished
+```
+
+**A clause an earlier catch-all makes unreachable is reported.** Sequence
+numbers are the operator's and this MUST NOT renumber them, but a policy that
+looks right and does nothing is worth a sentence.
+
+### What was not checked is marked
+
+Most of a route-map still passes straight through to FRR. Without a marker an
+operator reading the running configuration cannot tell a statement the box
+verified from one it merely forwarded, and reads a guarantee into both:
+
+```
+route-map RM-PASS permit 10
+ match ip address prefix-list PL-MEUS-BLOCOS
+ set tag 100    <- not checked by this VTY
+```
+
+**Display only**, and that is the design rather than a caveat: the marker must
+never reach `Config.text()`, the saved configuration, a rollback revision or
+the file handed to FRR. A comment appended mid-statement is not something FRR
+is obliged to accept, and a configuration that cannot be fed back is not a
+configuration.
+
+### How it is tested
+
+On the tables, never on the text of the configuration. `lab/routing.sh` has a
+**second link to the same peer**, so both sessions carry `203.0.113.0/24` and
+`set local-preference` has something to choose between:
+
+* **local-preference changes which path the dataplane forwards on.** The
+  assertion is on the VPP FIB's next hop, and on the fact that it *changed* —
+  which path the tie-break picked first is read at runtime, and the policy
+  prefers the other one, so the test is about the policy and not about FRR's
+  tie-break.
+* **`set as-path prepend` appears in the neighbour's received AS path**, read
+  from the neighbour's table in JSON. `65000 65000 65000` on the session with
+  the policy.
+* **A match that matches nothing changes nothing.** The second session carries
+  the same prefix with a policy whose `match` selects a prefix this box does not
+  announce, and the neighbour still sees `65000`. Same prefix, same box, same
+  moment: the policy is the only difference between the two AS paths. Without
+  this half, a `set` that applied to everything would pass every test that only
+  checked the routes it was supposed to affect.
+
 ## Prefix-lists
 
 ```

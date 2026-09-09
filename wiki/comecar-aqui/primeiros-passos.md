@@ -5,13 +5,14 @@ Do disco vazio até assinantes navegando. Cada passo diz **o que digitar** e **c
 ```mermaid
 flowchart TD
     A["1. Instalar pela ISO"] --> B["2. Entrar na VTY"]
-    B --> C["3. Identificar as interfaces<br/>NUNCA a de gerência"]
-    C --> D["4. Criar o pool"]
-    D --> E["5. Habilitar CGNAT nas interfaces"]
-    E --> F["6. commit check"]
-    F --> G["7. commit"]
-    G --> H["8. save"]
-    H --> I["9. Conferir com show"]
+    B --> C["3. HEXA_DATAPLANE_IF<br/>a caixa sai de fábrica sem placa"]
+    C --> D["4. Identificar as interfaces<br/>NUNCA a de gerência"]
+    D --> E["5. Criar o pool"]
+    E --> F["6. Habilitar CGNAT nas interfaces"]
+    F --> G["7. commit check"]
+    G --> H["8. commit"]
+    H --> I["9. save"]
+    I --> J["10. Conferir com show"]
 ```
 
 ## Antes de começar, decida duas coisas
@@ -43,7 +44,25 @@ hexarouting>
 
 Precisa de um shell? `start shell`, e `exit` volta.
 
-## 3. Identificar as interfaces
+## 3. Dizer à caixa qual placa carrega os assinantes
+
+**Uma caixa recém-instalada não entrega placa nenhuma ao dataplane.** A configuração sai de fábrica vazia, de propósito, e o self-test de boot avisa que a caixa não tem interface de dataplane e nomeia o arquivo a editar.
+
+Edite `/etc/hexarouting/tune.env`:
+
+```
+HEXA_DATAPLANE_IF=<nome da placa dos assinantes>
+```
+
+e reinicie. Só depois disso o VPP recebe a placa.
+
+
+:::warning
+**A placa que carrega a rota default é recusada, mesmo que você a nomeie**, e a recusa é impressa. As duas falhas não são simétricas: uma caixa sem interface de dataplane se resolve entrando por rede; uma caixa que engoliu a própria gerência se resolve indo até ela a pé.
+
+:::
+
+## 4. Identificar as interfaces
 
 ```
 show interface
@@ -51,7 +70,7 @@ show interface
 
 Anote qual é a de assinantes (*inside*) e qual é a de upstream (*outside*). Confirme que a de gerência não está entre elas.
 
-## 4. Criar o pool
+## 5. Criar o pool
 
 ```
 configure
@@ -80,14 +99,14 @@ O que cada linha decide:
 
 Não sabe o que digitar? **TAB** completa e `**?**` lista as opções válidas com descrição, em qualquer ponto da linha.
 
-## 5. Habilitar nas interfaces
+## 6. Habilitar nas interfaces
 
 ```
 cgnat interface TenGigabitEthernet0/0/0 inside
 cgnat interface TenGigabitEthernet0/0/1 outside
 ```
 
-## 6. Ver o que vai acontecer, antes de acontecer
+## 7. Ver o que vai acontecer, antes de acontecer
 
 ```
 show configuration compare
@@ -96,7 +115,7 @@ commit check
 
 `commit check` valida sem aplicar e informa **quantos assinantes seriam re-mapeados**. Em pool novo, nenhum. Em pool existente, esse número é literalmente quanta gente vai cair.
 
-## 7. Aplicar
+## 8. Aplicar
 
 ```
 commit comment "pool residencial inicial"
@@ -110,7 +129,7 @@ commit confirmed 5
 
 Aplica agora e desfaz sozinho em 5 minutos se você não confirmar. Se a mudança cortar seu próprio acesso, a máquina se recupera.
 
-## 8. Salvar
+## 9. Salvar
 
 ```
 exit
@@ -119,7 +138,7 @@ save
 
 `**commit**` **faz valer agora;** `**save**` **grava em disco.** Sem o `save`, a configuração desaparece no próximo boot. São duas decisões distintas, por isso são dois comandos.
 
-## 9. Conferir
+## 10. Conferir
 
 ```
 show cgnat pool
@@ -157,6 +176,7 @@ configure
 
 Antes de considerar a máquina pronta:
 
+- [ ] `HEXA_DATAPLANE_IF` está definido e a caixa foi reiniciada depois disso
 - [ ] A interface de gerência **não** está no CGNAT
 - [ ] `show cgnat pool` lista o pool
 - [ ] `show cgnat subscriber <ip-de-teste>` devolve endereço público e faixa de portas

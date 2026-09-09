@@ -372,6 +372,13 @@ def _address_family_error(keyword: str, prefix: str):
     return None
 
 
+#: What `show running-config` appends to a route-map statement this VTY does
+#: not model. Defined here because BOTH halves need it: the display adds it and
+#: the parser takes it off, and two spellings of the same string would be a
+#: marker that survives a copy-paste into a configuration file.
+UNCHECKED_MARK = "    <- not checked by this VTY"
+
+
 class Config:
     """A complete device configuration."""
 
@@ -541,6 +548,13 @@ class Config:
         snmp_user = None
         for lineno, raw in enumerate(text.splitlines(), 1):
             line = raw.rstrip()
+            # `show running-config` marks route-map statements this VTY did
+            # not verify. That marker is a display transform - but an operator
+            # copies what is on their screen into a file, and a marker read
+            # back as configuration would be appended to a statement handed to
+            # FRR. Stripped here so the screen and the file agree.
+            if line.endswith(UNCHECKED_MARK):
+                line = line[:-len(UNCHECKED_MARK)].rstrip()
             if not line.strip():
                 continue
             if line.strip() == ROUTING_HEADER:

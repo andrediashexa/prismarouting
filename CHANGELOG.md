@@ -25,7 +25,75 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.51.0.
+Nothing merged since v0.52.0.
+
+## 0.52.0 — route-maps, and a refusal the next commit used to pay for
+
+Policy the VTY understands
+([#144](https://github.com/andrediashexa/hexarouting/issues/144)), and the half
+[#160](https://github.com/andrediashexa/hexarouting/issues/160) left open
+([#164](https://github.com/andrediashexa/hexarouting/issues/164)).
+
+### Added
+
+* **`match` and `set` complete inside a route-map**, with the clause set an ISP
+  edge uses, and names read back from FRR: prefix-lists, AS-path lists,
+  community lists, route-maps and neighbours.
+
+* **A `deny` clause carrying `set` is refused.** The set never runs — the route
+  is denied — so the operator wrote something that reads like policy and is not.
+
+* **A `permit` clause with no `match` is reported, not refused.** It permits
+  every route, which is a deliberate way to end a policy and is also exactly
+  what an unfinished one looks like. The VTY cannot tell them apart and neither
+  can anyone afterwards, so it says so at `commit`. A clause an earlier
+  catch-all makes unreachable is reported the same way; sequence numbers are the
+  operator's and are never renumbered.
+
+* **What was not checked is marked** where the configuration is displayed:
+
+  ```
+  set tag 100    <- not checked by this VTY
+  ```
+
+  Display only. The marker never reaches the saved configuration, a rollback
+  revision or the file handed to FRR — and it is stripped on the way back in,
+  so copying the screen into a file is safe. Both halves are asserted.
+
+### Fixed
+
+* **A stale FRR refusal no longer costs the operator's next commit.** Measured:
+  a statement FRR rejects through the file-load path — which is the path
+  `frr-reload` uses — leaves the rejected entry in mgmtd's candidate datastore,
+  and the *next* commit is refused with the same message, naming a statement
+  that is in no configuration the operator can find. Exactly one commit, then it
+  clears. The VTY now takes that one itself.
+
+  Which absorbers work was measured, not guessed: `configure terminal`+`end`
+  does not clear it, nor does setting the hostname to what it already is —
+  neither changes anything, so mgmtd never re-validates. `no ip prefix-list` on
+  a name nobody has does, and leaves nothing behind.
+
+### Internal
+
+* `lab/routing.sh` has a **second link to the same peer**, so both sessions
+  carry the same prefix and `set local-preference` has something to choose
+  between. The assertion is on the VPP FIB's next hop and on the fact that it
+  changed; which path the tie-break picked first is read at runtime, so the test
+  is about the policy rather than about FRR's tie-break.
+
+* The prepend test reads the **neighbour's** table, and the second session
+  carries the same prefix with a `match` that matches nothing — same prefix,
+  same box, same moment, policy the only difference. Without that half, a `set`
+  applying to everything would pass a test that only checked the session it was
+  meant to change.
+
+* Three assertions were removed or rewritten after they turned out not to be
+  able to fail: `set extcommunity rt nonsense` is *accepted* by FRR, so a test
+  built on it proving "the next commit is unharmed" proved nothing. The
+  absorber is now tested against a poison that is reproduced first, with the
+  control — "with the refusal standing, the next commit MUST fail" — asserted
+  before the fix is asserted.
 
 ## 0.51.0 — BGP neighbours the VTY understands
 

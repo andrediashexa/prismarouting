@@ -71,6 +71,20 @@ Cada registro exportado tem estes campos:
 | 362 | `portRangeEnd` | 16   | não         | fim do bloco |
 | 283 | `natPoolId` | 32   | não         | índice do pool |
 
+
+:::warning
+**Registros coletados por TCP em versões até a 0.34.0 têm esse campo errado.** Eles carregavam segundos desde o boot do VPP em vez da hora do dia — o coletor decodificava uma alocação como `00:00:05`. O exportador UDP, carregando os mesmos eventos, decodificava a hora certa.
+
+Três consequências, e a terceira é a que importa para guarda legal:
+
+* registros de boots diferentes **não são ordenáveis**, porque o relógio volta a zero a cada reinício e o log anda para trás;
+* os dois transportes não podiam se corroborar, que é a única razão de rodar os dois;
+* **um pedido que nomeia uma hora do dia — que é todo pedido que este log existe para responder — não podia ser resolvido.**
+
+Corrigido na **0.35.0**. Um log já coletado por TCP pode ser reparado se a hora de boot da caixa for conhecida; **nada recupera a ordenação entre reinícios**. Se você opera modo dinâmico e coletou por TCP em versão anterior, trate isso como um problema de retenção, não de cosmética.
+
+:::
+
 Os três valores de `natEvent` usados:
 
 | Valor | Evento |

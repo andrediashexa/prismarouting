@@ -20,12 +20,21 @@ cd /src
 
 ip link add veth-out type veth peer name veth-vpp 2>/dev/null
 ip link set veth-vpp up
+# A SECOND link to the same peer, so there are two paths to the same prefix.
+# Without it `set local-preference` has nothing to choose between, and a policy
+# test would be asserting that a value appears in a table rather than that it
+# changed which way packets go (#144).
+ip link add veth2-out type veth peer name veth2-vpp 2>/dev/null
+ip link set veth2-vpp up
 
 ip netns add peer 2>/dev/null
 ip link set veth-out netns peer
 ip netns exec peer ip link set lo up
 ip netns exec peer ip link set veth-out up
 ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
+ip link set veth2-out netns peer
+ip netns exec peer ip link set veth2-out up
+ip netns exec peer ip addr add 10.1.0.2/24 dev veth2-out
 # one prefix per protocol, so there is no doubt about which brought which
 for d in bgp:203.0.113.1/24 ospf:198.18.0.1/24 isis:198.19.0.1/24; do
   n=${d%%:*}; a=${d##*:}
@@ -53,6 +62,15 @@ vppctl set interface mtu 1500 host-veth-vpp
 vppctl lcp osi-proto enable 0x83
 
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
+
+# The second link. No OSPF or IS-IS on it - it exists to carry a second BGP
+# session, and adding IGP would give the FIB a third opinion about the same
+# prefix and make the policy test unreadable.
+vppctl create host-interface name veth2-vpp
+vppctl set interface state host-veth2-vpp up
+vppctl lcp create host-veth2-vpp host-if vppwan1
+vppctl set interface mtu 1500 host-veth2-vpp
+vppctl set interface ip address host-veth2-vpp 10.1.0.1/24
 
 # ---------------- HexaRouting ----------------
 mkdir -p /var/run/frr /etc/frr
@@ -108,9 +126,11 @@ router bgp 65001
  bgp router-id 10.0.0.2
  no bgp ebgp-requires-policy
  neighbor 10.0.0.1 remote-as 65000
+ neighbor 10.1.0.1 remote-as 65000
  address-family ipv4 unicast
   network 203.0.113.0/24
   neighbor 10.0.0.1 activate
+  neighbor 10.1.0.1 activate
  exit-address-family
 EOF
 cat > /etc/frr/peer/ospfd.conf <<'EOF'
@@ -160,8 +180,11 @@ BGPUP=$($HX -c "configure" -c "router bgp 65000" \
         -c "no bgp ebgp-requires-policy" \
         -c "neighbor 10.0.0.2 remote-as 65001" \
         -c "neighbor 10.0.0.2 description upstream-lab" \
+        -c "neighbor 10.1.0.2 remote-as 65001" \
+        -c "neighbor 10.1.0.2 description upstream-lab-segundo-enlace" \
         -c "address-family ipv4 unicast" \
         -c "neighbor 10.0.0.2 activate" \
+        -c "neighbor 10.1.0.2 activate" \
         -c "exit-address-family" -c "exit" -c "commit" 2>&1)
 echo "$BGPUP" | tail -3 | sed 's/^/  /'
 expect_in "the VTY commits a BGP session" "commit complete" "$BGPUP"
@@ -180,7 +203,8 @@ echo "(${n}s, $ok de 3)"
 
 echo
 echo "=== adjacencias ==="
-printf 'BGP   : '; vtysh -c "show bgp ipv4 unicast summary" 2>/dev/null | grep -E "^10\.0\.0\.2" | awk '{print "peer "$1" AS "$3" up "$9" prefixos "$10}'
+vtysh -c "show bgp ipv4 unicast summary" 2>/dev/null | grep -E "^10\.[01]\.0\.2" \
+  | awk '{print "BGP   : peer "$1" AS "$3" up "$9" prefixos "$10}'
 printf 'OSPF  : '; vtysh -c "show ip ospf neighbor" 2>/dev/null | grep -E "^10\.0\.0\.2" | awk '{print "neighbour "$1" state "$3}'
 printf 'IS-IS : '; vtysh -c "show isis neighbor" 2>/dev/null | grep -iE "upstream" | awk '{print "neighbour "$1" state "$4" interface "$2}'
 
@@ -762,6 +786,240 @@ expect_not_in "nor in 'show this' inside the block" "$SECRET" "$THIS"
 # assertion above passes on empty output, which is the same result as a
 # redaction that works and proves neither.
 expect_in "which did print the block" "neighbor 10.0.0.9" "$THIS"
+
+# --- route-maps, asserted on the tables and not on the text (#144) ---
+#
+# Two sessions to the same peer carry the same prefix, so `set
+# local-preference` has something to CHOOSE between. Asserting that a value
+# appears in a table would pass on a policy that changes nothing.
+echo "=========== route-maps: local-preference decides the path ==========="
+fib_nexthop() { vppctl show ip fib 203.0.113.0/24 2>/dev/null \
+                | grep -oE "10\.[01]\.0\.2" | head -1; }
+BEFORE_NH=$(fib_nexthop)
+echo "  the FIB forwards 203.0.113.0/24 via: ${BEFORE_NH:-none}"
+# Prefer the OTHER one, whichever the tie-break happened to pick. Hard-coding
+# the winner would make this pass or fail on FRR's tie-break rather than on the
+# policy.
+if [ "$BEFORE_NH" = "10.0.0.2" ]; then OTHER=10.1.0.2; else OTHER=10.0.0.2; fi
+echo "  so the policy will prefer: $OTHER"
+
+LP=$($HX -c "configure" \
+     -c "ip prefix-list PL-PREFER seq 10 permit 203.0.113.0/24" \
+     -c "route-map RM-PREFER permit 10" \
+     -c "match ip address prefix-list PL-PREFER" \
+     -c "set local-preference 200" \
+     -c "exit" \
+     -c "route-map RM-PREFER permit 20" \
+     -c "exit" \
+     -c "router bgp 65000" -c "address-family ipv4 unicast" \
+     -c "neighbor $OTHER route-map RM-PREFER in" \
+     -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$LP" | tail -4 | sed 's/^/  /'
+expect_in "a route-map commits" "commit complete" "$LP"
+# The catch-all at the end is a real idiom and must not be refused - but it
+# must be SAID, because afterwards it is indistinguishable from a policy
+# somebody stopped typing in the middle of.
+expect_in "and the catch-all clause is reported, not refused" \
+  "permits every route" "$LP"
+
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$(fib_nexthop)" = "$OTHER" ] && break
+  sleep 1; n=$((n + 1))
+done
+AFTER_NH=$(fib_nexthop)
+echo "  after the policy, the FIB forwards via: ${AFTER_NH:-none} (${n}s)"
+# THE assertion: the table that moves packets changed its mind. Not FRR's
+# table, not the text of the configuration - the VPP FIB.
+expect "local-preference changed which path the dataplane forwards on" \
+  test "$AFTER_NH" = "$OTHER"
+expect "and it really did change, rather than starting there" \
+  test "$BEFORE_NH" != "$AFTER_NH"
+
+echo "=========== route-maps: a prepend the neighbour can see ==========="
+# This box announces something of its own, so there is an outbound direction
+# to have a policy in.
+ANN=$($HX -c "configure" -c "ip route 192.0.2.0/24 blackhole" \
+      -c "router bgp 65000" -c "address-family ipv4 unicast" \
+      -c "network 192.0.2.0/24" \
+      -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$ANN" | tail -2 | sed 's/^/  /'
+expect_in "the box announces a prefix of its own" "commit complete" "$ANN"
+
+# Prepend on ONE session only. The other carries the same prefix with no
+# policy, which makes it the control: same prefix, same box, same moment, and
+# the policy is the only difference between the two AS paths.
+PREP=$($HX -c "configure" \
+       -c "ip prefix-list PL-MINE seq 10 permit 192.0.2.0/24" \
+       -c "route-map RM-OUT permit 10" \
+       -c "match ip address prefix-list PL-MINE" \
+       -c "set as-path prepend 65000 65000" \
+       -c "exit" \
+       -c "route-map RM-OUT permit 20" \
+       -c "exit" \
+       -c "router bgp 65000" -c "address-family ipv4 unicast" \
+       -c "neighbor 10.0.0.2 route-map RM-OUT out" \
+       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+expect_in "the outbound policy commits" "commit complete" "$PREP"
+
+# A match that matches NOTHING, on the other session. If the set were applying
+# to everything, this would prepend too - and a test that only checked the
+# session it meant to change would never notice.
+NOMATCH=$($HX -c "configure" \
+          -c "ip prefix-list PL-NOTHING seq 10 permit 198.51.100.0/24" \
+          -c "route-map RM-NOMATCH permit 10" \
+          -c "match ip address prefix-list PL-NOTHING" \
+          -c "set as-path prepend 65000 65000 65000 65000" \
+          -c "exit" \
+          -c "route-map RM-NOMATCH permit 20" \
+          -c "exit" \
+          -c "router bgp 65000" -c "address-family ipv4 unicast" \
+          -c "neighbor 10.1.0.2 route-map RM-NOMATCH out" \
+          -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+expect_in "the no-match policy commits too" "commit complete" "$NOMATCH"
+
+# Read from the NEIGHBOUR's table, in JSON, because parsing the human output
+# means matching an AS-path line to the "from" line under it by position.
+aspath_from() {   # aspath_from <our address as the peer sees it>
+  ip netns exec peer vtysh -N peer \
+    -c "show bgp ipv4 unicast 192.0.2.0/24 json" 2>/dev/null > /tmp/paths.json
+  python3 - "$1" <<'PYEOF'
+import json, sys
+want = sys.argv[1]
+try:
+    d = json.load(open("/tmp/paths.json"))
+except Exception as e:
+    print("UNREADABLE", e)
+    raise SystemExit
+for p in d.get("paths", []):
+    peer = (p.get("peer") or {}).get("peerId") or (p.get("peer") or {}).get("routerId")
+    if peer != want:
+        continue
+    # FRR has spelled this both ways across versions; ask for what is there
+    # rather than assuming, and say so if neither is.
+    ap = p.get("aspath")
+    if isinstance(ap, dict):
+        print(ap.get("string", "").strip())
+    elif isinstance(ap, str):
+        print(ap.strip())
+    else:
+        print("NOFIELD", sorted(p))
+    raise SystemExit
+print("NOPATH")
+PYEOF
+}
+n=0
+while [ "$n" -lt 40 ]; do
+  case "$(aspath_from 10.0.0.1)" in *"65000 65000"*) break ;; esac
+  sleep 1; n=$((n + 1))
+done
+AS_PREPENDED=$(aspath_from 10.0.0.1)
+AS_PLAIN=$(aspath_from 10.1.0.1)
+echo "  AS path the neighbour sees, session with the prepend: '$AS_PREPENDED'"
+echo "  AS path the neighbour sees, session without it:       '$AS_PLAIN'"
+expect "the prepend reached the neighbour's table" \
+  test "$AS_PREPENDED" = "65000 65000 65000"
+expect "and the session with a match that matches nothing is untouched" \
+  test "$AS_PLAIN" = "65000"
+
+echo "=========== route-maps: what is refused, and what is only said ==========="
+# A deny clause with `set` statements is a mistake every time: the set never
+# runs, because the route is denied. That one can be refused.
+DENYSET=$($HX -c "configure" \
+          -c "route-map RM-BAD deny 10" \
+          -c "match ip address prefix-list PL-MINE" \
+          -c "set local-preference 50" \
+          -c "exit" -c "commit" 2>&1)
+echo "$DENYSET" | tail -3 | sed 's/^/  /'
+expect_in "a deny clause carrying 'set' is refused" "the set never runs" "$DENYSET"
+expect_in "and the refusal names the clause" "RM-BAD deny 10" "$DENYSET"
+
+# A clause that can never be reached. Sequence numbers are the operator's and
+# this must not renumber them - but a policy that looks right and does nothing
+# is worth a sentence.
+DEAD=$($HX -c "configure" \
+       -c "route-map RM-DEAD permit 10" \
+       -c "set local-preference 120" \
+       -c "exit" \
+       -c "route-map RM-DEAD permit 20" \
+       -c "match ip address prefix-list PL-MINE" \
+       -c "set local-preference 300" \
+       -c "exit" -c "commit check" 2>&1)
+echo "$DEAD" | grep -i "warning" | sed 's/^/  /'
+expect_in "a clause an earlier catch-all makes unreachable is reported" \
+  "unreachable" "$DEAD"
+expect_in "and the report names what shadows it" "RM-DEAD permit 10" "$DEAD"
+
+# What the VTY did NOT check has to be visible, or an operator reads a
+# guarantee into a statement that was merely forwarded.
+UNCH=$($HX -c "configure" \
+       -c "route-map RM-PASS permit 10" \
+       -c "match ip address prefix-list PL-MINE" \
+       -c "set tag 100" \
+       -c "exit" -c "commit" 2>&1)
+expect_in "a statement the VTY does not model still commits" \
+  "commit complete" "$UNCH"
+SHOWN=$($HX -c "show running-config" 2>&1)
+expect_in "and is marked as unchecked where it is displayed" \
+  "set tag 100    <- not checked by this VTY" "$SHOWN"
+expect_not_in "while the ones it does model carry no marker" \
+  "set local-preference 200    <-" "$SHOWN"
+
+# --- a refusal that belongs to FRR, and what it used to cost ---
+#
+# The VTY refuses the shapes it knows. Everything else reaches FRR, and one
+# class of FRR refusal is not free: it arrives through mgmtd, which keeps the
+# rejected entry in its candidate datastore and then refuses the NEXT
+# configuration commit with the same message - naming a statement that is in no
+# configuration the operator can find. Exactly one commit, and then it clears.
+#
+# Measured, and both halves matter:
+#
+#   * it takes the FILE-LOAD path to happen. A single statement typed at
+#     `vtysh -c` is refused and costs nothing. A file carrying a good line and
+#     a bad one - which is what frr-reload hands FRR on every commit - poisons.
+#   * of the statements tried, only an invalid `ge`/`le` reaches the commit at
+#     all. The rest are refused by FRR's PARSER, which does not poison.
+#
+# So the VTY refuses that class itself, and the poison is no longer reachable
+# through the product. The absorber below is the defence for the class rather
+# than for that one statement, and it is tested where the poison IS
+# reproducible: by loading the file directly, the way frr-reload does.
+echo "=========== a stale refusal, and the commit that used to pay for it ==========="
+cat > /tmp/poison.conf <<'PC'
+ip prefix-list PL-POISON-OK seq 10 permit 10.21.0.0/16
+ip prefix-list PL-POISON-BAD seq 10 permit 10.22.0.0/8 ge 24 le 16
+PC
+# THE CONTROL, and the reason the assertion after it means anything: with the
+# refusal left standing, the next commit fails. Without this half, "the commit
+# succeeded" would pass on a box that was never poisoned.
+vtysh -f /tmp/poison.conf > /dev/null 2>&1
+POISONED=$($HX -c "configure" \
+           -c "ip prefix-list PL-PAYS seq 10 permit 10.23.0.0/16" \
+           -c "commit" 2>&1)
+echo "$POISONED" | tail -2 | sed 's/^/  /'
+expect "with the stale refusal standing, the next commit is refused" \
+  sh -c "! printf '%s' \"$POISONED\" | grep -q 'commit complete'"
+expect_in "and the error names a prefix that is in no configuration" \
+  "10.0.0.0/8" "$POISONED"
+
+# And now the same thing with the absorber run first - the real function, from
+# the product, not a copy of it here.
+vtysh -f /tmp/poison.conf > /dev/null 2>&1
+python3 -c "
+import sys; sys.path.insert(0, '/src/src/hexash')
+from hexash import Frr
+Frr().absorb_stale_refusal()" 2>/dev/null
+ABSORBED=$($HX -c "configure" \
+           -c "ip prefix-list PL-SPARED seq 10 permit 10.24.0.0/16" \
+           -c "commit" 2>&1)
+echo "$ABSORBED" | tail -2 | sed 's/^/  /'
+expect_in "after absorbing it, the operator's commit goes through" \
+  "commit complete" "$ABSORBED"
+# The absorber removes a prefix-list nobody has. If it ever leaves one behind,
+# every box grows a statement the operator did not write.
+expect_not_in "and the absorber leaves nothing behind" \
+  "HEXA-ABSORB" "$(vtysh -c 'show running-config')"
 
 echo "=========== the prefix range rule, against FRR itself ==========="
 restart_mgmtd() {
