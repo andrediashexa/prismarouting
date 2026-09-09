@@ -225,6 +225,13 @@ print("THIS:", out.getvalue().replace("\n", " | "))
 sh.feed("exit")
 opts, _, _ = sh._options("cgnat pool ", False)
 print("POOLS:", " ".join(sorted(opts)))
+# Prefix-lists complete from the control plane, not from a model this VTY
+# keeps: FRR owns them and the running configuration is read back from FRR.
+sh.feed("ip prefix-list PL-LAB seq 10 permit 10.9.0.0/16")
+opts, _, _ = sh._options("ip prefix-list ", False)
+print("PLISTS:", " ".join(sorted(opts)))
+o, _, _ = sh._options("ip ", False)
+print("IPSUB:", " ".join(sorted(o)))
 # The prompt has to name WHICH interface, and show this has to show what that
 # interface holds - both against a real dataplane (#108).
 ifname = sorted(sh.dyn_interfaces())[0]
@@ -324,6 +331,14 @@ expect_in "and the rest of the block with them" "urpf" "$COMP"
 expect_in "including the ones that were always there" "mtu" "$COMP"
 expect_not_in "and nothing from the level above leaks in" \
   "IN_BLOCK: cgnat" "$COMP"
+
+# A prefix-list an operator typed completes by name afterwards, from the
+# configuration the box holds - the same source `show running-config` answers
+# from, so completion cannot offer a name the box does not have.
+expect_in "a prefix-list completes by name once it exists" "PL-LAB" \
+  "$(printf '%s\n' "$COMP" | sed -n 's/^ *PLISTS: *//p')"
+expect_in "and 'ip' offers prefix-list beside route" "prefix-list" \
+  "$(printf '%s\n' "$COMP" | sed -n 's/^ *IPSUB: *//p')"
 # Completion that needs the right case is completion for somebody who already
 # knows the answer.
 # A lowercase prefix must complete to SOMETHING, and to a name the dataplane

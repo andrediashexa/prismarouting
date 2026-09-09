@@ -555,4 +555,54 @@ expect_not_in "and nothing was applied" "commit complete" "$BADPOL"
 /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
 sleep 2
 
+# --- what a rejected policy statement does to the rest of the commit ---
+#
+# Open question from #143, and it decides the design of #144 and #145: if one
+# bad line can leave the box half-configured, a refusal has to be pre-flight;
+# if the whole thing is discarded, the refusal can be about diagnosis.
+#
+# Measured through the VTY, not through frr-reload directly - an ad-hoc probe
+# of frr-reload outside a working FRR was inconclusive, because it failed on a
+# VALID configuration too, and reporting that as "one bad line discards all"
+# would have been a conclusion the evidence did not support.
+echo "=========== a rejected policy line, and what survives it ==========="
+BEFORE_PL=$(vtysh -c 'show running-config' | grep -c 'prefix-list' || true)
+MIXED=$($HX -c "configure" \
+        -c "ip prefix-list PL-GOOD seq 10 permit 10.11.0.0/16" \
+        -c "ip prefix-list PL-BAD seq 10 permit 10.12.0.0/8 ge 24 le 16" \
+        -c "commit" 2>&1)
+echo "$MIXED" | tail -3 | sed 's/^/  /'
+AFTER_PL=$(vtysh -c 'show running-config' | grep -c 'prefix-list' || true)
+echo "  prefix-lists on the box: $BEFORE_PL -> $AFTER_PL"
+vtysh -c 'show running-config' | grep 'prefix-list' | sed 's/^/    /'
+
+# Whatever the answer, it must not be "some of it, silently". Either the commit
+# refuses and nothing changes, or it applies and says what it applied.
+# And the half that decides whether the operator finds out BEFORE applying.
+# `commit check` exists so a change can be validated without touching the box;
+# if it passes what the commit then refuses, it is telling the operator the
+# configuration is good and the box disagrees a moment later.
+CHECKOUT=$($HX -c "configure" \
+           -c "ip prefix-list PL-CHK seq 10 permit 10.13.0.0/8 ge 24 le 16" \
+           -c "commit check" 2>&1)
+echo "$CHECKOUT" | tail -3 | sed 's/^/  check: /'
+# The string the product actually prints, which is "configuration check
+# succeeds". The first version of this assertion grepped for phrases I imagined
+# - "would commit", "no errors", "ok" - none of which the VTY emits, so it
+# passed while the check was approving a configuration the commit then refused.
+# The check cannot catch this one - frr-reload --test exits 0 on a statement
+# FRR itself refuses - and it must not apply-and-roll-back to find out. What it
+# CAN do is stop claiming more than it verified, which is what an operator in a
+# maintenance window acts on.
+expect_in "commit check says routing is not fully validated" \
+  "FRR validates them at commit" "$CHECKOUT"
+expect_not_in "and does not claim the whole configuration checks out" \
+  "configuration check succeeds
+" "$CHECKOUT"
+
+expect "a commit carrying an invalid policy line does not report success" \
+  sh -c "! printf '%s' \"$MIXED\" | grep -q 'commit complete'"
+expect_not_in "and the invalid line is not on the box" "PL-BAD" \
+  "$(vtysh -c 'show running-config')"
+
 verdict

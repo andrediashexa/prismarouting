@@ -1244,6 +1244,65 @@ trail: the message carries no `audit_user`
 `vppctl` call before, so it was never attributable — moving it to the API made
 the gap visible rather than creating it.
 
+## Prefix-lists
+
+```
+hexarouting# [edit] ip ?
+  prefix-list  a named list of prefixes, for matching in policy
+  route        a static route
+hexarouting# [edit] ip prefix-list <TAB>
+  PL-CLIENTES   ip prefix-list
+  PL-BOGONS     ip prefix-list
+```
+
+**The statements themselves are still passed through to FRR**, and that is a
+decision rather than an omission. FRR stores them, the running configuration is
+read back from FRR, and `rollback` already restores them — so a model here
+would be a second copy of something that already works, and a second thing to
+keep in step.
+
+What was missing is the operator being able to find out what to type without
+leaving for `vtysh`, which is the whole point of this VTY. Names complete from
+**the same source `show running-config` answers from**, so completion cannot
+offer a name the box does not have.
+
+### What FRR already checks, measured rather than assumed
+
+The plan for this work asserted that FRR does not validate `ge` and `le`. **It
+does.** On FRR 10.7.1:
+
+| Written | What FRR does |
+|---|---|
+| `permit 10.0.0.0/8 ge 24 le 16` | refused: `Make sure that mask length <= ge <= le` |
+| `permit 10.0.0.0/8 le 33` | refused by the parser |
+| `permit 2001:db8::/32 le 129` | refused by the parser |
+| `permit 10.0.0.0/8 ge 8` | **accepted and stored** |
+
+So half the checks planned here would have duplicated a refusal the dataplane
+already makes, with this VTY's wording instead of FRR's — which is worse for
+anybody searching the error text.
+
+What FRR does not catch is `ge` equal to the prefix length: `10.0.0.0/8 ge 8`
+is a no-op, either a typo for a longer `ge` or a line that could be deleted.
+That is worth reporting and **not** worth refusing: it is valid, and refusing
+what the dataplane accepts teaches operators to work around the VTY.
+
+### One behaviour worth knowing before writing policy
+
+In `vtysh`, **one bad statement discards the whole transaction**. A batch of
+three prefix-lists where the second is invalid stores none of them, including
+the valid third:
+
+```
+% Configuration failed.
+commit failed ... reason: 'Invalid prefix range for 10.0.0.0/8: ...'
+```
+
+This VTY hands FRR a whole routing section through `frr-reload.py` rather than
+through `vtysh -c`, so whether the same all-or-nothing applies there is a
+different question — and it is the one that decides whether a rejected policy
+leaves the box half-configured. Not answered here.
+
 ## A policy whose daemon is not running
 
 `ip prefix-list`, `route-map`, `bgp as-path access-list` and the community
