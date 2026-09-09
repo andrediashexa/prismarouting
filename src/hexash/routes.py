@@ -242,6 +242,29 @@ def _addr_int(addr: str):
     return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
 
 
+def covers_prefix(outer: str, inner: str) -> bool:
+    """
+    True when `outer` contains the whole of `inner`.
+
+    _covers() below answers "is this ADDRESS inside this prefix", which is not
+    the same question: 200.150.0.0/24 contains the address 200.150.0.16, and
+    also contains all of 200.150.0.16/28 - but 200.150.0.16/28 does not contain
+    200.150.0.0/24, and an address test cannot tell those apart. A shorter
+    prefix cannot be covered by a longer one, whatever their addresses.
+
+    IPv4 only, like the rest of this module. The CGNAT's public side is IPv4 by
+    definition - it exists because IPv4 ran out.
+    """
+    o_net, _, o_len = outer.partition("/")
+    i_net, _, i_len = inner.partition("/")
+    try:
+        if int(o_len) > int(i_len):
+            return False
+    except ValueError:
+        return False
+    return _covers(outer, i_net)
+
+
 def _covers(prefix: str, addr: str) -> bool:
     net, _, length = prefix.partition("/")
     n, a = _addr_int(net), _addr_int(addr)

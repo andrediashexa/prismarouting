@@ -1244,6 +1244,46 @@ trail: the message carries no `audit_user`
 `vppctl` call before, so it was never attributable — moving it to the API made
 the gap visible rather than creating it.
 
+## A pool's public prefix that nothing announces
+
+```
+warning: pool 'clientes': nothing here announces 200.150.0.16/28
+    subscribers behind it would be translated to an address the internet
+    cannot route back to
+    add 'network 200.150.0.16/28' under the BGP address family, or
+    announce it from another box
+```
+
+The check this product can make and nobody else can.
+
+Configure a pool with `outside 200.150.0.16/28`. Configure BGP. Both correct.
+Unless something advertises a prefix **covering** that /28, every subscriber
+behind the pool is translated to an address the internet cannot route back to:
+traffic leaves and nothing returns. The CGNAT is right, the routing is right,
+and the service is dead — and until now nothing in the box connected the two
+halves, because they are configured in different places by different people on
+different days.
+
+Three properties, and the last two are what keep it useful:
+
+* **Containment, not equality.** A `network 200.150.0.0/24` covers a pool's
+  `/28`. `routes.covers_prefix()` answers "does this prefix contain the whole
+  of that one", which is a different question from the address test beside it:
+  `200.150.0.0/24` contains the *address* `200.150.0.16` and also all of
+  `200.150.0.16/28`, but a shorter prefix can never be covered by a longer one,
+  and an address test cannot tell those apart.
+* **It reports; it never refuses.** Announcing the prefix from another box is a
+  legitimate design, and a check that refuses a working topology gets worked
+  around.
+* **It stays quiet when it cannot see.** `redistribute` can advertise a prefix
+  in ways this check cannot follow, so a candidate carrying one produces no
+  warning at all. **A warning that fires on a working box is worse than no
+  warning**, because the next one — the real one — is ignored too.
+
+The lab asserts all three, and the order matters: "the warning stays quiet" is
+trivially true on a box where the warning never fires, so it is only meaningful
+beside the case that proves it does.
+
 ## Prefix-lists
 
 ```

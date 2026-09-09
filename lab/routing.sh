@@ -205,6 +205,12 @@ vppctl show lcp | sed 's/^/    /'
 # is not an assertion about the MTU.
 mtu_of() { vppctl show interface host-veth-vpp | awk 'NR==2 {split($4,a,"/"); print a[1]}'; }
 
+# The BPA plugin for the binary API. Core VPP messages work without it - which
+# is why the interface sections above pass - but a pool goes through
+# bpa_pool_add_del, and the CGNAT-versus-BGP check needs both halves present.
+. /src/lab/lib.sh
+use_binary_api
+
 HX="python3 /src/src/hexash/hexash.py"
 $HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1400" -c "exit" \
     -c "commit" > /tmp/mtu.log 2>&1 || true
@@ -604,5 +610,45 @@ expect "a commit carrying an invalid policy line does not report success" \
   sh -c "! printf '%s' \"$MIXED\" | grep -q 'commit complete'"
 expect_not_in "and the invalid line is not on the box" "PL-BAD" \
   "$(vtysh -c 'show running-config')"
+
+# --- a pool's public prefix that nothing announces (#145) ---
+#
+# The check this product can make and nobody else can. Configure a pool, get
+# BGP right, and unless something advertises a prefix covering the pool's
+# public side, every subscriber behind it is translated to an address the
+# internet cannot route back to. Both halves individually correct, service
+# dead, and nothing in the box connected them.
+echo "=========== a pool nobody announces ==========="
+NOANN=$($HX -c "configure" \
+        -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
+        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "commit check" 2>&1)
+printf '%s\n' "$NOANN" | tail -12 | sed 's/^/  check: /'
+expect_in "an unannounced pool prefix is called out" \
+  "nothing here announces 200.150.9.16/28" "$NOANN"
+expect_in "and the message says what it costs" \
+  "cannot route back" "$NOANN"
+
+# Announce a COVERING prefix - not the same one - because the check has to
+# understand containment, not string equality. A /24 covers the pool's /28.
+ANN=$($HX -c "configure" \
+      -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
+      -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+      -c "router bgp 65000" -c "address-family ipv4 unicast" \
+      -c "network 200.150.9.0/24" -c "exit-address-family" -c "exit" \
+      -c "commit check" 2>&1)
+expect_not_in "a covering prefix silences it" \
+  "nothing here announces 200.150.9.16/28" "$ANN"
+
+# And it must not fire on a box that announces by redistribution, which this
+# check cannot see. A warning that cries on a working box gets ignored, and
+# then the real one is ignored too.
+RED=$($HX -c "configure" \
+      -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
+      -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+      -c "router bgp 65000" -c "redistribute connected" -c "exit" \
+      -c "commit check" 2>&1)
+expect_not_in "and redistribution silences it, because it cannot be seen" \
+  "nothing here announces" "$RED"
 
 verdict
