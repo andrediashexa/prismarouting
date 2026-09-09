@@ -116,6 +116,7 @@ ARG_INTERFACE = "<interface>"
 ARG_POOL = "<pool>"
 ARG_USER = "<user>"
 ARG_SNMP_USER = "<snmp-user>"
+ARG_PREFIX_LIST = "<prefix-list>"
 ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
@@ -404,7 +405,12 @@ TREE = {
                 "pool": ("remove a pool", ARG_POOL),
                 "interface": ("disable CGNAT on an interface", ARG_INTERFACE)})}),
         "ip": ("IP configuration", {
-            "route": ("a static route", "<prefix> <next-hop|interface>")}),
+            "route": ("a static route", "<prefix> <next-hop|interface>"),
+            "prefix-list": ("a named list of prefixes, for matching in policy",
+                            ARG_PREFIX_LIST)}),
+        "ipv6": ("IPv6 configuration", {
+            "prefix-list": ("a named list of prefixes, for matching in policy",
+                            ARG_PREFIX_LIST)}),
         "router": ("routing protocols (FRR)", {
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", None),
@@ -3065,6 +3071,28 @@ class Shell:
             names[w[0]] = f"interface ({state})" if state else "interface"
         return names
 
+    def dyn_prefix_lists(self):
+        """
+        The prefix-lists this box has, read back from the control plane.
+
+        Not from a model this VTY keeps: FRR owns them, stores them and reports
+        them, and the running configuration is read from FRR. A second copy
+        here would be a second thing to keep in step.
+
+        Both families in one answer. `ip prefix-list` and `ipv6 prefix-list`
+        are separate namespaces in FRR, but an operator completing a name is
+        looking for the one they wrote, and offering the other costs nothing -
+        naming an IPv6 list after `ip prefix-list` is refused by FRR with its
+        own message, which is better than this VTY inventing one.
+        """
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for line in cfg.routing:
+            w = line.split()
+            if len(w) >= 3 and w[0] in ("ip", "ipv6") and w[1] == "prefix-list":
+                found.setdefault(w[2], f"{w[0]} prefix-list")
+        return found
+
     def dyn_pools(self):
         """Pools in the candidate, or in the running configuration."""
         cfg = self.candidate or self.running_config()
@@ -3086,6 +3114,7 @@ class Shell:
         ARG_POOL: "dyn_pools",
         ARG_USER: "dyn_users",
         ARG_SNMP_USER: "dyn_snmp_users",
+        ARG_PREFIX_LIST: "dyn_prefix_lists",
     }
 
     def dynamic_options(self, hint, prefix):

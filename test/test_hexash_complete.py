@@ -357,14 +357,42 @@ except Exception as e:
     check(False, f"completion must not propagate a broken source: {e!r}")
 
 print("\n=== every dynamic marker has a source ===")
+# The PROPERTY: every marker that promises values must have a method that can
+# produce them, and that method must exist. Written as set equality against a
+# hardcoded list, this failed when a marker was ADDED - reporting "markers
+# without a source: []", an empty difference, because the inequality was the
+# other way round. That is the third hardcoded list in this suite to break on
+# the code being extended correctly.
+#
+# The known markers are asserted as a SUBSET, so adding one is not a failure,
+# and every source is resolved so that a typo in the table is.
 markers = {hexash.ARG_INTERFACE, hexash.ARG_POOL, hexash.ARG_USER,
            hexash.ARG_SNMP_USER}
-check(set(hexash.Shell.DYNAMIC) == markers,
+check(markers <= set(hexash.Shell.DYNAMIC),
       f"markers without a source: {sorted(markers - set(hexash.Shell.DYNAMIC))}")
+missing = [m for m, name in hexash.Shell.DYNAMIC.items()
+           if not callable(getattr(hexash.Shell, name, None))]
+check(not missing,
+      f"markers whose source method does not exist: {missing}")
+# And a marker is only useful if something in the command tree offers it. One
+# that nothing references is a promise nobody can reach.
+#
+# Looked up by the CONSTANT's name, because that is how the tree refers to
+# them - counting the literal value found only the definition and reported
+# every marker as unused, which is this check being wrong rather than the code.
+tree_text = open(hexash.__file__).read()
+const_of = {v: k for k, v in vars(hexash).items()
+            if isinstance(v, str) and k.startswith("ARG_")}
+unused = [m for m in hexash.Shell.DYNAMIC
+          if tree_text.count(const_of.get(m, "\x00")) < 2]
+check(not unused, f"markers nothing in the tree offers: {unused}")
 for marker, method in hexash.Shell.DYNAMIC.items():
     check(hasattr(hexash.Shell, method),
           f"{marker} names {method}, which does not exist")
-print(f"  {len(markers)} markers, all sourced")
+# len(DYNAMIC), not len(markers): the second is the hardcoded subset this test
+# asserts is present, and reporting it said "4 markers" on a box with five.
+print(f"  {len(hexash.Shell.DYNAMIC)} markers, all sourced: "
+      + ", ".join(sorted(hexash.Shell.DYNAMIC)))
 
 print("\n=== show this ===")
 sh = shell_with_box()
