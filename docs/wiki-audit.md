@@ -10,6 +10,11 @@ deterministic CGNAT and its relationship to BPA**.
 This page is the brief for the session that goes and fixes that. It assumes no
 other context.
 
+**The conceptual error named below was found and corrected on 2026-09-09** —
+see section 2, *Found and corrected*. Read that before hunting for it again.
+What remains is the ordinary work: checking the rest of the pages, claim by
+claim, against a repository that has moved several releases since.
+
 > The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** in this document
 > are to be interpreted as described in
 > [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
@@ -24,7 +29,7 @@ other context.
 | **Where** | Outline, edited through its API. The mirror under `wiki/` is for reading. |
 | **When** | Before the wiki is treated as documentation by anybody. |
 | **How** | Claim by claim against `docs/`, never the reverse. |
-| **How much** | 31 pages, four of them already corrected — see below. |
+| **How much** | 29 pages. Two passes already done — see section 5. |
 
 ## 1. What is authoritative, and what is not
 
@@ -72,6 +77,34 @@ and *BPA — conceitos e mapeamento* — were read during the mirror import and
 **appeared correct**: both present deterministic and dynamic as modes of BPA.
 So either the error is elsewhere, or it is subtler than those two openings. Do
 not assume it has been found because those two read well.
+
+### Found and corrected, 2026-09-09
+
+The suspicion above was right: it was subtler than the openings, and it was
+**one label**. The mode table on *BPA — conceitos e mapeamento* read
+
+```
+|     | Determinístico | Dinâmico (PBA) |
+```
+
+which puts PBA on the dynamic column alone. A reader takes from that exactly
+the shape section 2 describes — that PBA is the dynamic thing and that
+deterministic is therefore not block allocation, so the two are different
+techniques rather than two modes of one.
+
+That is now:
+
+* the section is titled **"BPA é a técnica; determinístico e dinâmico são os
+  modos dela"** and says both modes allocate by block, that what differs is
+  *how* the block is assigned, and that the choice is between the two modes —
+  never between "BPA" and one of them;
+* the columns read **Modo determinístico** and **Modo dinâmico**; the string
+  "PBA" no longer appears on any page.
+
+The **home** carried the cause rather than the error: the reader met
+"Determinístico" and "Dinâmico" for the first time as table headings, with no
+sentence introducing them as the two modes of BPA. A section **"Os dois modos
+do BPA"** now precedes that table.
 
 ## 3. Access
 
@@ -133,6 +166,41 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
+### 2026-09-08, against v0.44.0 — the interface block, and a rule broken
+
+**Added: *Configuração de interface***, a subpage of the VTY guide. The
+interface block went from two statements to ten across v0.40.0-v0.44.0
+(description, shutdown, IPv4 and IPv6 addresses, VLAN and sub-interfaces, VRF,
+MAC, IPv6 RA suppression, MTU, uRPF) and the wiki covered none of it. Made a
+subpage rather than sections in the guide because the guide already splits by
+area, and ten statements would have doubled its length.
+
+The guide's own inline list now points at it instead of growing a second copy.
+
+**Corrected on *Instalação da appliance*: a warning I wrote earlier the same
+day cited two issue numbers and linked GitHub.** Section 0 of
+`PADRAO-DOCUMENTACAO.md` keeps both off a public page, and a reader outside the
+company cannot open either link. The warning itself was right and stays; the
+citations are gone, and the fact that the medium is now installed to a disk and
+booted before publication is stated as behaviour rather than as an issue
+reference.
+
+That rule is now also in `CONTRIBUTING.md`, with the mistake recorded next to
+it, because reading the standard once did not stop me breaking it on the first
+page I touched.
+
+**Two internal links in the new page were invented rather than looked up**, and
+were published broken before being corrected. Every `/doc/` link across all 30
+pages was then checked against the live list: zero broken.
+
+**Not verified in a browser.** The standard asks for it and this session has no
+browser. Mermaid rendering, CSP and chunk loading are exactly what `curl`
+cannot prove, and the new page carries no diagram - but the callouts on it have
+not been seen rendered, and the round-trip has broken callouts in half before.
+Worth a look by somebody who can open it.
+
+
+
 Six pages were updated on 2026-09-08 against v0.32.0 and v0.33.0. One of them,
 *Build, testes e laboratórios*, **was removed from the wiki shortly
 afterwards** when the category *Entender e desenvolver* became *Entender o
@@ -148,6 +216,39 @@ a warning about direction: the edit was accurate and it was the wrong page.
 
 Those four were corrected for **content that was stale**. None of them was
 audited for the conceptual error in section 2 — that is this brief's job.
+
+### Second pass, 2026-09-09 — audience, and the rest of the staleness
+
+The wiki is for whoever **uses** the platform, not for whoever develops it.
+That rule is now `PADRAO-DOCUMENTACAO.md` section 0, with the list of what
+stays out; it was a decision taken in conversation and written down so it
+survives the next session.
+
+Applying it:
+
+| Page | What changed |
+|---|---|
+| *Build, testes e laboratórios* | **deleted.** Compiling, `make`, the build container, the 40 labs — an operator does none of it, and `README.md` and `TESTING.md` cover it without a second copy that diverges. |
+| *Dataplane — comandos vppctl e API* | **deleted.** The binary API is for whoever writes a control plane; the product exists so the operator never leaves the VTY. |
+| *Entender e desenvolver* | renamed **Entender o produto**; its opening no longer invites the reader to touch the code. |
+| six operator pages | source filenames (`bpa_audit.c`, `bpa_handoff.c`, `bpa.api`, `tools/ipfix_collector.py`) and lab script names removed. The *claim* they supported was kept — "this is verified on the captured packet, not on a counter" is a trust argument for whoever is evaluating the product; naming the script that does it is not. |
+| *Instalação da appliance*, *Logging IPFIX* | sections that only served whoever builds the ISO or runs the labs removed. |
+| *Operação e diagnóstico*, *Configuração de CGNAT* | **"Nas máquinas de laboratório essa interface é a `ens18`"** removed from both. `PADRAO-DOCUMENTACAO.md` lists internal machine and interface names among the things that never go into a public wiki. |
+
+Stale content corrected in the same pass:
+
+| Page | What was wrong |
+|---|---|
+| *VTY hexash — guia de uso* | the prompt table predated v0.32.0: it showed `[edit cgnat pool]` without the pool's name and claimed entering an interface moved nothing. Both are the defect [#108](https://github.com/andrediashexa/hexarouting/issues/108) fixed. `show this` and the completion of live values from v0.29.0 were missing. |
+| *Dimensionamento e requisitos* | no records volume, no `hexarouting.log-gb=`, no ~29 GB/year arithmetic (v0.30.0) |
+| *Operação e diagnóstico* | the boot wait did not explain itself (v0.31.0) |
+| *BPA*, *Ampliar capacidade* | a `:::warning` on each held only its first sentence, the rest having fallen outside the block — Outline's markdown round-trip splits a callout whose source was a one-line blockquote. Check this after every edit that touches one. |
+
+**A trap worth not paying twice:** in the `wiki/` mirror, 21 places read
+`` `**vppctl**` `` and look like broken markdown. They are not — the live page
+renders `<strong><code>vppctl</code></strong>` with no literal asterisks. It is
+an artefact of Outline's markdown serialiser on export. Correcting it in the
+mirror would corrupt what is already right.
 
 ## 6. A method that will not fool you
 

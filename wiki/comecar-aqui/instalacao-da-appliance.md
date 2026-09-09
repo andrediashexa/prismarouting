@@ -136,13 +136,27 @@ O desligamento ao final não é conveniência: sem ele a máquina fica num promp
 
 Depois do primeiro boot sem a mídia:
 
-* o console mostra o relatório do self-test;
+* o console mostra o relatório do self-test, **sem nenhuma linha** `**[FAIL]**`;
+* entre elas, `binary API registered, so pools can be configured` — sem ela a caixa roteia e responde, e nenhum pool pode ser criado;
 * `show version` responde com a versão do HexaRouting, do VPP e do FRR;
 * você consegue entrar com a senha definida durante a instalação.
 
 
+:::warning
+**Não instale com as mídias 0.34.0, 0.35.0 ou 0.36.0.** Duas falhas na mídia, uma escondida atrás da outra:
+
+* a imagem não levava um componente necessário para configurar CGNAT, então a caixa bootava, roteava, respondia e dizia *pronto* — e **nenhum pool podia ser criado**;
+* e o serviço que aplica a configuração falhava no primeiro boot de toda instalação, porque o arquivo de configuração padrão — só comentários — era lido como uma mudança que removia o acesso SSH.
+
+Corrigidas na **0.37.0**. Uma caixa já instalada com uma dessas mídias precisa ser reinstalada: o componente que falta não está no disco.
+
+A partir da 0.37.0, a mídia de cada versão é instalada em disco e bootada com a mídia removida antes de ser publicada. Bootar a imagem live prova que a mídia dá boot; não prova que ela produz uma appliance que funciona.
+
+:::
+
+
 :::success
-Self-test dizendo pronto e `show version` respondendo: a instalação está válida. O próximo passo é [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+Self-test **sem** `**[FAIL]**` e `show version` respondendo: a instalação está válida. "Pronto" sozinho não bastava — uma caixa dizia pronto e não configurava CGNAT. O próximo passo é [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
 
 :::
 

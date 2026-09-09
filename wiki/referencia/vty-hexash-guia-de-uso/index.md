@@ -158,9 +158,14 @@ Com o dataplane inalcançável a checagem é **pulada, não reprovada**: uma VTY
 
 :::
 
+## Configuração de interface
+
+O bloco de interface tem dez declarações — endereços IPv4 e IPv6, VLAN, VRF, MTU, MAC, estado administrativo, descrição, anúncio de roteador IPv6 e uRPF — e ganhou página própria: [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+
 # Ver também
 
 * [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — a VTY aplicada do começo ao fim
+* [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — endereços, VLAN, VRF e o resto do bloco de interface
 * [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — tarefas prontas, sem precisar montar do zero
 
 ## O que o `?` oferece

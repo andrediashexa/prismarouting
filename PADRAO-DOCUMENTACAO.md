@@ -17,6 +17,35 @@ documentos do repo (`README.md`, `docs/`, `TESTING.md`) seguem as regras do
 o produto — a wiki é uma camada de uso por cima deles, não uma segunda cópia do
 design.
 
+## 0. Para quem a wiki é escrita
+
+**A wiki é para quem USA a plataforma — o operador, o NOC, quem avalia o produto.
+Não é para quem o desenvolve.**
+
+Quem desenvolve lê `README.md`, `docs/` e `TESTING.md`, que são autoritativos e
+não envelhecem em duas cópias. Uma página de wiki que ensina a compilar é uma
+segunda cópia daquilo, e diverge.
+
+Não entram na wiki:
+
+| Fora | Onde isso vive |
+|---|---|
+| compilar o plugin, `make`, container de build | `README.md`, `TESTING.md` |
+| os laboratórios, `tools/lab.sh`, `LAB_JOBS` | `TESTING.md` |
+| nomes de arquivo de código-fonte (`bpa_audit.c`, `bpa.api`) | o próprio código |
+| a API binária e suas mensagens | `docs/architecture.md` |
+| números de issue e links do GitHub | o issue |
+| nomes de interface ou de máquina do laboratório | lugar nenhum público |
+
+O que **entra**, quando serve ao operador, é a *consequência* daquilo. "Isto é
+verificado sobre o pacote capturado, não sobre um contador" é argumento de
+confiança para quem avalia o produto e pertence à wiki; nomear o script que faz
+essa verificação, não.
+
+Comandos de diagnóstico profundo (`vppctl`) também ficam de fora: o produto
+existe para que o operador não precise sair da VTY, e uma wiki que ensina a
+descer ao dataplane contradiz isso.
+
 ## 1. Estrutura obrigatória de cada página
 
 Toda página tem três partes, nesta ordem.
