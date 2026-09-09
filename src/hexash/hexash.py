@@ -42,6 +42,20 @@ FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
 # guessed from the keyword, because the two only look alike: "router ospf" is
 # served by ospfd, and "router isis" by isisd, but the mapping is a fact about
 # FRR and not about the word.
+# Policy statements have no `router` line, so the check below cannot key on
+# one. They are served by mgmtd and zebra, and with those stopped `vtysh`
+# ACCEPTS the statement and stores nothing - measured on FRR 10.7.1, where a
+# prefix-list typed with only staticd running produced no error and did not
+# appear in the running configuration afterwards (#155).
+#
+# A `router bgp` stanza that goes nowhere is noticed: no session comes up. A
+# prefix-list that goes nowhere is invisible until traffic that should have
+# been filtered is not.
+POLICY_STATEMENT = ("ip prefix-list", "ipv6 prefix-list", "route-map",
+                    "bgp as-path access-list", "bgp community-list",
+                    "bgp large-community-list")
+POLICY_DAEMONS = ("mgmtd", "zebra")
+
 ROUTER_DAEMON = {"bgp": "bgpd", "ospf": "ospfd", "ospf6": "ospf6d",
                  "isis": "isisd", "rip": "ripd", "eigrp": "eigrpd",
                  "babel": "babeld", "pim": "pimd"}
@@ -1417,6 +1431,23 @@ class Shell:
                                   f"nothing. Enable {need} in "
                                   "/etc/frr/daemons and restart frr")
                             ok = False
+
+                    # The statements that have no `router` line at all, and so
+                    # were never checked. Reported once per missing daemon
+                    # rather than once per statement: a policy is many lines
+                    # and the operator has one thing to fix.
+                    policy = [l.strip() for l in target.routing
+                              if l.strip().startswith(POLICY_STATEMENT)]
+                    for need in POLICY_DAEMONS if policy else ():
+                        if need in running_daemons:
+                            continue
+                        self.err(f"{len(policy)} policy statement(s) need "
+                                 f"{need}, which is not running")
+                        print(f"    first one: {policy[0]}")
+                        print("    they would commit and store nothing. "
+                              f"Enable {need} in /etc/frr/daemons and "
+                              "restart frr")
+                        ok = False
 
             # A static route whose next hop is on no connected network is
             # accepted by FRR, installed, and silently inert: FRR holds it, the
