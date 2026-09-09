@@ -143,14 +143,14 @@ Depois do primeiro boot sem a mídia:
 
 
 :::warning
-**Mídias 0.34.0, 0.35.0 e 0.36.0 não servem para CGNAT.** Duas falhas na mídia, uma escondida atrás da outra:
+**Não instale com as mídias 0.34.0, 0.35.0 ou 0.36.0.** Duas falhas na mídia, uma escondida atrás da outra:
 
-* a ISO nunca levou o plugin `vat2`, então a API binária não ficava registrada e **nenhum pool podia ser criado** — a caixa bootava, roteava, respondia e dizia *pronto* ([#119](https://github.com/andrediashexa/hexarouting/issues/119));
-* e o `hexarouting.service` falhava no primeiro boot de toda instalação, porque o arquivo de configuração padrão — só comentários — era lido como uma mudança que removia o acesso SSH ([#121](https://github.com/andrediashexa/hexarouting/issues/121)).
+* a imagem não levava um componente necessário para configurar CGNAT, então a caixa bootava, roteava, respondia e dizia *pronto* — e **nenhum pool podia ser criado**;
+* e o serviço que aplica a configuração falhava no primeiro boot de toda instalação, porque o arquivo de configuração padrão — só comentários — era lido como uma mudança que removia o acesso SSH.
 
-Corrigidas na **0.37.0**. Uma caixa já instalada com uma dessas mídias precisa ser reinstalada: o plugin faltante não está no disco.
+Corrigidas na **0.37.0**. Uma caixa já instalada com uma dessas mídias precisa ser reinstalada: o componente que falta não está no disco.
 
-O que mudou para isso não voltar: o gate de release agora **instala a mídia em um disco e boota o disco**, com a mídia removida. Bootar a imagem live prova que a mídia dá boot; não prova que ela produz uma appliance que funciona.
+A partir da 0.37.0, a mídia de cada versão é instalada em disco e bootada com a mídia removida antes de ser publicada. Bootar a imagem live prova que a mídia dá boot; não prova que ela produz uma appliance que funciona.
 
 :::
 

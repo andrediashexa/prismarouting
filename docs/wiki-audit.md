@@ -166,6 +166,41 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
+### 2026-09-08, against v0.44.0 — the interface block, and a rule broken
+
+**Added: *Configuração de interface***, a subpage of the VTY guide. The
+interface block went from two statements to ten across v0.40.0-v0.44.0
+(description, shutdown, IPv4 and IPv6 addresses, VLAN and sub-interfaces, VRF,
+MAC, IPv6 RA suppression, MTU, uRPF) and the wiki covered none of it. Made a
+subpage rather than sections in the guide because the guide already splits by
+area, and ten statements would have doubled its length.
+
+The guide's own inline list now points at it instead of growing a second copy.
+
+**Corrected on *Instalação da appliance*: a warning I wrote earlier the same
+day cited two issue numbers and linked GitHub.** Section 0 of
+`PADRAO-DOCUMENTACAO.md` keeps both off a public page, and a reader outside the
+company cannot open either link. The warning itself was right and stays; the
+citations are gone, and the fact that the medium is now installed to a disk and
+booted before publication is stated as behaviour rather than as an issue
+reference.
+
+That rule is now also in `CONTRIBUTING.md`, with the mistake recorded next to
+it, because reading the standard once did not stop me breaking it on the first
+page I touched.
+
+**Two internal links in the new page were invented rather than looked up**, and
+were published broken before being corrected. Every `/doc/` link across all 30
+pages was then checked against the live list: zero broken.
+
+**Not verified in a browser.** The standard asks for it and this session has no
+browser. Mermaid rendering, CSP and chunk loading are exactly what `curl`
+cannot prove, and the new page carries no diagram - but the callouts on it have
+not been seen rendered, and the round-trip has broken callouts in half before.
+Worth a look by somebody who can open it.
+
+
+
 Six pages were updated on 2026-09-08 against v0.32.0 and v0.33.0. One of them,
 *Build, testes e laboratórios*, **was removed from the wiki shortly
 afterwards** when the category *Entender e desenvolver* became *Entender o
