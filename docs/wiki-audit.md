@@ -166,6 +166,25 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
+### 2026-09-09, against v0.52.0 — route-maps, on the policy page
+
+**Added to *Roteamento, SSH, usuários e SNMP*: "Route-maps: a política em si".**
+A section rather than a page: the routing page already carries prefix-lists and
+the pool-announcement check, and route-maps are the same subject seen from the
+other end. A sixth thin subpage would have split policy across two places.
+
+Written around the split the product makes — what is refused, what is only
+said, and why a `permit` with no `match` is the second kind. The page says out
+loud that the warning is one line of noise when the catch-all was deliberate,
+because an operator who reads it as an error will go looking for a bug that is
+not there.
+
+The "not checked by this VTY" marker is documented **with its limits**: it is
+display only, it does not reach the saved configuration or a rollback revision,
+and copying the screen into a file is safe because the marker is stripped on
+the way back in. That last property is asserted in the test suite; without it
+the sentence would be a promise nobody checked.
+
 ### 2026-09-09, against v0.51.0 — BGP has a page
 
 **Added: *Configuração de BGP***, a subpage of the VTY guide, alongside

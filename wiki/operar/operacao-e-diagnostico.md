@@ -29,6 +29,24 @@ commit check                  quem seria re-mapeado
 
 Se aparecer re-mapeamento, você vai derrubar todos os assinantes daquele pool ao aplicar. Isso é o esperado — mas precisa ser uma decisão, com janela.
 
+## Recuperar uma caixa que ficou inalcançável
+
+Se o dataplane tomou a placa de gerência, a caixa saiu da rede no instante em que o VPP subiu. Pelo console:
+
+```
+HEXA_DATAPLANE_IF=<placa dos assinantes>   em /etc/hexarouting/tune.env
+```
+
+ou acrescente `no-pci` ao bloco `dpdk {}` de `/etc/vpp/startup.conf`. **Depois reinicie.**
+
+
+:::warning
+Reiniciar não é zelo: o DPDK amarrou a placa a um driver de espaço de usuário, e parar o VPP **não a devolve ao kernel de forma confiável**.
+
+:::
+
+Uma caixa sem interface de dataplane parece uma caixa funcionando — ela responde, loga e aceita configuração, só não encaminha. Por isso o self-test diz que ela não tem interface de dataplane e nomeia o arquivo a editar.
+
 # Serviços e ordem de boot
 
 ```mermaid

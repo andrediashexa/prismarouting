@@ -23,7 +23,8 @@ import sys
 import tempfile
 import time
 
-from config import Config, Pool, URPF_MODES, _address_family_error
+from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
+                    _address_family_error)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, redact, snmp_redact,
                     validate_snmp, validate_ssh, SSH_FIELDS)
@@ -119,6 +120,8 @@ ARG_USER = "<user>"
 ARG_SNMP_USER = "<snmp-user>"
 ARG_PREFIX_LIST = "<prefix-list>"
 ARG_NEIGHBOUR = "<neighbour>"
+ARG_AS_PATH_LIST = "<as-path-list>"
+ARG_COMMUNITY_LIST = "<community-list>"
 ARG_ROUTE_MAP = "<route-map>"
 ARG_PEER_GROUP = "<peer-group>"
 ARG_REV = "<0-19>"
@@ -199,6 +202,69 @@ INTERFACE_BLOCK = {
 # `neighbor X route-map RM in` belongs to an address family and does nothing
 # outside one, while `neighbor X remote-as` outside an address family is what
 # creates the session in the first place.
+# Offered inside `route-map <name> permit|deny <seq>`.
+#
+# Route-maps are where an ISP's policy lives, and the VTY modelled none of it
+# (#144). The clause set here is the one an ISP edge actually uses; anything
+# else still reaches FRR, and is MARKED as unchecked when the configuration is
+# displayed, so an operator can tell what was verified from what was merely
+# forwarded.
+ROUTE_MAP_MATCH = {
+    "ip": ("IPv4 selectors", {
+        "address": ("by prefix", {
+            "prefix-list": ("prefixes in a named list", ARG_PREFIX_LIST),
+        }),
+        "next-hop": ("by next hop", {
+            "prefix-list": ("next hops in a named list", ARG_PREFIX_LIST),
+        }),
+    }),
+    "ipv6": ("IPv6 selectors", {
+        "address": ("by prefix", {
+            "prefix-list": ("prefixes in a named list", ARG_PREFIX_LIST),
+        }),
+    }),
+    "as-path": ("by AS path, against a named list", ARG_AS_PATH_LIST),
+    "community": ("by community, against a named list", ARG_COMMUNITY_LIST),
+    "large-community": ("by large community, against a named list",
+                        ARG_COMMUNITY_LIST),
+    "metric": ("by MED", "<0-4294967295>"),
+    "peer": ("by which neighbour sent it", ARG_NEIGHBOUR),
+}
+
+ROUTE_MAP_SET = {
+    "local-preference": ("which path this box prefers; higher wins",
+                         "<0-4294967295>"),
+    "metric": ("the MED sent to the neighbour", "<0-4294967295>"),
+    "community": ("communities to carry; 'additive' keeps the ones already "
+                  "there", "<AS:NN> [additive]"),
+    "large-community": ("large communities to carry",
+                        "<AS:NN:MM> [additive]"),
+    "next-hop": ("the next hop advertised", "<A.B.C.D>"),
+    "as-path": ("AS path manipulation", {
+        "prepend": ("lengthen the path so others prefer another way",
+                    "<asn> [<asn> ...]"),
+        "exclude": ("remove AS numbers from the path", "<asn> [<asn> ...]"),
+    }),
+    "weight": ("this box's own preference, never advertised", "<0-65535>"),
+    "origin": ("the origin attribute", {
+        "igp": ("learned inside the AS", None),
+        "egp": ("learned from another AS", None),
+        "incomplete": ("origin unknown", None),
+    }),
+}
+
+ROUTE_MAP_BLOCK = {
+    "match": ("which routes this clause applies to", ROUTE_MAP_MATCH),
+    "set": ("what it changes about them", ROUTE_MAP_SET),
+    "call": ("run another route-map before deciding", ARG_ROUTE_MAP),
+    "on-match": ("what to do when this clause matches", {
+        "next": ("carry on to the next clause", None),
+        "goto": ("jump to a later clause", "<seq>"),
+    }),
+    "description": ("what this clause is for", "<text>"),
+    "exit": ("leave the clause", None),
+}
+
 BGP_NEIGHBOUR = {
     "remote-as": ("the neighbour's AS; this is what creates the session",
                   "<1-4294967295>|internal|external"),
@@ -639,6 +705,131 @@ class Vpp:
         return (1 if VPP_ERROR.match(first) else 0), out
 
 
+def mark_unchecked(lines):
+    """
+    The same configuration with route-map statements this VTY did not verify
+    marked as such.
+
+    DISPLAY ONLY, and that is not a caveat - it is the design. The marker must
+    never reach `Config.text()`, the saved configuration, a rollback revision
+    or the file handed to FRR: a comment appended mid-statement is not
+    something FRR is obliged to accept, and a configuration that cannot be
+    fed back is not a configuration.
+
+    The reason it exists: most of a route-map still passes straight through.
+    Without a marker, an operator reading the running configuration cannot
+    tell a statement the box checked from one it merely forwarded, and so
+    reads a guarantee into both.
+    """
+    out, inside = [], False
+    for l in lines:
+        t = l.strip()
+        w = t.split()
+        if w and w[0] == "route-map":
+            inside = True
+            out.append(l)
+            continue
+        if not l[:1].isspace():
+            inside = False
+            out.append(l)
+            continue
+        if not inside or not w:
+            out.append(l)
+            continue
+        node = ROUTE_MAP_BLOCK
+        known = True
+        for word in w:
+            if not isinstance(node, dict):
+                break                    # an argument: everything past it is
+            entry = node.get(word)       # the argument's business
+            if entry is None:
+                known = False
+                break
+            node = entry[1]
+        out.append(l if known else f"{l}{UNCHECKED_MARK}")
+    return out
+
+
+def route_map_findings(routing):
+    """
+    What a set of route-maps says that is wrong or worth saying out loud.
+
+    Returns (severity, statement, why) with severity "error" or "warning". The
+    split is the point: one of these is always a mistake and one of them is a
+    legitimate idiom that is ALSO what an unfinished policy looks like, and a
+    VTY that refuses the second is a VTY an operator has to fight.
+
+    * A `deny` clause with `set` statements is a mistake every time. The set
+      never runs - the route is denied - so the operator wrote something that
+      reads like policy and is not.
+
+    * A `permit` clause with no `match` permits everything. That is common and
+      deliberate at the end of a policy, and it is also exactly what "I had
+      not finished typing" looks like. It cannot be refused; it must be said,
+      because afterwards the two are indistinguishable.
+
+    * A clause that can never be reached, because an earlier clause in the same
+      route-map matches everything. Sequence numbers are the operator's and
+      this MUST NOT renumber them - but a policy that looks right and does
+      nothing is worth a sentence.
+    """
+    maps = {}          # name -> list of clauses, in the order written
+    clause = None
+    # Membership is decided by the statement, not by indentation. A
+    # configuration read back from FRR is indented; the same lines typed at
+    # this VTY are not, and a parser keyed on leading space sees every typed
+    # statement as a new block - so a `deny` clause carrying `set` read as an
+    # empty clause and was not refused. Found by the lab, not by reading.
+    for raw in routing:
+        line = raw.rstrip()
+        if not line:
+            continue
+        w = line.split()
+        if w[0] == "route-map" and len(w) >= 4:
+            clause = {"name": w[1], "action": w[2], "seq": w[3],
+                      "header": line.strip(), "match": [], "set": [],
+                      "other": []}
+            maps.setdefault(w[1], []).append(clause)
+            continue
+        if clause is None:
+            continue
+        if w[0] == "match":
+            clause["match"].append(line.strip())
+        elif w[0] == "set":
+            clause["set"].append(line.strip())
+        elif w[0] in ("call", "on-match", "description"):
+            clause["other"].append(line.strip())
+        elif w[0] != "exit":
+            clause = None          # some other block began
+
+    out = []
+    for name, clauses in maps.items():
+        catch_all = None
+        for c in clauses:
+            if c["action"] == "deny" and c["set"]:
+                out.append(("error", c["header"],
+                            f"a deny clause with {len(c['set'])} 'set' "
+                            "statement(s): the set never runs, because the "
+                            "route is denied"))
+            if catch_all is not None:
+                out.append(("warning", c["header"],
+                            f"unreachable: '{catch_all}' earlier in "
+                            f"{name} matches everything and permits it"))
+                continue
+            if not c["match"]:
+                if c["action"] == "permit":
+                    out.append(("warning", c["header"],
+                                "no 'match': this permits every route. If "
+                                "that is meant, it is the end of the policy; "
+                                "if not, the policy is unfinished"))
+                    catch_all = c["header"]
+                else:
+                    # `deny` with no match denies everything after it too, and
+                    # is the other half of the same trap.
+                    catch_all = c["header"]
+    return out
+
+
 def bgp_errors(routing):
     """
     What a BGP configuration says that cannot work, as (statement, why).
@@ -793,6 +984,41 @@ class Frr:
         rc, _ = self._exec(["-c", "show version"])
         return rc == 0
 
+    #: A prefix-list name nothing configures. Removing something that is not
+    #: there is a real commit that changes nothing, which is exactly what is
+    #: needed below.
+    ABSORB_NAME = "HEXA-ABSORB-STALE-REFUSAL"
+
+    def absorb_stale_refusal(self):
+        """
+        Take the refusal FRR owes the NEXT commit, so the operator does not.
+
+        Measured on FRR 10.7.1: a statement FRR rejects is refused through
+        mgmtd, which keeps the rejected entry in its candidate datastore and
+        then refuses the next configuration commit with the same message -
+        exactly one, and then it clears. That next commit is the operator's,
+        and the error names a statement that is in no configuration they can
+        find.
+
+        Which absorbers work was measured, not guessed:
+
+            configure terminal, end                 does NOT clear it
+            hostname <the hostname it already has>  does NOT clear it
+            no ip prefix-list <a name nobody has>   clears it, leaves nothing
+
+        The first two change nothing, so mgmtd never runs a commit cycle and
+        never re-validates. The third is a genuine commit whose effect is
+        nothing, which is the combination this needs. It is also harmless when
+        there was no stale refusal to absorb, which matters because this runs
+        on every failed apply and most of those are the VTY's own refusals.
+        """
+        try:
+            subprocess.run([VTYSH, "-c", "configure terminal",
+                            "-c", f"no ip prefix-list {self.ABSORB_NAME}"],
+                           capture_output=True, text=True, timeout=15)
+        except (subprocess.TimeoutExpired, OSError):
+            pass               # best effort: the commit already failed
+
     def reload(self, lines, check_only=False):
         """
         Converge FRR onto `lines` using frr-reload.py, which computes the
@@ -814,6 +1040,7 @@ class Frr:
                                capture_output=True, text=True, timeout=60)
             out = ((p.stdout or "") + (p.stderr or "")).rstrip()
             if p.returncode:
+                self.absorb_stale_refusal()
                 # frr-reload dumps a Python traceback on failure. An operator
                 # needs the reason, not our tooling's stack.
                 out = self._summarise(out)
@@ -1857,6 +2084,17 @@ class Shell:
             for stmt, why in bgp_errors(target.routing):
                 self.err(f"{stmt}: {why}")
                 ok = False
+
+            # Route-maps: one refusal and two things worth saying (#144). The
+            # warnings do NOT fail the check - a permit with no match is a
+            # real idiom - but they are printed, because afterwards nobody can
+            # tell a finished policy from an unfinished one.
+            for sev, stmt, why in route_map_findings(target.routing):
+                if sev == "error":
+                    self.err(f"{stmt}: {why}")
+                    ok = False
+                else:
+                    print(f"warning: {stmt}: {why}")
 
             if d["routing_changed"] and target.routing:
                 rc_fib, fib_text = self.dp.run("show ip fib")
@@ -3172,7 +3410,8 @@ class Shell:
         shared during an incident is a hash that has left the building, and it
         is crackable offline at the attacker's leisure.
         """
-        print("\n".join(snmp_redact(redact(cfg.text().splitlines()))))
+        print("\n".join(mark_unchecked(
+            snmp_redact(redact(cfg.text().splitlines())))))
 
     def show_this(self):
         """
@@ -3611,6 +3850,39 @@ class Shell:
                 found[w[1]] = "peer group"
         return found
 
+    def dyn_as_path_lists(self):
+        """AS-path access-lists by name, with what the first entry does."""
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for line in cfg.routing:
+            w = line.split()
+            if len(w) >= 4 and w[:3] == ["bgp", "as-path", "access-list"]:
+                found.setdefault(w[3], "as-path list")
+        return found
+
+    def dyn_community_lists(self):
+        """
+        Community and large-community lists by name.
+
+        Both in one answer, and labelled, because a route-map's `match
+        community` and `match large-community` are different statements and an
+        operator completing a name in either place wants to see which is which
+        rather than a list that does not say.
+        """
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for line in cfg.routing:
+            w = line.split()
+            if len(w) >= 3 and w[0] == "bgp" and w[1] == "community-list":
+                # "bgp community-list standard NAME permit ..." and
+                # "bgp community-list NAME permit ..." are both spelled.
+                name = w[3] if w[2] in ("standard", "expanded") else w[2]
+                found.setdefault(name, "community list")
+            elif len(w) >= 3 and w[0] == "bgp" and w[1] == "large-community-list":
+                name = w[3] if w[2] in ("standard", "expanded") else w[2]
+                found.setdefault(name, "large-community list")
+        return found
+
     def dyn_prefix_lists(self):
         """
         The prefix-lists this box has, read back from the control plane.
@@ -3658,6 +3930,8 @@ class Shell:
         ARG_NEIGHBOUR: "dyn_neighbours",
         ARG_ROUTE_MAP: "dyn_route_maps",
         ARG_PEER_GROUP: "dyn_peer_groups",
+        ARG_AS_PATH_LIST: "dyn_as_path_lists",
+        ARG_COMMUNITY_LIST: "dyn_community_lists",
     }
 
     def dynamic_options(self, hint, prefix):
@@ -3691,6 +3965,8 @@ class Shell:
         block = self.frr_ctx[-1]
         if block.startswith("interface "):
             return INTERFACE_BLOCK
+        if block.startswith("route-map "):
+            return ROUTE_MAP_BLOCK
         if block.startswith("address-family "):
             base, neigh = BGP_AF_BLOCK, BGP_AF_NEIGHBOUR
         elif block.startswith("router bgp"):

@@ -4,6 +4,8 @@
 
 # Roteamento, SSH, usuários e SNMP
 
+# Roteamento, SSH, usuários e SNMP
+
 Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças exigem a capacidade de **administrador** (`hexa-admin` ou root).
 
 # Roteamento (FRR)
@@ -247,6 +249,63 @@ commit complete
 ```
 
 Antes essa linha era descartada, e a pessoa saía com uma política apontando para nada.
+
+# Route-maps: a política em si
+
+Uma route-map é uma lista de cláusulas numeradas. Cada cláusula diz **a quais rotas se aplica** (`match`) e **o que muda nelas** (`set`). A primeira cláusula que casa decide; as de baixo não são consultadas.
+
+```
+ip prefix-list PL-MEUS-BLOCOS seq 10 permit 200.150.8.0/22
+
+route-map RM-TRANSITO-OUT permit 10
+ match ip address prefix-list PL-MEUS-BLOCOS
+ set as-path prepend 65000 65000
+exit
+route-map RM-TRANSITO-OUT permit 20
+exit
+
+router bgp 65000
+ address-family ipv4 unicast
+  neighbor 200.150.0.2 route-map RM-TRANSITO-OUT out
+ exit-address-family
+ exit
+```
+
+`?` e TAB dentro da cláusula listam o que `match` e `set` entendem, e completam nomes que já existem na caixa: prefix-lists, listas de AS-path, listas de comunidade, outras route-maps e vizinhos.
+
+## O que é recusado e o que é apenas dito
+
+**Cláusula** `**deny**` **com** `**set**` **é recusada.** O `set` nunca roda — a rota foi negada. É engano toda vez.
+
+**Cláusula** `**permit**` **sem** `**match**` **é avisada, não recusada.** Ela libera tudo. Isso é um jeito comum e proposital de terminar uma política — e é também exatamente o que uma política pela metade parece. O equipamento não consegue distinguir, e ninguém consegue depois, então ele fala:
+
+```
+warning: route-map RM-TRANSITO-OUT permit 20: no 'match': this permits every
+route. If that is meant, it is the end of the policy; if not, the policy is
+unfinished
+```
+
+Se era a intenção, o aviso é ruído de uma linha. Se não era, é a diferença entre uma política que filtra e uma que deixa passar tudo.
+
+**Cláusula que nenhuma rota alcança é avisada.** Se a cláusula 10 libera tudo, a 20 nunca é consultada. Os números de sequência são seus e o equipamento não renumera nada — mas uma política que parece certa e não faz nada merece uma frase.
+
+## O que não foi conferido aparece marcado
+
+A maior parte de uma route-map continua passando direto para o roteamento. Sem marcação, quem lê a configuração não distingue o que foi conferido do que foi apenas repassado — e acaba lendo garantia nos dois:
+
+```
+route-map RM-CLIENTES permit 10
+ match ip address prefix-list PL-CLIENTES
+ set tag 100    <- not checked by this VTY
+```
+
+A marca é só da exibição: ela não vai para a configuração salva, nem para uma revisão de rollback, nem para o roteamento. E se você copiar a tela para um arquivo e carregar de volta, ela é retirada na leitura — a tela e o arquivo não divergem.
+
+## Como conferir
+
+* `show running-config` mostra as route-maps como o equipamento as lê de volta, com o que não foi conferido marcado;
+* `commit check` mostra os avisos sem tocar na caixa;
+* `show route` mostra o que **encaminha** — se a política era para mudar o caminho, é aqui que a mudança aparece.
 
 ### Faixa de prefixo: `ge` e `le`
 
