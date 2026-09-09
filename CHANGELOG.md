@@ -25,7 +25,44 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.46.0.
+Nothing merged since v0.47.0.
+
+## 0.47.0 — a policy whose daemon is stopped is refused, not lost
+
+One defect ([#155](https://github.com/andrediashexa/hexarouting/issues/155)),
+found by measuring FRR's real grammar rather than trusting what a planning
+issue asserted about it.
+
+### Fixed
+
+* **`ip prefix-list`, `route-map`, `bgp as-path access-list` and the community
+  lists have no `router` line**, so the daemon check keyed on one never looked
+  at them. With the owning daemon stopped, FRR **accepts the statement and
+  stores nothing** — no error, and the statement is absent from the running
+  configuration afterwards. Measured on FRR 10.7.1.
+
+  A `router bgp` stanza that goes nowhere is noticed: no session comes up. A
+  prefix-list that goes nowhere is invisible until traffic that should have
+  been filtered is not, and by then nobody connects it to a commit that
+  reported success days earlier.
+
+  The refusal names the daemon **and the file to edit**, because the fix is
+  `/etc/frr/daemons` and a message that does not say so sends somebody to read
+  their own configuration for an error that is not in it.
+
+  Same shape as [#99](https://github.com/andrediashexa/hexarouting/issues/99),
+  where `bgpd`, `ospfd` and `isisd` shipped disabled and routing configuration
+  for daemons that were not running committed cleanly. That fix reported the
+  daemons on an installed box; this is the half that was left.
+
+### A correction to the plan
+
+[#143](https://github.com/andrediashexa/hexarouting/issues/143) asserted that
+FRR does not check `ge`/`le` on a prefix-list. **It does** — `mask length <=
+ge <= le` and the family bound are both enforced, with a clearer message than
+the VTY would produce. Half the checks planned there would have duplicated a
+refusal the dataplane already makes. The issue is corrected against a running
+FRR 10.7.1.
 
 ## 0.46.0 — the global settings leave the CLI socket, and fourteen tests that could not fail
 
