@@ -368,28 +368,49 @@ share it so they cannot drift.
 ```
 interface GigabitEthernet0/12/0
   mac-address 02:aa:bb:cc:dd:ee
-  ipv6 nd suppress-ra
+  no ipv6 nd suppress-ra
   exit
 ```
 
 `mac-address` matters on a card swap: the upstream's ARP cache, DHCP
 reservations and any L2 filtering all key on it.
 
-**VPP advertises this box as a router by default.** Measured on a running
-dataplane, not assumed: an interface holding an IPv6 address sends a router
-advertisement every 200 seconds, with a 600-second lifetime. On a
+**VPP advertises this box as a router by default. This product does not.**
+Measured on a running dataplane, not assumed: an interface holding an IPv6
+address sends a router advertisement every 200 seconds, with a 600-second
+lifetime, plus three initial advertisements when advertising starts. On a
 subscriber-facing port that is a second default gateway for every subscriber
-who gets their prefix by DHCPv6-PD.
+who gets their prefix by DHCPv6-PD, which is why the default here is the
+opposite of VPP's.
 
-`ipv6 nd suppress-ra` stops it. The **default is unchanged** — VPP's, which is
-to advertise — because changing it is a decision about how the product behaves
-and belongs to the maintainer, not to the commit that made the knob exist. It
-is written down here so it is a known default rather than an accident, which
-is what it was.
+So suppression is applied when an IPv6 address is added, and `no ipv6 nd
+suppress-ra` is the **exception** an operator writes on the ports that should
+advertise — an uplink, a transit link, a port facing routers rather than
+subscribers. `ipv6 nd suppress-ra` is accepted too, and says out loud what is
+already true.
 
 `is_no` in `sw_interface_ip6nd_ra_config` undoes a previous configuration
 rather than meaning "not suppressed", so resuming advertisements is `is_no` on
 the suppression and not `suppress = 0`.
+
+The state is **read back** from `sw_interface_ip6nd_ra_dump` (`send_radv`, and
+`cease_radv` unset), like every other interface attribute. It was not, once,
+and the consequence was not a cosmetic one: the running configuration always
+claimed "suppressed", the difference against a candidate that also said
+"suppressed" came out empty, and an operator who had enabled advertisements
+could not turn them off again — with `show running-config` not admitting they
+were on (#161). `show ip6 interface` prints the same text either way, so no
+text-based reader would have closed that gap.
+
+The lab measures all three states by counting packets on the wire in the peer
+namespace — none by default, three once asked for, none again after
+suppressing. Two things had to be right before that measurement said anything:
+the capture is opened **before** the commit, because the initial advertisements
+go out as advertising starts; and it runs inside the namespace the far end of
+the link lives in. Capturing from the wrong namespace is not a loud failure —
+tcpdump exits, the file stays empty, and every count reads zero, which made
+"the default sends none" pass because nothing could be counted on either side
+of the setting.
 
 ### `show interface <name>`
 

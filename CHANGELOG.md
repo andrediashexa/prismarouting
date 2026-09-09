@@ -25,7 +25,72 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.49.0.
+Nothing merged since v0.50.0.
+
+## 0.50.0 — router advertisements off by default, and a refusal that cost the next commit
+
+Three defects found chasing one lab failure
+([#160](https://github.com/andrediashexa/hexarouting/issues/160),
+[#161](https://github.com/andrediashexa/hexarouting/issues/161),
+[#162](https://github.com/andrediashexa/hexarouting/issues/162)), following
+[#133](https://github.com/andrediashexa/hexarouting/issues/133).
+
+### Changed
+
+* **This box no longer advertises itself as a router by default.** VPP does, on
+  any interface holding an IPv6 address, every 200 seconds with a 600-second
+  lifetime. On a subscriber-facing port that is a second default gateway for
+  everyone who gets their prefix by DHCPv6-PD. Suppression is now applied when
+  an IPv6 address is added, and `no ipv6 nd suppress-ra` is the exception an
+  operator writes on the ports that should advertise.
+
+  Measured on the wire, not read from a status line — `show ip6 interface`
+  prints the same text either way. Counted in the peer namespace across each
+  commit: **none by default, three once asked for, none again after
+  suppressing**.
+
+  Operators who rely on the previous behaviour MUST add `no ipv6 nd
+  suppress-ra` under the interfaces that should keep advertising.
+
+* **`commit` validates once.** It used to validate twice — once to discover
+  re-mappings, once to decide whether to apply — and `apply()` prints what it
+  refuses, so every validation error reached the operator twice. An invalid
+  candidate is now reported as invalid before the re-mapping question, which is
+  the more useful of the two answers.
+
+### Fixed
+
+* **A refused prefix-list range no longer costs the next commit.** A `ge`/`le`
+  FRR rejects arrives through `mgmtd`, which keeps the rejected entry in its
+  candidate datastore and then fails the **next** configuration commit with the
+  same message — naming a prefix-list that is in no running configuration, on
+  no disk, and in nothing the VTY sent. The VTY now refuses the line itself,
+  so FRR never receives it:
+
+  ```
+  error: ip prefix-list PL-BAD seq 10 permit 10.12.0.0/8 ge 24 le 16: prefix
+  range refused for 10.0.0.0/8: mask length <= ge <= le <= 32 does not hold
+  (length 8, ge 24, le 16)
+  ```
+
+  The VTY now holds an opinion about what FRR accepts, and an opinion that
+  drifts refuses configurations that are fine. So eight cases are put to both
+  the VTY and a running FRR, and they MUST agree; `mgmtd` is restarted between
+  cases so a poisoned candidate cannot make the next one look refused.
+
+* **Router-advertisement state is read back from the dataplane.** It was the
+  one interface attribute that was not, so the running configuration always
+  said "suppressed" and `ipv6 nd suppress-ra` on an advertising port produced
+  an empty difference, no call, and a commit that reported success having done
+  nothing. Enabling advertisements could not be undone.
+
+### Internal
+
+* The router-advertisement lab measures all three states, and refuses to report
+  a count from a capture that never opened. It had been capturing `veth-out`
+  from the root namespace, where that interface does not exist: tcpdump exits,
+  the file stays empty, every count reads zero, and "the default sends none"
+  passed because nothing could be counted on either side of the setting.
 
 ## 0.49.0 — a pool's public prefix that nothing announces
 

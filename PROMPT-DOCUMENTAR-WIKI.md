@@ -32,8 +32,15 @@ documente a versão lançada — não trabalho não commitado na árvore.
 
 ## O estado atual da wiki
 
-29 páginas em quatro categorias, numa coleção só (o compartilhamento público do
-Outline é por coleção, e a raiz do domínio aponta para esse link único):
+**Não confie na lista abaixo: ela é um retrato de 2026-09-09 e o projeto anda
+rápido — foi da v0.32.0 à v0.44.0 num único dia de trabalho, e há outra sessão
+editando a wiki em paralelo.** Rode `WIKI_TOKEN=... sh tools/wiki-pull.sh`
+antes de começar e leia `wiki/` para saber o que existe hoje. A lista serve
+para você reconhecer a forma da coisa, não para decidir o que falta.
+
+Eram 29 páginas em quatro categorias, numa coleção só (o compartilhamento
+público do Outline é por coleção, e a raiz do domínio aponta para esse link
+único):
 
 ```
 Começar aqui          Primeiros passos · Dimensionamento e requisitos ·
@@ -83,16 +90,38 @@ existente. A wiki tem 29 páginas; ela fica pior com 60 páginas finas.
 
 ## Como escrever e publicar
 
-Tudo pela **API do Outline**, nunca pelo banco. O `docs/wiki-audit.md` §3
-explica; peça ao mantenedor o host e o login.
+Você precisa de um **token de API do Outline** — não da senha da máquina. Peça
+ao mantenedor, ou crie um pela interface web e revogue quando terminar. Ele vai
+na variável `WIKI_TOKEN`, nunca em arquivo do repositório.
+
+**Para alterar uma página existente, use a ferramenta, não a API crua:**
+
+```sh
+WIKI_TOKEN=... sh tools/wiki-pull.sh                      # sincroniza o espelho
+# edite o arquivo em wiki/... como rascunho
+WIKI_TOKEN=... sh tools/wiki-push.sh <document-id> <arquivo.md>
+```
+
+O `wiki-push.sh` **se recusa a publicar** se o documento ao vivo mudou depois
+do último pull, e manda você puxar de novo. Isso não é zelo: ele existe por
+causa de uma quase-colisão real — quatro páginas foram atualizadas pela API, o
+espelho não foi atualizado, e uma edição posterior foi construída sobre a cópia
+velha **no mesmo momento em que outra pessoa renomeava uma categoria e apagava
+páginas**. Nada se perdeu, e só porque o texto velho não casou — não porque
+alguém percebeu.
+
+Chamar `documents.update` direto pula essa proteção. Faça isso apenas para o
+que a ferramenta não cobre:
 
 ```
 documents.list      lista as páginas e os ids
-documents.update    {id, text, publish:true}
 documents.create    {title, text, collectionId, parentDocumentId, publish:true}
 documents.move      {id, collectionId, parentDocumentId, index}
 collections.update  {id, description}   ← a home
 ```
+
+E se fizer, puxe o espelho logo depois, para a próxima pessoa não construir
+sobre o que você acabou de mudar.
 
 ## Armadilhas já pagas — não repita
 
@@ -132,4 +161,6 @@ Mermaid renderizam de fato — há 24 deles na wiki hoje.
    corpo de um tipo só, fecho com *Como conferir* ou *Ver também*.
 3. Atualize `docs/wiki-audit.md` §5 com o que mudou e por quê — o próprio
    documento manda registrar, senão o próximo leitor desfaz.
-4. Rode `tools/wiki-pull.sh` para o espelho refletir a wiki.
+4. Rode `tools/wiki-pull.sh` para o espelho refletir a wiki, e confira o
+   `git diff wiki/` — se aparecer mudança que não foi sua, outra pessoa estava
+   editando junto e vale conferir se vocês se atropelaram.

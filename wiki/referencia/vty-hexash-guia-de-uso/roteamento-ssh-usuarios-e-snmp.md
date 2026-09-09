@@ -2,6 +2,8 @@
 
 # Roteamento, SSH, usuários e SNMP
 
+# Roteamento, SSH, usuários e SNMP
+
 Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças exigem a capacidade de **administrador** (`hexa-admin` ou root).
 
 # Roteamento (FRR)
@@ -205,6 +207,84 @@ configure
   priv <aes|des> <passphrase>
   exit
 ```
+
+## Política de roteamento: o que a VTY confere
+
+Prefix-lists e route-maps são escritos na sintaxe do roteamento e guardados por ele. A VTY completa os nomes que a caixa já tem:
+
+```
+hexarouting# [edit] ip ?
+  prefix-list  a named list of prefixes, for matching in policy
+  route        a static route
+hexarouting# [edit] ip prefix-list <TAB>
+  PL-CLIENTES   ip prefix-list
+```
+
+A completação sai da mesma fonte que o `show running-config` responde, então ela não oferece um nome que a caixa não tem.
+
+
+:::warning
+**Uma política precisa dos daemons de roteamento de pé.** Prefix-list e route-map não pertencem a nenhum protocolo, então não é o `bgpd` que as guarda — e com o daemon dono parado o roteamento **aceita a linha e não guarda nada**, sem erro.
+
+O `commit` recusa nesse caso e diz qual daemon falta e qual arquivo editar:
+
+```
+error: 2 policy statement(s) need mgmtd, which is not running
+    first one: ip prefix-list PL-CLIENTES seq 10 permit 200.150.0.0/24
+    they would commit and store nothing. Enable mgmtd in /etc/frr/daemons
+    and restart frr
+```
+
+Uma estrofe `router bgp` que não vai a lugar nenhum se percebe: nenhuma sessão sobe. Uma prefix-list que não vai a lugar nenhum é invisível até o tráfego que devia ser filtrado não ser.
+
+:::
+
+Avisos do roteamento agora chegam ao operador mesmo quando o `commit` tem sucesso:
+
+```
+frr: The route-map 'RM-CLIENTES' does not exist.
+commit complete
+```
+
+Antes essa linha era descartada, e a pessoa saía com uma política apontando para nada.
+
+### Faixa de prefixo: `ge` e `le`
+
+Numa entrada de prefix-list com `ge` e `le`, vale `comprimento da máscara ≤ ge ≤ le ≤ 32` (ou `≤ 128`, em IPv6). Quando não vale, a linha é recusada no `commit` e no `commit check`, com o nome da sentença:
+
+```
+error: ip prefix-list PL-CLIENTES seq 10 permit 10.12.0.0/8 ge 24 le 16: prefix
+range refused for 10.0.0.0/8: mask length <= ge <= le <= 32 does not hold
+(length 8, ge 24, le 16)
+```
+
+Repare que o prefixo aparece normalizado — `10.12.0.0/8` vira `10.0.0.0/8`, porque `/8` só olha o primeiro octeto. Procure a sentença pelo nome da lista, não pelo prefixo impresso.
+
+
+:::info
+Essa recusa acontece **antes** de a linha chegar ao roteamento. É de propósito: recusada mais adiante, ela também derrubava o commit seguinte, com a mesma mensagem apontando para um prefixo que não estava em configuração nenhuma — nem a em vigor, nem a candidata. Quem visse aquilo procuraria o prefixo na própria configuração e não acharia nada para corrigir.
+
+:::
+
+## O prefixo público de um pool precisa ser anunciado
+
+```
+warning: pool 'clientes': nothing here announces 200.150.0.16/28
+    subscribers behind it would be translated to an address the internet
+    cannot route back to
+```
+
+Esta é a única verificação que cruza as duas metades do equipamento. Configure o CGNAT certo, configure o BGP certo, e o serviço pode estar morto assim mesmo: se nada anuncia um prefixo que **cobre** o lado público do pool, todo assinante atrás dele é traduzido para um endereço que a internet não sabe devolver. O tráfego sai e nada volta.
+
+As duas metades são configuradas em lugares diferentes, por pessoas diferentes, em dias diferentes — e nada ligava uma à outra.
+
+
+:::info
+O aviso entende **cobertura**, não igualdade: anunciar `200.150.0.0/24` cobre um pool em `200.150.0.16/28`.
+
+Ele **não recusa** o commit — anunciar de outro equipamento é um desenho legítimo. E ele **se cala** quando há `redistribute`, porque aí não consegue saber. Um aviso que dispara numa caixa que funciona é ignorado, e o próximo, verdadeiro, é ignorado junto.
+
+:::
 
 # Ver também
 
