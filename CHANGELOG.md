@@ -25,7 +25,74 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.45.0.
+Nothing merged since v0.46.0.
+
+## 0.46.0 — the global settings leave the CLI socket, and fourteen tests that could not fail
+
+Three merges in one release. The rule is one release per merge; these three
+tell one story and the medium takes twenty-five minutes to gate, so they are
+grouped and the deviation is recorded here rather than left implicit.
+
+### Changed
+
+* **Timeouts, block hold-down and session table sizing leave the VPP CLI
+  socket** for `bpa_global_set`
+  ([#76](https://github.com/andrediashexa/hexarouting/issues/76), still open
+  for the `check` path). Every account that could change a timeout needed the
+  socket, and an account with that socket can delete a pool and disconnect
+  everybody behind it.
+
+  A zero timeout field means "leave it alone" — zero is not a valid timeout,
+  so it needs no separate flag. The settings that can legitimately be zero
+  carry one.
+
+### Fixed
+
+* **`address-family` is a block**
+  ([#150](https://github.com/andrediashexa/hexarouting/issues/150)). It was
+  not, so `exit` inside one popped the enclosing `router bgp` and the
+  operator's next line went to the top of configuration mode with the prompt
+  still claiming BGP. The statement always reached FRR, so nothing failed —
+  what was wrong is what the operator was told.
+
+* **A refusal that named the wrong reason.** The session-table refusal
+  returned a code and logged nothing, and the client attaches the last line of
+  the dataplane's log so the operator gets a sentence rather than a number —
+  so it attached an unrelated error and sent the operator to debug a file
+  permission.
+
+* **Fourteen assertions that could not fail**
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)), out of
+  forty found weaker than they read. Three shapes:
+
+  * **matching a label instead of a value** — `"pptp"` passed with the ALG
+    off, including in the run that lab exists to fail; `"packets translated"`
+    is declared once per direction, so the return path could translate
+    nothing;
+  * **matching a bare number or word** — `grep -qi up` matched a peer whose
+    hostname is `upstream`; `grep -qc` is `grep -q`, so "all three routes"
+    asserted "at least one";
+  * **treating an empty result as a pass** — the check that the published ISO
+    carries no usable root password accepted an unreadable `/etc/shadow`,
+    passing without reading a byte of the image on any runner without
+    `unsquashfs`.
+
+  One of the fourteen was introduced the same day while deliberately replacing
+  a hardcoded list with a rule. Making an assertion look stronger is not the
+  same as making it stronger.
+
+### Worth recording
+
+Correcting the `grep -qc` showed `show route` listing one learned prefix
+instead of two. **`show route` was right** — the prefix had left the FIB
+because the lab's own MTU section drops the OSPF adjacency, and the restore
+that should have put it back sent its output to `/dev/null`.
+
+Two rules came out of chasing it: **a neighbour returning is not a route
+returning** — the adjacency came back in 10 seconds and the route in 15 — and
+**every section after a rollback test must re-establish its own
+preconditions**, because a rollback restores an older revision and a `vppctl`
+change pushes no revision for it to know about.
 
 ## 0.45.0 — the BGP plan, and the wiki rule made to stick
 
