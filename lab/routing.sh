@@ -519,4 +519,40 @@ expect_in "and so did the IPv6 address" "2001:db8:9::1/64" "$(addrs_of)"
 expect "the adjacency on the primary address was not disturbed" \
   sh -c "vtysh -c 'show ip ospf neighbor' | grep -q Full"
 
+# --- a policy statement whose daemon is not running (#155) ---
+#
+# `ip prefix-list` and `route-map` have no `router` line, so the daemon check
+# never looked at them. Measured on FRR 10.7.1: with mgmtd stopped, vtysh
+# ACCEPTS a prefix-list and stores nothing - no error, and the statement is
+# absent from the running configuration afterwards.
+#
+# A `router bgp` stanza that goes nowhere is noticed, because no session comes
+# up. A prefix-list that goes nowhere is invisible until traffic that should
+# have been filtered is not.
+echo "=========== a policy with its daemon stopped ==========="
+
+# With mgmtd running, an ordinary policy commit must still work. This half is
+# not decoration: a check that refuses in both cases is not a check, and one
+# that refuses too much gets worked around and is then wrong on the day it was
+# right.
+OKPOL=$($HX -c "configure" -c "ip prefix-list PL-LAB seq 10 permit 10.9.0.0/16" \
+        -c "commit" 2>&1)
+echo "$OKPOL" | tail -2 | sed 's/^/  /'
+expect_in "with mgmtd running, a prefix-list commits" "commit complete" "$OKPOL"
+expect "and the dataplane's control plane really has it" \
+  sh -c "vtysh -c 'show running-config' | grep -q 'PL-LAB'"
+
+pkill -f 'frr/mgmtd' 2>/dev/null
+sleep 2
+echo "  daemons now: $(vtysh -c 'show daemons' 2>&1 | head -1)"
+BADPOL=$($HX -c "configure" -c "ip prefix-list PL-GONE seq 10 permit 10.8.0.0/16" \
+         -c "commit" 2>&1)
+echo "$BADPOL" | tail -3 | sed 's/^/  /'
+expect_in "with mgmtd stopped, the commit is refused" "mgmtd" "$BADPOL"
+expect_in "and the refusal names the file to edit" "/etc/frr/daemons" "$BADPOL"
+expect_not_in "and nothing was applied" "commit complete" "$BADPOL"
+
+/usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
+sleep 2
+
 verdict

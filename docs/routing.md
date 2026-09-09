@@ -1244,6 +1244,44 @@ trail: the message carries no `audit_user`
 `vppctl` call before, so it was never attributable — moving it to the API made
 the gap visible rather than creating it.
 
+## A policy whose daemon is not running
+
+`ip prefix-list`, `route-map`, `bgp as-path access-list` and the community
+lists have **no `router` line**, so the daemon check keyed on one never looked
+at them.
+
+Measured on FRR 10.7.1 with only `staticd` running:
+
+```
+vtysh -c "configure terminal" -c "ip prefix-list A seq 10 permit 10.0.0.0/8"
+  → no error
+vtysh -c "show running-config" | grep prefix-list
+  → nothing
+```
+
+Accepted and discarded, silently, depending on a daemon nobody was asked
+about. With `mgmtd` and `zebra` up, the same statement is stored.
+
+**A `router bgp` stanza that goes nowhere is noticed** — no session comes up.
+**A prefix-list that goes nowhere is invisible** until traffic that should have
+been filtered is not, or traffic that should have passed is dropped, and by
+then nobody connects it to a commit that reported success days earlier.
+
+`commit` now refuses, names the daemon and names the file to edit — because
+the fix is `/etc/frr/daemons`, and a message that does not say so sends
+somebody to read their own configuration for an error that is not in it.
+
+The lab has both halves: the refusal with the daemon stopped, and an ordinary
+policy commit that still works with it running. A check that refuses in both
+cases is not a check, and one that refuses too much is worked around — and is
+then wrong on the day it was right.
+
+This is the same shape as
+[#99](https://github.com/andrediashexa/hexarouting/issues/99), where `bgpd`,
+`ospfd` and `isisd` shipped disabled and routing configuration for daemons
+that were not running committed cleanly. That fix reported the daemons on an
+installed box; this is the half that was left.
+
 ## FRR version
 
 Debian 12 ships FRR 8.4.4, already old. Production **SHOULD** pin a version
