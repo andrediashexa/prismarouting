@@ -1939,7 +1939,28 @@ class Shell:
 
         if args and args[0] == "check":
             if self.apply(self.candidate, check_only=True):
-                print("configuration check succeeds")
+                # Say what was checked, not "everything is fine".
+                #
+                # Routing statements are validated by `frr-reload.py --test`,
+                # which computes the delta and prints what it WOULD apply
+                # without handing the statements to FRR - so it exits 0 on a
+                # statement FRR itself refuses. Measured: a prefix-list with
+                # `ge 24 le 16` passes the check and fails the commit (#158).
+                #
+                # The check is not going to apply-and-roll-back to find out:
+                # `check` must not touch the box, and a lab asserts it issues
+                # read-only commands only. So it reports the limit instead,
+                # because "configuration check succeeds" claimed more than it
+                # had verified, and an operator in a maintenance window acts
+                # on that sentence.
+                if self.real_routing(self.candidate.routing):
+                    print("configuration check succeeds for CGNAT and the "
+                          "box's own configuration")
+                    print("  routing statements are checked for structure "
+                          "only; FRR validates them at commit, and can still "
+                          "refuse one")
+                else:
+                    print("configuration check succeeds")
             return
 
         # A change that re-maps existing subscribers is refused until it is
