@@ -251,6 +251,65 @@ done:
 }
 
 static void
+vl_api_bpa_global_set_t_handler (vl_api_bpa_global_set_t *mp)
+{
+  vl_api_bpa_global_set_reply_t *rmp;
+  bpa_main_t *bm = &bpa_main;
+  int rv = 0;
+  u32 v;
+
+  /* A zero timeout is not a timeout, so zero means "leave it alone" and needs
+   * no separate flag. Writing them one at a time rather than replacing the
+   * struct: the caller sends what the configuration says, and what the
+   * configuration does not mention is not the caller's to reset. */
+#define SET_IF(field, msgfield)                                               \
+  v = clib_net_to_host_u32 (mp->timeouts.msgfield);                           \
+  if (v)                                                                      \
+    bm->timeouts.field = v;
+
+  SET_IF (udp, udp)
+  SET_IF (icmp, icmp)
+  SET_IF (tcp_syn, tcp_syn)
+  SET_IF (tcp_trans, tcp_transitory)
+  SET_IF (tcp_estab, tcp_established)
+  SET_IF (gre, gre)
+  SET_IF (port_holddown, port_holddown)
+  SET_IF (alg_expect, alg_expect)
+#undef SET_IF
+
+  if (mp->set_block_holddown)
+    bm->block_holddown = clib_net_to_host_u32 (mp->block_holddown);
+
+  if (mp->set_session_table)
+    {
+      /* The same refusal the CLI makes, and for the same reason: the tables
+       * are allocated when the first pool is created, and changing the sizing
+       * afterwards would describe a table that is not the one in use. */
+      if (pool_elts (bm->pools))
+	{
+	  /* Logged, not only coded. The client attaches the last line of
+	   * VPP's log to a refusal so the operator gets a sentence instead of
+	   * a number - and a handler that returns a code without writing one
+	   * leaves it attaching somebody else's unrelated error. That is
+	   * worse than no explanation: it sends the operator to debug a file
+	   * permission when the tables are simply already allocated. */
+	  vlib_log_err (bm->log_class,
+			"session-table: tables already created; set this "
+			"before configuring pools");
+	  rv = VNET_API_ERROR_INSTANCE_IN_USE;
+	}
+      else
+	{
+	  bm->hash_buckets = clib_net_to_host_u32 (mp->session_buckets);
+	  bm->hash_memory =
+	    ((u64) clib_net_to_host_u32 (mp->session_memory_mb)) << 20;
+	}
+    }
+
+  REPLY_MACRO (VL_API_BPA_GLOBAL_SET_REPLY);
+}
+
+static void
 vl_api_bpa_limits_set_t_handler (vl_api_bpa_limits_set_t *mp)
 {
   vl_api_bpa_limits_set_reply_t *rmp;
