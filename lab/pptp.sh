@@ -195,9 +195,17 @@ OFF_CID=$(field 7)
 
 echo
 echo "=========== VERDICT ==========="
-expect_in "the PPTP ALG is enabled by default" "pptp" "$ALG"
+# The STATE, not the row label. `show bpa alg` prints one row per ALG whether
+# it is on or off, so matching "pptp" passed with the ALG disabled - including
+# in the BPA_PPTP_OFF run this lab exists to fail. lab/vty-pool.sh already
+# asserts "ftp    off" the right way, in this same repository.
+expect "the PPTP ALG is enabled by default" \
+  sh -c "printf '%s' \"$ALG\" | tr -s ' ' ' ' | grep -q 'pptp on'"
 expect "the control connection was translated" test -n "${A_PORT:-}"
-expect_in "the call request is still a PPTP Outgoing-Call-Request" "7" "${A_TYPE:-}"
+# A numeric field compared as a number. Matched as a substring, "7" also
+# accepted 17, 27 and 70; every other assertion in this file uses -eq.
+expect "the call request is still a PPTP Outgoing-Call-Request" \
+  test "${A_TYPE:-0}" -eq 7
 expect "the subscriber's Call ID was replaced" test "${A_CID:-1}" -ne 1
 expect "the rewritten call request still checksums" test "${A_CK:-BAD}" = "ok"
 expect "the reply hands the subscriber back its own Call ID" \

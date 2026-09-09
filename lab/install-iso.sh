@@ -48,10 +48,12 @@ cp /mnt/iso/live/vmlinuz /mnt/iso/live/initrd /tmp/bf/
 # the squashfs before anything else touches it - this is the file that used to
 # travel onto the disk with a published password in it.
 rm -rf /tmp/sq
+SHADOW_READ=1
 if ! unsquashfs -d /tmp/sq -no-progress /mnt/iso/live/filesystem.squashfs \
        etc/shadow > /tmp/unsq.log 2>&1; then
   echo "  could not read the live image's /etc/shadow:"
   tail -3 /tmp/unsq.log | sed 's/^/    /'
+  SHADOW_READ=0
 fi
 LIVE_ROOT=$(grep "^root:" /tmp/sq/etc/shadow 2>/dev/null | cut -d: -f2)
 umount /mnt/iso
@@ -202,12 +204,25 @@ if [ "$DISK_FAIL" = 0 ]; then
     echo "  [FAIL] the installed shadow entry is the live image's"
     fail=1
   fi
-  case "${LIVE_ROOT:-}" in
-    ""|"!"*|"*") echo "  [ ok ] the live image itself carries no usable password" ;;
-    *) echo "  [FAIL] the live image has a usable root password: an ISO on a"
-       echo "         network is rootable by anyone who has read the release"
-       fail=1 ;;
-  esac
+  # An unread /etc/shadow is NOT a clean /etc/shadow.
+  #
+  # This used to accept an empty LIVE_ROOT as proof, and the read above is
+  # deliberately tolerant of unsquashfs failing - so on any runner without it,
+  # the check that guards a published-password ISO passed without reading a
+  # byte of the image. The whole point of this check is the case where nobody
+  # is looking.
+  if [ "$SHADOW_READ" != "1" ]; then
+    echo "  [FAIL] could not read the live image's /etc/shadow, so nothing"
+    echo "         here proves the ISO carries no usable root password"
+    fail=1
+  else
+    case "${LIVE_ROOT:-}" in
+      "!"*|"*"|"") echo "  [ ok ] the live image itself carries no usable password" ;;
+      *) echo "  [FAIL] the live image has a usable root password: an ISO on a"
+         echo "         network is rootable by anyone who has read the release"
+         fail=1 ;;
+    esac
+  fi
   if [ "${INST_HOST:-}" = "$NEW_HOST" ]; then
     echo "  [ ok ] the hostname answer reached the disk"
   else

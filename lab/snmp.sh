@@ -109,6 +109,12 @@ expect "a SET is refused" sh -c "case \"$SETOUT\" in *noAccess*|*otWritable*) ex
 expect "and changed nothing" test "$AFTERSET" = "600"
 expect_in "the v3 user is granted read-only access" "rouser nms priv" "$V3CONF"
 expect_in "and created in net-snmp's own store" "createUser nms SHA" "$V3STORE"
+# Both checks below run against a variable built with "|| true", and nothing
+# asserted it was non-empty - so on a box printing no SNMP configuration at
+# all, "the secret never reached the screen" was true because nothing reached
+# the screen. An absent answer is not a passing answer, least of all here.
+expect "there is SNMP configuration to redact in the first place" \
+  sh -c "[ -n \"\$(printf '%s' \"$REDACTED\" | tr -d '[:space:]')\" ]"
 expect_not_in "the community string never reaches the screen" "hexro" "$REDACTED"
 expect_not_in "and neither does a v3 passphrase" "averylongpassphrase" "$REDACTED"
 

@@ -101,7 +101,14 @@ echo "=========== VERDICT ==========="
 C2=$(cat /tmp/c2.out)
 expect_in "records arrived after the collector came back" "DEALLOCATION" "$C2"
 expect_in "the template was resent on reconnect" "TEMPLATE 256" "$C2"
-expect_not_in "nothing was left pending" "270 pending" "$(vppctl show bpa logging)"
+# The VALUE, not one number it must not be. This asserted "270 pending" was
+# absent, which is true of 0 pending, 1 pending and 4000 pending alike - so the
+# only check that the spill queue drained was satisfied by a box that drained
+# nothing.
+PENDING=$(vppctl show bpa logging | tr -d '\r' \
+          | sed -n 's/.*[^0-9]\([0-9][0-9]*\) pending.*/\1/p' | head -1)
+echo "  still pending: ${PENDING:-0}"
+expect "nothing was left pending" test "${PENDING:-0}" -eq 0
 
 # The record's own timestamp, against the box's clock.
 #
