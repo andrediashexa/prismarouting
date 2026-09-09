@@ -105,7 +105,14 @@ for n in $LABS; do
     # PRINTF's status, so every lab records 0 and one that exits non-zero
     # without printing a failure marker is reported as passing - which is the
     # exact defect this suite exists to catch, in the suite itself.
-    out=$(timeout 300 sh "$REPO/tools/lab.sh" "$n" 2>&1); rc=$?
+    # 600, not 300. The cap is there to stop a hung lab holding the suite,
+    # not to budget how long a lab may honestly take: `routing` measures
+    # router advertisements in three states, and each state needs a window
+    # wider than the interval VPP schedules its initial advertisements in.
+    # Measured at 329 s alone and longer under LAB_JOBS parallelism, it was
+    # killed at 300 and reported as a failure - which is the cap telling the
+    # reader something false about the lab.
+    out=$(timeout 600 sh "$REPO/tools/lab.sh" "$n" 2>&1); rc=$?
     printf '%s\n' "$out" > "$OUT/$n.out"
     echo "$rc" > "$OUT/$n.rc"
   ) &

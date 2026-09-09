@@ -420,13 +420,18 @@ class Config:
         # came with. Read back from the dataplane, so a box that was never
         # told carries nothing here.
         self.macs: dict[str, str] = {}
-        # Interfaces where router advertisements are suppressed.
+        # Interfaces where router advertisements are ENABLED.
         #
-        # VPP sends RAs every 200 seconds on any interface holding an IPv6
-        # address - measured, not assumed. On a subscriber-facing port that
-        # advertises the box as a default router, which is a second gateway
-        # for subscribers who get their prefix by DHCPv6-PD.
-        self.ra_suppressed: set = set()
+        # The default is suppressed, which is the opposite of VPP's. Measured:
+        # VPP advertises every 200 seconds on any interface holding an IPv6
+        # address, and on a subscriber-facing port that makes the box a second
+        # default gateway for everybody who gets their prefix by DHCPv6-PD.
+        #
+        # Stored as the EXCEPTION rather than the rule, so a box nobody
+        # configured carries no statement: recording the default on every
+        # interface would put a line under every port on every box, and the
+        # configuration would stop being readable.
+        self.ra_enabled: set = set()
         # Present means shut down. Absent means up, which is the default and
         # the state of every interface nobody has touched, so recording the
         # absence would make every box look configured.
@@ -484,14 +489,14 @@ class Config:
                              | set(self.descriptions) | set(self.admin_down)
                              | set(self.addresses) | set(self.vlans)
                              | set(self.vrfs) | set(self.macs)
-                             | set(self.ra_suppressed)):
+                             | set(self.ra_enabled)):
             out.append(f"interface {ifname}")
             # Description first: it is what the interface IS, and a reader
             # scanning a long configuration for one port finds it by name.
             if ifname in self.macs:
                 out.append(f" mac-address {self.macs[ifname]}")
-            if ifname in self.ra_suppressed:
-                out.append(" ipv6 nd suppress-ra")
+            if ifname in self.ra_enabled:
+                out.append(" no ipv6 nd suppress-ra")
             if ifname in self.vrfs:
                 out.append(f" vrf {self.vrfs[ifname]}")
             if ifname in self.vlans:
@@ -688,9 +693,12 @@ class Config:
                 elif s == "no mac-address":
                     cfg.macs.pop(iface, None)
                 elif s == "ipv6 nd suppress-ra":
-                    cfg.ra_suppressed.add(iface)
+                    # The default. Accepted because an operator may write it
+                    # to say so out loud, and because a configuration saved
+                    # from an older box carries it.
+                    cfg.ra_enabled.discard(iface)
                 elif s == "no ipv6 nd suppress-ra":
-                    cfg.ra_suppressed.discard(iface)
+                    cfg.ra_enabled.add(iface)
                 elif w[0] == "vrf" and len(w) > 1 and w[1].isdigit():
                     if int(w[1]):
                         cfg.vrfs[iface] = int(w[1])
@@ -1021,8 +1029,12 @@ class Config:
                 addr_del[k] = sorted(have - want)
         mac_set = {k: v for k, v in other.macs.items()
                    if self.macs.get(k) != v}
-        ra_on = sorted(other.ra_suppressed - self.ra_suppressed)
-        ra_off = sorted(self.ra_suppressed - other.ra_suppressed)
+        # ra_on: start advertising. ra_off: stop. Named for what happens to
+        # the advertisements, not for which flag moves, because the flag is
+        # "suppress" and reading `ra_on` as "suppression on" is exactly the
+        # confusion that inverting this default invites.
+        ra_on = sorted(other.ra_enabled - self.ra_enabled)
+        ra_off = sorted(self.ra_enabled - other.ra_enabled)
         desc_set = {k: v for k, v in other.descriptions.items()
                     if self.descriptions.get(k) != v}
         desc_del = [k for k in self.descriptions if k not in other.descriptions]

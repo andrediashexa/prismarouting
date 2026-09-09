@@ -600,11 +600,23 @@ echo "$CHECKOUT" | tail -3 | sed 's/^/  check: /'
 # FRR itself refuses - and it must not apply-and-roll-back to find out. What it
 # CAN do is stop claiming more than it verified, which is what an operator in a
 # maintenance window acts on.
-expect_in "commit check says routing is not fully validated" \
-  "FRR validates them at commit" "$CHECKOUT"
+expect_in "commit check now refuses the bad range itself" \
+  "prefix range refused" "$CHECKOUT"
 expect_not_in "and does not claim the whole configuration checks out" \
   "configuration check succeeds
 " "$CHECKOUT"
+
+# The caveat is still true, and still has to be said - just not about the line
+# above, which the VTY now catches on its own. It is about every routing
+# statement the VTY passes through and does not model: `frr-reload.py --test`
+# exits 0 on statements FRR itself refuses at commit, so `commit check` must
+# not claim to have validated them. Asserted with a statement that is VALID,
+# so what is being tested is the wording and not a refusal.
+CAVEAT=$($HX -c "configure" -c "router ospf" \
+         -c "network 10.44.0.0/24 area 0" -c "exit" -c "commit check" 2>&1)
+echo "$CAVEAT" | tail -3 | sed 's/^/  caveat: /'
+expect_in "and commit check still says routing is not fully validated" \
+  "FRR validates them at commit" "$CAVEAT"
 
 expect "a commit carrying an invalid policy line does not report success" \
   sh -c "! printf '%s' \"$MIXED\" | grep -q 'commit complete'"
@@ -650,5 +662,182 @@ RED=$($HX -c "configure" \
       -c "commit check" 2>&1)
 expect_not_in "and redistribution silences it, because it cannot be seen" \
   "nothing here announces" "$RED"
+
+# --- what FRR says on a SUCCESSFUL apply (#145) ---
+#
+# frr-reload returning 0 does not mean FRR was silent. Told to use a route-map
+# that does not exist, FRR 10.7.1 answers "The route-map 'X' does not exist.",
+# stores the statement anyway and exits 0 - measured. The VTY only printed the
+# output when the return code was non-zero, so that warning went nowhere and
+# the operator committed a policy pointing at nothing.
+# --- the prefix range rule, checked against FRR itself ---
+#
+# A `ge`/`le` FRR refuses is not a cheap refusal. It arrives through mgmtd,
+# which keeps the rejected entry in its candidate datastore and then fails the
+# NEXT configuration commit with the same message - naming a prefix-list that
+# is in no running configuration, on no disk, and in nothing the VTY sent.
+# Measured here: one file load carrying a good line and a bad one wedged the
+# two commits that followed it, and this lab spent a whole run failing a
+# router-advertisement section for that reason.
+#
+# So the VTY refuses these lines itself. Which means the VTY now holds an
+# opinion about what FRR accepts, and an opinion that drifts is worse than no
+# opinion: it would refuse configurations that are fine. Every case below is
+# put to BOTH, and they must agree. mgmtd is restarted between cases so a
+# poisoned candidate cannot make the next case look refused.
+echo "=========== the prefix range rule, against FRR itself ==========="
+restart_mgmtd() {
+  pkill -f 'frr/mgmtd' 2>/dev/null
+  sleep 1
+  /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
+  sleep 1
+}
+N=0
+for CASE in "10.9.0.0/16" "10.9.0.0/16 ge 24 le 28" "10.9.0.0/16 ge 16" \
+            "10.9.0.0/16 le 32" "10.12.0.0/8 ge 24 le 16" "10.9.0.0/16 le 12" \
+            "10.9.0.0/16 ge 8" "10.9.0.0/16 ge 24 le 33"; do
+  N=$((N + 1))
+  STMT="ip prefix-list RC$N seq 10 permit $CASE"
+  restart_mgmtd
+  # "accepted" means FRR STORED it. Asking only whether the output said
+  # "Configuration failed" called a vtysh parser refusal an acceptance, and
+  # that is how this cross-check first reported a disagreement that was its
+  # own reading error rather than a difference of opinion.
+  vtysh -c 'configure terminal' -c "$STMT" >/dev/null 2>&1
+  if vtysh -c 'show running-config' 2>/dev/null | grep -q "prefix-list RC$N "; then
+    FRR_SAYS=accepted
+  else
+    FRR_SAYS=refused
+  fi
+  if STMT="$STMT" python3 -c "
+import os, sys
+sys.path.insert(0, '/src/src/hexash')
+from hexash import prefix_range_error as e
+sys.exit(1 if e(os.environ['STMT']) else 0)"; then
+    VTY_SAYS=accepted
+  else
+    VTY_SAYS=refused
+  fi
+  expect "FRR and the VTY agree on '$CASE'" test "$FRR_SAYS" = "$VTY_SAYS"
+  [ "$FRR_SAYS" = "$VTY_SAYS" ] || echo "    frr: $FRR_SAYS   vty: $VTY_SAYS"
+done
+restart_mgmtd
+# The refusal has to name the line, or an operator with forty policy statements
+# cannot find which one.
+BADRANGE=$($HX -c "configure" \
+           -c "ip prefix-list PL-RANGE seq 10 permit 10.12.0.0/8 ge 24 le 16" \
+           -c "commit" 2>&1)
+echo "$BADRANGE" | tail -3 | sed 's/^/  /'
+expect_in "the VTY refuses the bad range before FRR sees it" \
+  "prefix range refused" "$BADRANGE"
+expect_in "and names the statement" "PL-RANGE" "$BADRANGE"
+# The point of refusing early: the commit after it must still work. Before this
+# check existed, this second commit failed citing 10.0.0.0/8.
+AFTERBAD=$($HX -c "configure" \
+           -c "ip prefix-list PL-AFTER seq 10 permit 10.14.0.0/16" \
+           -c "commit" 2>&1)
+expect_in "and the NEXT commit is unharmed" "commit complete" "$AFTERBAD"
+
+echo "=========== a route-map that does not exist ==========="
+RM=$($HX -c "configure" -c "router bgp 65000" \
+     -c "address-family ipv4 unicast" \
+     -c "neighbor 10.0.0.2 route-map RM-MISSING in" \
+     -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$RM" | tail -6 | sed 's/^/  /'
+expect_in "the commit succeeds, because FRR accepts it" "commit complete" "$RM"
+expect_in "and FRR's warning reaches the operator" "does not exist" "$RM"
+
+# The noise filter has to keep the commit readable, or the warning is lost in
+# progress output and nothing has been gained.
+expect_not_in "without frr-reload's progress chatter" "Waiting for children" "$RM"
+# frr-reload echoes the commands it sends as a Python list repr, split across
+# lines. Those fragments are not diagnostics, and letting them through buried
+# the one line that matters in punctuation.
+expect_not_in "and without fragments of its command echo" "frr: '" "$RM"
+# frr-reload narrates itself at INFO. Four lines of that around one line that
+# matters is the warning being buried in a different way.
+expect_not_in "and without the tool narrating itself" "INFO:" "$RM"
+
+# --- router advertisements are off unless asked for (#133) ---
+#
+# VPP advertises this box as a router every 200 seconds on any interface
+# holding an IPv6 address. On a subscriber-facing port that is a second default
+# gateway for everybody who gets their prefix by DHCPv6-PD, so this product's
+# default is the opposite of VPP's.
+#
+# Counted on the wire, not read from a status line: `show ip6 interface` prints
+# the same text whether advertisements are suppressed or not - measured - so
+# the only honest evidence is whether packets appear.
+echo "=========== router advertisements ==========="
+# The capture is started BEFORE the change and stopped after, not started
+# after it, and it is held for 30 seconds rather than 14.
+#
+# Both numbers were measured, not chosen. VPP does not advertise the instant it
+# is enabled: it schedules the first of three initial advertisements within
+# MAX_INITIAL_RTR_ADVERT_INTERVAL, which is 16 seconds. A 14-second window
+# closed just before it, and the dataplane confirmed the reading - send_radv
+# true, initial_adverts_count 3, n_advertisements_sent 0. Waiting for the
+# unsolicited interval instead would mean a 200-second window per state.
+# veth-out lives in the `peer` namespace. Capturing it from the root namespace
+# is not an error tcpdump reports usefully once stderr is discarded: it exits,
+# the file stays empty, and every count reads zero. That made "the default
+# sends none" pass because nothing could ever be counted, on either side of the
+# setting. So stderr is kept, and an empty capture is checked for having been a
+# capture at all.
+count_ra() {   # count_ra <seconds> <command...>
+  secs=$1; shift
+  ip netns exec peer timeout "$secs" tcpdump -i veth-out -nn -l icmp6 \
+    > /tmp/ra.pcap.txt 2> /tmp/ra.tcpdump.err &
+  cap=$!
+  sleep 1
+  "$@" > /tmp/ra.cmd.log 2>&1 || true
+  wait $cap 2>/dev/null
+  if ! grep -q "listening on veth-out" /tmp/ra.tcpdump.err; then
+    echo "CAPTURE-FAILED"
+    return
+  fi
+  # grep -c prints its count AND exits 1 when the count is zero, so a
+  # "|| echo 0" fallback appends a SECOND line. The caller then compared a
+  # two-line string against a number and every count looked wrong.
+  n=$(grep -c "router advertisement" /tmp/ra.pcap.txt 2>/dev/null || true)
+  echo "${n:-0}"
+}
+
+RA_DEFAULT=$(count_ra 30 $HX -c "configure" -c "interface host-veth-vpp" \
+             -c "ipv6 address 2001:db8:5a::1/64" -c "exit" -c "commit")
+tail -3 /tmp/ra.cmd.log | sed 's/^/  commit: /'
+echo "  advertisements in 30s, by default: ${RA_DEFAULT:-0}"
+
+# The DECISIVE half. Enabling makes VPP send an advertisement at once, so a
+# count here is evidence inside a lab window rather than a wait for the
+# unsolicited interval.
+RA_ON=$(count_ra 30 $HX -c "configure" -c "interface host-veth-vpp" \
+        -c "no ipv6 nd suppress-ra" -c "exit" -c "commit")
+tail -3 /tmp/ra.cmd.log | sed 's/^/  commit: /'
+echo "  advertisements in 30s, once asked for: ${RA_ON:-0}"
+
+expect "asking for advertisements produces them" test "${RA_ON:-0}" -ge 1
+# Weaker evidence, and labelled as such: at a 200-second interval, "none in 14
+# seconds" is also what an UNSUPPRESSED interface looks like. It is asserted
+# because it must hold, not because it distinguishes on its own - the line
+# above is what carries the proof.
+expect "and the default sends none in the same window" \
+  test "${RA_DEFAULT:-0}" -eq 0
+expect_in "the exception is in the running configuration" \
+  "no ipv6 nd suppress-ra" "$($HX -c 'show running-config')"
+
+# And the way back. This is the half that was BROKEN and had no test: the
+# running configuration was read from the device for everything except this
+# one setting, which was assumed to be "suppressed" always. So the difference
+# between a configuration that said "advertise" and a device that already was
+# advertising came out empty, no call was made, and an operator who had
+# enabled advertisements on a subscriber port could not turn them off again -
+# with `show running-config` not admitting they were on.
+RA_AGAIN=$(count_ra 30 $HX -c "configure" -c "interface host-veth-vpp" \
+           -c "ipv6 nd suppress-ra" -c "exit" -c "commit")
+echo "  advertisements in 30s, after suppressing again: ${RA_AGAIN:-0}"
+expect "suppressing again stops them" test "${RA_AGAIN:-0}" -eq 0
+expect_not_in "and the running configuration drops the exception" \
+  "no ipv6 nd suppress-ra" "$($HX -c 'show running-config')"
 
 verdict

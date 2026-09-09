@@ -1,5 +1,7 @@
 # Configuração de interface
 
+# Configuração de interface
+
 Tudo o que se configura dentro de uma interface: endereços, VLAN, VRF, MTU, estado administrativo e o filtro de origem. Para quem está subindo um enlace, terminando assinantes em VLAN ou investigando uma porta que não passa tráfego.
 
 Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
@@ -26,7 +28,7 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 | `vrf`   | `<tabela>` | tabela de roteamento onde os endereços vivem |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
-| `ipv6 nd suppress-ra` |           | para de anunciar esta caixa como roteador |
+| `no ipv6 nd suppress-ra` |           | anuncia esta caixa como roteador nesta porta (por padrão não anuncia) |
 | `urpf`  | `strict\|loose\|off` | descarta pacotes cuja origem não volta por aqui |
 | `exit`  |           | sai da interface |
 
@@ -104,17 +106,21 @@ Num mesmo commit, o que desce é aplicado **antes** das outras mudanças e o que
 
 ## Anúncio de roteador IPv6
 
-Uma interface com endereço IPv6 **anuncia esta caixa como roteador padrão** a cada 200 segundos, com validade de 600 segundos. Esse é o comportamento de fábrica.
+Uma interface com endereço IPv6 **não anuncia** esta caixa como roteador. Esse é o padrão, e é deliberado: numa porta voltada para assinante, anunciar seria um segundo gateway para todo mundo que recebe prefixo por DHCPv6-PD, ao lado do roteador que o assinante já usa.
 
-
-:::warning
-Numa porta voltada para assinante isso é um segundo gateway para quem recebe prefixo por DHCPv6-PD. Se os assinantes não devem usar esta caixa como roteador padrão, desligue o anúncio:
+Nas portas em que o anúncio faz sentido — um uplink, um trânsito, uma porta voltada para outros roteadores — ligue por exceção:
 
 ```
 interface GigabitEthernet0/12/0
- ipv6 nd suppress-ra
+ no ipv6 nd suppress-ra
  exit
 ```
+
+Ligado, o anúncio sai a cada 200 segundos com validade de 600 segundos, e mais três anúncios iniciais logo que é ligado. `show running-config` mostra a linha só nas interfaces onde ela foi escrita, porque nas outras ela é o padrão.
+
+
+:::info
+`ipv6 nd suppress-ra` também é aceito. Ele não muda nada — diz em voz alta o que já vale — e serve para deixar a intenção escrita na configuração, ou para desfazer a exceção numa interface onde ela foi ligada.
 
 :::
 

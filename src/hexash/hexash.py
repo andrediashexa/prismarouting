@@ -14,6 +14,7 @@ and does not pin us to an FRR release.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import shlex
@@ -526,6 +527,67 @@ class Vpp:
         return (1 if VPP_ERROR.match(first) else 0), out
 
 
+def prefix_range_error(line):
+    """
+    Why FRR would refuse this prefix-list line, or None if it would not.
+
+    FRR 10.7.1 answers a bad `ge`/`le` with
+
+        Invalid prefix range for 10.0.0.0/8: Make sure that mask length <= ge <= le
+
+    and that refusal is not free. It arrives through mgmtd, which then leaves
+    its candidate datastore holding the rejected entry and fails the NEXT
+    configuration commit with the same message - naming a prefix-list that is
+    in no running configuration, on no disk, and in nothing this VTY sent.
+    Measured: a file load carrying one good line and one bad one, and the two
+    commits after it, all refused. An operator would be reading an error about
+    a prefix they never typed and cannot find.
+
+    So the line is refused here, before it reaches FRR. The rule is FRR's own,
+    and lab/routing.sh checks this function against the box rather than against
+    anyone's memory of it.
+    """
+    w = line.split()
+    if not w or w[0] not in ("ip", "ipv6") or len(w) < 2 or w[1] != "prefix-list":
+        return None
+    if "ge" not in w and "le" not in w:
+        return None
+    prefix = None
+    for t in w:
+        if "/" in t:
+            prefix = t
+            break
+    if prefix is None:
+        return None
+    try:
+        net = ipaddress.ip_network(prefix, strict=False)
+    except ValueError:
+        return None                      # a malformed prefix is FRR's to reject
+    top = net.max_prefixlen
+    length = net.prefixlen
+
+    def after(word):
+        try:
+            return int(w[w.index(word) + 1])
+        except (ValueError, IndexError):
+            return None
+
+    ge = after("ge") if "ge" in w else None
+    le = after("le") if "le" in w else None
+    if ("ge" in w and ge is None) or ("le" in w and le is None):
+        return None                      # not a number: FRR's parser refuses it
+    lo = length if ge is None else ge
+    hi = top if le is None else le
+    if not (length <= lo <= hi <= top):
+        shown = f"{net.network_address}/{length}"
+        return (f"prefix range refused for {shown}: "
+                f"mask length <= ge <= le <= {top} does not hold "
+                f"(length {length}"
+                + (f", ge {ge}" if ge is not None else "")
+                + (f", le {le}" if le is not None else "") + ")")
+    return None
+
+
 class Frr:
     """Talks to FRR through vtysh, and reloads whole configurations."""
 
@@ -583,11 +645,74 @@ class Frr:
             os.unlink(path)
 
     @staticmethod
-    def _summarise(out):
+    def diagnostics(out):
+        """
+        What FRR said during a SUCCESSFUL apply, and nothing else.
+
+        frr-reload returning 0 does not mean FRR was silent. Told to use a
+        route-map that does not exist, FRR 10.7.1 answers
+
+            The route-map 'PL-X' does not exist.
+
+        stores the statement anyway, and exits 0. The caller only printed the
+        output when the return code was non-zero, so that line was thrown away
+        and the operator committed a policy pointing at nothing.
+
+        Progress lines are dropped rather than diagnostics kept, because a
+        filter that lists what to SHOW silently loses the next message FRR
+        learns to print. This one only loses noise it already knows about.
+        """
+        # frr-reload's own logger stamps every line with a date and a level.
+        # FRR's messages carry neither, which is the clean way to tell "the
+        # tool narrating itself" from "the routing daemon answering". INFO and
+        # DEBUG are dropped; WARNING and ERROR from the same logger are kept,
+        # because those are about the operator's configuration.
+        chatty = re.compile(r"^\d{4}-\d\d-\d\d[\d :,]*\s*(INFO|DEBUG)\s*:")
+        noise = ("Waiting for children", "Loading Config", "Config file",
+                 "Reading Config", "Building Configuration")
+        keep = []
+        for line in (out or "").splitlines():
+            t = line.strip()
+            if not t or t.startswith(("[", "=", "-")) or t.startswith(noise):
+                continue
+            if t.endswith("done") or t.startswith("frr-reload"):
+                continue
+            # frr-reload echoes the commands it sends as a Python list, so its
+            # output carries fragments of a repr split across lines - "' exit"
+            # and "'exit ']". They are not diagnostics and they made every
+            # commit noisy, which would have buried the one line that matters.
+            if t[0] in "'\"" or t.endswith(("']", '"]', "',", '",')):
+                continue
+            if chatty.match(t):
+                continue
+            keep.append(t)
+        return keep
+
+    @classmethod
+    def _summarise(cls, out):
+        """
+        Why the reload failed, in as few lines as carry the reason.
+
+        This used to keep only lines starting with "Exiting:", "ERROR", "% "
+        or "Failed". On a rejected configuration frr-reload prints "%
+        Configuration failed." - which matches "% " - and the line that says
+        WHAT was rejected does not match any of them. So the operator got the
+        footer twice and never the reason.
+        """
         keep = [l for l in out.splitlines()
                 if l.startswith(("Exiting:", "ERROR", "% ", "Failed"))
                 or "Exception:" in l]
-        return "\n".join(keep[-4:]) if keep else out.splitlines()[-1] if out else ""
+        # A footer is not a reason. If that is all the prefixes caught, fall
+        # back to everything the daemon actually said.
+        useful = [l for l in keep
+                  if l.strip() not in ("% Configuration failed.",
+                                       "% Configuration failed")]
+        if not useful:
+            said = cls.diagnostics(out)
+            if said:
+                return "\n".join(said[-6:])
+        return "\n".join(keep[-4:]) if keep else (
+            out.splitlines()[-1] if out else "")
 
     def _exec(self, args):
         try:
@@ -798,6 +923,7 @@ class Shell:
         cfg.vrfs = self.device_vrfs()
         cfg.macs = self.device_macs()
         cfg.admin_down = self.device_admin_down()
+        cfg.ra_enabled = self.device_ra_enabled()
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
@@ -913,6 +1039,38 @@ class Shell:
         return {name: list(info["addresses"])
                 for name, info in found.items()
                 if info["addresses"] and name != "local0"}
+
+    def device_ra_enabled(self) -> set:
+        """
+        The interfaces actually advertising this box as a router.
+
+        Read, not remembered. Without this the running configuration always
+        said "suppressed", so `delta_to` never produced an ra_off: an operator
+        who had enabled advertisements could not turn them back off, and
+        `show running-config` did not admit they were on. The lab caught it.
+
+        `show ip6 interface` prints the same text either way - measured - so
+        the text path cannot answer this. The dump can: `send_radv` is the
+        field, and it is false on an interface that was never asked.
+        """
+        r = self.api.dump("sw_interface_ip6nd_ra_dump",
+                          {"sw_if_index": 0xFFFFFFFF})
+        if r.state != vppapi.OK:
+            return set()
+        names = {}
+        rc, out = self.dp.run("show interface")
+        if rc == 0:
+            for name in routes.parse_interfaces(out):
+                idx = self.api.interface_index(name)
+                if idx is not None:
+                    names[idx] = name
+        on = set()
+        for row in r.fields.get("rows", []):
+            if row.get("send_radv") and not row.get("cease_radv"):
+                name = names.get(row.get("sw_if_index"))
+                if name:
+                    on.add(name)
+        return on
 
     def device_admin_down(self) -> set:
         """
@@ -1216,6 +1374,11 @@ class Shell:
             return False
         return True
 
+    # Interfaces the candidate says should advertise. Empty until apply()
+    # fills it, which is the safe direction: an unknown interface gets the
+    # default, and the default is "do not advertise".
+    _ra_enabled_now: set = set()
+
     def set_address(self, ifname, prefix, is_add):
         """
         One address on one interface, over the binary API.
@@ -1237,6 +1400,19 @@ class Shell:
             self.err(f"interface {ifname}: could not {verb} {prefix}: "
                      f"{r.reason}")
             return False
+        # An interface advertises only once it holds an IPv6 address, so this
+        # is the moment the default becomes possible - and the moment to apply
+        # it. VPP's default is to advertise every 200 seconds; on a
+        # subscriber-facing port that is a second default gateway for everybody
+        # using DHCPv6-PD, so this product's default is the opposite.
+        #
+        # Applied here rather than compared in the delta because the state
+        # cannot be read back: `show ip6 interface` reports the same text
+        # whether advertisements are suppressed or not, measured. Where a value
+        # cannot be read, the honest thing is to set it at the moment it starts
+        # to matter rather than to pretend a comparison happened.
+        if is_add and ":" in prefix and ifname not in self._ra_enabled_now:
+            self.set_ra_suppress(ifname, True)
         return True
 
     def set_description(self, ifname, text):
@@ -1460,6 +1636,14 @@ class Shell:
             # FIB never gets it, and "show ip route" looks correct. It is the
             # exact failure `show route verbose` exists to find afterwards, and
             # it is cheaper to say so at the prompt (#95).
+            # Refused here rather than by FRR, because FRR's refusal costs
+            # the operator the NEXT commit too. See prefix_range_error().
+            for stmt in target.routing:
+                why = prefix_range_error(stmt.strip())
+                if why:
+                    self.err(f"{stmt.strip()}: {why}")
+                    ok = False
+
             if d["routing_changed"] and target.routing:
                 rc_fib, fib_text = self.dp.run("show ip fib")
                 if rc_fib == 0 and fib_text.strip():
@@ -1743,16 +1927,18 @@ class Shell:
                 if not self.set_address(ifname, a, True):
                     return False
 
+        # Read once, for set_address() to consult while it applies addresses.
+        self._ra_enabled_now = set(target.ra_enabled)
+        for ifname in d["ra_on"]:
+            if not self.set_ra_suppress(ifname, False):
+                return False
+        for ifname in d["ra_off"]:
+            if not self.set_ra_suppress(ifname, True):
+                return False
+
         for ifname, mac in d["mac_set"].items():
             if not self.set_mac(ifname, mac):
                 return False
-        for ifname in d["ra_on"]:
-            if not self.set_ra_suppress(ifname, True):
-                return False
-        for ifname in d["ra_off"]:
-            if not self.set_ra_suppress(ifname, False):
-                return False
-
         for ifname, text in d["desc_set"].items():
             if not self.set_description(ifname, text):
                 return False
@@ -1849,6 +2035,11 @@ class Shell:
                     print(out)
                     self.err("routing reload failed")
                     return False
+                # A successful reload is not a silent one. FRR warns about a
+                # route-map that does not exist, stores the statement and
+                # exits 0 - and that warning used to go nowhere.
+                for line in self.frr.diagnostics(out):
+                    print(f"  frr: {line}")
             elif self.real_routing(target.routing):
                 self.err("routing is configured and FRR is not answering; "
                          "check 'systemctl status frr'")
@@ -1984,8 +2175,12 @@ class Shell:
                 # Routing statements are validated by `frr-reload.py --test`,
                 # which computes the delta and prints what it WOULD apply
                 # without handing the statements to FRR - so it exits 0 on a
-                # statement FRR itself refuses. Measured: a prefix-list with
-                # `ge 24 le 16` passes the check and fails the commit (#158).
+                # statement FRR itself refuses. Measured on `ge 24 le 16`,
+                # which passed the check and failed the commit (#158). That
+                # one is now refused here rather than by FRR, because FRR's
+                # refusal costs the operator the next commit too (#160) - but
+                # the limit itself stands for every statement the VTY passes
+                # through and does not model.
                 #
                 # The check is not going to apply-and-roll-back to find out:
                 # `check` must not touch the box, and a lab asserts it issues
@@ -2020,8 +2215,19 @@ class Shell:
         if remap_ok:
             args = args[1:]
 
+        if running.is_same(self.candidate):
+            print("no changes to commit")
+            return
+
+        # Validated ONCE. This used to run here to discover re-mappings and
+        # again below to decide whether to apply, and apply() prints what it
+        # refuses - so every validation error reached the operator twice, which
+        # reads like two different problems.
+        if not self.apply(self.candidate, check_only=True):
+            self.err("candidate did not pass validation; nothing applied")
+            return
+
         if not remap_ok:
-            self.apply(self.candidate, check_only=True)
             if self.remap:
                 self.err("this change re-maps subscribers that already have "
                          "mappings")
@@ -2030,10 +2236,6 @@ class Shell:
                 print("    if that is what you mean, type: commit remap")
                 return
             self.remap = []
-
-        if running.is_same(self.candidate):
-            print("no changes to commit")
-            return
 
         confirm_min = 0
         comment = ""
@@ -2058,10 +2260,6 @@ class Shell:
                   "session you are using")
             print("applying it as 'commit confirmed 10': it reverts on its own "
                   "unless you enter 'commit' again from a session that works")
-
-        if not self.apply(self.candidate, check_only=True):
-            self.err("candidate did not pass validation; nothing applied")
-            return
 
         backup = running.text()
         if not self.apply(self.candidate):
@@ -2362,12 +2560,13 @@ class Shell:
             return True
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:3] == ["ipv6", "nd", "suppress-ra"]):
-            self.candidate.ra_suppressed.add(self.frr_ctx[-1].split()[1])
+            # The default already. Accepted so an operator can write it to
+            # say so, and so a configuration saved from an older box loads.
+            self.candidate.ra_enabled.discard(self.frr_ctx[-1].split()[1])
             return True
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:4] == ["no", "ipv6", "nd", "suppress-ra"]):
-            self.candidate.ra_suppressed.discard(
-                self.frr_ctx[-1].split()[1])
+            self.candidate.ra_enabled.add(self.frr_ctx[-1].split()[1])
             return True
 
         # `vrf` moves the interface between routing tables. The device's, and

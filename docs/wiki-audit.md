@@ -166,6 +166,30 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
+### 2026-09-09, against v0.50.0 — a default reversed, and a refusal explained
+
+**Rewritten on *Configuração de interface*: the router-advertisement section.**
+The page said an interface with an IPv6 address advertises this box as a
+default router every 200 seconds, which was true when it was written and is now
+the opposite of what the product does. The default is suppression; `no ipv6 nd
+suppress-ra` is the exception written on the ports that should advertise — an
+uplink, a transit, a port facing routers. The command table row changed with
+it, and the callout that told the reader to suppress on subscriber ports is
+gone, because suppressing is no longer something they have to remember.
+
+**Added to *Roteamento, SSH, usuários e SNMP*: the `ge`/`le` refusal.** With the
+rule, the error text as the box prints it, and the one thing that is confusing
+about it: the prefix comes back normalised, so `10.12.0.0/8` is reported as
+`10.0.0.0/8` and searching the configuration for the printed prefix finds
+nothing. The reader is told to look up the list by name instead.
+
+The note on why the refusal happens at the VTY rather than further along is
+written as consequence, not as history: refused later, it also broke the
+*next* commit with the same message, pointing at a prefix that was in no
+configuration at all. That is what the operator would have had to diagnose, so
+that is what the page explains — with no issue number and no link, per section
+0.
+
 ### 2026-09-08, against v0.44.0 — the interface block, and a rule broken
 
 **Added: *Configuração de interface***, a subpage of the VTY guide. The

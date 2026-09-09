@@ -27,6 +27,24 @@ flowchart LR
 
 É o comando que responde *"o que isso vai quebrar?"* antes de quebrar. Ele valida a candidata e, o que mais importa, informa quantos e quais assinantes seriam re-mapeados.
 
+Ele também diz **o que não verificou**:
+
+```
+configuration check succeeds for CGNAT and the box's own configuration
+  routing statements are checked for structure only; FRR validates them
+  at commit, and can still refuse one
+```
+
+
+:::warning
+Statements de roteamento — prefix-list, route-map, vizinhos BGP — são conferidos apenas na forma. Quem valida o conteúdo é o roteamento, e só no `commit`.
+
+Isso significa que um `commit check` aprovado **não garante** que o `commit` seguinte vai passar. Se ele recusar, nada é aplicado: a caixa volta ao estado anterior inteira, inclusive os statements válidos que estavam na mesma mudança.
+
+:::
+
+Antes esse comando dizia apenas *"configuration check succeeds"*, o que prometia mais do que ele tinha conferido — e numa janela de manutenção é essa frase que decide se a pessoa segue em frente.
+
 ### `commit remap` — a trava contra o desastre silencioso
 
 Um `commit` comum **recusa** mudanças que alterem o mapeamento de assinantes existentes. Elas precisam ser pedidas pelo nome, com `commit remap`.

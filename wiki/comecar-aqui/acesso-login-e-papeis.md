@@ -53,6 +53,24 @@ As capacidades são lidas da participação em grupos **no momento em que a VTY 
 
 Uma conta que o sistema não consegue descrever recebe **nada**. Falhar aberto aqui significaria que um NSS quebrado vira direito total de configuração.
 
+### Uma conta comum precisa alcançar o dataplane
+
+Os papéis só valem alguma coisa se quem não é `root` conseguir configurar a caixa. Se apenas `root` consegue, todo operador vira `root` — e aí os papéis não são frouxos, são **decorativos**, que é pior: a caixa anuncia um limite que não tem.
+
+Numa appliance instalada a partir da **0.39.0** isso está resolvido, e o auto-teste de boot verifica fazendo a chamada, não conferindo permissão de arquivo:
+
+```
+[ ok ] the binary API works for a non-root account, so roles mean something
+```
+
+Se essa linha aparecer como `[FAIL]`, os papéis não estão valendo naquela caixa: todo mundo que precisar configurar vai precisar de `root`.
+
+
+:::warning
+Mídias anteriores à **0.37.0** não instalavam o componente que atende essa chamada, e nas 0.37.0 e 0.38.x ele respondia apenas para `root`. Numa caixa instalada com mídia anterior à 0.39.0, confira essa linha antes de distribuir contas por papel.
+
+:::
+
 ### O que cada mudança exige
 
 | Tipo de mudança | Capacidade exigida |
