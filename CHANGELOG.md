@@ -25,7 +25,43 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.44.0.
+Nothing merged since v0.45.0.
+
+## 0.45.0 — the BGP plan, and the wiki rule made to stick
+
+Planning and documentation. No behaviour change.
+
+### Added
+
+* **Phase 5 in the roadmap: BGP, route policy and prefix-lists**
+  ([#141](https://github.com/andrediashexa/hexarouting/issues/141)), split into
+  eight issues. BGP is passthrough today — `router bgp` opens a block the VTY
+  never reads, and prefix-lists and route-maps are not in the grammar at all.
+
+  The plan models the path an ISP actually uses, passes the rest through, and
+  **makes the boundary visible**: a statement passed through unread is not one
+  that was validated.
+
+  The reason to do any of it is
+  [#145](https://github.com/andrediashexa/hexarouting/issues/145) — three
+  outages the box could refuse, one of them specific to this product. A CGNAT
+  pool whose public prefix nothing announces leaves every subscriber behind it
+  translated to an address the internet cannot route back to, with CGNAT and
+  BGP each individually correct. Nothing connects the two today.
+
+* **The interface block is documented on the wiki.** It went from two
+  statements to ten across v0.40.0-v0.44.0 and the wiki covered none of it.
+
+### Changed
+
+* **`CONTRIBUTING.md` now carries what section 0 of `PADRAO-DOCUMENTACAO.md`
+  keeps off a wiki page**: build instructions, labs, source file names, the
+  binary API, `vppctl`, lab machine names, and issue numbers and GitHub links.
+  The wiki is public and is written for whoever operates the platform.
+
+  Recorded with the mistake next to it: a warning published earlier the same
+  day cited two issue numbers and linked GitHub, on the first page the rule was
+  applied to.
 
 ## 0.44.0 — the interface is a first-class object
 
