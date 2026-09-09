@@ -25,7 +25,50 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.48.0.
+Nothing merged since v0.49.0.
+
+## 0.49.0 — a pool's public prefix that nothing announces
+
+The check this product can make and nobody else can
+([#145](https://github.com/andrediashexa/hexarouting/issues/145), in part).
+
+### Added
+
+* **`commit` warns when nothing advertises a pool's public prefix.**
+
+  ```
+  warning: pool 'clientes': nothing here announces 200.150.0.16/28
+      subscribers behind it would be translated to an address the internet
+      cannot route back to
+  ```
+
+  Configure the CGNAT right, configure BGP right, and the service can still be
+  dead: traffic leaves and nothing returns. The two halves are configured in
+  different places by different people on different days, and until now nothing
+  in the box connected them.
+
+  Three properties, and the last two are what keep it useful:
+
+  * **containment, not equality** — a `network 200.150.0.0/24` covers a pool's
+    `/28`, and a shorter prefix can never be covered by a longer one;
+  * **it reports and never refuses** — announcing from another box is a
+    legitimate design, and a check that refuses a working topology gets worked
+    around;
+  * **it stays quiet when it cannot see** — `redistribute` can advertise a
+    prefix in ways this check cannot follow. A warning that fires on a working
+    box is worse than no warning, because the next one is ignored too.
+
+### Worth recording
+
+The lab asserts all three, and the order matters. "The warning stays quiet" is
+**trivially true on a box where the warning never fires** — which is what
+happened: the two silence assertions were written first, they passed, and the
+feature was entirely dead. Only the assertion that proves it fires showed the
+check was never reached.
+
+That is the same shape as the ten vacuous assertions catalogued in
+[#151](https://github.com/andrediashexa/hexarouting/issues/151) earlier the
+same day, reproduced while writing a new test.
 
 ## 0.48.0 — prefix-lists complete from the box, and the check stops overclaiming
 
