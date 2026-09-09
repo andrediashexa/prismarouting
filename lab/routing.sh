@@ -59,15 +59,11 @@ mkdir -p /var/run/frr /etc/frr
 cat > /etc/frr/zebra.conf <<'EOF'
 hostname hexarouting
 EOF
+# Deliberately EMPTY of BGP. This side's session is configured through the VTY
+# further down, so the routes that arrive are evidence that the VTY configured
+# a working peering - not that a file written by the lab did (#142).
 cat > /etc/frr/bgpd.conf <<'EOF'
 hostname hexarouting
-router bgp 65000
- bgp router-id 10.0.0.1
- no bgp ebgp-requires-policy
- neighbor 10.0.0.2 remote-as 65001
- address-family ipv4 unicast
-  neighbor 10.0.0.2 activate
- exit-address-family
 EOF
 cat > /etc/frr/ospfd.conf <<'EOF'
 hostname hexarouting
@@ -141,6 +137,35 @@ for d in zebra bgpd ospfd isisd; do
   ip netns exec peer /usr/lib/frr/$d -d -N peer -A 127.0.0.1 -f /etc/frr/peer/$d.conf
 done
 
+# The assertion helpers and the VTY, needed from here on: the BGP session below
+# is configured through the VTY, and everything that waits for its routes is an
+# assertion about that.
+. /src/lab/verdict.sh
+# The BPA plugin for the binary API. Core VPP messages work without it - which
+# is why the interface sections pass - but a pool goes through
+# bpa_pool_add_del, and the CGNAT-versus-BGP check needs both halves present.
+. /src/lab/lib.sh
+use_binary_api
+HX="python3 /src/src/hexash/hexash.py"
+
+# ---------------- the session, configured through the VTY ----------------
+#
+# The point of doing it here rather than in bgpd.conf: everything below that
+# depends on 203.0.113.0/24 - the FIB wait, the route comparison, the pool
+# announcement checks - is now evidence that the VTY configured a BGP session
+# that works, on a box where nothing else did (#142).
+echo "=========== the BGP session, configured through the VTY ==========="
+BGPUP=$($HX -c "configure" -c "router bgp 65000" \
+        -c "bgp router-id 10.0.0.1" \
+        -c "no bgp ebgp-requires-policy" \
+        -c "neighbor 10.0.0.2 remote-as 65001" \
+        -c "neighbor 10.0.0.2 description upstream-lab" \
+        -c "address-family ipv4 unicast" \
+        -c "neighbor 10.0.0.2 activate" \
+        -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$BGPUP" | tail -3 | sed 's/^/  /'
+expect_in "the VTY commits a BGP session" "commit complete" "$BGPUP"
+
 echo "=== aguardando as tres rotas chegarem na FIB do VPP ==="
 n=0
 while [ "$n" -lt 90 ]; do
@@ -172,7 +197,6 @@ done
 
 echo
 echo "=========== VERDICT ==========="
-. /src/lab/verdict.sh
 for pfx in 203.0.113.0/24 198.18.0.0/24 198.19.0.0/24; do
   expect "$pfx reached the VPP FIB" sh -c "vppctl show ip fib $pfx | grep -q '^$pfx'"
 done
@@ -205,13 +229,6 @@ vppctl show lcp | sed 's/^/    /'
 # is not an assertion about the MTU.
 mtu_of() { vppctl show interface host-veth-vpp | awk 'NR==2 {split($4,a,"/"); print a[1]}'; }
 
-# The BPA plugin for the binary API. Core VPP messages work without it - which
-# is why the interface sections above pass - but a pool goes through
-# bpa_pool_add_del, and the CGNAT-versus-BGP check needs both halves present.
-. /src/lab/lib.sh
-use_binary_api
-
-HX="python3 /src/src/hexash/hexash.py"
 $HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1400" -c "exit" \
     -c "commit" > /tmp/mtu.log 2>&1 || true
 tail -3 /tmp/mtu.log | sed 's/^/  commit: /'
@@ -685,6 +702,67 @@ expect_not_in "and redistribution silences it, because it cannot be seen" \
 # opinion: it would refuse configurations that are fine. Every case below is
 # put to BOTH, and they must agree. mgmtd is restarted between cases so a
 # poisoned candidate cannot make the next case look refused.
+# --- what the VTY refuses, and what it will not print (#142) ---
+#
+# The refusals are about shapes that cannot work whatever the far end does.
+# "Will the session come up" is not in the configuration and is not claimed.
+echo "=========== BGP: what the VTY refuses ==========="
+NOAS=$($HX -c "configure" -c "router bgp 65000" \
+       -c "neighbor 10.0.0.9 description sem-as" \
+       -c "exit" -c "commit" 2>&1)
+echo "$NOAS" | tail -2 | sed 's/^/  /'
+expect_in "a neighbour with no remote-as is refused" "no 'remote-as'" "$NOAS"
+expect_in "and the refusal names the neighbour" "10.0.0.9" "$NOAS"
+
+NOPG=$($HX -c "configure" -c "router bgp 65000" \
+       -c "neighbor 10.0.0.9 peer-group TRANSITO" \
+       -c "exit" -c "commit" 2>&1)
+expect_in "a peer group nobody declared is refused" \
+  "is not declared" "$NOPG"
+
+# An interface the box does not have. FRR accepts this and the session sources
+# from nothing, so the configuration reads correctly and never works.
+NOIF=$($HX -c "configure" -c "router bgp 65000" \
+       -c "neighbor 10.0.0.2 update-source Loopback9" \
+       -c "exit" -c "commit" 2>&1)
+expect_in "update-source naming an interface the box lacks is refused" \
+  "no interface Loopback9" "$NOIF"
+
+# The valid shapes must still commit. A check that refuses everything would
+# pass every assertion above and make the feature unusable.
+OKPG=$($HX -c "configure" -c "router bgp 65000" \
+       -c "neighbor TRANSITO peer-group" \
+       -c "neighbor TRANSITO remote-as 65001" \
+       -c "neighbor 10.0.0.9 peer-group TRANSITO" \
+       -c "exit" -c "commit" 2>&1)
+echo "$OKPG" | tail -2 | sed 's/^/  /'
+expect_in "a neighbour inheriting its AS from a peer group commits" \
+  "commit complete" "$OKPG"
+
+# The secret itself, not a hash of it, and it opens the session on the other
+# router too. It must not reach the terminal.
+SECRET=n0tinlogs
+$HX -c "configure" -c "router bgp 65000" \
+    -c "neighbor 10.0.0.9 password $SECRET" \
+    -c "exit" -c "commit" > /tmp/bgppw.log 2>&1 || true
+tail -2 /tmp/bgppw.log | sed 's/^/  /'
+RUN=$($HX -c "show running-config" 2>&1)
+expect_not_in "the neighbour password is not in the running configuration" \
+  "$SECRET" "$RUN"
+# The WHOLE line, not the words "not shown". An account's password is redacted
+# with the same phrase, so grepping for it alone passes on any box that has a
+# user with a password - which is every box - whether or not the BGP secret
+# was touched. It also proves the statement reached FRR at all: if the commit
+# had not applied it, there would be no line to redact.
+expect_in "and the line is there, saying a password is set" \
+  "neighbor 10.0.0.9 password <set, not shown>" "$RUN"
+THIS=$($HX -c "configure" -c "router bgp 65000" -c "show this" 2>&1)
+expect_not_in "nor in 'show this' inside the block" "$SECRET" "$THIS"
+# ...and 'show this' printed the block, rather than nothing. Without this the
+# assertion above passes on empty output, which is the same result as a
+# redaction that works and proves neither.
+expect_in "which did print the block" "neighbor 10.0.0.9" "$THIS"
+
 echo "=========== the prefix range rule, against FRR itself ==========="
 restart_mgmtd() {
   pkill -f 'frr/mgmtd' 2>/dev/null

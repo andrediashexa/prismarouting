@@ -256,6 +256,35 @@ out = io.StringIO()
 with contextlib.redirect_stdout(out):
     sh.feed("show interface")
 print("SHOW_IF:", out.getvalue().replace("\n", " | "))
+# BGP: the block the VTY used to pass through without understanding a word of
+# it, so "?" offered nothing and a typo was found by FRR mid-commit (#142).
+sh.feed("router bgp 65000")
+o, _, _ = sh._options("", False)
+print("BGP_BLOCK:", " ".join(sorted(o)))
+sh.feed("neighbor 10.0.0.2 remote-as 65001")
+sh.feed("neighbor TRANSITO peer-group")
+# The neighbour completes by ADDRESS, from what has been configured, with the
+# AS beside it - an ISP box carries several and they are told apart by AS.
+o, _, _ = sh._options("neighbor ", False)
+print("BGP_NEIGH:", " ".join(sorted(o)))
+o, _, _ = sh._options("neighbor ", False)
+print("BGP_NEIGH_DESC:", " | ".join(f"{k}={v}" for k, v in sorted(o.items())))
+# And the words that follow an address are the neighbour's, not the block's.
+o, _, _ = sh._options("neighbor 10.0.0.2 ", False)
+print("BGP_STMT:", " ".join(sorted(o)))
+o, _, _ = sh._options("neighbor 10.0.0.2 peer-group ", False)
+print("BGP_PG:", " ".join(sorted(o)))
+sh.feed("address-family ipv4 unicast")
+o, _, _ = sh._options("", False)
+print("BGP_AF:", " ".join(sorted(o)))
+o, _, _ = sh._options("neighbor 10.0.0.2 ", False)
+print("BGP_AF_STMT:", " ".join(sorted(o)))
+# Asked as a question rather than by matching a whole sorted line: an
+# assertion anchored on the full list breaks every time a statement is added,
+# and reads as a regression when it is not one.
+print("BGP_AF_HAS_REMOTE_AS:", "yes" if "remote-as" in o else "no")
+sh.feed("exit-address-family")
+sh.feed("exit")
 PYEOF
 )
 printf '%s\n' "$COMP" | sed 's/^/  /'
@@ -331,6 +360,46 @@ expect_in "and the rest of the block with them" "urpf" "$COMP"
 expect_in "including the ones that were always there" "mtu" "$COMP"
 expect_not_in "and nothing from the level above leaks in" \
   "IN_BLOCK: cgnat" "$COMP"
+
+# --- BGP: the block that used to offer nothing (#142) ---
+#
+# Every assertion here names a WORD the grammar has to offer, not just that the
+# answer is non-empty: "some options came back" passes on the wrong block.
+expect_in "inside 'router bgp', '?' offers its own statements" \
+  "BGP_BLOCK: address-family " "$COMP"
+expect_in "including the one that creates a session" "neighbor" "$COMP"
+expect_not_in "and nothing from the level above leaks in" \
+  "BGP_BLOCK: cgnat" "$COMP"
+# A neighbour completes from what is configured, not from a fixed list.
+expect_in "a neighbour completes by address once it exists" \
+  "BGP_NEIGH: 10.0.0.2" "$COMP"
+expect_in "and a peer group is offered by name too" "TRANSITO" "$COMP"
+# The AS beside it, because an ISP box carries several sessions and they are
+# told apart by who is on the other end, not by the last octet.
+expect_in "the completion says which AS is on the other end" \
+  "10.0.0.2=AS 65001" "$COMP"
+# The words AFTER an address are the neighbour's, which is the part the tree
+# could not reach: the address is an argument, so the walk stopped there and
+# everything past it fell through to the configuration tree.
+expect_in "the words after a neighbour's address are the neighbour's" \
+  "BGP_STMT: bfd" "$COMP"
+expect_in "including the one that opens the session" "remote-as" "$COMP"
+expect_not_in "and not the block's own statements" "BGP_STMT: address-family" "$COMP"
+# A peer group completes only where one is declared.
+expect_in "a declared peer group completes as a value" \
+  "BGP_PG: TRANSITO" "$COMP"
+# The address family is a different block with a different vocabulary.
+expect_in "an address family offers its own statements" \
+  "BGP_AF: exit exit-address-family" "$COMP"
+expect_in "and 'activate' is offered there and not above" \
+  "BGP_AF_STMT: activate" "$COMP"
+expect_in "while 'remote-as' is not, because it does not belong there" \
+  "BGP_AF_HAS_REMOTE_AS: no" "$COMP"
+# A peer group is completed where a neighbour is, and must not be described as
+# one: an operator reading "neighbour" beside it goes looking for a router at
+# that name.
+expect_in "a peer group is labelled as a group, not as a neighbour" \
+  "TRANSITO=peer group" "$COMP"
 
 # A prefix-list an operator typed completes by name afterwards, from the
 # configuration the box holds - the same source `show running-config` answers

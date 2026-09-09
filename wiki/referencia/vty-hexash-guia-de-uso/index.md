@@ -2,6 +2,8 @@
 
 # VTY hexash — guia de uso
 
+# VTY hexash — guia de uso
+
 `hexash` é a VTY única do HexaRouting: configura CGNAT **e** roteamento pela mesma interface, com modelo de configuração candidata no estilo Juniper — você edita, revisa e só então aplica com `commit`.
 
 ```mermaid
@@ -160,12 +162,15 @@ Com o dataplane inalcançável a checagem é **pulada, não reprovada**: uma VTY
 
 ## Configuração de interface
 
+O bloco BGP tem página própria também: [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinho, peer group, família de endereço, e o que o equipamento recusa antes de mandar para o roteamento.
+
 O bloco de interface tem dez declarações — endereços IPv4 e IPv6, VLAN, VRF, MTU, MAC, estado administrativo, descrição, anúncio de roteador IPv6 e uRPF — e ganhou página própria: [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
 
 # Ver também
 
 * [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7) — a VTY aplicada do começo ao fim
 * [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ) — endereços, VLAN, VRF e o resto do bloco de interface
+* [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinhos, peer groups, famílias de endereço e a senha que não é impressa
 * [Receitas do dia a dia](/doc/receitas-do-dia-a-dia-IcocgdbXW2) — tarefas prontas, sem precisar montar do zero
 
 ## O que o `?` oferece

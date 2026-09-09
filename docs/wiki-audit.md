@@ -166,6 +166,31 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
+### 2026-09-09, against v0.51.0 — BGP has a page
+
+**Added: *Configuração de BGP***, a subpage of the VTY guide, alongside
+*Configuração de interface*. The VTY now models the `router bgp` block, and the
+wiki covered BGP only as three lines inside the routing page — enough to say
+policy exists, not enough to configure a session.
+
+The page is organised the way an operator meets the thing: one session from
+start to finish, then the table of what a neighbour takes, then peer groups
+(because forty peerings are not forty stanzas), then the refusals, then the
+password. The refusals are written as *shapes that cannot work*, and the page
+says out loud that whether the neighbour answers is not something the
+configuration knows — a page that implies the box can predict a session coming
+up is a page that will be blamed when it does not.
+
+Linked from the guide's *Ver também* and from the paragraph that already
+pointed at the interface subpage, so it is not an orphan.
+
+**A slug invented again, and caught before publication.** Writing the *Ver
+também* links I typed two `/doc/` slugs from memory. Both were wrong. They were
+replaced with the real ones read from the wiki, and every internal link on
+every page was then checked against the live list: 0 broken. This is the second
+time the same mistake was made — the fix is not to be more careful, it is to
+never type a slug that was not read back.
+
 ### 2026-09-09, against v0.50.0 — a default reversed, and a refusal explained
 
 **Rewritten on *Configuração de interface*: the router-advertisement section.**

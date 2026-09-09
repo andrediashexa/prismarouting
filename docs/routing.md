@@ -1305,6 +1305,93 @@ The lab asserts all three, and the order matters: "the warning stays quiet" is
 trivially true on a box where the warning never fires, so it is only meaningful
 beside the case that proves it does.
 
+## BGP neighbours
+
+The VTY passed the whole `router bgp` stanza through and understood none of
+it. No completion, no `?`, and a typo found when FRR refused it in the middle
+of a commit. Modelling it is not about refusing more — most of BGP is still
+passed through — it is about the operator being able to **discover what the
+box takes, from the box, at the point they are typing**.
+
+```
+router bgp 65000
+  bgp router-id 10.0.0.1
+  neighbor 10.0.0.2 remote-as 65001
+  neighbor 10.0.0.2 description transito-primario
+  neighbor 10.0.0.2 password <secret>
+  address-family ipv4 unicast
+    neighbor 10.0.0.2 activate
+    network 200.150.0.0/24
+  exit-address-family
+  exit
+```
+
+### Two grammars, because the same word means two things
+
+`neighbor X route-map RM in` belongs to an address family and does nothing
+outside one; `neighbor X remote-as` outside an address family is what creates
+the session. So `router bgp` and `address-family` offer different sets, and
+`remote-as` is deliberately **not** offered inside an address family.
+
+### The words after an address
+
+`neighbor <address> <statement>` could not be completed at all, and the reason
+is structural rather than an omission: the tree walk stops at an argument, so
+everything after the address fell through to the configuration tree, which has
+no `remote-as` in it. The walk now starts from the block's own grammar, which
+fixed the same gap inside `interface` — `ipv4 address` completed nothing
+either.
+
+### What completes from the box
+
+* **neighbours**, by address, with the AS on the other end beside them. An ISP
+  box carries several sessions and they are told apart by AS, not by the last
+  octet.
+* **peer groups**, by name, and labelled as groups. A group is completed in the
+  same place as an address because the same statements apply to it, but it is
+  not a session, and calling it "neighbour" sends an operator looking for a
+  router at that name.
+* **route-maps** and **prefix-lists**, read back from FRR rather than from a
+  model kept here.
+* **interfaces** for `update-source`.
+
+### What it refuses
+
+Structural only. Whether the neighbour *answers* is not in the configuration
+and is not claimed.
+
+* **A neighbour with no `remote-as`.** FRR refuses every other statement for a
+  neighbour whose AS it has not been told.
+* **A peer group nobody declared.** `neighbor X peer-group PG` where `PG` was
+  never created by `neighbor PG peer-group`.
+* **A member whose group has no AS either.** A member inherits `remote-as` from
+  its group, so a neighbour with no AS of its own is perfectly correct when the
+  group has one — which is why this is not a two-line check.
+* **`update-source` naming an interface this box does not have.** FRR accepts
+  it, the session sources from nothing and never comes up, and the
+  configuration reads correctly.
+
+### The password
+
+`neighbor X password <secret>` is worse than an account's entry, which is a
+hash: this is the secret itself, and it opens the session on the **other**
+router too. It is redacted in `show running-config` **and** in `show this`
+inside the block — the second path reads the routing lines straight out of the
+candidate, so a password printed nowhere else was printed there.
+
+Redaction is a display transform. The stored configuration and every rollback
+revision keep the real value, or a rollback could not restore the session,
+which is why those files are not world-readable.
+
+### How it is tested
+
+`lab/routing.sh` no longer writes this side's `bgpd.conf`. The session is
+configured **through the VTY**, so everything downstream that depends on
+`203.0.113.0/24` — the FIB wait, the route comparison, the pool announcement
+checks — is evidence that the VTY configured a BGP session that works, on a box
+where nothing else did. The prefix is asserted in the **VPP FIB**, not in FRR's
+table: FRR holding a route is a different claim from the box forwarding on it.
+
 ## Prefix-lists
 
 ```
@@ -1360,9 +1447,12 @@ commit failed ... reason: 'Invalid prefix range for 10.0.0.0/8: ...'
 ```
 
 This VTY hands FRR a whole routing section through `frr-reload.py` rather than
-through `vtysh -c`, so whether the same all-or-nothing applies there is a
-different question — and it is the one that decides whether a rejected policy
-leaves the box half-configured. Not answered here.
+through `vtysh -c`. **Measured since:** the same all-or-nothing applies, and it
+costs more than the transaction. The refusal arrives through `mgmtd`, which
+keeps the rejected entry in its candidate datastore and fails the *next*
+configuration commit with the same message — naming a prefix-list that is in no
+running configuration, on no disk, and in nothing the VTY sent. That is why the
+VTY refuses a bad `ge`/`le` itself, before FRR sees it.
 
 ## A policy whose daemon is not running
 

@@ -80,10 +80,21 @@ def redact(lines):
     """
     out = []
     for l in lines:
-        if l.strip().startswith("password "):
+        t = l.strip()
+        if t.startswith("password "):
             out.append(" password <set, not shown>")
-        else:
-            out.append(l)
+            continue
+        # `neighbor <address> password <secret>`. Worse than an account's
+        # entry, which is a hash: this is the secret itself, and it opens the
+        # session on the OTHER router too. The account form above does not
+        # match it - the line does not start with "password" - so it was
+        # printed in the clear by `show running-config` and by `show this`.
+        w = t.split()
+        if len(w) >= 4 and w[0] == "neighbor" and w[2] == "password":
+            indent = l[:len(l) - len(l.lstrip())]
+            out.append(f"{indent}neighbor {w[1]} password <set, not shown>")
+            continue
+        out.append(l)
     return out
 
 
