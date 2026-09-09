@@ -25,7 +25,52 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.47.0.
+Nothing merged since v0.48.0.
+
+## 0.48.0 — prefix-lists complete from the box, and the check stops overclaiming
+
+[#143](https://github.com/andrediashexa/hexarouting/issues/143) and
+[#158](https://github.com/andrediashexa/hexarouting/issues/158), the second
+found while measuring the first.
+
+### Added
+
+* **`ip prefix-list` and `ipv6 prefix-list` are in the command tree**, and a
+  list an operator has written completes by name afterwards. The statements
+  stay passed through to FRR deliberately: FRR stores them, the running
+  configuration is read back from FRR, and `rollback` already restores them, so
+  a model here would be a second copy of something that works. What was missing
+  is the operator finding out what to type without leaving for `vtysh`.
+
+### Fixed
+
+* **`commit check` reported success for configurations the commit then
+  refused.** It runs `frr-reload.py --test`, which computes the delta and
+  prints what it *would* apply without handing the statements to FRR — so it
+  exits 0 on a statement FRR itself rejects.
+
+  `check` must not apply-and-roll-back to find out, so it reports its limit
+  instead: CGNAT and the box's own configuration are checked, routing
+  statements are checked for structure only and FRR can still refuse one at
+  commit. That is true and actionable; the previous sentence was neither.
+
+  The commit path itself is sound, and measuring that is why the fix is a
+  message rather than a mechanism: a candidate carrying one invalid policy line
+  applies **nothing** and rolls back, including the valid statements beside it.
+
+### A correction
+
+The planning issue for prefix-lists asserted FRR does not validate `ge`/`le`.
+**It does** — `mask length <= ge <= le` and the family bound are both enforced,
+with a clearer message than this VTY would produce. Half the checks planned
+there would have duplicated a refusal the dataplane already makes.
+
+### Worth recording
+
+Three test defects were fixed in this suite's own guards, including one written
+during this work that counted a marker's literal value while the tree refers to
+the constant by name — and one that grepped for phrases the VTY does not print,
+which passed for a whole run while the check approved a broken configuration.
 
 ## 0.47.0 — a policy whose daemon is stopped is refused, not lost
 
