@@ -1191,7 +1191,8 @@ stands:
 | CGNAT attach or detach on an interface | binary API |
 | MTU | binary API (`sw_interface_set_mtu`) |
 | uRPF | binary API (`urpf_update`) |
-| timeouts, block-holddown, logging, session-table | **still the CLI socket** |
+| timeouts, block-holddown, session-table | binary API (`bpa_global_set`) |
+| logging | **still the CLI socket**, deliberately: the maintainer asked for logging work to wait |
 | the `check` path | **still the CLI socket**, and has no API message of its own ([#3](https://github.com/andrediashexa/hexarouting/issues/3)) |
 | every `show` | the CLI socket, read-only, and intended to stay |
 
@@ -1214,6 +1215,28 @@ root, in the `vpp` group, can call. `setpriv` drops to an unprivileged uid
 with that group added, so nothing has to be created — a fresh appliance has no
 operator accounts yet, and having the product create one for the benefit of
 its own test would be the tail wagging the dog.
+
+`bpa_global_set` takes the whole set of global settings, and a **zero timeout
+means "leave it alone"** — zero is not a valid timeout, so it needs no separate
+flag. The two settings that *can* legitimately be zero carry an explicit flag
+instead. The caller sends what the configuration says; what the configuration
+does not mention is not the caller's to reset.
+
+The session-table refusal survived the move, and had to: the tables are
+allocated with the first pool, and a new size afterwards would describe a table
+nobody is using. It now **explains itself**, which it did not at first:
+
+```
+error: cgnat session-table: the dataplane refused it: the change is refused
+while it is in use (session-table: tables already created; set this before
+configuring pools)
+```
+
+The first version returned the code and logged nothing. The client attaches the
+last line of VPP's log to a refusal so the operator gets a sentence instead of
+a number — and with nothing written, it attached an unrelated error about the
+configuration trail. That is worse than no explanation: it sends the operator
+to debug a file permission when the tables are simply already allocated.
 
 Attaching CGNAT to an interface is **not yet attributable** in the audit
 trail: the message carries no `audit_user`

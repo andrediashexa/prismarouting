@@ -496,7 +496,13 @@ class Vpp:
         except subprocess.TimeoutExpired:
             return 1, "VPP did not respond"
         out = ((p.stdout or "") + (p.stderr or "")).rstrip()
-        first = out.split("\n")[0] if out else ""
+        # splitlines(), not split("\n"): vppctl ends its lines with CR+LF, and
+        # split("\n") leaves the carriage return on the line this then matches
+        # an error pattern against. Nothing has failed because of it yet - the
+        # rest of this file uses splitlines() throughout - but a value carrying
+        # an invisible \r compares unequal to the same value without one, and
+        # that is a bug nobody can see in the output.
+        first = out.splitlines()[0] if out else ""
         return (1 if VPP_ERROR.match(first) else 0), out
 
 
@@ -1801,21 +1807,80 @@ class Shell:
             subprocess.run(["ip", "link", "set", "dev", name, "mtu", str(mtu)],
                            capture_output=True)
 
+    # The VTY's name for a timeout, and the API field that carries it. The two
+    # spellings differ - `tcp-transitory` against `tcp_transitory` - and a map
+    # is the honest way to say so rather than a replace() that would silently
+    # invent a field name for anything mistyped.
+    TIMEOUT_FIELD = {
+        "udp": "udp", "icmp": "icmp", "gre": "gre",
+        "tcp-syn": "tcp_syn", "tcp-transitory": "tcp_transitory",
+        "tcp-established": "tcp_established",
+        "port-holddown": "port_holddown", "alg-expect": "alg_expect",
+    }
+    ZERO_TIMEOUTS = {f: 0 for f in
+                     ("udp", "icmp", "tcp_syn", "tcp_transitory",
+                      "tcp_established", "gre", "port_holddown",
+                      "alg_expect")}
+
+    def global_api(self, **kw):
+        """
+        One global setting over the binary API.
+
+        A zero timeout field means "leave it alone", so every other field is
+        sent as zero and only the one being changed carries a value. That is
+        the message's contract, not a convention invented here: zero is not a
+        valid timeout, and the settings that CAN legitimately be zero carry an
+        explicit flag instead.
+        """
+        args = {"timeouts": dict(self.ZERO_TIMEOUTS),
+                "set_block_holddown": False, "block_holddown": 0,
+                "set_session_table": False, "session_buckets": 0,
+                "session_memory_mb": 0}
+        args.update(kw)
+        return self.api_call("bpa_global_set", args)
+
     def apply_global(self, line):
         w = line.split()
         if len(w) < 2:
             return
         if w[1] == "timeout" and len(w) >= 4:
-            self.dp.run(f"bpa timeouts {w[2]} {w[3]}")
+            field = self.TIMEOUT_FIELD.get(w[2])
+            if field is None:
+                self.err(f"cgnat timeout {w[2]}: no such timeout")
+                return
+            t = dict(self.ZERO_TIMEOUTS)
+            t[field] = int(w[3]) if w[3].isdigit() else 0
+            r = self.global_api(timeouts=t)
+            if r.state != vppapi.OK:
+                self.err(f"cgnat timeout {w[2]} {w[3]}: {r.reason}")
         elif w[1] == "block-holddown" and len(w) >= 3:
-            self.dp.run(f"bpa block-holddown {w[2]}")
+            r = self.global_api(set_block_holddown=True,
+                                block_holddown=int(w[2]) if w[2].isdigit()
+                                else 0)
+            if r.state != vppapi.OK:
+                self.err(f"cgnat block-holddown {w[2]}: {r.reason}")
         elif w[1] == "logging" and len(w) >= 3:
             if w[2] == "tcp":
                 self.dp.run("bpa logging tcp " + " ".join(w[3:]))
             else:
                 self.dp.run(f"bpa logging {w[2]}")
         elif w[1] == "session-table":
-            self.dp.run("bpa session-table " + " ".join(w[2:]))
+            # "session-table buckets <n> memory <MB>", in either order.
+            got = {}
+            for i in range(2, len(w) - 1, 2):
+                if w[i] in ("buckets", "memory") and w[i + 1].isdigit():
+                    got[w[i]] = int(w[i + 1])
+            if len(got) != 2:
+                self.err("usage: cgnat session-table buckets <n> memory <MB>")
+                return
+            r = self.global_api(set_session_table=True,
+                                session_buckets=got["buckets"],
+                                session_memory_mb=got["memory"])
+            if r.state != vppapi.OK:
+                # The dataplane refuses this once pools exist, because the
+                # tables are allocated with the first pool and a new size
+                # would describe a table nobody is using.
+                self.err(f"cgnat session-table: {r.reason}")
 
     def do_commit(self, args):
         """commit [check | remap | confirmed <min> | comment <text>]"""

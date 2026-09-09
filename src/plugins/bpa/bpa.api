@@ -300,6 +300,37 @@ autoreply define bpa_interface_add_del_feature
   vl_api_interface_index_t sw_if_index;
 };
 
+/** \brief The settings that are not per-pool.
+
+    Timeouts, the block hold-down and the session table sizing. Every one of
+    these was reachable only over the VPP CLI socket, and an account with that
+    socket can do anything on the box - so the roles bound what the VTY would
+    do and not what an account could reach.
+
+    A zero in a timeout field means "leave it alone": zero is not a valid
+    timeout, so it needs no separate flag. The other two DO get a flag,
+    because zero is a value an operator may legitimately mean.
+
+    @param timeouts - per-protocol idle timeouts; a zero field is unchanged
+    @param set_block_holddown - whether block_holddown is being set
+    @param block_holddown - seconds a block stays reserved once idle
+    @param set_session_table - whether the session table sizing is being set
+    @param session_buckets - hash buckets per table
+    @param session_memory_mb - memory per table, in megabytes
+*/
+autoreply define bpa_global_set
+{
+  u32 client_index;
+  u32 context;
+
+  vl_api_bpa_timeouts_t timeouts;
+  bool set_block_holddown;
+  u32 block_holddown;
+  bool set_session_table;
+  u32 session_buckets;
+  u32 session_memory_mb;
+};
+
 /** \brief Lists the configured pools. */
 define bpa_pool_dump
 {

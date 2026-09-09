@@ -88,12 +88,23 @@ TRACE=$(HEXA_TRACE=1 $HX -c "configure" -c "cgnat pool alpha" \
         -c "block-size 2048" -c "exit" -c "commit check" 2>&1 >/dev/null \
         | grep "^\[device\]")
 echo "$TRACE" | sed 's/^/  /'
-if echo "$TRACE" | grep -qE "\[device\] (bpa pool [^ ]+ del|set interface bpa|bpa timeouts|bpa block-holddown)"; then
-  echo "  FAIL: a check issued a mutating command"
-  exit 1
-fi
-if echo "$TRACE" | grep -qE "\[device\] bpa pool .* [^k]$"; then
-  echo "  FAIL: a check issued a pool creation"
+# Everything a check may do, listed; anything else is a write.
+#
+# This used to name the mutating commands instead - "bpa timeouts",
+# "set interface bpa" - and it went blind the moment one of them moved to the
+# binary API, because the trace line stopped starting with [device]. A test
+# that names what is forbidden stops testing when the forbidden thing changes
+# shape. Naming what is ALLOWED does not.
+BAD=$(echo "$TRACE" \
+      | grep -vE "^\[device\] show " \
+      | grep -vE "^\[api\] [a-z0-9_]+_dump " \
+      | grep -vE "^\[api\] sw_interface_get_table " \
+      | grep -vE "^\[device\] bpa pool .* check$" \
+      | grep -vE "^\[device\] bpa forward .* check$" \
+      | grep -v "^$")
+if [ -n "$BAD" ]; then
+  echo "  FAIL: a check did something that is not a read:"
+  echo "$BAD" | sed 's/^/    /'
   exit 1
 fi
 echo "  OK: read-only commands only"
@@ -237,4 +248,49 @@ expect "and the dataplane took it" test "$BLOCK_AFTER" = "block        1024"
 expect_not_in "a change that moves nobody is not questioned" \
   "re-maps subscribers" "$QUIET"
 expect_in "and commits normally" "commit complete" "$QUIET"
+# --- the global settings, over the binary API (#76) ---
+#
+# Timeouts, the block hold-down and the session table sizing used to reach the
+# dataplane through `vppctl`, which meant every account that could change a
+# timeout needed the socket - and an account with that socket can delete a
+# pool and disconnect everybody behind it.
+#
+# Asserted by reading the value back from the dataplane, not by the commit
+# saying "complete": a message the dataplane accepted and did nothing with
+# would report success either way.
+echo
+echo "=========== global settings over the API ==========="
+$HX -c "configure" -c "cgnat timeout udp 137" \
+    -c "cgnat block-holddown 11" -c "commit" 2>&1 | tail -2 | sed 's/^/  /'
+TIMEOUTS=$(vppctl show bpa timeouts)
+echo "  --- what the dataplane reports ---"
+printf '%s\n' "$TIMEOUTS" | sed 's/^/    /'
+# The value from the GLOBAL section, read as a field.
+#
+# `show bpa timeouts` prints two sections - the global one and the resolved
+# overrides for each pool - so every timeout name appears more than once. The
+# earlier attempt compared against every match at once and failed on a box
+# where all of them were 137. Stopping at the first is the fix, and printing
+# the table above is what made it visible.
+# tr -d '\r' is not decoration: vppctl ends its lines with CR+LF, so the value
+# extracted here is "137\r". The terminal shows it as "137" and `test` compares
+# it as different, which is a failure with no visible cause - the assertion
+# even printed "(udp 137)" in its own description while failing.
+UDP=$(vppctl show bpa timeouts | tr -d '\r' | awk '$1=="udp"{print $2; exit}')
+expect "the timeout reached the dataplane (udp ${UDP:-none})" \
+  test "${UDP:-0}" = "137"
+expect_in "and so did the block hold-down" "block-holddown 11" \
+  "$(vppctl bpa block-holddown)"
+expect_in "and both are in the running configuration" "cgnat timeout udp 137" \
+  "$($HX -c 'show running-config')"
+
+# The refusal has to survive the change of transport. The tables are allocated
+# with the first pool, and a new size afterwards would describe a table nobody
+# is using - so the dataplane refuses, and this lab has pools.
+SESS=$($HX -c "configure" -c "cgnat session-table buckets 1024 memory 64" \
+       -c "commit" 2>&1)
+echo "$SESS" | tail -2 | sed 's/^/  /'
+expect_in "resizing the session table with pools configured is refused" \
+  "session-table" "$SESS"
+
 verdict

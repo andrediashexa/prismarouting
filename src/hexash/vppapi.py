@@ -39,6 +39,7 @@ BAD_REPLY = "bad-reply"    # it answered something this client cannot read
 # else falls back to the number, which is still actionable when paired with the
 # detail from VPP's log.
 RETVAL_NAMES = {
+    -147: "the change is refused while it is in use",
     -1: "unspecified error",
     -2: "invalid interface",
     -6: "no such entry",
