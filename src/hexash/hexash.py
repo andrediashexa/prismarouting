@@ -1514,6 +1514,46 @@ class Shell:
                     self.err(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
                              "would be refused")
                     ok = False
+            # A pool's public prefix that nothing announces.
+            #
+            # Configure a pool with `outside 200.150.0.16/28`, get BGP right,
+            # and unless something advertises a prefix covering it, every
+            # subscriber behind that pool is translated to an address the
+            # internet cannot route back to. Traffic leaves and nothing
+            # returns. The CGNAT is correct, the BGP is correct, and the
+            # service does not work - nothing in the box connected the two.
+            #
+            # Reported, never refused. Announcing the prefix from another box
+            # is a legitimate design, and a check that refuses a working
+            # topology gets worked around.
+            if target.pools and any(l.lstrip().startswith("router bgp")
+                                    for l in target.routing):
+                # BGP's form is `network <prefix>`, two words. OSPF's is
+                # `network <prefix> area <n>`, so the length test is what
+                # tells them apart without parsing the block structure.
+                announced = [w[1] for w in (l.split() for l in target.routing)
+                             if len(w) == 2 and w[0] == "network"]
+                # `redistribute` can advertise a prefix in ways this check
+                # cannot see. Saying nothing is right there: a warning that
+                # fires on a working box is worse than no warning, because the
+                # next real one is ignored too.
+                blind = any(l.lstrip().startswith("redistribute")
+                            for l in target.routing)
+                for pname, pool in sorted(target.pools.items()):
+                    for pfx in pool.outside:
+                        if any(routes.covers_prefix(a, pfx)
+                               for a in announced):
+                            continue
+                        if blind:
+                            continue
+                        print(f"warning: pool '{pname}': nothing here "
+                              f"announces {pfx}")
+                        print("    subscribers behind it would be translated "
+                              "to an address the internet cannot route back "
+                              "to")
+                        print(f"    add 'network {pfx}' under the BGP address "
+                              "family, or announce it from another box")
+
             # Only when FRR can answer. A box may run CGNAT with no routing -
             # Frr.available() has said so in its docstring since it was
             # written, and was never called, so validation ran unconditionally
