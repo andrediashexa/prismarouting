@@ -397,6 +397,70 @@ omission:
 * **Speed, duplex, autonegotiation.** On a DPDK-bound NIC these are driver
   properties. A knob that silently does nothing is worse than no knob.
 
+#### Phase 5 — BGP, route policy and prefix-lists
+
+Asked for by the maintainer. [#141](https://github.com/andrediashexa/hexarouting/issues/141)
+is the plan; the issues below are the work.
+
+**Where it stands.** BGP works today only in the sense that FRR does. The VTY
+stages every routing line verbatim: `router bgp 65000` opens a block whose
+contents it never reads, and `ip prefix-list` and `route-map` are not in the
+grammar at all. No completion, no `?`, no validation — a typo is FRR's
+problem, discovered mid-commit.
+
+That was the right call while routing was a supporting feature. It stops being
+the right call the moment an ISP runs its edge on this box.
+
+**The decision.** Three ways to go:
+
+| | |
+|---|---|
+| **A** stay passthrough | cheapest, everything FRR does stays reachable, and none of the refusals below are possible because the VTY cannot see what it applies |
+| **B** model all of BGP | every FRR feature must be modelled or become unavailable; the VTY turns into a worse FRR |
+| **C** model the path an ISP uses, pass the rest through, **and say which is which** | ← recommended |
+
+C buys the refusals, the completion and the validation where they are worth
+most, and makes nothing currently possible impossible. The boundary **MUST**
+be visible: a statement passed through unread is not one that was validated,
+and a configuration hiding the difference lies about how much it checked.
+
+| Issue | What |
+|---|---|
+| [#142](https://github.com/andrediashexa/hexarouting/issues/142) | neighbours, peer groups, address families, `show bgp summary` answered by the VTY |
+| [#143](https://github.com/andrediashexa/hexarouting/issues/143) | prefix-lists, with the `ge`/`le` sanity FRR does not check |
+| [#144](https://github.com/andrediashexa/hexarouting/issues/144) | route-maps: the match and set clauses an ISP edge actually uses |
+| [#145](https://github.com/andrediashexa/hexarouting/issues/145) | **the refusals** — the reason to model any of it |
+| [#146](https://github.com/andrediashexa/hexarouting/issues/146) | AS-path and community lists |
+| [#147](https://github.com/andrediashexa/hexarouting/issues/147) | RPKI origin validation, and what happens when the validator is gone |
+| [#148](https://github.com/andrediashexa/hexarouting/issues/148) | the commands an operator runs while something is wrong |
+
+**#145 is the point.** A VTY that only types faster is not worth building.
+Three outages this box could refuse:
+
+* **A route-map referenced and never defined.** FRR denies everything. The
+  session comes up, carries no routes, and nothing says why.
+* **A policy that withdraws the prefix carrying the operator's own session.**
+  The same failure as the SSH lockout check
+  ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), one layer
+  down, and the box is the only thing that can see it coming.
+* **A pool's public prefix that nothing announces.** Specific to this product.
+  Configure `cgnat pool clientes outside 200.150.0.16/28` and, unless
+  something separately advertises that prefix, every subscriber behind it is
+  translated to an address the internet cannot route back to. CGNAT correct,
+  BGP correct, service dead. Nothing connects the two today.
+
+**Testing.** Counting configuration proves nothing — the lesson this
+repository keeps relearning. Every policy issue needs two routers and real
+routes, and every assertion is on the **neighbour's table** or the **VPP
+FIB**, never on the text of the configuration. Each filter test also asserts
+what it must **not** affect, because a policy that applies to everything
+passes every test that only checks the routes it was meant to change.
+
+Out of scope, said here so it is a decision: EVPN, VPNv4/L3VPN and MPLS are a
+different product; confederations are rare enough that passthrough is right;
+route damping is deprecated in practice; and `vtysh` stays reachable, because
+this VTY answering some questions does not mean it should answer all of them.
+
 #### What using the appliance turned up, and the order to fix it
 
 Everything in this section was found in one sitting, by booting the ISO and
