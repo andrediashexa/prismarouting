@@ -683,5 +683,48 @@ check("mtu 9000" in text, f"and its MTU is shown: {text!r}")
 check("urpf strict" in text, f"and its uRPF: {text!r}")
 print("  " + text.strip().replace("\n", " / "))
 
+# --- address-family is a block (#150) ---
+#
+# It was not one, so `exit` inside an address-family popped the enclosing
+# `router bgp` and the next line the operator typed went somewhere they did not
+# intend - with the prompt saying they were still in BGP. The statement always
+# reached FRR either way, which is why nothing noticed: what was wrong is what
+# the operator was told.
+#
+# A unit test and not a lab: this is about what the VTY believes, and it needs
+# no dataplane at all.
+print("\n=== address-family is a block, and exit leaves only it ===")
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router bgp 65000")
+check("router bgp 65000" in sh.prompt(), f"in BGP: {sh.prompt()}")
+sh.feed("address-family ipv4 unicast")
+check("address-family ipv4 unicast" in sh.prompt(),
+      f"the prompt names the address family: {sh.prompt()}")
+sh.feed("exit")
+check("router bgp 65000" in sh.prompt(),
+      f"exit leaves the address family and lands in BGP: {sh.prompt()}")
+check("address-family" not in sh.prompt(),
+      f"and not still inside it: {sh.prompt()}")
+sh.feed("exit")
+check("[edit]" in sh.prompt(), f"a second exit leaves BGP: {sh.prompt()}")
+print(f"  {sh.prompt().strip()}")
+
+# FRR's own spelling, which an operator arriving from another vendor types.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router bgp 65000")
+sh.feed("address-family ipv6 unicast")
+sh.feed("exit-address-family")
+check("router bgp 65000" in sh.prompt() and "address-family" not in sh.prompt(),
+      f"exit-address-family leaves it too: {sh.prompt()}")
+
+# It is only valid inside one. Popping whatever block happens to be open would
+# be the same defect pointing the other way.
+before = sh.failed
+sh.feed("exit-address-family")
+check(sh.failed > before,
+      "and outside an address-family it is refused, not silently obeyed")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

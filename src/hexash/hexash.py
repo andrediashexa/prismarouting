@@ -2118,6 +2118,17 @@ class Shell:
         if w[0] == "show":
             self.show_or_pass(line)
             return True
+        if w[0] == "exit-address-family":
+            # FRR's own spelling, and the one an operator arriving from
+            # another vendor types. It leaves the address-family and nothing
+            # else - so it is only accepted inside one, rather than silently
+            # popping whatever block happens to be open.
+            if self.frr_ctx and self.frr_ctx[-1].startswith("address-family "):
+                self.candidate.routing.append(line)
+                self.frr_ctx.pop()
+            else:
+                self.err("exit-address-family: not inside an address-family")
+            return True
         if w[0] in ("exit", "quit", "end"):
             if self.frr_ctx:
                 self.frr_ctx.pop()
@@ -2388,7 +2399,17 @@ class Shell:
 
         # anything else is routing: staged in the candidate, applied on commit
         self.candidate.routing.append(line)
-        if line.startswith(("router ", "interface ", "vrf ", "route-map ")):
+        # `address-family` is a block, and leaving it out was not an omission
+        # anybody noticed - it was invisible because everything in the routing
+        # section is passed through and still reached FRR.
+        #
+        # What was wrong is what the operator was told: `exit` inside an
+        # address-family popped the enclosing `router bgp`, so the next line
+        # typed went somewhere they did not intend, with nothing on screen
+        # saying so. That is exactly the failure the prompt work exists to
+        # prevent (#150).
+        if line.startswith(("router ", "interface ", "vrf ", "route-map ",
+                            "address-family ")):
             self.frr_ctx.append(line)
         return True
 
