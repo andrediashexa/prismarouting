@@ -118,6 +118,9 @@ ARG_POOL = "<pool>"
 ARG_USER = "<user>"
 ARG_SNMP_USER = "<snmp-user>"
 ARG_PREFIX_LIST = "<prefix-list>"
+ARG_NEIGHBOUR = "<neighbour>"
+ARG_ROUTE_MAP = "<route-map>"
+ARG_PEER_GROUP = "<peer-group>"
 ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
@@ -182,6 +185,103 @@ INTERFACE_BLOCK = {
         "off": ("no check (the default)", None),
     }),
     "exit": ("leave the interface", None),
+}
+
+# Offered inside `router bgp <asn>`, and inside an `address-family` under it.
+#
+# The VTY passed these through and understood none of them: no completion, no
+# `?`, and a typo discovered when FRR refused it in the middle of a commit
+# (#142). Modelling them is not about refusing more - most of BGP is still
+# passed through - it is about the operator being able to DISCOVER what the
+# box takes, from the box, at the point they are typing.
+#
+# Split in two because the same word means different things at the two levels:
+# `neighbor X route-map RM in` belongs to an address family and does nothing
+# outside one, while `neighbor X remote-as` outside an address family is what
+# creates the session in the first place.
+BGP_NEIGHBOUR = {
+    "remote-as": ("the neighbour's AS; this is what creates the session",
+                  "<1-4294967295>|internal|external"),
+    "description": ("what this session is, for whoever reads it next",
+                    "<text>"),
+    "password": ("MD5 password for the session; never printed back", "<text>"),
+    "update-source": ("the address or interface the session is sourced from",
+                      ARG_INTERFACE),
+    "ebgp-multihop": ("hops allowed to a neighbour not on a connected network",
+                      "<1-255>"),
+    "timers": ("keepalive and hold time", "<keepalive> <hold>"),
+    "maximum-prefix": ("tear the session down above this many prefixes",
+                       "<n> [<percent>] [restart <minutes>]"),
+    "next-hop-self": ("advertise this box as the next hop", None),
+    "bfd": ("track the session with BFD, so a failure is seconds not minutes",
+            None),
+    "shutdown": ("hold the session down, keeping the configuration", None),
+    "peer-group": ("put this neighbour in a peer group", ARG_PEER_GROUP),
+    "capability": ("optional BGP capabilities", {
+        "extended-nexthop": ("IPv4 routes over an IPv6 session", None),
+    }),
+}
+
+BGP_AF_NEIGHBOUR = {
+    "activate": ("carry THIS address family with the neighbour", None),
+    "route-map": ("apply a route-map in one direction",
+                  ARG_ROUTE_MAP),
+    "prefix-list": ("apply a prefix-list in one direction", ARG_PREFIX_LIST),
+    "next-hop-self": ("advertise this box as the next hop", None),
+    "soft-reconfiguration": ("keep what the neighbour sent, so policy can be "
+                             "re-applied without bouncing the session", {
+        "inbound": ("store the routes as received; this costs memory", None),
+    }),
+    "maximum-prefix": ("tear the session down above this many prefixes",
+                       "<n> [<percent>] [restart <minutes>]"),
+    "remove-private-AS": ("strip private AS numbers on the way out", None),
+    "default-originate": ("advertise a default route to this neighbour", None),
+}
+
+BGP_BLOCK = {
+    "bgp": ("BGP-wide settings", {
+        "router-id": ("the identifier this box uses in BGP", "<A.B.C.D>"),
+        "log-neighbor-changes": ("log every session state change", None),
+        "graceful-shutdown": ("drain traffic before maintenance (RFC 8326)",
+                              None),
+        "default": ("what a neighbour gets without being told", {
+            "ipv4-unicast": ("activate IPv4 unicast on every neighbour",
+                             None),
+        }),
+        "bestpath": ("how the best path is chosen", {
+            "as-path": ("AS path comparison", {
+                "multipath-relax": ("treat equal-length paths as equal", None),
+            }),
+        }),
+    }),
+    "neighbor": ("a BGP session with another router", ARG_NEIGHBOUR),
+    "address-family": ("what this box carries with its neighbours", {
+        "ipv4": ("IPv4", {"unicast": ("unicast", None)}),
+        "ipv6": ("IPv6", {"unicast": ("unicast", None)}),
+    }),
+    "network": ("a prefix this box originates, which MUST be in the FIB",
+                ARG_PREFIX),
+    "redistribute": ("inject routes from another source", {
+        "connected": ("directly attached networks", None),
+        "static": ("configured static routes", None),
+        "ospf": ("routes OSPF learned", None),
+        "isis": ("routes IS-IS learned", None),
+    }),
+    "exit": ("leave the BGP configuration", None),
+}
+
+BGP_AF_BLOCK = {
+    "neighbor": ("what a neighbour carries in this address family",
+                 ARG_NEIGHBOUR),
+    "network": ("a prefix this box originates in this family", ARG_PREFIX),
+    "redistribute": ("inject routes from another source", {
+        "connected": ("directly attached networks", None),
+        "static": ("configured static routes", None),
+        "ospf": ("routes OSPF learned", None),
+        "isis": ("routes IS-IS learned", None),
+    }),
+    "exit-address-family": ("leave the address family", None),
+    "exit": ("leave the address family", None),
 }
 
 CGNAT_POOL = {
@@ -483,7 +583,19 @@ def _starts(candidate, prefix):
 
 def tree_walk(mode, words):
     """Where we are in the tree after `words`; (options, argument hint)."""
-    node = TREE.get(mode)
+    return walk_from(TREE.get(mode), words)
+
+
+def walk_from(node, words):
+    """
+    The same walk, from any node rather than from a mode's root.
+
+    Blocks entered by an argument - `interface <name>`, `router bgp <asn>` -
+    are not reachable from a mode root, so their grammar could only ever be
+    offered for the FIRST word. Everything after it fell through to the
+    configuration tree, which does not contain `address` or `remote-as`, and
+    the operator got nothing.
+    """
     hint = None
     for w in words:
         if not isinstance(node, dict):
@@ -525,6 +637,73 @@ class Vpp:
         # that is a bug nobody can see in the output.
         first = out.splitlines()[0] if out else ""
         return (1 if VPP_ERROR.match(first) else 0), out
+
+
+def bgp_errors(routing):
+    """
+    What a BGP configuration says that cannot work, as (statement, why).
+
+    Structural only. Whether the neighbour ANSWERS is not knowable from the
+    configuration, and this does not pretend otherwise - it catches the shapes
+    FRR refuses or silently ignores, which are the ones an operator finds out
+    about from a session that never comes up.
+
+    Peer groups are the reason this is not a two-line check: a member inherits
+    `remote-as` from its group, so a neighbour with no AS of its own is
+    perfectly correct when it is in a group that has one.
+    """
+    entities = {}          # name -> what has been said about it
+    groups = set()         # names declared as peer groups
+
+    def ent(name):
+        return entities.setdefault(
+            name, {"remote_as": False, "group": None, "stmts": [], "af": False})
+
+    for line in routing:
+        w = line.split()
+        # `no neighbor ...` removes; reading it as configuration would report
+        # an error about a session being taken away.
+        if not w or w[0] == "no" or w[0] != "neighbor" or len(w) < 2:
+            continue
+        name = w[1]
+        if len(w) == 3 and w[2] == "peer-group":
+            groups.add(name)
+            ent(name)
+            continue
+        e = ent(name)
+        e["stmts"].append(line.strip())
+        if len(w) >= 4 and w[2] == "remote-as":
+            e["remote_as"] = True
+        elif len(w) >= 4 and w[2] == "peer-group":
+            e["group"] = w[3]
+        elif len(w) >= 3 and w[2] == "activate":
+            e["af"] = True
+
+    out = []
+    for name, e in entities.items():
+        if name in groups:
+            continue
+        if not e["stmts"]:
+            continue
+        if e["group"] and e["group"] not in groups:
+            out.append((e["stmts"][0],
+                        f"peer group '{e['group']}' is not declared; declare "
+                        f"it with 'neighbor {e['group']} peer-group'"))
+            continue
+        if e["remote_as"]:
+            continue
+        if e["group"]:
+            g = entities.get(e["group"], {})
+            if g.get("remote_as"):
+                continue
+            out.append((e["stmts"][0],
+                        f"neither {name} nor peer group '{e['group']}' has a "
+                        "remote-as, so the session has no AS to open with"))
+            continue
+        out.append((e["stmts"][0],
+                    f"{name} has no 'remote-as': FRR refuses every other "
+                    "statement for a neighbour whose AS it has not been told"))
+    return out
 
 
 def prefix_range_error(line):
@@ -1580,6 +1759,33 @@ class Shell:
                     w = line.split()
                     if len(w) == 2 and w[0] == "interface":
                         named.add(w[1])
+                # `neighbor X update-source Loopback0` on a box with no
+                # Loopback0. FRR accepts it, the session sources from nothing
+                # and never comes up, and the configuration reads correctly.
+                # Reported separately from the stanza check above because the
+                # useful sentence names the NEIGHBOUR - "this box has no such
+                # interface" leaves the operator looking for an interface
+                # stanza that is not the problem.
+                #
+                # An address is a legitimate update-source too, and is not an
+                # interface name, so only names that are not addresses are
+                # checked.
+                for line in target.routing:
+                    w = line.split()
+                    if (len(w) >= 4 and w[0] == "neighbor"
+                            and w[2] == "update-source"):
+                        src = w[3]
+                        try:
+                            ipaddress.ip_address(src)
+                            continue
+                        except ValueError:
+                            pass
+                        if src not in have:
+                            self.err(f"{line.strip()}: this box has no "
+                                     f"interface {src}")
+                            print("    the session would be sourced from "
+                                  "nothing and never come up")
+                            ok = False
                 for name in sorted(named - have):
                     self.err(f"interface {name}: this box has no such "
                              "interface")
@@ -1643,6 +1849,14 @@ class Shell:
                 if why:
                     self.err(f"{stmt.strip()}: {why}")
                     ok = False
+
+            # BGP the VTY can read: a neighbour FRR will not accept, a peer
+            # group nobody declared. Not "will the session come up" - that is
+            # not in the configuration - but the shapes that cannot work
+            # whatever the other end does (#142).
+            for stmt, why in bgp_errors(target.routing):
+                self.err(f"{stmt}: {why}")
+                ok = False
 
             if d["routing_changed"] and target.routing:
                 rc_fib, fib_text = self.dp.run("show ip fib")
@@ -3020,7 +3234,10 @@ class Shell:
                 if started:
                     if line and not line[0].isspace():
                         break
-                    print(line)
+                    # Redacted here too. `show this` inside a BGP block reads
+                    # the routing lines straight out of the candidate, so a
+                    # neighbour password printed nowhere else was printed here.
+                    print(redact([line])[0])
             return
 
         # At the top of configuration mode, "this" is the whole candidate -
@@ -3331,6 +3548,69 @@ class Shell:
             names[w[0]] = f"interface ({state})" if state else "interface"
         return names
 
+    def dyn_neighbours(self):
+        """
+        The BGP neighbours this box has, with their AS where it is known.
+
+        Read from the configuration, which is read from FRR - not from a model
+        kept here. An operator inside `address-family ipv4 unicast` typing
+        `neighbor <TAB>` is looking for a session they already configured; the
+        answer that helps is the address AND who is on the other end, because
+        an ISP's box carries several and they are told apart by AS, not by the
+        last octet.
+        """
+        cfg = self.candidate or self.running_config()
+        seen, groups = {}, set()
+        for line in cfg.routing:
+            w = line.split()
+            if len(w) >= 2 and w[0] == "neighbor":
+                seen.setdefault(w[1], "neighbour")
+                if len(w) == 3 and w[2] == "peer-group":
+                    groups.add(w[1])
+                elif len(w) >= 4 and w[2] == "remote-as":
+                    seen[w[1]] = f"AS {w[3]}"
+                elif len(w) >= 4 and w[2] == "peer-group":
+                    seen[w[1]] = f"peer-group {w[3]}"
+        # A group is completed in the same place as an address, because the
+        # same statements apply to it - but it is not a session, and calling
+        # it "neighbour" here sends an operator looking for a router at that
+        # name. Its AS still shows when it has one: that is what the members
+        # inherit.
+        for g in groups:
+            seen[g] = ("peer group" if seen.get(g, "neighbour") == "neighbour"
+                       else f"peer group, {seen[g]}")
+        return seen
+
+    def dyn_route_maps(self):
+        """The route-maps this box has, by name, with what the first entry does."""
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for line in cfg.routing:
+            w = line.split()
+            if len(w) >= 3 and w[0] == "route-map":
+                # "route-map RM permit 10" - several entries share a name, and
+                # the operator completing it wants the name once.
+                found.setdefault(w[1], f"route-map ({w[2]})")
+        return found
+
+    def dyn_peer_groups(self):
+        """
+        Peer groups declared in the configuration.
+
+        A peer group is declared by `neighbor <name> peer-group` with nothing
+        after it, and USED by `neighbor <address> peer-group <name>`. Only the
+        declaration makes the group exist, so only that spelling is offered -
+        completing a name that was only ever used would offer a group FRR does
+        not have.
+        """
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for line in cfg.routing:
+            w = line.split()
+            if len(w) == 3 and w[0] == "neighbor" and w[2] == "peer-group":
+                found[w[1]] = "peer group"
+        return found
+
     def dyn_prefix_lists(self):
         """
         The prefix-lists this box has, read back from the control plane.
@@ -3375,6 +3655,9 @@ class Shell:
         ARG_USER: "dyn_users",
         ARG_SNMP_USER: "dyn_snmp_users",
         ARG_PREFIX_LIST: "dyn_prefix_lists",
+        ARG_NEIGHBOUR: "dyn_neighbours",
+        ARG_ROUTE_MAP: "dyn_route_maps",
+        ARG_PEER_GROUP: "dyn_peer_groups",
     }
 
     def dynamic_options(self, hint, prefix):
@@ -3395,6 +3678,32 @@ class Shell:
             return {}
         return {k: v for k, v in values.items() if _starts(k, prefix)}
 
+    def block_grammar(self, words):
+        """
+        The grammar for the block being typed in, or None when there is none.
+
+        None is not the same as an empty grammar: a block this VTY does not
+        model offers `exit` and nothing else, because offering a guess as a
+        grammar is worse than offering nothing. `words` is needed because one
+        block has two grammars - the words after a neighbour's ADDRESS are a
+        different set from the words that start a line.
+        """
+        block = self.frr_ctx[-1]
+        if block.startswith("interface "):
+            return INTERFACE_BLOCK
+        if block.startswith("address-family "):
+            base, neigh = BGP_AF_BLOCK, BGP_AF_NEIGHBOUR
+        elif block.startswith("router bgp"):
+            base, neigh = BGP_BLOCK, BGP_NEIGHBOUR
+        else:
+            return {"exit": ("leave the block", None)}
+        # `neighbor <address> <word>`: the address is an argument, so the tree
+        # cannot walk through it. After it, the statements are the neighbour's.
+        if len(words) >= 2 and words[0] == "neighbor":
+            return {"neighbor": ("a BGP session", {words[1]: (
+                f"statements for {words[1]}", neigh)})}
+        return base
+
     def _options(self, line, ending_word):
         words = line.split()
         prefix = ""
@@ -3411,17 +3720,24 @@ class Shell:
         #
         # The blocks the tree knows about were always right: a pool offers its
         # own, a user its own. Only these needed narrowing.
-        if not words and self.frr_ctx:
-            block = self.frr_ctx[-1]
-            if block.startswith("interface "):
-                opts = dict(INTERFACE_BLOCK)
-            else:
-                # An FRR block. This VTY does not model its statements, so
-                # offering any would be a guess presented as a grammar.
-                opts = {"exit": ("leave the block", None)}
-            opts["show"] = ("display information", None)
-            return ({k: v[0] for k, v in opts.items() if _starts(k, prefix)},
-                    hint, prefix)
+        if self.frr_ctx:
+            grammar = self.block_grammar(words)
+            if grammar is not None:
+                node, bhint = walk_from(grammar, words)
+                if node is None:
+                    if bhint:
+                        dyn = self.dynamic_options(bhint, prefix)
+                        return (dyn, bhint, prefix) if dyn else ({}, bhint,
+                                                                 prefix)
+                    return {}, None, prefix
+                opts = {k: v[0] for k, v in node.items()}
+                if not words:
+                    # `show` works in every block and is most useful inside
+                    # one, where `show this` is the only way to read back what
+                    # has been typed so far.
+                    opts["show"] = "display information"
+                return ({k: v for k, v in opts.items() if _starts(k, prefix)},
+                        None, prefix)
 
         if node is None:
             # The tree knows a name goes here; the box knows which names.

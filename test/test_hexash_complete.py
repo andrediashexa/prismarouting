@@ -458,14 +458,46 @@ check(not ({"cgnat", "user", "commit", "rollback"} & set(opts)),
 print(f"  interface -> {sorted(opts)}")
 sh.feed("exit")
 
+from hexash import BGP_BLOCK, BGP_NEIGHBOUR, BGP_AF_BLOCK   # noqa: E402
 sh.feed("router bgp 65001")
 opts, _, _ = sh._options("", False)
-check(set(opts) == {"exit", "show"},
-      f"an FRR block offers what this VTY knows, and no more: {sorted(opts)}")
-# Offering BGP statements would be a guess presented as a grammar.
+check(set(opts) <= set(BGP_BLOCK) | {"show"},
+      f"router bgp offers only its own statements: "
+      f"{sorted(set(opts) - set(BGP_BLOCK) - {'show'})}")
+check({"neighbor", "address-family"} <= set(opts),
+      f"and it does offer them: {sorted(opts)}")
 check("cgnat" not in opts and "interface" not in opts,
       "and never the level above")
 print(f"  router bgp -> {sorted(opts)}")
+# The words after a neighbour's ADDRESS are the neighbour's, not the block's.
+# The tree walk stops at an argument, so before this everything past the
+# address fell through to the configuration tree.
+sh.feed("neighbor 10.0.0.2 remote-as 65001")
+opts, _, _ = sh._options("neighbor 10.0.0.2 ", False)
+check(set(opts) == set(BGP_NEIGHBOUR),
+      f"after an address, the neighbour's statements: {sorted(opts)}")
+check("address-family" not in opts,
+      "and not the block's own, which do not apply to a neighbour")
+# An address family is a different vocabulary: `activate` belongs there and
+# `remote-as` does not.
+sh.feed("address-family ipv4 unicast")
+opts, _, _ = sh._options("", False)
+check(set(opts) <= set(BGP_AF_BLOCK) | {"show"},
+      f"an address family offers only its own: {sorted(opts)}")
+opts, _, _ = sh._options("neighbor 10.0.0.2 ", False)
+check("activate" in opts and "remote-as" not in opts,
+      f"activate belongs to the family, remote-as does not: {sorted(opts)}")
+sh.feed("exit-address-family")
+sh.feed("exit")
+
+# A block this VTY does NOT model still offers nothing but the way out.
+# Offering statements for it would be a guess presented as a grammar, and that
+# is what this check has always been for.
+sh.feed("router ospf")
+opts, _, _ = sh._options("", False)
+check(set(opts) == {"exit", "show"},
+      f"an unmodelled FRR block offers only the way out: {sorted(opts)}")
+print(f"  router ospf -> {sorted(opts)}")
 sh.feed("exit")
 
 # The blocks the tree knows about were always right; this is the check that

@@ -25,7 +25,67 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.50.0.
+Nothing merged since v0.51.0.
+
+## 0.51.0 — BGP neighbours the VTY understands
+
+The `router bgp` block was passed through and understood word for word by
+nobody ([#142](https://github.com/andrediashexa/hexarouting/issues/142)).
+
+### Added
+
+* **Completion and `?` inside `router bgp` and inside an address family**, with
+  two grammars rather than one: `neighbor X route-map RM in` belongs to an
+  address family and does nothing outside one, while `neighbor X remote-as` is
+  what creates the session. `remote-as` is deliberately not offered inside an
+  address family.
+
+* **The words after a neighbour's address complete.** They could not before,
+  and the reason was structural: the tree walk stopped at an argument, so
+  everything past the address fell through to the configuration tree, which has
+  no `remote-as` in it. Fixing it fixed the same gap inside `interface`, where
+  `ipv4 address` completed nothing either.
+
+* **Values that come from the box**: neighbours by address with the AS on the
+  other end beside them, peer groups by name and labelled as groups, route-maps
+  and prefix-lists read back from FRR, interfaces for `update-source`.
+
+* **Four refusals, all structural.** Whether the neighbour answers is not in
+  the configuration and is not claimed.
+
+  ```
+  error: neighbor 10.0.0.9 description sem-as: 10.0.0.9 has no 'remote-as':
+  FRR refuses every other statement for a neighbour whose AS it has not been told
+  ```
+
+  A neighbour with no `remote-as`; a peer group nobody declared; a member whose
+  group has no AS either (a member inherits it, so a neighbour with no AS of its
+  own is correct when the group has one); and `update-source` naming an
+  interface this box does not have — which FRR accepts, sourcing the session
+  from nothing.
+
+### Fixed
+
+* **A BGP neighbour's password is no longer printed back.** It is the secret
+  itself, not a hash, and it opens the session on the other router too. It was
+  redacted nowhere: the account rule matched lines beginning with `password`,
+  and `neighbor X password Y` does not. Now redacted in `show running-config`
+  **and** in `show this` inside the block, which reads the routing lines
+  straight out of the candidate.
+
+### Internal
+
+* `lab/routing.sh` no longer writes this side's BGP configuration. The session
+  is configured **through the VTY**, so the three routes reaching the VPP FIB —
+  including the BGP one — are evidence that the VTY configured a working
+  peering. The password assertions were tightened after review: grepping for
+  `not shown` alone passes on any box with a user password, and a `show this`
+  that printed nothing would have satisfied the negative check.
+
+* The per-lab cap in the suite runner is 600 s, not 300. `routing` measures
+  router advertisements in three states and takes 329 s alone; killed at 300 it
+  was reported as a failure, which is the cap saying something false about the
+  lab.
 
 ## 0.50.0 — router advertisements off by default, and a refusal that cost the next commit
 
