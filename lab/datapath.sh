@@ -82,7 +82,11 @@ echo "=========== EXPIRY: ports have to come back ==========="
 vppctl bpa timeouts udp 2
 echo "udp timeout lowered to 2s; waiting for the expiry process..."
 n=0
-until vppctl show bpa session | grep -q "^total: 0 sessoes" || [ "$n" -ge 15 ]; do
+# "sessions", not "sessoes" - the plugin prints English. This loop never
+# matched, so it always ran its full 15 seconds and never confirmed the
+# sessions had expired; the assertion after it was reading whatever the box
+# happened to be doing at second 15.
+until vppctl show bpa session | grep -q "^total: 0 sessions" || [ "$n" -ge 15 ]; do
   sleep 1; n=$((n+1))
 done
 vppctl show bpa session

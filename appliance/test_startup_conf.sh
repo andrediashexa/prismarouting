@@ -35,10 +35,22 @@ for m in $(sed -n 's/^import \([a-z_][a-z_]*\)$/\1/p;s/^from \([a-z_][a-z_]*\) i
     || bad "hexash imports $m but $m.py was not installed"
 done
 
+# VPP is not started until much further down this file, so this can only ask
+# whether the installed VTY RUNS - not whether it reaches anything. It used to
+# claim "and reaches the dataplane", which was true of a box with no dataplane
+# installed at all: the correct "not running" message is not a traceback.
+#
+# What it can prove here is that the installed copy imports its own modules and
+# fails the way it is supposed to, which is what the loop above is about.
 out=$(hexash -c "show cgnat pool" 2>&1)
 case "$out" in
-  *Traceback*) bad "the installed hexash cannot reach the dataplane:"; echo "$out" | sed 's/^/    /' ;;
-  *) say "and reaches the dataplane" ;;
+  *Traceback*)
+    bad "the installed hexash crashes instead of reporting:"
+    echo "$out" | sed 's/^/    /' ;;
+  *"not answering"*|*"not running"*|*"cannot reach"*)
+    say "starts, and says the dataplane is not up yet - which it is not" ;;
+  *)
+    say "starts and answers" ;;
 esac
 
 echo

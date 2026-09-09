@@ -103,7 +103,9 @@ echo "  a date when the pool still used 512 - naming the wrong subscriber."
 
 echo
 echo "=== it also went to VPP's log (which can ship to remote syslog) ==="
-vppctl show logging | grep -c "pool provedor" | sed 's/^/  linhas: /'
+# The pools here are provider-a and provider-b; "provedor" never matched, so
+# this diagnostic reported 0 on every run since it was written.
+vppctl show logging | grep -c "pool provider" | sed 's/^/  lines: /'
 
 echo
 echo "=========== the chain (#22) ==========="

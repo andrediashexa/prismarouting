@@ -89,5 +89,10 @@ echo "=========== VERDICT ==========="
 ERR=$(vppctl show errors)
 expect_in "in2out handed packets to other workers" "packets handed to another worker" "$ERR"
 expect_not_in "every reply found its session" "no session for destination" "$ERR"
-expect_in "out2in translated" "packets translated" "$ERR"
+# bpa_errors.h declares "packets translated" TWICE - once for in2out and
+# once for out2in - so this was satisfied by the forward direction alone and
+# passed on a box whose return path translated nothing. Asserted on the
+# out2in node's own counters.
+expect "out2in translated" \
+  sh -c "vppctl show errors | grep -i 'out2in' | grep -q 'packets translated'"
 verdict

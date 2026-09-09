@@ -176,7 +176,13 @@ echo "=========== VERDICT ==========="
 for pfx in 203.0.113.0/24 198.18.0.0/24 198.19.0.0/24; do
   expect "$pfx reached the VPP FIB" sh -c "vppctl show ip fib $pfx | grep -q '^$pfx'"
 done
-expect "IS-IS adjacency is up" sh -c "vtysh -c 'show isis neighbor' 2>/dev/null | grep -qi up"
+# The STATE column, not "up" anywhere in the output. The peer's IS-IS hostname
+# is literally "upstream", so `grep -qi up` matched the System Id and passed
+# with the adjacency in Init or Down - which is every state except the one
+# being asserted.
+expect "IS-IS adjacency is up" \
+  sh -c "vtysh -c 'show isis neighbor' 2>/dev/null | tr -d '\r' \
+         | awk 'NR>1 && \$0 ~ /Up|UP/ {found=1} END {exit !found}'"
 
 # --- MTU committed through the VTY reaches BOTH sides ---
 # The lab sets 1500 by hand at the top, which is what makes OSPF come up here.
@@ -222,7 +228,37 @@ expect "with lcp-sync off, the TAP took it too - so hexash moved it, not VPP" \
   sh -c "ip link show vppwan0 | grep -q 'mtu 1450'"
 vppctl lcp lcp-sync on
 
+# Read back BEFORE the restore below, or this asserts on a value the next two
+# lines are about to change.
 expect "the MTU is in the running configuration"   sh -c "$HX -c 'show running-config' | grep -q 'mtu 1450'"
+
+# Put the MTU back, through vppctl and not a commit.
+#
+# Not a commit: a commit pushes a rollback revision, and the rollback test
+# further down depends on `rollback 1` meaning the state before the static
+# route. Restoring through the VTY shifted that by one and the rollback test
+# silently began restoring the wrong revision.
+#
+# Here, and not later: the peer is at 1500, OSPF compares MTU in Database
+# Description packets, and at 1450 the adjacency drops and takes
+# 198.18.0.0/24 with it. Everything below would then assert on a routing table
+# this test broke - which is what a `grep -qc` typo hid for months.
+vppctl set interface mtu packet 1500 host-veth-vpp
+echo "  mtu back to: $(mtu_of)"
+expect "the MTU is back to the peer's" test "$(mtu_of)" = "1500"
+
+# The adjacency returning is NOT the route returning. After Full there is still
+# an LSA exchange, an install into the kernel and a linux_nl walk into the VPP
+# FIB, and the section below reads the FIB. Waiting for the neighbour and then
+# asserting on routes is how this test came to report a table that was still
+# converging.
+n=0
+until vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24' \
+      || [ "$n" -ge 90 ]; do
+  sleep 1; n=$((n + 1))
+done
+expect "and the OSPF route came back into the FIB after the MTU change (${n}s)" \
+  sh -c "vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24'"
 
 
 # The restore that used to be here sent its output to /dev/null and ended in
@@ -237,6 +273,14 @@ expect "the MTU is in the running configuration"   sh -c "$HX -c 'show running-c
 # the table that forwards. This section asserts that the VTY says the same
 # thing - and that when the two tables disagree, it says WHICH.
 echo
+# The two learned prefixes, raw, side by side. `show route` was listing one of
+# them and not the other while both were asserted into the FIB above, and the
+# difference is not visible from the summary.
+echo "  --- 198.18.0.0/24 in the FIB, raw ---"
+vppctl show ip fib 198.18.0.0/24 | sed 's/^/    /'
+echo "  --- 198.19.0.0/24 in the FIB, raw ---"
+vppctl show ip fib 198.19.0.0/24 | sed 's/^/    /'
+
 echo "=========== show route ==========="
 SHOW_ROUTE=$($HX -c "show route" 2>&1)
 printf '%s\n' "$SHOW_ROUTE" | head -12 | sed 's/^/  /'
@@ -301,8 +345,12 @@ vtysh -c "show ip route json" 2>/dev/null \
 
 expect "the VTY lists the learned routes from the FIB" \
   sh -c "printf '%s' \"$SHOW_ROUTE\" | grep -q '203.0.113.0/24'"
-expect "and all three of them" \
-  sh -c "printf '%s' \"$SHOW_ROUTE\" | grep -qc '198.1[89]'"
+# COUNT them. `grep -qc` is `grep -q`: the -q wins and the -c is discarded, so
+# the exit status only said "at least one line matched" and a show route that
+# had lost the OSPF prefix but kept the IS-IS one passed as "all three".
+SEEN=$(printf '%s' "$SHOW_ROUTE" | grep -c '198\.1[89]')
+expect "and all three of them (198.18 and 198.19 seen: $SEEN)" \
+  test "$SEEN" -ge 2
 # The housekeeping VPP creates per interface address must not be in there, or
 # the three routes that matter are lost among a dozen entries nobody asked for.
 expect_not_in "without the per-neighbour adjacencies" "10.0.0.2/32" "$SHOW_ROUTE"
@@ -345,24 +393,23 @@ expect_in "a local address is not reported as a failure" "local" "$VERBOSE"
 #
 # The tag comes back from sw_interface_dump and the state from `show
 # interface`, so a value only FRR knows cannot satisfy either.
-# Put the MTU back to the peer's, AFTER the rollback test above.
+
+
+# The rollback test above restored an older revision, and older revisions carry
+# an older MTU - which is the rollback working, not failing. Every section after
+# it has to re-establish its own preconditions rather than assume the state it
+# left behind.
 #
-# Not before it: this is a commit, and a commit pushes a rollback revision.
-# Putting it earlier shifts what `rollback 1` means, and the rollback test
-# above depends on that distance - it silently started restoring the state
-# from before this restore, which put the interface back to 1450.
-#
-# Why it has to happen at all: the peer is at 1500 and OSPF compares MTU in
-# Database Description packets. An adjacency already established survives a
-# change - the comparison only happens while forming one - so 1450 looks
-# harmless until something makes the adjacency re-form, and then it sticks in
-# ExStart forever with nothing in the log saying why. That is Pitfall 1 in
-# docs/routing.md, and the shutdown test below is what made it re-form.
-$HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1500" -c "exit" \
-    -c "commit" > /tmp/mtu3.log 2>&1 || true
-echo "  mtu now: $(mtu_of)"
-expect "the MTU is back to the peer's, so an adjacency can re-form" \
-  test "$(mtu_of)" = "1500"
+# Restored through vppctl so no rollback revision is pushed; a commit here
+# would shift what `rollback 1` means for anything added later.
+vppctl set interface mtu packet 1500 host-veth-vpp
+n=0
+until vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24' \
+      || [ "$n" -ge 90 ]; do
+  sleep 1; n=$((n + 1))
+done
+expect "the MTU and the OSPF route are back before the shutdown test (${n}s)" \
+  sh -c "[ \"$(mtu_of)\" = 1500 ] && vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24'"
 
 echo "  mtu before the shutdown test: $(mtu_of)"
 echo "=========== description and shutdown ==========="

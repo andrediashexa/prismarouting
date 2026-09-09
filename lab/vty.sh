@@ -313,8 +313,14 @@ expect_in "and show this in an interface is not empty" "mtu 1500" "$COMP"
 # The boundary, not the inventory: an interface must offer its own statements
 # and none from the level above. Listing them all here meant editing this line
 # every time the block grew, which tested the list rather than the rule.
+# The label is not the answer. This asserted "IN_BLOCK: " - which print()
+# emits whether or not anything follows it - so a block offering NOTHING
+# passed. It was written that way while deliberately replacing a hardcoded
+# list with a rule, which is how a stronger-looking assertion became a vacuous
+# one. Naming two statements that must be there is the rule, checkably.
 expect_in "inside an interface, '?' offers its own statements" \
-  "IN_BLOCK: " "$COMP"
+  "IN_BLOCK: description " "$COMP"
+expect_in "and the rest of the block with them" "urpf" "$COMP"
 expect_in "including the ones that were always there" "mtu" "$COMP"
 expect_not_in "and nothing from the level above leaks in" \
   "IN_BLOCK: cgnat" "$COMP"

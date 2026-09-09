@@ -79,7 +79,9 @@ echo "  (so far the session is established: without handling RST it would last ~
 send_tcp rst
 echo "  aguardando a varredura de expiracao..."
 n=0
-until vppctl show bpa session | grep -q "^total: 1 sessoes" || [ "$n" -ge 15 ]; do
+# "sessions", not "sessoes". Line 145 of this same file spells it correctly,
+# so the two loops disagreed inside one lab.
+until vppctl show bpa session | grep -q "^total: 1 sessions" || [ "$n" -ge 15 ]; do
   sleep 1; n=$((n+1))
 done
 echo "  apos ${n}s: $(vppctl show bpa session | tail -1)"
