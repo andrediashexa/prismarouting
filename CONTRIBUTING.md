@@ -123,6 +123,37 @@ it is *no*, and why.
   the maintainer was renaming a category and removing pages. Nothing was lost,
   and only because the stale text failed to match, not because anything
   noticed.
+* **The wiki is written for whoever USES the platform**, not for whoever
+  develops it — `PADRAO-DOCUMENTACAO.md` section 0, and it is enforced: two
+  pages have already been deleted for breaking it. It is also **public on the
+  internet**, so a page is written for somebody outside the company.
+
+  These **MUST NOT** appear on a wiki page:
+
+  | Out | Where it lives instead |
+  |---|---|
+  | building the plugin, `make`, the build container | `README.md`, `TESTING.md` |
+  | the labs, `tools/lab.sh`, `LAB_JOBS` | `TESTING.md` |
+  | source file names (`bpa_audit.c`, `bpa.api`) | the code |
+  | the binary API and its messages | `docs/architecture.md` |
+  | **issue numbers and GitHub links** | the issue |
+  | lab interface or machine names | nowhere public |
+  | `vppctl` and dataplane commands | the product exists so the operator never needs them |
+
+  What *does* belong is the **consequence** of those things when it serves the
+  operator. "This is verified against the captured packet, not a counter" is an
+  argument about trust and belongs on the wiki; naming the script that does the
+  verifying does not.
+
+  I broke this rule the first time I used it: the installation page was given a
+  warning citing two issue numbers and linking GitHub. The warning was correct
+  and the citations were not, and a reader outside the company cannot open
+  either link.
+
+* **Never invent the output of a command.** `lab/*.sh` holds the strings the
+  product actually prints, inside its assertions. That is the safe source to
+  quote from.
+
 * **Read what a category is FOR before adding to it.** A page can be
   well-written, accurate, and still the wrong page. `make release-gate` was
   added to a wiki page about builds and testing, which was removed days later
