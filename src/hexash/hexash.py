@@ -1873,8 +1873,12 @@ class Shell:
             self.err(f"interface {ifname}: the dataplane does not have it")
             return False
         # Admin down is the ABSENCE of IF_STATUS_API_FLAG_ADMIN_UP, and the
-        # natural way to say that - flags: 0 - makes vat2 SEGFAULT. It parses
-        # the field as an enum name and cannot render the empty set.
+        # natural way to say that - flags: 0 - makes vat2 SEGFAULT: the
+        # generated parser for an `enum` field calls strcmp on whatever
+        # cJSON_GetStringValue returned, which is NULL for a number. The empty
+        # set has no name to send, so there is nothing to send (#136, and
+        # vppapi.ENUM_FLAG_FIELDS, which now refuses the value rather than
+        # letting the client die on it).
         #
         # So down is expressed by sending the one other flag in the type.
         # VPP reads only ADMIN_UP out of this message; LINK_UP is not settable
@@ -2064,9 +2068,26 @@ class Shell:
         Single-tag goes through create_vlan_subif, which needs no flags.
         QinQ goes through create_subif, whose sub_if_flags is a bitfield -
         and vat2 can only send ONE name of a bitfield, so TWO_TAGS is sent
-        without EXACT_MATCH. See #136: the consequence is that a QinQ
-        sub-interface also matches frames carrying MORE than two tags, which
-        is documented rather than silently shipped.
+        without EXACT_MATCH (#136, and vppapi.ENUM_FLAG_FIELDS for why the
+        client cannot say the other spelling).
+
+        The operator is TOLD what that produces, every time it is produced,
+        rather than left to read an issue. Measured on vpp 26.06-release with
+        the packet generator, against pg0.40 created by the VPP CLI with
+        `exact-match` set and pg0.10 created by this call without it: a frame
+        carrying three tags lands on BOTH of them. So the missing flag is not
+        what makes a QinQ sub-interface over-match here - vnet/ethernet/node.c
+        classifies "3 or more tags" as two tags in eth_input_tag_lookup(), the
+        path a sub-interface on a real port takes, and never asks for
+        SUBINT_CONFIG_MATCH_3_TAG at all. Sending EXACT_MATCH would change
+        nothing an operator can observe, which is why this warns instead of
+        refusing: the sub-interface does carry the traffic it was asked for.
+
+        The same measurement on a SINGLE-tag sub-interface does separate the
+        two - `dot1q 60 exact-match` drops a two-tag frame that `dot1q 50`
+        accepts - so exact matching works in that path and this VTY does not
+        need it there: create_vlan_subif takes no flags and VPP defaults a
+        single-tag sub-interface to exact matching.
         """
         parent = ifname.rsplit(".", 1)[0]
         idx = self.api.interface_index(parent)
@@ -2080,6 +2101,12 @@ class Shell:
                                "sub_if_flags": "SUB_IF_API_FLAG_TWO_TAGS",
                                "outer_vlan_id": tag["outer"],
                                "inner_vlan_id": tag["inner"]})
+            if r.state == vppapi.OK:
+                print(f"warning: {ifname} matches outer {tag['outer']} inner "
+                      f"{tag['inner']} AND anything carrying more tags than "
+                      "that; VPP's ethernet input reads three or more tags as "
+                      "two, so a QinQ sub-interface on this box cannot be "
+                      "made to refuse them (#136)")
         else:
             r = self.api_call("create_vlan_subif",
                               {"sw_if_index": idx, "vlan_id": tag["outer"]})

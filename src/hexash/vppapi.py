@@ -25,7 +25,7 @@ import subprocess
 VAT2 = os.environ.get("VAT2", "vat2")
 VPPCTL = os.environ.get("VPPCTL", "vppctl")
 
-# Five outcomes, because they need different actions from the operator.
+# Six outcomes, because they need different actions from the operator.
 # Collapsing them into "it failed" is how an unplugged dataplane and a rejected
 # configuration end up looking the same.
 OK = "ok"
@@ -34,6 +34,72 @@ NOT_RUNNING = "not-running"  # VPP is not answering
 NO_PLUGIN = "no-plugin"    # VPP is up, the bpa API is not registered
 REFUSED = "refused"        # the dataplane answered, and said no
 BAD_REPLY = "bad-reply"    # it answered something this client cannot read
+# CANNOT_SEND is the client's own failure and needs the opposite action from
+# NOT_RUNNING, which is where it used to land: nothing reached VPP, VPP is
+# fine, and the operator has to change what they asked for - not restart the
+# dataplane. vat2 makes that distinction hard to see, because it CRASHES on a
+# value it cannot encode (empty output, killed by a signal) and exits 0 with
+# "Failed converting JSON to API" on stderr when it merely refuses. Both used
+# to come back as "the dataplane is not answering; check systemctl" (#136).
+CANNOT_SEND = "cannot-send"  # the client could not say it; VPP never saw it
+
+# Fields VPP declares as a plain `enum` although every member is a bit.
+#
+# vat2 generates, for an `enum`, a parser that compares ONE name whole:
+#
+#     char *p = cJSON_GetStringValue(o);
+#     if (strcmp(p, "SUB_IF_API_FLAG_TWO_TAGS") == 0) {*a = 4; return 0;}
+#
+# (vnet/interface_types.api_fromjson.h). cJSON_GetStringValue returns NULL for
+# anything that is not a JSON string, and strcmp reads it. Measured against
+# vat2 from vpp 26.06-release:
+#
+#     "SUB_IF_API_FLAG_TWO_TAGS"                       reply, retval 0
+#     "SUB_IF_API_FLAG_TWO_TAGS|SUB_IF_API_FLAG_EXACT_MATCH"  exit 0, refused
+#     "SUB_IF_API_FLAG_TWO_TAGS,SUB_IF_API_FLAG_EXACT_MATCH"  exit 0, refused
+#     20                                               SIGSEGV
+#     0                                                SIGSEGV
+#     null                                             SIGSEGV
+#     ["SUB_IF_API_FLAG_TWO_TAGS"]                     SIGSEGV
+#     ["SUB_IF_API_FLAG_TWO_TAGS","SUB_IF_API_FLAG_EXACT_MATCH"]  SIGSEGV
+#
+# A type VPP declares as `enumflags` instead - tunnel_flags, af_xdp_flag,
+# ip_flow_hash_config - generates a loop over a JSON ARRAY that ORs the
+# members, and takes [] for none. So the multi-bit value is expressible in
+# vat2's JSON, and these two types are simply declared with the wrong keyword
+# upstream: it is the API definition, not the client's design.
+#
+# The check below is on the SHAPE of the value and not on a list of member
+# names. A list of names is one more thing to keep in step with VPP, and
+# getting it wrong would refuse a flag that works - a worse failure than the
+# one it prevents.
+ENUM_FLAG_FIELDS = {
+    "create_subif": ("sub_if_flags",),
+    "sw_interface_set_flags": ("flags",),
+}
+
+
+def unsendable(message, args):
+    """
+    Why vat2 cannot encode `args`, or "" when it can.
+
+    Checked before the process is started, so hexash never hands vat2 the
+    value it dies on. A core dump in the middle of a commit is not a
+    diagnosis, and the operator would be reading it instead of the sentence
+    that says which field could not be said.
+    """
+    for field in ENUM_FLAG_FIELDS.get(message, ()):
+        if field not in args:
+            continue
+        value = args[field]
+        if not isinstance(value, str):
+            return (f"{field} is sent as one flag NAME; vat2 reads a null "
+                    f"pointer for anything else, and {value!r} crashes it")
+        if not value or any(c in value for c in "|, "):
+            return (f"{field} takes exactly ONE flag name and {value!r} is "
+                    "not one; vat2 cannot send a combination of them")
+    return ""
+
 
 # From vnet/error.h. Only the codes this plugin can return are listed; anything
 # else falls back to the number, which is still actionable when paired with the
@@ -174,7 +240,35 @@ class Vat2:
 
     # ------------------------------------------------------------- calling
 
+    @staticmethod
+    def _client_failure(message, rc, text):
+        """
+        The Reply for a vat2 that never got the message out, or None.
+
+        Split out because a dump has to reach the same conclusion as a call: a
+        client that crashed while encoding sw_interface_dump used to surface
+        as interface_index() returning None, and from there as "the dataplane
+        does not have it" about an interface that is right there.
+        """
+        # subprocess reports a signal as a negative code; a shell in between
+        # reports it as 128+n. Both mean the same thing here.
+        if rc < 0 or rc >= 128:
+            sig = -rc if rc < 0 else rc - 128
+            return Reply(CANNOT_SEND, reason=(
+                f"the client crashed (signal {sig}) encoding '{message}'; "
+                "the dataplane never saw it"))
+        if "Failed converting JSON to API" in text:
+            return Reply(CANNOT_SEND, reason=(
+                f"the client cannot express '{message}' as it was asked to; "
+                "the dataplane never saw it"))
+        return None
+
     def call(self, message, args, timeout=15):
+        why = unsendable(message, args)
+        if why:
+            return Reply(CANNOT_SEND, reason=(
+                f"'{message}' cannot be sent over the binary API: {why}"))
+
         if message in WRITE_MESSAGES:
             # Added here and not in the argument builders in config.py: those
             # are COMPARED to work out what changed, and an identity inside
@@ -194,6 +288,9 @@ class Vat2:
             return Reply(NO_PLUGIN, reason=(
                 f"the dataplane does not know '{message}'; the vat2 plugin is "
                 "missing from the install"))
+        mine = self._client_failure(message, rc, text)
+        if mine:
+            return mine
 
         payload = self._parse(out)
         if payload is None:
@@ -246,6 +343,9 @@ class Vat2:
         if "No such command" in text:
             return Reply(NO_PLUGIN, reason=(
                 f"the dataplane does not know '{message}'"))
+        mine = self._client_failure(message, rc, text)
+        if mine:
+            return mine
 
         start = (out or "").find("[")
         if start < 0:
