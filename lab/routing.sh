@@ -227,6 +227,12 @@ BGPUP=$($HX -c "configure" -c "router bgp 65000" \
         -c "exit-address-family" -c "exit" -c "commit" 2>&1)
 echo "$BGPUP" | tail -3 | sed 's/^/  /'
 expect_in "the VTY commits a BGP session" "commit complete" "$BGPUP"
+# A `no` form that is CONFIGURATION rather than a removal. There is no
+# `bgp ebgp-requires-policy` line for it to take away, so it has to be staged
+# as written - and every eBGP session here needs it, which is why the check
+# that `no X` removes X must not swallow this one.
+expect_in "a 'no' with nothing to remove is kept as configuration" \
+  "no bgp ebgp-requires-policy" "$(vtysh -c 'show running-config')"
 
 echo "=== aguardando as tres rotas chegarem na FIB do VPP ==="
 n=0
@@ -1025,6 +1031,165 @@ expect_not_in "while the ones it does model carry no marker" \
 # than for that one statement, and it is tested where the poison IS
 # reproducible: by loading the file directly, the way frr-reload does.
 # --- AS-path lists, against the paths the box really received (#146) ---
+# --- the commands an operator runs while something is wrong (#148) ---
+echo "=========== show bgp summary, against the table that forwards ==========="
+SUM=$($HX -c "show bgp summary" 2>&1)
+echo "$SUM" | sed 's/^/  /'
+expect_in "the summary names a session" "10.0.0.2" "$SUM"
+expect_in "and says the state" "Established" "$SUM"
+# THE line this command exists for. FRR's own summary says a session is up and
+# carrying N prefixes; whether the dataplane got them is a different question,
+# and it is the one that decides whether packets move.
+expect_in "and says how many BGP prefixes reached the forwarding table" \
+  "forwarding table" "$SUM"
+
+echo "=========== announce, and withdraw ==========="
+# Announced through the VTY, asserted in the neighbour's table AND in the VPP
+# FIB. FRR holding a route is a different claim from the box forwarding on it.
+peer_has() {
+  ip netns exec peer vtysh -N peer -c "show bgp ipv4 unicast $1" 2>/dev/null \
+    | grep -c "$1" || true
+}
+in_fib2() { vppctl show ip fib "$1" 2>/dev/null | grep -c "^$1" || true; }
+ANNOUNCE=$($HX -c "configure" -c "ip route 203.0.114.0/24 blackhole" \
+           -c "router bgp 65000" -c "address-family ipv4 unicast" \
+           -c "network 203.0.114.0/24" \
+           -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+expect_in "announcing a prefix commits" "commit complete" "$ANNOUNCE"
+n=0
+while [ "$n" -lt 30 ]; do
+  [ "$(peer_has 203.0.114.0/24)" -ge 1 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  the neighbour sees it: $(peer_has 203.0.114.0/24)   the FIB has it: $(in_fib2 203.0.114.0/24)   (${n}s)"
+expect "the neighbour received the announcement" \
+  test "$(peer_has 203.0.114.0/24)" -ge 1
+expect "and this box forwards on it" test "$(in_fib2 203.0.114.0/24)" -ge 1
+
+WITHDRAW=$($HX -c "configure" -c "router bgp 65000" \
+           -c "address-family ipv4 unicast" \
+           -c "no network 203.0.114.0/24" \
+           -c "exit-address-family" -c "exit" \
+           -c "no ip route 203.0.114.0/24 blackhole" -c "commit" 2>&1)
+echo "$WITHDRAW" | tail -5 | sed 's/^/  withdraw: /'
+expect_in "withdrawing it commits" "commit complete" "$WITHDRAW"
+n=0
+while [ "$n" -lt 30 ]; do
+  [ "$(peer_has 203.0.114.0/24)" -eq 0 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  after withdrawing: neighbour $(peer_has 203.0.114.0/24), FIB $(in_fib2 203.0.114.0/24)   (${n}s)"
+expect "the neighbour stops seeing it" test "$(peer_has 203.0.114.0/24)" -eq 0
+expect "and it leaves the forwarding table too" \
+  test "$(in_fib2 203.0.114.0/24)" -eq 0
+
+echo "=========== graceful shutdown, measured by its effect ==========="
+# RFC 8326. Before maintenance an operator wants traffic to DRAIN rather than
+# drop. Asserted on what the neighbour receives and on what this box does to
+# the routes it holds - not on the configuration containing the words, which
+# would pass on a statement that did nothing.
+peer_communities() {
+  ip netns exec peer vtysh -N peer \
+    -c "show bgp ipv4 unicast $1 json" 2>/dev/null > /tmp/gs.json
+  python3 - <<'PYEOF'
+import json
+try:
+    d = json.load(open("/tmp/gs.json"))
+except Exception:
+    print("UNREADABLE"); raise SystemExit
+for p in d.get("paths", []):
+    c = p.get("community") or {}
+    print(" ".join(c.get("list", [])) or "(none)")
+    raise SystemExit
+print("NOPATH")
+PYEOF
+}
+local_pref_of() {
+  vtysh -c "show bgp ipv4 unicast $1 json" 2>/dev/null > /tmp/gs2.json
+  python3 - <<'PYEOF'
+import json
+try:
+    d = json.load(open("/tmp/gs2.json"))
+except Exception:
+    print("UNREADABLE"); raise SystemExit
+best = None
+for p in d.get("paths", []):
+    lp = p.get("locPrf", p.get("localPref"))
+    if lp is not None:
+        best = lp if best is None else min(best, lp)
+print("NONE" if best is None else best)
+PYEOF
+}
+COMM_BEFORE=$(peer_communities 192.0.2.0/24)
+LP_BEFORE=$(local_pref_of 198.51.100.0/24)
+echo "  before: the neighbour sees communities '$COMM_BEFORE'; local-pref here is $LP_BEFORE"
+
+GS=$($HX -c "configure" -c "router bgp 65000" \
+     -c "bgp graceful-shutdown" -c "exit" -c "commit" 2>&1)
+expect_in "graceful-shutdown commits" "commit complete" "$GS"
+n=0
+while [ "$n" -lt 30 ]; do
+  case "$(peer_communities 192.0.2.0/24)" in *65535:0*) break ;; esac
+  sleep 1; n=$((n + 1))
+done
+COMM_AFTER=$(peer_communities 192.0.2.0/24)
+LP_AFTER=$(local_pref_of 198.51.100.0/24)
+echo "  after:  the neighbour sees communities '$COMM_AFTER'; local-pref here is $LP_AFTER  (${n}s)"
+
+# The well-known community, in the neighbour's table. Asserted by the NAME FRR
+# renders, not by 65535:0 - the raw value never appears, because FRR prints
+# well-known communities symbolically, and asserting the number would be
+# asserting a rendering nothing produces.
+expect_in "the neighbour receives the graceful-shutdown community" \
+  "gracefulShutdown" "$COMM_AFTER"
+expect_not_in "which it was not receiving before" \
+  "gracefulShutdown" "$COMM_BEFORE"
+# And the other half of RFC 8326: this box stops preferring what it holds, so
+# traffic drains towards whoever else has a path.
+expect "the local preference of received routes drops to zero" \
+  test "$LP_AFTER" = "0"
+expect "and it was not zero before" test "$LP_BEFORE" != "0"
+
+# Reversible. A maintenance switch that cannot be switched back is not one.
+$HX -c "configure" -c "router bgp 65000" \
+    -c "no bgp graceful-shutdown" -c "exit" -c "commit" > /tmp/gs3.log 2>&1 || true
+n=0
+while [ "$n" -lt 30 ]; do
+  case "$(peer_communities 192.0.2.0/24)" in *65535:0*) ;; *) break ;; esac
+  sleep 1; n=$((n + 1))
+done
+echo "  after undoing it: '$(peer_communities 192.0.2.0/24)', local-pref $(local_pref_of 198.51.100.0/24)  (${n}s)"
+expect_not_in "and undoing it takes the community back off" \
+  "gracefulShutdown" "$(peer_communities 192.0.2.0/24)"
+
+echo "=========== routes it is not keeping ==========="
+# "no routes received" and "I am not keeping them" are different answers, and
+# an operator at 2am acts on the first one.
+RECV=$($HX -c "show bgp neighbor 10.0.0.2 received-routes" 2>&1)
+echo "$RECV" | tail -3 | sed 's/^/  /'
+expect_in "asking for routes the box does not keep says so" \
+  "does not keep what it received" "$RECV"
+expect_in "and names what to turn on" "soft-reconfiguration" "$RECV"
+
+CLEARSOFT=$($HX -c "clear bgp 10.0.0.2 soft in" 2>&1)
+echo "$CLEARSOFT" | tail -2 | sed 's/^/  /'
+expect_in "and 'clear soft in' refuses for the same reason" \
+  "nothing to re-apply" "$CLEARSOFT"
+
+# With it on, both work. A refusal that cannot be lifted is a wall, not a check.
+SOFTON=$($HX -c "configure" -c "router bgp 65000" \
+         -c "address-family ipv4 unicast" \
+         -c "neighbor 10.0.0.2 soft-reconfiguration inbound" \
+         -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+expect_in "turning soft-reconfiguration on commits" "commit complete" "$SOFTON"
+sleep 3
+RECV2=$($HX -c "show bgp neighbor 10.0.0.2 received-routes" 2>&1)
+expect_not_in "and then the routes are shown, not refused" \
+  "does not keep what it received" "$RECV2"
+CLEAR2=$($HX -c "clear bgp 10.0.0.2 soft in" 2>&1)
+echo "$CLEAR2" | tail -2 | sed 's/^/  /'
+expect_in "and the session can be softly cleared" "cleared" "$CLEAR2"
+
 echo "=========== AS-path lists ==========="
 # Wait for the third AS's prefix to arrive, so what follows is asserted against
 # a real path and not against an empty table.
