@@ -25,7 +25,80 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.55.0.
+Nothing merged since v0.56.0.
+
+## 0.56.0 — secrets that were printed, and a victim that was not protected
+
+Two shipped-box defects
+([#169](https://github.com/andrediashexa/hexarouting/issues/169),
+[#172](https://github.com/andrediashexa/hexarouting/issues/172) in part).
+
+### Fixed
+
+* **OSPF and IS-IS authentication keys are no longer printed in the clear.**
+  `redact()` covered an account's `password` line and a BGP neighbour's, and
+  stopped there. Five IGP spellings carry a secret and all five printed in full,
+  in `show running-config` **and** in `show this`:
+
+  ```
+   ip ospf authentication-key <key>
+   ip ospf message-digest-key 1 md5 <key>
+   isis password md5 <key>
+   domain-password md5 <key>
+   area-password md5 <key>
+  ```
+
+  These are not hashes. Each opens the adjacency on the **other** router as
+  well.
+
+  Matched by keyword prefix with the secret's position named, rather than by
+  looking for the word "password" anywhere — a rule that loose would mangle a
+  description that mentions it. Only the secret is replaced: the key id, the
+  `md5`, a trailing source address and IS-IS's `authenticate snp validate` all
+  survive, so the operator can still see which key is set and how it is used.
+
+  Still a display transform: `Config.text()` is byte-identical, so a rollback
+  can still restore an adjacency. Seventeen checks, and reverting the fix alone
+  makes fifteen of them fail — they are not vacuous.
+
+* **VPP is no longer the kernel's likely OOM victim.** This project watched the
+  kernel kill VPP while VPP held **19 MB** resident — *"it was not the glutton;
+  it was the chosen victim"*. The fix applied at the time was to require 4 GB,
+  which raises the threshold and does not change who gets picked.
+
+  A drop-in sets `OOMScoreAdjust=-1000` on `vpp.service`, and
+  `hexarouting.service` gets `MemoryMax=512M` — derived, not invented: the docs
+  state a 4 GB floor, the tuner already reserves `max(2, total/4)` GB outside
+  hugepages, and the measured peak RSS of the VTY and its modules is 13 MB. So
+  512M is a quarter of the reserve and forty times the observed need, and the
+  working set does not grow with the routing table or the session count because
+  both live in VPP.
+
+  **Deliberately not bounded**: `frr.service`, because nothing in this
+  repository says what `bgpd` costs with a full table and a bound guessed low
+  kills BGP rather than degrading it; the tuner, because an OOM kill during
+  `update-grub` leaves `isolcpus` and `startup.conf` disagreeing; and the
+  self-test, which has to run precisely when memory is tight.
+
+* **`--max-workers` was computed by the tuner and never passed.** On a 32-core
+  socket that leaves thirty-one cores spinning as workers and **one** physical
+  core for FRR, `hexash`, `sshd` and VPP's main thread — which is the
+  precondition for the main thread being preempted while it holds the worker
+  barrier. `HEXA_MAX_WORKERS` wires it through, empty by default, so a box
+  booting this build gets exactly what it gets today. A non-numeric value is
+  reported and ignored rather than failing the tuning service, because argparse
+  exiting non-zero would leave the kernel command line at whatever the previous
+  boot wrote.
+
+### Unverified, and marked as such
+
+`OOMScoreAdjust=-1000` was confirmed to parse but not observed taking effect: an
+unprivileged user unit may only raise its own score, and `vpp.service` runs as
+root under the system manager. That is reasoning, not a measurement. No live
+OOM experiment was run.
+
+The remaining half of #172 — giving VPP's main thread a core of its own — needs
+hardware this machine is not, and is untouched.
 
 ## 0.55.0 — origin validation, and a refusal that was wrong
 
