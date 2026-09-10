@@ -921,6 +921,85 @@ bpa_sub_find (bpa_main_t *bm, u32 pool_index, u32 sub_idx,
   return pool_elt_at_index (pt->subs, q[0]);
 }
 
+/*
+ * The block the allocator is holding for this subscriber right now, if any.
+ * Zero in deterministic mode: there the block is the formula's, printed
+ * whether or not the subscriber has ever sent a packet.
+ */
+static int
+bpa_sub_block_held (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
+		    u32 sub_idx, bpa_block_t *blk)
+{
+  u32 ti = bpa_sub_thread (bm, sub_idx), w, nw, block_idx;
+  bpa_per_thread_t *pt;
+
+  if (p->mode != BPA_MODE_DYNAMIC || ti >= vec_len (bm->per_thread))
+    return 0;
+  pt = vec_elt_at_index (bm->per_thread, ti);
+  if (pool_index >= vec_len (pt->dyn))
+    return 0;
+
+  bpa_worker_id (bm, ti, &w, &nw);
+  if (bpa_dyn_block_of (vec_elt_at_index (pt->dyn, pool_index), sub_idx, w, nw,
+			&block_idx))
+    return 0;
+
+  bpa_dyn_block_addr (p, block_idx, blk);
+  blk->sub_idx = sub_idx;
+  return 1;
+}
+
+/*
+ * Which pool this address belongs to, for a command that has no packet.
+ *
+ * bpa_pool_by_inside() answers with the FIRST pool that claims the address,
+ * because that is what the datapath does with a packet in hand. This command
+ * has no VRF to offer it, so where two tenants share an inside prefix - which
+ * the overlap check allows precisely because a VRF tells them apart - the
+ * first claimant is not necessarily the pool the subscriber's traffic was
+ * translated by. Keying the per-subscriber record on it then found nothing
+ * and the command reported "no live state" over live sessions (issue #74).
+ *
+ * So the state decides: the pool that is holding this subscriber's sessions
+ * or its block is the pool being asked about. When none is, the first
+ * claimant answers as before - which tenant an idle address belongs to is a
+ * question only the operator can settle, and that is issue #81.
+ */
+static int
+bpa_subscriber_pool (bpa_main_t *bm, u32 host, u32 *pool_index, u32 *sub_idx)
+{
+  bpa_pool_t *p;
+  int found = 0;
+
+  pool_foreach (p, bm->pools)
+    {
+      bpa_block_t blk;
+      u32 idx, si;
+
+      if (p->deleted)
+	continue;
+      if (bpa_set_index_of (&p->inside, host, &si))
+	continue;
+
+      idx = p - bm->pools;
+      if (!found)
+	{
+	  *pool_index = idx;
+	  *sub_idx = si;
+	  found = 1;
+	}
+      if (bpa_sub_find (bm, idx, si, 0)
+	  || bpa_sub_block_held (bm, p, idx, si, &blk))
+	{
+	  *pool_index = idx;
+	  *sub_idx = si;
+	  return 0;
+	}
+    }
+
+  return found ? 0 : -1;
+}
+
 static clib_error_t *
 bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
 				vlib_cli_command_t *cmd)
@@ -945,10 +1024,10 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
   {
     u32 host = clib_net_to_host_u32 (addr.as_u32);
 
-    /* No packet, so no VRF: this reports the first pool that claims the
-     * address. On a box with one VRF that is the only pool; on a box with
-     * several an operator has to say which tenant, and that is issue #81. */
-    if (bpa_pool_by_inside (bm, host, ~0u, &pool_index, &sub_idx))
+    /* No packet, so no VRF: on a box with one VRF there is one claimant; on a
+     * box with several the one holding this subscriber's state answers, and
+     * which tenant an idle address belongs to is issue #81. */
+    if (bpa_subscriber_pool (bm, host, &pool_index, &sub_idx))
       {
 	error = clib_error_return (
 	  0, "%U is not inside any configured pool", format_ip4_address, &addr);
@@ -983,8 +1062,28 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
     sub = bpa_sub_find (bm, pool_index, sub_idx, 0);
     if (!sub)
       {
-	vlib_cli_output (vm, "  no live state: this subscriber holds no "
-			     "block and has no sessions on this box");
+	/*
+	 * Two answers, not one. The record read above is created with the
+	 * subscriber's first session and destroyed with its last, while a
+	 * dynamic block stays reserved for the whole hold-down after it: its
+	 * absence means "no sessions", and reading it as "no block" told an
+	 * operator a block was free while the allocator was still refusing it
+	 * to everybody else.
+	 */
+	if (bpa_sub_block_held (bm, p, pool_index, sub_idx, &blk))
+	  {
+	    ip4_address_t pub;
+
+	    pub.as_u32 = clib_host_to_net_u32 (blk.ip_pub);
+	    vlib_cli_output (vm,
+			     "  holds %U ports %u-%u, and has no sessions on "
+			     "this box",
+			     format_ip4_address, &pub, blk.port_lo,
+			     blk.port_hi);
+	  }
+	else
+	  vlib_cli_output (vm, "  no live state: this subscriber holds no "
+			       "block and has no sessions on this box");
 	goto done;
       }
 
