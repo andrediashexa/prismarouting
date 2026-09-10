@@ -11,12 +11,16 @@
 # VPP, sleeps for packets to cross, and waits on timeouts. Thirty-five of those
 # in series is a queue, not a workload (#100).
 #
-# Measured again on 36 labs, 8 cores: LAB_JOBS=4 took 1568 s, LAB_JOBS=8 took
-# 1334 s - and the second run was competing with an ISO build, so it was under
-# MORE load and still faster. Doubling the parallelism buys 15%, which says the
-# rest of the wall clock is one lab waiting: `routing` alone runs over 350 s,
-# and the suite can never finish before its slowest member. More cores will not
-# change that number; splitting that lab would.
+# Measured on 36 labs. On 8 cores: LAB_JOBS=4 took 1568 s, LAB_JOBS=8 took
+# 1334 s - and that second run was competing with an ISO build, so it was under
+# MORE load and still faster. On 32 cores: LAB_JOBS=16 took 940 s with peak
+# load 3.09, and LAB_JOBS=32 took 826 s but LOST A LAB - `routing` hit the
+# per-lab cap, because 32 containers each starting VPP make the slowest lab
+# slower. 12% of wall clock is not worth a lab that did not run, so 16 it is.
+#
+# Load 3.09 out of 32 says what the rest of the clock is: waiting, not
+# computing. The floor is the slowest single lab, and `routing` is now well
+# over 400 s on its own. No number of cores changes that; splitting it would.
 #
 # What makes it safe: tools/lab.sh runs each lab in its own container WITHOUT
 # --network=host, so each has its own network namespace. The fixed veth and
@@ -32,7 +36,7 @@
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ONLY=${1:-}
-JOBS=${LAB_JOBS:-8}
+JOBS=${LAB_JOBS:-16}
 pass=0; fail=0; ran=0
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT

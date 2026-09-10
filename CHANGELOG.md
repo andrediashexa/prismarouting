@@ -25,7 +25,83 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.53.0.
+Nothing merged since v0.54.0.
+
+## 0.54.0 — the BGP commands an operator runs while something is wrong
+
+Operating a session, not just configuring one
+([#148](https://github.com/andrediashexa/hexarouting/issues/148)), and a
+removal that added a line
+([#166](https://github.com/andrediashexa/hexarouting/issues/166)).
+
+### Added
+
+* **`show bgp summary`, answered against the table that forwards.**
+
+  ```
+    Neighbour          AS       State          Prefixes  Up
+    10.0.0.2           65001    Established    2         00:01:55
+    10.1.0.2           65001    Established    2         00:03:37
+
+    2 session(s), 2 established
+    all 3 BGP prefix(es) are in the forwarding table
+  ```
+
+  FRR's summary says a session is Established and carrying N prefixes, which is
+  a real answer to a different question: a prefix FRR holds that VPP never got
+  moves no packets. The count is taken for the whole table rather than per
+  session, deliberately — the FIB does not record which session a route arrived
+  on, and a per-neighbour number could not be defended.
+
+* **`clear bgp <neighbour> [soft [in|out]]`**, admin-only. Operational, and it
+  changes nothing on disk. Until now it meant leaving `hexash` for `vtysh` on a
+  box whose point is that the operator does not have to.
+
+* **Routes the box is not keeping are said, not shown as empty.**
+  `received-routes` answers from what the neighbour sent before inbound policy,
+  which the box only has with `soft-reconfiguration inbound`. Without it FRR
+  prints an empty table, and "no routes received" and "I am not keeping them"
+  are different answers during an incident. `clear ... soft in` refuses for the
+  same reason and names the alternative that always works.
+
+* **`bgp graceful-shutdown`** (RFC 8326), tested by its effect: the neighbour
+  receives the well-known community, the local preference of received routes
+  drops to `0`, and undoing it takes both back off.
+
+### Fixed
+
+* **`no <routing statement>` removes the statement instead of adding a line.**
+  It was staged in the candidate as typed, so the candidate held both `ip route
+  203.0.114.0/24 blackhole` and `no ip route 203.0.114.0/24 blackhole` — which
+  is not a configuration. FRR answered the only way it could:
+
+  ```
+  % Can't find static route specified
+  ```
+
+  `frr-reload` had already removed the route from the delta, then reached the
+  literal `no` line and found nothing to remove. A `no` with nothing to remove
+  is still staged as written, because some `no` forms **are** configuration —
+  `no bgp ebgp-requires-policy` is the one every eBGP session in the lab needs,
+  and that case now has its own assertion.
+
+### Internal
+
+* The announce/withdraw pair is asserted in the **neighbour's** table and in
+  the **VPP FIB**, both directions. FRR holding a route is a different claim
+  from the box forwarding on it.
+
+* The lab suite runs 16 at a time. Measured on 36 labs: 8 cores gave 1568 s at
+  4 and 1334 s at 8; 32 cores gave 940 s at 16 with peak load 3.09, and 826 s
+  at 32 — but at 32 `routing` hit the per-lab cap and did not run, because that
+  many containers each starting VPP make the slowest lab slower. 12% of wall
+  clock is not worth a lab that did not run. Load 3.09 of 32 says the rest is
+  waiting rather than computing, and the floor is now `lab/routing.sh` alone
+  ([#167](https://github.com/andrediashexa/hexarouting/issues/167)).
+
+* The graceful-shutdown community is asserted by the name FRR renders,
+  `gracefulShutdown`. The raw `65535:0` never appears in its output, so
+  asserting the number would have been asserting a rendering nothing produces.
 
 ## 0.53.0 — a regex that compiles is not a regex that is right
 

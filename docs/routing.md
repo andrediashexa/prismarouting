@@ -1392,6 +1392,93 @@ checks — is evidence that the VTY configured a BGP session that works, on a bo
 where nothing else did. The prefix is asserted in the **VPP FIB**, not in FRR's
 table: FRR holding a route is a different claim from the box forwarding on it.
 
+## The BGP commands an operator runs while something is wrong
+
+Configuring BGP is half the job. The other half is what gets typed at 2am, and
+until now it meant leaving `hexash` for `vtysh` on a box whose whole point is
+that the operator does not have to.
+
+### `show bgp summary`, against the table that forwards
+
+```
+  Neighbour          AS       State          Prefixes  Up
+  10.0.0.2           65001    Established    2         00:01:55
+  10.1.0.2           65001    Established    2         00:03:37
+
+  2 session(s), 2 established
+  all 3 BGP prefix(es) are in the forwarding table
+```
+
+FRR's own summary says a session is Established and carrying N prefixes. That
+is a real answer to a different question: **the table that forwards is VPP's**,
+a full table exercises the `linux_nl` path far harder than a lab does, and a
+prefix FRR holds that VPP never got moves no packets. So the count of what
+reached the forwarding table is on the same screen, where the operator is
+already looking:
+
+```
+  3 of 412 BGP prefix(es) are NOT in the forwarding table
+    203.0.113.0/24
+    ...
+    'show route verbose' compares the two tables in full
+```
+
+The count is taken once for the whole table rather than per session, and
+deliberately: the FIB does not record which session a route arrived on, and
+putting a per-neighbour number on the line would be putting a number there that
+could not be defended.
+
+Everything else under `show bgp` goes to FRR untouched. This VTY is not going to
+re-implement `show bgp <prefix>`.
+
+### Routes the box is not keeping
+
+`show bgp neighbor X received-routes` answers from what the neighbour sent
+**before** inbound policy — which the box only has if it was told to keep it.
+Without `soft-reconfiguration inbound`, FRR prints an empty table, and "no
+routes received" and "I am not keeping them" are different answers to be
+looking at during an incident:
+
+```
+error: neighbour 10.0.0.2 does not keep what it received, so this would print
+an empty table either way
+    add 'neighbor 10.0.0.2 soft-reconfiguration inbound' under the address
+    family; it costs memory
+    'show bgp neighbor 10.0.0.2 routes' shows what survived inbound policy,
+    which the box does have
+```
+
+`clear bgp X soft in` is refused for the same reason and says the same thing,
+with the alternative that always works — resetting the session and taking the
+routes again.
+
+### `clear`
+
+Operational, and it changes nothing on disk. `clear bgp <neighbour> [soft
+[in|out]]`, admin-only, because a session reset is an outage on purpose.
+
+### Graceful shutdown
+
+`bgp graceful-shutdown` (RFC 8326) drains traffic before maintenance instead of
+dropping it. It is tested by its **effect**, never by the configuration
+containing the words:
+
+* the neighbour receives the well-known community — asserted by the name FRR
+  renders, `gracefulShutdown`, because the raw `65535:0` never appears in its
+  output and asserting the number would be asserting a rendering nothing
+  produces;
+* the local preference of received routes drops to `0`, so this box stops
+  preferring what it holds and traffic drains towards whoever else has a path;
+* and undoing it takes both back off. A maintenance switch that cannot be
+  switched back is not one.
+
+### How the announce/withdraw pair is tested
+
+Announce through the VTY, then assert the prefix is in the **neighbour's**
+table *and* in the **VPP FIB**. Withdraw it and assert it leaves both. FRR
+holding a route is a different claim from the box forwarding on it, and the two
+have to be made separately.
+
 ## AS-path and community lists
 
 `bgp as-path access-list` and `bgp community-list` are what a route-map matches

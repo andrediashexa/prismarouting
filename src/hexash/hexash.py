@@ -155,7 +155,10 @@ SHOW = {
         "verbose": ("compare it against FRR's table and mark disagreements",
                     None)}),
     "ip": ("IP information (FRR)", None),
-    "bgp": ("BGP information (FRR)", None),
+    "bgp": ("BGP sessions, and whether the dataplane has their routes", {
+        "summary": ("one line per session, with what reached the FIB", None),
+        "neighbor": ("one session in detail", ARG_NEIGHBOUR),
+    }),
     "isis": ("IS-IS information (FRR)", None),
     "interface": ("interfaces on the dataplane, with state and addresses",
                   ARG_INTERFACE),
@@ -562,6 +565,9 @@ TREE = {
     "operational": {
         "configure": ("edit the candidate configuration", None),
         "show": ("display information", SHOW),
+        "clear": ("reset a session, without changing the configuration", {
+            "bgp": ("a BGP session", ARG_NEIGHBOUR),
+        }),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "save": ("write the running configuration to disk", None),
         "exit": ("end the session", None),
@@ -2959,6 +2965,8 @@ class Shell:
             print("entering configuration mode")
         elif w[0] in ("exit", "quit", "logout"):
             return False
+        elif w[0] == "clear":
+            self.do_clear(line)
         elif w[0] == "rollback":
             self.candidate = self.running_config()
             self.do_rollback(w[1:])
@@ -3268,6 +3276,24 @@ class Shell:
             return True
 
         # anything else is routing: staged in the candidate, applied on commit
+        #
+        # `no X` REMOVES the X it negates, when the candidate has one. Staging
+        # it as another line left the candidate holding both `ip route
+        # 203.0.114.0/24 blackhole` and `no ip route 203.0.114.0/24 blackhole`,
+        # which is not a configuration - and FRR answered the only way it
+        # could: "% Can't find static route specified", because by the time it
+        # reached the `no`, the delta had already taken the route away.
+        #
+        # When there is nothing to remove, the `no` is staged as before. Some
+        # `no` forms ARE configuration rather than a removal - `no bgp
+        # ebgp-requires-policy` is the one every eBGP session in this lab
+        # needs - and dropping those would break them.
+        if w[0] == "no" and len(w) > 1:
+            negated = " ".join(w[1:])
+            for i, existing in enumerate(self.candidate.routing):
+                if existing.strip() == negated:
+                    del self.candidate.routing[i]
+                    return True
         self.candidate.routing.append(line)
         # `address-family` is a block, and leaving it out was not an omission
         # anybody noticed - it was invisible because everything in the routing
@@ -3516,6 +3542,9 @@ class Shell:
         if _w[:2] == ["show", "route"]:
             self.show_route(_w[2:])
             return
+        if _w[:2] == ["show", "bgp"]:
+            self.show_bgp(_w[2:])
+            return
         rc, out = self.frr.show(line)
         if out:
             print(out)
@@ -3726,6 +3755,150 @@ class Shell:
             # coming.
             print("  the dataplane carries no per-interface description; "
                   "FRR's view is 'show ip interface'")
+
+    def show_bgp(self, args):
+        """
+        `show bgp summary`, answered against the table that forwards.
+
+        FRR's own summary says a session is Established and carrying N
+        prefixes. That is a real answer to a different question: a full table
+        exercises the linux_nl path far harder than a lab does, and a prefix
+        FRR holds that VPP never got moves no packets. So the count of what
+        actually reached the forwarding table is on the same line, where the
+        operator is already looking (#148).
+
+        Everything else under `show bgp` goes to FRR untouched. This VTY is not
+        going to re-implement `show bgp <prefix>`.
+        """
+        # `received-routes` answers from what the neighbour sent BEFORE inbound
+        # policy - which the box only has if it was told to keep it. Without
+        # that, FRR prints an empty table, and "no routes received" and "I am
+        # not keeping them" are different answers to look at during an
+        # incident.
+        if len(args) >= 3 and args[0] == "neighbor" \
+                and args[2] == "received-routes" \
+                and not self.soft_reconfiguration_on(args[1]):
+            self.err(f"neighbour {args[1]} does not keep what it received, "
+                     "so this would print an empty table either way")
+            print("    add 'neighbor " + args[1] + " soft-reconfiguration "
+                  "inbound' under the address family; it costs memory")
+            print("    'show bgp neighbor " + args[1] + " routes' shows what "
+                  "survived inbound policy, which the box does have")
+            return
+        if args[:1] != ["summary"]:
+            rc, out = self.frr.show("show bgp " + " ".join(args))
+            if out:
+                print(out)
+            return
+
+        rc, sout = self.frr.show("show bgp ipv4 unicast summary json")
+        if rc != 0 or not sout.strip():
+            self.err("BGP is not answering")
+            print("    bgpd may not be running; 'show version' says which "
+                  "daemons are up")
+            return
+        try:
+            summary = json.loads(sout[sout.index("{"):])
+        except (ValueError, json.JSONDecodeError):
+            self.err("BGP answered something this VTY could not read")
+            return
+        peers = summary.get("peers") or {}
+        if not peers:
+            print("  no BGP sessions are configured")
+            return
+
+        # Which prefixes BGP holds, and which of them the dataplane has. Asked
+        # once for the whole table rather than per peer: the FIB does not know
+        # which session a route came from, and pretending otherwise would put a
+        # number on the line that could not be defended.
+        bgp_prefixes = self.bgp_prefixes()
+        in_fib = set()
+        rc_f, fout = self.dp.run("show ip fib")
+        if rc_f == 0 and fout.strip():
+            in_fib = set(routes.parse_fib(fout).get(0, {}))
+        missing = [p for p in bgp_prefixes if p not in in_fib] if in_fib else []
+
+        print(f"  {'Neighbour':<18} {'AS':<8} {'State':<14} {'Prefixes':<9} Up")
+        established = 0
+        for addr in sorted(peers):
+            p = peers[addr]
+            state = p.get("state", "?")
+            if str(state).lower() == "established":
+                established += 1
+                state = "Established"
+            pfx = p.get("pfxRcd", p.get("prefixReceivedCount", "-"))
+            up = p.get("peerUptime", "-")
+            print(f"  {addr:<18} {str(p.get('remoteAs', '-')):<8} "
+                  f"{state:<14} {str(pfx):<9} {up}")
+
+        print(f"\n  {len(peers)} session(s), {established} established")
+        if not in_fib:
+            print("  the dataplane is not answering, so what reached the "
+                  "forwarding table is unknown")
+        elif not bgp_prefixes:
+            print("  no BGP prefixes to check against the forwarding table")
+        elif missing:
+            # The number that is worth the line. A route FRR holds and VPP
+            # never got is invisible in every BGP command there is.
+            print(f"  {len(missing)} of {len(bgp_prefixes)} BGP prefix(es) "
+                  "are NOT in the forwarding table")
+            for prefix in sorted(missing)[:5]:
+                print(f"    {prefix}")
+            if len(missing) > 5:
+                print(f"    ... and {len(missing) - 5} more")
+            print("    'show route verbose' compares the two tables in full")
+        else:
+            print(f"  all {len(bgp_prefixes)} BGP prefix(es) are in the "
+                  "forwarding table")
+
+    def bgp_prefixes(self):
+        """Every prefix BGP holds, from FRR. Empty when there is no BGP."""
+        rc, out = self.frr.show("show bgp ipv4 unicast json")
+        if rc != 0 or not out.strip():
+            return []
+        try:
+            data = json.loads(out[out.index("{"):])
+        except (ValueError, json.JSONDecodeError):
+            return []
+        return sorted(data.get("routes") or {})
+
+    def do_clear(self, line):
+        """
+        Reset a session. Operational, and it changes nothing on disk.
+
+        `clear` is the command an operator reaches for at 2am, and until now
+        this VTY did not have it - which meant leaving hexash for vtysh, on a
+        box whose whole point is that they do not have to.
+        """
+        w = line.split()
+        if w[:2] != ["clear", "bgp"] or len(w) < 3:
+            self.err("usage: clear bgp <neighbour> [soft [in|out]]")
+            return
+        if not self.require(CAP_ALL, "clear bgp"):
+            return
+        # `soft in` re-applies inbound policy without bouncing the session, and
+        # needs the neighbour to have kept what it sent. Saying that here is
+        # the difference between "no routes" and "I am not keeping them".
+        if w[3:4] == ["soft"] and w[4:5] != ["out"]:
+            if not self.soft_reconfiguration_on(w[2]):
+                self.err(f"neighbour {w[2]} does not keep what it received, "
+                         "so there is nothing to re-apply")
+                print("    add 'neighbor " + w[2] + " soft-reconfiguration "
+                      "inbound' under the address family, which costs memory,")
+                print("    or use 'clear bgp " + w[2] + "' to reset the "
+                      "session and take the routes again")
+                return
+        rc, out = self.frr.show("clear bgp " + " ".join(w[2:]))
+        if out.strip():
+            print(out)
+        if rc == 0:
+            print(f"cleared: {' '.join(w[2:])}")
+
+    def soft_reconfiguration_on(self, neighbour):
+        """Is this neighbour keeping what it received, so policy can re-run?"""
+        cfg = self.running_config()
+        want = ["neighbor", neighbour, "soft-reconfiguration", "inbound"]
+        return any(l.split()[:4] == want for l in cfg.routing)
 
     def show_route(self, args):
         """
