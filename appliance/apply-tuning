@@ -12,6 +12,7 @@ VPPCONF=/etc/vpp/startup.conf
 : "${HEXA_DATAPLANE_IF:=}"
 : "${HEXA_SUBSCRIBERS:=200000}"
 : "${HEXA_LOW_LATENCY:=1}"
+: "${HEXA_MAX_WORKERS:=}"
 
 # The governor is runtime state, not a kernel parameter: asking for it in
 # GRUB does nothing, and it does not survive a reboot on its own. On
@@ -52,6 +53,23 @@ before=$(cat "$GRUBFILE" 2>/dev/null || true)
 set -- --write --subscribers "$HEXA_SUBSCRIBERS"
 [ -n "$HEXA_DATAPLANE_IF" ] && set -- "$@" --interface "$HEXA_DATAPLANE_IF"
 [ "$HEXA_LOW_LATENCY" = 1 ] || set -- "$@" --no-low-latency
+# The tuner has always accepted --max-workers; nothing ever passed it, so the
+# only reachable behaviour was "every core but one is a worker" and the cap
+# existed on paper (#172). Empty stays uncapped, so a box that sets nothing
+# boots identically to before.
+#
+# A typo must not cost the box its tuning. The tuner takes an integer and
+# argparse exits non-zero on anything else, which would fail this unit and
+# leave the kernel command line at whatever the previous boot wrote - a
+# mismatch between isolcpus and startup.conf that is far worse than an ignored
+# setting.
+case "$HEXA_MAX_WORKERS" in
+  "") ;;
+  *[!0-9]*)
+    echo "HEXA_MAX_WORKERS='$HEXA_MAX_WORKERS' is not a whole number:" \
+         "ignoring it and using every available core" >&2 ;;
+  *) set -- "$@" --max-workers "$HEXA_MAX_WORKERS" ;;
+esac
 # The decision goes to the journal. Diagnosing a box whose profile did not
 # match its hardware meant guessing across whole build cycles, because the one
 # component that knew why was throwing its reasoning away.

@@ -79,6 +79,12 @@ done
 # unit after vpp.service would put it in the wrong place on exactly that path.
 install -D -m 0644 "$REPO/appliance/systemd/vpp-api-access.conf" \
   "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-api-access.conf"
+# Same reason it is a drop-in and not a unit of ours, plus one more: a
+# protection that only applies to the VPP this boot started is no protection.
+# vpp.service carries Restart=always, and the restart after an OOM kill is
+# exactly the moment the box must not be choosable again.
+install -D -m 0644 "$REPO/appliance/systemd/vpp-oom-protect.conf" \
+  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-oom-protect.conf"
 
 say "login shell"
 install -D -m 0755 "$REPO/appliance/hexash-login" "$DESTDIR/usr/bin/hexash-login"

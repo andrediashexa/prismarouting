@@ -148,6 +148,57 @@ with tempfile.TemporaryDirectory() as root:
     check(len(isolated) == 6, f"3 cores x 2 threads = 6 isolated, got {len(isolated)}")
     print(f"  workers={workers} isolated={isolated}")
 
+print("\n=== no cap is the shipped default, and it takes every core but one ===")
+# HEXA_MAX_WORKERS ships empty. An operator who sets nothing has to get the
+# machine they get today: changing the worker count by default would change the
+# throughput of every installed box on its next boot.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=2, nic_node=0)
+    uncapped = run(root, "--interface", "eth0")
+    workers = expand(field(uncapped, "# workers").split(": ")[-1])
+    isolated = expand(field(uncapped, "# isolated:"))
+    check(len(workers) == 7, f"uncapped, 8 cores give 7 workers; got {len(workers)}")
+    check(len(isolated) == 14, f"7 cores x 2 threads = 14 isolated, got {len(isolated)}")
+    check(uncapped != run(root, "--interface", "eth0", "--max-workers", "3"),
+          "if the cap changes nothing when set, it is not wired to anything")
+    print(f"  uncapped -> {len(workers)} workers")
+
+print("\n=== a cap below the count frees the cores, not just the worker list ===")
+# The point of the cap is cores the control plane can run on, not fewer
+# workers. A cap that shortened the worker list but left the cores in isolcpus
+# would cost forwarding capacity and hand the control plane nothing - the
+# scheduler still would not be allowed to put frr, hexash or sshd there.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=2, nic_node=0,
+          hugepages_1g=8, isolated="1-7,9-15", nic_pci="0000:3b:00.0")
+    out = run(root, "--interface", "eth0", "--max-workers", "3")
+    workers = expand(field(out, "# workers").split(": ")[-1])
+    isolated = expand(field(out, "# isolated:"))
+    check(workers == [1, 2, 3], f"expected workers [1,2,3], got {workers}")
+    check(isolated == [1, 2, 3, 9, 10, 11],
+          f"only the capped cores and their siblings stay isolated; got {isolated}")
+    check("isolcpus=1-3,9-11" in out,
+          "the kernel command line must release the cores the cap gave back")
+    check("num-rx-queues 3" in out,
+          "one RX queue per worker still holds under a cap: more queues than "
+          "workers leaves traffic arriving on a queue nobody polls")
+    print(f"  workers={workers} isolated={isolated}")
+
+print("\n=== a cap above what the machine has invents no workers ===")
+# An operator sizing for the box they are about to buy must not get a plan
+# pinning workers to cores that do not exist: VPP would fail to place a thread
+# and the dataplane would not start at all.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0)
+    out = run(root, "--interface", "eth0", "--max-workers", "64")
+    workers = expand(field(out, "# workers").split(": ")[-1])
+    check(workers == [1, 2, 3],
+          f"a 4-core node has 3 workers to give, whatever is asked; got {workers}")
+    check(workers == expand(field(run(root, "--interface", "eth0"),
+                                  "# workers").split(": ")[-1]),
+          "a cap above the count must be identical to no cap")
+    print(f"  asked for 64 on a 4-core node -> {workers}")
+
 print("\n=== hugepages grow with the subscriber count ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0)
@@ -342,6 +393,59 @@ check("CALLED-UPDATE-GRUB" in out or "tuning unchanged" in out,
 check("governor" in out, f"apply-tuning should report the governor; output was {out!r}")
 check(r.returncode == 0, f"apply-tuning must not fail here (rc={r.returncode})")
 print("  normal system: behaviour preserved, governor reported")
+_sh.rmtree(fakebin, ignore_errors=True)
+
+# --- the worker cap has to survive the trip from tune.env to the tuner (#172) ---
+#
+# hexarouting-tune has accepted --max-workers since it was written. apply-tuning
+# never passed it and tune.env had no variable for it, so the flag was reachable
+# only by hand and every booted box ran uncapped. Testing the computation alone
+# is what let that stand: the calculation was right and nothing called it.
+print("\n=== the worker cap reaches the tuner from the environment ===")
+fakebin = _tf.mkdtemp()
+argvlog = os.path.join(fakebin, "argv")
+with open(os.path.join(fakebin, "hexarouting-tune"), "w") as f:
+    f.write(f'#!/bin/sh\necho "$@" >> {argvlog}\nexit 0\n')
+_os.chmod(os.path.join(fakebin, "hexarouting-tune"), 0o755)
+
+def apply_argv(**extra):
+    open(argvlog, "w").close()
+    env = dict(_os.environ, PATH=fakebin + ":" + _os.environ["PATH"],
+               HEXA_DATAPLANE_IF="", HEXA_SUBSCRIBERS="1000", **extra)
+    r = subprocess.run(["sh", APPLY], capture_output=True, text=True, env=env,
+                       timeout=30)
+    return open(argvlog).read().strip(), r
+
+argv, r = apply_argv(HEXA_MAX_WORKERS="4")
+check("--max-workers 4" in argv, f"the cap never reached the tuner: {argv!r}")
+check(r.returncode == 0, f"apply-tuning must still succeed (rc={r.returncode})")
+print(f"  HEXA_MAX_WORKERS=4 -> {argv}")
+
+argv, r = apply_argv(HEXA_MAX_WORKERS="")
+check("--max-workers" not in argv,
+      f"empty must stay uncapped, or every box changes on its next boot: {argv!r}")
+check(r.returncode == 0, f"apply-tuning must still succeed (rc={r.returncode})")
+print(f"  HEXA_MAX_WORKERS= (empty) -> {argv}")
+
+# Unset behaves as empty: an installed box whose tune.env predates the variable
+# has to keep booting the way it does now.
+argv, r = apply_argv()
+check("--max-workers" not in argv,
+      f"an older tune.env with no such variable must stay uncapped: {argv!r}")
+check(r.returncode == 0, f"apply-tuning must still succeed (rc={r.returncode})")
+print("  unset -> uncapped, same as an existing box")
+
+# A typo must cost the setting, not the tuning. argparse exits non-zero on a
+# non-integer, which would fail hexarouting-tune.service and leave the kernel
+# command line at whatever the previous boot wrote - isolcpus and startup.conf
+# then disagree, which is the restart-loop shape, not a lost setting.
+argv, r = apply_argv(HEXA_MAX_WORKERS="four")
+check("--max-workers" not in argv, f"garbage must not be forwarded: {argv!r}")
+check(r.returncode == 0,
+      f"a typo in tune.env must not fail the tuning unit (rc={r.returncode})")
+check("HEXA_MAX_WORKERS" in r.stdout + r.stderr,
+      "and it must say so, or the operator sets it and nothing happens")
+print("  HEXA_MAX_WORKERS=four -> ignored, reported, tuning still applied")
 _sh.rmtree(fakebin, ignore_errors=True)
 
 # --- which NIC the dataplane is allowed to claim (#123) ---
