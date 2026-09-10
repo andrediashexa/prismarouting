@@ -499,8 +499,22 @@ expect "the dataplane interface is administratively down" \
   test "$(state_of)" = "down"
 expect "and so is its TAP, so FRR stops holding the adjacency up" \
   sh -c "ip link show vppwan0 | grep -q 'state DOWN'"
+# Read as a BLOCK, not by counting lines back from the statement. The first
+# version grepped four lines above ` shutdown` for the interface name, which
+# held only until a statement was added to the block between the two - and one
+# was, so it started failing for a reason that had nothing to do with
+# shutdown.
+block_of() {   # block_of <interface name>
+  $HX -c 'show running-config' 2>/dev/null \
+    | awk -v want="interface $1" '
+        $0 == want { inside = 1; next }
+        inside && /^[^ ]/ { inside = 0 }
+        inside { print }'
+}
 expect_in "shutdown is in the running configuration, for THIS interface" \
-  "host-veth-vpp" "$($HX -c 'show running-config' | grep -B4 '^ shutdown' | head -8)"
+  "shutdown" "$(block_of host-veth-vpp)"
+expect_not_in "and not on the other one" \
+  "shutdown" "$(block_of host-veth2-vpp)"
 
 $HX -c "configure" -c "interface host-veth-vpp" -c "no shutdown" -c "exit" \
     -c "commit" > /tmp/noshut.log 2>&1 || true
@@ -681,6 +695,52 @@ expect_not_in "and the invalid line is not on the box" "PL-BAD" \
 # Counted on the wire, not read from a status line: `show ip6 interface` prints
 # the same text whether advertisements are suppressed or not - measured - so
 # the only honest evidence is whether packets appear.
+# --- a loopback, created and paired by the product (#179, #182) ---
+#
+# An operator reported `show interface` listing only local0 and no way to make
+# a loopback appear. There was none: no command created one. And the VTY
+# already REFUSED `neighbor X update-source Loopback0` for not existing, so the
+# box named what was missing and gave no way to make it.
+#
+# This section is also where the pairing in #182 is proved, because a loopback
+# is created and paired entirely by the product - no `vppctl lcp create` in
+# sight - so if FRR can see it, the product built the whole path.
+echo "=========== a loopback the product creates ==========="
+LOOP=$($HX -c "configure" -c "interface loop0" \
+       -c "linux-name loop0" \
+       -c "ipv4 address 10.99.0.1/32" \
+       -c "description router-id, which a port cannot take with it" \
+       -c "exit" -c "commit" 2>&1)
+echo "$LOOP" | tail -3 | sed 's/^/  /'
+expect_in "creating a loopback commits" "commit complete" "$LOOP"
+
+echo "  the dataplane:"; vppctl show interface loop0 2>&1 | head -2 | sed 's/^/    /'
+echo "  the kernel:"; ip -br addr show loop0 2>&1 | sed 's/^/    /'
+expect "the loopback is on the dataplane" \
+  sh -c "vppctl show interface loop0 | grep -q loop0"
+# The half that matters, and the reason a loopback is worth having: FRR has to
+# see it, or a router-id and an update-source cannot live on it. Nothing in
+# this section ran `lcp create` - the product built the pair.
+expect "and the kernel has it, so FRR can" \
+  sh -c "ip link show loop0 >/dev/null 2>&1"
+expect "with the address on it" \
+  sh -c "ip -br addr show loop0 | grep -q 10.99.0.1"
+expect_in "the pair is in the running configuration, read back from the box" \
+  "linux-name loop0" "$($HX -c 'show running-config')"
+# And it is usable for what it exists for. FRR refusing this would mean the
+# pair is present in VPP and absent from the kernel, which is the failure.
+FRRSEES=$(vtysh -c "show interface loop0" 2>&1)
+expect_not_in "FRR knows the interface" "Unknown" "$FRRSEES"
+
+# Removing it takes the whole path back down: address, pair, interface.
+BACK=$($HX -c "configure" -c "no interface loop0" -c "commit" 2>&1)
+echo "$BACK" | tail -2 | sed 's/^/  /'
+expect_in "removing it commits" "commit complete" "$BACK"
+expect "the loopback is gone from the dataplane" \
+  sh -c "! vppctl show interface loop0 2>/dev/null | grep -q '^loop0'"
+expect "and its pair is gone from the kernel" \
+  sh -c "! ip link show loop0 >/dev/null 2>&1"
+
 echo "=========== router advertisements ==========="
 # The capture is started BEFORE the change and stopped after, not started
 # after it, and it is held for 30 seconds rather than 14.

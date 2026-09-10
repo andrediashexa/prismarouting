@@ -379,6 +379,19 @@ def _address_family_error(keyword: str, prefix: str):
 UNCHECKED_MARK = "    <- not checked by this VTY"
 
 
+def _is_loopback(name: str) -> bool:
+    """
+    Is this VPP's spelling of a loopback?
+
+    `loop0`, `loop1`. Matched rather than guessed at, because naming an
+    interface is how one gets CREATED here, and a typo that happened to look
+    like a loopback would silently make one instead of being refused as an
+    interface the box does not have.
+    """
+    return (name.startswith("loop") and len(name) > 4
+            and name[4:].isdigit())
+
+
 class Config:
     """A complete device configuration."""
 
@@ -427,6 +440,24 @@ class Config:
         # came with. Read back from the dataplane, so a box that was never
         # told carries nothing here.
         self.macs: dict[str, str] = {}
+        # The Linux-side name of each interface's linux_cp pair.
+        #
+        # Nothing in this product created a pair at all until #182: the
+        # dataplane owned the NIC, FRR saw no interface for it, and every
+        # routing protocol was configurable and inert on an installed box.
+        # The labs created the pair by hand, so they proved a box nobody
+        # received - the same shape as #99 and #168.
+        #
+        # Read back from `show lcp`, not remembered. #161 was exactly the
+        # defect of a state that could be set and never read: the operator
+        # could not turn it off and the running configuration did not admit
+        # it was on.
+        self.linux_names: dict[str, str] = {}
+        # Loopbacks this configuration says should exist. A loopback is
+        # CREATED by naming it, the way a sub-interface is, because there is
+        # nothing else to create it from - and an ISP router needs one for a
+        # router-id and an update-source that do not disappear with a port.
+        self.loopbacks: set = set()
         # Interfaces where router advertisements are ENABLED.
         #
         # The default is suppressed, which is the opposite of VPP's. Measured:
@@ -496,10 +527,13 @@ class Config:
                              | set(self.descriptions) | set(self.admin_down)
                              | set(self.addresses) | set(self.vlans)
                              | set(self.vrfs) | set(self.macs)
+                             | set(self.linux_names) | set(self.loopbacks)
                              | set(self.ra_enabled)):
             out.append(f"interface {ifname}")
             # Description first: it is what the interface IS, and a reader
             # scanning a long configuration for one port finds it by name.
+            if ifname in self.linux_names:
+                out.append(f" linux-name {self.linux_names[ifname]}")
             if ifname in self.macs:
                 out.append(f" mac-address {self.macs[ifname]}")
             if ifname in self.ra_enabled:
@@ -690,14 +724,39 @@ class Config:
                 cfg.descriptions.pop(gone, None)
                 cfg.admin_down.discard(gone)
                 cfg.interfaces.pop(gone, None)
+                cfg.linux_names.pop(gone, None)
+                cfg.loopbacks.discard(gone)
+                cfg.macs.pop(gone, None)
+                cfg.vrfs.pop(gone, None)
+                cfg.ra_enabled.discard(gone)
             elif s.startswith("interface "):
                 iface = s.split()[1]
+                # A loopback is created by being named, the way a
+                # sub-interface is: there is nothing else on the box to
+                # create it from. `loop<n>` is VPP's own spelling, so the
+                # configuration and `show interface` agree about what the
+                # thing is called.
+                if _is_loopback(iface):
+                    cfg.loopbacks.add(iface)
             elif iface is not None and line.startswith(" "):
                 w = s.split()
                 if s == "exit":
                     iface = None
                 elif w[0] == "mtu" and len(w) > 1 and w[1].isdigit():
                     cfg.mtus[iface] = int(w[1])
+                elif w[0] == "linux-name" and len(w) > 1:
+                    # Linux refuses a name over 15 characters, and VPP's own
+                    # API field is 16 with the terminator. Refused here rather
+                    # than at commit, because the message an operator gets from
+                    # the dataplane for this is a bare retval.
+                    if len(w[1]) > 15 or "/" in w[1]:
+                        cfg.unknown.append(
+                            (lineno, s, f"'{w[1]}' cannot be a Linux "
+                             "interface name (15 characters, no '/')"))
+                    else:
+                        cfg.linux_names[iface] = w[1]
+                elif s == "no linux-name":
+                    cfg.linux_names.pop(iface, None)
                 elif w[0] == "mac-address" and len(w) > 1:
                     if len(w[1].split(":")) != 6:
                         cfg.unknown.append(
@@ -1043,6 +1102,14 @@ class Config:
                 addr_del[k] = sorted(have - want)
         mac_set = {k: v for k, v in other.macs.items()
                    if self.macs.get(k) != v}
+        # A loopback is created and destroyed, not merely configured, so both
+        # directions are here: a rollback that could create one and not remove
+        # it would leave an interface the configuration no longer mentions.
+        loopback_add = sorted(other.loopbacks - self.loopbacks)
+        loopback_del = sorted(self.loopbacks - other.loopbacks)
+        lcp_set = {k: v for k, v in other.linux_names.items()
+                   if self.linux_names.get(k) != v}
+        lcp_del = [k for k in self.linux_names if k not in other.linux_names]
         # ra_on: start advertising. ra_off: stop. Named for what happens to
         # the advertisements, not for which flag moves, because the flag is
         # "suppress" and reading `ra_on` as "suppression on" is exactly the
@@ -1101,6 +1168,10 @@ class Config:
             "ra_on": ra_on,
             "ra_off": ra_off,
             "vrf_set": vrf_set,
+            "loopback_add": loopback_add,
+            "loopback_del": loopback_del,
+            "lcp_set": lcp_set,
+            "lcp_del": lcp_del,
             "subif_add": subif_add,
             "subif_del": subif_del,
             "addr_add": addr_add,

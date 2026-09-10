@@ -1076,5 +1076,50 @@ check(KCSECRET in cfg.text(),
       "the text a commit sends and a revision stores keeps the real key")
 
 
+
+# --- a loopback is created by being named, and removed by name (#179, #182) ---
+print("\n=== loopbacks and the linux_cp pair ===")
+from config import _is_loopback                                  # noqa: E402
+
+for name, want in (("loop0", True), ("loop12", True),
+                   ("loopback0", False), ("loop", False),
+                   ("loopX", False), ("GigabitEthernet0/12/0", False)):
+    check(_is_loopback(name) is want,
+          f"{name} is{'' if want else ' not'} a loopback")
+
+made = Config.parse("""! cgnat
+interface loop0
+ linux-name loop0
+ ipv4 address 10.99.0.1/32
+ exit
+""")
+check(made.loopbacks == {"loop0"}, f"naming one creates it: {made.loopbacks}")
+check(made.linux_names.get("loop0") == "loop0",
+      f"and its pair is recorded: {made.linux_names}")
+check(not made.unknown, f"with nothing unread: {made.unknown}")
+
+# Both directions, because a rollback that can create a loopback and not
+# remove it leaves an interface the configuration no longer mentions.
+empty = Config.parse("! cgnat\n")
+fwd = empty.delta_to(made)
+back = made.delta_to(empty)
+check(fwd["loopback_add"] == ["loop0"] and fwd["lcp_set"] == {"loop0": "loop0"},
+      f"the delta creates it and pairs it: {fwd['loopback_add']}")
+check(back["loopback_del"] == ["loop0"] and back["lcp_del"] == ["loop0"],
+      f"and the reverse removes both: {back['loopback_del']}")
+
+# A name Linux cannot take. VPP's own names are full of '/', and copying one
+# across is the obvious mistake, so it is refused where it is written rather
+# than at commit with a bare return code.
+bad = Config.parse("""! cgnat
+interface loop0
+ linux-name GigabitEthernet0/12/0
+ exit
+""")
+check(bad.unknown and "cannot be a Linux" in bad.unknown[0][2],
+      f"a name with a slash is refused: {bad.unknown}")
+check("loop0" not in bad.linux_names,
+      "and is not recorded as though it had been accepted")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
