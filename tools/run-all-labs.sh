@@ -19,16 +19,28 @@
 # slower. 12% of wall clock is not worth a lab that did not run, so 16 it is.
 #
 # Load 3.09 out of 32 says what the rest of the clock is: waiting, not
-# computing. The floor is the slowest single lab, and `routing` is now well
-# over 400 s on its own. No number of cores changes that; splitting it would.
+# computing. The floor is the slowest single lab, and that lab was `routing`:
+# six subjects in one file, measured alone on the 32-core machine at 507 s. No
+# number of cores moved it, so it was split (#167) into `routing` - the punt
+# path for BGP, OSPF and IS-IS, and the interface and route work under it - and
+# `bgp-policy` - route-maps, AS-path lists, communities and RPKI. Measured
+# alone on the same machine straight afterwards: 304 s and 243 s, with 159
+# checks between them against the 158 the single file produced.
+#
+# The floor is therefore 304 s rather than 507 s, and it cost a second VPP and
+# a second FRR topology in total CPU - which on a machine sitting at load 3 of
+# 32 is bought with something there is plenty of.
 #
 # What makes it safe: tools/lab.sh runs each lab in its own container WITHOUT
 # --network=host, so each has its own network namespace. The fixed veth and
-# netns names in routing, lcp, ipfix, ipfix-tcp and vty do not collide with
-# each other. Only hw-vpp uses host networking, and it is already excluded.
+# netns names in routing, bgp-policy, lcp, ipfix, ipfix-tcp and vty do not
+# collide with each other - and routing and bgp-policy use the SAME ones,
+# veth-out and the `peer` namespace among them, which is only safe because of
+# that separate namespace. Only hw-vpp uses host networking, and it is already
+# excluded.
 #
-# What is NOT safe, and is why the build happens first: 36 labs run "ninja" in
-# the shared /src/.build-vpp, which is bind-mounted from the repository.
+# What is NOT safe, and is why the build happens first: every lab runs "ninja"
+# in the shared /src/.build-vpp, which is bind-mounted from the repository.
 # Concurrent builds in one build directory race.
 #
 # Output is captured per lab and printed whole, in a fixed order. Interleaved
@@ -116,21 +128,22 @@ for n in $LABS; do
     # PRINTF's status, so every lab records 0 and one that exits non-zero
     # without printing a failure marker is reported as passing - which is the
     # exact defect this suite exists to catch, in the suite itself.
-    # 1200 now, and this is the SECOND time it has been raised in a day -
-    # 300 killed `routing` at LAB_JOBS=4, 600 killed it again once the RPKI
-    # section landed. Raising it each time that lab grows is treating the
-    # symptom: the cap exists to stop a HUNG lab holding the suite, and
-    # `routing` is not hung, it is six subjects in one file. #167 is the fix
-    # and it is now overdue.
+    # 900, and for the first time in this file that is a number taken from a
+    # measurement rather than from a lab having been killed. It was 300, then
+    # 600, then 1200 within one day, raised each time because `routing` had
+    # grown another subject - which is treating the symptom. #167 was the fix:
+    # that lab is now `routing` and `bgp-policy`, measured alone at 304 s and
+    # 243 s.
     #
-    # The cap is there to stop a hung lab holding the suite,
-    # not to budget how long a lab may honestly take: `routing` measures
-    # router advertisements in three states, and each state needs a window
-    # wider than the interval VPP schedules its initial advertisements in.
-    # Measured at 329 s alone and longer under LAB_JOBS parallelism, it was
-    # killed at 300 and reported as a failure - which is the cap telling the
-    # reader something false about the lab.
-    out=$(timeout 1200 sh "$REPO/tools/lab.sh" "$n" 2>&1); rc=$?
+    # 900 is three times the slowest of those, and the factor is what
+    # parallelism has actually cost here: a 329 s lab survived a 600 s cap at
+    # LAB_JOBS=16 and was killed by it at LAB_JOBS=32. Lower than this would be
+    # budgeting how long a lab may honestly take, which is not what the cap is
+    # for - `routing` measures router advertisements in three states, and each
+    # state needs a window wider than the interval VPP schedules its initial
+    # advertisements in. Killed at 300, it was reported as a failure, which is
+    # the cap telling the reader something false about the lab.
+    out=$(timeout 900 sh "$REPO/tools/lab.sh" "$n" 2>&1); rc=$?
     printf '%s\n' "$out" > "$OUT/$n.out"
     echo "$rc" > "$OUT/$n.rc"
   ) &
