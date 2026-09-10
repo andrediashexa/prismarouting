@@ -458,6 +458,21 @@ static clib_error_t *
 bpa_api_hookup (vlib_main_t *vm)
 {
   bpa_main.msg_id_base = setup_message_id_table ();
+
+  /*
+   * This one message runs without the API dispatcher's barrier, and takes its
+   * own around each thing it changes.
+   *
+   * It is the message `hexash commit` deletes a pool with, and a delete frees
+   * that pool's sessions in budgeted chunks so the datapath keeps running in
+   * between. A chunk cannot release a barrier the dispatcher took on its
+   * behalf: the release is a no-op at recursion depth, and the commit would
+   * stop forwarding for the whole walk exactly as it did before. See
+   * bpa_pool_del().
+   */
+  vl_api_set_msg_thread_safe (vlibapi_get_main (),
+			      bpa_main.msg_id_base + VL_API_BPA_POOL_ADD_DEL,
+			      1);
   return 0;
 }
 

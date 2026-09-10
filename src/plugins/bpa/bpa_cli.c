@@ -605,7 +605,17 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       * mapping changes for all of them either way - a past
 		       * log record was computed with the old definition - but
 		       * what an operator wants to know first is how many
-		       * customers are about to be cut off. */
+		       * customers are about to be cut off.
+		       *
+		       * Under the barrier explicitly, because this command is
+		       * mp-safe and the dispatcher no longer takes one for
+		       * it: sub_by_idx is a worker's hash and a worker adds to
+		       * it on the packet path, so reading it while that
+		       * happens is a walk through a table being rehashed.
+		       * One pass over the subscribers of a check the operator
+		       * asked for, not something the datapath waits on
+		       * routinely. */
+		      vlib_worker_thread_barrier_sync (vm);
 		      for (ti = 0; ti < vec_len (bm->per_thread); ti++)
 			{
 			  bpa_per_thread_t *pt =
@@ -623,6 +633,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			  }));
 			  /* clang-format on */
 			}
+		      vlib_worker_thread_barrier_release (vm);
 
 		      vlib_cli_output (
 			vm,
@@ -703,6 +714,16 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
     "[check] | bpa pool <name> del",
   .function = bpa_pool_add_command_fn,
+  /*
+   * Runs without the CLI dispatcher's barrier, and everything under it takes
+   * its own. Not a micro-optimisation: bpa_pool_del() frees a pool's sessions
+   * in budgeted chunks so the datapath can run in between, and a chunk cannot
+   * release a barrier the dispatcher is holding on its behalf - the release
+   * is a no-op at recursion depth, which VPP's own event log says out loud
+   * ("bar-relrrec"). Without this line the delete is budgeted and the outage
+   * is exactly as long as it was.
+   */
+  .is_mp_safe = 1,
 };
 
 static clib_error_t *

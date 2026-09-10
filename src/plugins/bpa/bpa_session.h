@@ -620,5 +620,13 @@ void bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf);
 void bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now);
 u32 bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t,
 		     f64 now, u32 budget);
+/*
+ * One budgeted step of a pool delete, on one thread's table. Runs under the
+ * worker barrier and returns non-zero when the thread has none of that pool's
+ * sessions left; the pool MUST be marked deleted first, or the walk can be
+ * outrun by the traffic it is draining.
+ */
+int bpa_pool_drain (bpa_per_thread_t *pt, u32 pool_index, u32 *cursor,
+		    u32 scan_budget, u32 free_budget, f64 now);
 
 #endif /* __included_bpa_session_h__ */

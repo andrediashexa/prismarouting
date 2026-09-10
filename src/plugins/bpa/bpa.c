@@ -885,66 +885,156 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
   return 0;
 }
 
+/*
+ * How much of a pool delete happens inside one barrier acquisition.
+ *
+ * Measured on the two-worker lab (lab/pool-del.sh), which reads the barrier
+ * hold out of VPP's own accounting rather than inferring it from packet
+ * counts. Freeing a session costs about 0.6 us - two bihash deletions, the
+ * subscriber bookkeeping and a hold-down entry - and stepping over one that
+ * belongs to another pool costs a few nanoseconds.
+ *
+ * Before there was a budget, deleting a pool stopped forwarding for 6.0 ms at
+ * 10 000 sessions and 37 ms at 49 000: a straight line through the size of the
+ * table, which puts the design target of 200k subscribers with several
+ * sessions each into the hundreds of milliseconds. Every subscriber on the box
+ * loses that, for a pool delete an ordinary `commit` can reach (issue #69).
+ * With these budgets the same two deletes hold the barrier for 1.5 ms and
+ * 1.4 ms - the line is flat, which is the whole point.
+ *
+ * 2000 frees is about a millisecond of barrier; 64k steps is a fifth of one,
+ * and bounds the case the free budget does not - a pool with a handful of
+ * sessions in a table full of somebody else's.
+ */
+#define BPA_DEL_FREE_BUDGET 2000
+#define BPA_DEL_SCAN_BUDGET 65536
+/*
+ * And how long the workers get in between.
+ *
+ * Releasing the barrier is not the same as giving the workers time on it: the
+ * flag goes down and goes straight back up, and a delete that yields nothing
+ * but the flag is still an outage, only a slower one. A millisecond back for
+ * every millisecond taken leaves the datapath at about half its throughput
+ * for the length of the delete rather than at none of it - measured, a 10 000
+ * session delete is 9 acquisitions over 11 ms.
+ */
+#define BPA_DEL_YIELD 1e-3
+
+/*
+ * Hands the workers the CPU with the barrier open.
+ *
+ * A spin rather than vlib_process_suspend(): this runs from a CLI process and
+ * from an API handler, and suspending the latter would let the next request
+ * in while a pool is half deleted. Blocking the main thread for the length of
+ * a delete costs nothing that is running - it is the thread that called us.
+ */
+static void
+bpa_barrier_yield (vlib_main_t *vm)
+{
+  f64 until = vlib_time_now (vm) + BPA_DEL_YIELD;
+
+  while (vlib_time_now (vm) < until)
+    CLIB_PAUSE ();
+}
+
+/*
+ * Deleting a pool means freeing every session it produced, and there may be
+ * millions of them.
+ *
+ * Sessions MUST NOT outlive the definition that produced them: VPP reuses the
+ * pool index, so a pool created afterwards would inherit sessions carrying the
+ * OLD arithmetic - a subscriber still translated onto a public port that the
+ * new mapping assigns to somebody else, with nothing anywhere saying so.
+ * Redefining a pool is meant to invalidate its sessions.
+ *
+ * That is why this is still synchronous: it returns only once the last one is
+ * gone, so the `del` and the `add` of a `commit` that replaces a pool cannot
+ * overlap, and the replacement can never hand out a public port the old
+ * definition is still using. What changed is that the walk no longer happens
+ * inside ONE barrier acquisition. The pool is detached first, which is what
+ * stops the datapath creating more of what we are freeing, and the rest runs
+ * in budgeted chunks with the workers forwarding in between.
+ *
+ * This is also why the two entry points that reach it - the "bpa pool" CLI
+ * command and the bpa_pool_add_del API message - are declared mp-safe. Their
+ * dispatchers take the barrier around the whole call otherwise, and releasing
+ * a barrier we did not take is a no-op: the chunks would be real and the
+ * outage would not have moved.
+ */
 clib_error_t *
 bpa_pool_del (u8 *name)
 {
   bpa_main_t *bm = &bpa_main;
+  vlib_main_t *vm = bm->vlib_main;
+  u32 pool_index, i;
   bpa_pool_t *p;
   uword *q;
 
   q = hash_get_mem (bm->pool_by_name, name);
   if (!q)
     return clib_error_return (0, "no such pool");
+  pool_index = q[0];
 
-  vlib_worker_thread_barrier_sync (bm->vlib_main);
-
-  p = pool_elt_at_index (bm->pools, q[0]);
+  /*
+   * Detached. Two words, so this acquisition is as short as any other
+   * configuration change: after it the name resolves to nothing and no worker
+   * will bind another session to the pool, which is what makes the walk below
+   * terminate instead of chasing traffic it is still creating.
+   */
+  vlib_worker_thread_barrier_sync (vm);
+  p = pool_elt_at_index (bm->pools, pool_index);
   bpa_audit ("del", p, 0);
-  {
-    f64 now = vlib_time_now (bm->vlib_main);
-    u32 i;
-
-    for (i = 0; i < vec_len (bm->per_thread); i++)
-      {
-	bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
-
-	/*
-	 * Every session this pool owned, freed with it.
-	 *
-	 * Left behind, they outlive the definition that produced them: VPP
-	 * reuses the pool index, so a pool created afterwards inherits
-	 * sessions carrying the OLD arithmetic - a subscriber still
-	 * translated onto a public port that the new mapping assigns to
-	 * somebody else, with nothing anywhere saying so. Redefining a pool
-	 * is meant to invalidate its sessions; until this loop existed, it
-	 * only invalidated the reasoning about them.
-	 *
-	 * Indices are collected before anything is freed: bpa_session_free()
-	 * also reclaims the subscriber record, and mutating a pool while
-	 * iterating it is how a walk starts reading freed memory.
-	 */
-	u32 *doomed = 0, *ix;
-	bpa_session_t *s;
-
-	pool_foreach (s, pt->sessions)
-	  if (s->pool_index == q[0])
-	    vec_add1 (doomed, s - pt->sessions);
-
-	vec_foreach (ix, doomed)
-	  bpa_session_free (pt, pool_elt_at_index (pt->sessions, *ix), now);
-	vec_free (doomed);
-
-	if (q[0] < vec_len (pt->dyn))
-	  bpa_dyn_free (vec_elt_at_index (pt->dyn, q[0]));
-      }
-  }
+  p->deleted = 1;
   hash_unset_mem (bm->pool_by_name, p->name);
+  vlib_worker_thread_barrier_release (vm);
+
+  /*
+   * The sessions, a chunk per acquisition. Still under the barrier for each
+   * chunk - session state is per-worker and freeing an entry races with the
+   * worker reading it - but never for the whole table.
+   */
+  for (i = 0; i < vec_len (bm->per_thread); i++)
+    {
+      bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+      u32 cursor = 0;
+      int done;
+
+      if (!pt->initialised)
+	continue;
+
+      do
+	{
+	  vlib_worker_thread_barrier_sync (vm);
+	  done = bpa_pool_drain (pt, pool_index, &cursor, BPA_DEL_SCAN_BUDGET,
+				 BPA_DEL_FREE_BUDGET, vlib_time_now (vm));
+	  vlib_worker_thread_barrier_release (vm);
+
+	  if (!done)
+	    bpa_barrier_yield (vm);
+	}
+      while (!done);
+    }
+
+  /*
+   * And the definition itself, once nothing points at it. The public window
+   * narrows here and not at the top: while the pool was draining, its
+   * addresses still had live mappings on them, and a window that had already
+   * closed would have sent their replies past the translation.
+   */
+  vlib_worker_thread_barrier_sync (vm);
+  p = pool_elt_at_index (bm->pools, pool_index);
+  for (i = 0; i < vec_len (bm->per_thread); i++)
+    {
+      bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+
+      if (pool_index < vec_len (pt->dyn))
+	bpa_dyn_free (vec_elt_at_index (pt->dyn, pool_index));
+    }
   vec_free (p->name);
   vec_free (p->statics);
   pool_put (bm->pools, p);
   bpa_outside_window_update ();
-
-  vlib_worker_thread_barrier_release (bm->vlib_main);
+  vlib_worker_thread_barrier_release (vm);
   return 0;
 }
 

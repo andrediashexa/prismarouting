@@ -460,6 +460,19 @@ typedef struct
    */
   bpa_static_t *statics;
 
+  /*
+   * The delete has begun and this definition is being drained.
+   *
+   * The slot stays allocated until the last session that came out of it has
+   * been freed, because VPP reuses pool indices: a session that outlived its
+   * definition would be inherited by whatever pool took the index next, and
+   * a subscriber would go on being translated onto a public port the new
+   * mapping has already given to somebody else. Nothing may bind a new
+   * session to a pool carrying this flag, which is what makes the drain
+   * finish rather than chase traffic it is still creating.
+   */
+  u8 deleted;
+
   /* derived */
   u32 port_count;
   u32 blocks_per_ip;
