@@ -25,7 +25,78 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.54.0.
+Nothing merged since v0.55.0.
+
+## 0.55.0 — origin validation, and a refusal that was wrong
+
+RPKI ([#147](https://github.com/andrediashexa/hexarouting/issues/147)) and a
+regression shipped in v0.51.0
+([#178](https://github.com/andrediashexa/hexarouting/issues/178)).
+
+### Added
+
+* **Origin validation.** The `rpki` block, `match rpki valid|invalid|notfound`
+  in a route-map, and `show rpki` answered by FRR. The appliance installs
+  `frr-rpki-rtrlib` and `/etc/frr/daemons` carries `-M rpki`.
+
+  RPKI is a **module**, and `bgpd --version` reports `--enable-rpki` whether or
+  not it is present. Without it every RPKI command answers `bgpd is not
+  running`, because bgpd refuses to start when told to load a module it cannot
+  find — a symptom that points at the wrong thing, which is why the boot
+  self-test now checks for the module by name.
+
+* **`commit` reports a policy that is not validating anything:**
+
+  ```
+  warning: match rpki notfound: no RPKI cache is configured, so every route is
+  notfound and this clause matches all of them
+  ```
+
+  Reported, not refused: an operator may be building the policy before the
+  cache, on purpose. This is the failure origin validation *creates* — a
+  validator that is not connected eventually marks everything `notfound`, and a
+  policy keyed on it then acts on every route.
+
+* **`show bgp summary` and the boot self-test say when validation is not
+  available**, and say it accurately. Measured: `show rpki cache-connection`
+  prints a header line `Connected to group 1` that stays for as long as the
+  cache is configured — seventy seconds after the server was killed it still
+  said Connected. The real state is the per-cache `(connected)` marker, which
+  disappears within a second. Everything here reads the marker.
+
+  Also measured: the prefix table is **not** emptied when the cache goes.
+  Validation runs on what was already learned until `expire_interval` passes.
+  So the box says so, rather than "nothing is validated", which would send an
+  operator looking for an outage that has not started.
+
+### Fixed
+
+* **An OSPF NBMA `neighbor` was refused with a BGP error.** `bgp_errors()`
+  scanned every routing line for the word `neighbor`, and OSPF uses it too:
+
+  ```
+  error: neighbor 10.0.0.2 poll-interval 60: 10.0.0.2 has no 'remote-as' ...
+  ```
+
+  on a box that need not have BGP configured at all. The check is now
+  block-aware, tracking context **by the statement rather than by indentation**
+  — the same defect `route_map_findings` had already been caught with once.
+
+* **An AS-path regex read back from the box was never checked, and every match
+  count was taken against a pattern nobody wrote.** FRR returns the statement
+  with a `seq` it assigned — `bgp as-path access-list RX1 seq 5 permit ^65001$`
+  — and a parser counting words from the left read `5 permit ^65001$` as the
+  regular expression. Both now find the name and the regex by keyword. The
+  cross-check against FRR did not catch this because it feeds the statement in
+  the form an operator *types*, which has no `seq`.
+
+### Internal
+
+* `HEXA_FRR_DUMP` captures exactly what was sent to `frr-reload` and exactly
+  what it said. Kept, because `_summarise()` necessarily throws away most of
+  that output and twice the discarded line was the one naming the cause — a
+  stale mgmtd refusal, and an `rpki cache` missing its transport keyword, which
+  read like an upstream limitation rather than a missing word.
 
 ## 0.54.0 — the BGP commands an operator runs while something is wrong
 

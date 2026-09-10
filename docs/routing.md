@@ -1392,6 +1392,96 @@ checks — is evidence that the VTY configured a BGP session that works, on a bo
 where nothing else did. The prefix is asserted in the **VPP FIB**, not in FRR's
 table: FRR holding a route is a different claim from the box forwarding on it.
 
+## Origin validation (RPKI)
+
+FRR speaks RTR. An ISP that validates origins elsewhere should not have an edge
+box that accepts whatever it is told.
+
+```
+rpki
+ rpki cache tcp 10.0.0.10 8282 preference 1
+ exit
+route-map RM-TRANSITO-IN deny 5
+ match rpki invalid
+exit
+route-map RM-TRANSITO-IN permit 10
+exit
+```
+
+### It is a module, and a module that is not loaded is not there
+
+`bgpd --version` reports `--enable-rpki` whether or not the module is present.
+It ships in a **separate package**, `frr-rpki-rtrlib`, from the same repository
+and at the same version as `frr` itself — so it adds no new source and no
+version skew. The appliance installs it, and `/etc/frr/daemons` carries
+`-M rpki` in `bgpd_options`.
+
+Without both, every RPKI command answers **`bgpd is not running`**, because
+bgpd refuses to start when told to load a module it cannot find. That symptom
+points at the wrong thing entirely, which is why the boot self-test checks for
+the module by name.
+
+### The transport keyword is not optional
+
+`rpki cache tcp <host> <port> [source <A.B.C.D>] preference <1-255>`, or
+`rpki cache ssh ...`. Leaving out `tcp` is a plain unknown command — on the live
+box as well as in the file `frr-reload` validates. It was left out once here,
+and the resulting failure read like an upstream limitation rather than a missing
+word.
+
+### The failure this prevents, and the one it creates
+
+Rejecting RPKI-invalid routes is the point. The failure it **creates** is worse
+and has to be handled: **a validator that is not connected eventually marks
+everything `notfound`**. A policy that denies `invalid` keeps working; a policy
+that treats `notfound` as suspicious degrades every route on the box, and cache
+outages are ordinary.
+
+So `commit` reports a route-map matching `rpki` with no cache configured:
+
+```
+warning: match rpki notfound: no RPKI cache is configured, so every route is
+notfound and this clause matches all of them
+```
+
+Reported, not refused — an operator may be building the policy before the
+cache, in that order, on purpose.
+
+### What the box says when the cache goes away
+
+Measured, and both halves matter.
+
+`show rpki cache-connection` prints a header line, **`Connected to group 1`**,
+which stays for as long as the cache is configured — seventy seconds after the
+server was killed it still said Connected. The real state is the per-cache
+**`(connected)`** marker, which disappears within a second. Everything in this
+product reads the marker, never the header.
+
+And the prefix table is **not** emptied when the cache goes. Validation keeps
+running on what was already learned until `expire_interval` passes — 7200
+seconds by default — and only then does everything become `notfound`. So
+`show bgp summary` says:
+
+```
+  RPKI: 1 cache(s) configured, NONE connected
+        validation is running on data the caches already sent, which expires;
+        after that every route is notfound
+```
+
+rather than "nothing is validated", which would send an operator looking for an
+outage that has not started yet. The boot self-test says the same.
+
+### How it is tested
+
+A cache is a service, so the lab runs one — `stayrtr` with a two-entry VRP set.
+`203.0.113.0/24` really is originated by AS 65001 and the ROA says 65001:
+**valid**. `198.51.100.0/24` really is originated by AS 65002 and the ROA says
+64999, so a ROA covers it and the origin does not match: **invalid**.
+
+The assertion is on the VPP FIB, and it is two-sided — the invalid route MUST
+NOT be there **and** the valid one MUST still be. Dropping everything would
+satisfy the first on its own.
+
 ## The BGP commands an operator runs while something is wrong
 
 Configuring BGP is half the job. The other half is what gets typed at 2am, and

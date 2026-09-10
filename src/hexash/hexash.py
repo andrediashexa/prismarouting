@@ -227,6 +227,13 @@ ROUTE_MAP_MATCH = {
             "prefix-list": ("prefixes in a named list", ARG_PREFIX_LIST),
         }),
     }),
+    "rpki": ("by origin validation state", {
+        "valid": ("a ROA covers the prefix and the origin matches", None),
+        "invalid": ("a ROA covers the prefix and the origin does NOT match",
+                    None),
+        "notfound": ("no ROA covers the prefix - which is also what every "
+                     "route looks like when no cache is connected", None),
+    }),
     "as-path": ("by AS path, against a named list", ARG_AS_PATH_LIST),
     "community": ("by community, against a named list", ARG_COMMUNITY_LIST),
     "large-community": ("by large community, against a named list",
@@ -255,6 +262,31 @@ ROUTE_MAP_SET = {
         "egp": ("learned from another AS", None),
         "incomplete": ("origin unknown", None),
     }),
+}
+
+# Offered inside `rpki`. FRR speaks RTR through a loadable module; an ISP that
+# validates origins elsewhere should not have an edge box that accepts whatever
+# it is told (#147).
+RPKI_BLOCK = {
+    "rpki": ("the validator caches this box asks", {
+        # The transport keyword is NOT optional, and leaving it out is a plain
+        # unknown command - on the live box as well as in the file frr-reload
+        # validates. Written out here because it was omitted once and the
+        # resulting failure read like an upstream limitation rather than a
+        # missing word.
+        "cache": ("a cache to ask", {
+            "tcp": ("plain RTR over TCP",
+                    "<host> <port> [source <A.B.C.D>] preference <1-255>"),
+            "ssh": ("RTR over SSH",
+                    "<host> <port> <user> <privkey> [known-hosts] "
+                    "[source <A.B.C.D>] preference <1-255>"),
+        }),
+        "polling_period": ("seconds between refreshes", "<1-86400>"),
+        "expire_interval": ("seconds before data is discarded", "<600-172800>"),
+        "retry_interval": ("seconds before retrying a lost cache", "<1-7200>"),
+        "reset": ("drop what the caches sent and ask again", None),
+    }),
+    "exit": ("leave the RPKI configuration", None),
 }
 
 ROUTE_MAP_BLOCK = {
@@ -595,6 +627,7 @@ TREE = {
             "large-community-list": ("a named list of large communities",
                                      ARG_COMMUNITY_LIST),
         }),
+        "rpki": ("origin validation: the caches this box asks", None),
         "router": ("routing protocols (FRR)", {
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", None),
@@ -767,6 +800,29 @@ def mark_unchecked(lines):
     return out
 
 
+def as_path_parts(line):
+    """
+    The list name and the regex in a `bgp as-path access-list` line, or
+    (None, None) if it is not one.
+
+    Found by the keyword, not by position. FRR gives the statement back with a
+    `seq` it assigned - `bgp as-path access-list RX1 seq 5 permit ^65001$` -
+    and a parser counting words from the left read `5 permit ^65001$` as the
+    regular expression. Two consequences, both silent: a regex read back from
+    the box was never checked, and every match count was taken against a
+    pattern nobody wrote. The cross-check against FRR did not catch it because
+    it feeds the statement in the form an operator TYPES, which has no `seq`.
+    """
+    w = line.split()
+    if len(w) < 5 or w[:3] != ["bgp", "as-path", "access-list"]:
+        return None, None
+    name = w[3]
+    for i in range(4, len(w)):
+        if w[i] in ("permit", "deny"):
+            return name, " ".join(w[i + 1:])
+    return None, None
+
+
 def as_path_regex_error(line):
     """
     Why FRR would refuse this AS-path regex, or None.
@@ -781,12 +837,9 @@ def as_path_regex_error(line):
     prefix-range rule, and for the same reason: an opinion about what FRR
     accepts that drifts from FRR refuses configurations that are fine.
     """
-    w = line.split()
-    if len(w) < 5 or w[:3] != ["bgp", "as-path", "access-list"]:
+    name, regex = as_path_parts(line)
+    if name is None:
         return None
-    if w[4] not in ("permit", "deny"):
-        return None
-    regex = " ".join(w[5:])
     if not regex:
         return "no regular expression: 'permit' or 'deny' takes one"
     try:
@@ -853,6 +906,39 @@ def undefined_policy_lists(routing):
         elif kind == "large-community" and name not in have_large:
             out.append((line.strip(), f"no large-community list called "
                         f"'{name}' is defined; the clause would match nothing"))
+    return out
+
+
+def rpki_findings(routing):
+    """
+    What an origin-validation policy says that will not do what it looks like.
+
+    Rejecting RPKI-invalid routes is the point. The failure it CREATES is the
+    one worth a sentence: a validator that is not connected marks everything
+    `notfound`. A policy that denies `invalid` keeps working when the cache
+    goes away; a policy that treats `notfound` as suspicious quietly degrades
+    every route on the box - and cache outages are ordinary.
+
+    So a clause matching `notfound` with no cache configured is not a mistake
+    exactly, it is a policy that does nothing useful until one is configured,
+    and that is invisible afterwards. Reported, not refused: an operator may be
+    building the policy before the cache, in that order, on purpose.
+    """
+    caches = [l.strip() for l in routing
+              if l.strip().startswith("rpki cache ")]
+    out = []
+    for line in routing:
+        w = line.split()
+        if w[:2] == ["match", "rpki"] and len(w) >= 3 and not caches:
+            state = w[2]
+            if state == "notfound":
+                out.append((line.strip(),
+                            "no RPKI cache is configured, so every route is "
+                            "notfound and this clause matches all of them"))
+            elif state in ("valid", "invalid"):
+                out.append((line.strip(),
+                            "no RPKI cache is configured, so nothing is ever "
+                            + state + " and this clause matches nothing"))
     return out
 
 
@@ -956,11 +1042,34 @@ def bgp_errors(routing):
         return entities.setdefault(
             name, {"remote_as": False, "group": None, "stmts": [], "af": False})
 
+    # Only inside a `router bgp` stanza. `neighbor` is not a BGP word: OSPF
+    # uses it for NBMA and point-to-multipoint, and scanning every routing line
+    # for it refused `neighbor 10.0.0.2 poll-interval 60` under `router ospf`
+    # with a sentence about remote-as, on a box that need not have BGP at all.
+    # A refusal that is wrong is worse than a check that is missing.
+    #
+    # Context is tracked by the statement rather than by indentation, for the
+    # same reason route_map_findings had to be: a configuration read back from
+    # FRR is indented and the same line typed at this VTY is not.
+    in_bgp = False
     for line in routing:
         w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "bgp"]:
+            in_bgp = True
+            continue
+        if w[0] in ("router", "interface", "route-map", "rpki", "vrf"):
+            in_bgp = False
+            continue
+        if w[0] == "exit":
+            in_bgp = False      # `exit-address-family` is a different word
+            continue
+        if not in_bgp:
+            continue
         # `no neighbor ...` removes; reading it as configuration would report
         # an error about a session being taken away.
-        if not w or w[0] == "no" or w[0] != "neighbor" or len(w) < 2:
+        if w[0] == "no" or w[0] != "neighbor" or len(w) < 2:
             continue
         name = w[1]
         if len(w) == 3 and w[2] == "peer-group":
@@ -1145,6 +1254,17 @@ class Frr:
             p = subprocess.run(["python3", FRR_RELOAD, mode, "--stdout", path],
                                capture_output=True, text=True, timeout=60)
             out = ((p.stdout or "") + (p.stderr or "")).rstrip()
+            # Set HEXA_FRR_DUMP to a path to capture exactly what was sent
+            # and exactly what frr-reload said. Kept because _summarise()
+            # necessarily throws away most of that output, and twice now the
+            # line it threw away was the one that named the cause - a stale
+            # mgmtd refusal, and an `rpki cache` missing its transport keyword
+            # that read like an upstream limitation.
+            dump = os.environ.get("HEXA_FRR_DUMP")
+            if dump:
+                with open(dump, "a") as d:
+                    d.write("===== sent =====\n" + "\n".join(lines) + "\n")
+                    d.write(f"===== raw rc={p.returncode} =====\n{out}\n")
             if p.returncode:
                 self.absorb_stale_refusal()
                 # frr-reload dumps a Python traceback on failure. An operator
@@ -2211,6 +2331,10 @@ class Shell:
             # operator reading their own regex back will not see it; a count
             # against real paths is what shows it.
             self.report_as_path_reach(target.routing)
+
+            # Origin validation that is not validating anything (#147).
+            for stmt, why in rpki_findings(target.routing):
+                print(f"warning: {stmt}: {why}")
 
             # Route-maps: one refusal and two things worth saying (#144). The
             # warnings do NOT fail the check - a permit with no match is a
@@ -3305,7 +3429,7 @@ class Shell:
         # saying so. That is exactly the failure the prompt work exists to
         # prevent (#150).
         if line.startswith(("router ", "interface ", "vrf ", "route-map ",
-                            "address-family ")):
+                            "address-family ")) or line.strip() == "rpki":
             self.frr_ctx.append(line)
         return True
 
@@ -3832,6 +3956,7 @@ class Shell:
                   f"{state:<14} {str(pfx):<9} {up}")
 
         print(f"\n  {len(peers)} session(s), {established} established")
+        self.report_rpki_state()
         if not in_fib:
             print("  the dataplane is not answering, so what reached the "
                   "forwarding table is unknown")
@@ -3850,6 +3975,41 @@ class Shell:
         else:
             print(f"  all {len(bgp_prefixes)} BGP prefix(es) are in the "
                   "forwarding table")
+
+    def report_rpki_state(self):
+        """
+        Whether origin validation is actually available, on the summary.
+
+        "No invalid routes" and "no validator" look identical from a route
+        table, and the second one is a box accepting whatever it is told. Said
+        here because this is the screen an operator is already looking at.
+        """
+        cfg = self.running_config()
+        caches = [l for l in cfg.routing if l.strip().startswith("rpki cache ")]
+        if not caches:
+            return          # nothing configured is a choice, not a fault
+        rc, out = self.frr.show("show rpki cache-connection")
+        if rc != 0:
+            print("  RPKI: the module is not loaded, so nothing is validated")
+            return
+        # The per-cache "(connected)" marker, NOT the "Connected to group N"
+        # header. Measured: with the cache killed, the marker disappears within
+        # a second and the header still says Connected seventy seconds later.
+        # Reading the header is reading a line that is wrong, which is the
+        # thing this report exists to stop an operator doing.
+        live = sum(1 for l in out.splitlines() if "(connected)" in l)
+        if live:
+            print(f"  RPKI: {live} of {len(caches)} cache(s) connected")
+        else:
+            print(f"  RPKI: {len(caches)} cache(s) configured, NONE connected")
+            # Also measured: the prefix table is NOT emptied when the cache
+            # goes. Validation keeps running on what was already learned until
+            # expire_interval passes - 7200 seconds by default - and only then
+            # does everything become notfound. Both halves matter: an operator
+            # told "nothing is validated" would go looking for an outage that
+            # has not started yet.
+            print("        validation is running on data the caches already "
+                  "sent, which expires; after that every route is notfound")
 
     def bgp_prefixes(self):
         """Every prefix BGP holds, from FRR. Empty when there is no BGP."""
@@ -4188,10 +4348,9 @@ class Shell:
                   "be checked against anything")
             return
         for stmt in lists:
-            w = stmt.split()
-            if len(w) < 6:
+            name, regex = as_path_parts(stmt)
+            if name is None or not regex:
                 continue
-            name, regex = w[3], " ".join(w[5:])
             hit, example = as_path_matches(regex, paths)
             line = f"note: {name} '{regex}' matches {hit} of {len(paths)} " \
                    "received AS path(s)"
@@ -4314,6 +4473,8 @@ class Shell:
         block = self.frr_ctx[-1]
         if block.startswith("interface "):
             return INTERFACE_BLOCK
+        if block.strip() == "rpki":
+            return RPKI_BLOCK
         if block.startswith("route-map "):
             return ROUTE_MAP_BLOCK
         if block.startswith("address-family "):
