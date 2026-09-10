@@ -240,6 +240,25 @@ subscriber with full confidence.
   recomputed; a forwarded port is a mapping that was decided rather than
   computed, so a trail that omitted it would answer for that port with the
   subscriber the formula names — who is the wrong one, with full confidence.
+* Attaching and detaching CGNAT on an interface **MUST** be recorded too, with
+  the direction on the line:
+
+  ```
+  2026-09-08T16:11:42Z attach interface TenGigabitEthernet0/8/0 \
+    by marina uid 1001 via api direction inside
+  2026-09-08T16:40:07Z detach interface TenGigabitEthernet0/8/0 \
+    by unattributed via cli direction outside
+  ```
+
+  The pools say **how** to translate and the interfaces say **where**.
+  Detaching `out2in` stops translation for every subscriber behind that
+  interface, so a trail complete about the definitions and silent about where
+  they were applied describes a mapping that may not have been in force
+  ([#124](https://github.com/andrediashexa/hexarouting/issues/124)). The
+  direction is on the line because the rest of the entry does not imply it:
+  *attach interface X* alone does not say which half of the translation
+  started.
+
 ### Who changed it
 
 An entry that cannot say **who** is a log, not an audit trail: a log records

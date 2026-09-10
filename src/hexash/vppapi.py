@@ -125,12 +125,10 @@ WRITE_MESSAGES = frozenset({
     "bpa_bypass_set",
     "bpa_limits_set",
     "bpa_forward_add_del",
-    # bpa_interface_add_del_feature is NOT here, and that is a gap rather than
-    # a decision: attaching or detaching CGNAT on an interface is a change with
-    # operational consequence - detaching stops translation for everyone behind
-    # it - and the trail should name who did it. The message has no audit_user
-    # or audit_uid fields, so putting it on this list would send fields the
-    # dataplane does not define. Filed as #124.
+    # Attaching or detaching CGNAT on an interface is a change with
+    # operational consequence - detaching stops translation for everyone
+    # behind it - so it names who did it like the rest (#124).
+    "bpa_interface_add_del_feature",
 })
 
 

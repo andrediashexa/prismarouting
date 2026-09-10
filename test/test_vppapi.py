@@ -239,7 +239,8 @@ print("\n=== every message that changes something is on the list ===")
 # added to the plugin and forgotten here writes an unattributed entry, and
 # nothing anywhere says it should have had a name.
 mutating = {"bpa_pool_add_del", "bpa_pool_settings_set", "bpa_bypass_set",
-            "bpa_limits_set", "bpa_forward_add_del"}
+            "bpa_limits_set", "bpa_forward_add_del",
+            "bpa_interface_add_del_feature"}
 check(vppapi.WRITE_MESSAGES == mutating,
       f"the write list has drifted: {sorted(vppapi.WRITE_MESSAGES ^ mutating)}")
 print(f"  {len(vppapi.WRITE_MESSAGES)} write messages")

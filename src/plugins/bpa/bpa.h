@@ -131,6 +131,7 @@ void bpa_actor_clear (void);
 void bpa_audit_recover (void);
 
 void bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only);
+void bpa_audit_interface (const char *op, u8 *ifname, int is_inside);
 
 clib_error_t *bpa_pool_validate (bpa_pool_t *cfg);
 /*

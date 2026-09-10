@@ -819,9 +819,23 @@ bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
       error = clib_error_return (0, "vnet_feature_enable_disable failed: %d",
 				 rv);
     else
-      /* The set of interfaces the CGNAT runs on has just changed, and that
-       * set is what "tcp-mss auto" is the minimum over. */
-      bpa_auto_mss_update ();
+      {
+	/* The set of interfaces the CGNAT runs on has just changed, and that
+	 * set is what "tcp-mss auto" is the minimum over. */
+	bpa_auto_mss_update ();
+
+	/* And it is a configuration change, so it is in the trail like any
+	 * other. Typed here there is no session to ask, so it is recorded as
+	 * unattributed via cli - which is the honest answer and not the same
+	 * as leaving the change out of the record. */
+	{
+	  u8 *ifname = format (0, "%U", format_vnet_sw_if_index_name, vnm,
+			       sw_if_index);
+
+	  bpa_audit_interface (enable ? "attach" : "detach", ifname, is_in);
+	  vec_free (ifname);
+	}
+      }
   }
 
 done:
