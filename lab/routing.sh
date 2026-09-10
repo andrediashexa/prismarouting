@@ -311,6 +311,7 @@ expect "with lcp-sync off, the dataplane still took the MTU" \
   test "$(mtu_of)" = "1450"
 expect "with lcp-sync off, the TAP took it too - so hexash moved it, not VPP" \
   sh -c "ip link show vppwan0 | grep -q 'mtu 1450'"
+
 vppctl lcp lcp-sync on
 
 # Read back BEFORE the restore below, or this asserts on a value the next two
@@ -866,5 +867,52 @@ expect "suppressing again stops the dataplane sending any" \
 expect "and none reach the wire either" test "${RA_AGAIN:-0}" -eq 0
 expect_not_in "and the running configuration drops the exception" \
   "no ipv6 nd suppress-ra" "$($HX -c 'show running-config')"
+
+# --- the OSPF MTU stall, which FRR cannot see (#174) ---
+#
+# docs/routing.md has documented this as Pitfall 1 since before there was a
+# check for it: FRR compares the TAP's MTU in its database description packets
+# while the wire runs at the dataplane's, so when they differ the adjacency
+# sits in Exchange forever with no log line on either side.
+#
+# Last in the file, and deliberately: it pulls the two MTUs apart, which takes
+# the OSPF adjacency down, and every section above needs that adjacency.
+#
+# The mismatch is made on the DATAPLANE side, with vppctl. Measured: setting
+# the Linux side instead propagates back into VPP even with lcp-sync off - the
+# two ended up equal and the check correctly said nothing, which is how this
+# was found. And it cannot be made with `mtu` at the VTY either, because
+# hexash sets both sides itself.
+echo "=========== the OSPF MTU stall ==========="
+vppctl lcp lcp-sync off
+THERE=$(ip -o link show dev vppwan0 | awk '{for(i=1;i<=NF;i++) if($i=="mtu") print $(i+1)}')
+vppctl set interface mtu 1400 host-veth-vpp
+HERE=$(mtu_of)
+echo "  the dataplane is at $HERE, its Linux side at $THERE"
+expect "the two really do disagree, or the rest of this proves nothing" \
+  sh -c "[ \"$HERE\" != \"$THERE\" ]"
+MTUWARN=$($HX -c "configure" -c "ip route 10.77.0.0/16 blackhole" \
+          -c "commit check" 2>&1)
+echo "$MTUWARN" | grep -i "MTU is" | sed 's/^/  /'
+expect_in "the MTU stall is reported" "carries OSPF and its MTU is" "$MTUWARN"
+# Both numbers, because "the MTUs disagree" is not actionable and the two
+# values are. Read from the box, so the assertion does not depend on what an
+# earlier section happened to leave behind.
+expect_in "with the dataplane's number" "MTU is $HERE" "$MTUWARN"
+expect_in "and the Linux side's" "at $THERE" "$MTUWARN"
+# It names the interface an operator can type at this VTY, not the TAP's own
+# VPP name. The first version walked every interface with an MTU and reported
+# `tap4096`, which is in no configuration anybody writes.
+expect_in "and names the interface, not the TAP" \
+  "interface host-veth-vpp" "$MTUWARN"
+
+# The negative half. Put them back the same and it must go quiet, or the
+# warning is unconditional and says nothing.
+vppctl set interface mtu "$THERE" host-veth-vpp
+AGREE=$($HX -c "configure" -c "ip route 10.78.0.0/16 blackhole" \
+        -c "commit check" 2>&1)
+expect_not_in "and it is silent when the two agree" \
+  "carries OSPF and its MTU is" "$AGREE"
+vppctl lcp lcp-sync on
 
 verdict
