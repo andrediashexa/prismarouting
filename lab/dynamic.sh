@@ -98,8 +98,32 @@ echo "  100.64.0.12:"
 send 12 5
 
 echo
+echo "=========== a block outlives the sessions that took it ==========="
+# What an operator is told about a subscriber between its last session and the
+# end of the block hold-down. The block is still reserved - nobody else can be
+# given it - so "no sessions" and "holds no block" are different answers, and
+# the command that collapsed them into one reported a block as free while the
+# allocator was still refusing it to everybody else (issue #74).
+vppctl bpa block-holddown 300
+echo "  100.64.0.6 takes a block, then goes quiet:"
+send 6 5
+n=0
+until [ "$(vppctl show bpa session | sed -n 's/^total: \([0-9]*\) sessions/\1/p')" = "0" ] \
+   || [ "$n" -ge 20 ]; do sleep 1; n=$((n+1)); done
+SUB6=$(vppctl show bpa subscriber 100.64.0.6)
+SESS6=$(vppctl show bpa session)
+HELD=$(vppctl show bpa blocks)
+printf '%s\n' "$SUB6" | sed 's/^/  |/'
+printf '%s\n' "$SESS6" | sed -n '/total:/p' | sed 's/^/  |/'
+printf '%s\n' "$HELD" | sed -n '/total:/p' | sed 's/^/  |/'
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
+expect_in "the subscriber's sessions are gone" "total: 0 sessions" "$SESS6"
+expect_not_in "and it is not reported as holding no block while it holds one" \
+  "holds no block" "$SUB6"
+expect_in "the block it still holds is named" "200.150.0.16" "$SUB6"
 B=$(vppctl show bpa blocks)
 # "allocations" is a column label "show bpa blocks" prints on every dynamic
 # pool, so this passed on a pool that had allocated nothing. The count, off

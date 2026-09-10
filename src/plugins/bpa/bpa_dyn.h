@@ -141,4 +141,28 @@ bpa_dyn_owner (const bpa_dyn_t *d, u32 block_idx, u32 n_workers, u32 *sub_idx)
   return 0;
 }
 
+/*
+ * The mirror: which block this subscriber holds. -1 when it holds none.
+ *
+ * Asked by "show bpa subscriber", because the per-subscriber session record
+ * cannot answer it: that record dies with the subscriber's last session while
+ * the block stays reserved here for the whole hold-down. Only the primary
+ * block, which is the one whose absence means the subscriber holds nothing.
+ */
+static_always_inline int
+bpa_dyn_block_of (bpa_dyn_t *d, u32 sub_idx, u32 worker, u32 n_workers,
+		  u32 *block_idx)
+{
+  uword *q;
+
+  if (PREDICT_FALSE (!d->active))
+    return -1;
+  q = hash_get (d->by_sub, sub_idx);
+  if (!q)
+    return -1;
+
+  *block_idx = (u32) (q[0] - 1) * n_workers + worker;
+  return 0;
+}
+
 #endif /* __included_bpa_dyn_h__ */
