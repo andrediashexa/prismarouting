@@ -25,7 +25,85 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.59.0.
+Nothing merged since v0.60.0.
+
+## 0.60.0 — the second lab-only step, a trail that missed a change, and a diagnostic that lied
+
+[#168](https://github.com/andrediashexa/hexarouting/issues/168),
+[#124](https://github.com/andrediashexa/hexarouting/issues/124),
+[#74](https://github.com/andrediashexa/hexarouting/issues/74), and an audit of
+every lab for the class those first two belong to.
+
+### Fixed
+
+* **IS-IS committed cleanly and never formed an adjacency.** `lcp osi-proto
+  enable 0x83` existed in one lab and in the documentation — as a **MUST** — and
+  nowhere in the product. On a shipped box the commit succeeded, `isisd` came
+  up, the running configuration read back correctly, and no adjacency ever
+  formed, with the only evidence in a dataplane error counter nothing surfaced.
+
+  The product enables it now, over the binary API, when the configuration
+  contains an IS-IS instance. Not left to the operator: it is not a choice
+  anybody would make differently.
+
+  Reading it back took two attempts. VPP answers `lcp_osi_proto_get` with a
+  **hex string** — `"0x83"` for one protocol, bare `"0x"` for none — not a list
+  of numbers. Read as a list it came back empty every time, so the reader said
+  "nothing is punted" on a box that was punting, and the lab assertion counting
+  `131` found nothing while the adjacency was up.
+
+* **Attaching CGNAT to an interface was not in the audit trail.** Three changes
+  applied to a box — attach via the VTY, detach via the VTY, attach via
+  `vppctl` — grew the trail by **zero lines**. The pool messages record because
+  every mutator ends in the audit call; the interface attach never entered that
+  file at all, and the CLI twin had the same hole.
+
+  One writer now, so a new entry kind cannot skip a link or reorder fields.
+  Every integrity property survives, and the verify path needed no change.
+
+* **`show bpa subscriber` denied state the session table was holding.** Two
+  tenants sharing an inside prefix, told apart by a VRF: five live sessions, and
+  the command answered *"no live state: this subscriber holds no block and has
+  no sessions on this box"* — while naming the **other tenant's** public
+  address, which is the kind of answer a court order gets.
+
+  One lookup was answering two questions it cannot carry, and the pool lookup
+  disagreed with the datapath's: the command asked for "any VRF" and took the
+  first pool claiming the address, while `in2out` asks with the packet's
+  `fib_index`. The false sentence is split into the two answers it was
+  collapsing, and nothing was added for the cases that were already right.
+
+### Internal
+
+* **Four labs were testing a weaker box than the one shipped.** `lab/vty.sh`
+  made `/run/vpp` world-writable, `/etc/frr` world-readable, and the saved
+  configuration `0644` — which the installer installs `0660` group
+  `hexa-cgnat` with a comment saying *never world-readable*, because it holds
+  every password hash. So the lab handed the read-only account a copy of what
+  the product deliberately withholds.
+
+  The chmods were there because `lab/startup-lcp.conf` lacked the `gid vpp` the
+  appliance carries, so the lab's sockets came out `root:root`. With the gid
+  added, group membership does the work and the results are unchanged — which
+  is the proof the chmods were hiding something rather than enabling something.
+
+  `lab/api.sh` pointed `vat2` at the build tree for all five calls: the one lab
+  that drives the wire format was proving it against a client layout no
+  appliance runs.
+
+### Found and filed, not fixed
+
+The lab audit found four gaps the product genuinely has. The worst is
+[#184](https://github.com/andrediashexa/hexarouting/issues/184): **the VTY
+creates accounts and puts them in no group**, so every account it makes is
+read-only for ever, cannot open the dataplane socket, and cannot run `vtysh`.
+The roles are not loose — they are unreachable, and `lab/vty.sh` granted the
+memberships by hand.
+
+Also [#183](https://github.com/andrediashexa/hexarouting/issues/183): attaching
+CGNAT over the binary API skips the reassembly enable and the MSS recompute that
+the CLI path does — so since the VTY moved off `vppctl`, an interface attached
+by the product drops fragments.
 
 ## 0.59.0 — a loopback, the pair nothing was creating, and a flag that could not be sent
 
