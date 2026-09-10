@@ -588,6 +588,49 @@ enabled `ssh.service` are written by the installer **onto the target**, where
 they are a decision about the box being built rather than a property of the
 medium.
 
+### The disk is verified before the install reports success
+
+`hexarouting-selftest.service` runs on the **live medium**, before the
+installer, so until
+[#83](https://github.com/andrediashexa/hexarouting/issues/83) nothing had ever
+looked at the result of an install. The failure mode is a box that reports
+success, has its medium taken out, and then boots to a `grub>` prompt in front
+of whoever is standing there — by which time the person who could have run the
+install again has left the cage.
+
+The installer now checks the system it just wrote, while it is still mounted,
+**before** the success line:
+
+```
+==> verifying the disk that was just written
+  [ ok ] GRUB boots /boot/vmlinuz-6.1.0-40-amd64, which is on the disk
+  [ ok ] fstab: 3 UUID(s), every one of them resolves
+  [ ok ] root has a password, so somebody can log into this box
+```
+
+| Check | The failure it catches |
+|---|---|
+| GRUB has an entry whose kernel is on the disk | A squashfs built without `/boot`: the bootloader installs correctly and has nothing to boot |
+| Every `UUID=` in `/etc/fstab` resolves to a device that exists | A stale or mistyped UUID, which drops the boot into an initramfs prompt |
+| `root` has a password hash | A late failure leaving the **locked** account the live image carries — a disk nobody can log into |
+
+* Each failure **MUST** name its check. *"Verification failed"* tells the
+  operator to reinstall and hope; naming it tells them what to look at.
+* A failure is **not** reported as an install. The installer exits non-zero, so
+  the unattended path prints no completion marker, and the operator is told to
+  leave the medium in place.
+* An `fstab` with no `UUID=` in it at all is a **failure**, not an empty pass. A
+  loop over the UUIDs of an fstab that names none succeeds — a check agreeing
+  with itself, on the one fstab that is certainly wrong.
+* It reads only. A verification that repairs what it finds is a verification
+  whose result is about itself.
+
+The broken cases are driven by `test/test_installer.sh` against fabricated
+installed trees, because an install that succeeds cannot demonstrate what a
+failed verification does — and that is the only assertion proving the check can
+fail at all. `lab/install-iso.sh` asserts the other half: that a real install
+verified the real disk before it said it was finished.
+
 ### Unattended installs
 
 For labs, for the boot test and for PXE, the answers come from the kernel
@@ -600,13 +643,88 @@ command line:
 | `hexarouting.hostname=<name>` | answer the hostname question |
 | `hexarouting.timezone=<zone>` | answer the timezone question |
 | `hexarouting.password=<pw>` | answer the root password question |
+| `hexarouting.log-gb=<n>` | gigabytes for the connection records |
+| `hexarouting.answers[=<file>]` | read the answers from a file instead |
 | `hexarouting.yes` | skip the confirmations, then **power off** |
 
 `hexarouting.password` has a real cost: the kernel command line is
 world-readable in `/proc/cmdline` for the life of the booted system. It does
 not survive onto the installed box — that system has its own command line — but
 anyone logged into the medium while it installs can read it. For a hands-on
-install, leave it out and answer the prompt.
+install, leave it out and answer the prompt. For an unattended one, use the
+answer file below.
+
+### Answers from a file
+
+The **RECOMMENDED** unattended path. The same answers, the password among them,
+read from a file instead of published to every process on the running medium.
+
+```
+# /run/live/medium/hexarouting.answers
+disk     = /dev/sda
+hostname = cgnat01
+timezone = America/Sao_Paulo
+log-gb   = 30
+password = <the root password for this box>
+yes      = yes
+```
+
+Point the installer at it with `hexarouting.answers=<path>` on the kernel
+command line, or with `HEXA_ANSWERS=<path>` in the environment.
+`hexarouting.answers` with no value means
+`/run/live/medium/hexarouting.answers`, so that whoever writes the medium and
+whoever boots it do not have to agree on a path from memory.
+
+| Key | Answers |
+|---|---|
+| `disk` | which disk to install onto |
+| `hostname` | the hostname |
+| `timezone` | the timezone |
+| `log-gb` | gigabytes for the connection records |
+| `password` | the root password |
+| `yes` | skip the confirmations, then power off |
+
+What each answer costs to get wrong is the same as at the prompt — `disk` is
+the one that destroys something, `log-gb` is the one whose wrong answer is
+permanent and silent until the volume fills — with one addition: **nobody is
+standing there**. So:
+
+* An **unknown key is refused**, never ignored. A misspelt `password` is an
+  install that arrives at the password question with no answer and no console
+  to answer from: the typo would present as a machine that hung, hours later,
+  rather than as a typo.
+* An **answer file that is not there is refused.** Falling through to the
+  prompts is the same hang by another route.
+* **An answer already given wins.** What somebody typed on the command line for
+  this one boot beats what travels with the medium for every install it does —
+  which is what lets one medium install a second box without being rewritten.
+* `#` starts a comment only at the **beginning of a line**. A password may
+  contain one, and a parser that truncated it there would install a box whose
+  password is a *prefix* of the one in the file. Nobody would find that out
+  before the first login.
+* Spaces around the `=` are stripped, so a password whose first or last
+  character is a space cannot be given this way.
+
+**The file is a credential.** This moves the secret rather than removing it:
+`/proc/cmdline` stops carrying the password and the medium starts. A medium is
+a thing that can be locked in a drawer and `/proc/cmdline` is not, which is the
+whole of the improvement — anyone who can read the medium can read the file.
+The installer says so when the file answers the password:
+
+```
+==> answers from /run/live/medium/hexarouting.answers
+==>   it carries the root password, so the medium is itself a credential
+```
+
+* The password is **never printed** — not in the summary, not in an error. A
+  line that failed to parse is reported by its line number and not quoted back,
+  because the line that failed may be the password line.
+* **No answer file is shipped in the ISO**, and the build **MUST NOT** put one
+  there. A credential in a published image is the defect the locked live root
+  account exists to prevent. Write the file onto the medium you install from,
+  or give a path to one on another device.
+* The file is not copied onto the installed system. Nothing but `/etc/shadow`
+  carries the password once the install is finished.
 
 The power-off is not a convenience. Without it the machine sits at a login
 prompt until the harness kills it and the completion message is truncated

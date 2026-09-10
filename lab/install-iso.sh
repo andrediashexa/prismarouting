@@ -122,6 +122,27 @@ if ! grep -q "HexaRouting installed to /dev/vda" /tmp/install-clean.log; then
 fi
 echo "  install reported success"
 
+# It verified the disk before it said that (#83).
+#
+# The marker above only proves the installer exited zero, and it would exit
+# zero having looked at nothing if the verification were ever dropped or
+# short-circuited. The lines it prints are the evidence that it looked - on the
+# disk this lab actually installed, which is the only place blkid can answer
+# for the UUIDs in the fstab that was just written.
+#
+# test/test_installer.sh drives the broken trees this cannot produce: an
+# install that succeeds cannot demonstrate what a failed verification does.
+if grep -q "verifying the disk that was just written" /tmp/install-clean.log; then
+  echo "  [ ok ] the installer verified the disk before reporting success"
+  grep -E "\[ ok \] (GRUB boots|fstab:|root has a password)" \
+    /tmp/install-clean.log | sed 's/^/         /'
+else
+  echo "  [FAIL] the installer reported success without checking what it wrote:"
+  echo "         a box that boots to a grub> prompt reports as an install that"
+  echo "         worked, in front of whoever is standing there"
+  fail=1
+fi
+
 echo
 echo "=========== WHAT LANDED ON THE DISK ==========="
 # Read the installed filesystem directly. Booting it and logging in would be
