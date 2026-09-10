@@ -27,8 +27,10 @@ import time
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
                     _address_family_error, _is_loopback)
 from system import (System, SnmpDaemon, SnmpUser, User,
-                    can_anyone_log_in, redact, snmp_redact,
-                    validate_snmp, validate_ssh, SSH_FIELDS)
+                    can_anyone_log_in, can_anyone_configure, redact,
+                    snmp_redact, validate_snmp, validate_ssh, validate_role,
+                    SSH_FIELDS, GROUP_ADMIN, GROUP_CGNAT,
+                    ROLE_ADMIN, ROLE_CGNAT)
 import routes
 import vppapi
 
@@ -514,11 +516,13 @@ INSTALLER = os.environ.get("HEXA_INSTALLER", "/usr/sbin/hexarouting-install")
 #
 # root has both, because root can talk to the dataplane socket directly and
 # pretending otherwise would be theatre.
+#
+# The group names themselves live in system.py, beside the code that puts an
+# account in them: two spellings of "hexa-admin" would be two things to keep
+# in step, and the day they drifted the VTY would grant a role it had just
+# refused to write.
 CAP_CGNAT = "cgnat"
 CAP_ALL = "configure"
-
-GROUP_ADMIN = "hexa-admin"
-GROUP_CGNAT = "hexa-cgnat"
 
 
 def capabilities():
@@ -585,10 +589,12 @@ def cap_needed(delta):
 
 
 def role_name(caps):
+    # The words the `user` block takes, so that a refusal names the rank in
+    # the same spelling the operator would type to grant it.
     if CAP_ALL in caps:
-        return "administrator"
+        return ROLE_ADMIN
     if CAP_CGNAT in caps:
-        return "cgnat operator"
+        return ROLE_CGNAT
     return "read-only"
 
 
@@ -670,11 +676,15 @@ TREE = {
         "exit": ("leave the user", None),
     },
     "user": {
+        "role": ("what this account may change; without one it is read-only", {
+            ROLE_ADMIN: ("routing, CGNAT, accounts and the box itself", None),
+            ROLE_CGNAT: ("CGNAT configuration only", None)}),
         "ssh-key": ("an authorized public key, as it appears in "
                     "authorized_keys", "<type> <key> [comment]"),
         "password": ("a crypt hash, never a plaintext password "
                      "(openssl passwd -6)", "<hash>"),
         "no": ("remove", {"ssh-key": ("remove a key", "<key>"),
+                          "role": ("make the account read-only again", None),
                           "password": ("remove the password", None)}),
         "exit": ("leave the user", None),
     },
@@ -2337,6 +2347,21 @@ class Shell:
                 print("    give an account an authorized key, or allow "
                       "password authentication for one that has a password")
                 ok = False
+            # The same mistake through the other door. Removing the last
+            # administrator's role leaves a box that answers and forwards and
+            # that nobody can configure again: a cgnat operator cannot grant a
+            # role, so the way back is a root shell the operator may not have.
+            # Guarded the same way - refused only when THIS CHANGE is what
+            # causes it - so a box that already has no reachable administrator
+            # can still be worked on.
+            if (not can_anyone_configure(target.ssh, target.users)
+                    and can_anyone_configure(running.ssh, running.users)):
+                self.err("this change leaves nobody able to configure the "
+                         "box: afterwards no account that can log in over "
+                         f"SSH holds the {ROLE_ADMIN} role")
+                print(f"    give another account 'role {ROLE_ADMIN}' first, "
+                      "or allow root to log in over SSH")
+                ok = False
             # An interface this box does not have.
             #
             # "interface Ten0" - a typo for TenGigabitEthernet0/8/0 - creates
@@ -3723,9 +3748,21 @@ class Shell:
                          "plaintext password")
             else:
                 u.password = w[1]
+        elif w[0] == "role" and len(w) > 1:
+            why = validate_role(u.name, w[1])
+            if why:
+                self.err(why)
+            else:
+                u.role = w[1]
         elif w[:2] == ["no", "ssh-key"] and len(w) > 2:
             key = " ".join(w[2:])
             u.keys = [k for k in u.keys if k != key and not k.startswith(key)]
+        elif w[:2] == ["no", "role"]:
+            why = validate_role(u.name, "")
+            if why:
+                self.err(why)
+            else:
+                u.role = ""
         elif w[:2] == ["no", "password"]:
             u.password = ""
         else:

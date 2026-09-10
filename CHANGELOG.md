@@ -25,7 +25,49 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.60.0.
+[#184](https://github.com/andrediashexa/hexarouting/issues/184).
+
+### Fixed
+
+* **The VTY created every account in no group, so every role was
+  unreachable.** `apply_users()` ran `useradd`, `usermod -s` and `chpasswd`
+  and no group command at all, and the `user` block had no way to say what an
+  account may do. So `capabilities()` came back empty for every account the
+  product made: read-only for ever, unable to open the dataplane socket and
+  unable to run `vtysh`, with no product command to grant a role. The block
+  now takes `role administrator` or `role cgnat-operator`, `commit` writes the
+  memberships the role is made of — `hexa-admin`/`hexa-cgnat`, plus `vpp`,
+  `frr` and `frrvty`, which every account it owns needs before authorization
+  is even the question — and `no role` takes them away again. Only those five
+  are touched; a group an operator granted for their own reasons stays.
+* **The role is read back from the group database, not from the file.**
+  A membership removed by hand shows up in `show running-config` instead of
+  the VTY going on reporting a rank the box no longer grants.
+* **A commit that removes the last administrator is refused**, the way one
+  that leaves nobody able to log in over SSH already was, and for the same
+  reason: a CGNAT operator cannot grant a role, so the way back is a root
+  shell the operator may not have. `root` takes no role and its memberships
+  are never touched.
+* **The boot self-test stopped synthesising the group it was checking for.**
+  It proved reach with `setpriv --groups vpp`, which answers "would an account
+  in group `vpp` work" and never "is any account in group `vpp`" — so it was
+  green throughout the life of the defect above. It now reports an account
+  that holds a role and not the memberships, and makes the call as an account
+  the box really has.
+* **`lab/vty.sh` stopped configuring the box under test.** It granted every
+  membership with `usermod`, so the roles lab proved a box nobody received.
+  The accounts are created through the VTY, and the negative half is asserted
+  with them: an account given no role is in neither role group and can do
+  nothing but read.
+
+### Found and not fixed
+
+* A **root** API client puts `/dev/shm/global_vm` back to `root:root`, undoing
+  the `vpp.service` drop-in — after which every non-root client crashes in
+  `svm_region_map`. Measured in `lab/vty.sh`.
+* `frr-reload.py` logs to `/var/log/frr/frr-reload.log`, which the frr package
+  ships `drwxr-x--- frr:frr`, so a non-root administrator can validate a
+  routing change and cannot apply one.
 
 ## 0.60.0 — the second lab-only step, a trail that missed a change, and a diagnostic that lied
 

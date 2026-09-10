@@ -127,62 +127,79 @@ echo "=========== roles: what each account may change ==========="
 # Real accounts in real groups, run as themselves. No environment variable
 # that says "pretend I am read-only": a security check with a test-only way
 # past it is a security check with a way past it.
+#
+# The accounts are created BY THE PRODUCT and there is no usermod anywhere
+# below. This lab used to grant every membership by hand, so it proved a box
+# nobody receives: the VTY created accounts in no group at all, and every role
+# it reported was unreachable on every installed box (#184). A lab that
+# configures the box under test cannot notice the box failing to configure
+# itself.
+#
+# What is still done by hand is only what appliance/install.sh does at install
+# time and no lab image has.
+#
+# The two role groups. install.sh creates them; without them here the VTY
+# would refuse the role - correctly - and this lab would be testing the
+# refusal instead of the grant.
 groupadd -f hexa-admin 2>/dev/null
 groupadd -f hexa-cgnat 2>/dev/null
-for u in ro cg adm; do
-  id "$u" >/dev/null 2>&1 || useradd -M -s /bin/sh "$u" 2>/dev/null
-done
-usermod -aG hexa-cgnat cg 2>/dev/null
-usermod -aG hexa-admin adm 2>/dev/null
-# The dataplane socket is group-owned by vpp; every role needs to reach it to
-# read anything at all. That membership is what a read-only account MUST NOT
-# also give it - see docs/routing.md and issue #76.
-# One user per call: "usermod -aG vpp ro cg adm" adds only the first, and the
-# rest silently do not get the group - which looks exactly like an
-# authorization refusal three commands later.
-for u in ro cg adm; do usermod -aG vpp "$u" 2>/dev/null; done
-# The dataplane API socket and FRR's own socket are the two things every role
-# has to reach before authorization is even the question.
-#
-# The VPP sockets are NOT opened up here any more. They are group-owned by
-# "vpp" because lab/startup-lcp.conf carries the same "gid vpp" that
-# appliance/etc/vpp-base.conf ships, so the membership granted above is what
-# reaches them - the mechanism an installed box actually has. The
-# "chmod 0777 /run/vpp; chmod 0666 .../cli.sock" that used to stand here made
-# the sockets world-writable, which no appliance does: it meant this lab could
-# not have noticed the product shipping sockets no operator could open.
-for g in frr frrvty; do usermod -aG "$g" ro 2>/dev/null; usermod -aG "$g" cg 2>/dev/null; usermod -aG "$g" adm 2>/dev/null; done
-# No "chmod -R a+rX /etc/frr" any more. The frr package ships that directory as
-# frr:frr 0750, and membership of "frr" - granted just above - is what lets an
-# account read it. Opening it to the world instead meant the lab could not have
-# noticed an operator account that reaches vtysh on no installed box.
-# "api-segment { gid vpp }" group-owns /dev/shm/vpe-api and NOT
-# /dev/shm/global_vm, which a client maps as well - so a non-root API call
-# fails with svm_region_map(mmap open): Permission denied. Corrected here and
-# filed as #76: an appliance where only root can use the binary API is an
-# appliance where roles are decorative.
-chgrp vpp /dev/shm/global_vm 2>/dev/null
-chmod 0660 /dev/shm/global_vm 2>/dev/null
+# The login shell the VTY marks its accounts with. install.sh puts it there.
+install -D -m 0755 /src/appliance/hexash-login /usr/bin/hexash-login
 # An account that may configure has to be able to write the rollback store and
 # the saved configuration. Both hold the whole configuration, password hashes
 # included, so granting the capability grants sight of them - which is why the
 # directory is group-owned rather than world-anything. Also #76.
+#
+# hexa-cgnat owns it and hexa-admin is ADDITIVE on top: an administrator is a
+# member of both. Owning it with hexa-admin instead would have handed the
+# cgnat operator administrator rights, which is the opposite of the point.
 chgrp -R hexa-cgnat /etc/hexarouting 2>/dev/null
 chmod 0770 /etc/hexarouting 2>/dev/null
 mkdir -p /etc/hexarouting/rollback
 chgrp hexa-cgnat /etc/hexarouting/rollback 2>/dev/null
 chmod 0770 /etc/hexarouting/rollback 2>/dev/null
-# hexa-cgnat owns the configuration directory and hexa-admin is ADDITIVE on
-# top of it: an administrator is a member of both. Owning it with hexa-admin
-# instead would have handed the cgnat operator administrator rights, which is
-# the opposite of the point.
-usermod -aG hexa-cgnat adm 2>/dev/null
 # 0660 and group hexa-cgnat, which is what appliance/install.sh installs. It
 # used to be 0644 here: world-readable, which no appliance ships, and which
 # handed the read-only account a copy of every password hash on the box the
 # product deliberately does not give it.
 chgrp hexa-cgnat /etc/hexarouting/hexarouting.conf 2>/dev/null
 chmod 0660 /etc/hexarouting/hexarouting.conf 2>/dev/null
+
+echo "  -- the VTY creates the accounts and grants the roles"
+MAKE=$($HX -c "configure" \
+    -c "user ro" -c "exit" \
+    -c "user cg" -c "role cgnat-operator" -c "exit" \
+    -c "user netadm" -c "role administrator" -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$MAKE" | sed 's/^/    /'
+# The memberships as the SYSTEM reports them, not as the VTY believes them.
+# The whole defect was a VTY whose belief and the box's answer never met.
+RO_GROUPS=" $(id -nG ro 2>/dev/null) "
+CG_GROUPS=" $(id -nG cg 2>/dev/null) "
+NETADM_GROUPS=" $(id -nG netadm 2>/dev/null) "
+for u in ro cg netadm; do echo "    $u: $(id -nG $u 2>/dev/null)"; done
+# And as the VTY reads it BACK off the box, which is where the role in the
+# running configuration has to come from.
+ROLES_BACK=$($HX -c "show running-config" 2>/dev/null | grep -A2 "^user " \
+             | grep -E "^user |^ role " | tr '\n' '|')
+echo "    running-config: $ROLES_BACK"
+
+# "api-segment { gid vpp }" group-owns /dev/shm/vpe-api and NOT
+# /dev/shm/global_vm, which a client maps as well - so a non-root API call
+# fails with svm_region_map(mmap open): Permission denied. On an installed box
+# a drop-in on vpp.service does this; here it is done directly. Filed as #76:
+# an appliance where only root can use the binary API is an appliance where
+# roles are decorative.
+#
+# AFTER the last command run as root, and measured rather than assumed: a ROOT
+# API client puts /dev/shm/global_vm back to root:root, so every non-root
+# client that follows one crashes in svm_region_map. Doing it here is what
+# makes the accounts below usable; it is also a defect of its own, since on an
+# installed box hexarouting.service applies the configuration as root at every
+# boot and leaves the region that way.
+chgrp vpp /dev/shm/global_vm 2>/dev/null
+chmod 0660 /dev/shm/global_vm 2>/dev/null
+
 as() { u=$1; shift; su -s /bin/sh -c "HEXA_CONFIG=$HEXA_CONFIG python3 /src/src/hexash/hexash.py $*" "$u" 2>&1; }
 
 echo "  -- read-only account tries to configure"
@@ -208,6 +225,39 @@ CG_SHELL=$(as cg -c "'start shell'")
 printf '%s\n' "$CG_SHELL" | sed 's/^/    /'
 ALG_AFTER=$(vppctl show bpa config | grep -c "alg rtsp off")
 POOL_AFTER=$(vppctl show bpa pool | grep -c "pool nope")
+echo "  -- administrator passes the routing change the cgnat operator was refused"
+# "commit check" rather than "commit", and the reason is not that a check is
+# safer. frr-reload.py logs to /var/log/frr/frr-reload.log and the frr package
+# ships that directory drwxr-x--- frr:frr, so NO non-root account can APPLY a
+# routing change here whatever its groups - a defect of its own, about a
+# directory mode and not about a membership, and not fixed here.
+#
+# The check is not a weaker assertion of the thing this lab is about: the
+# authorization decision is made on a check-only run too, deliberately and for
+# its own reasons, so the refusal that hits the cgnat operator two commands
+# above would hit an administrator here just the same.
+NETADM_ROUTE=$(as netadm -c "'configure'" -c "'router bgp 65000'" \
+  -c "'neighbor 10.0.0.2 description NETADM-WAS-HERE'" -c "'exit'" \
+  -c "'commit check'")
+printf '%s\n' "$NETADM_ROUTE" | sed 's/^/    /'
+echo "  -- and applies a CGNAT change, because hexa-admin carries that too"
+NETADM_POOL=$(as netadm -c "'configure'" -c "'cgnat pool provider-a'" \
+  -c "'alg ftp off'" -c "'exit'" -c "'commit'")
+printf '%s\n' "$NETADM_POOL" | sed 's/^/    /'
+NETADM_REACHED=$(vppctl show bpa config | grep -c "alg ftp off")
+
+echo "  -- the demotion: 'no role', and what the box says afterwards"
+# A demotion that leaves the membership behind is not a demotion. Asserted
+# through what the account can still DO, because that is the thing the
+# membership decides - reading the group list back would only prove the VTY
+# ran a command.
+DEMOTE=$($HX -c "configure" -c "user netadm" -c "no role" -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$DEMOTE" | sed 's/^/    /'
+NETADM_GROUPS_AFTER=" $(id -nG netadm 2>/dev/null) "
+echo "    netadm afterwards: $NETADM_GROUPS_AFTER"
+NETADM_AFTER=$(as netadm -c "'configure'")
+printf '%s\n' "$NETADM_AFTER" | sed 's/^/    /'
+NETADM_SHOW_AFTER=$(as netadm -c "'show running-config'")
 
 echo
 echo "=========== the box's own names, offered by the VTY (#98) ==========="
@@ -321,11 +371,82 @@ expect_in "and cannot reach a shell" "permission denied" "$RO_SHELL"
 # VTY. Read-only must still be able to read.
 expect_in "but can still read the running configuration" \
   "cgnat pool" "$RO_SHOW"
+# Which needs the dataplane socket AND FRR's, both group-owned: the first line
+# comes from VPP over the binary API and the second from vtysh. An account
+# outside vpp, frr and frrvty reads neither, so this is where those three
+# memberships are proven rather than merely written.
+expect_in "including the routing half, which comes from FRR" \
+  "router bgp 65000" "$RO_SHOW"
 
 expect_in "a cgnat operator can change a pool" "commit complete" "$CG_OK"
 expect "and the change reached the dataplane" test "${ALG_AFTER:-0}" -ge 1
 expect_in "but cannot change routing" "permission denied" "$CG_ROUTE"
 expect_in "and cannot reach a shell either" "permission denied" "$CG_SHELL"
+
+expect_in "an administrator passes the routing change the operator was refused" \
+  "configuration check succeeds" "$NETADM_ROUTE"
+expect_in "and applies a CGNAT change, since hexa-admin carries that too" \
+  "commit complete" "$NETADM_POOL"
+expect "and that change reached the dataplane" test "${NETADM_REACHED:-0}" -ge 1
+
+# --- issue #184: the memberships come from the PRODUCT ---
+#
+# Nothing above ran usermod. Every membership asserted here was written by
+# `commit`, which is the whole difference between a role an operator is given
+# and a role a lab hands out on the product's behalf.
+expect_in "the VTY says it granted the role group" "added to group hexa-admin" \
+  "$MAKE"
+expect_in "an administrator is put in hexa-admin" " hexa-admin " "$NETADM_GROUPS"
+expect_in "and in hexa-cgnat with it, which owns the configuration directory" \
+  " hexa-cgnat " "$NETADM_GROUPS"
+expect_in "a cgnat operator is put in hexa-cgnat" " hexa-cgnat " "$CG_GROUPS"
+expect_not_in "and NOT in hexa-admin" " hexa-admin " "$CG_GROUPS"
+# The reach every role needs before authorization is even the question: VPP's
+# sockets are group vpp and /etc/frr is group frr, so an account outside them
+# is refused by the SOCKET on every command - including the read-only ones.
+#
+# Nothing in this lab opens those up, and nothing may. lab/startup-lcp.conf
+# carries the same "gid vpp" that appliance/etc/vpp-base.conf ships and
+# /etc/frr keeps the frr package's own frr:frr 0750, so the membership the
+# product wrote is what reaches them - the mechanism an installed box has. A
+# "chmod 0666 cli.sock" or a "chmod -R a+rX /etc/frr" here would make these
+# pass on a box where no operator can open either.
+for g in vpp frr frrvty; do
+  expect_in "every account the VTY makes reaches $g: read-only" " $g " "$RO_GROUPS"
+  expect_in "  cgnat operator" " $g " "$CG_GROUPS"
+  expect_in "  administrator" " $g " "$NETADM_GROUPS"
+done
+# Read back off the box rather than remembered, or the running configuration
+# would go on reporting a role somebody removed by hand (#161).
+expect_in "the running configuration reports the role it granted" \
+  "user netadm| role administrator" "$ROLES_BACK"
+expect_in "and the other one" "user cg| role cgnat-operator" "$ROLES_BACK"
+expect_not_in "and reports no role for the account that has none" \
+  "user ro| role" "$ROLES_BACK"
+
+# --- an account with no role can do nothing ---
+#
+# The negative half. `ro` was created by the product and given nothing, and
+# the assertions above already show it cannot configure, cannot commit and
+# cannot reach a shell. What is left is that being given nothing is a real
+# state and not an accident of the groups.
+expect_not_in "an account with no role is in neither role group" \
+  " hexa-admin " "$RO_GROUPS"
+expect_not_in "  nor the other" " hexa-cgnat " "$RO_GROUPS"
+
+# --- a demotion is one ---
+expect_in "'no role' says it took the membership away" \
+  "removed from group hexa-admin" "$DEMOTE"
+expect_not_in "and the box no longer has the account in it" \
+  " hexa-admin " "$NETADM_GROUPS_AFTER"
+expect_not_in "nor in hexa-cgnat" " hexa-cgnat " "$NETADM_GROUPS_AFTER"
+expect_in "the demoted administrator is refused where it was allowed" \
+  "permission denied" "$NETADM_AFTER"
+# But not stripped of everything: a demotion makes an account read-only, and a
+# read-only account that cannot read is a broken account, not a demoted one.
+expect_in "and can still read" "cgnat pool" "$NETADM_SHOW_AFTER"
+expect_in "  because the reach it needs to read was left alone" " vpp " \
+  "$NETADM_GROUPS_AFTER"
 
 # --- the VTY offers what the box has (#98) ---
 #

@@ -50,15 +50,95 @@ _VALID = {
     "password-authentication": ("yes", "no"),
 }
 
+# ------------------------------------------------------------------- roles
+#
+# The role an operator chooses, and the POSIX groups it is made of. Groups
+# rather than a database of this appliance's own: an appliance that invents
+# its own accounts is an appliance whose accounts nobody deprovisions.
+ROLE_ADMIN = "administrator"
+ROLE_CGNAT = "cgnat-operator"
+ROLES = (ROLE_ADMIN, ROLE_CGNAT)
+
+GROUP_ADMIN = "hexa-admin"
+GROUP_CGNAT = "hexa-cgnat"
+
+# Not a role and not the operator's to choose: this is the reach an account
+# needs before authorization is even the question, and EVERY account this VTY
+# owns gets it - a read-only account that cannot open these has no reading to
+# do either.
+#
+#   vpp      VPP creates its CLI and API sockets srwxrwxr-x root:vpp, so the
+#            connect bit belongs to the group. Outside it every command fails
+#            with permission denied, the read-only ones included.
+#   frr      /etc/frr is drwxr-x--- frr:frr and vtysh.conf is 0640 frr:frr.
+#   frrvty   the daemons' .vty sockets, which is what vtysh talks to.
+#
+# So an account granted a role and left out of these has a role it cannot
+# exercise, which is the state every account this VTY created used to be in.
+REACH_GROUPS = ("vpp", "frr", "frrvty")
+
+# hexa-admin is ADDITIVE on top of hexa-cgnat rather than a superset by name:
+# /etc/hexarouting and the rollback store under it are group hexa-cgnat mode
+# 0770 (appliance/install.sh), and an administrator that is not in that group
+# cannot record the rollback revision for the change it just made.
+ROLE_GROUPS = {
+    ROLE_ADMIN: (GROUP_ADMIN, GROUP_CGNAT),
+    ROLE_CGNAT: (GROUP_CGNAT,),
+}
+
+# The only memberships this VTY adds and removes. An operator may have put an
+# account in "sudo" or in a monitoring group for reasons of their own, and a
+# demotion that silently took those away would be this VTY deciding something
+# nobody asked it to decide.
+MANAGED_GROUPS = (GROUP_ADMIN, GROUP_CGNAT) + REACH_GROUPS
+
+
+def groups_for(role) -> set:
+    """The memberships an account with this role must have."""
+    return set(REACH_GROUPS) | set(ROLE_GROUPS.get(role, ()))
+
+
+def role_from_groups(names) -> str:
+    """
+    The role a set of group names amounts to, or "" for read-only.
+
+    Deliberately the same two questions, in the same order, that
+    hexash.capabilities() asks of the running process - a running
+    configuration that named a role the VTY would not grant would be a report
+    of something that is not true.
+    """
+    if GROUP_ADMIN in names:
+        return ROLE_ADMIN
+    if GROUP_CGNAT in names:
+        return ROLE_CGNAT
+    return ""
+
+
+def validate_role(name, role):
+    """Why this account cannot be given this role, or None."""
+    if name == "root":
+        # root has every capability by being root - capabilities() returns
+        # both for euid 0 and never looks at a group. Writing a role here
+        # would be a line the box could not read back, so every commit
+        # afterwards would see a difference and try to apply it again.
+        return ("root's rights come from being root, not from a group: this "
+                "VTY does not manage root's memberships")
+    if role and role not in ROLES:
+        return f"role '{role}': expected one of " + ", ".join(ROLES)
+    return None
+
 
 class User:
     def __init__(self, name):
         self.name = name
         self.keys: list[str] = []
         self.password = ""      # crypt(3) hash, or "" for none
+        self.role = ""          # "" is read-only: no role group at all
 
     def lines(self) -> list[str]:
         out = [f"user {self.name}"]
+        if self.role:
+            out.append(f" role {self.role}")
         out += [f" ssh-key {k}" for k in self.keys]
         if self.password:
             out.append(f" password {self.password}")
@@ -169,6 +249,23 @@ def can_anyone_log_in(ssh: dict, users: dict):
     return able
 
 
+def can_anyone_configure(ssh: dict, users: dict):
+    """
+    Who could still reach this box over SSH AND change anything. The names.
+
+    The same mistake as locking everybody out, by the other door. Removing the
+    last administrator's role leaves a box that answers, forwards and reports,
+    and that nobody can configure again through the product: a cgnat operator
+    cannot create an account or grant a role, so there is no way back that
+    does not involve a root shell somebody may not have.
+
+    root is counted whenever root could log in, because root holds every
+    capability by being root.
+    """
+    return [n for n in can_anyone_log_in(ssh, users)
+            if n == "root" or users[n].role == ROLE_ADMIN]
+
+
 def validate_ssh(settings: dict):
     """Why a setting is refused, or None. Checked before anything is written."""
     for k, v in settings.items():
@@ -247,17 +344,31 @@ class System:
         by definition an account of this appliance.
         """
         users = {}
+        members, gid_group = self._read_groups()
         try:
             with open(self.root + "/etc/passwd") as f:
                 for line in f:
                     p = line.rstrip("\n").split(":")
                     if len(p) < 7:
                         continue
-                    name, home, sh = p[0], p[5], p[6]
+                    name, gid, home, sh = p[0], p[3], p[5], p[6]
                     if name != "root" and sh != self.shell:
                         continue
                     u = User(name)
                     u.keys = self._read_keys(home)
+                    # Read from the box, never remembered. A role kept in the
+                    # saved configuration would go on being reported after
+                    # somebody removed the membership by hand, and the VTY
+                    # would be describing an account it no longer describes
+                    # (#161).
+                    #
+                    # root is skipped rather than examined: its rights do not
+                    # come from a group, so a role read off one would be
+                    # noise - and this VTY does not manage its memberships.
+                    if name != "root":
+                        u.role = role_from_groups(
+                            members.get(name, set())
+                            | {gid_group.get(gid, "")})
                     users[name] = u
         except OSError:
             return users
@@ -276,6 +387,31 @@ class System:
             # "!" and "*" are a locked account, not a password.
             u.password = h if h and not h.startswith(("!", "*")) else ""
         return users
+
+    def _read_groups(self):
+        """
+        (name -> the groups listing it, gid -> group name), from /etc/group.
+
+        The primary group is returned separately because it is not in any
+        member list: an account whose primary group is a role group holds that
+        role as far as the system is concerned, so a reader that only looked
+        at the member lists would report read-only for an account the box
+        lets configure.
+        """
+        members, gid_group = {}, {}
+        try:
+            with open(self.root + "/etc/group") as f:
+                for line in f:
+                    p = line.rstrip("\n").split(":")
+                    if len(p) < 4:
+                        continue
+                    gid_group[p[2]] = p[0]
+                    for m in p[3].split(","):
+                        if m:
+                            members.setdefault(m, set()).add(p[0])
+        except OSError:
+            pass
+        return members, gid_group
 
     def _read_keys(self, home):
         try:
@@ -369,6 +505,16 @@ class System:
                 # whose shell drifted would silently stop being ours.
                 self._run(["usermod", "-s", self.shell, name])
 
+            if name != "root":
+                # Every time, not only when the role changed: this is what
+                # repairs an account whose membership drifted, and it is
+                # cheap - the memberships are read from /etc/group and only
+                # the difference is written.
+                ok, why, gmsgs = self._apply_groups(name, u.role)
+                msgs += gmsgs
+                if not ok:
+                    return False, msgs + [why]
+
             old = have.get(name)
             if not old or old.keys != u.keys:
                 ok, why = self._write_keys(name, u.keys)
@@ -384,6 +530,44 @@ class System:
                 # Deliberately does not say what it was set to.
                 msgs.append(f"{name}: password changed")
         return True, msgs
+
+    def _apply_groups(self, name, role):
+        """
+        Put the account in the groups its role implies, and take it out of the
+        ones it no longer has. Returns (ok, why, [messages]).
+
+        The removal is half the point. A demotion that leaves the membership
+        behind is not a demotion: the VTY would report read-only and the box
+        would go on granting the role, and the account would keep the reach
+        the role was the only reason for.
+        """
+        want = groups_for(role)
+        members, _ = self._read_groups()
+        have = members.get(name, set())
+        msgs = []
+        for g in MANAGED_GROUPS:
+            if g in want and g not in have:
+                rc, out = self._run(["gpasswd", "-a", name, g])
+                if rc not in (0, 127):
+                    why = f"{name}: cannot join group {g}: {out.strip()[:120]}"
+                    # A role group that could not be joined is a role the
+                    # operator asked for and did not get, so the commit fails
+                    # rather than reporting a rank the box will not honour.
+                    # A missing reach group is said out loud and does not stop
+                    # the account being created: on a box without FRR there is
+                    # no frrvty group to join and no vtysh to run either.
+                    if g in (GROUP_ADMIN, GROUP_CGNAT):
+                        return False, why, msgs
+                    msgs.append(why + " - it cannot use what needs that group")
+                    continue
+                msgs.append(f"{name}: added to group {g}")
+            elif g not in want and g in have:
+                rc, out = self._run(["gpasswd", "-d", name, g])
+                if rc not in (0, 127):
+                    return False, (f"{name}: cannot leave group {g}: "
+                                   + out.strip()[:120]), msgs
+                msgs.append(f"{name}: removed from group {g}")
+        return True, "", msgs
 
     def _write_keys(self, name, keys):
         home = f"{self.root}/root" if name == "root" else f"{self.root}/home/{name}"

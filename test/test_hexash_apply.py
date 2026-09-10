@@ -15,10 +15,12 @@ import contextlib
 import io
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
 import config      # noqa: E402
 import hexash      # noqa: E402
+import system      # noqa: E402
 import vppapi      # noqa: E402
 
 fail = 0
@@ -220,6 +222,210 @@ check(vppapi.unsendable(
     {"sub_if_flags": "SUB_IF_API_FLAG_TWO_TAGS"}) == "",
     "the spelling hexash uses must not be")
 print("  integer refused, single name allowed")
+
+# ------------------------------------------------------- accounts and roles
+#
+# The other end of the same authorization: the checks above ask what an account
+# may do, and these ask whether the account the VTY created is in the groups
+# that decide it. It created every account in NO group, so `capabilities()`
+# came back empty for all of them and the role the operator granted did not
+# exist anywhere but in the configuration file (#184).
+#
+# Run against a fake root and a runner that records argv rather than a real
+# box: the assertion is which memberships are written and which are taken
+# away, and useradd/gpasswd on the machine running the suite would be a real
+# account nobody asked for.
+
+
+class FakeBox:
+    """A /etc/passwd, /etc/group and /etc/shadow, plus the commands run on them."""
+
+    def __init__(self, tmp, passwd="", group="", refuse=()):
+        self.dir = tmp
+        self.calls = []
+        self.refuse = set(refuse)
+        os.makedirs(os.path.join(tmp, "etc"), exist_ok=True)
+        for name, text in (("passwd", passwd), ("group", group),
+                           ("shadow", "")):
+            with open(os.path.join(tmp, "etc", name), "w") as f:
+                f.write(text)
+
+    def run(self, argv, stdin=None, timeout=30):
+        self.calls.append(argv)
+        if argv[0] == "gpasswd" and argv[-1] in self.refuse:
+            return 3, f"gpasswd: group '{argv[-1]}' does not exist"
+        return 0, ""
+
+    def system(self):
+        return system.System(runner=self.run, root=self.dir,
+                             shell="/usr/bin/hexash-login")
+
+    def groups(self, name):
+        """The memberships the recorded gpasswd calls would have produced."""
+        have = set()
+        for g in system.MANAGED_GROUPS:
+            if ["gpasswd", "-a", name, g] in self.calls:
+                have.add(g)
+            if ["gpasswd", "-d", name, g] in self.calls:
+                have.discard(g)
+        return have
+
+
+PASSWD = ("root:x:0:0::/root:/bin/bash\n"
+          "noc:x:1000:1000::/home/noc:/usr/bin/hexash-login\n")
+GROUPS_NONE = "vpp:x:900:\nfrr:x:901:\nfrrvty:x:902:\n" \
+              "hexa-admin:x:903:\nhexa-cgnat:x:904:\nnoc:x:1000:\n"
+
+print("\n=== the role is read back from the box, not remembered ===")
+# #161's lesson. A role kept in the saved configuration goes on being reported
+# after somebody removes the membership by hand, and the VTY ends up describing
+# an account it no longer describes.
+tmp = tempfile.mkdtemp()
+box = FakeBox(tmp, PASSWD, GROUPS_NONE.replace("hexa-admin:x:903:",
+                                               "hexa-admin:x:903:noc"))
+u = box.system().read_users()["noc"]
+check(u.role == system.ROLE_ADMIN,
+      f"membership of hexa-admin must read back as a role: {u.role!r}")
+check(" role administrator" in u.lines(),
+      f"and appear in the running configuration: {u.lines()}")
+print(f"  {u.lines()}")
+
+# The primary group is not in any member list, and an account whose primary
+# group is a role group holds that role as far as the system is concerned - so
+# a reader that only looked at the member lists would report read-only for an
+# account the box lets configure.
+box = FakeBox(tmp, PASSWD.replace("noc:x:1000:1000", "noc:x:1000:904"),
+              GROUPS_NONE)
+check(box.system().read_users()["noc"].role == system.ROLE_CGNAT,
+      "a role held as the primary group must be read back too")
+
+box = FakeBox(tmp, PASSWD, GROUPS_NONE)
+check(box.system().read_users()["noc"].role == "",
+      "and an account in neither group is read-only")
+check(box.system().read_users()["root"].role == "",
+      "root is never given a role: its rights do not come from a group")
+
+print("\n=== the memberships the role is MADE of are written ===")
+for role, expect in ((system.ROLE_ADMIN,
+                      {"hexa-admin", "hexa-cgnat", "vpp", "frr", "frrvty"}),
+                     (system.ROLE_CGNAT,
+                      {"hexa-cgnat", "vpp", "frr", "frrvty"}),
+                     ("", {"vpp", "frr", "frrvty"})):
+    box = FakeBox(tempfile.mkdtemp(), PASSWD, GROUPS_NONE)
+    want = system.User("noc")
+    want.role = role
+    ok, msgs = box.system().apply_users({"noc": want}, {"noc": system.User("noc")})
+    check(ok, f"applying role {role!r} must succeed: {msgs}")
+    check(box.groups("noc") == expect,
+          f"role {role or 'read-only'!r}: {sorted(box.groups('noc'))} "
+          f"!= {sorted(expect)}")
+    print(f"  {role or 'read-only'}: {' '.join(sorted(box.groups('noc')))}")
+
+# vpp, frr and frrvty are not a role and are not optional. VPP's sockets are
+# group vpp and /etc/frr is group frr, so an account outside them is refused by
+# the SOCKET on every command, read-only ones included - which is why the
+# read-only case above still gets all three.
+check("vpp" in system.groups_for(""),
+      "a read-only account must still be able to reach the dataplane")
+
+print("\n=== a demotion removes the membership ===")
+# Or it is not a demotion: the VTY would report read-only and the box would go
+# on granting the role.
+box = FakeBox(tempfile.mkdtemp(), PASSWD,
+              GROUPS_NONE.replace("hexa-admin:x:903:", "hexa-admin:x:903:noc")
+                         .replace("hexa-cgnat:x:904:", "hexa-cgnat:x:904:noc"))
+had = system.User("noc")
+had.role = system.ROLE_ADMIN
+ok, msgs = box.system().apply_users({"noc": system.User("noc")}, {"noc": had})
+check(ok, f"the demotion must apply: {msgs}")
+check(["gpasswd", "-d", "noc", "hexa-admin"] in box.calls,
+      f"hexa-admin must be taken away: {box.calls}")
+check(["gpasswd", "-d", "noc", "hexa-cgnat"] in box.calls,
+      f"and hexa-cgnat with it: {box.calls}")
+check(["gpasswd", "-d", "noc", "vpp"] not in box.calls,
+      "but not the reach, which a read-only account needs to read at all")
+print(f"  {[c for c in box.calls if c[0] == 'gpasswd']}")
+
+# A group this VTY was never asked to manage stays. An operator may have put
+# the account in "sudo" for reasons of their own, and a demotion that took it
+# away would be this VTY deciding something nobody asked it to decide.
+box = FakeBox(tempfile.mkdtemp(), PASSWD, GROUPS_NONE + "sudo:x:27:noc\n")
+box.system().apply_users({"noc": system.User("noc")}, {"noc": system.User("noc")})
+check(not [c for c in box.calls if c[:2] == ["gpasswd", "-d"] and c[-1] == "sudo"],
+      f"an unmanaged group must be left alone: {box.calls}")
+
+print("\n=== root's memberships are never touched ===")
+box = FakeBox(tempfile.mkdtemp(), PASSWD, GROUPS_NONE)
+box.system().apply_users({"root": system.User("root")},
+                         {"root": system.User("root")})
+check(box.calls == [], f"nothing may be run against root: {box.calls}")
+check(system.validate_role("root", system.ROLE_ADMIN) is not None,
+      "and a role typed on root is refused rather than written")
+print(f"  {system.validate_role('root', system.ROLE_ADMIN)}")
+
+print("\n=== a role group that cannot be joined fails the commit ===")
+# The rank was granted and did not happen. Reporting success here is how the
+# defect this file is about survived: the operator is told the account is an
+# administrator and every command it runs is refused.
+box = FakeBox(tempfile.mkdtemp(), PASSWD, GROUPS_NONE,
+              refuse={"hexa-admin"})
+want = system.User("noc")
+want.role = system.ROLE_ADMIN
+ok, msgs = box.system().apply_users({"noc": want}, {"noc": system.User("noc")})
+check(ok is False, "a role that could not be granted must fail the commit")
+check(any("hexa-admin" in m for m in msgs),
+      f"and the message must name the group: {msgs}")
+print(f"  {msgs[-1]}")
+
+# A reach group that is missing does not stop the account existing: on a box
+# without FRR there is no frrvty group to join and no vtysh to run either.
+box = FakeBox(tempfile.mkdtemp(), PASSWD, GROUPS_NONE, refuse={"frrvty"})
+ok, msgs = box.system().apply_users({"noc": system.User("noc")},
+                                    {"noc": system.User("noc")})
+check(ok is True, f"a missing reach group must not fail the commit: {msgs}")
+check(any("frrvty" in m for m in msgs),
+      f"but it must be said out loud: {msgs}")
+
+print("\n=== removing the last administrator is refused ===")
+# The lockout refusal through the other door. A box nobody can configure again
+# is the mistake an operator makes once, from the other side of the country:
+# a cgnat operator cannot grant a role, so the way back is a root shell they
+# may not have.
+KEY = "ssh-ed25519 AAAAfake noc@lab"
+RUNNING = (f"ssh permit-root-login no\nuser noc\n role administrator\n"
+           f" ssh-key {KEY}\n exit\n")
+DEMOTED = f"ssh permit-root-login no\nuser noc\n ssh-key {KEY}\n exit\n"
+sh = shell_with(FakeApi(), running_text=RUNNING)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    ok = sh.apply(config.Config.parse(DEMOTED), check_only=True)
+check(ok is False, "demoting the last administrator must be refused")
+check("nobody able to configure" in buf.getvalue(),
+      f"and say why: {buf.getvalue()!r}")
+print("  " + [l for l in buf.getvalue().splitlines() if "error" in l][0])
+
+# Refused only when THIS CHANGE is what causes it, exactly as the SSH lockout
+# is. A box that already has no reachable administrator - freshly installed,
+# reached by console - must still be able to commit.
+sh = shell_with(FakeApi(), running_text=DEMOTED)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    ok = sh.apply(config.Config.parse(DEMOTED + "user two\n exit\n"),
+                  check_only=True)
+check(ok is True,
+      f"a box with no administrator already must still commit: {buf.getvalue()!r}")
+
+# And a demotion that leaves another administrator behind is not refused, or
+# the refusal would make demotion impossible rather than safe.
+TWO = RUNNING + f"user two\n role administrator\n ssh-key {KEY}\n exit\n"
+sh = shell_with(FakeApi(), running_text=TWO)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    ok = sh.apply(config.Config.parse(
+        DEMOTED + f"user two\n role administrator\n ssh-key {KEY}\n exit\n"),
+        check_only=True)
+check(ok is True, f"one of two administrators may be demoted: {buf.getvalue()!r}")
+print("  one of two may be demoted; the last one may not")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
