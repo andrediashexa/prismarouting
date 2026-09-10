@@ -177,6 +177,17 @@ clib_error_t *bpa_pool_del (u8 *name);
 void bpa_outside_window_update (void);
 void bpa_auto_mss_update (void);
 /*
+ * Attaches CGNAT to an interface, or takes it off. Returns what
+ * vnet_feature_enable_disable() returned, and does nothing else when that
+ * failed.
+ *
+ * EVERY caller MUST come through here rather than toggle the feature itself:
+ * the toggle is only the first of the things an attach has to do, and the
+ * rest of them are silent when they are missing (#183).
+ */
+int bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
+					  int enable);
+/*
  * Warns about every timeout below the floor its RFC sets. `vm` may be null,
  * and then only the log hears it. Called where a timeout CHANGES, never on the
  * datapath.

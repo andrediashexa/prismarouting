@@ -7,7 +7,6 @@
 #include "bpa_mss.h"
 #include "bpa_errors.h"
 #include "bpa_log.h"
-#include <vnet/ip/reass/ip4_sv_reass.h>
 #include <vnet/fib/fib_table.h>
 
 u8 *
@@ -796,46 +795,15 @@ bpa_interface_command_fn (vlib_main_t *vm, unformat_input_t *input,
     }
 
   {
-    const char *feature;
-    int rv;
+    /* Everything an attach entails, including the trail entry: typed here
+     * there is no session to ask, so it is recorded as unattributed via cli -
+     * which is the honest answer and not the same as leaving the change out
+     * of the record. */
+    int rv = bpa_interface_feature_enable_disable (sw_if_index, is_in, enable);
 
-    if (bpa_main.n_workers)
-      feature = is_in ? "bpa-in2out-handoff" : "bpa-out2in-handoff";
-    else
-      feature = is_in ? "bpa-in2out" : "bpa-out2in";
-
-    rv = vnet_feature_enable_disable ("ip4-unicast", feature, sw_if_index,
-				      enable, 0, 0);
-
-    /*
-     * Shallow virtual reassembly: it keeps the ports from the first fragment
-     * and attaches them to the following ones. Without it a fragment with no
-     * port matches no session and is dropped. It is refcounted, so coexisting
-     * with another feature that also uses it is not a problem.
-     */
-    if (!rv)
-      ip4_sv_reass_enable_disable_with_refcnt (sw_if_index, enable);
     if (rv)
       error = clib_error_return (0, "vnet_feature_enable_disable failed: %d",
 				 rv);
-    else
-      {
-	/* The set of interfaces the CGNAT runs on has just changed, and that
-	 * set is what "tcp-mss auto" is the minimum over. */
-	bpa_auto_mss_update ();
-
-	/* And it is a configuration change, so it is in the trail like any
-	 * other. Typed here there is no session to ask, so it is recorded as
-	 * unattributed via cli - which is the honest answer and not the same
-	 * as leaving the change out of the record. */
-	{
-	  u8 *ifname = format (0, "%U", format_vnet_sw_if_index_name, vnm,
-			       sw_if_index);
-
-	  bpa_audit_interface (enable ? "attach" : "detach", ifname, is_in);
-	  vec_free (ifname);
-	}
-      }
   }
 
 done:
