@@ -1,6 +1,9 @@
 #!/bin/sh
-# Plano de controle completo: BGP, OSPF e IS-IS sobre o TAP do linux_cp,
-# with all three learned routes reaching the VPP FIB.
+# O plano de controle sobre o TAP do linux_cp, e a interface por baixo dele.
+#
+# BGP, OSPF e IS-IS chegando na FIB do VPP, e o que a VTY dirige na interface
+# que os carrega: MTU, enderecos, descricao, estado administrativo, rotas
+# estaticas com rollback, e router advertisements.
 #
 #   [netns peer] AS 65001 / OSPF / IS-IS       [default] HexaRouting
 #     dum-bgp   203.0.113.0/24  -- BGP  -->
@@ -11,6 +14,18 @@
 # IS-IS is the test that matters for punt: it does not run over IP, it uses CLNS
 # direto sobre o enlace. Se o caminho de punt so entendesse IPv4/IPv6, BGP e
 # OSPF subiriam e o IS-IS ficaria mudo.
+#
+# BGP policy - route-maps, AS-path lists, communities, graceful shutdown and
+# RPKI - is lab/bgp-policy.sh and is no longer here. The two halves in one file
+# ran over 400 s, which made this the slowest lab in the suite and therefore
+# its floor: the per-lab cap in tools/run-all-labs.sh had to be raised twice in
+# one day to stop it being killed (#167).
+#
+# The topology went with it. The second link, the third autonomous system and
+# the second BGP session exist ONLY so a policy has two paths to choose between
+# and a second origin to leave alone; nothing left in this file reads them, and
+# a namespace nothing asserts on is a minute of convergence that proves
+# nothing. They are built in bgp-policy.sh instead.
 set -u
 mkdir -p /run/vpp /vpp_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -20,37 +35,12 @@ cd /src
 
 ip link add veth-out type veth peer name veth-vpp 2>/dev/null
 ip link set veth-vpp up
-# A SECOND link to the same peer, so there are two paths to the same prefix.
-# Without it `set local-preference` has nothing to choose between, and a policy
-# test would be asserting that a value appears in a table rather than that it
-# changed which way packets go (#144).
-ip link add veth2-out type veth peer name veth2-vpp 2>/dev/null
-ip link set veth2-vpp up
 
 ip netns add peer 2>/dev/null
 ip link set veth-out netns peer
 ip netns exec peer ip link set lo up
 ip netns exec peer ip link set veth-out up
 ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
-ip link set veth2-out netns peer
-ip netns exec peer ip link set veth2-out up
-ip netns exec peer ip addr add 10.1.0.2/24 dev veth2-out
-
-# A THIRD autonomous system, one hop behind the peer. Without it every path
-# this box receives has the same origin, and "the other AS is not affected"
-# would be asserted against nothing (#146).
-ip netns add origin 2>/dev/null
-ip link add veth3-peer type veth peer name veth3-origin 2>/dev/null
-ip link set veth3-peer netns peer
-ip link set veth3-origin netns origin
-ip netns exec peer ip link set veth3-peer up
-ip netns exec peer ip addr add 10.2.0.1/24 dev veth3-peer
-ip netns exec origin ip link set lo up
-ip netns exec origin ip link set veth3-origin up
-ip netns exec origin ip addr add 10.2.0.2/24 dev veth3-origin
-ip netns exec origin ip link add dum-origin type dummy
-ip netns exec origin ip addr add 198.51.100.1/24 dev dum-origin
-ip netns exec origin ip link set dum-origin up
 # one prefix per protocol, so there is no doubt about which brought which
 for d in bgp:203.0.113.1/24 ospf:198.18.0.1/24 isis:198.19.0.1/24; do
   n=${d%%:*}; a=${d##*:}
@@ -78,15 +68,6 @@ vppctl set interface mtu 1500 host-veth-vpp
 vppctl lcp osi-proto enable 0x83
 
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
-
-# The second link. No OSPF or IS-IS on it - it exists to carry a second BGP
-# session, and adding IGP would give the FIB a third opinion about the same
-# prefix and make the policy test unreadable.
-vppctl create host-interface name veth2-vpp
-vppctl set interface state host-veth2-vpp up
-vppctl lcp create host-veth2-vpp host-if vppwan1
-vppctl set interface mtu 1500 host-veth2-vpp
-vppctl set interface ip address host-veth2-vpp 10.1.0.1/24
 
 # ---------------- HexaRouting ----------------
 mkdir -p /var/run/frr /etc/frr
@@ -119,17 +100,15 @@ chown -R frr:frr /var/run/frr /etc/frr
 # installed box inherits Debian's /etc/frr/daemons, where bgpd, ospfd and isisd
 # are all "no" (#99). Starting them by hand here is what let that go unnoticed,
 # so it is said out loud rather than left as a list somebody skims.
-# RPKI is a loadable MODULE, and `bgpd --version` reports --enable-rpki whether
-# or not it is there. Installed from the same repository and at the same
-# version as frr itself, so this adds no new source. Without it every RPKI
-# command answers "bgpd is not running", because bgpd refuses to start when
-# told to load a module it cannot find - a misleading symptom worth knowing
-# about, and the reason the boot self-test checks for it by name.
-apt-get install -y -qq frr-rpki-rtrlib stayrtr >/dev/null 2>&1
 for d in zebra ospfd isisd; do
   /usr/lib/frr/$d -d -A 127.0.0.1 -f /etc/frr/$d.conf
 done
-/usr/lib/frr/bgpd -d -A 127.0.0.1 -M rpki -f /etc/frr/bgpd.conf
+# No -M rpki here, and no frr-rpki-rtrlib to install. Nothing in this lab
+# validates anything, and bgpd refuses to start when told to load a module it
+# cannot find - which is a whole lab reporting "bgpd is not running" for a
+# feature it never exercises. That module, and the cache behind it, are
+# lab/bgp-policy.sh.
+/usr/lib/frr/bgpd -d -A 127.0.0.1 -f /etc/frr/bgpd.conf
 # mgmtd and staticd: on FRR 10 a static route is configured through mgmtd and
 # served by staticd, and without them vtysh answers "mgmtd is not running" to
 # every "ip route" - which is how a static route can be typed, accepted and
@@ -150,13 +129,9 @@ router bgp 65001
  bgp router-id 10.0.0.2
  no bgp ebgp-requires-policy
  neighbor 10.0.0.1 remote-as 65000
- neighbor 10.1.0.1 remote-as 65000
- neighbor 10.2.0.2 remote-as 65002
  address-family ipv4 unicast
   network 203.0.113.0/24
   neighbor 10.0.0.1 activate
-  neighbor 10.1.0.1 activate
-  neighbor 10.2.0.2 activate
  exit-address-family
 EOF
 cat > /etc/frr/peer/ospfd.conf <<'EOF'
@@ -183,34 +158,15 @@ for d in zebra bgpd ospfd isisd; do
   ip netns exec peer /usr/lib/frr/$d -d -N peer -A 127.0.0.1 -f /etc/frr/peer/$d.conf
 done
 
-# ---------------- the third AS, one hop behind the peer ----------------
-mkdir -p /var/run/frr/origin /etc/frr/origin
-cat > /etc/frr/origin/zebra.conf <<'EOF'
-hostname origin
-EOF
-cat > /etc/frr/origin/bgpd.conf <<'EOF'
-hostname origin
-router bgp 65002
- bgp router-id 10.2.0.2
- no bgp ebgp-requires-policy
- neighbor 10.2.0.1 remote-as 65001
- address-family ipv4 unicast
-  network 198.51.100.0/24
-  neighbor 10.2.0.1 activate
- exit-address-family
-EOF
-chown -R frr:frr /var/run/frr/origin /etc/frr/origin
-for d in zebra bgpd; do
-  ip netns exec origin /usr/lib/frr/$d -d -N origin -A 127.0.0.1 -f /etc/frr/origin/$d.conf
-done
-
 # The assertion helpers and the VTY, needed from here on: the BGP session below
 # is configured through the VTY, and everything that waits for its routes is an
 # assertion about that.
 . /src/lab/verdict.sh
-# The BPA plugin for the binary API. Core VPP messages work without it - which
-# is why the interface sections pass - but a pool goes through
-# bpa_pool_add_del, and the CGNAT-versus-BGP check needs both halves present.
+# The BPA plugin, installed where vat2 looks for it on a real box. Nothing
+# below sends a bpa_ message, but hexash asks vat2 which messages are
+# registered before it touches the dataplane and calls it unusable when
+# bpa_pool_add_del is not among them - so without this every interface commit
+# here fails for a reason that has nothing to do with the interface.
 . /src/lab/lib.sh
 use_binary_api
 HX="python3 /src/src/hexash/hexash.py"
@@ -218,20 +174,17 @@ HX="python3 /src/src/hexash/hexash.py"
 # ---------------- the session, configured through the VTY ----------------
 #
 # The point of doing it here rather than in bgpd.conf: everything below that
-# depends on 203.0.113.0/24 - the FIB wait, the route comparison, the pool
-# announcement checks - is now evidence that the VTY configured a BGP session
-# that works, on a box where nothing else did (#142).
+# depends on 203.0.113.0/24 - the FIB wait, the route comparison, `show route
+# verbose` - is now evidence that the VTY configured a BGP session that works,
+# on a box where nothing else did (#142).
 echo "=========== the BGP session, configured through the VTY ==========="
 BGPUP=$($HX -c "configure" -c "router bgp 65000" \
         -c "bgp router-id 10.0.0.1" \
         -c "no bgp ebgp-requires-policy" \
         -c "neighbor 10.0.0.2 remote-as 65001" \
         -c "neighbor 10.0.0.2 description upstream-lab" \
-        -c "neighbor 10.1.0.2 remote-as 65001" \
-        -c "neighbor 10.1.0.2 description upstream-lab-segundo-enlace" \
         -c "address-family ipv4 unicast" \
         -c "neighbor 10.0.0.2 activate" \
-        -c "neighbor 10.1.0.2 activate" \
         -c "exit-address-family" -c "exit" -c "commit" 2>&1)
 echo "$BGPUP" | tail -3 | sed 's/^/  /'
 expect_in "the VTY commits a BGP session" "commit complete" "$BGPUP"
@@ -256,7 +209,7 @@ echo "(${n}s, $ok de 3)"
 
 echo
 echo "=== adjacencias ==="
-vtysh -c "show bgp ipv4 unicast summary" 2>/dev/null | grep -E "^10\.[01]\.0\.2" \
+vtysh -c "show bgp ipv4 unicast summary" 2>/dev/null | grep -E "^10\.0\.0\.2" \
   | awk '{print "BGP   : peer "$1" AS "$3" up "$9" prefixos "$10}'
 printf 'OSPF  : '; vtysh -c "show ip ospf neighbor" 2>/dev/null | grep -E "^10\.0\.0\.2" | awk '{print "neighbour "$1" state "$3}'
 printf 'IS-IS : '; vtysh -c "show isis neighbor" 2>/dev/null | grep -iE "upstream" | awk '{print "neighbour "$1" state "$4" interface "$2}'
@@ -717,703 +670,6 @@ expect "a commit carrying an invalid policy line does not report success" \
 expect_not_in "and the invalid line is not on the box" "PL-BAD" \
   "$(vtysh -c 'show running-config')"
 
-# --- a pool's public prefix that nothing announces (#145) ---
-#
-# The check this product can make and nobody else can. Configure a pool, get
-# BGP right, and unless something advertises a prefix covering the pool's
-# public side, every subscriber behind it is translated to an address the
-# internet cannot route back to. Both halves individually correct, service
-# dead, and nothing in the box connected them.
-echo "=========== a pool nobody announces ==========="
-NOANN=$($HX -c "configure" \
-        -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
-        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
-        -c "commit check" 2>&1)
-printf '%s\n' "$NOANN" | tail -12 | sed 's/^/  check: /'
-expect_in "an unannounced pool prefix is called out" \
-  "nothing here announces 200.150.9.16/28" "$NOANN"
-expect_in "and the message says what it costs" \
-  "cannot route back" "$NOANN"
-
-# Announce a COVERING prefix - not the same one - because the check has to
-# understand containment, not string equality. A /24 covers the pool's /28.
-ANN=$($HX -c "configure" \
-      -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
-      -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
-      -c "router bgp 65000" -c "address-family ipv4 unicast" \
-      -c "network 200.150.9.0/24" -c "exit-address-family" -c "exit" \
-      -c "commit check" 2>&1)
-expect_not_in "a covering prefix silences it" \
-  "nothing here announces 200.150.9.16/28" "$ANN"
-
-# And it must not fire on a box that announces by redistribution, which this
-# check cannot see. A warning that cries on a working box gets ignored, and
-# then the real one is ignored too.
-RED=$($HX -c "configure" \
-      -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
-      -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
-      -c "router bgp 65000" -c "redistribute connected" -c "exit" \
-      -c "commit check" 2>&1)
-expect_not_in "and redistribution silences it, because it cannot be seen" \
-  "nothing here announces" "$RED"
-
-# --- what FRR says on a SUCCESSFUL apply (#145) ---
-#
-# frr-reload returning 0 does not mean FRR was silent. Told to use a route-map
-# that does not exist, FRR 10.7.1 answers "The route-map 'X' does not exist.",
-# stores the statement anyway and exits 0 - measured. The VTY only printed the
-# output when the return code was non-zero, so that warning went nowhere and
-# the operator committed a policy pointing at nothing.
-# --- the prefix range rule, checked against FRR itself ---
-#
-# A `ge`/`le` FRR refuses is not a cheap refusal. It arrives through mgmtd,
-# which keeps the rejected entry in its candidate datastore and then fails the
-# NEXT configuration commit with the same message - naming a prefix-list that
-# is in no running configuration, on no disk, and in nothing the VTY sent.
-# Measured here: one file load carrying a good line and a bad one wedged the
-# two commits that followed it, and this lab spent a whole run failing a
-# router-advertisement section for that reason.
-#
-# So the VTY refuses these lines itself. Which means the VTY now holds an
-# opinion about what FRR accepts, and an opinion that drifts is worse than no
-# opinion: it would refuse configurations that are fine. Every case below is
-# put to BOTH, and they must agree. mgmtd is restarted between cases so a
-# poisoned candidate cannot make the next case look refused.
-# --- what the VTY refuses, and what it will not print (#142) ---
-#
-# The refusals are about shapes that cannot work whatever the far end does.
-# "Will the session come up" is not in the configuration and is not claimed.
-echo "=========== BGP: what the VTY refuses ==========="
-NOAS=$($HX -c "configure" -c "router bgp 65000" \
-       -c "neighbor 10.0.0.9 description sem-as" \
-       -c "exit" -c "commit" 2>&1)
-echo "$NOAS" | tail -2 | sed 's/^/  /'
-expect_in "a neighbour with no remote-as is refused" "no 'remote-as'" "$NOAS"
-expect_in "and the refusal names the neighbour" "10.0.0.9" "$NOAS"
-
-NOPG=$($HX -c "configure" -c "router bgp 65000" \
-       -c "neighbor 10.0.0.9 peer-group TRANSITO" \
-       -c "exit" -c "commit" 2>&1)
-expect_in "a peer group nobody declared is refused" \
-  "is not declared" "$NOPG"
-
-# An interface the box does not have. FRR accepts this and the session sources
-# from nothing, so the configuration reads correctly and never works.
-NOIF=$($HX -c "configure" -c "router bgp 65000" \
-       -c "neighbor 10.0.0.2 update-source Loopback9" \
-       -c "exit" -c "commit" 2>&1)
-expect_in "update-source naming an interface the box lacks is refused" \
-  "no interface Loopback9" "$NOIF"
-
-# The valid shapes must still commit. A check that refuses everything would
-# pass every assertion above and make the feature unusable.
-OKPG=$($HX -c "configure" -c "router bgp 65000" \
-       -c "neighbor TRANSITO peer-group" \
-       -c "neighbor TRANSITO remote-as 65001" \
-       -c "neighbor 10.0.0.9 peer-group TRANSITO" \
-       -c "exit" -c "commit" 2>&1)
-echo "$OKPG" | tail -2 | sed 's/^/  /'
-expect_in "a neighbour inheriting its AS from a peer group commits" \
-  "commit complete" "$OKPG"
-
-# The secret itself, not a hash of it, and it opens the session on the other
-# router too. It must not reach the terminal.
-SECRET=n0tinlogs
-$HX -c "configure" -c "router bgp 65000" \
-    -c "neighbor 10.0.0.9 password $SECRET" \
-    -c "exit" -c "commit" > /tmp/bgppw.log 2>&1 || true
-tail -2 /tmp/bgppw.log | sed 's/^/  /'
-RUN=$($HX -c "show running-config" 2>&1)
-expect_not_in "the neighbour password is not in the running configuration" \
-  "$SECRET" "$RUN"
-# The WHOLE line, not the words "not shown". An account's password is redacted
-# with the same phrase, so grepping for it alone passes on any box that has a
-# user with a password - which is every box - whether or not the BGP secret
-# was touched. It also proves the statement reached FRR at all: if the commit
-# had not applied it, there would be no line to redact.
-expect_in "and the line is there, saying a password is set" \
-  "neighbor 10.0.0.9 password <set, not shown>" "$RUN"
-THIS=$($HX -c "configure" -c "router bgp 65000" -c "show this" 2>&1)
-expect_not_in "nor in 'show this' inside the block" "$SECRET" "$THIS"
-# ...and 'show this' printed the block, rather than nothing. Without this the
-# assertion above passes on empty output, which is the same result as a
-# redaction that works and proves neither.
-expect_in "which did print the block" "neighbor 10.0.0.9" "$THIS"
-
-# --- route-maps, asserted on the tables and not on the text (#144) ---
-#
-# Two sessions to the same peer carry the same prefix, so `set
-# local-preference` has something to CHOOSE between. Asserting that a value
-# appears in a table would pass on a policy that changes nothing.
-echo "=========== route-maps: local-preference decides the path ==========="
-fib_nexthop() { vppctl show ip fib 203.0.113.0/24 2>/dev/null \
-                | grep -oE "10\.[01]\.0\.2" | head -1; }
-BEFORE_NH=$(fib_nexthop)
-echo "  the FIB forwards 203.0.113.0/24 via: ${BEFORE_NH:-none}"
-# Prefer the OTHER one, whichever the tie-break happened to pick. Hard-coding
-# the winner would make this pass or fail on FRR's tie-break rather than on the
-# policy.
-if [ "$BEFORE_NH" = "10.0.0.2" ]; then OTHER=10.1.0.2; else OTHER=10.0.0.2; fi
-echo "  so the policy will prefer: $OTHER"
-
-LP=$($HX -c "configure" \
-     -c "ip prefix-list PL-PREFER seq 10 permit 203.0.113.0/24" \
-     -c "route-map RM-PREFER permit 10" \
-     -c "match ip address prefix-list PL-PREFER" \
-     -c "set local-preference 200" \
-     -c "exit" \
-     -c "route-map RM-PREFER permit 20" \
-     -c "exit" \
-     -c "router bgp 65000" -c "address-family ipv4 unicast" \
-     -c "neighbor $OTHER route-map RM-PREFER in" \
-     -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-echo "$LP" | tail -4 | sed 's/^/  /'
-expect_in "a route-map commits" "commit complete" "$LP"
-# The catch-all at the end is a real idiom and must not be refused - but it
-# must be SAID, because afterwards it is indistinguishable from a policy
-# somebody stopped typing in the middle of.
-expect_in "and the catch-all clause is reported, not refused" \
-  "permits every route" "$LP"
-
-n=0
-while [ "$n" -lt 40 ]; do
-  [ "$(fib_nexthop)" = "$OTHER" ] && break
-  sleep 1; n=$((n + 1))
-done
-AFTER_NH=$(fib_nexthop)
-echo "  after the policy, the FIB forwards via: ${AFTER_NH:-none} (${n}s)"
-# THE assertion: the table that moves packets changed its mind. Not FRR's
-# table, not the text of the configuration - the VPP FIB.
-expect "local-preference changed which path the dataplane forwards on" \
-  test "$AFTER_NH" = "$OTHER"
-expect "and it really did change, rather than starting there" \
-  test "$BEFORE_NH" != "$AFTER_NH"
-
-echo "=========== route-maps: a prepend the neighbour can see ==========="
-# This box announces something of its own, so there is an outbound direction
-# to have a policy in.
-ANN=$($HX -c "configure" -c "ip route 192.0.2.0/24 blackhole" \
-      -c "router bgp 65000" -c "address-family ipv4 unicast" \
-      -c "network 192.0.2.0/24" \
-      -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-echo "$ANN" | tail -2 | sed 's/^/  /'
-expect_in "the box announces a prefix of its own" "commit complete" "$ANN"
-
-# Prepend on ONE session only. The other carries the same prefix with no
-# policy, which makes it the control: same prefix, same box, same moment, and
-# the policy is the only difference between the two AS paths.
-PREP=$($HX -c "configure" \
-       -c "ip prefix-list PL-MINE seq 10 permit 192.0.2.0/24" \
-       -c "route-map RM-OUT permit 10" \
-       -c "match ip address prefix-list PL-MINE" \
-       -c "set as-path prepend 65000 65000" \
-       -c "exit" \
-       -c "route-map RM-OUT permit 20" \
-       -c "exit" \
-       -c "router bgp 65000" -c "address-family ipv4 unicast" \
-       -c "neighbor 10.0.0.2 route-map RM-OUT out" \
-       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-expect_in "the outbound policy commits" "commit complete" "$PREP"
-
-# A match that matches NOTHING, on the other session. If the set were applying
-# to everything, this would prepend too - and a test that only checked the
-# session it meant to change would never notice.
-NOMATCH=$($HX -c "configure" \
-          -c "ip prefix-list PL-NOTHING seq 10 permit 198.51.100.0/24" \
-          -c "route-map RM-NOMATCH permit 10" \
-          -c "match ip address prefix-list PL-NOTHING" \
-          -c "set as-path prepend 65000 65000 65000 65000" \
-          -c "exit" \
-          -c "route-map RM-NOMATCH permit 20" \
-          -c "exit" \
-          -c "router bgp 65000" -c "address-family ipv4 unicast" \
-          -c "neighbor 10.1.0.2 route-map RM-NOMATCH out" \
-          -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-expect_in "the no-match policy commits too" "commit complete" "$NOMATCH"
-
-# Read from the NEIGHBOUR's table, in JSON, because parsing the human output
-# means matching an AS-path line to the "from" line under it by position.
-aspath_from() {   # aspath_from <our address as the peer sees it>
-  ip netns exec peer vtysh -N peer \
-    -c "show bgp ipv4 unicast 192.0.2.0/24 json" 2>/dev/null > /tmp/paths.json
-  python3 - "$1" <<'PYEOF'
-import json, sys
-want = sys.argv[1]
-try:
-    d = json.load(open("/tmp/paths.json"))
-except Exception as e:
-    print("UNREADABLE", e)
-    raise SystemExit
-for p in d.get("paths", []):
-    peer = (p.get("peer") or {}).get("peerId") or (p.get("peer") or {}).get("routerId")
-    if peer != want:
-        continue
-    # FRR has spelled this both ways across versions; ask for what is there
-    # rather than assuming, and say so if neither is.
-    ap = p.get("aspath")
-    if isinstance(ap, dict):
-        print(ap.get("string", "").strip())
-    elif isinstance(ap, str):
-        print(ap.strip())
-    else:
-        print("NOFIELD", sorted(p))
-    raise SystemExit
-print("NOPATH")
-PYEOF
-}
-n=0
-while [ "$n" -lt 40 ]; do
-  case "$(aspath_from 10.0.0.1)" in *"65000 65000"*) break ;; esac
-  sleep 1; n=$((n + 1))
-done
-AS_PREPENDED=$(aspath_from 10.0.0.1)
-AS_PLAIN=$(aspath_from 10.1.0.1)
-echo "  AS path the neighbour sees, session with the prepend: '$AS_PREPENDED'"
-echo "  AS path the neighbour sees, session without it:       '$AS_PLAIN'"
-expect "the prepend reached the neighbour's table" \
-  test "$AS_PREPENDED" = "65000 65000 65000"
-expect "and the session with a match that matches nothing is untouched" \
-  test "$AS_PLAIN" = "65000"
-
-echo "=========== route-maps: what is refused, and what is only said ==========="
-# A deny clause with `set` statements is a mistake every time: the set never
-# runs, because the route is denied. That one can be refused.
-DENYSET=$($HX -c "configure" \
-          -c "route-map RM-BAD deny 10" \
-          -c "match ip address prefix-list PL-MINE" \
-          -c "set local-preference 50" \
-          -c "exit" -c "commit" 2>&1)
-echo "$DENYSET" | tail -3 | sed 's/^/  /'
-expect_in "a deny clause carrying 'set' is refused" "the set never runs" "$DENYSET"
-expect_in "and the refusal names the clause" "RM-BAD deny 10" "$DENYSET"
-
-# A clause that can never be reached. Sequence numbers are the operator's and
-# this must not renumber them - but a policy that looks right and does nothing
-# is worth a sentence.
-DEAD=$($HX -c "configure" \
-       -c "route-map RM-DEAD permit 10" \
-       -c "set local-preference 120" \
-       -c "exit" \
-       -c "route-map RM-DEAD permit 20" \
-       -c "match ip address prefix-list PL-MINE" \
-       -c "set local-preference 300" \
-       -c "exit" -c "commit check" 2>&1)
-echo "$DEAD" | grep -i "warning" | sed 's/^/  /'
-expect_in "a clause an earlier catch-all makes unreachable is reported" \
-  "unreachable" "$DEAD"
-expect_in "and the report names what shadows it" "RM-DEAD permit 10" "$DEAD"
-
-# What the VTY did NOT check has to be visible, or an operator reads a
-# guarantee into a statement that was merely forwarded.
-UNCH=$($HX -c "configure" \
-       -c "route-map RM-PASS permit 10" \
-       -c "match ip address prefix-list PL-MINE" \
-       -c "set tag 100" \
-       -c "exit" -c "commit" 2>&1)
-expect_in "a statement the VTY does not model still commits" \
-  "commit complete" "$UNCH"
-SHOWN=$($HX -c "show running-config" 2>&1)
-expect_in "and is marked as unchecked where it is displayed" \
-  "set tag 100    <- not checked by this VTY" "$SHOWN"
-expect_not_in "while the ones it does model carry no marker" \
-  "set local-preference 200    <-" "$SHOWN"
-
-# --- a refusal that belongs to FRR, and what it used to cost ---
-#
-# The VTY refuses the shapes it knows. Everything else reaches FRR, and one
-# class of FRR refusal is not free: it arrives through mgmtd, which keeps the
-# rejected entry in its candidate datastore and then refuses the NEXT
-# configuration commit with the same message - naming a statement that is in no
-# configuration the operator can find. Exactly one commit, and then it clears.
-#
-# Measured, and both halves matter:
-#
-#   * it takes the FILE-LOAD path to happen. A single statement typed at
-#     `vtysh -c` is refused and costs nothing. A file carrying a good line and
-#     a bad one - which is what frr-reload hands FRR on every commit - poisons.
-#   * of the statements tried, only an invalid `ge`/`le` reaches the commit at
-#     all. The rest are refused by FRR's PARSER, which does not poison.
-#
-# So the VTY refuses that class itself, and the poison is no longer reachable
-# through the product. The absorber below is the defence for the class rather
-# than for that one statement, and it is tested where the poison IS
-# reproducible: by loading the file directly, the way frr-reload does.
-# --- AS-path lists, against the paths the box really received (#146) ---
-# --- the commands an operator runs while something is wrong (#148) ---
-echo "=========== show bgp summary, against the table that forwards ==========="
-SUM=$($HX -c "show bgp summary" 2>&1)
-echo "$SUM" | sed 's/^/  /'
-expect_in "the summary names a session" "10.0.0.2" "$SUM"
-expect_in "and says the state" "Established" "$SUM"
-# THE line this command exists for. FRR's own summary says a session is up and
-# carrying N prefixes; whether the dataplane got them is a different question,
-# and it is the one that decides whether packets move.
-expect_in "and says how many BGP prefixes reached the forwarding table" \
-  "forwarding table" "$SUM"
-
-echo "=========== announce, and withdraw ==========="
-# Announced through the VTY, asserted in the neighbour's table AND in the VPP
-# FIB. FRR holding a route is a different claim from the box forwarding on it.
-peer_has() {
-  ip netns exec peer vtysh -N peer -c "show bgp ipv4 unicast $1" 2>/dev/null \
-    | grep -c "$1" || true
-}
-in_fib2() { vppctl show ip fib "$1" 2>/dev/null | grep -c "^$1" || true; }
-ANNOUNCE=$($HX -c "configure" -c "ip route 203.0.114.0/24 blackhole" \
-           -c "router bgp 65000" -c "address-family ipv4 unicast" \
-           -c "network 203.0.114.0/24" \
-           -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-expect_in "announcing a prefix commits" "commit complete" "$ANNOUNCE"
-n=0
-while [ "$n" -lt 30 ]; do
-  [ "$(peer_has 203.0.114.0/24)" -ge 1 ] && break
-  sleep 1; n=$((n + 1))
-done
-echo "  the neighbour sees it: $(peer_has 203.0.114.0/24)   the FIB has it: $(in_fib2 203.0.114.0/24)   (${n}s)"
-expect "the neighbour received the announcement" \
-  test "$(peer_has 203.0.114.0/24)" -ge 1
-expect "and this box forwards on it" test "$(in_fib2 203.0.114.0/24)" -ge 1
-
-WITHDRAW=$($HX -c "configure" -c "router bgp 65000" \
-           -c "address-family ipv4 unicast" \
-           -c "no network 203.0.114.0/24" \
-           -c "exit-address-family" -c "exit" \
-           -c "no ip route 203.0.114.0/24 blackhole" -c "commit" 2>&1)
-echo "$WITHDRAW" | tail -5 | sed 's/^/  withdraw: /'
-expect_in "withdrawing it commits" "commit complete" "$WITHDRAW"
-n=0
-while [ "$n" -lt 30 ]; do
-  [ "$(peer_has 203.0.114.0/24)" -eq 0 ] && break
-  sleep 1; n=$((n + 1))
-done
-echo "  after withdrawing: neighbour $(peer_has 203.0.114.0/24), FIB $(in_fib2 203.0.114.0/24)   (${n}s)"
-expect "the neighbour stops seeing it" test "$(peer_has 203.0.114.0/24)" -eq 0
-expect "and it leaves the forwarding table too" \
-  test "$(in_fib2 203.0.114.0/24)" -eq 0
-
-echo "=========== graceful shutdown, measured by its effect ==========="
-# RFC 8326. Before maintenance an operator wants traffic to DRAIN rather than
-# drop. Asserted on what the neighbour receives and on what this box does to
-# the routes it holds - not on the configuration containing the words, which
-# would pass on a statement that did nothing.
-peer_communities() {
-  ip netns exec peer vtysh -N peer \
-    -c "show bgp ipv4 unicast $1 json" 2>/dev/null > /tmp/gs.json
-  python3 - <<'PYEOF'
-import json
-try:
-    d = json.load(open("/tmp/gs.json"))
-except Exception:
-    print("UNREADABLE"); raise SystemExit
-for p in d.get("paths", []):
-    c = p.get("community") or {}
-    print(" ".join(c.get("list", [])) or "(none)")
-    raise SystemExit
-print("NOPATH")
-PYEOF
-}
-local_pref_of() {
-  vtysh -c "show bgp ipv4 unicast $1 json" 2>/dev/null > /tmp/gs2.json
-  python3 - <<'PYEOF'
-import json
-try:
-    d = json.load(open("/tmp/gs2.json"))
-except Exception:
-    print("UNREADABLE"); raise SystemExit
-best = None
-for p in d.get("paths", []):
-    lp = p.get("locPrf", p.get("localPref"))
-    if lp is not None:
-        best = lp if best is None else min(best, lp)
-print("NONE" if best is None else best)
-PYEOF
-}
-COMM_BEFORE=$(peer_communities 192.0.2.0/24)
-LP_BEFORE=$(local_pref_of 198.51.100.0/24)
-echo "  before: the neighbour sees communities '$COMM_BEFORE'; local-pref here is $LP_BEFORE"
-
-GS=$($HX -c "configure" -c "router bgp 65000" \
-     -c "bgp graceful-shutdown" -c "exit" -c "commit" 2>&1)
-expect_in "graceful-shutdown commits" "commit complete" "$GS"
-n=0
-while [ "$n" -lt 30 ]; do
-  case "$(peer_communities 192.0.2.0/24)" in *65535:0*) break ;; esac
-  sleep 1; n=$((n + 1))
-done
-COMM_AFTER=$(peer_communities 192.0.2.0/24)
-LP_AFTER=$(local_pref_of 198.51.100.0/24)
-echo "  after:  the neighbour sees communities '$COMM_AFTER'; local-pref here is $LP_AFTER  (${n}s)"
-
-# The well-known community, in the neighbour's table. Asserted by the NAME FRR
-# renders, not by 65535:0 - the raw value never appears, because FRR prints
-# well-known communities symbolically, and asserting the number would be
-# asserting a rendering nothing produces.
-expect_in "the neighbour receives the graceful-shutdown community" \
-  "gracefulShutdown" "$COMM_AFTER"
-expect_not_in "which it was not receiving before" \
-  "gracefulShutdown" "$COMM_BEFORE"
-# And the other half of RFC 8326: this box stops preferring what it holds, so
-# traffic drains towards whoever else has a path.
-expect "the local preference of received routes drops to zero" \
-  test "$LP_AFTER" = "0"
-expect "and it was not zero before" test "$LP_BEFORE" != "0"
-
-# Reversible. A maintenance switch that cannot be switched back is not one.
-$HX -c "configure" -c "router bgp 65000" \
-    -c "no bgp graceful-shutdown" -c "exit" -c "commit" > /tmp/gs3.log 2>&1 || true
-n=0
-while [ "$n" -lt 30 ]; do
-  case "$(peer_communities 192.0.2.0/24)" in *65535:0*) ;; *) break ;; esac
-  sleep 1; n=$((n + 1))
-done
-echo "  after undoing it: '$(peer_communities 192.0.2.0/24)', local-pref $(local_pref_of 198.51.100.0/24)  (${n}s)"
-expect_not_in "and undoing it takes the community back off" \
-  "gracefulShutdown" "$(peer_communities 192.0.2.0/24)"
-
-echo "=========== routes it is not keeping ==========="
-# "no routes received" and "I am not keeping them" are different answers, and
-# an operator at 2am acts on the first one.
-RECV=$($HX -c "show bgp neighbor 10.0.0.2 received-routes" 2>&1)
-echo "$RECV" | tail -3 | sed 's/^/  /'
-expect_in "asking for routes the box does not keep says so" \
-  "does not keep what it received" "$RECV"
-expect_in "and names what to turn on" "soft-reconfiguration" "$RECV"
-
-CLEARSOFT=$($HX -c "clear bgp 10.0.0.2 soft in" 2>&1)
-echo "$CLEARSOFT" | tail -2 | sed 's/^/  /'
-expect_in "and 'clear soft in' refuses for the same reason" \
-  "nothing to re-apply" "$CLEARSOFT"
-
-# With it on, both work. A refusal that cannot be lifted is a wall, not a check.
-SOFTON=$($HX -c "configure" -c "router bgp 65000" \
-         -c "address-family ipv4 unicast" \
-         -c "neighbor 10.0.0.2 soft-reconfiguration inbound" \
-         -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-expect_in "turning soft-reconfiguration on commits" "commit complete" "$SOFTON"
-sleep 3
-RECV2=$($HX -c "show bgp neighbor 10.0.0.2 received-routes" 2>&1)
-expect_not_in "and then the routes are shown, not refused" \
-  "does not keep what it received" "$RECV2"
-CLEAR2=$($HX -c "clear bgp 10.0.0.2 soft in" 2>&1)
-echo "$CLEAR2" | tail -2 | sed 's/^/  /'
-expect_in "and the session can be softly cleared" "cleared" "$CLEAR2"
-
-echo "=========== AS-path lists ==========="
-# Wait for the third AS's prefix to arrive, so what follows is asserted against
-# a real path and not against an empty table.
-n=0
-while [ "$n" -lt 60 ]; do
-  vtysh -c "show bgp ipv4 unicast" 2>/dev/null | grep -q "198.51.100.0" && break
-  sleep 1; n=$((n + 1))
-done
-echo "  paths this box has received:"
-vtysh -c "show bgp ipv4 unicast" 2>/dev/null | tr -d '\r' \
-  | awk 'NR>1 && $1 ~ /^[*>]/ {print "    " $0}' | head -8
-
-# A regex FRR would refuse. Refused at the prompt instead of mid-commit.
-BADRX=$($HX -c "configure" \
-        -c "bgp as-path access-list AS-BAD permit ^65001(" \
-        -c "commit" 2>&1)
-echo "$BADRX" | tail -2 | sed 's/^/  /'
-expect_in "a regex that does not compile is refused" \
-  "does not compile" "$BADRX"
-
-# The VTY now holds an opinion about which regexes FRR accepts, and an opinion
-# that drifts is worse than none: it refuses configurations that are fine.
-# Every case goes to BOTH, and they must agree. Same arrangement as the
-# prefix-range rule, and it is here for the same reason.
-echo "  --- the regex rule, against FRR itself ---"
-RXN=0
-for RX in '^65001$' '65001' '_65002_' '^65001(_65001)*$' '.*' '^$' \
-          '^65001(' '65001)' '*65001' '[65001'; do
-  RXN=$((RXN + 1))
-  vtysh -c 'configure terminal' \
-        -c "bgp as-path access-list RX$RXN permit $RX" >/dev/null 2>&1
-  if vtysh -c 'show running-config' 2>/dev/null | grep -q "access-list RX$RXN "; then
-    FRR_SAYS=accepted
-  else
-    FRR_SAYS=refused
-  fi
-  if RX="$RX" RXN="$RXN" python3 -c "
-import os, sys
-sys.path.insert(0, '/src/src/hexash')
-from hexash import as_path_regex_error as e
-stmt = 'bgp as-path access-list RX%s permit %s' % (os.environ['RXN'], os.environ['RX'])
-sys.exit(1 if e(stmt) else 0)"; then
-    VTY_SAYS=accepted
-  else
-    VTY_SAYS=refused
-  fi
-  expect "FRR and the VTY agree on '$RX'" test "$FRR_SAYS" = "$VTY_SAYS"
-  [ "$FRR_SAYS" = "$VTY_SAYS" ] || echo "      frr: $FRR_SAYS   vty: $VTY_SAYS"
-done
-
-# A name a route-map matches on that nothing defines. FRR accepts it; the
-# clause then matches nothing, forever, and the policy reads correctly.
-UNDEF=$($HX -c "configure" \
-        -c "route-map RM-UNDEF permit 10" \
-        -c "match as-path AS-NAO-EXISTE" \
-        -c "exit" -c "commit" 2>&1)
-expect_in "matching a list nothing defines is refused" \
-  "would match nothing" "$UNDEF"
-
-# THE report this exists for. `permit 65001` compiles and is legal, and it also
-# matches 165001 and 650012 - the mistake nobody sees by reading their own
-# regex back. Counted against paths the box actually holds.
-LOOSE=$($HX -c "configure" \
-        -c "bgp as-path access-list AS-LOOSE permit 65002" \
-        -c "commit check" 2>&1)
-echo "$LOOSE" | grep -i "note:" | sed 's/^/  /'
-expect_in "the VTY says what a regex matches, against real paths" \
-  "received AS path" "$LOOSE"
-
-# --- and the assertion the issue asks for: the OTHER AS is not affected ---
-#
-# Accept only what 65002 originated, on both sessions. 198.51.100.0/24 must
-# stay in the forwarding table and 203.0.113.0/24 must leave it.
-#
-# The second half is the one that matters: a regex matching everything would
-# keep BOTH, and a test that only looked at the route the policy was meant to
-# select would pass on it. That is the failure this whole section exists for -
-# a missing `^` or `$` turns an exact match into a substring one, and nobody
-# sees it by reading their own regex back.
-in_fib() { vppctl show ip fib "$1" 2>/dev/null | grep -c "^$1" || true; }
-echo "  before the policy: 198.51.100.0/24=$(in_fib 198.51.100.0/24)  203.0.113.0/24=$(in_fib 203.0.113.0/24)"
-expect "the third AS's prefix is in the FIB to begin with" \
-  test "$(in_fib 198.51.100.0/24)" -ge 1
-
-DROP=$($HX -c "configure" \
-       -c "bgp as-path access-list AS-ORIGIN2 permit _65002\$" \
-       -c "route-map RM-DROP permit 10" \
-       -c "match as-path AS-ORIGIN2" \
-       -c "exit" \
-       -c "route-map RM-DROP deny 20" \
-       -c "exit" \
-       -c "router bgp 65000" -c "address-family ipv4 unicast" \
-       -c "neighbor 10.0.0.2 route-map RM-DROP in" \
-       -c "neighbor 10.1.0.2 route-map RM-DROP in" \
-       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-echo "$DROP" | tail -2 | sed 's/^/  /'
-expect_in "the AS-path policy commits" "commit complete" "$DROP"
-n=0
-while [ "$n" -lt 40 ]; do
-  [ "$(in_fib 203.0.113.0/24)" -eq 0 ] && break
-  sleep 1; n=$((n + 1))
-done
-echo "  after the policy: 198.51.100.0/24=$(in_fib 198.51.100.0/24)  203.0.113.0/24=$(in_fib 203.0.113.0/24)  (${n}s)"
-expect "the AS the policy names keeps its route" \
-  test "$(in_fib 198.51.100.0/24)" -ge 1
-expect "and the AS it does not name loses its own" \
-  test "$(in_fib 203.0.113.0/24)" -eq 0
-
-echo "=========== a stale refusal, and the commit that used to pay for it ==========="
-cat > /tmp/poison.conf <<'PC'
-ip prefix-list PL-POISON-OK seq 10 permit 10.21.0.0/16
-ip prefix-list PL-POISON-BAD seq 10 permit 10.22.0.0/8 ge 24 le 16
-PC
-# THE CONTROL, and the reason the assertion after it means anything: with the
-# refusal left standing, the next commit fails. Without this half, "the commit
-# succeeded" would pass on a box that was never poisoned.
-vtysh -f /tmp/poison.conf > /dev/null 2>&1
-POISONED=$($HX -c "configure" \
-           -c "ip prefix-list PL-PAYS seq 10 permit 10.23.0.0/16" \
-           -c "commit" 2>&1)
-echo "$POISONED" | tail -2 | sed 's/^/  /'
-expect "with the stale refusal standing, the next commit is refused" \
-  sh -c "! printf '%s' \"$POISONED\" | grep -q 'commit complete'"
-expect_in "and the error names a prefix that is in no configuration" \
-  "10.0.0.0/8" "$POISONED"
-
-# And now the same thing with the absorber run first - the real function, from
-# the product, not a copy of it here.
-vtysh -f /tmp/poison.conf > /dev/null 2>&1
-python3 -c "
-import sys; sys.path.insert(0, '/src/src/hexash')
-from hexash import Frr
-Frr().absorb_stale_refusal()" 2>/dev/null
-ABSORBED=$($HX -c "configure" \
-           -c "ip prefix-list PL-SPARED seq 10 permit 10.24.0.0/16" \
-           -c "commit" 2>&1)
-echo "$ABSORBED" | tail -2 | sed 's/^/  /'
-expect_in "after absorbing it, the operator's commit goes through" \
-  "commit complete" "$ABSORBED"
-# The absorber removes a prefix-list nobody has. If it ever leaves one behind,
-# every box grows a statement the operator did not write.
-expect_not_in "and the absorber leaves nothing behind" \
-  "HEXA-ABSORB" "$(vtysh -c 'show running-config')"
-
-echo "=========== the prefix range rule, against FRR itself ==========="
-restart_mgmtd() {
-  pkill -f 'frr/mgmtd' 2>/dev/null
-  sleep 1
-  /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
-  sleep 1
-}
-N=0
-for CASE in "10.9.0.0/16" "10.9.0.0/16 ge 24 le 28" "10.9.0.0/16 ge 16" \
-            "10.9.0.0/16 le 32" "10.12.0.0/8 ge 24 le 16" "10.9.0.0/16 le 12" \
-            "10.9.0.0/16 ge 8" "10.9.0.0/16 ge 24 le 33"; do
-  N=$((N + 1))
-  STMT="ip prefix-list RC$N seq 10 permit $CASE"
-  restart_mgmtd
-  # "accepted" means FRR STORED it. Asking only whether the output said
-  # "Configuration failed" called a vtysh parser refusal an acceptance, and
-  # that is how this cross-check first reported a disagreement that was its
-  # own reading error rather than a difference of opinion.
-  vtysh -c 'configure terminal' -c "$STMT" >/dev/null 2>&1
-  if vtysh -c 'show running-config' 2>/dev/null | grep -q "prefix-list RC$N "; then
-    FRR_SAYS=accepted
-  else
-    FRR_SAYS=refused
-  fi
-  if STMT="$STMT" python3 -c "
-import os, sys
-sys.path.insert(0, '/src/src/hexash')
-from hexash import prefix_range_error as e
-sys.exit(1 if e(os.environ['STMT']) else 0)"; then
-    VTY_SAYS=accepted
-  else
-    VTY_SAYS=refused
-  fi
-  expect "FRR and the VTY agree on '$CASE'" test "$FRR_SAYS" = "$VTY_SAYS"
-  [ "$FRR_SAYS" = "$VTY_SAYS" ] || echo "    frr: $FRR_SAYS   vty: $VTY_SAYS"
-done
-restart_mgmtd
-# The refusal has to name the line, or an operator with forty policy statements
-# cannot find which one.
-BADRANGE=$($HX -c "configure" \
-           -c "ip prefix-list PL-RANGE seq 10 permit 10.12.0.0/8 ge 24 le 16" \
-           -c "commit" 2>&1)
-echo "$BADRANGE" | tail -3 | sed 's/^/  /'
-expect_in "the VTY refuses the bad range before FRR sees it" \
-  "prefix range refused" "$BADRANGE"
-expect_in "and names the statement" "PL-RANGE" "$BADRANGE"
-# The point of refusing early: the commit after it must still work. Before this
-# check existed, this second commit failed citing 10.0.0.0/8.
-AFTERBAD=$($HX -c "configure" \
-           -c "ip prefix-list PL-AFTER seq 10 permit 10.14.0.0/16" \
-           -c "commit" 2>&1)
-expect_in "and the NEXT commit is unharmed" "commit complete" "$AFTERBAD"
-
-echo "=========== a route-map that does not exist ==========="
-RM=$($HX -c "configure" -c "router bgp 65000" \
-     -c "address-family ipv4 unicast" \
-     -c "neighbor 10.0.0.2 route-map RM-MISSING in" \
-     -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-echo "$RM" | tail -6 | sed 's/^/  /'
-expect_in "the commit succeeds, because FRR accepts it" "commit complete" "$RM"
-expect_in "and FRR's warning reaches the operator" "does not exist" "$RM"
-
-# The noise filter has to keep the commit readable, or the warning is lost in
-# progress output and nothing has been gained.
-expect_not_in "without frr-reload's progress chatter" "Waiting for children" "$RM"
-# frr-reload echoes the commands it sends as a Python list repr, split across
-# lines. Those fragments are not diagnostics, and letting them through buried
-# the one line that matters in punctuation.
-expect_not_in "and without fragments of its command echo" "frr: '" "$RM"
-# frr-reload narrates itself at INFO. Four lines of that around one line that
-# matters is the warning being buried in a different way.
-expect_not_in "and without the tool narrating itself" "INFO:" "$RM"
 
 # --- router advertisements are off unless asked for (#133) ---
 #
@@ -1425,114 +681,6 @@ expect_not_in "and without the tool narrating itself" "INFO:" "$RM"
 # Counted on the wire, not read from a status line: `show ip6 interface` prints
 # the same text whether advertisements are suppressed or not - measured - so
 # the only honest evidence is whether packets appear.
-# --- origin validation, with a cache that is really running (#147) ---
-#
-# A cache is a service, so the lab runs one. stayrtr with a small VRP set is
-# enough, and it is in Debian.
-echo "=========== RPKI: a route the validator calls invalid ==========="
-# The AS-path policy from the section above is still on both sessions and it
-# dropped 203.0.113.0/24. Taken off first, so what follows measures the RPKI
-# policy and not the one before it.
-$HX -c "configure" -c "router bgp 65000" -c "address-family ipv4 unicast" \
-    -c "no neighbor 10.0.0.2 route-map RM-DROP in" \
-    -c "no neighbor 10.1.0.2 route-map RM-DROP in" \
-    -c "exit-address-family" -c "exit" -c "commit" > /tmp/rpki0.log 2>&1 || true
-in_fib3() { vppctl show ip fib "$1" 2>/dev/null | grep -c "^$1" || true; }
-n=0
-while [ "$n" -lt 40 ]; do
-  [ "$(in_fib3 203.0.113.0/24)" -ge 1 ] && [ "$(in_fib3 198.51.100.0/24)" -ge 1 ] && break
-  sleep 1; n=$((n + 1))
-done
-echo "  starting point: 203.0.113.0/24=$(in_fib3 203.0.113.0/24)  198.51.100.0/24=$(in_fib3 198.51.100.0/24)  (${n}s)"
-expect "both prefixes are in the FIB before validation is applied" \
-  sh -c "[ $(in_fib3 203.0.113.0/24) -ge 1 ] && [ $(in_fib3 198.51.100.0/24) -ge 1 ]"
-
-# 203.0.113.0/24 is really originated by 65001, and the ROA says 65001: VALID.
-# 198.51.100.0/24 is really originated by 65002, and the ROA says 64999, so a
-# ROA covers it and the origin does not match: INVALID. That is the pair the
-# whole section turns on.
-cat > /tmp/vrp.json <<'VRP'
-{"roas":[
- {"prefix":"203.0.113.0/24","maxLength":24,"asn":"AS65001"},
- {"prefix":"198.51.100.0/24","maxLength":24,"asn":"AS64999"}
-]}
-VRP
-stayrtr -cache /tmp/vrp.json -bind 127.0.0.1:8282 -checktime=false \
-  > /tmp/stayrtr.log 2>&1 &
-sleep 3
-
-# The module has to actually be loaded, or everything below is asserted against
-# a box that cannot validate anything.
-expect "the RPKI module is loaded" \
-  sh -c "vtysh -c 'show rpki cache-connection' >/dev/null 2>&1"
-
-# The warning that exists because of the failure this feature CREATES: a policy
-# keyed on notfound with no cache configured matches every route on the box.
-NOCACHE=$($HX -c "configure" -c "route-map RM-EARLY deny 5" \
-          -c "match rpki notfound" -c "exit" -c "commit check" 2>&1)
-echo "$NOCACHE" | grep -i "warning" | sed 's/^/  /'
-expect_in "a notfound policy with no cache configured is called out" \
-  "every route is notfound" "$NOCACHE"
-
-RPKI=$($HX -c "configure" -c "rpki" \
-       -c "rpki cache tcp 127.0.0.1 8282 preference 1" -c "exit" \
-       -c "route-map RM-RPKI deny 5" -c "match rpki invalid" -c "exit" \
-       -c "route-map RM-RPKI permit 10" -c "exit" \
-       -c "router bgp 65000" -c "address-family ipv4 unicast" \
-       -c "neighbor 10.0.0.2 route-map RM-RPKI in" \
-       -c "neighbor 10.1.0.2 route-map RM-RPKI in" \
-       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
-echo "$RPKI" | grep -vE "^(note|warning):" | tail -3 | sed 's/^/  /'
-expect_in "the RPKI policy commits" "commit complete" "$RPKI"
-
-n=0
-while [ "$n" -lt 40 ]; do
-  [ "$(in_fib3 198.51.100.0/24)" -eq 0 ] && break
-  sleep 1; n=$((n + 1))
-done
-echo "  after validation: 203.0.113.0/24=$(in_fib3 203.0.113.0/24)  198.51.100.0/24=$(in_fib3 198.51.100.0/24)  (${n}s)"
-vtysh -c "show rpki prefix-table" 2>/dev/null | head -8 | sed 's/^/    /'
-# The assertion on the table that forwards. Both halves: the invalid one is
-# gone AND the valid one is still there - dropping everything would satisfy the
-# first on its own.
-expect "the invalid route does not reach the forwarding table" \
-  test "$(in_fib3 198.51.100.0/24)" -eq 0
-expect "and the valid one still does" \
-  test "$(in_fib3 203.0.113.0/24)" -ge 1
-
-# And the summary says validation is available, where somebody will see it.
-SUMOK=$($HX -c "show bgp summary" 2>&1)
-echo "$SUMOK" | grep -i "rpki" | sed 's/^/  /'
-expect_in "the summary says the cache is connected" \
-  "of 1 cache(s) connected" "$SUMOK"
-
-echo "=========== RPKI: and when the cache goes away ==========="
-# THE assertion that matters. A cache that is gone marks everything notfound,
-# and from a route table that is indistinguishable from "nothing is invalid".
-pkill -f stayrtr 2>/dev/null
-# Waited on the per-cache marker. FRR's own header line says "Connected to
-# group 1" for as long as the cache stays configured - measured at seventy
-# seconds after the server was killed - so waiting on the word "connected"
-# would wait for something that never happens.
-n=0
-while [ "$n" -lt 30 ]; do
-  vtysh -c "show rpki cache-connection" 2>/dev/null \
-    | grep -q "(connected)" || break
-  sleep 1; n=$((n + 1))
-done
-vtysh -c "show rpki cache-connection" 2>&1 | head -5 | sed 's/^/    /'
-SUMGONE=$($HX -c "show bgp summary" 2>&1)
-echo "$SUMGONE" | grep -i "rpki" | sed 's/^/  /'
-expect_in "the box says the cache is not connected, rather than staying quiet" \
-  "NONE connected" "$SUMGONE"
-expect_in "and says what that costs, without overstating it" \
-  "which expires" "$SUMGONE"
-# The other half, measured: killing the cache does NOT empty the prefix table.
-# An operator told "nothing is validated" would go looking for an outage that
-# has not started yet.
-expect "the prefixes the cache already sent are still there" \
-  sh -c "vtysh -c 'show rpki prefix-table' | grep -q 'Number of IPv4 Prefixes: 2'"
-
 echo "=========== router advertisements ==========="
 # The capture is started BEFORE the change and stopped after, not started
 # after it, and it is held for 30 seconds rather than 14.
