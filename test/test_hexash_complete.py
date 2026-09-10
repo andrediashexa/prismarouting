@@ -974,5 +974,107 @@ check("isis password md5 <set, not shown>" in this, f"in every form: {this}")
 check(SECRET in cfg.text(),
       "the text a commit sends and a revision stores keeps the real key")
 
+# --- a key chain carries a secret too (#181) ---
+#
+# `key chain` is the OTHER way OSPF, IS-IS and RIP carry an authentication
+# secret, and #169 covered only the five spellings it named, so `key-string`
+# and `ip rip authentication string` printed in full. Verified against FRR
+# 10.7.1: `key-string LINE` and `ip rip authentication string LINE` each take
+# the secret as a single trailing word, while `key chain WORD`,
+# `key (0-2147483647)` and `ip rip authentication key-chain WORD` are a name,
+# an id and a reference - none of them a secret, and mangling any of them
+# leaves an operator unable to tell WHICH chain is on screen.
+print("\n=== a key chain's secret never reaches the screen ===")
+
+KCSECRET = "S3CR3T-KEYCHAIN"
+kc = [
+    "key chain KC-CORE",
+    " key 1",
+    f"  key-string {KCSECRET}",
+    "  cryptographic-algorithm hmac-sha-256",
+    "interface eth0",
+    f" ip rip authentication string {KCSECRET}",
+    # The boundaries. Both of these name a chain rather than hold one, and a
+    # rule keyed on "key" or on "string" takes them with it.
+    " ip rip authentication key-chain KC-CORE",
+    " ip ospf authentication key-chain KC-CORE",
+    " description the key-string for rip lives on the other router",
+]
+
+shown = redact(kc)
+check(KCSECRET not in "\n".join(shown),
+      f"the key is nowhere in the output: {[l for l in shown if KCSECRET in l]}")
+check("  key-string <set, not shown>" in shown,
+      f"`key-string` is redacted and still shows a key is set: {shown}")
+check(" ip rip authentication string <set, not shown>" in shown,
+      f"and so is RIP's inline string: {shown}")
+# The chain has to stay identifiable, or the operator cannot tell which of
+# several chains they are looking at - and sets a second key over the top.
+check("key chain KC-CORE" in shown,
+      f"the `key chain` line is a NAME, not a secret, and is untouched: {shown}")
+check(" key 1" in shown, f"and the key id survives: {shown}")
+check("  cryptographic-algorithm hmac-sha-256" in shown,
+      f"as does the algorithm that says how the key is used: {shown}")
+check(" ip rip authentication key-chain KC-CORE" in shown,
+      f"a key-chain REFERENCE is a name too: {shown}")
+check(" ip ospf authentication key-chain KC-CORE" in shown,
+      f"OSPF's reference likewise: {shown}")
+check(" description the key-string for rip lives on the other router" in shown,
+      f"a description that merely says the word is untouched: {shown}")
+
+# What #181 extends, not what it replaces.
+check(redact([" password $6$salt$hash"]) == [" password <set, not shown>"],
+      "an account's password still redacts")
+check(redact([" neighbor 10.0.0.1 password P"])
+      == [" neighbor 10.0.0.1 password <set, not shown>"],
+      "and a BGP neighbour's")
+check(redact([" ip ospf message-digest-key 1 md5 K"])
+      == [" ip ospf message-digest-key 1 md5 <set, not shown>"],
+      "and every IGP form from #169")
+
+# Both display paths, the same as #169: `show this` inside a block reads the
+# routing lines straight out of the candidate, and it is the path that printed
+# a secret nowhere else printed.
+cfg = Config()
+cfg.routing = list(kc)
+
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    hexash.Shell.print_config(cfg)
+running = buf.getvalue()
+check(KCSECRET not in running, f"show running-config prints no key: {running}")
+check("key-string <set, not shown>" in running,
+      f"and shows that one is set: {running}")
+
+sh = shell_with_box()
+sh.frr.running = lambda: list(kc)
+sh.feed("configure")
+sh.frr_ctx = ["key chain KC-CORE"]
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.show_this()
+this = buf.getvalue()
+check(KCSECRET not in this, f"show this prints no key-string: {this}")
+check("key-string <set, not shown>" in this,
+      f"and shows that one is set: {this}")
+check("key chain KC-CORE" in this, f"under the chain's own name: {this}")
+
+sh.frr_ctx = ["interface eth0"]
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.show_this()
+this = buf.getvalue()
+check(KCSECRET not in this, f"show this prints no RIP string either: {this}")
+check("ip rip authentication string <set, not shown>" in this,
+      f"and shows that one is set: {this}")
+check("ip rip authentication key-chain KC-CORE" in this,
+      f"while the reference beside it is untouched: {this}")
+
+# It stays a DISPLAY transform. A revision holding <set, not shown> is a
+# rollback that cannot restore the adjacency it is being run to restore.
+check(KCSECRET in cfg.text(),
+      "the text a commit sends and a revision stores keeps the real key")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
