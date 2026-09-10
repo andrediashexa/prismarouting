@@ -378,7 +378,6 @@ vl_api_bpa_interface_add_del_feature_t_handler (
 {
   vl_api_bpa_interface_add_del_feature_reply_t *rmp;
   u32 sw_if_index = clib_net_to_host_u32 (mp->sw_if_index);
-  const char *feature;
   int rv;
 
   VALIDATE_SW_IF_INDEX (mp);
@@ -387,29 +386,12 @@ vl_api_bpa_interface_add_del_feature_t_handler (
    * the identity of the request that produced it. */
   bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
 
-  if (bpa_main.n_workers)
-    feature = mp->is_inside ? "bpa-in2out-handoff" : "bpa-out2in-handoff";
-  else
-    feature = mp->is_inside ? "bpa-in2out" : "bpa-out2in";
-
-  rv = vnet_feature_enable_disable ("ip4-unicast", feature, sw_if_index,
-				    mp->is_add, 0, 0);
-
-  /*
-   * Recorded only once the dataplane has accepted it, and by NAME: an entry
-   * for a change that was refused is a trail that disagrees with the box, and
-   * an sw_if_index is a number that means nothing to whoever reads the file a
-   * year later, on a box that has been renumbered by a reboot.
-   */
-  if (!rv)
-    {
-      u8 *ifname = format (0, "%U", format_vnet_sw_if_index_name,
-			   vnet_get_main (), sw_if_index);
-
-      bpa_audit_interface (mp->is_add ? "attach" : "detach", ifname,
-			   mp->is_inside);
-      vec_free (ifname);
-    }
+  /* The same call the VPP CLI makes, and not a second copy of what it does:
+   * this handler once enabled the feature and returned, which left every
+   * interface the product attaches without shallow reassembly and with a
+   * stale "tcp-mss auto" clamp (#183). */
+  rv = bpa_interface_feature_enable_disable (sw_if_index, mp->is_inside,
+					     mp->is_add);
   bpa_actor_clear ();
 
   BAD_SW_IF_INDEX_LABEL;

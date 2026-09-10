@@ -4,6 +4,7 @@
 #include <vnet/plugin/plugin.h>
 #include <vpp/app/version.h>
 #include <vnet/ip/ip_interface.h>
+#include <vnet/ip/reass/ip4_sv_reass.h>
 
 #include "bpa.h"
 #include "bpa_mss.h"
@@ -587,6 +588,67 @@ bpa_auto_mss_update (void)
   bm->auto_mss = (min == ~0u || min <= BPA_MSS_OVERHEAD)
 		   ? 0
 		   : (u16) (min - BPA_MSS_OVERHEAD);
+}
+
+/*
+ * Attaching CGNAT to an interface, or taking it off, for every caller.
+ *
+ * One function and not two identical ones, because everything the feature
+ * toggle drags with it is invisible when it is missing, and a caller that
+ * forgets a piece produces a box that looks configured and is not. That is
+ * not hypothetical: the VPP CLI did all of this and the binary API did only
+ * the first line of it, so every interface the product attached after #76
+ * moved the VTY off vppctl carried CGNAT with no reassembly and no MSS
+ * recompute (#183). Whatever the next caller is - a startup file, a
+ * netconf agent - it gets the whole thing by calling this.
+ */
+int
+bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
+				      int enable)
+{
+  const char *feature;
+  int rv;
+
+  if (bpa_main.n_workers)
+    feature = is_inside ? "bpa-in2out-handoff" : "bpa-out2in-handoff";
+  else
+    feature = is_inside ? "bpa-in2out" : "bpa-out2in";
+
+  rv = vnet_feature_enable_disable ("ip4-unicast", feature, sw_if_index,
+				    enable, 0, 0);
+  if (rv)
+    return rv;
+
+  /*
+   * Shallow virtual reassembly: it keeps the ports from the first fragment
+   * and attaches them to the following ones. Without it a fragment with no
+   * port matches no session and is dropped. It is refcounted, so coexisting
+   * with another feature that also uses it is not a problem - and the detach
+   * has to give back exactly what the attach took, or reassembly stays on an
+   * interface the CGNAT no longer touches with nothing left to turn it off.
+   */
+  ip4_sv_reass_enable_disable_with_refcnt (sw_if_index, enable);
+
+  /* The set of interfaces the CGNAT runs on has just changed, and that set is
+   * what "tcp-mss auto" is the minimum over. Left alone, the clamp keeps
+   * describing an interface set that no longer exists, and a subscriber
+   * behind the new interface is handed an MSS larger than the path takes. */
+  bpa_auto_mss_update ();
+
+  /*
+   * Recorded only once the dataplane has accepted it, and by NAME: an entry
+   * for a change that was refused is a trail that disagrees with the box, and
+   * an sw_if_index is a number that means nothing to whoever reads the file a
+   * year later, on a box that has been renumbered by a reboot.
+   */
+  {
+    u8 *ifname = format (0, "%U", format_vnet_sw_if_index_name,
+			 vnet_get_main (), sw_if_index);
+
+    bpa_audit_interface (enable ? "attach" : "detach", ifname, is_inside);
+    vec_free (ifname);
+  }
+  return 0;
 }
 
 /*
