@@ -286,12 +286,47 @@ missing, and without that the check refused the very commit that would have
 brought it into existence. A sub-interface whose *parent* is absent is a
 different error and says so.
 
-**`exact-match` cannot be set.** `create_subif` takes a bitfield, and `vat2`
-can only send one flag name of one — an integer segfaults it
-([#136](https://github.com/andrediashexa/hexarouting/issues/136)). So a QinQ
-sub-interface is created with `TWO_TAGS` and without `EXACT_MATCH`, which means
-it also matches frames carrying **more** than two tags. Documented rather than
-silently shipped.
+**A QinQ sub-interface also matches frames carrying more than two tags**, and
+the VTY says so every time it creates one:
+
+```
+warning: pg0.700 matches outer 700 inner 900 AND anything carrying more tags
+than that; VPP's ethernet input reads three or more tags as two, so a QinQ
+sub-interface on this box cannot be made to refuse them (#136)
+```
+
+Two separate reasons, and only one of them was known when
+[#136](https://github.com/andrediashexa/hexarouting/issues/136) was filed.
+
+`create_subif` takes `sub_if_flags`, which VPP declares as an `enum` although
+every member is a bit, and `vat2` generates a parser for an `enum` that
+compares **one** name whole. Anything else is a null-pointer dereference:
+`20`, `0`, `null` and `["A","B"]` all segfault it, while `"A|B"` and `"A,B"`
+exit 0 having sent nothing. A type declared `enumflags` instead — `tunnel_flags`,
+say — generates a loop over a JSON array and ORs the members, so the multi-bit
+value **is** expressible in vat2's JSON and these two types are simply declared
+with the wrong keyword upstream. `SUB_IF_API_FLAG_TWO_TAGS` therefore goes
+without `SUB_IF_API_FLAG_EXACT_MATCH`.
+
+Sending it would change nothing an operator could see. Measured on
+`vpp 26.06-release` with the packet generator: a three-tag frame lands on a
+QinQ sub-interface created by the VPP CLI **with** `exact-match` exactly as it
+lands on one created without. `eth_input_tag_lookup()` in
+`vnet/ethernet/node.c` — the path a sub-interface on a real port takes — reads
+"three or more tags" as two and never asks for `SUBINT_CONFIG_MATCH_3_TAG`.
+The flag is honoured on a *single*-tag sub-interface, where `dot1q 60
+exact-match` does drop a two-tag frame that `dot1q 50` accepts; the VTY needs
+nothing there, because `create_vlan_subif` takes no flags and VPP already
+makes that sub-interface exact-matching.
+
+`lab/subif.sh` asserts the over-match rather than describing it, so a VPP that
+ever stops taking the three-tag frame fails the lab and the warning comes out.
+
+**The client refuses what it cannot say.** `vppapi.py` checks the shape of
+these flag fields before starting `vat2`, and reports a `vat2` that died or
+refused as `cannot-send` — "the dataplane never saw it" — rather than as
+`not-running`, which used to send the operator to restart a dataplane that was
+answering perfectly.
 
 ### An interface in a VRF
 

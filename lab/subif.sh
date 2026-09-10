@@ -106,6 +106,67 @@ expect_not_in "and the counters are real, not all zero" \
 expect_in "with at least one of them shown" "rx bytes" "$DETAIL"
 
 echo
+echo "=========== a QinQ sub-interface, and what it really matches ==========="
+# #136. The VTY can only send SUB_IF_API_FLAG_TWO_TAGS, because vat2 renders a
+# bitfield as ONE enum name and crashes on every other spelling. The flag it
+# cannot send is EXACT_MATCH - and this lab is where it was established that
+# sending it would change nothing observable anyway: a sub-interface created
+# by the VPP CLI *with* exact-match took the three-tag frame below just the
+# same. VPP's eth_input_tag_lookup() reads "three or more tags" as two.
+#
+# So the assertions here are the honest ones: the QinQ sub-interface carries
+# what it was asked to carry, the VTY says out loud what else it accepts, and
+# the over-match is asserted rather than described - if a later VPP stops
+# taking the three-tag frame, this lab fails and the warning comes out.
+QQ=$($HX -c "configure" -c "interface pg0.700" -c "vlan 700 inner 900" \
+         -c "exit" -c "commit" 2>&1)
+echo "$QQ" | sed 's/^/  /'
+vppctl set interface state pg0.700 up 2>/dev/null
+
+expect_in "the QinQ sub-interface exists on the dataplane" "pg0.700" \
+  "$(vppctl show interface | awk '{print $1}')"
+expect_in "and the VTY reads both tags back from the box" "vlan 700 inner 900" \
+  "$($HX -c 'show running-config' | sed -n '/^interface pg0.700$/,/^ exit$/p')"
+expect_in "creating one says what it will accept" "more tags" "$QQ"
+
+# Same recipe as frame() above, with as many tags as asked for.
+qframe() {  # $@ = vlan ids in hex, 4 digits each
+  printf '02fe00000001020000000002'
+  for t in "$@"; do printf '8100%s' "$t"; done
+  printf '08004500002e0001000040110000'
+  printf '0a6400020a640001'
+  printf '04d204d2001a0000'
+  printf '00000000000000000000000000000000'
+}
+qshoot() {  # $1 = size, $2 = hex
+  vppctl packet-generator new "name qq limit 1 node ethernet-input \
+      interface pg0 size $1-$1 data { hex 0x$2 }" >/dev/null
+  vppctl packet-generator enable >/dev/null; sleep 1
+  vppctl packet-generator delete qq >/dev/null 2>&1
+}
+
+BEFORE=$(count_of pg0.700)
+qshoot 64 "$(qframe 02bc 0384)"
+AFTER=$(count_of pg0.700)
+echo "  two tags 700/900:   ${BEFORE:-0} -> ${AFTER:-0}"
+expect "a frame tagged 700 outer, 900 inner lands on it" \
+  test "${AFTER:-0}" -gt "${BEFORE:-0}"
+
+BEFORE=$(count_of pg0.700)
+qshoot 64 "$(qframe 02bd 0384)"
+AFTER=$(count_of pg0.700)
+echo "  two tags 701/900:   ${BEFORE:-0} -> ${AFTER:-0}"
+expect "a different outer tag does NOT land on it" \
+  test "${AFTER:-0}" -eq "${BEFORE:-0}"
+
+BEFORE=$(count_of pg0.700)
+qshoot 68 "$(qframe 02bc 0384 0007)"
+AFTER=$(count_of pg0.700)
+echo "  three tags 700/900/7: ${BEFORE:-0} -> ${AFTER:-0}"
+expect "a THIRD tag lands on it too, which is the limitation warned about" \
+  test "${AFTER:-0}" -gt "${BEFORE:-0}"
+
+echo
 echo "=========== a MAC set through the VTY ==========="
 $HX -c "configure" -c "interface pg0" -c "mac-address 02:aa:bb:cc:dd:ee" \
     -c "exit" -c "commit" > /tmp/mac.log 2>&1 || true
@@ -117,9 +178,11 @@ expect_in "and the VTY reads it back from the box" "02:aa:bb:cc:dd:ee" \
 
 echo
 echo "=========== removing it through the VTY ==========="
-$HX -c "configure" -c "no interface pg0.100" -c "commit" 2>&1 | sed 's/^/  /'
+$HX -c "configure" -c "no interface pg0.100" -c "no interface pg0.700" \
+    -c "commit" 2>&1 | sed 's/^/  /'
 IFACES=$(vppctl show interface | awk '{print $1}')
 expect_not_in "the sub-interface is gone from the dataplane" "pg0.100" "$IFACES"
+expect_not_in "the QinQ one too" "pg0.700" "$IFACES"
 expect_in "and its parent is untouched" "pg0" "$IFACES"
 
 verdict

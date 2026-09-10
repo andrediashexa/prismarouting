@@ -126,6 +126,90 @@ check(r.state == vppapi.BAD_REPLY,
       f"unreadable output is a version mismatch, not a dead socket: {r.state}")
 print(f"  {r.state}: {r.reason}")
 
+print("\n=== a value the client cannot encode is never handed to vat2 ===")
+# vat2 dies on a null pointer for anything that is not a single flag NAME in
+# an `enum` field (#136). Measured spellings, all of them SIGSEGV against vpp
+# 26.06-release: 20, 0, null, ["A"], ["A","B"]. A commit that dumps core in
+# the middle has told the operator nothing about which field was wrong, so the
+# refusal has to happen before the process starts - which is what `attempts`
+# asserts here. Without the guard this test crashes a real vat2 instead.
+attempts = []
+
+
+def counting(argv, timeout=10):
+    attempts.append(argv)
+    return (0, '{"retval": 0}', "")
+
+
+for bad in (20, 0, None, ["SUB_IF_API_FLAG_TWO_TAGS"],
+            ["SUB_IF_API_FLAG_TWO_TAGS", "SUB_IF_API_FLAG_EXACT_MATCH"],
+            "SUB_IF_API_FLAG_TWO_TAGS|SUB_IF_API_FLAG_EXACT_MATCH",
+            "SUB_IF_API_FLAG_TWO_TAGS,SUB_IF_API_FLAG_EXACT_MATCH",
+            "SUB_IF_API_FLAG_TWO_TAGS SUB_IF_API_FLAG_EXACT_MATCH", ""):
+    api = vppapi.Vat2(runner=counting)
+    r = api.call("create_subif", {"sw_if_index": 1, "sub_id": 100,
+                                  "sub_if_flags": bad,
+                                  "outer_vlan_id": 100, "inner_vlan_id": 900})
+    check(r.state == vppapi.CANNOT_SEND,
+          f"sub_if_flags={bad!r} must be refused, got {r.state}")
+    check("sub_if_flags" in r.reason,
+          f"the reason must name the field: {r.reason!r}")
+check(attempts == [], f"nothing may be run for a value that crashes it: "
+                      f"{attempts}")
+print(f"  9 spellings refused, vat2 started {len(attempts)} times")
+
+# The one spelling that works still goes through, or the guard has replaced
+# the defect with a worse one.
+api = vppapi.Vat2(runner=counting)
+r = api.call("create_subif", {"sw_if_index": 1, "sub_id": 100,
+                              "sub_if_flags": "SUB_IF_API_FLAG_TWO_TAGS",
+                              "outer_vlan_id": 100, "inner_vlan_id": 900})
+check(r.ok, f"a single flag name must still be sent: {r.state} {r.reason}")
+check(len(attempts) == 1, f"and it must reach vat2: {attempts}")
+print(f"  one flag name: {r.state}")
+
+print("\n=== a client that crashed is not a dataplane that died ===")
+# The distinction this whole module exists for, applied to its own failures.
+# Both of these used to come back as not-running, sending the operator to
+# `systemctl status vpp` for a box that was answering perfectly.
+api = vppapi.Vat2(runner=fake({"vat2 sw_interface_set_rx_mode": (-11, "", "")}))
+r = api.call("sw_interface_set_rx_mode", {"sw_if_index": 1, "mode": 0})
+check(r.state == vppapi.CANNOT_SEND,
+      f"a signal death is the client's failure, not VPP's: {r.state}")
+check("11" in r.reason, f"and says which signal: {r.reason!r}")
+print(f"  {r.state}: {r.reason}")
+
+api = vppapi.Vat2(runner=fake({"vat2 create_subif": (139, "", "")}))
+r = api.call("create_subif", {"sw_if_index": 1})
+check(r.state == vppapi.CANNOT_SEND,
+      f"128+n from a shell means the same thing: {r.state}")
+print(f"  via a shell: {r.state}: {r.reason}")
+
+# vat2 exits 0 when it merely refuses to convert, so the return code says
+# nothing at all here and only the text does.
+api = vppapi.Vat2(runner=fake({"vat2 create_subif": (
+    0, "", "Failed converting JSON to API\nCall failed: create_subif\n")}))
+r = api.call("create_subif", {"sw_if_index": 1})
+check(r.state == vppapi.CANNOT_SEND,
+      f"a refusal to convert is not a dead dataplane: {r.state}")
+check("never saw it" in r.reason, f"say that nothing was applied: {r.reason!r}")
+print(f"  {r.state}: {r.reason}")
+
+# A dump reaches the same conclusion, or interface_index() turns a crashed
+# client into "the dataplane does not have that interface".
+api = vppapi.Vat2(runner=fake({"vat2 sw_interface_dump": (-11, "", "")}))
+r = api.dump("sw_interface_dump", {})
+check(r.state == vppapi.CANNOT_SEND,
+      f"a dump must not report a crash as a dead dataplane: {r.state}")
+print(f"  on a dump: {r.state}")
+
+# And a dataplane that really is not answering still says so.
+api = vppapi.Vat2(runner=fake({"vat2 bpa_pool_add_del": (1, "", "")}))
+r = api.call("bpa_pool_add_del", {})
+check(r.state == vppapi.NOT_RUNNING,
+      f"a silent failure is still not-running: {r.state}")
+print(f"  a real silence: {r.state}")
+
 print("\n=== a change carries who asked; a read does not ===")
 # The trail records accountable ACTIONS. Attaching an operator to a dump would
 # put a name against reading, which is not what the record is for and not what

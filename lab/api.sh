@@ -109,6 +109,21 @@ expect_in "an invalid pool comes back refused" "invalid: refused -7" "$CLI"
 expect_in "and carries a reason an operator can act on" "power of two" "$CLI"
 expect_not_in "the refused pool really is absent" "pool client-bad" "$(vppctl show bpa pool)"
 
+# --- the client's OWN failures, told apart from the dataplane's (#136) ---
+# vat2 cannot render a bitfield with more than one bit set, and it does not
+# refuse: it dereferences a null pointer and dies, or exits 0 with "Failed
+# converting JSON to API" on stderr. Both used to arrive here as not-running,
+# which sends the operator to restart a dataplane that is answering. VPP is
+# still up for these two lines - the stopped-dataplane case is below, and it
+# has to keep saying something different.
+expect_in "a value the client cannot encode is refused, not blamed on VPP" \
+  "unencodable: cannot-send" "$CLI"
+expect_in "and it names the field that could not be said" "flags" "$CLI"
+expect_in "a vat2 that segfaulted is reported as the client's failure" \
+  "crashing: cannot-send" "$CLI"
+expect_in "with the one fact that decides what to do next" \
+  "the dataplane never saw it" "$CLI"
+
 # --- with the dataplane stopped: the case that used to be a traceback ---
 pkill -f "vpp -c /src/lab/startup-test.conf" 2>/dev/null
 sleep 2

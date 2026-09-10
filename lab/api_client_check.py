@@ -47,3 +47,18 @@ print(f"valid: {r.state} {r.retval}")
 # reason it logged is what makes that number actionable.
 r = add(api, "client-bad", 500, ["100.64.12.0/22", "200.150.9.20/30"])
 print(f"invalid: {r.state} {r.retval} | {r.reason}")
+
+# #136, both shapes of "the client could not say it", against a real vat2.
+#
+# The first is refused before the process starts: `flags: 0` is the natural
+# way to say administratively down, and vat2 dies on it. The second is the
+# reason the first exists - it is a message hexash never sends, chosen because
+# it really does make vat2 segfault, so the classification is proved against a
+# crashing client rather than against a stub of one.
+r = api.call("sw_interface_set_flags", {"sw_if_index": 0, "flags": 0})
+print(f"unencodable: {r.state} | {r.reason}")
+
+r = api.call("sw_interface_set_rx_mode",
+             {"sw_if_index": 0, "queue_id_valid": False, "queue_id": 0,
+              "mode": 0})
+print(f"crashing: {r.state} | {r.reason}")

@@ -11,6 +11,8 @@ reported success while holding none of the configuration.
 The API is stubbed, so each outcome is produced on demand rather than raced
 for.
 """
+import contextlib
+import io
 import os
 import sys
 
@@ -165,6 +167,59 @@ sh = shell_with(api, caps={hexash.CAP_CGNAT})
 ok = sh.apply(target_with("fine", "100.64.0.0/22", "200.150.0.16/30"))
 check(ok is True, "a cgnat operator must be able to change a pool")
 print(f"  apply -> {ok}")
+
+print("\n=== a QinQ sub-interface says what it actually matches ===")
+# #136: vat2 can only send ONE name of a bitfield, so TWO_TAGS goes without
+# EXACT_MATCH - and measurement on vpp 26.06-release showed that sending it
+# would change nothing anyway, because eth_input_tag_lookup() reads three or
+# more tags as two. Either way the sub-interface accepts frames the operator
+# did not ask for, and the only honest thing left is to say so at the moment
+# it is created. Silence here is what #131 shipped.
+api = FakeApi()
+api.interface_index = lambda name: 1
+sh = shell_with(api)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    ok = sh.create_subif("pg0.100", {"outer": 100, "inner": 900})
+said = buf.getvalue()
+check(ok is True, "the sub-interface is still created")
+check("warning:" in said, f"the operator must be told: {said!r}")
+check("pg0.100" in said, f"and which interface it is about: {said!r}")
+check("more tags" in said, f"and what it also accepts: {said!r}")
+sent = [a for m, a in api.calls if m == "create_subif"]
+check(sent and sent[0]["sub_if_flags"] == "SUB_IF_API_FLAG_TWO_TAGS",
+      f"one flag name, the only spelling vat2 can send: {sent}")
+print("  " + said.strip())
+
+print("\n=== a single-tag sub-interface has nothing to warn about ===")
+# It goes through create_vlan_subif, which takes no flags at all, and VPP
+# makes it exact-matching: measured, a two-tag frame does not land on one.
+# A warning that fires on a working configuration teaches operators to ignore
+# warnings.
+api = FakeApi()
+api.interface_index = lambda name: 1
+sh = shell_with(api)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    ok = sh.create_subif("pg0.100", {"outer": 100, "inner": None})
+check(ok is True, "the sub-interface is created")
+check("warning" not in buf.getvalue(),
+      f"and nothing is warned about: {buf.getvalue()!r}")
+check([m for m, a in api.calls] == ["create_vlan_subif"],
+      f"through the message that needs no flags: {api.calls}")
+print(f"  {[m for m, a in api.calls]}, no warning")
+
+print("\n=== the flags vat2 cannot send never reach it ===")
+# The guard lives in vppapi, but the value that would trip it is chosen here.
+# If a later change starts computing TWO_TAGS|EXACT_MATCH, this catches it as
+# a refusal instead of as a core dump during somebody's commit.
+check(vppapi.unsendable("create_subif", {"sub_if_flags": 20}) != "",
+      "an integer bitfield must be refused")
+check(vppapi.unsendable(
+    "create_subif",
+    {"sub_if_flags": "SUB_IF_API_FLAG_TWO_TAGS"}) == "",
+    "the spelling hexash uses must not be")
+print("  integer refused, single name allowed")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
