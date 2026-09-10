@@ -25,7 +25,96 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.58.0.
+Nothing merged since v0.59.0.
+
+## 0.59.0 — a loopback, the pair nothing was creating, and a flag that could not be sent
+
+[#179](https://github.com/andrediashexa/hexarouting/issues/179),
+[#182](https://github.com/andrediashexa/hexarouting/issues/182) in part,
+[#136](https://github.com/andrediashexa/hexarouting/issues/136), and
+[#151](https://github.com/andrediashexa/hexarouting/issues/151) in part.
+
+### Fixed
+
+* **Nothing in the product created a `linux_cp` pair.** `lcp create` appeared in
+  five labs and nowhere else. The `linux-cp` settings in the startup
+  configuration govern how an **existing** pair behaves; `lcp-auto-subint`
+  creates a pair for a sub-interface of an interface that is *already* paired.
+  Neither creates the first one.
+
+  So on a box installed from the ISO, FRR saw no interface for the port that
+  carries traffic and **BGP, OSPF and IS-IS were configurable and inert** —
+  while the labs created the pair by hand, and therefore proved a box nobody
+  received. That is the third instance of the shape, after the routing daemons
+  ([#99](https://github.com/andrediashexa/hexarouting/issues/99)) and OSI
+  passthrough ([#168](https://github.com/andrediashexa/hexarouting/issues/168)).
+
+  `linux-name <name>` is what the kernel, `ip` and FRR see an interface by,
+  created over the binary API. TAP rather than TUN, and not by default: IS-IS is
+  OSI straight over the link and a TUN pair has no link layer to carry it.
+
+* **There was no way to create a loopback**, and the VTY already **refused**
+  `neighbor X update-source Loopback0` for not existing — so the box named what
+  was missing and gave no way to make it, which is worse than not offering the
+  statement. Naming a loopback creates it, the way naming a sub-interface does.
+  `loop<n>` is VPP's own spelling, and the instance in the name is the instance
+  VPP is given: `loop3` produces `loop3`, not whatever was next free.
+
+* **`vat2` segfaults on a flag it cannot send, and the client called it a dead
+  dataplane.** Reproduced against VPP 26.06: a bare flag name works; an integer,
+  `0`, `null` and a JSON list — including a one-element list — all segfault. The
+  comma, pipe and space spellings do **not** segfault, because they are strings
+  and take the clean-refusal path.
+
+  The cause is upstream: `interface_types.api.json` declares `sub_if_flags` and
+  `if_status_flags` under `enums` rather than `enumflags`, so the generated
+  `_fromjson` does `strcmp` on the NULL a non-string returns. A type declared
+  `enumflags` generates a loop over a JSON array. Multi-bit values **are**
+  expressible in vat2's JSON; these two are declared with the wrong keyword.
+
+  And both failures were classified as "no reply from the dataplane; check
+  `systemctl status vpp`" — for a dataplane that was answering perfectly. The
+  client now reports `CANNOT_SEND` and refuses a value whose *shape* vat2 dies
+  on, before the process starts, checked on shape rather than against a list of
+  member names so it cannot drift out of step with VPP.
+
+### Measured, and it changed the decision
+
+`EXACT_MATCH` buys **nothing observable** here. With the packet generator, a
+three-tag frame lands on a sub-interface created *with* the flag by `vppctl`
+and on one created with `TWO_TAGS` alone. `eth_input_tag_lookup()` — the path a
+sub-interface on a port takes — sets `n_tags = 2` whenever the second ethertype
+is `0x8100` and never asks for a three-tag match. The control proves exact
+matching works at all: a single-tag `exact-match` sub-interface refuses the 2-
+and 3-tag frames.
+
+So the acceptance test #136 proposed — a three-tag frame does not land — cannot
+pass on this VPP even with the flag sent correctly. What ships instead is a
+warning on every QinQ creation naming what the interface accepts, and
+`lab/subif.sh` asserts the three-tag frame **lands**. Asserting the wrong
+behaviour on purpose: a VPP that ever fixes this fails the lab.
+
+### Internal
+
+* **Six assertions that could not fail**, each demonstrated in three states: the
+  thing broken with the old assertion still passing, the new one failing on that
+  same build, and both restored.
+
+  The worst was `lab/frag.sh`. `expect_not_in "it did not open a phantom
+  session" "12346 -> "` looked for a needle the product never prints, because
+  the lab only ever sends from 12345. Disabling the reassembly the lab exists to
+  test made the box open a real phantom session — and the assertion stayed
+  green.
+
+  The other five were one family: a label standing in for a value.
+  `port-holddown` matches whatever the timer is set to; `packets translated` is
+  declared for **both** directions, so removing the return path still matched;
+  `allocations` is a column heading printed for a pool with zero.
+
+* One existing assertion was fragile by construction and had to change:
+  "shutdown is in the running configuration, for THIS interface" counted four
+  lines back from the statement, which held until a statement was added to the
+  block between the two. It reads the block now.
 
 ## 0.58.0 — a secret nobody covered, an installer that checks its work, and the suite's floor
 
