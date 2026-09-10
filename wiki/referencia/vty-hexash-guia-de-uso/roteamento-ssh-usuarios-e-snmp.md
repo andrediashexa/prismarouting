@@ -250,6 +250,62 @@ commit complete
 
 Antes essa linha era descartada, e a pessoa saía com uma política apontando para nada.
 
+# Listas de AS-path e de comunidade
+
+São elas que uma route-map consulta em `match as-path`, `match community` e `match large-community`.
+
+```
+bgp as-path access-list AS-CLIENTES permit ^65001(_65001)*$
+bgp community-list standard CM-NAO-EXPORTAR permit 65000:666
+bgp large-community-list standard LC-REGIAO permit 65000:1:1
+```
+
+`?` e TAB completam os nomes que já existem na caixa, nos dois lugares: onde a lista é criada e onde a route-map a consulta.
+
+## Uma expressão que não compila é recusada na hora
+
+O FRR compila a expressão **na hora de aplicar**, ou seja, no meio do commit. Aqui ela é compilada quando você digita:
+
+```
+error: bgp as-path access-list AS-BAD permit ^65001(: the regular expression
+does not compile: missing ), unterminated subpattern at position 6
+```
+
+## Uma expressão que compila e casa a coisa errada
+
+Esse é o erro comum, e ele **não** pode ser recusado — a expressão é legítima. `permit 65001` compila, é válida, e também casa `165001` e `650012`: sem `^` e `$`, uma comparação exata vira comparação por pedaço.
+
+E o `_` do FRR não é o caractere sublinhado: ele quer dizer **qualquer fronteira** — começo, fim ou separador entre ASNs.
+
+Ler a própria expressão de volta não mostra isso. Contar contra os caminhos que a caixa **realmente recebeu** mostra:
+
+```
+note: AS-LOOSE '65002' matches 2 of 5 received AS path(s); e.g. '65001 65002'
+```
+
+Se o número vier muito maior do que você esperava, falta âncora. Se vier zero, a lista existe e não filtra nada.
+
+:::info
+Quando a caixa ainda não recebeu nenhum caminho, o equipamento diz isso em vez de responder zero. "Casou 0" e "não havia contra o que casar" são respostas diferentes, e só uma delas fala da sua expressão.
+:::
+
+## Um nome que ninguém definiu é recusado
+
+```
+error: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
+defined; the clause would match nothing
+```
+
+É o mesmo problema da route-map que não existe: commita, a política lê certo, e a cláusula não casa nada — para sempre. O FRR não recusa; o equipamento recusa.
+
+As duas grafias de lista de comunidade valem como definição: `bgp community-list standard NOME` e `bgp community-list NOME`.
+
+## Como conferir
+
+* `commit check` mostra as contagens e as recusas sem tocar na caixa;
+* `show bgp ipv4 unicast` mostra os caminhos recebidos, que é contra o que a contagem foi feita;
+* `show route` mostra o que **encaminha** — se a política era para tirar rota, é aí que ela some.
+
 # Route-maps: a política em si
 
 Uma route-map é uma lista de cláusulas numeradas. Cada cláusula diz **a quais rotas se aplica** (`match`) e **o que muda nelas** (`set`). A primeira cláusula que casa decide; as de baixo não são consultadas.

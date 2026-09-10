@@ -25,7 +25,67 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.52.0.
+Nothing merged since v0.53.0.
+
+## 0.53.0 — a regex that compiles is not a regex that is right
+
+AS-path and community lists
+([#146](https://github.com/andrediashexa/hexarouting/issues/146)).
+
+### Added
+
+* **An AS-path regex that does not compile is refused at the prompt**, not
+  mid-commit, which is where FRR compiles it. Ten cases go to both the VTY and
+  a running FRR in the lab and must agree — the VTY now holds an opinion about
+  what FRR accepts, and an opinion that drifts refuses configurations that are
+  fine.
+
+* **What a regex actually matches, counted against the paths the box has
+  received.**
+
+  ```
+  note: AS-LOOSE '65002' matches 2 of 5 received AS path(s); e.g. '65001 65002'
+  ```
+
+  This is the failure that cannot be refused: `permit 65001` is legal, compiles,
+  and also matches `165001` and `650012`, because a missing `^` or `$` turns an
+  exact match into a substring one. FRR's `_` means *any boundary*, not an
+  underscore. Nobody sees this by reading their own regex back.
+
+  Read from JSON, not from the human table, where a long AS path wraps onto the
+  next line — losing exactly the long paths a regex is most likely to get wrong.
+  With no paths received, the VTY says so rather than reporting zero: "matches
+  0" and "there was nothing to match against" are different answers.
+
+* **A list a route-map names and nothing defines is refused.** It commits, the
+  policy reads correctly, and the clause matches nothing forever. Both spellings
+  of a community list count as defining it.
+
+* **`bgp as-path access-list`, `bgp community-list` and
+  `bgp large-community-list` complete**, and so do their names wherever a
+  route-map matches on them.
+
+### Internal
+
+* The lab runs a **third autonomous system** one hop behind the peer, so the
+  box receives two different origins. A policy accepts only what `65002`
+  originated: its prefix must stay in the VPP FIB and the other must leave it.
+  The second half is the one that matters — a regex matching everything would
+  keep both, and a test that only looked at the route the policy meant to
+  select would pass on it.
+
+* The lab suite runs 8 at a time rather than 4, measured: 1568 s against
+  1334 s on the same 36 labs, with the faster run competing against an ISO
+  build. Doubling the parallelism buys 15%, which says the rest of the wall
+  clock is one lab waiting — `routing` alone runs over 350 s, and the suite
+  cannot finish before its slowest member. More cores will not change that.
+
+* The router-advertisement suppression test was measured wrongly and passed
+  wrongly. Its capture opened before the commit — which is right for the
+  *enable* direction, because VPP sends its initial advertisements as
+  advertising starts — and therefore counted an advertisement already in flight
+  when suppression was applied. It now reads VPP's own
+  `n_advertisements_sent` across the window, which is not a matter of timing.
 
 ## 0.52.0 — route-maps, and a refusal the next commit used to pay for
 

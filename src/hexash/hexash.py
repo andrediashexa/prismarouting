@@ -15,6 +15,7 @@ and does not pin us to an FRR release.
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import re
 import shlex
@@ -578,6 +579,16 @@ TREE = {
         "ipv6": ("IPv6 configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
                             ARG_PREFIX_LIST)}),
+        "bgp": ("BGP-wide lists a route-map matches on", {
+            "as-path": ("AS path matching", {
+                "access-list": ("a named list of AS-path regexes",
+                                ARG_AS_PATH_LIST),
+            }),
+            "community-list": ("a named list of communities",
+                               ARG_COMMUNITY_LIST),
+            "large-community-list": ("a named list of large communities",
+                                     ARG_COMMUNITY_LIST),
+        }),
         "router": ("routing protocols (FRR)", {
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", None),
@@ -747,6 +758,95 @@ def mark_unchecked(lines):
                 break
             node = entry[1]
         out.append(l if known else f"{l}{UNCHECKED_MARK}")
+    return out
+
+
+def as_path_regex_error(line):
+    """
+    Why FRR would refuse this AS-path regex, or None.
+
+    FRR compiles the regex when the statement is APPLIED, which is mid-commit -
+    the worst moment to find out. Compiling it here moves that to the prompt.
+
+    POSIX extended regular expressions, which is what FRR uses, and what
+    Python's `re` accepts is close but not identical. So this refuses only what
+    fails to compile in BOTH readings, and lab/routing.sh puts a set of them to
+    FRR itself and requires the two to agree - the same arrangement as the
+    prefix-range rule, and for the same reason: an opinion about what FRR
+    accepts that drifts from FRR refuses configurations that are fine.
+    """
+    w = line.split()
+    if len(w) < 5 or w[:3] != ["bgp", "as-path", "access-list"]:
+        return None
+    if w[4] not in ("permit", "deny"):
+        return None
+    regex = " ".join(w[5:])
+    if not regex:
+        return "no regular expression: 'permit' or 'deny' takes one"
+    try:
+        re.compile(regex)
+    except re.error as e:
+        return f"the regular expression does not compile: {e}"
+    return None
+
+
+def as_path_matches(regex, paths):
+    """
+    How many of `paths` the regex matches, and one that it did.
+
+    FRR matches an AS path regex against the path rendered as a
+    space-separated string of AS numbers, with `_` standing for a boundary.
+    That underscore is the whole reason this exists as a report rather than a
+    refusal: `permit 65001` compiles, and matches 165001 and 650012 as well,
+    which is the mistake nobody sees by reading their own regex back.
+    """
+    # FRR's `_` is "any boundary": start, end, or a separator.
+    try:
+        rx = re.compile(regex.replace("_", "(^|$|[,{}()\\s])"))
+    except re.error:
+        return 0, None
+    hit, example = 0, None
+    for path in paths:
+        if rx.search(path):
+            hit += 1
+            if example is None:
+                example = path or "(empty: originated in the neighbour's AS)"
+    return hit, example
+
+
+def undefined_policy_lists(routing):
+    """
+    Names a route-map matches on that nothing in the configuration defines.
+
+    Same failure as the undefined route-map: the statement commits, the policy
+    reads correctly, and the clause matches nothing forever. FRR does not
+    refuse it, so this does.
+    """
+    have_as, have_comm, have_large = set(), set(), set()
+    for line in routing:
+        w = line.split()
+        if len(w) >= 4 and w[:3] == ["bgp", "as-path", "access-list"]:
+            have_as.add(w[3])
+        elif len(w) >= 3 and w[0] == "bgp" and w[1] == "community-list":
+            have_comm.add(w[3] if w[2] in ("standard", "expanded") else w[2])
+        elif len(w) >= 3 and w[0] == "bgp" and w[1] == "large-community-list":
+            have_large.add(w[3] if w[2] in ("standard", "expanded") else w[2])
+
+    out = []
+    for line in routing:
+        w = line.split()
+        if not w or w[0] != "match" or len(w) < 3:
+            continue
+        kind, name = w[1], w[2]
+        if kind == "as-path" and name not in have_as:
+            out.append((line.strip(), f"no AS-path list called '{name}' is "
+                        "defined; the clause would match nothing"))
+        elif kind == "community" and name not in have_comm:
+            out.append((line.strip(), f"no community list called '{name}' is "
+                        "defined; the clause would match nothing"))
+        elif kind == "large-community" and name not in have_large:
+            out.append((line.strip(), f"no large-community list called "
+                        f"'{name}' is defined; the clause would match nothing"))
     return out
 
 
@@ -2084,6 +2184,27 @@ class Shell:
             for stmt, why in bgp_errors(target.routing):
                 self.err(f"{stmt}: {why}")
                 ok = False
+
+            # An AS-path regex FRR would refuse, refused at the prompt
+            # instead of mid-commit (#146).
+            for stmt in target.routing:
+                why = as_path_regex_error(stmt.strip())
+                if why:
+                    self.err(f"{stmt.strip()}: {why}")
+                    ok = False
+
+            # A name a route-map matches on that nothing defines.
+            for stmt, why in undefined_policy_lists(target.routing):
+                self.err(f"{stmt}: {why}")
+                ok = False
+
+            # What each AS-path regex actually matches, against the paths this
+            # box has received. A regex that compiles and matches nothing - or
+            # everything - is the common mistake, and it cannot be refused:
+            # `permit 65001` is legal and also matches 165001 and 650012. An
+            # operator reading their own regex back will not see it; a count
+            # against real paths is what shows it.
+            self.report_as_path_reach(target.routing)
 
             # Route-maps: one refusal and two things worth saying (#144). The
             # warnings do NOT fail the check - a permit with no match is a
@@ -3849,6 +3970,61 @@ class Shell:
             if len(w) == 3 and w[0] == "neighbor" and w[2] == "peer-group":
                 found[w[1]] = "peer group"
         return found
+
+    def received_as_paths(self):
+        """
+        Every AS path this box has been offered, as FRR renders them.
+
+        From `show bgp ipv4 unicast json`, because the human table wraps a long
+        path onto the next line and a parser that reads it by column loses
+        exactly the long paths a regex is most likely to get wrong.
+
+        A box with no BGP, or with FRR down, has no paths - which is not a
+        failure and must not be reported as one.
+        """
+        rc, out = self.frr.show("show bgp ipv4 unicast json")
+        if rc != 0 or not out.strip():
+            return []
+        try:
+            data = json.loads(out[out.index("{"):])
+        except (ValueError, json.JSONDecodeError):
+            return []
+        paths = []
+        for entry in (data.get("routes") or {}).values():
+            for p in entry if isinstance(entry, list) else []:
+                ap = p.get("path")
+                if ap is None:
+                    ap = (p.get("aspath") or {}).get("string") \
+                        if isinstance(p.get("aspath"), dict) else p.get("aspath")
+                if ap is not None:
+                    paths.append(str(ap).strip())
+        return paths
+
+    def report_as_path_reach(self, routing):
+        """Say what each AS-path regex matches, against paths really received."""
+        lists = [l.strip() for l in routing
+                 if l.split()[:3] == ["bgp", "as-path", "access-list"]]
+        if not lists:
+            return
+        paths = self.received_as_paths()
+        if not paths:
+            # Said out loud rather than skipped in silence: "matches 0" and
+            # "there was nothing to match against" are different answers, and
+            # only one of them is about the regex.
+            print("note: no BGP paths received yet, so AS-path lists cannot "
+                  "be checked against anything")
+            return
+        for stmt in lists:
+            w = stmt.split()
+            if len(w) < 6:
+                continue
+            name, regex = w[3], " ".join(w[5:])
+            hit, example = as_path_matches(regex, paths)
+            line = f"note: {name} '{regex}' matches {hit} of {len(paths)} " \
+                   "received AS path(s)"
+            if example:
+                line += f"; e.g. '{example}'"
+            print(line)
 
     def dyn_as_path_lists(self):
         """AS-path access-lists by name, with what the first entry does."""

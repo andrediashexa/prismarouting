@@ -823,5 +823,46 @@ check([l.strip() for l in again.routing if l.strip()]
 check(not again.unknown,
       f"and with nothing the VTY cannot read: {again.unknown}")
 
+
+# --- AS-path regexes: what FRR's `_` means (#146) ---
+#
+# `_` is "any boundary" - start, end, or a separator - and it is the whole
+# reason the match count exists as a report rather than a refusal. `65001`
+# compiles, is legal, and also matches 165001 and 650012. An operator reading
+# their own regex back does not see that; a count against real paths does.
+print("\n=== what an AS-path regex actually matches ===")
+from hexash import as_path_matches, undefined_policy_lists   # noqa: E402
+
+seen = ["65001", "65001 65002", "165001", "650012", "65003 65001"]
+exact, _ = as_path_matches("^65001$", seen)
+loose, _ = as_path_matches("65001", seen)
+check(exact == 1, f"an anchored regex matches only the path it names: {exact}")
+check(loose == len(seen),
+      f"and the same regex unanchored matches every one of them: {loose}")
+check(loose > exact,
+      "which is the difference the report exists to show")
+bound, _ = as_path_matches("_65001_", seen)
+check(bound == 3, f"`_` is a boundary, not a character: {bound}")
+tail, example = as_path_matches("_65002$", seen)
+check(tail == 1 and example == "65001 65002",
+      f"and an origin match names a path it found: {tail} {example}")
+
+# A name a route-map matches on that nothing defines. FRR accepts it, the
+# clause matches nothing forever, and the policy reads correctly.
+print("\n=== a policy list nothing defines ===")
+check(len(undefined_policy_lists(
+    ["route-map R permit 10", "match as-path AS-GONE"])) == 1,
+    "an undefined AS-path list is caught")
+check(not undefined_policy_lists(
+    ["bgp as-path access-list AS1 permit ^65001$",
+     "route-map R permit 10", "match as-path AS1"]),
+    "and a defined one is not")
+# FRR spells a community list two ways and both create it.
+for spelling in ("bgp community-list standard CM1 permit 65000:1",
+                 "bgp community-list CM1 permit 65000:1"):
+    check(not undefined_policy_lists(
+        [spelling, "route-map R permit 10", "match community CM1"]),
+        f"a community list defined as `{spelling.split()[2]}` counts")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

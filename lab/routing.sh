@@ -35,6 +35,22 @@ ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
 ip link set veth2-out netns peer
 ip netns exec peer ip link set veth2-out up
 ip netns exec peer ip addr add 10.1.0.2/24 dev veth2-out
+
+# A THIRD autonomous system, one hop behind the peer. Without it every path
+# this box receives has the same origin, and "the other AS is not affected"
+# would be asserted against nothing (#146).
+ip netns add origin 2>/dev/null
+ip link add veth3-peer type veth peer name veth3-origin 2>/dev/null
+ip link set veth3-peer netns peer
+ip link set veth3-origin netns origin
+ip netns exec peer ip link set veth3-peer up
+ip netns exec peer ip addr add 10.2.0.1/24 dev veth3-peer
+ip netns exec origin ip link set lo up
+ip netns exec origin ip link set veth3-origin up
+ip netns exec origin ip addr add 10.2.0.2/24 dev veth3-origin
+ip netns exec origin ip link add dum-origin type dummy
+ip netns exec origin ip addr add 198.51.100.1/24 dev dum-origin
+ip netns exec origin ip link set dum-origin up
 # one prefix per protocol, so there is no doubt about which brought which
 for d in bgp:203.0.113.1/24 ospf:198.18.0.1/24 isis:198.19.0.1/24; do
   n=${d%%:*}; a=${d##*:}
@@ -127,10 +143,12 @@ router bgp 65001
  no bgp ebgp-requires-policy
  neighbor 10.0.0.1 remote-as 65000
  neighbor 10.1.0.1 remote-as 65000
+ neighbor 10.2.0.2 remote-as 65002
  address-family ipv4 unicast
   network 203.0.113.0/24
   neighbor 10.0.0.1 activate
   neighbor 10.1.0.1 activate
+  neighbor 10.2.0.2 activate
  exit-address-family
 EOF
 cat > /etc/frr/peer/ospfd.conf <<'EOF'
@@ -155,6 +173,27 @@ EOF
 chown -R frr:frr /var/run/frr/peer /etc/frr/peer
 for d in zebra bgpd ospfd isisd; do
   ip netns exec peer /usr/lib/frr/$d -d -N peer -A 127.0.0.1 -f /etc/frr/peer/$d.conf
+done
+
+# ---------------- the third AS, one hop behind the peer ----------------
+mkdir -p /var/run/frr/origin /etc/frr/origin
+cat > /etc/frr/origin/zebra.conf <<'EOF'
+hostname origin
+EOF
+cat > /etc/frr/origin/bgpd.conf <<'EOF'
+hostname origin
+router bgp 65002
+ bgp router-id 10.2.0.2
+ no bgp ebgp-requires-policy
+ neighbor 10.2.0.1 remote-as 65001
+ address-family ipv4 unicast
+  network 198.51.100.0/24
+  neighbor 10.2.0.1 activate
+ exit-address-family
+EOF
+chown -R frr:frr /var/run/frr/origin /etc/frr/origin
+for d in zebra bgpd; do
+  ip netns exec origin /usr/lib/frr/$d -d -N origin -A 127.0.0.1 -f /etc/frr/origin/$d.conf
 done
 
 # The assertion helpers and the VTY, needed from here on: the BGP session below
@@ -985,6 +1024,115 @@ expect_not_in "while the ones it does model carry no marker" \
 # through the product. The absorber below is the defence for the class rather
 # than for that one statement, and it is tested where the poison IS
 # reproducible: by loading the file directly, the way frr-reload does.
+# --- AS-path lists, against the paths the box really received (#146) ---
+echo "=========== AS-path lists ==========="
+# Wait for the third AS's prefix to arrive, so what follows is asserted against
+# a real path and not against an empty table.
+n=0
+while [ "$n" -lt 60 ]; do
+  vtysh -c "show bgp ipv4 unicast" 2>/dev/null | grep -q "198.51.100.0" && break
+  sleep 1; n=$((n + 1))
+done
+echo "  paths this box has received:"
+vtysh -c "show bgp ipv4 unicast" 2>/dev/null | tr -d '\r' \
+  | awk 'NR>1 && $1 ~ /^[*>]/ {print "    " $0}' | head -8
+
+# A regex FRR would refuse. Refused at the prompt instead of mid-commit.
+BADRX=$($HX -c "configure" \
+        -c "bgp as-path access-list AS-BAD permit ^65001(" \
+        -c "commit" 2>&1)
+echo "$BADRX" | tail -2 | sed 's/^/  /'
+expect_in "a regex that does not compile is refused" \
+  "does not compile" "$BADRX"
+
+# The VTY now holds an opinion about which regexes FRR accepts, and an opinion
+# that drifts is worse than none: it refuses configurations that are fine.
+# Every case goes to BOTH, and they must agree. Same arrangement as the
+# prefix-range rule, and it is here for the same reason.
+echo "  --- the regex rule, against FRR itself ---"
+RXN=0
+for RX in '^65001$' '65001' '_65002_' '^65001(_65001)*$' '.*' '^$' \
+          '^65001(' '65001)' '*65001' '[65001'; do
+  RXN=$((RXN + 1))
+  vtysh -c 'configure terminal' \
+        -c "bgp as-path access-list RX$RXN permit $RX" >/dev/null 2>&1
+  if vtysh -c 'show running-config' 2>/dev/null | grep -q "access-list RX$RXN "; then
+    FRR_SAYS=accepted
+  else
+    FRR_SAYS=refused
+  fi
+  if RX="$RX" RXN="$RXN" python3 -c "
+import os, sys
+sys.path.insert(0, '/src/src/hexash')
+from hexash import as_path_regex_error as e
+stmt = 'bgp as-path access-list RX%s permit %s' % (os.environ['RXN'], os.environ['RX'])
+sys.exit(1 if e(stmt) else 0)"; then
+    VTY_SAYS=accepted
+  else
+    VTY_SAYS=refused
+  fi
+  expect "FRR and the VTY agree on '$RX'" test "$FRR_SAYS" = "$VTY_SAYS"
+  [ "$FRR_SAYS" = "$VTY_SAYS" ] || echo "      frr: $FRR_SAYS   vty: $VTY_SAYS"
+done
+
+# A name a route-map matches on that nothing defines. FRR accepts it; the
+# clause then matches nothing, forever, and the policy reads correctly.
+UNDEF=$($HX -c "configure" \
+        -c "route-map RM-UNDEF permit 10" \
+        -c "match as-path AS-NAO-EXISTE" \
+        -c "exit" -c "commit" 2>&1)
+expect_in "matching a list nothing defines is refused" \
+  "would match nothing" "$UNDEF"
+
+# THE report this exists for. `permit 65001` compiles and is legal, and it also
+# matches 165001 and 650012 - the mistake nobody sees by reading their own
+# regex back. Counted against paths the box actually holds.
+LOOSE=$($HX -c "configure" \
+        -c "bgp as-path access-list AS-LOOSE permit 65002" \
+        -c "commit check" 2>&1)
+echo "$LOOSE" | grep -i "note:" | sed 's/^/  /'
+expect_in "the VTY says what a regex matches, against real paths" \
+  "received AS path" "$LOOSE"
+
+# --- and the assertion the issue asks for: the OTHER AS is not affected ---
+#
+# Accept only what 65002 originated, on both sessions. 198.51.100.0/24 must
+# stay in the forwarding table and 203.0.113.0/24 must leave it.
+#
+# The second half is the one that matters: a regex matching everything would
+# keep BOTH, and a test that only looked at the route the policy was meant to
+# select would pass on it. That is the failure this whole section exists for -
+# a missing `^` or `$` turns an exact match into a substring one, and nobody
+# sees it by reading their own regex back.
+in_fib() { vppctl show ip fib "$1" 2>/dev/null | grep -c "^$1" || true; }
+echo "  before the policy: 198.51.100.0/24=$(in_fib 198.51.100.0/24)  203.0.113.0/24=$(in_fib 203.0.113.0/24)"
+expect "the third AS's prefix is in the FIB to begin with" \
+  test "$(in_fib 198.51.100.0/24)" -ge 1
+
+DROP=$($HX -c "configure" \
+       -c "bgp as-path access-list AS-ORIGIN2 permit _65002\$" \
+       -c "route-map RM-DROP permit 10" \
+       -c "match as-path AS-ORIGIN2" \
+       -c "exit" \
+       -c "route-map RM-DROP deny 20" \
+       -c "exit" \
+       -c "router bgp 65000" -c "address-family ipv4 unicast" \
+       -c "neighbor 10.0.0.2 route-map RM-DROP in" \
+       -c "neighbor 10.1.0.2 route-map RM-DROP in" \
+       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$DROP" | tail -2 | sed 's/^/  /'
+expect_in "the AS-path policy commits" "commit complete" "$DROP"
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$(in_fib 203.0.113.0/24)" -eq 0 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  after the policy: 198.51.100.0/24=$(in_fib 198.51.100.0/24)  203.0.113.0/24=$(in_fib 203.0.113.0/24)  (${n}s)"
+expect "the AS the policy names keeps its route" \
+  test "$(in_fib 198.51.100.0/24)" -ge 1
+expect "and the AS it does not name loses its own" \
+  test "$(in_fib 203.0.113.0/24)" -eq 0
+
 echo "=========== a stale refusal, and the commit that used to pay for it ==========="
 cat > /tmp/poison.conf <<'PC'
 ip prefix-list PL-POISON-OK seq 10 permit 10.21.0.0/16
@@ -1169,10 +1317,32 @@ expect_in "the exception is in the running configuration" \
 # advertising came out empty, no call was made, and an operator who had
 # enabled advertisements on a subscriber port could not turn them off again -
 # with `show running-config` not admitting they were on.
-RA_AGAIN=$(count_ra 30 $HX -c "configure" -c "interface host-veth-vpp" \
-           -c "ipv6 nd suppress-ra" -c "exit" -c "commit")
-echo "  advertisements in 30s, after suppressing again: ${RA_AGAIN:-0}"
-expect "suppressing again stops them" test "${RA_AGAIN:-0}" -eq 0
+#
+# Measured differently from the other two, and deliberately. The capture above
+# opens BEFORE the commit, because VPP sends its initial advertisements as
+# advertising starts and a capture opened afterwards misses them. That same
+# choice makes it the wrong instrument here: suppression takes effect at the
+# commit, so a window that starts before it counts whatever was already in
+# flight - which is exactly what it did, one advertisement, and the assertion
+# failed for a reason that had nothing to do with suppression working.
+#
+# So this half asks the dataplane instead. `n_advertisements_sent` is VPP's own
+# count, and a count that does not move across a window is not a matter of
+# timing.
+adv_sent() {
+  vat2 sw_interface_ip6nd_ra_dump '{"sw_if_index":4294967295}' 2>/dev/null \
+    | tr ',' '\n' | awk -F: '/n_advertisements_sent/ {gsub(/[^0-9]/,"",$2); s+=$2} END {print s+0}'
+}
+$HX -c "configure" -c "interface host-veth-vpp" \
+    -c "ipv6 nd suppress-ra" -c "exit" -c "commit" > /tmp/ra3.log 2>&1 || true
+tail -2 /tmp/ra3.log | sed 's/^/  commit: /'
+SENT_BEFORE=$(adv_sent)
+RA_AGAIN=$(count_ra 30 true)
+SENT_AFTER=$(adv_sent)
+echo "  advertisements in 30s after suppressing: on the wire ${RA_AGAIN:-0}, by the dataplane's own count $SENT_BEFORE -> $SENT_AFTER"
+expect "suppressing again stops the dataplane sending any" \
+  test "$SENT_BEFORE" = "$SENT_AFTER"
+expect "and none reach the wire either" test "${RA_AGAIN:-0}" -eq 0
 expect_not_in "and the running configuration drops the exception" \
   "no ipv6 nd suppress-ra" "$($HX -c 'show running-config')"
 

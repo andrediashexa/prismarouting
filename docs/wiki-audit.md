@@ -166,6 +166,23 @@ To update a page, POST to `/api/documents.update` with `id`, `text` and
 
 ## 5. Already corrected, so it is not redone
 
+### 2026-09-09, against v0.53.0 — listas de AS-path e de comunidade
+
+**Added to *Roteamento, SSH, usuários e SNMP*: "Listas de AS-path e de
+comunidade".** A section above the route-map one, because that is the reading
+order: a route-map matches on a list, so the list has to exist first.
+
+The page spends most of its length on the failure that **cannot** be refused —
+a regex that compiles and matches the wrong thing — because that is the one an
+operator meets. It states plainly what `_` means in FRR (any boundary, not an
+underscore), since that is the detail that turns a correct-looking regex into a
+wrong one, and it tells the reader how to read the match count: much larger
+than expected means a missing anchor, zero means the list filters nothing.
+
+The note about an empty table is documented as its own callout rather than as a
+footnote: "matched 0" and "there was nothing to match against" are different
+answers, and a reader who conflates them goes looking for a bug in their regex.
+
 ### 2026-09-09, against v0.52.0 — route-maps, on the policy page
 
 **Added to *Roteamento, SSH, usuários e SNMP*: "Route-maps: a política em si".**

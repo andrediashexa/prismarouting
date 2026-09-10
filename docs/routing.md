@@ -1392,6 +1392,75 @@ checks — is evidence that the VTY configured a BGP session that works, on a bo
 where nothing else did. The prefix is asserted in the **VPP FIB**, not in FRR's
 table: FRR holding a route is a different claim from the box forwarding on it.
 
+## AS-path and community lists
+
+`bgp as-path access-list` and `bgp community-list` are what a route-map matches
+on, and neither was modelled. Both complete now, and a route-map's `match
+as-path`, `match community` and `match large-community` complete from the names
+the box actually has.
+
+### A regex that does not compile
+
+FRR compiles an AS-path regex when the statement is **applied**, which is
+mid-commit — the worst moment to find out. The VTY compiles it at the prompt:
+
+```
+error: bgp as-path access-list AS-BAD permit ^65001(: the regular expression
+does not compile: missing ), unterminated subpattern at position 6
+```
+
+FRR uses POSIX extended regular expressions and Python's `re` is close but not
+identical, so the VTY now holds an opinion about what FRR accepts. An opinion
+that drifts refuses configurations that are fine, so ten cases go to **both**
+in `lab/routing.sh` and they MUST agree — the same arrangement as the
+prefix-range rule, for the same reason.
+
+### A regex that compiles and matches the wrong thing
+
+This is the common failure and it cannot be refused. `permit 65001` is legal,
+compiles, and also matches `165001` and `650012`, because a missing `^` or `$`
+turns an exact match into a substring one. FRR's `_` makes it worse in the
+other direction: it means *any boundary* — start, end, or separator — not an
+underscore character.
+
+An operator reading their own regex back does not see this. A count against the
+paths the box has actually received does:
+
+```
+note: AS-LOOSE '65002' matches 2 of 5 received AS path(s); e.g. '65001 65002'
+```
+
+Read from `show bgp ipv4 unicast json`, not from the human table: a long AS
+path wraps onto the next line there, and a parser reading it by column loses
+exactly the long paths a regex is most likely to get wrong.
+
+When there are no paths yet, the VTY says so rather than reporting zero —
+"matches 0" and "there was nothing to match against" are different answers, and
+only one of them is about the regex.
+
+### A name nothing defines
+
+```
+error: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
+defined; the clause would match nothing
+```
+
+Same failure as the undefined route-map: it commits, the policy reads
+correctly, and the clause matches nothing forever. FRR does not refuse it, so
+the VTY does. Both spellings of a community list — `bgp community-list standard
+NAME` and `bgp community-list NAME` — count as defining it.
+
+### How it is tested
+
+`lab/routing.sh` runs a **third autonomous system** one hop behind the peer, so
+the box receives paths with two different origins: `203.0.113.0/24` via
+`65001`, and `198.51.100.0/24` via `65001 65002`.
+
+A policy accepts only what `65002` originated. `198.51.100.0/24` MUST stay in
+the VPP FIB and `203.0.113.0/24` MUST leave it — and the second half is the one
+that matters, because a regex matching everything would keep both, and a test
+that only looked at the route the policy was meant to select would pass on it.
+
 ## Route-maps
 
 Route-maps are where an ISP's policy lives, and the VTY modelled none of it.
