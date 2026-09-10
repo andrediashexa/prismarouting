@@ -125,6 +125,7 @@ ARG_AS_PATH_LIST = "<as-path-list>"
 ARG_COMMUNITY_LIST = "<community-list>"
 ARG_ROUTE_MAP = "<route-map>"
 ARG_PEER_GROUP = "<peer-group>"
+ARG_AREA = "<area>"
 ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
@@ -159,11 +160,88 @@ SHOW = {
         "summary": ("one line per session, with what reached the FIB", None),
         "neighbor": ("one session in detail", ARG_NEIGHBOUR),
     }),
+    "ospf": ("OSPF neighbours and the database (FRR)", None),
     "isis": ("IS-IS information (FRR)", None),
     "interface": ("interfaces on the dataplane, with state and addresses",
                   ARG_INTERFACE),
     "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
+}
+
+# Offered inside `router ospf`. The statements an ISP edge or aggregation box
+# actually uses - not everything FRR takes, because a grammar that lists a
+# thousand commands is the reference manual this VTY exists not to be (#173).
+OSPF_BLOCK = {
+    "ospf": ("OSPF-wide settings", {
+        "router-id": ("the identifier this box uses in OSPF", "<A.B.C.D>"),
+    }),
+    "network": ("run OSPF on the interfaces this prefix covers",
+                "<A.B.C.D/M> area <area>"),
+    "area": ("area settings", ARG_AREA),
+    "passive-interface": ("run OSPF on it but send no hellos - what every "
+                          "subscriber-facing port should be", ARG_INTERFACE),
+    "default-information": ("originate a default route", {
+        "originate": ("advertise 0.0.0.0/0",
+                      "[always] [metric <n>] [metric-type 1|2] "
+                      "[route-map <name>]"),
+    }),
+    "redistribute": ("inject routes from another source", {
+        "connected": ("directly attached networks",
+                      "[metric <n>] [metric-type 1|2] [route-map <name>]"),
+        "static": ("configured static routes",
+                   "[metric <n>] [metric-type 1|2] [route-map <name>]"),
+        "bgp": ("routes BGP learned - on an edge box that is a full table "
+                "into the IGP, so give it a route-map",
+                "[metric <n>] [metric-type 1|2] [route-map <name>]"),
+        "isis": ("routes IS-IS learned",
+                 "[metric <n>] [metric-type 1|2] [route-map <name>]"),
+    }),
+    "auto-cost": ("what a link's cost is measured against", {
+        "reference-bandwidth": ("in Mbit/s; without this every link at or "
+                                "above 100 Mbit/s costs 1, which disables "
+                                "path selection on a 10G box", "<1-4294967>"),
+    }),
+    "maximum-paths": ("how many equal-cost paths to install", "<1-64>"),
+    "log-adjacency-changes": ("log every adjacency transition", "[detail]"),
+    "timers": ("SPF timers", {
+        "throttle": ("throttle the SPF calculation", {
+            "spf": ("delay, initial hold, maximum hold, in milliseconds",
+                    "<delay> <init> <max>"),
+        }),
+    }),
+    "distance": ("administrative distance", "<1-255>"),
+    "neighbor": ("a neighbour on a non-broadcast network",
+                 "<A.B.C.D> [poll-interval <n>] [priority <n>]"),
+    "exit": ("leave the OSPF configuration", None),
+}
+
+# OSPF's interface statements. They live in INTERFACE_BLOCK because that is
+# where FRR puts them and where an operator looks for them - and unlike mtu,
+# urpf and the addresses, they stay FRR's rather than the dataplane's.
+OSPF_INTERFACE = {
+    "area": ("run OSPF on this interface, in this area", ARG_AREA),
+    "cost": ("this interface's cost", "<1-65535>"),
+    "network": ("how OSPF treats the link", {
+        "point-to-point": ("no DR election - what a /30 transit link wants",
+                           None),
+        "broadcast": ("elect a DR (the default on Ethernet)", None),
+    }),
+    "hello-interval": ("seconds between hellos", "<1-65535>"),
+    "dead-interval": ("seconds before the neighbour is declared down",
+                      "<1-65535>"),
+    "priority": ("this box's priority in the DR election", "<0-255>"),
+    "authentication": ("how the adjacency is authenticated", {
+        "message-digest": ("MD5", None),
+        "null": ("none, overriding the area", None),
+    }),
+    "authentication-key": ("the plain-text key; never printed back", "<key>"),
+    "message-digest-key": ("an MD5 key; never printed back",
+                           "<1-255> md5 <key>"),
+    "passive": ("run OSPF here and send no hellos", None),
+    "bfd": ("track the adjacency with BFD", None),
+    "mtu-ignore": ("do not compare MTU in database description packets - the "
+                   "escape hatch when the two sides disagree and cannot be "
+                   "made to agree", None),
 }
 
 # Offered inside an `interface <name>` block. It is not part of the mode tree
@@ -179,6 +257,9 @@ INTERFACE_BLOCK = {
     "mac-address": ("the MAC this interface answers to", "<xx:xx:xx:xx:xx:xx>"),
     "ipv4": ("IPv4 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
+    }),
+    "ip": ("routing-protocol settings FRR owns on this interface", {
+        "ospf": ("OSPF on this interface", OSPF_INTERFACE),
     }),
     "ipv6": ("IPv6 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
@@ -633,7 +714,7 @@ TREE = {
         "rpki": ("origin validation: the caches this box asks", None),
         "router": ("routing protocols (FRR)", {
             "bgp": ("BGP", "<AS>"),
-            "ospf": ("OSPF", None),
+            "ospf": ("OSPF", "[vrf <name>]"),
             "isis": ("IS-IS", ARG_WORD),
         }),
         "interface": ("interface configuration", ARG_INTERFACE),
@@ -909,6 +990,121 @@ def undefined_policy_lists(routing):
         elif kind == "large-community" and name not in have_large:
             out.append((line.strip(), f"no large-community list called "
                         f"'{name}' is defined; the clause would match nothing"))
+    return out
+
+
+def ospf_state(routing):
+    """
+    What the configuration says about OSPF, gathered once.
+
+    Returns (networks, areas_by_interface, passive, redistribute, has_ospf) -
+    parsed by statement rather than by indentation, for the reason
+    route_map_findings and bgp_errors both had to learn: a configuration read
+    back from FRR is indented and the same line typed at this VTY is not.
+    """
+    networks = []          # (prefix, area, statement)
+    iface_area = {}        # interface -> area, from `ip ospf area`
+    passive = []           # (interface, statement)
+    redist = []            # (statement, has_route_map)
+    has_ospf = False
+    in_ospf = False
+    iface = None
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "ospf"]:
+            in_ospf, iface, has_ospf = True, None, True
+            continue
+        if w[0] == "interface" and len(w) > 1:
+            in_ospf, iface = False, w[1]
+            continue
+        if w[0] in ("router", "route-map", "rpki", "vrf"):
+            in_ospf, iface = False, None
+            continue
+        if in_ospf:
+            if w[:1] == ["network"] and len(w) >= 4 and w[2] == "area":
+                networks.append((w[1], w[3], line.strip()))
+            elif w[:1] == ["passive-interface"] and len(w) >= 2:
+                passive.append((w[1], line.strip()))
+            elif w[:1] == ["redistribute"] and len(w) >= 2:
+                redist.append((line.strip(), "route-map" in w))
+        elif iface and w[:3] == ["ip", "ospf", "area"] and len(w) >= 4:
+            iface_area[iface] = w[3]
+            has_ospf = True
+    return networks, iface_area, passive, redist, has_ospf
+
+
+def ospf_findings(routing, addresses, have_interfaces, pools):
+    """
+    What an OSPF configuration says that will not do what it looks like.
+
+    Warnings unless stated: FRR accepts every one of these, and each is a
+    shape that commits cleanly and does nothing, or does something the
+    operator did not mean. The rule this project holds a check to is that it
+    must catch something FRR does not, and must not refuse a configuration
+    that is fine.
+    """
+    networks, iface_area, passive, redist, has_ospf = ospf_state(routing)
+    out = []
+    if not has_ospf:
+        return out
+
+    # REFUSED: a passive-interface naming an interface the box does not have.
+    # It commits, and the port the operator meant to keep quiet is not the one
+    # that goes quiet - which is the "interface Ten0" shape (#105) in the one
+    # place it costs an adjacency rather than nothing.
+    for ifname, stmt in passive:
+        if ifname != "default" and have_interfaces and ifname not in have_interfaces:
+            out.append(("error", stmt,
+                        f"this box has no interface {ifname}, so nothing is "
+                        "made passive"))
+
+    # A network statement matching no address on this box: OSPF runs on
+    # nothing and the configuration reads correctly.
+    every = [a for addrs in addresses.values() for a in addrs]
+    for prefix, area, stmt in networks:
+        if not every:
+            break                      # no addresses read: cannot judge
+        if not any(routes.covers_prefix(prefix, a) for a in every):
+            out.append(("warning", stmt,
+                        f"no address on this box is inside {prefix}, so OSPF "
+                        "runs on nothing because of this line"))
+
+    # An area border router with no backbone. Inter-area routes never
+    # propagate, and FRR says nothing.
+    areas = {a for _, a, _ in networks} | set(iface_area.values())
+    backbone = {"0", "0.0.0.0"}
+    if len(areas - backbone) >= 2 and not (areas & backbone):
+        out.append(("warning", f"router ospf ({len(areas)} areas)",
+                    "interfaces in two or more areas and none in area 0: "
+                    "inter-area routes will not propagate"))
+
+    # A subscriber-facing port speaking OSPF. The cross-half check only this
+    # product can make: FRR does not know what a CGNAT pool is, and the
+    # dataplane does not know what OSPF is.
+    quiet = {i for i, _ in passive}
+    inside = [p for pool in pools.values() for p in (pool.inside or [])]
+    for ifname, addrs in addresses.items():
+        if ifname in quiet or not inside:
+            continue
+        speaks = ifname in iface_area or any(
+            routes.covers_prefix(prefix, a)
+            for prefix, _, _ in networks for a in addrs)
+        if not speaks:
+            continue
+        if any(routes.covers_prefix(p, a) for p in inside for a in addrs):
+            out.append(("warning", f"interface {ifname}",
+                        "speaks OSPF and its addresses are inside a CGNAT "
+                        "pool: it is facing subscribers, and it is not "
+                        "passive"))
+
+    # A full table into the IGP.
+    for stmt, has_map in redist:
+        if stmt.split()[1] == "bgp" and not has_map:
+            out.append(("warning", stmt,
+                        "no route-map: on an edge box this is the whole BGP "
+                        "table into OSPF"))
     return out
 
 
@@ -2348,6 +2544,7 @@ class Shell:
             # #112 made the wrong name much harder to type, since "?" and TAB
             # now offer the interfaces the box has. It did not make it
             # impossible: a runbook, a copy-paste or a habit still types it.
+            known_interfaces = set()
             rc_i, iface_out = self.dp.run("show interface")
             if rc_i == 0 and iface_out.strip():
                 # BOTH names. A linux_cp pair has a VPP name and a Linux one,
@@ -2357,7 +2554,7 @@ class Shell:
                 # is every box that routes - and lab/routing.sh caught exactly
                 # that, on "interface vppwan0".
                 _, lcp_out = self.dp.run("show lcp")
-                have = set(routes.parse_interfaces(iface_out))
+                have = known_interfaces = set(routes.parse_interfaces(iface_out))
                 # Every name every pair answers to. All of them are real.
                 for names in routes.lcp_pairs(lcp_out).values():
                     have.update(names)
@@ -2516,6 +2713,31 @@ class Shell:
             # operator reading their own regex back will not see it; a count
             # against real paths is what shows it.
             self.report_as_path_reach(target.routing)
+
+            # OSPF: shapes that commit cleanly and do nothing (#174). The
+            # interface set is the one the existence check above built, when
+            # it could read the dataplane - an empty set means "could not
+            # ask", and ospf_findings refuses on a name only when it has a
+            # list to refuse it against.
+            for sev, stmt, why in ospf_findings(
+                    target.routing, target.addresses,
+                    known_interfaces, target.pools):
+                if sev == "error":
+                    self.err(f"{stmt}: {why}")
+                    ok = False
+                else:
+                    print(f"warning: {stmt}: {why}")
+
+            # The MTU stall, which FRR cannot see because FRR sees only the
+            # TAP. Reported with BOTH numbers, because "the MTUs disagree" is
+            # not actionable and "9000 against 1500" is.
+            for ifname, host, here, there in self.ospf_mtu_mismatch(
+                    target.routing, target.mtus or self.device_mtus()):
+                print(f"warning: interface {ifname}: carries OSPF and its "
+                      f"MTU is {here} while its Linux side {host} is at "
+                      f"{there}")
+                print("    the adjacency will sit in Exchange with no log "
+                      "line; set them the same, or 'ip ospf mtu-ignore'")
 
             # Origin validation that is not validating anything (#147).
             for stmt, why in rpki_findings(target.routing):
@@ -2964,6 +3186,76 @@ class Shell:
             # Otherwise there is nothing here for FRR: interface stanzas whose
             # contents this VTY applies to the dataplane itself.
         return True
+
+    def ospf_mtu_mismatch(self, routing, mtus):
+        """
+        Interfaces carrying OSPF whose dataplane and TAP disagree about MTU.
+
+        The check only this product can make, and the reason is the shape of
+        the box: FRR sees the TAP and nothing else, so it compares the TAP's
+        MTU in its database description packets while the wire runs at the
+        dataplane's. When they differ the adjacency sits in Exchange forever
+        with no log line on either side - documented in docs/routing.md as
+        Pitfall 1, and until now documented is all it was.
+
+        A warning, never a refusal. `ip ospf mtu-ignore` is the supported
+        escape hatch and a deliberate asymmetry is legitimate; what is not
+        legitimate is nobody saying so.
+        """
+        _, iface_area, passive, _, has_ospf = ospf_state(routing)
+        if not has_ospf:
+            return []
+        ignoring = set()
+        iface = None
+        for line in routing:
+            w = line.split()
+            if not w:
+                continue
+            if w[0] == "interface" and len(w) > 1:
+                iface = w[1]
+            elif iface and w[:3] == ["ip", "ospf", "mtu-ignore"]:
+                ignoring.add(iface)
+        rc, out = self.dp.run("show lcp")
+        if rc != 0:
+            return []
+        quiet = {i for i, _ in passive}
+        # Keyed on the interfaces whose MTU is KNOWN, not on every key
+        # lcp_pairs returns. That map holds an entry for every name a pair
+        # answers to - the dataplane name, the TAP's own name and the Linux
+        # one - so walking it named `tap4096` in the warning, which is a name
+        # the operator cannot type at this VTY.
+        pairs = routes.lcp_pairs(out)
+        found = []
+        for ifname, here in sorted(mtus.items()):
+            if ifname in ignoring or ifname in quiet:
+                continue
+            # VPP's own end of the pair is an interface too, named tap<n>, and
+            # it has an MTU - so walking every interface reported the stall
+            # against `tap4096`, a name that is in no configuration anybody
+            # writes and that an operator cannot type at this VTY. Skipped by
+            # its shape, which is VPP's naming convention for an lcp TAP; if
+            # that convention ever changes the warning names the tap again,
+            # which is cosmetic rather than a false alarm.
+            if ifname.startswith("tap") and ifname[3:].isdigit():
+                continue
+            names = pairs.get(ifname)
+            if not names:
+                continue
+            for host in names:
+                if host == ifname:
+                    continue
+                r = subprocess.run(["ip", "-o", "link", "show", "dev", host],
+                                   capture_output=True, text=True)
+                if r.returncode != 0:
+                    continue
+                w = r.stdout.split()
+                try:
+                    there = int(w[w.index("mtu") + 1])
+                except (ValueError, IndexError):
+                    continue
+                if there != here:
+                    found.append((ifname, host, here, there))
+        return found
 
     def set_host_mtu(self, ifname, mtu):
         """
@@ -4720,6 +5012,8 @@ class Shell:
             return INTERFACE_BLOCK
         if block.strip() == "rpki":
             return RPKI_BLOCK
+        if block.split()[:2] == ["router", "ospf"]:
+            return OSPF_BLOCK
         if block.startswith("route-map "):
             return ROUTE_MAP_BLOCK
         if block.startswith("address-family "):

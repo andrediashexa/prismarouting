@@ -493,11 +493,16 @@ sh.feed("exit")
 # A block this VTY does NOT model still offers nothing but the way out.
 # Offering statements for it would be a guess presented as a grammar, and that
 # is what this check has always been for.
-sh.feed("router ospf")
+#
+# `router rip` rather than `router ospf`: OSPF was the example until #173
+# modelled it, and this assertion failing is how that was noticed. RIP is not
+# a protocol this product claims, so it is the honest stand-in - and the day
+# it is claimed, this line fails again and asks for a new one.
+sh.feed("router rip")
 opts, _, _ = sh._options("", False)
 check(set(opts) == {"exit", "show"},
       f"an unmodelled FRR block offers only the way out: {sorted(opts)}")
-print(f"  router ospf -> {sorted(opts)}")
+print(f"  router rip -> {sorted(opts)}")
 sh.feed("exit")
 
 # The blocks the tree knows about were always right; this is the check that
@@ -1120,6 +1125,88 @@ check(bad.unknown and "cannot be a Linux" in bad.unknown[0][2],
       f"a name with a slash is refused: {bad.unknown}")
 check("loop0" not in bad.linux_names,
       "and is not recorded as though it had been accepted")
+
+
+# --- OSPF: shapes that commit cleanly and do nothing (#174) ---
+#
+# Every one of these is accepted by FRR. The rule a check is held to here is
+# that it must catch something FRR does not AND must not refuse a
+# configuration that is fine - so each case below has its negative beside it.
+print("\n=== OSPF findings ===")
+from hexash import ospf_findings, ospf_state                     # noqa: E402
+from config import Pool                                          # noqa: E402
+
+ADDRS = {"Gi0": ["200.150.0.1/24"], "Gi1": ["100.64.0.1/22"]}
+HAVE = {"Gi0", "Gi1"}
+_pool = Pool("res")
+_pool.inside = ["100.64.0.0/22"]
+POOLS = {"res": _pool}
+
+
+def find(lines, addrs=ADDRS, have=HAVE, pools=None):
+    return ospf_findings(lines, addrs, have, pools or {})
+
+
+# A passive-interface naming an interface the box does not have. Refused,
+# because the port the operator meant to keep quiet is not the one that goes
+# quiet, and the commit says nothing.
+r = find(["router ospf", "passive-interface Gi9"])
+check(len(r) == 1 and r[0][0] == "error",
+      f"a passive-interface naming nothing is refused: {r}")
+check(not find(["router ospf", "passive-interface Gi0"]),
+      "and one naming a real interface is not")
+# `default` is a keyword, not an interface name.
+check(not find(["router ospf", "passive-interface default"]),
+      "nor is the 'default' keyword")
+
+# A network statement matching no address: OSPF runs on nothing.
+r = find(["router ospf", "network 10.9.0.0/16 area 0"])
+check(len(r) == 1 and r[0][0] == "warning",
+      f"a network matching no address is reported: {r}")
+check(not find(["router ospf", "network 200.150.0.0/24 area 0"]),
+      "and one that matches is not")
+# With no addresses read back, the check MUST NOT fire - it cannot judge.
+check(not find(["router ospf", "network 10.9.0.0/16 area 0"], addrs={}),
+      "and with no addresses to compare against it says nothing")
+
+# An area border router with no backbone.
+r = find(["router ospf", "network 200.150.0.0/24 area 1",
+          "network 100.64.0.0/22 area 2"])
+check(any("area 0" in w for _, _, w in r),
+      f"two areas and no backbone is reported: {r}")
+check(not find(["router ospf", "network 200.150.0.0/24 area 1",
+                "network 100.64.0.0/22 area 0"]),
+      "and having a backbone is not")
+
+# THE cross-half check: a subscriber-facing port speaking OSPF. FRR does not
+# know what a CGNAT pool is and the dataplane does not know what OSPF is.
+r = find(["router ospf", "network 100.64.0.0/22 area 0"], pools=POOLS)
+check(any("facing subscribers" in w for _, _, w in r),
+      f"a port inside a pool's inside prefix speaking OSPF is reported: {r}")
+check(not find(["router ospf", "network 100.64.0.0/22 area 0",
+                "passive-interface Gi1"], pools=POOLS),
+      "and making it passive silences it")
+check(not find(["router ospf", "network 200.150.0.0/24 area 0"], pools=POOLS),
+      "while a port that is not inside a pool is never reported")
+
+# A full table into the IGP.
+check(any("whole BGP" in w for _, _, w in find(
+          ["router ospf", "redistribute bgp"])),
+      "redistribute bgp with no route-map is reported")
+check(not find(["router ospf", "redistribute bgp route-map RM"]),
+      "and with one it is not")
+
+# Nothing fires on a box with no OSPF at all.
+check(not find(["router bgp 65000", "neighbor 10.0.0.2 remote-as 65001"],
+               pools=POOLS),
+      "and none of it fires when there is no OSPF")
+
+# Parsed by statement, not by indentation - the same asymmetry that has now
+# caught three checks in this file.
+typed = ["router ospf", "network 200.150.0.0/24 area 0"]
+indented = ["router ospf", " network 200.150.0.0/24 area 0"]
+check(ospf_state(typed)[0] == ospf_state(indented)[0],
+      "typed and read-back statements parse the same")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
