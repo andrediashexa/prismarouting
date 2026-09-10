@@ -94,6 +94,34 @@ def redact(lines):
             indent = l[:len(l) - len(l.lstrip())]
             out.append(f"{indent}neighbor {w[1]} password <set, not shown>")
             continue
+        # The IGPs authenticate too, and none of their five spellings starts
+        # with "password" or looks like the BGP one, so every OSPF and IS-IS
+        # key printed in full (#169). They are secrets, not hashes, and like a
+        # neighbour's each one opens the adjacency on the OTHER router.
+        #
+        # Where the secret sits is spelled out per form. Redacting any word
+        # after "password" would take `neighbor PG peer-group` with it, and
+        # redacting any line containing the word would take a description that
+        # merely mentions one - a configuration mangled on screen is a
+        # configuration an operator retypes wrong.
+        secret = None
+        if w[:3] == ["ip", "ospf", "authentication-key"] and len(w) >= 4:
+            secret = 3
+        elif (w[:3] == ["ip", "ospf", "message-digest-key"]
+              and len(w) >= 6 and w[4] == "md5"):
+            secret = 5
+        elif w[:2] == ["isis", "password"] and len(w) >= 4:
+            secret = 3
+        elif w and w[0] in ("domain-password", "area-password") and len(w) >= 3:
+            secret = 2
+        if secret is not None:
+            indent = l[:len(l) - len(l.lstrip())]
+            # Everything but the secret is kept, the trailing words included:
+            # the key id, the `md5`, and IS-IS's `authenticate snp validate`
+            # are what tell an operator WHICH key is set and how it is used.
+            out.append(indent + " ".join(
+                w[:secret] + ["<set, not shown>"] + w[secret + 1:]))
+            continue
         out.append(l)
     return out
 

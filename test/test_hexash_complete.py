@@ -891,6 +891,88 @@ check(not bgp_errors(["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
                       "exit", "router ospf",
                       " neighbor 10.0.0.9 poll-interval 60"]),
       "and an OSPF stanza after a BGP one is out of context again")
+# --- IGP authentication keys are secrets too (#169) ---
+#
+# `redact()` covered an account's password and a BGP neighbour's and stopped
+# there, so every OSPF and IS-IS key printed in full. Each of these opens the
+# adjacency on the OTHER router as well, and a screen shared during an
+# incident is a screen that has left the building.
+print("\n=== OSPF and IS-IS keys never reach the screen ===")
+from system import redact, User                                  # noqa: E402
+
+SECRET = "S3CR3T-IGP-KEY"
+igp = [
+    "router isis 1",
+    f" domain-password md5 {SECRET}",
+    f" area-password md5 {SECRET}",
+    "interface eth0",
+    f" ip ospf authentication-key {SECRET}",
+    f" ip ospf message-digest-key 1 md5 {SECRET}",
+    f" isis password md5 {SECRET}",
+    # The boundaries. A rule keyed on the word "password" mangles both of
+    # these, and a line mangled on screen is a line an operator retypes wrong.
+    " description the ospf password lives on the other router",
+    "router bgp 65000",
+    " neighbor PG peer-group",
+    f" neighbor 10.0.0.1 password {SECRET}",
+]
+FORMS = ("ip ospf authentication-key", "ip ospf message-digest-key 1 md5",
+         "isis password md5", "domain-password md5", "area-password md5")
+
+shown = redact(igp)
+for form in FORMS:
+    # The form is kept and only the key goes: an operator has to be able to
+    # see that a key IS set, or they set a second one over the top of it.
+    check(f" {form} <set, not shown>" in shown,
+          f"`{form}` is redacted: {[l for l in shown if form in l]}")
+check(SECRET not in "\n".join(shown),
+      f"the key is nowhere in the output: {[l for l in shown if SECRET in l]}")
+check(" description the ospf password lives on the other router" in shown,
+      f"a description that merely says the word is untouched: {shown}")
+check(" neighbor PG peer-group" in shown,
+      f"and a peer-group line keeps its own second word: {shown}")
+
+# What #169 extends, not what it replaces.
+check(" neighbor 10.0.0.1 password <set, not shown>" in shown,
+      f"the BGP neighbour form still works: {shown}")
+check(redact([" password $6$salt$hash"]) == [" password <set, not shown>"],
+      "and so does an account's")
+
+# Both display paths. `show this` inside a block reads the routing lines
+# straight out of the candidate, and it was the path that printed a BGP
+# password nowhere else printed - so it is checked, not assumed.
+cfg = Config()
+cfg.routing = list(igp)
+cfg.users["op"] = User("op")
+cfg.users["op"].password = "$6$salt$hash"
+
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    hexash.Shell.print_config(cfg)
+running = buf.getvalue()
+check(SECRET not in running, "show running-config prints no IGP key")
+check("$6$salt$hash" not in running, "and no account hash either")
+for form in FORMS:
+    check(f" {form} <set, not shown>" in running,
+          f"`{form}` is redacted by show running-config too")
+
+sh = shell_with_box()
+sh.frr.running = lambda: list(igp)
+sh.feed("configure")
+sh.frr_ctx = ["interface eth0"]
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.show_this()
+this = buf.getvalue()
+check(SECRET not in this, f"show this prints no IGP key: {this}")
+check("ip ospf authentication-key <set, not shown>" in this,
+      f"and shows that one is set: {this}")
+check("isis password md5 <set, not shown>" in this, f"in every form: {this}")
+
+# It stays a DISPLAY transform. A rollback revision holding <set, not shown>
+# is a rollback that cannot restore the adjacency it is being run to restore.
+check(SECRET in cfg.text(),
+      "the text a commit sends and a revision stores keeps the real key")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
