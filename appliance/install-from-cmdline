@@ -7,6 +7,7 @@
 #   hexarouting.timezone=<zone>     answer the timezone question
 #   hexarouting.password=<pw>       answer the root password question
 #   hexarouting.log-gb=<n>          gigabytes for the connection records
+#   hexarouting.answers[=<file>]    read the answers from a file on the medium
 #   hexarouting.yes                 skip the confirmations
 #
 # The kernel command line is the hook rather than typing into the console,
@@ -19,6 +20,12 @@
 # apply - the installer's own command line does not survive the reboot - but
 # anyone logged into the live medium while it installs can read it. For a
 # hands-on install, leave it out and answer the prompt.
+#
+# hexarouting.answers is the unattended path that does not do that: the same
+# answers, the password among them, read from a file instead of published to
+# every process on the box (#83). It moves the secret rather than removing it -
+# whoever can read the medium can read the file - but a medium is a thing that
+# can be locked in a drawer, and /proc/cmdline is not.
 set -u
 cmdline=$(cat /proc/cmdline 2>/dev/null || echo "")
 
@@ -35,18 +42,60 @@ for tok in $cmdline; do
     hexarouting.timezone=*) HEXA_TIMEZONE=${tok#hexarouting.timezone=};      export HEXA_TIMEZONE ;;
     hexarouting.password=*) HEXA_ROOT_PASSWORD=${tok#hexarouting.password=}; export HEXA_ROOT_PASSWORD ;;
     hexarouting.log-gb=*)   HEXA_LOG_GB=${tok#hexarouting.log-gb=};          export HEXA_LOG_GB ;;
+    hexarouting.answers=*)  HEXA_ANSWERS=${tok#hexarouting.answers=};          export HEXA_ANSWERS ;;
+    # Bare, it means the file the medium is expected to carry. A default path
+    # so that the operator writing the medium and the operator booting it do
+    # not have to agree on one by memory.
+    hexarouting.answers)    HEXA_ANSWERS=/run/live/medium/hexarouting.answers; export HEXA_ANSWERS ;;
     hexarouting.yes)        HEXA_INSTALL_YES=1; export HEXA_INSTALL_YES ;;
   esac
 done
 
 exec >/dev/console 2>&1 </dev/console
 
+# The answer file is read HERE as well as inside the installer, because THIS
+# script decides whether the install is unattended - and "unattended" is one of
+# the answers. Read through the installer's own parser, sourced at its library
+# seam: two parsers disagreeing about which answers a file gave is worse than
+# one, and the answer they would disagree about is the password.
+#
+# After the exec above, so that a complaint about the file lands on the console
+# with the rest of the install rather than in a journal the operator standing
+# there cannot reach yet.
+#
+# The command line was parsed first, above, and the parser leaves an answer that
+# is already given alone: what somebody typed for this boot beats what travels
+# with the medium for every install it does.
+answers_rc=0
+if [ -n "${HEXA_ANSWERS:-}" ]; then
+  HEXA_INSTALL_LIB=1 . /usr/sbin/hexarouting-install
+  answers_rc=$?
+  # Unset, never left set. Exported into the installer's environment it would
+  # make the installer return at that same seam and do nothing at all - an
+  # install that writes not one byte and exits zero, which every caller below
+  # would report as a finished install.
+  unset HEXA_INSTALL_LIB
+  # And the file itself, once it has been read: every answer it gave is in the
+  # environment now, so leaving it set only makes the installer read it and
+  # announce it a second time. A console that says the same thing twice invites
+  # whoever is reading it to work out which of the two acted.
+  [ "$answers_rc" = 0 ] && unset HEXA_ANSWERS
+fi
+
 # This path reports its own outcome and powers off, so it takes the reboot into
 # its own hands.
 HEXA_INSTALL_NO_REBOOT=1; export HEXA_INSTALL_NO_REBOOT
 
-/usr/sbin/hexarouting-install ${disk:+"$disk"}
-rc=$?
+# An unusable answer file does not become an install attempt. The answers are
+# the thing this boot was given instead of a console, and running the installer
+# without them is how an unattended install arrives at a question and hangs.
+if [ "$answers_rc" = 0 ]; then
+  /usr/sbin/hexarouting-install ${disk:+"$disk"}
+  rc=$?
+else
+  echo "the answers were not usable; nothing was written to any disk"
+  rc=$answers_rc
+fi
 
 if [ "${HEXA_INSTALL_YES:-0}" != 1 ]; then
   # A hands-on install from the command line: the installer already said what

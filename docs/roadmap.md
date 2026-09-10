@@ -494,11 +494,11 @@ box.
 
 **4. [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the
 installer**, with the management address dropped from its scope. The **log
-volume** is *delivered in v0.30.0*; the mirror and verifying the disk that was
-just written remain. It was led by the log volume because: in dynamic mode the allocation log *is* the
-connection record the Marco Civil requires for a year, and it currently shares
-a filesystem with everything the box needs to keep working. Then the mirror,
-then verifying the disk that was just written.
+volume** is *delivered in v0.30.0*; **verifying the disk that was just
+written** and **answers from a file** are *delivered*; the **mirror** remains.
+It was led by the log volume because: in dynamic mode the allocation log *is*
+the connection record the Marco Civil requires for a year, and it currently
+shares a filesystem with everything the box needs to keep working.
 
 **5. [#97](https://github.com/andrediashexa/hexarouting/issues/97) — the
 twenty-three second wait** — *delivered, v0.31.0*. with nothing on the console saying what is being
@@ -565,17 +565,22 @@ anything, refuses to finish without a root password the operator supplied, and
 will not overwrite the medium it booted from. What it does not do is everything
 that happens **after** the disk is written.
 
-It never asks about the network, so an install ends with somebody still in
-front of the console or making a second trip to the cage — and management is
-the one interface that MUST NOT be handed to VPP, which makes it the one the
-installer could safely configure. It makes a single ext4 root and nothing else,
-so the allocation log — which in dynamic mode **is** the connection record the
-Marco Civil requires for a year — shares a filesystem with everything the box
-needs to keep working, and fills it. There is no mirror, so one disk failure on
-a box under a retention obligation loses the records themselves, which is a
-different class of loss from downtime. And nothing verifies the disk that was
-just written: the selftest runs on the live medium, before the install, so the
-failure mode is a box reporting success and then booting to a `grub>` prompt.
+The management address was dropped from the scope by the maintainer: it is
+arranged by other means before the box is installed.
+
+The allocation log — which in dynamic mode **is** the connection record the
+Marco Civil requires for a year — used to share a filesystem with everything
+the box needs to keep working, and fill it; it has had its own volume since
+v0.30.0. Nothing verified the disk that was just written, because the self-test
+runs on the live medium *before* the install: the failure mode was a box
+reporting success and then booting to a `grub>` prompt. It is now checked
+before the success line — GRUB has a kernel, the fstab UUIDs resolve, root can
+log in — and the unattended path can take its answers from a **file** rather
+than publishing the root password in `/proc/cmdline`.
+
+What remains is the **mirror**: with one disk, a single failure on a box under
+a retention obligation loses the records themselves, which is a different class
+of loss from downtime.
 
 Nothing blocks this and nothing depends on it, which is exactly why it keeps
 being deferred. The management address alone is paid on every single install.

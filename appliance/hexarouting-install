@@ -24,6 +24,7 @@
 # Non-interactive answers, for automated installs and for the lab:
 #
 #   HEXA_DISK, HEXA_HOSTNAME, HEXA_TIMEZONE, HEXA_ROOT_PASSWORD, HEXA_LOG_GB
+#   HEXA_ANSWERS=<file>       read those same answers from a file
 #   HEXA_INSTALL_YES=1        skip the confirmations
 #   HEXA_INSTALL_CHECK=1      collect and validate, write nothing, exit
 #   HEXA_INSTALL_NO_REBOOT=1  finish without rebooting
@@ -34,6 +35,98 @@ set -u
 
 say()  { echo "==> $*"; }
 die()  { echo "error: $*" >&2; exit 1; }
+
+# Answers read from a FILE, so that an unattended install does not have to put
+# the root password on the kernel command line, where /proc/cmdline publishes
+# it to every process on the live system for as long as that system runs (#83).
+# The command-line form stays for the cases with no medium to write to, and
+# keeps its warning.
+#
+# Format: "key = value", one per line. Blank lines and whole-line "#" comments
+# are ignored - "#" only starts a comment at the beginning of a line, because a
+# password may contain one and a parser that truncated it there would install a
+# box whose password is a PREFIX of the one in the file. Nobody would find that
+# out before the first login. Spaces around the "=" are stripped, so a password
+# whose first or last character is a space cannot be given here.
+#
+# An unknown key is REFUSED rather than ignored. A misspelt "password" is an
+# install that arrives at the password question with no answer, and an
+# unattended install has no console to answer from: the typo would present as a
+# machine that hung.
+#
+# It never echoes a value, not even in an error. The point of the file is that
+# the secret stays out of everything readable afterwards - a console log the
+# lab keeps included - and an installer that prints it back undoes that.
+#
+# An answer already given WINS over the file: the command line is typed for
+# this one boot, the file travels with the medium for every install it does.
+read_answers() {   # <file>; exports HEXA_* for the questions still unanswered
+  _f=$1
+  [ -f "$_f" ] || { echo "error: no answer file at $_f" >&2; return 1; }
+  [ -r "$_f" ] || { echo "error: the answer file $_f cannot be read" >&2; return 1; }
+  _n=0
+  _rc=0
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    _n=$((_n + 1))
+    _line=$(printf '%s' "$_line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    case "$_line" in ''|'#'*) continue ;; esac
+    # The offending line is NOT quoted back. The line that failed to parse may
+    # be the password line, and an error message is the one place nobody
+    # expects to have to redact.
+    case "$_line" in
+      *=*) ;;
+      *) echo "error: $_f line $_n: expected 'key = value'" >&2
+         _rc=1; continue ;;
+    esac
+    _k=$(printf '%s' "${_line%%=*}" | sed 's/[[:space:]]*$//')
+    _v=$(printf '%s' "${_line#*=}" | sed 's/^[[:space:]]*//')
+    case "$_k" in
+      disk)     [ -n "${HEXA_DISK:-}" ]          || { HEXA_DISK=$_v;          export HEXA_DISK ; } ;;
+      hostname) [ -n "${HEXA_HOSTNAME:-}" ]      || { HEXA_HOSTNAME=$_v;      export HEXA_HOSTNAME ; } ;;
+      timezone) [ -n "${HEXA_TIMEZONE:-}" ]      || { HEXA_TIMEZONE=$_v;      export HEXA_TIMEZONE ; } ;;
+      password) ANSWERS_PASSWORD=1
+                [ -n "${HEXA_ROOT_PASSWORD:-}" ] || { HEXA_ROOT_PASSWORD=$_v; export HEXA_ROOT_PASSWORD ; } ;;
+      log-gb)   [ -n "${HEXA_LOG_GB:-}" ]        || { HEXA_LOG_GB=$_v;        export HEXA_LOG_GB ; } ;;
+      yes)
+        case "$_v" in
+          1|yes|true) _y=1 ;;
+          0|no|false) _y=0 ;;
+          *) echo "error: $_f line $_n: 'yes' takes yes or no, got '$_v'" >&2
+             _rc=1; continue ;;
+        esac
+        [ -n "${HEXA_INSTALL_YES:-}" ] || { HEXA_INSTALL_YES=$_y; export HEXA_INSTALL_YES ; } ;;
+      *) echo "error: $_f line $_n: '$_k' is not an answer this installer knows" >&2
+         echo "  known: disk, hostname, timezone, password, log-gb, yes" >&2
+         _rc=1 ;;
+    esac
+  done < "$_f"
+  return $_rc
+}
+
+# Read here, before the first question, never during them. This script asks
+# everything before it writes anything, and an answer that arrived halfway
+# through would be exactly the ordering that rule exists to prevent.
+if [ -n "${HEXA_ANSWERS:-}" ]; then
+  ANSWERS_PASSWORD=0
+  if read_answers "$HEXA_ANSWERS"; then
+    say "answers from $HEXA_ANSWERS"
+    if [ "$ANSWERS_PASSWORD" = 1 ]; then
+      # Said out loud because it moves the secret rather than removing it: the
+      # kernel command line stops carrying the password and the medium starts.
+      # Whoever leaves that medium in a rack has left the root password in it.
+      say "  it carries the root password, so the medium is itself a credential"
+    fi
+  else
+    echo "error: the answer file was not usable; nothing has been written" >&2
+    # Sourced (HEXA_INSTALL_LIB=1) this is a RETURN, because install-from-cmdline
+    # reads the same file through this parser to learn whether the install is
+    # unattended - and an exit there would take that script down before it could
+    # say what happened or power the machine off, which is how an unattended
+    # install becomes a machine sitting at a prompt until a harness kills it.
+    [ "${HEXA_INSTALL_LIB:-0}" = 1 ] && return 1
+    exit 1
+  fi
+fi
 
 DISK=${HEXA_DISK:-${1:-}}
 HOSTNAME_NEW=${HEXA_HOSTNAME:-}
@@ -174,7 +267,88 @@ note()  { blockers="$blockers
   - $*"; }
 fatal() { if [ "$CHECK_ONLY" = 1 ]; then note "$*"; else die "$*"; fi }
 
-# A seam, so the disk menu can be tested without installing anything.
+# Does the disk that was just written actually work? (#83)
+#
+# hexarouting-selftest.service runs on the LIVE MEDIUM, before this installer,
+# so until now NOTHING had ever looked at the result of an install. The failure
+# mode is a box that reports success, has its medium taken out, and then boots
+# to a "grub>" prompt in front of whoever is standing there - by which time the
+# person who could have re-run the install has left the cage.
+#
+# Three checks, because three things stop a freshly written disk from being a
+# box somebody owns, and each has been seen on this product:
+#
+#   - GRUB has an entry whose kernel is on the disk (the squashfs built without
+#     /boot installed a bootloader with nothing to boot),
+#   - every UUID in fstab resolves to a device that exists (a mistyped or stale
+#     UUID drops the boot into an initramfs prompt), and
+#   - root has a password hash (a late failure leaves the LOCKED account the
+#     live image carries, which is a disk nobody can log into).
+#
+# Each failure NAMES its check. "Verification failed" tells the operator to
+# reinstall and hope; naming it tells them what to look at.
+#
+# It reads only. A verification that repairs what it finds is a verification
+# whose result is about itself.
+verify_installed() {   # <mounted root>; non-zero if the disk is not usable
+  _r=$1
+  _bad=0
+  _vok()  { echo "  [ ok ] $*"; }
+  _vbad() { echo "  [FAIL] $*"; _bad=$((_bad + 1)); }
+
+  _cfg="$_r/boot/grub/grub.cfg"
+  if [ ! -f "$_cfg" ]; then
+    _vbad "GRUB: no /boot/grub/grub.cfg, so there is no menu to boot from"
+  else
+    _kern=$(awk '$1 ~ /^linux(16|efi)?$/ { print $2; exit }' "$_cfg")
+    if [ -z "$_kern" ]; then
+      _vbad "GRUB: grub.cfg has no entry that loads a kernel"
+    elif [ ! -f "$_r$_kern" ]; then
+      _vbad "GRUB: grub.cfg boots $_kern and that file is not on the disk"
+    else
+      _vok "GRUB boots $_kern, which is on the disk"
+    fi
+  fi
+
+  _fstab="$_r/etc/fstab"
+  if [ ! -f "$_fstab" ]; then
+    _vbad "fstab: /etc/fstab was not written"
+  else
+    _uuids=$(grep -v '^[[:space:]]*#' "$_fstab" \
+             | grep -oE 'UUID=[-0-9A-Fa-f]+' | cut -d= -f2)
+    if [ -z "$_uuids" ]; then
+      # An fstab with no UUID in it passes a loop over its UUIDs. That is a
+      # check agreeing with itself, and it would pass the one fstab that is
+      # certainly wrong: the empty one.
+      _vbad "fstab: names no UUID at all, so the root filesystem is unidentified"
+    else
+      _n=0
+      for _u in $_uuids; do
+        if [ -n "$(blkid -U "$_u" 2>/dev/null)" ]; then
+          _n=$((_n + 1))
+        else
+          _vbad "fstab: UUID=$_u is mounted at boot and no device has it"
+        fi
+      done
+      [ "$_n" -gt 0 ] && _vok "fstab: $_n UUID(s), every one of them resolves"
+    fi
+  fi
+
+  # The hash itself is never printed: this runs on a console and into the
+  # install log, and a hash on either is an offline cracking target.
+  _pw=$(grep '^root:' "$_r/etc/shadow" 2>/dev/null | cut -d: -f2)
+  case "${_pw:-}" in
+    '$'*) _vok "root has a password, so somebody can log into this box" ;;
+    '')   _vbad "login: /etc/shadow has no root line at all" ;;
+    *)    _vbad "login: the root account is still LOCKED - this is the live
+         image's account, so the password answer never reached the disk" ;;
+  esac
+
+  [ "$_bad" = 0 ]
+}
+
+# A seam, so the disk menu and the verification can be tested without
+# installing anything.
 #
 # Sourced with HEXA_INSTALL_LIB=1, this script stops here and the caller gets
 # the functions above and nothing else. The alternative is testing the menu by
@@ -528,10 +702,27 @@ chroot "$MNT" systemctl enable ssh.service >/dev/null 2>&1 || true
 mkdir -p "$MNT/etc/ssh/sshd_config.d"
 echo "PermitRootLogin yes" > "$MNT/etc/ssh/sshd_config.d/hexarouting.conf"
 
+# Before the success line, not after it, and before the medium is removed.
+#
+# The check runs while the target is still mounted and its partitions still
+# exist, which is the only moment blkid can answer for them.
+say "verifying the disk that was just written"
+VERIFY_BAD=0
+verify_installed "$MNT" || VERIFY_BAD=1
+
 for d in run sys proc dev/pts dev; do umount -l "$MNT/$d" 2>/dev/null || true; done
 [ "$EFI" = 1 ] && umount "$MNT/boot/efi" 2>/dev/null || true
 umount "$MNT" 2>/dev/null || true
 sync
+
+# An install that did not verify is NOT an install, and it must not be reported
+# as one: install-from-cmdline prints its completion marker only on a zero exit,
+# and the operator is told to leave the medium where it is - a box that boots to
+# a "grub>" prompt with the medium already back in its box is a site visit.
+if [ "$VERIFY_BAD" != 0 ]; then
+  die "the installed system did not verify - see the failed check(s) above.
+  $DISK is NOT usable as it stands. Leave the medium in place and install again."
+fi
 
 echo
 say "installed on $DISK"

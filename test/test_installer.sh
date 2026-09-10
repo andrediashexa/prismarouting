@@ -242,6 +242,209 @@ SQ=$(mktemp); IN=$(mktemp); chmod +x "$IN"
 rm -f "$SQ" "$IN"
 
 echo
+echo "=== the boot medium is still refused when it is named outright ==="
+# A standing behaviour, asserted rather than assumed. The menu already hides
+# the medium (above), but a device path typed by hand or given by a script
+# bypasses the menu entirely - and overwriting the medium being read fails
+# halfway through and leaves neither system usable.
+med=$(mktemp -d)
+cat > "$med/findmnt" <<FINDMNT
+#!/bin/sh
+# /run/live/medium is on the disk this test names as the target.
+printf '%s\n' "$DISK"
+FINDMNT
+chmod +x "$med/findmnt"
+out=$(env PATH="$med:$PATH" HEXA_INSTALL_CHECK=1 HEXA_DISK="$DISK" \
+      HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
+      HEXA_ROOT_PASSWORD=s3cr3t sh "$INSTALLER" </dev/null 2>&1)
+if [ $? = 0 ]; then
+  bad "the medium this system booted from was accepted as the target"
+else
+  case "$out" in
+    *"medium this system booted from"*) ok "the boot medium named outright is refused, and says why" ;;
+    *) bad "refused, but not for being the boot medium: $out" ;;
+  esac
+fi
+rm -rf "$med"
+
+echo
+echo "=== answers from a file: the unattended path that publishes nothing ==="
+#
+# hexarouting.password= on the kernel command line is world-readable in
+# /proc/cmdline for the life of the live medium. The file does the same job
+# without that (#83), so what has to be asserted is not only that the answers
+# arrive but that the secret does not come back out.
+#
+adir=$(mktemp -d)
+SECRET=s3cr3t-from-the-file
+cat > "$adir/answers" <<ANS
+# HexaRouting install answers
+hostname = cgnat-file
+timezone = America/Sao_Paulo
+log-gb   = 2
+password = $SECRET
+ANS
+
+run 0 "a file answers every question, the password among them" \
+    HEXA_DISK="$DISK" HEXA_ANSWERS="$adir/answers"
+case "$LAST_OUT" in
+  *cgnat-file*) ok "the answers in the file reached the summary" ;;
+  *) bad "the file's hostname never arrived: $LAST_OUT" ;;
+esac
+# THE assertion of this section. Everything else about the answer file can work
+# and it is still the wrong feature if the password comes back out on a console
+# that is logged, or in an error message nobody thought to redact.
+case "$LAST_OUT" in
+  *"$SECRET"*) bad "the installer printed the root password it was given" ;;
+  *) ok "and the password itself was never printed" ;;
+esac
+
+# What is typed for THIS boot beats what travels with the medium for every
+# install it does - otherwise a medium could not be reused for a second box
+# without rewriting it.
+run 0 "an answer given on the command line overrides the file" \
+    HEXA_DISK="$DISK" HEXA_ANSWERS="$adir/answers" HEXA_HOSTNAME=cgnat-typed
+case "$LAST_OUT" in
+  *cgnat-typed*) ok "the typed hostname won" ;;
+  *) bad "the file overrode an answer that was already given: $LAST_OUT" ;;
+esac
+
+# A misspelt key is an install that arrives at a question with no answer, on a
+# machine with no console to answer from: it would present as a hang, hours
+# later, and not as a typo.
+printf 'passwrod = %s\n' "$SECRET" > "$adir/typo"
+run 1 "a key the installer does not know: refused, not ignored" \
+    HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
+    HEXA_TIMEZONE=America/Sao_Paulo HEXA_ANSWERS="$adir/typo"
+case "$LAST_OUT" in
+  *"'passwrod' is not an answer"*) ok "and it names the key it could not use" ;;
+  *) bad "refused without saying which key was wrong: $LAST_OUT" ;;
+esac
+case "$LAST_OUT" in
+  *"$SECRET"*) bad "the error message quoted the line, secret and all" ;;
+  *) ok "and the refusal did not quote the value back" ;;
+esac
+
+# A file that is not there must stop the install. Falling through to the
+# prompts is the same hang by another route.
+run 1 "an answer file that is not on the medium: refused" \
+    HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
+    HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_ANSWERS="$adir/absent"
+case "$LAST_OUT" in
+  *"no answer file at"*) ok "and says which file it looked for" ;;
+  *) bad "refused without naming the file: $LAST_OUT" ;;
+esac
+
+# The mechanism install-from-cmdline depends on: it sources this installer at
+# its library seam to learn whether the install is unattended, because
+# "unattended" is one of the answers in the file. A second parser over there
+# would be a second thing to disagree about the password.
+cat > "$adir/unattended" <<ANS
+hostname = cgnat-file
+yes      = yes
+ANS
+cat > "$adir/source-lib" <<'LIB'
+HEXA_INSTALL_LIB=1 . "$1"
+unset HEXA_INSTALL_LIB
+printf '%s|%s|%s\n' "${HEXA_HOSTNAME:-}" "${HEXA_INSTALL_YES:-}" \
+    "${HEXA_ROOT_PASSWORD:+set}"
+LIB
+got=$(HEXA_ANSWERS="$adir/unattended" sh "$adir/source-lib" "$INSTALLER" 2>/dev/null | tail -1)
+case "$got" in
+  "cgnat-file|1|") ok "sourcing the installer hands the answers to the caller" ;;
+  *) bad "install-from-cmdline would not learn the answers: got '$got'" ;;
+esac
+rm -rf "$adir"
+
+echo
+echo "=== the disk that was just written is verified before success ==="
+#
+# hexarouting-selftest runs on the LIVE MEDIUM, before the installer, so until
+# now nothing had ever looked at the result of an install. The failure mode is
+# a box that reports success and then boots to a "grub>" prompt in front of
+# whoever is standing there, with the medium already back in its box (#83).
+#
+# Driven against a fake installed root, because the alternative is a full boot
+# cycle in a virtual machine per case - and the case that matters most is the
+# broken install, which no passing install can produce.
+#
+vbin=$(mktemp -d)
+cat > "$vbin/blkid" <<'BLKID'
+#!/bin/sh
+# "blkid -U <uuid>" answers with the device carrying it, and exits non-zero
+# when nothing does. Only the UUID the good fstab names exists here.
+[ "${1:-}" = -U ] || exit 1
+case "${2:-}" in
+  11111111-1111-1111-1111-111111111111) echo /dev/vdz2 ;;
+  *) exit 2 ;;
+esac
+BLKID
+chmod +x "$vbin/blkid"
+
+mkroot() {  # <dir>: what a good install leaves behind
+  mkdir -p "$1/boot/grub" "$1/etc"
+  : > "$1/boot/vmlinuz-6.1.0-test"
+  printf 'menuentry "HexaRouting" {\n\tlinux\t/boot/vmlinuz-6.1.0-test root=UUID=11111111-1111-1111-1111-111111111111 ro\n\tinitrd\t/boot/initrd.img-6.1.0-test\n}\n' \
+    > "$1/boot/grub/grub.cfg"
+  printf 'UUID=11111111-1111-1111-1111-111111111111 / ext4 errors=remount-ro 0 1\n' \
+    > "$1/etc/fstab"
+  printf 'root:$6$saltsalt$hashhashhash:19000:0:99999:7:::\ndaemon:*:19000:0:99999:7:::\n' \
+    > "$1/etc/shadow"
+}
+
+verify() {  # <root> -> output on stdout, status in $?
+  ( PATH="$vbin:$PATH"
+    HEXA_INSTALL_LIB=1
+    export HEXA_INSTALL_LIB
+    . "$INSTALLER"
+    verify_installed "$1" 2>&1 )
+}
+
+vgood=$(mktemp -d); mkroot "$vgood"
+out=$(verify "$vgood"); rc=$?
+if [ "$rc" = 0 ]; then ok "a complete install verifies"
+else bad "a complete install was reported broken:
+$out"; fi
+
+vcase() {  # <description> <expected fragment> <shell that breaks the tree>
+  _d=$(mktemp -d); mkroot "$_d"
+  ( cd "$_d" && eval "$3" )
+  _o=$(verify "$_d"); _rc=$?
+  if [ "$_rc" = 0 ]; then
+    bad "$1: reported a working system"
+  else
+    case "$_o" in
+      *"$2"*) ok "$1, and the report names the check" ;;
+      *) bad "$1: refused without saying which check failed:
+$_o" ;;
+    esac
+  fi
+  rm -rf "$_d"
+}
+
+# Each of these has been seen on this product, or is one step from something
+# that has: a squashfs built without /boot, a stale UUID in fstab, and a late
+# failure that leaves the live image's LOCKED root account on the disk.
+vcase "GRUB boots a kernel that is not on the disk" \
+      "not on the disk" 'rm -f boot/vmlinuz-6.1.0-test'
+vcase "there is no GRUB menu at all" \
+      "no /boot/grub/grub.cfg" 'rm -f boot/grub/grub.cfg'
+vcase "the menu loads no kernel" \
+      "no entry that loads a kernel" 'printf "set timeout=5\n" > boot/grub/grub.cfg'
+vcase "fstab mounts a UUID no device has" \
+      "no device has it" 'printf "UUID=22222222-2222-2222-2222-222222222222 / ext4 defaults 0 1\n" > etc/fstab'
+# An fstab with no UUID in it passes a loop over its UUIDs. That is the check
+# agreeing with itself, on the one fstab that is certainly wrong.
+vcase "fstab identifies nothing" \
+      "names no UUID at all" ': > etc/fstab'
+vcase "the root account is still the live image's locked one" \
+      "still LOCKED" 'printf "root:!:19000:0:99999:7:::\n" > etc/shadow'
+vcase "there is no root account" \
+      "no root line" 'printf "daemon:*:19000:0:99999:7:::\n" > etc/shadow'
+
+rm -rf "$vgood" "$vbin"
+echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
 exit 1
