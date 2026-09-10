@@ -114,6 +114,19 @@ def redact(lines):
             secret = 3
         elif w and w[0] in ("domain-password", "area-password") and len(w) >= 3:
             secret = 2
+        # A key chain is the OTHER way OSPF, IS-IS and RIP carry a secret, and
+        # none of the five spellings above matches it, so it printed in full
+        # (#181). `key-string` is the secret itself; `key chain KC-CORE` and
+        # `key 1` above it are a name and an id, and redacting those would
+        # leave an operator unable to tell WHICH chain is on screen.
+        elif w[:1] == ["key-string"] and len(w) >= 2:
+            secret = 1
+        # RIP's own inline form. `ip rip authentication key-chain KC-CORE`
+        # names a chain and must survive; only `string` carries the secret,
+        # which is why the fourth word is named rather than assumed.
+        elif (w[:3] == ["ip", "rip", "authentication"]
+              and len(w) >= 5 and w[3] == "string"):
+            secret = 4
         if secret is not None:
             indent = l[:len(l) - len(l.lstrip())]
             # Everything but the secret is kept, the trailing words included:
