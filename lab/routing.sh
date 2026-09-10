@@ -62,12 +62,19 @@ vppctl lcp create host-veth-vpp host-if vppwan0
 # be explicit, never inherited.
 vppctl set interface mtu 1500 host-veth-vpp
 
-# IS-IS does not run over IP: it is OSI NLPID 0x83 straight over the link.
-# Without this the frame reaches VPP, lands in osi-input as "unknown osi
-# protocol" and is dropped - BGP and OSPF come up fine and only IS-IS is mute.
-vppctl lcp osi-proto enable 0x83
+# NOT enabled here any more, and that is the point of the assertion below.
+# Until #168 this line existed in this lab and in the documentation and NOWHERE
+# in the product, so the lab proved a box nobody received: on a shipped
+# appliance an operator configured IS-IS, the commit succeeded, isisd came up,
+# and no adjacency ever formed. The product does it now, when the
+# configuration contains an IS-IS instance, and the lab has to leave it alone
+# or the assertion tests nothing.
 
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
+
+# Recorded before anything commits, so the assertion after the first commit is
+# a CHANGE rather than a state that might have been there all along.
+OSI_BEFORE=$(vat2 lcp_osi_proto_get '{}' 2>/dev/null | grep -c '"0x83"' || true)
 
 # ---------------- HexaRouting ----------------
 mkdir -p /var/run/frr /etc/frr
@@ -188,6 +195,31 @@ BGPUP=$($HX -c "configure" -c "router bgp 65000" \
         -c "exit-address-family" -c "exit" -c "commit" 2>&1)
 echo "$BGPUP" | tail -3 | sed 's/^/  /'
 expect_in "the VTY commits a BGP session" "commit complete" "$BGPUP"
+
+# --- IS-IS frames are punted because the PRODUCT punts them (#168) ---
+#
+# Nothing in this lab ran `lcp osi-proto enable`. The commit above carried an
+# IS-IS instance - it is in the configuration the VTY read back from FRR - so
+# the product enabled the punt as part of applying it.
+#
+# The negative half is what gives this meaning, and it is taken BEFORE the
+# commit, above: with no punt, IS-IS forms no adjacency at all, so every
+# IS-IS assertion further down is evidence about the product rather than
+# about a line this file used to run.
+# Asked of the same API the product uses to set it, because `show lcp` does not
+# report the OSI protocols at all - the first version of this assertion grepped
+# that output and failed while the adjacency was up, which is the assertion
+# being wrong rather than the product.
+# VPP answers with a HEX STRING - "0x83" for one protocol, bare "0x" for none
+# - not with a list of numbers. The first version of this counted "131" and
+# found nothing on a box that was punting, which is the assertion being wrong
+# rather than the product.
+osi_count() {
+  vat2 lcp_osi_proto_get '{}' 2>/dev/null | grep -c '"0x83"' || true
+}
+echo "  OSI protocols linux_cp is punting, after the commit: $(osi_count)"
+expect "the product enabled the OSI punt IS-IS needs" test "$(osi_count)" -ge 1
+expect "and it was not already on before the commit" test "${OSI_BEFORE:-1}" -eq 0
 # A `no` form that is CONFIGURATION rather than a removal. There is no
 # `bgp ebgp-requires-policy` line for it to take away, so it has to be staged
 # as written - and every eBGP session here needs it, which is why the check

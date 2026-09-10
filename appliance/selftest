@@ -163,6 +163,21 @@ if vtysh -c "show version" >/dev/null 2>&1; then
     ok "routing daemons up:$(printf '%s' "$daemons" | tr -d '\n')"
   fi
 
+  # IS-IS is not carried over IP: it is OSI NLPID 0x83 straight over the link,
+  # and linux_cp drops it unless told to punt it. A box with an IS-IS instance
+  # and no punt commits cleanly, brings isisd up, reads back correctly, and
+  # forms no adjacency ever - with the only evidence in a dataplane error
+  # counter nothing surfaces. Worth its own line for that reason.
+  if vtysh -c "show running-config" 2>/dev/null | grep -q "^router isis"; then
+    if vppctl show lcp 2>/dev/null | grep -qi "osi.*0x83\|osi-proto.*131"; then
+      ok "IS-IS frames are punted to the kernel"
+    else
+      say "  [warn] IS-IS is configured and its frames are NOT punted"
+      say "         the adjacency will never form, and the only sign of it"
+      say "         is a dataplane counter for unknown OSI protocols"
+    fi
+  fi
+
   # RPKI is a loadable module, and one that is present and not loaded is not
   # there. Worth its own line because the symptom is misleading: bgpd refuses
   # to start when told to load a module it cannot find, so a missing module

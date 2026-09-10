@@ -1971,6 +1971,64 @@ class Shell:
             return False
         return True
 
+    #: IS-IS is not carried over IP. It is OSI NLPID 0x83 straight over the
+    #: link, and linux_cp does not punt it unless told - the frame reaches
+    #: VPP, lands in osi-input as "unknown osi protocol", and is dropped.
+    OSI_ISIS = 0x83
+
+    def osi_protos_enabled(self):
+        """
+        The OSI protocols linux_cp is punting, read from the box.
+
+        Read rather than remembered, for the reason #161 cost: a state that
+        can be set and never read is one the operator cannot turn off, and one
+        nothing will admit is on. An empty list is a real answer - it is what
+        a box that has never been told looks like - and is not a failure.
+        """
+        r = self.api_call("lcp_osi_proto_get", {})
+        if r.state != vppapi.OK:
+            return None                 # could not ask, which is not "none"
+        # A HEX STRING, not a list: "0x83" for one protocol, bare "0x" for
+        # none. Read as a list of integers it came back empty every time, so
+        # this reported "nothing is punted" on a box that was punting - and
+        # the only reason it did no harm is that enabling twice is a no-op.
+        got = r.fields.get("osi_protos")
+        if isinstance(got, str):
+            body = got[2:] if got.startswith("0x") else got
+            return [int(body[i:i + 2], 16) for i in range(0, len(body), 2)]
+        return [int(x) for x in got] if isinstance(got, list) else []
+
+    def enable_osi_isis(self):
+        """
+        Punt IS-IS's frames to the kernel, so FRR can see them.
+
+        Applied by the product when the configuration contains an IS-IS
+        instance, not left to the operator. Until now this line existed in a
+        lab and in the documentation and NOWHERE in the product, so on a
+        shipped box an operator configured IS-IS, the commit succeeded, isisd
+        came up, the running configuration read correctly, and no adjacency
+        ever formed - with the only evidence in a VPP error counter nothing
+        surfaced (#168).
+
+        Not undone when IS-IS is removed. Punting one OSI protocol costs a
+        branch on frames that are not IP and would otherwise be dropped, and
+        turning it off would mean deciding it is safe to stop punting while
+        something else might still want it. The self-test reports what is on.
+        """
+        have = self.osi_protos_enabled()
+        if have is None:
+            return True                 # dataplane not answering: not our call
+        if self.OSI_ISIS in have:
+            return True
+        r = self.api_call("lcp_osi_proto_enable", {"osi_proto": self.OSI_ISIS})
+        if r.state != vppapi.OK:
+            self.err("IS-IS is configured but its frames cannot be punted to "
+                     f"the kernel: {r.reason}")
+            print("    the adjacency would never form, and the only evidence "
+                  "would be a dataplane error counter")
+            return False
+        return True
+
     def create_loopback(self, ifname):
         """
         Create a loopback, at the instance number its name carries.
@@ -2726,6 +2784,14 @@ class Shell:
                 return False
         for ifname, tag in d["subif_add"].items():
             if not self.create_subif(ifname, tag):
+                return False
+
+        # IS-IS needs its frames punted before the adjacency can form, and
+        # the punt is box-wide rather than per-interface, so it goes here
+        # rather than with the interface work below.
+        if any(l.split()[:2] == ["router", "isis"] for l in target.routing
+               if l.split()):
+            if not self.enable_osi_isis():
                 return False
 
         # The pair, before anything that needs FRR to see the interface. A
