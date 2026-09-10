@@ -14,6 +14,27 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStartPre=/usr/lib/hexarouting/wait-for-vpp 60
 ExecStart=/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf
+# The control plane must not be the process that empties a box sized to the
+# documented floor. docs/appliance.md sets that floor at 4 GB, and the tuner
+# leaves a quarter of RAM outside the hugepage pool for everything that is not
+# VPP - 2 GB on such a box, shared by the kernel, the page cache, FRR and this.
+# Loading a configuration is the interpreter plus hexash's own modules and the
+# file: 13 MB peak measured, and it does not grow with the routing table or the
+# session count, both of which live in VPP. 512M is a quarter of that 2 GB and
+# forty times the measured need, so a runaway here is killed while it is still
+# a bug in one unit, instead of becoming a machine-wide shortage that lets the
+# kernel choose a victim (#172).
+#
+# Deliberately NOT applied to frr.service. bgpd's working set scales with the
+# table it carries, nothing in this repository states what a full one costs,
+# and a bound guessed too low does not degrade BGP - it kills it, on exactly
+# the box that has the most to lose. No bound is better than that one.
+#
+# Reach: this is a oneshot, so the bound holds while the configuration is being
+# applied and not afterwards - the unit keeps its cgroup but no processes. The
+# interactive VTY is started by the login shell, not by this unit, and is not
+# covered here.
+MemoryMax=512M
 # No ExecStop: the configuration lives in VPP, and stopping this service must
 # not erase a production pool. Removing a pool is the operator's action,
 # through the VTY.

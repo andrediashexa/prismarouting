@@ -61,6 +61,18 @@ The latency knobs cost power, so they are a switch, not a law:
 parameters from the kernel command line and leaves the governor alone. The
 default is `1`, because this is a router.
 
+`HEXA_MAX_WORKERS` in the same file caps how many physical cores become
+forwarding workers. It ships **empty**, which means no cap and is exactly the
+behaviour above: every core on the dataplane node except the first. The cap
+exists because "all but the first" scales the wrong way — on a 32-core socket
+it leaves **one** physical core carrying FRR, `frr-reload`, `vtysh`, `hexash`,
+`sshd` and VPP's main thread together, and the main thread takes the worker
+barrier once a second for `bpa-expire-process`. Setting it hands cores back to
+the control plane, and the cores it frees leave `isolcpus` so the scheduler can
+use them. A cap larger than the machine has invents nothing. Each worker
+removed is that share of forwarding capacity, so no default is shipped: the
+trade depends on how much control-plane work the box actually carries.
+
 Tested against synthetic topologies in `appliance/test_tune.py`, because the
 development machine has neither SMT nor multiple NUMA nodes — and that is
 exactly where the decisions matter. One case builds 2 sockets × 8 cores ×
@@ -149,6 +161,24 @@ defaulting to 16k buckets and 16 MB per table. The size is a virtual
 reservation, but the OOM killer counts virtual memory — hence the modest
 default. A 200k-subscriber deployment **SHOULD** raise it; a small box **MUST
 NOT** pay for it.
+
+Raising the floor to 4 GB did nothing for the victim. `vpp.service` therefore
+carries `OOMScoreAdjust=-1000`, shipped as the drop-in
+`/etc/systemd/system/vpp.service.d/hexarouting-oom-protect.conf`, which takes
+the dataplane out of the kernel's selection instead of merely lowering its
+score: a box that has lost `bgpd` still forwards on what it learned, and a box
+that has lost VPP forwards nothing. It does **not** protect VPP from its own
+allocations — if VPP is genuinely the process consuming the machine, the kernel
+still kills it.
+
+`hexarouting.service` carries `MemoryMax=512M` for the other side of the same
+event: the control plane must not be what empties a box sized to the floor. On
+4 GB the tuner leaves a quarter of RAM outside the hugepage pool, and 512M is a
+quarter of that — against a measured 13 MB peak for loading a configuration,
+which does not grow with the routing table or the session count. `frr.service`
+carries **no** bound on purpose: `bgpd`'s working set scales with the table it
+carries, nothing here states what a full one costs, and a bound guessed too low
+kills BGP rather than degrading it.
 
 ## CPU requirement
 
