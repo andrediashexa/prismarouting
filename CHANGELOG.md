@@ -25,7 +25,78 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.56.0.
+Nothing merged since v0.57.0.
+
+## 0.57.0 — deleting a pool no longer stops forwarding for everybody
+
+[#171](https://github.com/andrediashexa/hexarouting/issues/171).
+
+### Fixed
+
+* **`bpa_pool_del` held the worker barrier across an unbounded walk of every
+  session on every worker.** Forwarding was stopped for all subscribers while
+  it ran, and an ordinary `commit` reaches it — `hexash` replaces any pool whose
+  configuration text differs, so a change to an ALG or an MSS clamp during an
+  incident tears the pool down.
+
+  Measured with VPP's own barrier accounting — the `t` field of the `bar-rel`
+  events, which is how long forwarding was actually stopped — on two workers,
+  with subscriber traffic running through the pool being deleted:
+
+  | sessions | before | after |
+  |---|---|---|
+  | 10 000 | **5 964 µs**, one acquisition | **1 451 µs**, 9 acquisitions over 11 ms |
+  | ~49 000 | **37 095 µs**, one acquisition | **1 374 µs**, 28 acquisitions over 45 ms |
+
+  4.9× the sessions, 6.2× the stall: a straight line at ~0.6 µs per session
+  freed, which puts the design target of 200k subscribers into the hundreds of
+  milliseconds. Flat afterwards.
+
+### How, and why not the other way
+
+The delete stays **synchronous** — it returns only when the last session is
+gone — and only the *walk* is chunked: one short barrier to detach, budgeted
+chunks with the barrier open in between, one short barrier to free the
+definition.
+
+Returning early and letting the expiry pass reclaim would have been simpler and
+is wrong, because of #69: `hexash` replaces a changed pool with `del` then `add`
+of the same prefixes. A delete that returns while sessions drain lets the
+replacement pool compute the same blocks and hand subscriber 5 the same public
+port the old pool's subscriber 5 is still holding — both write the same
+`out2in` key, the second insert wins, and freeing the old session deletes the
+new subscriber's entry.
+
+**Two costs worth stating.** The entry points had to be declared mp-safe, or
+their dispatchers hold the barrier around the whole call and a nested release is
+a no-op — VPP says so in its own event log — which would have left the walk
+budgeted and the outage exactly as long. And the main thread is now blocked for
+the delete's wall time rather than the barrier being held for it: no expiry, no
+API, for ~11 ms at 10k sessions. That is better than an outage of the same
+length.
+
+Dropping the barrier mid-walk lets the datapath run against a half-drained pool,
+so three gates make one forward pass sufficient: `bpa_session_bind` refuses a
+deleted pool, without which an ALG opening a data connection on a control
+session the cursor has passed would create a session *behind* the cursor;
+`bpa_pool_by_inside` skips deleted pools, so in2out reports "no pool" rather
+than being counted as an exhausted port block — the counter an operator chases
+when a customer complains; and `bpa_pool_by_outside` deliberately does **not**
+skip them, because sessions not yet freed must keep answering.
+
+### Internal
+
+* `lab/pool-del.sh` is new and **fails on the unfixed build**, verified by
+  reverting and reapplying the source diff. It runs two workers, because with
+  fewer than two VPP's barrier returns without doing anything and a
+  single-threaded lab would report zero on a broken build. It asserts the
+  mechanism as well as the number: the delete must take more than one barrier of
+  its own.
+
+* A correction to the issue's own text: `bpa_static_install` and
+  `bpa_static_uninstall` do **not** walk every session table. Each is a fixed
+  number of lookups per thread plus one subscriber's own blocks. That claim came
+  from a reading rather than a measurement, and it was wrong.
 
 ## 0.56.0 — secrets that were printed, and a victim that was not protected
 
