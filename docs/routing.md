@@ -363,6 +363,82 @@ defect surfaced immediately.
 interface stanzas the VTY stages itself, and the check path and the apply path
 share it so they cannot drift.
 
+## Loopbacks, and the pair that makes an interface visible to FRR
+
+### Nothing created a linux_cp pair
+
+`lcp create` appeared in five labs and nowhere else in this repository. Nothing
+in `appliance/` and nothing in `hexash` paired a dataplane interface into the
+kernel. The `linux-cp` settings in the startup configuration — `lcp-sync`,
+`lcp-auto-subint` — govern how an **existing** pair behaves; `lcp-auto-subint`
+creates a pair for a sub-interface of an interface that is *already* paired.
+Neither creates the first one.
+
+So on a box installed from the ISO, VPP owned the NIC and FRR saw no interface
+for it. **BGP, OSPF and IS-IS were configurable and inert.** The labs created
+the pair by hand, which meant they proved a box nobody received — the third
+instance of that shape, after the routing daemons (#99) and OSI passthrough
+(#168).
+
+```
+interface GigabitEthernet0/12/0
+  linux-name vppwan0
+  ipv4 address 200.150.0.1/24
+  exit
+```
+
+`linux-name` is what the kernel, `ip` and FRR see the interface by. Linux
+refuses a name over 15 characters and cannot have `/` in one at all — which
+matters here because VPP's own names are full of them, and copying one across
+is the obvious mistake to make, so it is refused with that sentence rather than
+with the dataplane's bare return code.
+
+The pair is **read back** from the box, not remembered. That is the lesson
+#161 cost: a state that can be set and never read is one the operator cannot
+turn off, and one the running configuration will not admit is on.
+
+TAP rather than TUN, and not as a default: the routing protocols this product
+carries are not all IP. IS-IS is OSI straight over the link, and a TUN pair has
+no link layer to carry it.
+
+### Loopbacks
+
+```
+interface loop0
+  linux-name loop0
+  ipv4 address 10.99.0.1/32
+  description router-id, which a port cannot take with it
+  exit
+```
+
+Naming a loopback is what **creates** it, the way naming a sub-interface is —
+there is nothing else on the box to create it from. `loop<n>` is VPP's own
+spelling, so the configuration and `show interface` cannot disagree about what
+the thing is called, and the instance number in the name is the instance number
+VPP is given: a configuration saying `loop3` produces `loop3`, not whatever was
+next free.
+
+`no interface loop0` takes the whole path back down — address, pair, interface.
+A physical port is still refused, because that is not something a configuration
+can remove and accepting the words for one would promise what the commit cannot
+deliver.
+
+**Why a router needs one.** An address on a physical port disappears with the
+port. A BGP `router-id`, an OSPF or IS-IS router-id, an iBGP `update-source`
+that survives a link failure, and an SNMP or logging source address that does
+not move all want an interface that is always up. Until this existed the VTY
+could **refuse** `neighbor X update-source Loopback0` for not existing and
+offered no way to make one — which is worse than not offering the statement.
+
+### How it is tested
+
+The loopback section is where the pairing is proved, because a loopback is
+created and paired **entirely by the product** — there is no `vppctl lcp create`
+anywhere in it. So the assertions are: the interface is on the dataplane, the
+kernel has it, the address is on it, FRR knows it, and the pair is in the
+running configuration read back from the box. Then removal, asserted on both
+the dataplane and the kernel.
+
 ### MAC, router advertisements, and one interface in detail
 
 ```

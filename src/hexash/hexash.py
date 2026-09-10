@@ -25,7 +25,7 @@ import tempfile
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
-                    _address_family_error)
+                    _address_family_error, _is_loopback)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, redact, snmp_redact,
                     validate_snmp, validate_ssh, SSH_FIELDS)
@@ -174,6 +174,8 @@ INTERFACE_BLOCK = {
     "description": ("what this interface is for", "<text>"),
     "vlan": ("VLAN tag, on a sub-interface", "<1-4094> [inner <1-4094>]"),
     "vrf": ("the routing table this interface's addresses live in", ARG_NUM),
+    "linux-name": ("the name FRR and 'ip' see this interface by; without one "
+                   "the routing daemons cannot see it at all", "<name>"),
     "mac-address": ("the MAC this interface answers to", "<xx:xx:xx:xx:xx:xx>"),
     "ipv4": ("IPv4 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
@@ -563,6 +565,7 @@ DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
+               "loopback_add", "loopback_del", "lcp_set", "lcp_del",
                "mac_set", "ra_on", "ra_off")
 
 
@@ -1554,6 +1557,8 @@ class Shell:
         cfg.vlans = self.device_vlans()
         cfg.vrfs = self.device_vrfs()
         cfg.macs = self.device_macs()
+        cfg.linux_names = self.device_linux_names()
+        cfg.loopbacks = self.device_loopbacks()
         cfg.admin_down = self.device_admin_down()
         cfg.ra_enabled = self.device_ra_enabled()
         # Read from the box, not from what this VTY last wrote: the same
@@ -1962,6 +1967,96 @@ class Shell:
             return False
         return True
 
+    def create_loopback(self, ifname):
+        """
+        Create a loopback, at the instance number its name carries.
+
+        `loop3` is instance 3, so the name an operator writes is the name the
+        dataplane gives it and the configuration and `show interface` cannot
+        disagree about what the thing is called. Without `is_specified` VPP
+        picks the next free number, which would mean a configuration saying
+        `loop3` could produce `loop0` on a box where 3 was taken.
+
+        A loopback is what a router-id and an `update-source` are meant to
+        live on: an address on a physical port disappears with the port, which
+        is the failure a loopback exists to prevent. Until now this VTY could
+        REFUSE `update-source Loopback0` for not existing and offered no way to
+        make one (#179).
+        """
+        instance = int(ifname[4:])
+        r = self.api_call("create_loopback_instance",
+                          {"mac_address": "00:00:00:00:00:00",
+                           "is_specified": True, "user_instance": instance})
+        if r.state != vppapi.OK:
+            self.err(f"could not create {ifname}: {r.reason}")
+            return False
+        return True
+
+    def delete_loopback(self, ifname):
+        """Remove a loopback. Already gone is the outcome asked for."""
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            return True
+        r = self.api_call("delete_loopback", {"sw_if_index": idx})
+        if r.state != vppapi.OK:
+            self.err(f"could not delete {ifname}: {r.reason}")
+            return False
+        return True
+
+    def set_lcp_pair(self, ifname, host_name, is_add=True):
+        """
+        Pair an interface into the kernel, so FRR can see it.
+
+        Nothing in this product created a pair until now. The dataplane owned
+        the NIC, FRR saw no interface for it, and every routing protocol was
+        configurable and inert on an installed box - while the labs created
+        the pair by hand, so they proved a box nobody received (#182).
+
+        TAP rather than TUN: the routing protocols this product carries are
+        not all IP. IS-IS is OSI straight over the link, and a TUN pair has no
+        link layer to carry it.
+        """
+        idx = self.api.interface_index(ifname)
+        if idx is None:
+            self.err(f"interface {ifname}: the dataplane does not have it")
+            return False
+        r = self.api_call("lcp_itf_pair_add_del",
+                          {"is_add": is_add, "sw_if_index": idx,
+                           "host_if_name": host_name,
+                           "host_if_type": "LCP_API_ITF_HOST_TAP",
+                           "netns": ""})
+        if r.state != vppapi.OK:
+            verb = "pair" if is_add else "unpair"
+            self.err(f"could not {verb} {ifname} with {host_name}: {r.reason}")
+            return False
+        return True
+
+    def device_linux_names(self) -> dict:
+        """
+        The Linux-side name of each interface that has a pair, from the box.
+
+        Read back rather than remembered, which is the lesson #161 cost: a
+        state that can be set and never read is one the operator cannot turn
+        off, and one the running configuration will not admit is on.
+        """
+        rc, out = self.dp.run("show lcp")
+        if rc != 0:
+            return {}
+        found = {}
+        for line in out.splitlines():
+            # itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+            w = line.split()
+            if len(w) >= 6 and w[0] == "itf-pair:":
+                found[w[2]] = w[4]
+        return found
+
+    def device_loopbacks(self) -> set:
+        """The loopbacks the dataplane has, by their own names."""
+        rc, out = self.dp.run("show interface")
+        if rc != 0:
+            return set()
+        return {n for n in routes.parse_interfaces(out) if _is_loopback(n)}
+
     def create_subif(self, ifname, tag):
         """
         Create a sub-interface on its parent.
@@ -2193,6 +2288,11 @@ class Shell:
                 # existence - which is a check that makes the feature it
                 # guards impossible to use.
                 have |= set(target.vlans)
+                # A loopback the configuration CREATES is not one the box is
+                # missing. Without this the check refuses every new loopback -
+                # the commit that would have brought it into existence - which
+                # is the same trap the sub-interface line above exists for.
+                have |= set(target.loopbacks)
                 named = set(target.interfaces)
                 named |= set(target.mtus)
                 named |= set(target.urpf)
@@ -2591,10 +2691,21 @@ class Shell:
             if not self.set_admin(ifname, False):
                 return False
 
-        # Sub-interfaces first: nothing can be put on one that does not exist
-        # yet. Removals last, further down, for the mirror-image reason.
+        # Loopbacks and sub-interfaces first: nothing can be put on an
+        # interface that does not exist yet. Removals last, further down, for
+        # the mirror-image reason.
+        for ifname in d["loopback_add"]:
+            if not self.create_loopback(ifname):
+                return False
         for ifname, tag in d["subif_add"].items():
             if not self.create_subif(ifname, tag):
+                return False
+
+        # The pair, before anything that needs FRR to see the interface. A
+        # loopback with no pair is invisible to the routing daemons, which is
+        # the entire reason an operator creates one.
+        for ifname, host in d["lcp_set"].items():
+            if not self.set_lcp_pair(ifname, host, True):
                 return False
 
         # Moving an interface between routing tables, addresses and all.
@@ -2717,8 +2828,18 @@ class Shell:
         # Destroyed after everything has been taken off them: deleting a
         # sub-interface the dataplane still holds addresses or a CGNAT feature
         # on leaves dangling references to an interface that is gone.
+        # Unpaired before the interface goes: removing an interface that still
+        # has a pair leaves a TAP in the kernel with nothing behind it, and FRR
+        # holding an adjacency on a port that stopped forwarding.
+        for ifname in d["lcp_del"]:
+            if not self.set_lcp_pair(ifname, "", False):
+                return False
+
         for ifname in d["subif_del"]:
             if not self.delete_subif(ifname):
+                return False
+        for ifname in d["loopback_del"]:
+            if not self.delete_loopback(ifname):
                 return False
 
         for ifname in d["mtu_del"]:
@@ -3205,24 +3326,30 @@ class Shell:
             else:
                 self.candidate.interfaces[w[2]] = w[3]
             return True
-        # `no interface <name>` deletes a sub-interface, and with it whatever
-        # was on it. Only a sub-interface: a physical port is not something a
-        # configuration can remove, and accepting the words for one would
-        # promise something the commit cannot deliver.
+        # `no interface <name>` deletes what this configuration CREATED, and
+        # with it whatever was on it: a sub-interface or a loopback. Not a
+        # physical port - that is not something a configuration can remove, and
+        # accepting the words for one would promise what the commit cannot
+        # deliver.
         if line.startswith("no interface "):
             gone = w[2] if len(w) > 2 else ""
-            if "." not in gone:
-                self.err(f"{gone or '<name>'}: only a sub-interface can be "
-                         "removed; a physical port is not created by this "
-                         "configuration")
+            if "." not in gone and not _is_loopback(gone):
+                self.err(f"{gone or '<name>'}: only a sub-interface or a "
+                         "loopback can be removed; a physical port is not "
+                         "created by this configuration")
                 return True
             self.candidate.vlans.pop(gone, None)
+            self.candidate.loopbacks.discard(gone)
+            self.candidate.linux_names.pop(gone, None)
             self.candidate.addresses.pop(gone, None)
             self.candidate.mtus.pop(gone, None)
             self.candidate.urpf.pop(gone, None)
             self.candidate.descriptions.pop(gone, None)
             self.candidate.admin_down.discard(gone)
             self.candidate.interfaces.pop(gone, None)
+            self.candidate.macs.pop(gone, None)
+            self.candidate.vrfs.pop(gone, None)
+            self.candidate.ra_enabled.discard(gone)
             return True
 
         if line.startswith("no cgnat interface "):
@@ -3262,6 +3389,25 @@ class Shell:
                 self.err("usage: mac-address <xx:xx:xx:xx:xx:xx>")
             else:
                 self.candidate.macs[ifname] = w[1].lower()
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[0] == "linux-name"):
+            ifname = self.frr_ctx[-1].split()[1]
+            if len(w) < 2:
+                self.err("usage: linux-name <name>")
+            elif len(w[1]) > 15 or "/" in w[1]:
+                # Linux refuses a name over 15 characters, and a '/' cannot be
+                # in one at all - which matters here because VPP's own names
+                # are full of them, and copying one across is the obvious
+                # mistake to make.
+                self.err(f"linux-name: '{w[1]}' cannot be a Linux interface "
+                         "name (15 characters, no '/')")
+            else:
+                self.candidate.linux_names[ifname] = w[1]
+            return True
+        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                and w[:2] == ["no", "linux-name"]):
+            self.candidate.linux_names.pop(self.frr_ctx[-1].split()[1], None)
             return True
         if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
                 and w[:3] == ["ipv6", "nd", "suppress-ra"]):
@@ -3430,6 +3576,12 @@ class Shell:
         # prevent (#150).
         if line.startswith(("router ", "interface ", "vrf ", "route-map ",
                             "address-family ")) or line.strip() == "rpki":
+            # Naming a loopback is what CREATES it, the way naming a
+            # sub-interface is - there is nothing else on the box to create it
+            # from. Recorded on the way into the block, because the statements
+            # typed inside it are about an interface that does not exist yet.
+            if line.startswith("interface ") and _is_loopback(line.split()[1]):
+                self.candidate.loopbacks.add(line.split()[1])
             self.frr_ctx.append(line)
         return True
 
