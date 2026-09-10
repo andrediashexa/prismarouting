@@ -150,6 +150,19 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   clib_bihash_kv_16_8_t kv;
   bpa_session_t *s;
 
+  /*
+   * The one gate that makes a budgeted delete terminate.
+   *
+   * bpa_pool_del() drops the worker barrier between chunks, so the datapath
+   * runs while the pool is half drained. Without this, an ALG opening a data
+   * connection on a control session the walk has not reached yet would put a
+   * new session behind the cursor, and it would be left holding a public port
+   * of a pool that no longer exists. Here rather than in each caller because
+   * this is where every path that is not GRE ends up.
+   */
+  if (PREDICT_FALSE (p->deleted))
+    return 0;
+
   pool_get_zero (pt->sessions, s);
   s->ip_pub = sb->blk.ip_pub;
   s->port_priv = port_priv;
@@ -509,6 +522,14 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
     }
   if (off < 0 || sb == 0)
     return 0; /* no room on that address: the tunnel does not come up */
+
+  /* GRE builds its own record rather than going through bpa_session_bind(),
+   * so it needs the drain gate of its own. See the one there. */
+  if (PREDICT_FALSE (p->deleted))
+    {
+      bpa_portmap_free (&sb->map, (u16) off);
+      return 0;
+    }
 
   pool_get_zero (pt->sessions, s);
   s->ip_pub = sb->blk.ip_pub;
@@ -971,6 +992,49 @@ bpa_static_uninstall (u32 pool_index, const bpa_static_t *sf)
       if (sb)
 	bpa_portmap_free (&sb->map, sf->port_off);
     }
+}
+
+/*
+ * Budgeted drain of one pool's sessions on one worker's table.
+ *
+ * The same shape as bpa_expire_walk() below and for the same reason: the walk
+ * runs under the worker barrier, so it has to be able to stop. It differs in
+ * where it stops - expiry sweeps forever and resumes anywhere, this one has to
+ * cover the whole table exactly once and say when it has, because the pool's
+ * definition may not be freed until nothing is left pointing at it.
+ *
+ * Once round is enough because bpa_session_bind() refuses a pool marked
+ * deleted: nothing can appear behind the cursor. `*cursor` carries the walk
+ * across barrier acquisitions; pool_put() does not move the entries that
+ * remain, so an index that was valid before a free is still that entry after
+ * it.
+ *
+ * Returns non-zero when this thread has nothing of the pool left.
+ */
+int
+bpa_pool_drain (bpa_per_thread_t *pt, u32 pool_index, u32 *cursor,
+		u32 scan_budget, u32 free_budget, f64 now)
+{
+  u32 cap = vec_len (pt->sessions);
+  u32 scanned = 0, freed = 0;
+
+  while (*cursor < cap && scanned < scan_budget && freed < free_budget)
+    {
+      if (!pool_is_free_index (pt->sessions, *cursor))
+	{
+	  bpa_session_t *s = pool_elt_at_index (pt->sessions, *cursor);
+
+	  if (s->pool_index == pool_index)
+	    {
+	      bpa_session_free (pt, s, now);
+	      freed++;
+	    }
+	}
+      (*cursor)++;
+      scanned++;
+    }
+
+  return *cursor >= cap;
 }
 
 /*

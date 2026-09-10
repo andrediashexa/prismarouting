@@ -215,6 +215,15 @@ bpa_pool_by_inside (bpa_main_t *bm, u32 addr, u32 fib, u32 *pool_index,
        */
       if (fib != ~0u && p->fib_index != ~0u && p->fib_index != fib)
 	continue;
+      /*
+       * A pool being drained by bpa_pool_del() is already gone as far as new
+       * traffic is concerned. Skipped here so the packet is counted as "no
+       * pool" - which is the truth - rather than travelling on to be refused
+       * by the session bind and counted as a full port block, which is the
+       * counter an operator chases when a customer complains.
+       */
+      if (PREDICT_FALSE (p->deleted))
+	continue;
       if (bpa_set_index_of (&p->inside, addr, sub_idx) == 0)
 	{
 	  *pool_index = p - bm->pools;
