@@ -6,6 +6,15 @@ mkdir -p /run/vpp /vpp_plugins /vat2_plugins
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
+# The vat2 plugin where a real box has it, BEFORE the first call rather than
+# halfway down. Every vat2 invocation below used to carry "-p /vat2_plugins",
+# which is the build tree's layout and no appliance's: the lab proved the wire
+# format against a client configuration nobody receives, and would not have
+# noticed appliance/install.sh failing to install the plugin at all. lib.sh
+# says exactly this and this file was calling it too late to matter.
+. /src/lab/lib.sh
+use_binary_api
+
 vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 
@@ -17,7 +26,7 @@ echo "=== criando um pool pela API binaria ==="
 # Every field spelled out, including the ones hexash would fill in. That is
 # the point of this lab: it drives the WIRE FORMAT, not hexash's model of it,
 # so a field added to one and forgotten in the other is caught here.
-vat2 -p /vat2_plugins bpa_pool_add_del '{
+vat2 bpa_pool_add_del '{
   "is_add": true,
   "name": "via-api",
   "block_size": 512,
@@ -49,12 +58,12 @@ vppctl show bpa pool | head -4 | sed 's/^/  /'
 
 echo
 echo "=== dump pela API ==="
-vat2 -p /vat2_plugins bpa_pool_dump '{}' 2>&1 | head -14 | sed 's/^/  /'
+vat2 bpa_pool_dump '{}' 2>&1 | head -14 | sed 's/^/  /'
 
 echo
 echo "=== an error returns a CODE, not text ==="
 echo "  (block 500 is not a power of two)"
-vat2 -p /vat2_plugins bpa_pool_add_del '{
+vat2 bpa_pool_add_del '{
   "is_add": true, "name": "bad", "block_size": 500,
   "port_min": 1024, "port_max": 65535,
   "policy": "BPA_API_POLICY_INTERLEAVED", "mode": "BPA_API_MODE_DETERMINISTIC",
@@ -82,9 +91,9 @@ vppctl show logging 2>/dev/null | grep -i "block size" | tail -1 | sed 's/^/    
 echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
-OK=$(vat2 -p /vat2_plugins bpa_pool_dump '{}' 2>&1)
+OK=$(vat2 bpa_pool_dump '{}' 2>&1)
 expect_in "the pool created through the API is listed" "via-api" "$OK"
-BAD=$(vat2 -p /vat2_plugins bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","filter":"BPA_API_FILTER_ENDPOINT_INDEPENDENT","max_blocks":0,"alg":0,"alg_set":0,"tcp_mss":0,"tcp_mss_auto":false,"vrf_id":4294967295,"out_vrf_id":4294967295,"audit_user":"api-lab","audit_uid":4242,"timeouts":{"udp":0,"icmp":0,"tcp_syn":0,"tcp_transitory":0,"tcp_established":0,"gre":0,"port_holddown":0,"alg_expect":0},"n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
+BAD=$(vat2 bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","filter":"BPA_API_FILTER_ENDPOINT_INDEPENDENT","max_blocks":0,"alg":0,"alg_set":0,"tcp_mss":0,"tcp_mss_auto":false,"vrf_id":4294967295,"out_vrf_id":4294967295,"audit_user":"api-lab","audit_uid":4242,"timeouts":{"udp":0,"icmp":0,"tcp_syn":0,"tcp_transitory":0,"tcp_established":0,"gre":0,"port_holddown":0,"alg_expect":0},"n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
 # vat2 prints a real TAB between the key and the value. Written as '\t' in a
 # quoted shell pattern it is a backslash followed by a t, which matches
 # nothing vat2 has ever printed - so this, the ONLY check that the binary API
@@ -98,9 +107,8 @@ expect_not_in "and is not created" "pool z " "$(vppctl show bpa pool)"
 
 # --- the client hexash will use, against a real dataplane ---
 # The client deliberately takes no plugin path: on an appliance there is none
-# to give. use_binary_api sets up the layout a real box runs.
-. /src/lab/lib.sh
-use_binary_api
+# to give. use_binary_api, at the top of this file, set up the layout a real
+# box runs - and every vat2 call above now uses it too.
 CLI=$(python3 /src/lab/api_client_check.py 2>&1)
 echo "$CLI" | sed 's/^/  /'
 expect_in "the client reports the dataplane ready" "available: ok" "$CLI"
