@@ -196,8 +196,50 @@ class Vat2:
         # goes on the wire must not depend on which account runs it.
         self._identity = identity
 
-    @staticmethod
-    def _subprocess(argv, timeout=10):
+    #: VPP's shared-memory API segment, and the group an operator account
+    #: reaches it through.
+    API_SEGMENT = os.environ.get("HEXA_API_SEGMENT", "/dev/shm/global_vm")
+    API_GROUP = "vpp"
+
+    @classmethod
+    def _keep_segment_reachable(cls):
+        """
+        Put the API segment's group back after a root client has attached.
+
+        Measured: one client running as root resets /dev/shm/global_vm to
+        root:root, and every non-root client afterwards dies inside
+        svm_region_map - vat2 with SIGSEGV, which reads like a client bug
+        rather than a permission one.
+
+        That matters on a shipped box because `hexarouting.service` applies the
+        saved configuration AS ROOT at every boot, so the drop-in that sets the
+        group when VPP starts is undone by the very next unit. The release gate
+        caught it: an installed box reported the binary API root-only, and the
+        boot self-test that found it is the one that stopped SYNTHESISING the
+        group to prove reach (#184, #185).
+
+        Repaired by the thing that breaks it, rather than by another unit
+        chasing it, because an interactive root session breaks it too and no
+        unit runs after that one.
+
+        Best effort and silent: a box where the group does not exist, or where
+        this is not root, is not a box this can fix, and failing a commit over
+        it would refuse a change that worked.
+        """
+        if os.geteuid() != 0:
+            return
+        try:
+            import grp
+            gid = grp.getgrnam(cls.API_GROUP).gr_gid
+            st = os.stat(cls.API_SEGMENT)
+            if st.st_gid != gid or (st.st_mode & 0o777) != 0o660:
+                os.chown(cls.API_SEGMENT, 0, gid)
+                os.chmod(cls.API_SEGMENT, 0o660)
+        except (KeyError, OSError, ImportError):
+            pass
+
+    @classmethod
+    def _subprocess(cls, argv, timeout=10):
         try:
             p = subprocess.run(argv, capture_output=True, text=True,
                                timeout=timeout)
@@ -206,6 +248,8 @@ class Vat2:
             return 127, "", f"{argv[0]}: not found"
         except subprocess.TimeoutExpired:
             return 124, "", f"{argv[0]}: timed out"
+        finally:
+            cls._keep_segment_reachable()
 
     # ------------------------------------------------------------- readiness
 
