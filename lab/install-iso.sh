@@ -390,13 +390,34 @@ fi
 # Asserted here because the drop-in runs under systemd, and the labs start VPP
 # directly: this is the only place the unit file is exercised at all.
 if [ "$up" = 1 ]; then
-  if grep -q "binary API works for a non-root account" /tmp/disk-clean.log; then
-    echo "  [ ok ] a non-root account can use the binary API, so roles bind"
-  else
+  # What this can and cannot assert, stated rather than implied.
+  #
+  # It used to grep for "binary API works for a non-root account", a line the
+  # self-test printed after SYNTHESISING the group with setpriv. #184 replaced
+  # that with a check on the box's real accounts - and this assertion then
+  # failed on a correct box, because a freshly installed one has no operator
+  # account at all. The release gate refused two tags for it before the cause
+  # was read out of the console rather than guessed at.
+  #
+  # So the assertion is now the two things this lab can honestly see: the
+  # self-test MUST NOT report the API root-only, and on a box nobody has
+  # configured yet it MUST say so out loud rather than staying quiet - because
+  # "no accounts" being mistaken for "the accounts are fine" is the whole
+  # reason that line exists.
+  if grep -q "no account on this box is in group vpp" /tmp/disk-clean.log \
+     || grep -q "the binary API does not work for" /tmp/disk-clean.log; then
     echo "  [FAIL] the binary API is root-only on the installed box: every"
     echo "         operator would have to be root and roles would be decorative"
-    grep -A1 "binary API is root-only" /tmp/disk-clean.log | head -2 \
+    grep -A2 "in group vpp\|does not work for" /tmp/disk-clean.log | head -3 \
       | sed 's/^/         /'
+    fail=1
+  elif grep -q "no operator account exists yet" /tmp/disk-clean.log; then
+    echo "  [ ok ] a fresh box says it has no operator account yet, rather"
+    echo "         than reporting reach nobody has"
+  elif grep -q "the binary API works for" /tmp/disk-clean.log; then
+    echo "  [ ok ] a real non-root account reaches the binary API, so roles bind"
+  else
+    echo "  [FAIL] the self-test said nothing about who can reach the API"
     fail=1
   fi
 fi
