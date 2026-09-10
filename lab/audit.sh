@@ -76,7 +76,7 @@ echo "=== an API client that sends no identity ==="
 # because vat2 requires every field to be present. Zero is a REAL uid: root.
 # Recording this as root would be false attribution, so it must come out
 # unattributed.
-vat2 -p /vat2_plugins bpa_limits_set \
+vat2 bpa_limits_set \
   '{"name":"provider-b","max_sessions":6000,"max_rate":0,"audit_user":"","audit_uid":0}' \
   2>&1 | sed 's/^/  /'
 BARE_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.log | tail -1)

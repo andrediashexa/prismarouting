@@ -142,13 +142,20 @@ usermod -aG hexa-admin adm 2>/dev/null
 # authorization refusal three commands later.
 for u in ro cg adm; do usermod -aG vpp "$u" 2>/dev/null; done
 # The dataplane API socket and FRR's own socket are the two things every role
-# has to reach before authorization is even the question. Granting them here
-# is what makes the checks below measure AUTHORIZATION rather than file
-# permissions.
-chmod 0777 /run/vpp 2>/dev/null
-chmod 0666 /run/vpp/api.sock /run/vpp/cli.sock 2>/dev/null
+# has to reach before authorization is even the question.
+#
+# The VPP sockets are NOT opened up here any more. They are group-owned by
+# "vpp" because lab/startup-lcp.conf carries the same "gid vpp" that
+# appliance/etc/vpp-base.conf ships, so the membership granted above is what
+# reaches them - the mechanism an installed box actually has. The
+# "chmod 0777 /run/vpp; chmod 0666 .../cli.sock" that used to stand here made
+# the sockets world-writable, which no appliance does: it meant this lab could
+# not have noticed the product shipping sockets no operator could open.
 for g in frr frrvty; do usermod -aG "$g" ro 2>/dev/null; usermod -aG "$g" cg 2>/dev/null; usermod -aG "$g" adm 2>/dev/null; done
-chmod -R a+rX /etc/frr 2>/dev/null
+# No "chmod -R a+rX /etc/frr" any more. The frr package ships that directory as
+# frr:frr 0750, and membership of "frr" - granted just above - is what lets an
+# account read it. Opening it to the world instead meant the lab could not have
+# noticed an operator account that reaches vtysh on no installed box.
 # "api-segment { gid vpp }" group-owns /dev/shm/vpe-api and NOT
 # /dev/shm/global_vm, which a client maps as well - so a non-root API call
 # fails with svm_region_map(mmap open): Permission denied. Corrected here and
@@ -170,7 +177,12 @@ chmod 0770 /etc/hexarouting/rollback 2>/dev/null
 # instead would have handed the cgnat operator administrator rights, which is
 # the opposite of the point.
 usermod -aG hexa-cgnat adm 2>/dev/null
-chmod 0644 /etc/hexarouting/hexarouting.conf 2>/dev/null
+# 0660 and group hexa-cgnat, which is what appliance/install.sh installs. It
+# used to be 0644 here: world-readable, which no appliance ships, and which
+# handed the read-only account a copy of every password hash on the box the
+# product deliberately does not give it.
+chgrp hexa-cgnat /etc/hexarouting/hexarouting.conf 2>/dev/null
+chmod 0660 /etc/hexarouting/hexarouting.conf 2>/dev/null
 as() { u=$1; shift; su -s /bin/sh -c "HEXA_CONFIG=$HEXA_CONFIG python3 /src/src/hexash/hexash.py $*" "$u" 2>&1; }
 
 echo "  -- read-only account tries to configure"
