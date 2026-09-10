@@ -1058,9 +1058,14 @@ ssh listen-address 0.0.0.0
 ssh permit-root-login prohibit-password
 ssh password-authentication no
 user noc
+ role cgnat-operator
  ssh-key ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... noc@laptop
  exit
 ```
+
+`role` is what the account may change, and is what puts it in the groups that
+decide it — see [Roles](#roles-what-each-account-may-change). An account
+without one is read-only.
 
 Accounts are **real POSIX accounts**, not a private database — an appliance that
 invents its own accounts is one whose accounts nobody deprovisions when somebody
@@ -1284,6 +1289,60 @@ access. `/etc/hexarouting` is group-owned by `hexa-cgnat`, so **an
 administrator MUST also be a member of `hexa-cgnat`** — otherwise they can
 apply a change and then fail to record its rollback revision.
 
+#### How a role is granted
+
+Through the VTY, and only through the VTY:
+
+```
+configure
+ user noc
+  role administrator          # or: role cgnat-operator
+  ssh-key ssh-ed25519 AAAA... noc@noc
+  exit
+ commit
+```
+
+`no role` takes it away again, and takes the memberships with it — a demotion
+that leaves the group behind is not a demotion.
+
+`commit` writes the memberships the role is **made of**:
+
+| written for | groups |
+|---|---|
+| `role administrator` | `hexa-admin`, `hexa-cgnat` |
+| `role cgnat-operator` | `hexa-cgnat` |
+| **every** account the VTY owns, role or none | `vpp`, `frr`, `frrvty` |
+
+The last row is not a role and is not the operator's to choose. VPP creates its
+sockets `srwxrwxr-x root:vpp`, `/etc/frr` is `drwxr-x--- frr:frr`, and the
+daemons' `.vty` sockets are group `frrvty` — so an account outside those three
+is refused by the **socket** on every command, the read-only ones included. A
+read-only account that cannot open them has no reading to do either.
+
+Only those five memberships are touched. An account put in `sudo`, or in a
+monitoring group, keeps it: a demotion that silently took those away would be
+the VTY deciding something nobody asked it to decide.
+
+The role in `show running-config` is **read back from the group database**,
+never remembered from the file — so removing a membership by hand shows up in
+the running configuration, rather than the VTY going on reporting a rank the
+box no longer grants.
+
+`root` takes no role. Its rights come from being root, and `role` under
+`user root` is refused rather than written.
+
+**A commit MUST NOT remove the last administrator.** It is the SSH lockout
+through the other door: a CGNAT operator cannot grant a role, so a box with no
+reachable administrator can only be recovered from a root shell. Like the SSH
+refusal, it fires only when *that change* is what causes it.
+
+Until this existed, the VTY created every account in **no group at all**: the
+role was in the configuration file and nowhere else, `capabilities()` came
+back empty, and the account could not open the dataplane socket or run
+`vtysh` ([#184](https://github.com/andrediashexa/hexarouting/issues/184)).
+`lab/vty.sh` granted the memberships with `usermod`, so the roles lab proved a
+box nobody received.
+
 #### Where the check lives
 
 At the point where the change is applied, in `Shell.apply()`, which `commit`,
@@ -1342,11 +1401,28 @@ neither was:
   ([#119](https://github.com/andrediashexa/hexarouting/issues/119)), so the
   binary API was unreachable on an installed box no matter who was asking.
 
-The boot self-test now proves the property rather than the mode bits: not
-root, in the `vpp` group, can call. `setpriv` drops to an unprivileged uid
-with that group added, so nothing has to be created — a fresh appliance has no
-operator accounts yet, and having the product create one for the benefit of
-its own test would be the tail wagging the dog.
+The boot self-test proves the property rather than the mode bits, and it does
+it with **the accounts the box actually has**. It used to synthesise the
+membership with `setpriv --groups vpp`, which answers "would an account in
+group `vpp` work" — always yes — and never "is any account in group `vpp`",
+which for the life of the product was no. So it now reports an account that
+holds a role and not the memberships, names them, and says so as a failed
+check. A box with no operator account yet says that instead, and does not fail
+for it.
+
+Two things measured while doing that, neither of which is about memberships
+and neither of which is fixed:
+
+* **A root API client puts `/dev/shm/global_vm` back to `root:root`.**
+  Measured in `lab/vty.sh`: the drop-in above fixes the segment after the
+  dataplane starts, and the next `hexash` run as root undoes it — after which
+  every non-root client crashes in `svm_region_map`. On an installed box
+  `hexarouting.service` applies the configuration as root at every boot.
+* **`frr-reload.py` logs to `/var/log/frr/frr-reload.log`**, and the frr
+  package ships that directory `drwxr-x--- frr:frr`. Group `frr` is read-only
+  there, so a non-root administrator can validate a routing change
+  (`commit check`, which uses `--test` and logs to stdout) and cannot apply
+  one.
 
 `bpa_global_set` takes the whole set of global settings, and a **zero timeout
 means "leave it alone"** — zero is not a valid timeout, so it needs no separate

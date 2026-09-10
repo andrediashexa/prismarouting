@@ -14,6 +14,7 @@ from __future__ import annotations
 import difflib
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
+                    validate_role,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
 
 CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
@@ -859,6 +860,12 @@ class Config:
                         "$y$... or $6$... (openssl passwd -6), not a plaintext "
                         "password")
             user.password = h
+        elif w[0] == "role" and len(w) > 1:
+            role = w[1].strip()
+            why = validate_role(user.name, role)
+            if why:
+                return why
+            user.role = role
         elif w[0] == "exit":
             pass
         else:
