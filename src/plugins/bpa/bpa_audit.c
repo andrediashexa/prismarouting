@@ -11,6 +11,10 @@
  * So every pool change is recorded, dated in UTC, in an append-only file. The
  * record carries the complete definition, so that it can be read back without
  * depending on anything else.
+ *
+ * The pools are not the whole of it: where they are APPLIED changes the same
+ * answer. An interface with no CGNAT on it translates nothing, so the trail
+ * records attaching and detaching it too.
  */
 
 #include <fcntl.h>
@@ -283,8 +287,25 @@ bpa_audit_recover (void)
     bm->audit_seq = strtoull (p + 5, 0, 10);
 }
 
-void
-bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
+/*
+ * One entry, from the date to the digest.
+ *
+ * Every kind of change goes through here rather than formatting a line of its
+ * own. An entry that carried different fields from its neighbours - or the
+ * same fields in a different order - cannot be compared with them, and
+ * comparing them is the whole of what a reader does with this file. It is
+ * also the only place the chain advances, so a change that wrote its own line
+ * would either skip a sequence number or break every digest after it.
+ *
+ * `kind` and `subject` are what was changed - "pool residential",
+ * "interface GigabitEthernet0/0/0". `detail` is everything the change needs
+ * to be read back on its own, and goes AFTER the identity for the same reason
+ * the pool definition does: it is open-ended, and an identity at the end of a
+ * line of unknown length is one a reader has to go looking for.
+ */
+static void
+bpa_audit_entry (const char *op, const char *kind, u8 *subject, bpa_pool_t *p,
+		 const char *detail)
 {
   bpa_main_t *bm = &bpa_main;
   struct tm tm;
@@ -295,15 +316,17 @@ bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
   now = (time_t) unix_time_now ();
   gmtime_r (&now, &tm);
 
-  line = format (0, "%04d-%02d-%02dT%02d:%02d:%02dZ %s pool %v",
+  line = format (0, "%04d-%02d-%02dT%02d:%02d:%02dZ %s %s %v",
 		 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
-		 tm.tm_min, tm.tm_sec, op, p ? p->name : name_only);
+		 tm.tm_min, tm.tm_sec, op, kind, subject);
   /* Before the definition, not after it: the definition is open-ended - it
    * grows a field with every feature - and an identity at the end of a line
    * of unknown length is one a reader has to go looking for. */
   line = bpa_audit_format_actor (line);
   if (p)
     line = bpa_audit_format_pool (line, p);
+  if (detail)
+    line = format (line, "%s", detail);
 
   /*
    * Sequence, then digest. The digest covers everything on the line up to and
@@ -347,6 +370,29 @@ bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
 
 done:
   vec_free (line);
+}
+
+void
+bpa_audit (const char *op, bpa_pool_t *p, u8 *name_only)
+{
+  bpa_audit_entry (op, "pool", p ? p->name : name_only, p, 0);
+}
+
+/*
+ * Attaching or detaching CGNAT on an interface.
+ *
+ * Not a pool change, and recorded all the same: detaching `out2in` stops
+ * translation for every subscriber behind that interface, and a trail that
+ * showed the pools but not where they were applied would show the box
+ * changing without showing what changed (#124). The direction is on the line
+ * because the entry has to be readable on its own - "attach interface X" does
+ * not say which half of the translation was attached.
+ */
+void
+bpa_audit_interface (const char *op, u8 *ifname, int is_inside)
+{
+  bpa_audit_entry (op, "interface", ifname, 0,
+		   is_inside ? " direction inside" : " direction outside");
 }
 
 /*

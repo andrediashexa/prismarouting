@@ -383,6 +383,10 @@ vl_api_bpa_interface_add_del_feature_t_handler (
 
   VALIDATE_SW_IF_INDEX (mp);
 
+  /* Before the change, cleared after it: an entry can then only ever carry
+   * the identity of the request that produced it. */
+  bpa_actor_set ((char *) mp->audit_user, mp->audit_uid);
+
   if (bpa_main.n_workers)
     feature = mp->is_inside ? "bpa-in2out-handoff" : "bpa-out2in-handoff";
   else
@@ -390,6 +394,23 @@ vl_api_bpa_interface_add_del_feature_t_handler (
 
   rv = vnet_feature_enable_disable ("ip4-unicast", feature, sw_if_index,
 				    mp->is_add, 0, 0);
+
+  /*
+   * Recorded only once the dataplane has accepted it, and by NAME: an entry
+   * for a change that was refused is a trail that disagrees with the box, and
+   * an sw_if_index is a number that means nothing to whoever reads the file a
+   * year later, on a box that has been renumbered by a reboot.
+   */
+  if (!rv)
+    {
+      u8 *ifname = format (0, "%U", format_vnet_sw_if_index_name,
+			   vnet_get_main (), sw_if_index);
+
+      bpa_audit_interface (mp->is_add ? "attach" : "detach", ifname,
+			   mp->is_inside);
+      vec_free (ifname);
+    }
+  bpa_actor_clear ();
 
   BAD_SW_IF_INDEX_LABEL;
   REPLY_MACRO (VL_API_BPA_INTERFACE_ADD_DEL_FEATURE_REPLY);

@@ -289,7 +289,14 @@ autoreply define bpa_forward_add_del
   u32 audit_uid;
 };
 
-/** \brief Enables or disables CGNAT on an interface. */
+/** \brief Enables or disables CGNAT on an interface.
+
+    Attaching is a change with the same consequence as a pool change and is
+    recorded in the same trail: detaching stops translation for every
+    subscriber behind the interface. It carried no identity until #124, which
+    CHANGES THE LAYOUT of this message - a client built before that must be
+    rebuilt.
+*/
 autoreply define bpa_interface_add_del_feature
 {
   u32 client_index;
@@ -298,6 +305,9 @@ autoreply define bpa_interface_add_del_feature
   bool is_add;
   bool is_inside;
   vl_api_interface_index_t sw_if_index;
+  /* Who asked. Not proof - see the 0.10.0 note above. */
+  string audit_user[64];
+  u32 audit_uid;
 };
 
 /** \brief The settings that are not per-pool.

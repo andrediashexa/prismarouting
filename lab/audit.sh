@@ -83,6 +83,39 @@ BARE_LINE=$(grep "limits pool provider-b" /var/log/hexarouting/config-history.lo
 printf '%s\n' "$BARE_LINE" | sed 's/^/  /'
 
 echo
+echo "=== attaching CGNAT to an interface (#124) ==="
+# The pools say HOW to translate; the interfaces say WHERE. Detaching out2in
+# stops translation for every subscriber behind that interface, which is the
+# same consequence as deleting the pool - so it is the same kind of entry.
+# Until #124 the attach went through the binary API with no identity on the
+# message at all, and the trail did not mention it: the box could stop
+# translating with nobody's name against the change.
+LOG=/var/log/hexarouting/config-history.log
+vppctl create loopback interface >/dev/null
+echo "  the trail before the attach:"
+echo "    interface entries: $(grep -c 'interface loop0' $LOG)"
+MARK=$(wc -l < $LOG)
+env $HX_ENV $HX -c "configure" -c "cgnat interface loop0 inside" \
+    -c "commit" 2>&1 | tail -1 | sed 's/^/  /'
+env $HX_ENV $HX -c "configure" -c "no cgnat interface loop0" \
+    -c "commit" 2>&1 | tail -1 | sed 's/^/  /'
+IF_NEW=$(tail -n +$((MARK + 1)) $LOG)
+echo "  the trail after the attach and the detach:"
+printf '%s\n' "$IF_NEW" | sed 's/^/    /'
+ATTACH_LINE=$(printf '%s\n' "$IF_NEW" | grep " attach interface loop0" | tail -1)
+DETACH_LINE=$(printf '%s\n' "$IF_NEW" | grep " detach interface loop0" | tail -1)
+
+echo
+echo "=== and one attached at the VPP CLI, which names nobody ==="
+# The same third shape the pool entries have: there is no session to ask, so
+# the entry says unattributed rather than leaving the change out of the file.
+MARK2=$(wc -l < $LOG)
+vppctl set interface bpa out2in loop0
+CLI_IF_LINE=$(tail -n +$((MARK2 + 1)) $LOG | grep " attach interface loop0" | tail -1)
+printf '%s\n' "$CLI_IF_LINE" | sed 's/^/  /'
+vppctl set interface bpa out2in loop0 del
+
+echo
 echo "=========== A TRILHA ==========="
 vppctl show bpa pool history | sed 's/^/  /'
 
@@ -185,6 +218,37 @@ expect_in "an API client that sends nothing is unattributed too" \
   "by unattributed" "$BARE_LINE"
 expect_in "but is not confused with a change typed at the console" "via api" \
   "$BARE_LINE"
+
+# --- where the pools are applied (#124) ---
+#
+# A pool that translates nothing because its interface was detached answers a
+# court order with a mapping that was not in force. The trail recorded every
+# pool change and none of these, so the record could be complete about the
+# definition and silent about whether it was doing anything.
+expect_in "attaching CGNAT to an interface is recorded" \
+  "attach interface loop0" "$IF_NEW"
+expect_in "and so is detaching it, which is the change that stops translation" \
+  "detach interface loop0" "$IF_NEW"
+expect_in "an attach through the VTY names the operator" "by marina" \
+  "$ATTACH_LINE"
+expect_not_in "and not the account the dataplane runs as" "by root" \
+  "$ATTACH_LINE"
+expect_in "and says it arrived over the API" "via api" "$ATTACH_LINE"
+expect_in "a detach names the operator too" "by marina" "$DETACH_LINE"
+# Which half of the translation was attached is not derivable from the rest of
+# the entry, so it is on the line: "attach interface loop0" alone leaves the
+# reader unable to say what stopped working.
+expect_in "the entry says which direction it was" "direction inside" \
+  "$ATTACH_LINE"
+expect_in "an attach typed at the VPP CLI says nobody can be named" \
+  "by unattributed via cli" "$CLI_IF_LINE"
+# The identity sits in the same place as on a pool entry, before the
+# open-ended part. An entry whose fields are ordered differently from its
+# neighbours cannot be compared with them, and comparing them is what a reader
+# of this file does.
+expect_in "and carries the same fields in the same order as a pool entry" \
+  "attach interface loop0 by unattributed via cli direction outside" \
+  "$CLI_IF_LINE"
 
 # Entries written before any of this existed still read back.
 expect_in "older entries without an identity are still listed" \
