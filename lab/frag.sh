@@ -75,6 +75,15 @@ echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 TR=$(vppctl show trace)
 expect_in "the non-first fragment was recognised" "[non-first fragment]" "$TR"
-expect_not_in "it did not open a phantom session" "12346 -> " "$TR"
+# 12346 is a port this lab never sends from, so the needle could not appear
+# whatever the box did: with reassembly off the phantom session it is about
+# actually opens on 100.64.0.5:1 -> 200.150.0.17:1537, and this still passed.
+# A phantom session is a SECOND session, so that is what is counted, and the
+# following fragment has to carry the first one's ports.
+NEWSESS=$(printf '%s\n' "$TR" | grep -c "BPA in2out .*(new session)" || true)
+echo "  sessions opened by the two fragments: $NEWSESS"
+expect "the two fragments opened one session between them" test "$NEWSESS" = "1"
+expect_in "and the following fragment was translated with the first one's ports" \
+  "100.64.0.5:12345 -> 200.150.0.17:1536 proto udp [non-first fragment]" "$TR"
 expect_in "reassembly feature is on the interface" "ip4-sv-reassembly-feature" "$(vppctl show interface features pg0)"
 verdict

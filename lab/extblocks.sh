@@ -72,6 +72,13 @@ expect "the subscriber filled its first block and got a second" \
   test "${EXTS:-0}" -ge 1
 expect "eight sessions fit in two four-port blocks" test "${SESS2:-0}" = "8"
 expect "the ninth was refused, so the cap is a cap" test -n "${REFUSED:-}"
-expect_in "the extension was logged as an allocation" "allocations" \
-  "$(vppctl show bpa blocks)"
+# "allocations" is a column label "show bpa blocks" prints whatever the pool
+# did, so this passed on a pool that had allocated nothing at all - let alone
+# extended anything. The count, off the total line: a subscriber that got an
+# extension has TWO allocations, its first block and the extension.
+ALLOCS=$(vppctl show bpa blocks \
+         | sed -n 's/^ *total: .* in use, \([0-9][0-9]*\) allocations.*/\1/p')
+echo "  allocations counted: ${ALLOCS:-<none>}   extensions: ${EXTS:-0}"
+expect "the extension counted as an allocation of its own" \
+  test "${ALLOCS:-0}" -ge 2
 verdict

@@ -109,7 +109,14 @@ echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 ERR=$(vppctl show errors)
-expect_in "packets were translated in both directions" "packets translated" "$ERR"
+# bpa_errors.h declares "packets translated" TWICE - once for in2out and once
+# for out2in - so "in both directions" was satisfied by the forward direction
+# alone, on a box whose return path translated nothing. Each direction is
+# asserted against its own node's counter row.
+expect "packets were translated on the way out" \
+  sh -c "vppctl show errors | grep -i 'bpa-in2out' | grep -q 'packets translated'"
+expect "and on the way back, so both directions really ran" \
+  sh -c "vppctl show errors | grep -i 'bpa-out2in' | grep -q 'packets translated'"
 expect_in "an unsolicited inbound packet was refused" "no session for destination" "$ERR"
 expect_in "sessions were created" "sessions created" "$ERR"
 # after expiry the port went back to the pool and was handed out again

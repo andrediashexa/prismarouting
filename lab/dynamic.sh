@@ -101,7 +101,14 @@ echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 B=$(vppctl show bpa blocks)
-expect_in "blocks were allocated" "allocations" "$B"
+# "allocations" is a column label "show bpa blocks" prints on every dynamic
+# pool, so this passed on a pool that had allocated nothing. The count, off
+# the total line - the per-thread line above it carries the same words.
+ALLOCS=$(printf '%s\n' "$B" \
+         | sed -n 's/^ *total: .* in use, \([0-9][0-9]*\) allocations.*/\1/p')
+echo "  allocations counted: ${ALLOCS:-<none>}"
+expect "a block was allocated for each of the three subscribers" \
+  test "${ALLOCS:-0}" -ge 3
 expect_in "exhaustion was counted, not silent" "1 refusals" "$B"
 # The hold-down is proved by the release counter, not by an instantaneous
 # reading: the lab reallocates a block right after, so "0 in use" is true only
