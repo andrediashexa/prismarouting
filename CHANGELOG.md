@@ -25,7 +25,79 @@ are to be interpreted as described in
 
 ## Unreleased
 
-Nothing merged since v0.57.0.
+Nothing merged since v0.58.0.
+
+## 0.58.0 — a secret nobody covered, an installer that checks its work, and the suite's floor
+
+[#181](https://github.com/andrediashexa/hexarouting/issues/181),
+[#83](https://github.com/andrediashexa/hexarouting/issues/83) in part, and
+[#167](https://github.com/andrediashexa/hexarouting/issues/167).
+
+### Fixed
+
+* **FRR key chains printed their secret in the clear.** `key chain` is the other
+  way OSPF, IS-IS, RIP and BFD carry an authentication secret, and
+  `ip rip authentication string` is the same class.
+
+  The syntax was verified against a running FRR 10.7.1 rather than remembered:
+  `key-string` takes a single token — a multi-word attempt is rejected and never
+  reaches the running configuration — and the lines around it are **not**
+  secrets. `key chain <name>` is a name, `key 1` an index,
+  `cryptographic-algorithm` an algorithm, and both `ip rip authentication
+  key-chain` and `ip ospf authentication key-chain` are references. All of those
+  survive untouched.
+
+### Added
+
+* **The installer verifies the disk it just wrote**, while the target is still
+  mounted and **before** the success line: GRUB has an entry whose kernel is on
+  the disk, every UUID in the target's `fstab` resolves, and `root` has a real
+  password hash rather than the live image's locked one. An `fstab` naming no
+  UUID at all is a failure, not a vacuous pass. A failure is fatal and the
+  message tells the operator to leave the medium in place — a box that reports
+  success and boots to a `grub>` prompt is a site visit.
+
+* **Answers can come from a file**, so the unattended path stops publishing the
+  root password on the kernel command line. The password is never printed — not
+  in the summary, not in an error — and a malformed line is reported by line
+  **number** only, never quoted back, because the line that failed to parse may
+  be the password line.
+
+  The mirrored install is deliberately not done: its acceptance criterion is a
+  lab that removes one disk, and doing it on assumptions is what the issue's own
+  scope note warns against.
+
+### Internal
+
+* **`lab/routing.sh` was the suite's floor; it is split.** Six subjects in one
+  file, 507 s measured alone, and a per-lab cap raised twice in one day because
+  it kept being killed.
+
+  The seam was verified by `grep` rather than by reading: in the moved half
+  there is exactly **one** reference to OSPF or IS-IS — a `router ospf` inside a
+  `commit check` that tests wording, not an adjacency — and **zero** to the two
+  IGP prefixes. Each file now builds only what it uses.
+
+  **507 s → 304 s and 243 s.** 158 checks → 61 + 98, with the descriptions
+  diffed to prove nothing was lost or duplicated. The one added check exists so
+  an assertion cannot become vacuous: the graceful-shutdown section reads a
+  prefix arriving from the third AS one BGP hop back, which in the single file
+  had long arrived by the time that section ran ten minutes in, and now runs two
+  minutes in. The precondition is explicit rather than inherited from how long
+  the file above happened to take.
+
+  Cap 1200 → 900. Not 600 — that is the number that killed a 329 s lab under
+  `LAB_JOBS=32`.
+
+* **`lab/pool-del.sh` asserted a wall-clock threshold and measured the host.**
+  It passed alone and failed in the suite. The load-bearing assertion is now a
+  **ratio** — the cost of one barrier acquisition must not follow the size of
+  the table — because a barrier waits for every worker to arrive, and under
+  sixteen-way contention an acquisition was measured at 1 008 443 µs, a hair
+  under VPP's own barrier timeout, for reasons that have nothing to do with what
+  is inside it. That noise adds to both measurements, so the ratio survives it.
+  The absolute bound that remains is loose and labelled as a ceiling rather than
+  a measurement.
 
 ## 0.57.0 — deleting a pool no longer stops forwarding for everybody
 
