@@ -137,8 +137,12 @@ n=0
 until [ "$(vppctl show bpa session | grep -c '100.64.0.9' || true)" = 0 ] \
       || [ "$n" -ge 15 ]; do sleep 1; n=$((n+1)); done
 echo "  session gone after ${n}s; the port is now in hold-down for 6s"
-HELD=$(vppctl show bpa timeouts 2>/dev/null | grep -o "port-holddown [0-9]*" || true)
-echo "  ${HELD:-port-holddown not reported}"
+# "port-holddown [0-9]*" never captured the number: the column is printed
+# with %6u, so the digits are several spaces away and grep -o returned the
+# bare label. Anchored on the row and the width instead.
+HELD=$(vppctl show bpa timeouts 2>/dev/null \
+       | sed -n 's/^ *port-holddown  *\([0-9][0-9]*\).*/\1/p' | head -1)
+echo "  port-holddown reported as: ${HELD:-<not reported>}"
 
 echo
 echo "=========== VERDICT ==========="
@@ -155,6 +159,10 @@ expect "the half-open test actually created sessions to expire" \
   test "$HALFOPEN" != "0"
 expect "and they expired on the SYN timer, not the transitory one" \
   test "$HALFLEFT" = "0"
-expect_in "the hold-down is configurable and reported" "port-holddown" \
-  "$(vppctl bpa timeouts 2>&1)"
+# The label, not the value. "port-holddown" is a column heading that
+# "bpa timeouts" prints on every box whatever the setting is, so this passed
+# without ever looking at the 6 set above - the one thing the section is
+# about. Asserted on the number the box reports back.
+expect "the hold-down the lab set is the one the box reports" \
+  test "${HELD:-}" = "6"
 verdict

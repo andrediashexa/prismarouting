@@ -320,14 +320,17 @@ expect_in "and cannot reach a shell either" "permission denied" "$CG_SHELL"
 # Before this, "interface <TAB>" answered "<word>" and the operator went to
 # vppctl or "ip link" in another window - the two tools this VTY exists to
 # keep them out of - at the first argument.
-expect_in "interface completion names a real dataplane interface" \
-  "pg0" "$COMP"
 # The INTERFACES line, not the whole blob. This assertion meant "completion
 # does not offer local0" and never said which line it was about, so a listing
 # that mentions local0 elsewhere - correctly, because the dataplane reports it -
 # made it fail. An assertion that does not name what it is about is one that
 # breaks for reasons that have nothing to do with it.
 COMP_IFACES=$(printf '%s\n' "$COMP" | sed -n 's/^ *INTERFACES: *//p')
+# The same reason the line below it needs it: "pg0" is printed on several
+# lines of this blob, so asserting it against the whole thing passed with
+# completion offering nothing at all - which is exactly the state #98 fixed.
+expect_in "interface completion names a real dataplane interface" \
+  "pg0" "$COMP_IFACES"
 expect_not_in "and not VPP's own loopback, which configures nothing" \
   "local0" "$COMP_IFACES"
 # The pool exists only in the CANDIDATE at that moment, so this also proves
@@ -421,8 +424,16 @@ expect_in "and completes to a name the dataplane has" \
   "$COMP_LOWER" "$COMP_IFACES"
 # show interface answered from FRR, which sees only what linux_cp mirrored -
 # so a box with dataplane interfaces reported "lo".
-expect_in "show interface reports the dataplane's interfaces" "pg0" "$COMP"
-expect_in "with their state" "up" "$COMP"
+# Against SHOW_IF's own rows. "pg0" is already on the INTERFACES line of this
+# same blob, so both of these passed with "show interface" answering nothing
+# but an error - the very regression the command exists to prevent. "up" is
+# worse still: it is a substring of half the words in the blob.
+COMP_SHOWIF=$(printf '%s\n' "$COMP" | sed -n 's/^ *SHOW_IF: *//p')
+PG0_ROW=$(printf '%s\n' "$COMP_SHOWIF" | tr '|' '\n' \
+          | sed -n 's/^ *\(pg0 .*\)$/\1/p' | head -1)
+echo "  show interface's own row for pg0: '${PG0_ROW:-<none>}'"
+expect_in "show interface reports the dataplane's interfaces" "pg0" "$PG0_ROW"
+expect_in "with their state, on that same row" "up" "$PG0_ROW"
 expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
 
 verdict
