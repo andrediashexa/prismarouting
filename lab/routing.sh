@@ -119,9 +119,17 @@ chown -R frr:frr /var/run/frr /etc/frr
 # installed box inherits Debian's /etc/frr/daemons, where bgpd, ospfd and isisd
 # are all "no" (#99). Starting them by hand here is what let that go unnoticed,
 # so it is said out loud rather than left as a list somebody skims.
-for d in zebra bgpd ospfd isisd; do
+# RPKI is a loadable MODULE, and `bgpd --version` reports --enable-rpki whether
+# or not it is there. Installed from the same repository and at the same
+# version as frr itself, so this adds no new source. Without it every RPKI
+# command answers "bgpd is not running", because bgpd refuses to start when
+# told to load a module it cannot find - a misleading symptom worth knowing
+# about, and the reason the boot self-test checks for it by name.
+apt-get install -y -qq frr-rpki-rtrlib stayrtr >/dev/null 2>&1
+for d in zebra ospfd isisd; do
   /usr/lib/frr/$d -d -A 127.0.0.1 -f /etc/frr/$d.conf
 done
+/usr/lib/frr/bgpd -d -A 127.0.0.1 -M rpki -f /etc/frr/bgpd.conf
 # mgmtd and staticd: on FRR 10 a static route is configured through mgmtd and
 # served by staticd, and without them vtysh answers "mgmtd is not running" to
 # every "ip route" - which is how a static route can be typed, accepted and
@@ -1417,6 +1425,114 @@ expect_not_in "and without the tool narrating itself" "INFO:" "$RM"
 # Counted on the wire, not read from a status line: `show ip6 interface` prints
 # the same text whether advertisements are suppressed or not - measured - so
 # the only honest evidence is whether packets appear.
+# --- origin validation, with a cache that is really running (#147) ---
+#
+# A cache is a service, so the lab runs one. stayrtr with a small VRP set is
+# enough, and it is in Debian.
+echo "=========== RPKI: a route the validator calls invalid ==========="
+# The AS-path policy from the section above is still on both sessions and it
+# dropped 203.0.113.0/24. Taken off first, so what follows measures the RPKI
+# policy and not the one before it.
+$HX -c "configure" -c "router bgp 65000" -c "address-family ipv4 unicast" \
+    -c "no neighbor 10.0.0.2 route-map RM-DROP in" \
+    -c "no neighbor 10.1.0.2 route-map RM-DROP in" \
+    -c "exit-address-family" -c "exit" -c "commit" > /tmp/rpki0.log 2>&1 || true
+in_fib3() { vppctl show ip fib "$1" 2>/dev/null | grep -c "^$1" || true; }
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$(in_fib3 203.0.113.0/24)" -ge 1 ] && [ "$(in_fib3 198.51.100.0/24)" -ge 1 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  starting point: 203.0.113.0/24=$(in_fib3 203.0.113.0/24)  198.51.100.0/24=$(in_fib3 198.51.100.0/24)  (${n}s)"
+expect "both prefixes are in the FIB before validation is applied" \
+  sh -c "[ $(in_fib3 203.0.113.0/24) -ge 1 ] && [ $(in_fib3 198.51.100.0/24) -ge 1 ]"
+
+# 203.0.113.0/24 is really originated by 65001, and the ROA says 65001: VALID.
+# 198.51.100.0/24 is really originated by 65002, and the ROA says 64999, so a
+# ROA covers it and the origin does not match: INVALID. That is the pair the
+# whole section turns on.
+cat > /tmp/vrp.json <<'VRP'
+{"roas":[
+ {"prefix":"203.0.113.0/24","maxLength":24,"asn":"AS65001"},
+ {"prefix":"198.51.100.0/24","maxLength":24,"asn":"AS64999"}
+]}
+VRP
+stayrtr -cache /tmp/vrp.json -bind 127.0.0.1:8282 -checktime=false \
+  > /tmp/stayrtr.log 2>&1 &
+sleep 3
+
+# The module has to actually be loaded, or everything below is asserted against
+# a box that cannot validate anything.
+expect "the RPKI module is loaded" \
+  sh -c "vtysh -c 'show rpki cache-connection' >/dev/null 2>&1"
+
+# The warning that exists because of the failure this feature CREATES: a policy
+# keyed on notfound with no cache configured matches every route on the box.
+NOCACHE=$($HX -c "configure" -c "route-map RM-EARLY deny 5" \
+          -c "match rpki notfound" -c "exit" -c "commit check" 2>&1)
+echo "$NOCACHE" | grep -i "warning" | sed 's/^/  /'
+expect_in "a notfound policy with no cache configured is called out" \
+  "every route is notfound" "$NOCACHE"
+
+RPKI=$($HX -c "configure" -c "rpki" \
+       -c "rpki cache tcp 127.0.0.1 8282 preference 1" -c "exit" \
+       -c "route-map RM-RPKI deny 5" -c "match rpki invalid" -c "exit" \
+       -c "route-map RM-RPKI permit 10" -c "exit" \
+       -c "router bgp 65000" -c "address-family ipv4 unicast" \
+       -c "neighbor 10.0.0.2 route-map RM-RPKI in" \
+       -c "neighbor 10.1.0.2 route-map RM-RPKI in" \
+       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$RPKI" | grep -vE "^(note|warning):" | tail -3 | sed 's/^/  /'
+expect_in "the RPKI policy commits" "commit complete" "$RPKI"
+
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$(in_fib3 198.51.100.0/24)" -eq 0 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  after validation: 203.0.113.0/24=$(in_fib3 203.0.113.0/24)  198.51.100.0/24=$(in_fib3 198.51.100.0/24)  (${n}s)"
+vtysh -c "show rpki prefix-table" 2>/dev/null | head -8 | sed 's/^/    /'
+# The assertion on the table that forwards. Both halves: the invalid one is
+# gone AND the valid one is still there - dropping everything would satisfy the
+# first on its own.
+expect "the invalid route does not reach the forwarding table" \
+  test "$(in_fib3 198.51.100.0/24)" -eq 0
+expect "and the valid one still does" \
+  test "$(in_fib3 203.0.113.0/24)" -ge 1
+
+# And the summary says validation is available, where somebody will see it.
+SUMOK=$($HX -c "show bgp summary" 2>&1)
+echo "$SUMOK" | grep -i "rpki" | sed 's/^/  /'
+expect_in "the summary says the cache is connected" \
+  "of 1 cache(s) connected" "$SUMOK"
+
+echo "=========== RPKI: and when the cache goes away ==========="
+# THE assertion that matters. A cache that is gone marks everything notfound,
+# and from a route table that is indistinguishable from "nothing is invalid".
+pkill -f stayrtr 2>/dev/null
+# Waited on the per-cache marker. FRR's own header line says "Connected to
+# group 1" for as long as the cache stays configured - measured at seventy
+# seconds after the server was killed - so waiting on the word "connected"
+# would wait for something that never happens.
+n=0
+while [ "$n" -lt 30 ]; do
+  vtysh -c "show rpki cache-connection" 2>/dev/null \
+    | grep -q "(connected)" || break
+  sleep 1; n=$((n + 1))
+done
+vtysh -c "show rpki cache-connection" 2>&1 | head -5 | sed 's/^/    /'
+SUMGONE=$($HX -c "show bgp summary" 2>&1)
+echo "$SUMGONE" | grep -i "rpki" | sed 's/^/  /'
+expect_in "the box says the cache is not connected, rather than staying quiet" \
+  "NONE connected" "$SUMGONE"
+expect_in "and says what that costs, without overstating it" \
+  "which expires" "$SUMGONE"
+# The other half, measured: killing the cache does NOT empty the prefix table.
+# An operator told "nothing is validated" would go looking for an outage that
+# has not started yet.
+expect "the prefixes the cache already sent are still there" \
+  sh -c "vtysh -c 'show rpki prefix-table' | grep -q 'Number of IPv4 Prefixes: 2'"
+
 echo "=========== router advertisements ==========="
 # The capture is started BEFORE the change and stopped after, not started
 # after it, and it is held for 30 seconds rather than 14.

@@ -195,6 +195,27 @@ for d in bgpd ospfd isisd; do
 done
 grep -E "^(bgpd|ospfd|isisd)=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
 
+# RPKI is a MODULE, and a module that is installed and never loaded is not
+# there. `bgpd --version` reports `--enable-rpki` either way, which is how this
+# looks like support and is not: without the module every RPKI command answers
+# "bgpd is not running", because bgpd refuses to start when told to load a
+# module it cannot find.
+#
+# Measured: the module ships in frr-rpki-rtrlib, from the same repository and
+# at the same version as frr itself, so this adds no new source and no skew.
+say "RPKI module"
+if grep -q "^bgpd_options=" "$DESTDIR/etc/frr/daemons" 2>/dev/null; then
+  if grep -q "^bgpd_options=.*-M rpki" "$DESTDIR/etc/frr/daemons"; then
+    echo "  bgpd already loads it"
+  else
+    sed -i 's/^\(bgpd_options="[^"]*\)"/\1 -M rpki"/' \
+      "$DESTDIR/etc/frr/daemons"
+  fi
+else
+  echo 'bgpd_options="  -A 127.0.0.1 -M rpki"' >> "$DESTDIR/etc/frr/daemons"
+fi
+grep -E "^bgpd_options=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
+
 say "documentation"
 for d in architecture routing logging; do
   install -D -m 0644 "$REPO/docs/$d.md" "$DESTDIR/usr/share/doc/hexarouting/$d.md"

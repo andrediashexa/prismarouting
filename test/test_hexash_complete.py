@@ -864,5 +864,33 @@ for spelling in ("bgp community-list standard CM1 permit 65000:1",
         [spelling, "route-map R permit 10", "match community CM1"]),
         f"a community list defined as `{spelling.split()[2]}` counts")
 
+
+# --- `neighbor` is not a BGP word (#178) ---
+#
+# OSPF uses it for NBMA and point-to-multipoint. Scanning every routing line
+# for it refused a valid OSPF statement with a sentence about remote-as, on a
+# box that need not have BGP at all. The last case is the one that catches a
+# naive fix: an OSPF stanza AFTER a BGP one.
+print("\n=== a check that must not fire outside its own block ===")
+from hexash import bgp_errors                                    # noqa: E402
+
+check(not bgp_errors(["router ospf", "neighbor 10.0.0.2 poll-interval 60"]),
+      "OSPF NBMA, typed unindented, is not refused")
+check(not bgp_errors(["router ospf", " neighbor 10.0.0.2 poll-interval 60"]),
+      "nor when read back from FRR, indented")
+check(len(bgp_errors(["router bgp 65000", "neighbor 10.0.0.9 description x"])) == 1,
+      "and a BGP neighbour with no remote-as still is")
+check(len(bgp_errors(["router bgp 65000", " neighbor 10.0.0.9 description x"])) == 1,
+      "indented too")
+check(not bgp_errors(["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+                      " address-family ipv4 unicast",
+                      "  neighbor 10.0.0.2 activate",
+                      " exit-address-family", "exit"]),
+      "an address-family keeps the BGP context")
+check(not bgp_errors(["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+                      "exit", "router ospf",
+                      " neighbor 10.0.0.9 poll-interval 60"]),
+      "and an OSPF stanza after a BGP one is out of context again")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

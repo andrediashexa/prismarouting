@@ -162,6 +162,41 @@ if vtysh -c "show version" >/dev/null 2>&1; then
   else
     ok "routing daemons up:$(printf '%s' "$daemons" | tr -d '\n')"
   fi
+
+  # RPKI is a loadable module, and one that is present and not loaded is not
+  # there. Worth its own line because the symptom is misleading: bgpd refuses
+  # to start when told to load a module it cannot find, so a missing module
+  # presents as "bgpd is not running" and sends the reader after the wrong
+  # thing entirely.
+  if vtysh -c "show rpki cache-connection" >/dev/null 2>&1; then
+    caches=$(vtysh -c "show running-config" 2>/dev/null \
+             | grep -c "^ rpki cache" || true)
+    if [ "${caches:-0}" -eq 0 ]; then
+      ok "RPKI module loaded (no cache configured, so nothing is validated)"
+    else
+      # A cache that is configured and not connected marks EVERY route
+      # notfound. A policy that denies invalid keeps working; one that treats
+      # notfound as suspicious degrades every route on the box, quietly, and
+      # cache outages are ordinary.
+      # The per-cache "(connected)" marker, not the "Connected to group N"
+      # header - measured: the header still says Connected long after the
+      # cache is gone.
+      conn=$(vtysh -c "show rpki cache-connection" 2>/dev/null \
+             | grep -c "(connected)" || true)
+      if [ "${conn:-0}" -ge 1 ]; then
+        ok "RPKI: $caches cache(s) configured and connected"
+      else
+        say "  [warn] RPKI: $caches cache(s) configured, NONE connected"
+        say "         validation is running on what the caches already sent,"
+        say "         which expires; after that every route is notfound and a"
+        say "         policy keyed on notfound is acting on all of them"
+      fi
+    fi
+  else
+    say "  [warn] RPKI module not loaded: origin validation is unavailable"
+    say "         install frr-rpki-rtrlib and add '-M rpki' to bgpd_options"
+    say "         in /etc/frr/daemons"
+  fi
 else
   bad "FRR not responding"
 fi

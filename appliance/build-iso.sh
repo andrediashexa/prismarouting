@@ -96,7 +96,8 @@ chroot "$ROOT" /bin/sh -c "
     squashfs-tools dosfstools parted fdisk \
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
     libvppinfra=$VPP_VERSION \
-    frr=$FRR_VERSION frr-pythontools=$FRR_VERSION
+    frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \
+    frr-rpki-rtrlib=$FRR_VERSION
   apt-get clean
 "
 
