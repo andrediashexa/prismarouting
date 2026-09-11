@@ -150,8 +150,26 @@ done
 # hexa-cgnat owns it and hexa-admin is ADDITIVE on top: an administrator is a
 # member of both. Owning it with hexa-admin instead would leave a CGNAT
 # operator unable to record a rollback revision for the change it just made.
-install -d -m 0770 "$DESTDIR/etc/hexarouting"
-install -d -m 0770 "$DESTDIR/etc/hexarouting/rollback"
+#
+# THIS FILE IS THE ONLY PLACE THESE MODES ARE STATED. The VTY does not restate
+# them and does not narrow them: it chmod'd 0700/0600 on every save and every
+# commit, so the first one by anybody - root applying the configuration at
+# boot - took the group's access away and every non-root operation afterwards
+# failed (#188). It cannot be the other owner either, because half of this is
+# ownership: a mode without the group grants nobody anything, and a non-root
+# operator cannot chgrp a directory it does not own.
+#
+# 2770 rather than 0770. The group is not enough on its own: a revision root
+# writes at boot would be group root, and one operator's revision would be
+# unreadable to the next. setgid makes the kernel put hexa-cgnat on everything
+# created in here - including the rollback directory, since a directory made
+# inside a setgid directory inherits the bit - so "rollback 1" works whoever
+# made the revision.
+#
+# install -d re-states it on an upgrade as well as a first install, which is
+# what repairs a box the old VTY already narrowed.
+install -d -m 2770 "$DESTDIR/etc/hexarouting"
+install -d -m 2770 "$DESTDIR/etc/hexarouting/rollback"
 if [ -z "${DESTDIR:-}" ] && getent group hexa-cgnat >/dev/null 2>&1; then
   chgrp hexa-cgnat /etc/hexarouting /etc/hexarouting/rollback 2>/dev/null || true
 fi
@@ -200,6 +218,34 @@ for d in bgpd ospfd isisd; do
   fi
 done
 grep -E "^(bgpd|ospfd|isisd)=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
+
+# The one file in /etc/frr an administrator has to be able to write.
+#
+# Applying a routing change ends with frr-reload asking vtysh to persist the
+# result, and with integrated-vtysh-config that is /etc/frr/frr.conf. The
+# package ships it 0640 frr:frr, so a non-root administrator got "failed to
+# open configuration file: Permission denied" and the whole commit was rolled
+# back - the account could check a routing change and not make one (#186).
+#
+# The FILE and not the directory, measured both ways on FRR 10.7.1: with the
+# file group-writable vtysh rewrites it in place and it stays frr:frr, which
+# works for every account and for the next one. With the DIRECTORY group-
+# writable instead, vtysh renames it aside and creates a new one owned by
+# whoever committed - after which the next administrator cannot write it at
+# all, and FRR reads its own configuration from a file an operator owns.
+#
+# Group frr and not a role group: user frr has to read this file at boot, and
+# the accounts the VTY creates are in group frr already - they run vtysh, which
+# is total control of the routing daemons whatever this mode says. What it adds
+# is the ability to persist a configuration they can already make.
+#
+# The cost, stated because it is real: this is a package conffile, so an frr
+# upgrade that reinstalls it puts 0640 back and non-root commits start failing
+# again until this installer is re-run. It fails loudly - the commit is refused
+# and rolled back - rather than quietly.
+if [ -f "$DESTDIR/etc/frr/frr.conf" ]; then
+  chmod 0660 "$DESTDIR/etc/frr/frr.conf"
+fi
 
 # RPKI is a MODULE, and a module that is installed and never loaded is not
 # there. `bgpd --version` reports `--enable-rpki` either way, which is how this

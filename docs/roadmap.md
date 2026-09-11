@@ -621,10 +621,26 @@ remains of [#63](https://github.com/andrediashexa/hexarouting/issues/63), whose 
 [#30](https://github.com/andrediashexa/hexarouting/issues/30) the soak test can run earlier but pays most on a stable base — it
 catches the leak that appears at hour six.
 
+[#163](https://github.com/andrediashexa/hexarouting/issues/163) kernel and boot tuning is also here, and **only** here: it lists the
+parameters the tuner does not yet set, each as a hypothesis with a named cost,
+and it may not ship any of them before #28 can say whether they do anything.
+Applying jitter knobs and declaring an improvement is the failure this
+repository is organised against. The same issue records the refusal to ship a
+**custom-built kernel** — no argument for one survives the fact that the kernel
+is off the packet path, and every one of them gives up Debian's security
+updates on an appliance shipped to providers.
+
 #### Outside the queue
 
 [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13, blocked upstream with measured evidence: fd.io
-publishes no trixie suite. Revisit when they do.
+publishes no trixie suite. **Re-tested 2026-09-09 against v0.51.0 and both
+blockers still hold** — with a stronger datum than the first measurement: two
+newer release trains have shipped since (`fdio/2510`, `fdio/2602`) and neither
+added a trixie suite, so this is no longer an absence about to be corrected.
+The second blocker is the harder one and is a property of the fd.io key itself:
+Debian 13 verifies with `sqv`, which rejects the key's SHA-1 binding signature,
+so it would survive trixie packages appearing under the same key. Revisit when
+upstream moves, not on a schedule.
 
 #### If only three were possible
 
@@ -644,6 +660,7 @@ flowchart LR
     C --> D["#32 PCP"]
     E["#15 conformance lab"] --> F["#16 hairpinning"]
     G["#28 throughput harness"] --> H["#29 symmetric RSS"]
+    G --> I["#163 kernel tuning<br/>each knob measured"]
 ```
 
 * **#3 before any new configuration.** A feature added while `commit` reports
@@ -667,6 +684,9 @@ flowchart LR
 * **#9 before #7 and #8.** The failover lab is the acceptance test for HA and
   MUST be observed to fail before the implementation exists; written
   afterwards, it tests what was built rather than what was required.
+* **#28 before #163.** Every tuning parameter in that issue is a hypothesis
+  about jitter on a path nobody has measured. Shipping one without the harness
+  does not make the box faster; it makes the claim unfalsifiable.
 
 Everything else is a preference and may be reordered on demand from a real
 deployment. A provider blocked on SIP moves #14 forward; that is a better
