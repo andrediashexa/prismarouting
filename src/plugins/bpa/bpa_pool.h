@@ -218,7 +218,8 @@ typedef enum
 #define foreach_bpa_alg                                                       \
   _ (FTP, "ftp", "FTP PORT/EPRT and the 227/229 replies")                     \
   _ (RTSP, "rtsp", "RTSP Transport client_port, and the media pair it needs") \
-  _ (PPTP, "pptp", "PPTP control channel and its GRE data channel")
+  _ (PPTP, "pptp", "PPTP control channel and its GRE data channel")         \
+  _ (ESP, "esp", "IPsec ESP passthrough, bound to the peer gateway")
 
 typedef enum
 {
@@ -238,18 +239,22 @@ typedef enum
 /*
  * What ships on.
  *
- * All three, and each for its own reason rather than by a blanket rule. The
+ * All four, and each for its own reason rather than by a blanket rule. The
  * general rule stands - an ALG that misparses corrupts traffic that would
- * otherwise merely fail, so an ambiguous parse defaults off - and these three
- * are the ones whose parse can be made strict:
+ * otherwise merely fail, so an ambiguous parse defaults off - and these are
+ * the ones whose parse can be made strict:
  *
  *   FTP  - active FTP does not work at all without it;
  *   RTSP - the black frame nobody blames on the CGNAT;
  *   PPTP - its rewrite changes no length, so no sequence number moves, and
  *          every message is guarded by a magic cookie and its own length
  *          field. Without it PPTP fails for everyone, not only on collision.
+ *   ESP  - it parses nothing and rewrites nothing but the addresses, so there
+ *          is no payload it can corrupt. Without it an ESP packet is an
+ *          unsupported protocol and the tunnel does not come up at all.
  */
-#define BPA_ALG_DEFAULT (BPA_ALG_FTP | BPA_ALG_RTSP | BPA_ALG_PPTP)
+#define BPA_ALG_DEFAULT                                                       \
+  (BPA_ALG_FTP | BPA_ALG_RTSP | BPA_ALG_PPTP | BPA_ALG_ESP)
 
 static_always_inline int
 bpa_alg_on (u32 enabled, u32 bit)

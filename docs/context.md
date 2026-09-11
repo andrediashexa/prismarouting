@@ -179,6 +179,7 @@ Not what it contains — what question it is the answer to.
 | `src/plugins/bpa/bpa_handoff.c` | Which worker owns this subscriber, and how do both directions reach the same one? |
 | `src/plugins/bpa/bpa_dyn.c` | When blocks are allocated on demand rather than computed. |
 | `src/plugins/bpa/bpa_ftp.c`, `bpa_pptp.c`, `bpa_rtsp.h` | Protocols that carry an address in their payload. |
+| `src/plugins/bpa/bpa_esp.h` | IPsec ESP passthrough: no payload to rewrite, only the question of whose tunnel it is. |
 | `src/plugins/bpa/bpa_log.c`, `bpa_log_tcp.c` | What is exported, to whom, and what happens when the collector goes away. |
 | `src/plugins/bpa/bpa_audit.c` | Which configuration was in force on the date in the court order, and who put it there. |
 | `src/plugins/bpa/bpa.api`, `bpa_api.c` | What a control plane may change, and what it is told when refused. |

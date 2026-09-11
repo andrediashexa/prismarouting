@@ -105,6 +105,15 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 	      void *l4h;
 	      u16 port;
 
+	      /*
+	       * ESP comes out of here unmatched, and that is the design
+	       * rather than a gap: it carries no port, so bpa_reverse_sub()
+	       * has nothing to work from and no rule computable from the
+	       * packet alone would put the two directions of a tunnel on one
+	       * worker. It is left on whatever thread it arrived on, and
+	       * bpa-out2in resolves it in the shared binding table that
+	       * exists for exactly this reason (bpa_esp.h).
+	       */
 	      if (proto >= 0
 		  && bpa_l4_dst (b[0], ip, (u8) proto, &port, &l4h) == 0)
 		{

@@ -63,8 +63,8 @@ class Pool:
     # same bits. A pool a VTY cannot express is a pool an operator cannot
     # configure, so this list and that macro have to be kept in step; the lab
     # asserts a round trip through the dataplane, which is what catches it.
-    ALG_BITS = {"ftp": 1 << 0, "rtsp": 1 << 1, "pptp": 1 << 2}
-    ALG_DEFAULT_ON = ("ftp", "rtsp", "pptp")
+    ALG_BITS = {"ftp": 1 << 0, "rtsp": 1 << 1, "pptp": 1 << 2, "esp": 1 << 3}
+    ALG_DEFAULT_ON = ("ftp", "rtsp", "pptp", "esp")
 
     def __init__(self, name: str):
         self.name = name

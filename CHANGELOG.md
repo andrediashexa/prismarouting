@@ -25,7 +25,34 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#14](https://github.com/andrediashexa/hexarouting/issues/14),
 [#184](https://github.com/andrediashexa/hexarouting/issues/184).
+
+### Added
+
+* **IPsec ESP passthrough, on by default**, the fourth entry in the ALG
+  registry and the first that is not an ALG: it parses nothing and rewrites
+  nothing but the addresses. The SPI in particular is left alone — RFC 4303
+  §3.3.2 puts it inside the integrity check, so a CGNAT that renumbered it the
+  way it renumbers a port would hand the subscriber a packet its own stack
+  discards while every counter reported success. Without passthrough an ESP
+  packet was an unsupported protocol and the tunnel did not come up at all.
+* **An inbound ESP packet is bound to a subscriber by its peer gateway**, not
+  by an SPI, so the first packet of the inbound half of an SA is delivered
+  rather than lost: the SPI a subscriber chose is announced over IKE, which is
+  encrypted, and nothing on the wire ever tells this box what it is. Two
+  subscribers sharing one public address keep separate tunnels as long as their
+  peers differ; when they do not, the second is refused under its own counter
+  rather than delivered on a guess, because the guess puts one customer's
+  ciphertext into another customer's IPsec stack. That is the case NAT-T (RFC
+  3948) exists for.
+* The ESP binding table is the one structure in the plugin shared across
+  workers, and `src/plugins/bpa/bpa_esp.h` says why it has to be: an inbound
+  ESP packet carries no port, so the arithmetic that steers every other reply
+  to the worker holding the subscriber cannot run on it.
+* `lab/esp.sh` asserts all of it on the captured packet — SPI, sequence number,
+  ciphertext and IP checksum — and `sh tools/lab.sh esp off` drops 21 of its 27
+  assertions.
 
 ### Fixed
 
