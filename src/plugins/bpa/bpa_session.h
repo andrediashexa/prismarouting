@@ -61,6 +61,13 @@ typedef enum
    * translated. That is a property of the protocol, not a gap here.
    */
   BPA_PROTO_GRE,
+  /*
+   * IPsec ESP (RFC 4303). Portless like GRE, and unlike GRE there is nothing
+   * in it this box may rewrite - the SPI is inside the integrity check. It is
+   * here as a protocol the session table knows about so that a tunnel can be
+   * bound to a subscriber at all; see bpa_esp.h for what binds it.
+   */
+  BPA_PROTO_ESP,
   BPA_N_PROTO,
 } bpa_proto_t;
 
@@ -452,6 +459,16 @@ bpa_session_timeout (const bpa_session_t *s, const bpa_timeouts_t *t)
     case BPA_PROTO_ICMP:
       return t->icmp;
     case BPA_PROTO_GRE:
+    /*
+     * ESP shares the tunnel timeout with GRE deliberately, rather than get a
+     * knob of its own. Both are portless tunnels and both are judged live by
+     * the same signal - PPP sends LCP echoes, IPsec sends DPD, each on the
+     * order of tens of seconds - so half an hour of silence means the same
+     * thing for both. A second timeout nobody would ever set differently is a
+     * second thing to keep in step, and this plugin has already learned what
+     * that costs.
+     */
+    case BPA_PROTO_ESP:
       return t->gre;
     default:
       break;
@@ -500,6 +517,11 @@ bpa_tcp_track (bpa_session_t *s, u8 flags)
 #define BPA_HASH_BUCKETS_DEFAULT (16 * 1024)
 #define BPA_HASH_MEMORY_DEFAULT	 (16 << 20)
 
+/* The shared ESP binding table. One entry per public address and peer
+ * gateway, not per flow, so it is an order of magnitude smaller. */
+#define BPA_ESP_BUCKETS_DEFAULT (1024)
+#define BPA_ESP_MEMORY_DEFAULT	(2 << 20)
+
 clib_error_t *bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index);
 /*
  * Why a session could not be created. The caller needs to know: a full block
@@ -513,6 +535,12 @@ typedef enum
   BPA_CREATE_NO_PORT,	    /* every block this subscriber holds is full */
   BPA_CREATE_OVER_SESSIONS, /* at its concurrent cap */
   BPA_CREATE_OVER_RATE,	    /* opening them faster than allowed */
+  /*
+   * ESP only: another subscriber on this same public address already has a
+   * tunnel to this peer, and the two are indistinguishable on the wire. The
+   * binding is not taken from its owner and not shared; see bpa_esp.h.
+   */
+  BPA_CREATE_ESP_PEER_TAKEN,
 } bpa_create_why_t;
 
 /*
@@ -595,6 +623,24 @@ bpa_session_t *bpa_session_create_gre (bpa_per_thread_t *pt,
 /* The server answered: the outbound direction can be keyed now. */
 void bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
 				  u16 peer_call_id);
+/*
+ * An IPsec tunnel to one peer, created by the first outbound ESP packet.
+ *
+ * Takes NO port: there is nowhere in an ESP packet to put one, and a port
+ * allocated here would be a number that never appears on the wire while
+ * costing an entry of a 512-entry block. It still counts as a session, so the
+ * per-subscriber caps apply and a dynamic block is held while the tunnel
+ * lives.
+ *
+ * Writes the shared binding that the inbound direction reads. Returns 0 with
+ * `*why` set when the caps refuse it, or when the peer already belongs to
+ * another subscriber of the same public address.
+ */
+bpa_session_t *bpa_session_create_esp (bpa_per_thread_t *pt,
+				       const bpa_pool_t *p, u32 pool_index,
+				       const bpa_block_t *b, u32 remote,
+				       u32 fib, f64 now,
+				       bpa_create_why_t *why);
 /*
  * The session a configured port forward describes, opened on first use.
  *

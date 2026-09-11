@@ -24,7 +24,7 @@ HX="python3 /src/src/hexash/hexash.py"
 mkdir -p /var/run/frr /etc/frr
 printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
 chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
-/usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf 2>/dev/null
+start_frr
 
 vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
 n=0
@@ -192,9 +192,18 @@ expect "with no bounds, eight sessions are eight sessions" \
 expect_in "the VTY set the bounds on the dataplane" " max-sessions 64" "$VTY_CONF"
 expect_in "including the rate" " max-session-rate 20" "$VTY_CONF"
 expect_in "and the trail recorded them" "limits sessions 64 rate 20" "$NEW"
-expect_not_in "without recreating the pool" "del pool lab" "$NEW"
+# Both of these were GREEN in `sh tools/lab.sh limits off`, where the commit
+# above never runs: an empty trail contains no "del pool lab", and a box that
+# changed nothing dropped nothing. They are about what the CHANGE did, so they
+# are predicated on the trail's record that there was one.
+case "$NEW" in *"limits pool lab"*) APPLIED=yes ;; *) APPLIED=no ;; esac
+applied_and() { [ "$APPLIED" = yes ] && "$@"; }
+DEL_IN=$(printf '%s\n' "$NEW" | grep -c "del pool lab" || true)
+expect "the bounds change was applied at all, and recorded" \
+  test "$APPLIED" = yes
+expect "without recreating the pool" applied_and test "${DEL_IN:-1}" -eq 0
 # The reason the pool must not be recreated, measured rather than argued.
 expect "and without dropping the sessions it held" \
-  test "${AFTER_VTY:-0}" -ge "${BEFORE_VTY:-0}"
+  applied_and test "${AFTER_VTY:-0}" -ge "${BEFORE_VTY:-0}"
 
 verdict

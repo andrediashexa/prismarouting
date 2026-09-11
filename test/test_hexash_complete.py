@@ -68,16 +68,27 @@ print("\n=== a free argument becomes a hint, not an empty list ===")
 o, hint, _ = opts("pool", "inside ")
 check(hint == hexash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
 check(not o, f"should not list options after 'inside': {o}")
-o, hint, _ = opts("config", "cgnat block-holddown ")
+o, hint, _ = opts("config", "nat cgnat block-holddown ")
 check(hint == hexash.ARG_NUM, f"expected a numeric hint, got {hint!r}")
 print(f"  'inside ' -> {hexash.ARG_PREFIX} ; 'block-holddown ' -> {hexash.ARG_NUM}")
 
 print("\n=== config: CGNAT and routing at the same level ===")
 o, _, _ = opts("config", "")
-check({"cgnat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
+check({"nat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
       f"got {o}")
-o, _, _ = opts("config", "cgnat ")
+# `cgnat` is NOT offered at the top level any more - it moved under `nat`
+# (#193) - and offering both spellings would teach the one being left behind.
+check("cgnat" not in o, f"the old top-level spelling is not offered: {o}")
+o, _, _ = opts("config", "nat ")
+check(o == {"cgnat"}, f"nat holds the CGNAT hierarchy: {o}")
+o, _, _ = opts("config", "nat cgnat ")
 check({"pool", "interface", "timeout", "logging", "block-holddown"} <= o, f"got {o}")
+# Static routes moved under `router`, beside the protocols.
+o, _, _ = opts("config", "router ")
+check("static" in o, f"router offers static: {o}")
+o, _, _ = opts("config", "ip ")
+check("route" not in o and "prefix-list" in o,
+      f"and `ip route` is no longer the offered spelling: {o}")
 o, _, _ = opts("config", "router ")
 check({"bgp", "ospf", "isis"} <= o, f"got {o}")
 print("  cgnat, router, interface, no, exit")
@@ -145,19 +156,39 @@ check(not o and hint is None,
       f"should admit it does not know, got options={o} hint={hint!r}")
 print("  admits that from there on FRR is the one that knows")
 
-print("\n=== 'start shell' is hidden but reachable ===")
-# Hidden means: absent from completion and from '?', at every level. If it
-# ever shows up in the tree, the reason it is hidden is gone.
-for mode, line in (("operational", ""), ("config", ""), ("pool", ""),
-                   ("operational", "start "), ("config", "start ")):
-    o, hint, _ = opts(mode, line)
-    check("start" not in o and "shell" not in o,
-          f"'start shell' leaked into completion for {mode!r} {line!r}: {sorted(o)}")
+print("\n=== 'start shell' is offered, and restricted ===")
+# It used to be HIDDEN from the tree, and this assertion said so. The
+# maintainer then asked for a command that already existed, which is what a
+# command nobody can find looks like (#194). start_shell()'s own comment had
+# already made the argument: hiding was never the boundary, the capability
+# check is - so the offer changed and the restriction did not.
+o, _, _ = opts("operational", "")
+check("start" in o, f"'start' is offered at the top level: {sorted(o)}")
+o, _, _ = opts("operational", "start ")
+check("shell" in o, f"and 'shell' under it: {sorted(o)}")
 check(hasattr(hexash.Shell, "start_shell"), "the escape must still exist")
 src = open(hexash.__file__).read()
 check('["start", "shell"]' in src,
       "the escape must be dispatched before the command tree")
-print("  absent from completion and from '?', still dispatched")
+
+# THE half that matters, and the one the old assertion never made: being
+# offered must not mean being granted. A shell on this box is every
+# capability at once.
+for caps, who, want in ((set(), "a read-only account", False),
+                        ({hexash.CAP_CGNAT}, "a cgnat operator", False),
+                        ({hexash.CAP_ALL}, "an administrator", True)):
+    probe = hexash.Shell.__new__(hexash.Shell)
+    probe.caps = caps
+    probe.failed = 0
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        allowed = probe.require(hexash.CAP_ALL, "start shell")
+    check(allowed is want,
+          f"{who} is {'allowed' if want else 'refused'} the shell")
+    if not want:
+        check("permission denied" in out.getvalue(),
+              f"and {who} is told why: {out.getvalue().strip()[:60]}")
+print("  offered at every level, granted only to an administrator")
 
 print("\n=== show version ===")
 o, _, _ = opts("operational", "show ")
@@ -311,18 +342,24 @@ check(len(opts) == 1, "and a single match is a single match")
 print(f"  interface Ten -> {sorted(opts)}")
 
 print("\n=== names the CANDIDATE knows ===")
-sh.feed("cgnat pool residential")
+# One pool made in the NEW hierarchy and one in the old, because both have to
+# work: a box in service has a saved configuration and twenty rollback
+# revisions written in the old spelling, and hexarouting.service replays that
+# file at every boot (#193).
+sh.feed("nat cgnat pool residential")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("exit")
 sh.feed("cgnat pool business")
 sh.feed("exit")
-opts, _, _ = sh._options("cgnat pool ", False)
+check(set(sh.candidate.pools) == {"residential", "business"},
+      f"both spellings make a pool: {sorted(sh.candidate.pools)}")
+opts, _, _ = sh._options("nat cgnat pool ", False)
 check(set(opts) == {"residential", "business"},
       f"pools come from the candidate being edited: {sorted(opts)}")
-opts, _, _ = sh._options("no cgnat pool ", False)
+opts, _, _ = sh._options("no nat cgnat pool ", False)
 check(set(opts) == {"residential", "business"},
       f"and from the removal branch too: {sorted(opts)}")
-print(f"  cgnat pool -> {sorted(opts)}")
+print(f"  nat cgnat pool -> {sorted(opts)}")
 
 print("\n=== a source that cannot answer offers nothing, and does not raise ===")
 # A VTY that becomes unusable when the dataplane is down is a VTY that cannot
@@ -668,12 +705,19 @@ check("up" in text, "with their state")
 check("local0" in text, "including VPP's own loopback, which it does report")
 print("  " + [l for l in text.splitlines() if "TenGig" in l][0].strip())
 
+# `show interface description` used to be answered with a line saying the
+# dataplane carries no descriptions. That was true when it was written and
+# stopped being true when `description` began to be stored as the interface
+# tag - and it was left saying so, which is worse than never having answered,
+# because somebody reading it stops looking for the feature that exists. The
+# assertion that held it in place is now the other way round (#192).
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
     sh.feed("show interface description")
-check("no per-interface description" in out.getvalue(),
-      "asking for descriptions says why there is no such column, rather than "
-      "leaving somebody looking for one that is never coming")
+check("no per-interface description" not in out.getvalue(),
+      "the box does not deny having descriptions it can store")
+check("Description" in out.getvalue(),
+      f"it answers with the column: {out.getvalue()!r}")
 
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
@@ -1207,6 +1251,565 @@ typed = ["router ospf", "network 200.150.0.0/24 area 0"]
 indented = ["router ospf", " network 200.150.0.0/24 area 0"]
 check(ospf_state(typed)[0] == ospf_state(indented)[0],
       "typed and read-back statements parse the same")
+
+
+# --- IS-IS: shapes that commit cleanly and carry nothing (#175) ---
+#
+# Every one is accepted by FRR and every one is local to this box, which is
+# the line drawn here: whether the neighbour agrees is not in the
+# configuration and is not claimed.
+print("\n=== IS-IS findings ===")
+from hexash import isis_findings                                 # noqa: E402
+
+GOOD = ["router isis HEXA", "net 49.0001.0000.0000.0001.00",
+        "metric-style wide", "interface Gi0", "ip router isis HEXA"]
+check(not isis_findings(GOOD), f"a complete instance is clean: {isis_findings(GOOD)}")
+
+# An instance with no NET never starts; FRR accepts the stanza.
+r = isis_findings(["router isis HEXA", "interface Gi0", "ip router isis HEXA"])
+check(any(sv == "error" and "no 'net'" in w for sv, _, w in r),
+      f"no net is refused: {r}")
+
+# An interface joining a tag no instance declares - the same shape as the
+# undeclared peer group and the undefined route-map.
+r = isis_findings(["interface Gi0", "ip router isis GONE"])
+check(any(sv == "error" and "declares that instance" in w for sv, _, w in r),
+      f"an undeclared tag is refused: {r}")
+
+# An instance nothing joins runs and carries nothing.
+r = isis_findings(["router isis HEXA", "net 49.0001.0000.0000.0001.00"])
+check(any("no interface joins it" in w for _, _, w in r),
+      f"an instance nobody joins is reported: {r}")
+
+# The IPv6 half silently absent while IPv4 works.
+v6 = ["router isis HEXA", "net 49.0001.0000.0000.0001.00",
+      "interface Gi0", "ipv6 router isis HEXA"]
+check(any("topology ipv6-unicast" in w for _, _, w in isis_findings(v6)),
+      "IPv6 with no topology statement is reported")
+check(not isis_findings(v6[:2] + ["topology ipv6-unicast"] + v6[2:]),
+      "and with it, nothing is")
+
+# Narrow metrics cap at 63 - the classic silent limitation on a 10G box.
+narrow = GOOD[:2] + ["interface Gi0", "ip router isis HEXA", "isis metric 100"]
+check(any("metric-style wide" in w for _, _, w in isis_findings(narrow)),
+      "a metric above 63 with narrow encoding is reported")
+check(not isis_findings(GOOD + ["isis metric 100"]),
+      "and with wide it is not")
+
+# A level-2-only instance with a level-1 circuit forms no adjacency, and both
+# halves are accepted by FRR.
+lv = GOOD[:2] + ["is-type level-2-only", "interface Gi0",
+                 "ip router isis HEXA", "isis circuit-type level-1"]
+check(any("forms no adjacency" in w for _, _, w in isis_findings(lv)),
+      "a circuit-type the instance cannot serve is reported")
+check(not isis_findings(GOOD[:2] + ["is-type level-2-only", "interface Gi0",
+                                    "ip router isis HEXA",
+                                    "isis circuit-type level-2-only"]),
+      "and a matching one is not")
+
+check(not isis_findings(["router bgp 65000", "neighbor 10.0.0.2 remote-as 65001"]),
+      "and none of it fires when there is no IS-IS")
+
+# By statement, not by indentation - the asymmetry that has caught four
+# checks in this file now.
+check(isis_findings([" " + l for l in GOOD]) == isis_findings(GOOD),
+      "typed and read-back statements parse the same")
+
+
+# --- a box with only local0 must say WHY (#190) ---
+#
+# `local0` alone is the truth and it is not an answer. It was reported twice
+# from a box in use, and answered both times with "run these commands and tell
+# me" - which is the defect: the box should not need an interrogation to say
+# what it decided.
+print("\n=== why the dataplane has no interface ===")
+import tempfile                                                  # noqa: E402
+
+_d = tempfile.mkdtemp()
+
+
+def why(conf, env=""):
+    c = os.path.join(_d, "startup.conf")
+    e = os.path.join(_d, "tune.env")
+    open(c, "w").write(conf)
+    open(e, "w").write(env)
+    probe = hexash.Shell.__new__(hexash.Shell)
+    probe.STARTUP_CONF, probe.TUNE_ENV = c, e
+    return probe.why_no_dataplane_interface()
+
+
+r = why("plugin dpdk_plugin.so { disable }")
+check(r and "hugepages" in r[0],
+      f"first-boot mode is named as first-boot mode: {r[:1]}")
+check(any("Reboot" in l for l in r),
+      "and says what to do about it")
+
+r = why("dpdk {\n  no-pci\n}", "HEXA_DATAPLANE_IF=\n")
+check(r and "no interface was named" in r[0],
+      f"an empty HEXA_DATAPLANE_IF is named as the cause: {r[:1]}")
+check(any("tune.env" in l for l in r),
+      "and the file to edit is named")
+
+r = why("dpdk {\n  no-pci\n}", 'HEXA_DATAPLANE_IF="ens19"\n')
+check(r and "ens19" in r[0],
+      f"a named interface that was refused is quoted back: {r[:1]}")
+# The three reasons a named interface produces no-pci are different work, so
+# all three are offered rather than one guessed at.
+check(any("default route" in l for l in r),
+      "including the one that is a deliberate refusal")
+
+r = why("dpdk {\n  dev 0000:01:00.0\n}")
+check(r and "did not bring it up" in r[0],
+      f"a NIC that was named and did not appear is a different answer: {r[:1]}")
+
+# A box that is not an appliance has no startup.conf, and inventing an
+# explanation for it would be worse than saying nothing.
+probe = hexash.Shell.__new__(hexash.Shell)
+probe.STARTUP_CONF = os.path.join(_d, "does-not-exist")
+probe.TUNE_ENV = os.path.join(_d, "nor-this")
+check(probe.why_no_dataplane_interface() == [],
+      "and a box with no startup configuration explains nothing")
+
+
+# --- filtering a show, without leaving the VTY (#191) ---
+print("\n=== pipe filters ===")
+from hexash import apply_pipe, split_pipe, PIPE_FILTERS          # noqa: E402
+
+TXT = """interface Gi0
+ mtu 1500
+ ipv4 address 10.0.0.1/24
+interface Gi1
+ mtu 9000
+router bgp 65000
+ neighbor 10.0.0.2 remote-as 65001
+"""
+
+
+def piped(*stages):
+    lines, why = apply_pipe(TXT, list(stages))
+    return why if why else lines
+
+
+check(piped("include mtu") == [" mtu 1500", " mtu 9000"],
+      f"include keeps the matching lines: {piped('include mtu')}")
+check(piped("match mtu") == piped("include mtu"),
+      "match is the same filter under the name operators type")
+check(" mtu 1500" not in piped("exclude mtu"), "exclude drops them")
+# `section` is the one that pays most here, because this box's configuration
+# IS blocks: a line at column 0 and everything indented under it.
+check(piped("section interface Gi0")
+      == ["interface Gi0", " mtu 1500", " ipv4 address 10.0.0.1/24"],
+      f"section keeps one block and stops at the next: "
+      f"{piped('section interface Gi0')}")
+check(piped("count") == ["7"], f"count answers with a number: {piped('count')}")
+check(len(piped("first 2")) == 2 and len(piped("last 2")) == 2,
+      "first and last take the head and the tail")
+check(piped("include interface", "exclude Gi1") == ["interface Gi0"],
+      f"and they chain: {piped('include interface', 'exclude Gi1')}")
+
+# An unknown filter is REFUSED, not ignored. Ignoring it would answer the
+# question the operator did not ask, with no sign that it had - and `grep` is
+# exactly what somebody types first.
+check("not a filter" in piped("grep mtu"), f"grep is refused: {piped('grep mtu')}")
+check("needs <n>" in piped("first"), "a filter missing its argument is refused")
+# The exact words the product prints, read off it rather than remembered:
+# "needs a number, not 'x'".
+check("needs a number, not 'x'" in piped("first x"),
+      f"and so is one given the wrong kind: {piped('first x')}")
+
+# THE property that makes a pipe safe here: it runs over the text the command
+# already produced, after the redactions - so it can never reveal a value the
+# unfiltered command hides. Asserted on the real redaction, not on a
+# hand-written string.
+from system import redact                                        # noqa: E402
+_secret = "n0tinlogs"
+_shown = "\n".join(redact([" neighbor 10.0.0.2 password " + _secret]))
+_lines, _ = apply_pipe(_shown, ["include password"])
+check(_secret not in "\n".join(_lines),
+      f"a filter cannot reveal what the command hid: {_lines}")
+check(any("not shown" in l for l in _lines),
+      "and the line it does show is the redacted one")
+
+check(split_pipe("show running-config | include x | count")
+      == ("show running-config", ["include x", "count"]),
+      "a command and its filters are split apart")
+
+
+# ---------------------------------------------------------------------------
+# `show interface terse | description | utilization` (#192)
+
+import routes                                                    # noqa: E402
+
+
+def capture(sh, line):
+    """What the VTY printed for one command."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sh.feed(line)
+    return buf.getvalue()
+
+
+#
+# The counter text is the dataplane's own, copied off a running VPP rather
+# than written by hand: the layout - a first counter on the interface's line
+# and the rest indented, names with spaces in them, and NO line at all for an
+# interface whose counters are zero - is the whole difficulty, and a
+# hand-written sample would have had whatever shape made the parser pass.
+COUNTERS_A = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+host-veth-vpp                     1      up          9000/0/0/0     tx packets                     3
+                                                                    tx bytes                     266
+local0                            0     down          0/0/0/0
+loop3                             3      up          9000/0/0/0
+pg0                               4      up          9000/0/0/0     rx packets                    20
+                                                                    rx bytes                    2000
+                                                                    drops                          4
+pg0.100                           5      up           0/0/0/0
+"""
+COUNTERS_B = COUNTERS_A.replace("2000", "3000").replace(
+    "                    20", "                    30").replace(
+    "                          4", "                          9")
+
+_c = routes.parse_interface_counters(COUNTERS_A)
+check(_c["pg0"] == {"rx packets": 20, "rx bytes": 2000, "drops": 4},
+      f"a counter name with a space in it survives: {_c.get('pg0')}")
+check(_c["host-veth-vpp"]["tx bytes"] == 266,
+      "the first counter shares the interface's line")
+check(_c["loop3"] == {} and _c["local0"] == {},
+      "an interface with no counter line has no counters, not no entry")
+check("Name" not in _c, "the header is not an interface")
+
+HW = """              Name                Idx   Link  Hardware
+TenGigabitEthernet0/8/0            1     up   TenGigabitEthernet0/8/0
+  Link speed: 10 Gbps
+local0                             0    down  local0
+  Link speed: unknown
+pg0                                4    down  pg0
+  Link speed: unknown
+"""
+_h = routes.parse_hardware(HW)
+check(_h["TenGigabitEthernet0/8/0"] == {"link": "up", "speed": 10 ** 10},
+      f"a link speed becomes a number: {_h.get('TenGigabitEthernet0/8/0')}")
+check(_h["pg0"]["speed"] is None,
+      "and 'unknown' stays unknown - not zero, which would divide")
+check(_h["pg0"]["link"] == "down", "the link column is the LINK, not admin")
+
+
+def box_192(iface_text, hw_text=HW, counters=None, descs=None, elapsed=None,
+            addr_text=""):
+    """A box whose dataplane answers with a scripted sequence of counters."""
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    left = list(counters or [])
+
+    def run(_self, cmd):
+        if cmd.startswith("show hardware-interfaces"):
+            return 0, hw_text
+        if cmd == "show interface addr":
+            return 0, addr_text
+        if cmd == "show interface" and left:
+            return 0, left.pop(0)
+        if cmd.startswith("show interface"):
+            return 0, iface_text
+        return 0, ""
+
+    sh.dp = type("D", (), {"TRACE": False, "run": run})()
+    sh.frr = type("F", (), {"available": lambda s: False,
+                            "running": lambda s: [],
+                            "show": lambda s, c: (1, "")})()
+    sh.device_descriptions = lambda: dict(descs or {})
+    if elapsed is not None:
+        clock = iter(elapsed)
+        hexash.time.monotonic = lambda: next(clock)
+        hexash.time.sleep = lambda _s: None
+    return sh
+
+
+TERSE_IF = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+TenGigabitEthernet0/8/0           1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+pg0                               4      up          9000/0/0/0
+pg0.100                           5      up          9000/0/0/0
+"""
+ADDRS = """TenGigabitEthernet0/8/0 (up):
+  L3 198.51.100.1/30
+  L3 2001:db8::1/64
+pg0.100 (up):
+  L3 192.0.2.1/24
+"""
+
+sh = box_192(TERSE_IF, addr_text=ADDRS)
+out = capture(sh, "show interface terse")
+check("Admin" in out and "Link" in out,
+      f"terse has both states, because they are two facts: {out}")
+check("inet6" in out and "2001:db8::1/64" in out,
+      "a second family is a second row, not a truncation")
+# The one conclusion this view exists for. pg0 is admin up and link down.
+check("pg0" in out and "link down" in out,
+      f"admin up with the link down is called out: {out}")
+check("that is the wire or the far end" in out,
+      "and named as a wire fault, not a configuration one")
+# A sub-interface has no hardware of its own. Its link is its parent's - and
+# the interfaces an ISP terminates subscribers on are all sub-interfaces, so
+# a '?' here would blank the column exactly where it is needed.
+_row = [l for l in out.splitlines() if l.split()[:1] == ["pg0.100"]][0]
+check(_row.split()[1:3] == ["up", "down"],
+      f"a sub-interface inherits its parent's link: {_row}")
+
+# Both numbers of the word. `show interfaces terse` is what an operator arriving
+# from a Juniper types, and a parser error for the plural on a VTY built to look
+# like one is the opposite of the point.
+sh = box_192(TERSE_IF, addr_text=ADDRS)
+check("Admin" in capture(sh, "show interfaces terse"),
+      "the plural is the same command")
+# A filtered listing says so, rather than reporting the filtered count as the
+# number of interfaces the box has.
+sh = box_192(TERSE_IF, addr_text=ADDRS)
+out = capture(sh, "show interface terse pg0.100")
+check("1 of 4 interface(s) shown" in out, f"a narrowed listing says so: {out}")
+
+# The description view. This used to print a table and then say the dataplane
+# carries no descriptions - true when written, false since `description`
+# started being stored as the interface tag, and left saying so.
+sh = box_192(TERSE_IF, descs={"TenGigabitEthernet0/8/0": "TRANSITO Vivo"})
+out = capture(sh, "show interface description")
+check("TRANSITO Vivo" in out, f"a description is shown: {out}")
+check("carries no per-interface description" not in out,
+      "and the box no longer denies having them")
+check("1 of 4 interface(s) described" in out, f"counted: {out}")
+check("description <text>" in out,
+      "an empty column is a question; the answer is how to fill it")
+
+# Utilisation. The rate must come from the MEASURED elapsed time, not from the
+# interval that was asked for: on a box busy enough to be worth asking about,
+# a 2s sleep is not 2s, and a rate computed from the nominal figure is wrong
+# in exactly the conditions the question gets asked in. Here the clock moves
+# 4s per sample while the interval says 2, so the two answers differ by half.
+sh = box_192(TERSE_IF, counters=[COUNTERS_A, COUNTERS_B],
+             elapsed=[100.0, 104.0])
+out = capture(sh, "show interface utilization interval 2 count 1")
+# 1000 bytes in the 4s the clock actually moved is 2 kbit/s; the same bytes
+# over the 2s that were ASKED for would read 4 kbit/s. The assertion is that
+# the box says the first.
+check("2.00 kbit/s" in out and "4.00 kbit/s" not in out,
+      f"the rate is measured, not assumed from the interval: {out}")
+check("sampling every 2s" in out and "2s in total" in out,
+      f"and the interval is stated before the wait: {out}")
+check("pg0 dropped 5 packet(s)" in out,
+      f"what was dropped during the window is the fault: {out}")
+check("busiest sample in this run" in out,
+      "with no line speed there is no percentage to defend")
+
+# With a line speed the bar IS a share of capacity, and the percentage is real.
+HW_FAST = HW.replace("pg0                                4    down  pg0\n"
+                     "  Link speed: unknown\n",
+                     "pg0                                4    down  pg0\n"
+                     "  Link speed: 1 Gbps\n")
+sh = box_192(TERSE_IF, hw_text=HW_FAST, counters=[COUNTERS_A, COUNTERS_B],
+             elapsed=[100.0, 104.0])
+out = capture(sh, "show interface utilization interval 2 count 1")
+check("share of its own line rate" in out and "% of 1.00 Gbit/s" in out,
+      f"a known line rate is used as the capacity: {out}")
+# A box can have both kinds at once - a NIC that reports its speed and a
+# loopback that does not - and one footer claiming every bar is a share of a
+# line rate would be wrong about half the table.
+check("the rest have no link speed" in out and "loop3" in out.split(
+          "the rest have no link speed")[-1],
+      f"the unrated interfaces are named, not folded in: {out}")
+
+# A counter that goes backwards is `clear interfaces` running mid-sample. It
+# must not become a negative rate, and it must not pass silently either.
+sh = box_192(TERSE_IF, counters=[COUNTERS_B, COUNTERS_A],
+             elapsed=[100.0, 102.0])
+out = capture(sh, "show interface utilization interval 1 count 1")
+_rows = [l for l in out.splitlines() if l.split()[:1] == ["pg0"]]
+check(_rows and "-" not in _rows[0],
+      f"a cleared counter is not a negative rate: {_rows}")
+check("went backwards" in out, f"and it is said out loud: {out}")
+
+# An interface created between two samples has a counter that is a total since
+# it was made. Reporting that as a rate would invent a spike out of somebody
+# running `create loopback`.
+_late = COUNTERS_B + ("loop9                             9      up"
+                      "          9000/0/0/0     rx bytes"
+                      "                  999999999\n")
+sh = box_192(TERSE_IF, counters=[COUNTERS_A, _late], elapsed=[100.0, 102.0])
+out = capture(sh, "show interface utilization interval 1 count 1")
+check("loop9" not in out,
+      f"an interface that appeared mid-sample has no rate yet: {out}")
+
+sh = box_192(TERSE_IF)
+out = capture(sh, "show interface utilization interval x")
+check("needs a number, not 'x'" in out, f"a bad interval is refused: {out}")
+out = capture(sh, "show interface utilization count 0")
+check("between 1 and 120" in out, f"and so is a count of zero: {out}")
+
+# Adding `terse` to `show interface` must not cost the interface names it has
+# always completed - a new option that takes away an old one is how a CLI gets
+# a reputation.
+sh = box_192(TERSE_IF)
+opts, _, _ = sh._options("show interface ", False)
+check("terse" in opts and "utilization" in opts,
+      f"the new views are offered: {sorted(opts)}")
+check("TenGigabitEthernet0/8/0" in opts,
+      f"and the interface names still are: {sorted(opts)}")
+check("<interface>" not in opts,
+      "the hint is a marker, not something to type")
+opts, _, _ = sh._options("show interface pg", True)
+check("pg0" in opts and "terse" not in opts,
+      f"a prefix still narrows to the names: {sorted(opts)}")
+
+
+
+# ---------------------------------------------------------------------------
+# The typed hierarchies: `nat cgnat ...` and `router static` (#193)
+
+def box_193():
+    sh = shell_with_box()
+    sh.frr = type("F", (), {"available": lambda s: True,
+                            "running": lambda s: ["router bgp 65000"],
+                            "show": lambda s, c: (1, "")})()
+    sh.sys = type("S", (), {"read_ssh": lambda s: {},
+                            "read_users": lambda s: {}})()
+    sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
+    sh.feed("configure")
+    return sh
+
+sh = box_193()
+for line in ("nat cgnat pool residential", "inside 100.64.0.0/22",
+             "outside 203.0.113.0/24", "block-size 512", "exit",
+             "nat cgnat interface TenGigabitEthernet0/8/0 inside",
+             "router static", "route 0.0.0.0/0 10.0.0.2",
+             "route 2001:db8::/32 fe80::1", "exit"):
+    sh.feed(line)
+check(list(sh.candidate.pools) == ["residential"],
+      f"a pool is made under nat: {list(sh.candidate.pools)}")
+check(sh.candidate.interfaces == {"TenGigabitEthernet0/8/0": "inside"},
+      f"and an interface attached there: {sh.candidate.interfaces}")
+# What reaches FRR is what FRR understands. `router static` handed to it is
+# refused mid-commit, so the block has to be translated and not passed through.
+check("router static" not in sh.candidate.routing,
+      f"the block never reaches FRR: {sh.candidate.routing}")
+check("ip route 0.0.0.0/0 10.0.0.2" in sh.candidate.routing
+      and "ipv6 route 2001:db8::/32 fe80::1" in sh.candidate.routing,
+      f"the routes do, in FRR's own words: {sh.candidate.routing}")
+
+# The old spellings still work, typed. Not because of politeness: a box in
+# service has a saved configuration and up to twenty rollback revisions written
+# in them, and hexarouting.service replays that file at every boot.
+sh = box_193()
+sh.feed("cgnat interface TenGigabitEthernet0/8/0 outside")
+sh.feed("ip route 198.51.100.0/24 blackhole")
+check(sh.candidate.interfaces == {"TenGigabitEthernet0/8/0": "outside"},
+      f"the old CGNAT spelling still configures: {sh.candidate.interfaces}")
+check("ip route 198.51.100.0/24 blackhole" in sh.candidate.routing,
+      f"and so does the old route spelling: {sh.candidate.routing}")
+
+# `exit` leaves the block, and the next statement lands outside it.
+sh = box_193()
+sh.feed("router static")
+check(sh.frr_ctx == ["router static"], f"the block is entered: {sh.frr_ctx}")
+check("router static" in sh.prompt(),
+      f"and the prompt says which block: {sh.prompt()!r}")
+sh.feed("exit")
+check(sh.frr_ctx == [], f"and left: {sh.frr_ctx}")
+
+# A statement that is not a route is REFUSED inside the block rather than
+# passed to FRR, which would take it as a statement of a block it does not
+# have and fail the whole commit with a message about a line nobody typed.
+sh = box_193()
+sh.feed("router static")
+out = capture(sh, "neighbor 10.0.0.2 remote-as 65001")
+check("not a statement of 'router static'" in out, f"refused: {out}")
+check("neighbor 10.0.0.2 remote-as 65001" not in sh.candidate.routing,
+      "and not staged")
+
+# `nat` on its own is refused, with the statement that follows it. `cgnat` was
+# never a block either - what is entered is `cgnat pool NAME` - and inventing
+# one level of block here would make `exit` mean two different things
+# depending on which word opened it.
+sh = box_193()
+out = capture(sh, "nat")
+check("a hierarchy, not a block" in out, f"nat alone is refused: {out}")
+check("nat cgnat pool" in out, "and says what to type instead")
+
+# Inside another block the words belong to that block's grammar. A route-map
+# or a description may begin with any word at all, and rewriting there would
+# edit somebody's policy on the strength of its first token.
+sh = box_193()
+sh.feed("route-map NAT-OUT permit 10")
+sh.feed("description nat cgnat pool residential")
+check(any(l.strip() == "description nat cgnat pool residential"
+          for l in sh.candidate.routing),
+      f"a description that starts with 'nat' is left alone: {sh.candidate.routing}")
+
+
+
+# ---------------------------------------------------------------------------
+# Advice that names a file the daemon is not in (#197)
+#
+# The refusal for a daemon that is not running used to say "Enable <daemon> in
+# /etc/frr/daemons" whichever daemon it was. frrinit.sh starts zebra, mgmtd and
+# staticd itself, so those three are NOT lines in that file: an operator sent
+# there finds nothing to enable, on a box where the real fault is that frr did
+# not finish starting.
+from hexash import enable_daemon_advice                           # noqa: E402
+
+check("/etc/frr/daemons" in enable_daemon_advice("bgpd"),
+      "an optional daemon is enabled in the file")
+for always in ("zebra", "mgmtd", "staticd"):
+    advice = enable_daemon_advice(always)
+    check("not listed in /etc/frr/daemons" in advice,
+          f"{always} is not a line in that file, and the advice says so: {advice}")
+    check("systemctl restart frr" in advice,
+          f"and says what to do instead: {advice}")
+
+
+
+# ---------------------------------------------------------------------------
+# Three things the documentation pass found in the product (#191, #193)
+
+# A filter argument in quotes. Everybody types them - `| section "interface Gi"`
+# is what a pipe looks like in every shell anybody has used - and this filter is
+# not a shell, so nothing removed them: the quotes became part of the text being
+# searched for and the filter matched nothing at all. Silently, which is the
+# worst of it, because an empty result reads as "there is no such section".
+_cfg = "interface Gi0/1\n mtu 1500\ninterface Gi0/2\n mtu 9000\n"
+for _q in ('"interface Gi0/1"', "'interface Gi0/1'", "interface Gi0/1"):
+    _lines, _why = apply_pipe(_cfg, [f"section {_q}"])
+    check(_why is None and _lines == ["interface Gi0/1", " mtu 1500"],
+          f"a quoted filter argument finds the same section: {_q} -> {_lines}")
+# Only a matched pair, and only around the whole argument: a quote in the middle
+# of a string is a character somebody is searching for.
+_lines, _ = apply_pipe('say "hi" there\nsay hi there\n', ['include say "hi"'])
+check(_lines == ['say "hi" there'],
+      f"a quote inside the argument is searched for: {_lines}")
+_lines, _ = apply_pipe('a"b\nab\n', ['include a"b'])
+check(_lines == ['a"b'],
+      f"and an unmatched one is not stripped: {_lines}")
+
+# A refusal has to name something the operator can find. Typed inside `router
+# static`, a route is translated to FRR's words before any check runs, so every
+# refusal about one named a statement that appears nowhere in what was typed and
+# nowhere in `show configuration` either.
+from config import as_hierarchy                                   # noqa: E402
+check(as_hierarchy("ip route 10.55.0.0/16 172.31.99.1")
+      == "router static / route 10.55.0.0/16 172.31.99.1",
+      f"a static route is named as the VTY spells it: "
+      f"{as_hierarchy('ip route 10.55.0.0/16 172.31.99.1')}")
+check(as_hierarchy("ipv6 route 2001:db8::/32 fe80::1")
+      == "router static / route 2001:db8::/32 fe80::1",
+      "and so is an IPv6 one")
+check(as_hierarchy(" neighbor 10.0.0.2 remote-as 65001")
+      == "neighbor 10.0.0.2 remote-as 65001",
+      "a statement the VTY does not rename is left alone")
+
+# The box must not go on teaching the spelling it moved away from. A `usage:`
+# line is an instruction, which is exactly the case #193 is about.
+import hexash as _hx                                              # noqa: E402
+_src = open(_hx.__file__).read()
+check("usage: cgnat " not in _src,
+      "no usage line still teaches the old top-level spelling")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

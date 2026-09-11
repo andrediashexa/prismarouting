@@ -25,6 +25,118 @@ CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
 # against every device that changes one.
 URPF_MODES = ("strict", "loose", "off")
 ROUTING_HEADER = "! routing"
+
+#: The hierarchy CGNAT lives under, and the block static routes live in.
+#:
+#: Neither exists in the tool underneath: VPP's plugin knows `cgnat`, and FRR
+#: has no `router static` at all - static routes are top-level `ip route`
+#: statements. Both spellings are ACCEPTED here, in both directions, and that
+#: is not politeness. Every box already in service has a saved configuration
+#: and up to twenty rollback revisions written in the old words, and a grammar
+#: change that cannot read the box's own file is a grammar change that leaves
+#: the box unconfigured at the next reboot - on a machine nobody is watching,
+#: which is exactly when hexarouting.service replays that file.
+NAT_HIERARCHY = "nat"
+STATIC_BLOCK = "router static"
+
+
+def strip_nat(line: str) -> str:
+    """`nat cgnat ...` written as `cgnat ...`, which is what the model holds."""
+    s = line.strip()
+    if s == NAT_HIERARCHY:
+        return ""
+    for prefix in (NAT_HIERARCHY + " ", "no " + NAT_HIERARCHY + " "):
+        if s.startswith(prefix):
+            keep = s[len(prefix):]
+            return ("no " + keep) if prefix.startswith("no ") else keep
+    return line
+
+
+def as_hierarchy(stmt: str) -> str:
+    """
+    A canonical FRR statement, named in the words the VTY takes for it.
+
+    A refusal has to name something the operator can find. Typed inside
+    `router static`, a route is translated to FRR's `ip route ...` before any
+    check runs, so every refusal about one used to name a statement that
+    appears nowhere in what the operator typed and nowhere in `show
+    configuration` either - which now prints the block. Searching for `ip
+    route` after reading the error found nothing.
+    """
+    s = stmt.strip()
+    if s.split()[:2] in (["ip", "route"], ["ipv6", "route"]):
+        return f"{STATIC_BLOCK} / route " + " ".join(s.split()[2:])
+    return s
+
+
+def is_static_route(line: str) -> bool:
+    """
+    A top-level static route as FRR writes one.
+
+    Column 0 matters and is not a style preference. FRR puts a VRF's static
+    routes INSIDE its `vrf red` block, indented, and hoisting one of those out
+    into a `router static` block would move the route to another table - a
+    display transform that changes where packets go. So this reads the column
+    as well as the statement.
+    """
+    return (bool(line) and not line[:1].isspace()
+            and line.split()[:2] in (["ip", "route"], ["ipv6", "route"]))
+
+
+def group_static(routing: list) -> list:
+    """
+    FRR's flat `ip route` lines, shown as the block this VTY takes.
+
+    Emitted where the FIRST static route was, so a configuration read back
+    from FRR and written out again keeps its order. FRR groups them anyway;
+    this does not depend on that.
+    """
+    statics = [l for l in routing if is_static_route(l)]
+    if not statics:
+        return list(routing)
+    out, emitted = [], False
+    for line in routing:
+        if not is_static_route(line):
+            out.append(line)
+            continue
+        if emitted:
+            continue          # already inside the block above
+        out.append(STATIC_BLOCK)
+        out += [" route " + " ".join(s.split()[2:]) for s in statics]
+        out.append(" exit")
+        emitted = True
+    return out
+
+
+def ungroup_static(lines: list) -> list:
+    """
+    The inverse: a `router static` block back into what FRR understands.
+
+    The family comes from the prefix rather than from a keyword, because a
+    prefix with a colon in it is IPv6 and nothing else, and asking the operator
+    to say so twice is asking them to contradict themselves.
+    """
+    out, inside = [], False
+    for line in lines:
+        s = line.strip()
+        if s == STATIC_BLOCK:
+            inside = True
+            continue
+        if inside and s in ("exit", "exit-vrf"):
+            inside = False
+            continue
+        if inside and s.split()[:1] == ["route"] and len(s.split()) > 2:
+            rest = s.split(None, 1)[1]
+            family = "ipv6" if ":" in rest.split()[0] else "ip"
+            out.append(f"{family} route {rest}")
+            continue
+        if inside and s.split()[:2] == ["no", "route"]:
+            rest = s.split(None, 2)[2]
+            family = "ipv6" if ":" in rest.split()[0] else "ip"
+            out.append(f"no {family} route {rest}")
+            continue
+        out.append(line)
+    return out
 CGNAT_HEADER = "! cgnat"
 
 
@@ -63,8 +175,8 @@ class Pool:
     # same bits. A pool a VTY cannot express is a pool an operator cannot
     # configure, so this list and that macro have to be kept in step; the lab
     # asserts a round trip through the dataplane, which is what catches it.
-    ALG_BITS = {"ftp": 1 << 0, "rtsp": 1 << 1, "pptp": 1 << 2}
-    ALG_DEFAULT_ON = ("ftp", "rtsp", "pptp")
+    ALG_BITS = {"ftp": 1 << 0, "rtsp": 1 << 1, "pptp": 1 << 2, "esp": 1 << 3}
+    ALG_DEFAULT_ON = ("ftp", "rtsp", "pptp", "esp")
 
     def __init__(self, name: str):
         self.name = name
@@ -520,10 +632,18 @@ class Config:
 
     def text(self) -> str:
         out = [CGNAT_HEADER]
+        # `nat ` in front of the CGNAT statements, because the hierarchy is
+        # `nat` now. Written flat rather than as an indented block for the same
+        # reason `cgnat pool residential` is one line and not two: this format
+        # has always flattened a hierarchy onto its statement, and a second
+        # indentation level would need `exit` to mean two different things.
         for name in sorted(self.pools):
-            out += self.pools[name].lines()
+            pool = self.pools[name].lines()
+            out.append(f"{NAT_HIERARCHY} {pool[0]}")
+            out += pool[1:]
         for ifname in sorted(self.interfaces):
-            out.append(f"cgnat interface {ifname} {self.interfaces[ifname]}")
+            out.append(f"{NAT_HIERARCHY} cgnat interface {ifname} "
+                       f"{self.interfaces[ifname]}")
         for ifname in sorted(set(self.mtus) | set(self.urpf)
                              | set(self.descriptions) | set(self.admin_down)
                              | set(self.addresses) | set(self.vlans)
@@ -570,7 +690,7 @@ class Config:
             out += self.snmp_users[name].lines()
         out += sorted(self.globals)
         out.append(ROUTING_HEADER)
-        out += self.routing
+        out += group_static(self.routing)
         return "\n".join(out) + "\n"
 
     @classmethod
@@ -590,6 +710,11 @@ class Config:
             # FRR. Stripped here so the screen and the file agree.
             if line.endswith(UNCHECKED_MARK):
                 line = line[:-len(UNCHECKED_MARK)].rstrip()
+            if not line.strip():
+                continue
+            # The hierarchy the file is written in, back to the words the model
+            # holds. Both spellings, in both directions: see NAT_HIERARCHY.
+            line = strip_nat(line)
             if not line.strip():
                 continue
             if line.strip() == ROUTING_HEADER:
@@ -837,6 +962,10 @@ class Config:
                 cfg.globals.append(s)
             else:
                 cfg.unknown.append((lineno, s, "not a CGNAT statement"))
+        # `router static` back into the top-level `ip route` statements FRR
+        # takes. Done after the loop rather than in it, because the block is
+        # only recognisable as one from its own `exit`.
+        cfg.routing = ungroup_static(cfg.routing)
         return cfg
 
     @staticmethod

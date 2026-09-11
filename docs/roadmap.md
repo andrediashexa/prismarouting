@@ -444,7 +444,7 @@ Three outages this box could refuse:
   ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), one layer
   down, and the box is the only thing that can see it coming.
 * **A pool's public prefix that nothing announces.** Specific to this product.
-  Configure `cgnat pool clientes outside 200.150.0.16/28` and, unless
+  Configure `nat cgnat pool clientes outside 200.150.0.16/28` and, unless
   something separately advertises that prefix, every subscriber behind it is
   translated to an address the internet cannot route back to. CGNAT correct,
   BGP correct, service dead. Nothing connects the two today.
@@ -557,6 +557,68 @@ and the table that forwards packets is VPP's FIB. An operator debugging *"the
 traffic is not flowing"* is shown the table where the route is present and
 correct, on a box that is dropping it.
 
+#### The VTY an operator actually types at
+
+Reported from a box in use, in one message, and the first item was reported
+**twice** — which is the part worth recording. `show interface` listing nothing
+but `local0` was answered both times with "run these five commands and tell
+me". That answer is the defect: `local0` alone is the truth and it is not an
+answer, and the two files that know are not where the operator is looking.
+
+| Issue | What it is | State |
+|---|---|---|
+| [#190](https://github.com/andrediashexa/hexarouting/issues/190) | `show interface` says WHY it has no interface — first boot with DPDK off, no interface named, a name that does not resolve, or the interface carrying the default route, refused on purpose | *delivered* |
+| [#191](https://github.com/andrediashexa/hexarouting/issues/191) | pipe filters on any `show`: `include`, `match`, `exclude`, `section`, `count`, `first`, `last`, without shelling out to `grep` | *delivered* |
+| [#192](https://github.com/andrediashexa/hexarouting/issues/192) | `show interface terse` / `description` / `utilization`, the last sampling the counters and graphing them | *delivered* |
+| [#193](https://github.com/andrediashexa/hexarouting/issues/193) | CGNAT under `nat`, static routes under `router static`, both old spellings still accepted | *delivered* |
+| [#194](https://github.com/andrediashexa/hexarouting/issues/194) | `start shell` in the command tree — it existed and was hidden | *delivered* |
+
+Three properties these share, and they are the reason the work is grouped
+rather than listed:
+
+* **A pipe is not a shell.** Implemented over the text the command already
+  produced, after its redactions, because a filter that hands the output to
+  `grep` is a shell escape wearing a filter's clothes — reachable by a
+  read-only account, on a product that restricts the shell to administrators on
+  purpose.
+* **A hierarchy that moves must still read the box's own file.** Every box in
+  service has a saved configuration and up to twenty rollback revisions in the
+  old spelling, and `hexarouting.service` replays that file at every boot on a
+  machine nobody is watching.
+* **A rate is a difference, and the difference is measured.** On a box loaded
+  enough to be worth asking about, a two-second sleep is not two seconds.
+
+Two more came out of doing it, both about the labs and the product rather than
+the VTY:
+
+| Issue | What it is | State |
+|---|---|---|
+| [#196](https://github.com/andrediashexa/hexarouting/issues/196) | six labs started an FRR the product does not ship — no mgmtd, no staticd, so any statement mgmtd owns was silently dropped | *delivered*: one `start_frr` in `lab/lib.sh`, used by all eight |
+| [#197](https://github.com/andrediashexa/hexarouting/issues/197) | `commit` reported success for a statement FRR dropped: `frr-reload` exits 0, its own log noticing on a second pass that the line is still missing and sending it again | **partly** — a static route whose daemon is not running is refused now; the general read-back check is still open |
+
+#197 is ahead of anything else in this section that is still open, and half of
+it is done. The reachable half was that a static route is neither a `router`
+line nor a policy statement, so both existing daemon checks — the one from
+[#99](https://github.com/andrediashexa/hexarouting/issues/99) and the one from
+[#155](https://github.com/andrediashexa/hexarouting/issues/155) — walked
+straight past it, and a default route is the most common statement there is on
+an edge box. That is refused now, at `commit check` as well as at `commit`.
+
+What remains is the class, and it is the harder half: `frr-reload` exits 0
+having dropped a statement, and the product believes it. The general answer is a
+read-back check — a statement the candidate holds that is not in FRR's running
+configuration afterwards is a failed commit whatever the exit status said, the
+same argument `show bgp summary` already makes about the FIB. It is not written
+yet because of a measured false positive rather than a missing idea: FRR omits a
+statement from its read-back when the value equals a default, so `poll-interval
+60` typed explicitly comes back absent (recorded in `lab/igp.sh`), and refusing
+on that would be worse than the bug. It needs a list of what FRR round-trips
+that is measured rather than assumed — a small piece of research, not a
+redesign.
+
+`commit` returning success is the one thing in this product an operator has to
+be able to trust, because every diagnosis they make afterwards starts from it.
+
 #### Installation — blocked by nothing, paid on every box
 
 [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the installer
@@ -621,10 +683,26 @@ remains of [#63](https://github.com/andrediashexa/hexarouting/issues/63), whose 
 [#30](https://github.com/andrediashexa/hexarouting/issues/30) the soak test can run earlier but pays most on a stable base — it
 catches the leak that appears at hour six.
 
+[#163](https://github.com/andrediashexa/hexarouting/issues/163) kernel and boot tuning is also here, and **only** here: it lists the
+parameters the tuner does not yet set, each as a hypothesis with a named cost,
+and it may not ship any of them before #28 can say whether they do anything.
+Applying jitter knobs and declaring an improvement is the failure this
+repository is organised against. The same issue records the refusal to ship a
+**custom-built kernel** — no argument for one survives the fact that the kernel
+is off the packet path, and every one of them gives up Debian's security
+updates on an appliance shipped to providers.
+
 #### Outside the queue
 
 [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13, blocked upstream with measured evidence: fd.io
-publishes no trixie suite. Revisit when they do.
+publishes no trixie suite. **Re-tested 2026-09-09 against v0.51.0 and both
+blockers still hold** — with a stronger datum than the first measurement: two
+newer release trains have shipped since (`fdio/2510`, `fdio/2602`) and neither
+added a trixie suite, so this is no longer an absence about to be corrected.
+The second blocker is the harder one and is a property of the fd.io key itself:
+Debian 13 verifies with `sqv`, which rejects the key's SHA-1 binding signature,
+so it would survive trixie packages appearing under the same key. Revisit when
+upstream moves, not on a schedule.
 
 #### If only three were possible
 
@@ -644,6 +722,7 @@ flowchart LR
     C --> D["#32 PCP"]
     E["#15 conformance lab"] --> F["#16 hairpinning"]
     G["#28 throughput harness"] --> H["#29 symmetric RSS"]
+    G --> I["#163 kernel tuning<br/>each knob measured"]
 ```
 
 * **#3 before any new configuration.** A feature added while `commit` reports
@@ -667,6 +746,9 @@ flowchart LR
 * **#9 before #7 and #8.** The failover lab is the acceptance test for HA and
   MUST be observed to fail before the implementation exists; written
   afterwards, it tests what was built rather than what was required.
+* **#28 before #163.** Every tuning parameter in that issue is a hypothesis
+  about jitter on a path nobody has measured. Shipping one without the harness
+  does not make the box faster; it makes the claim unfalsifiable.
 
 Everything else is a preference and may be reordered on demand from a real
 deployment. A provider blocked on SIP moves #14 forward; that is a better

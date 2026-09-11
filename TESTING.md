@@ -154,6 +154,7 @@ sh tools/lab.sh hairpin        # one subscriber reaching another (RFC 4787 REQ-9
 sh tools/lab.sh nat-behaviour  # RFC 4787 mapping and filtering
 sh tools/lab.sh extblocks      # a second block for a subscriber that fills one
 sh tools/lab.sh pptp           # PPTP call IDs and GRE (also: pptp off)
+sh tools/lab.sh esp            # IPsec ESP passthrough (also: esp off)
 sh tools/lab.sh routing        # BGP, OSPF and IS-IS into the VPP FIB
 sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
@@ -186,6 +187,7 @@ The most instructive to run:
 | `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch twelve assertions drop |
 | `rtsp` | Reads the rewritten `Transport:` header out of the wire, and `BPA_RTSP_OFF=1 sh tools/lab.sh rtsp` drops 11 of its 18 assertions |
 | `pptp` | Two subscribers choose the same Call ID and both tunnels work |
+| `esp` | Two subscribers share one public address and each keeps its own IPsec tunnel — and the SPI is asserted **unchanged**, because rewriting it is the failure. `sh tools/lab.sh esp off` drops 21 of its 27 assertions |
 | `vty-pool` | Sets a pool setting with `vppctl`, commits something unrelated through the VTY, and proves the first one survived |
 | `two-pools` | The only lab that configures more than one pool — which is why nothing caught subscribers of two pools sharing one set of port bitmaps |
 | `troubleshoot` | Uses `ref/bpa_model.py` as the oracle, so the show commands cannot agree with the plugin by sharing its arithmetic |
@@ -250,9 +252,9 @@ device only on `commit`:
 
 ```
 hexarouting> configure
-hexarouting# [edit] cgnat pool alpha
-hexarouting# [edit cgnat pool] inside 100.64.0.0/22
-hexarouting# [edit cgnat pool] exit
+hexarouting# [edit] nat cgnat pool alpha
+hexarouting# [edit cgnat pool alpha] inside 100.64.0.0/22
+hexarouting# [edit cgnat pool alpha] exit
 hexarouting# [edit] show configuration compare
 hexarouting# [edit] commit check
 hexarouting# [edit] commit comment "first pool"

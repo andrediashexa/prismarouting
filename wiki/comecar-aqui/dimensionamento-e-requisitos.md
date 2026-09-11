@@ -28,7 +28,7 @@ Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed proc
 A tabela de sessões é ajustada com:
 
 ```
-cgnat session-table buckets <n> memory <MB>
+nat cgnat session-table buckets <n> memory <MB>
 ```
 
 O padrão é 16 mil buckets e 16 MB por tabela. A reserva é **virtual**, mas o OOM killer conta memória virtual — daí o padrão modesto. Uma implantação de 200 mil assinantes deve elevar esse valor; uma caixa pequena não deve pagar por capacidade que nunca vai usar.

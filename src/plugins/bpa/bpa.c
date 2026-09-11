@@ -1199,6 +1199,18 @@ bpa_init (vlib_main_t *vm)
   bm->out2in_fq_index =
     vlib_frame_queue_main_init (bpa_out2in_node.index, 0);
 
+  /*
+   * The ESP binding table, shared by every worker.
+   *
+   * Sized well below the session tables and on purpose: it holds one entry
+   * per (public address, peer gateway) with an IPsec tunnel up, which in a
+   * residential mix is orders of magnitude fewer than sessions. The size is a
+   * virtual reservation and the OOM killer counts virtual - that lesson is
+   * written up over BPA_HASH_BUCKETS_DEFAULT, and it applies here too.
+   */
+  clib_bihash_init_16_8 (&bm->esp, "bpa-esp", BPA_ESP_BUCKETS_DEFAULT,
+			 BPA_ESP_MEMORY_DEFAULT);
+
   /* One session table per vlib main, worker or not: index by thread. */
   vec_validate (bm->per_thread, tm->n_vlib_mains - 1);
   for (i = 0; i < vec_len (bm->per_thread); i++)

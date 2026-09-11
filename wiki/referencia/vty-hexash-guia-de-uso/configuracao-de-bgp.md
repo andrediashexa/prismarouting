@@ -82,6 +82,73 @@ São recusas de **forma**, não de funcionamento: se o vizinho vai responder nã
 
 Vale tanto em `show running-config` quanto em `show this` dentro do bloco. Isso é só a exibição: a configuração salva e as revisões de rollback guardam o valor real, senão um rollback não conseguiria restaurar a sessão — e é por isso que esses arquivos não são legíveis por qualquer um.
 
+
+# Operar a sessão: o que se digita quando algo está errado
+
+## `show bgp summary`
+
+```
+hexarouting> show bgp summary
+  Neighbour          AS       State          Prefixes  Up
+  200.150.0.2        65001    Established    412       03:11:55
+  200.150.1.2        65002    Established    398       01:02:37
+
+  2 session(s), 2 established
+  all 810 BGP prefix(es) are in the forwarding table
+```
+
+A última linha é a que existe só aqui. Uma sessão Established carregando 412 prefixos é uma resposta verdadeira para **outra** pergunta: quem encaminha é a tabela do dataplane, e um prefixo que o roteamento tem e o dataplane não recebeu não move pacote nenhum. Quando os dois discordam:
+
+```
+  3 of 412 BGP prefix(es) are NOT in the forwarding table
+    200.150.9.0/24
+    ...
+    'show route verbose' compares the two tables in full
+```
+
+A contagem é do total, não por sessão. A tabela de encaminhamento não guarda por qual sessão a rota chegou, e pôr um número por vizinho ali seria pôr um número que não se sustenta.
+
+## Rotas que o equipamento não está guardando
+
+`show bgp neighbor <endereço> received-routes` mostra o que o vizinho mandou **antes** da política de entrada — e isso o equipamento só tem se mandaram guardar. Sem `soft-reconfiguration inbound` a tabela sai vazia, e "não recebi rota" e "não estou guardando" são respostas diferentes para se olhar durante um incidente:
+
+```
+error: neighbour 200.150.0.2 does not keep what it received, so this would
+print an empty table either way
+    add 'neighbor 200.150.0.2 soft-reconfiguration inbound' under the address
+    family; it costs memory
+    'show bgp neighbor 200.150.0.2 routes' shows what survived inbound policy,
+    which the box does have
+```
+
+`clear bgp <endereço> soft in` recusa pelo mesmo motivo e diz o mesmo, com a saída que sempre funciona: reiniciar a sessão e pegar as rotas de novo.
+
+## `clear`
+
+```
+hexarouting> clear bgp 200.150.0.2
+hexarouting> clear bgp 200.150.0.2 soft in
+```
+
+É operacional: não muda nada em disco. Exige conta de administrador, porque reiniciar sessão é uma queda de propósito.
+
+## Manutenção sem derrubar tráfego
+
+```
+router bgp 65000
+ bgp graceful-shutdown
+ exit
+```
+
+RFC 8326. Antes de uma manutenção, o tráfego **escoa** em vez de cair: os anúncios saem marcados com a comunidade de graceful shutdown, e as rotas que esta caixa recebeu passam a ter preferência local zero — ou seja, ela deixa de ser o caminho preferido enquanto quem tiver outro caminho assume.
+
+`no bgp graceful-shutdown` desfaz as duas coisas. Uma chave de manutenção que não volta não é uma chave de manutenção.
+
+:::info
+Confira pelo efeito, não pelo texto: `show bgp <prefixo>` no vizinho deve mostrar a comunidade `gracefulShutdown`, e `show bgp <prefixo>` aqui deve mostrar preferência local 0. Se a configuração tem a linha e o vizinho não vê a comunidade, a sessão não reanunciou ainda.
+:::
+
+
 # Como conferir
 
 * `show running-config` mostra a estrofe BGP como o equipamento a lê de volta, com a senha omitida;

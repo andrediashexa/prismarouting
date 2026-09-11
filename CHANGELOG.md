@@ -11,6 +11,17 @@ The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** in this document
 are to be interpreted as described in
 [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
+> The entries for **0.61.0, 0.61.1 and 0.61.2 were written after the fact**,
+> reconstructed from the commits, because all three were tagged, built and
+> installed with no entry here at all — leaving work an operator's box was
+> already running described under *Unreleased*. That breaks this file's own
+> rule ("at merge time, never afterwards from memory") and saying so is part of
+> the repair: a reconstruction that hides being one is a second, quieter
+> defect. `tools/release-gate.sh` now refuses a release whose version has no
+> heading here, so the rule is enforced by the only thing in this project that
+> has ever caught a release mistake rather than by whoever is doing the merge
+> remembering it ([#195](https://github.com/andrediashexa/hexarouting/issues/195)).
+
 ## 5W2H
 
 | | |
@@ -23,11 +34,355 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
-## Unreleased
+## 0.62.0 — the VTY an operator types at, ESP passthrough, and three releases with no entry
 
-[#184](https://github.com/andrediashexa/hexarouting/issues/184).
+[#14](https://github.com/andrediashexa/hexarouting/issues/14),
+[#190](https://github.com/andrediashexa/hexarouting/issues/190),
+[#191](https://github.com/andrediashexa/hexarouting/issues/191),
+[#186](https://github.com/andrediashexa/hexarouting/issues/186),
+[#188](https://github.com/andrediashexa/hexarouting/issues/188),
+[#192](https://github.com/andrediashexa/hexarouting/issues/192),
+[#193](https://github.com/andrediashexa/hexarouting/issues/193),
+[#194](https://github.com/andrediashexa/hexarouting/issues/194),
+[#195](https://github.com/andrediashexa/hexarouting/issues/195),
+[#196](https://github.com/andrediashexa/hexarouting/issues/196),
+[#197](https://github.com/andrediashexa/hexarouting/issues/197) (partly).
+
+### Added
+
+* **IPsec ESP passthrough, on by default**, the fourth entry in the ALG
+  registry and the first that is not an ALG: it parses nothing and rewrites
+  nothing but the addresses. The SPI in particular is left alone — RFC 4303
+  §3.3.2 puts it inside the integrity check, so a CGNAT that renumbered it the
+  way it renumbers a port would hand the subscriber a packet its own stack
+  discards while every counter reported success. Without passthrough an ESP
+  packet was an unsupported protocol and the tunnel did not come up at all.
+* **An inbound ESP packet is bound to a subscriber by its peer gateway**, not
+  by an SPI, so the first packet of the inbound half of an SA is delivered
+  rather than lost: the SPI a subscriber chose is announced over IKE, which is
+  encrypted, and nothing on the wire ever tells this box what it is. Two
+  subscribers sharing one public address keep separate tunnels as long as their
+  peers differ; when they do not, the second is refused under its own counter
+  rather than delivered on a guess, because the guess puts one customer's
+  ciphertext into another customer's IPsec stack. That is the case NAT-T (RFC
+  3948) exists for.
+* The ESP binding table is the one structure in the plugin shared across
+  workers, and `src/plugins/bpa/bpa_esp.h` says why it has to be: an inbound
+  ESP packet carries no port, so the arithmetic that steers every other reply
+  to the worker holding the subscriber cannot run on it.
+* `lab/esp.sh` asserts all of it on the captured packet — SPI, sequence number,
+  ciphertext and IP checksum — and `sh tools/lab.sh esp off` drops 21 of its 27
+  assertions.
+* **`show interface terse`** — one line per interface with an **Admin** column
+  and a **Link** column, because those are two facts and the difference between
+  them is the fault: up/down is a wire, down/down is a person, and the single
+  state column a box ships with cannot say which. When the two disagree the view
+  says so in words rather than leaving the conclusion to be read for. A
+  sub-interface has no hardware of its own and inherits its parent's link,
+  because a blank there would empty the column on exactly the interfaces an ISP
+  terminates subscribers on.
+* **`show interface utilization`** samples the counters and graphs what went
+  past. A counter is a total since boot; a rate is a difference, so the command
+  takes time and says how much **before** it starts rather than appearing to
+  have hung. The elapsed time is measured, not taken from the interval that was
+  asked for — on a box loaded enough to be worth asking about, a two-second
+  sleep is not two seconds. Where the dataplane reports a link speed the bar is
+  that interface's share of its own line rate; where it does not, the bar is
+  scaled to the busiest sample in the run and the footer says so, because a
+  percentage of a capacity the box does not know would be a number nobody could
+  defend. A counter that goes backwards (`clear interfaces`, mid-sample) reads
+  as zero and is said out loud; an interface that appeared between two samples
+  is skipped rather than reported as a spike.
+* **Pipe filters on any `show`** — `include`, `match`, `exclude`, `section`,
+  `count`, `first`, `last`. They run over the text the command already produced,
+  **after** its redactions, so `show running-config | include password` cannot
+  reveal what the unfiltered command hid; that is asserted against the real
+  redaction. Nothing shells out to `grep`: a pipe implemented that way is a
+  shell escape wearing a filter's clothes, reachable by a read-only account on
+  a product that restricts the shell to administrators on purpose. `section` is
+  the one that pays most, because this box's configuration *is* blocks. Only for
+  a `show` — elsewhere a `|` is a character in a regular expression or a
+  description, and treating it as a filter would cut a policy in half. An
+  unknown filter is refused rather than ignored, because `grep` is what somebody
+  types first.
+* `test/test_hexash_perms.py`: twelve assertions on the modes and the paths,
+  ten of which fail against the VTY as it was, and two of which are "must not"
+  guards that fail in the other direction — proved by widening the umask to
+  0o000 rather than argued for.
+* **CGNAT is configured under `nat`, and static routes under `router`.**
+  `nat cgnat pool residential`, and a `router static` block holding `route
+  <prefix> <next-hop>` lines — one `route` keyword rather than two, because the
+  family is in the prefix and asking for it again is asking the operator to
+  contradict themselves. Neither hierarchy exists in the tool underneath: VPP's
+  plugin knows `cgnat`, and FRR has no `router static` at all — its static
+  routes are top-level `ip route` statements, and a `router static` line handed
+  to it is refused mid-commit. So the block is translated, at the one place
+  typed configuration enters and at the one place a file is read, which is why
+  the two cannot drift.
+  **Both old spellings keep working**, typed and in a file, and that is not
+  politeness: every box in service has a saved configuration and up to twenty
+  rollback revisions written the old way, and `hexarouting.service` replays that
+  file at every boot on a machine nobody is watching. A grammar that cannot read
+  the box's own file leaves the box unconfigured, with nothing to say so until
+  somebody notices the traffic. They are deliberately NOT offered by completion,
+  because offering both teaches the one being left behind. `show
+  running-config`, `show configuration` and the file `save` writes are all in
+  the new hierarchy, and the box can read back what it wrote — asserted in
+  `test/test_hexash_config.py` and, on a real box with a file written in the old
+  format, in `lab/vty.sh`.
+  A VRF's static routes stay inside their `vrf` block: FRR indents those, and
+  hoisting one into `router static` would move the route to another table — a
+  display transform that changes where packets go. So the column is read as well
+  as the statement.
+* **`start shell` is in the command tree.** It already existed and already did
+  what was wanted — a child shell that returns to the VTY, refused for anything
+  but an administrator — and was deliberately hidden. Hiding was never the
+  boundary; the capability check is, and a command nobody can find is a command
+  the maintainer has to ask for.
 
 ### Fixed
+
+* **A non-root administrator could `commit check` a routing change and not
+  `commit` it.** Applying one needs three paths that belong to FRR and not to
+  this product: `/var/log/frr` (`drwxr-x--- frr:frr`, where `frr-reload` opens
+  `--logfile` before it looks at `--stdout`), `/var/run/frr` (`0710 frr:frr`,
+  where the delta is staged for `vtysh`), and `/etc/frr/frr.conf`
+  (`0640 frr:frr`, which `frr-reload` asks `vtysh` to persist into at the end).
+  The first two are scratch, so the VTY now hands `frr-reload` a private
+  directory of its own for both and nothing package-owned is touched. The third
+  is not scratch, so the installer makes that **file** `0660` — measured: with
+  the *directory* group-writable instead, `vtysh` creates a new `frr.conf`
+  owned by whoever committed and the next administrator cannot write it at all.
+  `lab/vty.sh` now asserts that an administrator APPLIES the change and that
+  FRR holds it, where it asserted a `commit check` and said why it could not
+  ask for more.
+* **`save` and the rollback store narrowed `/etc/hexarouting` past what the
+  operator's group needs.** `save_running()` chmod'd the directory `0700` and
+  the file `0600`, and `Rollback.push()` did the same — so the first `save` or
+  `commit` by anybody, root applying the configuration at boot included, took
+  away the access `install.sh` had just granted, and every later non-root
+  operation on it failed. The modes now have **one owner**, `install.sh`, which
+  states `2770`/`0660` group `hexa-cgnat`; the VTY neither restates nor narrows
+  them, and what it has to create it creates no wider than the group and never
+  world-readable. setgid, because the group alone is not enough: without it a
+  revision root writes at boot is group `root` and the operator who has to roll
+  back to it cannot read it.
+* A revision that is present and out of reach — every box upgraded from the
+  above carries up to twenty of them — is now **named** by `show rollback` and
+  refused in words by `rollback`, rather than raising a Python traceback in
+  front of whoever is in the maintenance window.
+
+* **`show interface` listing nothing but `local0` now says why.** That is the
+  truth and it is not an answer: it has several causes — nobody named an
+  interface, the name does not resolve, the name is the interface carrying the
+  default route and is refused on purpose so a remote box is not cut off, or
+  DPDK is off until a reboot has reserved hugepages — and each needs different
+  work. The two files that know (`/etc/vpp/startup.conf`,
+  `/etc/hexarouting/tune.env`) are not where the operator is looking. Reported
+  twice from a box in use and answered both times with "run these five commands
+  and tell me", which is the defect. In the same words as the boot self-test,
+  because two diagnoses of one fact that disagree are worse than one.
+* **`show interface description` stopped denying that the box has
+  descriptions.** It printed the table and then a line saying the dataplane
+  carries no per-interface description — true when written, false since
+  `description` began to be stored as the interface tag, and left saying so.
+  Worse than never having answered, because a reader stops looking for a feature
+  that exists. The assertion holding it in place asserted the sentence, so it
+  went on passing; it now asserts the other direction.
+* A command tree node could offer keywords **or** take a name, never both, so
+  adding `terse` to `show interface` would have taken away the interface names
+  it had always completed. A new option costing an old one is how a CLI gets a
+  reputation.
+
+* **`lab/lib.sh` starts FRR the way `frrinit.sh` does**, and eight labs use it.
+  Six of them started zebra and sometimes bgpd and nothing else — which is not
+  the FRR the product ships: on FRR 10 a static route and a prefix-list are
+  configured *through* mgmtd and served by staticd, and without them `vtysh`
+  answers `mgmtd is not running` to every one of them. A statement can be typed,
+  accepted, reported as committed and never exist. Two labs had worked this out
+  and written the reason in comments of their own while six went on starting two
+  daemons, so the knowledge now has one home. Three traps recorded in it, each
+  measured: mgmtd and staticd take **no `-f`** (passing one is an `invalid
+  option` that leaves the daemon not running with nothing obviously wrong);
+  bgpd **refuses to start** when told to load an RPKI module that is not
+  installed, and that module is at `/usr/lib/*/frr/modules/`, not beside the
+  daemons — the first version of this looked in the wrong place and
+  `lab/bgp-policy.sh` failed seven checks, quietly, because a bgpd with no RPKI
+  answers as though the feature were simply off; and the wait is on
+  `mgmtd_fe.sock` rather than a `sleep`.
+
+* **A static route whose daemon is not running is refused, instead of
+  committing and forwarding nothing.** A static route is neither a `router`
+  line nor a policy statement, so both existing daemon checks — the one from
+  #99 and the one from #155 — walked straight past it. Nothing looked at `ip
+  route`, which is the most common statement there is on an edge box. Measured
+  with staticd and mgmtd stopped: `frr-reload` **exits 0 having applied
+  nothing**. Its own log says `[zebra] sending configuration` / `done` for the
+  line, then notices on a second pass that the statement is still missing,
+  sends it *again*, and exits 0 anyway — FRR discards a statement no running
+  daemon claims and says so to nobody, and the box reported `commit complete`
+  for a default route that forwards no packets. Part of
+  [#197](https://github.com/andrediashexa/hexarouting/issues/197).
+* **A filter argument in quotes matched nothing.** `show running-config |
+  section "interface Gi"` is the shape a pipe has in every shell anybody has
+  used, and this filter is not a shell: nothing removed the quotes, so they
+  became part of the text being searched for and the filter found nothing at
+  all. Silently, which is the worst of it — an empty result reads as "there is
+  no such section". A matched pair around the whole argument is taken off now;
+  a quote inside the argument is still a character somebody is searching for.
+* **Two `usage:` lines still taught the spelling the box moved away from** —
+  `usage: cgnat interface ...` and `usage: cgnat session-table ...`. A usage
+  line is an instruction, which is exactly what
+  [#193](https://github.com/andrediashexa/hexarouting/issues/193) is about.
+* **A refusal about a route typed in `router static` named FRR's spelling.**
+  The translation happens before any check runs, so the error named a statement
+  that appears nowhere in what was typed and nowhere in `show configuration`
+  either: an operator who searched their own configuration for `ip route` after
+  reading the error found nothing. It now reads `router static / route
+  10.55.0.0/16 172.31.99.1: ...`.
+* **The refusal for a missing daemon stopped naming a file the daemon is not
+  in.** It said `Enable <daemon> in /etc/frr/daemons` whichever daemon was
+  missing, and frrinit.sh starts zebra, mgmtd and staticd itself — they are not
+  lines in that file, so an operator sent there finds nothing to enable, on a
+  box whose real fault is that frr did not finish starting. `lab/routing.sh`
+  asserted that `/etc/frr/daemons` appeared in the refusal, which passed
+  whatever the sentence around it said, including the wrong one; it now asserts
+  the advice.
+
+### Found and not fixed
+
+* **`frr-reload` can exit 0 having dropped a statement, and the product
+  believes it.** The fix above catches the one cause that can be named in
+  advance; it does not catch the next. The general answer is a read-back check
+  — after applying, a statement the candidate holds that is not in FRR's
+  running configuration is a failed commit whatever the exit status said, the
+  same argument `show bgp summary` already makes about the FIB. What stops it
+  being written today is a measured false positive: FRR omits a statement from
+  its read-back when the value equals a default, so `poll-interval 60` typed
+  explicitly comes back absent (recorded in `lab/igp.sh`), and refusing on that
+  would be worse than the bug. The shape it needs is to report the absent
+  statements without rolling back and stop printing `commit complete` when any
+  are missing — with a list of what FRR round-trips that is measured rather
+  than assumed
+  ([#197](https://github.com/andrediashexa/hexarouting/issues/197)).
+* `/etc/frr/frr.conf` is a package conffile, so an frr upgrade that reinstalls
+  it puts `0640` back and non-root commits fail until `install.sh` is re-run.
+  The failure is loud — the commit is refused and rolled back.
+
+## 0.61.2 — the gate refused twice, and the second refusal was a stale assertion
+
+### Fixed
+
+* **`lab/install-iso.sh` asserted a self-test string the product had stopped
+  printing, in the same release that stopped printing it.** It grepped the boot
+  self-test for `binary API works for a non-root account` — a line the
+  self-test printed after *synthesising* the group with `setpriv`. #184
+  replaced that with a check on the box's real accounts, and a freshly
+  installed box has no operator account at all, so it prints `[info] no
+  operator account exists yet`. The lab now asserts what it can honestly see:
+  the API must not be reported root-only, and a box nobody has configured yet
+  must SAY it has no operator account rather than staying quiet — "no accounts"
+  being mistaken for "the accounts are fine" is the whole reason that line
+  exists.
+* The note in 0.61.1 naming #185 as the cause of the gate's refusal of v0.61.0
+  was **wrong**, and the gate refusing v0.61.1 for the identical message is
+  what proved it. The #185 fix stands — it is a real defect and it was
+  measured — but it was not that one. Corrected here rather than by rewriting
+  0.61.1's own entry, because a changelog that edits its own history is not a
+  record.
+
+### Found and not fixed
+
+* [#189](https://github.com/andrediashexa/hexarouting/issues/189): that a role
+  granted through the VTY works on an **installed** box is still unproven. It
+  needs the lab to drive the serial console; until it does, the roles feature
+  is proved in a container against a VPP the lab started by hand — which is the
+  shape [#99](https://github.com/andrediashexa/hexarouting/issues/99),
+  [#168](https://github.com/andrediashexa/hexarouting/issues/168) and
+  [#182](https://github.com/andrediashexa/hexarouting/issues/182) all had.
+
+## 0.61.1 — a root API client reset the segment, and the release gate was right to refuse
+
+[#185](https://github.com/andrediashexa/hexarouting/issues/185).
+
+### Fixed
+
+* **One client running as root reset `/dev/shm/global_vm` to `root:root`, and
+  every non-root client afterwards died inside `svm_region_map`** — `vat2` with
+  SIGSEGV, which reads like a client bug rather than a permission one. On a
+  shipped box `hexarouting.service` applies the saved configuration as root at
+  every boot, so the drop-in that sets the group when VPP starts was undone by
+  the very next unit. Repaired by the thing that breaks it rather than by
+  another unit chasing it, because an interactive root session breaks it too
+  and no unit runs after that one. Best effort and silent: a box where the
+  group does not exist, or where this is not root, is not a box this can fix,
+  and failing a commit over it would refuse a change that worked.
+* This was found by 0.61.0's own work and written down there as *not* fixed. It
+  became a blocker in the next release because of the other half of that work
+  — the boot self-test stopped synthesising the group with `setpriv`. The old
+  check asked "would an account in group `vpp` work", which is true; the new
+  one asks "is any account reaching it", which on a real installed box was
+  false. The first self-test that looked at the real accounts found it on the
+  first try, which is the whole argument for that change.
+
+## 0.61.0 — roles that were unreachable, OSPF the VTY understands, and a stall only this box can see
+
+[#173](https://github.com/andrediashexa/hexarouting/issues/173),
+[#174](https://github.com/andrediashexa/hexarouting/issues/174),
+[#183](https://github.com/andrediashexa/hexarouting/issues/183),
+[#184](https://github.com/andrediashexa/hexarouting/issues/184).
+
+### Added
+
+* **`router ospf` is a block the VTY understands**, at both levels. It used to
+  be passed through and understood by nobody: no completion, no `?`, and a typo
+  found when FRR refused it mid-commit. The router-level and interface-level
+  statements an ISP edge or aggregation box uses are modelled — not everything
+  FRR takes, because a grammar listing a thousand commands is the reference
+  manual this VTY exists not to be.
+* **The OSPF MTU stall, which FRR cannot report at all.** FRR compares the
+  TAP's MTU in its database description packets while the wire runs at the
+  dataplane's, so when they differ the adjacency sits in Exchange for ever with
+  no log line on either side. `docs/routing.md` had called that Pitfall 1 since
+  before there was a check for it. Reported with BOTH numbers, because "the
+  MTUs disagree" is not actionable and "1400 against 1500" is — and as a
+  warning, never a refusal, because `ip ospf mtu-ignore` is the supported
+  escape hatch and a deliberate asymmetry is legitimate.
+* Four more OSPF findings reported and one refused. Refused: a
+  `passive-interface` naming an interface the box does not have, which commits
+  and leaves the port the operator meant to keep quiet talking. Reported: a
+  `network` statement matching no address on this box; an area border router
+  with interfaces in two areas and none in area 0, so inter-area routes never
+  propagate; `redistribute bgp` with no route-map, which on an edge box is the
+  whole table into the IGP; and a **subscriber-facing port speaking OSPF** —
+  the cross-half check only this product can make, because FRR does not know
+  what a CGNAT pool is and the dataplane does not know what OSPF is.
+* **`lab/igp.sh`**: both IGPs configured through the VTY and asserted on the
+  FIB, with `ospfd.conf` and `isisd.conf` emptied to a hostname line the way
+  `bgpd.conf` was for #142, so every assertion is evidence about the VTY rather
+  than about a file the lab wrote. The MTU stall is measured rather than
+  papered over — 40 s with the prefix absent, then `mtu 1500` through the VTY
+  and Full in 6 s, asserted against the same adjacency's own convergence rather
+  than a wall-clock threshold. First IPv6 route in this suite proved to have
+  reached the dataplane by any protocol.
+
+### Fixed
+
+* **Attaching CGNAT over the binary API skipped the reassembly the CLI path
+  enables.** Since #76 moved the VTY off `vppctl`, an interface attached by the
+  product got no shallow virtual reassembly and no tcp-mss recompute — both
+  silent. On an API-attached interface a following fragment was not recognised
+  as one: it was read with whatever bytes sat where the ports would be, opened
+  a SECOND session, burned a port of the block, and the datagram left in two
+  halves wearing two different source ports; out2in the same fragment matched
+  nothing and was dropped. One shared function now, not two copies, because a
+  third caller is not hypothetical. The detach mirror was worse than it looked
+  — the API neither incremented nor decremented, so a CLI attach followed by an
+  API detach decremented a refcount the API had never raised; all four
+  combinations close at zero and the lab asserts the round trip. The MSS half
+  was a bounded window rather than a permanent state: the expiry process
+  recomputes once a second, so the missing call left the clamp up to 1 s stale
+  rather than wrong for ever.
 
 * **The VTY created every account in no group, so every role was
   unreachable.** `apply_users()` ran `useradd`, `usermod -s` and `chpasswd`
@@ -62,12 +417,14 @@ are to be interpreted as described in
 
 ### Found and not fixed
 
-* A **root** API client puts `/dev/shm/global_vm` back to `root:root`, undoing
-  the `vpp.service` drop-in — after which every non-root client crashes in
-  `svm_region_map`. Measured in `lab/vty.sh`.
+* `ospf6d` is enabled nowhere, so the VTY models an OSPFv3 block the box cannot
+  run ([#187](https://github.com/andrediashexa/hexarouting/issues/187) — the
+  maintainer's call whether to ship the daemon or withdraw the grammar).
 * `frr-reload.py` logs to `/var/log/frr/frr-reload.log`, which the frr package
   ships `drwxr-x--- frr:frr`, so a non-root administrator can validate a
-  routing change and cannot apply one.
+  routing change and cannot apply one
+  ([#186](https://github.com/andrediashexa/hexarouting/issues/186) — fixed
+  later, and it turned out to be three paths rather than this one).
 
 ## 0.60.0 — the second lab-only step, a trail that missed a change, and a diagnostic that lied
 

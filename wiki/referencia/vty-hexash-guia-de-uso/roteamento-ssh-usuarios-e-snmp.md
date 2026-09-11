@@ -11,21 +11,42 @@ Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças ex
 # Roteamento (FRR)
 
 ```
+router static
 router bgp <AS>
 router ospf
 router isis <nome>
-ip route <prefixo> <próximo-salto>
 ```
 
-O roteamento é do FRR, alcançado pelo TAP do `linux_cp`. Depois de entrar no protocolo, a sintaxe é a do FRR.
+Tudo que roteia fica debaixo de `router`: os protocolos, e também as rotas que ninguém aprende — as estáticas. Os protocolos são do FRR, alcançado pelo TAP do `linux_cp`; depois de entrar no protocolo, a sintaxe é a do FRR.
+
+## Rotas estáticas: o bloco `router static`
 
 Uma rota estática não precisa de protocolo nenhum e é a primeira coisa que se configura numa caixa nova:
 
 ```
 configure
-ip route 0.0.0.0/0 200.150.0.1
-commit
+ router static
+  route 0.0.0.0/0 200.150.0.1
+  route 2001:db8::/32 2001:db8:0:1::1
+  exit
+ commit
 ```
+
+Dentro do bloco:
+
+| Comando | O que faz |
+|---------|-----------|
+| `route <prefixo> <próximo-salto\|interface\|blackhole\|Null0> [distância]` | uma rota estática |
+| `no route <prefixo> ...` | remove uma rota estática |
+| `exit` | sai do bloco |
+
+**Há um só** `**route**`**, não um para cada família.** A família sai do prefixo: prefixo com dois-pontos é IPv6 e não pode ser outra coisa. Pedir a família outra vez seria pedir ao operador a chance de se contradizer.
+
+
+:::info
+**A grafia antiga continua aceita.** `ip route 0.0.0.0/0 200.150.0.1` e `ipv6 route ...` digitados no topo do modo de configuração continuam valendo, e é assim que está escrita toda configuração salva antes desta mudança — inclusive as revisões de rollback que a caixa relê a cada boot. O que TAB e `?` oferecem é só `router static`, e é nessa forma que `show running-config`, `show configuration` e o arquivo do `save` passam a mostrar as estáticas: um bloco `router static` com as rotas dentro.
+
+:::
 
 `commit check` recusa um próximo salto que não está em nenhuma rede conectada:
 
@@ -35,6 +56,8 @@ error: ip route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
 ```
 
 Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
+
+Repare que a recusa nomeia a rota como `ip route ...`, e não como você a digitou: quem guarda rota estática é o roteamento, nessa grafia, e a mensagem mostra a linha que iria para ele. Procure a rota pelo prefixo, não pela primeira palavra.
 
 ## Ver a tabela: `show route`, não `show ip route`
 
@@ -217,7 +240,6 @@ Prefix-lists e route-maps são escritos na sintaxe do roteamento e guardados por
 ```
 hexarouting# [edit] ip ?
   prefix-list  a named list of prefixes, for matching in policy
-  route        a static route
 hexarouting# [edit] ip prefix-list <TAB>
   PL-CLIENTES   ip prefix-list
 ```

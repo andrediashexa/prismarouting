@@ -66,15 +66,18 @@ e reinicie. Só depois disso o VPP recebe a placa.
 
 ```
 show interface
+show interface terse
 ```
 
 Anote qual é a de assinantes (*inside*) e qual é a de upstream (*outside*). Confirme que a de gerência não está entre elas.
+
+`show interface terse` dá uma linha por interface com duas colunas de estado — `Admin`, que é o que está configurado, e `Link`, que é o que o cabo está fazendo. Antes de configurar qualquer coisa, é a forma mais rápida de ver se as duas portas que você vai usar estão realmente conectadas.
 
 ## 5. Criar o pool
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   inside 100.64.0.0/10
   outside 203.0.113.0/24
   block-size 512
@@ -102,8 +105,8 @@ Não sabe o que digitar? **TAB** completa e `**?**` lista as opções válidas c
 ## 6. Habilitar nas interfaces
 
 ```
-cgnat interface TenGigabitEthernet0/0/0 inside
-cgnat interface TenGigabitEthernet0/0/1 outside
+nat cgnat interface TenGigabitEthernet0/0/0 inside
+nat cgnat interface TenGigabitEthernet0/0/1 outside
 ```
 
 ## 7. Ver o que vai acontecer, antes de acontecer

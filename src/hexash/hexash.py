@@ -14,17 +14,21 @@ and does not pin us to an FRR release.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import ipaddress
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
+                    NAT_HIERARCHY, STATIC_BLOCK, strip_nat, as_hierarchy,
                     _address_family_error, _is_loopback)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -39,6 +43,23 @@ readline = None
 CONFIG_PATH = os.environ.get("HEXA_CONFIG", "/etc/hexarouting/hexarouting.conf")
 ROLLBACK_DIR = os.environ.get("HEXA_ROLLBACK", "/etc/hexarouting/rollback")
 ROLLBACK_KEEP = 20
+# What the VTY may do to the mode of the configuration store, which is:
+# create it no wider than the group, and nothing else.
+#
+# The mode has ONE owner and it is appliance/install.sh - 2770 on the
+# directories and 0660 on the files, group hexa-cgnat. It has to be the
+# installer, because the rest of this is ownership: a mode without the group
+# grants nobody anything, the setgid bit is what puts that group on what gets
+# created later, and a non-root operator can do neither to a directory it does
+# not own. The VTY can only ever damage that arrangement, which is what it did
+# - chmod 0700 here made the first save or commit by ANYBODY, root at boot
+# included, the last one a non-root operator could follow (#188).
+#
+# 0007 rather than a mode argument: it covers the directory and the file and
+# every path makedirs() creates on the way, and what it guarantees is the half
+# that must never slip - no world access to a file carrying every password
+# hash on the box.
+CONFIG_UMASK = 0o007
 VPPCTL = os.environ.get("VPPCTL", "vppctl")
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
@@ -60,6 +81,32 @@ POLICY_STATEMENT = ("ip prefix-list", "ipv6 prefix-list", "route-map",
                     "bgp as-path access-list", "bgp community-list",
                     "bgp large-community-list")
 POLICY_DAEMONS = ("mgmtd", "zebra")
+
+# A static route is not a policy statement and not a `router` line, so neither
+# check above ever looked at one. It needs staticd to serve it and mgmtd to
+# configure it - and without them frr-reload EXITS 0 having done nothing.
+# Measured: its own log says `[zebra] sending configuration` / `done` for the
+# line, then notices on a second pass that the statement is still missing, sends
+# it again, and exits 0 anyway. FRR discards a statement no running daemon
+# claims, and says so to nobody (#197).
+STATIC_STATEMENT = ("ip route", "ipv6 route")
+STATIC_DAEMONS = ("mgmtd", "staticd")
+
+#: The daemons frrinit.sh starts unconditionally. They are NOT lines in
+#: /etc/frr/daemons that an operator can turn on, so telling somebody to enable
+#: one there sends them to a file that will not mention it. One of these being
+#: absent means frr did not finish starting, which is a different fault with a
+#: different fix.
+ALWAYS_STARTED = ("zebra", "mgmtd", "staticd")
+
+
+def enable_daemon_advice(need):
+    """How to get `need` running, which depends on whether it is optional."""
+    if need in ALWAYS_STARTED:
+        return (f"{need} is started by frr itself, not listed in "
+                "/etc/frr/daemons - so frr did not finish starting. "
+                "'systemctl restart frr' and read its journal")
+    return f"Enable {need} in /etc/frr/daemons and restart frr"
 
 ROUTER_DAEMON = {"bgp": "bgpd", "ospf": "ospfd", "ospf6": "ospf6d",
                  "isis": "isisd", "rip": "ripd", "eigrp": "eigrpd",
@@ -128,6 +175,7 @@ ARG_COMMUNITY_LIST = "<community-list>"
 ARG_ROUTE_MAP = "<route-map>"
 ARG_PEER_GROUP = "<peer-group>"
 ARG_AREA = "<area>"
+ARG_ISIS_TAG = "<isis-instance>"
 ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
@@ -164,10 +212,97 @@ SHOW = {
     }),
     "ospf": ("OSPF neighbours and the database (FRR)", None),
     "isis": ("IS-IS information (FRR)", None),
-    "interface": ("interfaces on the dataplane, with state and addresses",
-                  ARG_INTERFACE),
+    "interface": ("interfaces on the dataplane, with state and addresses", {
+        "terse": ("one line each: admin state, link state, address", None),
+        "description": ("what each interface is for, and its state", None),
+        "utilization": ("sample the counters and graph what is passing", {
+            "interval": ("seconds between samples (default 2)", "<seconds>"),
+            "count": ("how many samples to take (default 5)", "<count>"),
+            ARG_INTERFACE: ("only this interface", None),
+        }),
+        ARG_INTERFACE: ("one interface, in detail, with its counters", None),
+    }),
     "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
+}
+
+# Offered inside `router static`. FRR has no such block - its static routes are
+# top-level `ip route` statements - so this is a hierarchy this VTY provides and
+# translates, which is the whole reason it needs a grammar of its own here.
+STATIC_BLOCK_GRAMMAR = {
+    "route": ("a destination this box is told about, rather than taught",
+              "<prefix> <next-hop|interface|blackhole|Null0> [distance]"),
+    "no": ("remove", {"route": ("remove a static route", "<prefix> ...")}),
+    "exit": ("leave the block", None),
+}
+
+# Offered inside `router isis <tag>`. IS-IS is what an ISP core runs, and this
+# VTY offered `<word>` for the instance tag and nothing after it (#175).
+ISIS_BLOCK = {
+    "net": ("this box's NSAP address; without it the instance never starts",
+            "<49.xxxx.xxxx.xxxx.xxxx.00>"),
+    "is-type": ("which levels this box takes part in", {
+        "level-1": ("area-internal only", None),
+        "level-2-only": ("backbone only - what an ISP core runs", None),
+        "level-1-2": ("both", None),
+    }),
+    "metric-style": ("how a link's metric is encoded", {
+        "wide": ("32-bit metrics; narrow caps at 63 and cannot express a "
+                 "10G-and-up topology", None),
+        "narrow": ("6-bit metrics, for a neighbour that cannot do wide", None),
+        "transition": ("send both while a network is being migrated", None),
+    }),
+    "topology": ("carry a second address family over the same adjacency", {
+        "ipv6-unicast": ("IPv6, which needs this even when the interfaces "
+                         "already have addresses", None),
+    }),
+    "set-overload-bit": ("tell everybody not to transit through this box - "
+                         "IS-IS's maintenance drain", "[on-startup <1-86400>]"),
+    "redistribute": ("inject routes from another source", {
+        "ipv4": ("IPv4", "<proto> level-1|level-2 [metric <n>] "
+                 "[route-map <name>]"),
+        "ipv6": ("IPv6", "<proto> level-1|level-2 [metric <n>] "
+                 "[route-map <name>]"),
+    }),
+    "default-information": ("originate a default route", {
+        "originate": ("advertise a default", "ipv4|ipv6 level-1|level-2 "
+                      "[always] [route-map <name>]"),
+    }),
+    "domain-password": ("level-2 authentication; never printed back",
+                        "[clear|md5] <password>"),
+    "area-password": ("level-1 authentication; never printed back",
+                      "[clear|md5] <password>"),
+    "log-adjacency-changes": ("log every adjacency transition", None),
+    "lsp-mtu": ("largest LSP this box generates; larger than the smallest "
+                "interface MTU and they cannot be sent", "<128-4352>"),
+    "lsp-gen-interval": ("seconds between LSP regenerations", "<1-120>"),
+    "spf-interval": ("seconds between SPF runs", "<1-120>"),
+    "max-lsp-lifetime": ("seconds an LSP stays valid", "<350-65535>"),
+    "exit": ("leave the IS-IS configuration", None),
+}
+
+# IS-IS's interface statements, which live in the interface block the way
+# OSPF's do.
+ISIS_INTERFACE = {
+    "circuit-type": ("which levels this interface takes part in", {
+        "level-1": ("area-internal only", None),
+        "level-2-only": ("backbone only", None),
+        "level-1-2": ("both", None),
+    }),
+    "network": ("how IS-IS treats the link", {
+        "point-to-point": ("no DIS election and no pseudo-node - what a p2p "
+                           "Ethernet wants, and setting it on one side only "
+                           "is a non-adjacency", None),
+    }),
+    "metric": ("this interface's metric; above 63 needs metric-style wide",
+               "<0-16777215> [level-1|level-2]"),
+    "passive": ("advertise the interface and send no hellos", None),
+    "hello-interval": ("seconds between hellos", "<1-600>"),
+    "hello-multiplier": ("missed hellos before the neighbour is down",
+                         "<2-100>"),
+    "password": ("per-interface authentication; never printed back",
+                 "[clear|md5] <password>"),
+    "bfd": ("track the adjacency with BFD", None),
 }
 
 # Offered inside `router ospf`. The statements an ISP edge or aggregation box
@@ -262,11 +397,20 @@ INTERFACE_BLOCK = {
     }),
     "ip": ("routing-protocol settings FRR owns on this interface", {
         "ospf": ("OSPF on this interface", OSPF_INTERFACE),
+        "router": ("join a routing instance", {
+            "isis": ("run IS-IS for IPv4 on this interface", ARG_ISIS_TAG),
+        }),
     }),
+    "isis": ("IS-IS settings on this interface", ISIS_INTERFACE),
     "ipv6": ("IPv6 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
         "nd": ("neighbour discovery", {
             "suppress-ra": ("stop advertising this box as a router", None),
+        }),
+        "router": ("join a routing instance", {
+            "isis": ("run IS-IS for IPv6 on this interface - which also needs "
+                     "'topology ipv6-unicast' on the instance",
+                     ARG_ISIS_TAG),
         }),
     }),
     "shutdown": ("take the interface administratively down", None),
@@ -520,6 +664,8 @@ CGNAT_POOL = {
         "ftp": ("FTP PORT/EPRT and the 227/229 replies", "<on|off>"),
         "rtsp": ("RTSP Transport client_port", "<on|off>"),
         "pptp": ("PPTP control channel and its GRE data channel", "<on|off>"),
+        "esp": ("IPsec ESP passthrough, bound to the peer gateway",
+                "<on|off>"),
     }),
     "vrf": ("the VRF whose subscribers this pool serves; absent means every "
             "VRF", ARG_NUM),
@@ -686,6 +832,14 @@ def running_from_live_medium():
 TREE = {
     "operational": {
         "configure": ("edit the candidate configuration", None),
+        # Offered rather than hidden. The comment on start_shell() already
+        # made this argument: hiding it was never the boundary, the capability
+        # check is - and a command an administrator cannot find is one they
+        # ask for, which is how this came back (#194).
+        "start": ("leave the VTY for a shell, and come back to it", {
+            "shell": ("a login shell; administrators only, because a shell "
+                      "on this box is every capability at once", None),
+        }),
         "show": ("display information", SHOW),
         "clear": ("reset a session, without changing the configuration", {
             "bgp": ("a BGP session", ARG_NEIGHBOUR),
@@ -695,13 +849,23 @@ TREE = {
         "exit": ("end the session", None),
     },
     "config": {
-        "cgnat": ("CGNAT configuration", CGNAT_CONFIG),
+        # CGNAT sits under `nat`, and static routes under `router`, because
+        # that is where an operator looks for them (#193). Both old spellings
+        # - `cgnat ...` at the top level and `ip route ...` - are still
+        # accepted, and are deliberately NOT offered here: a box in service has
+        # a saved configuration and twenty rollback revisions written in them,
+        # so they have to work, but offering both teaches the one being left
+        # behind.
+        "nat": ("address translation", {
+            "cgnat": ("carrier-grade NAT", CGNAT_CONFIG),
+        }),
         "no": ("remove configuration", {
-            "cgnat": ("remove CGNAT configuration", {
-                "pool": ("remove a pool", ARG_POOL),
-                "interface": ("disable CGNAT on an interface", ARG_INTERFACE)})}),
+            "nat": ("remove address translation", {
+                "cgnat": ("remove CGNAT configuration", {
+                    "pool": ("remove a pool", ARG_POOL),
+                    "interface": ("disable CGNAT on an interface",
+                                  ARG_INTERFACE)})})}),
         "ip": ("IP configuration", {
-            "route": ("a static route", "<prefix> <next-hop|interface>"),
             "prefix-list": ("a named list of prefixes, for matching in policy",
                             ARG_PREFIX_LIST)}),
         "ipv6": ("IPv6 configuration", {
@@ -718,10 +882,11 @@ TREE = {
                                      ARG_COMMUNITY_LIST),
         }),
         "rpki": ("origin validation: the caches this box asks", None),
-        "router": ("routing protocols (FRR)", {
+        "router": ("routing, static and dynamic", {
+            "static": ("routes this box is told, rather than taught", None),
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", "[vrf <name>]"),
-            "isis": ("IS-IS", ARG_WORD),
+            "isis": ("IS-IS", ARG_ISIS_TAG),
         }),
         "interface": ("interface configuration", ARG_INTERFACE),
         "ssh": ("the SSH daemon", {
@@ -789,6 +954,12 @@ def _starts(candidate, prefix):
     than not completing.
     """
     return candidate.lower().startswith(prefix.lower())
+
+
+def _frr_static(rest):
+    """`route <prefix> ...` as the `ip route` / `ipv6 route` FRR understands."""
+    family = "ipv6" if ":" in rest[0] else "ip"
+    return f"{family} route " + " ".join(rest)
 
 
 def tree_walk(mode, words):
@@ -1001,6 +1172,203 @@ def undefined_policy_lists(routing):
             out.append((line.strip(), f"no large-community list called "
                         f"'{name}' is defined; the clause would match nothing"))
     return out
+
+
+def isis_findings(routing):
+    """
+    What an IS-IS configuration says that will not do what it looks like.
+
+    Every one of these is accepted by FRR and every one is local to this box,
+    which is the line this project draws: whether the neighbour agrees is not
+    in the configuration and is not claimed.
+    """
+    instances = {}      # tag -> {net, is_type, metric_style, topologies}
+    joined = {}         # tag -> [(interface, family, statement)]
+    circuits = {}       # tag -> [(interface, circuit_type, statement)]
+    metrics = []        # (interface, value, statement)
+    tag = None
+    iface = None
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "isis"] and len(w) > 2:
+            tag, iface = w[2], None
+            instances.setdefault(tag, {"net": False, "is_type": None,
+                                       "metric_style": None, "v6": False})
+            continue
+        if w[0] == "interface" and len(w) > 1:
+            tag, iface = None, w[1]
+            continue
+        if w[0] in ("router", "route-map", "rpki", "vrf"):
+            tag, iface = None, None
+            continue
+        if tag:
+            inst = instances[tag]
+            if w[0] == "net":
+                inst["net"] = True
+            elif w[0] == "is-type" and len(w) > 1:
+                inst["is_type"] = w[1]
+            elif w[0] == "metric-style" and len(w) > 1:
+                inst["metric_style"] = w[1]
+            elif w[:2] == ["topology", "ipv6-unicast"]:
+                inst["v6"] = True
+        elif iface:
+            if w[:3] in (["ip", "router", "isis"], ["ipv6", "router", "isis"]) \
+                    and len(w) > 3:
+                joined.setdefault(w[3], []).append((iface, w[0], line.strip()))
+            elif w[:2] == ["isis", "circuit-type"] and len(w) > 2:
+                circuits.setdefault(None, []).append((iface, w[2],
+                                                      line.strip()))
+            elif w[:2] == ["isis", "metric"] and len(w) > 2:
+                try:
+                    metrics.append((iface, int(w[2]), line.strip()))
+                except ValueError:
+                    pass
+
+    out = []
+    for tag, inst in instances.items():
+        # REFUSED: an instance with no NET never starts. FRR accepts the
+        # stanza and isisd runs with nothing in it.
+        if not inst["net"]:
+            out.append(("error", f"router isis {tag}",
+                        "no 'net': the instance has no address and will not "
+                        "start"))
+        # An instance no interface joins runs and carries nothing.
+        if tag not in joined:
+            out.append(("warning", f"router isis {tag}",
+                        "no interface joins it, so it runs and carries "
+                        "nothing"))
+        # The IPv6 half, silently absent while IPv4 works.
+        v6_joins = [j for j in joined.get(tag, []) if j[1] == "ipv6"]
+        if v6_joins and not inst["v6"]:
+            out.append(("warning", v6_joins[0][2],
+                        f"instance {tag} has no 'topology ipv6-unicast', so "
+                        "the IPv6 half carries nothing while IPv4 works"))
+        # Narrow metrics cap at 63. The classic silent limitation.
+        if inst["metric_style"] in (None, "narrow"):
+            big = [m for m in metrics if m[1] > 63]
+            if big:
+                out.append(("warning", big[0][2],
+                            f"{big[0][1]} needs 'metric-style wide' on "
+                            f"{tag}; narrow metrics cap at 63"))
+
+    # REFUSED: an interface joining a tag no instance declares. Same shape as
+    # the undeclared peer group and the undefined route-map.
+    for tag, joins in joined.items():
+        if tag not in instances:
+            out.append(("error", joins[0][2],
+                        f"no 'router isis {tag}' declares that instance"))
+
+    # A level-2-only box with a level-1 circuit forms no adjacency on it, and
+    # this is entirely local: FRR accepts both halves.
+    only_tag = next(iter(instances), None)
+    if len(instances) == 1 and only_tag:
+        want = instances[only_tag]["is_type"]
+        for ifname, ctype, stmt in circuits.get(None, []):
+            if want == "level-2-only" and ctype == "level-1":
+                out.append(("warning", stmt,
+                            f"instance {only_tag} is level-2-only, so a "
+                            "level-1 circuit forms no adjacency"))
+            elif want == "level-1" and ctype == "level-2-only":
+                out.append(("warning", stmt,
+                            f"instance {only_tag} is level-1, so a "
+                            "level-2-only circuit forms no adjacency"))
+    return out
+
+
+#: The filters a `show` may be piped into, and what each takes after it.
+#: Deliberately short. Every one of these answers a question an operator
+#: actually asks on this box; a longer list would be a second language to
+#: learn, and the one thing it MUST NOT become is a shell - a pipe implemented
+#: by handing the text to `grep` is a shell escape wearing a filter's clothes,
+#: reachable by a read-only account, on a product that restricts the shell to
+#: administrators on purpose.
+PIPE_FILTERS = {
+    "include": ("keep the lines containing this", "<text>"),
+    "match": ("the same as include, for operators who type it that way",
+              "<text>"),
+    "exclude": ("drop the lines containing this", "<text>"),
+    "section": ("keep the block a matching line opens, to the next line that "
+                "starts at column 0", "<text>"),
+    "count": ("how many lines, instead of the lines", None),
+    "first": ("the first n lines", "<n>"),
+    "last": ("the last n lines", "<n>"),
+}
+
+
+def split_pipe(line):
+    """
+    A command and the filters it was piped into.
+
+    Only for `show`. A '|' in a configuration statement is a character in a
+    regular expression or in a description, not a filter, and treating it as
+    one would mangle a policy an operator wrote - so the caller decides, and
+    this is never applied to anything else.
+    """
+    parts = [p.strip() for p in line.split("|")]
+    return parts[0], [p for p in parts[1:] if p]
+
+
+def apply_pipe(text, stages):
+    """
+    Run the filters over the text a command already produced.
+
+    AFTER the command, and after its redactions, which is what makes
+    `show running-config | include password` safe: the filter sees the string
+    the operator would have seen anyway, never the value behind it.
+
+    An unknown filter is refused rather than ignored. Ignoring it would answer
+    the question the operator did not ask, with no sign that it had.
+    """
+    lines = text.splitlines()
+    for stage in stages:
+        w = stage.split()
+        if not w:
+            continue
+        verb, arg = w[0], " ".join(w[1:])
+        # Surrounding quotes are taken off. Everybody types them - the shape
+        # `| section "interface Gi"` is what a pipe looks like in every shell
+        # anybody has used, and this filter is not a shell, so nothing had
+        # removed them: the quotes became part of the text being searched for
+        # and the filter matched nothing at all. Silently, which is the worst
+        # of it - an empty result reads as "there is no such section".
+        #
+        # Only a matched pair, and only around the whole argument. A quote in
+        # the middle of a string is a character somebody is searching for.
+        if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in "\"'":
+            arg = arg[1:-1]
+        if verb not in PIPE_FILTERS:
+            return None, (f"'{verb}' is not a filter; this box has: "
+                          + ", ".join(sorted(PIPE_FILTERS)))
+        if PIPE_FILTERS[verb][1] and not arg:
+            return None, f"'{verb}' needs {PIPE_FILTERS[verb][1]} after it"
+        if verb in ("include", "match"):
+            lines = [l for l in lines if arg in l]
+        elif verb == "exclude":
+            lines = [l for l in lines if arg not in l]
+        elif verb == "section":
+            # A block is a line at column 0 and everything indented under it.
+            # That is the shape of this box's configuration, which is why this
+            # filter is worth having at all.
+            kept, inside = [], False
+            for l in lines:
+                if l[:1] and not l[:1].isspace():
+                    inside = arg in l
+                if inside:
+                    kept.append(l)
+            lines = kept
+        elif verb == "count":
+            lines = [str(len(lines))]
+        elif verb in ("first", "last"):
+            try:
+                n = int(arg)
+            except ValueError:
+                return None, f"'{verb}' needs a number, not '{arg}'"
+            if n < 0:
+                return None, f"'{verb}' needs a number that is not negative"
+            lines = lines[:n] if verb == "first" else (lines[-n:] if n else [])
+    return lines, None
 
 
 def ospf_state(routing):
@@ -1455,12 +1823,46 @@ class Frr:
             # A CGNAT-only box is a legitimate deployment. Refusing every
             # commit because no routing daemon is running would be wrong.
             return 1, "FRR is not responding"
-        with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as f:
+        # A directory of our own, per run, and every path frr-reload writes to
+        # pointed into it - because with --reload it writes to two places that
+        # belong to FRR and not to the account applying the change (#186):
+        #
+        #   --logfile  /var/log/frr/frr-reload.log, opened BEFORE --stdout is
+        #              looked at, in a directory the frr package ships
+        #              drwxr-x--- frr:frr - group frr reads it and cannot write
+        #   --rundir   /var/run/frr, where the delta is staged for vtysh -f.
+        #              frrcommon.sh makes it 0710 frr:frr, so group frr may
+        #              traverse it and cannot write either
+        #
+        # Both are one PermissionError, and both only on --reload: --test logs
+        # to stdout and stages nothing. So a non-root administrator could
+        # validate a routing change and then not apply it - which is the worst
+        # place to find out, because the check has already said yes and the
+        # maintenance window is open.
+        #
+        # Their modes belong to the frr package and to frrcommon.sh, which
+        # re-state them on every upgrade and every start; widening them would
+        # last until the next one and would hand group frr the routing daemons'
+        # own logs besides.
+        #
+        # Nothing is lost by moving either: --stdout REPLACES the log handler,
+        # so frr-reload opens that log and never writes a line to it, and the
+        # staged delta is a scratch file frr-reload unlinks itself. What it has
+        # to say arrives on stdout, which is what this reads and HEXA_FRR_DUMP
+        # records.
+        #
+        # mkdtemp rather than a fixed name: this also runs as root at boot, and
+        # a predictable path in a world-writable directory is a symlink
+        # somebody else planted for root to write through.
+        work = tempfile.mkdtemp(prefix="hexash-frr-")
+        path = os.path.join(work, "candidate.conf")
+        logfile = os.path.join(work, "frr-reload.log")
+        with open(path, "w") as f:
             f.write("\n".join(lines) + "\n")
-            path = f.name
         try:
             mode = "--test" if check_only else "--reload"
-            p = subprocess.run(["python3", FRR_RELOAD, mode, "--stdout", path],
+            p = subprocess.run(["python3", FRR_RELOAD, mode, "--stdout",
+                                "--logfile", logfile, "--rundir", work, path],
                                capture_output=True, text=True, timeout=60)
             out = ((p.stdout or "") + (p.stderr or "")).rstrip()
             # Set HEXA_FRR_DUMP to a path to capture exactly what was sent
@@ -1483,7 +1885,7 @@ class Frr:
         except subprocess.TimeoutExpired:
             return 1, "frr-reload timed out"
         finally:
-            os.unlink(path)
+            shutil.rmtree(work, ignore_errors=True)
 
     @staticmethod
     def diagnostics(out):
@@ -1598,9 +2000,17 @@ class Rollback:
         for n in range(self.keep):
             f = self._file(n)
             if os.path.exists(f):
-                with open(f) as fh:
-                    first = fh.readline().strip()
-                comment = first[2:] if first.startswith("# ") else ""
+                try:
+                    with open(f) as fh:
+                        first = fh.readline().strip()
+                    comment = first[2:] if first.startswith("# ") else ""
+                except OSError as e:
+                    # Named, not hidden and not raised. A box upgraded from a
+                    # version whose VTY wrote these root-only still carries up
+                    # to twenty revisions this account cannot read, and an
+                    # operator who is shown a shorter list concludes the
+                    # commits never happened.
+                    comment = f"cannot be read: {e.strerror}"
                 out.append((n, time.strftime(
                     "%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(f))),
                     comment))
@@ -1610,41 +2020,50 @@ class Rollback:
         f = self._file(n)
         if not os.path.exists(f):
             return None
-        with open(f) as fh:
-            return "".join(l for l in fh if not l.startswith("# "))
+        try:
+            with open(f) as fh:
+                return "".join(l for l in fh if not l.startswith("# "))
+        except OSError as e:
+            # A revision that is there and out of reach is not a revision that
+            # does not exist, and neither of them is a Python traceback in
+            # front of somebody in a maintenance window.
+            raise RollbackUnavailable(f"{f}: {e.strerror}") from None
 
     def push(self, text, comment=""):
         """
         Store a new revision 0, shifting the others down.
 
-        Root-only, for the same reason as the saved configuration: a rollback
-        revision is a complete configuration, and since accounts joined it that
-        includes password hashes.
+        Written by whoever committed, which is any account holding a role: a
+        rollback revision is a complete configuration, so the store is group
+        hexa-cgnat and not root-only. It does hold password hashes, which is
+        why that group is a role group and why nothing here is world-readable.
         """
         # A store this account cannot write is reported, not raised. By the
         # time a revision is recorded the change is already on the dataplane,
         # so a traceback here would leave the operator looking at a Python
         # stack with no idea whether their commit took effect - and it did.
+        old_umask = os.umask(CONFIG_UMASK)
         try:
             os.makedirs(self.path, exist_ok=True)
-            os.chmod(self.path, 0o700)
+            oldest = self._file(self.keep - 1)
+            if os.path.exists(oldest):
+                os.unlink(oldest)
+            for n in range(self.keep - 2, -1, -1):
+                src = self._file(n)
+                if os.path.exists(src):
+                    os.replace(src, self._file(n + 1))
+            with open(self._file(0), "w") as fh:
+                if comment:
+                    fh.write(f"# {comment}\n")
+                fh.write(text)
         except OSError as e:
-            raise RollbackUnavailable(f"{self.path}: {e.strerror}") from None
-        oldest = self._file(self.keep - 1)
-        if os.path.exists(oldest):
-            os.unlink(oldest)
-        for n in range(self.keep - 2, -1, -1):
-            src = self._file(n)
-            if os.path.exists(src):
-                os.replace(src, self._file(n + 1))
-        with open(self._file(0), "w") as fh:
-            if comment:
-                fh.write(f"# {comment}\n")
-            fh.write(text)
-        try:
-            os.chmod(self._file(0), 0o600)
-        except OSError:
-            pass
+            # Every step, not only the first: the shift renames files and the
+            # write creates one, and a store this account cannot write fails at
+            # whichever of those it reaches first.
+            raise RollbackUnavailable(
+                f"{e.filename or self.path}: {e.strerror}") from None
+        finally:
+            os.umask(old_umask)
 
 
 class Shell:
@@ -2675,9 +3094,8 @@ class Shell:
                         need = ROUTER_DAEMON.get(w[1])
                         if need and need not in running_daemons:
                             self.err(f"{line.strip()}: {need} is not running")
-                            print(f"    the statement would commit and reach "
-                                  f"nothing. Enable {need} in "
-                                  "/etc/frr/daemons and restart frr")
+                            print("    the statement would commit and reach "
+                                  "nothing. " + enable_daemon_advice(need))
                             ok = False
 
                     # The statements that have no `router` line at all, and so
@@ -2693,8 +3111,24 @@ class Shell:
                                  f"{need}, which is not running")
                         print(f"    first one: {policy[0]}")
                         print("    they would commit and store nothing. "
-                              f"Enable {need} in /etc/frr/daemons and "
-                              "restart frr")
+                              + enable_daemon_advice(need))
+                        ok = False
+
+                    # Static routes, which are neither a `router` line nor a
+                    # policy statement and so were checked by nothing. On a box
+                    # without staticd a default route commits, reports success
+                    # and forwards no packets - and a default route is the most
+                    # common statement there is on an edge box.
+                    statics = [l.strip() for l in target.routing
+                               if l.strip().startswith(STATIC_STATEMENT)]
+                    for need in STATIC_DAEMONS if statics else ():
+                        if need in running_daemons:
+                            continue
+                        self.err(f"{len(statics)} static route(s) need "
+                                 f"{need}, which is not running")
+                        print(f"    first one: {as_hierarchy(statics[0])}")
+                        print("    they would commit and forward nothing. "
+                              + enable_daemon_advice(need))
                         ok = False
 
             # A static route whose next hop is on no connected network is
@@ -2764,6 +3198,14 @@ class Shell:
                 print("    the adjacency will sit in Exchange with no log "
                       "line; set them the same, or 'ip ospf mtu-ignore'")
 
+            # IS-IS: shapes that commit cleanly and carry nothing (#175).
+            for sev, stmt, why in isis_findings(target.routing):
+                if sev == "error":
+                    self.err(f"{stmt}: {why}")
+                    ok = False
+                else:
+                    print(f"warning: {stmt}: {why}")
+
             # Origin validation that is not validating anything (#147).
             for stmt, why in rpki_findings(target.routing):
                 print(f"warning: {stmt}: {why}")
@@ -2786,8 +3228,8 @@ class Shell:
                     table = fibs.get(0, {})
                     for stmt, nexthop in routes.unreachable_next_hops(
                             target.routing, table):
-                        self.err(f"{stmt}: {nexthop} is on no connected "
-                                 "network")
+                        self.err(f"{as_hierarchy(stmt)}: {nexthop} is on "
+                                 "no connected network")
                         print("    the route would be accepted and never "
                               "reach the forwarding table")
                         ok = False
@@ -3373,7 +3815,8 @@ class Shell:
                 if w[i] in ("buckets", "memory") and w[i + 1].isdigit():
                     got[w[i]] = int(w[i + 1])
             if len(got) != 2:
-                self.err("usage: cgnat session-table buckets <n> memory <MB>")
+                self.err("usage: nat cgnat session-table buckets <n> "
+                         "memory <MB>")
                 return
             r = self.global_api(set_session_table=True,
                                 session_buckets=got["buckets"],
@@ -3536,7 +3979,11 @@ class Shell:
             self.candidate = self.running_config()
             print("candidate reset to the running configuration")
             return
-        text = self.rb.load(n)
+        try:
+            text = self.rb.load(n)
+        except RollbackUnavailable as e:
+            self.err(f"revision {n} cannot be read: {e}")
+            return
         if text is None:
             self.err(f"revision {n} does not exist")
             return
@@ -3548,16 +3995,18 @@ class Shell:
 
     def start_shell(self):
         """
-        Hidden escape to a real shell.
+        Escape to a real shell, for administrators only.
 
-        Deliberately absent from TREE, so neither completion nor `?` offers
-        it - and, since roles exist, RESTRICTED as well: a shell on this box is
-        every capability at once, so administrators only. Hiding it was never
-        the boundary; this check is what makes the sentence above true rather
-        than a hope. It exists
-        because recovery, tcpdump and reading a log the VTY does not expose all
-        need a shell, and an appliance that makes those impossible gets one
-        opened permanently by the first operator who needs one.
+        RESTRICTED: a shell on this box is every capability at once, so the
+        check below is the boundary. It used to be hidden from TREE as well,
+        and this docstring already made the argument against that - hiding was
+        never the boundary, the capability check is - so when the maintainer
+        asked for the command, hiding was what had to go (#194). A command
+        nobody can find is a command somebody has to ask for.
+
+        It exists because recovery, tcpdump and reading a log the VTY does not
+        expose all need a shell, and an appliance that makes those impossible
+        gets one opened permanently by the first operator who needs one.
 
         Spawned as a child rather than exec'd: leaving the shell has to come
         back to the VTY, not log the operator out.
@@ -3635,7 +4084,72 @@ class Shell:
             self.show_or_pass(line)
         return True
 
+    def hierarchy_rewrite(self, line):
+        """
+        The hierarchy the operator typed, in the words the model holds.
+
+        Two hierarchies were asked for that the tools underneath do not have:
+        CGNAT under `nat`, and static routes under `router` (#193). VPP's
+        plugin knows `cgnat`; FRR has no `router static` at all - its static
+        routes are top-level `ip route` statements, and a `router static` line
+        handed to it is refused mid-commit.
+
+        So the new words are translated here, at the one place typed
+        configuration enters, and the OLD words keep working unchanged. That
+        second half is not politeness. Every box in service has a saved
+        configuration and up to twenty rollback revisions written in the old
+        spelling, and hexarouting.service replays that file at every boot, on a
+        machine nobody is watching: a grammar that cannot read the box's own
+        file leaves the box unconfigured. `config.strip_nat` and
+        `config.ungroup_static` are the same rule for the file, so the two
+        cannot drift.
+
+        Returns the line to go on with, or "" when the line was a block of this
+        VTY's own and there is nothing further to do.
+        """
+        # Only at the top level of configuration mode. Inside a block the
+        # words belong to that block's grammar - a route-map or a description
+        # may legitimately begin with any word at all - and rewriting there
+        # would edit somebody's policy on the strength of its first token.
+        if self.frr_ctx and self.frr_ctx[-1] != STATIC_BLOCK:
+            return line
+        if line.strip() == NAT_HIERARCHY and not self.frr_ctx:
+            # `nat` on its own. Refused rather than entered, because `cgnat`
+            # was never a block either - what is entered is `cgnat pool NAME` -
+            # and inventing one level of block here would make `exit` mean
+            # something different depending on which word opened it.
+            self.err("nat: a hierarchy, not a block - "
+                     "'nat cgnat pool <name>' or 'nat cgnat interface ...'")
+            return ""
+        line = strip_nat(line) if not self.frr_ctx else line
+        w = line.split()
+        if not w:
+            return ""
+
+        if line.strip() == STATIC_BLOCK:
+            self.frr_ctx.append(STATIC_BLOCK)
+            return ""
+        if not (self.frr_ctx and self.frr_ctx[-1] == STATIC_BLOCK):
+            return line
+        # Inside the block. The family comes from the prefix, because a prefix
+        # with a colon in it is IPv6 and nothing else; asking for the family as
+        # well would be asking the operator to contradict themselves.
+        if w[:1] == ["route"] and len(w) > 2:
+            return _frr_static(w[1:])
+        if w[:2] == ["no", "route"] and len(w) > 3:
+            return "no " + _frr_static(w[2:])
+        if w[:1] == ["ip"] or w[:1] == ["ipv6"]:
+            return line          # FRR's own spelling, typed inside the block
+        if w[0] in ("exit", "quit", "end", "show", "commit", "rollback"):
+            return line
+        self.err(f"{w[0]}: not a statement of 'router static' - "
+                 "'route <prefix> <next-hop>', or 'exit'")
+        return ""
+
     def do_config(self, line):
+        line = self.hierarchy_rewrite(line)
+        if not line:
+            return True
         w = line.split()
 
         if w[:2] == ["start", "shell"]:
@@ -3732,7 +4246,8 @@ class Shell:
             return True
         if line.startswith("cgnat interface "):
             if len(w) < 4 or w[3] not in ("inside", "outside"):
-                self.err("usage: cgnat interface <interface> <inside|outside>")
+                self.err("usage: nat cgnat interface <interface> "
+                         "<inside|outside>")
             else:
                 self.candidate.interfaces[w[2]] = w[3]
             return True
@@ -4234,7 +4749,11 @@ class Shell:
         if _w[:2] == ["show", "this"]:
             self.show_this()
             return
-        if _w[:2] == ["show", "interface"]:
+        # Both numbers of the word. `show interfaces terse` is what an operator
+        # arriving from a Juniper types, and being handed a parser error for
+        # the plural on a VTY built to look like one is the opposite of the
+        # point.
+        if _w[:1] == ["show"] and _w[1:2] in (["interface"], ["interfaces"]):
             self.show_interfaces(_w[2:])
             return
         if _w[:2] == ["show", "route"]:
@@ -4332,6 +4851,296 @@ class Shell:
         # better than printing it twice under two names.
         self.print_config(cfg)
 
+    @staticmethod
+    def link_state(name, hardware):
+        """
+        The link state of an interface, or of its parent when it has none.
+
+        A sub-interface is not hardware, so the dataplane reports no link for
+        it - but its link IS its parent's, and there is nothing else it could
+        be. Printing '?' there would blank the column on exactly the
+        interfaces an ISP terminates subscribers on, which are all
+        sub-interfaces.
+        """
+        row = hardware.get(name)
+        if row is None and "." in name:
+            row = hardware.get(name.split(".")[0])
+        return row["link"] if row else "?"
+
+    def show_interfaces_terse(self, ifaces, hardware, total=None):
+        """
+        One line per interface: admin state, link state, family, address.
+
+        Admin and link are two columns because they are two facts and the
+        difference between them is the fault. `show interface` reports the
+        admin flag - what somebody configured - and an operator reading "down"
+        there cannot tell whether a colleague ran `shutdown` or the fibre is
+        cut. Up/down is a wire; down/down is a person. One "state" column
+        cannot say which, and this is the listing people reach for when
+        something is off, so it says both.
+        """
+        print(f"  {'Interface':<26} {'Admin':<6} {'Link':<6} {'Proto':<6} "
+              "Local")
+        mismatched = []
+        for name in sorted(ifaces):
+            e = ifaces[name]
+            link = self.link_state(name, hardware)
+            if e["state"] == "up" and link == "down":
+                mismatched.append(name)
+            rows = [("inet6" if ":" in a else "inet", a)
+                    for a in e["addresses"]] or [("-", "-")]
+            first = True
+            for proto, addr in rows:
+                print(f"  {name if first else '':<26} "
+                      f"{e['state'] if first else '':<6} "
+                      f"{link if first else '':<6} {proto:<6} {addr}")
+                first = False
+        if total is not None and total != len(ifaces):
+            print(f"\n  {len(ifaces)} of {total} interface(s) shown")
+        else:
+            print(f"\n  {len(ifaces)} interface(s) on the dataplane")
+        if mismatched:
+            # The one conclusion this view exists to make reachable without
+            # being read for.
+            print("  " + ", ".join(mismatched) + ": configured up, link "
+                  "down - that is the wire or the far end, not this "
+                  "configuration")
+
+    def show_interfaces_description(self, ifaces, hardware):
+        """
+        What each interface is for, next to whether it is working.
+
+        The description is the dataplane's own interface tag, read back from
+        the box - so it survives a restart of this VTY and says the same thing
+        to anyone who asks VPP directly.
+
+        This command used to print the table and then a line saying the
+        dataplane carries no descriptions. That was true when it was written
+        and stopped being true when `description` started being stored as the
+        tag; it was left saying so, which is worse than never having answered,
+        because somebody reading it stops looking for the feature that exists.
+        """
+        descs = self.device_descriptions()
+        print(f"  {'Interface':<26} {'Admin':<6} {'Link':<6} Description")
+        for name in sorted(ifaces):
+            print(f"  {name:<26} {ifaces[name]['state']:<6} "
+                  f"{self.link_state(name, hardware):<6} "
+                  f"{descs.get(name, '')}")
+        described = sum(1 for n in ifaces if descs.get(n))
+        print(f"\n  {described} of {len(ifaces)} interface(s) described")
+        if described < len(ifaces):
+            # An empty column is a question, and it has an answer. Saying
+            # nothing here is what made the old wrong sentence seem worth
+            # printing in the first place.
+            print("  set one with 'description <text>' inside 'interface "
+                  "<name>'")
+
+    #: A sparkline needs eight levels and a mark for nothing. The block
+    #: characters are the readable ones; an appliance is also operated over a
+    #: serial console that may be answering in ASCII, and a row of question
+    #: marks would make the graph worse than no graph.
+    #:
+    #: Index 0 is a visible baseline rather than a space, because a blank
+    #: reads as "no data" and the thing it means is "no traffic" - which on a
+    #: link somebody is asking about is the answer, not the absence of one.
+    BARS_UTF = "\u00b7\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+    BARS_ASCII = "_.:;+*#%@"
+
+    def bars(self):
+        enc = (getattr(sys.stdout, "encoding", None) or "").lower()
+        return self.BARS_UTF if enc.startswith("utf") else self.BARS_ASCII
+
+    def spark(self, values, full):
+        """A series drawn against `full`; an empty bar is a real zero."""
+        chars = self.bars()
+        if not full:
+            return chars[0] * len(values)
+        out = ""
+        for v in values:
+            level = int(round((v / full) * (len(chars) - 1)))
+            # Traffic that rounds to nothing is still traffic. Drawn at the
+            # lowest level rather than at the baseline, because "a trickle"
+            # and "silence" are different answers and on a graph scaled to a
+            # 10G peak they would otherwise look identical.
+            if v > 0:
+                level = max(1, level)
+            out += chars[max(0, min(len(chars) - 1, level))]
+        return out
+
+    @staticmethod
+    def rate(bits):
+        """bit/s, at the multiple an operator would have said it in."""
+        for unit, div in (("Gbit/s", 10 ** 9), ("Mbit/s", 10 ** 6),
+                          ("kbit/s", 10 ** 3)):
+            if bits >= div:
+                return f"{bits / div:.2f} {unit}"
+        return f"{bits:.0f} bit/s"
+
+    def show_interface_utilisation(self, args):
+        """
+        Sample the counters, twice or more, and graph what went past.
+
+        `show interface` prints a counter, which is a total since boot. Nobody
+        wants a total; they want to know whether the link is busy NOW, and the
+        only way to that from a total is to take two of them and divide by the
+        time between. So this command takes time to answer, and says how much
+        before it starts rather than appearing to have hung.
+
+        The elapsed time is MEASURED, not assumed from the sleep. A box under
+        the load worth asking about is a box where a two-second sleep is not
+        two seconds, and a rate computed from the nominal interval would be
+        wrong in exactly the conditions the question gets asked in.
+
+        "Utilisation" only means something against a capacity. When the
+        dataplane reports a link speed, the bar is that interface's share of
+        its own line rate and the percentage is real. When it does not - every
+        virtual interface says "unknown" - the bar is scaled to the busiest
+        sample in this run and the footer says so, because a percentage of a
+        capacity the box does not know would be a number nobody could defend.
+        """
+        interval, count, names = 2.0, 5, []
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a in ("interval", "count"):
+                if i + 1 >= len(args):
+                    self.err(f"{a} needs a number after it")
+                    return
+                try:
+                    value = float(args[i + 1])
+                except ValueError:
+                    self.err(f"{a} needs a number, not '{args[i + 1]}'")
+                    return
+                if a == "interval":
+                    if not 0.1 <= value <= 60:
+                        self.err("interval must be between 0.1 and 60 seconds")
+                        return
+                    interval = value
+                else:
+                    if not 1 <= value <= 120:
+                        self.err("count must be between 1 and 120")
+                        return
+                    count = int(value)
+                i += 2
+                continue
+            names.append(a)
+            i += 1
+
+        _, hw = self.dp.run("show hardware-interfaces brief")
+        hardware = routes.parse_hardware(hw)
+
+        print(f"  sampling every {interval:g}s, {count} time(s) - "
+              f"{interval * count:g}s in total; Ctrl-C stops early")
+        samples = []
+        try:
+            for n in range(count + 1):
+                rc, out = self.dp.run("show interface")
+                if rc != 0 or not out.strip():
+                    self.err("the dataplane stopped answering part-way "
+                             "through the sample")
+                    return
+                samples.append((time.monotonic(),
+                                routes.parse_interface_counters(out)))
+                if n < count:
+                    time.sleep(interval)
+        except KeyboardInterrupt:
+            print()
+
+        if len(samples) < 2:
+            self.err("stopped before two samples, so no rate could be "
+                     "measured")
+            print("    a rate is a difference between two counters; one "
+                  "reading is a total since boot")
+            return
+
+        series, drops, reset = {}, {}, False
+        for (t0, c0), (t1, c1) in zip(samples, samples[1:]):
+            dt = t1 - t0
+            if dt <= 0:
+                continue
+            for name, now in c1.items():
+                was = c0.get(name)
+                if was is None:
+                    # Appeared mid-sample. Its counter is a total since it was
+                    # created, and reporting that as a rate would invent a
+                    # spike out of an interface somebody just made.
+                    continue
+                step = []
+                for key in ("rx bytes", "tx bytes"):
+                    delta = now.get(key, 0) - was.get(key, 0)
+                    if delta < 0:
+                        # `clear interfaces` ran while this was sampling.
+                        reset = True
+                        delta = 0
+                    step.append(delta * 8 / dt)
+                series.setdefault(name, []).append(tuple(step))
+                lost = now.get("drops", 0) - was.get("drops", 0)
+                if lost > 0:
+                    drops[name] = drops.get(name, 0) + lost
+
+        if names:
+            series = {n: v for n, v in series.items()
+                      if any(_starts(n, w) for w in names)}
+            if not series:
+                print("  no interface matches")
+                return
+
+        peak = max((max(max(rx, tx) for rx, tx in v)
+                    for v in series.values() if v), default=0.0)
+        speeds = {n: (hardware.get(n) or {}).get("speed")
+                  or (hardware.get(n.split(".")[0]) or {}).get("speed")
+                  for n in series}
+        rated = any(speeds.values())
+
+        width = len(samples) - 1
+        # 13, not 12: "675.56 Mbit/s" is thirteen characters, and a column
+        # that the widest real value overflows is a column that stops lining
+        # up exactly on the box that is busy.
+        head = (f"\n  {'Interface':<26} {'rx':>13} {'tx':>13}  "
+                f"{'rx history':<{max(width, 10)}} tx history")
+        print(head)
+        for name in sorted(series):
+            steps = series[name]
+            if not steps:
+                continue
+            rx_now, tx_now = steps[-1]
+            full = speeds.get(name) or peak
+            print(f"  {name:<26} {self.rate(rx_now):>13} "
+                  f"{self.rate(tx_now):>13}  "
+                  f"{self.spark([s[0] for s in steps], full):<{max(width, 10)}} "
+                  f"{self.spark([s[1] for s in steps], full)}")
+
+        print()
+        if rated:
+            print("  bars are each interface's share of its own line rate")
+            for name in sorted(series):
+                speed = speeds.get(name)
+                if not speed or not series[name]:
+                    continue
+                rx_now, tx_now = series[name][-1]
+                print(f"    {name:<24} {max(rx_now, tx_now) / speed * 100:5.1f}"
+                      f"% of {self.rate(speed)}")
+            # A box can have both kinds at once - a NIC that reports its speed
+            # and a loopback that does not - and one footer claiming every bar
+            # is a share of a line rate would be wrong about half the table.
+            unrated = sorted(n for n in series if not speeds.get(n))
+            if unrated and peak:
+                print(f"  the rest have no link speed, so their bars are "
+                      f"scaled to {self.rate(peak)}: " + ", ".join(unrated))
+        elif peak:
+            print(f"  bars are scaled to {self.rate(peak)}, the busiest "
+                  "sample in this run -")
+            print("  the dataplane reports no link speed for these "
+                  "interfaces, so there is no line rate to be a share of")
+        else:
+            print("  nothing passed any interface during the sample")
+        for name in sorted(n for n in drops if n in series):
+            print(f"  {name} dropped {drops[name]} packet(s) while this was "
+                  "sampling")
+        if reset:
+            print("  a counter went backwards - something cleared the "
+                  "interfaces mid-sample; that step reads as zero")
+
     def show_one_interface(self, name, ifaces):
         """
         Everything the box knows about one interface, for a fault report.
@@ -4377,6 +5186,61 @@ class Shell:
             else:
                 print("    counters    all zero")
 
+    #: Where the tuner writes what it decided, and where it writes it down.
+    STARTUP_CONF = os.environ.get("HEXA_STARTUP_CONF", "/etc/vpp/startup.conf")
+    TUNE_ENV = os.environ.get("HEXA_TUNE_ENV", "/etc/hexarouting/tune.env")
+
+    def why_no_dataplane_interface(self):
+        """
+        Why the dataplane has no interface but VPP's own loopback.
+
+        `local0` alone is the truth and it is not an answer. It has several
+        causes, each needing different work from the operator, and the two
+        files that know are not where they are looking - which is why this was
+        reported twice and answered both times with "run these commands and
+        tell me". That answer is the defect: the box should not need an
+        interrogation to say what it decided.
+
+        Reads the same sources, in the same order, and says the same words as
+        the boot self-test. Two diagnoses of one fact that disagree are worse
+        than one.
+        """
+        try:
+            with open(self.STARTUP_CONF) as f:
+                conf = f.read()
+        except OSError:
+            return []                   # not an appliance: nothing to explain
+        if "plugin dpdk_plugin.so { disable }" in conf:
+            return ["DPDK is off until hugepages exist, so no NIC can be "
+                    "claimed yet.",
+                    "This is the first-boot profile. Reboot once the tuning "
+                    "has been applied and the pages reserved."]
+        if "no-pci" in conf:
+            named = ""
+            try:
+                with open(self.TUNE_ENV) as f:
+                    for line in f:
+                        if line.startswith("HEXA_DATAPLANE_IF="):
+                            named = line.split("=", 1)[1].strip().strip('"')
+            except OSError:
+                pass
+            if not named:
+                return ["no interface was named, so VPP was given no NIC.",
+                        f"Set HEXA_DATAPLANE_IF in {self.TUNE_ENV} to the "
+                        "interface carrying subscriber traffic,",
+                        "then restart hexarouting-tune and vpp."]
+            return [f"'{named}' was named and VPP was given no NIC.",
+                    "Either it does not exist on this box, or it could not be "
+                    "resolved to a PCI address,",
+                    "or it carries the default route - which is refused on "
+                    "purpose, so a remote box is not cut off."]
+        if "dev 0000:" in conf:
+            return ["a NIC is named in the startup configuration and the "
+                    "dataplane did not bring it up.",
+                    "'show log' and the VPP journal say why; the usual cause "
+                    "is the NIC still bound to a kernel driver."]
+        return []
+
     def show_interfaces(self, args):
         """
         The dataplane's interfaces.
@@ -4391,6 +5255,14 @@ class Shell:
         still reachable - `show ip interface`, and anything else vtysh knows -
         because sometimes that IS the question.
         """
+        # Both spellings of the same word. An operator who types the one
+        # their keyboard layout and their last employer taught them should
+        # not get FRR's parser error for it; the box has no opinion about
+        # which side of the Atlantic they learned it on.
+        if args[:1] and args[0].rstrip("s") in ("utilization", "utilisation"):
+            self.show_interface_utilisation(args[1:])
+            return
+
         rc, out = self.dp.run("show interface")
         if rc != 0 or not out.strip():
             # An empty table reads as "this box has no interfaces", which is a
@@ -4402,6 +5274,38 @@ class Shell:
         _, addr = self.dp.run("show interface addr")
         _, lcp = self.dp.run("show lcp")
         ifaces = routes.parse_interfaces(out, addr, lcp)
+
+        # `local0` alone means the dataplane claimed no NIC. Explained here
+        # rather than left as a one-line table, because the operator asking
+        # this question is looking at a box that forwards nothing and a box
+        # that forwards nothing looks exactly like a box that is working
+        # (#190).
+        if set(ifaces) <= {"local0"} and not args:
+            why = self.why_no_dataplane_interface()
+            if why:
+                print("  the dataplane has no interface to forward on: "
+                      + why[0])
+                for line in why[1:]:
+                    print("  " + line)
+                print()
+
+        if args[:1] and args[0].rstrip("s") in ("terse", "description",
+                                               "descr", "brief"):
+            _, hw = self.dp.run("show hardware-interfaces brief")
+            hardware = routes.parse_hardware(hw)
+            total = len(ifaces)
+            rest = [a for a in args[1:] if a]
+            if rest:
+                ifaces = {n: e for n, e in ifaces.items()
+                          if any(_starts(n, w) for w in rest)}
+                if not ifaces:
+                    print("  no interface matches")
+                    return
+            if args[0].startswith("terse"):
+                self.show_interfaces_terse(ifaces, hardware, total)
+            else:
+                self.show_interfaces_description(ifaces, hardware)
+            return
 
         wanted = [a for a in args if a not in ("description", "descr", "brief")]
         if wanted:
@@ -4447,12 +5351,6 @@ class Shell:
         # as an inconsistency somebody has to work out.
         print(f"\n  {len(ifaces)} interface(s) on the dataplane")
 
-        if any(a in ("description", "descr") for a in args):
-            # They asked for descriptions and got a table without them. Saying
-            # nothing would leave somebody looking for a column that is never
-            # coming.
-            print("  the dataplane carries no per-interface description; "
-                  "FRR's view is 'show ip interface'")
 
     def show_bgp(self, args):
         """
@@ -4766,25 +5664,30 @@ class Shell:
 
     def save_running(self):
         """
-        Write the running configuration to disk, readable only by root.
+        Write the running configuration to disk, never world-readable.
 
         The mode is not housekeeping. Since accounts became part of the
         configuration this file carries password hashes and public keys, so a
         world-readable copy hands every local account an offline cracking
-        target. Set on every write rather than at creation, because a file
-        that already exists keeps whatever mode it was given.
+        target.
+
+        What is on disk already is left exactly as it is, and the installer
+        owns it - see CONFIG_UMASK. A save that re-stated the mode narrowed the
+        directory the operator's own group had been given, so the first save on
+        the box was the last one a non-root account could make (#188).
         """
         d = os.path.dirname(CONFIG_PATH)
+        old_umask = os.umask(CONFIG_UMASK)
         try:
             if d:
                 os.makedirs(d, exist_ok=True)
-                os.chmod(d, 0o700)
             with open(CONFIG_PATH, "w") as f:
                 f.write(self.running_config().text())
-            os.chmod(CONFIG_PATH, 0o600)
         except OSError as e:
             self.err(f"cannot write {CONFIG_PATH}: {e}")
             return
+        finally:
+            os.umask(old_umask)
         print(f"configuration saved to {CONFIG_PATH}")
 
     # ---------------------------------------------------------- completion
@@ -4932,6 +5835,24 @@ class Shell:
                 line += f"; e.g. '{example}'"
             print(line)
 
+    def dyn_isis_tags(self):
+        """
+        The IS-IS instances this box has, by their tag.
+
+        Read from the configuration, which is read from FRR. The tag was
+        offered as a bare `<word>` before, so an operator writing `ip router
+        isis` on an interface had to remember what they had called the
+        instance - and getting it wrong produces an interface that joins
+        nothing, silently.
+        """
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for line in cfg.routing:
+            w = line.split()
+            if w[:2] == ["router", "isis"] and len(w) > 2:
+                found[w[2]] = "IS-IS instance"
+        return found
+
     def dyn_as_path_lists(self):
         """AS-path access-lists by name, with what the first entry does."""
         cfg = self.candidate or self.running_config()
@@ -5012,6 +5933,7 @@ class Shell:
         ARG_NEIGHBOUR: "dyn_neighbours",
         ARG_ROUTE_MAP: "dyn_route_maps",
         ARG_PEER_GROUP: "dyn_peer_groups",
+        ARG_ISIS_TAG: "dyn_isis_tags",
         ARG_AS_PATH_LIST: "dyn_as_path_lists",
         ARG_COMMUNITY_LIST: "dyn_community_lists",
     }
@@ -5045,10 +5967,14 @@ class Shell:
         different set from the words that start a line.
         """
         block = self.frr_ctx[-1]
+        if block.strip() == STATIC_BLOCK:
+            return STATIC_BLOCK_GRAMMAR
         if block.startswith("interface "):
             return INTERFACE_BLOCK
         if block.strip() == "rpki":
             return RPKI_BLOCK
+        if block.split()[:2] == ["router", "isis"]:
+            return ISIS_BLOCK
         if block.split()[:2] == ["router", "ospf"]:
             return OSPF_BLOCK
         if block.startswith("route-map "):
@@ -5067,6 +5993,19 @@ class Shell:
         return base
 
     def _options(self, line, ending_word):
+        # After a pipe, the only words that mean anything are the filters. The
+        # command's own grammar does not apply there and offering it would
+        # send the operator back into the command they have already finished
+        # typing.
+        if line.split()[:1] == ["show"] and "|" in line:
+            tail = line.rsplit("|", 1)[1]
+            words = tail.split()
+            prefix = words[-1] if (ending_word and words) else ""
+            if len(words) - (1 if ending_word and words else 0) == 0:
+                return ({k: v[0] for k, v in PIPE_FILTERS.items()
+                         if _starts(k, prefix)}, None, prefix)
+            verb = words[0]
+            return {}, (PIPE_FILTERS.get(verb) or (None, None))[1], prefix
         words = line.split()
         prefix = ""
         if ending_word and words:
@@ -5108,6 +6047,17 @@ class Shell:
                 return dyn, hint, prefix
             return {}, hint, prefix
         opts = {k: v[0] for k, v in node.items() if _starts(k, prefix)}
+        # A node can offer keywords AND take a name - `show interface` offers
+        # `terse` and every interface on the box. Before this, a node with a
+        # subtree discarded the hint, so adding `terse` to `show interface`
+        # would have taken away the interface names it had always completed:
+        # a new option costing an old one, which is how a CLI gets a
+        # reputation. The hint rides IN the dict, as a key, so the tree still
+        # reads as one thing.
+        for key in node:
+            if key in self.DYNAMIC:
+                opts.pop(key, None)
+                opts.update(self.dynamic_options(key, prefix))
         return opts, hint, prefix
 
     def complete(self, text, state):
@@ -5160,6 +6110,23 @@ class Shell:
                    "pool": self.do_pool,
                    "user": self.do_user,
                    "snmp-user": self.do_snmp_user}[self.mode]
+
+        # A pipe filters a `show`, and only a `show`. Everywhere else a '|' is
+        # a character in a regular expression or a description - an AS-path
+        # list is full of them - and treating it as a filter would silently
+        # cut a policy in half (#191).
+        if line.split()[:1] == ["show"] and "|" in line:
+            command, stages = split_pipe(line)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                result = handler(command)
+            lines, why = apply_pipe(out.getvalue(), stages)
+            if why:
+                self.err(why)
+            else:
+                for l in lines:
+                    print(l)
+            return result
         return handler(line)
 
     def load(self, path):

@@ -8,7 +8,7 @@ Um assinante atrás de CGNAT não é alcançável de fora, e alguns precisam ser
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   forward tcp 6200 to 100.64.0.5 80
   exit
  commit

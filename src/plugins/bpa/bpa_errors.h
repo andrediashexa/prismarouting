@@ -46,7 +46,10 @@
   _ (PPTP_MANGLED, 0, "PPTP control messages rewritten") \
   _ (PPTP_UNKNOWN, 0, "PPTP message about an unknown call") \
   _ (PPTP_NO_CALL_ID, 0, "PPTP call refused: no free entry in the block") \
-  _ (PPTP_MALFORMED, 0, "malformed or split PPTP control message")
+  _ (PPTP_MALFORMED, 0, "malformed or split PPTP control message") \
+  _ (ESP_BOUND, 0, "IPsec tunnels bound to a peer") \
+  _ (ESP_OFF, 1, "ESP dropped: passthrough is off") \
+  _ (ESP_PEER_TAKEN, 1, "ESP peer is another subscriber's")
 
 #define foreach_bpa_out2in_error \
   _ (TRANSLATED, 0, "packets translated") \
@@ -69,6 +72,9 @@
   _ (GRE_NOT_ENHANCED, 1, "GRE that is not the enhanced GRE of RFC 2637") \
   _ (PPTP_MANGLED, 0, "PPTP control messages rewritten") \
   _ (PPTP_UNKNOWN, 0, "PPTP message about an unknown call") \
-  _ (PPTP_MALFORMED, 0, "malformed or split PPTP control message")
+  _ (PPTP_MALFORMED, 0, "malformed or split PPTP control message") \
+  _ (ESP_TRANSLATED, 0, "ESP passed to a subscriber") \
+  _ (ESP_OFF, 1, "ESP dropped: passthrough is off") \
+  _ (ESP_NO_TUNNEL, 1, "ESP from a peer with no tunnel")
 
 #endif /* __included_bpa_errors_h__ */

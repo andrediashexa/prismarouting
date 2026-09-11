@@ -395,3 +395,99 @@ def lcp_pairs(show_lcp: str) -> dict:
         for n in names:
             pairs[n] = names
     return pairs
+
+
+def parse_interface_counters(show_interface: str) -> dict:
+    """
+    Every counter the dataplane prints, per interface: {name: {counter: int}}.
+
+    `show interface` puts the first counter on the SAME line as the interface
+    and the rest on indented continuation lines:
+
+        host-veth-vpp    1    up    9000/0/0/0    tx packets    3
+                                                  tx bytes    266
+
+    and an interface whose counters are all zero prints no counter line at
+    all. So an absent counter is zero, not unknown - which matters, because
+    "this interface has passed nothing" is the answer most of the time and a
+    reader that treated it as unknown would have nothing to say about an idle
+    box.
+
+    The count is the LAST token and the counter name is everything between the
+    fixed columns and it. Read that way rather than by position because the
+    names have spaces in them ("rx packets") and new ones appear between VPP
+    versions; a positional parse would find the wrong field the first time one
+    does.
+    """
+    out = {}
+    current = None
+    for line in (show_interface or "").splitlines():
+        w = line.split()
+        if not w:
+            continue
+        if not line[0].isspace():
+            if w[0] == "Name":
+                current = None
+                continue
+            current = w[0]
+            out.setdefault(current, {})
+            rest = w[4:]
+        else:
+            rest = w
+        if current is None or len(rest) < 2:
+            continue
+        try:
+            value = int(rest[-1])
+        except ValueError:
+            continue
+        out[current][" ".join(rest[:-1])] = value
+    return out
+
+
+#: What `show hardware-interfaces` calls each multiple. VPP prints the speed
+#: as a human string ("10 Gbps"), so the only way to a number is this table.
+_SPEED_UNITS = {"bps": 1, "kbps": 10 ** 3, "mbps": 10 ** 6,
+                "gbps": 10 ** 9, "tbps": 10 ** 12}
+
+
+def parse_hardware(show_hardware: str) -> dict:
+    """
+    Link state and link speed per interface: {name: {"link", "speed"}}.
+
+    `show interface` reports the ADMIN state - what somebody configured. The
+    link state lives in `show hardware-interfaces` and is what the wire is
+    doing. Keeping them apart is the whole reason an operator asks for a terse
+    listing: "up/down" is a cut fibre and "down/down" is a colleague who ran
+    `shutdown`, and a single "state" column cannot tell anybody which.
+
+    Sub-interfaces are not hardware and do not appear here; their link is
+    their parent's, which the caller resolves - this function reports only
+    what the dataplane actually said.
+
+    The speed is "unknown" on every virtual interface, which is most of a lab
+    and none of an appliance. None means unknown, and unknown has to stay
+    distinguishable from zero: a utilisation bar drawn against a line rate the
+    box does not know would be a number nobody could defend.
+    """
+    out = {}
+    current = None
+    for line in (show_hardware or "").splitlines():
+        w = line.split()
+        if not w:
+            continue
+        if not line[0].isspace():
+            if w[0] == "Name":
+                current = None
+                continue
+            current = w[0]
+            out[current] = {"link": w[2] if len(w) > 2 else "?", "speed": None}
+            continue
+        if current and len(w) >= 3 and w[0] == "Link" and w[1] == "speed:":
+            unit = _SPEED_UNITS.get(w[-1].lower())
+            if unit is None:
+                continue
+            try:
+                out[current]["speed"] = int(float(w[-2]) * unit)
+            except ValueError:
+                pass
+    return out

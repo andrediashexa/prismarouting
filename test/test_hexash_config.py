@@ -314,5 +314,98 @@ check(not config.Config.parse("cgnat logging enable\n").is_empty(),
 check(not config.Config.parse("! routing\nrouter bgp 65000\n").is_empty(),
       "a routing section alone is not empty")
 
+
+# ---------------------------------------------------------------------------
+# The hierarchies moved, and every box in service is written in the old ones
+# (#193).
+#
+# CGNAT is under `nat` now and static routes are under `router`. Neither
+# hierarchy exists in the tool underneath - VPP's plugin knows `cgnat`, FRR has
+# no `router static` at all - so both are translated. The property that matters
+# is not that the new spelling works; it is that the OLD one still does, in
+# both directions, because hexarouting.service replays a saved file at every
+# boot on a machine nobody is watching, and every rollback revision on a box
+# already in service is written the old way.
+
+OLD_FILE = """! cgnat
+cgnat pool residential
+ inside 100.64.0.0/22
+ outside 203.0.113.0/24
+ block-size 512
+ policy interleaved
+ mode deterministic
+ exit
+cgnat interface pg0 inside
+! routing
+router bgp 65000
+ bgp router-id 10.0.0.1
+ip route 0.0.0.0/0 10.0.0.2
+ipv6 route 2001:db8::/32 fe80::1
+vrf red
+ ip route 10.0.0.0/8 192.0.2.1
+ exit-vrf
+"""
+
+old = config.Config.parse(OLD_FILE)
+check(not old.unknown, f"a file in the old hierarchy still loads: {old.unknown}")
+check(list(old.pools) == ["residential"] and old.interfaces == {"pg0": "inside"},
+      "with its CGNAT intact")
+check("ip route 0.0.0.0/0 10.0.0.2" in old.routing,
+      f"and its static routes: {old.routing}")
+
+# Written back out, it comes out in the NEW hierarchy...
+new_text = old.text()
+check("nat cgnat pool residential" in new_text,
+      f"CGNAT is written under nat: {new_text}")
+check("router static" in new_text and " route 0.0.0.0/0 10.0.0.2" in new_text,
+      f"and static routes as a block under router: {new_text}")
+check("\nip route " not in new_text,
+      "the flat spelling is not written twice")
+
+# ...and reading that back gives the same configuration. This is the assertion
+# that would fail if the translation were one-way: the box would save a file it
+# could not read at the next boot.
+back = config.Config.parse(new_text)
+check(not back.unknown, f"the new hierarchy loads: {back.unknown}")
+check(back.is_same(old), "an old file and its rewritten form are one configuration")
+check(back.routing == old.routing,
+      f"including the routing lines FRR is handed: {back.routing}")
+
+# A VRF's static routes live INSIDE its `vrf` block, indented. Hoisting one of
+# those into `router static` would move the route to another table - a display
+# transform that changes where packets go - so the column is read as well as
+# the statement.
+check(" ip route 10.0.0.0/8 192.0.2.1" in new_text.splitlines(),
+      f"a vrf's static route stays in its vrf: {new_text}")
+check(back.routing.index("vrf red") < back.routing.index(" ip route 10.0.0.0/8 192.0.2.1"),
+      "and is still inside it after a round trip")
+
+# The family comes from the prefix, not from a keyword: a prefix with a colon
+# in it is IPv6 and nothing else, and asking for it twice is asking the
+# operator to contradict themselves.
+v6 = config.Config.parse("! routing\nrouter static\n route 2001:db8::/32 fe80::1\n exit\n")
+check(v6.routing == ["ipv6 route 2001:db8::/32 fe80::1"],
+      f"an IPv6 prefix becomes an ipv6 route: {v6.routing}")
+
+# Both spellings in ONE file - which is what a hand-edited file looks like
+# during a migration, and what a rollback revision written either side of an
+# upgrade looks like.
+mixed = config.Config.parse("""! cgnat
+nat cgnat interface pg0 inside
+cgnat interface pg1 outside
+! routing
+router static
+ route 0.0.0.0/0 10.0.0.2
+ exit
+ip route 198.51.100.0/24 blackhole
+""")
+check(not mixed.unknown, f"a file in both hierarchies loads: {mixed.unknown}")
+check(mixed.interfaces == {"pg0": "inside", "pg1": "outside"},
+      f"both CGNAT spellings: {mixed.interfaces}")
+check(mixed.routing == ["ip route 0.0.0.0/0 10.0.0.2",
+                        "ip route 198.51.100.0/24 blackhole"],
+      f"both static-route spellings: {mixed.routing}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

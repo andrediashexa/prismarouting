@@ -5,7 +5,11 @@
 FRR provides BGP, OSPF and IS-IS. VPP's `linux_cp` mirrors each dataplane
 interface as a Linux TAP, so FRR sees ordinary netdevs and needs no
 modification; `linux_nl` carries the routes FRR installs back into the VPP FIB.
-`hexash` is one CLI for routing and CGNAT.
+`hexash` is one CLI for routing and CGNAT: CGNAT under `nat`, static routes in a
+`router static` block, and both of those hierarchies translated here because
+neither VPP's plugin nor FRR has them — the older spellings (`cgnat ...`,
+`ip route ...`) stay readable forever, because every box in service saved its
+configuration in them.
 
 Two failures found in the lab, both silent: OSPF stalls in `Exchange` when the
 TAP inherits a different MTU, and IS-IS never comes up unless OSI passthrough
@@ -157,11 +161,119 @@ A coluna **Linux** traz o par do `linux_cp`, porque esse é o nome que o FRR e o
 * `local0` **aparece** — esconder uma interface que o dataplane reporta seria
   este comando decidindo o que o operador pode ver — mas **não é oferecida na
   completação**, porque não configura nada.
-* Pedir `description` diz por que não existe essa coluna, em vez de deixar
-  alguém procurando uma que nunca vem. A visão do FRR continua em
-  `show ip interface`.
+* FRR's view of the same interfaces stays at `show ip interface`.
 * Com o dataplane fora, ele diz que não conseguiu perguntar. Uma tabela vazia
   leria como *"esta caixa não tem interfaces"*, que é afirmação bem diferente.
+
+### `terse`, `description` and `utilization`
+
+Three views on the same interfaces, each existing for a question the table above
+answers badly.
+
+**`show interface terse`** prints one line per interface with **two** state
+columns:
+
+```
+hexarouting> show interface terse
+  Interface                  Admin  Link   Proto  Local
+  GigabitEthernet0/12/0      up     up     inet   203.0.113.1/24
+  TenGigabitEthernet0/8/0    up     down   -      -
+  local0                     down   down   -      -
+
+  3 interface(s) on the dataplane
+  TenGigabitEthernet0/8/0: configured up, link down - that is the wire or the far end, not this configuration
+```
+
+Admin and link are two facts, and the difference between them is the fault.
+`show interface` reports the admin flag — what somebody configured — and an
+operator reading `down` there cannot tell whether a colleague ran `shutdown` or
+the fibre is cut. **Up/down is a wire; down/down is a person.** One "state"
+column cannot say which, and this is the listing people reach for when something
+is wrong, so it says both and then names the mismatches, which is the one
+conclusion the view exists to make reachable without being read for.
+
+The link state comes from `show hardware-interfaces brief`, a different command
+from the one the admin state comes from. A sub-interface is not hardware and the
+dataplane reports no link for it, so it takes its **parent's** — an ISP
+terminates subscribers on sub-interfaces, and a blank column exactly there would
+be a blank column everywhere it matters.
+
+**`show interface description`** puts the descriptions next to the same two
+columns:
+
+```
+hexarouting> show interface description
+  Interface                  Admin  Link   Description
+  GigabitEthernet0/12/0      up     up     ASSINANTES PON-3
+  TenGigabitEthernet0/8/0    up     down   TRANSITO Vivo AS26599
+  local0                     down   down   
+
+  2 of 3 interface(s) described
+  set one with 'description <text>' inside 'interface <name>'
+```
+
+The description is the dataplane's own interface tag, read back from the box, so
+it survives a restart of the VTY and says the same thing to anything that asks
+VPP directly. It is set over the API and not with `vppctl set interface tag`,
+which truncates at the first space — `lab/vty.sh` asserts a description with two
+spaces in it for that reason.
+
+This command used to print the table and then a line saying the dataplane
+carries no per-interface description. That was true when it was written and
+stopped being true when `description` began to be stored as the tag, and it was
+left saying so — which is worse than never having answered, because a reader
+stops looking for a feature that exists.
+
+**`show interface utilization [<name>] [interval <s>] [count <n>]`** samples the
+counters and graphs the rate:
+
+```
+hexarouting> show interface utilization
+  sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
+
+  Interface                             rx            tx  rx history tx history
+  TenGigabitEthernet0/8/0    675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
+  GigabitEthernet0/12/0        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+
+  bars are each interface's share of its own line rate
+    TenGigabitEthernet0/8/0   12.4% of 10.00 Gbit/s
+    GigabitEthernet0/12/0      0.8% of 1.00 Gbit/s
+```
+
+`show interface` prints a counter, which is a total since boot. Nobody wants the
+total; they want to know whether the link is busy **now**, and the only way
+there from a total is two of them divided by the time between. So the command
+takes time to answer and says how much before it starts, rather than appearing
+to have hung.
+
+* **The elapsed time is measured, not assumed from the sleep.** On a box under
+  the load worth asking about, a two-second sleep is not two seconds, and a rate
+  computed from the nominal interval would be wrong in exactly the conditions the
+  question gets asked in.
+* **A bar needs a capacity.** Where the dataplane reports a link speed the bar
+  is that interface's share of its own line rate and the percentage is real.
+  Where it does not — every virtual interface says `unknown` — the bar is scaled
+  to the busiest sample in the run and the footer **says so**, because a
+  percentage of a capacity the box does not know is a number nobody could
+  defend.
+* Traffic that rounds to nothing is drawn at the lowest level rather than at the
+  baseline: a trickle and silence are different answers, and on a graph scaled to
+  a 10G peak they would otherwise be the same character. Index 0 of the ramp is a
+  visible baseline, not a space, for the same reason.
+* The ramp is Unicode blocks when stdout is UTF-8 and ASCII otherwise: an
+  appliance is also operated over a serial console that may be answering in
+  ASCII, and a row of question marks is worse than no graph.
+* An interface that appeared **mid-sample** is skipped rather than reported: its
+  counter is a total since it was created, and printing that as a rate would
+  invent a spike out of an interface somebody just made. A counter that went
+  backwards means something ran `clear interfaces` during the sample; that step
+  reads as zero and the footer says it happened.
+* `lab/vty.sh` asserts the rate against a packet generator set to a known
+  800 kbit/s — a window wide enough for a software generator, narrow enough that
+  reporting bytes instead of bits, or per-sample totals instead of rates, falls
+  outside it — and asserts the graph by comparing a run with traffic against a
+  run without, rather than by looking for a particular character, which would be
+  an assertion about the terminal.
 
 ## Um nome de interface que não existe é recusado
 
@@ -585,7 +697,7 @@ and the code says so.
 The configuration of the hierarchy being edited, and nothing above it:
 
 ```
-hexarouting# [edit cgnat pool] show this
+hexarouting# [edit cgnat pool residential] show this
 cgnat pool residential
  inside 100.64.0.0/22
  outside 200.150.0.16/30
@@ -602,6 +714,13 @@ It works in every level the VTY has — a pool, a user, an SNMP user and an FRR
 block — which required letting `show` reach the sub-modes: each dispatches its
 own lines, and without that the command was refused in the one place it exists
 for.
+
+Inside a pool it prints `Pool.lines()`, which opens with `cgnat pool residential`
+— the short form, the same one the prompt names. `show configuration` and
+`show running-config` go through `Config.text()` and therefore carry the `nat`
+prefix and the `router static` block. Both spellings are accepted as input, so
+either screen can be copied into a file and loaded back; the two are worth
+knowing apart when reading a screenshot on a ticket.
 
 ## Which daemons run
 
@@ -639,12 +758,88 @@ rather than a failure — a box deliberately running fewer daemons is a
 legitimate deployment, and a box that cannot run BGP should say so before
 somebody configures BGP on it.
 
+## Two hierarchies the tools underneath do not have
+
+CGNAT is configured under `nat`, and static routes inside a `router static`
+block:
+
+```
+nat cgnat pool residential
+nat cgnat interface TenGigabitEthernet0/0/0 inside
+nat cgnat timeout udp 300
+
+router static
+ route 0.0.0.0/0 200.150.0.1
+ exit
+```
+
+Neither hierarchy exists in the tool that ends up holding the configuration.
+VPP's plugin knows `cgnat`; FRR has no `router static` at all — its static
+routes are top-level `ip route` statements, and a `router static` line handed to
+`frr-reload` is refused mid-commit. So both are **this VTY's own grammar**,
+translated at the one place typed configuration enters (`hierarchy_rewrite`) and
+at the one place a file is read (`config.strip_nat`, `config.ungroup_static`),
+so the screen and the file cannot drift apart.
+
+**Both old spellings MUST keep working**, typed and read from a file:
+
+* every box already in service has a saved configuration, and up to twenty
+  rollback revisions, written as `cgnat ...` and `ip route ...`;
+* `hexarouting.service` replays that file at **every boot**, unattended. A
+  grammar that cannot read the box's own file leaves the box unconfigured, on a
+  machine nobody is watching, and nothing says so until somebody notices the
+  traffic.
+
+**Only the new spellings are offered.** They are what tab completion and `?`
+list, and `ip route` is gone from the `ip` subtree. Offering both would teach
+the one being left behind, and a grammar that advertises two ways to say one
+thing gets both into the same configuration file.
+
+What the box **writes** is the new hierarchy: `Config.text()` prefixes the CGNAT
+statements with `nat ` and emits the static routes as a `router static` block,
+so `show running-config`, `show configuration` and the file `save` writes all
+carry it. The round trip — a box reading back the file it just wrote, and a box
+reading a file written before the move — is asserted in
+`test/test_hexash_config.py` and end to end in `lab/vty.sh`, which loads an
+old-format file, checks the pool reached the dataplane and the route reached
+FRR, saves, and loads what the box itself wrote.
+
+Two consequences worth knowing, because both are visible on a screen:
+
+* `nat` on its own is **refused**, not entered:
+
+  ```
+  error: nat: a hierarchy, not a block - 'nat cgnat pool <name>' or 'nat cgnat interface ...'
+  ```
+
+  `cgnat` was never a block either — what is entered is `cgnat pool NAME` — and
+  inventing one level of block here would make `exit` mean two different things
+  depending on which word opened it.
+* **Inside a block nothing is rewritten.** A route-map clause or a description
+  may legitimately begin with any word, and rewriting on the strength of a first
+  token would edit somebody's policy. The rewrite runs only at the top level of
+  configuration mode, plus inside `router static`, which is this VTY's own
+  block.
+
+The static routes of a VRF are **not** hoisted into the block: FRR writes them
+inside the `vrf red` stanza, indented, and moving one out of it would move the
+route to another table — a display transform that changes where packets go. So
+`config.is_static_route()` reads the column as well as the statement.
+
 ## Static routes
 
 ```
-hexarouting# [edit] ip route 0.0.0.0/0 200.150.0.1
+hexarouting# [edit] router static
+hexarouting# [edit router static] route 0.0.0.0/0 200.150.0.1
+hexarouting# [edit router static] route 2001:db8::/32 2001:db8:0:1::1
+hexarouting# [edit router static] exit
 hexarouting# [edit] commit
 ```
+
+There is **one** `route` keyword rather than `ip route` and `ipv6 route`: the
+family comes from the prefix, because a prefix with a colon in it is IPv6 and
+nothing else, and asking for the family as well is asking the operator for the
+chance to contradict themselves.
 
 Staged in the candidate and applied by `frr-reload` like every other routing
 statement, so it is committed and rolled back the same way — and a rollback
@@ -660,6 +855,12 @@ error: ip route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
 Accepted, such a route sits in FRR and never reaches the FIB — the exact
 failure `show route verbose` exists to find afterwards, and cheaper to say at
 the prompt than to have somebody find during an outage.
+
+The refusal names the statement in FRR's spelling, not in the one that was
+typed: by the time it is checked the line has been translated, and the check
+runs over the routing text the commit would hand to `frr-reload`. That is worth
+saying on the page an operator reads, because searching the screen for the first
+word they typed finds nothing.
 
 **On FRR 10 a static route is configured through `mgmtd` and served by
 `staticd`.** Without them `vtysh` answers `mgmtd is not running` to every
@@ -826,13 +1027,19 @@ a wrapper rather than `hexash` itself, and the reason is lockout: a `hexash`
 that fails to start would otherwise leave nobody able to reach the box.
 
 `start shell` opens a real shell as a child of the VTY; leaving it returns to
-the VTY rather than logging out. It appears in neither tab completion nor `?`.
+the VTY rather than logging out. It **is** in the command tree, so completion
+and `?` offer it.
 
-* The escape is hidden **and** restricted: administrators only. Hiding was
-  never the boundary — the role check is
+* The escape is **restricted** rather than hidden: administrators only. Hiding
+  was never the boundary — the role check is
   ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), and it is
   what makes that sentence true rather than a hope. A shell on this box is
-  every capability at once.
+  every capability at once. It was hidden until the argument turned around: a
+  command an administrator cannot find is a command they ask for, which is how
+  it came back into the tree
+  ([#194](https://github.com/andrediashexa/hexarouting/issues/194)). A
+  read-only or CGNAT account that types it is refused by name —
+  `error: start shell: permission denied for a read-only account`.
 * A shell **MUST** remain reachable. Recovery, `tcpdump`, and reading a log the
   VTY does not expose all need one, and an appliance that makes them impossible
   gets a permanent hole opened by the first operator who needs one.
@@ -1259,6 +1466,40 @@ FRR command it **admits it does not know**, rather than presenting a copied
 list of thousands of commands that would drift out of date with every FRR
 release and start suggesting commands that no longer exist.
 
+### Filtering a `show`
+
+A `show` may be piped into one or more filters: `include`, `match`, `exclude`,
+`section`, `count`, `first <n>`, `last <n>`.
+
+```
+show running-config | section interface
+show running-config | include timeout | count
+```
+
+Three properties are deliberate.
+
+**The filters run over the text the command already produced, after its
+redactions.** That is what makes `show running-config | include password` safe:
+what the filter sees is `<set, not shown>`, the same line the unfiltered command
+would have printed, so no filter can reveal a value the command hides. The unit
+test asserts this against the real `redact()` rather than a hand-written string.
+
+**A pipe is a filter only after `show`.** Anywhere else a `|` is a character in
+a regular expression or in a description — an AS-path list is full of them — and
+treating it as a filter would cut a policy in half silently.
+
+**An unknown filter is refused, not ignored**, and the refusal lists what this
+box has. Ignoring it would answer the question the operator did not ask, with
+nothing on the screen saying so.
+
+The list is short on purpose. Every entry answers a question an operator asks on
+this box, and the one thing it **MUST NOT** become is a shell: a pipe implemented
+by handing the text to `grep` is a shell escape wearing a filter's clothes,
+reachable by a read-only account, on a product that restricts the shell to
+administrators on purpose. The argument is therefore a plain substring — quotes
+would be part of it — and `section` knows one structure only: a line at column 0
+and everything indented under it, which is the shape of this configuration.
+
 ### Limits of this version
 
 * The dataplane error check is textual, because `vppctl` returns 0 even on
@@ -1288,6 +1529,25 @@ pretending otherwise would be theatre.
 access. `/etc/hexarouting` is group-owned by `hexa-cgnat`, so **an
 administrator MUST also be a member of `hexa-cgnat`** — otherwise they can
 apply a change and then fail to record its rollback revision.
+
+**The modes have one owner, and it is `appliance/install.sh`**: `2770` on
+`/etc/hexarouting` and on its rollback store, `0660` on the files inside, group
+`hexa-cgnat`. The VTY does not restate them. It used to `chmod 0700` on every
+`save` and every `commit`, so the **first** one on the box — root, applying the
+configuration at boot — closed the directory the operator's group had just been
+given, and from then on every non-root `save` failed and every non-root
+`commit` reported that no rollback revision could be recorded
+([#188](https://github.com/andrediashexa/hexarouting/issues/188)). It cannot be
+the other way round either: half of this is ownership, and a non-root operator
+cannot `chgrp` a directory it does not own.
+
+**setgid**, because the group alone is not enough. Without it a revision root
+writes at boot is group `root`, and one operator's revision is unreadable to
+the next — a rollback store only the account that wrote it can read is not one.
+What the VTY still states is the half that must never slip: what it has to
+create, it creates no wider than the group. These files carry the password hash
+of every account on the box, so world-readable is an offline cracking target
+handed to every login, and no group problem is worth fixing that way.
 
 #### How a role is granted
 
@@ -1410,19 +1670,46 @@ holds a role and not the memberships, names them, and says so as a failed
 check. A box with no operator account yet says that instead, and does not fail
 for it.
 
-Two things measured while doing that, neither of which is about memberships
-and neither of which is fixed:
+One thing measured while doing that, which is not about memberships and is not
+fixed:
 
 * **A root API client puts `/dev/shm/global_vm` back to `root:root`.**
   Measured in `lab/vty.sh`: the drop-in above fixes the segment after the
   dataplane starts, and the next `hexash` run as root undoes it — after which
   every non-root client crashes in `svm_region_map`. On an installed box
   `hexarouting.service` applies the configuration as root at every boot.
-* **`frr-reload.py` logs to `/var/log/frr/frr-reload.log`**, and the frr
-  package ships that directory `drwxr-x--- frr:frr`. Group `frr` is read-only
-  there, so a non-root administrator can validate a routing change
-  (`commit check`, which uses `--test` and logs to stdout) and cannot apply
-  one.
+
+#### What applying a routing change needs, beyond the role
+
+A role says an account **may** change routing. Three paths decide whether it
+**can**, and all three belong to FRR rather than to this product
+([#186](https://github.com/andrediashexa/hexarouting/issues/186)):
+
+| path | shipped as | what happens without it |
+|---|---|---|
+| `/var/log/frr` | `drwxr-x--- frr:frr`, by the frr package | `frr-reload --reload` opens `--logfile` there before it looks at `--stdout`, and dies in `FileHandler` |
+| `/var/run/frr` | `0710 frr:frr`, by `frrcommon.sh` | `--rundir` is where the delta is staged for `vtysh -f`; the write is refused |
+| `/etc/frr/frr.conf` | `0640 frr:frr`, by the frr package | `frr-reload` ends by asking `vtysh` to persist the result, and the open fails |
+
+The first two are **scratch**, so the VTY hands `frr-reload` a private
+directory of its own for both — nothing package-owned is touched, and nothing
+has to survive an frr upgrade. `--stdout` replaces the log handler anyway, so
+that log file was opened and never written to.
+
+The third is not scratch: persisting FRR's configuration **is** writing that
+file, so `appliance/install.sh` makes it `0660`. The **file** and not the
+directory, measured both ways on FRR 10.7.1: with the file group-writable
+`vtysh` rewrites it in place and it stays `frr:frr`, which works for the next
+account too; with the *directory* group-writable instead, `vtysh` renames it
+aside and creates a new one owned by whoever committed, after which the next
+administrator cannot write it at all. The cost is stated where it is set: an
+frr upgrade that reinstalls the conffile puts `0640` back, and non-root commits
+fail — loudly — until the installer is re-run.
+
+`commit check` never needed any of this: `--test` logs to stdout and stages
+nothing. That is why the split was **check succeeds, commit fails** — the worst
+one available, because it is found in the maintenance window, after the check
+has already said yes.
 
 `bpa_global_set` takes the whole set of global settings, and a **zero timeout
 means "leave it alone"** — zero is not a valid timeout, so it needs no separate

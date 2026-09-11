@@ -20,7 +20,7 @@ Três ALGs, ligáveis por pool com `alg <nome> <on|off>`:
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   alg ftp on
   alg rtsp on
   alg pptp on

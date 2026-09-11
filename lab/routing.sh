@@ -107,23 +107,20 @@ chown -R frr:frr /var/run/frr /etc/frr
 # installed box inherits Debian's /etc/frr/daemons, where bgpd, ospfd and isisd
 # are all "no" (#99). Starting them by hand here is what let that go unnoticed,
 # so it is said out loud rather than left as a list somebody skims.
-for d in zebra ospfd isisd; do
-  /usr/lib/frr/$d -d -A 127.0.0.1 -f /etc/frr/$d.conf
-done
 # No -M rpki here, and no frr-rpki-rtrlib to install. Nothing in this lab
 # validates anything, and bgpd refuses to start when told to load a module it
 # cannot find - which is a whole lab reporting "bgpd is not running" for a
 # feature it never exercises. That module, and the cache behind it, are
-# lab/bgp-policy.sh.
-/usr/lib/frr/bgpd -d -A 127.0.0.1 -f /etc/frr/bgpd.conf
-# mgmtd and staticd: on FRR 10 a static route is configured through mgmtd and
-# served by staticd, and without them vtysh answers "mgmtd is not running" to
-# every "ip route" - which is how a static route can be typed, accepted and
-# never exist. frrinit.sh starts both on a real box; a lab that starts daemons
-# by hand has to know that.
-/usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
-/usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
-sleep 1
+# lab/bgp-policy.sh. start_frr only asks for it when it is installed.
+#
+# lib.sh is sourced here rather than where it was, because FRR starts before
+# that point.
+#
+# mgmtd and staticd come with start_frr. This lab and lab/bgp-policy.sh knew
+# they were needed and six others did not, which is why that knowledge is now
+# in one place (#196).
+. /src/lab/lib.sh
+start_frr ospfd isisd bgpd
 
 # ---------------- upstream ----------------
 mkdir -p /var/run/frr/peer /etc/frr/peer
@@ -374,7 +371,15 @@ printf '%s\n' "$SHOW_ROUTE" | head -12 | sed 's/^/  /'
 echo
 echo "=========== a static route through the VTY ==========="
 # 10.0.0.2 is the peer, on the connected /24, so this one is legitimate.
-$HX -c "configure" -c "ip route 192.168.77.0/24 10.0.0.2" -c "commit" \
+#
+# Typed in the `router static` block, which is where static routes live now
+# (#193). FRR has no such block - its static routes are top-level `ip route`
+# statements - so this is a hierarchy the VTY provides and translates, and the
+# assertion below is on the VPP FIB: if the translation were wrong the route
+# would not be anywhere. The old spelling is still accepted and is exercised
+# further down, in the MTU section, which types `ip route` directly.
+$HX -c "configure" -c "router static" \
+    -c "route 192.168.77.0/24 10.0.0.2" -c "exit" -c "commit" \
   > /tmp/staticroute.log 2>&1 || true
 cat /tmp/staticroute.log | sed 's/^/  commit: /'
 echo "  --- what FRR holds now ---"
@@ -649,10 +654,58 @@ BADPOL=$($HX -c "configure" -c "ip prefix-list PL-GONE seq 10 permit 10.8.0.0/16
          -c "commit" 2>&1)
 echo "$BADPOL" | tail -3 | sed 's/^/  /'
 expect_in "with mgmtd stopped, the commit is refused" "mgmtd" "$BADPOL"
-expect_in "and the refusal names the file to edit" "/etc/frr/daemons" "$BADPOL"
+# It used to be enough that the refusal contained "/etc/frr/daemons". That
+# passed whatever the sentence around it said - and the sentence was wrong:
+# frrinit.sh starts mgmtd itself, so it is NOT a line in that file and an
+# operator sent there finds nothing to enable. The advice now depends on which
+# daemon is missing, and the assertion is on the advice rather than on a path
+# that appears in both versions of it.
+expect_in "and the refusal says frr did not finish starting, not 'edit the file'" \
+  "started by frr itself" "$BADPOL"
+expect_in "and how to get it back" "systemctl restart frr" "$BADPOL"
 expect_not_in "and nothing was applied" "commit complete" "$BADPOL"
 
 /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
+sleep 2
+
+# --- a static route whose daemon is not running (#197) ---
+#
+# A static route is neither a `router` line nor a policy statement, so BOTH
+# checks above walked past it. Measured on FRR 10.7.1 with staticd and mgmtd
+# stopped: frr-reload EXITS 0 having applied nothing. Its own log says
+# "[zebra] sending configuration" and "done" for the line, then notices on a
+# second pass that the statement is still missing, sends it AGAIN, and exits 0.
+# FRR discards a statement no running daemon claims and says so to nobody - so
+# the box reported "commit complete" for a default route that forwards nothing,
+# which is the most common statement there is on an edge box.
+echo "=========== a static route with staticd stopped ==========="
+OKSTATIC=$($HX -c "configure" -c "router static" \
+           -c "route 10.66.0.0/16 blackhole" -c "exit" -c "commit" 2>&1)
+expect_in "with staticd running, a static route commits" "commit complete" \
+  "$OKSTATIC"
+expect "and FRR really holds it" \
+  sh -c "vtysh -c 'show running-config' | grep -q '10.66.0.0/16'"
+
+pkill -f 'frr/staticd' 2>/dev/null
+sleep 2
+echo "  daemons now: $(vtysh -c 'show daemons' 2>&1 | head -1)"
+BADSTATIC=$($HX -c "configure" -c "router static" \
+            -c "route 10.67.0.0/16 blackhole" -c "exit" -c "commit" 2>&1)
+echo "$BADSTATIC" | tail -4 | sed 's/^/  /'
+expect_in "with staticd stopped, the commit is refused" "staticd" "$BADSTATIC"
+expect_in "and says what the route would do" "forward nothing" "$BADSTATIC"
+# It names the route in the words the operator typed, not FRR's. Typed inside
+# `router static`, a route is translated before any check runs, so the refusal
+# used to name a statement that appears nowhere in what was typed and nowhere
+# in `show configuration` either - an operator who then searched for "ip route"
+# found nothing.
+expect_in "and names it as the VTY spells it" "router static / route" \
+  "$BADSTATIC"
+expect_not_in "and nothing was applied" "commit complete" "$BADSTATIC"
+expect "and FRR does not hold the route either" \
+  sh -c "! vtysh -c 'show running-config' | grep -q '10.67.0.0/16'"
+
+/usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
 sleep 2
 
 # --- what a rejected policy statement does to the rest of the commit ---

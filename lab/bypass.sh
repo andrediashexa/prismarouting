@@ -23,7 +23,7 @@ HX="python3 /src/src/hexash/hexash.py"
 mkdir -p /var/run/frr /etc/frr
 printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
 chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
-/usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf 2>/dev/null
+start_frr
 
 vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
 n=0
@@ -199,9 +199,19 @@ expect_in "and destination bypasses separately" "bypassed destination" "$ERR"
 expect_in "the pool reports what it let past" "left untranslated" "$POOL"
 
 expect_in "the VTY added a bypass on the dataplane" "192.0.2.0/24" "$VTY_CONF"
-expect_not_in "without recreating the pool" "del pool lab" "$NEW"
+# Both of these were GREEN in `sh tools/lab.sh bypass off`, the run this
+# file's header says the bypass checks MUST fail in: with no commit made, the
+# trail is empty - so it carries no "del pool lab" - and no session was
+# dropped because nothing happened. Predicated on the trail's record that the
+# change was made, which is the only thing that makes either a statement.
+case "$NEW" in *"bypass-destination pool lab"*) APPLIED=yes ;; *) APPLIED=no ;; esac
+applied_and() { [ "$APPLIED" = yes ] && "$@"; }
+DEL_IN=$(printf '%s\n' "$NEW" | grep -c "del pool lab" || true)
+expect "the bypass change was applied at all, and recorded" \
+  test "$APPLIED" = yes
+expect "without recreating the pool" applied_and test "${DEL_IN:-1}" -eq 0
 expect "and without dropping the sessions it held" \
-  test "${V1:-0}" -ge "${V0:-0}"
+  applied_and test "${V1:-0}" -ge "${V0:-0}"
 
 expect_in "'none' put the source back to being translated" \
   "200.150.0." "$CLEARED"

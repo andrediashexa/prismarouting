@@ -22,8 +22,7 @@ vppctl set interface state pg0 up
 printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
 printf 'hostname hexarouting\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
-pgrep zebra >/dev/null || /usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf
-pgrep bgpd  >/dev/null || /usr/lib/frr/bgpd  -d -A 127.0.0.1 -f /etc/frr/bgpd.conf
+pgrep zebra >/dev/null || start_frr bgpd
 sleep 2
 
 HX="python3 /src/src/hexash/hexash.py"

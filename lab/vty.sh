@@ -38,8 +38,7 @@ mkdir -p /var/run/frr /etc/frr
 printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
 printf 'hostname hexarouting\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
-/usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf
-/usr/lib/frr/bgpd  -d -A 127.0.0.1 -f /etc/frr/bgpd.conf
+start_frr bgpd
 
 mkdir -p /var/run/frr/peer /etc/frr/peer
 printf 'hostname upstream\n' > /etc/frr/peer/zebra.conf
@@ -153,17 +152,32 @@ install -D -m 0755 /src/appliance/hexash-login /usr/bin/hexash-login
 # hexa-cgnat owns it and hexa-admin is ADDITIVE on top: an administrator is a
 # member of both. Owning it with hexa-admin instead would have handed the
 # cgnat operator administrator rights, which is the opposite of the point.
+#
+# 2770 and not 0770, which is also what install.sh states: the group is not
+# enough on its own. Without setgid a revision root writes at boot is group
+# root, and the operator who comes next cannot read the thing it is supposed to
+# be able to roll back to.
 chgrp -R hexa-cgnat /etc/hexarouting 2>/dev/null
-chmod 0770 /etc/hexarouting 2>/dev/null
+chmod 2770 /etc/hexarouting 2>/dev/null
 mkdir -p /etc/hexarouting/rollback
 chgrp hexa-cgnat /etc/hexarouting/rollback 2>/dev/null
-chmod 0770 /etc/hexarouting/rollback 2>/dev/null
+chmod 2770 /etc/hexarouting/rollback 2>/dev/null
 # 0660 and group hexa-cgnat, which is what appliance/install.sh installs. It
 # used to be 0644 here: world-readable, which no appliance ships, and which
 # handed the read-only account a copy of every password hash on the box the
 # product deliberately does not give it.
 chgrp hexa-cgnat /etc/hexarouting/hexarouting.conf 2>/dev/null
 chmod 0660 /etc/hexarouting/hexarouting.conf 2>/dev/null
+# And the one file in /etc/frr an administrator has to be able to write, which
+# install.sh also states. Applying a routing change ends with frr-reload asking
+# vtysh to persist the result, and the frr package ships that file 0640
+# frr:frr - so the administrator below could check the change and not make it
+# (#186). The FILE and not the directory: with the directory group-writable
+# vtysh creates a new frr.conf owned by whoever committed, and the next
+# administrator cannot write it at all. Nothing else in /etc/frr is touched -
+# it keeps the package's own frr:frr 0750, which is what the read-only account
+# above proves it can still read through.
+chmod 0660 /etc/frr/frr.conf 2>/dev/null
 
 echo "  -- the VTY creates the accounts and grants the roles"
 MAKE=$($HX -c "configure" \
@@ -172,6 +186,13 @@ MAKE=$($HX -c "configure" \
     -c "user netadm" -c "role administrator" -c "exit" \
     -c "commit" 2>&1)
 printf '%s\n' "$MAKE" | sed 's/^/    /'
+# The modes after a commit run by ROOT, which is the case that made every later
+# one fail: the VTY chmod'd 0700/0600 on every save and every commit, so the
+# first one on the box - hexarouting.service applying the configuration at boot
+# - took the group's access away (#188). They are stated by appliance/install.sh
+# and by nothing else, so they must be exactly what was set above.
+MODE_AFTER_ROOT="$(stat -c %a /etc/hexarouting) $(stat -c %a /etc/hexarouting/rollback)"
+echo "    modes after root's commit: $MODE_AFTER_ROOT"
 # The memberships as the SYSTEM reports them, not as the VTY believes them.
 # The whole defect was a VTY whose belief and the box's answer never met.
 RO_GROUPS=" $(id -nG ro 2>/dev/null) "
@@ -217,6 +238,27 @@ printf '%s\n' "$RO_SHOW" | sed 's/^/    /'
 echo "  -- cgnat operator changes a pool setting"
 CG_OK=$(as cg -c "'configure'" -c "'cgnat pool provider-a'" -c "'alg rtsp off'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$CG_OK" | sed 's/^/    /'
+echo "  -- and the rollback revision that commit has to record"
+# Asserted rather than read, because the failure is SURVIVABLE: the commit
+# still says "commit complete" and the store being out of reach is one warning
+# line above it, which is why an operator whose commits could not be undone
+# went unnoticed until #188 was filed.
+CG_RB=$(as cg -c "'show rollback'")
+printf '%s\n' "$CG_RB" | head -2 | sed 's/^/    /'
+RB_OWNER=$(stat -c %U /etc/hexarouting/rollback/0.conf 2>/dev/null || echo none)
+RB_GROUP=$(stat -c %G /etc/hexarouting/rollback/0.conf 2>/dev/null || echo none)
+echo "    revision 0 belongs to: $RB_OWNER:$RB_GROUP"
+echo "  -- and the operator saves the running configuration"
+CG_SAVE=$(as cg -c "'save'")
+printf '%s\n' "$CG_SAVE" | sed 's/^/    /'
+MODE_DIR=$(stat -c %a /etc/hexarouting)
+MODE_RB=$(stat -c %a /etc/hexarouting/rollback)
+MODE_CONF=$(stat -c %a /etc/hexarouting/hexarouting.conf)
+GROUP_CONF=$(stat -c %G /etc/hexarouting/hexarouting.conf)
+SAVE_STATE="$(printf '%s' "$CG_SAVE" | grep -c 'configuration saved') \
+$MODE_DIR $MODE_RB $MODE_CONF $GROUP_CONF"
+SAVE_STATE=$(printf '%s' "$SAVE_STATE" | tr -s ' \n' ' ')
+echo "    afterwards: dir $MODE_DIR, store $MODE_RB, file $MODE_CONF $GROUP_CONF"
 echo "  -- cgnat operator tries to change routing"
 CG_ROUTE=$(as cg -c "'configure'" -c "'router bgp 65000'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$CG_ROUTE" | sed 's/^/    /'
@@ -225,21 +267,24 @@ CG_SHELL=$(as cg -c "'start shell'")
 printf '%s\n' "$CG_SHELL" | sed 's/^/    /'
 ALG_AFTER=$(vppctl show bpa config | grep -c "alg rtsp off")
 POOL_AFTER=$(vppctl show bpa pool | grep -c "pool nope")
-echo "  -- administrator passes the routing change the cgnat operator was refused"
-# "commit check" rather than "commit", and the reason is not that a check is
-# safer. frr-reload.py logs to /var/log/frr/frr-reload.log and the frr package
-# ships that directory drwxr-x--- frr:frr, so NO non-root account can APPLY a
-# routing change here whatever its groups - a defect of its own, about a
-# directory mode and not about a membership, and not fixed here.
-#
-# The check is not a weaker assertion of the thing this lab is about: the
-# authorization decision is made on a check-only run too, deliberately and for
-# its own reasons, so the refusal that hits the cgnat operator two commands
-# above would hit an administrator here just the same.
+echo "  -- administrator APPLIES the routing change the cgnat operator was refused"
+# "commit", not "commit check". This was a check for as long as no non-root
+# account could apply a routing change at all: frr-reload.py opens
+# /var/log/frr/frr-reload.log on every --reload whatever --stdout says, and the
+# frr package ships that directory drwxr-x--- frr:frr, so the administrator was
+# told the change was fine and then could not make it (#186). A role that ends
+# at "your change is valid" is not the role this lab says it proves - and the
+# split is the worst one available, because it is found in the maintenance
+# window, after the check has already said yes.
 NETADM_ROUTE=$(as netadm -c "'configure'" -c "'router bgp 65000'" \
   -c "'neighbor 10.0.0.2 description NETADM-WAS-HERE'" -c "'exit'" \
-  -c "'commit check'")
+  -c "'commit'")
 printf '%s\n' "$NETADM_ROUTE" | sed 's/^/    /'
+# From FRR, not from what the VTY printed: "commit complete" is this VTY's own
+# sentence, and the question is whether the routing daemon took a change from
+# an account that is not root.
+NETADM_IN_FRR=$(vtysh -c "show run" 2>/dev/null | grep -c "NETADM-WAS-HERE")
+echo "    statements FRR holds with that description: $NETADM_IN_FRR"
 echo "  -- and applies a CGNAT change, because hexa-admin carries that too"
 NETADM_POOL=$(as netadm -c "'configure'" -c "'cgnat pool provider-a'" \
   -c "'alg ftp off'" -c "'exit'" -c "'commit'")
@@ -276,6 +321,9 @@ sh.feed("configure")
 opts, hint, _ = sh._options("interface ", False)
 print("INTERFACES:", " ".join(sorted(opts)))
 print("HINT:", hint)
+# Deliberately the OLD spelling: the pool made here is the one the assertions
+# below read back, so this run proves that a box driven the old way still
+# works after the hierarchy moved (#193).
 sh.feed("cgnat pool lab")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("outside 200.150.0.16/30")
@@ -285,8 +333,12 @@ with contextlib.redirect_stdout(out):
     sh.feed("show this")
 print("THIS:", out.getvalue().replace("\n", " | "))
 sh.feed("exit")
-opts, _, _ = sh._options("cgnat pool ", False)
+opts, _, _ = sh._options("nat cgnat pool ", False)
 print("POOLS:", " ".join(sorted(opts)))
+o, _, _ = sh._options("nat ", False)
+print("NATSUB:", " ".join(sorted(o)))
+o, _, _ = sh._options("router ", False)
+print("ROUTERSUB:", " ".join(sorted(o)))
 # Prefix-lists complete from the control plane, not from a model this VTY
 # keeps: FRR owns them and the running configuration is read back from FRR.
 sh.feed("ip prefix-list PL-LAB seq 10 permit 10.9.0.0/16")
@@ -383,8 +435,13 @@ expect "and the change reached the dataplane" test "${ALG_AFTER:-0}" -ge 1
 expect_in "but cannot change routing" "permission denied" "$CG_ROUTE"
 expect_in "and cannot reach a shell either" "permission denied" "$CG_SHELL"
 
-expect_in "an administrator passes the routing change the operator was refused" \
-  "configuration check succeeds" "$NETADM_ROUTE"
+expect_in "an administrator APPLIES the routing change the operator was refused" \
+  "commit complete" "$NETADM_ROUTE"
+# The half a "commit check" never proved, and the half that was broken: the
+# check logs to stdout and the apply logs to a directory the frr package ships
+# read-only to group frr, so this account could validate and not commit (#186).
+expect "and FRR holds what that account sent it" \
+  test "${NETADM_IN_FRR:-0}" -ge 1
 expect_in "and applies a CGNAT change, since hexa-admin carries that too" \
   "commit complete" "$NETADM_POOL"
 expect "and that change reached the dataplane" test "${NETADM_REACHED:-0}" -ge 1
@@ -423,6 +480,39 @@ expect_in "the running configuration reports the role it granted" \
 expect_in "and the other one" "user cg| role cgnat-operator" "$ROLES_BACK"
 expect_not_in "and reports no role for the account that has none" \
   "user ro| role" "$ROLES_BACK"
+
+# --- issue #188: the commit an operator makes can be undone ---
+#
+# The modes have ONE owner, appliance/install.sh, and the VTY neither restates
+# them nor narrows them. It used to chmod 0700/0600 on every save and every
+# commit, so the first one by anybody - root applying the configuration at boot
+# - closed the directory the operator's own group had been given.
+expect_not_in "a cgnat operator's commit records its rollback revision" \
+  "no rollback revision could be recorded" "$CG_OK"
+# Read back by the operator, off the box. The revision existing is not the
+# assertion: the assertion is that the account which made the commit can see
+# the revision it would roll back to.
+expect_in "and the operator can see the revision it would roll back to" \
+  "current" "$CG_RB"
+expect "which that account wrote itself" test "${RB_OWNER:-none}" = cg
+# setgid on the directory, or a revision root writes at boot is group root and
+# the next operator cannot read it.
+expect "and which carries the role group, whoever wrote it" \
+  test "${RB_GROUP:-none}" = hexa-cgnat
+# The modes, against what install.sh states - 2770 on the directories, 0660 on
+# the file - at the two moments that broke them.
+expect "root's own commit left the configuration directory as installed" \
+  test "${MODE_AFTER_ROOT:-}" = "2770 2770"
+# The save and the modes in ONE assertion, because either alone passes for the
+# wrong reason: a save that is refused cannot narrow anything, so a mode read
+# after a failed save says only that nothing happened.
+expect "and a non-root save succeeds and leaves every one of them alone" \
+  test "${SAVE_STATE:-}" = "1 2770 2770 660 hexa-cgnat"
+# The constraint none of the above may buy: this file holds the password hash
+# of every account on the box, so widening it to everybody would answer the
+# group problem by handing out an offline cracking target.
+expect "and never readable by everybody: it holds every password hash" \
+  sh -c "[ \"\$(stat -c %a /etc/hexarouting/hexarouting.conf | tail -c 2)\" = 0 ]"
 
 # --- an account with no role can do nothing ---
 #
@@ -469,6 +559,10 @@ expect_not_in "and not VPP's own loopback, which configures nothing" \
 # The pool exists only in the CANDIDATE at that moment, so this also proves
 # the source is the configuration being edited and not the committed one.
 expect_in "pool completion names the pool being edited" "POOLS: lab" "$COMP"
+# The hierarchies asked for in #193, offered where an operator looks for them.
+expect_in "CGNAT is offered under nat" "NATSUB: cgnat" "$COMP"
+expect_in "and static routes under router, beside the protocols" "static" \
+  "$(printf '%s\n' "$COMP" | sed -n 's/^ *ROUTERSUB: *//p')"
 expect_in "show this prints the hierarchy being edited" \
   "cgnat pool lab" "$COMP"
 # The prompt must name the subject, not only the kind: "[edit cgnat pool]" is
@@ -490,10 +584,26 @@ expect_in "and show this in an interface is not empty" "mtu 1500" "$COMP"
 # passed. It was written that way while deliberately replacing a hardcoded
 # list with a rule, which is how a stronger-looking assertion became a vacuous
 # one. Naming two statements that must be there is the rule, checkably.
+# ...and the words after it against that ONE line, not against the blob. The
+# blob also carries IFACE_THIS, which reads "interface host-veth-vpp | mtu
+# 1500 |", so "mtu" was satisfied by the statement the lab had just typed -
+# and the assertion that the interface block still OFFERS mtu passed with the
+# block offering no mtu at all, which is #112 exactly. Same reason "pg0" and
+# "up" needed their own row forty lines up.
+COMP_IN_BLOCK=$(printf '%s\n' "$COMP" | sed -n 's/^ *IN_BLOCK: *//p')
+# A whole word off a space-separated list: "mtu" must not be matched by a
+# statement that merely starts with it, and an empty list must not match at all.
+has_word() { printf ' %s ' "$2" | grep -q " $1 "; }
+echo "  the interface block offers: ${COMP_IN_BLOCK:-<nothing>}"
 expect_in "inside an interface, '?' offers its own statements" \
   "IN_BLOCK: description " "$COMP"
+# "urpf" appears exactly once in this blob, on IN_BLOCK's own line, so unlike
+# "mtu" below it this one does fail when the block stops offering it. Left as
+# it was: an assertion rewritten without being shown to fail first is one
+# nobody has verified.
 expect_in "and the rest of the block with them" "urpf" "$COMP"
-expect_in "including the ones that were always there" "mtu" "$COMP"
+expect "including the ones that were always there" \
+  has_word mtu "$COMP_IN_BLOCK"
 expect_not_in "and nothing from the level above leaks in" \
   "IN_BLOCK: cgnat" "$COMP"
 
@@ -501,15 +611,28 @@ expect_not_in "and nothing from the level above leaks in" \
 #
 # Every assertion here names a WORD the grammar has to offer, not just that the
 # answer is non-empty: "some options came back" passes on the wrong block.
+COMP_BGP_BLOCK=$(printf '%s\n' "$COMP" | sed -n 's/^ *BGP_BLOCK: *//p')
+COMP_BGP_NEIGH=$(printf '%s\n' "$COMP" | sed -n 's/^ *BGP_NEIGH: *//p')
+echo "  router bgp offers: ${COMP_BGP_BLOCK:-<nothing>}"
+echo "  neighbor <TAB> offers: ${COMP_BGP_NEIGH:-<nothing>}"
 expect_in "inside 'router bgp', '?' offers its own statements" \
   "BGP_BLOCK: address-family " "$COMP"
-expect_in "including the one that creates a session" "neighbor" "$COMP"
+# Against BGP_BLOCK's own line. The address family two lines below offers a
+# "neighbor" of its own, so this passed with `router bgp` offering none - the
+# statement that creates a session, missing from the block an operator enters
+# to create one, which is the whole of #142.
+expect "including the one that creates a session" \
+  has_word neighbor "$COMP_BGP_BLOCK"
 expect_not_in "and nothing from the level above leaks in" \
   "BGP_BLOCK: cgnat" "$COMP"
 # A neighbour completes from what is configured, not from a fixed list.
 expect_in "a neighbour completes by address once it exists" \
   "BGP_NEIGH: 10.0.0.2" "$COMP"
-expect_in "and a peer group is offered by name too" "TRANSITO" "$COMP"
+# BGP_PG carries TRANSITO too - it is the same name, completed as the value of
+# `peer-group` - so this passed with the neighbour completion returning an
+# empty list. It is about BGP_NEIGH's line or it is about nothing.
+expect "and a peer group is offered by name too" \
+  has_word TRANSITO "$COMP_BGP_NEIGH"
 # The AS beside it, because an ISP box carries several sessions and they are
 # told apart by who is on the other end, not by the last octet.
 expect_in "the completion says which AS is on the other end" \
@@ -519,6 +642,8 @@ expect_in "the completion says which AS is on the other end" \
 # everything past it fell through to the configuration tree.
 expect_in "the words after a neighbour's address are the neighbour's" \
   "BGP_STMT: bfd" "$COMP"
+# Same as "urpf" above: "remote-as" is on BGP_STMT's line and nowhere else in
+# the blob, so it can fail, and it was left alone.
 expect_in "including the one that opens the session" "remote-as" "$COMP"
 expect_not_in "and not the block's own statements" "BGP_STMT: address-family" "$COMP"
 # A peer group completes only where one is declared.
@@ -568,5 +693,168 @@ echo "  show interface's own row for pg0: '${PG0_ROW:-<none>}'"
 expect_in "show interface reports the dataplane's interfaces" "pg0" "$PG0_ROW"
 expect_in "with their state, on that same row" "up" "$PG0_ROW"
 expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
+
+
+# ---------------------------------------------------------------------------
+# show interface terse / description / utilization (#192)
+#
+# Against a real dataplane, because all three of these READ VPP's own output
+# and the layout is the whole difficulty: the counter names have spaces in
+# them, an idle interface prints no counter line at all, and the link state
+# lives in a different command from the admin state. A unit test proves the
+# parser against text this repository wrote; only this proves it against text
+# VPP wrote.
+echo
+echo "=== show interface terse / description / utilization ==="
+
+# A description with a SPACE in it. `vppctl set interface tag` truncates at
+# the first space; the API does not - so a box that had taken the easy route
+# would store "TRANSITO" and this would fail.
+$HX -c "configure" -c "interface pg0" \
+    -c "description TRANSITO Vivo AS26599" -c "exit" -c "commit" >/dev/null 2>&1
+DESCR=$($HX -c "show interface description" 2>&1)
+echo "$DESCR" | sed 's/^/  /'
+expect_in "a description survives whole, spaces and all" \
+  "TRANSITO Vivo AS26599" "$DESCR"
+expect_in "and the view has the column it used to deny having" \
+  "Description" "$DESCR"
+expect_not_in "the box no longer says it cannot hold one" \
+  "carries no per-interface description" "$DESCR"
+
+TERSE=$($HX -c "show interface terse" 2>&1)
+echo "$TERSE" | sed 's/^/  /'
+expect_in "terse has an admin column" "Admin" "$TERSE"
+expect_in "and a link column, which is a different fact" "Link" "$TERSE"
+# The link column is checked against the dataplane's own answer rather than
+# against "up": a reader that returned a constant, or that read the admin
+# state twice, passes any check written against a literal.
+HW_LINK=$(vppctl show hardware-interfaces brief | awk '$1=="pg0"{print $3}')
+VTY_LINK=$(printf '%s\n' "$TERSE" | awk '$1=="pg0"{print $3}')
+echo "  dataplane says pg0 link '$HW_LINK'; the VTY says '$VTY_LINK'"
+expect "the link column is the dataplane's link state, not a constant" \
+  sh -c "[ -n \"$HW_LINK\" ] && [ \"$HW_LINK\" = \"$VTY_LINK\" ]"
+# And it has to MOVE. A column read off the admin state would follow this too,
+# so the admin state is held still while the link goes down: host-veth-vpp's
+# link follows its peer, and the peer is in another namespace.
+vppctl set interface state pg0 down
+TERSE_DOWN=$($HX -c "show interface terse" 2>&1)
+DOWN_LINK=$(printf '%s\n' "$TERSE_DOWN" | awk '$1=="pg0"{print $3}')
+DOWN_ADMIN=$(printf '%s\n' "$TERSE_DOWN" | awk '$1=="pg0"{print $2}')
+echo "  with pg0 shut: admin '$DOWN_ADMIN' link '$DOWN_LINK'"
+expect_in "shutting an interface shows in the admin column" "down" "$DOWN_ADMIN"
+vppctl set interface state pg0 up
+
+# A sub-interface is not hardware and VPP reports no link for it. Its link is
+# its parent's, and an ISP's subscriber ports are all sub-interfaces - so a
+# blank there would empty the column exactly where it is needed.
+vppctl create sub-interfaces pg0 100 >/dev/null 2>&1
+vppctl set interface state pg0.100 up
+SUBTERSE=$($HX -c "show interface terse" 2>&1 | awk '$1=="pg0.100"{print $3}')
+echo "  pg0.100 link column: '${SUBTERSE:-<none>}'"
+expect "a sub-interface takes its parent's link state" \
+  sh -c "[ \"$SUBTERSE\" = \"$HW_LINK\" ]"
+
+# Utilisation. A counter is a total since boot; a rate is a difference. The
+# traffic runs for the whole sample at a rate the generator was TOLD, so the
+# figure the VTY prints can be checked against a number this lab knows rather
+# than against "not zero" - which a bytes-for-bits mistake would also pass.
+#
+# 1000 packets per second of 100 bytes is 800 kbit/s. The window is wide
+# (300-2000) because a software generator is not a calibration source; it is
+# still narrow enough that reporting bytes (100 kbit/s) or per-sample totals
+# (1.6 Mbit/s at this interval) falls outside it.
+# No `limit`, so the stream runs for the whole window rather than emptying
+# into the first sample; `incrementing 8` because a stream whose data does not
+# fill `size` is refused with "failed to parse packet data", which reads like
+# a syntax error and is not one.
+vppctl packet-generator new \
+  "name util rate 1000 size 100-100 interface pg0 node ethernet-input \
+   data { IP4: 1.2.3 -> 4.5.6 UDP: 100.64.0.9 -> 8.8.8.8 UDP: 1234 -> 53 \
+   incrementing 8 }"
+vppctl packet-generator enable-stream util
+UTIL=$($HX -c "show interface utilization interval 2 count 2 pg0" 2>&1)
+vppctl packet-generator disable-stream util
+echo "$UTIL" | sed 's/^/  /'
+expect_in "the interval is stated before the command makes anybody wait" \
+  "sampling every 2s" "$UTIL"
+KBIT=$(printf '%s\n' "$UTIL" | awk '$1=="pg0"{
+          if ($3 == "Mbit/s") printf "%d", $2 * 1000;
+          else if ($3 == "kbit/s") printf "%d", $2;
+          else if ($3 == "Gbit/s") printf "%d", $2 * 1000000;
+          else printf "%d", $2 / 1000 }')
+echo "  the VTY read ${KBIT:-<none>} kbit/s off a generator set to 800"
+expect "a 800 kbit/s stream reads as bit/s, not bytes and not a total" \
+  sh -c "[ -n \"$KBIT\" ] && [ \"$KBIT\" -ge 300 ] && [ \"$KBIT\" -le 2000 ]"
+# The graph. A run with traffic must draw something above the baseline; the
+# same command with the generator stopped must not - which is what makes the
+# first assertion mean anything.
+IDLE=$($HX -c "show interface utilization interval 1 count 2 pg0" 2>&1)
+IDLE_RATE=$(printf '%s\n' "$IDLE" | awk '$1=="pg0"{print $2, $3}')
+echo "  with the generator stopped: '$IDLE_RATE'"
+expect_in "with nothing passing, the rate is zero" "0 bit/s" "$IDLE_RATE"
+
+# The graph. Checked by COMPARING the two runs rather than by looking for a
+# particular character: which characters are drawn depends on whether the
+# console is answering in UTF-8, and an assertion on one of them would be an
+# assertion about the terminal. What has to be true is that a link carrying
+# traffic and the same link carrying none do not draw the same line.
+HIST=$(printf '%s\n' "$UTIL" | awk '$1=="pg0"{print $6}')
+IDLE_HIST=$(printf '%s\n' "$IDLE" | awk '$1=="pg0"{print $6}')
+echo "  history with traffic '$HIST', idle '$IDLE_HIST'"
+expect "the history is drawn, not left blank" sh -c "[ -n \"$HIST\" ]"
+expect "and traffic does not draw the same line as silence" \
+  sh -c "[ \"$HIST\" != \"$IDLE_HIST\" ]"
+
+echo
+# LAST IN THE FILE, and it has to be. `--load` applies a file as the WHOLE
+# configuration, so the deliberately small one below REMOVES everything it does
+# not mention - including this lab's BGP session. Run anywhere but here it takes
+# the rest of the lab's setup away, and five assertions fail for a reason that
+# has nothing to do with what they test. That was measured, not foreseen.
+echo "=========== a file written before the hierarchies moved (#193) ==========="
+# The migration property, on a real box rather than on a parser. CGNAT is under
+# `nat` now and static routes under `router`; every box already in service has
+# a saved configuration and up to twenty rollback revisions written the OLD
+# way, and hexarouting.service replays that file at every boot on a machine
+# nobody is watching. A grammar that cannot read the box's own file leaves the
+# box unconfigured, and nothing would say so until somebody noticed the traffic.
+vppctl bpa pool provider-a del 2>/dev/null
+cat > /tmp/old-format.conf <<'OLDEOF'
+! cgnat
+cgnat pool provider-a
+ inside 100.64.0.0/22
+ outside 200.150.0.16/30
+ block-size 512
+ policy interleaved
+ mode deterministic
+ exit
+! routing
+ip route 198.51.100.0/24 blackhole
+OLDEOF
+$HX --load /tmp/old-format.conf 2>&1 | sed 's/^/  /'
+OLD_POOL=$(vppctl show bpa pool | grep -c provider-a)
+OLD_ROUTE=$(vtysh -c "show running-config" 2>/dev/null | grep -c "ip route 198.51.100.0/24")
+echo "  after loading the old format: pool rows $OLD_POOL, route lines $OLD_ROUTE"
+# And what the box writes back is the NEW hierarchy, which must itself load.
+$HX -c "save" >/dev/null 2>&1
+NEW_TEXT=$(cat "$HEXA_CONFIG")
+printf '%s\n' "$NEW_TEXT" | grep -E "^nat |^router static|^ route " | sed 's/^/    /'
+vppctl bpa pool provider-a del 2>/dev/null
+$HX --load "$HEXA_CONFIG" 2>&1 | sed 's/^/  /'
+ROUND=$(vppctl show bpa pool | grep -c provider-a)
+echo "  after loading what the box itself wrote: pool rows $ROUND"
+
+echo
+
+# The migration property, measured earlier on a real box: a configuration
+# written before the hierarchies moved still reaches the dataplane and FRR,
+# what the box writes back is the new hierarchy, and the box can read that.
+expect "a configuration in the old hierarchy still reaches the dataplane" \
+  sh -c "[ \"$OLD_POOL\" -ge 1 ]"
+expect "and its static route still reaches FRR" \
+  sh -c "[ \"$OLD_ROUTE\" -ge 1 ]"
+expect_in "the box writes CGNAT under nat" "nat cgnat pool provider-a" "$NEW_TEXT"
+expect_in "and static routes as a block under router" "router static" "$NEW_TEXT"
+expect "a box can read back the file it just wrote" sh -c "[ \"$ROUND\" -ge 1 ]"
 
 verdict
