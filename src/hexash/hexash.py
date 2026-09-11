@@ -128,6 +128,7 @@ ARG_COMMUNITY_LIST = "<community-list>"
 ARG_ROUTE_MAP = "<route-map>"
 ARG_PEER_GROUP = "<peer-group>"
 ARG_AREA = "<area>"
+ARG_ISIS_TAG = "<isis-instance>"
 ARG_REV = "<0-19>"
 
 SHOW_CGNAT = {
@@ -168,6 +169,75 @@ SHOW = {
                   ARG_INTERFACE),
     "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
+}
+
+# Offered inside `router isis <tag>`. IS-IS is what an ISP core runs, and this
+# VTY offered `<word>` for the instance tag and nothing after it (#175).
+ISIS_BLOCK = {
+    "net": ("this box's NSAP address; without it the instance never starts",
+            "<49.xxxx.xxxx.xxxx.xxxx.00>"),
+    "is-type": ("which levels this box takes part in", {
+        "level-1": ("area-internal only", None),
+        "level-2-only": ("backbone only - what an ISP core runs", None),
+        "level-1-2": ("both", None),
+    }),
+    "metric-style": ("how a link's metric is encoded", {
+        "wide": ("32-bit metrics; narrow caps at 63 and cannot express a "
+                 "10G-and-up topology", None),
+        "narrow": ("6-bit metrics, for a neighbour that cannot do wide", None),
+        "transition": ("send both while a network is being migrated", None),
+    }),
+    "topology": ("carry a second address family over the same adjacency", {
+        "ipv6-unicast": ("IPv6, which needs this even when the interfaces "
+                         "already have addresses", None),
+    }),
+    "set-overload-bit": ("tell everybody not to transit through this box - "
+                         "IS-IS's maintenance drain", "[on-startup <1-86400>]"),
+    "redistribute": ("inject routes from another source", {
+        "ipv4": ("IPv4", "<proto> level-1|level-2 [metric <n>] "
+                 "[route-map <name>]"),
+        "ipv6": ("IPv6", "<proto> level-1|level-2 [metric <n>] "
+                 "[route-map <name>]"),
+    }),
+    "default-information": ("originate a default route", {
+        "originate": ("advertise a default", "ipv4|ipv6 level-1|level-2 "
+                      "[always] [route-map <name>]"),
+    }),
+    "domain-password": ("level-2 authentication; never printed back",
+                        "[clear|md5] <password>"),
+    "area-password": ("level-1 authentication; never printed back",
+                      "[clear|md5] <password>"),
+    "log-adjacency-changes": ("log every adjacency transition", None),
+    "lsp-mtu": ("largest LSP this box generates; larger than the smallest "
+                "interface MTU and they cannot be sent", "<128-4352>"),
+    "lsp-gen-interval": ("seconds between LSP regenerations", "<1-120>"),
+    "spf-interval": ("seconds between SPF runs", "<1-120>"),
+    "max-lsp-lifetime": ("seconds an LSP stays valid", "<350-65535>"),
+    "exit": ("leave the IS-IS configuration", None),
+}
+
+# IS-IS's interface statements, which live in the interface block the way
+# OSPF's do.
+ISIS_INTERFACE = {
+    "circuit-type": ("which levels this interface takes part in", {
+        "level-1": ("area-internal only", None),
+        "level-2-only": ("backbone only", None),
+        "level-1-2": ("both", None),
+    }),
+    "network": ("how IS-IS treats the link", {
+        "point-to-point": ("no DIS election and no pseudo-node - what a p2p "
+                           "Ethernet wants, and setting it on one side only "
+                           "is a non-adjacency", None),
+    }),
+    "metric": ("this interface's metric; above 63 needs metric-style wide",
+               "<0-16777215> [level-1|level-2]"),
+    "passive": ("advertise the interface and send no hellos", None),
+    "hello-interval": ("seconds between hellos", "<1-600>"),
+    "hello-multiplier": ("missed hellos before the neighbour is down",
+                         "<2-100>"),
+    "password": ("per-interface authentication; never printed back",
+                 "[clear|md5] <password>"),
+    "bfd": ("track the adjacency with BFD", None),
 }
 
 # Offered inside `router ospf`. The statements an ISP edge or aggregation box
@@ -262,11 +332,20 @@ INTERFACE_BLOCK = {
     }),
     "ip": ("routing-protocol settings FRR owns on this interface", {
         "ospf": ("OSPF on this interface", OSPF_INTERFACE),
+        "router": ("join a routing instance", {
+            "isis": ("run IS-IS for IPv4 on this interface", ARG_ISIS_TAG),
+        }),
     }),
+    "isis": ("IS-IS settings on this interface", ISIS_INTERFACE),
     "ipv6": ("IPv6 addressing", {
         "address": ("an address on this interface, may repeat", ARG_PREFIX),
         "nd": ("neighbour discovery", {
             "suppress-ra": ("stop advertising this box as a router", None),
+        }),
+        "router": ("join a routing instance", {
+            "isis": ("run IS-IS for IPv6 on this interface - which also needs "
+                     "'topology ipv6-unicast' on the instance",
+                     ARG_ISIS_TAG),
         }),
     }),
     "shutdown": ("take the interface administratively down", None),
@@ -721,7 +800,7 @@ TREE = {
         "router": ("routing protocols (FRR)", {
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", "[vrf <name>]"),
-            "isis": ("IS-IS", ARG_WORD),
+            "isis": ("IS-IS", ARG_ISIS_TAG),
         }),
         "interface": ("interface configuration", ARG_INTERFACE),
         "ssh": ("the SSH daemon", {
@@ -1000,6 +1079,109 @@ def undefined_policy_lists(routing):
         elif kind == "large-community" and name not in have_large:
             out.append((line.strip(), f"no large-community list called "
                         f"'{name}' is defined; the clause would match nothing"))
+    return out
+
+
+def isis_findings(routing):
+    """
+    What an IS-IS configuration says that will not do what it looks like.
+
+    Every one of these is accepted by FRR and every one is local to this box,
+    which is the line this project draws: whether the neighbour agrees is not
+    in the configuration and is not claimed.
+    """
+    instances = {}      # tag -> {net, is_type, metric_style, topologies}
+    joined = {}         # tag -> [(interface, family, statement)]
+    circuits = {}       # tag -> [(interface, circuit_type, statement)]
+    metrics = []        # (interface, value, statement)
+    tag = None
+    iface = None
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "isis"] and len(w) > 2:
+            tag, iface = w[2], None
+            instances.setdefault(tag, {"net": False, "is_type": None,
+                                       "metric_style": None, "v6": False})
+            continue
+        if w[0] == "interface" and len(w) > 1:
+            tag, iface = None, w[1]
+            continue
+        if w[0] in ("router", "route-map", "rpki", "vrf"):
+            tag, iface = None, None
+            continue
+        if tag:
+            inst = instances[tag]
+            if w[0] == "net":
+                inst["net"] = True
+            elif w[0] == "is-type" and len(w) > 1:
+                inst["is_type"] = w[1]
+            elif w[0] == "metric-style" and len(w) > 1:
+                inst["metric_style"] = w[1]
+            elif w[:2] == ["topology", "ipv6-unicast"]:
+                inst["v6"] = True
+        elif iface:
+            if w[:3] in (["ip", "router", "isis"], ["ipv6", "router", "isis"]) \
+                    and len(w) > 3:
+                joined.setdefault(w[3], []).append((iface, w[0], line.strip()))
+            elif w[:2] == ["isis", "circuit-type"] and len(w) > 2:
+                circuits.setdefault(None, []).append((iface, w[2],
+                                                      line.strip()))
+            elif w[:2] == ["isis", "metric"] and len(w) > 2:
+                try:
+                    metrics.append((iface, int(w[2]), line.strip()))
+                except ValueError:
+                    pass
+
+    out = []
+    for tag, inst in instances.items():
+        # REFUSED: an instance with no NET never starts. FRR accepts the
+        # stanza and isisd runs with nothing in it.
+        if not inst["net"]:
+            out.append(("error", f"router isis {tag}",
+                        "no 'net': the instance has no address and will not "
+                        "start"))
+        # An instance no interface joins runs and carries nothing.
+        if tag not in joined:
+            out.append(("warning", f"router isis {tag}",
+                        "no interface joins it, so it runs and carries "
+                        "nothing"))
+        # The IPv6 half, silently absent while IPv4 works.
+        v6_joins = [j for j in joined.get(tag, []) if j[1] == "ipv6"]
+        if v6_joins and not inst["v6"]:
+            out.append(("warning", v6_joins[0][2],
+                        f"instance {tag} has no 'topology ipv6-unicast', so "
+                        "the IPv6 half carries nothing while IPv4 works"))
+        # Narrow metrics cap at 63. The classic silent limitation.
+        if inst["metric_style"] in (None, "narrow"):
+            big = [m for m in metrics if m[1] > 63]
+            if big:
+                out.append(("warning", big[0][2],
+                            f"{big[0][1]} needs 'metric-style wide' on "
+                            f"{tag}; narrow metrics cap at 63"))
+
+    # REFUSED: an interface joining a tag no instance declares. Same shape as
+    # the undeclared peer group and the undefined route-map.
+    for tag, joins in joined.items():
+        if tag not in instances:
+            out.append(("error", joins[0][2],
+                        f"no 'router isis {tag}' declares that instance"))
+
+    # A level-2-only box with a level-1 circuit forms no adjacency on it, and
+    # this is entirely local: FRR accepts both halves.
+    only_tag = next(iter(instances), None)
+    if len(instances) == 1 and only_tag:
+        want = instances[only_tag]["is_type"]
+        for ifname, ctype, stmt in circuits.get(None, []):
+            if want == "level-2-only" and ctype == "level-1":
+                out.append(("warning", stmt,
+                            f"instance {only_tag} is level-2-only, so a "
+                            "level-1 circuit forms no adjacency"))
+            elif want == "level-1" and ctype == "level-2-only":
+                out.append(("warning", stmt,
+                            f"instance {only_tag} is level-1, so a "
+                            "level-2-only circuit forms no adjacency"))
     return out
 
 
@@ -2763,6 +2945,14 @@ class Shell:
                       f"{there}")
                 print("    the adjacency will sit in Exchange with no log "
                       "line; set them the same, or 'ip ospf mtu-ignore'")
+
+            # IS-IS: shapes that commit cleanly and carry nothing (#175).
+            for sev, stmt, why in isis_findings(target.routing):
+                if sev == "error":
+                    self.err(f"{stmt}: {why}")
+                    ok = False
+                else:
+                    print(f"warning: {stmt}: {why}")
 
             # Origin validation that is not validating anything (#147).
             for stmt, why in rpki_findings(target.routing):
@@ -4932,6 +5122,24 @@ class Shell:
                 line += f"; e.g. '{example}'"
             print(line)
 
+    def dyn_isis_tags(self):
+        """
+        The IS-IS instances this box has, by their tag.
+
+        Read from the configuration, which is read from FRR. The tag was
+        offered as a bare `<word>` before, so an operator writing `ip router
+        isis` on an interface had to remember what they had called the
+        instance - and getting it wrong produces an interface that joins
+        nothing, silently.
+        """
+        cfg = self.candidate or self.running_config()
+        found = {}
+        for line in cfg.routing:
+            w = line.split()
+            if w[:2] == ["router", "isis"] and len(w) > 2:
+                found[w[2]] = "IS-IS instance"
+        return found
+
     def dyn_as_path_lists(self):
         """AS-path access-lists by name, with what the first entry does."""
         cfg = self.candidate or self.running_config()
@@ -5012,6 +5220,7 @@ class Shell:
         ARG_NEIGHBOUR: "dyn_neighbours",
         ARG_ROUTE_MAP: "dyn_route_maps",
         ARG_PEER_GROUP: "dyn_peer_groups",
+        ARG_ISIS_TAG: "dyn_isis_tags",
         ARG_AS_PATH_LIST: "dyn_as_path_lists",
         ARG_COMMUNITY_LIST: "dyn_community_lists",
     }
@@ -5049,6 +5258,8 @@ class Shell:
             return INTERFACE_BLOCK
         if block.strip() == "rpki":
             return RPKI_BLOCK
+        if block.split()[:2] == ["router", "isis"]:
+            return ISIS_BLOCK
         if block.split()[:2] == ["router", "ospf"]:
             return OSPF_BLOCK
         if block.startswith("route-map "):

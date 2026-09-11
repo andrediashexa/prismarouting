@@ -1208,5 +1208,68 @@ indented = ["router ospf", " network 200.150.0.0/24 area 0"]
 check(ospf_state(typed)[0] == ospf_state(indented)[0],
       "typed and read-back statements parse the same")
 
+
+# --- IS-IS: shapes that commit cleanly and carry nothing (#175) ---
+#
+# Every one is accepted by FRR and every one is local to this box, which is
+# the line drawn here: whether the neighbour agrees is not in the
+# configuration and is not claimed.
+print("\n=== IS-IS findings ===")
+from hexash import isis_findings                                 # noqa: E402
+
+GOOD = ["router isis HEXA", "net 49.0001.0000.0000.0001.00",
+        "metric-style wide", "interface Gi0", "ip router isis HEXA"]
+check(not isis_findings(GOOD), f"a complete instance is clean: {isis_findings(GOOD)}")
+
+# An instance with no NET never starts; FRR accepts the stanza.
+r = isis_findings(["router isis HEXA", "interface Gi0", "ip router isis HEXA"])
+check(any(sv == "error" and "no 'net'" in w for sv, _, w in r),
+      f"no net is refused: {r}")
+
+# An interface joining a tag no instance declares - the same shape as the
+# undeclared peer group and the undefined route-map.
+r = isis_findings(["interface Gi0", "ip router isis GONE"])
+check(any(sv == "error" and "declares that instance" in w for sv, _, w in r),
+      f"an undeclared tag is refused: {r}")
+
+# An instance nothing joins runs and carries nothing.
+r = isis_findings(["router isis HEXA", "net 49.0001.0000.0000.0001.00"])
+check(any("no interface joins it" in w for _, _, w in r),
+      f"an instance nobody joins is reported: {r}")
+
+# The IPv6 half silently absent while IPv4 works.
+v6 = ["router isis HEXA", "net 49.0001.0000.0000.0001.00",
+      "interface Gi0", "ipv6 router isis HEXA"]
+check(any("topology ipv6-unicast" in w for _, _, w in isis_findings(v6)),
+      "IPv6 with no topology statement is reported")
+check(not isis_findings(v6[:2] + ["topology ipv6-unicast"] + v6[2:]),
+      "and with it, nothing is")
+
+# Narrow metrics cap at 63 - the classic silent limitation on a 10G box.
+narrow = GOOD[:2] + ["interface Gi0", "ip router isis HEXA", "isis metric 100"]
+check(any("metric-style wide" in w for _, _, w in isis_findings(narrow)),
+      "a metric above 63 with narrow encoding is reported")
+check(not isis_findings(GOOD + ["isis metric 100"]),
+      "and with wide it is not")
+
+# A level-2-only instance with a level-1 circuit forms no adjacency, and both
+# halves are accepted by FRR.
+lv = GOOD[:2] + ["is-type level-2-only", "interface Gi0",
+                 "ip router isis HEXA", "isis circuit-type level-1"]
+check(any("forms no adjacency" in w for _, _, w in isis_findings(lv)),
+      "a circuit-type the instance cannot serve is reported")
+check(not isis_findings(GOOD[:2] + ["is-type level-2-only", "interface Gi0",
+                                    "ip router isis HEXA",
+                                    "isis circuit-type level-2-only"]),
+      "and a matching one is not")
+
+check(not isis_findings(["router bgp 65000", "neighbor 10.0.0.2 remote-as 65001"]),
+      "and none of it fires when there is no IS-IS")
+
+# By statement, not by indentation - the asymmetry that has caught four
+# checks in this file now.
+check(isis_findings([" " + l for l in GOOD]) == isis_findings(GOOD),
+      "typed and read-back statements parse the same")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
