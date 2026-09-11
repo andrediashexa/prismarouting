@@ -34,7 +34,7 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
-## Unreleased
+## 0.62.0 — the VTY an operator types at, ESP passthrough, and three releases with no entry
 
 [#14](https://github.com/andrediashexa/hexarouting/issues/14),
 [#190](https://github.com/andrediashexa/hexarouting/issues/190),
