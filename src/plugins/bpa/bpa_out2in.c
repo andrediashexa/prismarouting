@@ -68,8 +68,10 @@ static char *bpa_out2in_error_strings[] = {
 typedef enum
 {
   BPA_OUT2IN_NEXT_DROP,
+  BPA_OUT2IN_NEXT_LOOKUP,
   BPA_OUT2IN_N_NEXT,
 } bpa_out2in_next_t;
+
 
 
 /*
@@ -230,7 +232,7 @@ VLIB_NODE_FN (bpa_out2in_node)
 	{
 	  vlib_node_increment_counter (vm, node->node_index,
 				       BPA_OUT2IN_ERROR_NOT_OURS, 1);
-	  vnet_feature_next_u16 (&next[0], b[0]);
+	  bpa_next_after (&next[0], b[0], BPA_OUT2IN_NEXT_LOOKUP);
 	  goto trace;
 	}
 
@@ -261,7 +263,7 @@ VLIB_NODE_FN (bpa_out2in_node)
 		}
 	      matched = 1;
 	      n_icmp_err++;
-	      vnet_feature_next_u16 (&next[0], b[0]);
+	      bpa_next_after (&next[0], b[0], BPA_OUT2IN_NEXT_LOOKUP);
 	      goto trace;
 	    }
 	}
@@ -309,7 +311,7 @@ VLIB_NODE_FN (bpa_out2in_node)
 	  matched = 1;
 	  n_esp++;
 	  n_translated++;
-	  vnet_feature_next_u16 (&next[0], b[0]);
+	  bpa_next_after (&next[0], b[0], BPA_OUT2IN_NEXT_LOOKUP);
 	  goto trace;
 	}
 
@@ -555,7 +557,7 @@ VLIB_NODE_FN (bpa_out2in_node)
 					     &s->adj[BPA_DIR_OUT]);
 	}
 
-      vnet_feature_next_u16 (&next[0], b[0]);
+      bpa_next_after (&next[0], b[0], BPA_OUT2IN_NEXT_LOOKUP);
 
     trace:
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
@@ -610,6 +612,7 @@ VLIB_REGISTER_NODE (bpa_out2in_node) = {
   .n_next_nodes = BPA_OUT2IN_N_NEXT,
   .next_nodes = {
     [BPA_OUT2IN_NEXT_DROP] = "error-drop",
+    [BPA_OUT2IN_NEXT_LOOKUP] = "ip4-lookup",
   },
 };
 

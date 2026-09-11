@@ -34,6 +34,55 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+[#48](https://github.com/andrediashexa/hexarouting/issues/48),
+[#199](https://github.com/andrediashexa/hexarouting/issues/199).
+
+### Fixed
+
+* **On a box with workers, every translated packet was blackholed.** `bpa-in2out`
+  translated the packet, counted it as translated, and sent it to `error-drop`.
+  Nothing left the box. `hexarouting-tune` configures workers on every
+  appliance, so **that was the shipped configuration**. With workers the node on
+  the `ip4-unicast` arc is the HANDOFF node, not the translation node: the
+  feature machinery stores each chain entry's next as an index into the
+  next-node list of the node that consumes it, and the translation node applied
+  the handoff node's index to its own list, whose only member was `error-drop`.
+  It now sends the packet to `ip4-lookup` itself when there are workers, which
+  is where the chain was going — the arc is already terminated at the handoff,
+  because that node enqueues to a thread and never consults the chain. With
+  workers, a feature some *other* plugin enables between BPA and `ip4-lookup` is
+  skipped; this product enables nothing there, and the alternative on offer was
+  a dropped packet.
+* **The assertion that would have caught it.** `lab/handoff.sh` is the only lab
+  that runs with workers and every check in it was a **counter** — which says
+  what a node decided, not what came out of the box. It passed on a box that
+  dropped every packet, and did. It now sends a packet in each direction and
+  asserts on the **captured packet** that it left the far interface with the
+  right address. On the unfixed build four of the five new checks fail and all
+  three old ones still say `ok`. Every other lab that asserts forwarding uses a
+  startup file with no workers, so the forwarding path had only ever been proved
+  in a configuration the product does not ship.
+
+### Changed
+
+* **One TCP sequence-correction mechanism, not two.** `sizeof (bpa_session_t)`
+  96 → 88. The FTP ALG kept its own set of correction fields beside the general
+  one; a connection is either FTP or RTSP, so the duplication cost bytes rather
+  than correctness — and cost the next ALG that lengthens a payload a choice
+  between two mechanisms of which only one could be right. The one kept has the
+  better retransmission guard: a rewritten segment arriving again, already
+  accounted for, must not push a second correction, and the deleted one would
+  have **doubled** the offset for exactly that case. `lab/ftp-alg.sh` asserts it
+  now, on the segment after the retransmission; with the guard removed it fails
+  with `unexpected: seq=1025`. FTP's own payload splice went with it, so there
+  is one rewriter and one correction. The session's `alg` flag field is gone
+  rather than renamed — it held one bit that was redundant with the offsets
+  themselves. **The counter names changed with it**: two FTP-specific names
+  became one per node describing the mechanism, and RTSP's corrections, which
+  had no counter at all, are visible for the first time.
+
 ## 0.62.0 — the VTY an operator types at, ESP passthrough, and three releases with no entry
 
 [#14](https://github.com/andrediashexa/hexarouting/issues/14),

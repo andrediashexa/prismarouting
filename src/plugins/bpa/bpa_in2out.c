@@ -71,8 +71,10 @@ static char *bpa_in2out_error_strings[] = {
 typedef enum
 {
   BPA_IN2OUT_NEXT_DROP,
+  BPA_IN2OUT_NEXT_LOOKUP,
   BPA_IN2OUT_N_NEXT,
 } bpa_in2out_next_t;
+
 
 static_always_inline void
 bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
@@ -282,7 +284,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 		  &n_bypass_dst)))
 	    {
 	      bypassed = 1;
-	      vnet_feature_next_u16 (&next[0], b[0]);
+	      bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
 	      goto trace;
 	    }
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_GRE_NO_CALL];
@@ -328,7 +330,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 					    &n_bypass_src, &n_bypass_dst)))
 	{
 	  bypassed = 1;
-	  vnet_feature_next_u16 (&next[0], b[0]);
+	  bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
 	  goto trace;
 	}
 
@@ -773,7 +775,7 @@ VLIB_NODE_FN (bpa_in2out_node)
       hp_done:;
       }
 
-      vnet_feature_next_u16 (&next[0], b[0]);
+      bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
 
     trace:
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
@@ -846,6 +848,7 @@ VLIB_REGISTER_NODE (bpa_in2out_node) = {
   .n_next_nodes = BPA_IN2OUT_N_NEXT,
   .next_nodes = {
     [BPA_IN2OUT_NEXT_DROP] = "error-drop",
+    [BPA_IN2OUT_NEXT_LOOKUP] = "ip4-lookup",
   },
 };
 
