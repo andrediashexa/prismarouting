@@ -1289,6 +1289,25 @@ access. `/etc/hexarouting` is group-owned by `hexa-cgnat`, so **an
 administrator MUST also be a member of `hexa-cgnat`** — otherwise they can
 apply a change and then fail to record its rollback revision.
 
+**The modes have one owner, and it is `appliance/install.sh`**: `2770` on
+`/etc/hexarouting` and on its rollback store, `0660` on the files inside, group
+`hexa-cgnat`. The VTY does not restate them. It used to `chmod 0700` on every
+`save` and every `commit`, so the **first** one on the box — root, applying the
+configuration at boot — closed the directory the operator's group had just been
+given, and from then on every non-root `save` failed and every non-root
+`commit` reported that no rollback revision could be recorded
+([#188](https://github.com/andrediashexa/hexarouting/issues/188)). It cannot be
+the other way round either: half of this is ownership, and a non-root operator
+cannot `chgrp` a directory it does not own.
+
+**setgid**, because the group alone is not enough. Without it a revision root
+writes at boot is group `root`, and one operator's revision is unreadable to
+the next — a rollback store only the account that wrote it can read is not one.
+What the VTY still states is the half that must never slip: what it has to
+create, it creates no wider than the group. These files carry the password hash
+of every account on the box, so world-readable is an offline cracking target
+handed to every login, and no group problem is worth fixing that way.
+
 #### How a role is granted
 
 Through the VTY, and only through the VTY:
@@ -1410,19 +1429,46 @@ holds a role and not the memberships, names them, and says so as a failed
 check. A box with no operator account yet says that instead, and does not fail
 for it.
 
-Two things measured while doing that, neither of which is about memberships
-and neither of which is fixed:
+One thing measured while doing that, which is not about memberships and is not
+fixed:
 
 * **A root API client puts `/dev/shm/global_vm` back to `root:root`.**
   Measured in `lab/vty.sh`: the drop-in above fixes the segment after the
   dataplane starts, and the next `hexash` run as root undoes it — after which
   every non-root client crashes in `svm_region_map`. On an installed box
   `hexarouting.service` applies the configuration as root at every boot.
-* **`frr-reload.py` logs to `/var/log/frr/frr-reload.log`**, and the frr
-  package ships that directory `drwxr-x--- frr:frr`. Group `frr` is read-only
-  there, so a non-root administrator can validate a routing change
-  (`commit check`, which uses `--test` and logs to stdout) and cannot apply
-  one.
+
+#### What applying a routing change needs, beyond the role
+
+A role says an account **may** change routing. Three paths decide whether it
+**can**, and all three belong to FRR rather than to this product
+([#186](https://github.com/andrediashexa/hexarouting/issues/186)):
+
+| path | shipped as | what happens without it |
+|---|---|---|
+| `/var/log/frr` | `drwxr-x--- frr:frr`, by the frr package | `frr-reload --reload` opens `--logfile` there before it looks at `--stdout`, and dies in `FileHandler` |
+| `/var/run/frr` | `0710 frr:frr`, by `frrcommon.sh` | `--rundir` is where the delta is staged for `vtysh -f`; the write is refused |
+| `/etc/frr/frr.conf` | `0640 frr:frr`, by the frr package | `frr-reload` ends by asking `vtysh` to persist the result, and the open fails |
+
+The first two are **scratch**, so the VTY hands `frr-reload` a private
+directory of its own for both — nothing package-owned is touched, and nothing
+has to survive an frr upgrade. `--stdout` replaces the log handler anyway, so
+that log file was opened and never written to.
+
+The third is not scratch: persisting FRR's configuration **is** writing that
+file, so `appliance/install.sh` makes it `0660`. The **file** and not the
+directory, measured both ways on FRR 10.7.1: with the file group-writable
+`vtysh` rewrites it in place and it stays `frr:frr`, which works for the next
+account too; with the *directory* group-writable instead, `vtysh` renames it
+aside and creates a new one owned by whoever committed, after which the next
+administrator cannot write it at all. The cost is stated where it is set: an
+frr upgrade that reinstalls the conffile puts `0640` back, and non-root commits
+fail — loudly — until the installer is re-run.
+
+`commit check` never needed any of this: `--test` logs to stdout and stages
+nothing. That is why the split was **check succeeds, commit fails** — the worst
+one available, because it is found in the maintenance window, after the check
+has already said yes.
 
 `bpa_global_set` takes the whole set of global settings, and a **zero timeout
 means "leave it alone"** — zero is not a valid timeout, so it needs no separate

@@ -153,17 +153,32 @@ install -D -m 0755 /src/appliance/hexash-login /usr/bin/hexash-login
 # hexa-cgnat owns it and hexa-admin is ADDITIVE on top: an administrator is a
 # member of both. Owning it with hexa-admin instead would have handed the
 # cgnat operator administrator rights, which is the opposite of the point.
+#
+# 2770 and not 0770, which is also what install.sh states: the group is not
+# enough on its own. Without setgid a revision root writes at boot is group
+# root, and the operator who comes next cannot read the thing it is supposed to
+# be able to roll back to.
 chgrp -R hexa-cgnat /etc/hexarouting 2>/dev/null
-chmod 0770 /etc/hexarouting 2>/dev/null
+chmod 2770 /etc/hexarouting 2>/dev/null
 mkdir -p /etc/hexarouting/rollback
 chgrp hexa-cgnat /etc/hexarouting/rollback 2>/dev/null
-chmod 0770 /etc/hexarouting/rollback 2>/dev/null
+chmod 2770 /etc/hexarouting/rollback 2>/dev/null
 # 0660 and group hexa-cgnat, which is what appliance/install.sh installs. It
 # used to be 0644 here: world-readable, which no appliance ships, and which
 # handed the read-only account a copy of every password hash on the box the
 # product deliberately does not give it.
 chgrp hexa-cgnat /etc/hexarouting/hexarouting.conf 2>/dev/null
 chmod 0660 /etc/hexarouting/hexarouting.conf 2>/dev/null
+# And the one file in /etc/frr an administrator has to be able to write, which
+# install.sh also states. Applying a routing change ends with frr-reload asking
+# vtysh to persist the result, and the frr package ships that file 0640
+# frr:frr - so the administrator below could check the change and not make it
+# (#186). The FILE and not the directory: with the directory group-writable
+# vtysh creates a new frr.conf owned by whoever committed, and the next
+# administrator cannot write it at all. Nothing else in /etc/frr is touched -
+# it keeps the package's own frr:frr 0750, which is what the read-only account
+# above proves it can still read through.
+chmod 0660 /etc/frr/frr.conf 2>/dev/null
 
 echo "  -- the VTY creates the accounts and grants the roles"
 MAKE=$($HX -c "configure" \
@@ -172,6 +187,13 @@ MAKE=$($HX -c "configure" \
     -c "user netadm" -c "role administrator" -c "exit" \
     -c "commit" 2>&1)
 printf '%s\n' "$MAKE" | sed 's/^/    /'
+# The modes after a commit run by ROOT, which is the case that made every later
+# one fail: the VTY chmod'd 0700/0600 on every save and every commit, so the
+# first one on the box - hexarouting.service applying the configuration at boot
+# - took the group's access away (#188). They are stated by appliance/install.sh
+# and by nothing else, so they must be exactly what was set above.
+MODE_AFTER_ROOT="$(stat -c %a /etc/hexarouting) $(stat -c %a /etc/hexarouting/rollback)"
+echo "    modes after root's commit: $MODE_AFTER_ROOT"
 # The memberships as the SYSTEM reports them, not as the VTY believes them.
 # The whole defect was a VTY whose belief and the box's answer never met.
 RO_GROUPS=" $(id -nG ro 2>/dev/null) "
@@ -217,6 +239,27 @@ printf '%s\n' "$RO_SHOW" | sed 's/^/    /'
 echo "  -- cgnat operator changes a pool setting"
 CG_OK=$(as cg -c "'configure'" -c "'cgnat pool provider-a'" -c "'alg rtsp off'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$CG_OK" | sed 's/^/    /'
+echo "  -- and the rollback revision that commit has to record"
+# Asserted rather than read, because the failure is SURVIVABLE: the commit
+# still says "commit complete" and the store being out of reach is one warning
+# line above it, which is why an operator whose commits could not be undone
+# went unnoticed until #188 was filed.
+CG_RB=$(as cg -c "'show rollback'")
+printf '%s\n' "$CG_RB" | head -2 | sed 's/^/    /'
+RB_OWNER=$(stat -c %U /etc/hexarouting/rollback/0.conf 2>/dev/null || echo none)
+RB_GROUP=$(stat -c %G /etc/hexarouting/rollback/0.conf 2>/dev/null || echo none)
+echo "    revision 0 belongs to: $RB_OWNER:$RB_GROUP"
+echo "  -- and the operator saves the running configuration"
+CG_SAVE=$(as cg -c "'save'")
+printf '%s\n' "$CG_SAVE" | sed 's/^/    /'
+MODE_DIR=$(stat -c %a /etc/hexarouting)
+MODE_RB=$(stat -c %a /etc/hexarouting/rollback)
+MODE_CONF=$(stat -c %a /etc/hexarouting/hexarouting.conf)
+GROUP_CONF=$(stat -c %G /etc/hexarouting/hexarouting.conf)
+SAVE_STATE="$(printf '%s' "$CG_SAVE" | grep -c 'configuration saved') \
+$MODE_DIR $MODE_RB $MODE_CONF $GROUP_CONF"
+SAVE_STATE=$(printf '%s' "$SAVE_STATE" | tr -s ' \n' ' ')
+echo "    afterwards: dir $MODE_DIR, store $MODE_RB, file $MODE_CONF $GROUP_CONF"
 echo "  -- cgnat operator tries to change routing"
 CG_ROUTE=$(as cg -c "'configure'" -c "'router bgp 65000'" -c "'exit'" -c "'commit'")
 printf '%s\n' "$CG_ROUTE" | sed 's/^/    /'
@@ -225,21 +268,24 @@ CG_SHELL=$(as cg -c "'start shell'")
 printf '%s\n' "$CG_SHELL" | sed 's/^/    /'
 ALG_AFTER=$(vppctl show bpa config | grep -c "alg rtsp off")
 POOL_AFTER=$(vppctl show bpa pool | grep -c "pool nope")
-echo "  -- administrator passes the routing change the cgnat operator was refused"
-# "commit check" rather than "commit", and the reason is not that a check is
-# safer. frr-reload.py logs to /var/log/frr/frr-reload.log and the frr package
-# ships that directory drwxr-x--- frr:frr, so NO non-root account can APPLY a
-# routing change here whatever its groups - a defect of its own, about a
-# directory mode and not about a membership, and not fixed here.
-#
-# The check is not a weaker assertion of the thing this lab is about: the
-# authorization decision is made on a check-only run too, deliberately and for
-# its own reasons, so the refusal that hits the cgnat operator two commands
-# above would hit an administrator here just the same.
+echo "  -- administrator APPLIES the routing change the cgnat operator was refused"
+# "commit", not "commit check". This was a check for as long as no non-root
+# account could apply a routing change at all: frr-reload.py opens
+# /var/log/frr/frr-reload.log on every --reload whatever --stdout says, and the
+# frr package ships that directory drwxr-x--- frr:frr, so the administrator was
+# told the change was fine and then could not make it (#186). A role that ends
+# at "your change is valid" is not the role this lab says it proves - and the
+# split is the worst one available, because it is found in the maintenance
+# window, after the check has already said yes.
 NETADM_ROUTE=$(as netadm -c "'configure'" -c "'router bgp 65000'" \
   -c "'neighbor 10.0.0.2 description NETADM-WAS-HERE'" -c "'exit'" \
-  -c "'commit check'")
+  -c "'commit'")
 printf '%s\n' "$NETADM_ROUTE" | sed 's/^/    /'
+# From FRR, not from what the VTY printed: "commit complete" is this VTY's own
+# sentence, and the question is whether the routing daemon took a change from
+# an account that is not root.
+NETADM_IN_FRR=$(vtysh -c "show run" 2>/dev/null | grep -c "NETADM-WAS-HERE")
+echo "    statements FRR holds with that description: $NETADM_IN_FRR"
 echo "  -- and applies a CGNAT change, because hexa-admin carries that too"
 NETADM_POOL=$(as netadm -c "'configure'" -c "'cgnat pool provider-a'" \
   -c "'alg ftp off'" -c "'exit'" -c "'commit'")
@@ -383,8 +429,13 @@ expect "and the change reached the dataplane" test "${ALG_AFTER:-0}" -ge 1
 expect_in "but cannot change routing" "permission denied" "$CG_ROUTE"
 expect_in "and cannot reach a shell either" "permission denied" "$CG_SHELL"
 
-expect_in "an administrator passes the routing change the operator was refused" \
-  "configuration check succeeds" "$NETADM_ROUTE"
+expect_in "an administrator APPLIES the routing change the operator was refused" \
+  "commit complete" "$NETADM_ROUTE"
+# The half a "commit check" never proved, and the half that was broken: the
+# check logs to stdout and the apply logs to a directory the frr package ships
+# read-only to group frr, so this account could validate and not commit (#186).
+expect "and FRR holds what that account sent it" \
+  test "${NETADM_IN_FRR:-0}" -ge 1
 expect_in "and applies a CGNAT change, since hexa-admin carries that too" \
   "commit complete" "$NETADM_POOL"
 expect "and that change reached the dataplane" test "${NETADM_REACHED:-0}" -ge 1
@@ -423,6 +474,39 @@ expect_in "the running configuration reports the role it granted" \
 expect_in "and the other one" "user cg| role cgnat-operator" "$ROLES_BACK"
 expect_not_in "and reports no role for the account that has none" \
   "user ro| role" "$ROLES_BACK"
+
+# --- issue #188: the commit an operator makes can be undone ---
+#
+# The modes have ONE owner, appliance/install.sh, and the VTY neither restates
+# them nor narrows them. It used to chmod 0700/0600 on every save and every
+# commit, so the first one by anybody - root applying the configuration at boot
+# - closed the directory the operator's own group had been given.
+expect_not_in "a cgnat operator's commit records its rollback revision" \
+  "no rollback revision could be recorded" "$CG_OK"
+# Read back by the operator, off the box. The revision existing is not the
+# assertion: the assertion is that the account which made the commit can see
+# the revision it would roll back to.
+expect_in "and the operator can see the revision it would roll back to" \
+  "current" "$CG_RB"
+expect "which that account wrote itself" test "${RB_OWNER:-none}" = cg
+# setgid on the directory, or a revision root writes at boot is group root and
+# the next operator cannot read it.
+expect "and which carries the role group, whoever wrote it" \
+  test "${RB_GROUP:-none}" = hexa-cgnat
+# The modes, against what install.sh states - 2770 on the directories, 0660 on
+# the file - at the two moments that broke them.
+expect "root's own commit left the configuration directory as installed" \
+  test "${MODE_AFTER_ROOT:-}" = "2770 2770"
+# The save and the modes in ONE assertion, because either alone passes for the
+# wrong reason: a save that is refused cannot narrow anything, so a mode read
+# after a failed save says only that nothing happened.
+expect "and a non-root save succeeds and leaves every one of them alone" \
+  test "${SAVE_STATE:-}" = "1 2770 2770 660 hexa-cgnat"
+# The constraint none of the above may buy: this file holds the password hash
+# of every account on the box, so widening it to everybody would answer the
+# group problem by handing out an offline cracking target.
+expect "and never readable by everybody: it holds every password hash" \
+  sh -c "[ \"\$(stat -c %a /etc/hexarouting/hexarouting.conf | tail -c 2)\" = 0 ]"
 
 # --- an account with no role can do nothing ---
 #

@@ -25,7 +25,9 @@ are to be interpreted as described in
 
 ## Unreleased
 
-[#184](https://github.com/andrediashexa/hexarouting/issues/184).
+[#184](https://github.com/andrediashexa/hexarouting/issues/184),
+[#186](https://github.com/andrediashexa/hexarouting/issues/186),
+[#188](https://github.com/andrediashexa/hexarouting/issues/188).
 
 ### Fixed
 
@@ -59,15 +61,44 @@ are to be interpreted as described in
   The accounts are created through the VTY, and the negative half is asserted
   with them: an account given no role is in neither role group and can do
   nothing but read.
+* **A non-root administrator could `commit check` a routing change and not
+  `commit` it.** Applying one needs three paths that belong to FRR and not to
+  this product: `/var/log/frr` (`drwxr-x--- frr:frr`, where `frr-reload` opens
+  `--logfile` before it looks at `--stdout`), `/var/run/frr` (`0710 frr:frr`,
+  where the delta is staged for `vtysh`), and `/etc/frr/frr.conf`
+  (`0640 frr:frr`, which `frr-reload` asks `vtysh` to persist into at the end).
+  The first two are scratch, so the VTY now hands `frr-reload` a private
+  directory of its own for both and nothing package-owned is touched. The third
+  is not scratch, so the installer makes that **file** `0660` — measured: with
+  the *directory* group-writable instead, `vtysh` creates a new `frr.conf`
+  owned by whoever committed and the next administrator cannot write it at all.
+  `lab/vty.sh` now asserts that an administrator APPLIES the change and that
+  FRR holds it, where it asserted a `commit check` and said why it could not
+  ask for more.
+* **`save` and the rollback store narrowed `/etc/hexarouting` past what the
+  operator's group needs.** `save_running()` chmod'd the directory `0700` and
+  the file `0600`, and `Rollback.push()` did the same — so the first `save` or
+  `commit` by anybody, root applying the configuration at boot included, took
+  away the access `install.sh` had just granted, and every later non-root
+  operation on it failed. The modes now have **one owner**, `install.sh`, which
+  states `2770`/`0660` group `hexa-cgnat`; the VTY neither restates nor narrows
+  them, and what it has to create it creates no wider than the group and never
+  world-readable. setgid, because the group alone is not enough: without it a
+  revision root writes at boot is group `root` and the operator who has to roll
+  back to it cannot read it.
+* A revision that is present and out of reach — every box upgraded from the
+  above carries up to twenty of them — is now **named** by `show rollback` and
+  refused in words by `rollback`, rather than raising a Python traceback in
+  front of whoever is in the maintenance window.
 
 ### Found and not fixed
 
 * A **root** API client puts `/dev/shm/global_vm` back to `root:root`, undoing
   the `vpp.service` drop-in — after which every non-root client crashes in
   `svm_region_map`. Measured in `lab/vty.sh`.
-* `frr-reload.py` logs to `/var/log/frr/frr-reload.log`, which the frr package
-  ships `drwxr-x--- frr:frr`, so a non-root administrator can validate a
-  routing change and cannot apply one.
+* `/etc/frr/frr.conf` is a package conffile, so an frr upgrade that reinstalls
+  it puts `0640` back and non-root commits fail until `install.sh` is re-run.
+  The failure is loud — the commit is refused and rolled back.
 
 ## 0.60.0 — the second lab-only step, a trail that missed a change, and a diagnostic that lied
 

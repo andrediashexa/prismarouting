@@ -114,8 +114,17 @@ expect_not_in "and the address it refused is not in effect" \
   "not:an:address" "${EFFECTIVE:-}"
 expect_in "so sshd would still start" "VALID" "${STILL_VALID:-}"
 
-expect "the saved configuration is readable only by root" test "$CFGMODE" = "600"
-expect "and so is every rollback revision" test "$RBMODE" = "600"
+# Not "readable only by root", which is what this asserted while the VTY
+# chmod'd 0600 over the mode the installer states: an account holding a role
+# has to read the saved configuration to build its candidate and write it to
+# save one, and every rollback revision with it. What must never happen is the
+# other direction - this file carries the password hash of every account on the
+# box, so world-readable is an offline cracking target handed to every login.
+expect "the saved configuration is writable by the role group" \
+  test "$CFGMODE" = "660"
+expect "and so is every rollback revision" test "$RBMODE" = "660"
+expect "and neither is readable by everybody" \
+  sh -c "[ \"$(printf %s "$CFGMODE" | tail -c 1)\" = 0 ] && [ \"$(printf %s "$RBMODE" | tail -c 1)\" = 0 ]"
 expect "the hash IS stored, or a rollback could not restore a password" \
   test "${ONDISK:-0}" -ge 1
 expect_not_in "but 'show running-config' does not print it" "\$6\$" "$RUN"

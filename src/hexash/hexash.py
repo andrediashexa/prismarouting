@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,23 @@ readline = None
 CONFIG_PATH = os.environ.get("HEXA_CONFIG", "/etc/hexarouting/hexarouting.conf")
 ROLLBACK_DIR = os.environ.get("HEXA_ROLLBACK", "/etc/hexarouting/rollback")
 ROLLBACK_KEEP = 20
+# What the VTY may do to the mode of the configuration store, which is:
+# create it no wider than the group, and nothing else.
+#
+# The mode has ONE owner and it is appliance/install.sh - 2770 on the
+# directories and 0660 on the files, group hexa-cgnat. It has to be the
+# installer, because the rest of this is ownership: a mode without the group
+# grants nobody anything, the setgid bit is what puts that group on what gets
+# created later, and a non-root operator can do neither to a directory it does
+# not own. The VTY can only ever damage that arrangement, which is what it did
+# - chmod 0700 here made the first save or commit by ANYBODY, root at boot
+# included, the last one a non-root operator could follow (#188).
+#
+# 0007 rather than a mode argument: it covers the directory and the file and
+# every path makedirs() creates on the way, and what it guarantees is the half
+# that must never slip - no world access to a file carrying every password
+# hash on the box.
+CONFIG_UMASK = 0o007
 VPPCTL = os.environ.get("VPPCTL", "vppctl")
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
@@ -1455,12 +1473,46 @@ class Frr:
             # A CGNAT-only box is a legitimate deployment. Refusing every
             # commit because no routing daemon is running would be wrong.
             return 1, "FRR is not responding"
-        with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as f:
+        # A directory of our own, per run, and every path frr-reload writes to
+        # pointed into it - because with --reload it writes to two places that
+        # belong to FRR and not to the account applying the change (#186):
+        #
+        #   --logfile  /var/log/frr/frr-reload.log, opened BEFORE --stdout is
+        #              looked at, in a directory the frr package ships
+        #              drwxr-x--- frr:frr - group frr reads it and cannot write
+        #   --rundir   /var/run/frr, where the delta is staged for vtysh -f.
+        #              frrcommon.sh makes it 0710 frr:frr, so group frr may
+        #              traverse it and cannot write either
+        #
+        # Both are one PermissionError, and both only on --reload: --test logs
+        # to stdout and stages nothing. So a non-root administrator could
+        # validate a routing change and then not apply it - which is the worst
+        # place to find out, because the check has already said yes and the
+        # maintenance window is open.
+        #
+        # Their modes belong to the frr package and to frrcommon.sh, which
+        # re-state them on every upgrade and every start; widening them would
+        # last until the next one and would hand group frr the routing daemons'
+        # own logs besides.
+        #
+        # Nothing is lost by moving either: --stdout REPLACES the log handler,
+        # so frr-reload opens that log and never writes a line to it, and the
+        # staged delta is a scratch file frr-reload unlinks itself. What it has
+        # to say arrives on stdout, which is what this reads and HEXA_FRR_DUMP
+        # records.
+        #
+        # mkdtemp rather than a fixed name: this also runs as root at boot, and
+        # a predictable path in a world-writable directory is a symlink
+        # somebody else planted for root to write through.
+        work = tempfile.mkdtemp(prefix="hexash-frr-")
+        path = os.path.join(work, "candidate.conf")
+        logfile = os.path.join(work, "frr-reload.log")
+        with open(path, "w") as f:
             f.write("\n".join(lines) + "\n")
-            path = f.name
         try:
             mode = "--test" if check_only else "--reload"
-            p = subprocess.run(["python3", FRR_RELOAD, mode, "--stdout", path],
+            p = subprocess.run(["python3", FRR_RELOAD, mode, "--stdout",
+                                "--logfile", logfile, "--rundir", work, path],
                                capture_output=True, text=True, timeout=60)
             out = ((p.stdout or "") + (p.stderr or "")).rstrip()
             # Set HEXA_FRR_DUMP to a path to capture exactly what was sent
@@ -1483,7 +1535,7 @@ class Frr:
         except subprocess.TimeoutExpired:
             return 1, "frr-reload timed out"
         finally:
-            os.unlink(path)
+            shutil.rmtree(work, ignore_errors=True)
 
     @staticmethod
     def diagnostics(out):
@@ -1598,9 +1650,17 @@ class Rollback:
         for n in range(self.keep):
             f = self._file(n)
             if os.path.exists(f):
-                with open(f) as fh:
-                    first = fh.readline().strip()
-                comment = first[2:] if first.startswith("# ") else ""
+                try:
+                    with open(f) as fh:
+                        first = fh.readline().strip()
+                    comment = first[2:] if first.startswith("# ") else ""
+                except OSError as e:
+                    # Named, not hidden and not raised. A box upgraded from a
+                    # version whose VTY wrote these root-only still carries up
+                    # to twenty revisions this account cannot read, and an
+                    # operator who is shown a shorter list concludes the
+                    # commits never happened.
+                    comment = f"cannot be read: {e.strerror}"
                 out.append((n, time.strftime(
                     "%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(f))),
                     comment))
@@ -1610,41 +1670,50 @@ class Rollback:
         f = self._file(n)
         if not os.path.exists(f):
             return None
-        with open(f) as fh:
-            return "".join(l for l in fh if not l.startswith("# "))
+        try:
+            with open(f) as fh:
+                return "".join(l for l in fh if not l.startswith("# "))
+        except OSError as e:
+            # A revision that is there and out of reach is not a revision that
+            # does not exist, and neither of them is a Python traceback in
+            # front of somebody in a maintenance window.
+            raise RollbackUnavailable(f"{f}: {e.strerror}") from None
 
     def push(self, text, comment=""):
         """
         Store a new revision 0, shifting the others down.
 
-        Root-only, for the same reason as the saved configuration: a rollback
-        revision is a complete configuration, and since accounts joined it that
-        includes password hashes.
+        Written by whoever committed, which is any account holding a role: a
+        rollback revision is a complete configuration, so the store is group
+        hexa-cgnat and not root-only. It does hold password hashes, which is
+        why that group is a role group and why nothing here is world-readable.
         """
         # A store this account cannot write is reported, not raised. By the
         # time a revision is recorded the change is already on the dataplane,
         # so a traceback here would leave the operator looking at a Python
         # stack with no idea whether their commit took effect - and it did.
+        old_umask = os.umask(CONFIG_UMASK)
         try:
             os.makedirs(self.path, exist_ok=True)
-            os.chmod(self.path, 0o700)
+            oldest = self._file(self.keep - 1)
+            if os.path.exists(oldest):
+                os.unlink(oldest)
+            for n in range(self.keep - 2, -1, -1):
+                src = self._file(n)
+                if os.path.exists(src):
+                    os.replace(src, self._file(n + 1))
+            with open(self._file(0), "w") as fh:
+                if comment:
+                    fh.write(f"# {comment}\n")
+                fh.write(text)
         except OSError as e:
-            raise RollbackUnavailable(f"{self.path}: {e.strerror}") from None
-        oldest = self._file(self.keep - 1)
-        if os.path.exists(oldest):
-            os.unlink(oldest)
-        for n in range(self.keep - 2, -1, -1):
-            src = self._file(n)
-            if os.path.exists(src):
-                os.replace(src, self._file(n + 1))
-        with open(self._file(0), "w") as fh:
-            if comment:
-                fh.write(f"# {comment}\n")
-            fh.write(text)
-        try:
-            os.chmod(self._file(0), 0o600)
-        except OSError:
-            pass
+            # Every step, not only the first: the shift renames files and the
+            # write creates one, and a store this account cannot write fails at
+            # whichever of those it reaches first.
+            raise RollbackUnavailable(
+                f"{e.filename or self.path}: {e.strerror}") from None
+        finally:
+            os.umask(old_umask)
 
 
 class Shell:
@@ -3536,7 +3605,11 @@ class Shell:
             self.candidate = self.running_config()
             print("candidate reset to the running configuration")
             return
-        text = self.rb.load(n)
+        try:
+            text = self.rb.load(n)
+        except RollbackUnavailable as e:
+            self.err(f"revision {n} cannot be read: {e}")
+            return
         if text is None:
             self.err(f"revision {n} does not exist")
             return
@@ -4766,25 +4839,30 @@ class Shell:
 
     def save_running(self):
         """
-        Write the running configuration to disk, readable only by root.
+        Write the running configuration to disk, never world-readable.
 
         The mode is not housekeeping. Since accounts became part of the
         configuration this file carries password hashes and public keys, so a
         world-readable copy hands every local account an offline cracking
-        target. Set on every write rather than at creation, because a file
-        that already exists keeps whatever mode it was given.
+        target.
+
+        What is on disk already is left exactly as it is, and the installer
+        owns it - see CONFIG_UMASK. A save that re-stated the mode narrowed the
+        directory the operator's own group had been given, so the first save on
+        the box was the last one a non-root account could make (#188).
         """
         d = os.path.dirname(CONFIG_PATH)
+        old_umask = os.umask(CONFIG_UMASK)
         try:
             if d:
                 os.makedirs(d, exist_ok=True)
-                os.chmod(d, 0o700)
             with open(CONFIG_PATH, "w") as f:
                 f.write(self.running_config().text())
-            os.chmod(CONFIG_PATH, 0o600)
         except OSError as e:
             self.err(f"cannot write {CONFIG_PATH}: {e}")
             return
+        finally:
+            os.umask(old_umask)
         print(f"configuration saved to {CONFIG_PATH}")
 
     # ---------------------------------------------------------- completion
