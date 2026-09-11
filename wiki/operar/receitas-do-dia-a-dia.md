@@ -54,7 +54,7 @@ Câmera, servidor de jogo, VPN. A porta pública fica fixada no socket do client
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   forward tcp 8080 to 100.64.3.19 80
   exit
  commit
@@ -82,7 +82,7 @@ Um host varrendo a internet consome o bloco inteiro e depois pede mais.
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   max-sessions 2000
   max-session-rate 200
   exit
@@ -105,7 +105,7 @@ Acrescentar um prefixo em `outside` muda a conta do mapeamento e move **todos** 
 
 ```
 configure
- cgnat pool residencial-2
+ nat cgnat pool residencial-2
   inside 100.64.4.0/22
   outside 45.170.16.0/26
   block-size 512
@@ -135,7 +135,7 @@ O procedimento completo dos dois caminhos, com o que muda e o que não muda, est
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   timeout udp 300
   timeout tcp-established 7440
   timeout port-holddown 120
@@ -151,7 +151,7 @@ FTP, RTSP e PPTP carregam endereço dentro do payload. Sem o ALG, a conexão de 
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   alg ftp on
   alg pptp on
   exit
@@ -168,7 +168,7 @@ Servidor que precisa enxergar o IP real do assinante — um portal interno, um s
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   bypass destination 198.51.100.0/24
   exit
  commit
@@ -182,13 +182,28 @@ Sintoma clássico: a conexão abre, a transferência começa e para. Quase sempr
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   tcp-mss auto
   exit
  commit
 ```
 
 `auto` deriva o valor das MTUs das interfaces de CGNAT.
+
+# Achar uma linha numa configuração grande
+
+Numa caixa com vinte pools e política de BGP, `show running-config` é várias telas. Qualquer `show` aceita filtro depois de uma barra vertical:
+
+```
+show running-config | section interface         o bloco de cada interface
+show running-config | include mode dynamic      só as linhas com esse texto
+show running-config | include timeout | count   quantas linhas casam
+show logging | last 40                          o fim do log
+```
+
+`section` mantém a linha que casa e tudo que está indentado embaixo dela — é como se pede um bloco inteiro sem ler a caixa toda. O texto procurado vai **sem aspas** e pode ter espaços.
+
+O filtro roda sobre o que o comando já imprimiu, **depois** das ocultações: `show running-config | include password` mostra `<set, not shown>`, a mesma linha que apareceria sem filtro. Nenhum filtro alcança o valor por trás dela.
 
 # Desfazer uma mudança
 
@@ -239,7 +254,7 @@ openssl passwd -6
 
 ```
 configure
- cgnat logging tcp 198.51.100.10 port 4739
+ nat cgnat logging tcp 198.51.100.10 port 4739
  commit
  exit
 save

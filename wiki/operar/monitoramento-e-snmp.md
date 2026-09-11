@@ -77,9 +77,12 @@ Esses **não têm OID padrão**. Vivem sob o Private Enterprise Number da sua pr
 O mesmo se vê pela VTY, sem NMS:
 
 ```
-show cgnat top       quem está mais perto de encher o bloco
-show cgnat drops     o que não passou, e por quê
+show cgnat top                              quem está mais perto de encher o bloco
+show cgnat drops                            o que não passou, e por quê
+show interface utilization <nome>           quanto está passando na porta, agora
 ```
+
+`show interface utilization` amostra os contadores duas ou mais vezes e mostra a taxa em bit/s, com histórico — é a resposta para *"o enlace está cheio?"* sem esperar o gráfico da NMS fechar o intervalo. Onde o dataplane informa a velocidade do enlace, a porcentagem é da taxa de linha daquela porta.
 
 # Como conferir
 

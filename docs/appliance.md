@@ -841,11 +841,12 @@ during the install.
 | `hexash` fails to start | Falls back to a shell **with the reason printed** |
 | Boot with `hexash=off` | Skips the VTY entirely; the ISO offers it as a menu entry |
 
-`start shell` appears in neither tab completion nor `?`. It is hidden, not
-restricted: anyone who can log in can run it. **It is not a security
-boundary** — that is
-[#35](https://github.com/andrediashexa/hexarouting/issues/35), roles in the
-VTY. Hiding it only keeps it from being the obvious next thing after `?`.
+`start shell` is **in** the command tree: completion and `?` offer it, and it is
+**restricted to administrators** — a read-only or CGNAT account that types it is
+refused by name. Hiding it was never the boundary; the role check is
+([#35](https://github.com/andrediashexa/hexarouting/issues/35)), and a command an
+administrator cannot find is a command they ask for, which is why it stopped
+being hidden ([#194](https://github.com/andrediashexa/hexarouting/issues/194)).
 
 The fallback and the `hexash=off` escape exist because pointing a login shell
 at an application creates a lockout risk: a `hexash` that fails to start would

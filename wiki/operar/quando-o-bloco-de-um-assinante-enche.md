@@ -48,7 +48,7 @@ Com `max-blocks` acima de 1, um assinante cujos blocos estão todos cheios ganha
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   max-blocks 2
   exit
  commit
@@ -81,7 +81,7 @@ Dois limites, por pool. **Zero significa ilimitado**, para que uma atualização
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   max-sessions 512
   max-session-rate 50
   exit

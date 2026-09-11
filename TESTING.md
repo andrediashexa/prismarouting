@@ -252,9 +252,9 @@ device only on `commit`:
 
 ```
 hexarouting> configure
-hexarouting# [edit] cgnat pool alpha
-hexarouting# [edit cgnat pool] inside 100.64.0.0/22
-hexarouting# [edit cgnat pool] exit
+hexarouting# [edit] nat cgnat pool alpha
+hexarouting# [edit cgnat pool alpha] inside 100.64.0.0/22
+hexarouting# [edit cgnat pool alpha] exit
 hexarouting# [edit] show configuration compare
 hexarouting# [edit] commit check
 hexarouting# [edit] commit comment "first pool"

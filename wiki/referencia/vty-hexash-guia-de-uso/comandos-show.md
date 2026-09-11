@@ -73,7 +73,88 @@ Este comando já foi repassado ao `vtysh`, que enxerga apenas o que o `linux_cp`
 
 `local0` é o loopback interno do VPP. Aparece na lista — esconder o que o dataplane reporta seria o comando decidindo o que você pode ver — mas não é oferecido na completação, porque não configura nada.
 
-Pedir `description` diz por que não existe essa coluna, em vez de deixar alguém procurando uma que nunca vem. A visão do FRR continua em `show ip interface`.
+A visão do FRR continua em `show ip interface`.
+
+### `show interface terse` — administrativo e enlace, separados
+
+Uma linha por interface, com **duas** colunas de estado:
+
+```
+hexarouting> show interface terse
+  Interface                  Admin  Link   Proto  Local
+  GigabitEthernet0/12/0      up     up     inet   203.0.113.1/24
+  TenGigabitEthernet0/8/0    up     down   -      -
+  local0                     down   down   -      -
+
+  3 interface(s) on the dataplane
+  TenGigabitEthernet0/8/0: configured up, link down - that is the wire or the far end, not this configuration
+```
+
+| `Admin` | `Link` | O que é |
+|---------|--------|---------|
+| `up`    | `up`   | normal |
+| `up`    | `down` | **é o cabo, o transceiver ou o outro lado** — a configuração está de pé |
+| `down`  | `down` | alguém digitou `shutdown` |
+
+São duas colunas porque são dois fatos, e a diferença entre eles é o defeito. Uma coluna só de "estado" não distingue *alguém aplicou* `shutdown` de *a fibra foi cortada* — e essa é justamente a listagem que se abre quando algo está errado. Por isso a caixa também nomeia, no fim, as interfaces configuradas up cujo enlace está down: é a conclusão da tabela, dita sem precisar ser procurada.
+
+Uma sub-interface não é hardware e o dataplane não reporta enlace para ela. O enlace dela é o **do pai**, e é isso que a coluna mostra — as portas de assinante de um provedor são todas sub-interfaces, e uma coluna vazia justamente nelas não serviria para nada.
+
+Um endereço por linha: uma interface com IPv4 e IPv6 aparece em duas linhas, com `inet` e `inet6` na coluna `Proto` e o nome escrito uma vez só.
+
+### `show interface description` — para que cada porta serve
+
+```
+hexarouting> show interface description
+  Interface                  Admin  Link   Description
+  GigabitEthernet0/12/0      up     up     ASSINANTES PON-3
+  TenGigabitEthernet0/8/0    up     down   TRANSITO Vivo AS26599
+  local0                     down   down   
+
+  2 of 3 interface(s) described
+  set one with 'description <text>' inside 'interface <name>'
+```
+
+A descrição fica guardada como a **etiqueta da interface no próprio dataplane**, com espaços e tudo: ela sobrevive a um restart da VTY e diz a mesma coisa a quem consultar o dataplane por outro caminho. Escreve-se com `description <texto>` dentro de `interface <nome>`.
+
+A coluna vem ao lado de `Admin` e `Link` de propósito: a pergunta *"o que é essa porta?"* quase nunca vem sozinha — vem junto de *"e ela está funcionando?"*.
+
+### `show interface utilization` — quanto está passando agora
+
+```
+show interface utilization [<nome>] [interval <segundos>] [count <n>]
+```
+
+`show interface` mostra **contador**, que é um total desde o boot. Ninguém quer o total: quer saber se o enlace está cheio **agora**. Para isso são necessárias duas leituras e a divisão pelo tempo entre elas — então este comando **demora**, e diz de quanto é a demora antes de começar:
+
+```
+hexarouting> show interface utilization
+  sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
+
+  Interface                             rx            tx  rx history tx history
+  TenGigabitEthernet0/8/0    675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
+  GigabitEthernet0/12/0        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+
+  bars are each interface's share of its own line rate
+    TenGigabitEthernet0/8/0   12.4% of 10.00 Gbit/s
+    GigabitEthernet0/12/0      0.8% of 1.00 Gbit/s
+```
+
+| Argumento | Efeito |
+|-----------|--------|
+| `<nome>`  | só as interfaces cujo nome começa assim |
+| `interval <segundos>` | tempo entre amostras; padrão 2, entre 0,1 e 60 |
+| `count <n>` | quantas amostras; padrão 5, entre 1 e 120 |
+
+O que vale saber para ler o gráfico:
+
+* **A taxa é em bit/s**, no múltiplo em que um operador diria o número.
+* **O tempo decorrido é medido, não suposto.** Numa caixa carregada — a única em que a pergunta interessa — dois segundos de espera não são dois segundos, e uma taxa calculada pelo intervalo nominal estaria errada exatamente ali.
+* **Quando o dataplane informa a velocidade do enlace**, a barra é a fatia daquela interface da própria taxa de linha, e a porcentagem é real.
+* **Quando não informa** — interface virtual, por exemplo — a barra é escalada para a maior amostra daquela execução, e a caixa **diz isso** em vez de apresentar porcentagem de uma capacidade que não conhece.
+* Tráfego que arredondaria para nada é desenhado no nível mais baixo, não no traço de base: *um fio de tráfego* e *silêncio* são respostas diferentes.
+* `Ctrl-C` encerra antes do fim e o gráfico sai com o que já foi amostrado. Interrompido antes da segunda leitura, não há taxa nenhuma a mostrar, e a caixa diz isso em vez de imprimir zeros.
+* Pacotes descartados durante a amostragem, e um contador que andou para trás porque alguém limpou as interfaces no meio, são reportados no fim.
 
 ## `show this` — o que há na hierarquia em que estou
 
@@ -91,6 +172,8 @@ cgnat pool residential
 
 Mostra a **candidata**, não a configuração em vigor: quem está no meio de uma edição pergunta sobre o que está construindo.
 
+Dentro de um pool, o bloco sai na forma curta — `cgnat pool residential`, sem o `nat` na frente — que é como o prompt também o nomeia. `show configuration` e `show running-config`, que mostram a caixa inteira, saem na hierarquia nova: `nat cgnat pool ...` e as rotas estáticas num bloco `router static`. As duas grafias são aceitas na entrada, então copiar qualquer uma das telas para um arquivo e carregá-lo de volta funciona.
+
 O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface TenGigabitEthernet0/8/0]` — para que a próxima declaração não caia no bloco errado.
 
 ## `show` — restante
@@ -105,10 +188,44 @@ O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[ed
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show bgp ...` | informação de BGP (FRR) |
 | `show isis ...` | informação de IS-IS (FRR) |
-| `show interface` | interfaces (FRR) |
+| `show ip interface` | interfaces como o FRR as enxerga |
 | `show logging` | log do sistema (FRR) |
 
 Os `show` de roteamento são repassados ao `vtysh` do FRR, então a sintaxe completa do FRR vale depois da primeira palavra.
+
+## Filtrando a saída com `|`
+
+Qualquer `show` aceita filtros depois de uma barra vertical, e eles podem ser encadeados:
+
+```
+show running-config | section interface
+show running-config | include timeout | count
+show logging | exclude bgpd | last 20
+```
+
+| Filtro | O que faz |
+|--------|-----------|
+| `include <texto>` | mantém as linhas que contêm o texto |
+| `match <texto>` | o mesmo que `include`, para quem digita assim |
+| `exclude <texto>` | descarta as linhas que contêm o texto |
+| `section <texto>` | mantém o bloco que a linha casada abre, até a próxima linha que começa na coluna 0 |
+| `count` | quantas linhas, em vez das linhas |
+| `first <n>` | as primeiras n linhas |
+| `last <n>` | as últimas n linhas |
+
+O argumento vai **sem aspas**, e pode ter espaços: `include mode deterministic` procura essas duas palavras juntas. Aspas digitadas viram parte do texto procurado e a busca não casa nada.
+
+Um filtro que a caixa não conhece é **recusado**, com a lista do que existe — não ignorado. Ignorar responderia a pergunta que ninguém fez, sem nada na tela dizendo que foi isso que aconteceu. `first` e `last` sem número, ou com algo que não é número, também são recusados (`needs a number, not 'x'`).
+
+`section` serve à forma desta configuração: um bloco é uma linha na coluna 0 mais tudo que está indentado embaixo dela. É como se pede a configuração de uma interface, ou de um pool, sem ler a caixa inteira.
+
+
+:::info
+**O filtro roda sobre o texto que o comando já produziu, depois das ocultações.** É isso que faz `show running-config | include password` ser seguro: o que o filtro enxerga é `<set, not shown>`, a mesma linha que você veria sem filtro nenhum. Nenhum filtro alcança o valor por trás dela.
+
+A barra vertical só é filtro depois de um `show`. Numa declaração de configuração ela é um caractere de expressão regular ou de descrição — uma lista de AS-path é cheia delas — e tratá-la como filtro cortaria uma política em silêncio.
+
+:::
 
 ## O que olhar primeiro
 
@@ -122,6 +239,9 @@ Os `show` de roteamento são repassados ao `vtysh` do FRR, então a sintaxe comp
 | "o coletor está recebendo?" | `show cgnat logging` |
 | "o que mudou aqui?" | `show cgnat history` |
 | "o que eu estou prestes a aplicar?" | `show configuration compare` |
+| "essa porta caiu ou alguém deu shutdown?" | `show interface terse` |
+| "para que serve essa porta?" | `show interface description` |
+| "o enlace está cheio?" | `show interface utilization <nome>` |
 
 ## Como ler a resposta de `show cgnat translation`
 

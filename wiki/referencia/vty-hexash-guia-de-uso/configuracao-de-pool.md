@@ -1,6 +1,6 @@
 # Configuração de pool
 
-Entra-se com `cgnat pool <nome>` dentro de `configure`. O prompt vira `hexarouting# [edit cgnat pool] `. Sai-se com `exit`.
+Entra-se com `nat cgnat pool <nome>` dentro de `configure`. O prompt vira `hexarouting# [edit cgnat pool residencial] ` — ele nomeia o pool, e mantém a grafia curta `cgnat pool`, sem o `nat`. Sai-se com `exit`.
 
 
 :::info
@@ -145,7 +145,7 @@ São os protocolos que carregam um endereço dentro do payload. Sem o ALG corres
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   inside 100.64.0.0/10
   outside 203.0.113.0/24
   block-size 512
@@ -162,14 +162,16 @@ configure
   alg pptp on
   bypass destination 198.51.100.0/24
   exit
- cgnat interface TenGigabitEthernet0/0/0 inside
- cgnat interface TenGigabitEthernet0/0/1 outside
+ nat cgnat interface TenGigabitEthernet0/0/0 inside
+ nat cgnat interface TenGigabitEthernet0/0/1 outside
  show configuration compare
  commit check
  commit comment "pool residencial inicial"
  exit
 save
 ```
+
+Uma configuração salva antes de o CGNAT passar para baixo de `nat` abre o pool com `cgnat pool residencial`, sem o `nat` na frente. **Ela continua sendo aceita** — a caixa relê o próprio arquivo a cada boot — e os campos de dentro do bloco não mudaram. O primeiro `save` depois desta versão reescreve o arquivo já com `nat cgnat pool`.
 
 # Ver também
 

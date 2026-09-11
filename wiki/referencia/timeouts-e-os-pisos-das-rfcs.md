@@ -33,10 +33,10 @@ Global:
 
 ```
 configure
- cgnat timeout udp 300
- cgnat timeout icmp 60
- cgnat timeout tcp-transitory 240
- cgnat timeout tcp-established 7440
+ nat cgnat timeout udp 300
+ nat cgnat timeout icmp 60
+ nat cgnat timeout tcp-transitory 240
+ nat cgnat timeout tcp-established 7440
  commit
 ```
 
@@ -44,7 +44,7 @@ Por pool — sobrescreve o global; ausente, herda:
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   timeout udp 300
   timeout tcp-syn 60
   timeout gre 3600
