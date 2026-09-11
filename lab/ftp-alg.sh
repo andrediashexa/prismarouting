@@ -95,6 +95,31 @@ SEQOUT=$(python3 /src/lab/checkftp.py /tmp/ftp-seq.pcap 2>&1); SEQRC=$?
 printf '%s\n' "$SEQOUT" | sed 's/^/  /'
 
 echo
+echo "=========== 2b. the PORT segment RETRANSMITTED does not double the shift ==========="
+# The one behaviour that changed when the two sequence-correction mechanisms
+# became one (#48), and the reason that one was kept.
+#
+# A client that does not hear its PORT acknowledged sends it again, byte for
+# byte, at the same sequence number. The ALG rewrites it again - correctly, the
+# packet on the wire has to carry the public address either way - and must NOT
+# record a second correction for it: the rewrite it is accounting for has
+# already been accounted for. The mechanism deleted by #48 had no guard for
+# this and would have pushed the offset to 4, after which the stream is two
+# bytes further out with every later segment and the connection stalls looking
+# like something else entirely.
+#
+# Asserted on the segment AFTER it, because the retransmission itself looks
+# identical in both worlds. Still 1023, not 1025.
+HEX=$(python3 /src/lab/mkftp.py 100.64.0.5 8.8.8.8 40000 21 1000 5000 psh,ack \
+      'PORT 100,64,0,5,1,1\r\n')
+send pg0 pg1 /tmp/ftp-port2.pcap "$HEX"
+HEX=$(python3 /src/lab/mkftp.py 100.64.0.5 8.8.8.8 40000 21 1021 5000 psh,ack \
+      'TYPE I\r\n')
+send pg0 pg1 /tmp/ftp-seq2.pcap "$HEX"
+SEQ2OUT=$(python3 /src/lab/checkftp.py /tmp/ftp-seq2.pcap 2>&1)
+printf '%s\n' "$SEQ2OUT" | sed 's/^/  /'
+
+echo
 echo "=========== 3. and the server's acknowledgement is renumbered back ==========="
 # The subscriber sent 21 bytes of PORT and 8 of TYPE, so it believes it is at
 # 1029. The server sees 23 and 8 and acknowledges 1031, which has to arrive as
@@ -212,6 +237,11 @@ expect_in "the PORT rewrite changed the payload's length, 21 bytes to 23" \
   "paylen=23" "$PORTOUT"
 expect_in "so the next segment of the stream leaves renumbered" "seq=1023" \
   "$SEQOUT"
+# A retransmitted PORT is rewritten again and must not be counted again.
+expect_in "a retransmitted rewrite does not shift the stream twice" "seq=1023" \
+  "$SEQ2OUT"
+expect_not_in "and in particular not by double the rewrite" "seq=1025" \
+  "$SEQ2OUT"
 expect_in "and the server's acknowledgement comes back renumbered" "ack=1029" \
   "$ACKOUT"
 # Without the shift the subscriber would see 1031 - two bytes it never sent.

@@ -48,9 +48,6 @@
 
 #define BPA_FTP_CONTROL_PORT 21
 
-/* bpa_session_t.alg bits. */
-#define BPA_ALG_FTP_SEQ 0x01 /* a rewrite happened; seq/ack need shifting */
-
 typedef enum
 {
   BPA_FTP_NOTHING = 0, /* no address-bearing line here; nothing to count */
@@ -58,18 +55,6 @@ typedef enum
   BPA_FTP_UNTOUCHED,   /* looked like FTP and was not parsed: left alone */
   BPA_FTP_NO_PORT,     /* no public port for the data connection: left alone */
 } bpa_ftp_result_t;
-
-/*
- * Serial-number comparison (RFC 1982): true when `a` is after `b`.
- * Plain `>` wraps wrongly across the 2^32 boundary, and a control connection
- * that lives long enough to wrap would start shifting sequence numbers the
- * wrong way with nothing in any counter to say so.
- */
-static_always_inline int
-bpa_seq_after (u32 a, u32 b)
-{
-  return (i32) (b - a) < 0;
-}
 
 /*
  * Is this TCP segment part of an FTP control connection?
@@ -87,91 +72,6 @@ bpa_ftp_is_control (const tcp_header_t *tcp, const bpa_session_t *s)
 {
   return clib_net_to_host_u16 (tcp->dst_port) == BPA_FTP_CONTROL_PORT
 	 || s->port_priv == BPA_FTP_CONTROL_PORT;
-}
-
-/*
- * Shift the sequence number of a subscriber -> internet segment.
- *
- * Rewriting an ASCII address changes the LENGTH of the payload, so every byte
- * the subscriber sends after it sits at a different offset in the stream than
- * the subscriber believes. Without this the server acknowledges bytes the
- * client never sent, the client retransmits, and the control connection
- * stalls a few commands after the rewrite - a failure that looks like
- * anything except FTP.
- *
- * The offset to apply is chosen by comparing against the position of the last
- * rewrite, so a retransmission of data sent BEFORE it still gets the offset
- * that was in force when it was first sent.
- *
- * Returns 1 when it changed something.
- */
-static_always_inline int
-bpa_ftp_seq_in2out (tcp_header_t *tcp, const bpa_session_t *s)
-{
-  u32 seq, new_seq;
-  ip_csum_t sum;
-  i32 off;
-
-  if (PREDICT_TRUE (!(s->alg & BPA_ALG_FTP_SEQ)))
-    return 0;
-
-  seq = clib_net_to_host_u32 (tcp->seq_number);
-  off = bpa_seq_after (seq, s->alg_seq_pos) ? s->alg_off_after
-					    : s->alg_off_before;
-  if (off == 0)
-    return 0;
-
-  new_seq = clib_host_to_net_u32 (seq + (u32) off);
-  sum = tcp->checksum;
-  sum = ip_csum_update (sum, tcp->seq_number, new_seq, tcp_header_t,
-			seq_number);
-  tcp->checksum = ip_csum_fold (sum);
-  tcp->seq_number = new_seq;
-  return 1;
-}
-
-/*
- * Shift the acknowledgement number of an internet -> subscriber segment.
- *
- * The remote acknowledges the stream as WE lengthened it. The subscriber only
- * knows its own numbering, so the acknowledgement has to be shifted back or
- * the subscriber sees its own unsent bytes acknowledged.
- *
- * Applied whenever the session carries drift, even if the ALG has since been
- * switched off for the pool: a connection this ALG already touched must keep
- * being corrected, otherwise turning the knob off breaks the very sessions it
- * was meant to stop interfering with.
- *
- * Returns 1 when it changed something.
- */
-static_always_inline int
-bpa_ftp_ack_out2in (tcp_header_t *tcp, const bpa_session_t *s)
-{
-  u32 ack, new_ack;
-  ip_csum_t sum;
-  i32 off;
-
-  if (PREDICT_TRUE (!(s->alg & BPA_ALG_FTP_SEQ)))
-    return 0;
-  if (!(tcp->flags & TCP_FLAG_ACK))
-    return 0;
-
-  ack = clib_net_to_host_u32 (tcp->ack_number);
-  /* The comparison is done in the subscriber's numbering, which is why the
-   * "before" offset is removed from the acknowledgement first. */
-  off = bpa_seq_after (ack - (u32) s->alg_off_before, s->alg_seq_pos)
-	  ? s->alg_off_after
-	  : s->alg_off_before;
-  if (off == 0)
-    return 0;
-
-  new_ack = clib_host_to_net_u32 (ack - (u32) off);
-  sum = tcp->checksum;
-  sum = ip_csum_update (sum, tcp->ack_number, new_ack, tcp_header_t,
-			ack_number);
-  tcp->checksum = ip_csum_fold (sum);
-  tcp->ack_number = new_ack;
-  return 1;
 }
 
 /*

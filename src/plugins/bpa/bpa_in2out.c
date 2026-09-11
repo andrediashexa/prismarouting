@@ -200,7 +200,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u32 n_translated = 0, n_new = 0, n_forwarded = 0, n_mss = 0;
   u32 n_bypass_src = 0, n_bypass_dst = 0;
   u32 n_hairpin = 0;
-  u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
+  u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_seq_adj = 0;
   u32 n_rtsp = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_nocid = 0, n_pptp_bad = 0;
   u32 n_esp = 0;
@@ -620,13 +620,6 @@ VLIB_NODE_FN (bpa_in2out_node)
 		  }
 	    }
 
-	  /*
-	   * Applied even when the ALG is off for the pool: a connection this
-	   * box already lengthened must keep being renumbered, or turning the
-	   * knob off stalls the very sessions the operator was trying to stop
-	   * interfering with.
-	   */
-	  n_ftp_seq += bpa_ftp_seq_in2out (l4h, s);
 	}
 
       /*
@@ -680,14 +673,21 @@ VLIB_NODE_FN (bpa_in2out_node)
 	      s = pool_elt_at_index (pt->sessions, s_index);
 	    }
 
-	  /* Every later segment of a connection an ALG has rewritten, in
-	   * either direction. Zero on every session no ALG has touched. */
+	  /*
+	   * Every later segment of a connection an ALG has rewritten, in
+	   * either direction. Zero on every session no ALG has touched.
+	   *
+	   * Applied even when the ALG is off for the pool: a connection this
+	   * box already lengthened must keep being renumbered, or turning the
+	   * knob off stalls the very sessions the operator was trying to stop
+	   * interfering with.
+	   */
 	  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
 			     | s->adj[BPA_DIR_OUT].off_before
 			     | s->adj[BPA_DIR_IN].off_after
 			     | s->adj[BPA_DIR_IN].off_before))
-	    bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_OUT],
-				&s->adj[BPA_DIR_IN]);
+	    n_seq_adj += bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_OUT],
+					     &s->adj[BPA_DIR_IN]);
 	}
 
       /*
@@ -819,8 +819,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       n_ftp_untouched);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_FTP_NO_PORT, n_ftp_noport);
-  vlib_node_increment_counter (vm, node->node_index, BPA_IN2OUT_ERROR_FTP_SEQ,
-			       n_ftp_seq);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_SEQ_ADJUSTED, n_seq_adj);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_RTSP_REWRITTEN, n_rtsp);
   vlib_node_increment_counter (vm, node->node_index,

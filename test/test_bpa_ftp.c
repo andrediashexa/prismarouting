@@ -10,7 +10,7 @@
  *
  * Three things a lab structurally cannot enumerate, and this file does:
  *
- *   - the 2^32 boundary. bpa_seq_after exists because plain `>` is wrong
+ *   - the 2^32 boundary. The comparison is signed because plain `>` is wrong
  *     across it, and a control connection has to live a long time to get
  *     there. No lab is going to send four gigabytes to find out.
  *   - a retransmission of data sent BEFORE the rewrite, which must keep the
@@ -77,46 +77,58 @@ build (tcp_header_t *t, u32 seq, u32 ack, u8 flags)
   t->checksum = clib_host_to_net_u16 (full_checksum (t));
 }
 
+/*
+ * A session whose subscriber -> internet direction has drifted.
+ *
+ * There used to be a flag argument saying whether an ALG had touched this
+ * session at all. It is gone with the flag: under one shared mechanism "has
+ * drifted" IS "the offsets are not both zero", and the flag was redundant with
+ * them in every case except a session whose two rewrites cancelled exactly -
+ * where no correction is needed anyway (#48).
+ */
 static bpa_session_t
-session (u8 alg, u32 pos, i32 before, i32 after)
+session (u32 pos, i32 before, i32 after)
 {
   bpa_session_t s;
   memset (&s, 0, sizeof (s));
-  s.alg = alg;
-  s.alg_seq_pos = pos;
-  s.alg_off_before = before;
-  s.alg_off_after = after;
+  s.adj[BPA_DIR_OUT].correction_pos = pos;
+  s.adj[BPA_DIR_OUT].off_before = before;
+  s.adj[BPA_DIR_OUT].off_after = after;
   return s;
 }
 
 /* ------------------------------------------------------ serial arithmetic */
 
 static void
-seq_after_cases (void)
+seq_boundary_cases (void)
 {
-  printf ("--- bpa_seq_after: serial numbers, not integers ---\n");
+  bpa_seq_adj_t a;
 
-  CHECK (bpa_seq_after (1200, 1000) == 1, "1200 is after 1000");
-  CHECK (bpa_seq_after (1000, 1200) == 0, "1000 is not after 1200");
-  CHECK (bpa_seq_after (1000, 1000) == 0, "a number is not after itself");
+  printf ("--- bpa_seq_delta_at: serial numbers, not integers ---\n");
+
+  /* A correction at 1000: eight bytes after it, nothing before. */
+  a.correction_pos = 1000;
+  a.off_before = 0;
+  a.off_after = 8;
+
+  CHECK (bpa_seq_delta_at (&a, 1200) == 8, "1200 is after 1000");
+  CHECK (bpa_seq_delta_at (&a, 900) == 0, "900 is not");
+  CHECK (bpa_seq_delta_at (&a, 1000) == 0,
+	 "and the rewritten segment itself is not after itself");
 
   /*
-   * The boundary. Written with `>` these two answer the opposite way round,
-   * and the ALG then shifts in the wrong direction on a connection that has
-   * been up long enough to wrap - which is the connection least likely to be
-   * reproduced by anyone investigating it.
+   * The boundary. Written with a plain `>` these two answer the opposite way
+   * round, and the correction is then applied in the wrong direction on a
+   * connection that has been up long enough to wrap - which is the connection
+   * least likely to be reproduced by anyone investigating it.
    */
-  CHECK (bpa_seq_after (0x00000100u, 0xffffff00u) == 1,
+  a.correction_pos = 0xffffff00u;
+  CHECK (bpa_seq_delta_at (&a, 0x00000100u) == 8,
 	 "a wrapped sequence is after one just below 2^32");
-  CHECK (bpa_seq_after (0xffffff00u, 0x00000100u) == 0,
+  CHECK (bpa_seq_delta_at (&a, 0xfffffe00u) == 0,
 	 "and the one below 2^32 is not after the wrapped one");
   CHECK ((0x00000100u > 0xffffff00u) == 0,
-	 "plain > disagrees, which is why bpa_seq_after exists");
-
-  /* Half the space away is the point where the answer stops being defined;
-   * assert the two sides of it so a change to the comparison shows up. */
-  CHECK (bpa_seq_after (0x7fffffffu, 0) == 1, "just under half the space");
-  CHECK (bpa_seq_after (0x80000001u, 0) == 0, "just over it wraps the other way");
+	 "plain > disagrees, which is why the comparison is signed");
 }
 
 /* ------------------------------------------------------ is this control? */
@@ -132,7 +144,7 @@ is_control_cases (void)
 
   build (&t, 1000, 0, TCP_FLAG_ACK);
   t.dst_port = clib_host_to_net_u16 (21);
-  s = session (0, 0, 0, 0);
+  s = session (0, 0, 0);
   CHECK (bpa_ftp_is_control (&t, &s) == 1,
 	 "a segment to port 21 is a control connection");
 
@@ -145,14 +157,14 @@ is_control_cases (void)
   build (&t, 1000, 0, TCP_FLAG_ACK);
   t.dst_port = clib_host_to_net_u16 (49152);
   t.src_port = clib_host_to_net_u16 (34567);
-  s = session (0, 0, 0, 0);
+  s = session (0, 0, 0);
   s.port_priv = 21;
   CHECK (bpa_ftp_is_control (&t, &s) == 1,
 	 "a reply from the subscriber's own server is control traffic");
 
   build (&t, 1000, 0, TCP_FLAG_ACK);
   t.dst_port = clib_host_to_net_u16 (49152);
-  s = session (0, 0, 0, 0);
+  s = session (0, 0, 0);
   s.port_priv = 40000;
   CHECK (bpa_ftp_is_control (&t, &s) == 0,
 	 "ordinary traffic is not a control connection");
@@ -170,7 +182,9 @@ expect_seq (const char *what, bpa_session_t *s, u32 seq, int want_ret,
 
   build (&t, seq, 0, TCP_FLAG_ACK);
   before = t.checksum;
-  ret = bpa_ftp_seq_in2out (&t, s);
+  /* Subscriber -> internet: this direction is the one that drifted, and the
+   * other carries no acknowledgement correction. */
+  ret = bpa_tcp_seq_adjust (&t, &s->adj[BPA_DIR_OUT], &s->adj[BPA_DIR_IN]);
 
   CHECK (ret == want_ret, "%s: returned %d, expected %d", what, ret, want_ret);
   CHECK (clib_net_to_host_u32 (t.seq_number) == want_seq,
@@ -194,7 +208,9 @@ expect_ack (const char *what, bpa_session_t *s, u32 ack, u8 flags,
 
   build (&t, 500, ack, flags);
   before = t.checksum;
-  ret = bpa_ftp_ack_out2in (&t, s);
+  /* Internet -> subscriber: the acknowledgement is expressed in the stream
+   * the OTHER direction lengthened, which is why that one is the reverse. */
+  ret = bpa_tcp_seq_adjust (&t, &s->adj[BPA_DIR_IN], &s->adj[BPA_DIR_OUT]);
 
   CHECK (ret == want_ret, "%s: returned %d, expected %d", what, ret, want_ret);
   CHECK (clib_net_to_host_u32 (t.ack_number) == want_ack,
@@ -215,14 +231,14 @@ main (void)
 
   printf ("=== FTP ALG sequence arithmetic ===\n\n");
 
-  seq_after_cases ();
+  seq_boundary_cases ();
   printf ("\n");
   is_control_cases ();
 
-  printf ("\n--- bpa_ftp_seq_in2out: subscriber -> internet ---\n");
+  printf ("\n--- the correction, subscriber -> internet ---\n");
 
   /* A rewrite at stream position 1000 lengthened the payload by 8 bytes. */
-  s = session (BPA_ALG_FTP_SEQ, 1000, 0, 8);
+  s = session (1000, 0, 8);
   expect_seq ("a segment sent after the rewrite is shifted", &s, 1200, 1, 1208);
 
   /*
@@ -235,33 +251,38 @@ main (void)
 	      900, 0, 900);
 
   /* Wrapped, with the rewrite just below 2^32. */
-  s = session (BPA_ALG_FTP_SEQ, 0xffffff00u, 0, 8);
+  s = session (0xffffff00u, 0, 8);
   expect_seq ("a segment after a rewrite that wrapped is still shifted", &s,
 	      0x00000100u, 1, 0x00000108u);
   expect_seq ("and one from before it is still not", &s, 0xfffffe00u, 0,
 	      0xfffffe00u);
 
-  /* A session this ALG never touched must be left completely alone: the flag
-   * is the only thing separating an FTP control connection from every other
-   * TCP session on the box, all of which go through this function. */
-  s = session (0, 1000, 0, 8);
-  expect_seq ("a session with no rewrite is untouched", &s, 1200, 0, 1200);
-
-  /* Drift of zero is not a rewrite. Shifting by 0 would still rewrite the
-   * checksum, which is a write to every segment of every FTP connection for
-   * no reason. */
-  s = session (BPA_ALG_FTP_SEQ, 1000, 0, 0);
-  expect_seq ("a zero offset changes nothing", &s, 1200, 0, 1200);
+  /*
+   * A session no ALG has touched must be left completely alone. Every TCP
+   * session on the box reaches this function, and all but a handful of them
+   * have never been rewritten.
+   *
+   * There used to be TWO cases here - "no rewrite" and "a rewrite of zero
+   * bytes" - because a flag separated them. They are one case now, and that
+   * is the point rather than a loss: with the flag gone, "untouched" and
+   * "touched but not drifted" are the same state and there is nothing left
+   * that can disagree about which it is. A shift of zero would still rewrite
+   * the checksum, which is a write to every segment of every FTP connection
+   * for no reason, so the assertion that nothing is written still earns its
+   * place.
+   */
+  s = session (1000, 0, 0);
+  expect_seq ("a session with no drift is untouched", &s, 1200, 0, 1200);
 
   /* A rewrite that SHORTENED the payload: a shorter public address than the
    * private one is perfectly possible (100.64.0.100 -> 45.1.1.1). */
-  s = session (BPA_ALG_FTP_SEQ, 1000, 0, -4);
+  s = session (1000, 0, -4);
   expect_seq ("a rewrite that shortened the payload shifts backwards", &s,
 	      1200, 1, 1196);
 
-  printf ("\n--- bpa_ftp_ack_out2in: internet -> subscriber ---\n");
+  printf ("\n--- the correction, internet -> subscriber ---\n");
 
-  s = session (BPA_ALG_FTP_SEQ, 1000, 0, 8);
+  s = session (1000, 0, 8);
   /* The remote acknowledges the stream as we lengthened it; the subscriber
    * only knows its own numbering. */
   expect_ack ("an acknowledgement past the rewrite is shifted back", &s, 1208,
@@ -277,13 +298,14 @@ main (void)
    * A session whose pool has since had the ALG switched off. The drift
    * already happened, so the correction has to keep being applied - otherwise
    * turning the knob off breaks exactly the connections it was meant to stop
-   * interfering with. The flag lives on the SESSION for this reason.
+   * interfering with. The correction lives on the SESSION for this reason,
+   * and not on the pool.
    */
-  s = session (BPA_ALG_FTP_SEQ, 1000, 0, 8);
+  s = session (1000, 0, 8);
   expect_ack ("a session already drifting is still corrected", &s, 1208,
 	      TCP_FLAG_ACK, 1, 1200);
 
-  s = session (0, 1000, 0, 8);
+  s = session (1000, 0, 0);
   expect_ack ("a session that never drifted is not", &s, 1208, TCP_FLAG_ACK, 0,
 	      1208);
 
@@ -291,12 +313,12 @@ main (void)
   /*
    * Two PORT commands on one control connection, which is ordinary: the
    * offset before the second rewrite is already 8, and after it 16. Until
-   * this case existed every assertion above ran with alg_off_before == 0,
-   * which made the subtraction in bpa_ftp_ack_out2in unobservable - removing
+   * this case existed every assertion above ran with off_before == 0, which
+   * made the subtraction in the acknowledgement path unobservable - removing
    * it entirely changed no result. That is the shape of a test that passes
    * without testing.
    */
-  s = session (BPA_ALG_FTP_SEQ, 2000, 8, 16);
+  s = session (2000, 8, 16);
 
   expect_seq ("a segment before the second rewrite carries the first offset",
 	      &s, 1500, 1, 1508);

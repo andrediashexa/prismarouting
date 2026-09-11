@@ -35,7 +35,7 @@
   _ (FTP_REWRITTEN, 0, "FTP ALG payloads rewritten") \
   _ (FTP_UNTOUCHED, 0, "FTP payloads left untouched (malformed or unsupported)") \
   _ (FTP_NO_PORT, 0, "FTP data connection could not get a public port") \
-  _ (FTP_SEQ, 0, "TCP sequence numbers shifted after an FTP rewrite") \
+  _ (SEQ_ADJUSTED, 0, "TCP sequence or acknowledgement numbers shifted after an ALG rewrote a payload") \
   _ (RTSP_REWRITTEN, 0, "RTSP Transport headers rewritten") \
   _ (RTSP_UNPARSED, 0, "RTSP Transport not understood") \
   _ (RTSP_PARTIAL, 0, "RTSP message spans segments") \
@@ -64,7 +64,7 @@
   _ (ICMP_ERROR, 0, "ICMP errors translated") \
   _ (ICMP_MALFORMED, 1, "truncated or malformed ICMP error") \
   _ (TRUNCATED, 1, "truncated packet") \
-  _ (FTP_ACK, 0, "TCP acknowledgements shifted after an FTP rewrite") \
+  _ (SEQ_ADJUSTED, 0, "TCP sequence or acknowledgement numbers shifted after an ALG rewrote a payload") \
   _ (RTSP_REWRITTEN, 0, "RTSP Transport replies rewritten") \
   _ (RTSP_UNPARSED, 0, "RTSP reply not understood") \
   _ (RTSP_PARTIAL, 0, "RTSP reply spans segments") \

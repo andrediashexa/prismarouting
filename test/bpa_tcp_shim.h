@@ -139,13 +139,15 @@ tcp_header_bytes (const tcp_header_t *t)
 
 /* -------------------------------------------------------------- session */
 
+#include "../src/plugins/bpa/bpa_seq.h"
+
 typedef struct
 {
   u16 port_priv;
-  u8 alg;
-  u32 alg_seq_pos;
-  i32 alg_off_before;
-  i32 alg_off_after;
+  /* The correction an ALG left behind, which is now ONE mechanism shared by
+   * all of them (#48). This mirror carries the real field so that renaming it
+   * over there breaks this build, which is the point of the mirror. */
+  bpa_seq_adj_t adj[BPA_N_DIR];
 } bpa_session_t;
 
 #endif /* __included_bpa_tcp_shim_h__ */

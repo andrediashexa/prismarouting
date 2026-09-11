@@ -23,6 +23,7 @@
 #include <vnet/tcp/tcp_packet.h>
 
 #include "bpa.h"
+#include "bpa_seq.h"
 #include "bpa_rtsp.h"
 
 typedef enum
@@ -64,63 +65,6 @@ bpa_tcp_payload (vlib_buffer_t *b, ip4_header_t *ip, tcp_header_t *tcp,
   if (PREDICT_FALSE (p + *pl_len > end))
     return -1;
   return 0;
-}
-
-/*
- * Delta that applies to one position in a stream.
- *
- * Signed comparison, so a stream that has wrapped past 2^32 still answers
- * "which side of the correction point is this" correctly.
- */
-static_always_inline i32
-bpa_seq_delta_at (const bpa_seq_adj_t *a, u32 seq)
-{
-  return ((i32) (seq - a->correction_pos) > 0) ? a->off_after : a->off_before;
-}
-
-/*
- * Moves a TCP header's sequence and acknowledgement numbers onto the rewritten
- * stream, fixing the checksum as it goes.
- *
- * `fwd` describes the direction this packet travels; `rev` the other one, from
- * which its acknowledgements come. The acknowledgement is un-corrected before
- * being classified, because it is expressed in the rewritten stream's
- * coordinates and the correction point is expressed in the original's.
- */
-static_always_inline void
-bpa_tcp_seq_adjust (tcp_header_t *tcp, const bpa_seq_adj_t *fwd,
-		    const bpa_seq_adj_t *rev)
-{
-  ip_csum_t sum = tcp->checksum;
-  u32 seq = clib_net_to_host_u32 (tcp->seq_number);
-  u32 ack = clib_net_to_host_u32 (tcp->ack_number);
-  i32 dseq = bpa_seq_delta_at (fwd, seq);
-  i32 dack;
-
-  if (rev->off_after || rev->off_before)
-    dack = bpa_seq_delta_at (rev, ack - (u32) rev->off_before);
-  else
-    dack = 0;
-
-  if (dseq)
-    {
-      u32 new_seq = clib_host_to_net_u32 (seq + (u32) dseq);
-      sum = ip_csum_update (sum, tcp->seq_number, new_seq, tcp_header_t,
-			    seq_number);
-      tcp->seq_number = new_seq;
-    }
-
-  /* Only a segment that carries an acknowledgement has an ack field worth
-   * moving; in a SYN without ACK the field is whatever the sender left there. */
-  if (dack && (tcp->flags & TCP_FLAG_ACK))
-    {
-      u32 new_ack = clib_host_to_net_u32 (ack - (u32) dack);
-      sum = ip_csum_update (sum, tcp->ack_number, new_ack, tcp_header_t,
-			    ack_number);
-      tcp->ack_number = new_ack;
-    }
-
-  tcp->checksum = ip_csum_fold (sum);
 }
 
 /*

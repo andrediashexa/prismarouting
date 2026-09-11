@@ -203,7 +203,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_icmp_err = 0, n_ftp_ack = 0, n_rtsp = 0;
+  u32 n_translated = 0, n_icmp_err = 0, n_seq_adj = 0, n_rtsp = 0;
   u32 n_forwarded = 0, n_mss = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
   u32 n_esp = 0;
@@ -503,18 +503,6 @@ VLIB_NODE_FN (bpa_out2in_node)
       n_translated++;
 
       /*
-       * The remote acknowledges the subscriber's stream as the FTP ALG
-       * lengthened it. The subscriber only knows its own numbering, so the
-       * acknowledgement is shifted back here. Without it the subscriber sees
-       * bytes it never sent acknowledged, and the control connection stalls a
-       * few commands after the rewrite - which does not look like FTP, and
-       * does not look like NAT either.
-       */
-      if (PREDICT_FALSE (proto == BPA_PROTO_TCP && l4h != 0
-			 && (s->alg & BPA_ALG_FTP_SEQ)))
-	n_ftp_ack += bpa_ftp_ack_out2in (l4h, s);
-
-      /*
        * RTSP ALG, internet -> subscriber: the reply that echoes client_port.
        *
        * Same ordering as in2out - after the address rewrite so the checksum
@@ -551,12 +539,20 @@ VLIB_NODE_FN (bpa_out2in_node)
 		}
 	    }
 
+	  /*
+	   * The remote acknowledges the subscriber's stream as an ALG
+	   * lengthened it. The subscriber only knows its own numbering, so the
+	   * acknowledgement is shifted back here. Without it the subscriber
+	   * sees bytes it never sent acknowledged, and the connection stalls a
+	   * few messages after the rewrite - which does not look like the ALG,
+	   * and does not look like NAT either.
+	   */
 	  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
 			     | s->adj[BPA_DIR_OUT].off_before
 			     | s->adj[BPA_DIR_IN].off_after
 			     | s->adj[BPA_DIR_IN].off_before))
-	    bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_IN],
-				&s->adj[BPA_DIR_OUT]);
+	    n_seq_adj += bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_IN],
+					     &s->adj[BPA_DIR_OUT]);
 	}
 
       vnet_feature_next_u16 (&next[0], b[0]);
@@ -590,7 +586,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_MSS_CLAMPED, n_mss);
   vlib_node_increment_counter (vm, node->node_index,
-			       BPA_OUT2IN_ERROR_FTP_ACK, n_ftp_ack);
+			       BPA_OUT2IN_ERROR_SEQ_ADJUSTED, n_seq_adj);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_RTSP_REWRITTEN, n_rtsp);
   vlib_node_increment_counter (vm, node->node_index,

@@ -10,6 +10,7 @@
 
 #include "bpa.h"
 #include "bpa_ftp.h"
+#include "bpa_alg.h"
 
 /* Longest replacement: "1|255.255.255.255|65535" for EPRT, 23 bytes. */
 #define BPA_FTP_MAX_ARG 32
@@ -422,40 +423,6 @@ bpa_ftp_expect (bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t *ctl,
 
 /* ------------------------------------------------------------- rewriting */
 
-/*
- * Record the length change so that everything the subscriber sends after this
- * point is renumbered. The shape is the one netfilter arrived at: remember
- * where the last change happened and the offset on each side of it, so a
- * retransmission from before the change is still shifted by what was in force
- * when it was first sent.
- *
- * Only the two most recent offsets are kept. A retransmission older than the
- * last-but-one rewrite gets the wrong one - stated here rather than hidden,
- * because on an FTP control connection rewrites are seconds apart and a
- * retransmission that old has already been given up on by the sender.
- */
-static void
-bpa_ftp_seqadj_set (bpa_session_t *s, u32 seq, i32 delta)
-{
-  i32 after;
-
-  if (s->alg_off_before == s->alg_off_after
-      || bpa_seq_after (seq, s->alg_seq_pos))
-    {
-      s->alg_seq_pos = seq;
-      s->alg_off_before = s->alg_off_after;
-    }
-
-  after = (i32) s->alg_off_after + delta;
-  /* The offsets are 16-bit: an FTP control connection rewrites a handful of
-   * short strings, and one that somehow drifted past 32 KB is one we stop
-   * following rather than wrap into nonsense. */
-  if (after > 32000 || after < -32000)
-    return;
-  s->alg_off_after = (i16) after;
-  s->alg |= BPA_ALG_FTP_SEQ;
-}
-
 bpa_ftp_result_t
 bpa_ftp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
 		bpa_per_thread_t *pt, const bpa_pool_t *p, bpa_session_t **sp,
@@ -467,8 +434,7 @@ bpa_ftp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
   bpa_session_t *data;
   tcp_header_t *tcp;
   u8 *end, *pl;
-  u32 hlen, plen, rep_len = 0, tail, s_index;
-  i32 delta;
+  u32 hlen, plen, rep_len = 0, s_index;
   int server_side, rc;
 
   end = (u8 *) vlib_buffer_get_current (b) + b->current_length;
@@ -558,38 +524,23 @@ bpa_ftp_in2out (vlib_main_t *vm, vlib_buffer_t *b, ip4_header_t *ip,
       break;
     }
 
-  delta = (i32) rep_len - (i32) pr.arg_len;
-
-  /* Growing past the buffer would corrupt whatever follows it. */
-  if (PREDICT_FALSE ((i32) b->current_data + (i32) b->current_length + delta
-		     > (i32) vlib_buffer_get_default_data_size (vm)))
-    return BPA_FTP_UNTOUCHED;
-
-  tail = plen - pr.arg_off - pr.arg_len;
-  if (tail && delta)
-    clib_memmove (pl + pr.arg_off + rep_len, pl + pr.arg_off + pr.arg_len,
-		  tail);
-  clib_memcpy_fast (pl + pr.arg_off, rep, rep_len);
-
-  b->current_length = (u16) ((i32) b->current_length + delta);
-  ip->length = clib_host_to_net_u16 (
-    (u16) ((i32) clib_net_to_host_u16 (ip->length) + delta));
-
-  bpa_ftp_seqadj_set (s, clib_net_to_host_u32 (tcp->seq_number), delta);
-
   /*
-   * Both checksums from scratch, not incrementally.
+   * The shared splice: it moves the tail, repairs the IP length, both
+   * checksums and this direction's sequence correction, and refuses rather
+   * than growing past the buffer.
    *
-   * The payload changed length, so an incremental update would have to fold
-   * in every moved byte - and the ICMP work already proved what a wrong
-   * checksum costs here: the receiver drops the packet in silence while every
-   * counter reports success. The segment is one short command, so recomputing
-   * it is not a cost worth the risk of getting the arithmetic wrong.
+   * This ALG used to do all of that itself, into a second set of correction
+   * fields of its own (#48). Two mechanisms for one job meant the next ALG
+   * that lengthens a payload had to pick one, and half of any reader's mental
+   * model would then be wrong. The one kept is the one with the better
+   * retransmission guard: a rewritten segment arriving again, with the same
+   * rewrite already accounted for, must not push a second correction, and the
+   * version deleted here would have doubled the offset for exactly that case.
    */
-  ip->checksum = 0;
-  ip->checksum = ip4_header_checksum (ip);
-  tcp->checksum = 0;
-  tcp->checksum = ip4_tcp_udp_compute_checksum (vm, b, ip);
+  if (PREDICT_FALSE (bpa_alg_splice (vm, b, ip, tcp, pl, plen, pr.arg_off,
+				     pr.arg_len, rep, rep_len,
+				     &s->adj[BPA_DIR_OUT]) < 0))
+    return BPA_FTP_UNTOUCHED;
 
   return BPA_FTP_REWRITTEN;
 }
