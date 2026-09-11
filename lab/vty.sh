@@ -569,4 +569,115 @@ expect_in "show interface reports the dataplane's interfaces" "pg0" "$PG0_ROW"
 expect_in "with their state, on that same row" "up" "$PG0_ROW"
 expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
 
+
+# ---------------------------------------------------------------------------
+# show interface terse / description / utilization (#192)
+#
+# Against a real dataplane, because all three of these READ VPP's own output
+# and the layout is the whole difficulty: the counter names have spaces in
+# them, an idle interface prints no counter line at all, and the link state
+# lives in a different command from the admin state. A unit test proves the
+# parser against text this repository wrote; only this proves it against text
+# VPP wrote.
+echo
+echo "=== show interface terse / description / utilization ==="
+
+# A description with a SPACE in it. `vppctl set interface tag` truncates at
+# the first space; the API does not - so a box that had taken the easy route
+# would store "TRANSITO" and this would fail.
+$HX -c "configure" -c "interface pg0" \
+    -c "description TRANSITO Vivo AS26599" -c "exit" -c "commit" >/dev/null 2>&1
+DESCR=$($HX -c "show interface description" 2>&1)
+echo "$DESCR" | sed 's/^/  /'
+expect_in "a description survives whole, spaces and all" \
+  "TRANSITO Vivo AS26599" "$DESCR"
+expect_in "and the view has the column it used to deny having" \
+  "Description" "$DESCR"
+expect_not_in "the box no longer says it cannot hold one" \
+  "carries no per-interface description" "$DESCR"
+
+TERSE=$($HX -c "show interface terse" 2>&1)
+echo "$TERSE" | sed 's/^/  /'
+expect_in "terse has an admin column" "Admin" "$TERSE"
+expect_in "and a link column, which is a different fact" "Link" "$TERSE"
+# The link column is checked against the dataplane's own answer rather than
+# against "up": a reader that returned a constant, or that read the admin
+# state twice, passes any check written against a literal.
+HW_LINK=$(vppctl show hardware-interfaces brief | awk '$1=="pg0"{print $3}')
+VTY_LINK=$(printf '%s\n' "$TERSE" | awk '$1=="pg0"{print $3}')
+echo "  dataplane says pg0 link '$HW_LINK'; the VTY says '$VTY_LINK'"
+expect "the link column is the dataplane's link state, not a constant" \
+  sh -c "[ -n \"$HW_LINK\" ] && [ \"$HW_LINK\" = \"$VTY_LINK\" ]"
+# And it has to MOVE. A column read off the admin state would follow this too,
+# so the admin state is held still while the link goes down: host-veth-vpp's
+# link follows its peer, and the peer is in another namespace.
+vppctl set interface state pg0 down
+TERSE_DOWN=$($HX -c "show interface terse" 2>&1)
+DOWN_LINK=$(printf '%s\n' "$TERSE_DOWN" | awk '$1=="pg0"{print $3}')
+DOWN_ADMIN=$(printf '%s\n' "$TERSE_DOWN" | awk '$1=="pg0"{print $2}')
+echo "  with pg0 shut: admin '$DOWN_ADMIN' link '$DOWN_LINK'"
+expect_in "shutting an interface shows in the admin column" "down" "$DOWN_ADMIN"
+vppctl set interface state pg0 up
+
+# A sub-interface is not hardware and VPP reports no link for it. Its link is
+# its parent's, and an ISP's subscriber ports are all sub-interfaces - so a
+# blank there would empty the column exactly where it is needed.
+vppctl create sub-interfaces pg0 100 >/dev/null 2>&1
+vppctl set interface state pg0.100 up
+SUBTERSE=$($HX -c "show interface terse" 2>&1 | awk '$1=="pg0.100"{print $3}')
+echo "  pg0.100 link column: '${SUBTERSE:-<none>}'"
+expect "a sub-interface takes its parent's link state" \
+  sh -c "[ \"$SUBTERSE\" = \"$HW_LINK\" ]"
+
+# Utilisation. A counter is a total since boot; a rate is a difference. The
+# traffic runs for the whole sample at a rate the generator was TOLD, so the
+# figure the VTY prints can be checked against a number this lab knows rather
+# than against "not zero" - which a bytes-for-bits mistake would also pass.
+#
+# 1000 packets per second of 100 bytes is 800 kbit/s. The window is wide
+# (300-2000) because a software generator is not a calibration source; it is
+# still narrow enough that reporting bytes (100 kbit/s) or per-sample totals
+# (1.6 Mbit/s at this interval) falls outside it.
+# No `limit`, so the stream runs for the whole window rather than emptying
+# into the first sample; `incrementing 8` because a stream whose data does not
+# fill `size` is refused with "failed to parse packet data", which reads like
+# a syntax error and is not one.
+vppctl packet-generator new \
+  "name util rate 1000 size 100-100 interface pg0 node ethernet-input \
+   data { IP4: 1.2.3 -> 4.5.6 UDP: 100.64.0.9 -> 8.8.8.8 UDP: 1234 -> 53 \
+   incrementing 8 }"
+vppctl packet-generator enable-stream util
+UTIL=$($HX -c "show interface utilization interval 2 count 2 pg0" 2>&1)
+vppctl packet-generator disable-stream util
+echo "$UTIL" | sed 's/^/  /'
+expect_in "the interval is stated before the command makes anybody wait" \
+  "sampling every 2s" "$UTIL"
+KBIT=$(printf '%s\n' "$UTIL" | awk '$1=="pg0"{
+          if ($3 == "Mbit/s") printf "%d", $2 * 1000;
+          else if ($3 == "kbit/s") printf "%d", $2;
+          else if ($3 == "Gbit/s") printf "%d", $2 * 1000000;
+          else printf "%d", $2 / 1000 }')
+echo "  the VTY read ${KBIT:-<none>} kbit/s off a generator set to 800"
+expect "a 800 kbit/s stream reads as bit/s, not bytes and not a total" \
+  sh -c "[ -n \"$KBIT\" ] && [ \"$KBIT\" -ge 300 ] && [ \"$KBIT\" -le 2000 ]"
+# The graph. A run with traffic must draw something above the baseline; the
+# same command with the generator stopped must not - which is what makes the
+# first assertion mean anything.
+IDLE=$($HX -c "show interface utilization interval 1 count 2 pg0" 2>&1)
+IDLE_RATE=$(printf '%s\n' "$IDLE" | awk '$1=="pg0"{print $2, $3}')
+echo "  with the generator stopped: '$IDLE_RATE'"
+expect_in "with nothing passing, the rate is zero" "0 bit/s" "$IDLE_RATE"
+
+# The graph. Checked by COMPARING the two runs rather than by looking for a
+# particular character: which characters are drawn depends on whether the
+# console is answering in UTF-8, and an assertion on one of them would be an
+# assertion about the terminal. What has to be true is that a link carrying
+# traffic and the same link carrying none do not draw the same line.
+HIST=$(printf '%s\n' "$UTIL" | awk '$1=="pg0"{print $6}')
+IDLE_HIST=$(printf '%s\n' "$IDLE" | awk '$1=="pg0"{print $6}')
+echo "  history with traffic '$HIST', idle '$IDLE_HIST'"
+expect "the history is drawn, not left blank" sh -c "[ -n \"$HIST\" ]"
+expect "and traffic does not draw the same line as silence" \
+  sh -c "[ \"$HIST\" != \"$IDLE_HIST\" ]"
+
 verdict

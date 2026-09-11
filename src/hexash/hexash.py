@@ -167,8 +167,16 @@ SHOW = {
     }),
     "ospf": ("OSPF neighbours and the database (FRR)", None),
     "isis": ("IS-IS information (FRR)", None),
-    "interface": ("interfaces on the dataplane, with state and addresses",
-                  ARG_INTERFACE),
+    "interface": ("interfaces on the dataplane, with state and addresses", {
+        "terse": ("one line each: admin state, link state, address", None),
+        "description": ("what each interface is for, and its state", None),
+        "utilization": ("sample the counters and graph what is passing", {
+            "interval": ("seconds between samples (default 2)", "<seconds>"),
+            "count": ("how many samples to take (default 5)", "<count>"),
+            ARG_INTERFACE: ("only this interface", None),
+        }),
+        ARG_INTERFACE: ("one interface, in detail, with its counters", None),
+    }),
     "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
 }
@@ -4617,6 +4625,286 @@ class Shell:
         # better than printing it twice under two names.
         self.print_config(cfg)
 
+    @staticmethod
+    def link_state(name, hardware):
+        """
+        The link state of an interface, or of its parent when it has none.
+
+        A sub-interface is not hardware, so the dataplane reports no link for
+        it - but its link IS its parent's, and there is nothing else it could
+        be. Printing '?' there would blank the column on exactly the
+        interfaces an ISP terminates subscribers on, which are all
+        sub-interfaces.
+        """
+        row = hardware.get(name)
+        if row is None and "." in name:
+            row = hardware.get(name.split(".")[0])
+        return row["link"] if row else "?"
+
+    def show_interfaces_terse(self, ifaces, hardware):
+        """
+        One line per interface: admin state, link state, family, address.
+
+        Admin and link are two columns because they are two facts and the
+        difference between them is the fault. `show interface` reports the
+        admin flag - what somebody configured - and an operator reading "down"
+        there cannot tell whether a colleague ran `shutdown` or the fibre is
+        cut. Up/down is a wire; down/down is a person. One "state" column
+        cannot say which, and this is the listing people reach for when
+        something is off, so it says both.
+        """
+        print(f"  {'Interface':<26} {'Admin':<6} {'Link':<6} {'Proto':<6} "
+              "Local")
+        mismatched = []
+        for name in sorted(ifaces):
+            e = ifaces[name]
+            link = self.link_state(name, hardware)
+            if e["state"] == "up" and link == "down":
+                mismatched.append(name)
+            rows = [("inet6" if ":" in a else "inet", a)
+                    for a in e["addresses"]] or [("-", "-")]
+            first = True
+            for proto, addr in rows:
+                print(f"  {name if first else '':<26} "
+                      f"{e['state'] if first else '':<6} "
+                      f"{link if first else '':<6} {proto:<6} {addr}")
+                first = False
+        print(f"\n  {len(ifaces)} interface(s) on the dataplane")
+        if mismatched:
+            # The one conclusion this view exists to make reachable without
+            # being read for.
+            print("  " + ", ".join(mismatched) + ": configured up, link "
+                  "down - that is the wire or the far end, not this "
+                  "configuration")
+
+    def show_interfaces_description(self, ifaces, hardware):
+        """
+        What each interface is for, next to whether it is working.
+
+        The description is the dataplane's own interface tag, read back from
+        the box - so it survives a restart of this VTY and says the same thing
+        to anyone who asks VPP directly.
+
+        This command used to print the table and then a line saying the
+        dataplane carries no descriptions. That was true when it was written
+        and stopped being true when `description` started being stored as the
+        tag; it was left saying so, which is worse than never having answered,
+        because somebody reading it stops looking for the feature that exists.
+        """
+        descs = self.device_descriptions()
+        print(f"  {'Interface':<26} {'Admin':<6} {'Link':<6} Description")
+        for name in sorted(ifaces):
+            print(f"  {name:<26} {ifaces[name]['state']:<6} "
+                  f"{self.link_state(name, hardware):<6} "
+                  f"{descs.get(name, '')}")
+        described = sum(1 for n in ifaces if descs.get(n))
+        print(f"\n  {described} of {len(ifaces)} interface(s) described")
+        if described < len(ifaces):
+            # An empty column is a question, and it has an answer. Saying
+            # nothing here is what made the old wrong sentence seem worth
+            # printing in the first place.
+            print("  set one with 'description <text>' inside 'interface "
+                  "<name>'")
+
+    #: A sparkline needs eight levels and a mark for nothing. The block
+    #: characters are the readable ones; an appliance is also operated over a
+    #: serial console that may be answering in ASCII, and a row of question
+    #: marks would make the graph worse than no graph.
+    #:
+    #: Index 0 is a visible baseline rather than a space, because a blank
+    #: reads as "no data" and the thing it means is "no traffic" - which on a
+    #: link somebody is asking about is the answer, not the absence of one.
+    BARS_UTF = "\u00b7\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+    BARS_ASCII = "_.:;+*#%@"
+
+    def bars(self):
+        enc = (getattr(sys.stdout, "encoding", None) or "").lower()
+        return self.BARS_UTF if enc.startswith("utf") else self.BARS_ASCII
+
+    def spark(self, values, full):
+        """A series drawn against `full`; an empty bar is a real zero."""
+        chars = self.bars()
+        if not full:
+            return chars[0] * len(values)
+        out = ""
+        for v in values:
+            level = int(round((v / full) * (len(chars) - 1)))
+            # Traffic that rounds to nothing is still traffic. Drawn at the
+            # lowest level rather than at the baseline, because "a trickle"
+            # and "silence" are different answers and on a graph scaled to a
+            # 10G peak they would otherwise look identical.
+            if v > 0:
+                level = max(1, level)
+            out += chars[max(0, min(len(chars) - 1, level))]
+        return out
+
+    @staticmethod
+    def rate(bits):
+        """bit/s, at the multiple an operator would have said it in."""
+        for unit, div in (("Gbit/s", 10 ** 9), ("Mbit/s", 10 ** 6),
+                          ("kbit/s", 10 ** 3)):
+            if bits >= div:
+                return f"{bits / div:.2f} {unit}"
+        return f"{bits:.0f} bit/s"
+
+    def show_interface_utilisation(self, args):
+        """
+        Sample the counters, twice or more, and graph what went past.
+
+        `show interface` prints a counter, which is a total since boot. Nobody
+        wants a total; they want to know whether the link is busy NOW, and the
+        only way to that from a total is to take two of them and divide by the
+        time between. So this command takes time to answer, and says how much
+        before it starts rather than appearing to have hung.
+
+        The elapsed time is MEASURED, not assumed from the sleep. A box under
+        the load worth asking about is a box where a two-second sleep is not
+        two seconds, and a rate computed from the nominal interval would be
+        wrong in exactly the conditions the question gets asked in.
+
+        "Utilisation" only means something against a capacity. When the
+        dataplane reports a link speed, the bar is that interface's share of
+        its own line rate and the percentage is real. When it does not - every
+        virtual interface says "unknown" - the bar is scaled to the busiest
+        sample in this run and the footer says so, because a percentage of a
+        capacity the box does not know would be a number nobody could defend.
+        """
+        interval, count, names = 2.0, 5, []
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a in ("interval", "count"):
+                if i + 1 >= len(args):
+                    self.err(f"{a} needs a number after it")
+                    return
+                try:
+                    value = float(args[i + 1])
+                except ValueError:
+                    self.err(f"{a} needs a number, not '{args[i + 1]}'")
+                    return
+                if a == "interval":
+                    if not 0.1 <= value <= 60:
+                        self.err("interval must be between 0.1 and 60 seconds")
+                        return
+                    interval = value
+                else:
+                    if not 1 <= value <= 120:
+                        self.err("count must be between 1 and 120")
+                        return
+                    count = int(value)
+                i += 2
+                continue
+            names.append(a)
+            i += 1
+
+        _, hw = self.dp.run("show hardware-interfaces brief")
+        hardware = routes.parse_hardware(hw)
+
+        print(f"  sampling every {interval:g}s, {count} time(s) - "
+              f"{interval * count:g}s in total; Ctrl-C stops early")
+        samples = []
+        try:
+            for n in range(count + 1):
+                rc, out = self.dp.run("show interface")
+                if rc != 0 or not out.strip():
+                    self.err("the dataplane stopped answering part-way "
+                             "through the sample")
+                    return
+                samples.append((time.monotonic(),
+                                routes.parse_interface_counters(out)))
+                if n < count:
+                    time.sleep(interval)
+        except KeyboardInterrupt:
+            print()
+
+        if len(samples) < 2:
+            self.err("stopped before two samples, so no rate could be "
+                     "measured")
+            print("    a rate is a difference between two counters; one "
+                  "reading is a total since boot")
+            return
+
+        series, drops, reset = {}, {}, False
+        for (t0, c0), (t1, c1) in zip(samples, samples[1:]):
+            dt = t1 - t0
+            if dt <= 0:
+                continue
+            for name, now in c1.items():
+                was = c0.get(name)
+                if was is None:
+                    # Appeared mid-sample. Its counter is a total since it was
+                    # created, and reporting that as a rate would invent a
+                    # spike out of an interface somebody just made.
+                    continue
+                step = []
+                for key in ("rx bytes", "tx bytes"):
+                    delta = now.get(key, 0) - was.get(key, 0)
+                    if delta < 0:
+                        # `clear interfaces` ran while this was sampling.
+                        reset = True
+                        delta = 0
+                    step.append(delta * 8 / dt)
+                series.setdefault(name, []).append(tuple(step))
+                lost = now.get("drops", 0) - was.get("drops", 0)
+                if lost > 0:
+                    drops[name] = drops.get(name, 0) + lost
+
+        if names:
+            series = {n: v for n, v in series.items()
+                      if any(_starts(n, w) for w in names)}
+            if not series:
+                print("  no interface matches")
+                return
+
+        peak = max((max(max(rx, tx) for rx, tx in v)
+                    for v in series.values() if v), default=0.0)
+        speeds = {n: (hardware.get(n) or {}).get("speed")
+                  or (hardware.get(n.split(".")[0]) or {}).get("speed")
+                  for n in series}
+        rated = any(speeds.values())
+
+        width = len(samples) - 1
+        # 13, not 12: "675.56 Mbit/s" is thirteen characters, and a column
+        # that the widest real value overflows is a column that stops lining
+        # up exactly on the box that is busy.
+        head = (f"\n  {'Interface':<26} {'rx':>13} {'tx':>13}  "
+                f"{'rx history':<{max(width, 10)}} tx history")
+        print(head)
+        for name in sorted(series):
+            steps = series[name]
+            if not steps:
+                continue
+            rx_now, tx_now = steps[-1]
+            full = speeds.get(name) or peak
+            print(f"  {name:<26} {self.rate(rx_now):>13} "
+                  f"{self.rate(tx_now):>13}  "
+                  f"{self.spark([s[0] for s in steps], full):<{max(width, 10)}} "
+                  f"{self.spark([s[1] for s in steps], full)}")
+
+        print()
+        if rated:
+            print("  bars are each interface's share of its own line rate")
+            for name in sorted(series):
+                speed = speeds.get(name)
+                if not speed or not series[name]:
+                    continue
+                rx_now, tx_now = series[name][-1]
+                print(f"    {name:<24} {max(rx_now, tx_now) / speed * 100:5.1f}"
+                      f"% of {self.rate(speed)}")
+        elif peak:
+            print(f"  bars are scaled to {self.rate(peak)}, the busiest "
+                  "sample in this run -")
+            print("  the dataplane reports no link speed for these "
+                  "interfaces, so there is no line rate to be a share of")
+        else:
+            print("  nothing passed any interface during the sample")
+        for name in sorted(drops):
+            print(f"  {name} dropped {drops[name]} packet(s) while this was "
+                  "sampling")
+        if reset:
+            print("  a counter went backwards - something cleared the "
+                  "interfaces mid-sample; that step reads as zero")
+
     def show_one_interface(self, name, ifaces):
         """
         Everything the box knows about one interface, for a fault report.
@@ -4731,6 +5019,14 @@ class Shell:
         still reachable - `show ip interface`, and anything else vtysh knows -
         because sometimes that IS the question.
         """
+        # Both spellings of the same word. An operator who types the one
+        # their keyboard layout and their last employer taught them should
+        # not get FRR's parser error for it; the box has no opinion about
+        # which side of the Atlantic they learned it on.
+        if args[:1] and args[0].rstrip("s") in ("utilization", "utilisation"):
+            self.show_interface_utilisation(args[1:])
+            return
+
         rc, out = self.dp.run("show interface")
         if rc != 0 or not out.strip():
             # An empty table reads as "this box has no interfaces", which is a
@@ -4756,6 +5052,23 @@ class Shell:
                 for line in why[1:]:
                     print("  " + line)
                 print()
+
+        if args[:1] and args[0].rstrip("s") in ("terse", "description",
+                                               "descr", "brief"):
+            _, hw = self.dp.run("show hardware-interfaces brief")
+            hardware = routes.parse_hardware(hw)
+            rest = [a for a in args[1:] if a]
+            if rest:
+                ifaces = {n: e for n, e in ifaces.items()
+                          if any(_starts(n, w) for w in rest)}
+                if not ifaces:
+                    print("  no interface matches")
+                    return
+            if args[0].startswith("terse"):
+                self.show_interfaces_terse(ifaces, hardware)
+            else:
+                self.show_interfaces_description(ifaces, hardware)
+            return
 
         wanted = [a for a in args if a not in ("description", "descr", "brief")]
         if wanted:
@@ -4801,12 +5114,6 @@ class Shell:
         # as an inconsistency somebody has to work out.
         print(f"\n  {len(ifaces)} interface(s) on the dataplane")
 
-        if any(a in ("description", "descr") for a in args):
-            # They asked for descriptions and got a table without them. Saying
-            # nothing would leave somebody looking for a column that is never
-            # coming.
-            print("  the dataplane carries no per-interface description; "
-                  "FRR's view is 'show ip interface'")
 
     def show_bgp(self, args):
         """
@@ -5496,6 +5803,17 @@ class Shell:
                 return dyn, hint, prefix
             return {}, hint, prefix
         opts = {k: v[0] for k, v in node.items() if _starts(k, prefix)}
+        # A node can offer keywords AND take a name - `show interface` offers
+        # `terse` and every interface on the box. Before this, a node with a
+        # subtree discarded the hint, so adding `terse` to `show interface`
+        # would have taken away the interface names it had always completed:
+        # a new option costing an old one, which is how a CLI gets a
+        # reputation. The hint rides IN the dict, as a key, so the tree still
+        # reads as one thing.
+        for key in node:
+            if key in self.DYNAMIC:
+                opts.pop(key, None)
+                opts.update(self.dynamic_options(key, prefix))
         return opts, hint, prefix
 
     def complete(self, text, state):

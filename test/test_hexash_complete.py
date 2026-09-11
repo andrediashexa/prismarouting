@@ -688,12 +688,19 @@ check("up" in text, "with their state")
 check("local0" in text, "including VPP's own loopback, which it does report")
 print("  " + [l for l in text.splitlines() if "TenGig" in l][0].strip())
 
+# `show interface description` used to be answered with a line saying the
+# dataplane carries no descriptions. That was true when it was written and
+# stopped being true when `description` began to be stored as the interface
+# tag - and it was left saying so, which is worse than never having answered,
+# because somebody reading it stops looking for the feature that exists. The
+# assertion that held it in place is now the other way round (#192).
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
     sh.feed("show interface description")
-check("no per-interface description" in out.getvalue(),
-      "asking for descriptions says why there is no such column, rather than "
-      "leaving somebody looking for one that is never coming")
+check("no per-interface description" not in out.getvalue(),
+      "the box does not deny having descriptions it can store")
+check("Description" in out.getvalue(),
+      f"it answers with the column: {out.getvalue()!r}")
 
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
@@ -1409,6 +1416,213 @@ check(any("not shown" in l for l in _lines),
 check(split_pipe("show running-config | include x | count")
       == ("show running-config", ["include x", "count"]),
       "a command and its filters are split apart")
+
+
+# ---------------------------------------------------------------------------
+# `show interface terse | description | utilization` (#192)
+
+import routes                                                    # noqa: E402
+
+
+def capture(sh, line):
+    """What the VTY printed for one command."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sh.feed(line)
+    return buf.getvalue()
+
+
+#
+# The counter text is the dataplane's own, copied off a running VPP rather
+# than written by hand: the layout - a first counter on the interface's line
+# and the rest indented, names with spaces in them, and NO line at all for an
+# interface whose counters are zero - is the whole difficulty, and a
+# hand-written sample would have had whatever shape made the parser pass.
+COUNTERS_A = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+host-veth-vpp                     1      up          9000/0/0/0     tx packets                     3
+                                                                    tx bytes                     266
+local0                            0     down          0/0/0/0
+loop3                             3      up          9000/0/0/0
+pg0                               4      up          9000/0/0/0     rx packets                    20
+                                                                    rx bytes                    2000
+                                                                    drops                          4
+pg0.100                           5      up           0/0/0/0
+"""
+COUNTERS_B = COUNTERS_A.replace("2000", "3000").replace(
+    "                    20", "                    30").replace(
+    "                          4", "                          9")
+
+_c = routes.parse_interface_counters(COUNTERS_A)
+check(_c["pg0"] == {"rx packets": 20, "rx bytes": 2000, "drops": 4},
+      f"a counter name with a space in it survives: {_c.get('pg0')}")
+check(_c["host-veth-vpp"]["tx bytes"] == 266,
+      "the first counter shares the interface's line")
+check(_c["loop3"] == {} and _c["local0"] == {},
+      "an interface with no counter line has no counters, not no entry")
+check("Name" not in _c, "the header is not an interface")
+
+HW = """              Name                Idx   Link  Hardware
+TenGigabitEthernet0/8/0            1     up   TenGigabitEthernet0/8/0
+  Link speed: 10 Gbps
+local0                             0    down  local0
+  Link speed: unknown
+pg0                                4    down  pg0
+  Link speed: unknown
+"""
+_h = routes.parse_hardware(HW)
+check(_h["TenGigabitEthernet0/8/0"] == {"link": "up", "speed": 10 ** 10},
+      f"a link speed becomes a number: {_h.get('TenGigabitEthernet0/8/0')}")
+check(_h["pg0"]["speed"] is None,
+      "and 'unknown' stays unknown - not zero, which would divide")
+check(_h["pg0"]["link"] == "down", "the link column is the LINK, not admin")
+
+
+def box_192(iface_text, hw_text=HW, counters=None, descs=None, elapsed=None,
+            addr_text=""):
+    """A box whose dataplane answers with a scripted sequence of counters."""
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    left = list(counters or [])
+
+    def run(_self, cmd):
+        if cmd.startswith("show hardware-interfaces"):
+            return 0, hw_text
+        if cmd == "show interface addr":
+            return 0, addr_text
+        if cmd == "show interface" and left:
+            return 0, left.pop(0)
+        if cmd.startswith("show interface"):
+            return 0, iface_text
+        return 0, ""
+
+    sh.dp = type("D", (), {"TRACE": False, "run": run})()
+    sh.frr = type("F", (), {"available": lambda s: False,
+                            "running": lambda s: [],
+                            "show": lambda s, c: (1, "")})()
+    sh.device_descriptions = lambda: dict(descs or {})
+    if elapsed is not None:
+        clock = iter(elapsed)
+        hexash.time.monotonic = lambda: next(clock)
+        hexash.time.sleep = lambda _s: None
+    return sh
+
+
+TERSE_IF = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+TenGigabitEthernet0/8/0           1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+pg0                               4      up          9000/0/0/0
+pg0.100                           5      up          9000/0/0/0
+"""
+ADDRS = """TenGigabitEthernet0/8/0 (up):
+  L3 198.51.100.1/30
+  L3 2001:db8::1/64
+pg0.100 (up):
+  L3 192.0.2.1/24
+"""
+
+sh = box_192(TERSE_IF, addr_text=ADDRS)
+out = capture(sh, "show interface terse")
+check("Admin" in out and "Link" in out,
+      f"terse has both states, because they are two facts: {out}")
+check("inet6" in out and "2001:db8::1/64" in out,
+      "a second family is a second row, not a truncation")
+# The one conclusion this view exists for. pg0 is admin up and link down.
+check("pg0" in out and "link down" in out,
+      f"admin up with the link down is called out: {out}")
+check("that is the wire or the far end" in out,
+      "and named as a wire fault, not a configuration one")
+# A sub-interface has no hardware of its own. Its link is its parent's - and
+# the interfaces an ISP terminates subscribers on are all sub-interfaces, so
+# a '?' here would blank the column exactly where it is needed.
+_row = [l for l in out.splitlines() if l.split()[:1] == ["pg0.100"]][0]
+check(_row.split()[1:3] == ["up", "down"],
+      f"a sub-interface inherits its parent's link: {_row}")
+
+# The description view. This used to print a table and then say the dataplane
+# carries no descriptions - true when written, false since `description`
+# started being stored as the interface tag, and left saying so.
+sh = box_192(TERSE_IF, descs={"TenGigabitEthernet0/8/0": "TRANSITO Vivo"})
+out = capture(sh, "show interface description")
+check("TRANSITO Vivo" in out, f"a description is shown: {out}")
+check("carries no per-interface description" not in out,
+      "and the box no longer denies having them")
+check("1 of 4 interface(s) described" in out, f"counted: {out}")
+check("description <text>" in out,
+      "an empty column is a question; the answer is how to fill it")
+
+# Utilisation. The rate must come from the MEASURED elapsed time, not from the
+# interval that was asked for: on a box busy enough to be worth asking about,
+# a 2s sleep is not 2s, and a rate computed from the nominal figure is wrong
+# in exactly the conditions the question gets asked in. Here the clock moves
+# 4s per sample while the interval says 2, so the two answers differ by half.
+sh = box_192(TERSE_IF, counters=[COUNTERS_A, COUNTERS_B],
+             elapsed=[100.0, 104.0])
+out = capture(sh, "show interface utilization interval 2 count 1")
+# 1000 bytes in the 4s the clock actually moved is 2 kbit/s; the same bytes
+# over the 2s that were ASKED for would read 4 kbit/s. The assertion is that
+# the box says the first.
+check("2.00 kbit/s" in out and "4.00 kbit/s" not in out,
+      f"the rate is measured, not assumed from the interval: {out}")
+check("sampling every 2s" in out and "2s in total" in out,
+      f"and the interval is stated before the wait: {out}")
+check("pg0 dropped 5 packet(s)" in out,
+      f"what was dropped during the window is the fault: {out}")
+check("busiest sample in this run" in out,
+      "with no line speed there is no percentage to defend")
+
+# With a line speed the bar IS a share of capacity, and the percentage is real.
+HW_FAST = HW.replace("pg0                                4    down  pg0\n"
+                     "  Link speed: unknown\n",
+                     "pg0                                4    down  pg0\n"
+                     "  Link speed: 1 Gbps\n")
+sh = box_192(TERSE_IF, hw_text=HW_FAST, counters=[COUNTERS_A, COUNTERS_B],
+             elapsed=[100.0, 104.0])
+out = capture(sh, "show interface utilization interval 2 count 1")
+check("share of its own line rate" in out and "% of 1.00 Gbit/s" in out,
+      f"a known line rate is used as the capacity: {out}")
+
+# A counter that goes backwards is `clear interfaces` running mid-sample. It
+# must not become a negative rate, and it must not pass silently either.
+sh = box_192(TERSE_IF, counters=[COUNTERS_B, COUNTERS_A],
+             elapsed=[100.0, 102.0])
+out = capture(sh, "show interface utilization interval 1 count 1")
+_rows = [l for l in out.splitlines() if l.split()[:1] == ["pg0"]]
+check(_rows and "-" not in _rows[0],
+      f"a cleared counter is not a negative rate: {_rows}")
+check("went backwards" in out, f"and it is said out loud: {out}")
+
+# An interface created between two samples has a counter that is a total since
+# it was made. Reporting that as a rate would invent a spike out of somebody
+# running `create loopback`.
+_late = COUNTERS_B + ("loop9                             9      up"
+                      "          9000/0/0/0     rx bytes"
+                      "                  999999999\n")
+sh = box_192(TERSE_IF, counters=[COUNTERS_A, _late], elapsed=[100.0, 102.0])
+out = capture(sh, "show interface utilization interval 1 count 1")
+check("loop9" not in out,
+      f"an interface that appeared mid-sample has no rate yet: {out}")
+
+sh = box_192(TERSE_IF)
+out = capture(sh, "show interface utilization interval x")
+check("needs a number, not 'x'" in out, f"a bad interval is refused: {out}")
+out = capture(sh, "show interface utilization count 0")
+check("between 1 and 120" in out, f"and so is a count of zero: {out}")
+
+# Adding `terse` to `show interface` must not cost the interface names it has
+# always completed - a new option that takes away an old one is how a CLI gets
+# a reputation.
+sh = box_192(TERSE_IF)
+opts, _, _ = sh._options("show interface ", False)
+check("terse" in opts and "utilization" in opts,
+      f"the new views are offered: {sorted(opts)}")
+check("TenGigabitEthernet0/8/0" in opts,
+      f"and the interface names still are: {sorted(opts)}")
+check("<interface>" not in opts,
+      "the hint is a marker, not something to type")
+opts, _, _ = sh._options("show interface pg", True)
+check("pg0" in opts and "terse" not in opts,
+      f"a prefix still narrows to the names: {sorted(opts)}")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
