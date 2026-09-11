@@ -119,9 +119,23 @@ echo "=========== VERDICT ==========="
 
 expect "the pool was carrying sessions to begin with" test "${BEFORE:-0}" -ge 5
 
+# Both of these were GREEN in `sh tools/lab.sh in-place off` - the run this
+# file's own header says they MUST fail in. "Kept every session" is true of a
+# box that changed nothing, and "did not recreate the pool" is true of a trail
+# with nothing in it. Neither says anything until the change is known to have
+# happened, so both are predicated on the trail's record of it instead of
+# standing beside it. What they guard is #69: a pool rebuilt behind a setting
+# change drops every session on it, which is every subscriber behind it.
+case "$IN_TRAIL" in *"settings pool live"*) APPLIED=yes ;; *) APPLIED=no ;; esac
+applied_and() { [ "$APPLIED" = yes ] && "$@"; }
+DEL_IN=$(printf '%s\n' "$IN_TRAIL" | grep -c "del pool live" || true)
+echo "  the trail's record of the in-place change:" \
+     "$(printf '%s\n' "$IN_TRAIL" | grep -o '^[^ ]* [a-z-]* pool live' | tr '\n' ' ')"
+expect "the in-place change was applied at all, and recorded" \
+  test "$APPLIED" = yes
 expect "an in-place change kept every session" \
-  test "${AFTER:-0}" -eq "${BEFORE:-99}"
-expect_not_in "and did not recreate the pool" "del pool live" "$IN_TRAIL"
+  applied_and test "${AFTER:-0}" -eq "${BEFORE:-99}"
+expect "and did not recreate the pool" applied_and test "${DEL_IN:-1}" -eq 0
 expect_in "the ALG switch reached the dataplane" " alg rtsp off" "$CONF"
 expect_in "the timeout did too" " timeout udp 900" "$CONF"
 expect_in "and max-blocks" " max-blocks 2" "$CONF"

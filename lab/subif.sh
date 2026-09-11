@@ -92,11 +92,41 @@ echo "=========== the detailed view of one interface ==========="
 # fault, and it passes every test that does not create a packet first.
 DETAIL=$($HX -c "show interface pg0")
 echo "$DETAIL" | sed 's/^/  /'
+# The VALUE beside the label, which is the only part of this view an operator
+# reads during a fault. "vrf", "urpf" and "cgnat" are labels that
+# show_one_interface prints on every interface whatever the state is, so all
+# three passed on a box reporting pg0 in VRF 1, with uRPF strict and CGNAT
+# attached in2out - and pg0 here is in the default table, has no uRPF at all
+# and has nothing attached. Being told anti-spoofing is on where there is none
+# is the reading that stops somebody looking for why a spoofed source was
+# translated.
+row_of() { printf '%s\n' "$2" | sed -n "s/^ *$1  *//p" | head -1; }
+VRF_ROW=$(row_of vrf "$DETAIL")
+URPF_ROW=$(row_of urpf "$DETAIL")
+CGNAT_ROW=$(row_of cgnat "$DETAIL")
+echo "  rows read back: vrf='${VRF_ROW:-<none>}' urpf='${URPF_ROW:-<none>}'" \
+     "cgnat='${CGNAT_ROW:-<none>}'"
 expect_in "naming one interface gives the detailed view, not the table" \
   "counters" "$DETAIL"
-expect_in "it reports the VRF" "vrf" "$DETAIL"
-expect_in "and the uRPF mode" "urpf" "$DETAIL"
-expect_in "and whether CGNAT is attached" "cgnat" "$DETAIL"
+expect "it reports the table this interface is really in" \
+  test "$VRF_ROW" = "0 (default)"
+expect "and CGNAT as not attached, which is what pg0 is here" \
+  test "$CGNAT_ROW" = "not attached"
+expect "and the uRPF mode the dataplane really has" test "$URPF_ROW" = "off"
+# ...and "off" is read from the device, not printed unconditionally. A view
+# that always said "off" would pass the line above, and it would be wrong in
+# the direction that matters more: an operator told uRPF is off turns it on
+# again on a box that already has it, which is a commit and a risk for nothing.
+$HX -c "configure" -c "interface pg0" -c "urpf loose" -c "exit" -c "commit" \
+    >/dev/null 2>&1
+URPF_ON=$(row_of urpf "$($HX -c 'show interface pg0')")
+$HX -c "configure" -c "interface pg0" -c "no urpf" -c "exit" -c "commit" \
+    >/dev/null 2>&1
+URPF_OFF=$(row_of urpf "$($HX -c 'show interface pg0')")
+echo "  urpf row with it on: '${URPF_ON:-<none>}', after 'no urpf': '${URPF_OFF:-<none>}'"
+expect "the uRPF row follows the device: loose when it is loose" \
+  test "$URPF_ON" = "loose"
+expect "  and off again when it is taken off" test "$URPF_OFF" = "off"
 # The property, not a counter name. Asserting "rx packets" tied the test to
 # which counters VPP happens to have moved off zero - this box had "rx bytes"
 # and "punt" - and a test that names one counter fails when the box is working
