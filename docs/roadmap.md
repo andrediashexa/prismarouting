@@ -557,6 +557,54 @@ and the table that forwards packets is VPP's FIB. An operator debugging *"the
 traffic is not flowing"* is shown the table where the route is present and
 correct, on a box that is dropping it.
 
+#### The VTY an operator actually types at
+
+Reported from a box in use, in one message, and the first item was reported
+**twice** — which is the part worth recording. `show interface` listing nothing
+but `local0` was answered both times with "run these five commands and tell
+me". That answer is the defect: `local0` alone is the truth and it is not an
+answer, and the two files that know are not where the operator is looking.
+
+| Issue | What it is | State |
+|---|---|---|
+| [#190](https://github.com/andrediashexa/hexarouting/issues/190) | `show interface` says WHY it has no interface — first boot with DPDK off, no interface named, a name that does not resolve, or the interface carrying the default route, refused on purpose | *delivered* |
+| [#191](https://github.com/andrediashexa/hexarouting/issues/191) | pipe filters on any `show`: `include`, `match`, `exclude`, `section`, `count`, `first`, `last`, without shelling out to `grep` | *delivered* |
+| [#192](https://github.com/andrediashexa/hexarouting/issues/192) | `show interface terse` / `description` / `utilization`, the last sampling the counters and graphing them | *delivered* |
+| [#193](https://github.com/andrediashexa/hexarouting/issues/193) | CGNAT under `nat`, static routes under `router static`, both old spellings still accepted | *delivered* |
+| [#194](https://github.com/andrediashexa/hexarouting/issues/194) | `start shell` in the command tree — it existed and was hidden | *delivered* |
+
+Three properties these share, and they are the reason the work is grouped
+rather than listed:
+
+* **A pipe is not a shell.** Implemented over the text the command already
+  produced, after its redactions, because a filter that hands the output to
+  `grep` is a shell escape wearing a filter's clothes — reachable by a
+  read-only account, on a product that restricts the shell to administrators on
+  purpose.
+* **A hierarchy that moves must still read the box's own file.** Every box in
+  service has a saved configuration and up to twenty rollback revisions in the
+  old spelling, and `hexarouting.service` replays that file at every boot on a
+  machine nobody is watching.
+* **A rate is a difference, and the difference is measured.** On a box loaded
+  enough to be worth asking about, a two-second sleep is not two seconds.
+
+Two more came out of doing it, both about the labs and the product rather than
+the VTY:
+
+| Issue | What it is | State |
+|---|---|---|
+| [#196](https://github.com/andrediashexa/hexarouting/issues/196) | six labs started an FRR the product does not ship — no mgmtd, no staticd, so any statement mgmtd owns was silently dropped | *delivered*: one `start_frr` in `lab/lib.sh`, used by all eight |
+| [#197](https://github.com/andrediashexa/hexarouting/issues/197) | `commit` reported success for a statement FRR dropped, with `No changes found to be committed!` on FRR's own stdout | **open**, and the more serious of the two |
+
+#197 is ahead of anything else in this section that is still open. The trigger
+measured for it cannot arise on a real appliance — mgmtd always runs there —
+but the shape outlives the trigger: any statement belonging to a daemon that is
+not running fails the same way, which is exactly the state
+[#99](https://github.com/andrediashexa/hexarouting/issues/99) describes on a
+box shipped from Debian's `/etc/frr/daemons`. `commit` returning success is the
+one thing in this product an operator has to be able to trust, because every
+diagnosis they make afterwards starts from it.
+
 #### Installation — blocked by nothing, paid on every box
 
 [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the installer
