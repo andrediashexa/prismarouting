@@ -79,6 +79,42 @@ if [ "$TAG" != "v$VER" ]; then
   exit 1
 fi
 
+# The version must have an entry in the CHANGELOG of the tree being released.
+#
+# v0.61.0, v0.61.1 and v0.61.2 were each tagged, built, installed and booted
+# with no entry at all: the release commits bumped VERSION and touched nothing
+# else, so the newest heading in the file stayed 0.60.0 and the work three
+# shipped versions were running sat under "Unreleased". An operator on 0.61.2
+# looking up what they run would conclude their box was on something
+# unreleased - which is worse than an empty file (#195).
+#
+# The rule was already written down, in CONTRIBUTING.md and in the CHANGELOG's
+# own TL;DR, and being written down did not enforce it three times in a row.
+# This script is the only thing in this project that has ever caught a release
+# mistake, so the rule belongs here.
+#
+# The heading, not just the string: "0.61.2" appears in a tag message, in a URL
+# and in prose, and a grep for the bare number would pass on any of them.
+if ! grep -qE "^## v?$VER( |\$)" "$WORK/CHANGELOG.md"; then
+  echo "error: CHANGELOG.md in $TAG has no '## $VER' heading." >&2
+  echo "       Every release carries an entry - an operator reporting a fault" >&2
+  echo "       says which version they run, and without one that number means" >&2
+  echo "       nothing to anybody. Write it before tagging, not afterwards" >&2
+  echo "       from memory." >&2
+  grep -n "^## " "$WORK/CHANGELOG.md" | sed -n '3,5p' | sed 's/^/       newest headings: /' >&2
+  exit 1
+fi
+# And the work must not ALSO still be sitting under Unreleased, which is what
+# it looks like when the heading was added by hand and the section below it was
+# never moved.
+if awk '/^## Unreleased/{u=1;next} /^## /{u=0} u && /^[*-] /{n++} END{exit !(n>0)}' \
+     "$WORK/CHANGELOG.md"; then
+  echo "error: CHANGELOG.md in $TAG still has entries under '## Unreleased'." >&2
+  echo "       Those describe behaviour this medium HAS. Move them under" >&2
+  echo "       '## $VER' or the release ships work it does not admit to." >&2
+  exit 1
+fi
+
 # The same seam the installer has, and for the same reason: the checks above
 # are what make this a gate, and a check that can only be exercised by building
 # a 321 MB image is a check nobody exercises.
