@@ -10,6 +10,7 @@
 
 #include "bpa.h"
 #include "bpa_errors.h"
+#include "bpa_esp.h"
 #include "bpa_ftp.h"
 #include "bpa_l4.h"
 #include "bpa_log.h"
@@ -89,8 +90,9 @@ bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
       ip->checksum = ip_csum_fold (sum);
     }
 
-  /* A non-first fragment: there is no port to rewrite, and the L4 checksum
-   * lives in the first fragment. Only the address changes. */
+  /* Nothing below the IP header to touch: a non-first fragment, whose ports
+   * and L4 checksum live in the first one, or ESP, which has neither. Only
+   * the address changes. */
   if (PREDICT_FALSE (l4h == 0))
     {
       ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
@@ -201,6 +203,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
   u32 n_rtsp = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_nocid = 0, n_pptp_bad = 0;
+  u32 n_esp = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -214,7 +217,7 @@ VLIB_NODE_FN (bpa_in2out_node)
       bpa_pool_t *p;
       bpa_block_t blk;
       void *l4h = 0;
-      u32 pool_index = 0, sub_idx = 0, src_host;
+      u32 pool_index = 0, sub_idx = 0, src_host, dst_host;
       /* The VRF the packet arrived in. Read here rather than after the pool
        * is chosen, because the session lookup happens first and its key needs
        * it: one vector element, on the same buffer the node already has. */
@@ -226,6 +229,9 @@ VLIB_NODE_FN (bpa_in2out_node)
       next[0] = BPA_IN2OUT_NEXT_DROP;
       /* captured before any rewrite: the trace must show the pre-NAT source */
       src_host = clib_net_to_host_u32 (ip->src_address.as_u32);
+      /* The peer. Read here because it is the ESP session key, and that key
+       * is built before the pool is known, exactly as the VRF is. */
+      dst_host = clib_net_to_host_u32 (ip->dst_address.as_u32);
 
       proto = bpa_proto_of (ip->protocol);
       if (PREDICT_FALSE (proto < 0))
@@ -283,7 +289,16 @@ VLIB_NODE_FN (bpa_in2out_node)
 	  goto trace;
 	}
 
-      bpa_key_in (&kv, src_host, port_priv, (u8) proto, fib_index);
+      /*
+       * ESP is keyed on the peer rather than on a port, because it has none.
+       * One session per (subscriber, peer): a subscriber with two tunnels is
+       * an ordinary home worker, and one entry for both would have to be torn
+       * down when either of them ended.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_ESP))
+	bpa_key_esp (&kv, src_host, dst_host, fib_index);
+      else
+	bpa_key_in (&kv, src_host, port_priv, (u8) proto, fib_index);
       if (clib_bihash_search_16_8 (&pt->in2out, &kv, &value) == 0)
 	{
 	  s = pool_elt_at_index (pt->sessions, value.value);
@@ -318,6 +333,20 @@ VLIB_NODE_FN (bpa_in2out_node)
 	}
 
       p = pool_elt_at_index (bm->pools, pool_index);
+
+      /*
+       * ESP with passthrough switched off does what this box did before the
+       * feature existed: nothing, and the packet is dropped. Under a counter
+       * of its own, because "the operator turned it off" and "this box does
+       * not translate that protocol" send a support call to two different
+       * places.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_ESP
+			 && !bpa_alg_on (p->alg, BPA_ALG_ESP)))
+	{
+	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_ESP_OFF];
+	  goto trace;
+	}
 
       if (PREDICT_TRUE (p->mode == BPA_MODE_DETERMINISTIC))
 	{
@@ -375,7 +404,27 @@ VLIB_NODE_FN (bpa_in2out_node)
 	    }
 	}
 
-      if (PREDICT_TRUE (s == 0))
+      /*
+       * An IPsec tunnel, which takes no port and so cannot come out of the
+       * ordinary create path. The refusal that is specific to it - the peer
+       * already belonging to a neighbour on the same public address - is
+       * answered here and not shared with the port refusals below, because
+       * the operator's response to it is different: nothing about this
+       * subscriber's block will fix it.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_ESP))
+	{
+	  s = bpa_session_create_esp (pt, p, pool_index, &blk, dst_host,
+				      fib_index, now, &why);
+	  if (PREDICT_FALSE (s == 0 && why == BPA_CREATE_ESP_PEER_TAKEN))
+	    {
+	      b[0]->error = node->errors[BPA_IN2OUT_ERROR_ESP_PEER_TAKEN];
+	      goto trace;
+	    }
+	  if (PREDICT_TRUE (s != 0))
+	    n_esp++;
+	}
+      else if (PREDICT_TRUE (s == 0))
 	s = bpa_session_create (pt, p, pool_index, &blk, port_priv,
 				(u8) proto, fib_index, now,
 				BPA_CREATE_TRAFFIC, &why);
@@ -440,6 +489,25 @@ VLIB_NODE_FN (bpa_in2out_node)
       n_new++;
 
     translate:
+      /*
+       * The switch, re-read on a tunnel that already has a binding.
+       *
+       * The inbound direction checks it on every packet because the pool is
+       * already in its hand there, and without this the two directions would
+       * disagree: an operator who turned passthrough off would watch ESP keep
+       * leaving while the replies were dropped, which is a one-way tunnel and
+       * a support call that looks like anything but a switch.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_ESP
+			 && !pool_is_free_index (bm->pools, s->pool_index)
+			 && !bpa_alg_on (
+			   pool_elt_at_index (bm->pools, s->pool_index)->alg,
+			   BPA_ALG_ESP)))
+	{
+	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_ESP_OFF];
+	  goto trace;
+	}
+
       s->last_heard = now;
       /* A mapping an ALG predicted has now been used, so it goes back on the
        * protocol's own lifetime. Left as an expectation it would expire in a
@@ -651,6 +719,35 @@ VLIB_NODE_FN (bpa_in2out_node)
 	    clib_bihash_kv_16_8_t hkv;
 	    u16 hp_port = 0;
 
+	    /*
+	     * An IPsec tunnel between two subscribers of this same box. The
+	     * neighbour's binding is keyed on the address it sees us as,
+	     * which is the public one this packet now carries - the source
+	     * was rewritten a few lines above.
+	     *
+	     * Its last_heard is deliberately not touched: the binding may
+	     * belong to another worker's session, and a cross-worker write is
+	     * the one thing this datapath does not do. The tunnel is kept
+	     * alive by the neighbour's own outbound packets, which is where
+	     * every other portless mapping gets its liveness from too.
+	     */
+	    if (PREDICT_FALSE (proto == BPA_PROTO_ESP))
+	      {
+		u32 peer_priv, peer_fib;
+
+		if (bpa_esp_lookup (
+		      hp_dst, clib_net_to_host_u32 (ip->src_address.as_u32),
+		      &peer_priv, &peer_fib))
+		  {
+		    b[0]->error =
+		      node->errors[BPA_IN2OUT_ERROR_HAIRPIN_NO_PEER];
+		    goto trace;
+		  }
+		bpa_rewrite_dst (ip, 0, (u8) proto, peer_priv, 0);
+		n_hairpin++;
+		goto hp_done;
+	      }
+
 	    if (bpa_l4_dst (b[0], ip, (u8) proto, &hp_port, &l4h))
 	      goto hp_done;
 
@@ -734,6 +831,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_PPTP_NO_CALL_ID, n_pptp_nocid);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_PPTP_MALFORMED, n_pptp_bad);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_ESP_BOUND, n_esp);
   return frame->n_vectors;
 }
 

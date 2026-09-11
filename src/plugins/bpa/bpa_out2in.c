@@ -15,6 +15,7 @@
 
 #include "bpa.h"
 #include "bpa_errors.h"
+#include "bpa_esp.h"
 #include "bpa_ftp.h"
 #include "bpa_l4.h"
 #include "bpa_alg.h"
@@ -205,6 +206,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   u32 n_translated = 0, n_icmp_err = 0, n_ftp_ack = 0, n_rtsp = 0;
   u32 n_forwarded = 0, n_mss = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
+  u32 n_esp = 0;
 
   from = vlib_frame_vector_args (frame);
   n_left_from = frame->n_vectors;
@@ -262,6 +264,53 @@ VLIB_NODE_FN (bpa_out2in_node)
 	      vnet_feature_next_u16 (&next[0], b[0]);
 	      goto trace;
 	    }
+	}
+
+      /*
+       * ESP, which is the whole of the inbound passthrough.
+       *
+       * Before the port arithmetic below, not after it, because there is no
+       * port: the pre-check that rejects scan traffic on a port outside every
+       * block would reject every ESP packet on port zero. What identifies the
+       * subscriber is the peer that sent it, looked up in the one table this
+       * plugin shares between workers - see bpa_esp.h for why it has to be
+       * shared, and for the pair of subscribers it cannot separate.
+       *
+       * Nothing below the IP header is touched. The SPI is inside the
+       * integrity check (RFC 4303 s3.3.2), so rewriting it would hand the
+       * subscriber a packet its own stack discards - the silent drop this
+       * project already met once with a stale checksum, except that this one
+       * cannot be repaired because the key is the subscriber's.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_ESP))
+	{
+	  u32 esp_fib;
+
+	  if (!bpa_alg_on (pool_elt_at_index (bm->pools, pool_index)->alg,
+			   BPA_ALG_ESP))
+	    {
+	      b[0]->error = node->errors[BPA_OUT2IN_ERROR_ESP_OFF];
+	      goto trace;
+	    }
+
+	  if (bpa_esp_lookup (dst_host,
+			      clib_net_to_host_u32 (ip->src_address.as_u32),
+			      &ip_priv, &esp_fib))
+	    {
+	      b[0]->error = node->errors[BPA_OUT2IN_ERROR_ESP_NO_TUNNEL];
+	      goto trace;
+	    }
+
+	  /* Back into the VRF the subscriber's own traffic came from, for the
+	   * reason spelled out further down: the outside interface's table
+	   * has no route to a private address. */
+	  vnet_buffer (b[0])->sw_if_index[VLIB_TX] = esp_fib;
+	  bpa_rewrite_dst (ip, 0, (u8) proto, ip_priv, 0);
+	  matched = 1;
+	  n_esp++;
+	  n_translated++;
+	  vnet_feature_next_u16 (&next[0], b[0]);
+	  goto trace;
 	}
 
       if (PREDICT_FALSE (bpa_l4_dst (b[0], ip, proto, &port_pub, &l4h)))
@@ -550,6 +599,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_PPTP_UNKNOWN, n_pptp_unknown);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_PPTP_MALFORMED, n_pptp_bad);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_ESP_TRANSLATED, n_esp);
   return frame->n_vectors;
 }
 

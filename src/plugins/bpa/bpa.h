@@ -54,6 +54,18 @@ typedef struct
   u32 hash_buckets;   /* session table sizing */
   u32 hash_memory;
 
+  /*
+   * (public address, peer address) -> the subscriber running an IPsec tunnel
+   * to that peer, packed by bpa_esp_value().
+   *
+   * The one table in this plugin that is shared across workers, and bpa_esp.h
+   * says at length why it has to be: an inbound ESP packet carries no port,
+   * so the arithmetic that steers every other reply to the worker holding the
+   * subscriber cannot run on it. A bihash is multi-writer, so the price is a
+   * bucket lock paid by ESP packets alone.
+   */
+  clib_bihash_16_8_t esp;
+
   /* handoff */
   u32 in2out_fq_index;
   u32 out2in_fq_index;
@@ -309,6 +321,8 @@ bpa_proto_of (u8 ip_proto)
       return BPA_PROTO_ICMP;
     case IP_PROTOCOL_GRE:
       return BPA_PROTO_GRE;
+    case IP_PROTOCOL_IPSEC_ESP:
+      return BPA_PROTO_ESP;
     default:
       return -1;
     }

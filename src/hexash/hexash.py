@@ -601,6 +601,8 @@ CGNAT_POOL = {
         "ftp": ("FTP PORT/EPRT and the 227/229 replies", "<on|off>"),
         "rtsp": ("RTSP Transport client_port", "<on|off>"),
         "pptp": ("PPTP control channel and its GRE data channel", "<on|off>"),
+        "esp": ("IPsec ESP passthrough, bound to the peer gateway",
+                "<on|off>"),
     }),
     "vrf": ("the VRF whose subscribers this pool serves; absent means every "
             "VRF", ARG_NUM),

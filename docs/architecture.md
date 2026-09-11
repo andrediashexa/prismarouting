@@ -1065,7 +1065,7 @@ which is a worse outcome than the one it exists to prevent.
 | FTP (RFC 959 `PORT`/`227`, RFC 2428 `EPRT`/`229`) | on | built |
 | RTSP (RFC 2326 `Transport:`) | on | built |
 | PPTP/GRE (RFC 2637) | on | built |
-| IPsec ESP passthrough | on | not built |
+| IPsec ESP passthrough (RFC 4303) | on | built |
 | SIP | **off** | not built |
 
 One registry drives all of them: adding an ALG is one line in
@@ -1073,8 +1073,8 @@ One registry drives all of them: adding an ALG is one line in
 follow from it.
 
 ```
-bpa pool <name> ... [alg <ftp|rtsp|pptp> on|off]
-bpa alg <pool> <ftp|rtsp|pptp> <on|off>       # in place, keeps sessions
+bpa pool <name> ... [alg <ftp|rtsp|pptp|esp> on|off]
+bpa alg <pool> <ftp|rtsp|pptp|esp> <on|off>   # in place, keeps sessions
 show bpa alg
 ```
 
@@ -1425,6 +1425,75 @@ instead of burning a second one.
   ID is the one the *server* assigned; deployed servers put the subscriber's
   there, and Linux's `nf_nat_pptp` has treated it as a peer Call ID for twenty
   years. Following the text would break against the servers that exist.
+
+## IPsec ESP passthrough
+
+ESP is in the ALG registry and is not an ALG. The other four exist because a
+protocol writes an address or a port into a payload; ESP writes nothing this
+box could correct, and the one field that looks like a port **MUST NOT** be
+touched — RFC 4303 §3.3.2 puts the SPI inside the integrity check, so a
+rewritten SPI arrives with an ICV that no longer verifies and the subscriber's
+own stack discards the packet in silence. That is the stale-checksum failure
+this project has already paid for once, except that this one is not repairable:
+the key belongs to the subscriber.
+
+So the addresses are translated and nothing else is. The only thing to invent
+is the answer to *which subscriber does an inbound ESP packet belong to*, and
+the answer is the **peer**:
+
+```
+inbound   (our public address, the peer's address)      -> subscriber
+outbound  (private address, the peer's address, VRF)    -> session
+```
+
+Both directions know both halves without learning anything, so the first
+inbound packet of an SA is delivered rather than lost. A subscriber holds as
+many tunnels as it has peers, and each costs a session but **no port** — there
+is nowhere in an ESP packet to put one.
+
+### The one shared table
+
+Every other mapping in this plugin is per worker, which is safe because both
+directions of a subscriber are steered to the same worker: outbound by the
+source address, inbound by the arithmetic that turns (public address, port)
+back into a subscriber index. An inbound ESP packet has no port, so that second
+step cannot run, and no rule computable from the packet alone puts the two
+directions of a tunnel on one worker.
+
+The alternative — steering ESP by the peer address — would put the session on a
+worker that does not hold the subscriber's port block, and in dynamic mode that
+worker cannot learn the subscriber's public address at all. So the binding table
+is global (`bpa_main_t.esp`). A `clib_bihash` is multi-writer, so the price is a
+bucket lock paid by ESP packets alone, and the table has no lifetime of its own:
+entries are written by the outbound datapath and removed by
+`bpa_session_free()`, which runs under the worker barrier.
+
+### Where it stops, deliberately
+
+* **Two subscribers sharing one public address whose tunnels go to the same
+  peer gateway cannot be separated.** Every field of both flows is identical on
+  the wire. The first to send keeps the binding; the second is refused under
+  `ESP peer is another subscriber's` and is not bound. Delivering its inbound
+  packets to its neighbour would be a guess, and the guess puts one customer's
+  ciphertext into another customer's IPsec stack. This is the case NAT-T (RFC
+  3948) exists for — and a CPE that does NAT-T never reaches this code, because
+  it sends UDP 4500, which is an ordinary UDP session.
+* **A binding's liveness comes from the outbound direction only.** An inbound
+  ESP packet does not refresh `last_heard`, because the session may belong to
+  another worker and a cross-worker write is the one thing this datapath does
+  not do. A tunnel carrying anything at all sends in both directions; one that
+  is idle for the tunnel timeout is rebuilt by the next outbound packet.
+* **The tunnel timeout is shared with GRE.** Both are portless tunnels judged
+  live by the same kind of signal — PPP sends LCP echoes, IPsec sends DPD — so
+  half an hour of silence means the same thing for both. A second knob nobody
+  would set differently is a second thing to keep in step.
+* **Fragmented ESP is translated**, unlike fragmented GRE: nothing below the IP
+  header is read, so there is no first-fragment field to recover.
+
+Evidence: `lab/esp.sh`, which reads the SPI, the sequence number, the
+ciphertext and the IP checksum off the captured packet — the SPI assertion is
+that it did **not** change. `sh tools/lab.sh esp off` runs the same lab with
+passthrough disabled, where 21 of its 27 assertions drop.
 
 ## Fragments
 

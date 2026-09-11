@@ -53,6 +53,25 @@ bpa_l4_id (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, int want_dst,
   u32 hlen = ip4_header_bytes (ip);
   void *p = (u8 *) ip + hlen;
 
+  /*
+   * ESP has no identifier this box may use and no header it may rewrite: the
+   * SPI is covered by the integrity check (RFC 4303 s3.3.2), so touching it
+   * would make the subscriber's own stack discard the packet. What binds an
+   * ESP flow to a subscriber is the peer address, and that is in the IP
+   * header, so there is nothing to read here.
+   *
+   * Before the fragment branch on purpose. A fragmented ESP packet needs
+   * exactly the same treatment as a whole one - its address translated and
+   * nothing else - and refusing it for having no port to recover would drop
+   * every tunnel carrying a full-sized datagram.
+   */
+  if (PREDICT_FALSE (proto == BPA_PROTO_ESP))
+    {
+      *l4h = 0;
+      *port = 0;
+      return 0;
+    }
+
   if (PREDICT_FALSE (vnet_buffer (b)->ip.reass.is_non_first_fragment))
     {
       /*
@@ -146,8 +165,9 @@ bpa_rewrite_dst (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
       ip->checksum = ip_csum_fold (sum);
     }
 
-  /* A non-first fragment: there is no port to rewrite, and the L4 checksum
-   * lives in the first fragment. Only the address changes. */
+  /* Nothing below the IP header to touch: a non-first fragment, whose ports
+   * and L4 checksum live in the first one, or ESP, which has neither. Only
+   * the address changes. */
   if (PREDICT_FALSE (l4h == 0))
     {
       ip->dst_address.as_u32 = clib_host_to_net_u32 (new_addr);

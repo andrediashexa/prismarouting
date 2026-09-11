@@ -1,6 +1,7 @@
 /* bpa_session.c - per-worker session table. */
 
 #include "bpa.h"
+#include "bpa_esp.h"
 #include "bpa_log.h"
 
 /*
@@ -573,6 +574,107 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
 }
 
 /*
+ * An IPsec tunnel to one peer.
+ *
+ * Almost bpa_session_bind(), and deliberately not it: that one exists to hand
+ * out a public PORT, and ESP has nowhere to carry one. What this still needs
+ * from the subscriber record is everything else - the caps, the session count
+ * that keeps a dynamic block out of hold-down, and the public address the
+ * block already decided.
+ */
+bpa_session_t *
+bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
+			u32 pool_index, const bpa_block_t *b, u32 remote,
+			u32 fib, f64 now, bpa_create_why_t *why)
+{
+  bpa_main_t *bm = &bpa_main;
+  clib_bihash_kv_16_8_t kv, value;
+  bpa_session_t *s;
+  bpa_sub_t *sub;
+  u32 ip_priv;
+
+  *why = BPA_CREATE_OK;
+
+  /* The drain gate, for the same reason bpa_session_bind() has one: the pool
+   * delete drops the barrier between chunks, and a session created behind the
+   * cursor would outlive the pool it belongs to. */
+  if (PREDICT_FALSE (p->deleted))
+    return 0;
+
+  if (bpa_set_addr_of (&p->inside, b->sub_idx, &ip_priv))
+    return 0;
+
+  /*
+   * Refused BEFORE the subscriber record is touched, because this refusal is
+   * not about this subscriber at all: the peer already belongs to a neighbour
+   * sharing the public address, and binding it here would make two customers'
+   * tunnels indistinguishable on the way back. Counted by the caller, never
+   * guessed at.
+   */
+  bpa_key_esp_pub (&kv, b->ip_pub, remote);
+  if (PREDICT_FALSE (clib_bihash_search_16_8 (&bm->esp, &kv, &value) == 0
+		     && (u32) value.value != ip_priv))
+    {
+      *why = BPA_CREATE_ESP_PEER_TAKEN;
+      return 0;
+    }
+
+  sub = bpa_sub_get (pt, p, pool_index, b);
+
+  if (PREDICT_FALSE (p->max_sessions && sub->n_sessions >= p->max_sessions))
+    {
+      sub->n_refused_sessions++;
+      *why = BPA_CREATE_OVER_SESSIONS;
+      bpa_sub_put (pt, pool_index, b->sub_idx, sub);
+      return 0;
+    }
+  if (PREDICT_FALSE (p->max_rate && !bpa_rate_take (sub, p->max_rate, now)))
+    {
+      sub->n_refused_rate++;
+      *why = BPA_CREATE_OVER_RATE;
+      bpa_sub_put (pt, pool_index, b->sub_idx, sub);
+      return 0;
+    }
+
+  pool_get_zero (pt->sessions, s);
+  s->ip_priv = ip_priv;
+  s->ip_pub = b->ip_pub;
+  /*
+   * Zero, and it means zero: an ESP flow has no ports, and printing a number
+   * here would put a port in "show bpa session" that never travelled. The
+   * free path reads blk_idx and port_off only for sessions that took one, so
+   * these staying zero is not a latent double free.
+   */
+  s->port_priv = 0;
+  s->port_pub = 0;
+  s->proto = BPA_PROTO_ESP;
+  s->sub_idx = b->sub_idx;
+  s->pool_index = pool_index;
+  s->fib_index = fib;
+  s->out_fib_index = p->out_fib_index;
+  s->remote = remote;
+  s->last_heard = now;
+
+  sub->n_sessions++;
+
+  bpa_key_esp (&kv, ip_priv, remote, fib);
+  kv.value = s - pt->sessions;
+  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+
+  /*
+   * The shared half. It is what the inbound direction reads, on whatever
+   * worker the packet happened to land on, and it holds the VRF as well as
+   * the address because the reply has to go back into the table the
+   * subscriber's traffic came from.
+   */
+  bpa_key_esp_pub (&kv, b->ip_pub, remote);
+  kv.value = bpa_esp_value (ip_priv, fib);
+  clib_bihash_add_del_16_8 (&bm->esp, &kv, 1);
+
+  return s;
+}
+
+/*
  * The server answered with its own Call ID, which is what the subscriber's
  * outbound GRE packets will carry from now on. Only now can the outbound
  * direction be keyed at all.
@@ -725,14 +827,38 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
 	}
     }
+  else if (PREDICT_FALSE (s->proto == BPA_PROTO_ESP))
+    {
+      clib_bihash_kv_16_8_t value;
+
+      bpa_key_esp (&kv, s->ip_priv, s->remote, s->fib_index);
+      clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+
+      /*
+       * The shared binding goes only if it is still THIS subscriber's. It is
+       * the one entry in this plugin that another worker can have replaced
+       * between the two halves of a teardown, and deleting a neighbour's
+       * binding would black-hole a tunnel that is working.
+       */
+      bpa_key_esp_pub (&kv, s->ip_pub, s->remote);
+      if (clib_bihash_search_16_8 (&bm->esp, &kv, &value) == 0
+	  && (u32) value.value == s->ip_priv)
+	clib_bihash_add_del_16_8 (&bm->esp, &kv, 0);
+    }
   else
     {
       bpa_key_in (&kv, s->ip_priv, s->port_priv, s->proto, s->fib_index);
       clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
     }
 
-  bpa_key_out (&kv, s->ip_pub, s->port_pub, s->proto);
-  clib_bihash_add_del_16_8 (&pt->out2in, &kv, 0);
+  /* ESP never took an inbound key of this shape - it has no public port to
+   * key one on - and removing one here would be a delete of whatever else
+   * happened to sit at (this address, port 0). */
+  if (PREDICT_TRUE (s->proto != BPA_PROTO_ESP))
+    {
+      bpa_key_out (&kv, s->ip_pub, s->port_pub, s->proto);
+      clib_bihash_add_del_16_8 (&pt->out2in, &kv, 0);
+    }
 
   q = hash_get (pt->sub_by_idx, bpa_sub_key (s->pool_index, s->sub_idx));
   if (q)
@@ -747,7 +873,10 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
        * allocation. Handing it back would let the next flow take it while the
        * customer is between two connections, and the forward would then be
        * silently pointed at somebody else's traffic. */
-      if (PREDICT_TRUE (!s->is_static))
+      /* And not an ESP tunnel, which never took a port: releasing offset 0 of
+       * its first block would hand out a port that is still in use by
+       * somebody else's flow. */
+      if (PREDICT_TRUE (!s->is_static && s->proto != BPA_PROTO_ESP))
 	bpa_port_release (pt, s->pool_index, s->sub_idx, s->blk_idx,
 			  s->port_off, now);
       if (sub->n_sessions)
