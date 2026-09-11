@@ -40,17 +40,30 @@ done
 # claim "and reaches the dataplane", which was true of a box with no dataplane
 # installed at all: the correct "not running" message is not a traceback.
 #
-# What it can prove here is that the installed copy imports its own modules and
-# fails the way it is supposed to, which is what the loop above is about.
+# Correcting that claim left a check that still could not fail. Only the word
+# "Traceback" reached bad(); every other answer fell through to a catch-all
+# that SAID "starts and answers" whatever came back - including nothing at all.
+# And the arm that was supposed to be the good one is a dead needle here: none
+# of "not answering", "not running" or "cannot reach" is what this path prints,
+# so the run below has always landed on the catch-all. The state it never
+# looked at is the one that matters to an operator: with no dataplane, an
+# empty answer to "show cgnat pool" is indistinguishable from a healthy box
+# with no pools configured, and that is the reading that sends somebody to
+# look at the CGNAT configuration instead of at VPP.
+#
+# So: it must answer, and the answer must say why it cannot answer.
 out=$(hexash -c "show cgnat pool" 2>&1)
+echo "  with no dataplane, 'show cgnat pool' answers: '${out:-<nothing at all>}'"
 case "$out" in
   *Traceback*)
     bad "the installed hexash crashes instead of reporting:"
     echo "$out" | sed 's/^/    /' ;;
-  *"not answering"*|*"not running"*|*"cannot reach"*)
+  "")
+    bad "it answered nothing at all - silence here reads as 'no pools'" ;;
+  *socket*|*Socket*|*"not answering"*|*"not running"*|*"cannot reach"*|*"did not respond"*)
     say "starts, and says the dataplane is not up yet - which it is not" ;;
   *)
-    say "starts and answers" ;;
+    bad "it named no dataplane trouble, so this reads as an answer: '$out'" ;;
 esac
 
 echo

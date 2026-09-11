@@ -490,10 +490,26 @@ expect_in "and show this in an interface is not empty" "mtu 1500" "$COMP"
 # passed. It was written that way while deliberately replacing a hardcoded
 # list with a rule, which is how a stronger-looking assertion became a vacuous
 # one. Naming two statements that must be there is the rule, checkably.
+# ...and the words after it against that ONE line, not against the blob. The
+# blob also carries IFACE_THIS, which reads "interface host-veth-vpp | mtu
+# 1500 |", so "mtu" was satisfied by the statement the lab had just typed -
+# and the assertion that the interface block still OFFERS mtu passed with the
+# block offering no mtu at all, which is #112 exactly. Same reason "pg0" and
+# "up" needed their own row forty lines up.
+COMP_IN_BLOCK=$(printf '%s\n' "$COMP" | sed -n 's/^ *IN_BLOCK: *//p')
+# A whole word off a space-separated list: "mtu" must not be matched by a
+# statement that merely starts with it, and an empty list must not match at all.
+has_word() { printf ' %s ' "$2" | grep -q " $1 "; }
+echo "  the interface block offers: ${COMP_IN_BLOCK:-<nothing>}"
 expect_in "inside an interface, '?' offers its own statements" \
   "IN_BLOCK: description " "$COMP"
+# "urpf" appears exactly once in this blob, on IN_BLOCK's own line, so unlike
+# "mtu" below it this one does fail when the block stops offering it. Left as
+# it was: an assertion rewritten without being shown to fail first is one
+# nobody has verified.
 expect_in "and the rest of the block with them" "urpf" "$COMP"
-expect_in "including the ones that were always there" "mtu" "$COMP"
+expect "including the ones that were always there" \
+  has_word mtu "$COMP_IN_BLOCK"
 expect_not_in "and nothing from the level above leaks in" \
   "IN_BLOCK: cgnat" "$COMP"
 
@@ -501,15 +517,28 @@ expect_not_in "and nothing from the level above leaks in" \
 #
 # Every assertion here names a WORD the grammar has to offer, not just that the
 # answer is non-empty: "some options came back" passes on the wrong block.
+COMP_BGP_BLOCK=$(printf '%s\n' "$COMP" | sed -n 's/^ *BGP_BLOCK: *//p')
+COMP_BGP_NEIGH=$(printf '%s\n' "$COMP" | sed -n 's/^ *BGP_NEIGH: *//p')
+echo "  router bgp offers: ${COMP_BGP_BLOCK:-<nothing>}"
+echo "  neighbor <TAB> offers: ${COMP_BGP_NEIGH:-<nothing>}"
 expect_in "inside 'router bgp', '?' offers its own statements" \
   "BGP_BLOCK: address-family " "$COMP"
-expect_in "including the one that creates a session" "neighbor" "$COMP"
+# Against BGP_BLOCK's own line. The address family two lines below offers a
+# "neighbor" of its own, so this passed with `router bgp` offering none - the
+# statement that creates a session, missing from the block an operator enters
+# to create one, which is the whole of #142.
+expect "including the one that creates a session" \
+  has_word neighbor "$COMP_BGP_BLOCK"
 expect_not_in "and nothing from the level above leaks in" \
   "BGP_BLOCK: cgnat" "$COMP"
 # A neighbour completes from what is configured, not from a fixed list.
 expect_in "a neighbour completes by address once it exists" \
   "BGP_NEIGH: 10.0.0.2" "$COMP"
-expect_in "and a peer group is offered by name too" "TRANSITO" "$COMP"
+# BGP_PG carries TRANSITO too - it is the same name, completed as the value of
+# `peer-group` - so this passed with the neighbour completion returning an
+# empty list. It is about BGP_NEIGH's line or it is about nothing.
+expect "and a peer group is offered by name too" \
+  has_word TRANSITO "$COMP_BGP_NEIGH"
 # The AS beside it, because an ISP box carries several sessions and they are
 # told apart by who is on the other end, not by the last octet.
 expect_in "the completion says which AS is on the other end" \
@@ -519,6 +548,8 @@ expect_in "the completion says which AS is on the other end" \
 # everything past it fell through to the configuration tree.
 expect_in "the words after a neighbour's address are the neighbour's" \
   "BGP_STMT: bfd" "$COMP"
+# Same as "urpf" above: "remote-as" is on BGP_STMT's line and nowhere else in
+# the blob, so it can fail, and it was left alone.
 expect_in "including the one that opens the session" "remote-as" "$COMP"
 expect_not_in "and not the block's own statements" "BGP_STMT: address-family" "$COMP"
 # A peer group completes only where one is declared.
