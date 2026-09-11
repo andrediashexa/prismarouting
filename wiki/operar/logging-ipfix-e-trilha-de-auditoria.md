@@ -40,9 +40,9 @@ Um registro por **alocação de bloco** (RFC 8158) — não por fluxo. É a dife
 
 ```
 configure
- cgnat logging enable                        exportação por UDP
- cgnat logging tcp <coletor> [port <n>]      exportação por TCP
- cgnat logging disable                       desliga
+ nat cgnat logging enable                        exportação por UDP
+ nat cgnat logging tcp <coletor> [port <n>]      exportação por TCP
+ nat cgnat logging disable                       desliga
  commit
 ```
 

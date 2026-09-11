@@ -6,7 +6,7 @@ As regras que evitam incidente, a ordem em que a máquina sobe, e por onde come�
 
 ## A interface de gerência não vai para o VPP
 
-O DPDK tira a NIC do Linux. Entregue ao VPP a porta pela qual você administra a máquina e ela fica **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece em `cgnat interface`.
+O DPDK tira a NIC do Linux. Entregue ao VPP a porta pela qual você administra a máquina e ela fica **inalcançável** — e inalcançável é inconsertável remotamente. Identifique-a antes de configurar qualquer coisa, e confirme que ela não aparece em `nat cgnat interface`.
 
 ## Mudança remota vai com rede de segurança
 
@@ -119,12 +119,16 @@ flowchart TD
 | "quem mudou o quê, e quando?" | `show cgnat history` |
 | "o que estou prestes a aplicar?" | `show configuration compare` |
 | "que versão é essa máquina?" | `show version` |
+| "a porta caiu ou alguém deu shutdown?" | `show interface terse` |
+| "para que serve essa porta?" | `show interface description` |
+| "o enlace está cheio?" | `show interface utilization <nome>` |
 
 ## Sintomas conhecidos
 
 | Sintoma | Causa provável |
 |---------|----------------|
 | Adjacência OSPF travada em Exchange | MTU herdada do TAP (9000). Ajuste com `mtu` dentro de `interface` |
+| Um lado reclama de queda e a configuração está de pé | `show interface terse`: `Admin up` com `Link down` é cabo, transceiver ou o outro lado |
 | FTP/RTSP/PPTP conectam mas a transferência não começa | ALG correspondente desligado no pool |
 | Conexões travam sem erro, em certos caminhos | MSS não rebaixado — configure `tcp-mss auto` |
 | Assinante sem tradução e o pool não enche | prefixo dele coberto por um `bypass source` |

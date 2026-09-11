@@ -151,7 +151,9 @@ O nome exato tem precedência: pedir `GigabitEthernet0/12/0` numa caixa que tamb
 # Como conferir
 
 * `show interface <nome>` traz o relatório, com estado, endereços, VRF, MAC e contadores;
-* `show interface description` mostra a descrição de todas;
+* `show interface terse` traz uma linha por interface com **duas** colunas de estado — `Admin`, que é o que alguém configurou, e `Link`, que é o que o cabo está fazendo: up/down é problema de enlace, down/down é `shutdown`;
+* `show interface description` mostra a descrição de todas, ao lado dessas duas colunas;
+* `show interface utilization <nome>` amostra os contadores e mostra quanto está passando agora, em bit/s;
 * `show running-config` mostra o bloco da interface como o equipamento o lê de volta — o que está lá é o que está em vigor, não o que foi digitado.
 
 # Ver também

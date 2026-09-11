@@ -25,7 +25,21 @@ O autologin de console é feito **apenas pela ISO**, e o instalador o remove do 
 
 ### `start shell`
 
-Não aparece no completar por TAB nem no `?`. É **oculto, não restrito**: qualquer um que consiga logar pode executá-lo. **Não é fronteira de segurança** — esconder só evita que seja a coisa óbvia a fazer depois de um `?`.
+Está na árvore de comandos: TAB e `?` oferecem. E é **restrito a administradores** — um shell nesta caixa é todas as capacidades de uma vez, então quem não tem `hexa-admin` é recusado pelo nome do papel que tem:
+
+```
+error: start shell: permission denied for a read-only account
+    membership of hexa-cgnat allows CGNAT configuration, hexa-admin allows everything
+```
+
+```
+error: start shell: permission denied for a cgnat-operator account
+    this change needs hexa-admin
+```
+
+Esconder nunca foi a fronteira; a verificação de capacidade é. E um comando que o administrador não consegue encontrar é um comando que ele vai pedir a alguém — por isso ele é oferecido em vez de escondido.
+
+O shell abre como processo **filho** da VTY: sair dele volta para a VTY, não encerra a sessão.
 
 ### Por que existe saída de emergência
 

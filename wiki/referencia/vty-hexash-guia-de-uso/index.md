@@ -9,7 +9,7 @@
 ```mermaid
 flowchart LR
     O["operacional<br/><code>hexarouting&gt;</code>"] -->|configure| G["configuração<br/><code>[edit]</code>"]
-    G -->|"cgnat pool NOME"| P["pool<br/><code>[edit cgnat pool]</code>"]
+    G -->|"nat cgnat pool NOME"| P["pool<br/><code>[edit cgnat pool]</code>"]
     G -->|"user NOME"| U["usuário<br/><code>[edit user]</code>"]
     G -->|"snmp-user NOME"| SU["usuário SNMP<br/><code>[edit snmp user]</code>"]
     P -->|exit| G
@@ -24,10 +24,11 @@ flowchart LR
 |------|--------|-------------|-----------|
 | Operacional | `hexarouting> ` | é onde a sessão começa | `exit` encerra a sessão |
 | Configuração | `hexarouting# [edit] ` | `configure` | `exit`    |
-| Pool | `hexarouting# [edit cgnat pool residencial] ` | `cgnat pool <nome>` | `exit`    |
+| Pool | `hexarouting# [edit cgnat pool residencial] ` | `nat cgnat pool <nome>` | `exit`    |
 | Interface | `hexarouting# [edit interface GigabitEthernet0/12/0] ` | `interface <nome>` | `exit`    |
 | Usuário | `hexarouting# [edit user joao] ` | `user <nome>` | `exit`    |
 | Usuário SNMP | `hexarouting# [edit snmp user nms] ` | `snmp-user <nome>` | `exit`    |
+| Rotas estáticas | `hexarouting# [edit router static] ` | `router static` | `exit`    |
 | Bloco do FRR | `hexarouting# [edit router bgp 65000] ` | `router bgp <AS>` | `exit`    |
 
 **O prompt nomeia o assunto, não só o tipo de bloco.** `[edit cgnat pool]` seria o mesmo prompt numa caixa com vinte pools: diria que você está *num* pool sem dizer em qual, que é justamente a pergunta que você tem.
@@ -92,6 +93,7 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 |---------|-----------|
 | `configure` | entra no modo de configuração |
 | `show ...` | exibe informação (ver a página de comandos `show`) |
+| `start shell` | abre um shell como processo filho; `exit` volta para a VTY. **Só administradores** — um shell nesta caixa é toda a capacidade de uma vez |
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `save`  | grava a configuração em vigor em disco |
 | `install` | instala o HexaRouting num disco desta máquina — **só existe rodando a partir da ISO** |
@@ -101,9 +103,10 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 
 | Comando | O que faz |
 |---------|-----------|
-| `cgnat ...` | configuração de CGNAT |
-| `no cgnat pool <nome>` | remove um pool |
-| `no cgnat interface <nome>` | desabilita CGNAT numa interface |
+| `nat cgnat ...` | configuração de CGNAT |
+| `no nat cgnat pool <nome>` | remove um pool |
+| `no nat cgnat interface <nome>` | desabilita CGNAT numa interface |
+| `router static` | entra no bloco das rotas estáticas |
 | `router bgp <AS>` / `router ospf` / `router isis <nome>` | protocolos de roteamento (FRR) |
 | `interface <nome>` | entra na configuração de uma interface |
 | `ssh ...` | daemon SSH |
@@ -114,6 +117,14 @@ E `commit` **não** grava em disco — quem faz isso é `save`. Uma configuraç�
 | `rollback <0-19>` | carrega uma revisão commitada na candidata |
 | `show ...` | exibe informação |
 | `exit`  | sai do modo de configuração |
+
+
+:::info
+**Duas hierarquias mudaram de lugar.** O CGNAT ficou embaixo de `nat` (`nat cgnat pool ...`, `nat cgnat interface ...`) e as rotas estáticas viraram um bloco embaixo de `router` (`router static`, com `route <prefixo> <próximo-salto>` dentro). É onde o operador procura por elas.
+
+As grafias antigas — `cgnat ...` no topo do modo de configuração e `ip route ...` — **continuam aceitas**, digitadas ou lidas de um arquivo salvo, para que nenhuma caixa em serviço perca a própria configuração. Só as novas são oferecidas por TAB e `?`, e é nelas que a caixa escreve o que mostra e o que salva.
+
+:::
 
 ## Bloco de interface
 
@@ -144,7 +155,7 @@ error: interface Ten0: this box has no such interface
 
 `interface Ten0` — um erro de digitação de `TenGigabitEthernet0/8/0` — commitava limpo, aparecia na configuração em vigor e não fazia nada. A recusa **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
 
-Vale para as quatro formas de nomear uma interface: o bloco do FRR, o `cgnat interface`, e as declarações `mtu` e `urpf`.
+Vale para as quatro formas de nomear uma interface: o bloco do FRR, o `nat cgnat interface`, e as declarações `mtu` e `urpf`.
 
 
 :::info

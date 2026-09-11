@@ -69,7 +69,7 @@ where two of them go. It is not an estimate: the dataplane holds both
 definitions and runs the same arithmetic it would run afterwards.
 
 ```
-cgnat pool residential
+nat cgnat pool residential
  outside 45.170.16.0/26
  exit
 commit check
@@ -106,11 +106,11 @@ of the subscriber space has its own mapping and does not disturb the existing
 one:
 
 ```
-cgnat pool residential          ← untouched, keeps its mapping
+nat cgnat pool residential      ← untouched, keeps its mapping
  inside 100.64.0.0/22
  outside 200.150.0.16/28
  exit
-cgnat pool residential-2        ← the new capacity
+nat cgnat pool residential-2    ← the new capacity
  inside 100.64.4.0/22
  outside 45.170.16.0/26
  exit

@@ -444,7 +444,7 @@ Three outages this box could refuse:
   ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), one layer
   down, and the box is the only thing that can see it coming.
 * **A pool's public prefix that nothing announces.** Specific to this product.
-  Configure `cgnat pool clientes outside 200.150.0.16/28` and, unless
+  Configure `nat cgnat pool clientes outside 200.150.0.16/28` and, unless
   something separately advertises that prefix, every subscriber behind it is
   translated to an address the internet cannot route back to. CGNAT correct,
   BGP correct, service dead. Nothing connects the two today.

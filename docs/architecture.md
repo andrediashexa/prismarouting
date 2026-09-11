@@ -445,7 +445,7 @@ Without a way to say so, the only way to exempt traffic is to keep it out of
 the pool entirely, which is not always possible.
 
 ```
-cgnat pool residential
+nat cgnat pool residential
  bypass destination 10.0.0.0/8
  bypass source 100.64.1.0/24
  exit
@@ -539,12 +539,12 @@ one tenant was translated by the other's pool and the second pool translated
 nothing.
 
 ```
-cgnat pool tenant-a
+nat cgnat pool tenant-a
  inside 100.64.0.0/22
  outside 200.150.0.16/30
  vrf 1
  exit
-cgnat pool tenant-b
+nat cgnat pool tenant-b
  inside 100.64.0.0/22
  outside 200.150.0.32/30
  vrf 2
@@ -642,7 +642,7 @@ many*, and `show bpa top` says *which*.
 ### The alarm, once per crossing
 
 ```
-cgnat pool residential
+nat cgnat pool residential
  utilisation-alarm 75
  exit
 ```
@@ -716,7 +716,7 @@ Two bounds, per pool, **zero meaning unlimited** so an upgrade refuses nothing
 that worked yesterday:
 
 ```
-cgnat pool residential
+nat cgnat pool residential
  max-sessions 512
  max-session-rate 50
  exit
@@ -791,7 +791,7 @@ it is one of the longest tickets an ISP has.
 Clamping the MSS option of the handshake removes the category:
 
 ```
-cgnat pool residential
+nat cgnat pool residential
  tcp-mss 1400
  exit
 ```
@@ -943,7 +943,7 @@ bpa forward <pool> <tcp|udp> <public-port> to <private-ip> <private-port>
 and in a candidate configuration, inside the pool block:
 
 ```
-cgnat pool residential
+nat cgnat pool residential
  forward tcp 6200 to 100.64.0.5 80
  exit
 ```

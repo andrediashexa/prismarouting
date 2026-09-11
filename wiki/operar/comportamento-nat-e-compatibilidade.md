@@ -51,7 +51,7 @@ Dois modos, por pool:
 
 ```
 configure
- cgnat pool residencial
+ nat cgnat pool residencial
   filter address-dependent
   exit
  commit
