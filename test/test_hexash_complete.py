@@ -145,19 +145,39 @@ check(not o and hint is None,
       f"should admit it does not know, got options={o} hint={hint!r}")
 print("  admits that from there on FRR is the one that knows")
 
-print("\n=== 'start shell' is hidden but reachable ===")
-# Hidden means: absent from completion and from '?', at every level. If it
-# ever shows up in the tree, the reason it is hidden is gone.
-for mode, line in (("operational", ""), ("config", ""), ("pool", ""),
-                   ("operational", "start "), ("config", "start ")):
-    o, hint, _ = opts(mode, line)
-    check("start" not in o and "shell" not in o,
-          f"'start shell' leaked into completion for {mode!r} {line!r}: {sorted(o)}")
+print("\n=== 'start shell' is offered, and restricted ===")
+# It used to be HIDDEN from the tree, and this assertion said so. The
+# maintainer then asked for a command that already existed, which is what a
+# command nobody can find looks like (#194). start_shell()'s own comment had
+# already made the argument: hiding was never the boundary, the capability
+# check is - so the offer changed and the restriction did not.
+o, _, _ = opts("operational", "")
+check("start" in o, f"'start' is offered at the top level: {sorted(o)}")
+o, _, _ = opts("operational", "start ")
+check("shell" in o, f"and 'shell' under it: {sorted(o)}")
 check(hasattr(hexash.Shell, "start_shell"), "the escape must still exist")
 src = open(hexash.__file__).read()
 check('["start", "shell"]' in src,
       "the escape must be dispatched before the command tree")
-print("  absent from completion and from '?', still dispatched")
+
+# THE half that matters, and the one the old assertion never made: being
+# offered must not mean being granted. A shell on this box is every
+# capability at once.
+for caps, who, want in ((set(), "a read-only account", False),
+                        ({hexash.CAP_CGNAT}, "a cgnat operator", False),
+                        ({hexash.CAP_ALL}, "an administrator", True)):
+    probe = hexash.Shell.__new__(hexash.Shell)
+    probe.caps = caps
+    probe.failed = 0
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        allowed = probe.require(hexash.CAP_ALL, "start shell")
+    check(allowed is want,
+          f"{who} is {'allowed' if want else 'refused'} the shell")
+    if not want:
+        check("permission denied" in out.getvalue(),
+              f"and {who} is told why: {out.getvalue().strip()[:60]}")
+print("  offered at every level, granted only to an administrator")
 
 print("\n=== show version ===")
 o, _, _ = opts("operational", "show ")
@@ -1270,6 +1290,125 @@ check(not isis_findings(["router bgp 65000", "neighbor 10.0.0.2 remote-as 65001"
 # checks in this file now.
 check(isis_findings([" " + l for l in GOOD]) == isis_findings(GOOD),
       "typed and read-back statements parse the same")
+
+
+# --- a box with only local0 must say WHY (#190) ---
+#
+# `local0` alone is the truth and it is not an answer. It was reported twice
+# from a box in use, and answered both times with "run these commands and tell
+# me" - which is the defect: the box should not need an interrogation to say
+# what it decided.
+print("\n=== why the dataplane has no interface ===")
+import tempfile                                                  # noqa: E402
+
+_d = tempfile.mkdtemp()
+
+
+def why(conf, env=""):
+    c = os.path.join(_d, "startup.conf")
+    e = os.path.join(_d, "tune.env")
+    open(c, "w").write(conf)
+    open(e, "w").write(env)
+    probe = hexash.Shell.__new__(hexash.Shell)
+    probe.STARTUP_CONF, probe.TUNE_ENV = c, e
+    return probe.why_no_dataplane_interface()
+
+
+r = why("plugin dpdk_plugin.so { disable }")
+check(r and "hugepages" in r[0],
+      f"first-boot mode is named as first-boot mode: {r[:1]}")
+check(any("Reboot" in l for l in r),
+      "and says what to do about it")
+
+r = why("dpdk {\n  no-pci\n}", "HEXA_DATAPLANE_IF=\n")
+check(r and "no interface was named" in r[0],
+      f"an empty HEXA_DATAPLANE_IF is named as the cause: {r[:1]}")
+check(any("tune.env" in l for l in r),
+      "and the file to edit is named")
+
+r = why("dpdk {\n  no-pci\n}", 'HEXA_DATAPLANE_IF="ens19"\n')
+check(r and "ens19" in r[0],
+      f"a named interface that was refused is quoted back: {r[:1]}")
+# The three reasons a named interface produces no-pci are different work, so
+# all three are offered rather than one guessed at.
+check(any("default route" in l for l in r),
+      "including the one that is a deliberate refusal")
+
+r = why("dpdk {\n  dev 0000:01:00.0\n}")
+check(r and "did not bring it up" in r[0],
+      f"a NIC that was named and did not appear is a different answer: {r[:1]}")
+
+# A box that is not an appliance has no startup.conf, and inventing an
+# explanation for it would be worse than saying nothing.
+probe = hexash.Shell.__new__(hexash.Shell)
+probe.STARTUP_CONF = os.path.join(_d, "does-not-exist")
+probe.TUNE_ENV = os.path.join(_d, "nor-this")
+check(probe.why_no_dataplane_interface() == [],
+      "and a box with no startup configuration explains nothing")
+
+
+# --- filtering a show, without leaving the VTY (#191) ---
+print("\n=== pipe filters ===")
+from hexash import apply_pipe, split_pipe, PIPE_FILTERS          # noqa: E402
+
+TXT = """interface Gi0
+ mtu 1500
+ ipv4 address 10.0.0.1/24
+interface Gi1
+ mtu 9000
+router bgp 65000
+ neighbor 10.0.0.2 remote-as 65001
+"""
+
+
+def piped(*stages):
+    lines, why = apply_pipe(TXT, list(stages))
+    return why if why else lines
+
+
+check(piped("include mtu") == [" mtu 1500", " mtu 9000"],
+      f"include keeps the matching lines: {piped('include mtu')}")
+check(piped("match mtu") == piped("include mtu"),
+      "match is the same filter under the name operators type")
+check(" mtu 1500" not in piped("exclude mtu"), "exclude drops them")
+# `section` is the one that pays most here, because this box's configuration
+# IS blocks: a line at column 0 and everything indented under it.
+check(piped("section interface Gi0")
+      == ["interface Gi0", " mtu 1500", " ipv4 address 10.0.0.1/24"],
+      f"section keeps one block and stops at the next: "
+      f"{piped('section interface Gi0')}")
+check(piped("count") == ["7"], f"count answers with a number: {piped('count')}")
+check(len(piped("first 2")) == 2 and len(piped("last 2")) == 2,
+      "first and last take the head and the tail")
+check(piped("include interface", "exclude Gi1") == ["interface Gi0"],
+      f"and they chain: {piped('include interface', 'exclude Gi1')}")
+
+# An unknown filter is REFUSED, not ignored. Ignoring it would answer the
+# question the operator did not ask, with no sign that it had - and `grep` is
+# exactly what somebody types first.
+check("not a filter" in piped("grep mtu"), f"grep is refused: {piped('grep mtu')}")
+check("needs <n>" in piped("first"), "a filter missing its argument is refused")
+# The exact words the product prints, read off it rather than remembered:
+# "needs a number, not 'x'".
+check("needs a number, not 'x'" in piped("first x"),
+      f"and so is one given the wrong kind: {piped('first x')}")
+
+# THE property that makes a pipe safe here: it runs over the text the command
+# already produced, after the redactions - so it can never reveal a value the
+# unfiltered command hides. Asserted on the real redaction, not on a
+# hand-written string.
+from system import redact                                        # noqa: E402
+_secret = "n0tinlogs"
+_shown = "\n".join(redact([" neighbor 10.0.0.2 password " + _secret]))
+_lines, _ = apply_pipe(_shown, ["include password"])
+check(_secret not in "\n".join(_lines),
+      f"a filter cannot reveal what the command hid: {_lines}")
+check(any("not shown" in l for l in _lines),
+      "and the line it does show is the redacted one")
+
+check(split_pipe("show running-config | include x | count")
+      == ("show running-config", ["include x", "count"]),
+      "a command and its filters are split apart")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

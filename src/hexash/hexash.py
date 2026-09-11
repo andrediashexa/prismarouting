@@ -14,6 +14,8 @@ and does not pin us to an FRR release.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import ipaddress
 import json
 import os
@@ -765,6 +767,14 @@ def running_from_live_medium():
 TREE = {
     "operational": {
         "configure": ("edit the candidate configuration", None),
+        # Offered rather than hidden. The comment on start_shell() already
+        # made this argument: hiding it was never the boundary, the capability
+        # check is - and a command an administrator cannot find is one they
+        # ask for, which is how this came back (#194).
+        "start": ("leave the VTY for a shell, and come back to it", {
+            "shell": ("a login shell; administrators only, because a shell "
+                      "on this box is every capability at once", None),
+        }),
         "show": ("display information", SHOW),
         "clear": ("reset a session, without changing the configuration", {
             "bgp": ("a BGP session", ARG_NEIGHBOUR),
@@ -1183,6 +1193,89 @@ def isis_findings(routing):
                             f"instance {only_tag} is level-1, so a "
                             "level-2-only circuit forms no adjacency"))
     return out
+
+
+#: The filters a `show` may be piped into, and what each takes after it.
+#: Deliberately short. Every one of these answers a question an operator
+#: actually asks on this box; a longer list would be a second language to
+#: learn, and the one thing it MUST NOT become is a shell - a pipe implemented
+#: by handing the text to `grep` is a shell escape wearing a filter's clothes,
+#: reachable by a read-only account, on a product that restricts the shell to
+#: administrators on purpose.
+PIPE_FILTERS = {
+    "include": ("keep the lines containing this", "<text>"),
+    "match": ("the same as include, for operators who type it that way",
+              "<text>"),
+    "exclude": ("drop the lines containing this", "<text>"),
+    "section": ("keep the block a matching line opens, to the next line that "
+                "starts at column 0", "<text>"),
+    "count": ("how many lines, instead of the lines", None),
+    "first": ("the first n lines", "<n>"),
+    "last": ("the last n lines", "<n>"),
+}
+
+
+def split_pipe(line):
+    """
+    A command and the filters it was piped into.
+
+    Only for `show`. A '|' in a configuration statement is a character in a
+    regular expression or in a description, not a filter, and treating it as
+    one would mangle a policy an operator wrote - so the caller decides, and
+    this is never applied to anything else.
+    """
+    parts = [p.strip() for p in line.split("|")]
+    return parts[0], [p for p in parts[1:] if p]
+
+
+def apply_pipe(text, stages):
+    """
+    Run the filters over the text a command already produced.
+
+    AFTER the command, and after its redactions, which is what makes
+    `show running-config | include password` safe: the filter sees the string
+    the operator would have seen anyway, never the value behind it.
+
+    An unknown filter is refused rather than ignored. Ignoring it would answer
+    the question the operator did not ask, with no sign that it had.
+    """
+    lines = text.splitlines()
+    for stage in stages:
+        w = stage.split()
+        if not w:
+            continue
+        verb, arg = w[0], " ".join(w[1:])
+        if verb not in PIPE_FILTERS:
+            return None, (f"'{verb}' is not a filter; this box has: "
+                          + ", ".join(sorted(PIPE_FILTERS)))
+        if PIPE_FILTERS[verb][1] and not arg:
+            return None, f"'{verb}' needs {PIPE_FILTERS[verb][1]} after it"
+        if verb in ("include", "match"):
+            lines = [l for l in lines if arg in l]
+        elif verb == "exclude":
+            lines = [l for l in lines if arg not in l]
+        elif verb == "section":
+            # A block is a line at column 0 and everything indented under it.
+            # That is the shape of this box's configuration, which is why this
+            # filter is worth having at all.
+            kept, inside = [], False
+            for l in lines:
+                if l[:1] and not l[:1].isspace():
+                    inside = arg in l
+                if inside:
+                    kept.append(l)
+            lines = kept
+        elif verb == "count":
+            lines = [str(len(lines))]
+        elif verb in ("first", "last"):
+            try:
+                n = int(arg)
+            except ValueError:
+                return None, f"'{verb}' needs a number, not '{arg}'"
+            if n < 0:
+                return None, f"'{verb}' needs a number that is not negative"
+            lines = lines[:n] if verb == "first" else (lines[-n:] if n else [])
+    return lines, None
 
 
 def ospf_state(routing):
@@ -4567,6 +4660,61 @@ class Shell:
             else:
                 print("    counters    all zero")
 
+    #: Where the tuner writes what it decided, and where it writes it down.
+    STARTUP_CONF = os.environ.get("HEXA_STARTUP_CONF", "/etc/vpp/startup.conf")
+    TUNE_ENV = os.environ.get("HEXA_TUNE_ENV", "/etc/hexarouting/tune.env")
+
+    def why_no_dataplane_interface(self):
+        """
+        Why the dataplane has no interface but VPP's own loopback.
+
+        `local0` alone is the truth and it is not an answer. It has several
+        causes, each needing different work from the operator, and the two
+        files that know are not where they are looking - which is why this was
+        reported twice and answered both times with "run these commands and
+        tell me". That answer is the defect: the box should not need an
+        interrogation to say what it decided.
+
+        Reads the same sources, in the same order, and says the same words as
+        the boot self-test. Two diagnoses of one fact that disagree are worse
+        than one.
+        """
+        try:
+            with open(self.STARTUP_CONF) as f:
+                conf = f.read()
+        except OSError:
+            return []                   # not an appliance: nothing to explain
+        if "plugin dpdk_plugin.so { disable }" in conf:
+            return ["DPDK is off until hugepages exist, so no NIC can be "
+                    "claimed yet.",
+                    "This is the first-boot profile. Reboot once the tuning "
+                    "has been applied and the pages reserved."]
+        if "no-pci" in conf:
+            named = ""
+            try:
+                with open(self.TUNE_ENV) as f:
+                    for line in f:
+                        if line.startswith("HEXA_DATAPLANE_IF="):
+                            named = line.split("=", 1)[1].strip().strip('"')
+            except OSError:
+                pass
+            if not named:
+                return ["no interface was named, so VPP was given no NIC.",
+                        f"Set HEXA_DATAPLANE_IF in {self.TUNE_ENV} to the "
+                        "interface carrying subscriber traffic,",
+                        "then restart hexarouting-tune and vpp."]
+            return [f"'{named}' was named and VPP was given no NIC.",
+                    "Either it does not exist on this box, or it could not be "
+                    "resolved to a PCI address,",
+                    "or it carries the default route - which is refused on "
+                    "purpose, so a remote box is not cut off."]
+        if "dev 0000:" in conf:
+            return ["a NIC is named in the startup configuration and the "
+                    "dataplane did not bring it up.",
+                    "'show log' and the VPP journal say why; the usual cause "
+                    "is the NIC still bound to a kernel driver."]
+        return []
+
     def show_interfaces(self, args):
         """
         The dataplane's interfaces.
@@ -4592,6 +4740,20 @@ class Shell:
         _, addr = self.dp.run("show interface addr")
         _, lcp = self.dp.run("show lcp")
         ifaces = routes.parse_interfaces(out, addr, lcp)
+
+        # `local0` alone means the dataplane claimed no NIC. Explained here
+        # rather than left as a one-line table, because the operator asking
+        # this question is looking at a box that forwards nothing and a box
+        # that forwards nothing looks exactly like a box that is working
+        # (#190).
+        if set(ifaces) <= {"local0"} and not args:
+            why = self.why_no_dataplane_interface()
+            if why:
+                print("  the dataplane has no interface to forward on: "
+                      + why[0])
+                for line in why[1:]:
+                    print("  " + line)
+                print()
 
         wanted = [a for a in args if a not in ("description", "descr", "brief")]
         if wanted:
@@ -5278,6 +5440,19 @@ class Shell:
         return base
 
     def _options(self, line, ending_word):
+        # After a pipe, the only words that mean anything are the filters. The
+        # command's own grammar does not apply there and offering it would
+        # send the operator back into the command they have already finished
+        # typing.
+        if line.split()[:1] == ["show"] and "|" in line:
+            tail = line.rsplit("|", 1)[1]
+            words = tail.split()
+            prefix = words[-1] if (ending_word and words) else ""
+            if len(words) - (1 if ending_word and words else 0) == 0:
+                return ({k: v[0] for k, v in PIPE_FILTERS.items()
+                         if _starts(k, prefix)}, None, prefix)
+            verb = words[0]
+            return {}, (PIPE_FILTERS.get(verb) or (None, None))[1], prefix
         words = line.split()
         prefix = ""
         if ending_word and words:
@@ -5371,6 +5546,23 @@ class Shell:
                    "pool": self.do_pool,
                    "user": self.do_user,
                    "snmp-user": self.do_snmp_user}[self.mode]
+
+        # A pipe filters a `show`, and only a `show`. Everywhere else a '|' is
+        # a character in a regular expression or a description - an AS-path
+        # list is full of them - and treating it as a filter would silently
+        # cut a policy in half (#191).
+        if line.split()[:1] == ["show"] and "|" in line:
+            command, stages = split_pipe(line)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                result = handler(command)
+            lines, why = apply_pipe(out.getvalue(), stages)
+            if why:
+                self.err(why)
+            else:
+                for l in lines:
+                    print(l)
+            return result
         return handler(line)
 
     def load(self, path):
