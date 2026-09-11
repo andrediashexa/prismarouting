@@ -107,23 +107,20 @@ chown -R frr:frr /var/run/frr /etc/frr
 # installed box inherits Debian's /etc/frr/daemons, where bgpd, ospfd and isisd
 # are all "no" (#99). Starting them by hand here is what let that go unnoticed,
 # so it is said out loud rather than left as a list somebody skims.
-for d in zebra ospfd isisd; do
-  /usr/lib/frr/$d -d -A 127.0.0.1 -f /etc/frr/$d.conf
-done
 # No -M rpki here, and no frr-rpki-rtrlib to install. Nothing in this lab
 # validates anything, and bgpd refuses to start when told to load a module it
 # cannot find - which is a whole lab reporting "bgpd is not running" for a
 # feature it never exercises. That module, and the cache behind it, are
-# lab/bgp-policy.sh.
-/usr/lib/frr/bgpd -d -A 127.0.0.1 -f /etc/frr/bgpd.conf
-# mgmtd and staticd: on FRR 10 a static route is configured through mgmtd and
-# served by staticd, and without them vtysh answers "mgmtd is not running" to
-# every "ip route" - which is how a static route can be typed, accepted and
-# never exist. frrinit.sh starts both on a real box; a lab that starts daemons
-# by hand has to know that.
-/usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
-/usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
-sleep 1
+# lab/bgp-policy.sh. start_frr only asks for it when it is installed.
+#
+# lib.sh is sourced here rather than where it was, because FRR starts before
+# that point.
+#
+# mgmtd and staticd come with start_frr. This lab and lab/bgp-policy.sh knew
+# they were needed and six others did not, which is why that knowledge is now
+# in one place (#196).
+. /src/lab/lib.sh
+start_frr ospfd isisd bgpd
 
 # ---------------- upstream ----------------
 mkdir -p /var/run/frr/peer /etc/frr/peer
@@ -374,7 +371,15 @@ printf '%s\n' "$SHOW_ROUTE" | head -12 | sed 's/^/  /'
 echo
 echo "=========== a static route through the VTY ==========="
 # 10.0.0.2 is the peer, on the connected /24, so this one is legitimate.
-$HX -c "configure" -c "ip route 192.168.77.0/24 10.0.0.2" -c "commit" \
+#
+# Typed in the `router static` block, which is where static routes live now
+# (#193). FRR has no such block - its static routes are top-level `ip route`
+# statements - so this is a hierarchy the VTY provides and translates, and the
+# assertion below is on the VPP FIB: if the translation were wrong the route
+# would not be anywhere. The old spelling is still accepted and is exercised
+# further down, in the MTU section, which types `ip route` directly.
+$HX -c "configure" -c "router static" \
+    -c "route 192.168.77.0/24 10.0.0.2" -c "exit" -c "commit" \
   > /tmp/staticroute.log 2>&1 || true
 cat /tmp/staticroute.log | sed 's/^/  commit: /'
 echo "  --- what FRR holds now ---"

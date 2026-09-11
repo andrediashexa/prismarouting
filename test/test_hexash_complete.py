@@ -68,16 +68,27 @@ print("\n=== a free argument becomes a hint, not an empty list ===")
 o, hint, _ = opts("pool", "inside ")
 check(hint == hexash.ARG_PREFIX, f"expected a prefix hint, got {hint!r}")
 check(not o, f"should not list options after 'inside': {o}")
-o, hint, _ = opts("config", "cgnat block-holddown ")
+o, hint, _ = opts("config", "nat cgnat block-holddown ")
 check(hint == hexash.ARG_NUM, f"expected a numeric hint, got {hint!r}")
 print(f"  'inside ' -> {hexash.ARG_PREFIX} ; 'block-holddown ' -> {hexash.ARG_NUM}")
 
 print("\n=== config: CGNAT and routing at the same level ===")
 o, _, _ = opts("config", "")
-check({"cgnat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
+check({"nat", "router", "interface", "no", "commit", "rollback", "exit"} <= o,
       f"got {o}")
-o, _, _ = opts("config", "cgnat ")
+# `cgnat` is NOT offered at the top level any more - it moved under `nat`
+# (#193) - and offering both spellings would teach the one being left behind.
+check("cgnat" not in o, f"the old top-level spelling is not offered: {o}")
+o, _, _ = opts("config", "nat ")
+check(o == {"cgnat"}, f"nat holds the CGNAT hierarchy: {o}")
+o, _, _ = opts("config", "nat cgnat ")
 check({"pool", "interface", "timeout", "logging", "block-holddown"} <= o, f"got {o}")
+# Static routes moved under `router`, beside the protocols.
+o, _, _ = opts("config", "router ")
+check("static" in o, f"router offers static: {o}")
+o, _, _ = opts("config", "ip ")
+check("route" not in o and "prefix-list" in o,
+      f"and `ip route` is no longer the offered spelling: {o}")
 o, _, _ = opts("config", "router ")
 check({"bgp", "ospf", "isis"} <= o, f"got {o}")
 print("  cgnat, router, interface, no, exit")
@@ -331,18 +342,24 @@ check(len(opts) == 1, "and a single match is a single match")
 print(f"  interface Ten -> {sorted(opts)}")
 
 print("\n=== names the CANDIDATE knows ===")
-sh.feed("cgnat pool residential")
+# One pool made in the NEW hierarchy and one in the old, because both have to
+# work: a box in service has a saved configuration and twenty rollback
+# revisions written in the old spelling, and hexarouting.service replays that
+# file at every boot (#193).
+sh.feed("nat cgnat pool residential")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("exit")
 sh.feed("cgnat pool business")
 sh.feed("exit")
-opts, _, _ = sh._options("cgnat pool ", False)
+check(set(sh.candidate.pools) == {"residential", "business"},
+      f"both spellings make a pool: {sorted(sh.candidate.pools)}")
+opts, _, _ = sh._options("nat cgnat pool ", False)
 check(set(opts) == {"residential", "business"},
       f"pools come from the candidate being edited: {sorted(opts)}")
-opts, _, _ = sh._options("no cgnat pool ", False)
+opts, _, _ = sh._options("no nat cgnat pool ", False)
 check(set(opts) == {"residential", "business"},
       f"and from the removal branch too: {sorted(opts)}")
-print(f"  cgnat pool -> {sorted(opts)}")
+print(f"  nat cgnat pool -> {sorted(opts)}")
 
 print("\n=== a source that cannot answer offers nothing, and does not raise ===")
 # A VTY that becomes unusable when the dataplane is down is a VTY that cannot
@@ -1538,6 +1555,18 @@ _row = [l for l in out.splitlines() if l.split()[:1] == ["pg0.100"]][0]
 check(_row.split()[1:3] == ["up", "down"],
       f"a sub-interface inherits its parent's link: {_row}")
 
+# Both numbers of the word. `show interfaces terse` is what an operator arriving
+# from a Juniper types, and a parser error for the plural on a VTY built to look
+# like one is the opposite of the point.
+sh = box_192(TERSE_IF, addr_text=ADDRS)
+check("Admin" in capture(sh, "show interfaces terse"),
+      "the plural is the same command")
+# A filtered listing says so, rather than reporting the filtered count as the
+# number of interfaces the box has.
+sh = box_192(TERSE_IF, addr_text=ADDRS)
+out = capture(sh, "show interface terse pg0.100")
+check("1 of 4 interface(s) shown" in out, f"a narrowed listing says so: {out}")
+
 # The description view. This used to print a table and then say the dataplane
 # carries no descriptions - true when written, false since `description`
 # started being stored as the interface tag, and left saying so.
@@ -1580,6 +1609,12 @@ sh = box_192(TERSE_IF, hw_text=HW_FAST, counters=[COUNTERS_A, COUNTERS_B],
 out = capture(sh, "show interface utilization interval 2 count 1")
 check("share of its own line rate" in out and "% of 1.00 Gbit/s" in out,
       f"a known line rate is used as the capacity: {out}")
+# A box can have both kinds at once - a NIC that reports its speed and a
+# loopback that does not - and one footer claiming every bar is a share of a
+# line rate would be wrong about half the table.
+check("the rest have no link speed" in out and "loop3" in out.split(
+          "the rest have no link speed")[-1],
+      f"the unrated interfaces are named, not folded in: {out}")
 
 # A counter that goes backwards is `clear interfaces` running mid-sample. It
 # must not become a negative rate, and it must not pass silently either.
@@ -1622,6 +1657,90 @@ check("<interface>" not in opts,
 opts, _, _ = sh._options("show interface pg", True)
 check("pg0" in opts and "terse" not in opts,
       f"a prefix still narrows to the names: {sorted(opts)}")
+
+
+
+# ---------------------------------------------------------------------------
+# The typed hierarchies: `nat cgnat ...` and `router static` (#193)
+
+def box_193():
+    sh = shell_with_box()
+    sh.frr = type("F", (), {"available": lambda s: True,
+                            "running": lambda s: ["router bgp 65000"],
+                            "show": lambda s, c: (1, "")})()
+    sh.sys = type("S", (), {"read_ssh": lambda s: {},
+                            "read_users": lambda s: {}})()
+    sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
+    sh.feed("configure")
+    return sh
+
+sh = box_193()
+for line in ("nat cgnat pool residential", "inside 100.64.0.0/22",
+             "outside 203.0.113.0/24", "block-size 512", "exit",
+             "nat cgnat interface TenGigabitEthernet0/8/0 inside",
+             "router static", "route 0.0.0.0/0 10.0.0.2",
+             "route 2001:db8::/32 fe80::1", "exit"):
+    sh.feed(line)
+check(list(sh.candidate.pools) == ["residential"],
+      f"a pool is made under nat: {list(sh.candidate.pools)}")
+check(sh.candidate.interfaces == {"TenGigabitEthernet0/8/0": "inside"},
+      f"and an interface attached there: {sh.candidate.interfaces}")
+# What reaches FRR is what FRR understands. `router static` handed to it is
+# refused mid-commit, so the block has to be translated and not passed through.
+check("router static" not in sh.candidate.routing,
+      f"the block never reaches FRR: {sh.candidate.routing}")
+check("ip route 0.0.0.0/0 10.0.0.2" in sh.candidate.routing
+      and "ipv6 route 2001:db8::/32 fe80::1" in sh.candidate.routing,
+      f"the routes do, in FRR's own words: {sh.candidate.routing}")
+
+# The old spellings still work, typed. Not because of politeness: a box in
+# service has a saved configuration and up to twenty rollback revisions written
+# in them, and hexarouting.service replays that file at every boot.
+sh = box_193()
+sh.feed("cgnat interface TenGigabitEthernet0/8/0 outside")
+sh.feed("ip route 198.51.100.0/24 blackhole")
+check(sh.candidate.interfaces == {"TenGigabitEthernet0/8/0": "outside"},
+      f"the old CGNAT spelling still configures: {sh.candidate.interfaces}")
+check("ip route 198.51.100.0/24 blackhole" in sh.candidate.routing,
+      f"and so does the old route spelling: {sh.candidate.routing}")
+
+# `exit` leaves the block, and the next statement lands outside it.
+sh = box_193()
+sh.feed("router static")
+check(sh.frr_ctx == ["router static"], f"the block is entered: {sh.frr_ctx}")
+check("router static" in sh.prompt(),
+      f"and the prompt says which block: {sh.prompt()!r}")
+sh.feed("exit")
+check(sh.frr_ctx == [], f"and left: {sh.frr_ctx}")
+
+# A statement that is not a route is REFUSED inside the block rather than
+# passed to FRR, which would take it as a statement of a block it does not
+# have and fail the whole commit with a message about a line nobody typed.
+sh = box_193()
+sh.feed("router static")
+out = capture(sh, "neighbor 10.0.0.2 remote-as 65001")
+check("not a statement of 'router static'" in out, f"refused: {out}")
+check("neighbor 10.0.0.2 remote-as 65001" not in sh.candidate.routing,
+      "and not staged")
+
+# `nat` on its own is refused, with the statement that follows it. `cgnat` was
+# never a block either - what is entered is `cgnat pool NAME` - and inventing
+# one level of block here would make `exit` mean two different things
+# depending on which word opened it.
+sh = box_193()
+out = capture(sh, "nat")
+check("a hierarchy, not a block" in out, f"nat alone is refused: {out}")
+check("nat cgnat pool" in out, "and says what to type instead")
+
+# Inside another block the words belong to that block's grammar. A route-map
+# or a description may begin with any word at all, and rewriting there would
+# edit somebody's policy on the strength of its first token.
+sh = box_193()
+sh.feed("route-map NAT-OUT permit 10")
+sh.feed("description nat cgnat pool residential")
+check(any(l.strip() == "description nat cgnat pool residential"
+          for l in sh.candidate.routing),
+      f"a description that starts with 'nat' is left alone: {sh.candidate.routing}")
 
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

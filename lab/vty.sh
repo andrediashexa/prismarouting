@@ -38,8 +38,7 @@ mkdir -p /var/run/frr /etc/frr
 printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
 printf 'hostname hexarouting\n' > /etc/frr/bgpd.conf
 chown -R frr:frr /var/run/frr /etc/frr
-/usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf
-/usr/lib/frr/bgpd  -d -A 127.0.0.1 -f /etc/frr/bgpd.conf
+start_frr bgpd
 
 mkdir -p /var/run/frr/peer /etc/frr/peer
 printf 'hostname upstream\n' > /etc/frr/peer/zebra.conf
@@ -322,6 +321,9 @@ sh.feed("configure")
 opts, hint, _ = sh._options("interface ", False)
 print("INTERFACES:", " ".join(sorted(opts)))
 print("HINT:", hint)
+# Deliberately the OLD spelling: the pool made here is the one the assertions
+# below read back, so this run proves that a box driven the old way still
+# works after the hierarchy moved (#193).
 sh.feed("cgnat pool lab")
 sh.feed("inside 100.64.0.0/22")
 sh.feed("outside 200.150.0.16/30")
@@ -331,8 +333,12 @@ with contextlib.redirect_stdout(out):
     sh.feed("show this")
 print("THIS:", out.getvalue().replace("\n", " | "))
 sh.feed("exit")
-opts, _, _ = sh._options("cgnat pool ", False)
+opts, _, _ = sh._options("nat cgnat pool ", False)
 print("POOLS:", " ".join(sorted(opts)))
+o, _, _ = sh._options("nat ", False)
+print("NATSUB:", " ".join(sorted(o)))
+o, _, _ = sh._options("router ", False)
+print("ROUTERSUB:", " ".join(sorted(o)))
 # Prefix-lists complete from the control plane, not from a model this VTY
 # keeps: FRR owns them and the running configuration is read back from FRR.
 sh.feed("ip prefix-list PL-LAB seq 10 permit 10.9.0.0/16")
@@ -553,6 +559,10 @@ expect_not_in "and not VPP's own loopback, which configures nothing" \
 # The pool exists only in the CANDIDATE at that moment, so this also proves
 # the source is the configuration being edited and not the committed one.
 expect_in "pool completion names the pool being edited" "POOLS: lab" "$COMP"
+# The hierarchies asked for in #193, offered where an operator looks for them.
+expect_in "CGNAT is offered under nat" "NATSUB: cgnat" "$COMP"
+expect_in "and static routes under router, beside the protocols" "static" \
+  "$(printf '%s\n' "$COMP" | sed -n 's/^ *ROUTERSUB: *//p')"
 expect_in "show this prints the hierarchy being edited" \
   "cgnat pool lab" "$COMP"
 # The prompt must name the subject, not only the kind: "[edit cgnat pool]" is
@@ -794,5 +804,57 @@ echo "  history with traffic '$HIST', idle '$IDLE_HIST'"
 expect "the history is drawn, not left blank" sh -c "[ -n \"$HIST\" ]"
 expect "and traffic does not draw the same line as silence" \
   sh -c "[ \"$HIST\" != \"$IDLE_HIST\" ]"
+
+echo
+# LAST IN THE FILE, and it has to be. `--load` applies a file as the WHOLE
+# configuration, so the deliberately small one below REMOVES everything it does
+# not mention - including this lab's BGP session. Run anywhere but here it takes
+# the rest of the lab's setup away, and five assertions fail for a reason that
+# has nothing to do with what they test. That was measured, not foreseen.
+echo "=========== a file written before the hierarchies moved (#193) ==========="
+# The migration property, on a real box rather than on a parser. CGNAT is under
+# `nat` now and static routes under `router`; every box already in service has
+# a saved configuration and up to twenty rollback revisions written the OLD
+# way, and hexarouting.service replays that file at every boot on a machine
+# nobody is watching. A grammar that cannot read the box's own file leaves the
+# box unconfigured, and nothing would say so until somebody noticed the traffic.
+vppctl bpa pool provider-a del 2>/dev/null
+cat > /tmp/old-format.conf <<'OLDEOF'
+! cgnat
+cgnat pool provider-a
+ inside 100.64.0.0/22
+ outside 200.150.0.16/30
+ block-size 512
+ policy interleaved
+ mode deterministic
+ exit
+! routing
+ip route 198.51.100.0/24 blackhole
+OLDEOF
+$HX --load /tmp/old-format.conf 2>&1 | sed 's/^/  /'
+OLD_POOL=$(vppctl show bpa pool | grep -c provider-a)
+OLD_ROUTE=$(vtysh -c "show running-config" 2>/dev/null | grep -c "ip route 198.51.100.0/24")
+echo "  after loading the old format: pool rows $OLD_POOL, route lines $OLD_ROUTE"
+# And what the box writes back is the NEW hierarchy, which must itself load.
+$HX -c "save" >/dev/null 2>&1
+NEW_TEXT=$(cat "$HEXA_CONFIG")
+printf '%s\n' "$NEW_TEXT" | grep -E "^nat |^router static|^ route " | sed 's/^/    /'
+vppctl bpa pool provider-a del 2>/dev/null
+$HX --load "$HEXA_CONFIG" 2>&1 | sed 's/^/  /'
+ROUND=$(vppctl show bpa pool | grep -c provider-a)
+echo "  after loading what the box itself wrote: pool rows $ROUND"
+
+echo
+
+# The migration property, measured earlier on a real box: a configuration
+# written before the hierarchies moved still reaches the dataplane and FRR,
+# what the box writes back is the new hierarchy, and the box can read that.
+expect "a configuration in the old hierarchy still reaches the dataplane" \
+  sh -c "[ \"$OLD_POOL\" -ge 1 ]"
+expect "and its static route still reaches FRR" \
+  sh -c "[ \"$OLD_ROUTE\" -ge 1 ]"
+expect_in "the box writes CGNAT under nat" "nat cgnat pool provider-a" "$NEW_TEXT"
+expect_in "and static routes as a block under router" "router static" "$NEW_TEXT"
+expect "a box can read back the file it just wrote" sh -c "[ \"$ROUND\" -ge 1 ]"
 
 verdict

@@ -28,6 +28,7 @@ import tempfile
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
+                    NAT_HIERARCHY, STATIC_BLOCK, strip_nat,
                     _address_family_error, _is_loopback)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -197,6 +198,16 @@ SHOW = {
     }),
     "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
+}
+
+# Offered inside `router static`. FRR has no such block - its static routes are
+# top-level `ip route` statements - so this is a hierarchy this VTY provides and
+# translates, which is the whole reason it needs a grammar of its own here.
+STATIC_BLOCK_GRAMMAR = {
+    "route": ("a destination this box is told about, rather than taught",
+              "<prefix> <next-hop|interface|blackhole|Null0> [distance]"),
+    "no": ("remove", {"route": ("remove a static route", "<prefix> ...")}),
+    "exit": ("leave the block", None),
 }
 
 # Offered inside `router isis <tag>`. IS-IS is what an ISP core runs, and this
@@ -812,13 +823,23 @@ TREE = {
         "exit": ("end the session", None),
     },
     "config": {
-        "cgnat": ("CGNAT configuration", CGNAT_CONFIG),
+        # CGNAT sits under `nat`, and static routes under `router`, because
+        # that is where an operator looks for them (#193). Both old spellings
+        # - `cgnat ...` at the top level and `ip route ...` - are still
+        # accepted, and are deliberately NOT offered here: a box in service has
+        # a saved configuration and twenty rollback revisions written in them,
+        # so they have to work, but offering both teaches the one being left
+        # behind.
+        "nat": ("address translation", {
+            "cgnat": ("carrier-grade NAT", CGNAT_CONFIG),
+        }),
         "no": ("remove configuration", {
-            "cgnat": ("remove CGNAT configuration", {
-                "pool": ("remove a pool", ARG_POOL),
-                "interface": ("disable CGNAT on an interface", ARG_INTERFACE)})}),
+            "nat": ("remove address translation", {
+                "cgnat": ("remove CGNAT configuration", {
+                    "pool": ("remove a pool", ARG_POOL),
+                    "interface": ("disable CGNAT on an interface",
+                                  ARG_INTERFACE)})})}),
         "ip": ("IP configuration", {
-            "route": ("a static route", "<prefix> <next-hop|interface>"),
             "prefix-list": ("a named list of prefixes, for matching in policy",
                             ARG_PREFIX_LIST)}),
         "ipv6": ("IPv6 configuration", {
@@ -835,7 +856,8 @@ TREE = {
                                      ARG_COMMUNITY_LIST),
         }),
         "rpki": ("origin validation: the caches this box asks", None),
-        "router": ("routing protocols (FRR)", {
+        "router": ("routing, static and dynamic", {
+            "static": ("routes this box is told, rather than taught", None),
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", "[vrf <name>]"),
             "isis": ("IS-IS", ARG_ISIS_TAG),
@@ -906,6 +928,12 @@ def _starts(candidate, prefix):
     than not completing.
     """
     return candidate.lower().startswith(prefix.lower())
+
+
+def _frr_static(rest):
+    """`route <prefix> ...` as the `ip route` / `ipv6 route` FRR understands."""
+    family = "ipv6" if ":" in rest[0] else "ip"
+    return f"{family} route " + " ".join(rest)
 
 
 def tree_walk(mode, words):
@@ -4001,7 +4029,72 @@ class Shell:
             self.show_or_pass(line)
         return True
 
+    def hierarchy_rewrite(self, line):
+        """
+        The hierarchy the operator typed, in the words the model holds.
+
+        Two hierarchies were asked for that the tools underneath do not have:
+        CGNAT under `nat`, and static routes under `router` (#193). VPP's
+        plugin knows `cgnat`; FRR has no `router static` at all - its static
+        routes are top-level `ip route` statements, and a `router static` line
+        handed to it is refused mid-commit.
+
+        So the new words are translated here, at the one place typed
+        configuration enters, and the OLD words keep working unchanged. That
+        second half is not politeness. Every box in service has a saved
+        configuration and up to twenty rollback revisions written in the old
+        spelling, and hexarouting.service replays that file at every boot, on a
+        machine nobody is watching: a grammar that cannot read the box's own
+        file leaves the box unconfigured. `config.strip_nat` and
+        `config.ungroup_static` are the same rule for the file, so the two
+        cannot drift.
+
+        Returns the line to go on with, or "" when the line was a block of this
+        VTY's own and there is nothing further to do.
+        """
+        # Only at the top level of configuration mode. Inside a block the
+        # words belong to that block's grammar - a route-map or a description
+        # may legitimately begin with any word at all - and rewriting there
+        # would edit somebody's policy on the strength of its first token.
+        if self.frr_ctx and self.frr_ctx[-1] != STATIC_BLOCK:
+            return line
+        if line.strip() == NAT_HIERARCHY and not self.frr_ctx:
+            # `nat` on its own. Refused rather than entered, because `cgnat`
+            # was never a block either - what is entered is `cgnat pool NAME` -
+            # and inventing one level of block here would make `exit` mean
+            # something different depending on which word opened it.
+            self.err("nat: a hierarchy, not a block - "
+                     "'nat cgnat pool <name>' or 'nat cgnat interface ...'")
+            return ""
+        line = strip_nat(line) if not self.frr_ctx else line
+        w = line.split()
+        if not w:
+            return ""
+
+        if line.strip() == STATIC_BLOCK:
+            self.frr_ctx.append(STATIC_BLOCK)
+            return ""
+        if not (self.frr_ctx and self.frr_ctx[-1] == STATIC_BLOCK):
+            return line
+        # Inside the block. The family comes from the prefix, because a prefix
+        # with a colon in it is IPv6 and nothing else; asking for the family as
+        # well would be asking the operator to contradict themselves.
+        if w[:1] == ["route"] and len(w) > 2:
+            return _frr_static(w[1:])
+        if w[:2] == ["no", "route"] and len(w) > 3:
+            return "no " + _frr_static(w[2:])
+        if w[:1] == ["ip"] or w[:1] == ["ipv6"]:
+            return line          # FRR's own spelling, typed inside the block
+        if w[0] in ("exit", "quit", "end", "show", "commit", "rollback"):
+            return line
+        self.err(f"{w[0]}: not a statement of 'router static' - "
+                 "'route <prefix> <next-hop>', or 'exit'")
+        return ""
+
     def do_config(self, line):
+        line = self.hierarchy_rewrite(line)
+        if not line:
+            return True
         w = line.split()
 
         if w[:2] == ["start", "shell"]:
@@ -4600,7 +4693,11 @@ class Shell:
         if _w[:2] == ["show", "this"]:
             self.show_this()
             return
-        if _w[:2] == ["show", "interface"]:
+        # Both numbers of the word. `show interfaces terse` is what an operator
+        # arriving from a Juniper types, and being handed a parser error for
+        # the plural on a VTY built to look like one is the opposite of the
+        # point.
+        if _w[:1] == ["show"] and _w[1:2] in (["interface"], ["interfaces"]):
             self.show_interfaces(_w[2:])
             return
         if _w[:2] == ["show", "route"]:
@@ -4714,7 +4811,7 @@ class Shell:
             row = hardware.get(name.split(".")[0])
         return row["link"] if row else "?"
 
-    def show_interfaces_terse(self, ifaces, hardware):
+    def show_interfaces_terse(self, ifaces, hardware, total=None):
         """
         One line per interface: admin state, link state, family, address.
 
@@ -4742,7 +4839,10 @@ class Shell:
                       f"{e['state'] if first else '':<6} "
                       f"{link if first else '':<6} {proto:<6} {addr}")
                 first = False
-        print(f"\n  {len(ifaces)} interface(s) on the dataplane")
+        if total is not None and total != len(ifaces):
+            print(f"\n  {len(ifaces)} of {total} interface(s) shown")
+        else:
+            print(f"\n  {len(ifaces)} interface(s) on the dataplane")
         if mismatched:
             # The one conclusion this view exists to make reachable without
             # being read for.
@@ -4964,6 +5064,13 @@ class Shell:
                 rx_now, tx_now = series[name][-1]
                 print(f"    {name:<24} {max(rx_now, tx_now) / speed * 100:5.1f}"
                       f"% of {self.rate(speed)}")
+            # A box can have both kinds at once - a NIC that reports its speed
+            # and a loopback that does not - and one footer claiming every bar
+            # is a share of a line rate would be wrong about half the table.
+            unrated = sorted(n for n in series if not speeds.get(n))
+            if unrated and peak:
+                print(f"  the rest have no link speed, so their bars are "
+                      f"scaled to {self.rate(peak)}: " + ", ".join(unrated))
         elif peak:
             print(f"  bars are scaled to {self.rate(peak)}, the busiest "
                   "sample in this run -")
@@ -4971,7 +5078,7 @@ class Shell:
                   "interfaces, so there is no line rate to be a share of")
         else:
             print("  nothing passed any interface during the sample")
-        for name in sorted(drops):
+        for name in sorted(n for n in drops if n in series):
             print(f"  {name} dropped {drops[name]} packet(s) while this was "
                   "sampling")
         if reset:
@@ -5130,6 +5237,7 @@ class Shell:
                                                "descr", "brief"):
             _, hw = self.dp.run("show hardware-interfaces brief")
             hardware = routes.parse_hardware(hw)
+            total = len(ifaces)
             rest = [a for a in args[1:] if a]
             if rest:
                 ifaces = {n: e for n, e in ifaces.items()
@@ -5138,7 +5246,7 @@ class Shell:
                     print("  no interface matches")
                     return
             if args[0].startswith("terse"):
-                self.show_interfaces_terse(ifaces, hardware)
+                self.show_interfaces_terse(ifaces, hardware, total)
             else:
                 self.show_interfaces_description(ifaces, hardware)
             return
@@ -5803,6 +5911,8 @@ class Shell:
         different set from the words that start a line.
         """
         block = self.frr_ctx[-1]
+        if block.strip() == STATIC_BLOCK:
+            return STATIC_BLOCK_GRAMMAR
         if block.startswith("interface "):
             return INTERFACE_BLOCK
         if block.strip() == "rpki":

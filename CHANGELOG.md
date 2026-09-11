@@ -42,8 +42,10 @@ are to be interpreted as described in
 [#186](https://github.com/andrediashexa/hexarouting/issues/186),
 [#188](https://github.com/andrediashexa/hexarouting/issues/188),
 [#192](https://github.com/andrediashexa/hexarouting/issues/192),
+[#193](https://github.com/andrediashexa/hexarouting/issues/193),
 [#194](https://github.com/andrediashexa/hexarouting/issues/194),
-[#195](https://github.com/andrediashexa/hexarouting/issues/195).
+[#195](https://github.com/andrediashexa/hexarouting/issues/195),
+[#196](https://github.com/andrediashexa/hexarouting/issues/196).
 
 ### Added
 
@@ -106,6 +108,31 @@ are to be interpreted as described in
   ten of which fail against the VTY as it was, and two of which are "must not"
   guards that fail in the other direction — proved by widening the umask to
   0o000 rather than argued for.
+* **CGNAT is configured under `nat`, and static routes under `router`.**
+  `nat cgnat pool residential`, and a `router static` block holding `route
+  <prefix> <next-hop>` lines — one `route` keyword rather than two, because the
+  family is in the prefix and asking for it again is asking the operator to
+  contradict themselves. Neither hierarchy exists in the tool underneath: VPP's
+  plugin knows `cgnat`, and FRR has no `router static` at all — its static
+  routes are top-level `ip route` statements, and a `router static` line handed
+  to it is refused mid-commit. So the block is translated, at the one place
+  typed configuration enters and at the one place a file is read, which is why
+  the two cannot drift.
+  **Both old spellings keep working**, typed and in a file, and that is not
+  politeness: every box in service has a saved configuration and up to twenty
+  rollback revisions written the old way, and `hexarouting.service` replays that
+  file at every boot on a machine nobody is watching. A grammar that cannot read
+  the box's own file leaves the box unconfigured, with nothing to say so until
+  somebody notices the traffic. They are deliberately NOT offered by completion,
+  because offering both teaches the one being left behind. `show
+  running-config`, `show configuration` and the file `save` writes are all in
+  the new hierarchy, and the box can read back what it wrote — asserted in
+  `test/test_hexash_config.py` and, on a real box with a file written in the old
+  format, in `lab/vty.sh`.
+  A VRF's static routes stay inside their `vrf` block: FRR indents those, and
+  hoisting one into `router static` would move the route to another table — a
+  display transform that changes where packets go. So the column is read as well
+  as the statement.
 * **`start shell` is in the command tree.** It already existed and already did
   what was wanted — a child shell that returns to the VTY, refused for anything
   but an administrator — and was deliberately hidden. Hiding was never the
@@ -166,8 +193,34 @@ are to be interpreted as described in
   it had always completed. A new option costing an old one is how a CLI gets a
   reputation.
 
+* **`lab/lib.sh` starts FRR the way `frrinit.sh` does**, and eight labs use it.
+  Six of them started zebra and sometimes bgpd and nothing else — which is not
+  the FRR the product ships: on FRR 10 a static route and a prefix-list are
+  configured *through* mgmtd and served by staticd, and without them `vtysh`
+  answers `mgmtd is not running` to every one of them. A statement can be typed,
+  accepted, reported as committed and never exist. Two labs had worked this out
+  and written the reason in comments of their own while six went on starting two
+  daemons, so the knowledge now has one home. Three traps recorded in it, each
+  measured: mgmtd and staticd take **no `-f`** (passing one is an `invalid
+  option` that leaves the daemon not running with nothing obviously wrong);
+  bgpd **refuses to start** when told to load an RPKI module that is not
+  installed, and that module is at `/usr/lib/*/frr/modules/`, not beside the
+  daemons — the first version of this looked in the wrong place and
+  `lab/bgp-policy.sh` failed seven checks, quietly, because a bgpd with no RPKI
+  answers as though the feature were simply off; and the wait is on
+  `mgmtd_fe.sock` rather than a `sleep`.
+
 ### Found and not fixed
 
+* **`commit` reports success for a routing statement FRR dropped.** Measured on
+  a box without mgmtd: FRR printed `% Configuration applied with notes:` and
+  `No changes found to be committed!` on its own stdout, `frr-reload` exited 0,
+  and the box said `commit complete` for a route that does not exist. mgmtd is
+  always running on a real appliance so that trigger cannot arise there, but the
+  shape outlives it — any statement belonging to a daemon that is not running
+  fails the same way, and `commit` returning success is the one thing an
+  operator has to be able to trust
+  ([#197](https://github.com/andrediashexa/hexarouting/issues/197)).
 * `/etc/frr/frr.conf` is a package conffile, so an frr upgrade that reinstalls
   it puts `0640` back and non-root commits fail until `install.sh` is re-run.
   The failure is loud — the commit is refused and rolled back.
