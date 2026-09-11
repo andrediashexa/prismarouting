@@ -52,6 +52,23 @@ def strip_nat(line: str) -> str:
     return line
 
 
+def as_hierarchy(stmt: str) -> str:
+    """
+    A canonical FRR statement, named in the words the VTY takes for it.
+
+    A refusal has to name something the operator can find. Typed inside
+    `router static`, a route is translated to FRR's `ip route ...` before any
+    check runs, so every refusal about one used to name a statement that
+    appears nowhere in what the operator typed and nowhere in `show
+    configuration` either - which now prints the block. Searching for `ip
+    route` after reading the error found nothing.
+    """
+    s = stmt.strip()
+    if s.split()[:2] in (["ip", "route"], ["ipv6", "route"]):
+        return f"{STATIC_BLOCK} / route " + " ".join(s.split()[2:])
+    return s
+
+
 def is_static_route(line: str) -> bool:
     """
     A top-level static route as FRR writes one.

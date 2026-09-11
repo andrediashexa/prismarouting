@@ -654,10 +654,58 @@ BADPOL=$($HX -c "configure" -c "ip prefix-list PL-GONE seq 10 permit 10.8.0.0/16
          -c "commit" 2>&1)
 echo "$BADPOL" | tail -3 | sed 's/^/  /'
 expect_in "with mgmtd stopped, the commit is refused" "mgmtd" "$BADPOL"
-expect_in "and the refusal names the file to edit" "/etc/frr/daemons" "$BADPOL"
+# It used to be enough that the refusal contained "/etc/frr/daemons". That
+# passed whatever the sentence around it said - and the sentence was wrong:
+# frrinit.sh starts mgmtd itself, so it is NOT a line in that file and an
+# operator sent there finds nothing to enable. The advice now depends on which
+# daemon is missing, and the assertion is on the advice rather than on a path
+# that appears in both versions of it.
+expect_in "and the refusal says frr did not finish starting, not 'edit the file'" \
+  "started by frr itself" "$BADPOL"
+expect_in "and how to get it back" "systemctl restart frr" "$BADPOL"
 expect_not_in "and nothing was applied" "commit complete" "$BADPOL"
 
 /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
+sleep 2
+
+# --- a static route whose daemon is not running (#197) ---
+#
+# A static route is neither a `router` line nor a policy statement, so BOTH
+# checks above walked past it. Measured on FRR 10.7.1 with staticd and mgmtd
+# stopped: frr-reload EXITS 0 having applied nothing. Its own log says
+# "[zebra] sending configuration" and "done" for the line, then notices on a
+# second pass that the statement is still missing, sends it AGAIN, and exits 0.
+# FRR discards a statement no running daemon claims and says so to nobody - so
+# the box reported "commit complete" for a default route that forwards nothing,
+# which is the most common statement there is on an edge box.
+echo "=========== a static route with staticd stopped ==========="
+OKSTATIC=$($HX -c "configure" -c "router static" \
+           -c "route 10.66.0.0/16 blackhole" -c "exit" -c "commit" 2>&1)
+expect_in "with staticd running, a static route commits" "commit complete" \
+  "$OKSTATIC"
+expect "and FRR really holds it" \
+  sh -c "vtysh -c 'show running-config' | grep -q '10.66.0.0/16'"
+
+pkill -f 'frr/staticd' 2>/dev/null
+sleep 2
+echo "  daemons now: $(vtysh -c 'show daemons' 2>&1 | head -1)"
+BADSTATIC=$($HX -c "configure" -c "router static" \
+            -c "route 10.67.0.0/16 blackhole" -c "exit" -c "commit" 2>&1)
+echo "$BADSTATIC" | tail -4 | sed 's/^/  /'
+expect_in "with staticd stopped, the commit is refused" "staticd" "$BADSTATIC"
+expect_in "and says what the route would do" "forward nothing" "$BADSTATIC"
+# It names the route in the words the operator typed, not FRR's. Typed inside
+# `router static`, a route is translated before any check runs, so the refusal
+# used to name a statement that appears nowhere in what was typed and nowhere
+# in `show configuration` either - an operator who then searched for "ip route"
+# found nothing.
+expect_in "and names it as the VTY spells it" "router static / route" \
+  "$BADSTATIC"
+expect_not_in "and nothing was applied" "commit complete" "$BADSTATIC"
+expect "and FRR does not hold the route either" \
+  sh -c "! vtysh -c 'show running-config' | grep -q '10.67.0.0/16'"
+
+/usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
 sleep 2
 
 # --- what a rejected policy statement does to the rest of the commit ---

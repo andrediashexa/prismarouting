@@ -1743,5 +1743,73 @@ check(any(l.strip() == "description nat cgnat pool residential"
       f"a description that starts with 'nat' is left alone: {sh.candidate.routing}")
 
 
+
+# ---------------------------------------------------------------------------
+# Advice that names a file the daemon is not in (#197)
+#
+# The refusal for a daemon that is not running used to say "Enable <daemon> in
+# /etc/frr/daemons" whichever daemon it was. frrinit.sh starts zebra, mgmtd and
+# staticd itself, so those three are NOT lines in that file: an operator sent
+# there finds nothing to enable, on a box where the real fault is that frr did
+# not finish starting.
+from hexash import enable_daemon_advice                           # noqa: E402
+
+check("/etc/frr/daemons" in enable_daemon_advice("bgpd"),
+      "an optional daemon is enabled in the file")
+for always in ("zebra", "mgmtd", "staticd"):
+    advice = enable_daemon_advice(always)
+    check("not listed in /etc/frr/daemons" in advice,
+          f"{always} is not a line in that file, and the advice says so: {advice}")
+    check("systemctl restart frr" in advice,
+          f"and says what to do instead: {advice}")
+
+
+
+# ---------------------------------------------------------------------------
+# Three things the documentation pass found in the product (#191, #193)
+
+# A filter argument in quotes. Everybody types them - `| section "interface Gi"`
+# is what a pipe looks like in every shell anybody has used - and this filter is
+# not a shell, so nothing removed them: the quotes became part of the text being
+# searched for and the filter matched nothing at all. Silently, which is the
+# worst of it, because an empty result reads as "there is no such section".
+_cfg = "interface Gi0/1\n mtu 1500\ninterface Gi0/2\n mtu 9000\n"
+for _q in ('"interface Gi0/1"', "'interface Gi0/1'", "interface Gi0/1"):
+    _lines, _why = apply_pipe(_cfg, [f"section {_q}"])
+    check(_why is None and _lines == ["interface Gi0/1", " mtu 1500"],
+          f"a quoted filter argument finds the same section: {_q} -> {_lines}")
+# Only a matched pair, and only around the whole argument: a quote in the middle
+# of a string is a character somebody is searching for.
+_lines, _ = apply_pipe('say "hi" there\nsay hi there\n', ['include say "hi"'])
+check(_lines == ['say "hi" there'],
+      f"a quote inside the argument is searched for: {_lines}")
+_lines, _ = apply_pipe('a"b\nab\n', ['include a"b'])
+check(_lines == ['a"b'],
+      f"and an unmatched one is not stripped: {_lines}")
+
+# A refusal has to name something the operator can find. Typed inside `router
+# static`, a route is translated to FRR's words before any check runs, so every
+# refusal about one named a statement that appears nowhere in what was typed and
+# nowhere in `show configuration` either.
+from config import as_hierarchy                                   # noqa: E402
+check(as_hierarchy("ip route 10.55.0.0/16 172.31.99.1")
+      == "router static / route 10.55.0.0/16 172.31.99.1",
+      f"a static route is named as the VTY spells it: "
+      f"{as_hierarchy('ip route 10.55.0.0/16 172.31.99.1')}")
+check(as_hierarchy("ipv6 route 2001:db8::/32 fe80::1")
+      == "router static / route 2001:db8::/32 fe80::1",
+      "and so is an IPv6 one")
+check(as_hierarchy(" neighbor 10.0.0.2 remote-as 65001")
+      == "neighbor 10.0.0.2 remote-as 65001",
+      "a statement the VTY does not rename is left alone")
+
+# The box must not go on teaching the spelling it moved away from. A `usage:`
+# line is an instruction, which is exactly the case #193 is about.
+import hexash as _hx                                              # noqa: E402
+_src = open(_hx.__file__).read()
+check("usage: cgnat " not in _src,
+      "no usage line still teaches the old top-level spelling")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

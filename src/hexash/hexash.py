@@ -28,7 +28,7 @@ import tempfile
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
-                    NAT_HIERARCHY, STATIC_BLOCK, strip_nat,
+                    NAT_HIERARCHY, STATIC_BLOCK, strip_nat, as_hierarchy,
                     _address_family_error, _is_loopback)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -81,6 +81,32 @@ POLICY_STATEMENT = ("ip prefix-list", "ipv6 prefix-list", "route-map",
                     "bgp as-path access-list", "bgp community-list",
                     "bgp large-community-list")
 POLICY_DAEMONS = ("mgmtd", "zebra")
+
+# A static route is not a policy statement and not a `router` line, so neither
+# check above ever looked at one. It needs staticd to serve it and mgmtd to
+# configure it - and without them frr-reload EXITS 0 having done nothing.
+# Measured: its own log says `[zebra] sending configuration` / `done` for the
+# line, then notices on a second pass that the statement is still missing, sends
+# it again, and exits 0 anyway. FRR discards a statement no running daemon
+# claims, and says so to nobody (#197).
+STATIC_STATEMENT = ("ip route", "ipv6 route")
+STATIC_DAEMONS = ("mgmtd", "staticd")
+
+#: The daemons frrinit.sh starts unconditionally. They are NOT lines in
+#: /etc/frr/daemons that an operator can turn on, so telling somebody to enable
+#: one there sends them to a file that will not mention it. One of these being
+#: absent means frr did not finish starting, which is a different fault with a
+#: different fix.
+ALWAYS_STARTED = ("zebra", "mgmtd", "staticd")
+
+
+def enable_daemon_advice(need):
+    """How to get `need` running, which depends on whether it is optional."""
+    if need in ALWAYS_STARTED:
+        return (f"{need} is started by frr itself, not listed in "
+                "/etc/frr/daemons - so frr did not finish starting. "
+                "'systemctl restart frr' and read its journal")
+    return f"Enable {need} in /etc/frr/daemons and restart frr"
 
 ROUTER_DAEMON = {"bgp": "bgpd", "ospf": "ospfd", "ospf6": "ospf6d",
                  "isis": "isisd", "rip": "ripd", "eigrp": "eigrpd",
@@ -1301,6 +1327,17 @@ def apply_pipe(text, stages):
         if not w:
             continue
         verb, arg = w[0], " ".join(w[1:])
+        # Surrounding quotes are taken off. Everybody types them - the shape
+        # `| section "interface Gi"` is what a pipe looks like in every shell
+        # anybody has used, and this filter is not a shell, so nothing had
+        # removed them: the quotes became part of the text being searched for
+        # and the filter matched nothing at all. Silently, which is the worst
+        # of it - an empty result reads as "there is no such section".
+        #
+        # Only a matched pair, and only around the whole argument. A quote in
+        # the middle of a string is a character somebody is searching for.
+        if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in "\"'":
+            arg = arg[1:-1]
         if verb not in PIPE_FILTERS:
             return None, (f"'{verb}' is not a filter; this box has: "
                           + ", ".join(sorted(PIPE_FILTERS)))
@@ -3057,9 +3094,8 @@ class Shell:
                         need = ROUTER_DAEMON.get(w[1])
                         if need and need not in running_daemons:
                             self.err(f"{line.strip()}: {need} is not running")
-                            print(f"    the statement would commit and reach "
-                                  f"nothing. Enable {need} in "
-                                  "/etc/frr/daemons and restart frr")
+                            print("    the statement would commit and reach "
+                                  "nothing. " + enable_daemon_advice(need))
                             ok = False
 
                     # The statements that have no `router` line at all, and so
@@ -3075,8 +3111,24 @@ class Shell:
                                  f"{need}, which is not running")
                         print(f"    first one: {policy[0]}")
                         print("    they would commit and store nothing. "
-                              f"Enable {need} in /etc/frr/daemons and "
-                              "restart frr")
+                              + enable_daemon_advice(need))
+                        ok = False
+
+                    # Static routes, which are neither a `router` line nor a
+                    # policy statement and so were checked by nothing. On a box
+                    # without staticd a default route commits, reports success
+                    # and forwards no packets - and a default route is the most
+                    # common statement there is on an edge box.
+                    statics = [l.strip() for l in target.routing
+                               if l.strip().startswith(STATIC_STATEMENT)]
+                    for need in STATIC_DAEMONS if statics else ():
+                        if need in running_daemons:
+                            continue
+                        self.err(f"{len(statics)} static route(s) need "
+                                 f"{need}, which is not running")
+                        print(f"    first one: {as_hierarchy(statics[0])}")
+                        print("    they would commit and forward nothing. "
+                              + enable_daemon_advice(need))
                         ok = False
 
             # A static route whose next hop is on no connected network is
@@ -3176,8 +3228,8 @@ class Shell:
                     table = fibs.get(0, {})
                     for stmt, nexthop in routes.unreachable_next_hops(
                             target.routing, table):
-                        self.err(f"{stmt}: {nexthop} is on no connected "
-                                 "network")
+                        self.err(f"{as_hierarchy(stmt)}: {nexthop} is on "
+                                 "no connected network")
                         print("    the route would be accepted and never "
                               "reach the forwarding table")
                         ok = False
@@ -3763,7 +3815,8 @@ class Shell:
                 if w[i] in ("buckets", "memory") and w[i + 1].isdigit():
                     got[w[i]] = int(w[i + 1])
             if len(got) != 2:
-                self.err("usage: cgnat session-table buckets <n> memory <MB>")
+                self.err("usage: nat cgnat session-table buckets <n> "
+                         "memory <MB>")
                 return
             r = self.global_api(set_session_table=True,
                                 session_buckets=got["buckets"],
@@ -3942,16 +3995,18 @@ class Shell:
 
     def start_shell(self):
         """
-        Hidden escape to a real shell.
+        Escape to a real shell, for administrators only.
 
-        Deliberately absent from TREE, so neither completion nor `?` offers
-        it - and, since roles exist, RESTRICTED as well: a shell on this box is
-        every capability at once, so administrators only. Hiding it was never
-        the boundary; this check is what makes the sentence above true rather
-        than a hope. It exists
-        because recovery, tcpdump and reading a log the VTY does not expose all
-        need a shell, and an appliance that makes those impossible gets one
-        opened permanently by the first operator who needs one.
+        RESTRICTED: a shell on this box is every capability at once, so the
+        check below is the boundary. It used to be hidden from TREE as well,
+        and this docstring already made the argument against that - hiding was
+        never the boundary, the capability check is - so when the maintainer
+        asked for the command, hiding was what had to go (#194). A command
+        nobody can find is a command somebody has to ask for.
+
+        It exists because recovery, tcpdump and reading a log the VTY does not
+        expose all need a shell, and an appliance that makes those impossible
+        gets one opened permanently by the first operator who needs one.
 
         Spawned as a child rather than exec'd: leaving the shell has to come
         back to the VTY, not log the operator out.
@@ -4191,7 +4246,8 @@ class Shell:
             return True
         if line.startswith("cgnat interface "):
             if len(w) < 4 or w[3] not in ("inside", "outside"):
-                self.err("usage: cgnat interface <interface> <inside|outside>")
+                self.err("usage: nat cgnat interface <interface> "
+                         "<inside|outside>")
             else:
                 self.candidate.interfaces[w[2]] = w[3]
             return True

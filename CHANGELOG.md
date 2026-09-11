@@ -45,7 +45,8 @@ are to be interpreted as described in
 [#193](https://github.com/andrediashexa/hexarouting/issues/193),
 [#194](https://github.com/andrediashexa/hexarouting/issues/194),
 [#195](https://github.com/andrediashexa/hexarouting/issues/195),
-[#196](https://github.com/andrediashexa/hexarouting/issues/196).
+[#196](https://github.com/andrediashexa/hexarouting/issues/196),
+[#197](https://github.com/andrediashexa/hexarouting/issues/197) (partly).
 
 ### Added
 
@@ -210,16 +211,59 @@ are to be interpreted as described in
   answers as though the feature were simply off; and the wait is on
   `mgmtd_fe.sock` rather than a `sleep`.
 
+* **A static route whose daemon is not running is refused, instead of
+  committing and forwarding nothing.** A static route is neither a `router`
+  line nor a policy statement, so both existing daemon checks — the one from
+  #99 and the one from #155 — walked straight past it. Nothing looked at `ip
+  route`, which is the most common statement there is on an edge box. Measured
+  with staticd and mgmtd stopped: `frr-reload` **exits 0 having applied
+  nothing**. Its own log says `[zebra] sending configuration` / `done` for the
+  line, then notices on a second pass that the statement is still missing,
+  sends it *again*, and exits 0 anyway — FRR discards a statement no running
+  daemon claims and says so to nobody, and the box reported `commit complete`
+  for a default route that forwards no packets. Part of
+  [#197](https://github.com/andrediashexa/hexarouting/issues/197).
+* **A filter argument in quotes matched nothing.** `show running-config |
+  section "interface Gi"` is the shape a pipe has in every shell anybody has
+  used, and this filter is not a shell: nothing removed the quotes, so they
+  became part of the text being searched for and the filter found nothing at
+  all. Silently, which is the worst of it — an empty result reads as "there is
+  no such section". A matched pair around the whole argument is taken off now;
+  a quote inside the argument is still a character somebody is searching for.
+* **Two `usage:` lines still taught the spelling the box moved away from** —
+  `usage: cgnat interface ...` and `usage: cgnat session-table ...`. A usage
+  line is an instruction, which is exactly what
+  [#193](https://github.com/andrediashexa/hexarouting/issues/193) is about.
+* **A refusal about a route typed in `router static` named FRR's spelling.**
+  The translation happens before any check runs, so the error named a statement
+  that appears nowhere in what was typed and nowhere in `show configuration`
+  either: an operator who searched their own configuration for `ip route` after
+  reading the error found nothing. It now reads `router static / route
+  10.55.0.0/16 172.31.99.1: ...`.
+* **The refusal for a missing daemon stopped naming a file the daemon is not
+  in.** It said `Enable <daemon> in /etc/frr/daemons` whichever daemon was
+  missing, and frrinit.sh starts zebra, mgmtd and staticd itself — they are not
+  lines in that file, so an operator sent there finds nothing to enable, on a
+  box whose real fault is that frr did not finish starting. `lab/routing.sh`
+  asserted that `/etc/frr/daemons` appeared in the refusal, which passed
+  whatever the sentence around it said, including the wrong one; it now asserts
+  the advice.
+
 ### Found and not fixed
 
-* **`commit` reports success for a routing statement FRR dropped.** Measured on
-  a box without mgmtd: FRR printed `% Configuration applied with notes:` and
-  `No changes found to be committed!` on its own stdout, `frr-reload` exited 0,
-  and the box said `commit complete` for a route that does not exist. mgmtd is
-  always running on a real appliance so that trigger cannot arise there, but the
-  shape outlives it — any statement belonging to a daemon that is not running
-  fails the same way, and `commit` returning success is the one thing an
-  operator has to be able to trust
+* **`frr-reload` can exit 0 having dropped a statement, and the product
+  believes it.** The fix above catches the one cause that can be named in
+  advance; it does not catch the next. The general answer is a read-back check
+  — after applying, a statement the candidate holds that is not in FRR's
+  running configuration is a failed commit whatever the exit status said, the
+  same argument `show bgp summary` already makes about the FIB. What stops it
+  being written today is a measured false positive: FRR omits a statement from
+  its read-back when the value equals a default, so `poll-interval 60` typed
+  explicitly comes back absent (recorded in `lab/igp.sh`), and refusing on that
+  would be worse than the bug. The shape it needs is to report the absent
+  statements without rolling back and stop printing `commit complete` when any
+  are missing — with a list of what FRR round-trips that is measured rather
+  than assumed
   ([#197](https://github.com/andrediashexa/hexarouting/issues/197)).
 * `/etc/frr/frr.conf` is a package conffile, so an frr upgrade that reinstalls
   it puts `0640` back and non-root commits fail until `install.sh` is re-run.

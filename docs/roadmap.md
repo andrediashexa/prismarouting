@@ -594,16 +594,30 @@ the VTY:
 | Issue | What it is | State |
 |---|---|---|
 | [#196](https://github.com/andrediashexa/hexarouting/issues/196) | six labs started an FRR the product does not ship — no mgmtd, no staticd, so any statement mgmtd owns was silently dropped | *delivered*: one `start_frr` in `lab/lib.sh`, used by all eight |
-| [#197](https://github.com/andrediashexa/hexarouting/issues/197) | `commit` reported success for a statement FRR dropped, with `No changes found to be committed!` on FRR's own stdout | **open**, and the more serious of the two |
+| [#197](https://github.com/andrediashexa/hexarouting/issues/197) | `commit` reported success for a statement FRR dropped: `frr-reload` exits 0, its own log noticing on a second pass that the line is still missing and sending it again | **partly** — a static route whose daemon is not running is refused now; the general read-back check is still open |
 
-#197 is ahead of anything else in this section that is still open. The trigger
-measured for it cannot arise on a real appliance — mgmtd always runs there —
-but the shape outlives the trigger: any statement belonging to a daemon that is
-not running fails the same way, which is exactly the state
-[#99](https://github.com/andrediashexa/hexarouting/issues/99) describes on a
-box shipped from Debian's `/etc/frr/daemons`. `commit` returning success is the
-one thing in this product an operator has to be able to trust, because every
-diagnosis they make afterwards starts from it.
+#197 is ahead of anything else in this section that is still open, and half of
+it is done. The reachable half was that a static route is neither a `router`
+line nor a policy statement, so both existing daemon checks — the one from
+[#99](https://github.com/andrediashexa/hexarouting/issues/99) and the one from
+[#155](https://github.com/andrediashexa/hexarouting/issues/155) — walked
+straight past it, and a default route is the most common statement there is on
+an edge box. That is refused now, at `commit check` as well as at `commit`.
+
+What remains is the class, and it is the harder half: `frr-reload` exits 0
+having dropped a statement, and the product believes it. The general answer is a
+read-back check — a statement the candidate holds that is not in FRR's running
+configuration afterwards is a failed commit whatever the exit status said, the
+same argument `show bgp summary` already makes about the FIB. It is not written
+yet because of a measured false positive rather than a missing idea: FRR omits a
+statement from its read-back when the value equals a default, so `poll-interval
+60` typed explicitly comes back absent (recorded in `lab/igp.sh`), and refusing
+on that would be worse than the bug. It needs a list of what FRR round-trips
+that is measured rather than assumed — a small piece of research, not a
+redesign.
+
+`commit` returning success is the one thing in this product an operator has to
+be able to trust, because every diagnosis they make afterwards starts from it.
 
 #### Installation — blocked by nothing, paid on every box
 
