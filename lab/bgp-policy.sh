@@ -109,16 +109,11 @@ chown -R frr:frr /var/run/frr /etc/frr
 # told to load a module it cannot find - a misleading symptom worth knowing
 # about, and the reason the boot self-test checks for it by name.
 apt-get install -y -qq frr-rpki-rtrlib stayrtr >/dev/null 2>&1
-/usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf
-/usr/lib/frr/bgpd -d -A 127.0.0.1 -M rpki -f /etc/frr/bgpd.conf
-# mgmtd and staticd: on FRR 10 a prefix-list and a static route are configured
-# through mgmtd and served by staticd, and without them vtysh answers "mgmtd is
-# not running" to every one of them - which is how a policy statement can be
-# typed, accepted and never exist. frrinit.sh starts both on a real box; a lab
-# that starts daemons by hand has to know that.
-/usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
-/usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
-sleep 1
+# This lab worked out the mgmtd/staticd requirement; it now lives in
+# lab/lib.sh so the other six labs cannot go on not knowing it. Sourced here
+# rather than where it was, because FRR starts before that point.
+. /src/lab/lib.sh
+start_frr bgpd
 
 # ---------------- upstream ----------------
 mkdir -p /var/run/frr/peer /etc/frr/peer

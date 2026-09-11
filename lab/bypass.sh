@@ -23,7 +23,7 @@ HX="python3 /src/src/hexash/hexash.py"
 mkdir -p /var/run/frr /etc/frr
 printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
 chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
-/usr/lib/frr/zebra -d -A 127.0.0.1 -f /etc/frr/zebra.conf 2>/dev/null
+start_frr
 
 vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
 n=0
