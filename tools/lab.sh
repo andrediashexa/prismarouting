@@ -17,6 +17,13 @@
 #
 # On this machine the docker group only takes effect in a new login, so we
 # re-exec through "sg docker" when the socket denies access.
+#
+# The package list below is one list for every lab on purpose. It already had
+# to learn this once: lab/install-iso.sh reads the installed disk back with
+# sfdisk and the live image's /etc/shadow with unsquashfs, and "make test-install"
+# happened to install both while this runner installed neither - so the same
+# lab gave two answers depending on which command ran it, and the one that
+# could not look reported it as something the install had done wrong.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=${IMAGE:-hexarouting-dev:26.06}
@@ -66,5 +73,5 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e LAB_WORKER_COUNT="${LAB_WORKER_COUNT:-}" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "apt-get update -qq >/dev/null 2>&1
-         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
+         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
          sh /src/lab/$LAB.sh $LAB_ARGV"

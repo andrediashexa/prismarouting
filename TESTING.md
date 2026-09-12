@@ -279,6 +279,29 @@ make test-appliance            # generates startup.conf and starts VPP with it
 make test-install              # installs onto a blank disk, boots that disk
 ```
 
+`make test-install` - and `sh tools/lab.sh install-iso`, which is the same lab -
+does more than boot the disk it just installed: it **drives that box's serial
+console**. It logs in as root, creates two accounts through the VTY - one with
+`role administrator`, one with no role at all - commits, and then holds each of
+them to what its role says, reading every answer off the box rather than off
+what the VTY printed. It is the only place in this repository where a role is
+proved on a box somebody receives; every other roles assertion runs in a
+container against a VPP the lab started itself. It is also the only place
+systemd runs at all, so it is the only place the drop-in that lets a non-root
+account reach the binary API is exercised.
+
+```sh
+sh tools/lab.sh install-iso                 # the lab
+sh tools/lab.sh install-iso wrong-password  # the driver typing a password
+                                            # the box refuses: MUST fail
+```
+
+The second is how the driver is kept honest. It must fail **at the login**,
+naming the wait that timed out and saying that the box answered and refused the
+credentials - a console driver whose failure mode is a hang proves nothing, and
+a login that fails silently would run the whole session against a login prompt
+and report a pass.
+
 `make test-iso` exits non-zero when the self-test does not report
 `HexaRouting ready`, and dumps the console to `boot-console.log` on failure.
 It refuses to boot an ISO older than the sources — a build that dies halfway

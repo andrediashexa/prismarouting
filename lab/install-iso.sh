@@ -9,6 +9,22 @@
 # It also proves the part the live image can never reach: the installed system
 # applies isolcpus and hugepages, so its self-test comes up OUT of first-boot
 # mode. On the live ISO that path is dead code by construction.
+#
+# And the installed box's console is DRIVEN, not only read (#189). A role is
+# only real if an account the product created on a box somebody RECEIVES can
+# use it, and until this existed the only proof of one was lab/vty.sh: in a
+# container, against a VPP the lab had started itself, with the memberships
+# handed out by the lab. That is the shape of #99, #168, #182 and #184, and it
+# cost three shipped defects in two days when the same assumption was made
+# about VPP workers (#199, #200, #201).
+#
+#   sh tools/lab.sh install-iso                  the lab
+#   sh tools/lab.sh install-iso wrong-password   the driver typing a password
+#                                                the box will refuse
+#
+# The second is not a mode anybody wants; it is how this lab is shown to FAIL
+# rather than hang when the box does not answer, which is the one failure a
+# console driver has to get right.
 set -u
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 DISK=${DISK:-/tmp/hexa-disk.qcow2}
@@ -29,6 +45,47 @@ LOG=${LOGCOPY:-/src/install-console.log}
 NEW_HOST=${NEW_HOST:-cgnat-lab}
 NEW_TZ=${NEW_TZ:-America/Sao_Paulo}
 NEW_PW=${NEW_PW:-lab-secret-42}
+
+# The accounts the VTY is made to create on the installed box, and what the
+# driver types to log in as them.
+#
+# The password is a crypt HASH because that is what the `user` block takes: a
+# plaintext one lands in /etc/shadow and simply never matches, so the VTY
+# refuses it. The salt is fixed so two runs put the same line on the console
+# and a diff between two consoles is a real difference.
+OP_USER=${OP_USER:-netadm}
+OP_PW=${OP_PW:-op-secret-42}
+RO_USER=${RO_USER:-lookonly}
+RO_PW=${RO_PW:-ro-secret-42}
+crypt_hash() {  # <plaintext> -> md5-crypt hash, as `user ... password` takes
+  # md5-crypt and not sha512, which is what the VTY's own refusal suggests. An
+  # sha512 hash is about 106 characters: typed at an 80-column serial console
+  # it wraps, and readline redraws the line around the wrap, so what the
+  # console log holds is the hash with escape sequences through the middle of
+  # it. Nothing breaks - the box gets the characters - but the artefact this
+  # lab leaves behind stops being readable, and that artefact is the evidence.
+  #
+  # crypt goes away in Python 3.13; the container is Debian 12 (3.11), the same
+  # note the password check below carries.
+  python3 -W ignore -c 'import crypt,sys; print(crypt.crypt(sys.argv[1], "$1$hexalab"))' "$1"
+}
+OP_HASH=$(crypt_hash "$OP_PW")
+RO_HASH=$(crypt_hash "$RO_PW")
+
+# The password the driver TYPES at the console, which is the answer the
+# installer was given and is deliberately a SECOND name for it. Making them
+# differ is the only way to see what this lab does when the box answers and
+# refuses - and a console driver whose failure mode is a hang is not finished.
+LOGIN_PW=$NEW_PW
+case "${1:-}" in
+  "") ;;
+  wrong-password)
+    LOGIN_PW="not-$NEW_PW"
+    echo "running with a root password the box will REFUSE: this lab MUST"
+    echo "fail, and it must say which wait timed out and why" ;;
+  *)
+    echo "usage: install-iso.sh [wrong-password]" >&2; exit 1 ;;
+esac
 
 [ -f "$ISO" ] || { echo "no ISO at $ISO"; exit 1; }
 fail=0
@@ -272,12 +329,337 @@ echo "=========== PHASE 2: boot the disk, ISO detached ==========="
 # product bug.
 # No -cdrom and no -kernel: if the disk cannot boot itself, nothing here will
 # boot it for it.
-timeout "${BOOT_SECS:-300}" qemu-system-x86_64 \
+#
+# ---------------------------------------------------------- the console driver
+#
+# A named pipe is qemu's stdin, so this lab can TYPE at the same serial line an
+# operator is handed. Everything it types is in drive_console() below.
+#
+# Nothing here sleeps and hopes. A serial console echoes what is typed, a
+# prompt arrives when the box is ready and not when the driver is, and hexash
+# is not a shell - so every wait is for a string the BOX prints, with a timeout
+# and a report naming the string it gave up on. A driver that cannot tell "the
+# box never asked" from "the box asked and refused" is worse than no driver:
+# both look like a timeout, and they need opposite work.
+CONSOLE_IN=/tmp/console.in
+CONSOLE_LOG=/tmp/disk.log
+CONSOLE_POS=1
+: > "$CONSOLE_LOG"
+rm -f "$CONSOLE_IN"
+mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
+
+# What the console has printed since the last thing the driver recognised.
+#
+# \r goes, because a serial console ends every line with one and a pattern
+# anchored on the start of a line would never match otherwise. The escape
+# sequences go with it: readline redraws its prompt with them, so the string
+# "hexarouting> " arrives cut in half by a cursor move often enough to matter.
+console_since() {
+  tail -c "+$CONSOLE_POS" "$CONSOLE_LOG" 2>/dev/null \
+    | tr -d '\r' | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g'
+}
+
+send() { printf '%s\n' "$*" >&3; }
+
+console_gave_up() {  # <string> <what the driver was doing> <how long>
+  echo
+  echo "=========== THE CONSOLE DRIVER GAVE UP ==========="
+  echo "  waiting for: '$1'"
+  echo "  which was:   $2"
+  echo "  it waited:   $3"
+  echo "  what the console printed since the last thing the driver"
+  echo "  recognised:"
+  # The newline is not decoration: the console's last line has no line ending
+  # of its own - it is a half-drawn prompt - so without this the diagnosis
+  # below is printed onto the end of it and reads as the box's own words.
+  console_since | tail -25 | sed 's/^/    | /'
+  echo
+  # The whole reason this function exists rather than an "expect timed out".
+  # These four are different failures needing different work, and reporting
+  # them as one timeout sends whoever reads it to the timing when the answer
+  # is already on the screen.
+  if console_since | grep -q "Login incorrect"; then
+    echo "  DIAGNOSIS: the box ANSWERED and REFUSED the credentials. Nothing"
+    echo "  here is slow: the password the installer was given and the one the"
+    echo "  driver typed are not the same password."
+  elif console_since | grep -qi "permission denied"; then
+    echo "  DIAGNOSIS: the box ANSWERED and REFUSED the command. The account"
+    echo "  does not have the reach its role implies - which is the defect"
+    echo "  this lab exists to catch, and not a fault in the driver."
+  elif [ -z "$(console_since | tr -d ' \t\n')" ]; then
+    echo "  DIAGNOSIS: the box printed NOTHING at all since then. It is not"
+    echo "  refusing anything - the console went silent, so the question is"
+    echo "  whether the machine is still running, not what was typed at it."
+  else
+    echo "  DIAGNOSIS: the box is talking and never said the string above."
+    echo "  Two different things end here and the tail tells them apart: the"
+    echo "  box ANSWERED SOMETHING ELSE, which is this lab's assertion failing"
+    echo "  and the answer is printed above - or a prompt's wording changed,"
+    echo "  which fails identically and means nothing is wrong with the box."
+  fi
+  echo "  --- full console in $LOG ---"
+}
+
+wait_for() {  # <string> <seconds> <what the driver was doing>
+  _s=$1; _t=$2; _why=$3; _n=0
+  while :; do
+    if console_since | grep -qF "$_s"; then
+      # Everything up to here has been recognised, so the next wait starts
+      # after it. Without this a prompt printed once satisfies every later
+      # wait for a prompt, and the driver races ahead of the box saying yes
+      # to itself.
+      CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+      return 0
+    fi
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+      console_gave_up "$_s" "$_why" "${_n}s, and then the machine exited"
+      return 1
+    fi
+    if [ "$_n" -ge "$_t" ]; then
+      console_gave_up "$_s" "$_why" "${_t}s"
+      return 1
+    fi
+    sleep 1
+    _n=$((_n + 1))
+  done
+}
+
+# The markers the box is made to print are split in the command - echo
+# "HX""LAB" - so that what comes back is the box's ANSWER and never the
+# driver's own keystrokes echoed back at it. Every assertion below anchors on
+# the start of a line for the same reason.
+drive_console() {
+  # The box's OWN statement that it is ready, not a login prompt and not a
+  # clock. They are not the same moment on an installed box, and the
+  # difference is a defect this lab found on its first run:
+  #
+  #   the serial getty draws "cgnat-lab login:" while hexarouting.service is
+  #   still waiting for the dataplane, so `configure` typed at that prompt
+  #   builds its candidate out of vppctl's "Could not find VPP CLI socket"
+  #   and every commit in that session is then refused with "there are
+  #   configuration lines this VTY does not understand". The VTY recovers -
+  #   it waits and the dataplane answers - but the candidate keeps the error
+  #   text as a configuration line.
+  #
+  # That is a real bug on a box somebody receives and it is NOT the one this
+  # lab is about. Starting here is the same decision the installer answers
+  # above are: a test that logs in at the earliest instant the getty allows is
+  # testing the timing of the login against the boot, and it would report that
+  # race as a role failure. Do not replace this with a sleep, and do not move
+  # it earlier without dealing with the bug first.
+  wait_for "HexaRouting ready." 420 \
+    "the installed box to boot and report itself ready" || return 1
+  # The self-test writes its report over whatever the getty has already drawn,
+  # because the ordering that stops it doing so is installed on the LIVE image
+  # only (#93) - so the login prompt above is scrolled off and has to be asked
+  # for again. An empty line is what the operator standing there does too.
+  send ""
+  wait_for "$NEW_HOST login:" 120 \
+    "the getty to draw a login prompt again" || return 1
+  send "root"
+  wait_for "Password:" 60 "login to ask for root's password" || return 1
+  send "$LOGIN_PW"
+  # The banner, not a prompt. It is the one string that proves the login
+  # SUCCEEDED - and that root's login shell on a shipped box is this VTY. A
+  # driver that waited for a prompt would type its next command at the login
+  # prompt that follows a refusal and run the whole lab against it, which is
+  # the single most likely way for this to go green proving nothing.
+  wait_for "HexaRouting VTY" 180 "root's login to land in the VTY" || return 1
+  echo "  -- root is in the VTY; the VTY creates the accounts and grants a role"
+
+  send "configure"
+  wait_for "entering configuration mode" 60 \
+    "the VTY to enter configuration mode" || return 1
+  send "user $OP_USER"
+  wait_for "[edit user $OP_USER]" 30 "the user block to open" || return 1
+  send "password $OP_HASH"
+  send "role administrator"
+  send "exit"
+  wait_for "[edit]" 30 "the user block to close" || return 1
+  send "user $RO_USER"
+  wait_for "[edit user $RO_USER]" 30 \
+    "the second user block to open" || return 1
+  # No role at all: the half a lab that only grants things never checks. An
+  # account with no role must be able to do nothing, or the boundary the box
+  # reports is decoration.
+  send "password $RO_HASH"
+  send "exit"
+  wait_for "[edit]" 30 "the second user block to close" || return 1
+  send "commit"
+  wait_for "commit complete" 300 "root's commit to apply the accounts" || return 1
+  send "exit"
+  wait_for "hexarouting> " 30 "the VTY to leave configuration mode" || return 1
+
+  echo "  -- what the BOX says those accounts got, read off the box"
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open" || return 1
+  send 'echo "HX""LAB whoami=$(id -un)"'
+  wait_for "HXLAB whoami=root" 60 "the shell to answer" || return 1
+  send 'echo "HX""LAB groups-op=$(id -nG '"$OP_USER"')"'
+  wait_for "HXLAB groups-op=" 30 \
+    "the box to list the administrator's memberships" || return 1
+  send 'echo "HX""LAB groups-ro=$(id -nG '"$RO_USER"')"'
+  wait_for "HXLAB groups-ro=" 30 \
+    "the box to list the read-only account's memberships" || return 1
+  send 'echo "HX""LAB shell-op=$(getent passwd '"$OP_USER"' | cut -d: -f7)"'
+  wait_for "HXLAB shell-op=" 30 \
+    "the box to say what the account logs into" || return 1
+  send 'echo "HX""LAB modes=$(stat -c %a:%G /etc/hexarouting) $(stat -c %a:%G /etc/hexarouting/rollback)"'
+  wait_for "HXLAB modes=" 30 \
+    "the box to state the configuration directory's mode" || return 1
+
+  # The self-test again, now that the box has an account. At boot it said it
+  # had none; this is the same program, on the same console, with the only
+  # difference being the thing the VTY just did.
+  echo "  -- the boot self-test, run again now that an account has a role"
+  send 'echo "HX""LAB selftest-rerun"'
+  wait_for "HXLAB selftest-rerun" 30 "the marker before the re-run" || return 1
+  send "/usr/lib/hexarouting/selftest"
+  wait_for "====================" 240 "the self-test to finish" || return 1
+
+  send 'echo "HX""LAB section=op"'
+  wait_for "HXLAB section=op" 30 "the marker that ends root's session" || return 1
+  send "exit"
+  wait_for "back in the HexaRouting VTY" 60 \
+    "the shell escape to return to the VTY" || return 1
+  send "exit"
+  wait_for "$NEW_HOST login:" 120 \
+    "the VTY to log root out and the getty to come back" || return 1
+
+  # --------------------------------------------------- the account, as itself
+  echo "  -- the account the VTY made logs in and uses the role it was given"
+  send "$OP_USER"
+  wait_for "Password:" 60 "login to ask for the account's password" || return 1
+  send "$OP_PW"
+  wait_for "HexaRouting VTY" 180 \
+    "the account the VTY created to log in and land in the VTY" || return 1
+  send "configure"
+  wait_for "entering configuration mode" 60 \
+    "an administrator to be let into configuration mode" || return 1
+  # Routing, which is the half a cgnat-operator is refused and the half that
+  # was broken for a non-root administrator: frr-reload.py writes its log into
+  # a directory the frr package ships read-only to group frr, so this account
+  # could `commit check` a change and not commit it (#186).
+  send "router bgp 65000"
+  wait_for "[edit router bgp 65000]" 30 "the BGP block to open" || return 1
+  send "neighbor 10.0.0.2 remote-as 65001"
+  send "neighbor 10.0.0.2 description NETADM-ON-AN-INSTALLED-BOX"
+  send "exit"
+  wait_for "[edit]" 30 "the BGP block to close" || return 1
+  # And CGNAT, which goes over the BINARY API. That is the call that fails for
+  # everybody but root unless the drop-in on vpp.service group-owns
+  # /dev/shm/global_vm - a drop-in that runs under systemd, which no other lab
+  # in this repository has (#76).
+  send "cgnat pool lab-a"
+  wait_for "[edit cgnat pool lab-a]" 30 "the pool block to open" || return 1
+  send "inside 100.64.0.0/22"
+  send "outside 198.51.100.64/30"
+  send "exit"
+  wait_for "[edit]" 30 "the pool block to close" || return 1
+  send "commit"
+  wait_for "commit complete" 300 \
+    "an administrator's commit to be applied on the installed box" || return 1
+  send "exit"
+  wait_for "hexarouting> " 30 "the VTY to leave configuration mode" || return 1
+
+  # Read back from FRR and from the dataplane, by the account itself. "commit
+  # complete" is this VTY's own sentence; whether the routing daemon and the
+  # dataplane took a change from an account that is not root is a question
+  # only they can answer.
+  send "start shell"
+  wait_for "entering /bin" 60 "the administrator's shell escape to open" || return 1
+  send 'echo "HX""LAB frr=$(vtysh -c "show run" | grep -c NETADM-ON-AN-INSTALLED-BOX)"'
+  wait_for "HXLAB frr=" 60 "FRR to answer the account" || return 1
+  send 'echo "HX""LAB pool=$(vppctl show bpa pool | grep -c lab-a)"'
+  wait_for "HXLAB pool=" 60 "the dataplane to answer the account" || return 1
+  # A commit whose rollback revision could not be written still says "commit
+  # complete" and warns one line above it, so an operator whose changes could
+  # not be undone went unnoticed until #188 was filed.
+  send 'echo "HX""LAB rollback=$(ls /etc/hexarouting/rollback | wc -l) $(stat -c %a:%G /etc/hexarouting/rollback)"'
+  wait_for "HXLAB rollback=" 30 "the rollback store to be listed" || return 1
+  # WHO owns the newest revision, and not how many there are. root's commit
+  # above wrote one, so a count proves nothing about the operator's - a store
+  # holding somebody else's revision is exactly the box #188 describes, where
+  # the operator's own change is the one that cannot be undone.
+  send 'echo "HX""LAB newest-rev=$(stat -c %U $(ls -dt /etc/hexarouting/rollback/* | head -1))"'
+  wait_for "HXLAB newest-rev=" 30 \
+    "the box to say who owns the newest rollback revision" || return 1
+  send 'echo "HX""LAB section=ro"'
+  wait_for "HXLAB section=ro" 30 \
+    "the marker that ends the administrator's session" || return 1
+  send "exit"
+  wait_for "back in the HexaRouting VTY" 60 \
+    "the shell escape to return to the VTY" || return 1
+  send "exit"
+  wait_for "$NEW_HOST login:" 120 \
+    "the getty to come back after the administrator logs out" || return 1
+
+  # ------------------------------------------- the account with no role at all
+  echo "  -- and the account with no role is held to it"
+  send "$RO_USER"
+  wait_for "Password:" 60 \
+    "login to ask the read-only account for its password" || return 1
+  send "$RO_PW"
+  wait_for "HexaRouting VTY" 180 \
+    "the read-only account to log in and land in the VTY" || return 1
+  send "configure"
+  wait_for "configure: permission denied for a read-only account" 60 \
+    "the box to refuse configuration to an account with no role" || return 1
+  send "start shell"
+  wait_for "start shell: permission denied for a read-only account" 60 \
+    "the box to refuse the shell escape to an account with no role" || return 1
+  # The other half: a role that refuses everything is not a role, it is a
+  # broken VTY. Reading needs the dataplane socket and FRR's, both group-owned
+  # - so this is where the memberships every account gets, role or none, are
+  # proved on an installed box.
+  send "show running-config"
+  # Rewound between the two, deliberately. They are two halves of ONE answer
+  # and they arrive in an order this driver must not depend on: waiting for
+  # whichever the VTY happens to print first would step the reader past the
+  # other and time out on an answer that was already on the screen.
+  _cfg_at=$CONSOLE_POS
+  wait_for "router bgp 65000" 120 \
+    "the read-only account to read the routing configuration back from FRR" \
+    || return 1
+  CONSOLE_POS=$_cfg_at
+  wait_for "cgnat pool lab-a" 60 \
+    "the read-only account to read the pool back from the dataplane" || return 1
+  return 0
+}
+
+# BOOT_SECS is the ceiling on the whole driven session now - the boot, three
+# logins and a re-run of the self-test - and not a schedule. Every wait above
+# has its own timeout and the machine is killed the moment the last account
+# has been held to its role.
+timeout "${BOOT_SECS:-900}" qemu-system-x86_64 \
   $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
   -drive file="$DISK",format=qcow2,if=virtio \
-  > /tmp/disk.log 2>&1
+  < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
+QEMU_PID=$!
+# Held open for the whole session. A writer that opens the pipe for each line
+# and closes it hands qemu an end-of-file on the serial console in between,
+# and the box stops reading.
+exec 3> "$CONSOLE_IN"
 
-sed 's/\x1b\[[0-9;]*m//g' /tmp/disk.log > /tmp/disk-clean.log
+CONSOLE_DRIVEN=1
+if ! drive_console; then
+  CONSOLE_DRIVEN=0
+  fail=1
+fi
+
+# The box has answered everything it is going to be asked. Killing it is not a
+# shutdown test - nothing here asserts anything about how it goes down - and
+# waiting out BOOT_SECS for a machine that has finished costs ten minutes of
+# every run. The pause is so that the last thing it said reaches the log.
+exec 3>&-
+sleep 2
+kill "$QEMU_PID" 2>/dev/null || true
+sleep 3
+pkill -9 -f qemu-system-x86_64 2>/dev/null || true
+wait "$QEMU_PID" 2>/dev/null || true
+
+# \r as well as the colours, now that assertions anchor on the start of a line.
+sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' /tmp/disk.log | tr -d '\r' > /tmp/disk-clean.log
 cat /tmp/disk-clean.log >> "$LOG" 2>/dev/null || true
 sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log | head -40
 
@@ -399,11 +781,16 @@ if [ "$up" = 1 ]; then
   # account at all. The release gate refused two tags for it before the cause
   # was read out of the console rather than guessed at.
   #
-  # So the assertion is now the two things this lab can honestly see: the
-  # self-test MUST NOT report the API root-only, and on a box nobody has
-  # configured yet it MUST say so out loud rather than staying quiet - because
-  # "no accounts" being mistaken for "the accounts are fine" is the whole
-  # reason that line exists.
+  # Both halves are asserted now, and they are told apart by WHEN the
+  # self-test said them: the one at boot is a box nobody has configured, the
+  # one after the marker is the same program on the same box after the VTY
+  # gave an account a role. A single grep over the whole console would find
+  # either and could not say which - and "no accounts" being mistaken for "the
+  # accounts are fine" is the entire reason that line exists.
+  BOOT_ST=/tmp/selftest-boot.log
+  RERUN_ST=/tmp/selftest-rerun.log
+  sed -n '1,/^HXLAB selftest-rerun/p' /tmp/disk-clean.log > "$BOOT_ST"
+  sed -n '/^HXLAB selftest-rerun/,$p' /tmp/disk-clean.log > "$RERUN_ST"
   if grep -q "no account on this box is in group vpp" /tmp/disk-clean.log \
      || grep -q "the binary API does not work for" /tmp/disk-clean.log; then
     echo "  [FAIL] the binary API is root-only on the installed box: every"
@@ -411,17 +798,207 @@ if [ "$up" = 1 ]; then
     grep -A2 "in group vpp\|does not work for" /tmp/disk-clean.log | head -3 \
       | sed 's/^/         /'
     fail=1
-  elif grep -q "no operator account exists yet" /tmp/disk-clean.log; then
-    echo "  [ ok ] a fresh box says it has no operator account yet, rather"
-    echo "         than reporting reach nobody has"
-  elif grep -q "the binary API works for" /tmp/disk-clean.log; then
-    echo "  [ ok ] a real non-root account reaches the binary API, so roles bind"
   else
-    echo "  [FAIL] the self-test said nothing about who can reach the API"
+    if grep -q "no operator account exists yet" "$BOOT_ST"; then
+      echo "  [ ok ] a fresh box says it has no operator account yet, rather"
+      echo "         than reporting reach nobody has"
+    else
+      echo "  [FAIL] the box that had just been installed said nothing about"
+      echo "         having no operator account: a box with no accounts and a"
+      echo "         box whose accounts are fine would read the same"
+      fail=1
+    fi
+    # WHICH account it names, rather than that it named one. The self-test
+    # proves the API with the first account it finds in group vpp, and the
+    # only accounts on this box are the two the VTY made a minute ago - so
+    # naming anything else would mean it found reach somewhere this lab did
+    # not put it.
+    API_FOR=$(sed -n 's/.*the binary API works for \([^,]*\),.*/\1/p' \
+      "$RERUN_ST" | head -1)
+    if [ "$API_FOR" = "$OP_USER" ] || [ "$API_FOR" = "$RO_USER" ]; then
+      echo "  [ ok ] and after the VTY gave an account a role, the same"
+      echo "         self-test names one of the accounts it made:"
+      grep -o "the binary API works for.*" "$RERUN_ST" | head -1 \
+        | sed 's/^/         /'
+    elif [ "$CONSOLE_DRIVEN" = 0 ]; then
+      echo "  [FAIL] and the self-test was never re-run: the driver did not"
+      echo "         get as far as giving an account a role"
+    else
+      echo "  [FAIL] the self-test still does not name an account that reaches"
+      echo "         the binary API, after the VTY created one and gave it a"
+      echo "         role on this box. Either the account did not get the"
+      echo "         membership, or the membership does not reach the API:"
+      grep -E "no operator account|in group vpp|does not work for|\[warn\] $OP_USER" \
+        "$RERUN_ST" | head -3 | sed 's/^/         /'
+      fail=1
+    fi
+  fi
+fi
+
+# --- the role, on a box somebody receives (#189) ---
+#
+# Every answer below was read OFF the installed box - out of /etc/group, out of
+# FRR, out of the dataplane - and not out of what the VTY printed, which is the
+# lesson #161 cost: a VTY whose belief and the box's answer never met is
+# exactly what #184 was.
+#
+# The accounts were created BY THE PRODUCT, at the console, through the VTY.
+# There is no useradd, no usermod and no writing to the disk image anywhere in
+# this lab. A lab that performs the product's missing step cannot notice the
+# product missing it.
+echo
+echo "=========== THE ROLE, ON THE BOX THAT WAS JUST INSTALLED ==========="
+if [ "$CONSOLE_DRIVEN" = 0 ]; then
+  echo "  [FAIL] nothing about roles was proved on this box: the console"
+  echo "         driver did not finish its session, and every assertion"
+  echo "         below it went untested rather than passing"
+  fail=1
+else
+  # Three sessions in one console log, told apart by a marker each one printed
+  # before it logged out. Without this a refusal printed by one account would
+  # satisfy an assertion about another, which is the console equivalent of
+  # asserting on what the VTY printed.
+  sed -n '/^HXLAB section=op/,/^HXLAB section=ro/p' /tmp/disk-clean.log \
+    > /tmp/sec-op.log
+  sed -n '/^HXLAB section=ro/,$p' /tmp/disk-clean.log > /tmp/sec-ro.log
+  field() { sed -n "s/^HXLAB $1=//p" /tmp/disk-clean.log | head -1; }
+  OP_GROUPS=" $(field groups-op) "
+  RO_GROUPS=" $(field groups-ro) "
+  OP_SHELL=$(field shell-op)
+  CONF_MODES=$(field modes)
+  FRR_HITS=$(field frr)
+  POOL_HITS=$(field pool)
+  RB_COUNT=$(field rollback | awk '{print $1}')
+  RB_MODE=$(field rollback | awk '{print $2}')
+  NEWEST_REV=$(field newest-rev)
+  has() { case "$2" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+  echo "  $OP_USER (role administrator) is in:$OP_GROUPS"
+  echo "  $RO_USER (no role) is in:$RO_GROUPS"
+
+  # The role groups. hexa-admin is additive on top of hexa-cgnat, because the
+  # configuration directory and the rollback store are group hexa-cgnat and an
+  # administrator that cannot write them cannot record the revision for the
+  # change it just made.
+  for g in hexa-admin hexa-cgnat; do
+    if has "$g" "$OP_GROUPS"; then
+      echo "  [ ok ] the account the VTY made is in $g"
+    else
+      echo "  [FAIL] the account the VTY made is NOT in $g: it was granted a"
+      echo "         role the box will not honour, and every command it issues"
+      echo "         will be refused as though it were an authorization"
+      fail=1
+    fi
+    if has "$g" "$RO_GROUPS"; then
+      echo "  [FAIL] the account with NO role is in $g: the box grants rights"
+      echo "         nobody asked it to grant, and the boundary the VTY reports"
+      echo "         is decoration"
+      fail=1
+    fi
+  done
+  # The reach every account needs before authorization is even the question.
+  # VPP creates its sockets srwxrwxr-x root:vpp and /etc/frr is drwxr-x---
+  # frr:frr, so an account outside these is refused by the SOCKET on every
+  # command, the read-only ones included.
+  for g in vpp frr frrvty; do
+    if has "$g" "$OP_GROUPS" && has "$g" "$RO_GROUPS"; then
+      echo "  [ ok ] both accounts reach $g, role or none"
+    else
+      echo "  [FAIL] an account the VTY created is outside $g, so it cannot"
+      echo "         open the socket its role is about - which reads as an"
+      echo "         authorization refusal and is not one"
+      fail=1
+    fi
+  done
+  if [ "$OP_SHELL" = /usr/bin/hexash-login ]; then
+    echo "  [ ok ] and it logs into the VTY, not into a shell"
+  else
+    echo "  [FAIL] the account's login shell is '$OP_SHELL', so the box hands"
+    echo "         whoever logs in a shell instead of the VTY"
+    fail=1
+  fi
+
+  # #188, on an installed box: the installer states these modes and the VTY
+  # must not narrow them. The first commit here was ROOT's, which is the case
+  # that broke every later one.
+  if [ "$CONF_MODES" = "2770:hexa-cgnat 2770:hexa-cgnat" ]; then
+    echo "  [ ok ] root's commit left the configuration directory and the"
+    echo "         rollback store 2770 group hexa-cgnat"
+  else
+    echo "  [FAIL] after root's commit the configuration directory and the"
+    echo "         rollback store are '$CONF_MODES', not '2770:hexa-cgnat"
+    echo "         2770:hexa-cgnat': every non-root operation on them fails"
+    fail=1
+  fi
+
+  # The account, as itself. "commit complete" is the VTY's own sentence; these
+  # two are the daemons' answers.
+  if [ "${FRR_HITS:-0}" -ge 1 ] 2>/dev/null; then
+    echo "  [ ok ] FRR holds the routing statement that account committed"
+  else
+    echo "  [FAIL] FRR holds nothing from that account: an administrator that"
+    echo "         can enter a routing change and not apply it is #186, found"
+    echo "         in the maintenance window after the check has said yes"
+    grep -E "permission denied|frr-reload|reached FRR" /tmp/sec-op.log 2>/dev/null \
+      | head -3 | sed 's/^/         /'
+    fail=1
+  fi
+  if [ "${POOL_HITS:-0}" -ge 1 ] 2>/dev/null; then
+    echo "  [ ok ] and the dataplane holds the pool it created over the"
+    echo "         binary API, which is the call that is root-only unless the"
+    echo "         drop-in on vpp.service ran"
+  else
+    echo "  [FAIL] the dataplane holds no pool from that account: on an"
+    echo "         installed box the binary API is reached through a drop-in"
+    echo "         that only systemd runs, and this is the only lab that has one"
+    fail=1
+  fi
+  if [ "$NEWEST_REV" = "$OP_USER" ] && [ "$RB_MODE" = 2770:hexa-cgnat ] \
+     && ! grep -q "no rollback revision could be recorded" /tmp/sec-op.log; then
+    echo "  [ ok ] and the commit it made can be undone: the newest of the"
+    echo "         $RB_COUNT revision(s) belongs to $NEWEST_REV, in a store"
+    echo "         that is still $RB_MODE"
+  else
+    echo "  [FAIL] that account's commit did not record a rollback revision of"
+    echo "         its own: the newest belongs to '$NEWEST_REV', not to"
+    echo "         $OP_USER, and the store is '$RB_MODE'. The commit still says"
+    echo "         'commit complete' and warns one line above it, so an"
+    echo "         operator whose changes cannot be undone does not find out"
+    grep "no rollback revision could be recorded" /tmp/sec-op.log | head -1 \
+      | sed 's/^/         /'
+    fail=1
+  fi
+
+  # The negative half. A role that refuses nothing is not a role.
+  if grep -q "configure: permission denied for a read-only account" \
+       /tmp/sec-ro.log 2>/dev/null; then
+    echo "  [ ok ] the account with no role is refused configuration mode"
+  else
+    echo "  [FAIL] an account the VTY gave no role was let into configuration"
+    echo "         mode on the installed box"
+    fail=1
+  fi
+  if grep -q "start shell: permission denied for a read-only account" \
+       /tmp/sec-ro.log 2>/dev/null; then
+    echo "  [ ok ] and refused the shell escape"
+  else
+    echo "  [FAIL] an account with no role reached a root shell through the"
+    echo "         VTY, which is every boundary above it at once"
+    fail=1
+  fi
+  # And can still read, through the two sockets it is in the groups for.
+  if grep -q "router bgp 65000" /tmp/sec-ro.log 2>/dev/null \
+     && grep -q "cgnat pool lab-a" /tmp/sec-ro.log 2>/dev/null; then
+    echo "  [ ok ] and can still read the box: the routing half from FRR and"
+    echo "         the CGNAT half from the dataplane"
+  else
+    echo "  [FAIL] the account with no role cannot read the box either, so it"
+    echo "         is not read-only - it is locked out, and the operator will"
+    echo "         conclude the box is broken"
     fail=1
   fi
 fi
 
+echo
 # Which NIC the dataplane was allowed to claim (#123).
 #
 # An installed box used to generate a DPDK stanza with no device allowlist,
@@ -520,3 +1097,4 @@ fi
 echo "LAB FAILED"
 echo "--- full console in $LOG ---"
 exit 1
+
