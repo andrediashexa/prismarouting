@@ -687,14 +687,51 @@ box's strongest claim, the diagnoses FRR cannot make.
 |---|---|---|
 | [#198](https://github.com/andrediashexa/hexarouting/issues/198) | the IS-IS IPv6 warning, disproved by this repository's own lab on every run | *withdrawn* |
 | [#205](https://github.com/andrediashexa/hexarouting/issues/205) | the OSPF check silenced by the wrong spelling of `passive-interface` and fired by the right one | *fixed* |
-| [#208](https://github.com/andrediashexa/hexarouting/issues/208) | BGP unnumbered refused, failing the whole commit | **open** |
-| — | `route_map_findings` evaluating clauses in written order where FRR uses `seq`; `undefined_policy_lists` refusing a forward reference FRR accepts; an `IndexError` on a half-typed statement | **open**, folded into #208 |
+| [#208](https://github.com/andrediashexa/hexarouting/issues/208) | BGP unnumbered refused, failing the whole commit | *fixed* |
+| — | `route_map_findings` evaluating clauses in written order where FRR uses `seq`; `undefined_policy_lists` refusing a forward reference FRR accepts; an `IndexError` on a half-typed statement | *fixed*, folded into #208 |
 
-#208 matters beyond its own line: it refuses the **whole commit**, so a CGNAT
-change in the same candidate is refused with it, over a BGP statement the
-operator may not have touched. And the only way round it is `vtysh`, which is
+#208 mattered beyond its own line: it refused the **whole commit**, so a CGNAT
+change in the same candidate was refused with it, over a BGP statement the
+operator may not have touched. And the only way round it was `vtysh`, which is
 the tool this VTY exists to keep them out of — a routing change made there is
 invisible to `commit`, `rollback` and the audit trail.
+
+Two of the issue's claims did **not** reproduce against FRR 10.7.1 and nothing
+was changed for them: definitions are already collected in a pass of their own,
+so a route-map written above its lists was never order-dependent; and FRR
+answers both legacy `ip community-list` / `ip as-path access-list` spellings
+with `% Unknown command`, so tolerating them would be tolerance for a statement
+FRR rejects. Both are now asserted in `lab/bgp-policy.sh`, so the measurement is
+recorded rather than rediscovered by whoever reads the issue next.
+
+It left one thing behind, and it is a dataplane defect rather than a VTY one:
+[#213](https://github.com/andrediashexa/hexarouting/issues/213). An unnumbered
+session still does not reach Established, because IPv6 link-local multicast is
+not punted over a `linux_cp` pair — `ff02::1/128` is a receive-only MFIB entry
+and linux_cp puts nothing on the `ip6-multicast` arc. FRR learns an unnumbered
+peer's address from that Router Advertisement and from nothing else. The same
+hole affects IPv6 ND from a neighbour, OSPFv3 and IS-IS over IPv6, which makes
+it a dependency of [#187](https://github.com/andrediashexa/hexarouting/issues/187).
+
+#### The box an operator is handed, in the first five minutes
+
+Found by giving `lab/install-iso.sh` a console driver
+([#189](https://github.com/andrediashexa/hexarouting/issues/189)) and then
+using it the way an operator does rather than the way a test does.
+
+| | | |
+|---|---|---|
+| [#211](https://github.com/andrediashexa/hexarouting/issues/211) | the getty offers a login before the box is ready, and the first `configure` poisons every commit in that session | **open**, VTY half fixed |
+| [#212](https://github.com/andrediashexa/hexarouting/issues/212) | `commit confirmed` dies with the session that made it, so it protects nothing | **open** |
+
+#211 is two defects wearing one hat. The VTY half is fixed: `Vpp.run` now
+honours the exit status, and `configure` refuses to build a candidate from a
+dataplane that is not answering rather than putting vppctl's error text into
+the candidate as configuration lines. The getty half is the ordering drop-in,
+which the live image has had since
+[#93](https://github.com/andrediashexa/hexarouting/issues/93) and an installed
+box has never had: the ordering and the autologin shared one file, and the
+installer correctly deletes the autologin, taking the ordering with it.
 
 #### Installation — blocked by nothing, paid on every box
 

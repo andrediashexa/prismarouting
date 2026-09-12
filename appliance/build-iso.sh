@@ -137,12 +137,26 @@ say "binary API: vat2 plugin in place"
 # prompt does not show what it is. On an INSTALLED box this would mean physical
 # or IPMI access equals full access with no password, which is a decision for
 # the operator, not a default - so install.sh never does this.
-say "console autologin (live image only)"
+say "console ordering (both) and autologin (live image only)"
 for tty in ttyS0 tty1; do
   d="$ROOT/etc/systemd/system/serial-getty@$tty.service.d"
   [ "$tty" = tty1 ] && d="$ROOT/etc/systemd/system/getty@$tty.service.d"
   mkdir -p "$d"
-  cat > "$d/autologin.conf" <<EOF
+
+  # TWO files, and the split is the whole point.
+  #
+  # These used to be one, and the installer deletes what it finds here because
+  # an installed box must not log anybody in without a password. So it took the
+  # ORDERING with the autologin, and an installed box drew a login prompt while
+  # hexarouting.service was still waiting for VPP. The first thing anybody does
+  # with a new box is log in at that prompt, and `configure` there built a
+  # candidate out of vppctl's error text that refused every later commit in the
+  # session (#211).
+  #
+  # The ordering belongs to every box; the autologin belongs to the live image
+  # alone. Separate files say which is which to the installer, and to whoever
+  # reads the directory next.
+  cat > "$d/10-after-selftest.conf" <<EOF
 [Unit]
 # The self-test writes to /dev/console and this getty draws the VTY prompt on
 # the same screen. Nothing ordered them, so the prompt was drawn first and the
@@ -158,9 +172,17 @@ for tty in ttyS0 tty1; do
 # the lab reported "the installer unit never started" for a unit that had.
 # No Wants= for it: the unit carries a ConditionKernelCommandLine and must
 # stay skipped on a boot that did not ask to install.
+#
+# On an INSTALLED box this is what keeps the prompt back until the dataplane is
+# up: the self-test is ordered after hexarouting.service, whose ExecStartPre
+# waits for VPP. A prompt offered before that invites an operator into a VTY
+# that cannot read the box (#211).
 After=hexarouting-selftest.service hexarouting-installer.service
 Wants=hexarouting-selftest.service
+EOF
 
+  # Live image only. The installer removes this one and keeps the other.
+  cat > "$d/20-autologin.conf" <<EOF
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin root --noclear %I \$TERM

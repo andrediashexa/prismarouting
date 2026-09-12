@@ -44,6 +44,21 @@ hexarouting>
 
 Precisa de um shell? `start shell`, e `exit` volta.
 
+:::info
+**No primeiro boot o console fica quieto por um tempo, e isso é de propósito.**
+A caixa só oferece o prompt de login depois que o dataplane subiu. Se o VPP
+demora, o prompt demora junto — a caixa não travou, está esperando.
+
+O motivo é prático: uma VTY aberta antes do dataplane responder não consegue
+ler a configuração da caixa, e o `configure` digitado ali montaria um candidato
+incompleto. Enquanto isso, o self-test escreve o relatório de boot no mesmo
+console; o prompt aparece depois dele, inteiro.
+
+Se mesmo assim você entrar num momento em que o dataplane ainda não respondeu,
+o `configure` recusa e diz isso, em vez de deixar você trabalhar em cima de uma
+leitura vazia.
+:::
+
 ## 3. Dizer à caixa qual placa carrega os assinantes
 
 **Uma caixa recém-instalada não entrega placa nenhuma ao dataplane.** A configuração sai de fábrica vazia, de propósito, e o self-test de boot avisa que a caixa não tem interface de dataplane e nomeia o arquivo a editar.
