@@ -139,6 +139,40 @@ one.
 asserts the allocation arrives at a real collector with the right subscriber
 and port range.
 
+## Deleting a pool closes the records of the blocks it held
+
+A pool that is deleted frees its blocks itself, and they never reach the reap
+that emits `natEvent` 17 for an ordinary release. So every block held at that
+instant used to leave an allocation **open**, which is the gap above read from
+the far end: the last allocation before the instant asked about says the
+subscriber still held those ports, for as long as the log is kept, and it names
+somebody who had already been disconnected
+([#215](https://github.com/andrediashexa/hexarouting/issues/215)).
+
+* Deleting a pool **MUST** emit `natEvent` 17 for every block it frees, before
+  it frees it. Afterwards there is nothing left that knows whose the block was.
+* The record is stamped at the **delete**, like the pin replay above and for
+  the same reason: the box did not observe the moment the block stopped being
+  used, and a record that guessed at it would be a fabricated one.
+* **Replacing** a pool is a delete followed by an add, so a `commit remap` that
+  changes a pool's addresses or block size closes the records it invalidates.
+* Pinned blocks make this likelier rather than worse: a pinned block is by
+  definition held at delete time, so a pool carrying static forwards left one
+  open record per forward, every time.
+* Deterministic pools have nothing to close. They allocate no blocks and emit
+  no events at all, so a release from there would be the second half of a pair
+  whose first half was never written.
+
+What a **restart** does is not covered by any of this. Nothing is emitted when
+the box goes down, so a dynamic block held at that moment stays open in the
+log, and a pinned block is announced again on the way back up with no release
+between the two allocations. A box that lost power could not have said
+otherwise; a graceful stop could, and does not.
+
+`lab/ipfix.sh` allocates three blocks, pins one of them, deletes the pool and
+asserts at a real collector that every allocation in the capture has its
+release for the same subscriber and the same port range.
+
 ## Volume
 
 Explicit assumptions, for order of magnitude rather than precision: 200k
@@ -582,6 +616,9 @@ to the subscriber it was issued to
 - [x] `natEvent` 16 on allocation, 17 on release, 12 on exhaustion
 - [x] `natEvent` 16 when a forward pins a block, 17 when the last one is
       removed
+- [x] `natEvent` 17 for every block a deleted pool was still holding
+- [ ] Nothing is emitted when the box is stopped, so a block held at that
+      moment leaves an allocation with no release ever written
 - [x] Per-thread queue in the dataplane, drained by a process
 - [x] TCP transport with disk spill
 - [x] Dated configuration trail, carrying the operator who made the change
