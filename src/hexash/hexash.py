@@ -1044,7 +1044,22 @@ class Vpp:
         # an invisible \r compares unequal to the same value without one, and
         # that is a bug nobody can see in the output.
         first = out.splitlines()[0] if out else ""
-        return (1 if VPP_ERROR.match(first) else 0), out
+        return (1 if (p.returncode or VPP_ERROR.match(first)) else 0), out
+
+    def reachable(self):
+        """
+        Is the dataplane answering at all - as opposed to answering "no"?
+
+        Measured, and the distinction is the one this file was missing: vppctl
+        exits 0 whenever VPP ANSWERED, including when VPP refused the command,
+        and exits 1 only when it could not reach VPP. So its exit status is
+        exactly "did I reach the dataplane", and run() above was discarding it
+        and reconstructing an answer from the text instead - which is how
+        "Could not find VPP CLI socket" reached Config.parse() as a line of
+        configuration (#211). It starts with a capital letter and carries no
+        colon, so the pattern that recognises a VPP error does not match it.
+        """
+        return self.run("show version")[0] == 0
 
 
 def mark_unchecked(lines):
@@ -4487,6 +4502,38 @@ class Shell:
                          "account")
                 print(f"    membership of {GROUP_CGNAT} allows CGNAT "
                       f"configuration, {GROUP_ADMIN} allows everything")
+                return True
+            # Not while the dataplane is silent, and the reason is that BOTH
+            # ways of proceeding are wrong.
+            #
+            # An installed box draws a login prompt while hexarouting.service
+            # is still waiting for VPP - the ordering that holds the prompt
+            # back exists on the live image only, in the same drop-in file as
+            # the live autologin, which the installer correctly deletes whole.
+            # So the first thing anybody does with a new box is log in at the
+            # first prompt and type this.
+            #
+            # Built then, the candidate carried vppctl's "Could not find VPP
+            # CLI socket" as a line of configuration, and every commit for the
+            # rest of that session was refused for a line nobody typed. The
+            # dataplane came up seconds later and the candidate kept the error
+            # text; the way out was `exit` and `configure` again, and nothing
+            # said so.
+            #
+            # Reading the status properly does not fix it, it moves it: with
+            # the read refused, the CGNAT half of the candidate is silently
+            # EMPTY, and committing that removes every pool on the box. That is
+            # #47, which running_config's own docstring is about.
+            #
+            # So neither - refuse, and say what to wait for (#211).
+            if not self.dp.reachable():
+                self.err("the dataplane is not answering, so there is nothing "
+                         "to build a candidate from")
+                print("    a candidate built now would be missing the CGNAT "
+                      "half, and committing it would remove every pool")
+                print("    the box is probably still starting: 'show version' "
+                      "says which daemons are up, and this usually clears "
+                      "within a minute of boot")
                 return True
             self.candidate = self.running_config()
             self.mode = "config"

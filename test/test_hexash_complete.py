@@ -315,7 +315,11 @@ def shell_with_box(iface_text=IFACES, dp_rc=0):
             return dp_rc, iface_text
         return 0, ""          # anything else: a box with nothing configured
 
-    sh.dp = type("D", (), {"TRACE": False, "run": run})()
+    # reachable() too, because the real Vpp has it and a stub that does not
+    # mirror the real class is a stub that passes a test the product fails.
+    # It answers through run(), the way the real one does.
+    sh.dp = type("D", (), {"TRACE": False, "run": run,
+                           "reachable": lambda _s: run(_s, "show version")[0] == 0})()
     sh.frr = type("F", (), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
@@ -1888,7 +1892,11 @@ def box_192(iface_text, hw_text=HW, counters=None, descs=None, elapsed=None,
             return 0, iface_text
         return 0, ""
 
-    sh.dp = type("D", (), {"TRACE": False, "run": run})()
+    # reachable() too, because the real Vpp has it and a stub that does not
+    # mirror the real class is a stub that passes a test the product fails.
+    # It answers through run(), the way the real one does.
+    sh.dp = type("D", (), {"TRACE": False, "run": run,
+                           "reachable": lambda _s: run(_s, "show version")[0] == 0})()
     sh.frr = type("F", (), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
@@ -2345,7 +2353,8 @@ def logging_call(line):
     sh.api_call = api_call
     sh.dp = type("D", (), {
         "TRACE": False,
-        "run": lambda _s, c: (cli.append(c), (0, ""))[1]})()
+        "run": lambda _s, c: (cli.append(c), (0, ""))[1],
+        "reachable": lambda _s: True})()
     # apply_global, not apply_logging: the statement has to REACH the API
     # path, and a test that called the new method directly went on passing
     # with the dispatcher handing the line back to the socket - which is the
@@ -2402,6 +2411,101 @@ check(_off.get("set_tcp") is True and _off.get("tcp_enable") is False,
       f"tcp off: {_off}")
 check(_off.get("collector") != "disable",
       f"'disable' is not a collector address: {_off}")
+
+
+
+# ---------------------------------------------------------------------------
+# `configure` on a box whose dataplane is not answering yet (#211)
+#
+# An installed box draws a login prompt while hexarouting.service is still
+# waiting for VPP, so the first thing anybody does with a new box is log in at
+# the first prompt and type `configure`. Both ways of proceeding from there are
+# wrong, which is why the answer is to refuse.
+
+def box_211(reachable, cfg_text):
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+
+    def run(_self, cmd):
+        if cmd == "show version":
+            return (0, "vpp v26.06") if reachable else (1, "Could not find VPP CLI socket")
+        if cmd == "show bpa config":
+            return (0 if reachable else 1), cfg_text
+        return (0 if reachable else 1), ""
+
+    sh.dp = type("D", (), {"TRACE": False, "run": run,
+                           "reachable": lambda _s: run(_s, "show version")[0] == 0})()
+    sh.frr = type("F", (), {"available": lambda s: False, "running": lambda s: [],
+                            "show": lambda s, c: (1, "")})()
+    sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_users": lambda s: {}})()
+    sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
+    return sh
+
+
+sh = box_211(False, "Could not find VPP CLI socket")
+out = capture(sh, "configure")
+check("entering configuration mode" not in out,
+      f"configuration mode is refused while the dataplane is silent: {out}")
+check(sh.candidate is None and sh.mode == "operational",
+      "and no candidate is built from what could not be read")
+check("not answering" in out, f"the refusal says what is wrong: {out}")
+# The half that matters most, because it is the one an operator would not
+# guess: a candidate built now is missing the CGNAT configuration, and
+# committing it takes every pool with it.
+check("remove every pool" in out,
+      f"and says what a candidate built now would have cost: {out}")
+
+# The same box a minute later.
+sh = box_211(True, "cgnat pool p1\n inside 100.64.0.0/22\n outside 203.0.113.0/24\n"
+                   " block-size 512\n policy interleaved\n mode deterministic\n exit\n")
+out = capture(sh, "configure")
+check("entering configuration mode" in out, f"and allowed once it answers: {out}")
+check(sh.candidate is not None and list(sh.candidate.pools) == ["p1"],
+      f"with the dataplane's own configuration in it: {out}")
+
+# vppctl's exit status is the signal, and it was being thrown away. Measured:
+# vppctl exits 0 whenever VPP ANSWERED - including when VPP refused the command
+# - and 1 only when it could not reach VPP. "Could not find VPP CLI socket"
+# starts with a capital and carries no colon, so the pattern that recognises a
+# VPP error never matched it and the text reached Config.parse as a line of
+# configuration.
+check(hexash.VPP_ERROR.match("Could not find VPP CLI socket") is None,
+      "the text alone does not look like an error, which is the whole trap")
+check(hexash.VPP_ERROR.match("unknown input `nope'") is not None,
+      "while what VPP itself says does")
+
+# So the status has to be read, and this exercises the REAL Vpp.run with a
+# stand-in vppctl rather than a stub that returns the answer directly. The
+# first version of this section tested the refusal through a stub whose run()
+# already knew the right code, so removing the status check from Vpp.run
+# changed nothing and the assertion could not fail - which is the shape this
+# repository keeps finding in its own tests.
+import stat as _stat, tempfile as _tf                             # noqa: E402
+_dir = _tf.mkdtemp()
+_fake = os.path.join(_dir, "vppctl")
+with open(_fake, "w") as _f:
+    # What the real one does, measured: it prints this on stdout and exits 1
+    # when it cannot reach VPP, and exits 0 whenever VPP answered at all.
+    _f.write("#!/bin/sh\n"
+             "case \"$*\" in\n"
+             "  *unreachable*) echo 'Could not find VPP CLI socket'; exit 1 ;;\n"
+             "  *) echo \"unknown input \\`x'\"; exit 0 ;;\n"
+             "esac\n")
+os.chmod(_fake, os.stat(_fake).st_mode | _stat.S_IEXEC)
+_saved, hexash.VPPCTL = hexash.VPPCTL, _fake
+_vpp = hexash.Vpp()
+_rc_unreach, _out_unreach = _vpp.run("unreachable")
+_rc_refused, _ = _vpp.run("something")
+hexash.VPPCTL = _saved
+
+check(_rc_unreach == 1,
+      f"vppctl exiting 1 is an error however innocent the text looks: {_rc_unreach}")
+check("Could not find" in _out_unreach,
+      "and the text still reaches the caller, for the operator to read")
+check(_rc_refused == 1,
+      "a command VPP itself refused is still an error, by the text")
+check(not _vpp.reachable(),
+      "and reachable() is that same status, asked once")
 
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
