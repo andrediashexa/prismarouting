@@ -104,6 +104,61 @@ are to be interpreted as described in
   carrying a `set` after one was not refused
   ([#208](https://github.com/andrediashexa/hexarouting/issues/208)).
 
+* **UDP IPFIX export had never worked on an installed box, and the box said
+  `commit complete`.** In dynamic mode the allocation log *is* the connection
+  record the Marco Civil requires to be kept for a year, and on a shipped
+  appliance it could not be exported over UDP at all: VPP's own IPFIX exporter
+  needs a collector, nothing in the installer, the tuner, the unit files or
+  the VTY ever set one, and the dataplane therefore refused `bpa logging
+  enable` — permanently, because it was not a state an operator could leave.
+  Until [#76](https://github.com/andrediashexa/hexarouting/issues/76) landed
+  the VTY discarded that refusal and printed `commit complete`
+  ([#209](https://github.com/andrediashexa/hexarouting/issues/209)).
+
+  `nat cgnat logging udp <collector> src <source> [port <n>]` is the statement
+  that was missing. It goes to VPP's own `set_ipfix_exporter` over the binary
+  API and not onto the plugin's message, because the exporter is core state
+  and `libvnet` exports no setter a plugin could call — copying the core
+  handler into the plugin would be a copy that drifts with every VPP bump. The
+  plugin reads it back in `show bpa config`, so the destination is saved,
+  rolled back and audited like every other setting, and `nat cgnat logging udp
+  disable` clears it.
+
+  Three things travel with it. **`commit check` now refuses `logging enable`
+  with no exporter**, before anything is applied, rather than letting the
+  dataplane refuse it half way through the apply. **The saved configuration is
+  written exporter-first**: `cgnat logging enable` sorts alphabetically before
+  the statement that makes it possible, so a file written in plain sorted
+  order refused its own second line on reload — on the boot path, which is the
+  one nobody types by hand. And **the boot self-test says whether export is
+  running**, not merely configured, by comparing the file the box was loaded
+  from against the state the dataplane holds: a refused setting looks exactly
+  like a working one, which is the shape of
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172).
+
+  How it survived: `lab/ipfix.sh` exercised the UDP path and **configured the
+  exporter itself**, with `vppctl`, because it needed one — the product's
+  missing step performed by the lab, which is the shape of
+  [#99](https://github.com/andrediashexa/hexarouting/issues/99),
+  [#168](https://github.com/andrediashexa/hexarouting/issues/168),
+  [#182](https://github.com/andrediashexa/hexarouting/issues/182) and
+  [#184](https://github.com/andrediashexa/hexarouting/issues/184), and the
+  fifth time this repository has been caught by it. The lab now configures the
+  exporter **through the VTY** and asserts a record decoded off the wire on a
+  box the product configured; `sh tools/lab.sh ipfix no-exporter` leaves the
+  statement out and fails 9 of its 13 checks.
+
+  Measured against `vpp v26.06-release` while doing it, and written down in
+  `docs/logging.md` because none of it is discoverable: the exporter starts
+  **zeroed**, so there is no dataplane default to read back and no "leave it
+  alone" encoding; `set_ipfix_exporter` refuses a source address of `0.0.0.0`
+  whatever the collector is, and a path MTU outside 68–1450; clearing the
+  exporter is a collector of `0.0.0.0` with the source left in place; a
+  collector port of 0 is *accepted*, so the caller has to supply 4739; and
+  clearing the exporter leaves `bpa logging` reporting **enabled**, which is
+  why `show cgnat logging` now prints where the records go and why the
+  self-test reads that line and not the state.
+
 ## 0.64.0 — the labs ran the box the way it ships, and seven things fell out
 
 [#14](https://github.com/andrediashexa/hexarouting/issues/14),
@@ -176,124 +231,6 @@ are to be interpreted as described in
   forwarding labs both ways.
 
 ### Fixed
-
-* **The VTY refused BGP unnumbered, and failed the whole commit for it.**
-  `neighbor vppwan0 interface remote-as external` — eBGP to a directly
-  connected peer with no address on the link, and the ordinary way to build a
-  handoff without spending a /30 — was answered with "vppwan0 has no
-  'remote-as'", with the AS on that same line. The parser read `neighbor <x>
-  remote-as <asn>` by position and did not know the form where the neighbour
-  is an **interface** and `external`/`internal` are values. Because a refusal
-  fails the candidate whole, a CGNAT or interface change typed in the same
-  commit went down with it, and there was no way round it except `vtysh`,
-  which is the tool this VTY exists to keep an operator out of.
-
-  The interface name is now validated the way
-  [#205](https://github.com/andrediashexa/hexarouting/issues/205) established
-  for `passive-interface`: through the linux_cp pair, because it is an FRR
-  statement and must be a spelling FRR can act on. A name the box does not
-  have at all is refused; the dataplane's end of a pair is warned about, not
-  refused, because that is the name `show interface` prints. The half of the
-  check that was always right — a neighbour declared with no `remote-as`
-  anywhere — still refuses, and now covers the unnumbered form too, where FRR
-  accepts the statement and leaves the peer Idle at AS 0 forever.
-
-  **The session does not reach Established yet**, and the reason is in the
-  dataplane rather than in any of this: measured on `lab/routing.sh`'s pair,
-  the far end's Router Advertisements reach the wire and never reach the TAP,
-  because `ff02::1/128` is a receive-only MFIB entry and linux_cp punts
-  nothing on the `ip6-multicast` arc. FRR learns an unnumbered peer's address
-  from that advertisement and from nothing else. That punt gap is the same
-  shape as [#168](https://github.com/andrediashexa/hexarouting/issues/168) and
-  is a defect of its own
-  ([#208](https://github.com/andrediashexa/hexarouting/issues/208)).
-
-* **A route-map naming a policy list that does not exist yet was refused.**
-  Measured on FRR 10.7.1: the clause is accepted, stored, and bound when the
-  list arrives, with nothing retyped — so writing the map first and the lists
-  in the next commit is a correct order of work, and refusing it took every
-  unrelated change in the same commit with it. It is now a warning, which is
-  the posture `rpki_findings` already argued for a clause that will not do
-  anything *yet*. The true positive survives: a list name with a typo in it
-  matches nothing forever, and nothing else on the box mentions it. The
-  legacy `ip community-list` / `ip as-path access-list` spellings were checked
-  against the same FRR and answer "Unknown command", so there was nothing to
-  be tolerant of
-  ([#208](https://github.com/andrediashexa/hexarouting/issues/208)).
-
-* **A half-typed `bgp community-list standard` crashed the VTY.** It raised
-  `IndexError` — a Python traceback in front of an operator in a maintenance
-  window is not a refusal. Every truncation of every statement these functions
-  parse, at every word and every character boundary and in every block
-  context, is now fed back in by the test suite: 305,946 inputs, no traceback
-  ([#208](https://github.com/andrediashexa/hexarouting/issues/208)).
-
-* **Route-map clauses were judged in written order while FRR uses `seq`.**
-  Inserting a low-seq clause after a catch-all — which is what sequence
-  numbers are for — was reported unreachable when FRR reaches it first;
-  measured against FRR's own `show route-map`. `on-match next`, `on-match
-  goto` and the `continue` an operator types for the second were parsed and
-  then ignored, so one of them poisoned the verdict on every later clause: a
-  route-map containing one now gets no reachability claim at all, because
-  where the reading goes next depends on whether the clause matched. `continue`
-  was not a word the parser knew, so it ended the clause and a `deny` clause
-  carrying a `set` after one was not refused
-  ([#208](https://github.com/andrediashexa/hexarouting/issues/208)).
-
-* **UDP IPFIX export had never worked on an installed box, and the box said
-  `commit complete`.** In dynamic mode the allocation log *is* the connection
-  record the Marco Civil requires to be kept for a year, and on a shipped
-  appliance it could not be exported over UDP at all: VPP's own IPFIX exporter
-  needs a collector, nothing in the installer, the tuner, the unit files or
-  the VTY ever set one, and the dataplane therefore refused `bpa logging
-  enable` — permanently, because it was not a state an operator could leave.
-  Until [#76](https://github.com/andrediashexa/hexarouting/issues/76) landed
-  the VTY discarded that refusal and printed `commit complete`
-  ([#209](https://github.com/andrediashexa/hexarouting/issues/209)).
-
-  `nat cgnat logging udp <collector> src <source> [port <n>]` is the statement
-  that was missing. It goes to VPP's own `set_ipfix_exporter` over the binary
-  API and not onto the plugin's message, because the exporter is core state
-  and `libvnet` exports no setter a plugin could call — copying the core
-  handler into the plugin would be a copy that drifts with every VPP bump. The
-  plugin reads it back in `show bpa config`, so the destination is saved,
-  rolled back and audited like every other setting, and `nat cgnat logging udp
-  disable` clears it.
-
-  Three things travel with it. **`commit check` now refuses `logging enable`
-  with no exporter**, before anything is applied, rather than letting the
-  dataplane refuse it half way through the apply. **The saved configuration is
-  written exporter-first**: `cgnat logging enable` sorts alphabetically before
-  the statement that makes it possible, so a file written in plain sorted
-  order refused its own second line on reload — on the boot path, which is the
-  one nobody types by hand. And **the boot self-test says whether export is
-  running**, not merely configured, by comparing the file the box was loaded
-  from against the state the dataplane holds: a refused setting looks exactly
-  like a working one, which is the shape of
-  [#172](https://github.com/andrediashexa/hexarouting/issues/172).
-
-  How it survived: `lab/ipfix.sh` exercised the UDP path and **configured the
-  exporter itself**, with `vppctl`, because it needed one — the product's
-  missing step performed by the lab, which is the shape of
-  [#99](https://github.com/andrediashexa/hexarouting/issues/99),
-  [#168](https://github.com/andrediashexa/hexarouting/issues/168),
-  [#182](https://github.com/andrediashexa/hexarouting/issues/182) and
-  [#184](https://github.com/andrediashexa/hexarouting/issues/184), and the
-  fifth time this repository has been caught by it. The lab now configures the
-  exporter **through the VTY** and asserts a record decoded off the wire on a
-  box the product configured; `sh tools/lab.sh ipfix no-exporter` leaves the
-  statement out and fails 9 of its 13 checks.
-
-  Measured against `vpp v26.06-release` while doing it, and written down in
-  `docs/logging.md` because none of it is discoverable: the exporter starts
-  **zeroed**, so there is no dataplane default to read back and no "leave it
-  alone" encoding; `set_ipfix_exporter` refuses a source address of `0.0.0.0`
-  whatever the collector is, and a path MTU outside 68–1450; clearing the
-  exporter is a collector of `0.0.0.0` with the source left in place; a
-  collector port of 0 is *accepted*, so the caller has to supply 4739; and
-  clearing the exporter leaves `bpa logging` reporting **enabled**, which is
-  why `show cgnat logging` now prints where the records go and why the
-  self-test reads that line and not the state.
 
 * **The IS-IS IPv6 warning fired on a working configuration, including this
   repository's own lab.** `ipv6 router isis <tag>` without `topology
@@ -368,15 +305,10 @@ are to be interpreted as described in
   reading: FRR does not store `passive-interface` at all (it rewrites it to
   `ip ospf passive`, so every commit after the first saw a spelling the parser
   did not know), and `passive-interface default` was read as an interface name.
-* **The IS-IS IPv6 warning fired on a configuration this repository's own lab
-  proves works**, and printed itself five more times per lab run on commits
-  with nothing to do with IS-IS. Withdrawn.
 * **A commit that asked FRR for changes and got none no longer says `commit
   complete`.** The general read-back check cannot be built on this tooling and
   the measurement is on the issue; what is decidable is the worst case, and it
   is now caught.
-* **`wiki-pull` and `wiki-push` round-trip.** The title was duplicated into the
-  body on every pass.
 
 ### Internal
 
