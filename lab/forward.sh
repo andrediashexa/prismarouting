@@ -8,6 +8,7 @@
 # unless a forward actually changes what the dataplane does, and running with
 # the feature removed is the only way to know they can fail at all.
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 MODE=${1:-on}
 
 mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
@@ -16,7 +17,7 @@ mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting
 }
 cd /src
 
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0
 until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }

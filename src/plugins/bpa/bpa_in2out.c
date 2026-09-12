@@ -71,8 +71,11 @@ static char *bpa_in2out_error_strings[] = {
 typedef enum
 {
   BPA_IN2OUT_NEXT_DROP,
+  BPA_IN2OUT_NEXT_LOOKUP,
+  BPA_IN2OUT_NEXT_HAIRPIN,
   BPA_IN2OUT_N_NEXT,
 } bpa_in2out_next_t;
+
 
 static_always_inline void
 bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
@@ -200,7 +203,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u32 n_translated = 0, n_new = 0, n_forwarded = 0, n_mss = 0;
   u32 n_bypass_src = 0, n_bypass_dst = 0;
   u32 n_hairpin = 0;
-  u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_ftp_seq = 0;
+  u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_seq_adj = 0;
   u32 n_rtsp = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_nocid = 0, n_pptp_bad = 0;
   u32 n_esp = 0;
@@ -282,7 +285,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 		  &n_bypass_dst)))
 	    {
 	      bypassed = 1;
-	      vnet_feature_next_u16 (&next[0], b[0]);
+	      bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
 	      goto trace;
 	    }
 	  b[0]->error = node->errors[BPA_IN2OUT_ERROR_GRE_NO_CALL];
@@ -328,7 +331,7 @@ VLIB_NODE_FN (bpa_in2out_node)
 					    &n_bypass_src, &n_bypass_dst)))
 	{
 	  bypassed = 1;
-	  vnet_feature_next_u16 (&next[0], b[0]);
+	  bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
 	  goto trace;
 	}
 
@@ -620,13 +623,6 @@ VLIB_NODE_FN (bpa_in2out_node)
 		  }
 	    }
 
-	  /*
-	   * Applied even when the ALG is off for the pool: a connection this
-	   * box already lengthened must keep being renumbered, or turning the
-	   * knob off stalls the very sessions the operator was trying to stop
-	   * interfering with.
-	   */
-	  n_ftp_seq += bpa_ftp_seq_in2out (l4h, s);
 	}
 
       /*
@@ -680,14 +676,21 @@ VLIB_NODE_FN (bpa_in2out_node)
 	      s = pool_elt_at_index (pt->sessions, s_index);
 	    }
 
-	  /* Every later segment of a connection an ALG has rewritten, in
-	   * either direction. Zero on every session no ALG has touched. */
+	  /*
+	   * Every later segment of a connection an ALG has rewritten, in
+	   * either direction. Zero on every session no ALG has touched.
+	   *
+	   * Applied even when the ALG is off for the pool: a connection this
+	   * box already lengthened must keep being renumbered, or turning the
+	   * knob off stalls the very sessions the operator was trying to stop
+	   * interfering with.
+	   */
 	  if (PREDICT_FALSE (s->adj[BPA_DIR_OUT].off_after
 			     | s->adj[BPA_DIR_OUT].off_before
 			     | s->adj[BPA_DIR_IN].off_after
 			     | s->adj[BPA_DIR_IN].off_before))
-	    bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_OUT],
-				&s->adj[BPA_DIR_IN]);
+	    n_seq_adj += bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_OUT],
+					     &s->adj[BPA_DIR_IN]);
 	}
 
       /*
@@ -748,32 +751,49 @@ VLIB_NODE_FN (bpa_in2out_node)
 		goto hp_done;
 	      }
 
-	    if (bpa_l4_dst (b[0], ip, (u8) proto, &hp_port, &l4h))
-	      goto hp_done;
-
-	    bpa_key_out (&hkv, hp_dst, hp_port, (u8) proto);
-	    if (clib_bihash_search_16_8 (&pt->out2in, &hkv, &hkv) == 0)
-	      {
-		bpa_session_t *peer =
-		  pool_elt_at_index (pt->sessions, hkv.value);
-		bpa_rewrite_dst (ip, l4h, (u8) proto, peer->ip_priv,
-				 peer->port_priv);
-		peer->last_heard = now;
-		n_hairpin++;
-	      }
-	    else
-	      {
-		/* The address is ours but nothing is listening on that port.
-		 * Dropped rather than forwarded: sending it on would put a
-		 * packet addressed to our own public range back on the wire. */
-		b[0]->error = node->errors[BPA_IN2OUT_ERROR_HAIRPIN_NO_PEER];
-		goto trace;
-	      }
+	    /*
+	     * The peer's session is not ours to read.
+	     *
+	     * It lives in pt->out2in - the PER-THREAD table of whichever
+	     * worker owns B - and this packet is on A's. Looked up here it
+	     * misses, and the packet was dropped as "hairpin to a public
+	     * address with no session", which is exactly what it looks like
+	     * from this thread. With N workers that happened N-1 times out of
+	     * N, so the same pair of neighbours worked or did not depending on
+	     * which workers their addresses hashed to, with nothing in the
+	     * configuration to explain it (#200).
+	     *
+	     * A hairpin needs TWO workers and there is no way around it: the
+	     * source translation needs A's worker, for A's session and A's
+	     * port bitmap, and the destination translation needs B's. So it is
+	     * STEERED rather than looked up - handed to bpa-out2in-handoff,
+	     * which resolves the owner of the destination by the same
+	     * arithmetic every reply already uses, and bpa-out2in on that
+	     * worker does the destination rewrite.
+	     *
+	     * That second half IS out2in: a hairpin is an inbound packet whose
+	     * source happens to be one of ours. Reusing it rather than keeping
+	     * a second copy of the peer lookup here is the whole point - the
+	     * copy that used to be here was right on one thread and wrong on
+	     * every other one.
+	     *
+	     * The source is already A's PUBLIC address, which REQ-9 requires
+	     * and which the steering also needs: B replies to it and that
+	     * reply is an ordinary out2in packet.
+	     *
+	     * Counted as hairpinned HERE, where it is recognised. A hairpin
+	     * that finds nothing listening is dropped by out2in as "no session
+	     * for destination", which on that thread is the truth; the
+	     * in2out no-peer counter below now belongs to ESP alone.
+	     */
+	    n_hairpin++;
+	    next[0] = BPA_IN2OUT_NEXT_HAIRPIN;
+	    goto trace;
 	  }
       hp_done:;
       }
 
-      vnet_feature_next_u16 (&next[0], b[0]);
+      bpa_next_after (&next[0], b[0], BPA_IN2OUT_NEXT_LOOKUP);
 
     trace:
       if (PREDICT_FALSE (b[0]->flags & VLIB_BUFFER_IS_TRACED))
@@ -819,8 +839,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       n_ftp_untouched);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_FTP_NO_PORT, n_ftp_noport);
-  vlib_node_increment_counter (vm, node->node_index, BPA_IN2OUT_ERROR_FTP_SEQ,
-			       n_ftp_seq);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_SEQ_ADJUSTED, n_seq_adj);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_RTSP_REWRITTEN, n_rtsp);
   vlib_node_increment_counter (vm, node->node_index,
@@ -846,6 +866,8 @@ VLIB_REGISTER_NODE (bpa_in2out_node) = {
   .n_next_nodes = BPA_IN2OUT_N_NEXT,
   .next_nodes = {
     [BPA_IN2OUT_NEXT_DROP] = "error-drop",
+    [BPA_IN2OUT_NEXT_LOOKUP] = "ip4-lookup",
+    [BPA_IN2OUT_NEXT_HAIRPIN] = "bpa-out2in-handoff",
   },
 };
 

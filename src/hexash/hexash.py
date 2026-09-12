@@ -28,7 +28,9 @@ import tempfile
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
-                    NAT_HIERARCHY, STATIC_BLOCK, strip_nat, as_hierarchy,
+                    NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
+                    strip_nat, as_hierarchy, group_static,
+                    block_paths, frr_block_lines, opens_frr_block,
                     _address_family_error, _is_loopback)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -210,8 +212,22 @@ SHOW = {
         "summary": ("one line per session, with what reached the FIB", None),
         "neighbor": ("one session in detail", ARG_NEIGHBOUR),
     }),
-    "ospf": ("OSPF neighbours and the database (FRR)", None),
-    "isis": ("IS-IS information (FRR)", None),
+    "ospf": ("OSPF adjacencies, and whether the dataplane has their routes", {
+        "neighbor": ("one line per adjacency, with what reached the FIB",
+                     None),
+        "interface": ("what OSPF believes about each interface, beside what "
+                      "the dataplane has", None),
+    }),
+    # `adjacency` rather than `neighbor`, which is what IS-IS itself calls
+    # them and what Juniper types. FRR's own `show isis neighbor` still works
+    # and lands in the same place; it is simply not the one offered, because
+    # offering both teaches neither.
+    "isis": ("IS-IS adjacencies, and whether the dataplane has their routes", {
+        "adjacency": ("one line per adjacency, with what reached the FIB",
+                      None),
+        "interface": ("each circuit, and whether its frames are being punted",
+                      None),
+    }),
     "interface": ("interfaces on the dataplane, with state and addresses", {
         "terse": ("one line each: admin state, link state, address", None),
         "description": ("what each interface is for, and its state", None),
@@ -843,6 +859,15 @@ TREE = {
         "show": ("display information", SHOW),
         "clear": ("reset a session, without changing the configuration", {
             "bgp": ("a BGP session", ARG_NEIGHBOUR),
+            "ospf": ("OSPF, which has no sessions to reset one at a time", {
+                "process": ("tear the process down and build it again; every "
+                            "adjacency goes with it", None),
+                "neighbor": ("one adjacency", "<A.B.C.D>"),
+            }),
+            "isis": ("IS-IS adjacencies", {
+                "adjacency": ("all of them, or one system id",
+                              "[<system-id>]"),
+            }),
         }),
         "rollback": ("load a committed revision into the candidate", ARG_REV),
         "save": ("write the running configuration to disk", None),
@@ -1275,6 +1300,67 @@ def isis_findings(routing):
                             f"instance {only_tag} is level-1, so a "
                             "level-2-only circuit forms no adjacency"))
     return out
+
+
+def mtu_stall_lines(ifname, host, here, there):
+    """
+    The two sentences that say an OSPF adjacency is stalled on MTU.
+
+    One function because there are two places that have to say it - the check
+    at commit time and the operational view of the adjacency it predicted -
+    and two diagnoses of one fact that disagree are worse than one. Both
+    numbers, never "the MTUs disagree": that is not actionable and "9000
+    against 1500" is.
+    """
+    return [f"interface {ifname}: carries OSPF and its MTU is {here} while "
+            f"its Linux side {host} is at {there}",
+            "    the adjacency will sit in Exchange with no log line; set "
+            "them the same, or 'ip ospf mtu-ignore'"]
+
+
+def osi_input_drops(show_errors):
+    """
+    Frames VPP counted as an OSI protocol nobody is registered to receive.
+
+    This is the only evidence an IS-IS circuit that is Up with no adjacency
+    leaves anywhere on the box (#168): the hellos arrive, VPP recognises them
+    as OSI, and with no punt configured there is nothing to hand them to.
+
+    Read by field and not by searching the whole text for the phrase. "show
+    errors" is a table, the count is its first column, and a needle matched
+    against the blob would be satisfied by the words appearing in any row of
+    it - including a row about a different node.
+    """
+    for line in (show_errors or "").splitlines():
+        w = line.split()
+        if len(w) >= 5 and w[0].isdigit() and w[1] == "osi-input" \
+                and w[2:5] == ["unknown", "osi", "protocol"]:
+            return int(w[0])
+    return 0
+
+
+def isis_overload_set(database):
+    """
+    Is THIS box advertising the overload bit, read from the LSP it floods?
+
+    "show isis database" prints ATT/P/OL as the last column, and marks the
+    LSPs this box originated with a bare `*` in the second field:
+
+        hexarouting.00-00    *    108   0x00000005  0x0113    1160    0/0/1
+        upstream.00-00            127   0x00000005  0xbfed    1138    0/0/0
+
+    Read from the advertisement rather than from `set-overload-bit` in the
+    configuration, for the reason #176 gives: a maintenance drain that is
+    reported by the words that asked for it is reported by a line that may not
+    have taken effect. `.00-00` is the box's own LSP and not one of the
+    pseudo-node LSPs a DIS also originates, which carry no overload bit.
+    """
+    for line in (database or "").splitlines():
+        w = line.split()
+        if len(w) >= 3 and w[0].endswith(".00-00") and w[1] == "*" \
+                and w[-1].count("/") == 2:
+            return w[-1].split("/")[2] != "0"
+    return False
 
 
 #: The filters a `show` may be piped into, and what each takes after it.
@@ -2480,8 +2566,12 @@ class Shell:
         commit is rolled back including the half that had nothing to do with
         routing (#137).
         """
+        # A block's own `exit` is not a routing statement either: staged on
+        # the way out of every block, it would make a candidate that only sets
+        # an interface MTU look like routing and bring #137 straight back.
         return [l for l in lines
-                if l.split()[0:1] != ["interface"] and not l.startswith(" ")]
+                if l.split()[0:1] != ["interface"] and not l.startswith(" ")
+                and l.strip() not in FRR_BLOCK_CLOSERS]
 
     def set_admin(self, ifname, up):
         """
@@ -3188,15 +3278,13 @@ class Shell:
                     print(f"warning: {stmt}: {why}")
 
             # The MTU stall, which FRR cannot see because FRR sees only the
-            # TAP. Reported with BOTH numbers, because "the MTUs disagree" is
-            # not actionable and "9000 against 1500" is.
+            # TAP. The same sentence `show ospf neighbor` prints once the
+            # adjacency this predicted is sitting in Exchange.
             for ifname, host, here, there in self.ospf_mtu_mismatch(
                     target.routing, target.mtus or self.device_mtus()):
-                print(f"warning: interface {ifname}: carries OSPF and its "
-                      f"MTU is {here} while its Linux side {host} is at "
-                      f"{there}")
-                print("    the adjacency will sit in Exchange with no log "
-                      "line; set them the same, or 'ip ospf mtu-ignore'")
+                said = mtu_stall_lines(ifname, host, here, there)
+                print("warning: " + said[0])
+                print(said[1])
 
             # IS-IS: shapes that commit cleanly and carry nothing (#175).
             for sev, stmt, why in isis_findings(target.routing):
@@ -3694,8 +3782,6 @@ class Shell:
         pairs = routes.lcp_pairs(out)
         found = []
         for ifname, here in sorted(mtus.items()):
-            if ifname in ignoring or ifname in quiet:
-                continue
             # VPP's own end of the pair is an interface too, named tap<n>, and
             # it has an MTU - so walking every interface reported the stall
             # against `tap4096`, a name that is in no configuration anybody
@@ -3707,6 +3793,15 @@ class Shell:
                 continue
             names = pairs.get(ifname)
             if not names:
+                continue
+            # Both escape hatches name the interface the way FRR does, which
+            # is the LINUX name, while the MTU being read is the dataplane's
+            # and keyed by the dataplane name. Compared against every name the
+            # pair answers to: matching only the dataplane name meant
+            # `passive-interface vppwan0` switched nothing off, and the
+            # warning an operator had deliberately silenced came back on the
+            # next commit under a name they had never typed.
+            if set(names) & (ignoring | quiet):
                 continue
             for host in names:
                 if host == ifname:
@@ -4177,6 +4272,21 @@ class Shell:
             return True
         if w[0] in ("exit", "quit", "end"):
             if self.frr_ctx:
+                # The `exit` goes into the candidate, because without it the
+                # flat list of routing statements has no record that the block
+                # ended - the header went in on the way in and nothing marked
+                # the way out. frr-reload.py reads the same list and decides
+                # context by statement exactly as `block_paths` does, so a
+                # missing `exit` meant the next top-level statement was handed
+                # to FRR INSIDE the block just left (#180). It is also what
+                # FRR writes itself, so the candidate and what comes back from
+                # `show running-config` are written the same way.
+                #
+                # `router static` is the exception: FRR has no such block,
+                # nothing opened one, and a stray `exit` would close whatever
+                # really is open.
+                if self.frr_ctx[-1] != STATIC_BLOCK:
+                    self.candidate.routing.append("exit")
                 self.frr_ctx.pop()
                 return True
             running = self.running_config()
@@ -4499,14 +4609,26 @@ class Shell:
         # typed went somewhere they did not intend, with nothing on screen
         # saying so. That is exactly the failure the prompt work exists to
         # prevent (#150).
-        if line.startswith(("router ", "interface ", "vrf ", "route-map ",
-                            "address-family ")) or line.strip() == "rpki":
+        if opens_frr_block(line):
             # Naming a loopback is what CREATES it, the way naming a
             # sub-interface is - there is nothing else on the box to create it
             # from. Recorded on the way into the block, because the statements
             # typed inside it are about an interface that does not exist yet.
             if line.startswith("interface ") and _is_loopback(line.split()[1]):
                 self.candidate.loopbacks.add(line.split()[1])
+            # What NESTS is FRR's grammar, not this VTY's stack discipline.
+            # `address-family` nests in the `router` above it, and a second
+            # one replaces the first; every other block is a top-level context
+            # in FRR, which is where `interface Gi0/0/0` typed inside `router
+            # bgp` actually lands. Letting the prompt claim a nesting FRR does
+            # not have leaves `show this` looking for a block nothing holds -
+            # and `block_paths` reads the very same rule (#180).
+            if line.startswith("address-family "):
+                while (self.frr_ctx
+                       and self.frr_ctx[-1].startswith("address-family ")):
+                    self.frr_ctx.pop()
+            else:
+                self.frr_ctx = []
             self.frr_ctx.append(line)
         return True
 
@@ -4762,6 +4884,20 @@ class Shell:
         if _w[:2] == ["show", "bgp"]:
             self.show_bgp(_w[2:])
             return
+        # `show ospf` is this product's spelling and `show ip ospf` is FRR's.
+        # Both reach the same place, with one deliberate difference: bare
+        # `show ip ospf` is a command an operator arriving from another vendor
+        # types expecting the process summary, and it still gets exactly that,
+        # while bare `show ospf` answers the question they actually came with.
+        if _w[:2] == ["show", "ospf"]:
+            self.show_ospf(_w[2:])
+            return
+        if _w[:3] == ["show", "ip", "ospf"]:
+            self.show_ospf(_w[3:], bare_is_neighbors=False)
+            return
+        if _w[:2] == ["show", "isis"]:
+            self.show_isis(_w[2:])
+            return
         rc, out = self.frr.show(line)
         if out:
             print(out)
@@ -4817,33 +4953,23 @@ class Shell:
             block = self.frr_ctx[-1]
             print(block)
 
-            # An interface's own settings are staged in cfg.mtus and cfg.urpf,
-            # NOT in cfg.routing. This branch was written for FRR blocks and
-            # never saw the fields the VTY models itself, so it printed the
-            # header and stopped - reporting a hierarchy that plainly had an
-            # MTU as empty (#108).
+            # An interface's own settings are staged in cfg.mtus, cfg.urpf,
+            # cfg.descriptions and eight more fields, NOT in cfg.routing. This
+            # branch was written for FRR blocks and never saw the fields the
+            # VTY models itself, so it printed the header and stopped -
+            # reporting a hierarchy that plainly had an MTU as empty (#108).
             #
             # An operator who runs "show this" and sees nothing concludes the
             # block is empty and configures accordingly, which makes an empty
             # answer worse than no command at all.
             if block.startswith("interface "):
-                ifname = block.split(None, 1)[1]
-                if ifname in cfg.mtus:
-                    print(f" mtu {cfg.mtus[ifname]}")
-                if ifname in cfg.urpf:
-                    print(f" urpf {cfg.urpf[ifname]}")
-            started = False
-            for line in cfg.routing:
-                if line == block:
-                    started = True
-                    continue
-                if started:
-                    if line and not line[0].isspace():
-                        break
-                    # Redacted here too. `show this` inside a BGP block reads
-                    # the routing lines straight out of the candidate, so a
-                    # neighbour password printed nowhere else was printed here.
-                    print(redact([line])[0])
+                for line in cfg.interface_lines(block.split(None, 1)[1]):
+                    print(line)
+            # Redacted here too. `show this` inside a block reads the routing
+            # lines straight out of the candidate, so a neighbour password
+            # printed nowhere else was printed here.
+            for line in redact(frr_block_lines(cfg.routing, self.frr_ctx)):
+                print(line)
             return
 
         # At the top of configuration mode, "this" is the whole candidate -
@@ -5403,17 +5529,6 @@ class Shell:
             print("  no BGP sessions are configured")
             return
 
-        # Which prefixes BGP holds, and which of them the dataplane has. Asked
-        # once for the whole table rather than per peer: the FIB does not know
-        # which session a route came from, and pretending otherwise would put a
-        # number on the line that could not be defended.
-        bgp_prefixes = self.bgp_prefixes()
-        in_fib = set()
-        rc_f, fout = self.dp.run("show ip fib")
-        if rc_f == 0 and fout.strip():
-            in_fib = set(routes.parse_fib(fout).get(0, {}))
-        missing = [p for p in bgp_prefixes if p not in in_fib] if in_fib else []
-
         print(f"  {'Neighbour':<18} {'AS':<8} {'State':<14} {'Prefixes':<9} Up")
         established = 0
         for addr in sorted(peers):
@@ -5429,24 +5544,11 @@ class Shell:
 
         print(f"\n  {len(peers)} session(s), {established} established")
         self.report_rpki_state()
-        if not in_fib:
-            print("  the dataplane is not answering, so what reached the "
-                  "forwarding table is unknown")
-        elif not bgp_prefixes:
-            print("  no BGP prefixes to check against the forwarding table")
-        elif missing:
-            # The number that is worth the line. A route FRR holds and VPP
-            # never got is invisible in every BGP command there is.
-            print(f"  {len(missing)} of {len(bgp_prefixes)} BGP prefix(es) "
-                  "are NOT in the forwarding table")
-            for prefix in sorted(missing)[:5]:
-                print(f"    {prefix}")
-            if len(missing) > 5:
-                print(f"    ... and {len(missing) - 5} more")
-            print("    'show route verbose' compares the two tables in full")
-        else:
-            print(f"  all {len(bgp_prefixes)} BGP prefix(es) are in the "
-                  "forwarding table")
+        # Which prefixes BGP holds, and which of them the dataplane has. Asked
+        # once for the whole table rather than per peer: the FIB does not know
+        # which session a route came from, and pretending otherwise would put a
+        # number on the line that could not be defended.
+        self.report_fib_reach(self.bgp_prefixes(), "BGP")
 
     def report_rpki_state(self):
         """
@@ -5494,6 +5596,447 @@ class Shell:
             return []
         return sorted(data.get("routes") or {})
 
+    def frr_json(self, cmd):
+        """
+        One FRR command, parsed. None when it could not be had.
+
+        An empty object is a REAL answer and comes back as one: `show ip ospf
+        neighbor json` on a box with no OSPF prints `{}` and exits 0, while a
+        box whose ospfd is not running prints "ospfd is not running" and exits
+        1. Those are different situations with different first questions, and
+        collapsing them into "no neighbours" is how an operator spends ten
+        minutes looking at a protocol that was never started.
+        """
+        rc, out = self.frr.show(cmd)
+        if rc != 0 or not out.strip() or "{" not in out:
+            return None
+        try:
+            return json.loads(out[out.index("{"):])
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+    def report_fib_reach(self, prefixes, what):
+        """
+        How many of these prefixes the table that forwards actually has.
+
+        The count #148 put on `show bgp summary`, said in the same words for
+        every protocol that has one: FRR installs into the kernel and linux_nl
+        carries it into VPP, and a route that stops half way leaves both halves
+        looking healthy on their own.
+        """
+        rc, out = self.dp.run("show ip fib")
+        in_fib = set(routes.parse_fib(out).get(0, {})) \
+            if rc == 0 and out.strip() else set()
+        if not in_fib:
+            print("  the dataplane is not answering, so what reached the "
+                  "forwarding table is unknown")
+        elif not prefixes:
+            print(f"  no {what} prefixes to check against the forwarding "
+                  "table")
+        elif [p for p in prefixes if p not in in_fib]:
+            missing = [p for p in prefixes if p not in in_fib]
+            # The number that is worth the line. A route FRR holds and VPP
+            # never got is invisible in every command that answers from FRR.
+            print(f"  {len(missing)} of {len(prefixes)} {what} prefix(es) "
+                  "are NOT in the forwarding table")
+            for prefix in sorted(missing)[:5]:
+                print(f"    {prefix}")
+            if len(missing) > 5:
+                print(f"    ... and {len(missing) - 5} more")
+            print("    'show route verbose' compares the two tables in full")
+        else:
+            print(f"  all {len(prefixes)} {what} prefix(es) are in the "
+                  "forwarding table")
+
+    def igp_prefixes(self, protocol):
+        """Every prefix FRR chose from one IGP. Empty when FRR has none."""
+        rc, out = self.frr.show("show ip route json")
+        if rc != 0 or not out.strip():
+            return []
+        return routes.protocol_prefixes(routes.parse_rib(out), protocol)
+
+    def ospf_mtu_stalls(self):
+        """
+        The MTU stall, keyed by the name FRR knows the interface by.
+
+        The same check the commit runs, asked of the running configuration
+        instead of a candidate. It is keyed on the Linux name because that is
+        the only name an OSPF answer ever contains: FRR has never heard of
+        `host-veth-vpp`.
+        """
+        try:
+            found = self.ospf_mtu_mismatch(self.running_config().routing,
+                                           self.device_mtus())
+        except Exception:
+            return {}
+        return {host: (ifname, here, there)
+                for ifname, host, here, there in found}
+
+    def dataplane_name(self, host, pairs, mtus):
+        """
+        The dataplane's own name for the interface FRR calls `host`.
+
+        VPP's end of a linux_cp pair is an interface too, named tap<n>, and it
+        has an MTU - so the pair answers to three names and only one of them is
+        the one an operator can type at this VTY. The same shape rule
+        ospf_mtu_mismatch uses, for the same reason.
+        """
+        for name in pairs.get(host, []):
+            if name == host or (name.startswith("tap") and name[3:].isdigit()):
+                continue
+            if name in mtus:
+                return name
+        return None
+
+    # ----------------------------------------------------------------- OSPF
+
+    def show_ospf(self, args, bare_is_neighbors=True):
+        """
+        OSPF adjacencies, beside what the dataplane has.
+
+        `show ip ospf neighbor` is handed to vtysh today and FRR answers it,
+        which for the STATE of an adjacency is right: that is FRR's to know and
+        nothing else on this box has it. What FRR cannot say is whether the
+        routes the adjacency brought ever reached the table that forwards, and
+        why one that will not finish is not finishing - and on this box the
+        commonest answer to the second is a fault only this product can see.
+
+        Everything else under `show ospf` goes to FRR untouched, in FRR's own
+        spelling. This VTY is not going to re-implement the link-state
+        database.
+        """
+        if args in (["neighbor"], ["neighbors"]) \
+                or (bare_is_neighbors and not args):
+            self.show_ospf_neighbors()
+            return
+        if args in (["interface"], ["interfaces"]):
+            self.show_ospf_interfaces()
+            return
+        rc, out = self.frr.show(("show ip ospf " + " ".join(args)).rstrip())
+        if out:
+            print(out)
+
+    def show_ospf_neighbors(self):
+        data = self.frr_json("show ip ospf neighbor json")
+        if data is None:
+            self.err("OSPF is not answering")
+            print("    ospfd may not be running; 'show version' says which "
+                  "daemons are up")
+            return
+        neighbours = data.get("neighbors") or {}
+        if not neighbours:
+            self.report_no_ospf_neighbour()
+        else:
+            stalls = self.ospf_mtu_stalls()
+            print(f"  {'Neighbour':<17} {'Interface':<14} {'State':<16} "
+                  f"{'Dead':<10} Up")
+            total, full, stalled, exchanging = 0, 0, {}, {}
+            for rid in sorted(neighbours):
+                for n in neighbours[rid]:
+                    total += 1
+                    # FRR renders the interface as "<name>:<local address>" in
+                    # this command and as the bare name in every other one.
+                    # Measured on 10.7.1; taken apart here rather than printed
+                    # as it comes, because the name in this column has to be
+                    # the name the next command takes.
+                    iface = str(n.get("ifaceName", "-")).split(":")[0]
+                    state = str(n.get("nbrState", "?"))
+                    converged = n.get("converged")
+                    if converged == "Full":
+                        full += 1
+                    else:
+                        if converged in ("ExStart", "Exchange"):
+                            exchanging[iface] = (rid, converged)
+                        if iface in stalls:
+                            stalled[iface] = stalls[iface]
+                    print(f"  {rid:<17} {iface:<14} {state:<16} "
+                          f"{str(n.get('deadTime', '-')):<10} "
+                          f"{n.get('upTime', '-')}")
+            print(f"\n  {total} adjacency(ies), {full} full")
+            # The one thing worth saying on this screen. An adjacency that
+            # stops in Exchange is the MTU stall documented as Pitfall 1, and
+            # nothing in FRR's own answer mentions MTU at all.
+            if exchanging:
+                self.report_ospf_exchange(exchanging)
+            # And the half of it that is entirely local to this box: its own
+            # two MTUs disagreeing. Said in the words the commit check already
+            # used, from the same place - two diagnoses of one fact that
+            # disagree are worse than one.
+            for iface, (ifname, here, there) in sorted(stalled.items()):
+                for line in mtu_stall_lines(ifname, iface, here, there):
+                    print("  " + line)
+        self.report_fib_reach(self.igp_prefixes("ospf"), "OSPF")
+
+    def report_ospf_exchange(self, exchanging):
+        """
+        An adjacency that will not leave Exchange, and what this box is
+        advertising into it.
+
+        OSPF carries the interface MTU in its Database Description packets and
+        the receiver drops any that claims one larger than its own - with no
+        log line on either side, which is what makes this the fault that costs
+        an afternoon rather than a minute. The far end's MTU cannot be known
+        from here; what this end is advertising can, and it is the number to
+        compare against. On this box it is the TAP's, and `linux_cp` starts
+        the TAP at 9000, so it is more often wrong than right.
+        """
+        data = self.frr_json("show ip ospf interface json") or {}
+        ifaces = data.get("interfaces") or {}
+        for iface, (rid, state) in sorted(exchanging.items()):
+            mtu = (ifaces.get(iface) or {}).get("mtuBytes", "?")
+            print(f"  {rid} on {iface} is in {state}, which is where the two "
+                  f"ends compare MTU; this end advertises {mtu}")
+            print("    an adjacency that stops here is the far end running a "
+                  "smaller one, and neither side logs a word about it")
+            print("    'show ospf interface' has both of this box's MTUs; "
+                  "'mtu <n>' sets them together, and 'ip ospf mtu-ignore' is "
+                  "the escape hatch")
+
+    def report_no_ospf_neighbour(self):
+        """
+        "No adjacency" is three different situations, and they are told apart
+        by whether anything is running OSPF at all.
+        """
+        data = self.frr_json("show ip ospf interface json") or {}
+        ifaces = data.get("interfaces") or {}
+        running = [n for n, e in ifaces.items() if e.get("ospfEnabled")]
+        quiet = [n for n in running if ifaces[n].get("timerPassiveIface")]
+        if not running:
+            print("  no OSPF adjacency, and no interface is running OSPF")
+            return
+        if len(quiet) == len(running):
+            print(f"  no OSPF adjacency; all {len(running)} interface(s) "
+                  "running OSPF are passive, so none sends a hello")
+            return
+        print(f"  no OSPF adjacency, on {len(running) - len(quiet)} "
+              "interface(s) that are sending hellos")
+
+    def show_ospf_interfaces(self):
+        """
+        What OSPF believes about each interface, beside what the dataplane has.
+
+        The MTU is two columns on purpose, and they are the reason this command
+        exists. `linux_cp` gives FRR a TAP and nothing else, so the MTU ospfd
+        puts in its Database Description packets is the TAP's while the wire
+        runs at the dataplane's - and when the two differ the adjacency stops
+        in Exchange with no log line on either side. Until now no command on
+        this box put those two numbers on one screen.
+        """
+        data = self.frr_json("show ip ospf interface json")
+        if data is None:
+            self.err("OSPF is not answering")
+            print("    ospfd may not be running; 'show version' says which "
+                  "daemons are up")
+            return
+        ifaces = data.get("interfaces") or {}
+        if not ifaces:
+            print("  no interface is running OSPF")
+            return
+        mtus = self.device_mtus()
+        rc, lcp = self.dp.run("show lcp")
+        pairs = routes.lcp_pairs(lcp) if rc == 0 else {}
+        stalls = self.ospf_mtu_stalls()
+
+        print(f"  {'Interface':<14} {'Area':<10} {'State':<18} {'Cost':<6} "
+              f"{'Adjacent':<10} {'OSPF MTU':<9} Dataplane")
+        for name in sorted(ifaces):
+            e = ifaces[name]
+            dp = self.dataplane_name(name, pairs, mtus)
+            # "-" and 0 are different answers. An interface the dataplane does
+            # not have - the management port, which is kept away from VPP on
+            # purpose - has no MTU here, and printing one would be inventing
+            # the number this column exists to compare against.
+            there = mtus.get(dp)
+            state = str(e.get("state", "?"))
+            if e.get("timerPassiveIface"):
+                state += " (passive)"
+            adjacent = f"{e.get('nbrAdjacentCount', 0)} of " \
+                       f"{e.get('nbrCount', 0)}"
+            print(f"  {name:<14} {str(e.get('area', '-')):<10} {state:<18} "
+                  f"{str(e.get('cost', '-')):<6} {adjacent:<10} "
+                  f"{str(e.get('mtuBytes', '-')):<9} "
+                  f"{'-' if there is None else there}"
+                  + (f"  ({dp})" if dp else ""))
+        for iface in sorted(stalls):
+            if iface in ifaces:
+                ifname, here, there = stalls[iface]
+                for line in mtu_stall_lines(ifname, iface, here, there):
+                    print("  " + line)
+
+    # ---------------------------------------------------------------- IS-IS
+
+    def show_isis(self, args):
+        """
+        IS-IS adjacencies, beside what the dataplane has.
+
+        Same shape as `show ospf`, with a different trap underneath it: IS-IS
+        does not run over IP, so a box whose dataplane is not punting OSI to
+        the kernel has a circuit that is Up and Active, no adjacency, and its
+        only evidence in a VPP error counter (#168).
+        """
+        if args in ([], ["adjacency"], ["adjacencies"], ["neighbor"],
+                    ["neighbors"]):
+            self.show_isis_adjacency()
+            return
+        if args in (["interface"], ["interfaces"]):
+            self.show_isis_interfaces()
+            return
+        rc, out = self.frr.show("show isis " + " ".join(args))
+        if out:
+            print(out)
+
+    def isis_circuits(self):
+        """
+        Every IS-IS circuit, flattened out of the area/circuit nesting.
+
+        Returns (area, interface-object) pairs. isisd answers per area and a
+        box can run more than one instance, so the area travels with the
+        circuit rather than being dropped on the way out.
+        """
+        data = self.frr_json("show isis interface detail json")
+        out = []
+        for area in (data or {}).get("areas") or []:
+            for circuit in area.get("circuits") or []:
+                iface = circuit.get("interface")
+                if isinstance(iface, dict):
+                    out.append((area.get("area", "?"), iface))
+        return out
+
+    def isis_punt_state(self):
+        """
+        Is the dataplane punting IS-IS to the kernel, and what did it drop?
+
+        Returns (punting, drops); punting is None when the dataplane could not
+        be asked, which is not the same answer as "no". IS-IS runs OSI CLNS
+        straight over the link layer, so linux_cp has to be told to pass NLPID
+        0x83 up or the hellos never reach isisd at all.
+        """
+        have = self.osi_protos_enabled()
+        rc, out = self.dp.run("show errors")
+        return (None if have is None else self.OSI_ISIS in have,
+                osi_input_drops(out) if rc == 0 else 0)
+
+    def report_isis_punt(self, silent_circuits):
+        """
+        Why there is no adjacency on a circuit that looks perfectly healthy.
+
+        Said on both IS-IS screens, and said either way: "the punt is off" and
+        "the punt is on" are both answers an operator at 2am needs, because the
+        second one is what stops them chasing the trap this box is known for
+        and sends them to the neighbour instead.
+        """
+        punting, drops = self.isis_punt_state()
+        if punting is None:
+            print("  the dataplane is not answering, so whether it is punting "
+                  "IS-IS to the kernel is unknown")
+            return
+        if punting:
+            if silent_circuits:
+                print("  the dataplane IS punting IS-IS to the kernel "
+                      f"(NLPID 0x{self.OSI_ISIS:02x}), so the hellos are "
+                      "reaching isisd; the far end is not answering them")
+            return
+        print(f"  the dataplane is NOT punting IS-IS to the kernel (NLPID "
+              f"0x{self.OSI_ISIS:02x}), so no hello ever reaches isisd")
+        if drops:
+            # The evidence, and the reason this is not merely "nothing
+            # happened": the frames ARRIVED and were dropped for want of a
+            # registered receiver. Without it the same sentence would be
+            # printed on a box whose neighbour is switched off.
+            print(f"    {drops} frame(s) counted in osi-input as an unknown "
+                  "OSI protocol, which is the hellos arriving and being "
+                  "dropped")
+        else:
+            print("    and nothing has been counted in osi-input either, so "
+                  "the frames are not even arriving")
+        print("    committing an IS-IS instance through this VTY turns the "
+              "punt on; a box configured through vtysh never had it")
+
+    def show_isis_adjacency(self):
+        data = self.frr_json("show isis neighbor json")
+        if data is None:
+            self.err("IS-IS is not answering")
+            print("    isisd may not be running; 'show version' says which "
+                  "daemons are up")
+            return
+        adjacencies = [c for area in data.get("areas") or []
+                       for c in area.get("circuits") or [] if c.get("adj")]
+        if adjacencies:
+            print(f"  {'System Id':<18} {'Interface':<14} {'Level':<7} "
+                  f"{'State':<8} Expires")
+            for c in adjacencies:
+                print(f"  {str(c.get('adj', '?')):<18} "
+                      f"{str(c.get('interface', '-')):<14} "
+                      f"L{str(c.get('level', '?')):<6} "
+                      f"{str(c.get('state', '?')):<8} "
+                      f"{c.get('expires-in', '-')}")
+            up = sum(1 for c in adjacencies if c.get("state") == "Up")
+            print(f"\n  {len(adjacencies)} adjacency(ies), {up} up")
+        # A circuit that is Up and Active with nobody on it is the shape the
+        # punt leaves behind, and it is the one an operator is looking at when
+        # they type this. Passive circuits are excluded: one with no
+        # adjacency is doing exactly what it was told.
+        silent = [(area, i) for area, i in self.isis_circuits()
+                  if i.get("state") == "Up"
+                  and i.get("is-passive") == "active"
+                  and not sum(l.get("active-neighbors", 0)
+                              for l in i.get("levels") or [])]
+        if not adjacencies:
+            print("  no IS-IS adjacency")
+        for area, i in silent:
+            print(f"  circuit {i.get('name', '?')} in area {area} is Up and "
+                  "Active with no adjacency")
+        if silent:
+            self.report_isis_punt(silent)
+        self.report_isis_overload()
+        self.report_fib_reach(self.igp_prefixes("isis"), "IS-IS")
+
+    def report_isis_overload(self):
+        """
+        Whether this box is telling everybody not to transit through it.
+
+        The maintenance drain nobody remembers turning on. An operator looking
+        at a box that has adjacencies, holds routes and carries no transit
+        traffic will not find the cause in any of them - it is one bit in the
+        LSP this box is flooding, and that LSP is where it is read from.
+        """
+        rc, out = self.frr.show("show isis database")
+        if rc != 0 or not isis_overload_set(out):
+            return
+        print("  this box has the overload bit set: its neighbours will not "
+              "compute transit paths through it")
+        print("    traffic to anything behind this box drains away, which is "
+              "what 'set-overload-bit' is for and what it looks like when it "
+              "was left on")
+
+    def show_isis_interfaces(self):
+        circuits = self.isis_circuits()
+        if not circuits:
+            data = self.frr_json("show isis interface detail json")
+            if data is None:
+                self.err("IS-IS is not answering")
+                print("    isisd may not be running; 'show version' says "
+                      "which daemons are up")
+            else:
+                print("  no interface is running IS-IS")
+            return
+        print(f"  {'Interface':<14} {'Area':<10} {'Circuit':<9} {'State':<10} "
+              f"{'Level':<7} {'Metric':<8} Neighbours")
+        silent = []
+        for area, i in circuits:
+            levels = i.get("levels") or []
+            active = sum(l.get("active-neighbors", 0) for l in levels)
+            state = str(i.get("state", "?"))
+            if i.get("is-passive") != "active":
+                state += " (passive)"
+            elif state == "Up" and not active:
+                silent.append((area, i))
+            metric = levels[0].get("metric", "-") if levels else "-"
+            print(f"  {str(i.get('name', '?')):<14} {str(area):<10} "
+                  f"{str(i.get('circuit-id', '-')):<9} {state:<10} "
+                  f"{str(i.get('level', '-')):<7} {str(metric):<8} {active}")
+        self.report_isis_punt(silent)
+
     def do_clear(self, line):
         """
         Reset a session. Operational, and it changes nothing on disk.
@@ -5503,8 +6046,20 @@ class Shell:
         box whose whole point is that they do not have to.
         """
         w = line.split()
+        # FRR spells these `clear ip ospf ...`, and an operator arriving from
+        # another vendor types that; the tree offers the short one.
+        if w[1:3] == ["ip", "ospf"]:
+            w = ["clear", "ospf"] + w[3:]
+        if w[1:2] == ["ospf"]:
+            self.clear_ospf(w[2:])
+            return
+        if w[1:2] == ["isis"]:
+            self.clear_isis(w[2:])
+            return
         if w[:2] != ["clear", "bgp"] or len(w) < 3:
             self.err("usage: clear bgp <neighbour> [soft [in|out]]")
+            print("       clear ospf process | clear ospf neighbor <A.B.C.D>")
+            print("       clear isis adjacency [<system-id>]")
             return
         if not self.require(CAP_ALL, "clear bgp"):
             return
@@ -5525,6 +6080,55 @@ class Shell:
             print(out)
         if rc == 0:
             print(f"cleared: {' '.join(w[2:])}")
+
+    def clear_ospf(self, rest):
+        """
+        `clear ospf process` and `clear ospf neighbor <id>`.
+
+        OSPF has no sessions to reset one at a time the way BGP has: tearing
+        the process down takes every adjacency on the box with it, and it is
+        named `process` here because that is what it does. Admin-only for the
+        same reason `clear bgp` is - it is an outage on purpose.
+        """
+        if rest == ["process"]:
+            cmd = "clear ip ospf process"
+        elif len(rest) == 2 and rest[0] in ("neighbor", "neighbors"):
+            cmd = "clear ip ospf neighbor " + rest[1]
+        else:
+            self.err("usage: clear ospf process | clear ospf neighbor "
+                     "<A.B.C.D>")
+            return
+        if not self.require(CAP_ALL, "clear ospf"):
+            return
+        rc, out = self.frr.show(cmd)
+        if out.strip():
+            print(out)
+        if rc == 0:
+            print(f"cleared: {' '.join(rest)}")
+
+    def clear_isis(self, rest):
+        """
+        `clear isis adjacency [<system-id>]`, which FRR spells `neighbor`.
+
+        Bare `clear isis` means all of them, because that is what #176 asks for
+        and what an operator types.
+        """
+        if rest and rest[0] not in ("adjacency", "adjacencies", "neighbor",
+                                    "neighbors"):
+            self.err("usage: clear isis adjacency [<system-id>]")
+            return
+        if len(rest) > 2:
+            self.err("usage: clear isis adjacency [<system-id>]")
+            return
+        if not self.require(CAP_ALL, "clear isis"):
+            return
+        cmd = "clear isis neighbor" + (" " + rest[1] if len(rest) == 2 else "")
+        rc, out = self.frr.show(cmd)
+        if out.strip():
+            print(out)
+        if rc == 0:
+            print("cleared: isis adjacency"
+                  + (" " + rest[1] if len(rest) == 2 else ""))
 
     def soft_reconfiguration_on(self, neighbour):
         """Is this neighbour keeping what it received, so policy can re-run?"""

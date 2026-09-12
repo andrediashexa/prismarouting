@@ -328,4 +328,37 @@ bpa_proto_of (u8 ip_proto)
     }
 }
 
+/*
+ * Where a packet goes after this node.
+ *
+ * NOT vnet_feature_next on a box with workers, and the difference was the
+ * whole product: with workers the node on the ip4-unicast arc is the HANDOFF
+ * node, not this one. The feature machinery stores each chain entry's next as
+ * an index into the next-node list of the node that consumes it - the handoff
+ * node - and this node then applied that index to its own list, whose only
+ * member was error-drop. Every packet was translated, counted as translated,
+ * and blackholed. `hexarouting-tune` configures workers on every appliance, so
+ * that was the shipped configuration; no lab asserted that a packet LEAVES a
+ * box that has them, which is why it survived (#199).
+ *
+ * With workers the arc is already terminated at the handoff - that node
+ * enqueues to a thread and never consults the chain - so there is nothing
+ * further on it to hand the packet to, and this node sends it to ip4-lookup
+ * itself. BPA registers `runs_before ip4-lookup`, so that is where the chain
+ * was going.
+ *
+ * The narrowing is stated rather than hidden: with workers, a feature some
+ * OTHER plugin enables between BPA and ip4-lookup on this arc is skipped. This
+ * product enables nothing there, and the alternative on offer today is a
+ * dropped packet.
+ */
+static_always_inline void
+bpa_next_after (u16 *next, vlib_buffer_t *b, u16 lookup)
+{
+  if (bpa_main.n_workers)
+    next[0] = lookup;
+  else
+    vnet_feature_next_u16 (next, b);
+}
+
 #endif /* __included_bpa_h__ */

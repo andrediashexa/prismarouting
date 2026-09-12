@@ -1,4 +1,5 @@
 #!/bin/sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 # What the CGNAT costs, per packet, in CPU clocks.
 #
 # READ THIS BEFORE QUOTING A NUMBER FROM IT.
@@ -27,7 +28,7 @@ mkdir -p /run/vpp /vpp_plugins /var/log/vpp
 cd /src
 
 SECONDS_PER_RUN=${SECONDS_PER_RUN:-4}
-CONF=${CONF:-/src/lab/startup-test.conf}
+CONF=${CONF:-$(startup_conf test)}
 WORKERS=${WORKERS:-0}
 
 start_vpp() {
@@ -124,7 +125,7 @@ echo "=========== with two workers ==========="
 # what this shows is the cost of the HANDOFF plus the node - not how the design
 # scales. Scaling is a question about RSS spreading a real NIC's queues across
 # workers, and that needs the real NIC.
-CONF=/src/lab/startup-workers.conf
+CONF=$(startup_conf test workers)
 WORKERS=2
 start_vpp
 vppctl set interface bpa in2out pg0 >/dev/null

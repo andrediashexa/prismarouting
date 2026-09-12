@@ -1,4 +1,5 @@
 #!/bin/sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 # RTSP ALG: the Transport header carries the media ports, so behind a NAT they
 # name nothing and the video never arrives.
 #
@@ -27,7 +28,7 @@ mkdir -p /run/vpp /vpp_plugins /var/log/vpp
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 
@@ -226,10 +227,21 @@ HEX=$(python3 /src/lab/mkrtsp.py 100.64.0.8 8.8.8.8 5000 554 \
 shoot pg1 /tmp/expire.pcap "$HEX"
 OPENED=$(( $(sess) - BASE ))
 echo "  sessions opened by the SETUP: $OPENED (control + RTP + RTCP)"
+# 60, not 20. The claim is that an announced port nobody used expires on the
+# ALG's OWN short timer rather than on the TCP one, and the numbers either side
+# of that claim are 2 seconds and 240. Any cap between them proves it; 20 does
+# not survive a loaded runner, where this failed twice and passed alone - the
+# expiry process runs once a second and takes the worker barrier to do it, so
+# on a starved box it measures the runner. 60 is still two orders of magnitude
+# below the timer it has to be distinguished from.
 n=0
-until [ "$(sess)" -le $(( BASE + 1 )) ] || [ "$n" -ge 20 ]; do sleep 1; n=$((n+1)); done
+until [ "$(sess)" -le $(( BASE + 1 )) ] || [ "$n" -ge 60 ]; do sleep 1; n=$((n+1)); done
 LEFT=$(( $(sess) - BASE ))
 echo "  after ${n}s: $LEFT left (the control connection, which is not an expectation)"
+# Per thread, because "two left" says nothing about WHICH two and the whole
+# question with workers is which thread a session is on.
+vppctl show bpa session | sed 's/^/    /'
+vppctl show bpa top 2>/dev/null | head -8 | sed 's/^/    /'
 
 echo
 echo "=========== 9. the switch, and telling 'off' from 'saw nothing' ==========="

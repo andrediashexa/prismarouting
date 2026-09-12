@@ -71,44 +71,7 @@ typedef enum
   BPA_N_PROTO,
 } bpa_proto_t;
 
-/*
- * Direction of a TCP stream within one session. Two, because an ALG that
- * rewrites a payload changes the length of ONE direction, and the other
- * direction's acknowledgements have to be moved by the same amount the other
- * way.
- */
-#define BPA_DIR_OUT 0 /* subscriber -> internet */
-#define BPA_DIR_IN  1 /* internet -> subscriber */
-#define BPA_N_DIR   2
-
-/*
- * Sequence-number correction for one direction of a TCP stream.
- *
- * Rewriting a payload changes its length, so every byte after the rewrite sits
- * at a different offset in the stream than the sender thinks. Left
- * uncorrected, the control connection does not fail at the rewrite: it stalls
- * some seconds later, when the peer acknowledges a byte count that never
- * matches, and the failure looks unrelated to the ALG that caused it.
- *
- * Two generations rather than one running total, so a RETRANSMISSION of the
- * segment that was rewritten - which carries a sequence number from before the
- * correction - is moved by the delta that applied to it at the time, not by
- * the new one. A single cumulative offset gets that case wrong by exactly the
- * length of the rewrite, and a retransmitted SETUP is not a rare event on a
- * camera with a poor uplink.
- *
- * Only the most recent correction is remembered. A stream rewritten twice and
- * then retransmitting from before the FIRST rewrite is still wrong; the
- * alternative is a per-session list of correction points on a datapath whose
- * whole point is not having any, and RTSP is request/response with a small
- * window, so the exposure is one message.
- */
-typedef struct
-{
-  i32 off_before;     /* delta up to and including correction_pos */
-  i32 off_after;      /* delta strictly after it */
-  u32 correction_pos; /* original sequence number of the rewritten segment */
-} bpa_seq_adj_t;
+#include "bpa_seq.h"
 
 /*
  * How far a PPTP call has got. Only meaningful for BPA_PROTO_GRE.
@@ -135,9 +98,6 @@ typedef struct
   u8 blk_idx;	 /* which of the subscriber's blocks that offset is in */
   u8 proto;	 /* bpa_proto_t */
   u8 tcp_state; /* bpa_tcp_state_t */
-  /* Which ALG state this session carries; see bpa_ftp.h. Lives in padding
-   * the struct already had, so it costs nothing per session. */
-  u8 alg;
   u32 sub_idx;
   u32 pool_index;
   /*
@@ -171,24 +131,6 @@ typedef struct
    */
   u32 remote;
   /*
-   * ALG sequence correction, in the subscriber -> internet direction, which
-   * is the only one whose payload this box ever lengthens.
-   *
-   * `alg_seq_pos` is where the last rewrite happened, in the subscriber's own
-   * numbering; the two offsets are the drift on each side of it, so a
-   * retransmission from before the rewrite is still shifted by what was in
-   * force when it was first sent.
-   *
-   * Eight bytes on every session, FTP or not, which is what a side table
-   * keyed on the session index would have avoided. It is not worth it: the
-   * table would need its own lifecycle hanging off bpa_session_free(), and
-   * this project has already learned that a second thing to keep in step is
-   * a second thing to get wrong. 16-bit offsets keep the cost to one word.
-   */
-  u32 alg_seq_pos;
-  i16 alg_off_before;
-  i16 alg_off_after;
-  /*
    * BPA_PROTO_GRE only: the Call ID the PPTP server assigned, which is what
    * the subscriber's outbound GRE packets carry. Valid once gre_state is
    * BPA_GRE_ESTABLISHED; the subscriber's own Call ID lives in port_priv and
@@ -198,9 +140,26 @@ typedef struct
   u8 gre_state;
   f64 last_heard;
 
-  /* Payload rewrites on this connection, one correction per direction. Both
+  /*
+   * Payload rewrites on this connection, one correction per direction. Both
    * stay zero on every session no ALG has touched, which is nearly all of
-   * them, and the datapath tests them with a single OR. */
+   * them, and the datapath tests them with a single OR.
+   *
+   * THE mechanism, for every ALG that changes a payload length. There used to
+   * be two of these - this one, and a narrower set of fields belonging to the
+   * FTP ALG - because the two arrived on separate branches at the same time
+   * and folding them together during a merge, with no test that would catch a
+   * mistake, is how a merge breaks two working features at once (#48). A
+   * connection is either FTP or RTSP, so the duplication cost bytes on every
+   * session rather than correctness, and it cost the next ALG a choice between
+   * two mechanisms of which only one could be right.
+   *
+   * Twenty-four bytes on every session, FTP or not, which is what a side table
+   * keyed on the session index would have avoided. It is not worth it: the
+   * table would need its own lifecycle hanging off bpa_session_free(), and
+   * this project has already learned that a second thing to keep in step is a
+   * second thing to get wrong.
+   */
   bpa_seq_adj_t adj[BPA_N_DIR];
 
   /*

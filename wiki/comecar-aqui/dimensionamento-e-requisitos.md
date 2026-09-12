@@ -17,6 +17,24 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 
 Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed process (vpp)` com o VPP segurando apenas **19 MB residentes** — ele não era o glutão, era a vítima escolhida. Instalado em disco o consumo cai, porque não há a sobreposição em RAM, mas 4 GB continua sendo o piso sensato para um dataplane.
 
+# Se a caixa vai receber a tabela BGP completa
+
+4 GB é o piso de uma caixa que **não** carrega tabela cheia. Recebendo uma tabela IPv4 completa de um trânsito, o roteamento sozinho passa a ocupar cerca de **1,4 GB** de RAM. Medido com uma sessão e um milhão de prefixos: o `bgpd` ficou com \~840 MB e o `zebra` com \~550 MB, contra 37 MB somados numa caixa que só recebe rota padrão. Cada trânsito adicional com tabela cheia soma de novo, e IPv6 soma por cima.
+
+| Cenário de peering | RAM só para o roteamento | Piso recomendado da máquina |
+|--------------------|-------------------------:|----------------------------:|
+| Só rota padrão     | \~40 MB                  | 4 GB |
+| Uma tabela IPv4 cheia | \~1,4 GB              | 16 GB |
+| Dois trânsitos com tabela cheia, mais IPv6 | mais que isso | 32 GB |
+
+O dataplane reserva a maior parte da RAM em hugepages e deixa `máx(2, RAM/4)` GB para todo o resto. Numa caixa de 4 GB isso são 2 GB, e uma tabela cheia sozinha já ocupa quase tudo — por isso 8 GB já é apertado e 16 GB é o número sensato.
+
+
+:::info
+**Não existe limite de memória configurado para o roteamento, e isso é deliberado.** Um limite apertado não deixa o BGP mais lento: ele mata o `bgpd` no meio da convergência, o serviço reinicia cinco segundos depois, converge de novo e morre de novo. Quem protege a caixa é o outro lado — o dataplane está fora da escolha do OOM killer, de modo que, faltando memória, o que o kernel escolhe é o próprio processo de roteamento que cresceu, e a caixa continua encaminhando com o que já aprendeu. O self-test de boot diz na tela se essa proteção está valendo.
+
+:::
+
 # Memória por estrutura
 
 | Estrutura | Dimensionamento | Ordem de grandeza |
@@ -31,7 +49,7 @@ A tabela de sessões é ajustada com:
 nat cgnat session-table buckets <n> memory <MB>
 ```
 
-O padrão é 16 mil buckets e 16 MB por tabela. A reserva é **virtual**, mas o OOM killer conta memória virtual — daí o padrão modesto. Uma implantação de 200 mil assinantes deve elevar esse valor; uma caixa pequena não deve pagar por capacidade que nunca vai usar.
+O padrão é 16 mil buckets e 16 MB por tabela. A reserva é **virtual**: ela não custa RAM enquanto a tabela não é preenchida, e o OOM killer também não a enxerga — quem escolhe a vítima olha memória **residente**, não memória mapeada. O padrão modesto continua certo pelo motivo mais simples: a tabela acaba sendo usada, e uma caixa pequena não tem essa memória. Uma implantação de 200 mil assinantes deve elevar esse valor; uma caixa pequena não deve pagar por capacidade que nunca vai usar.
 
 # Quantos endereços públicos
 

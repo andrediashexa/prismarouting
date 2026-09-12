@@ -704,6 +704,45 @@ Debian 13 verifies with `sqv`, which rejects the key's SHA-1 binding signature,
 so it would survive trixie packages appearing under the same key. Revisit when
 upstream moves, not on a schedule.
 
+#### The rename to PrismaRouting
+
+[#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
+is renaming the product **HexaRouting → PrismaRouting**. Recorded here with its
+measured size rather than an impression of it: 905 lines across 101 files carry
+`hexarouting`, 372 across 73 carry `hexash`, and 87 carry the role group names.
+
+The rename is not the hard part. **A box already in service carries the old name
+in the path of its saved configuration, in its unit names, in its group names
+and in the login shell of every operator account it created.** An upgrade that
+renames those without a migration leaves that box unconfigured at the next boot,
+on a machine nobody is watching — which is the exact failure
+[#193](https://github.com/andrediashexa/hexarouting/issues/193) was careful
+about when it kept both spellings of a hierarchy that moved.
+
+Four of those are worse than a path. The role groups are read by GID, so a group
+that is *recreated* rather than renamed silently takes every operator's role
+away. `/var/log/hexarouting` is a separate filesystem holding, in dynamic mode,
+the connection record the Marco Civil requires for a year: moving that mountpoint
+is a data migration under a retention obligation, not a rename. `hexash` is the
+recorded login shell of accounts that already exist. And the ISO filename is
+covered by [#91](https://github.com/andrediashexa/hexarouting/issues/91)'s rule
+that a medium's name must carry its identity, because a file loses its context
+the moment it is copied to a USB stick.
+
+The acceptance test does not exist yet and is the real work: `lab/install-iso.sh`
+installs and boots a real box, and nothing upgrades one. **An upgrade lab — install
+the old name, upgrade, boot, and assert the configuration is still in effect — is
+what makes this issue closeable**, and it is worth having whatever the box is
+called.
+
+Two ordering rules, both for the reader of the release note rather than for the
+work. It **MUST** ship alone: a note that says "renamed, and also fixed the
+forwarding path" is one whose reader cannot tell which change broke their box. And
+it **SHOULD** wait until the worker-path defects are closed
+([#201](https://github.com/andrediashexa/hexarouting/issues/201)), because a
+rename touching 900 lines makes every later `git blame` on those files answer with
+the rename.
+
 #### If only three were possible
 
 [#35](https://github.com/andrediashexa/hexarouting/issues/35), [#23](https://github.com/andrediashexa/hexarouting/issues/23) and [#69](https://github.com/andrediashexa/hexarouting/issues/69). The first two are not features —

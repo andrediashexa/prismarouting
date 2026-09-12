@@ -99,6 +99,62 @@ ip_csum_fold (ip_csum_t c)
   return (u16) c;
 }
 
+/* ------------------------------------------------------------ IPv4, ICMP */
+
+/*
+ * Field for field with VPP's, and laid out so that sizeof() is 20 with no
+ * padding on any sane ABI - test_bpa_icmp.c asserts that at compile time,
+ * because a header that is one byte longer here than on the box would move
+ * every offset the parse under test computes and quietly make the test agree
+ * with itself instead of with the product.
+ */
+typedef union
+{
+  u8 as_u8[4];
+  u32 as_u32;
+} ip4_address_t;
+
+typedef struct
+{
+  u8 ip_version_and_header_length;
+  u8 tos;
+  u16 length;
+  u16 fragment_id;
+  u16 flags_and_fragment_offset;
+  u8 ttl;
+  u8 protocol;
+  u16 checksum;
+  ip4_address_t src_address, dst_address;
+} ip4_header_t;
+
+static inline int
+ip4_header_bytes (const ip4_header_t *i)
+{
+  return sizeof (u32) * (i->ip_version_and_header_length & 0xf);
+}
+
+typedef struct
+{
+  u8 type;
+  u8 code;
+  u16 checksum;
+} icmp46_header_t;
+
+/* The numbers, not VPP's spelling of them: these are on the wire. */
+#define ICMP4_echo_reply	      0
+#define ICMP4_destination_unreachable 3
+#define ICMP4_source_quench	      4
+#define ICMP4_redirect		      5
+#define ICMP4_echo_request	      8
+#define ICMP4_time_exceeded	      11
+#define ICMP4_parameter_problem	      12
+
+#define IP_PROTOCOL_ICMP       1
+#define IP_PROTOCOL_TCP	       6
+#define IP_PROTOCOL_UDP	       17
+#define IP_PROTOCOL_GRE	       47
+#define IP_PROTOCOL_IPSEC_ESP  50
+
 /* ---------------------------------------------------------- TCP and UDP */
 
 typedef struct
@@ -139,13 +195,15 @@ tcp_header_bytes (const tcp_header_t *t)
 
 /* -------------------------------------------------------------- session */
 
+#include "../src/plugins/bpa/bpa_seq.h"
+
 typedef struct
 {
   u16 port_priv;
-  u8 alg;
-  u32 alg_seq_pos;
-  i32 alg_off_before;
-  i32 alg_off_after;
+  /* The correction an ALG left behind, which is now ONE mechanism shared by
+   * all of them (#48). This mirror carries the real field so that renaming it
+   * over there breaks this build, which is the point of the mirror. */
+  bpa_seq_adj_t adj[BPA_N_DIR];
 } bpa_session_t;
 
 #endif /* __included_bpa_tcp_shim_h__ */

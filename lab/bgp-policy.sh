@@ -1,4 +1,5 @@
 #!/bin/sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 # BGP policy asserted on the tables that forward, not on the text of a config.
 #
 # Route-maps, AS-path lists, communities, graceful shutdown, the pool prefix
@@ -64,7 +65,7 @@ ip netns exec origin ip link add dum-origin type dummy
 ip netns exec origin ip addr add 198.51.100.1/24 dev dum-origin
 ip netns exec origin ip link set dum-origin up
 
-vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
@@ -112,7 +113,6 @@ apt-get install -y -qq frr-rpki-rtrlib stayrtr >/dev/null 2>&1
 # This lab worked out the mgmtd/staticd requirement; it now lives in
 # lab/lib.sh so the other six labs cannot go on not knowing it. Sourced here
 # rather than where it was, because FRR starts before that point.
-. /src/lab/lib.sh
 start_frr bgpd
 
 # ---------------- upstream ----------------
@@ -165,7 +165,6 @@ done
 # The BPA plugin for the binary API. Core VPP messages work without it, but a
 # pool goes through bpa_pool_add_del, and the check that a pool's public prefix
 # is announced needs both halves present.
-. /src/lab/lib.sh
 use_binary_api
 HX="python3 /src/src/hexash/hexash.py"
 

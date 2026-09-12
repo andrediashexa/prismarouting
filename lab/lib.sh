@@ -77,3 +77,44 @@ start_frr() {
     sleep 1; _n=$((_n + 1))
   done
 }
+
+# The startup configuration a lab boots VPP with, with or without workers.
+#
+#   startup_conf                 lab/startup-test.conf
+#   startup_conf lcp             lab/startup-lcp.conf
+#   startup_conf test workers    the same, plus workers, always
+#   LAB_WORKERS=1 sh tools/lab.sh <lab>    the same, plus workers, for any lab
+#
+# This exists because of #199, and #199 is the reason to read the rest of this
+# comment. Every lab that asserted a packet LEAVING the box ran single-threaded,
+# while hexarouting-tune gives every appliance with more than one core two or
+# more workers. On a worker box the node on the ip4-unicast arc is the handoff
+# node, not the translation node, so the translated packet was sent to
+# error-drop and nothing left. Every counter said it was working, and the one
+# lab that did run with workers asserted only counters.
+#
+# A small box really does run everything on the main thread - the tuner says so
+# in as many words - so single-threaded is not a lab-only configuration and the
+# answer is not "make everything use workers". The answer is that a lab which
+# asserts forwarding MUST be runnable both ways, and tools/run-all-labs.sh runs
+# those labs twice.
+#
+# Derived from the base file rather than kept beside it as a copy. The copy
+# that used to exist, lab/startup-workers.conf, differed from lab/startup-test.conf
+# by exactly the cpu stanza - and two files that must differ by exactly one
+# stanza are two files that will one day differ by two.
+startup_conf() {
+  _base=${1:-test}
+  _src=/src/lab/startup-$_base.conf
+  [ -f "$_src" ] || { echo "startup_conf: no $_src" >&2; return 1; }
+  if [ "${2:-}" = workers ] || [ "${LAB_WORKERS:-0}" = 1 ]; then
+    _out=/tmp/startup-$_base-workers.conf
+    {
+      cat "$_src"
+      printf '\ncpu {\n  workers %s\n}\n' "${LAB_WORKER_COUNT:-2}"
+    } > "$_out"
+    echo "$_out"
+  else
+    echo "$_src"
+  fi
+}
