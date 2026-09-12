@@ -427,5 +427,42 @@ with contextlib.redirect_stdout(buf):
 check(ok is True, f"one of two administrators may be demoted: {buf.getvalue()!r}")
 print("  one of two may be demoted; the last one may not")
 
+print("\n=== 'no forward' names the subscriber when the port names two ===")
+# The public address of a forward is the subscriber's own and is never typed,
+# so one public port names one forward per public address the pool has. The
+# removal used to drop EVERY forward on the port: the operator removes a
+# customer's inbound port and hears about it from a second customer.
+sh = shell_with(FakeApi())
+sh.dp.reachable = lambda: True
+# Straight into configuration mode: what is being tested is one statement in a
+# pool block, not the way in.
+sh.mode = "config"
+sh.candidate = config.Config()
+sh.feed("nat cgnat pool residential")
+sh.feed("inside 100.64.0.0/22")
+sh.feed("forward tcp 1650 to 100.64.0.5 8080")
+sh.feed("forward tcp 1650 to 100.64.0.6 8081")
+pool = sh.candidate.pools["residential"]
+check(len(pool.forwards) == 2,
+      f"two subscribers may hold the same port: {pool.forwards}")
+
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("no forward tcp 1650")
+said = out.getvalue()
+check(len(pool.forwards) == 2,
+      f"an ambiguous removal must remove nothing: {pool.forwards}")
+check("100.64.0.5" in said and "100.64.0.6" in said,
+      f"and must name both subscribers it could have meant: {said.strip()}")
+print(f"  no forward tcp 1650 -> {said.strip()}")
+
+sh.feed("no forward tcp 1650 to 100.64.0.5 8080")
+check([f[2] for f in pool.forwards] == ["100.64.0.6"],
+      f"naming the subscriber removes that one: {pool.forwards}")
+sh.feed("no forward tcp 1650")
+check(pool.forwards == [],
+      f"and the port alone is enough once it names one: {pool.forwards}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

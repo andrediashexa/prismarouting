@@ -128,7 +128,20 @@ else
   vppctl bpa pool inline inside 172.16.0.0/24 outside 198.51.100.16/30 \
       block 64 forward tcp 1100 to 172.16.0.5 80
   vppctl ip route add 172.16.0.0/24 via 100.64.3.253 pg0
+  # The same public PORT, on two different public ADDRESSES of one pool.
+  # 100.64.0.5 sends from 200.150.0.17 and 100.64.0.6 from 200.150.0.18, so
+  # 1650 on one of them is not 1650 on the other: they are two sockets, and
+  # the pool has already given them to two customers. A pool with more than
+  # one public address is the ordinary case, so a port that can only be sold
+  # once across the whole pool is a port that can be sold to one customer in
+  # four here (#214).
+  R_SHARED_A=$(vppctl bpa forward lab tcp 1650 to 100.64.0.5 8080 2>&1)
+  R_SHARED_B=$(vppctl bpa forward lab tcp 1650 to 100.64.0.6 8081 2>&1)
+  echo "  the same port on each of two public addresses:"
+  echo "  .17: ${R_SHARED_A:-accepted}"
+  echo "  .18: ${R_SHARED_B:-accepted}"
 fi
+SHARED=$(vppctl show bpa forward lab)
 
 echo
 echo "=========== 3. unsolicited inbound reaches the subscriber ==========="
@@ -143,6 +156,20 @@ echo "expected: 198.51.100.17:1100 -> 172.16.0.5:80"
 tcp 8.8.8.8 198.51.100.17 33000 1100 syn pg1
 INLINE=$(trace)
 echo "$INLINE" | sed 's/^/  /'
+
+echo
+echo "=========== 3c. one public port, two public addresses ==========="
+echo "expected: 200.150.0.17:1650 -> 100.64.0.5:8080"
+tcp 8.8.8.8 200.150.0.17 33000 1650 syn pg1
+SHARED_A=$(trace)
+echo "$SHARED_A" | sed 's/^/  /'
+echo "expected: 200.150.0.18:1650 -> 100.64.0.6:8081"
+echo "on its own address, and reaching its own subscriber - the packet is"
+echo "what says the return path kept the address in the key rather than"
+echo "answering with whichever forward happened to hold the port."
+tcp 8.8.8.8 200.150.0.18 33000 1650 syn pg1
+SHARED_B=$(trace)
+echo "$SHARED_B" | sed 's/^/  /'
 
 echo
 echo "=========== 4. the port next to it still does not ==========="
@@ -243,6 +270,14 @@ if [ "$MODE" = off ]; then
   echo "  nobody's and the hold-down takes it like any other."
 else
   vppctl bpa forward dyn tcp 1100 to 10.0.0.5 80
+  # The #214 measurement itself, on the pool it was taken on. 10.0.0.4 is
+  # subscriber 4 of this pool and sends from 203.0.113.16; 10.0.0.5 is
+  # subscriber 5 and sends from 203.0.113.17. Both are given port 1100, which
+  # sits in block 1088-1151 of each of their own addresses. A dynamic pool is
+  # where an operator has many public addresses, so this is the case that
+  # decides how many customers can be sold an inbound port.
+  R_DYN_SHARED=$(vppctl bpa forward dyn tcp 1100 to 10.0.0.4 8080 2>&1)
+  echo "  the same port on the other public address: ${R_DYN_SHARED:-accepted}"
 fi
 DYN_FWD=$(vppctl show bpa forward dyn)
 echo "$DYN_FWD" | sed 's/^/  /'
@@ -252,6 +287,10 @@ echo "  unsolicited inbound, expected: 203.0.113.17:1100 -> 10.0.0.5:80"
 tcp 8.8.8.8 203.0.113.17 33000 1100 syn pg1
 DYN_IN=$(trace)
 echo "$DYN_IN" | sed 's/^/  /'
+echo "  and on the other address, expected: 203.0.113.16:1100 -> 10.0.0.4:8080"
+tcp 8.8.8.8 203.0.113.16 33000 1100 syn pg1
+DYN_IN_B=$(trace)
+echo "$DYN_IN_B" | sed 's/^/  /'
 DYN_TRAIL=$(grep "forward" /var/log/hexarouting/config-history.log 2>/dev/null | tail -1)
 echo "  trail: $DYN_TRAIL"
 
@@ -273,6 +312,7 @@ IDLE=$(( $(date +%s) - T0 ))
 echo "  ${IDLE}s with no traffic from any of them"
 CTL_IDLE=$(vppctl show bpa subscriber 10.0.0.20)
 PIN_IDLE=$(vppctl show bpa subscriber 10.0.0.5)
+PIN_IDLE_B=$(vppctl show bpa subscriber 10.0.0.4)
 BLOCKS=$(vppctl show bpa blocks)
 printf '%s\n' "$CTL_IDLE" | sed 's/^/  |/'
 printf '%s\n' "$PIN_IDLE" | sed 's/^/  |/'
@@ -284,11 +324,23 @@ echo "  expected: 203.0.113.17:1100 -> 10.0.0.5:80"
 tcp 8.8.8.8 203.0.113.17 33000 1100 syn pg1
 DYN_AFTER=$(trace)
 echo "$DYN_AFTER" | sed 's/^/  /'
+echo "  expected: 203.0.113.16:1100 -> 10.0.0.4:8080"
+tcp 8.8.8.8 203.0.113.16 33000 1100 syn pg1
+DYN_AFTER_B=$(trace)
+echo "$DYN_AFTER_B" | sed 's/^/  /'
 
 echo
 echo "  removing the forward gives the block back:"
+# Removing by public port alone can no longer name ONE forward, because the
+# port is now two of them on two addresses. Asked here, after everything else
+# has been measured, because on a box that still keys the port to the pool
+# this removes a forward that was never named and the sections below would
+# then be measuring the removal.
+R_AMBIG=$(vppctl bpa forward dyn tcp 1100 del 2>&1)
+echo "  by port alone: ${R_AMBIG:-removed something without being told which}"
 if [ "$MODE" != off ]; then
-  vppctl bpa forward dyn tcp 1100 del
+  vppctl bpa forward dyn tcp 1100 to 10.0.0.5 80 del
+  vppctl bpa forward dyn tcp 1100 to 10.0.0.4 8080 del
 fi
 UNPINNED=$(vppctl show bpa blocks)
 printf '%s\n' "$UNPINNED" | sed 's/^/  |/'
@@ -314,6 +366,21 @@ expect_in "an unsolicited inbound packet reached the subscriber" \
   "200.150.0.17:1600 -> 100.64.0.5:80" "$INBOUND"
 expect_in "a forward given on the pool line works, not just shows" \
   "198.51.100.17:1100 -> 172.16.0.5:80" "$INLINE"
+# One public port on two public addresses of one pool. The refusal these
+# replace named a customer the operator had never heard of, because the port
+# was being treated as the pool's rather than the address's (#214).
+expect_in "the same public port was forwarded on the first public address" \
+  "tcp 200.150.0.17:1650 -> 100.64.0.5:8080" "$SHARED"
+expect_in "and on the second, which is a different socket" \
+  "tcp 200.150.0.18:1650 -> 100.64.0.6:8081" "$SHARED"
+expect_in "the first address reached its own subscriber" \
+  "200.150.0.17:1650 -> 100.64.0.5:8080" "$SHARED_A"
+# The assertion that fails if the address was dropped from the key on the way
+# back in: the port alone would answer with whichever forward holds it.
+expect_in "the second address reached its own subscriber" \
+  "200.150.0.18:1650 -> 100.64.0.6:8081" "$SHARED_B"
+expect_not_in "and not the subscriber on the other address" \
+  "-> 100.64.0.5" "$SHARED_B"
 expect_not_in "the neighbouring port was not translated" \
   "-> 100.64.0.5" "$NEIGHBOUR"
 expect_in "the neighbouring port was counted as having no session" \
@@ -339,6 +406,11 @@ expect_in "an address that is not a subscriber is refused" \
   "not a subscriber" "$R_NOSUB"
 expect_in "a second forward on the same public port is refused" \
   "already forwarded" "$R_DUP"
+# The reason the refusal exists is that somebody already has the socket, so
+# the refusal has to say who. "Refused" on its own sends the operator to the
+# configuration to find out what they collided with.
+expect_in "and it names the subscriber socket that holds it" \
+  "100.64.0.5:80" "$R_DUP"
 expect_in "removing a forward that does not exist is refused" \
   "tcp port 4444 is not forwarded" "$R_MISS"
 
@@ -356,6 +428,17 @@ expect_in "a block another subscriber holds is refused at commit check" \
   "which 10.0.0.21 is holding now" "$R_HELD"
 expect_in "an unsolicited inbound packet reached the pinned subscriber" \
   "203.0.113.17:1100 -> 10.0.0.5:80" "$DYN_IN"
+# The dynamic half of #214, on the pool the issue measured. A dynamic pool is
+# where the operator has many public addresses, so this is the case that
+# decides how many customers can be sold one inbound port.
+expect_in "the same port was forwarded on another address of a dynamic pool" \
+  "tcp 203.0.113.16:1100 -> 10.0.0.4:8080" "$DYN_FWD"
+expect_in "and an inbound packet on that address reached ITS subscriber" \
+  "203.0.113.16:1100 -> 10.0.0.4:8080" "$DYN_IN_B"
+expect_not_in "and not the one on the neighbouring address" \
+  "-> 10.0.0.5" "$DYN_IN_B"
+expect_in "removing by public port alone is refused while it names two forwards" \
+  "10.0.0.4" "$R_AMBIG"
 expect_in "the pin is in the configuration trail, as the forward it derives from" \
   "forward tcp/1100->10.0.0.5:80" "$DYN_TRAIL"
 # The control. Without it the assertion below passes on a box whose hold-down
@@ -364,10 +447,14 @@ expect_in "the hold-down did run: an unpinned block went back to the pool" \
   "no live state" "$CTL_IDLE"
 expect_in "the pinned block is still the subscriber's after ${IDLE}s idle" \
   "PINNED by a forward" "$PIN_IDLE"
-expect_in "and the pool says so" "1 pinned" "$BLOCKS"
+expect_in "so is the block of the subscriber on the other public address" \
+  "PINNED by a forward" "$PIN_IDLE_B"
+expect_in "and the pool says so" "2 pinned" "$BLOCKS"
 # The claim is about a packet, so it is asserted on the packet.
 expect_in "an inbound packet on the forwarded port still reaches them" \
   "203.0.113.17:1100 -> 10.0.0.5:80" "$DYN_AFTER"
+expect_in "and the same port on the other address still reaches the other" \
+  "203.0.113.16:1100 -> 10.0.0.4:8080" "$DYN_AFTER_B"
 expect_in "removing the last forward unpinned the block" \
   "0 pinned" "$UNPINNED"
 

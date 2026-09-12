@@ -37,7 +37,8 @@ are to be interpreted as described in
 ## Unreleased
 
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
-[#203](https://github.com/andrediashexa/hexarouting/issues/203).
+[#203](https://github.com/andrediashexa/hexarouting/issues/203),
+[#214](https://github.com/andrediashexa/hexarouting/issues/214).
 
 ### Fixed
 
@@ -134,13 +135,62 @@ are to be interpreted as described in
   the subscriber idle for **six times the hold-down** (30s against 5s) and
   keeps two unpinned blocks as a control: if those are still held, nothing was
   reaped and the section proved nothing. The reachability claim is asserted on
-  the captured packet. `sh tools/lab.sh forward off` now fails 16 of its
-  checks; the lab passes under `LAB_WORKERS=1` and joins the worker pass in
-  `tools/run-all-labs.sh`, because "the pinned block is in the slice of the
-  same worker the subscriber's own traffic lands on" is a sentence only a
-  worker run can check. `lab/ipfix.sh` asserts all four records off the wire,
-  decoded by a real collector, with the subscriber and port range in them —
-  including a block pinned while the export was off.
+  the captured packet. `sh tools/lab.sh forward off` fails 16 of its checks
+  (26 once [#214](https://github.com/andrediashexa/hexarouting/issues/214)
+  below adds its own); the lab passes under `LAB_WORKERS=1` and joins the
+  worker pass in `tools/run-all-labs.sh`, because "the pinned block is in the
+  slice of the same worker the subscriber's own traffic lands on" is a
+  sentence only a worker run can check. `lab/ipfix.sh` asserts all four
+  records off the wire, decoded by a real collector, with the subscriber and
+  port range in them — including a block pinned while the export was off.
+
+* **A public port could be forwarded once per pool instead of once per public
+  address.** A pool has as many public addresses as the operator gave it and
+  hands the same port offset to one subscriber per address, so
+  `203.0.113.16:1100` and `203.0.113.17:1100` are two sockets the box has
+  already given to two different customers. Both the conflict check and the
+  return-path lookup keyed a forward on `(protocol, port)` alone, so the first
+  customer to be sold a port took it away from everybody who shares its offset
+  on the other addresses - and the next one was refused by a message naming a
+  customer the operator had never heard of:
+  `public port 1030 is already forwarded to 10.0.0.0:80`
+  ([#214](https://github.com/andrediashexa/hexarouting/issues/214)).
+
+  On an interleaved pool with **N** public addresses that is one forward per
+  port offset where there should be N. It was invisible while forwards were a
+  deterministic-only feature, and
+  [#67](https://github.com/andrediashexa/hexarouting/issues/67) has just made
+  them work on a dynamic pool, which is exactly where an operator has many
+  addresses.
+
+  Both are now keyed on `(public address, protocol, port)`. The address was
+  already in the forward - it is derived from the subscriber, not configured -
+  and on the return path it is the address the packet was addressed to, which
+  that node had already used to find the block. **The out2in agreement check
+  stays**: the forward is still trusted only when it names the subscriber the
+  arithmetic resolved independently, which is what catches a forward that
+  outlived a pool redefinition. Without it, an address-blind lookup did not
+  merely refuse the second customer - it handed them the first one's packets,
+  and `lab/forward.sh` now asserts that it does not.
+
+  **Removing a forward names the subscriber when the port alone is ambiguous.**
+  The public address is derived and never typed, so a public port used to BE
+  the name of a forward; it now names up to one per address. `bpa forward
+  <pool> <proto> <port> del` removes the one forward on that port, and refuses
+  when there are several, naming the subscribers and how to say which. The VTY
+  already sends the private address with a removal, so a commit is unaffected.
+  The VTY's own duplicate check was the same rule in the other language: it
+  refused a second `forward` line on a port for **any** subscriber, which it
+  cannot judge - it does not know the pool's arithmetic - so it now refuses
+  only the same port for the same subscriber and leaves the rest to the device.
+
+  Evidence: `lab/forward.sh` gains two subscribers on **different** public
+  addresses of one pool given the **same** port, on the deterministic pool and
+  on the dynamic one, each asserted on the captured packet to reach its own
+  subscriber and not the neighbour's. The negative half is kept: two forwards
+  on the same public socket are still refused, naming the socket that holds it.
+  The lab goes from 28 checks to 40; `sh tools/lab.sh forward off` fails 26 of
+  them.
 
 ## 0.65.0 — the box refused correct configurations, exported nothing, and let you in too early
 

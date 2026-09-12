@@ -175,7 +175,17 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
   return 0;
 }
 
-/* Where a forward belongs in a vector ordered by (public port, protocol). */
+/*
+ * Where a forward belongs in a vector ordered by (public port, protocol).
+ *
+ * Two forwards may now share both, on different public addresses, and a tie
+ * goes AFTER the ones already there. The VTY keeps its own copy of a pool's
+ * forwards in the order it read them out of "show bpa config" and renders
+ * both sides of a commit diff with a stable sort, so a device that inserted a
+ * new tie in front of an older one would show a diff on the following commit
+ * that nobody asked for. The vector stays ordered by public port, which is
+ * the only thing bpa_static_lower() needs.
+ */
 static u32
 bpa_static_position (const bpa_pool_t *p, const bpa_static_t *sf)
 {
@@ -183,7 +193,7 @@ bpa_static_position (const bpa_pool_t *p, const bpa_static_t *sf)
   u32 i = bpa_static_lower (p->statics, n, sf->port_pub);
 
   while (i < n && p->statics[i].port_pub == sf->port_pub
-	 && p->statics[i].proto < sf->proto)
+	 && p->statics[i].proto <= sf->proto)
     i++;
   return i;
 }
@@ -191,15 +201,30 @@ bpa_static_position (const bpa_pool_t *p, const bpa_static_t *sf)
 /*
  * Two forwards that cannot both hold.
  *
- * One public port serves one socket, and one subscriber socket answers on one
- * public port - the second is endpoint-independent mapping (RFC 4787 REQ-1),
- * which the rest of this box already guarantees and a second forward on the
- * same socket would quietly break.
+ * One public SOCKET serves one subscriber socket, and one subscriber socket
+ * answers on one public socket - the second is endpoint-independent mapping
+ * (RFC 4787 REQ-1), which the rest of this box already guarantees and a
+ * second forward on the same socket would quietly break.
+ *
+ * The public socket is (address, port). A pool has as many addresses as the
+ * operator gave it and hands the same port offset to one subscriber per
+ * address, so 203.0.113.16:1100 and 203.0.113.17:1100 are two sockets that
+ * two customers already own. Comparing the port alone made a port sellable
+ * once per POOL instead of once per address, and refused the second customer
+ * by naming a first one they have never heard of (issue #214).
+ *
+ * The private side is deliberately NOT narrowed the same way: a subscriber's
+ * public address is derived from its private one, so (ip_priv, port_priv) is
+ * already one address's worth of socket.
+ *
+ * Both callers run bpa_static_validate() first, which is where ip_pub is
+ * derived. A forward that has not been through it has no address to compare
+ * and must not reach here.
  */
 static clib_error_t *
 bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
 {
-  ip4_address_t a;
+  ip4_address_t a, pub;
   u32 i;
 
   vec_foreach_index (i, p->statics)
@@ -208,12 +233,14 @@ bpa_static_conflict (const bpa_pool_t *p, const bpa_static_t *sf)
 
       if (o->proto != sf->proto)
 	continue;
-      if (o->port_pub == sf->port_pub)
+      if (o->port_pub == sf->port_pub && o->ip_pub == sf->ip_pub)
 	{
 	  a.as_u32 = clib_host_to_net_u32 (o->ip_priv);
+	  pub.as_u32 = clib_host_to_net_u32 (o->ip_pub);
 	  return clib_error_return (
-	    0, "public port %u is already forwarded to %U:%u", sf->port_pub,
-	    format_ip4_address, &a, o->port_priv);
+	    0, "public port %u on %U is already forwarded to %U:%u",
+	    sf->port_pub, format_ip4_address, &pub, format_ip4_address, &a,
+	    o->port_priv);
 	}
       if (o->ip_priv == sf->ip_priv && o->port_priv == sf->port_priv)
 	{
@@ -520,6 +547,64 @@ bpa_static_last_in_block (const bpa_pool_t *p, const bpa_static_t *sf)
 }
 
 /*
+ * The one forward on (protocol, public port) when the caller did not say which
+ * subscriber, or an error naming the ones it could have meant.
+ *
+ * The public address is derived and never typed, so the public port used to
+ * BE the name of a forward. On a pool with several public addresses it names
+ * up to one forward per address, and removing the first match would take an
+ * inbound port away from a customer nobody mentioned. Ambiguity is refused
+ * and the operator is told how to say which - the subscriber, which is the
+ * one thing they do type.
+ */
+static clib_error_t *
+bpa_static_only_on_port (const bpa_pool_t *p, const bpa_static_t *sf,
+			 const bpa_static_t **out)
+{
+  const bpa_static_t *first = 0, *second = 0;
+  u32 n = vec_len (p->statics);
+  u32 i = bpa_static_lower (p->statics, n, sf->port_pub);
+  u32 n_match = 0;
+  ip4_address_t a;
+  clib_error_t *e;
+  u8 *who = 0;
+
+  for (; i < n && p->statics[i].port_pub == sf->port_pub; i++)
+    {
+      if (p->statics[i].proto != sf->proto)
+	continue;
+      n_match++;
+      if (!first)
+	first = &p->statics[i];
+      else if (!second)
+	second = &p->statics[i];
+    }
+
+  if (n_match <= 1)
+    {
+      *out = first;
+      return 0;
+    }
+
+  a.as_u32 = clib_host_to_net_u32 (first->ip_priv);
+  who = format (who, "%U", format_ip4_address, &a);
+  a.as_u32 = clib_host_to_net_u32 (second->ip_priv);
+  who = format (who, " and %U", format_ip4_address, &a);
+  if (n_match > 2)
+    who = format (who, " and %u more", n_match - 2);
+
+  e = clib_error_return (
+    0,
+    "%U port %u is forwarded on %u public addresses of pool '%v' - for %v. "
+    "Name the subscriber: 'bpa forward %v %U %u to <private-ip> "
+    "<private-port> del'",
+    format_bpa_proto, sf->proto, sf->port_pub, n_match, p->name, who, p->name,
+    format_bpa_proto, sf->proto, sf->port_pub);
+  vec_free (who);
+  return e;
+}
+
+/*
  * Adds or removes one static port forward on a running pool.
  *
  * `is_check` validates and changes nothing, which is what a commit check
@@ -552,8 +637,34 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
    */
   if (!is_add)
     {
-      const bpa_static_t *have = bpa_static_by_pub (p, sf->port_pub, sf->proto);
+      const bpa_static_t *have = 0;
       bpa_static_t gone;
+      bpa_block_t blk;
+
+      /*
+       * Given the subscriber, the public address follows from the pool's own
+       * arithmetic and the forward is named exactly. That is the shape the
+       * VTY sends - it removes a forward it holds in full - and the shape an
+       * operator gets by putting "del" on the end of the line they added.
+       */
+      if (sf->ip_priv != 0)
+	{
+	  ip4_address_t priv;
+
+	  priv.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
+	  if (bpa_forward (p, sf->ip_priv, &blk))
+	    return clib_error_return (
+	      0, "%U is not a subscriber of pool '%v', or is beyond its "
+		 "capacity of %u",
+	      format_ip4_address, &priv, p->name, p->capacity);
+	  have = bpa_static_by_pub (p, blk.ip_pub, sf->port_pub, sf->proto);
+	}
+      else
+	{
+	  e = bpa_static_only_on_port (p, sf, &have);
+	  if (e)
+	    return e;
+	}
 
       if (!have)
 	return clib_error_return (0, "%U port %u is not forwarded",

@@ -1020,6 +1020,52 @@ public port 2048 belongs to 100.64.0.9's block, not to 100.64.0.5's.
 
 The operator finds the block with `show bpa subscriber <address>`.
 
+### One port per public address, not per pool
+
+A pool has as many public addresses as the operator gave it, and it hands the
+**same port offset to one subscriber per address**. So a forward is keyed on
+the public **socket**, `(address, protocol, port)`, and not on the port
+alone:
+
+```
+203.0.113.16:1100 -> 10.0.0.4:8080
+203.0.113.17:1100 -> 10.0.0.5:80
+```
+
+Those are two sockets, and the pool's own arithmetic had already given them to
+two different customers. Keyed on the port alone, the first forward sold made
+that offset unsellable to the other **N-1** subscribers who share it, and the
+next customer was refused by a message naming one they had never heard of. The
+address costs neither path anything: on the way in it is the address the
+packet was addressed to, which the node has already used to find the block, and
+on the way out it is the subscriber's own.
+
+The **agreement check on the return path stays**. A forward is trusted only
+when its subscriber is the one the reverse arithmetic resolved independently
+from `(address, port)`; the two can disagree only if the pool was redefined
+under a forward that survived it, and translating on the older of two answers
+is how a customer receives another customer's traffic.
+
+Two forwards on the **same** public socket are still refused, naming the
+subscriber socket that holds it, and so are two public ports pointing at one
+subscriber socket - that second one is endpoint-independent mapping (RFC 4787
+REQ-1), which the rest of the box guarantees.
+
+Removal is where this is visible to an operator. The public address is derived
+and never typed, so a public port used to **be** the name of a forward and now
+names up to one per address:
+
+```
+bpa forward <pool> <tcp|udp> <public-port> [to <private-ip> <private-port>] del
+```
+
+Naming the subscriber names the forward exactly, because the address follows
+from the arithmetic. The port on its own is accepted while it is unambiguous
+and refused when it is not, naming the subscribers it could have meant -
+removing the first match would take an inbound port from a customer nobody
+mentioned. The VTY sends the private address with every removal, so a commit
+is never the ambiguous case.
+
 ### On a dynamic pool, the block is what gets pinned
 
 A dynamic pool hands blocks out on the first flow and takes them back after the
@@ -1154,7 +1200,7 @@ pinned blocks with no record at all. See [logging.md](logging.md).
 
 `lab/forward.sh` asserts the behaviour on packets, and
 `sh tools/lab.sh forward off` runs the same lab with no forward configured,
-where sixteen of its checks **MUST** fail. Its dynamic-pool section leaves the
+where twenty-six of its checks **MUST** fail. Its dynamic-pool section leaves the
 subscriber idle for **six times the hold-down**, with two unpinned blocks as
 the control: if those are still held, the hold-down never ran and the section
 would have been asserting something the hold-down gives it anyway.

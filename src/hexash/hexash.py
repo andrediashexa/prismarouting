@@ -5521,12 +5521,31 @@ class Shell:
                     p.timeouts.pop(w[2], None)
                 elif w[1] == "alg":
                     p.algs.pop(w[2], None)
-                # "no forward tcp 1100": the public port and protocol identify
-                # it, which is the pair the dataplane keys on.
+                # "no forward tcp 1100", and the subscriber when the port
+                # alone is not enough. The public ADDRESS is the subscriber's
+                # own and is never typed, so one port names one forward per
+                # public address the pool has - and removing every one of them
+                # would take an inbound port from a customer who was never
+                # mentioned. The trailing "to <private-ip> <private-port>" is
+                # accepted so that removing a forward can be the line that
+                # added it with "no" on the front.
                 elif w[1] == "forward" and len(w) > 3:
-                    p.forwards = [f for f in p.forwards
-                                  if not (f[0] == w[2]
-                                          and str(f[1]) == w[3])]
+                    ip = None
+                    if len(w) > 5 and w[4] == "to":
+                        ip = w[5]
+                    elif len(w) > 4:
+                        ip = w[4]
+                    hit = [f for f in p.forwards
+                           if f[0] == w[2] and str(f[1]) == w[3]
+                           and (ip is None or f[2] == ip)]
+                    if len(hit) > 1:
+                        raise ValueError(
+                            f"forward {w[2]} {w[3]} is configured for "
+                            + ", ".join(f[2] for f in hit)
+                            + " on different public addresses; name the "
+                            "subscriber: no forward " + w[2] + " " + w[3]
+                            + " to <private-ip> <private-port>")
+                    p.forwards = [f for f in p.forwards if f not in hit]
             elif w[0] == "no" and len(w) > 1 and w[1] == "max-blocks":
                 p.max_blocks = 0
             elif w[0] == "no" and len(w) > 1 and w[1] == "tcp-mss":
