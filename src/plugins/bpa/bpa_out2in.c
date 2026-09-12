@@ -488,6 +488,16 @@ VLIB_NODE_FN (bpa_out2in_node)
 		  pool_elt_at_index (bm->pools, pool_index)->alg,
 		  BPA_ALG_PPTP)))
 	    {
+	      /*
+	       * The index, because the ALG may create a GRE session and
+	       * pool_get() moves the whole vector. `s` is a pointer into it
+	       * and everything below this block dereferences it - the VRF, the
+	       * counters, the trace. bpa_ftp.c and bpa_rtsp both re-resolve
+	       * for this reason and say so; PPTP was the one that did not
+	       * (#207).
+	       */
+	      u32 s_index = (u32) (s - pt->sessions);
+
 	      switch (bpa_pptp_in (pt, b[0], tcp, s, now))
 		{
 		case BPA_PPTP_MANGLED:
@@ -502,6 +512,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 		default:
 		  break;
 		}
+	      /* Re-resolved: the ALG may have moved the pool under us. */
+	      s = pool_elt_at_index (pt->sessions, s_index);
 	    }
 	}
 
