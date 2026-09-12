@@ -37,9 +37,31 @@ are to be interpreted as described in
 ## Unreleased
 
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
-[#203](https://github.com/andrediashexa/hexarouting/issues/203).
+[#203](https://github.com/andrediashexa/hexarouting/issues/203),
+[#215](https://github.com/andrediashexa/hexarouting/issues/215).
 
 ### Fixed
+
+* **Deleting a pool left every block it was holding open in the retention
+  log.** The blocks a pool still holds are freed by the delete itself and
+  never reach the reap, so the release record the ordinary path emits was
+  never written for them. In dynamic mode that log is the connection record
+  kept for a year, and it is read as "the last allocation before the instant
+  asked about": an allocation with no release says the subscriber held those
+  ports from the delete onwards, so the box answered a court order with a
+  subscriber who had already been disconnected
+  ([#215](https://github.com/andrediashexa/hexarouting/issues/215)).
+
+  The delete now emits `natEvent` 17 for every block it frees, before it frees
+  it, through the same queue every other block event leaves by. The record is
+  stamped at the delete and not at some earlier moment the box never observed.
+  Pinned blocks are the ones this bit most often, because a pinned block is by
+  definition held at delete time: a pool carrying static forwards left one open
+  record per forward, every time it was deleted or replaced. Deterministic
+  pools are unaffected and always were, having no allocation events at all.
+
+  Replacing a pool goes through the same delete, so a `commit` that changes a
+  pool's addresses or block size now closes the records it invalidates.
 
 * **An ICMP error about a PPTP tunnel was dropped, so PMTUD was a black hole
   for every PPTP subscriber.** A GRE packet carries no MSS to clamp, so the

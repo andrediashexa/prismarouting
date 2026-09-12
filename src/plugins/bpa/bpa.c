@@ -1301,6 +1301,85 @@ bpa_barrier_yield (vlib_main_t *vm)
 }
 
 /*
+ * Every block the pool is still holding, as an RFC 8158 natEvent 17, before
+ * the allocator that knows whose they are is freed.
+ *
+ * A block held at this instant is freed by bpa_dyn_free() below and never
+ * reaches the reap, so nothing on the ordinary release path runs for it. In
+ * dynamic mode the allocation log IS the connection record the Marco Civil
+ * requires to be kept for a year, and the question it answers is "who held
+ * this public port at this instant" - read as the last allocation before the
+ * instant asked about. An allocation with no release says the subscriber held
+ * those ports from then on, for as long as the log is kept, so deleting a pool
+ * used to name a subscriber who had already been disconnected. That is the
+ * worst direction for this particular error to go in (#215).
+ *
+ * The record is stamped at the delete, not at some earlier moment when the
+ * block stopped being used: the box did not observe that moment and a record
+ * that guessed at it would be a fabricated one. The same argument
+ * bpa_log_pins_replay() makes for the other half of this hole.
+ *
+ * Queued rather than emitted, through the one call every other block event
+ * goes through. A delete arrives from a CLI process and from an API handler,
+ * and the export path may only be reached from process context - the queue is
+ * what bpa-expire-process drains, under the barrier, a second later.
+ *
+ * DETERMINISTIC POOLS ARE NOT AFFECTED, and the check says so rather than
+ * relying on the loop finding nothing: bpa_dyn_init() is called only for
+ * BPA_MODE_DYNAMIC, so a deterministic pool has no allocator here. It also has
+ * no events at all - the mapping is the formula plus the dated configuration
+ * trail, which is why that mode logs nothing per subscriber - so a release
+ * emitted here would be the second half of a pair whose first half was never
+ * written, and a collector reading it would have to invent the allocation.
+ */
+static void
+bpa_pool_del_log_blocks (const bpa_pool_t *p, u32 pool_index)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 i;
+
+  if (p->mode != BPA_MODE_DYNAMIC)
+    return;
+
+  for (i = 0; i < vec_len (bm->per_thread); i++)
+    {
+      bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
+      bpa_dyn_t *d;
+      u32 w, nw, local;
+
+      if (pool_index >= vec_len (pt->dyn))
+	continue;
+      d = vec_elt_at_index (pt->dyn, pool_index);
+      if (!d->active)
+	continue;
+
+      bpa_worker_id (bm, i, &w, &nw);
+
+      /*
+       * owner[] rather than by_sub: an extension block has no entry in by_sub
+       * and is held by a subscriber exactly like a primary one, and a pinned
+       * block is an owner too. Whatever the block is being held for, it was
+       * announced with a natEvent 16 and is about to disappear.
+       */
+      for (local = 0; local < d->n_local; local++)
+	{
+	  bpa_block_t blk;
+	  u32 ip_priv;
+
+	  if (d->owner[local] == BPA_NO_BLOCK)
+	    continue;
+	  if (bpa_set_addr_of (&p->inside, d->owner[local], &ip_priv))
+	    continue;
+
+	  bpa_dyn_block_addr (p, local * nw + w, &blk);
+	  bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
+			       blk.ip_pub, blk.port_lo, blk.port_hi,
+			       pool_index);
+	}
+    }
+}
+
+/*
  * Deleting a pool means freeing every session it produced, and there may be
  * millions of them.
  *
@@ -1386,6 +1465,9 @@ bpa_pool_del (u8 *name)
    */
   vlib_worker_thread_barrier_sync (vm);
   p = pool_elt_at_index (bm->pools, pool_index);
+  /* Before the free, because the allocator is the only thing that knows which
+   * subscriber each block belongs to. */
+  bpa_pool_del_log_blocks (p, pool_index);
   for (i = 0; i < vec_len (bm->per_thread); i++)
     {
       bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
