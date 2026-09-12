@@ -34,6 +34,51 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+[#165](https://github.com/andrediashexa/hexarouting/issues/165),
+[#198](https://github.com/andrediashexa/hexarouting/issues/198),
+[#206](https://github.com/andrediashexa/hexarouting/issues/206).
+
+### Fixed
+
+* **The IS-IS IPv6 warning fired on a working configuration, including this
+  repository's own lab.** `ipv6 router isis <tag>` without `topology
+  ipv6-unicast` was reported as "the IPv6 half carries nothing while IPv4
+  works". That statement turns on Multi-Topology IS-IS (RFC 5120), a second SPF
+  for IPv6; without it IPv6 reachability floods in the single legacy topology
+  and forwards perfectly well when both ends agree, which is the ordinary
+  single-vendor core. `lab/igp.sh` commits exactly that configuration and then
+  watches `2001:db8:19::/64` reach the VPP IPv6 FIB over the adjacency, so the
+  box was contradicting its own acceptance test on every run — and, because the
+  check runs at every commit, printing the same sentence again over an OSPF
+  NBMA neighbour, a BGP refusal and `router ospf6`. The warning is withdrawn
+  rather than narrowed: what would be a real fault is Multi-Topology on at one
+  end and off at the other, which is not in this box's configuration at all.
+  The lab now asserts the commit stays silent about it, so it cannot come back
+  unnoticed ([#198](https://github.com/andrediashexa/hexarouting/issues/198)).
+* **Two more IGP findings fired on correct configurations.** The IS-IS
+  `metric-style wide` warning charged every interface metric on the box to
+  every instance, so a metric a wide instance expresses perfectly named a
+  narrow instance that never carries that port; it is now read from the
+  interfaces that joined the instance being judged. The OSPF "no area 0"
+  warning ignored `area <n> virtual-link`, which is precisely how RFC 2328
+  section 15 attaches a box with no physical backbone interface — the warning
+  described a working design back to the operator who had to think hardest
+  about it.
+* **`tools/wiki-pull.sh` and `tools/wiki-push.sh` did not round-trip.** The
+  mirror writes each page as `# <title>` followed by the body; Outline keeps
+  the title in a field of its own, and push sent the file verbatim — so a page
+  that made the documented pull, edit, push cycle grew a second title above its
+  opening sentence, which `PADRAO-DOCUMENTACAO.md` section 1 forbids, and every
+  further round trip added another. push now strips a leading heading that
+  matches the live document's title, and **stops** when the first line is a
+  heading that does not, rather than guessing. `test/test_wiki_roundtrip.sh`
+  drives both scripts against a stubbed `curl` — there is no wiki and no token
+  in the test — and compares the bytes that would have been sent against the
+  bytes the page held, twice around
+  ([#165](https://github.com/andrediashexa/hexarouting/issues/165)).
+
 ## 0.63.0 — the configuration the product ships had never been tested
 
 [#48](https://github.com/andrediashexa/hexarouting/issues/48),

@@ -34,6 +34,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 	@echo
 	@sh test/test_version_stamp.sh
 	@echo
+	@sh test/test_wiki_roundtrip.sh
+	@echo
 	@python3 test/test_vppapi.py
 	@echo
 	@python3 test/test_hexash_apply.py
