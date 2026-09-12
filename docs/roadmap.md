@@ -642,20 +642,38 @@ had.**
 | [#201](https://github.com/andrediashexa/hexarouting/issues/201) | an ICMP error steered to a worker that had never heard of the session, and a counter that blamed the internet for it | *fixed, v0.63.0* |
 | [#207](https://github.com/andrediashexa/hexarouting/issues/207) | a session pointer held across a second `pool_get`, twice | *fixed* |
 | [#206](https://github.com/andrediashexa/hexarouting/issues/206) | `alg <x> off` on the pool line accepted and ignored, taking a lab's whole `off` mode with it | *fixed* |
-| [#209](https://github.com/andrediashexa/hexarouting/issues/209) | UDP IPFIX export has never worked on an installed box | **open** |
+| [#209](https://github.com/andrediashexa/hexarouting/issues/209) | UDP IPFIX export has never worked on an installed box | *fixed* |
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) | a subscriber refused while blocks stand free, and the pool reporting capacity it cannot deliver | **open**; the claim is fixed, the mechanism is a decision |
 
-**#209 is the one to do next and it is not close.** In dynamic mode the
-allocation log *is* the connection record — kept a year, on its own filesystem,
-and what answers a court order under the Marco Civil. A CGNAT that cannot say
-which subscriber held a public port at a given moment cannot answer the one
-question it exists to answer. It survived because `lab/ipfix.sh` configures the
-exporter itself, with `vppctl`, because it needs one: the lab performing the
-product's missing step, for the fifth time in this repository
+**#209 was the one to do next and it is done.** In dynamic mode the allocation
+log *is* the connection record — kept a year, on its own filesystem, and what
+answers a court order under the Marco Civil. A CGNAT that cannot say which
+subscriber held a public port at a given moment cannot answer the one question
+it exists to answer, and over UDP it could not export at all: VPP's own IPFIX
+exporter needs a collector and nothing in the product ever set one.
+`nat cgnat logging udp <collector> src <source> [port <n>]` is the statement
+that was missing; it goes to VPP's own `set_ipfix_exporter` over the binary
+API, and the read-back stays in the plugin so the statement is saved, rolled
+back and audited like every other.
+
+It survived because `lab/ipfix.sh` configured the exporter itself, with
+`vppctl`, because it needed one: the lab performing the product's missing step,
+for the fifth time in this repository
 ([#99](https://github.com/andrediashexa/hexarouting/issues/99),
 [#168](https://github.com/andrediashexa/hexarouting/issues/168),
 [#182](https://github.com/andrediashexa/hexarouting/issues/182),
-[#184](https://github.com/andrediashexa/hexarouting/issues/184) were the others).
+[#184](https://github.com/andrediashexa/hexarouting/issues/184) were the
+others). The lab now contains no `vppctl set ipfix exporter` anywhere, and one
+of its assertions greps the lab file itself so the trap cannot come back
+quietly. **#182 is the one still open in that family**, and it is the one with
+the widest blast radius: nothing in the product creates a `linux_cp` pair, so
+FRR has no interface for the dataplane port and every routing feature this
+product ships is configurable and inert on a box installed from the ISO.
+
+The boot self-test now reports the state this defect lived in. It reads what
+the box was **told** at boot against what the dataplane **has**, from two
+different places, and configures nothing: a check that arranges the condition
+it is checking for cannot report its absence ([#184](https://github.com/andrediashexa/hexarouting/issues/184)).
 
 #### The checks that fire on correct configurations
 
