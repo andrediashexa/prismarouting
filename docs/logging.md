@@ -109,6 +109,32 @@ RFC 7011 permits SCTP, TCP and UDP.
 Compliance logging **SHOULD** use TCP. UDP **MAY** be used for telemetry, and
 both **MAY** be enabled at once.
 
+### UDP export cannot be turned on from the VTY
+
+`bpa logging enable` hands the records to VPP's own flow-report infrastructure,
+which is refused when no IPFIX exporter is configured — and nothing configures
+one. The exporter is set with `set ipfix exporter collector <ip> src <ip>`,
+which is a VPP CLI command: `hexash` has no statement for it and
+`appliance/etc/vpp-base.conf` does not carry one, so on an installed box
+`nat cgnat logging enable` is refused by the dataplane.
+
+Until #76 moved the statement onto the binary API the refusal was **discarded**
+— `self.dp.run()` returned a status nobody read, `vppctl` exits 0 either way,
+and the operator got `commit complete` from a box that exported nothing. Moving
+it made the gap visible rather than creating it, and it now reports:
+
+```
+error: cgnat logging enable: the dataplane refused it: invalid value
+(bpa_log_enable: no IPFIX collector configured; use 'set ipfix exporter
+collector <ip> src <ip>' first)
+```
+
+Closing it means a VTY statement for the exporter's collector and source
+address, which is logging work rather than #76's. The TCP transport is
+unaffected: `nat cgnat logging tcp <collector>` carries its destination in the
+statement itself, and that path is the one `lab/ipfix-tcp.sh` drives end to
+end.
+
 ### TCP implementation
 
 `bpa logging tcp <collector> [port <n>]`. VPP's infrastructure only speaks UDP,

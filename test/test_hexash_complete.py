@@ -2218,5 +2218,92 @@ check(sh.routing_added([], ["interface loop0", " ipv6 nd suppress-ra"])
       "and what is inside one still counts")
 
 
+print("\n=== the IPFIX export goes over the binary API, not the CLI socket ===")
+# #76: `cgnat logging` was the last configuration statement hexash applied with
+# vppctl, and #172 found it still there while the acceptance criterion read as
+# met. lab/vty.sh asserts the property against a real box; these check the
+# SHAPE of what goes on the wire, including two forms no lab drives - `tcp
+# disable`, and a collector named without a port.
+import vppapi as _vppapi                                          # noqa: E402
+
+
+def logging_call(line):
+    """
+    What `line` sends: (one API call or None, the list of CLI commands).
+
+    Written to survive the regression it exists to catch. A version that
+    indexed the API call directly raised a TypeError the moment the statement
+    went back to the socket, and a test that CRASHES on the defect reports a
+    broken test rather than a broken product.
+    """
+    sh = hexash.Shell()
+    api, cli = [], []
+
+    def api_call(_message, _args):
+        api.append((_message, _args))
+        return _vppapi.Reply(_vppapi.OK)
+
+    sh.api_call = api_call
+    sh.dp = type("D", (), {
+        "TRACE": False,
+        "run": lambda _s, c: (cli.append(c), (0, ""))[1]})()
+    # apply_global, not apply_logging: the statement has to REACH the API
+    # path, and a test that called the new method directly went on passing
+    # with the dispatcher handing the line back to the socket - which is the
+    # defect, not the parsing.
+    sh.apply_global(line)
+    return (api[0] if len(api) == 1 else None), cli
+
+
+for _line in ("cgnat logging enable", "cgnat logging disable",
+              "cgnat logging tcp 10.0.0.2", "cgnat logging tcp disable",
+              "cgnat logging tcp 10.0.0.2 port 4740"):
+    _a, _cli = logging_call(_line)
+    check(_cli == [], f"'{_line}' must send nothing to the CLI socket: {_cli}")
+    check(_a is not None and _a[0] == "bpa_logging_set",
+          f"'{_line}' must be one bpa_logging_set and no more: {_a}")
+
+
+def _f(line):
+    """The fields of the call `line` makes, or {} if it made none."""
+    _a, _ = logging_call(line)
+    return _a[1] if _a else {}
+
+
+check(_f("cgnat logging enable").get("set_enable") is True
+      and _f("cgnat logging enable").get("enable") is True,
+      f"enable: {_f('cgnat logging enable')}")
+check(_f("cgnat logging enable").get("set_tcp") is False,
+      f"and says nothing about the transport it was not asked about: "
+      f"{_f('cgnat logging enable')}")
+check(_f("cgnat logging disable").get("set_enable") is True
+      and _f("cgnat logging disable").get("enable") is False,
+      f"disable: {_f('cgnat logging disable')}")
+
+_tcp = _f("cgnat logging tcp 10.0.0.2 port 4740")
+check(_tcp.get("set_tcp") is True and _tcp.get("tcp_enable") is True,
+      f"tcp on: {_tcp}")
+check(_tcp.get("collector") == "10.0.0.2" and _tcp.get("port") == 4740,
+      f"and where to: {_tcp}")
+check(_tcp.get("set_enable") is False,
+      f"naming a collector does not also turn the export on: {_tcp}")
+
+# Zero, not 4739. The default belongs to the dataplane, which is where the
+# running configuration is read back from - a default invented on this side
+# would be a second opinion about it, and the two would drift apart silently.
+check(_f("cgnat logging tcp 10.0.0.2").get("port") == 0,
+      f"an omitted port is the dataplane's to fill: "
+      f"{_f('cgnat logging tcp 10.0.0.2')}")
+
+# `tcp disable` is the word an operator types and it is NOT an address. Read as
+# one it would go on the wire as the collector, and the export would keep
+# running to whatever the encoder made of it.
+_off = _f("cgnat logging tcp disable")
+check(_off.get("set_tcp") is True and _off.get("tcp_enable") is False,
+      f"tcp off: {_off}")
+check(_off.get("collector") != "disable",
+      f"'disable' is not a collector address: {_off}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
