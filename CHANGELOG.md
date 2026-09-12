@@ -37,7 +37,8 @@ are to be interpreted as described in
 ## Unreleased
 
 [#208](https://github.com/andrediashexa/hexarouting/issues/208),
-[#209](https://github.com/andrediashexa/hexarouting/issues/209).
+[#209](https://github.com/andrediashexa/hexarouting/issues/209),
+[#211](https://github.com/andrediashexa/hexarouting/issues/211).
 
 ### Fixed
 
@@ -158,6 +159,42 @@ are to be interpreted as described in
   clearing the exporter leaves `bpa logging` reporting **enabled**, which is
   why `show cgnat logging` now prints where the records go and why the
   self-test reads that line and not the state.
+
+* **The box offered a login prompt before it was ready, and the first
+  `configure` poisoned every commit in that session.** Two defects wearing one
+  hat, and the second is what made the first expensive
+  ([#211](https://github.com/andrediashexa/hexarouting/issues/211)).
+
+  `Vpp.run()` reported success whenever `vppctl` produced output, ignoring its
+  exit status — and `vppctl` exits 0 whenever VPP *answered*, including when it
+  answered with a refusal. So the error text came back as though it were
+  configuration. `configure` builds the candidate by reading the box, so a
+  dataplane that was not answering put "Could not find VPP CLI socket" into the
+  candidate **as a configuration line**, and every commit in that session was
+  then refused with "there are configuration lines this VTY does not
+  understand". The operator meets that refusal on their first real commit, by
+  which time they have typed a pool and have every reason to think the pool is
+  what was refused. `configure` now refuses to build a candidate from a
+  dataplane that is not answering, and says the box is probably still starting.
+
+  The prompt should not have been there at all. `appliance/build-iso.sh` wrote a
+  single getty drop-in carrying **both** the ordering that holds the prompt back
+  until the boot self-test has run and the autologin the live image needs. The
+  installer deletes that file, correctly, because an installed box must not log
+  anybody in without a password — and it took the ordering with it. So the
+  ordering the live image has had since
+  [#93](https://github.com/andrediashexa/hexarouting/issues/93) is exactly what
+  an installed box never had. Two files now: `10-after-selftest.conf` belongs to
+  every box, `20-autologin.conf` to the live image alone, and the installer
+  names the second one exactly.
+
+  `lab/install-iso.sh` used to start at "HexaRouting ready." and its comment
+  described this defect, stepped around it, and told whoever came next not to
+  move the wait earlier without dealing with the bug first. It now starts where
+  the operator starts — the **first** prompt the box offers — and does the
+  smallest thing an operator does: `configure`, then `commit`, with nothing
+  typed in between. Shown failing on a full ISO build, install and second boot
+  before the fix, both assertions red.
 
 ## 0.64.0 — the labs ran the box the way it ships, and seven things fell out
 
