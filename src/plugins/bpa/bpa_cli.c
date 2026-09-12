@@ -39,7 +39,7 @@ format_bpa_proto (u8 *s, va_list *args)
     }
 }
 
-/* The whole mask at once: "ftp on rtsp off pptp on esp on". One line an
+/* The whole mask at once: "ftp on rtsp off pptp on esp on sip on". One line an
  * operator can read, rather than one line per ALG that has to be assembled by
  * eye. */
 u8 *
@@ -717,7 +717,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "outside <pfx>/<len> [outside <pfx>/<len> ...] "
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
-    "[alg <ftp|rtsp|pptp|esp> on|off] "
+    "[alg <ftp|rtsp|pptp|esp|sip> on|off] "
     "[bypass <destination|source> <pfx>/<len>] "
     "[vrf <id>] [outside-vrf <id>] "
     "[utilisation-alarm <percent>] "
@@ -1994,7 +1994,7 @@ bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   if (!unformat_user (input, unformat_line_input, line_input))
     return clib_error_return (
-      0, "usage: bpa alg <pool> <ftp|rtsp|pptp|esp> <on|off>");
+      0, "usage: bpa alg <pool> <ftp|rtsp|pptp|esp|sip> <on|off>");
 
   if (!unformat (line_input, "%v", &name))
     {
@@ -2009,7 +2009,7 @@ bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
 #undef _
     {
       error =
-	clib_error_return (0, "expected an ALG name (ftp, rtsp, pptp, esp)");
+	clib_error_return (0, "expected an ALG name (ftp, rtsp, pptp, esp, sip)");
       goto done;
     }
   /* "enable"/"disable" are accepted as well as "on"/"off": the three ALGs
@@ -2051,7 +2051,7 @@ done:
 
 VLIB_CLI_COMMAND (bpa_alg_command, static) = {
   .path = "bpa alg",
-  .short_help = "bpa alg <pool> <ftp|rtsp|pptp|esp> <on|off>",
+  .short_help = "bpa alg <pool> <ftp|rtsp|pptp|esp|sip> <on|off>",
   .function = bpa_alg_command_fn,
 };
 

@@ -7,7 +7,8 @@ BUILD  := .build
         model vectors clean
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
-      $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp
+      $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
+      $(BUILD)/test_bpa_sip
 	@$(BUILD)/test_bpa
 	@echo
 	@$(BUILD)/test_bpa_ports
@@ -19,6 +20,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 	@$(BUILD)/test_bpa_ftp
 	@echo
 	@$(BUILD)/test_bpa_icmp
+	@echo
+	@$(BUILD)/test_bpa_sip
 	@echo
 	@python3 appliance/test_tune.py
 	@echo
@@ -96,6 +99,15 @@ $(BUILD)/test_bpa_icmp: test/test_bpa_icmp.c src/plugins/bpa/bpa_icmp.h \
                         test/bpa_shim.h test/bpa_tcp_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_icmp.c
+# The SIP parser and the edit list it feeds. Standalone for the reason the RTSP
+# parser is, and for one more: a SIP message is rewritten in several places at
+# once, so the offsets of every edit after the first depend on the ones before
+# it. That arithmetic is exercised here against whole messages, where a wrong
+# answer is a message that still parses and names the wrong things.
+$(BUILD)/test_bpa_sip: test/test_bpa_sip.c src/plugins/bpa/bpa_sip.h \
+                       test/bpa_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_sip.c
 
 # Tests that need VPP, so they run in the build container.
 test-appliance:

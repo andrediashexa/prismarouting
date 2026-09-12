@@ -142,14 +142,16 @@ Still missing, now tracked as
 between the blocks one subscriber holds, and **per-pool block-size ranges** so a
 pool can start subscribers small and grow only those who need it.
 
-### 2.3 ALG — FTP, RTSP and PPTP built; SIP, TFTP and ESP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
+### 2.3 ALG — FTP, RTSP, PPTP, ESP and SIP-over-UDP built; TFTP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
 Protocols that carry an address or port inside the payload break behind any
 NAT unless the NAT rewrites the payload too.
 
-**FTP, RTSP and PPTP/GRE are built** (v0.5.0), switchable per pool with
-`bpa alg <pool> <name> <on|off>` and on by default. The design of each, and
-what each deliberately refuses to do, is in
+**FTP, RTSP and PPTP/GRE are built** (v0.5.0), **ESP passthrough** after them,
+and **SIP over UDP** once [#48](https://github.com/andrediashexa/hexarouting/issues/48)
+had left exactly one sequence-correction mechanism to inherit. All are
+switchable per pool with `bpa alg <pool> <name> <on|off>` and on by default.
+The design of each, and what each deliberately refuses to do, is in
 [architecture.md](architecture.md#application-level-gateways).
 
 | ALG | Symptom without it | Priority |
@@ -157,9 +159,10 @@ what each deliberately refuses to do, is in
 | **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | **Built**, [#42](https://github.com/andrediashexa/hexarouting/issues/42) |
 | **RTSP** | IP cameras and some streaming boxes: works on the LAN, black frame from outside. | **Built**, [#43](https://github.com/andrediashexa/hexarouting/issues/43) |
 | **PPTP / GRE** | VPNs to older corporate concentrators do not connect at all. GRE has no ports, so the Call ID has to play the part one plays. | **Built**, [#44](https://github.com/andrediashexa/hexarouting/issues/44) |
-| **SIP** | VoIP registers but has no audio, or one-way audio. The single most expensive support call an ISP receives. | High |
+| **SIP over UDP** | VoIP registers and nobody can call the subscriber, or the call connects with no audio. The single most expensive support call an ISP receives. | **Built**, [#14](https://github.com/andrediashexa/hexarouting/issues/14) |
+| **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | **Built** |
+| **SIP over TCP/TLS** | A SIP message over TCP is a stream, so an honest ALG needs reassembly, and TLS is untouchable by any NAT. | **Not being built**, stated as a decision |
 | **TFTP** | Provisioning of some CPE. | Low |
-| **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | Medium |
 
 Each ALG **MUST** be individually switchable per pool, and a malformed or
 unexpected payload **MUST** leave the packet untouched and increment a counter:
@@ -168,12 +171,16 @@ corrupts traffic that would otherwise merely fail to connect.
 
 The defaults were decided on
 [#14](https://github.com/andrediashexa/hexarouting/issues/14) and are the
-reverse of what this section originally said. Every ALG built here is **on**
-except **SIP**, which is off and whose enabling **MUST** be a deliberate act:
-VoIP providers routinely tell customers to disable SIP ALG on their CPE,
-because one that misparses SDP produces one-way audio and registrations that
-drop — failures harder to diagnose than the ones it prevents, and modern SIP
-solves NAT traversal from the endpoint. H.323, MGCP, SCCP, MSRPC, NetBIOS,
+reverse of what this section originally said. Every ALG built here is **on**,
+SIP included — and SIP being on is a change from what this section used to
+require, so the argument is written down rather than assumed. VoIP providers
+routinely tell customers to disable SIP ALG on their CPE because one that
+misparses SDP produces one-way audio and registrations that drop. That is an
+argument against a *guessing* ALG. This one rewrites only a literal IPv4
+address equal to the subscriber's own private address, so a message it misreads
+is a message it leaves alone, and a CPE that already knows its public address
+is untouched by construction rather than by luck — which is exactly the case
+those providers are protecting against. H.323, MGCP, SCCP, MSRPC, NetBIOS,
 IRC/DCC, TFTP and DNS are **not** being built; the reasoning is on #14.
 Each ALG **MUST** be individually switchable per pool, and **SHOULD** default
 to off unless its parse is cheap to make safe: an ALG that rewrites a payload
@@ -656,13 +663,17 @@ being deferred. The management address alone is paid on every single install.
 
 #### Phase 5 — applications
 
-[#48](https://github.com/andrediashexa/hexarouting/issues/48) first: two TCP sequence-adjustment mechanisms do the same job and
-are carried by every session. A third ALG that lengthens a payload — **SIP** —
-would have to pick one, and half of any reader's mental model would then be
-wrong.
+[#48](https://github.com/andrediashexa/hexarouting/issues/48) came first and is
+done: there is now exactly one sequence-correction mechanism, so the ALG that
+lengthens a payload next had nothing to choose between.
 
-Then [#14](https://github.com/andrediashexa/hexarouting/issues/14) SIP, the most expensive support call an ISP takes;
-[#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on dynamic pools, which needs the block pinned; and
+[#14](https://github.com/andrediashexa/hexarouting/issues/14) **SIP over UDP**
+followed, and is built — the most expensive support call an ISP takes. It
+turned out not to need #48's work at all, which is the useful thing to record:
+a datagram has no stream to renumber, so the ALG carries none of that
+apparatus. **SIP over TCP** is written up as not done rather than half done.
+
+Still open here: [#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on dynamic pools, which needs the block pinned; and
 [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP last — now unblocked, since it depends on #17 and should be
 bounded by #18, both delivered.
 

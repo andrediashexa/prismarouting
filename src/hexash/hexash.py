@@ -682,6 +682,8 @@ CGNAT_POOL = {
         "pptp": ("PPTP control channel and its GRE data channel", "<on|off>"),
         "esp": ("IPsec ESP passthrough, bound to the peer gateway",
                 "<on|off>"),
+        "sip": ("SIP over UDP: Via, Contact and the SDP media pair",
+                "<on|off>"),
     }),
     "vrf": ("the VRF whose subscribers this pool serves; absent means every "
             "VRF", ARG_NUM),
