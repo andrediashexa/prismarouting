@@ -39,7 +39,8 @@ are to be interpreted as described in
 [#165](https://github.com/andrediashexa/hexarouting/issues/165),
 [#198](https://github.com/andrediashexa/hexarouting/issues/198),
 [#14](https://github.com/andrediashexa/hexarouting/issues/14),
-[#206](https://github.com/andrediashexa/hexarouting/issues/206).
+[#206](https://github.com/andrediashexa/hexarouting/issues/206),
+[#189](https://github.com/andrediashexa/hexarouting/issues/189).
 
 ### Added
 
@@ -80,6 +81,103 @@ are to be interpreted as described in
   lab header names which; it also passes under `LAB_WORKERS=1` and is in
   `WORKER_LABS`. `test/test_bpa_sip.c` unit-tests the parser's refusals and the
   multi-edit offset arithmetic without VPP.
+
+### Internal
+
+* **No lab proved a role on a box somebody receives, only in a container.**
+  `lab/install-iso.sh` booted the disk it had just installed and only *read*
+  the console. Every role assertion in this repository lived in `lab/vty.sh`:
+  in a container, against a VPP the lab had started itself - the shape of
+  [#99](https://github.com/andrediashexa/hexarouting/issues/99),
+  [#168](https://github.com/andrediashexa/hexarouting/issues/168),
+  [#182](https://github.com/andrediashexa/hexarouting/issues/182) and
+  [#184](https://github.com/andrediashexa/hexarouting/issues/184), and the
+  shape that cost three shipped defects in two days when the same assumption
+  was made about VPP workers.
+
+  Phase 2 now types at the same serial line an operator is handed. It logs in
+  as root, creates two accounts through the VTY - one `role administrator`,
+  one with no role at all - commits, and then reads what the **box** says they
+  got: `id -nG` out of `/etc/group`, the login shell out of `/etc/passwd`, the
+  mode and group of `/etc/hexarouting` and its rollback store after root's own
+  commit. There is no `useradd`, no `usermod` and no writing to the disk
+  image anywhere in it, so the memberships asserted are the ones `commit`
+  wrote.
+
+  The administrator then logs in **as itself** and applies a routing change
+  and a CGNAT pool, and both are read back from the daemons rather than from
+  what the VTY printed: `vtysh -c "show run"` for the statement,
+  `vppctl show bpa pool` for the pool. The pool goes over the binary API,
+  which is root-only unless the drop-in on `vpp.service` group-owns
+  `/dev/shm/global_vm` - and this is the only lab in the repository that runs
+  under systemd at all, so it is the only place that drop-in is exercised. The
+  rollback revision recorded for that commit is asserted by **owner**, not by
+  count: root's commit wrote one a moment earlier, so a count would pass on
+  the box [#188](https://github.com/andrediashexa/hexarouting/issues/188)
+  describes. The account with no role is refused `configure` and
+  `start shell`, and still reads both halves of the running configuration
+  through the group memberships every account gets. Finally the boot self-test
+  is re-run on the same console: a freshly installed box says it has no
+  operator account, and the same program afterwards names the account that
+  reaches the API.
+
+  The driver is a named pipe as qemu's stdin. Every wait is for a string the
+  **box** prints, with its own timeout, and a failure names the string it gave
+  up on, prints the console since the last thing it recognised, and says which
+  of four things happened: the box refused the credentials, refused the
+  command, went silent, or answered something else. A login that fails must
+  fail the lab rather than run the rest of the session against a login prompt,
+  so the wait after the password is for the VTY's banner and not for a prompt.
+  `sh tools/lab.sh install-iso wrong-password` types a password the box
+  rejects, and the lab fails at that wait with the diagnosis - which is how a
+  driver whose failure mode would otherwise be a hang is kept honest
+  ([#189](https://github.com/andrediashexa/hexarouting/issues/189)).
+
+* **`tools/lab.sh` installed neither `sfdisk` nor `unsquashfs`, so the same lab
+  gave two answers depending on which command ran it.** `make test-install`
+  installs both; this runner installed `fdisk` and not `squashfs-tools`, so
+  under `sh tools/lab.sh install-iso` the check that the live image carries no
+  usable root password could not read a byte of the image and reported that as
+  a failure of the install. The lab's own `fdisk` comment already records this
+  shape.
+
+### Found and not fixed
+
+* **A getty offers a login before the box is ready, and `configure` typed at
+  that prompt makes every commit in the session fail.** Measured on the
+  console of a box `lab/install-iso.sh` had just installed:
+  `serial-getty@ttyS0` draws `cgnat-lab login:` while `hexarouting.service` is
+  still inside `wait-for-vpp`, so the first `configure` builds its candidate
+  from vppctl's own `Could not find VPP CLI socket`. That text lands in the
+  candidate as a configuration line the VTY does not model, and every `commit`
+  afterwards is refused with *"there are configuration lines this VTY does not
+  understand"*. The VTY recovers the dataplane on its own - the console says
+  *"the dataplane answered after 14s"* - and the poisoned candidate survives
+  it. The way out is `exit` and `configure` again, and nothing says so. The
+  failure is in reach of every operator who has just been handed a box: it is
+  the first thing they type.
+
+  Two halves, and the second explains why the first is easy to hit.
+  `running_config()` must not parse a failed read as configuration - a
+  dataplane that could not be read is not a dataplane with no CGNAT
+  configuration. And the ordering that puts the self-test's report on the
+  screen before the login prompt
+  ([#93](https://github.com/andrediashexa/hexarouting/issues/93)) exists on
+  the **live image only**: `build-iso.sh` writes it into the same drop-in file
+  as the live autologin, and the installer deletes that file wholesale,
+  correctly, to remove the autologin. So an installed box prints its self-test
+  over the login prompt - the exact symptom #93 was filed for - and the
+  operator's Enter lands at a prompt drawn before the box was ready.
+
+* **A commit that changes accounts becomes `commit confirmed 10`, and the
+  timer dies with the session.** Measured on the same console: creating the
+  operator accounts printed *"applying it as 'commit confirmed 10': it reverts
+  on its own unless you enter 'commit' again"*, and the revert is driven by
+  `check_confirm_timeout()` inside the running `hexash`. Log out - which is
+  what an operator does after creating an account - and nothing reverts
+  anything. The safety net is real only for a session that stays open, which
+  is the opposite of the case it exists for (a change that cut the session
+  off).
 
 ### Fixed
 

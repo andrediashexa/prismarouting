@@ -71,13 +71,37 @@ Uma conta que o sistema não consegue descrever recebe **nada**. Falhar aberto a
 
 Os papéis só valem alguma coisa se quem não é `root` conseguir configurar a caixa. Se apenas `root` consegue, todo operador vira `root` — e aí os papéis não são frouxos, são **decorativos**, que é pior: a caixa anuncia um limite que não tem.
 
-Numa appliance instalada a partir da **0.39.0** isso está resolvido, e o auto-teste de boot verifica fazendo a chamada, não conferindo permissão de arquivo:
+Numa appliance instalada a partir da **0.39.0** isso está resolvido, e o auto-teste de boot verifica **fazendo a chamada** com uma conta que existe de verdade — não conferindo permissão de arquivo e não fabricando a participação em grupo para poder responder sim.
+
+Numa caixa recém-instalada ainda não existe conta de operador nenhuma, e ele diz isso em voz alta em vez de responder por contas que não existem:
 
 ```
-[ ok ] the binary API works for a non-root account, so roles mean something
+[info] no operator account exists yet: only root can use this box
+       create one with 'user <name>' and give it a role
 ```
 
-Se essa linha aparecer como `[FAIL]`, os papéis não estão valendo naquela caixa: todo mundo que precisar configurar vai precisar de `root`.
+Depois que você cria a conta e dá um papel a ela, o mesmo auto-teste passa a **nomear** a conta que alcança o dataplane:
+
+```
+[ ok ] the binary API works for netadm, an account that really has the group
+```
+
+Se aparecer `[FAIL]`, os papéis não estão valendo naquela caixa: todo mundo que precisar configurar vai precisar de `root`. Duas formas, e elas querem ações diferentes:
+
+```
+[FAIL] netadm has role administrator and is in none of: vpp frr frrvty
+       the role cannot be exercised: VPP's sockets are group vpp
+       and /etc/frr is group frr. Re-apply the role from the VTY:
+       configure / user netadm / role administrator / commit
+```
+
+A conta tem posto e não tem alcance: ela recebeu o papel e ficou de fora dos grupos que abrem os sockets do dataplane e do roteamento, então **todo comando que ela der falha por permissão** — inclusive os de leitura, e a mensagem parece recusa de autorização sem ser. Reaplicar o papel pela VTY, como a própria linha diz, refaz as participações.
+
+```
+[FAIL] no account on this box is in group vpp: only root can use the API
+```
+
+Nenhuma conta desta caixa alcança o dataplane. Antes de distribuir contas por papel, resolva isso — senão os papéis existem no papel e não na máquina.
 
 
 :::warning
