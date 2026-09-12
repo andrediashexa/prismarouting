@@ -16,6 +16,8 @@ commit confirmed 5
 
 Aplica agora e desfaz sozinho em 5 minutos se você não confirmar. Se a mudança cortar seu próprio acesso, a máquina se recupera.
 
+O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fechar o console ou reiniciar a máquina não cancela o desfazer. Só `commit` cancela. E uma mudança em `ssh` ou em `user` vira `commit confirmed 10` mesmo sem você pedir, porque é a mudança que pode cortar a sessão em que você está digitando.
+
 ## `commit` não é `save`
 
 `commit` faz valer agora. `save` grava em disco. Uma configuração commitada e não salva **desaparece no próximo boot**.

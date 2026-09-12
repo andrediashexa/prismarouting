@@ -224,7 +224,13 @@ configure
  commit confirmed 10
 ```
 
-Se você continuar com acesso, confirme. Se perder, espere 10 minutos e a máquina volta sozinha ao estado anterior.
+Se você continuar com acesso, confirme com `commit`. Se perder, espere 10 minutos e a máquina volta sozinha ao estado anterior — **inclusive se você não tiver mais nenhuma sessão aberta**, e inclusive se a máquina for reiniciada no meio da janela. O prazo fica gravado no equipamento, não na sessão que fez a mudança.
+
+Quem entrar na VTY enquanto a janela estiver aberta é avisado logo no banner, com a hora em que a máquina vai desfazer.
+
+:::warning
+Não use `save` antes de confirmar. O desfazer devolve o que está valendo e não reescreve o arquivo de boot, então salvar uma mudança não confirmada a traz de volta no próximo reboot. Confirme primeiro, salve depois — o `save` avisa se você inverter a ordem.
+:::
 
 # Adicionar um operador que só mexe em CGNAT
 

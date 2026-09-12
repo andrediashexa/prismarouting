@@ -1206,7 +1206,7 @@ stateDiagram-v2
 | `commit check` | Validate without applying |
 | `commit` | Apply, and store a new revision |
 | `commit comment "<text>"` | Same, with a note recorded against the revision |
-| `commit confirmed <min>` | Apply, and roll back automatically unless confirmed |
+| `commit confirmed <min>` | Apply, and roll back automatically unless confirmed — from the box, not from this session |
 | `rollback <0-19>` | Load a committed revision into the candidate |
 | `show rollback` | List revisions with timestamp and comment |
 
@@ -1235,8 +1235,96 @@ Requirements:
 * `rollback 0` returns the candidate to the running configuration, discarding
   uncommitted edits — the same meaning JunOS gives it.
 
+### `commit confirmed`, and where its deadline lives
+
 `commit confirmed` exists for the change that cuts your own access. If the
 operator cannot type `commit` again, the box returns on its own.
+
+For two years it could not. The deadline was instance state on the `Shell`
+object that made the commit, checked from that shell's own REPL loop — so
+logging out, losing the SSH connection, closing the serial console or killing
+the process took the deadline with it and left the configuration. The failure
+the feature guards against is *"this change cut off the session I am typing
+in"*, and in that scenario the session is exactly what does not survive: it
+reverted in every case where it was not needed and in none of the cases where
+it was. Worse, a change to SSH or to accounts becomes a `commit confirmed`
+whether or not the operator asked, and the box said so in words describing a
+guarantee it did not provide — so an operator who read them was *less* likely
+to keep a second session open ([#212](https://github.com/andrediashexa/hexarouting/issues/212)).
+
+The deadline now lives on the box:
+
+| | |
+|---|---|
+| `/etc/hexarouting/confirm-pending` | the configuration to go back to, and the absolute time it is due. Mode 0660, group `hexa-cgnat`: it holds a whole configuration, password hashes included |
+| `hexarouting-confirm.timer` | elapses every 15 seconds, and 60 seconds after boot |
+| `hexarouting-confirm.service` | `ConditionPathExists` on that file, so nothing is started while nothing is pending. `hexash --confirm-expired` is what it runs, as root |
+
+**The file is the record of the confirmation, and it is removed the moment the
+operator confirms** — not when the window ends. That is what lets the box tell
+a confirmed change from an unconfirmed one across a reboot:
+
+* Rebooted **after** confirming: there is no file, and nothing reverts. The
+  change the operator confirmed stands.
+* Rebooted **before** the deadline: the file is still there and so is its
+  deadline, which is an absolute time and not an amount of uptime. A box that
+  was off past its own deadline comes back and reverts at once, because nobody
+  confirmed.
+
+What the design deliberately cannot tell apart is a reboot that *is* the
+operator coming back from a reboot in the middle of the maintenance. Both
+revert. That is the safe direction: the operator can type one word to keep the
+change, and cannot type anything at all to recover a box they cannot reach.
+
+Polled rather than armed at the instant of the commit, because the account that
+commits is not root — it holds a role, which is membership of `hexa-admin` or
+`hexa-cgnat`. Arming a transient unit from an operator's session would mean
+granting every such account the ability to make the box run units, which is a
+far larger grant than the feature is worth; writing a file into a directory
+its role group already owns is not a grant at all. The cost is that the error
+on the deadline is one tick of that timer. Measured, not assumed: a transient
+timer with these exact properties elapsed at 16.008, 16.096, 15.888 and 16.012
+seconds, because the interval is counted from the last activation and the
+oneshot's own start is inside it. So `commit confirmed 10` reverts between
+10:00 and roughly 10:16 after the commit. The error being removed is infinite.
+
+`ConditionPathExists` was measured the same way: with the path absent the
+command ran zero times and systemd reported `ConditionResult=no`; with it
+present, once. On the installed box the console carries no unit chatter at all
+- the only thing this feature ever prints there is the revert itself.
+
+The session that made the commit keeps a copy of the deadline, and it is
+neither the promise nor a duplicate of it. It makes the revert punctual — it
+fires at the deadline itself rather than at the next tick of the timer — and
+it is the whole mechanism where there is no systemd to run that timer, which
+is every lab container. Whichever fires first removes the file, so the other
+finds nothing to do, and a session that armed a window checks the file before
+acting on its own copy: a change confirmed from another session must not be
+undone by the one that armed it.
+
+A store that cannot be written is **not** papered over. The commit still
+applies and the in-session timer is still set, and the box says that is all it
+is worth:
+
+```
+warning: the revert could NOT be armed on the box: /etc/hexarouting: Permission denied
+    it will run in 10 minute(s) IF THIS SESSION LASTS THAT LONG, and not otherwise
+    which is not the case it exists for: keep a second session open, and use
+    'rollback 1' there if this one stops answering
+```
+
+A weaker promise that is kept beats a strong one that is not.
+
+`commit` and `save` remain two decisions, and inside an open window they can
+disagree: the revert puts the *running* configuration back and does not rewrite
+the file the next boot reads. Saving inside the window therefore says so, and
+tells the operator to confirm first and save again.
+
+Five failed attempts and the box stops trying: a unit that fires every fifteen
+seconds must not print the same failure onto the console forever, because that
+is the same as printing nothing. It moves the configuration to
+`confirm-pending.failed`, says the box is holding a change nobody confirmed,
+and points at `rollback 1`.
 
 ### The model refuses what it cannot hold
 
@@ -1346,8 +1434,10 @@ the country, so it has three guards rather than one.
    an escape; "you still have the console" is not an answer at 2am for a box in
    somebody else's datacentre.
 2. **Any change under `ssh` or `user` is applied as `commit confirmed`,** whether
-   or not the operator asked, and the VTY says so. It reverts on its own unless
-   confirmed from a session that still works.
+   or not the operator asked, and the VTY says so. The revert is armed on the
+   box and not in the session that made the commit, so logging out, losing the
+   session or rebooting does not cancel it — typing `commit` does. See
+   "`commit confirmed`, and where its deadline lives" above.
 3. **`sshd -t` validates the generated file before the daemon is reloaded,** and
    the previous file is put back if it refuses. A syntax error that stops sshd
    starting is the same lockout by another route. It fails **closed**: refusing
