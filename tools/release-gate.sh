@@ -115,6 +115,30 @@ if awk '/^## Unreleased/{u=1;next} /^## /{u=0} u && /^[*-] /{n++} END{exit !(n>0
   exit 1
 fi
 
+# And no bullet may be written twice.
+#
+# This is a mechanical hazard, not carelessness, and it cost two merges to
+# learn: a branch cut BEFORE a release rename still calls the section
+# "Unreleased", master has renamed the same section to "## <VERSION>", and git
+# sees the branch's copy of every bullet as an ADDITION rather than a
+# duplicate. The only conflict it raises is over the heading. So the released
+# section quietly grows a second copy of entries it already had, and the merge
+# looks clean.
+#
+# Compared on the first line of each bullet, which is where the claim is. A
+# reworded second copy of the same fix is a different defect and this will not
+# catch it - the two that were found by hand were reworded - but an exact
+# repeat is what the merge produces, and that is what this is for.
+dups=$(grep -E "^\* \*\*" "$WORK/CHANGELOG.md" | sort | uniq -d)
+if [ -n "$dups" ]; then
+  echo "error: CHANGELOG.md in $TAG says the same thing twice." >&2
+  echo "$dups" | sed 's/^/       /' >&2
+  echo "       A branch cut before a release rename re-adds the whole" >&2
+  echo "       section on merge. Keep one copy, under the version that" >&2
+  echo "       actually shipped it." >&2
+  exit 1
+fi
+
 # The same seam the installer has, and for the same reason: the checks above
 # are what make this a gate, and a check that can only be exercised by building
 # a 321 MB image is a check nobody exercises.

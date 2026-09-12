@@ -420,43 +420,6 @@ are to be interpreted as described in
 
 ### Added
 
-* **A SIP ALG, over UDP, and it says so.** `alg sip on|off` per pool, on by
-  default ([#14](https://github.com/andrediashexa/hexarouting/issues/14)). It
-  rewrites the topmost `Via` sent-by, the `Contact` URI host, the SDP `c=`
-  address and each SDP `m=` port — reserving a consecutive RTP/RTCP pair for
-  each stream through the same machinery the RTSP `SETUP` uses, because an ALG
-  that rewrites SDP and opens no mapping delivers signalling and no audio. It
-  recomputes `Content-Length`, which is a third length over the same bytes that
-  neither IP nor UDP can see. On the way back it restores the response `Via`
-  the phone insists on (RFC 3261 §18.1.2).
-
-  One rule keeps a small parser safe in front of a large protocol: **a span is
-  rewritten only when the literal IPv4 address in it is the address the session
-  belongs to.** A response the subscriber sends carries the caller's `Via` and
-  is therefore not touched, with no direction flag needed to work that out; a
-  CPE that already knows its public address is not interfered with, which is
-  the failure operators know as "the ALG broke my phone"; and a message whose
-  syntax does not come apart is refused **whole**, counted, and passed through.
-  `From`, `To`, `Call-ID`, `Route`, the SDP `o=` line and the `received=` and
-  `rport=` parameters are deliberately left alone, each for a reason recorded in
-  `bpa_sip.h`.
-
-  **TCP is not handled, as a decision rather than an omission.** A SIP message
-  over TCP is a stream whose end one segment cannot show, and an INVITE with SDP
-  regularly exceeds one; the honest answer is reassembly, which is different
-  work. A TCP connection to 5060 is translated like any other and never
-  inspected — and because the ALG is UDP-only it carries none of the sequence
-  correction of `bpa_seq.h`: what a UDP payload rewrite invalidates is the IP
-  total length, the UDP length and the UDP checksum, and that is the whole list.
-
-  Evidence: `lab/sip.sh`, which asserts on the captured packet — every rewritten
-  field, every field that must not have moved (byte for byte against the payload
-  as it was injected), both lengths, the UDP checksum, `Content-Length` against
-  the body that arrived, and the media reaching the phone on the announced
-  ports. `sh tools/lab.sh sip off` fails exactly 7 of its 18 checks and the
-  lab header names which; it also passes under `LAB_WORKERS=1` and is in
-  `WORKER_LABS`. `test/test_bpa_sip.c` unit-tests the parser's refusals and the
-  multi-edit offset arithmetic without VPP.
 * **`lab/oom.sh`: the kernel is shown making its choice, both ways.** Real VPP
   and one growing control-plane process share a cgroup with a `memory.max` of
   their own, so the shortage is real and the lab's own shell is not in the
@@ -671,31 +634,6 @@ are to be interpreted as described in
   `no session for destination`, which on that thread is the plain truth; the
   in2out no-peer counter belongs to ESP alone, whose binding table is global for
   exactly this reason.
-* **On a box with workers, every translated packet was blackholed.** `bpa-in2out`
-  translated the packet, counted it as translated, and sent it to `error-drop`.
-  Nothing left the box. `hexarouting-tune` configures workers on every
-  appliance, so **that was the shipped configuration**. With workers the node on
-  the `ip4-unicast` arc is the HANDOFF node, not the translation node: the
-  feature machinery stores each chain entry's next as an index into the
-  next-node list of the node that consumes it, and the translation node applied
-  the handoff node's index to its own list, whose only member was `error-drop`.
-  It now sends the packet to `ip4-lookup` itself when there are workers, which
-  is where the chain was going — the arc is already terminated at the handoff,
-  because that node enqueues to a thread and never consults the chain. With
-  workers, a feature some *other* plugin enables between BPA and `ip4-lookup` is
-  skipped; this product enables nothing there, and the alternative on offer was
-  a dropped packet.
-* **The assertion that would have caught it.** `lab/handoff.sh` is the only lab
-  that runs with workers and every check in it was a **counter** — which says
-  what a node decided, not what came out of the box. It passed on a box that
-  dropped every packet, and did. It now sends a packet in each direction and
-  asserts on the **captured packet** that it left the far interface with the
-  right address. On the unfixed build four of the five new checks fail and all
-  three old ones still say `ok`. Every other lab that asserts forwarding uses a
-  startup file with no workers, so the forwarding path had only ever been proved
-  in a configuration the product does not ship.
-
-
 * **`tools/run-all-labs.sh` runs the forwarding labs twice**, once plain and once
   with workers, listed in `BOTH_WAYS`. `hexarouting-tune` gives every appliance
   with more than one core at least two workers and a smaller box everything on
@@ -716,28 +654,6 @@ are to be interpreted as described in
   measured both ways rather than assumed to forward something. `handoff`,
   `dynamic-workers` and `pool-del` are deliberately absent: they ask for workers
   themselves, so a second run of those would be the same run twice.
-* **`make test` gained `test_bpa_icmp`.** The ICMP error parse is the only place
-  this plugin walks headers a remote wrote inside another packet, and its
-  refusals cannot be seen from a lab: a packet dropped by a bounds check and one
-  dropped after reading past the buffer look identical from outside. Every packet
-  in it is placed against an unmapped page, so an over-read is a crash rather
-  than a judgement call.
-* **One TCP sequence-correction mechanism, not two.** `sizeof (bpa_session_t)`
-  96 → 88. The FTP ALG kept its own set of correction fields beside the general
-  one; a connection is either FTP or RTSP, so the duplication cost bytes rather
-  than correctness — and cost the next ALG that lengthens a payload a choice
-  between two mechanisms of which only one could be right. The one kept has the
-  better retransmission guard: a rewritten segment arriving again, already
-  accounted for, must not push a second correction, and the deleted one would
-  have **doubled** the offset for exactly that case. `lab/ftp-alg.sh` asserts it
-  now, on the segment after the retransmission; with the guard removed it fails
-  with `unexpected: seq=1025`. FTP's own payload splice went with it, so there
-  is one rewriter and one correction. The session's `alg` flag field is gone
-  rather than renamed — it held one bit that was redundant with the offsets
-  themselves. **The counter names changed with it**: two FTP-specific names
-  became one per node describing the mechanism, and RTSP's corrections, which
-  had no counter at all, are visible for the first time.
-
 ## 0.62.0 — the VTY an operator types at, ESP passthrough, and three releases with no entry
 
 [#14](https://github.com/andrediashexa/hexarouting/issues/14),
@@ -754,42 +670,6 @@ are to be interpreted as described in
 
 ### Added
 
-* **`show ospf neighbor`, `show ospf interface`, `show isis adjacency` and
-  `show isis interface`** — the IGP half of what
-  [#148](https://github.com/andrediashexa/hexarouting/issues/148) did for BGP.
-  `show ip ospf neighbor` was handed to `vtysh` untouched and FRR's table is
-  not the table that forwards, so each of these puts the count of IGP prefixes
-  that reached the **VPP FIB** on the same screen as the adjacency state. OSPF
-  was not in the `show` tree at all: `show ?` offered `bgp` and `isis` and not
-  OSPF, and both IGP entries ended the command. FRR's own spellings still work
-  and still reach FRR — bare `show ip ospf` is still the process summary an
-  operator arriving from another vendor expects.
-* **An OSPF adjacency that stops in Exchange is told why.** OSPF compares the
-  MTU in Database Description packets and drops any claiming one larger than
-  its own, with no log line on either side; on this box `linux_cp` starts the
-  TAP at 9000, so what ospfd advertises is more often wrong than right. The
-  screen names the state, the MTU this end is advertising, and — when the
-  box's own two halves disagree — the sentence `commit check` already printed,
-  from the same place, because two diagnoses of one fact that disagree are
-  worse than one. `show ospf interface` carries both MTUs in two columns.
-* **An IS-IS circuit that is Up and Active with no adjacency is told why.**
-  IS-IS is not carried over IP, so without `lcp osi-proto enable 0x83` the
-  hellos never reach isisd and the only evidence is a VPP error counter
-  ([#168](https://github.com/andrediashexa/hexarouting/issues/168)). The screen
-  says whether the dataplane is punting, and counts the frames `osi-input`
-  dropped as an unknown OSI protocol. It says so either way: "the punt is on"
-  is what stops an operator chasing this box's best-known trap and sends them
-  to the far end.
-* **This box advertising the IS-IS overload bit is reported**, read from the
-  LSP it is flooding rather than from the configuration that asked for it —
-  a maintenance drain reported by the words that requested it is reported by a
-  line that may not have taken effect. `lab/igp.sh` asserts it in the
-  **neighbour's** copy of this box's LSP, and asserts that taking it off
-  reaches the neighbour too.
-* **`clear ospf process`, `clear ospf neighbor <id>` and `clear isis
-  adjacency [<system-id>]`**, administrators only, the way `clear bgp` is.
-  Asserted in the lab by what they do — the IS-IS adjacency's flap count going
-  up, the OSPF adjacency's uptime going backwards — never by what they print.
 * **IPsec ESP passthrough, on by default**, the fourth entry in the ALG
   registry and the first that is not an ALG: it parses nothing and rewrites
   nothing but the addresses. The SPI in particular is left alone — RFC 4303
@@ -880,36 +760,8 @@ are to be interpreted as described in
   boundary; the capability check is, and a command nobody can find is a command
   the maintainer has to ask for.
 
-* **`lab/oom.sh`: the kernel is shown making its choice, both ways.** Real VPP
-  and one growing control-plane process share a cgroup with a `memory.max` of
-  their own, so the shortage is real and the lab's own shell is not in the
-  draw. With the drop-in's adjustment applied the kernel kills the control-plane
-  process and VPP goes on answering with its pool; with it removed and **nothing
-  else changed** the kernel kills VPP, although the balloon is the smaller of
-  the two by design; restored, it kills the balloon again. The number is read
-  out of `appliance/systemd/vpp-oom-protect.conf` and never typed in the lab,
-  and the lab checks that `install.sh` puts that same file under
-  `vpp.service.d`, so deleting the drop-in fails the lab rather than leaving it
-  green. `sh tools/lab.sh oom off` fails 10 of its 24 checks.
-* **The boot self-test says whether the dataplane is actually out of the OOM
-  killer's selection**, read from `/proc/<vpp pid>/oom_score_adj` on the running
-  box and never written by the self-test. A drop-in that was not installed, or
-  that systemd refused, used to look exactly like one that was working. A
-  merely lowered score is reported as still selectable rather than accepted, an
-  unreadable one is a failed check rather than a silence, and a VPP running
-  outside `vpp.service` is named because no drop-in on that unit reaches it.
-  `lab/install-iso.sh` reads the line back off a box it installed and booted,
-  which is the only place in this repository where real systemd applies the
-  unit.
-
 ### Fixed
 
-* **`passive-interface` did not silence the OSPF MTU warning** it exists to
-  silence, and neither did `ip ospf mtu-ignore`. Both name the interface the
-  way FRR does - the Linux name - while the MTU being compared is the
-  dataplane's and keyed by the dataplane's name, so neither ever matched. The
-  escape hatch an operator had deliberately used came back on the next commit,
-  naming an interface they had never typed.
 * **A non-root administrator could `commit check` a routing change and not
   `commit` it.** Applying one needs three paths that belong to FRR and not to
   this product: `/var/log/frr` (`drwxr-x--- frr:frr`, where `frr-reload` opens
