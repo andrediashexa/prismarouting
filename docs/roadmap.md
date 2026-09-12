@@ -675,6 +675,33 @@ the box was **told** at boot against what the dataplane **has**, from two
 different places, and configures nothing: a check that arranges the condition
 it is checking for cannot report its absence ([#184](https://github.com/andrediashexa/hexarouting/issues/184)).
 
+#### PMTUD inside a tunnel, which is the only signal a tunnel has
+
+A subscriber behind CGNAT with an IPsec or PPTP tunnel had a tunnel that
+authenticated, carried small packets, and hung on the first large transfer,
+with nothing anywhere saying why. Neither protocol has an MSS to clamp, so the
+ICMP *fragmentation needed* is not one signal among several — it is the only
+one, and it was being dropped.
+
+| | | |
+|---|---|---|
+| [#203](https://github.com/andrediashexa/hexarouting/issues/203) ESP | an ICMP error about an outbound IPsec packet dropped | *fixed, v0.64.0* |
+| [#203](https://github.com/andrediashexa/hexarouting/issues/203) GRE | an ICMP error about an outbound PPTP packet dropped, and before [#201](https://github.com/andrediashexa/hexarouting/issues/201) looked up on a **constant** | *fixed* |
+
+The GRE half is worth a note beyond its line, because it is the third time the
+same thing has been found in this plugin: the session key was read at offset 0
+of the embedded GRE header, which is the flags and version word. The reverse
+lookup was built out of `0x3001` and matched nothing, on any box, for the life
+of the project — and no assertion anywhere could have caught it, because
+nothing sent an ICMP error into a tunnel.
+
+ESP turns out to be the easy one and that is the opposite of how it looks: it
+has no identifier this box may key on, which is what makes its binding global,
+and being global is what makes it reachable from an error that landed on
+whatever worker the internet happened to choose. GRE *has* an identifier and
+still could not be steered, because the server's Call ID is not drawn from the
+subscriber's port block.
+
 #### The checks that fire on correct configurations
 
 A second family, found by asking one question of every finding function: *can
@@ -739,6 +766,25 @@ next not to move the wait earlier without dealing with the bug first. The lab
 now starts at the first prompt the box offers, which is where the operator
 starts, and both assertions were shown red on a full ISO build, install and
 second boot before the fix.
+
+#### Filed while doing something else, and not folded in
+
+Each of these was measured during another change and written up rather than
+fixed in passing. A fix that rides along in somebody else's commit is a fix
+nobody reviewed, and the issue is the only place the measurement survives.
+
+| | | |
+|---|---|---|
+| [#213](https://github.com/andrediashexa/hexarouting/issues/213) | IPv6 link-local multicast is not punted over a `linux_cp` pair, so an unnumbered BGP session reaches Active and never Established — and IPv6 ND, OSPFv3 and IS-IS over IPv6 have the same hole | **open** |
+| [#214](https://github.com/andrediashexa/hexarouting/issues/214) | a public port can be forwarded once per **pool** rather than once per public address, so on an interleaved pool with N addresses only one subscriber in N can hold a forward at a given offset | **open** |
+| [#215](https://github.com/andrediashexa/hexarouting/issues/215) | deleting a pool emits no `natEvent 17`, so every block it held stays **open** in the retention log — the answer to a court order then names a subscriber who had already been disconnected | **open** |
+| [#216](https://github.com/andrediashexa/hexarouting/issues/216) | `bpa_dyn_active()` has no callers; either it is unnecessary or a call is missing, and nothing in the code says which | **open** |
+
+#213 is the one that matters most, for the reason that puts anything at the top
+of this file: **the product accepts the configuration and cannot deliver it.**
+The VTY takes an unnumbered neighbour, FRR holds the statement, the peer appears
+in `show bgp summary` — at `Idle`, `remote AS 0`, forever. It is also a
+dependency of [#187](https://github.com/andrediashexa/hexarouting/issues/187).
 
 #### Installation — blocked by nothing, paid on every box
 
