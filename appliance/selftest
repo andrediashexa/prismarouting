@@ -89,6 +89,57 @@ else
   ok "vpp.service stable (0 restarts)"
 fi
 
+# --- is the dataplane out of the OOM killer's selection? ---
+#
+# docs/appliance.md records the event this guards against: the ISO booted with
+# 2 GB and the console said "Out of memory: Killed process (vpp)" with VPP
+# holding 19 MB resident. It was the chosen victim, not the glutton. The answer
+# is a drop-in on vpp.service carrying OOMScoreAdjust, and until now nothing on
+# an installed box ever looked at whether it took effect - a drop-in that was
+# never installed, or that systemd parsed and refused, is indistinguishable
+# from one that is working.
+#
+# What is read is /proc/<pid>/oom_score_adj, which is what the kernel will act
+# on, and not the drop-in file, which is only what somebody asked for. Read and
+# never written: a check that arranges the condition it is checking for cannot
+# report its absence, which is #184 in one sentence.
+#
+# -1000 is the kernel's OOM_SCORE_ADJ_MIN, and it is the only value that takes
+# the process out of the selection. Anything else merely reweights it, and a
+# reweighted process is still a candidate - which is why a negative value that
+# is not the minimum is reported rather than accepted.
+vpid=$(systemctl show vpp.service -p MainPID --value 2>/dev/null)
+[ -n "$vpid" ] || vpid=0
+if [ "$vpid" = 0 ]; then
+  # A VPP that is not running at all was already reported above. A VPP that IS
+  # running while vpp.service owns no process is a different box: something
+  # started the dataplane by hand, and no drop-in on that unit covers it.
+  if vppctl show version >/dev/null 2>&1; then
+    say "  [warn] VPP is running but vpp.service owns no process: the drop-in"
+    say "         that takes the dataplane out of the OOM killer's selection"
+    say "         does not apply to a VPP somebody started by hand"
+  fi
+elif adj=$(cat "/proc/$vpid/oom_score_adj" 2>/dev/null); then
+  case "$adj" in
+    -1000)
+      ok "dataplane out of the OOM killer's selection (oom_score_adj $adj)" ;;
+    -*)
+      say "  [warn] vpp's oom_score_adj is $adj: lowered, not removed. The"
+      say "         dataplane is still a candidate when something else on this"
+      say "         box grows, which is how it was killed at 19 MB resident" ;;
+    *)
+      bad "vpp's oom_score_adj is $adj: the dataplane can be chosen as an"
+      say "        OOM victim for somebody else's allocation. The drop-in"
+      say "        /etc/systemd/system/vpp.service.d/hexarouting-oom-protect.conf"
+      say "        is missing or did not take effect; check it, then"
+      say "        'systemctl daemon-reload' and restart vpp.service" ;;
+  esac
+else
+  bad "cannot read /proc/$vpid/oom_score_adj for vpp.service (pid $vpid)"
+  say "        whether the dataplane is protected from the OOM killer is"
+  say "        unknown on this box, which is not the same as protected"
+fi
+
 # --- plugins ---
 if vppctl show plugins 2>/dev/null | grep -q bpa_plugin; then
   ok "CGNAT plugin loaded"
