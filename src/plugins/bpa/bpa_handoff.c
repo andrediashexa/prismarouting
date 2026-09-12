@@ -152,9 +152,24 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 		  /* The embedded SOURCE, not the outer destination. RFC 792
 		   * makes them the same address, and when a sender disagrees
 		   * it is the embedded one that keys the session - so it is
-		   * the embedded one that has to choose the worker. */
-		  pub = e.pub_addr;
-		  port = e.pub_port;
+		   * the embedded one that has to choose the worker.
+		   *
+		   * Unless there is no port. An error about an outbound ESP
+		   * packet parses, and parses correctly, but the tunnel it
+		   * names is in the table shared between workers - so there
+		   * is no owner to steer to and the packet is right where it
+		   * needs to be. Left unmatched EXPLICITLY: bpa_reverse_sub()
+		   * would also fail on a port of zero, because zero is in no
+		   * subscriber's block, and arriving at the right answer
+		   * because an unrelated check happens to reject the input is
+		   * how a wrong answer arrives the day that check changes. */
+		  if (e.port)
+		    {
+		      pub = e.pub_addr;
+		      port = e.pub_port;
+		    }
+		  else
+		    have_id = 0;
 		}
 	      /*
 	       * ESP comes out of here unmatched, and that is the design

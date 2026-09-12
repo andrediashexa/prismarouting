@@ -194,6 +194,28 @@ vppctl show errors | grep "passthrough is off" | sed 's/^/  /'
 [ "$MODE" = "off" ] || vppctl bpa alg lab esp on >/dev/null
 
 echo
+echo "=========== PMTUD: an ICMP error about A's outbound tunnel ==========="
+# The only signal a tunnel has. There is no MSS in an ESP packet to clamp, so
+# when a router on the path cannot carry the subscriber's packet, this error is
+# the whole of what tells them - and a CGNAT that drops it is the classic PMTUD
+# black hole: the tunnel comes up, small packets work, and the first large
+# transfer hangs with nothing anywhere saying why (#203).
+#
+# It resolves through the SAME global binding an inbound ESP packet uses, and
+# the key is already in the packet: the embedded IP header's source is our
+# public address and its destination is the peer. No port, and none needed -
+# which is why ESP, the protocol with no identifier of its own, is the one this
+# works for while GRE is not.
+arm pg0
+send pg1 "$(python3 /src/lab/mkicmperr.py 4.4.4.4 "${A_PUB:-200.150.0.17}" \
+            8.8.8.8 0 0 esp)"
+PMTUD=$(seen)
+printf '%s\n' "${PMTUD:-  <nothing reached the subscriber>}" | sed 's/^/  /'
+PMTUD_DST=$(field 3); PMTUD_INNER=$(field 4)
+PMTUD_CK=$(field 6); PMTUD_ICK=$(field 7)
+echo "  reached ${PMTUD_DST:-nobody}, embedded source now ${PMTUD_INNER:-?}"
+
+echo
 echo "=========== VERDICT ==========="
 # The STATE, not the row label: "show bpa alg" prints one row per ALG whether
 # it is on or off, so matching "esp" would pass with passthrough disabled,
@@ -240,6 +262,21 @@ expect "the first subscriber's tunnel is untouched by the refusal" \
        test "${A_SURVIVED:-}" = "100.64.0.5"
 expect "tunnels bound is counted, so 'off' and 'saw nothing' differ" \
        test "${BOUND:-0}" -ge 2
+# PMTUD, asserted on the captured packet: the error has to arrive at the
+# subscriber's PRIVATE address, or it reaches a host that does not exist.
+expect "an ICMP error about the tunnel reaches the subscriber" \
+       test "${PMTUD_DST:-}" = "100.64.0.5"
+# The half that decides whether it is worth anything: the subscriber's stack
+# matches the error against its own socket by the packet quoted INSIDE it.
+expect "and the embedded packet names the subscriber, not the public address" \
+       test "${PMTUD_INNER:-}" = "100.64.0.5"
+expect "the outer IP checksum still covers what was rewritten" \
+       test "${PMTUD_CK:-BAD}" = "ok"
+# The ICMP checksum covers the whole embedded packet. Rewriting an address in
+# there without it is a packet the subscriber's kernel drops in silence, which
+# is the same shape as the ESP SPI this lab exists for.
+expect "and so does the ICMP checksum, which covers the embedded packet" \
+       test "${PMTUD_ICK:-BAD}" = "ok"
 expect "with passthrough off nothing leaves" test -z "${OFF_OUT:-}"
 expect "not even on a tunnel that was already bound" test -z "${OFF_BOUND:-}"
 expect "with passthrough off nothing comes back either" test -z "${OFF_IN:-}"

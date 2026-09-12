@@ -181,10 +181,39 @@ main (void)
   mk (pkt);
   pkt[O_INNER_PROTO] = IP_PROTOCOL_GRE;
   CHECK (parse (pkt, PKT_LEN, &e) != 0,
-	 "embedded GRE: the Call ID is at offset 6, so offset 0 is not a port");
+	 "embedded GRE is refused: the Call ID an outbound packet carries is "
+	 "the server's, and no table is keyed on it with our public address");
+
+  /*
+   * ESP is the one with no identifier of its own, and it is the one that
+   * works. Its binding is keyed on (our public address, peer) in the table
+   * shared between workers, and BOTH of those are in the embedded IP header -
+   * so the error carries the whole key and needs no payload bytes at all.
+   */
   mk (pkt);
   pkt[O_INNER_PROTO] = IP_PROTOCOL_IPSEC_ESP;
-  CHECK (parse (pkt, PKT_LEN, &e) != 0, "embedded ESP has no port at all");
+  CHECK (parse (pkt, PKT_LEN, &e) == 0, "embedded ESP parses");
+  CHECK (e.port == 0, "and hands the caller no port to write through");
+  CHECK (e.pub_port == 0, "nor a port value to key on");
+  CHECK (e.pub_addr == 0xc8960011u,
+	 "the embedded source is our public address, 200.150.0.17");
+  CHECK (e.peer == 0x08080808u,
+	 "and the embedded destination is the peer, 8.8.8.8");
+  CHECK (e.ip_proto == IP_PROTOCOL_IPSEC_ESP, "and it says which protocol");
+
+  /*
+   * The bound the ported protocols need and this one does not. An ICMP error
+   * is only required to quote eight bytes of the original datagram; truncated
+   * to the embedded IP header alone, TCP has no port to read and ESP has
+   * everything it needs.
+   */
+  mk (pkt);
+  pkt[O_INNER_PROTO] = IP_PROTOCOL_IPSEC_ESP;
+  CHECK (parse (pkt, O_INNER_L4, &e) == 0,
+	 "ESP parses from the embedded IP header alone");
+  mk (pkt);
+  CHECK (parse (pkt, O_INNER_L4, &e) != 0,
+	 "while TCP truncated to the same point is refused");
 
   /*
    * The attacker's header lengths. Both of these are the shape that reads off
