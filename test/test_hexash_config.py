@@ -377,6 +377,26 @@ check(back.routing == old.routing,
 # the statement.
 check(" ip route 10.0.0.0/8 192.0.2.1" in new_text.splitlines(),
       f"a vrf's static route stays in its vrf: {new_text}")
+# The same route typed at the VTY, where it is NOT indented: `Shell.feed`
+# strips leading whitespace before dispatch, so a route typed inside `vrf red`
+# reaches `routing` at column 0 like every other typed line. Reading the column
+# to decide what is top-level therefore hoisted it out of the VRF and into
+# `router static`, which is another routing table - the file said the route was
+# global and the operator had put it in a VRF (#180). Which block a statement
+# is in is decided by `block_paths`, which reads the typed shape as well.
+typed = config.Config()
+typed.routing = ["vrf red", "ip route 10.0.0.0/8 192.0.2.1", "exit-vrf",
+                 "ip route 0.0.0.0/0 10.0.0.2"]
+lines = config.group_static(typed.routing)
+# By position, and without assuming the route is there at all: hoisting it is
+# exactly the defect, and a lookup that raises reports the wrong thing.
+in_vrf = "ip route 10.0.0.0/8 192.0.2.1" in lines
+check(in_vrf and lines.index("vrf red") < lines.index("ip route 10.0.0.0/8 192.0.2.1"),
+      f"a route typed inside a vrf stays inside it: {lines}")
+check(" route 0.0.0.0/0 10.0.0.2" in lines,
+      f"while the one typed outside is still grouped: {lines}")
+check(" route 10.0.0.0/8 192.0.2.1" not in lines,
+      f"and the vrf's is not grouped with it: {lines}")
 check(back.routing.index("vrf red") < back.routing.index(" ip route 10.0.0.0/8 192.0.2.1"),
       "and is still inside it after a round trip")
 

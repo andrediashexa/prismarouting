@@ -792,6 +792,259 @@ check("mtu 9000" in text, f"and its MTU is shown: {text!r}")
 check("urpf strict" in text, f"and its uRPF: {text!r}")
 print("  " + text.strip().replace("\n", " / "))
 
+# --- show this, for what is being typed right now (#180) ---
+#
+# The routing half of the candidate is a flat list of verbatim FRR statements
+# with no record of which block each one is in, and it arrives in two shapes:
+# read back from FRR it is INDENTED, and typed at this VTY it is not, because
+# `feed` strips leading whitespace before dispatch. `show this` walked it by
+# indentation and so stopped at the first line the operator had typed - which
+# is every line, in the one situation the command exists for. An operator who
+# types four statements, runs it and sees only the header will reasonably
+# conclude nothing was accepted.
+#
+# Every block the VTY models is checked, one at a time and against the block's
+# OWN line, because a needle looked for in the whole output is satisfied by
+# the header the command already printed.
+print("\n=== show this shows what this session typed (#180) ===")
+
+def this_in(block, *typed):
+    """`show this` inside `block` after `typed`, as a list of lines."""
+    s = shell_with_box()
+    s.feed("configure")
+    s.feed(block)
+    for line in typed:
+        s.feed(line)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        s.feed("show this")
+    return buf.getvalue().splitlines()
+
+# Each case: the block, what is typed in it, and the line that MUST come back.
+# The expected line carries its own leading space, so a statement shown
+# unindented - or the header matching by accident - is not a pass.
+TYPED = [
+    ("router bgp 65001",
+     ["neighbor 10.0.0.2 remote-as 65002", "no bgp ebgp-requires-policy"],
+     [" neighbor 10.0.0.2 remote-as 65002", " no bgp ebgp-requires-policy"]),
+    ("router ospf", ["network 10.0.0.0/24 area 0", "passive-interface default"],
+     [" network 10.0.0.0/24 area 0", " passive-interface default"]),
+    ("router isis TAG", ["is-type level-2-only", "net 49.0001.0000.0000.0001.00"],
+     [" is-type level-2-only", " net 49.0001.0000.0000.0001.00"]),
+    ("route-map RM-LAB permit 10",
+     ["match ip address prefix-list PL-A", "set local-preference 200"],
+     [" match ip address prefix-list PL-A", " set local-preference 200"]),
+    ("rpki", ["rpki cache 10.0.0.9 3323 preference 1"],
+     [" rpki cache 10.0.0.9 3323 preference 1"]),
+    ("vrf red", ["ip route 10.9.0.0/16 10.0.0.9"],
+     [" ip route 10.9.0.0/16 10.0.0.9"]),
+    # In the BLOCK's own words, not FRR's. `router static` is a hierarchy FRR
+    # does not have - its statements are top-level `ip route` lines - and the
+    # operator is being shown the hierarchy they are editing.
+    ("router static", ["route 0.0.0.0/0 10.0.0.2", "route 192.0.2.0/24 10.0.0.3"],
+     [" route 0.0.0.0/0 10.0.0.2", " route 192.0.2.0/24 10.0.0.3"]),
+]
+for block, typed, expected in TYPED:
+    lines = this_in(block, *typed)
+    check(lines[:1] == [block], f"{block}: the header is still first: {lines}")
+    for want in expected:
+        check(want in lines[1:],
+              f"{block}: '{want.strip()}' is shown as a statement of it: {lines}")
+    print(f"  {block}: " + " / ".join(l.strip() for l in lines[1:]))
+
+# FRR's spelling typed inside the block is shown in the block's words too: it
+# is the same route either way, and showing it twice over would be a lie about
+# what commits.
+lines = this_in("router static", "ip route 198.51.100.0/24 blackhole")
+check(" route 198.51.100.0/24 blackhole" in lines,
+      f"FRR's own spelling comes back in the block's words: {lines}")
+check(not any(l.strip().startswith("ip route") for l in lines),
+      f"and not in FRR's as well: {lines}")
+
+# A nested block. Standing in the address-family shows its statements; standing
+# in the router above shows them too, one level deeper, because an operator
+# asking what `router bgp 65001` holds is asking about its families as well.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router bgp 65001")
+sh.feed("neighbor 10.0.0.2 remote-as 65002")
+sh.feed("address-family ipv4 unicast")
+sh.feed("neighbor 10.0.0.2 activate")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+af = buf.getvalue().splitlines()
+check(af[:1] == ["address-family ipv4 unicast"], f"the family is named: {af}")
+check(" neighbor 10.0.0.2 activate" in af[1:],
+      f"and holds what was typed in it: {af}")
+check(not any("remote-as 65002" in l for l in af),
+      f"and nothing from the router above it, at any depth: {af}")
+sh.feed("exit")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+bgp = buf.getvalue().splitlines()
+check(" neighbor 10.0.0.2 remote-as 65002" in bgp,
+      f"the router shows its own statement: {bgp}")
+check(" address-family ipv4 unicast" in bgp,
+      f"and the family under it: {bgp}")
+check("  neighbor 10.0.0.2 activate" in bgp,
+      f"whose statements come one level deeper: {bgp}")
+print("  nesting: " + " / ".join(l.strip() for l in bgp[1:]))
+
+# The two shapes in ONE candidate, which is what every real edit is: the
+# configuration was read back from FRR indented, and the operator has just
+# typed a line at the VTY. Both belong to the block and both must show.
+sh = shell_with_box()
+sh.frr.running = lambda: ["router bgp 65001",
+                          " neighbor 10.0.0.1 remote-as 65000",
+                          " exit",
+                          "!"]
+sh.feed("configure")
+sh.feed("router bgp 65001")
+sh.feed("neighbor 10.0.0.2 remote-as 65002")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+mixed = buf.getvalue().splitlines()
+check(" neighbor 10.0.0.1 remote-as 65000" in mixed,
+      f"what FRR already had is shown: {mixed}")
+check(" neighbor 10.0.0.2 remote-as 65002" in mixed,
+      f"and what was typed a moment ago, in the same block: {mixed}")
+# `exit` ends a block; it is not a statement OF it, and printing it invites
+# somebody to copy it back in as configuration.
+check(not any(l.strip() in ("exit", "!") for l in mixed),
+      f"a block's own exit is not shown as configuration: {mixed}")
+print("  mixed: " + " / ".join(l.strip() for l in mixed[1:]))
+
+# Nothing from a neighbouring block, and everything from this one - a block
+# left and re-entered is one hierarchy, not two. The header alone is a match
+# for any substring test, so this asserts on the statements.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router bgp 65001")
+sh.feed("neighbor 10.0.0.2 remote-as 65002")
+sh.feed("exit")
+sh.feed("router ospf")
+sh.feed("network 10.0.0.0/24 area 0")
+sh.feed("exit")
+sh.feed("router bgp 65001")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+only = buf.getvalue().splitlines()
+check(" neighbor 10.0.0.2 remote-as 65002" in only,
+      f"what BGP was given earlier in the session is still its own: {only}")
+check(not any("network 10.0.0.0/24 area 0" in l for l in only),
+      f"and OSPF's, typed between the two visits, is not: {only}")
+
+# The same without an `exit`, which is what an operator who knows FRR types:
+# naming another block is how you leave the one you are in. Asserted from BOTH
+# sides, because a walk that nests one block inside the other gets one of them
+# right whichever way round it is wrong.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router ospf")
+sh.feed("network 10.0.0.0/24 area 0")
+sh.feed("router bgp 65001")
+sh.feed("neighbor 10.0.0.2 remote-as 65002")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+noexit = buf.getvalue().splitlines()
+check(" neighbor 10.0.0.2 remote-as 65002" in noexit,
+      f"BGP holds what was typed after its header: {noexit}")
+check(not any("network 10.0.0.0/24 area 0" in l for l in noexit),
+      f"and OSPF, named before it, is not inside it: {noexit}")
+sh.feed("router ospf")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+back = buf.getvalue().splitlines()
+check(" network 10.0.0.0/24 area 0" in back,
+      f"and OSPF still holds its own: {back}")
+check(not any("neighbor 10.0.0.2 remote-as 65002" in l for l in back),
+      f"with BGP, named inside it, not swallowed by it: {back}")
+
+# A secret typed in this session reaches this path too - it did not before,
+# because the path stopped at the header and printed nothing at all.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router bgp 65001")
+sh.feed("neighbor 10.0.0.2 password S3CR3T-BGP")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+secret = buf.getvalue()
+check("S3CR3T-BGP" not in secret, f"show this prints no typed password: {secret}")
+check(" neighbor 10.0.0.2 password <set, not shown>" in secret.splitlines(),
+      f"and says one is set: {secret}")
+
+# An interface holds eleven things and `show this` knew about two of them, so
+# an operator who had just typed a description was told the block had none.
+# `Config.interface_lines` is the one list, shared with the file writer.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("interface TenGigabitEthernet0/8/0")
+sh.feed("description transito-vivo")
+sh.feed("mtu 9000")
+sh.feed("ip ospf area 0")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+iface = buf.getvalue().splitlines()
+check(" description transito-vivo" in iface,
+      f"a description typed in this session is shown: {iface}")
+check(" mtu 9000" in iface, f"beside the MTU that #108 added: {iface}")
+check(" ip ospf area 0" in iface,
+      f"and the FRR statement typed in the same block: {iface}")
+print("  interface: " + " / ".join(l.strip() for l in iface[1:]))
+
+# Leaving a block has to leave a mark in the candidate. The header went in on
+# the way in and nothing recorded the way out, so the flat list said the block
+# was still open - and `frr-reload.py`, which decides context by statement
+# exactly as `block_paths` does, then handed the next top-level statement to
+# FRR INSIDE the block just left.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router bgp 65001")
+sh.feed("neighbor 10.0.0.2 remote-as 65002")
+sh.feed("exit")
+check("exit" in sh.candidate.routing,
+      f"leaving a block is recorded in the candidate: {sh.candidate.routing}")
+sh.feed("router static")
+sh.feed("route 0.0.0.0/0 10.0.0.2")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+after = buf.getvalue().splitlines()
+check(" route 0.0.0.0/0 10.0.0.2" in after,
+      f"a route typed after leaving a block is in the static block: {after}")
+# And not only on the screen: the file the box would save has to put it there
+# too, or `show this` and the commit are two answers to one question.
+check(" route 0.0.0.0/0 10.0.0.2" in sh.candidate.text().splitlines(),
+      f"and the saved file agrees: {sh.candidate.text()}")
+# ...and it is not routing an operator wrote, so it must not make a candidate
+# that only sets an interface MTU look like one that needs FRR (#137).
+check(hexash.Shell.real_routing(["interface Gi0", "exit"]) == [],
+      "a block terminator is not a routing statement")
+
+# A block entered by argument is a TOP-LEVEL context in FRR - only an
+# address-family nests - so the prompt must not claim a nesting that would
+# leave `show this` looking for a block nothing holds.
+sh = shell_with_box()
+sh.feed("configure")
+sh.feed("router bgp 65001")
+sh.feed("interface TenGigabitEthernet0/8/0")
+check(sh.frr_ctx == ["interface TenGigabitEthernet0/8/0"],
+      f"an interface entered from inside BGP is not nested in it: {sh.frr_ctx}")
+sh.feed("mtu 9000")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.feed("show this")
+check(" mtu 9000" in buf.getvalue().splitlines(),
+      f"and shows what it holds: {buf.getvalue()!r}")
+
 # --- address-family is a block (#150) ---
 #
 # It was not one, so `exit` inside an address-family popped the enclosing

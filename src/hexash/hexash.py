@@ -28,7 +28,8 @@ import tempfile
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
-                    NAT_HIERARCHY, STATIC_BLOCK, strip_nat,
+                    NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
+                    frr_block_lines, opens_frr_block, strip_nat,
                     _address_family_error, _is_loopback)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -2443,8 +2444,12 @@ class Shell:
         commit is rolled back including the half that had nothing to do with
         routing (#137).
         """
+        # A block's own `exit` is not a routing statement either: staged on
+        # the way out of every block, it would make a candidate that only sets
+        # an interface MTU look like routing and bring #137 straight back.
         return [l for l in lines
-                if l.split()[0:1] != ["interface"] and not l.startswith(" ")]
+                if l.split()[0:1] != ["interface"] and not l.startswith(" ")
+                and l.strip() not in FRR_BLOCK_CLOSERS]
 
     def set_admin(self, ifname, up):
         """
@@ -4122,6 +4127,21 @@ class Shell:
             return True
         if w[0] in ("exit", "quit", "end"):
             if self.frr_ctx:
+                # The `exit` goes into the candidate, because without it the
+                # flat list of routing statements has no record that the block
+                # ended - the header went in on the way in and nothing marked
+                # the way out. frr-reload.py reads the same list and decides
+                # context by statement exactly as `block_paths` does, so a
+                # missing `exit` meant the next top-level statement was handed
+                # to FRR INSIDE the block just left (#180). It is also what
+                # FRR writes itself, so the candidate and what comes back from
+                # `show running-config` are written the same way.
+                #
+                # `router static` is the exception: FRR has no such block,
+                # nothing opened one, and a stray `exit` would close whatever
+                # really is open.
+                if self.frr_ctx[-1] != STATIC_BLOCK:
+                    self.candidate.routing.append("exit")
                 self.frr_ctx.pop()
                 return True
             running = self.running_config()
@@ -4443,14 +4463,26 @@ class Shell:
         # typed went somewhere they did not intend, with nothing on screen
         # saying so. That is exactly the failure the prompt work exists to
         # prevent (#150).
-        if line.startswith(("router ", "interface ", "vrf ", "route-map ",
-                            "address-family ")) or line.strip() == "rpki":
+        if opens_frr_block(line):
             # Naming a loopback is what CREATES it, the way naming a
             # sub-interface is - there is nothing else on the box to create it
             # from. Recorded on the way into the block, because the statements
             # typed inside it are about an interface that does not exist yet.
             if line.startswith("interface ") and _is_loopback(line.split()[1]):
                 self.candidate.loopbacks.add(line.split()[1])
+            # What NESTS is FRR's grammar, not this VTY's stack discipline.
+            # `address-family` nests in the `router` above it, and a second
+            # one replaces the first; every other block is a top-level context
+            # in FRR, which is where `interface Gi0/0/0` typed inside `router
+            # bgp` actually lands. Letting the prompt claim a nesting FRR does
+            # not have leaves `show this` looking for a block nothing holds -
+            # and `block_paths` reads the very same rule (#180).
+            if line.startswith("address-family "):
+                while (self.frr_ctx
+                       and self.frr_ctx[-1].startswith("address-family ")):
+                    self.frr_ctx.pop()
+            else:
+                self.frr_ctx = []
             self.frr_ctx.append(line)
         return True
 
@@ -4761,33 +4793,23 @@ class Shell:
             block = self.frr_ctx[-1]
             print(block)
 
-            # An interface's own settings are staged in cfg.mtus and cfg.urpf,
-            # NOT in cfg.routing. This branch was written for FRR blocks and
-            # never saw the fields the VTY models itself, so it printed the
-            # header and stopped - reporting a hierarchy that plainly had an
-            # MTU as empty (#108).
+            # An interface's own settings are staged in cfg.mtus, cfg.urpf,
+            # cfg.descriptions and eight more fields, NOT in cfg.routing. This
+            # branch was written for FRR blocks and never saw the fields the
+            # VTY models itself, so it printed the header and stopped -
+            # reporting a hierarchy that plainly had an MTU as empty (#108).
             #
             # An operator who runs "show this" and sees nothing concludes the
             # block is empty and configures accordingly, which makes an empty
             # answer worse than no command at all.
             if block.startswith("interface "):
-                ifname = block.split(None, 1)[1]
-                if ifname in cfg.mtus:
-                    print(f" mtu {cfg.mtus[ifname]}")
-                if ifname in cfg.urpf:
-                    print(f" urpf {cfg.urpf[ifname]}")
-            started = False
-            for line in cfg.routing:
-                if line == block:
-                    started = True
-                    continue
-                if started:
-                    if line and not line[0].isspace():
-                        break
-                    # Redacted here too. `show this` inside a BGP block reads
-                    # the routing lines straight out of the candidate, so a
-                    # neighbour password printed nowhere else was printed here.
-                    print(redact([line])[0])
+                for line in cfg.interface_lines(block.split(None, 1)[1]):
+                    print(line)
+            # Redacted here too. `show this` inside a block reads the routing
+            # lines straight out of the candidate, so a neighbour password
+            # printed nowhere else was printed here.
+            for line in redact(frr_block_lines(cfg.routing, self.frr_ctx)):
+                print(line)
             return
 
         # At the top of configuration mode, "this" is the whole candidate -

@@ -45,7 +45,8 @@ are to be interpreted as described in
 [#193](https://github.com/andrediashexa/hexarouting/issues/193),
 [#194](https://github.com/andrediashexa/hexarouting/issues/194),
 [#195](https://github.com/andrediashexa/hexarouting/issues/195),
-[#196](https://github.com/andrediashexa/hexarouting/issues/196).
+[#196](https://github.com/andrediashexa/hexarouting/issues/196),
+[#180](https://github.com/andrediashexa/hexarouting/issues/180).
 
 ### Added
 
@@ -141,6 +142,41 @@ are to be interpreted as described in
 
 ### Fixed
 
+* **`show this` printed the block header and stopped, for anything typed in
+  the session.** The routing half of the candidate is a flat list of verbatim
+  FRR statements with no record of which block each one is in, and it arrives
+  in two shapes: read back from FRR it is **indented**, and typed at the VTY it
+  is not, because `Shell.feed` strips leading whitespace before dispatch. The
+  block was walked by indentation, so it stopped at the first line the operator
+  had typed — which is every line, in the one situation the command exists for.
+  An operator who typed four statements, ran `show this` and saw only the
+  header would reasonably conclude nothing was accepted. Membership in a block
+  is now decided by `config.block_paths()`, which reads indentation where the
+  text has it and otherwise applies the rule `do_config` itself applies —
+  the same rule `frr-reload.py` uses on the very same list — and
+  `route_map_findings`, `bgp_errors` and `ospf_state` were the first three
+  places to learn it separately. Covered: `interface`, `router bgp` with a
+  nested `address-family`, `router ospf`, `router isis`, `route-map`, `rpki`,
+  `vrf` and `router static`, whose routes are shown in the block's own words
+  (` route 0.0.0.0/0 10.0.0.2`) because that hierarchy is what is being edited
+  and FRR has no such block at all.
+* **Leaving an FRR block left no mark in the candidate.** The header went in on
+  the way in and nothing recorded the way out, so the flat list said the block
+  was still open — and since `frr-reload.py` decides context by statement, the
+  next top-level statement was handed to FRR **inside the block just left**.
+  `exit` is now staged like any other line, which is also what FRR writes
+  itself; `real_routing()` ignores it, so a candidate that only sets an
+  interface MTU still does not need FRR to commit.
+* **A static route typed inside `vrf red` was hoisted out of the VRF.**
+  `group_static()` decided what was top-level by reading column 0, which is
+  right for a configuration read back from FRR and wrong for every line typed
+  at the VTY: the saved file said the route was global and the operator had put
+  it in a VRF, which is a different routing table.
+* **`show this` inside an interface knew about two of its eleven fields.**
+  `mtu` and `urpf` were listed by hand; a description, an address, a VLAN tag
+  or a VRF typed a moment earlier was reported as nothing at all.
+  `Config.interface_lines()` is now the single list, shared with the writer of
+  the configuration file.
 * **A non-root administrator could `commit check` a routing change and not
   `commit` it.** Applying one needs three paths that belong to FRR and not to
   this product: `/var/log/frr` (`drwxr-x--- frr:frr`, where `frr-reload` opens

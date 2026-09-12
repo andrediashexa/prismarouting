@@ -603,6 +603,56 @@ block — which required letting `show` reach the sub-modes: each dispatches its
 own lines, and without that the command was refused in the one place it exists
 for.
 
+Inside an FRR block it shows the block **and everything nested under it**, one
+space per level:
+
+```
+hexarouting# [edit router bgp 65001] show this
+router bgp 65001
+ neighbor 10.0.0.2 remote-as 65002
+ address-family ipv4 unicast
+  neighbor 10.0.0.2 activate
+```
+
+### How it knows what is in the block
+
+The routing half of the candidate is a flat list of verbatim FRR statements
+with no record of which block each one belongs to, and it arrives in **two
+different shapes**: read back from FRR it is indented, and typed at this VTY it
+is not, because `feed()` strips leading whitespace before dispatch.
+
+Walking it by indentation therefore worked on a configuration that had been
+committed and re-read, and stopped at the first line of one being typed — which
+is the only moment anybody runs `show this`. An operator who typed four
+statements, ran it and saw only the header would reasonably conclude nothing
+had been accepted
+([#180](https://github.com/andrediashexa/hexarouting/issues/180)).
+
+`config.block_paths()` reads each shape by the evidence it carries: an indented
+line states its level outright, and a line at column 0 gets the rule
+`do_config` itself applies — an opener starts a block, an `exit` leaves one,
+anything else belongs to the block currently open. That is also the rule
+`frr-reload.py` uses on the same list, which is why leaving a block now stages
+its `exit` in the candidate: without it the next top-level statement was handed
+to FRR *inside* the block just left.
+
+Inside `router static` the routes come back in **that block's own words**:
+
+```
+hexarouting# [edit router static] show this
+router static
+ route 0.0.0.0/0 10.0.0.2
+```
+
+FRR has no `router static` at all — these are top-level `ip route` statements —
+so this is the same transform `save` writes into the configuration file, and
+what `show this` says the block holds is what a `commit` will apply.
+
+Inside an interface it shows what the **VTY** stages for that interface —
+description, addresses, VLAN tags, VRF, MTU, uRPF and the rest — beside the FRR
+statements typed in the same block. Those fields live in `Config`, not in the
+routing list, and the same list is what `save` writes.
+
 ## Which daemons run
 
 `frrinit.sh` starts `zebra`, `mgmtd` and `staticd` unconditionally. Everything

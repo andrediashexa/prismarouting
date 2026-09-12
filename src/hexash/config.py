@@ -52,18 +52,128 @@ def strip_nat(line: str) -> str:
     return line
 
 
+#: The statements that OPEN an FRR block.
+#:
+#: The same list `Shell.do_config` pushes onto `frr_ctx`, so that the prompt
+#: naming the block an operator stands in and `show this` naming what that
+#: block holds cannot disagree about what a block is.
+FRR_BLOCK_OPENERS = ("router ", "interface ", "vrf ", "route-map ",
+                     "address-family ")
+
+#: What ends one. `exit-address-family` is FRR's word for leaving an
+#: address-family and `exit-vrf` for leaving a VRF; each closes one level.
+FRR_BLOCK_CLOSERS = ("exit", "quit", "end", "exit-vrf", "exit-address-family")
+
+
+def opens_frr_block(line: str) -> bool:
+    """Does this statement open a block? `rpki` is the one that takes no name."""
+    s = line.strip()
+    return s.startswith(FRR_BLOCK_OPENERS) or s == "rpki"
+
+
+def block_paths(routing: list) -> list:
+    """
+    The block path of every line of `routing`, index for index.
+
+    Entry i is the list of block headers enclosing `routing[i]`, outermost
+    first - so `[]` for a top-level statement, and for a block's own header
+    the path of its PARENT. It is `None` where the line is not a statement of
+    the configuration at all: a blank, one of FRR's `!` separators, or a
+    block's own `exit`. Index for index rather than a filtered list, because
+    the caller that writes the configuration file has to put the lines it did
+    not touch back where they were.
+
+    It exists because `routing` is a flat list of verbatim FRR statements
+    that carries no record of which block each one is in, and arrives in two
+    different shapes: read back from FRR it is INDENTED, and typed at the VTY
+    it is not - `Shell.feed` strips leading whitespace before dispatch.
+    Everything that has had to ask "which block is this line in" -
+    `route_map_findings`, `bgp_errors`, `ospf_state`, `show this` (#180) - has
+    answered it again, and by indentation alone it is answered wrongly for
+    every line typed in the current session.
+
+    Each shape is read by the evidence it actually carries:
+
+    * An INDENTED line states its level outright: it is inside whatever line
+      above it is less indented. Nothing has to be known about which
+      statements are blocks, which is what makes a `key chain` or a
+      `segment-routing` stanza this VTY does not model itself come out right.
+    * A line at column 0 is read by its statement, the way `do_config` reads
+      it: an opener starts a block, a closer leaves one, anything else belongs
+      to the block currently open.
+
+    A column-0 opener closes what FRR's own grammar says it closes:
+    `address-family` is the only one that nests, and it nests in the `router`
+    above it. `interface` and `route-map` are top-level contexts in FRR even
+    when the VTY let somebody walk into one from inside `router bgp`.
+    """
+    out = []
+    stack = []                  # [indent, statement, children were indented]
+    for raw in routing:
+        stmt = raw.strip()
+        if not stmt:
+            out.append(None)
+            continue
+        if stmt.startswith("!"):
+            # FRR separates top-level stanzas with it, and releases before 8.1
+            # emit no `exit` at all. `feed` cuts `!` off anything typed, so one
+            # reaching here is FRR's own separator and means "back to the top".
+            stack = []
+            out.append(None)
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if indent:
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+            if stack:
+                stack[-1][2] = True
+        else:
+            # Column 0 has to be read two ways, and which one applies is
+            # decided by how the block above was written rather than guessed.
+            # A block whose statements arrived INDENTED is over at column 0 -
+            # that is what the indentation was saying. A block entered at this
+            # VTY has no indentation to end it, so it stays open until its
+            # own `exit`, exactly as `do_config` keeps it open.
+            #
+            # The second loop takes back a line pushed as a POSSIBLE header:
+            # in indented text that is the only way `key chain KC-CORE` or a
+            # `segment-routing` stanza is known to be a block at all - the
+            # next line comes in indented under it and nothing was declared.
+            while stack and (stack[-1][0] > 0 or stack[-1][2]):
+                stack.pop()
+            while stack and not opens_frr_block(stack[-1][1]):
+                stack.pop()
+        if stmt in FRR_BLOCK_CLOSERS:
+            # Whatever the loops above left open is the block this closes.
+            if stack:
+                stack.pop()
+            out.append(None)
+            continue
+        if not indent and opens_frr_block(stmt):
+            if stmt.startswith("address-family "):
+                while stack and stack[-1][1].startswith("address-family "):
+                    stack.pop()         # a sibling family, not a parent
+            else:
+                stack = []
+        out.append([f[1] for f in stack])
+        stack.append([indent, stmt, False])
+    return out
+
+
 def is_static_route(line: str) -> bool:
     """
-    A top-level static route as FRR writes one.
+    A static route as FRR writes one - the statement, not the position.
 
-    Column 0 matters and is not a style preference. FRR puts a VRF's static
-    routes INSIDE its `vrf red` block, indented, and hoisting one of those out
-    into a `router static` block would move the route to another table - a
-    display transform that changes where packets go. So this reads the column
-    as well as the statement.
+    Whether it is a TOP-LEVEL one is a separate question and belongs to
+    `block_paths`: FRR puts a VRF's static routes inside its `vrf red`
+    block, and hoisting one of those into a `router static` block would move
+    the route to another table. That used to be decided here by reading column
+    0, which is right for a configuration read back from FRR and wrong for
+    every line typed at this VTY, where a route typed inside `vrf red` sits at
+    column 0 like everything else.
     """
-    return (bool(line) and not line[:1].isspace()
-            and line.split()[:2] in (["ip", "route"], ["ipv6", "route"]))
+    return bool(line) and line.split()[:2] in (["ip", "route"],
+                                               ["ipv6", "route"])
 
 
 def group_static(routing: list) -> list:
@@ -74,12 +184,14 @@ def group_static(routing: list) -> list:
     from FRR and written out again keeps its order. FRR groups them anyway;
     this does not depend on that.
     """
-    statics = [l for l in routing if is_static_route(l)]
+    paths = block_paths(routing)
+    top = [p == [] and is_static_route(l) for p, l in zip(paths, routing)]
+    statics = [l for l, t in zip(routing, top) if t]
     if not statics:
         return list(routing)
     out, emitted = [], False
-    for line in routing:
-        if not is_static_route(line):
+    for line, t in zip(routing, top):
+        if not t:
             out.append(line)
             continue
         if emitted:
@@ -88,6 +200,29 @@ def group_static(routing: list) -> list:
         out += [" route " + " ".join(s.split()[2:]) for s in statics]
         out.append(" exit")
         emitted = True
+    return out
+
+
+def frr_block_lines(routing: list, ctx: list) -> list:
+    """
+    What the block at path `ctx` holds, in the words it was entered in.
+
+    Lines of blocks NESTED below `ctx` come too, indented one space per level:
+    an operator standing in `router bgp 65001` is asking what that router
+    holds, and its address-families are part of the answer.
+
+    `group_static` first, because `router static` is a block FRR does not have
+    - its statements are top-level `ip route` lines - and an operator being
+    shown the hierarchy they are editing must be shown it in its own words.
+    That transform is the one the configuration file already goes through, so
+    what `show this` says a block holds is what a commit will write.
+    """
+    want = [c.strip() for c in ctx]
+    grouped = group_static(routing)
+    out = []
+    for path, line in zip(block_paths(grouped), grouped):
+        if path is not None and path[:len(want)] == want:
+            out.append(" " * (len(path) - len(want) + 1) + line.strip())
     return out
 
 
@@ -613,6 +748,44 @@ class Config:
 
     # ------------------------------------------------------------ text
 
+    def interface_lines(self, ifname: str) -> list:
+        """
+        What this configuration holds for one interface, without its header.
+
+        Split out of `text()` because `show this` inside an interface needs
+        the same answer and had its own shorter list - it knew about `mtu` and
+        `urpf` and about none of the other nine, so an operator who had just
+        typed a description was told the block did not have one (#180). Two
+        lists of the fields an interface has is two answers to the same
+        question, and the one nobody is looking at is the one that goes stale.
+        """
+        out = []
+        # Description first: it is what the interface IS, and a reader
+        # scanning a long configuration for one port finds it by name.
+        if ifname in self.linux_names:
+            out.append(f" linux-name {self.linux_names[ifname]}")
+        if ifname in self.macs:
+            out.append(f" mac-address {self.macs[ifname]}")
+        if ifname in self.ra_enabled:
+            out.append(" no ipv6 nd suppress-ra")
+        if ifname in self.vrfs:
+            out.append(f" vrf {self.vrfs[ifname]}")
+        if ifname in self.vlans:
+            t = self.vlans[ifname]
+            out.append(f" vlan {t['outer']}" +
+                       (f" inner {t['inner']}" if t["inner"] else ""))
+        if ifname in self.descriptions:
+            out.append(f" description {self.descriptions[ifname]}")
+        for a in self.addresses.get(ifname, []):
+            out.append(f" ipv{'6' if ':' in a else '4'} address {a}")
+        if ifname in self.admin_down:
+            out.append(" shutdown")
+        if ifname in self.mtus:
+            out.append(f" mtu {self.mtus[ifname]}")
+        if ifname in self.urpf:
+            out.append(f" urpf {self.urpf[ifname]}")
+        return out
+
     def text(self) -> str:
         out = [CGNAT_HEADER]
         # `nat ` in front of the CGNAT statements, because the hierarchy is
@@ -634,30 +807,7 @@ class Config:
                              | set(self.linux_names) | set(self.loopbacks)
                              | set(self.ra_enabled)):
             out.append(f"interface {ifname}")
-            # Description first: it is what the interface IS, and a reader
-            # scanning a long configuration for one port finds it by name.
-            if ifname in self.linux_names:
-                out.append(f" linux-name {self.linux_names[ifname]}")
-            if ifname in self.macs:
-                out.append(f" mac-address {self.macs[ifname]}")
-            if ifname in self.ra_enabled:
-                out.append(" no ipv6 nd suppress-ra")
-            if ifname in self.vrfs:
-                out.append(f" vrf {self.vrfs[ifname]}")
-            if ifname in self.vlans:
-                t = self.vlans[ifname]
-                out.append(f" vlan {t['outer']}" +
-                           (f" inner {t['inner']}" if t["inner"] else ""))
-            if ifname in self.descriptions:
-                out.append(f" description {self.descriptions[ifname]}")
-            for a in self.addresses.get(ifname, []):
-                out.append(f" ipv{'6' if ':' in a else '4'} address {a}")
-            if ifname in self.admin_down:
-                out.append(" shutdown")
-            if ifname in self.mtus:
-                out.append(f" mtu {self.mtus[ifname]}")
-            if ifname in self.urpf:
-                out.append(f" urpf {self.urpf[ifname]}")
+            out += self.interface_lines(ifname)
             out.append(" exit")
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
