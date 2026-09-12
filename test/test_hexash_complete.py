@@ -2942,10 +2942,21 @@ check(frr_writes_instead("ip route 10.0.0.0/8 10.0.0.1") is None,
 # The entry that is not about a value. What decides is the LAST word, so the
 # address between them is anything - a table keyed on leading words and fixed
 # values cannot express that, which is why it is a separate list.
-check(not frr_keeps("neighbor 10.0.0.2 activate"),
+# The entry whose answer depends on the REST of the configuration, and the one
+# that was written wrong first: unconditional, off half a measurement. That
+# would have excused a GENUINELY dropped activate on every box that turns the
+# default off - which is the ISP configuration, so the check would have been
+# switched off exactly where it was needed.
+_AF_ON = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001"]
+_AF_OFF = _AF_ON + [" no bgp default ipv4-unicast"]
+check(not frr_keeps("neighbor 10.0.0.2 activate", _AF_ON),
       "'neighbor activate' is implied by bgp default ipv4-unicast, so omitted")
-check(not frr_keeps("neighbor vppwan0 activate"),
+check(frr_keeps("neighbor 10.0.0.2 activate", _AF_OFF),
+      "and STORED when that default is turned off, which is the ISP case")
+check(not frr_keeps("neighbor vppwan0 activate", _AF_ON),
       "whatever the neighbour is named")
+check(not frr_keeps("neighbor 10.0.0.2 activate"),
+      "with no context at all it reads as omitted, which is the quiet side")
 check(frr_keeps("neighbor 10.0.0.2 remote-as 65001"),
       "while another neighbor statement is kept")
 check(frr_keeps("neighbor 10.0.0.2 route-map RM in"),

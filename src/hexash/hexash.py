@@ -917,40 +917,54 @@ FRR_OMITS_AT = {
     "bgp default ipv4-unicast": (),
 }
 
-# The one entry that is not about a VALUE, and it needs its own shape.
+# The one entry whose answer depends on the REST of the configuration, and the
+# reason this is a list of predicates rather than of words.
 #
-# `neighbor <x> activate` inside `address-family ipv4 unicast` is implied by
-# `bgp default ipv4-unicast`, which is on unless somebody turns it off - so FRR
-# accepts the statement and writes nothing. Measured, and the probe is in
-# lab/frr-readback.sh with the others.
+# `neighbor <x> activate` in an ipv4-unicast address family is implied by `bgp
+# default ipv4-unicast`, so with that on FRR accepts the statement and writes
+# nothing. Turn it OFF - which is what an ISP configuration does, so that a
+# peer carries only the families it was given - and FRR stores the activate
+# line like any other. Measured both ways:
 #
-# It is here rather than in FRR_OMITS_AT because the thing that decides is the
-# LAST word and not the value of a setting: `neighbor 10.0.0.2 activate` and
-# `neighbor vppwan0 activate` are both omitted and the address between them is
-# anything. FRR_OMITS_AT matches leading words against fixed values, which
-# cannot express that.
+#   bgp default ipv4-unicast on   OMITTED     neighbor 10.9.9.9 activate
+#   no bgp default ipv4-unicast   ROUNDTRIPS  neighbor 10.9.9.9 activate
 #
-# This one is the reason `lab/routing.sh` refused a BGP session the first time
-# this check ran on a real box: the lab configures a session the ordinary way,
-# with an activate line, and the box called it a dropped statement. The lab
-# caught it, which is what the lab is for.
-FRR_OMITS_TRAILING = (
-    ("neighbor", "activate"),
+# An unconditional entry was written here first, off the first half of that
+# measurement alone. It would have excused a GENUINELY dropped activate on
+# every box that turns the default off - which is the box where an activate
+# line is load-bearing rather than decorative, so the check would have been
+# switched off exactly where it was needed. Guessing that an omission is
+# unconditional because it was seen once is the same mistake as guessing it
+# follows the default value.
+#
+# Each entry is (does this statement match, is it omitted in THIS
+# configuration).
+FRR_OMITS_IN_CONTEXT = (
+    (lambda w: len(w) >= 3 and w[0] == "neighbor" and w[-1] == "activate",
+     lambda ctx: not any(l.strip() == "no bgp default ipv4-unicast"
+                         for l in ctx)),
 )
 
 
-def frr_keeps(stmt):
+def frr_keeps(stmt, context=()):
     """
     Would FRR store this statement as typed, so that its absence means a drop?
 
     False for the statements measured NOT to come back - and for those the
     caller must not conclude anything from absence. Everything else is
     expected back verbatim, and absence is a failed commit.
+
+    `context` is the whole routing configuration this statement is part of,
+    because one of these answers depends on it: an activate line is omitted
+    when `bgp default ipv4-unicast` is on and stored when it is off. Defaulting
+    it to empty is deliberate and is the CONSERVATIVE direction - with no
+    context the activate case reads as omitted, so the check says nothing about
+    a statement it cannot judge rather than refusing a commit on a guess.
     """
     w = stmt.split()
-    for first, last in FRR_OMITS_TRAILING:
-        if len(w) >= 3 and w[0] == first and w[-1] == last:
-            return False
+    for matches, omitted_here in FRR_OMITS_IN_CONTEXT:
+        if matches(w):
+            return not omitted_here(context)
     for k, vals in FRR_OMITS_AT.items():
         kw = k.split()
         if w[:len(kw)] != kw:
@@ -993,7 +1007,7 @@ def statements_frr_dropped(added, running):
             if instead not in have:
                 out.append((stmt, instead))
             continue
-        if not frr_keeps(stmt):
+        if not frr_keeps(stmt, running):
             continue
         if stmt not in have:
             out.append((stmt, None))
@@ -4730,7 +4744,8 @@ class Shell:
         # the box does, so leaving it in makes "all of them are outstanding"
         # true for a commit that worked.
         added = [a for a in added
-                 if frr_keeps(a) and frr_writes_instead(a) is None]
+                 if frr_keeps(a, self.candidate.routing)
+                 and frr_writes_instead(a) is None]
         if not added:
             return []
         rc, out = self.frr.reload(self.candidate.routing, check_only=True)

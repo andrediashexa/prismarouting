@@ -183,7 +183,7 @@ echo "=========== 4b. omitted because something ELSE is on ==========="
 run "router bgp 65000" " neighbor 10.9.9.9 remote-as 65001"
 run "router bgp 65000" " address-family ipv4 unicast" \
     "  neighbor 10.9.9.9 activate" "  exit-address-family"
-expect "'neighbor activate' is not read back" \
+expect "'neighbor activate' is not read back with the default on" \
        sh -c '! vtysh -c "show running-config" 2>/dev/null | grep -qF "neighbor 10.9.9.9 activate"'
 # The control, in the same address family, so "not read back" is not simply
 # what this box says about everything under address-family.
@@ -192,6 +192,24 @@ run "router bgp 65000" " address-family ipv4 unicast" \
 expect "while another statement in the same family is" \
        sh -c 'vtysh -c "show running-config" 2>/dev/null | grep -qF "neighbor 10.9.9.9 soft-reconfiguration inbound"'
 run "router bgp 65000" " no neighbor 10.9.9.9"
+
+# AND THE OTHER HALF, which is the assertion that matters. Turn the default
+# off - which is what an ISP configuration does, so that a peer carries only
+# the families it was given - and FRR stores the activate line like any other.
+#
+# Without this probe the table entry above was written UNCONDITIONAL, off the
+# first half of the measurement alone, and it would have excused a genuinely
+# dropped activate on every box that turns the default off: the box where an
+# activate line is load-bearing rather than decorative, so the check would have
+# been switched off exactly where it was needed.
+run "no router bgp 65000"
+run "router bgp 65000" " no bgp default ipv4-unicast" \
+    " neighbor 10.9.9.9 remote-as 65001" \
+    " address-family ipv4 unicast" "  neighbor 10.9.9.9 activate" \
+    "  exit-address-family"
+expect "and IS read back once that default is turned off" \
+       sh -c 'vtysh -c "show running-config" 2>/dev/null | grep -qF "neighbor 10.9.9.9 activate"'
+run "no router bgp 65000"
 
 echo
 echo "=========== 5. the ordinary case, for contrast ==========="
