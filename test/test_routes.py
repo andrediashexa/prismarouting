@@ -214,9 +214,18 @@ check(kind == routes.DROP,
       f"a prefix VPP drops is reported as dropped, not as absent: {kind}")
 check(not in_fib, "and it does not count as forwarding")
 
-check([r[0] for r in rows] == sorted((r[0] for r in rows),
-                                     key=routes._sort_key),
-      "rows come out in address order")
+# The order written out, not re-derived. This used to sort the rows' own
+# prefixes with routes._sort_key - the very function compare() sorted them
+# with - so both sides changed together and the sentence was never tested:
+# _sort_key could return a constant and the rows come out in dict order, and
+# this stayed green. A /24 before a /32 on the same network is the tie-break
+# that makes it an ADDRESS order rather than a string one.
+check([r[0] for r in rows] == [
+          "0.0.0.0/0", "0.0.0.0/32", "10.0.0.0/8", "198.19.0.0/24",
+          "200.150.0.0/24", "200.150.0.0/32", "200.150.0.1/32",
+          "200.150.0.2/32", "200.150.0.255/32", "224.0.0.0/4",
+          "240.0.0.0/4", "255.255.255.255/32"],
+      f"rows come out in address order: {[r[0] for r in rows]}")
 print(f"  {len(rows)} prefixes across both tables, "
       f"{sum(1 for r in rows if r[1] and not r[2])} disagreeing")
 
@@ -244,15 +253,54 @@ check("tap" not in pairs and "type" not in pairs,
 check(pairs["host-veth-mgmt"] != pairs["host-veth-vpp"],
       "two pairs stay two pairs")
 
-# The parse this replaced looked for a literal 'host' token and read the next
-# field. There is no such token. It is kept here as a test rather than a
-# comment because 'this cannot work' is a claim, and a claim about a parse is
-# worth the four lines it takes to hold it to account.
-positional = [ln.split()[ln.split().index("host") + 1]
-              for ln in LCP.splitlines()
-              if "host" in ln.split()]
-check(positional == [],
-      "the old positional parse finds nothing at all in this output")
+# --- the interfaces VPP owns, and the faults that depend on knowing them ---
+#
+# The claim "the old positional parse cannot work" was held to account against
+# a COPY of the parse written out here, not against the function the product
+# calls - so the copy was right, the claim was right, and
+# routes.vpp_host_interfaces went on carrying that parse and returning an
+# empty set on every box. Asked of the function now.
+#
+# The empty set is not a small error. compare() suppresses a route FRR holds
+# and the FIB does not when its interface is in NO VPP-owned name, so with an
+# empty set every such route is suppressed - and "in RIB, not in FIB", the one
+# report that finds a route the dataplane is missing, found none on any real
+# box, silently.
+HOSTS = routes.vpp_host_interfaces(LCP)
+check("host-veth-vpp" in HOSTS,
+      f"the pair's Linux name is a VPP-owned interface: {sorted(HOSTS)}")
+check("vppwan0" in HOSTS, "and the name the dataplane knows it by")
+check("host-veth-mgmt" in HOSTS, "both pairs, not only the first")
+check(routes.vpp_host_interfaces("") == set(),
+      "no linux_cp output is no interfaces, not a crash")
+
+# The branch that USES it, which had no test at all: compare()'s third
+# argument decides whether a missing route is a fault or is none of VPP's
+# business, and nothing above this line ever passed it one.
+MGMT_RIB = json.dumps({
+    # Reached through an interface VPP owns. The dataplane should hold this,
+    # and does not: that is the disagreement the report exists for.
+    "198.19.0.0/24": [{"protocol": "isis", "selected": True,
+                       "nexthops": [{"ip": "198.19.0.2",
+                                     "interfaceName": "host-veth-vpp"}]}],
+    # Reached through the management interface, which is deliberately not a
+    # linux_cp pair. Permanently absent from the FIB, and correctly so.
+    "192.168.9.0/24": [{"protocol": "static", "selected": True,
+                        "nexthops": [{"ip": "192.168.9.1",
+                                      "interfaceName": "eno1"}]}],
+})
+mrows = {r[0]: r for r in
+         routes.compare({}, routes.parse_rib(MGMT_RIB), HOSTS)}
+check(mrows["198.19.0.0/24"][1],
+      "a route through an interface VPP owns and does not hold is a fault")
+check(not mrows["192.168.9.0/24"][1],
+      "a route through the management interface is not")
+# And with nothing known about what VPP owns, both are faults rather than
+# neither: an unanswered "show lcp" must not silence the report.
+srows = {r[0]: r for r in
+         routes.compare({}, routes.parse_rib(MGMT_RIB), set())}
+check(srows["198.19.0.0/24"][1] and srows["192.168.9.0/24"][1],
+      "an empty set of VPP interfaces reports everything, not nothing")
 
 check(routes.lcp_pairs("") == {}, "no output is no pairs, not a crash")
 check(routes.lcp_pairs("Linux-CP Interface Pairs:\n") == {},

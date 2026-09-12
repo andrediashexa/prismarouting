@@ -146,9 +146,14 @@ print("\n=== commit check sends no write, whatever the outcome ===")
 api = FakeApi()
 sh = shell_with(api)
 sh.apply(target_with("fine", "100.64.0.0/22", "200.150.0.16/30"), check_only=True)
-writes = [m for m, a in api.calls if m == "bpa_pool_add_del"]
+# Every write message, not one of them. This filtered for bpa_pool_add_del
+# alone and then said "write nothing" - so a check that set a bypass list,
+# changed a pool's limits or added a port forward sent three mutations and
+# reported none. vppapi.WRITE_MESSAGES is the list, and it is the list the
+# assertion two sections up already uses.
+writes = [m for m, a in api.calls if m in vppapi.WRITE_MESSAGES]
 check(writes == [], f"commit check must write nothing, sent: {writes}")
-print(f"  writes during check: {len(writes)}")
+print(f"  calls during check: {len(api.calls)}, of them writes: {len(writes)}")
 
 print("\n=== a read-only account is refused, and nothing is sent ===")
 # The other half of stating capabilities above. Without this, granting them in

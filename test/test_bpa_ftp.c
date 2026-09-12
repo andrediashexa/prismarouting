@@ -127,8 +127,22 @@ seq_boundary_cases (void)
 	 "a wrapped sequence is after one just below 2^32");
   CHECK (bpa_seq_delta_at (&a, 0xfffffe00u) == 0,
 	 "and the one below 2^32 is not after the wrapped one");
-  CHECK ((0x00000100u > 0xffffff00u) == 0,
-	 "plain > disagrees, which is why the comparison is signed");
+  /*
+   * Anchored to what the function ANSWERS. Written as
+   * `(0x00000100u > 0xffffff00u) == 0` this named no production symbol at
+   * all: an integer constant expression the compiler folds to 1, true of C
+   * rather than of bpa_seq_delta_at, and no mutation of bpa_seq.h could turn
+   * it red. Asked as "the two comparisons disagree here", it goes red the
+   * moment the production one stops being signed.
+   */
+  {
+    int signed_says = bpa_seq_delta_at (&a, 0x00000100u) != 0;
+    int plain_says = (0x00000100u > a.correction_pos);
+
+    CHECK (signed_says != plain_says,
+	   "a plain > answers this boundary the other way round, which is "
+	   "why the comparison is signed");
+  }
 }
 
 /* ------------------------------------------------------ is this control? */

@@ -501,8 +501,16 @@ sh = shell({"show ip ospf neighbor json": OSPF_NBR_STALLED,
             "show ip route json": RIB},
            DP_STALLED, routing=OSPF_ROUTING)
 text = out_of(sh.show_ospf_neighbors)
+# The sentence written out, not asked of the function that produces it. This
+# compared the screen against mtu_stall_lines()' own return value, and the
+# screen is printed BY mtu_stall_lines() - so the two moved together and the
+# assertion held for any pair of sentences at all, including two the reader
+# could do nothing with.
+check("host-veth-vpp: carries OSPF and its MTU is 9000 while its Linux "
+      "side vppwan0 is at 1500" in text,
+      f"the screen names both interfaces and both MTUs: {text!r}")
 check(all(l.strip() in text for l in said),
-      "the operational view prints exactly the sentence commit prints")
+      "and the commit check says it in those same words, from the same place")
 
 
 # ------------------------------------------------------- the FIB comparison

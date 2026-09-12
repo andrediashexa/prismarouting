@@ -183,14 +183,21 @@ def vpp_host_interfaces(lcp_text: str) -> set:
 
     Reporting those as faults would put a handful of standing alarms on every
     real box, and an alarm that is always on is one nobody reads.
+
+    Read through lcp_pairs rather than by position. This used to look for a
+    literal "host" token and take the next field, and there is no such token on
+    any line VPP prints - so it returned an EMPTY SET on every box, and an
+    empty set makes compare() suppress every route FRR holds and the FIB does
+    not. The one report that exists to find a route the dataplane is missing
+    found none, on every box, silently. The claim "this cannot work" was
+    written down in test/test_routes.py and demonstrated on a copy of the parse
+    rather than on this function, so it went on shipping.
+
+    Every name on the pair, not the Linux one alone: FRR names an interface by
+    its Linux name and the dataplane by its own, and which of them appears in a
+    RIB entry is not this function's business to predict.
     """
-    hosts = set()
-    for line in (lcp_text or "").splitlines():
-        parts = line.split()
-        for i, tok in enumerate(parts):
-            if tok == "host" and i + 1 < len(parts):
-                hosts.add(parts[i + 1].rstrip(","))
-    return hosts
+    return set(lcp_pairs(lcp_text))
 
 
 def compare(fib: dict, rib: dict, vpp_hosts: set = None) -> list:
@@ -217,7 +224,13 @@ def compare(fib: dict, rib: dict, vpp_hosts: set = None) -> list:
         # A route FRR reaches through an interface VPP does not own is not
         # VPP's to hold. On a real box that is the management interface, and
         # every route through it would otherwise stand as a permanent fault.
-        if in_rib and vpp_hosts is not None and not in_fib:
+        #
+        # An EMPTY set means nothing is known, not that VPP owns nothing, and
+        # it is not a rare state: "show lcp" answers nothing on a box whose
+        # linux_cp plugin is not loaded, and the caller discards its exit
+        # status. Treated as "VPP owns nothing" it silenced every fault there
+        # is - which is the direction a fault report must never fail in.
+        if in_rib and vpp_hosts and not in_fib:
             ifaces = {nh["interface"] for e in rib[prefix]
                       for nh in e["nexthops"] if nh["interface"]}
             if ifaces and not (ifaces & vpp_hosts):
