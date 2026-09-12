@@ -1,4 +1,5 @@
 #!/bin/sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 # O plano de controle sobre o TAP do linux_cp, e a interface por baixo dele.
 #
 # BGP, OSPF e IS-IS chegando na FIB do VPP, e o que a VTY dirige na interface
@@ -49,7 +50,7 @@ for d in bgp:203.0.113.1/24 ospf:198.18.0.1/24 isis:198.19.0.1/24; do
   ip netns exec peer ip link set dum-$n up
 done
 
-vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
@@ -119,7 +120,6 @@ chown -R frr:frr /var/run/frr /etc/frr
 # mgmtd and staticd come with start_frr. This lab and lab/bgp-policy.sh knew
 # they were needed and six others did not, which is why that knowledge is now
 # in one place (#196).
-. /src/lab/lib.sh
 start_frr ospfd isisd bgpd
 
 # ---------------- upstream ----------------
@@ -171,7 +171,6 @@ done
 # registered before it touches the dataplane and calls it unusable when
 # bpa_pool_add_del is not among them - so without this every interface commit
 # here fails for a reason that has nothing to do with the interface.
-. /src/lab/lib.sh
 use_binary_api
 HX="python3 /src/src/hexash/hexash.py"
 

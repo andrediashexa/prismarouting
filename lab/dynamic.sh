@@ -5,13 +5,14 @@
 #   64512 ports / 16384-port block = 3 blocks on a single public IP
 # Blocos previstos, em ordem de alocacao: portas 1024, 17408, 33792.
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 mkdir -p /run/vpp /vpp_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
 
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 

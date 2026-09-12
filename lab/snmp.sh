@@ -12,6 +12,7 @@
 #     keeps reporting yesterday's numbers through an outage hides the outage;
 #     one that reports a gap shows it.
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 . /src/lab/verdict.sh
 mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting /etc/snmp /var/lib/snmp
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -22,7 +23,7 @@ HX="python3 /src/src/hexash/hexash.py"
 export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
 install -D -m 0755 /src/appliance/hexarouting-snmp-agent /usr/lib/hexarouting/snmp-agent
 
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up

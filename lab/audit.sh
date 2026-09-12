@@ -9,13 +9,14 @@
 # attributed has to SAY so, because an entry that silently omits the field is
 # indistinguishable from one where nobody was accountable.
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 MODE=${1:-on}
 mkdir -p /run/vpp /vpp_plugins /var/log/hexarouting /etc/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 
 echo "=== initial state ==="
@@ -42,7 +43,6 @@ echo "=== a change through the VTY, which knows who is asking ==="
 # demands that name on the line. That is the assertion that separates "the
 # identity travelled with the request" from "the box wrote down whoever it
 # happened to be running as".
-. /src/lab/lib.sh
 use_binary_api
 HX="python3 /src/src/hexash/hexash.py"
 if [ "$MODE" = off ]; then

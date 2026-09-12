@@ -37,7 +37,13 @@ shift
 LAB_ARGV=$*
 
 if ! docker ps >/dev/null 2>&1; then
-  exec sg docker -c "IMAGE='$IMAGE' '$0' '$LAB' $LAB_ARGV"
+  # LAB_WORKERS has to survive the re-exec through sg, or asking for a worker
+  # run gets a single-threaded one and reports a pass for a configuration that
+  # was never tested. That is the shape of #199 and it is not going to be
+  # reintroduced by the runner.
+  exec sg docker -c "IMAGE='$IMAGE' LAB_WORKERS='${LAB_WORKERS:-}' \
+                     LAB_WORKER_COUNT='${LAB_WORKER_COUNT:-}' \
+                     '$0' '$LAB' $LAB_ARGV"
 fi
 
 # --device=/dev/kvm when it exists: an ISO boots in seconds instead of minutes
@@ -56,6 +62,8 @@ esac
 
 exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BPA_RTSP_OFF="${BPA_RTSP_OFF:-}" \
+  -e LAB_WORKERS="${LAB_WORKERS:-}" \
+  -e LAB_WORKER_COUNT="${LAB_WORKER_COUNT:-}" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "apt-get update -qq >/dev/null 2>&1
          apt-get install -y -qq qemu-system-x86 qemu-utils fdisk openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1

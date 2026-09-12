@@ -3,13 +3,14 @@
 # same worker. Without it, the reply would land on a worker with no session and
 # the packet would die in "no session for destination".
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 mkdir -p /run/vpp /vpp_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
 
-vpp -c /src/lab/startup-workers.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test workers)" > /tmp/vpp.log 2>&1 &
 n=0
 until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }

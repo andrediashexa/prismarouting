@@ -6,7 +6,7 @@ mkdir -p /run/vpp /vpp_plugins /etc/hexarouting
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
-. /src/lab/lib.sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
 
 HX="python3 /src/src/hexash/hexash.py"
@@ -23,7 +23,7 @@ ip netns exec peer ip link add dum type dummy
 ip netns exec peer ip addr add 203.0.113.1/24 dev dum
 ip netns exec peer ip link set dum up
 
-vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up

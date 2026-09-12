@@ -24,10 +24,10 @@ ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
 # correctly installed box has it - see
 # https://github.com/andrediashexa/hexarouting/issues/119, where it turned out
 # the ISO does not put it there.
-. /src/lab/lib.sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
 
-vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up

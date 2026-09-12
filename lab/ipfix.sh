@@ -5,6 +5,7 @@
 #   pg0/pg1  subscriber traffic, dynamic pool
 #   veth     path to the collector, which runs in the "peer" netns
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 mkdir -p /run/vpp /vpp_plugins
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
@@ -19,7 +20,7 @@ ip netns exec peer ip link set lo up
 ip netns exec peer ip link set veth-out up
 ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
 
-vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 

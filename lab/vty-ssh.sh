@@ -7,6 +7,7 @@
 # which strands everybody is REFUSED, and that is verified by producing the
 # lockout rather than by reasoning about it.
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 . /src/lab/verdict.sh
 mkdir -p /run/vpp /vpp_plugins /var/log/vpp /etc/hexarouting /etc/ssh/sshd_config.d
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -19,7 +20,7 @@ export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
 install -D -m 0755 /src/appliance/hexash-login /usr/bin/hexash-login
 ssh-keygen -A >/dev/null 2>&1
 
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 
 # A password for root, so the box starts in a state where somebody CAN log in.

@@ -1,4 +1,5 @@
 #!/bin/sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 # OSPF and IS-IS configured through the VTY, asserted on the tables that forward.
 #
 # Both IGPs are configured with `configure` ... `commit` at this box's own VTY,
@@ -60,7 +61,7 @@ ip netns exec peer ip addr add 198.19.0.1/24 dev dum-isis
 ip netns exec peer ip addr add 2001:db8:19::1/64 dev dum-isis
 ip netns exec peer ip link set dum-isis up
 
-vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
@@ -153,7 +154,6 @@ done
 # before it touches the dataplane and calls it unusable when bpa_pool_add_del is
 # not among them - so without this every commit here fails for a reason that has
 # nothing to do with routing.
-. /src/lab/lib.sh
 use_binary_api
 HX="python3 /src/src/hexash/hexash.py"
 

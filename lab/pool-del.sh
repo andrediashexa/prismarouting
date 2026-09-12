@@ -1,4 +1,5 @@
 #!/bin/sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 # How long deleting a pool stops forwarding, measured from VPP's own barrier
 # accounting, at two session counts.
 #
@@ -24,7 +25,7 @@ cd /src
 # Workers, and not for realism: with fewer than two threads VPP's barrier
 # returns without doing anything, so a single-threaded box has no stall to
 # measure and this lab would report zero on a build that has the defect.
-vpp -c /src/lab/startup-workers.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test workers)" > /tmp/vpp.log 2>&1 &
 n=0
 until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }

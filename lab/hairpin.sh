@@ -7,13 +7,14 @@
 # specific and hard to attribute: a camera that answers from the street and not
 # from next door, a service that works for everyone except the neighbours.
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 . /src/lab/verdict.sh
 mkdir -p /run/vpp /vpp_plugins /var/log/vpp
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 

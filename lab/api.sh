@@ -12,10 +12,10 @@ cd /src
 # format against a client configuration nobody receives, and would not have
 # noticed appliance/install.sh failing to install the plugin at all. lib.sh
 # says exactly this and this file was calling it too late to matter.
-. /src/lab/lib.sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
 
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 
 echo "=== a API foi registrada? ==="
@@ -133,7 +133,7 @@ expect_in "with the one fact that decides what to do next" \
   "the dataplane never saw it" "$CLI"
 
 # --- with the dataplane stopped: the case that used to be a traceback ---
-pkill -f "vpp -c /src/lab/startup-test.conf" 2>/dev/null
+pkill -f "vpp -c" 2>/dev/null
 sleep 2
 DOWN=$(python3 /src/lab/api_client_check.py down 2>&1)
 echo "  $DOWN"

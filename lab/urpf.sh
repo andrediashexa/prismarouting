@@ -16,7 +16,7 @@ mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/hexarouting /etc/hexaroutin
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
-. /src/lab/lib.sh
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 use_binary_api
 HX="python3 /src/src/hexash/hexash.py"
 
@@ -29,7 +29,7 @@ printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
 chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
 start_frr
 
-vpp -c /src/lab/startup-test.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0
 until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }

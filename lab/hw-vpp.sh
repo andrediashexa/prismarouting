@@ -2,6 +2,7 @@
 # Starts the lab VPP on real hardware. Run it inside the build container,
 # with --network=host --privileged.
 set -u
+. /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 LINK_LOCAL=10.95.172.128
 LINK_PEER=10.95.172.129
 TRANSIT_VPP=169.254.99.1
@@ -21,7 +22,7 @@ mkdir -p /run/vpp /vpp_plugins
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 
-vpp -c /src/lab/startup-lcp.conf > /tmp/vpp.log 2>&1 &
+vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -20 /tmp/vpp.log; exit 1; }
 
