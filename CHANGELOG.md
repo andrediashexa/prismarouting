@@ -37,6 +37,7 @@ are to be interpreted as described in
 ## Unreleased
 
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
+[#197](https://github.com/andrediashexa/hexarouting/issues/197),
 [#203](https://github.com/andrediashexa/hexarouting/issues/203).
 
 ### Fixed
@@ -141,6 +142,46 @@ are to be interpreted as described in
   worker run can check. `lab/ipfix.sh` asserts all four records off the wire,
   decoded by a real collector, with the subscriber and port range in them —
   including a block pinned while the export was off.
+
+* **`commit` said success for a routing statement FRR threw away.** `frr-reload`
+  exits 0 having dropped a statement, and the box believed it - and `commit`
+  returning success is the one thing in this product an operator has to be able
+  to trust, because every diagnosis they make afterwards starts from it
+  ([#197](https://github.com/andrediashexa/hexarouting/issues/197)).
+
+  `commit` now reads FRR's **own running configuration** back and refuses when a
+  statement this commit introduced is not in it, naming the statements.
+
+  The check was blocked for a long time on a measured false positive, and the
+  rule everybody assumed was behind it turned out to be wrong. Measured on FRR
+  10.7.1, one statement at a time, each undone before the next: `ip ospf
+  hello-interval 10`, `ip ospf retransmit-interval 5` and `timers throttle spf
+  0 50 5000` are **omitted** from the read-back, while `ip ospf dead-interval
+  40` and `ip ospf cost 10` come back. Every one of those is the FRR default.
+  **Omission is per statement, not per value**, so there is no table of FRR
+  defaults to chase across versions and no comparison to get right - there is a
+  short list, and `lab/frr-readback.sh` is what produces it and keeps it honest
+  against an FRR upgrade.
+
+  Two further shapes came out of the same measurement and neither had been
+  named. **Rewritten:** `passive-interface vppwan0` comes back as `ip ospf
+  passive`, in the interface stanza rather than the router one, and `continue
+  20` as `on-match goto 20`; when the rewrite is missing too, the refusal names
+  what FRR would have written, because an operator told "`passive-interface` is
+  missing" will grep for it and find nothing. **Negated:** `bgp default
+  ipv4-unicast` is the default, so turning it on writes nothing and turning it
+  off writes the `no` line.
+
+  The comparison is against FRR's running configuration and **not** against
+  `frr-reload --test`, which reports a default-valued statement under *Lines To
+  Add* for ever - a check built on that calls every commit carrying one a
+  failure, which is exactly why this could not be written before.
+
+  `lab/igp.sh` carries the half that would hurt an operator: a commit of
+  statements FRR does not store still says `commit complete`, on a box where
+  OSPF is running perfectly, with two assertions beside it proving FRR really
+  did omit and really did rewrite - so that "complete" is not simply what this
+  box says to everything.
 
 ## 0.65.0 — the box refused correct configurations, exported nothing, and let you in too early
 
