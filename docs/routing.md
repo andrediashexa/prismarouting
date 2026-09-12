@@ -579,12 +579,75 @@ offered no way to make one — which is worse than not offering the statement.
 
 ### How it is tested
 
-The loopback section is where the pairing is proved, because a loopback is
-created and paired **entirely by the product** — there is no `vppctl lcp create`
-anywhere in it. So the assertions are: the interface is on the dataplane, the
-kernel has it, the address is on it, FRR knows it, and the pair is in the
-running configuration read back from the box. Then removal, asserted on both
-the dataplane and the kernel.
+There is no `vppctl lcp create` anywhere in this repository any more. Every
+lab that needed a pair — `lcp`, `routing`, `vty`, `igp`, `bgp-policy`,
+`ipfix-tcp` — now gets one the way a box gets one, by committing `linux-name`
+through the VTY. While those lines existed each of those labs performed the
+product's missing step, and a lab that does that does not test the product; it
+tests a box nobody receives. That is the same conclusion as the routing
+daemons ([#99](https://github.com/andrediashexa/hexarouting/issues/99)) and OSI
+passthrough ([#168](https://github.com/andrediashexa/hexarouting/issues/168)).
+
+The loopback section is where the pairing is proved end to end, because a
+loopback is created and paired entirely by the product: there is no NIC and no
+veth behind it, so nothing but the product could have made it. The assertions
+are that the interface is on the dataplane, the kernel has it, the address is
+on it, FRR holds it, and the pair is in the running configuration read back
+from the box. Then removal, asserted on both the dataplane and the kernel.
+
+And the negative half, without which none of that shows the **pair** is what
+did it: the same loopback committed with no `linux-name` is on the dataplane,
+has no netdev, and FRR does not hold it. One measurement changed how that is
+asserted. `vtysh -c "show interface"` **does** list an unpaired interface —
+configuring one stages an `interface` stanza into FRR, and zebra makes a
+placeholder object for any interface its configuration names. What FRR does
+not have is a real one, and it says so in those words:
+
+```
+Interface loop1 is down
+  vrf: default
+  pseudo interface
+```
+
+against, one `linux-name` later and nothing else changed:
+
+```
+Interface loop1 is down
+  vrf: default
+  index 10 metric 0 mtu 9000 speed 10 txqlen 1000
+  flags: <BROADCAST,MULTICAST>
+```
+
+`pseudo interface` is therefore the marker both halves are asserted on. The
+word the positive half used to look for — `Unknown` — appears in no FRR output
+either way, so that check passed on a box with no pair at all.
+
+### And the pair has to survive a reboot
+
+`hexarouting.service` runs `hexash --load /etc/hexarouting/hexarouting.conf`,
+which is the same apply path a commit takes — so the pair a box has at boot is
+the pair its saved file names. `lab/lcp.sh` asks that out loud: pair a
+loopback, save, take it down, and hand the box back the file it wrote.
+
+It found two defects, both of which ended with the unit failing and the box
+coming up with **no** configuration at all.
+
+The dataplane reads report every interface VPP has, and once the product makes
+pairs one of them is the pair's own TAP — so `save` wrote `interface tap4097`
+into the file, and at the next boot, against a VPP with no pairs yet, the
+interface-existence check refused the file whole. The Linux end of a pair is
+now out of the configuration at both ends: off the device, so no new file
+carries one, and out of a file the box is handed, so boxes that already saved
+one still boot. Which TAPs those are is read off the box and never guessed
+from the name — `tap<n>` is equally what an operator's own `create tap` makes,
+and `lab/hw-vpp.sh` runs its whole WAN over one.
+
+And a loopback is created administratively **down**, so its saved
+configuration carries `shutdown` — while the apply order shut interfaces down
+*before* it created them. The first statement applied named an interface the
+dataplane did not have yet, and every loopback this product can create
+survived exactly until the next reboot. An interface the same delta is about
+to create is now shut down after it exists.
 
 ### MAC, router advertisements, and one interface in detail
 

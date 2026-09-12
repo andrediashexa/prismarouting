@@ -641,6 +641,26 @@ def _is_loopback(name: str) -> bool:
             and name[4:].isdigit())
 
 
+def _is_lcp_tap(name: str) -> bool:
+    """
+    Is this the LINUX end of a linux_cp pair, as VPP names it?
+
+    `tap4096`, `tap4097`. The pair prints as
+
+        itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+
+    and the middle name is an interface in VPP's own list, with a MAC, an MTU
+    and an admin state of its own. Nobody configures it: it is created by
+    `lcp_itf_pair_add_del` and destroyed with the pair.
+
+    Matched on the shape, which is VPP's naming convention for an lcp TAP and
+    not something this VTY can ask for. If that convention ever changes the
+    worst outcome is the TAP coming back into the running configuration, which
+    is the state this replaces - visible, not silent.
+    """
+    return name.startswith("tap") and len(name) > 3 and name[3:].isdigit()
+
+
 class Config:
     """A complete device configuration."""
 
@@ -818,12 +838,7 @@ class Config:
         for ifname in sorted(self.interfaces):
             out.append(f"{NAT_HIERARCHY} cgnat interface {ifname} "
                        f"{self.interfaces[ifname]}")
-        for ifname in sorted(set(self.mtus) | set(self.urpf)
-                             | set(self.descriptions) | set(self.admin_down)
-                             | set(self.addresses) | set(self.vlans)
-                             | set(self.vrfs) | set(self.macs)
-                             | set(self.linux_names) | set(self.loopbacks)
-                             | set(self.ra_enabled)):
+        for ifname in sorted(self.interface_names()):
             out.append(f"interface {ifname}")
             out += self.interface_lines(ifname)
             out.append(" exit")
@@ -843,6 +858,73 @@ class Config:
         out.append(ROUTING_HEADER)
         out += group_static(self.routing)
         return "\n".join(out) + "\n"
+
+    def interface_names(self) -> set:
+        """
+        Every interface this configuration has an `interface` block for.
+
+        The same union the renderer walks, so the two cannot disagree about
+        which interfaces a file names.
+        """
+        return (set(self.mtus) | set(self.urpf) | set(self.descriptions)
+                | set(self.admin_down) | set(self.addresses) | set(self.vlans)
+                | set(self.vrfs) | set(self.macs) | set(self.linux_names)
+                | set(self.loopbacks) | set(self.ra_enabled))
+
+    def drop_lcp_taps(self, taps):
+        """
+        Take the named linux_cp TAPs out of this configuration.
+
+        MEASURED, and what it prevents is a box that does not come up.
+        `device_macs` and `device_mtus` report every interface the dataplane
+        has, and after #182 gave the product a way to MAKE a pair the
+        dataplane has one more: the pair's own TAP. So `save` wrote
+
+            interface tap4097
+             mac-address de:ad:00:00:00:07
+
+        into /etc/hexarouting/hexarouting.conf. hexarouting.service hands that
+        file straight back to `hexash --load` at every boot, against a VPP
+        that has just started and has no pairs yet - so tap4097 does not
+        exist, and the interface-existence check refuses the file whole:
+
+            error: interface tap4097: this box has no such interface
+                it has: host-veth-vpp, local0, loop7, tap4096, vppctl0
+            error: refusing to load, the check above says why
+
+        The box then comes up with no pools, no addresses and no pair at all,
+        which is the very symptom #182 was opened about, reached through a
+        different door. Found by asking the boot half of #182's first
+        requirement out loud in lab/lcp.sh: take a pair down, hand the box the
+        file it saved, and watch it refuse its own configuration.
+
+        Takes the names to drop rather than deciding from the name's SHAPE,
+        and that is not fussiness. `tap<n>` is also what VPP calls a TAP an
+        operator made themselves - `vppctl create tap id 0 host-if-name
+        vppwan` produces `tap0`, and lab/hw-vpp.sh puts an address, a default
+        route and a CGNAT attachment on exactly that. Dropping it by shape
+        would take a real interface's configuration out of the running
+        configuration, and the NEXT commit would then remove it from the
+        device. That is #47 in one sentence, and it is the reason both callers
+        ask the box which TAPs are actually part of a pair.
+
+        `interfaces` - the CGNAT attachments - is deliberately left alone even
+        for a name in `taps`. It is a top-level `cgnat interface <name>
+        <inside|outside>` statement read back from `show bpa config`, so it is
+        only ever populated by something the dataplane really has attached,
+        and #47 applies to it with more force than to anything else here.
+        """
+        taps = set(taps or ())
+        if not taps:
+            return
+        # Everything that renders as a statement INSIDE an `interface` block,
+        # which is what the file names an interface in.
+        for d in (self.mtus, self.urpf, self.descriptions, self.addresses,
+                  self.vlans, self.vrfs, self.macs, self.linux_names):
+            for name in [n for n in d if n in taps]:
+                del d[name]
+        self.admin_down -= taps
+        self.ra_enabled -= taps
 
     @classmethod
     def parse(cls, text: str) -> "Config":
@@ -1117,6 +1199,10 @@ class Config:
         # takes. Done after the loop rather than in it, because the block is
         # only recognisable as one from its own `exit`.
         cfg.routing = ungroup_static(cfg.routing)
+        # NOT dropping linux_cp TAPs here. A file is parsed with no dataplane
+        # in reach - `hexash --load` runs before anything asks VPP anything -
+        # so this is the one place that cannot tell a pair's TAP from a TAP an
+        # operator made. Shell.load does it, where the box can be asked.
         return cfg
 
     @staticmethod

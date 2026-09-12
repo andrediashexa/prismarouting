@@ -397,6 +397,80 @@ else
   say "         and does not say no-pci."
 fi
 
+# --- is any dataplane interface paired into the kernel? ---
+#
+# FRR only ever sees a linux_cp pair. VPP owns the NIC outright, so without a
+# pair the port that carries traffic has no netdev at all: `ip` does not have
+# it, zebra does not have it, and BGP, OSPF and IS-IS are configurable and
+# completely inert (#182). For the life of the product nothing created a pair
+# and every lab created one by hand, so the labs proved a box nobody received.
+#
+# The pair is the OPERATOR's to ask for, by name - `linux-name <name>` under
+# `interface` - and that is a decision rather than an omission: the Linux-side
+# name is what FRR, `ip` and the operator's own scripts act on, so a name this
+# product invented would be one nobody could predict, and #161 is the standing
+# rule that such a name must be read back from the box rather than remembered.
+# The cost of the decision is that a box can be installed, tuned, given a NIC
+# and left with no pair, which from outside looks exactly like a box that is
+# working. This line is what pays that cost.
+#
+# Read from the box and never arranged here. A check that creates the pair it
+# is checking for cannot report its absence, which is #184 in one sentence.
+#
+# Excluded from the count, with the reason for each:
+#   local0   VPP's own null interface. On every box, never paired.
+#   pg*      the packet generator, which exists in labs and not on appliances
+#   tap*     the LINUX end of a pair is itself an interface in VPP's list, so
+#            counting it would make every correctly paired box look half done
+if vppctl show version >/dev/null 2>&1; then
+  lcp_lines=$(vppctl show lcp 2>/dev/null | grep "itf-pair" || true)
+  unpaired=""
+  npaired=0
+  # The header of `show interface` is INDENTED, and so is every continuation
+  # line carrying a counter; only a name starts in column one. The $1 != "Name"
+  # is the second half of the same belt, because a header that ever loses its
+  # indentation would otherwise be reported as an unpaired interface.
+  for iface in $(vppctl show interface 2>/dev/null \
+                 | awk '/^[^ \t]/ && $1 != "Name" {print $1}'); do
+    case "$iface" in local0|pg*|tap*) continue ;; esac
+    # Matched as a fixed string between spaces, not as a pattern: VPP's own
+    # interface names are full of "/" and "." and a pattern made of one would
+    # match interfaces it does not name. Every name on an itf-pair line is
+    # followed by a space, because the line ends "type tap".
+    if printf '%s\n' "$lcp_lines" | grep -qF " $iface "; then
+      npaired=$((npaired + 1))
+    else
+      unpaired="$unpaired $iface"
+    fi
+  done
+  # Configured routing turns this from something worth knowing into a box that
+  # cannot do what it has been told to do. `router bgp`, `router ospf` and
+  # `router isis` are all top level in FRR's running configuration.
+  routing_configured=no
+  if vtysh -c "show running-config" 2>/dev/null | grep -q "^router "; then
+    routing_configured=yes
+  fi
+  if [ -z "$unpaired" ] && [ "$npaired" -eq 0 ]; then
+    # Nothing but local0. The DPDK block above already said why, in the
+    # operator's terms, so this does not say it a second time as a warning.
+    say "  [info] the dataplane has no interface that could be paired yet"
+  elif [ "$npaired" -eq 0 ] && [ "$routing_configured" = yes ]; then
+    bad "routing is configured and NO interface is paired into the kernel"
+    say "        FRR has no interface for the port that carries traffic, so"
+    say "        BGP, OSPF and IS-IS will never form an adjacency."
+    say "        without a pair:$unpaired"
+    say "        give each one a 'linux-name <name>' under 'interface' in"
+    say "        hexash, and commit."
+  elif [ -n "$unpaired" ]; then
+    say "  [warn] no linux_cp pair on:$unpaired"
+    say "         FRR and 'ip' cannot see these, so no routing protocol can"
+    say "         run on them. Set 'linux-name <name>' under 'interface' in"
+    say "         hexash, and commit."
+  else
+    ok "$npaired dataplane interface(s) paired into the kernel, so FRR sees them"
+  fi
+fi
+
 # --- where the connection records live ---
 #
 # In dynamic mode the allocation log IS the record the Marco Civil requires to

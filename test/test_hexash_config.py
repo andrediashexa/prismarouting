@@ -427,5 +427,93 @@ check(mixed.routing == ["ip route 0.0.0.0/0 10.0.0.2",
       f"both static-route spellings: {mixed.routing}")
 
 
+# --- the linux_cp TAP must never be part of a configuration (#182) ---
+#
+# What this prevents is a box that does not come up. The dataplane reads
+# report EVERY interface VPP has, and once the product makes pairs one of them
+# is the pair's own TAP - so `save` wrote `interface tap4097` into the file
+# hexarouting.service replays at every boot, against a VPP that has just
+# started and has no pairs yet. The interface-existence check then refused the
+# file whole and the box came up with no pools, no addresses and no pair at
+# all, which is the symptom #182 was opened about reached through another
+# door. Measured in lab/lcp.sh by taking a pair down and reloading the file
+# the box had saved.
+dev = config.Config.parse("""interface tap4097
+ mac-address de:ad:00:00:00:07
+ mtu 9000
+ exit
+interface host-veth-vpp
+ linux-name vppwan0
+ mac-address 02:fe:00:00:00:01
+ mtu 1500
+ exit
+""")
+check(not dev.unknown, f"a file naming a pair's TAP parses: {dev.unknown}")
+# Parsing does NOT drop it: a file is read with no dataplane in reach, and
+# this is the one place that cannot tell a pair's TAP from an operator's own.
+check("tap4097" in dev.macs,
+      f"parsing keeps what the file says; the caller decides: {dev.macs}")
+dev.drop_lcp_taps({"tap4097"})
+check("tap4097" not in dev.macs, f"the TAP's MAC is gone: {dev.macs}")
+check("tap4097" not in dev.mtus, f"the TAP's MTU is gone: {dev.mtus}")
+# Not a blanket drop. The interface the operator actually configured has to
+# survive, or this would empty the file it was meant to make loadable.
+check(dev.macs.get("host-veth-vpp") == "02:fe:00:00:00:01",
+      f"the real interface keeps its MAC: {dev.macs}")
+check(dev.mtus.get("host-veth-vpp") == 1500, f"and its MTU: {dev.mtus}")
+check(dev.linux_names.get("host-veth-vpp") == "vppwan0",
+      f"and its pair: {dev.linux_names}")
+
+# Named, never guessed from the shape. `tap0` is equally what an operator's
+# own `vppctl create tap id 0` produces, and lab/hw-vpp.sh runs its whole WAN
+# over exactly that - an address, a default route and a CGNAT attachment.
+# Dropping it by shape would take a real interface out of the running
+# configuration and the NEXT commit would remove it from the device, which is
+# #47.
+own = config.Config.parse("""interface tap0
+ mtu 1400
+ exit
+""")
+own.drop_lcp_taps({"tap4096"})
+check(own.mtus == {"tap0": 1400},
+      f"a TAP nobody paired keeps its configuration: {own.mtus}")
+
+# The shape predicate itself, which is one of the two signals the callers
+# combine: on an itf-pair line AND spelled the way VPP spells an lcp TAP.
+check(config._is_lcp_tap("tap4096"), "tap4096 is VPP's spelling")
+check(config._is_lcp_tap("tap0"), "and so is tap0")
+check(not config._is_lcp_tap("tapfoo"), "tapfoo is not")
+check(not config._is_lcp_tap("tap"), "and neither is a bare tap")
+
+# The sets and the CGNAT attachments.
+s2 = config.Config()
+s2.admin_down = {"tap4096", "loop0"}
+s2.ra_enabled = {"tap4096", "loop0"}
+s2.descriptions = {"tap4096": "x", "loop0": "y"}
+s2.interfaces = {"tap4096": "outside", "pg0": "inside"}
+s2.drop_lcp_taps({"tap4096"})
+check(s2.admin_down == {"loop0"}, f"admin_down: {s2.admin_down}")
+check(s2.ra_enabled == {"loop0"}, f"ra_enabled: {s2.ra_enabled}")
+check(s2.descriptions == {"loop0": "y"}, f"descriptions: {s2.descriptions}")
+# The CGNAT attachment stays even for a TAP that IS part of a pair: it is read
+# back from `show bpa config`, so it is only there when the dataplane really
+# has it attached, and removing it from the model is the next commit detaching
+# it from the box (#47).
+check(s2.interfaces == {"tap4096": "outside", "pg0": "inside"},
+      f"a CGNAT attachment is never dropped: {s2.interfaces}")
+
+# interface_names is what the load path asks which interfaces a file names,
+# and it is the same union the renderer walks - so a field added to one and
+# not the other cannot go unnoticed.
+named = config.Config.parse("""interface loop3
+ ipv4 address 10.0.0.1/32
+ exit
+interface tap4096
+ mtu 9000
+ exit
+""").interface_names()
+check(named == {"loop3", "tap4096"}, f"the interfaces a file names: {named}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -87,6 +87,25 @@ EOF
 cat > "$BIN/vppctl" <<'EOF'
 #!/bin/sh
 [ -f "$FAKE/vppctl_ok" ] || exit 1
+# The two listings the pair check reads. Absent from $FAKE they are empty,
+# which is what a dataplane holding nothing but local0 looks like.
+case "$*" in
+  "show interface") cat "$FAKE/show_interface" 2>/dev/null ;;
+  "show lcp")       cat "$FAKE/show_lcp" 2>/dev/null ;;
+esac
+exit 0
+EOF
+# FRR, and only when a case asks for it. Left failing by default because that
+# is what the machine running these tests looks like, and because the pair
+# check reads the running configuration to decide how loudly to speak.
+cat > "$BIN/vtysh" <<'EOF'
+#!/bin/sh
+[ -f "$FAKE/frr_running" ] || exit 1
+case "$*" in
+  *"show running-config"*) cat "$FAKE/frr_running" ;;
+  *"show daemons"*) echo "bgpd ospfd isisd zebra staticd mgmtd" ;;
+  *) : ;;
+esac
 exit 0
 EOF
 chmod +x "$BIN"/*
@@ -265,6 +284,125 @@ else
   bad "the self-test could not read the file and said nothing"
 fi
 rm -f "$FAKE/mainpid"
+
+echo "=== a dataplane interface with no linux_cp pair (#182) ==="
+# The defect this file's newest check exists for. FRR only ever sees a pair:
+# with none, the port that carries traffic has no netdev, and BGP, OSPF and
+# IS-IS are configurable and completely inert. Nothing in the product created
+# a pair for the life of the project, and every lab created one by hand, so
+# the labs proved a box nobody received.
+#
+# The listings are ARRANGED HERE and only read by the self-test. A check that
+# creates the pair it is checking for cannot report its absence.
+printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
+printf '\n' > "$FAKE/groups"
+: > "$FAKE/vppctl_ok"
+rm -f "$FAKE/frr_running"
+
+# The header is indented, the counter continuation lines are indented, and a
+# name is the only thing in column one. Copied from a real `show interface`
+# rather than invented, because the parse depends on that shape.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+host-veth-vpp                     1      up          1500/0/0/0     rx packets                  12
+                                                                    rx bytes                  1008
+local0                            0     down          0/0/0/0
+IFACE
+: > "$FAKE/show_lcp"
+run
+if said '\[warn\] no linux_cp pair on: host-veth-vpp'; then
+  ok "an unpaired dataplane interface is reported, by name"
+else
+  bad "an unpaired interface said nothing: $(printf '%s\n' "$OUTPUT" | grep -i lcp || echo '<nothing about it>')"
+fi
+# Not "something is wrong". Whoever is at the console has to be able to act,
+# and the statement that fixes it is one line in the VTY.
+if said "linux-name <name>"; then
+  ok "and it names the statement that creates the pair"
+else
+  bad "the report does not say how to create the pair"
+fi
+# A box that forwards CGNAT and runs no routing at all is a supported
+# configuration of this product. Failing it over a pair it does not need is
+# how a self-test's failures stop being read.
+if said '\[FAIL\].*pair'; then
+  bad "a box with no routing configured was FAILED over a missing pair"
+else
+  ok "and with no routing configured it is not a failed check"
+fi
+# local0 is on every box and is never paired. Reporting it would put a
+# permanent warning on every appliance, which is a warning nobody reads.
+if said 'pair on:.*local0'; then
+  bad "local0 was reported as an interface that wants a pair"
+else
+  ok "and local0 is not one of them"
+fi
+
+echo "=== the same box, with routing configured on it ==="
+# The line between worth knowing and broken. Routing is configured, no
+# interface is paired, so every protocol the operator configured will sit
+# there and never form an adjacency.
+printf 'router bgp 65000\n bgp router-id 10.0.0.1\n' > "$FAKE/frr_running"
+run
+if said "\[FAIL\] routing is configured and NO interface is paired"; then
+  ok "it is a failed check, not a warning"
+else
+  bad "a box whose routing cannot work reported no failure: $(printf '%s\n' "$OUTPUT" | grep -i 'pair' || echo '<nothing about it>')"
+fi
+if said 'without a pair:.*host-veth-vpp'; then
+  ok "and it still names the interface"
+else
+  bad "the failure does not say which interface has no pair"
+fi
+rm -f "$FAKE/frr_running"
+
+echo "=== the pair exists, which is the state the product produces ==="
+# `linux-name vppwan0` under `interface host-veth-vpp`, committed. The TAP is
+# itself an interface in VPP's list, and counting it would make every
+# correctly paired box look half done - which is why the COUNT is asserted and
+# not merely the presence of the ok line: drop tap* from the exclusions and
+# this box reports two paired interfaces where it has one.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+host-veth-vpp                     1      up          1500/0/0/0     rx packets                  12
+local0                            0     down          0/0/0/0
+tap4096                           2      up          1500/0/0/0
+IFACE
+printf 'itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap\n' > "$FAKE/show_lcp"
+run
+if said '\[ ok \] 1 dataplane interface\(s\) paired into the kernel'; then
+  ok "a paired box says so, and counts one"
+else
+  bad "a paired box did not report the pair: $(printf '%s\n' "$OUTPUT" | grep -i pair || echo '<nothing>')"
+fi
+if said 'no linux_cp pair on'; then
+  bad "a paired box warned anyway: $(printf '%s\n' "$OUTPUT" | grep 'no linux_cp pair')"
+else
+  ok "and nothing on it is reported as unpaired"
+fi
+
+echo "=== a dataplane holding nothing but local0 ==="
+# First boot, and the live medium: the tuner has given VPP no NIC yet. The
+# DPDK block above already says why in the operator's terms, so this must not
+# repeat it as a warning - and it must not be silent either, because no line
+# reads as nothing to report.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+local0                            0     down          0/0/0/0
+IFACE
+: > "$FAKE/show_lcp"
+run
+if said '\[info\] the dataplane has no interface that could be paired yet'; then
+  ok "said as information, once"
+else
+  bad "a box with no NIC yet said nothing about pairing"
+fi
+if said '\[warn\] no linux_cp pair|\[FAIL\].*paired'; then
+  bad "a box with no NIC yet was warned or failed over a pair it cannot have"
+else
+  ok "and neither warned nor failed over it"
+fi
+rm -f "$FAKE/vppctl_ok" "$FAKE/show_interface" "$FAKE/show_lcp"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
