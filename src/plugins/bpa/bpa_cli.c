@@ -350,14 +350,6 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	cfg.timeouts.tcp_trans = tv;
       else if (unformat (line_input, "timeout tcp-established %u", &tv))
 	cfg.timeouts.tcp_estab = tv;
-      /* "alg <name> off" in a candidate configuration. Only the departures
-       * from the default are ever written out, so a configuration file does
-       * not grow a line per ALG per pool. */
-#define _(sym, nm, desc)                                                      \
-  else if (unformat (line_input, "alg " nm " off")) cfg.alg &= ~BPA_ALG_##sym; \
-  else if (unformat (line_input, "alg " nm " on")) cfg.alg |= BPA_ALG_##sym;
-      foreach_bpa_alg
-#undef _
       else if (unformat (line_input, "timeout gre %u", &tv))
 	cfg.timeouts.gre = tv;
       else if (unformat (line_input, "timeout port-holddown %u", &tv))
@@ -426,9 +418,27 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	    }
 	  cfg.tcp_mss = (u16) mss;
 	}
-      /* "alg <name> on|off" in a candidate configuration. alg_set records
+      /*
+       * "alg <name> on|off" in a candidate configuration. alg_set records
        * that an opinion was stated, so bpa_pool_init() leaves it alone
-       * instead of resolving it back to the default. */
+       * instead of resolving it back to the default.
+       *
+       * There were TWO of these chains, from two branches that each added one
+       * and a merge that kept both - the same accident lab/ftp-alg.sh records
+       * for the configuration emitter a few hundred lines away, in the same
+       * file, found separately. The first one reached matched "on" and "off",
+       * set cfg.alg and never cfg.alg_set, so bpa_pool_init() resolved the bit
+       * straight back to the shipped default: `bpa pool lab ... alg ftp off`
+       * was accepted, printed nothing, and produced a pool with the ALG ON
+       * (#206).
+       *
+       * It took lab/ftp-alg.sh's own off mode with it. That lab's header says
+       * "sh tools/lab.sh ftp-alg off -> LAB FAILED", it passed, and it is the
+       * only lab that spells the switch this way: rtsp writes "disable", which
+       * this chain matched and that one did not, and pptp, esp and sip use the
+       * runtime command. One lab used the broken spelling and it is the one
+       * that went quiet.
+       */
 #define _(sym, nm, desc)                                                      \
   else if (unformat (line_input, "alg " nm " on")                             \
 	   || unformat (line_input, "alg " nm " enable"))                     \
