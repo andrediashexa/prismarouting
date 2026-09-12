@@ -4,9 +4,16 @@
 #   sh tools/lab.sh forward        with the forwards configured
 #   sh tools/lab.sh forward off    without them - the assertions MUST fail
 #
-# The second form is the point. Four of the checks below pass by construction
+# The second form is the point. Sixteen of the checks below pass by construction
 # unless a forward actually changes what the dataplane does, and running with
 # the feature removed is the only way to know they can fail at all.
+#
+# Section 11 is where that matters most. A dynamic block stays put for the
+# length of the hold-down whether or not anything pinned it, so an assertion
+# taken a few seconds after the last packet would be measuring the hold-down
+# and calling it a pin. It waits six times the hold-down, and keeps two
+# unpinned blocks as a control: if those are still held, nothing was reaped and
+# the section proved nothing.
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 MODE=${1:-on}
@@ -174,14 +181,12 @@ echo "$RESERVED" | sed 's/^/  /'
 
 echo
 echo "=========== 8. what has to be refused, and why ==========="
-vppctl bpa pool dyn inside 10.0.0.0/24 outside 203.0.113.16/30 block 64 mode dynamic >/dev/null
 R_OTHER=$(vppctl bpa forward lab tcp 2048 to 100.64.0.5 80 2>&1)
 R_RANGE=$(vppctl bpa forward lab tcp 80 to 100.64.0.5 80 2>&1)
 R_NOSUB=$(vppctl bpa forward lab tcp 1601 to 100.64.99.5 80 2>&1)
-R_DYN=$(vppctl bpa forward dyn tcp 2000 to 10.0.0.5 80 2>&1)
 R_DUP=$(vppctl bpa forward lab tcp 1600 to 100.64.0.5 81 2>&1)
 R_MISS=$(vppctl bpa forward lab tcp 4444 del 2>&1)
-for r in "$R_OTHER" "$R_RANGE" "$R_NOSUB" "$R_DYN" "$R_DUP" "$R_MISS"; do
+for r in "$R_OTHER" "$R_RANGE" "$R_NOSUB" "$R_DUP" "$R_MISS"; do
   echo "  $r"
 done
 
@@ -200,6 +205,93 @@ fi
 tcp 100.64.0.5 8.8.8.8 1600 9443 syn pg0
 GIVEN_BACK=$(trace)
 echo "$GIVEN_BACK" | sed 's/^/  /'
+
+echo
+echo "=========== 11. a dynamic pool: the block is what gets pinned ==========="
+# A dynamic pool hands blocks out on the first flow and takes them back after
+# the hold-down, so a forwarded port would follow its block to whichever
+# subscriber got it next. The forward pins the block instead, and the block it
+# pins is the one the pool's arithmetic gives that subscriber - the same one a
+# deterministic pool would have given it.
+#
+#   10.0.0.0/24 over 203.0.113.16/30, block 64, ports 1024-65535
+#   -> 1008 blocks per address, 4032 in the pool, interleaved:
+#      subscriber s -> 203.0.113.(16 + s mod 4), block s/4
+#
+#   10.0.0.1  -> 203.0.113.17 ports 1024-1087   (block index 1)
+#   10.0.0.5  -> 203.0.113.17 ports 1088-1151   (block index 5)
+#
+# The allocator hands out free blocks in increasing index order, so the first
+# two subscribers to send take block 0 and block 1 - and block 1 is the one
+# 10.0.0.1 would need.
+vppctl bpa pool dyn inside 10.0.0.0/24 outside 203.0.113.16/30 block 64 \
+    mode dynamic >/dev/null
+vppctl ip route add 10.0.0.0/24 via 100.64.3.253 pg0
+
+echo "  two subscribers take the first two blocks:"
+tcp 10.0.0.20 8.8.8.8 40000 443 syn pg0
+tcp 10.0.0.21 8.8.8.8 40001 443 syn pg0
+vppctl show bpa blocks | sed 's/^/  /'
+
+echo
+echo "  a forward whose block somebody else is holding, at commit check:"
+R_HELD=$(vppctl bpa forward dyn tcp 1030 to 10.0.0.1 80 check 2>&1)
+echo "  $R_HELD"
+
+if [ "$MODE" = off ]; then
+  echo "  MODE=off: no forward on the dynamic pool either, so its block is"
+  echo "  nobody's and the hold-down takes it like any other."
+else
+  vppctl bpa forward dyn tcp 1100 to 10.0.0.5 80
+fi
+DYN_FWD=$(vppctl show bpa forward dyn)
+echo "$DYN_FWD" | sed 's/^/  /'
+
+echo
+echo "  unsolicited inbound, expected: 203.0.113.17:1100 -> 10.0.0.5:80"
+tcp 8.8.8.8 203.0.113.17 33000 1100 syn pg1
+DYN_IN=$(trace)
+echo "$DYN_IN" | sed 's/^/  /'
+DYN_TRAIL=$(grep "forward" /var/log/hexarouting/config-history.log 2>/dev/null | tail -1)
+echo "  trail: $DYN_TRAIL"
+
+echo
+echo "  --- and now the part the hold-down must not be allowed to prove ---"
+# The trap this section exists to avoid: a block stays put for the length of
+# the hold-down whether or not anything pinned it, so an idle subscriber that
+# is only idle for a few seconds proves nothing at all. The hold-down is set
+# to 5s and the subscriber is then left alone for 30 - six times it - and the
+# two unpinned blocks taken above are the control: if they are still held, the
+# hold-down never ran and this section is measuring nothing.
+vppctl bpa block-holddown 5
+vppctl bpa timeouts udp 3 tcp-syn 3 tcp-transitory 3 tcp-established 3 \
+    >/dev/null
+T0=$(date +%s)
+echo "  hold-down 5s, sessions expire in 3s, idle for 30s:"
+while [ "$(date +%s)" -lt $((T0 + 30)) ]; do sleep 1; done
+IDLE=$(( $(date +%s) - T0 ))
+echo "  ${IDLE}s with no traffic from any of them"
+CTL_IDLE=$(vppctl show bpa subscriber 10.0.0.20)
+PIN_IDLE=$(vppctl show bpa subscriber 10.0.0.5)
+BLOCKS=$(vppctl show bpa blocks)
+printf '%s\n' "$CTL_IDLE" | sed 's/^/  |/'
+printf '%s\n' "$PIN_IDLE" | sed 's/^/  |/'
+printf '%s\n' "$BLOCKS" | sed 's/^/  |/'
+
+echo
+echo "  the packet, after all that idling:"
+echo "  expected: 203.0.113.17:1100 -> 10.0.0.5:80"
+tcp 8.8.8.8 203.0.113.17 33000 1100 syn pg1
+DYN_AFTER=$(trace)
+echo "$DYN_AFTER" | sed 's/^/  /'
+
+echo
+echo "  removing the forward gives the block back:"
+if [ "$MODE" != off ]; then
+  vppctl bpa forward dyn tcp 1100 del
+fi
+UNPINNED=$(vppctl show bpa blocks)
+printf '%s\n' "$UNPINNED" | sed 's/^/  |/'
 
 echo
 echo "=========== counters ==========="
@@ -245,8 +337,6 @@ expect_in "a port outside the pool's range is refused" \
   "outside pool" "$R_RANGE"
 expect_in "an address that is not a subscriber is refused" \
   "not a subscriber" "$R_NOSUB"
-expect_in "a dynamic pool is refused, with the reason" \
-  "dynamic mode" "$R_DYN"
 expect_in "a second forward on the same public port is refused" \
   "already forwarded" "$R_DUP"
 expect_in "removing a forward that does not exist is refused" \
@@ -258,5 +348,27 @@ expect_in "the forward is in the configuration trail" \
   "forward tcp/1600->100.64.0.5:80" "$TRAIL"
 expect_in "removing the forward gave the port back to the allocator" \
   "100.64.0.5:1600 -> 200.150.0.17:1600" "$GIVEN_BACK"
+
+# The dynamic pool.
+expect_in "a forward on a dynamic pool was accepted" \
+  "tcp 203.0.113.17:1100 -> 10.0.0.5:80" "$DYN_FWD"
+expect_in "a block another subscriber holds is refused at commit check" \
+  "which 10.0.0.21 is holding now" "$R_HELD"
+expect_in "an unsolicited inbound packet reached the pinned subscriber" \
+  "203.0.113.17:1100 -> 10.0.0.5:80" "$DYN_IN"
+expect_in "the pin is in the configuration trail, as the forward it derives from" \
+  "forward tcp/1100->10.0.0.5:80" "$DYN_TRAIL"
+# The control. Without it the assertion below passes on a box whose hold-down
+# simply never ran, which is the one way this section could prove nothing.
+expect_in "the hold-down did run: an unpinned block went back to the pool" \
+  "no live state" "$CTL_IDLE"
+expect_in "the pinned block is still the subscriber's after ${IDLE}s idle" \
+  "PINNED by a forward" "$PIN_IDLE"
+expect_in "and the pool says so" "1 pinned" "$BLOCKS"
+# The claim is about a packet, so it is asserted on the packet.
+expect_in "an inbound packet on the forwarded port still reaches them" \
+  "203.0.113.17:1100 -> 10.0.0.5:80" "$DYN_AFTER"
+expect_in "removing the last forward unpinned the block" \
+  "0 pinned" "$UNPINNED"
 
 verdict

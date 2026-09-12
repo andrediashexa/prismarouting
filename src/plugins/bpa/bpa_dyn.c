@@ -27,10 +27,12 @@ bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers)
   d->n_local = n;
   vec_validate (d->owner, n - 1);
   vec_validate (d->idle_since, n - 1);
+  vec_validate (d->pinned, n - 1);
   for (i = 0; i < n; i++)
     {
       d->owner[i] = BPA_NO_BLOCK;
       d->idle_since[i] = 0;
+      d->pinned[i] = 0;
     }
 
   /* pushed high to low so popping hands out increasing block indices */
@@ -49,6 +51,7 @@ bpa_dyn_free (bpa_dyn_t *d)
 {
   vec_free (d->owner);
   vec_free (d->idle_since);
+  vec_free (d->pinned);
   vec_free (d->free_list);
   vec_free (d->extras);
   hash_free (d->by_sub);
@@ -125,6 +128,167 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
   return 0;
 }
 
+/*
+ * Takes one named block off the free list. The list is a stack, so the entry
+ * has to be found rather than popped.
+ *
+ * Guessed at before it is searched for. bpa_dyn_init() fills the stack with
+ * n-1 down to 0, so block `local` starts at index n-1-local, and vec_del1()
+ * displaces exactly one entry per removal - the one that was last. The guess
+ * is therefore right for every block nothing has displaced, which on the path
+ * that pins many blocks at once - a pool coming back with the forwards its
+ * configuration carries - is all of them.
+ *
+ * The guess is worth its two lines because the search is not free and is paid
+ * under the worker barrier. Measured, 64 forwards one at a time: with the
+ * search alone, 202 ms on a 258048-block slice against 149 ms on a 4032-block
+ * one and 158 ms on a deterministic pool, which pins nothing - about 0.8 ms
+ * per pin, all of it the walk, and a pool created with a few hundred forwards
+ * pays every one of them inside ONE barrier acquisition. With the guess the
+ * same three read 161, 166 and 162 ms: the cost no longer follows the size of
+ * the slice.
+ */
+static void
+bpa_dyn_unfree (bpa_dyn_t *d, u32 local)
+{
+  u32 i = d->n_local - 1 - local;
+
+  if (i < vec_len (d->free_list) && d->free_list[i] == local)
+    {
+      vec_del1 (d->free_list, i);
+      return;
+    }
+
+  for (i = 0; i < vec_len (d->free_list); i++)
+    if (d->free_list[i] == local)
+      {
+	vec_del1 (d->free_list, i);
+	return;
+      }
+}
+
+int
+bpa_dyn_pin (bpa_dyn_t *d, u32 block_idx, u32 sub_idx, u32 n_workers, f64 now,
+	     u32 *held_by, int *is_new)
+{
+  u32 local = block_idx / n_workers, k;
+  uword *q;
+
+  *is_new = 0;
+  if (!d->active || local >= d->n_local)
+    return -2;
+
+  if (d->owner[local] != BPA_NO_BLOCK && d->owner[local] != sub_idx)
+    {
+      *held_by = d->owner[local];
+      return -1;
+    }
+
+  if (d->owner[local] == BPA_NO_BLOCK)
+    {
+      bpa_dyn_unfree (d, local);
+      d->owner[local] = sub_idx;
+      d->n_alloc++;
+      d->n_allocations++;
+      /* Idle from the first instant, and deliberately: nothing is using the
+       * block yet. The pin is what keeps it, and the moment the pin goes the
+       * ordinary lifetime applies with no special case to remember. */
+      d->idle_since[local] = now;
+      *is_new = 1;
+    }
+
+  /*
+   * The pinned block becomes the subscriber's primary, and whatever it was
+   * holding becomes an extension.
+   *
+   * Not cosmetic. bpa_dyn_acquire() answers with the primary, and the
+   * forwarded socket lives in the pinned block - so a subscriber left on its
+   * old primary would have its own outbound traffic translated out of a block
+   * that does not contain the operator's forward, and the forward would be
+   * contradicted by the customer's own packets. The old block keeps its
+   * sessions and leaves by the hold-down like any other extension.
+   */
+  q = hash_get (d->by_sub, sub_idx);
+  if (q && (u32) (q[0] - 1) != local)
+    {
+      bpa_dyn_extra_t *e;
+
+      vec_add2 (d->extras, e, 1);
+      e->sub_idx = sub_idx;
+      e->local = (u32) (q[0] - 1);
+    }
+
+  /*
+   * And unconditionally off the extras, because the block being pinned may
+   * have been one: the two lists are exclusive - the reap picks a block's list
+   * by asking by_sub first - and an entry left behind names a local index that
+   * is handed to somebody else later, so the old subscriber going idle would
+   * mark THEIR block. Unconditional and not inside the branch above: a
+   * subscriber can hold an extension with no primary at all, for as long as it
+   * takes the reap to come back for it after its budget ran out mid-pass.
+   */
+  for (k = 0; k < vec_len (d->extras); k++)
+    if (d->extras[k].local == local)
+      {
+	vec_del1 (d->extras, k);
+	break;
+      }
+  hash_set (d->by_sub, sub_idx, (uword) local + 1);
+
+  if (!d->pinned[local])
+    {
+      d->pinned[local] = 1;
+      d->n_pinned++;
+    }
+  return 0;
+}
+
+void
+bpa_dyn_unpin (bpa_dyn_t *d, u32 block_idx, u32 n_workers, int *released)
+{
+  u32 local = block_idx / n_workers;
+
+  *released = 0;
+  if (!d->active || local >= d->n_local || !d->pinned[local])
+    return;
+
+  d->pinned[local] = 0;
+  d->n_pinned--;
+
+  /*
+   * In use: it is an ordinary dynamic block from here on, and the hold-down
+   * that has been suspended for the life of the forward takes it back the
+   * usual way - with the usual natEvent 17 from the reap.
+   */
+  if (d->idle_since[local] == 0)
+    return;
+
+  /*
+   * Not in use: the pin was the only thing holding it, so it goes back now
+   * rather than sitting out a hold-down that is measuring nothing. The caller
+   * emits the release.
+   */
+  if (hash_get (d->by_sub, d->owner[local])
+      && hash_get (d->by_sub, d->owner[local])[0] == (uword) local + 1)
+    hash_unset (d->by_sub, d->owner[local]);
+  else
+    {
+      u32 k;
+      for (k = 0; k < vec_len (d->extras); k++)
+	if (d->extras[k].local == local)
+	  {
+	    vec_del1 (d->extras, k);
+	    break;
+	  }
+    }
+  d->owner[local] = BPA_NO_BLOCK;
+  d->idle_since[local] = 0;
+  vec_add1 (d->free_list, local);
+  d->n_alloc--;
+  d->n_releases++;
+  *released = 1;
+}
+
 void
 bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now)
 {
@@ -168,6 +332,12 @@ bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
       if (freed >= max_out)
 	break;
       if (d->owner[i] == BPA_NO_BLOCK)
+	continue;
+      /* Held by the configuration, not by traffic. Reaping it would give the
+       * block to the next subscriber that asks and leave the operator's
+       * forward pointing at them - the failure that kept forwards off dynamic
+       * pools until the pin existed. */
+      if (d->pinned[i])
 	continue;
       if (d->idle_since[i] == 0)
 	continue;

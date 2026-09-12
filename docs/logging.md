@@ -81,6 +81,64 @@ gap, which is exactly where nobody tests.
 
 * `natEvent` 17 **MUST** be emitted on release. It is correctness, not tidiness.
 
+## Pinned blocks: configuration is also an allocation
+
+A [static port forward](architecture.md#static-port-forwarding) on a dynamic
+pool **pins** the block that carries it: the block is held for that subscriber
+for as long as the forward exists, and no hold-down releases it.
+
+That block is held by an operator's decision rather than by a packet, and the
+log does not care which:
+
+* Pinning a block **MUST** be emitted as `natEvent` **16**, and unpinning it as
+  `natEvent` **17**. A block held for a year with no record is a mapping nobody
+  can attribute to a subscriber later, which is the one thing this log exists
+  to prevent — and on this product it is a legal obligation rather than a
+  nicety.
+* The event is on the **block**, not on the forward. A second forward inside a
+  block that is already pinned allocates nothing, and a second `natEvent` 16
+  with no 17 between them is exactly the gap described above, read from the
+  other end: a query would find two allocations of one block to one subscriber
+  and no idea which one ended.
+* Unpinning emits the release only when the block actually goes back to the
+  pool. If the subscriber still has sessions on it, the block is simply an
+  ordinary dynamic block again and leaves later, by the hold-down, with the
+  release the reap emits.
+
+The record is **queued**, not emitted where the pin happens. A pin usually
+happens while a configuration is being replayed — which is before any template
+has gone out, and a record emitted then is one no collector can decode (see
+below). The queue is drained by `bpa-expire-process`, which is where every
+other block event leaves from.
+
+There is no separate trail entry for a pin. The `forward-add` and
+`forward-del` lines already carry the forward, and the pin is **derived** from
+it: a second record of the same fact is a second thing to keep in step and a
+second thing to get wrong.
+
+### Turning the export on re-announces every pinned block
+
+A pin is made once, by a configuration change. A configuration is applied
+**pools first, export afterwards** — which is the order a box takes on every
+boot — so a pin made in that window would hold a block from then on with
+nothing anywhere saying whose it is. And unlike an ordinary dynamic block, a
+pinned block never comes up for release, so it never gets a second chance at a
+record.
+
+So enabling a transport where there was none emits `natEvent` **16** for every
+block that is pinned at that instant, once per block. Only the pinned ones: an
+ordinary block held across the same moment is released within a hold-down and
+reallocated with a record of its own.
+
+The record is stamped **when the export was enabled**, not when the pin was
+made. That is the truth the box can tell — this block is this subscriber's as
+of now — and a record that guessed at the earlier instant would be a fabricated
+one.
+
+`lab/ipfix.sh` pins a block with the log switched off, switches it on, and
+asserts the allocation arrives at a real collector with the right subscriber
+and port range.
+
 ## Volume
 
 Explicit assumptions, for order of magnitude rather than precision: 200k
@@ -348,6 +406,11 @@ subscriber with full confidence.
   recomputed; a forwarded port is a mapping that was decided rather than
   computed, so a trail that omitted it would answer for that port with the
   subscriber the formula names — who is the wrong one, with full confidence.
+
+  On a dynamic pool the same line carries a second meaning: it is also the
+  record of a **pinned block**, because the pin is derived from the forward
+  and from nothing else. There is deliberately no separate pin entry — a
+  second record of one fact is a second thing to keep in step.
 * Attaching and detaching CGNAT on an interface **MUST** be recorded too, with
   the direction on the line:
 
@@ -517,6 +580,8 @@ to the subscriber it was issued to
 
 - [x] RFC 8158 template via `flow_report.h`
 - [x] `natEvent` 16 on allocation, 17 on release, 12 on exhaustion
+- [x] `natEvent` 16 when a forward pins a block, 17 when the last one is
+      removed
 - [x] Per-thread queue in the dataplane, drained by a process
 - [x] TCP transport with disk spill
 - [x] Dated configuration trail, carrying the operator who made the change

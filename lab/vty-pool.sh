@@ -82,8 +82,9 @@ printf '%s\n' "$BAD" | sed 's/^/  /'
 
 echo
 echo "=========== 5. a static port forward, through the VTY ==========="
-# A deterministic pool of its own: forwards are refused on a dynamic one, and
-# pool 'lab' above is dynamic.
+# A deterministic pool of its own, so this section measures the VTY path and
+# not the block pin a forward on a dynamic pool also takes out (lab/forward.sh
+# section 11 covers that); pool 'lab' above is dynamic.
 #
 #   10.0.0.5 is subscriber 5 of this pool -> 203.0.113.17, block 1088-1151
 $HX -c "configure" \

@@ -135,6 +135,41 @@ bpa_sub_extend (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
 }
 
 /*
+ * Gives a live subscriber record the block a forward has just pinned.
+ *
+ * A pin can land on a subscriber that is already translating out of a
+ * different block, because in dynamic mode the allocator gave it whichever was
+ * free. From this instant its forwarded socket lives in the pinned block, and
+ * this record - one per worker - is what bpa_session_static_open() searches
+ * for it. Without this the forward is accepted, shown by "show bpa forward",
+ * and translates nothing until the customer's last session expires: configured
+ * and silently inert, which is the failure mode every other part of this
+ * feature is arranged to avoid.
+ *
+ * A subscriber with no sessions has no record and needs none: the record is
+ * built from the pinned block when its first packet arrives.
+ */
+void
+bpa_sub_adopt_block (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
+		     const bpa_block_t *b)
+{
+  uword *q = hash_get (pt->sub_by_idx, bpa_sub_key (pool_index, b->sub_idx));
+  bpa_sub_t *sub;
+  u32 i;
+
+  if (!q)
+    return;
+
+  sub = pool_elt_at_index (pt->subs, q[0]);
+  for (i = 0; i < vec_len (sub->blocks); i++)
+    if (sub->blocks[i].blk.ip_pub == b->ip_pub
+	&& sub->blocks[i].blk.port_lo == b->port_lo)
+      return;
+
+  bpa_sub_add_block (sub, p, b);
+}
+
+/*
  * Builds the session record for a port offset that is already allocated in
  * `sb`'s bitmap, and indexes it in both directions.
  *

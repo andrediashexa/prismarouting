@@ -364,13 +364,20 @@ bpa_log_tcp_enable (ip4_address_t *collector, u16 port, int enable)
       return 0;
     }
 
-  bpa_log_tcp.collector = *collector;
-  bpa_log_tcp.port = port ? port : 4739;
-  bpa_log_tcp.fd = -1;
-  bpa_log_tcp.next_attempt = 0;
-  bpa_log_tcp.enabled = 1;
-  if (!bpa_log_tcp.spill_path)
-    bpa_log_tcp.spill_path =
-      format (0, "/var/log/hexarouting/ipfix-spill.bin%c", 0);
+  {
+    /* See bpa_log_enable(): the same transition, from the other transport. */
+    int was = bpa_log_tcp.enabled || bpa_log_main.enabled;
+
+    bpa_log_tcp.collector = *collector;
+    bpa_log_tcp.port = port ? port : 4739;
+    bpa_log_tcp.fd = -1;
+    bpa_log_tcp.next_attempt = 0;
+    bpa_log_tcp.enabled = 1;
+    if (!bpa_log_tcp.spill_path)
+      bpa_log_tcp.spill_path =
+	format (0, "/var/log/hexarouting/ipfix-spill.bin%c", 0);
+    if (!was)
+      bpa_log_pins_replay ();
+  }
   return 0;
 }

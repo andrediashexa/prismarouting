@@ -36,6 +36,7 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#67](https://github.com/andrediashexa/hexarouting/issues/67),
 [#203](https://github.com/andrediashexa/hexarouting/issues/203).
 
 ### Fixed
@@ -82,6 +83,64 @@ are to be interpreted as described in
   `bpa_gre.h` that the data path and the ICMP path both include, and that
   `test/test_bpa_icmp.c` can reach without VPP. And the shared table was called
   `esp` while holding GRE bindings, so it is called `shared`.
+
+* **A static port forward on a dynamic pool, by pinning the block that carries
+  it** ([#67](https://github.com/andrediashexa/hexarouting/issues/67)). An
+  operator who chose dynamic mode for the IPv4 savings could not sell an
+  inbound port at all: the forward was refused, correctly, because in dynamic
+  mode a block belongs to whoever holds it now, so a port pinned inside one
+  would keep working and start reaching **a different customer** — worse than
+  not working, because nothing looks broken.
+
+  The unit to pin is the **block**, not the forward. Configuring a forward on a
+  dynamic pool holds that subscriber's block: `bpa_dyn` never hands it to
+  anybody else and no hold-down reaps it, for as long as the forward exists.
+  The block is the one the pool's arithmetic gives that subscriber —
+  `block_idx == sub_idx`, the same block a deterministic pool would give it —
+  which is what lets the reverse arithmetic, the worker handoff and
+  `bpa_session_static_open()` serve both modes with no second code path. An
+  operator-chosen block would have broken all three, and on a box with workers
+  it would have made most (address, port) pairs unpinnable for a given
+  subscriber for a reason no operator can be expected to hear.
+
+  **The pin is derived from the configuration and stored nowhere.** The
+  subscriber index comes from its address, the block index is that index, and
+  the worker comes from the index too — so a box that reboots comes back
+  holding exactly the blocks its forwards name, because the configuration
+  replay is the only thing that has to survive. A pin table would have been a
+  second thing to keep in step with the forwards, which is the reason
+  `bpa_pool.h` already refused a second index on them.
+
+  **A block another subscriber is holding is refused at `commit check`, naming
+  them** — taking it would end that customer's live sessions to give somebody
+  else an inbound port. Pinning is logged as RFC 8158 `natEvent` 16 and
+  unpinning as 17, on the **block** and not on the forward: in dynamic mode the
+  log is the only record of who held a block, and two allocations with no
+  release between them is the same gap `docs/logging.md` exists to close.
+  `show bpa blocks` counts pinned blocks apart from blocks in use, and `show
+  bpa subscriber` says which block no hold-down will take.
+
+  **Turning the export on re-announces every pinned block**, because a
+  configuration is applied pools first and export afterwards — the order every
+  boot takes — and a pin made in that window would otherwise hold a block for
+  ever with nothing anywhere saying whose it is. Unlike an ordinary dynamic
+  block, a pinned one never comes up for release and never gets a second
+  chance at a record. Only the pinned blocks, stamped at the instant the export
+  came up rather than at a guessed-at earlier one.
+
+  Evidence: `lab/forward.sh` gains a dynamic-pool section and is run **with the
+  pin removed**, where its block-survival assertion has to fail — otherwise it
+  is asserting something the hold-down would have given it anyway. It leaves
+  the subscriber idle for **six times the hold-down** (30s against 5s) and
+  keeps two unpinned blocks as a control: if those are still held, nothing was
+  reaped and the section proved nothing. The reachability claim is asserted on
+  the captured packet. `sh tools/lab.sh forward off` now fails 16 of its
+  checks; the lab passes under `LAB_WORKERS=1` and joins the worker pass in
+  `tools/run-all-labs.sh`, because "the pinned block is in the slice of the
+  same worker the subscriber's own traffic lands on" is a sentence only a
+  worker run can check. `lab/ipfix.sh` asserts all four records off the wire,
+  decoded by a real collector, with the subscriber and port range in them —
+  including a block pinned while the export was off.
 
 ## 0.65.0 — the box refused correct configurations, exported nothing, and let you in too early
 
@@ -284,6 +343,64 @@ are to be interpreted as described in
 [#210](https://github.com/andrediashexa/hexarouting/issues/210) (partly).
 
 ### Added
+
+* **A static port forward on a dynamic pool, by pinning the block that carries
+  it** ([#67](https://github.com/andrediashexa/hexarouting/issues/67)). An
+  operator who chose dynamic mode for the IPv4 savings could not sell an
+  inbound port at all: the forward was refused, correctly, because in dynamic
+  mode a block belongs to whoever holds it now, so a port pinned inside one
+  would keep working and start reaching **a different customer** — worse than
+  not working, because nothing looks broken.
+
+  The unit to pin is the **block**, not the forward. Configuring a forward on a
+  dynamic pool holds that subscriber's block: `bpa_dyn` never hands it to
+  anybody else and no hold-down reaps it, for as long as the forward exists.
+  The block is the one the pool's arithmetic gives that subscriber —
+  `block_idx == sub_idx`, the same block a deterministic pool would give it —
+  which is what lets the reverse arithmetic, the worker handoff and
+  `bpa_session_static_open()` serve both modes with no second code path. An
+  operator-chosen block would have broken all three, and on a box with workers
+  it would have made most (address, port) pairs unpinnable for a given
+  subscriber for a reason no operator can be expected to hear.
+
+  **The pin is derived from the configuration and stored nowhere.** The
+  subscriber index comes from its address, the block index is that index, and
+  the worker comes from the index too — so a box that reboots comes back
+  holding exactly the blocks its forwards name, because the configuration
+  replay is the only thing that has to survive. A pin table would have been a
+  second thing to keep in step with the forwards, which is the reason
+  `bpa_pool.h` already refused a second index on them.
+
+  **A block another subscriber is holding is refused at `commit check`, naming
+  them** — taking it would end that customer's live sessions to give somebody
+  else an inbound port. Pinning is logged as RFC 8158 `natEvent` 16 and
+  unpinning as 17, on the **block** and not on the forward: in dynamic mode the
+  log is the only record of who held a block, and two allocations with no
+  release between them is the same gap `docs/logging.md` exists to close.
+  `show bpa blocks` counts pinned blocks apart from blocks in use, and `show
+  bpa subscriber` says which block no hold-down will take.
+
+  **Turning the export on re-announces every pinned block**, because a
+  configuration is applied pools first and export afterwards — the order every
+  boot takes — and a pin made in that window would otherwise hold a block for
+  ever with nothing anywhere saying whose it is. Unlike an ordinary dynamic
+  block, a pinned one never comes up for release and never gets a second
+  chance at a record. Only the pinned blocks, stamped at the instant the export
+  came up rather than at a guessed-at earlier one.
+
+  Evidence: `lab/forward.sh` gains a dynamic-pool section and is run **with the
+  pin removed**, where its block-survival assertion has to fail — otherwise it
+  is asserting something the hold-down would have given it anyway. It leaves
+  the subscriber idle for **six times the hold-down** (30s against 5s) and
+  keeps two unpinned blocks as a control: if those are still held, nothing was
+  reaped and the section proved nothing. The reachability claim is asserted on
+  the captured packet. `sh tools/lab.sh forward off` now fails 16 of its
+  checks; the lab passes under `LAB_WORKERS=1` and joins the worker pass in
+  `tools/run-all-labs.sh`, because "the pinned block is in the slice of the
+  same worker the subscriber's own traffic lands on" is a sentence only a
+  worker run can check. `lab/ipfix.sh` asserts all four records off the wire,
+  decoded by a real collector, with the subscriber and port range in them —
+  including a block pinned while the export was off.
 
 * **A SIP ALG, over UDP, and it says so.** `alg sip on|off` per pool, on by
   default ([#14](https://github.com/andrediashexa/hexarouting/issues/14)). It
