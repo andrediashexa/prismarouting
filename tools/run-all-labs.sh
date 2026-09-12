@@ -65,6 +65,25 @@ else
 fi
 echo
 
+# Labs that assert a packet LEAVING the box, which is the only kind of lab for
+# which the number of workers can change the answer. Each of these is run a
+# SECOND time with workers.
+#
+# This list exists because of #199 and #200. Every appliance with more than one
+# core runs workers, and until this list every lab that asserted forwarding ran
+# single-threaded: #199 (every translated packet blackholed) and #200 (every
+# cross-worker hairpin dropped) were both invisible for the life of the product
+# because of it. Neither is exotic - between them they are "the box forwards"
+# and "two neighbours can reach each other".
+#
+# Not every lab, and the reason is worth stating rather than left as a
+# selection: a lab that asserts what the VTY prints, or what a counter says
+# about a refusal, tests the same code whatever the thread count, and running
+# it twice would double the suite to re-prove things that cannot differ. These
+# eleven touch the packet.
+WORKER_LABS="bypass esp frag ftp-alg hairpin handoff icmp-tcp mss
+             nat-behaviour pptp rtsp two-pools"
+
 # The list, in the order the summary will print.
 LABS=""
 for f in "$REPO"/lab/*.sh; do
@@ -157,6 +176,34 @@ for n in $LABS; do
 done
 wait
 judge_batch
+
+# The second pass: the same labs, with workers. Reported under their own names
+# so a failure says which configuration it was in - "hairpin" and
+# "hairpin+workers" are two different claims about the box and an operator
+# reading the summary needs to know which one broke.
+if [ -z "$ONLY" ] || printf '%s' "$WORKER_LABS" | tr ' \n' '\n\n' | grep -qx "$ONLY"; then
+  echo
+  echo "the same labs again, with VPP workers:"
+  BATCH=""
+  running=0
+  for n in $WORKER_LABS; do
+    [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
+    (
+      out=$(LAB_WORKERS=1 timeout 900 sh "$REPO/tools/lab.sh" "$n" 2>&1); rc=$?
+      printf '%s\n' "$out" > "$OUT/$n+workers.out"
+      echo "$rc" > "$OUT/$n+workers.rc"
+    ) &
+    BATCH="$BATCH $n+workers"
+    running=$((running + 1))
+    if [ "$running" -ge "$JOBS" ]; then
+      wait
+      judge_batch
+      running=0
+    fi
+  done
+  wait
+  judge_batch
+fi
 
 echo
 echo "  pass=$pass  fail=$fail  ran=$ran"

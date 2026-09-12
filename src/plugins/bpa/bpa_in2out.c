@@ -72,6 +72,7 @@ typedef enum
 {
   BPA_IN2OUT_NEXT_DROP,
   BPA_IN2OUT_NEXT_LOOKUP,
+  BPA_IN2OUT_NEXT_HAIRPIN,
   BPA_IN2OUT_N_NEXT,
 } bpa_in2out_next_t;
 
@@ -750,27 +751,44 @@ VLIB_NODE_FN (bpa_in2out_node)
 		goto hp_done;
 	      }
 
-	    if (bpa_l4_dst (b[0], ip, (u8) proto, &hp_port, &l4h))
-	      goto hp_done;
-
-	    bpa_key_out (&hkv, hp_dst, hp_port, (u8) proto);
-	    if (clib_bihash_search_16_8 (&pt->out2in, &hkv, &hkv) == 0)
-	      {
-		bpa_session_t *peer =
-		  pool_elt_at_index (pt->sessions, hkv.value);
-		bpa_rewrite_dst (ip, l4h, (u8) proto, peer->ip_priv,
-				 peer->port_priv);
-		peer->last_heard = now;
-		n_hairpin++;
-	      }
-	    else
-	      {
-		/* The address is ours but nothing is listening on that port.
-		 * Dropped rather than forwarded: sending it on would put a
-		 * packet addressed to our own public range back on the wire. */
-		b[0]->error = node->errors[BPA_IN2OUT_ERROR_HAIRPIN_NO_PEER];
-		goto trace;
-	      }
+	    /*
+	     * The peer's session is not ours to read.
+	     *
+	     * It lives in pt->out2in - the PER-THREAD table of whichever
+	     * worker owns B - and this packet is on A's. Looked up here it
+	     * misses, and the packet was dropped as "hairpin to a public
+	     * address with no session", which is exactly what it looks like
+	     * from this thread. With N workers that happened N-1 times out of
+	     * N, so the same pair of neighbours worked or did not depending on
+	     * which workers their addresses hashed to, with nothing in the
+	     * configuration to explain it (#200).
+	     *
+	     * A hairpin needs TWO workers and there is no way around it: the
+	     * source translation needs A's worker, for A's session and A's
+	     * port bitmap, and the destination translation needs B's. So it is
+	     * STEERED rather than looked up - handed to bpa-out2in-handoff,
+	     * which resolves the owner of the destination by the same
+	     * arithmetic every reply already uses, and bpa-out2in on that
+	     * worker does the destination rewrite.
+	     *
+	     * That second half IS out2in: a hairpin is an inbound packet whose
+	     * source happens to be one of ours. Reusing it rather than keeping
+	     * a second copy of the peer lookup here is the whole point - the
+	     * copy that used to be here was right on one thread and wrong on
+	     * every other one.
+	     *
+	     * The source is already A's PUBLIC address, which REQ-9 requires
+	     * and which the steering also needs: B replies to it and that
+	     * reply is an ordinary out2in packet.
+	     *
+	     * Counted as hairpinned HERE, where it is recognised. A hairpin
+	     * that finds nothing listening is dropped by out2in as "no session
+	     * for destination", which on that thread is the truth; the
+	     * in2out no-peer counter below now belongs to ESP alone.
+	     */
+	    n_hairpin++;
+	    next[0] = BPA_IN2OUT_NEXT_HAIRPIN;
+	    goto trace;
 	  }
       hp_done:;
       }
@@ -849,6 +867,7 @@ VLIB_REGISTER_NODE (bpa_in2out_node) = {
   .next_nodes = {
     [BPA_IN2OUT_NEXT_DROP] = "error-drop",
     [BPA_IN2OUT_NEXT_LOOKUP] = "ip4-lookup",
+    [BPA_IN2OUT_NEXT_HAIRPIN] = "bpa-out2in-handoff",
   },
 };
 

@@ -57,12 +57,37 @@ printf '%s\n' "$HPTRACE" | grep -A4 "BPA in2out" | head -12 | sed 's/^/    /'
 HP=$(vppctl show errors | grep -i "hairpinned" | awk '{print $1}' | head -1)
 NOPEER=$(vppctl show errors | grep -i "hairpin to a public" | awk '{print $1}' | head -1)
 echo "  hairpinned: ${HP:-0}   no-peer drops: ${NOPEER:-0}"
+# With workers, the two subscribers MUST land on different ones or this whole
+# lab passes by luck: a hairpin between two subscribers the hash happens to put
+# on one worker works even on a build where every cross-worker hairpin is
+# dropped, which is the build this lab exists to refuse (#200).
+#
+# Counted off "show bpa session", which reports per thread, rather than off the
+# handoff trace. The trace was the first attempt and it was wrong in the way
+# that matters: on the UNFIXED build the in2out handoff prints a "thread x -> y"
+# line of its own, so the precondition passed there too and proved nothing.
+BUSY_THREADS=$(vppctl show bpa session | awk '/^thread /{ if ($3+0 > 0) n++ } END{print n+0}')
+echo "  threads holding sessions: $BUSY_THREADS"
 
 echo
 echo "=========== A reaches a public address with nothing behind it ==========="
+# The counter for this moved, and the move is the fix (#200). The peer lookup
+# used to happen here, in bpa-in2out, against the per-thread table of the
+# WRONG worker; a hairpin is steered to the destination's owner now and the
+# lookup happens in bpa-out2in on that thread. So a hairpin to a port nobody is
+# listening on is counted by out2in, where it is the plain truth - there is no
+# session for that destination - rather than by in2out, which no longer knows.
+#
+# Read off the out2in node's own counters and not the whole blob: "no session
+# for destination" would otherwise be satisfied by the out2in counter that any
+# earlier unsolicited packet raised.
+CAPTURED=$(vppctl show interface pg0 | awk '/tx packets/{print $NF}')
 send 5 40001 200.150.0.18 9999
-NOPEER2=$(vppctl show errors | grep -i "hairpin to a public" | awk '{print $1}' | head -1)
-echo "  no-peer drops now: ${NOPEER2:-0}"
+NOPEER2=$(vppctl show errors | grep "bpa-out2in" | grep -i "no session for destination" \
+          | awk '{print $1}' | head -1)
+AFTER=$(vppctl show interface pg0 | awk '/tx packets/{print $NF}')
+echo "  out2in no-session drops now: ${NOPEER2:-0}"
+echo "  pg0 tx before ${CAPTURED:-0}, after ${AFTER:-0}"
 
 echo
 echo "=========== VERDICT ==========="
@@ -76,6 +101,18 @@ expect_in "with A's PUBLIC address as source, not its private one" \
 # answer to an address it cannot route to.
 expect_not_in "A's private address must not reach B" "100.64.0.5 -> 100.64.0.6" \
   "$HPTRACE"
-expect "a hairpin to an unused port is dropped, not forwarded" \
+# Only when the lab was asked for workers: single-threaded there is one thread
+# and nothing to steer to, and demanding a steer there would be demanding a
+# different box.
+if [ "${LAB_WORKERS:-0}" = 1 ]; then
+  expect "the two subscribers are on different workers, so this is the real case" \
+    sh -c "[ \"${BUSY_THREADS:-0}\" -ge 2 ]"
+fi
+expect "a hairpin to an unused port is counted as having no session" \
   test "${NOPEER2:-0}" -ge 1
+# And DROPPED, which is the half the counter does not prove: forwarding it on
+# would put a packet addressed to this box's own public range back on the wire.
+# Asserted on the interface, because that is where "not forwarded" is a fact.
+expect "and it really is dropped, not forwarded to the inside" \
+  test "${AFTER:-0}" -eq "${CAPTURED:-0}"
 verdict

@@ -41,6 +41,32 @@ are to be interpreted as described in
 
 ### Fixed
 
+* **Hairpinning was broken on every appliance.** Two subscribers of the same box
+  reaching each other through a public address worked only when they happened to
+  land on the same worker — with N workers it failed N-1 times out of N, and the
+  same pair worked or did not depending on which workers their addresses hashed
+  to, with nothing in the configuration to explain it. The peer lookup ran in
+  `pt->out2in`, the **per-thread** table of the worker the packet arrived on,
+  which is the sender's and not the peer's. A hairpin needs two workers and
+  there is no way around it: the source translation needs the sender's worker,
+  for its session and its port bitmap, and the destination translation needs the
+  peer's. So it is **steered** now rather than looked up — handed to
+  `bpa-out2in-handoff`, which resolves the destination's owner by the same
+  arithmetic every reply already uses, and `bpa-out2in` on that worker does the
+  destination rewrite. That second half *is* out2in: a hairpin is an inbound
+  packet whose source happens to be one of ours, and reusing it removes the
+  second copy of the peer lookup that was right on one thread and wrong on every
+  other. A hairpin to a port nobody is listening on is now counted by out2in as
+  `no session for destination`, which on that thread is the plain truth; the
+  in2out no-peer counter belongs to ESP alone, whose binding table is global for
+  exactly this reason.
+* **The suite runs the packet labs twice, once with workers.** Eleven labs
+  assert a packet leaving the box and every one of them ran single-threaded.
+  Both defects above were invisible for the life of the product because of that,
+  and between them they are "the box forwards" and "two neighbours can reach
+  each other". `lab/hairpin.sh` also asserts, from `show bpa session`, that the
+  two subscribers really are on different workers — otherwise the whole lab
+  passes by luck on a build where every cross-worker hairpin is dropped.
 * **On a box with workers, every translated packet was blackholed.** `bpa-in2out`
   translated the packet, counted it as translated, and sent it to `error-drop`.
   Nothing left the box. `hexarouting-tune` configures workers on every
