@@ -96,6 +96,7 @@ $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
 # outside. This one puts an unmapped page behind every packet so the difference
 # is a crash instead of a judgement call.
 $(BUILD)/test_bpa_icmp: test/test_bpa_icmp.c src/plugins/bpa/bpa_icmp.h \
+              src/plugins/bpa/bpa_gre.h \
                         test/bpa_shim.h test/bpa_tcp_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_icmp.c

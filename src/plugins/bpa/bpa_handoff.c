@@ -155,14 +155,22 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 		   * the embedded one that has to choose the worker.
 		   *
 		   * Unless there is no port. An error about an outbound ESP
-		   * packet parses, and parses correctly, but the tunnel it
-		   * names is in the table shared between workers - so there
-		   * is no owner to steer to and the packet is right where it
-		   * needs to be. Left unmatched EXPLICITLY: bpa_reverse_sub()
-		   * would also fail on a port of zero, because zero is in no
-		   * subscriber's block, and arriving at the right answer
-		   * because an unrelated check happens to reject the input is
-		   * how a wrong answer arrives the day that check changes. */
+		   * or PPTP GRE packet parses, and parses correctly, but what
+		   * it names is in the table shared between workers - so
+		   * there is no owner to steer to and the packet is right
+		   * where it needs to be. Left unmatched EXPLICITLY:
+		   * bpa_reverse_sub() would also fail on a port of zero,
+		   * because zero is in no subscriber's block, and arriving at
+		   * the right answer because an unrelated check happens to
+		   * reject the input is how a wrong answer arrives the day
+		   * that check changes.
+		   *
+		   * GRE is the case that proves the point rather than an
+		   * extra one: it HAS an identifier, the server's Call ID,
+		   * and e->call_id carries it - but it is not drawn from the
+		   * subscriber's port block, so bpa_reverse_sub() cannot turn
+		   * it into an owner. Steering on it would send the error to
+		   * a worker that does not hold the call (#203). */
 		  if (e.port)
 		    {
 		      pub = e.pub_addr;

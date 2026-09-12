@@ -43,6 +43,20 @@ O PPTP tem um problema próprio: GRE não tem portas, então o **Call ID** preci
 
 :::
 
+## O túnel que conecta e trava no primeiro arquivo
+
+Vale conhecer o sintoma porque ele não se parece com um problema de CGNAT, e porque o assinante vai descrevê-lo de um jeito que manda o diagnóstico para o lado errado:
+
+> "A VPN conecta normal, eu navego na intranet, mas quando eu abro um arquivo grande trava."
+
+O que está acontecendo é **PMTUD quebrado**. Quando um roteador no caminho não consegue carregar um pacote grande, ele devolve um ICMP *fragmentation needed* dizendo o tamanho que caberia. Para TCP comum existe uma segunda rede de proteção — o *MSS clamp*, que você liga com `tcp-mss` no pool. Dentro de um túnel **não existe MSS para ajustar**: o ICMP é o único aviso que o assinante tem. Se ele se perder, pacotes pequenos passam, pacotes grandes somem, e nada em lugar nenhum reclama.
+
+A caixa entrega esse ICMP de volta ao assinante, tanto para PPTP quanto para IPsec, e reescreve o pacote citado dentro dele — que é a metade que importa, porque é por esse pacote citado que a máquina do assinante reconhece de qual conexão o aviso fala.
+
+**O que isso exige de você:** que o túnel esteja estabelecido *através desta caixa*. O aviso é amarrado à chamada PPTP no momento em que o servidor a aceita, e some quando a chamada é desconectada. Um túnel que subiu antes da caixa entrar no caminho não tem essa amarração até reconectar.
+
+**Um limite honesto, e só do IPsec:** dois assinantes atrás do **mesmo endereço público** com túneis IPsec para o **mesmo gateway** não podem ser distinguidos — nenhum campo na rede os separa. O primeiro fica com a amarração; o segundo não. Para PPTP isso não acontece, porque o Call ID que o servidor entrega separa as duas chamadas. Quem cai nesse caso do IPsec é atendido por NAT-T, que é o que o CPE moderno faz sozinho.
+
 # O SIP, em detalhe
 
 Vale o detalhe porque é o ALG que mais gera dúvida, e porque a indústria caminhou no sentido contrário: provedores de VoIP rotineiramente pedem que o cliente **desligue** o SIP ALG do CPE, já que um ALG que interpreta o SDP errado produz áudio unidirecional e registro que cai — falhas mais difíceis de diagnosticar do que as que ele evitaria.

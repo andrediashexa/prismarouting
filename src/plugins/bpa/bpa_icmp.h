@@ -48,6 +48,8 @@
 #include <vnet/ip/icmp46_packet.h>
 #endif
 
+#include "bpa_gre.h"
+
 /*
  * ICMP errors carry the original packet embedded, and it is the embedded one
  * that says who they are about.
@@ -80,6 +82,7 @@ typedef struct
   u32 pub_addr;	       /* host order: the embedded SOURCE address */
   u32 peer;	       /* host order: the embedded DESTINATION address */
   u16 pub_port;	       /* host order: the embedded SOURCE port */
+  u16 call_id;	       /* host order: the embedded GRE Call ID, GRE only */
   u8 ip_proto;	       /* the embedded packet's IP protocol number */
 } bpa_icmp_err_t;
 
@@ -90,7 +93,7 @@ typedef struct
  *
  *   - not an error at all (an echo, which the ordinary path handles)
  *   - truncated: the bytes the embedded headers claim are not present
- *   - embedded GRE or ESP, whose identifier is not where this reads
+ *   - an embedded protocol this box has no way to key
  *
  * `end` is one past the last readable byte of THIS buffer. On a chained
  * buffer that is the first segment's end, so an error whose embedded header
@@ -165,25 +168,57 @@ bpa_icmp_err_parse (ip4_header_t *ip, const u8 *end, bpa_icmp_err_t *e)
       e->pub_addr = clib_net_to_host_u32 (inner->src_address.as_u32);
       e->peer = clib_net_to_host_u32 (inner->dst_address.as_u32);
       e->pub_port = 0;
+      e->call_id = 0;
       e->ip_proto = inner->protocol;
       return 0;
+    case IP_PROTOCOL_GRE:
+      /*
+       * PPTP. The Call ID an OUTBOUND GRE packet carries is the one the
+       * SERVER assigned, and no PER-WORKER table is keyed on it: in2out is
+       * keyed on the subscriber's PRIVATE address, out2in on the Call ID this
+       * box handed out. So this used to be refused, and before #201 it was
+       * looked up on offset 0 - the flags and version word, a constant.
+       *
+       * There is a shared binding on (public address, server's Call ID,
+       * server address) now, written when the call establishes and read by
+       * whichever worker the error lands on (#203). bpa_pptp.h carries the
+       * argument for that key, including why it is unambiguous where ESP's
+       * is not.
+       *
+       * The bounds are the reason this is a case and not a line: eight bytes
+       * of embedded GRE must really be present. RFC 792 requires a sender to
+       * quote them and RFC 2637 puts the Call ID at offset 6, two bytes
+       * inside - but a sender that quotes less is a packet this box refuses,
+       * not a read past the buffer.
+       */
+      if (PREDICT_FALSE (avail < BPA_GRE_MIN_BYTES))
+	return -1;
+      {
+	const u8 *g = (const u8 *) inner + inner_hlen;
+	/*
+	 * The same shape test the data path applies, from bpa_l4.h and not a
+	 * second copy of it. An error about a GRE packet that is not the
+	 * enhanced GRE PPTP uses names no call this box has, and the Call ID
+	 * field would be something else entirely.
+	 */
+	if (PREDICT_FALSE (!bpa_gre_is_enhanced (g)))
+	  return -1;
+	e->inner = inner;
+	e->port = 0;
+	e->pub_addr = clib_net_to_host_u32 (inner->src_address.as_u32);
+	e->peer = clib_net_to_host_u32 (inner->dst_address.as_u32);
+	e->pub_port = 0;
+	e->call_id = bpa_gre_call_id (g);
+	e->ip_proto = inner->protocol;
+	return 0;
+      }
     default:
       /*
-       * GRE reaches the ordinary return path but not this one, and the reason
-       * is not the bounds - the PPTP Call ID is at offset 6, inside the eight
-       * bytes RFC 792 requires, and reading it would be easy.
-       *
-       * It is that the Call ID an OUTBOUND GRE packet carries is the one the
-       * SERVER assigned, and no table here is keyed on it together with our
-       * public address: in2out is keyed on the subscriber's PRIVATE address
-       * and out2in on the Call ID this box handed out, which is the other
-       * one. Worse, with workers the handoff has nothing to steer by either -
-       * the server's Call ID is not drawn from the subscriber's port block,
-       * so bpa_reverse_sub() cannot recover an owner from it.
-       *
-       * Making it work needs a global binding of the shape ESP already has,
-       * and that is its own change (#203). Refused here rather than looked up
-       * on a value that means something else.
+       * Everything else. There is no identifier this box keys on, so a lookup
+       * would be built out of whatever those bytes happen to be - which is
+       * precisely the defect #203 records for GRE: a reverse lookup on a
+       * constant, matching nothing, on every box, for the life of the
+       * project. Refused, and the caller counts it.
        */
       return -1;
     }
@@ -196,6 +231,7 @@ bpa_icmp_err_parse (ip4_header_t *ip, const u8 *end, bpa_icmp_err_t *e)
   e->pub_addr = clib_net_to_host_u32 (inner->src_address.as_u32);
   e->peer = clib_net_to_host_u32 (inner->dst_address.as_u32);
   e->pub_port = clib_net_to_host_u16 (e->port[0]);
+  e->call_id = 0;
   e->ip_proto = inner->protocol;
   return 0;
 }

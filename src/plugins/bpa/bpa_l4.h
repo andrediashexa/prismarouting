@@ -24,18 +24,7 @@
  *   bytes 4-5  Key high: payload length
  *   bytes 6-7  Key low:  Call ID
  */
-#define BPA_GRE_FLAG_KEY     0x20
-#define BPA_GRE_PROTO_PPP    0x880b
-#define BPA_GRE_CALL_ID_OFF  6
-
-/* Is this the enhanced GRE that PPTP uses? Anything else is not translatable
- * behind a shared address and the caller must say so in its own counter. */
-static_always_inline int
-bpa_gre_is_enhanced (const u8 *g)
-{
-  return (g[0] & BPA_GRE_FLAG_KEY) && (g[1] & 0x07) == 1
-	 && clib_net_to_host_u16 (((const u16 *) g)[1]) == BPA_GRE_PROTO_PPP;
-}
+#include "bpa_gre.h"
 
 /*
  * Returns 0 and the L4 id; -1 when the packet is not translatable.
@@ -101,12 +90,9 @@ bpa_l4_id (vlib_buffer_t *b, ip4_header_t *ip, u8 proto, int want_dst,
 
   if (proto == BPA_PROTO_GRE)
     {
-      /* The Call ID identifies the call in both directions - it is always the
-       * receiver's, so which end sent the packet does not change where it is
-       * read from, exactly as with an ICMP echo identifier. */
       if (PREDICT_FALSE (!bpa_gre_is_enhanced (p)))
 	return -1;
-      *port = clib_net_to_host_u16 (((u16 *) p)[BPA_GRE_CALL_ID_OFF / 2]);
+      *port = bpa_gre_call_id (p);
       return 0;
     }
 

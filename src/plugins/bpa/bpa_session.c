@@ -2,6 +2,7 @@
 
 #include "bpa.h"
 #include "bpa_esp.h"
+#include "bpa_pptp.h"
 #include "bpa_log.h"
 
 /*
@@ -642,7 +643,7 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
    * guessed at.
    */
   bpa_key_esp_pub (&kv, b->ip_pub, remote);
-  if (PREDICT_FALSE (clib_bihash_search_16_8 (&bm->esp, &kv, &value) == 0
+  if (PREDICT_FALSE (clib_bihash_search_16_8 (&bm->shared, &kv, &value) == 0
 		     && (u32) value.value != ip_priv))
     {
       *why = BPA_CREATE_ESP_PEER_TAKEN;
@@ -698,8 +699,8 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
    * subscriber's traffic came from.
    */
   bpa_key_esp_pub (&kv, b->ip_pub, remote);
-  kv.value = bpa_esp_value (ip_priv, fib);
-  clib_bihash_add_del_16_8 (&bm->esp, &kv, 1);
+  kv.value = bpa_shared_value (ip_priv, fib);
+  clib_bihash_add_del_16_8 (&bm->shared, &kv, 1);
 
   return s;
 }
@@ -713,6 +714,7 @@ void
 bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
 			     u16 peer_call_id)
 {
+  bpa_main_t *bm = &bpa_main;
   clib_bihash_kv_16_8_t kv;
 
   if (s->gre_state == BPA_GRE_ESTABLISHED)
@@ -720,10 +722,14 @@ bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
       if (s->peer_call_id == peer_call_id)
 	return;
       /* A second reply naming a different Call ID: drop the stale key rather
-       * than leave the table pointing at a call that no longer exists. */
+       * than leave the table pointing at a call that no longer exists. Both
+       * keys, because the shared one is keyed on the same Call ID and would
+       * otherwise send an ICMP error about a call that ended to a subscriber
+       * who is no longer in it. */
       bpa_key_gre (&kv, s->ip_priv, s->peer_call_id, s->remote,
 		   BPA_GRE_KEY_DATA, s->fib_index);
       clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+      bpa_gre_unbind (s->ip_pub, s->peer_call_id, s->remote, s->ip_priv);
     }
 
   s->peer_call_id = peer_call_id;
@@ -733,6 +739,21 @@ bpa_session_gre_established (bpa_per_thread_t *pt, bpa_session_t *s,
 	       s->fib_index);
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
+
+  /*
+   * And the shared half, which exists for one packet: an ICMP error about an
+   * OUTBOUND GRE packet. That packet quotes the Call ID the server chose, and
+   * the key above is on the subscriber's PRIVATE address, which an error
+   * arriving from the internet does not carry. bpa.h says why the table is
+   * shared rather than per worker.
+   *
+   * Written here and nowhere earlier because this is the first moment the
+   * server's Call ID exists at all - before the reply there is nothing to key
+   * on, which is the same reason the data key is written here.
+   */
+  bpa_key_gre_pub (&kv, s->ip_pub, peer_call_id, s->remote);
+  kv.value = bpa_shared_value (s->ip_priv, s->fib_index);
+  clib_bihash_add_del_16_8 (&bm->shared, &kv, 1);
 }
 
 /*
@@ -855,6 +876,9 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	  bpa_key_gre (&kv, s->ip_priv, s->peer_call_id, s->remote,
 		       BPA_GRE_KEY_DATA, s->fib_index);
 	  clib_bihash_add_del_16_8 (&pt->in2out, &kv, 0);
+	  /* Both halves go together, and the shared one is written only when
+	   * the call established - so it exists exactly when this key does. */
+	  bpa_gre_unbind (s->ip_pub, s->peer_call_id, s->remote, s->ip_priv);
 	}
     }
   else if (PREDICT_FALSE (s->proto == BPA_PROTO_ESP))
@@ -871,9 +895,9 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
        * binding would black-hole a tunnel that is working.
        */
       bpa_key_esp_pub (&kv, s->ip_pub, s->remote);
-      if (clib_bihash_search_16_8 (&bm->esp, &kv, &value) == 0
+      if (clib_bihash_search_16_8 (&bm->shared, &kv, &value) == 0
 	  && (u32) value.value == s->ip_priv)
-	clib_bihash_add_del_16_8 (&bm->esp, &kv, 0);
+	clib_bihash_add_del_16_8 (&bm->shared, &kv, 0);
     }
   else
     {

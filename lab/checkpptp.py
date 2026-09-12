@@ -11,7 +11,18 @@ Prints one line per packet, meant to be read by the shell:
 
   pptp <src> <dst> <sport> <dport> <type> <cid@12> <cid@14> <csum>
   gre  <src> <dst> <version> <callid>
+  icmp <src> <dst> <inner-src> <inner-dst> <inner-callid> <ipcsum> <icmpcsum>
   tcp  <src> <dst> <sport> <dport> <csum>
+
+The icmp line carries the EMBEDDED addresses and the embedded Call ID, and all
+three are the point. A subscriber's stack matches an ICMP error against its own
+socket by the packet quoted INSIDE it, so an error delivered to the right host
+still tells it nothing if the embedded header names the public address. The
+embedded Call ID is printed because it must NOT have changed: it is the Call ID
+the SERVER chose, which this box never translated - the one it did translate is
+the subscriber's own, and that one is not in an outbound packet at all. A box
+that "helpfully" rewrote it would still deliver the error and still pass every
+address assertion.
 
 <csum> is "ok" or "BAD": a rewritten segment whose checksum no longer covers it
 is dropped by the peer's stack, and the CGNAT's own counter still says it
@@ -62,6 +73,26 @@ for raw in pkts:
     src = str(ipaddress.IPv4Address(p[12:16]))
     dst = str(ipaddress.IPv4Address(p[16:20]))
     l4 = p[hlen:]
+    # The outer IP checksum, needed by every branch below: a translated packet
+    # whose checksum no longer covers it is dropped by the first router that
+    # looks at it, while this box's own counter still says it translated.
+    ck = "ok" if csum(p[:hlen]) == 0 else "BAD"
+
+    if proto == 1:
+        if len(l4) < 8 + 20:
+            continue
+        icmp_ck = "ok" if csum(l4) == 0 else "BAD"
+        inner = l4[8:]
+        isrc = str(ipaddress.IPv4Address(inner[12:16]))
+        idst = str(ipaddress.IPv4Address(inner[16:20]))
+        ihlen = (inner[0] & 0x0F) * 4
+        g = inner[ihlen:]
+        # -1 and not 0 when the quote stops short: 0 is a Call ID a box could
+        # plausibly have written, so it would read as an answer rather than as
+        # "the packet did not carry one".
+        icid = struct.unpack("!H", g[6:8])[0] if len(g) >= 8 else -1
+        print(f"icmp {src} {dst} {isrc} {idst} {icid} {ck} {icmp_ck}")
+        continue
 
     if proto == 47:
         if len(l4) < 8:

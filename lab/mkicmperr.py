@@ -28,9 +28,15 @@ def ip4(src, dst, proto, payload_len, total=None):
 router, pub, remote = sys.argv[1], sys.argv[2], sys.argv[3]
 pub_port, remote_port, mtu = int(sys.argv[4]), int(sys.argv[5]), 1500
 
-# The embedded protocol. UDP unless asked otherwise; "esp" builds the error a
-# router sends about an outbound IPsec packet, which is the only PMTUD signal
-# a tunnel has - there is no MSS in an ESP packet to clamp.
+# The embedded protocol. UDP unless asked otherwise; "esp" and "gre" build the
+# error a router sends about an outbound tunnel packet, which is the only PMTUD
+# signal a tunnel has - neither carries an MSS to clamp.
+#
+# For "gre" the seventh argument is the Call ID the SERVER assigned, which is
+# what an OUTBOUND GRE packet carries and what this box keys the error on. It
+# is a parameter and not a constant because the lab reads it off the wire from
+# the real call rather than choosing it: a hard-coded Call ID here would make
+# the assertion pass against a box that matched on something else entirely.
 kind = sys.argv[6] if len(sys.argv) > 6 else "udp"
 
 if kind == "esp":
@@ -40,6 +46,15 @@ if kind == "esp":
     # the one a real router would send rather than the smallest one that works.
     inner_l4 = struct.pack("!II", 0x11111111, 7)
     inner_ip = ip4(pub, remote, 50, len(inner_l4), total=1500)
+elif kind == "gre":
+    # The enhanced GRE header PPTP uses (RFC 2637 section 4.1), which is
+    # exactly the eight bytes RFC 792 asks for: flags and version, protocol
+    # type 0x880B, the payload length, and the Call ID at offset 6. The
+    # payload length is deliberately NOT the Call ID, so a box reading the
+    # wrong 16-bit field resolves nothing instead of resolving by luck.
+    call_id = int(sys.argv[7]) if len(sys.argv) > 7 else 0
+    inner_l4 = struct.pack("!BBHHH", 0x20, 0x01, 0x880B, 0x0064, call_id)
+    inner_ip = ip4(pub, remote, 47, len(inner_l4), total=1500)
 else:
     inner_l4 = struct.pack("!HHHH", pub_port, remote_port, 8, 0)
     inner_ip = ip4(pub, remote, 17, len(inner_l4), total=1500)
