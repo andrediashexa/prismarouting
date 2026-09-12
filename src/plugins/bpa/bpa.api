@@ -370,6 +370,15 @@ autoreply define bpa_global_set
     @param tcp_enable - TCP transport on or off; off disconnects the collector
                         and stops that transport, and does NOT turn the UDP
                         export on - the two are separate paths in the plugin
+    There is a THIRD statement in this hierarchy and it is deliberately not
+    here: `cgnat logging udp <collector> src <source>` goes to VPP's own
+    set_ipfix_exporter. The UDP exporter is core state shared with anything
+    else that exports, and libvnet exports no setter a plugin could call - so
+    carrying it on this message would mean copying the core handler's field
+    assignments into this plugin, where the copy would drift with every VPP
+    bump. The plugin READS it back, in `show bpa config`, because that is the
+    one place the CGNAT running configuration is produced (#209).
+
     @param collector - the TCP collector, read only when tcp_enable is true
     @param port - its port; 0 means the IPFIX default, which the dataplane
                   applies rather than the caller, so every client agrees on it

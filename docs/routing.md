@@ -1799,24 +1799,31 @@ Moving it fixed something that was not the socket. `self.dp.run()` returned a
 status the caller discarded, and the dataplane **refuses** `bpa logging enable`
 when no IPFIX exporter is configured — so an operator who turned the export on
 read `commit complete` off a box that exports nothing. `vppctl` exits 0 either
-way, which is the reason `vppapi.py` exists. It now says so:
+way, which is the reason `vppapi.py` exists.
 
-```
-error: cgnat logging enable: the dataplane refused it: invalid value
-(bpa_log_enable: no IPFIX collector configured; use 'set ipfix exporter
-collector <ip> src <ip>' first)
-```
+That refusal was permanent on a shipped box, because nothing in this product
+ever configured VPP's exporter and no statement reached it
+([#209](https://github.com/andrediashexa/hexarouting/issues/209)). The
+statement now exists — `nat cgnat logging udp <collector> src <source>` — and
+it goes to VPP's **own** `set_ipfix_exporter`, not onto `bpa_logging_set`: the
+exporter is core state shared with anything else that exports, and `libvnet`
+exports no setter a plugin could call, so carrying it on the plugin's message
+would mean copying the core handler into the plugin. It is still the binary
+API. The plugin reads it back in `show bpa config`, which is where the CGNAT
+running configuration is produced, and `commit check` refuses `logging enable`
+without it before anything is applied. `docs/logging.md` has the measurements.
 
 ### What the acceptance criterion is, and what it is not
 
 `lab/vty.sh` drives one commit that changes a pool, a pool setting, a bypass
 list, an interface attachment, two global settings, the IPFIX collector, an MTU
-and a uRPF mode — and asks for an export state the box refuses — with
-`HEXA_TRACE=1`, and asserts that every `[device]` line in the trace is a `show`
-or a `check`. It asserts beside it that the commit was not vacuous — a commit
-that changes nothing sends nothing and would satisfy the rule without testing
-it — and that the refusal above reaches the operator, which is the half the
-discarded `dp.run()` status used to swallow.
+and a uRPF mode — with `HEXA_TRACE=1`, and asserts that every `[device]` line
+in the trace is a `show` or a `check`. It asserts beside it that the commit was
+not vacuous — a commit that changes nothing sends nothing and would satisfy the
+rule without testing it — and that the export state and the exporter beside it
+are both in force afterwards, read off the dataplane. The refusal itself is
+asserted by `lab/ipfix.sh`, on a box with no exporter, which is where it
+belongs now that a box can have one.
 
 The other clause of the criterion is that what stays is **read-only**, and
 `show cgnat subscriber|translation|top <argument>` is the one place an

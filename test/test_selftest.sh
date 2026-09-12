@@ -87,6 +87,13 @@ EOF
 cat > "$BIN/vppctl" <<'EOF'
 #!/bin/sh
 [ -f "$FAKE/vppctl_ok" ] || exit 1
+# What the dataplane HAS, which is half of every comparison the self-test
+# makes: the other half is the file the box was loaded from. Both come from
+# the fake box, because the whole question is what happens when they disagree.
+case "$*" in
+  "show bpa logging") cat "$FAKE/bpa_logging" 2>/dev/null ;;
+  "show bpa config")  cat "$FAKE/bpa_config" 2>/dev/null ;;
+esac
 exit 0
 EOF
 chmod +x "$BIN"/*
@@ -265,6 +272,95 @@ else
   bad "the self-test could not read the file and said nothing"
 fi
 rm -f "$FAKE/mainpid"
+
+echo "=== is the allocation log actually leaving the box? (#209) ==="
+# The #172 shape, on the setting that carries the connection record: a
+# statement the dataplane REFUSED looks, from the configuration, exactly like
+# one that is working. So the self-test reads the file the box was loaded from
+# and the state the dataplane has, and compares them. It configures nothing.
+printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
+printf '\n' > "$FAKE/groups"
+: > "$FAKE/vppctl_ok"
+export HEXA_CONFIG="$FAKE/hexarouting.conf"
+
+logging() {  # <state> <exporter line body>
+  printf 'IPFIX export of block events (RFC 8158)\n  state       %s\n  exporter    %s\n  records     0 emitted, 0 dropped\nTCP transport: disabled\n' \
+    "$1" "$2" > "$FAKE/bpa_logging"
+}
+: > "$FAKE/bpa_config"
+
+echo "--- the box was told to export and the dataplane has it off ---"
+printf 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
+  > "$FAKE/hexarouting.conf"
+logging disabled "none: nothing is sent over UDP"
+run
+if said '\[FAIL\] the saved configuration names an IPFIX collector and the dataplane'; then
+  ok "a refused exporter statement is a FAILED check"
+else
+  bad "the box exported nothing and said nothing: $(printf '%s\n' "$OUTPUT" | grep -i ipfix || echo '<nothing>')"
+fi
+
+echo "--- the exporter took and the export state did not ---"
+logging disabled "10.0.0.2:4739 src 10.0.0.1 (path mtu 512, template every 20s)"
+run
+if said '\[FAIL\] the saved configuration turns UDP export ON and the dataplane has it'; then
+  ok "an export state that was refused is a FAILED check"
+else
+  bad "the export state was refused and nothing said so"
+fi
+# Whoever is at the console has to know what it costs, not only that a line is red.
+if said 'connection record'; then
+  ok "and it says what the missing log is"
+else
+  bad "the failure does not say what is not being recorded"
+fi
+
+echo "--- enabled, and the exporter cleared underneath it ---"
+# Measured: clearing VPP's exporter leaves the export state enabled, so
+# "state enabled" on its own is not evidence that anything is being sent.
+printf '\n' > "$FAKE/hexarouting.conf"
+logging enabled "none: nothing is sent over UDP"
+run
+if said '\[FAIL\] UDP export is enabled and the IPFIX exporter has no collector'; then
+  ok "an enabled export with nowhere to send is a FAILED check"
+else
+  bad "a box producing records and sending none was reported as fine"
+fi
+
+echo "--- exporting, which is the only state that passes ---"
+printf 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
+  > "$FAKE/hexarouting.conf"
+logging enabled "10.0.0.2:4739 src 10.0.0.1 (path mtu 512, template every 20s)"
+run
+if said '\[ ok \] UDP export running to 10.0.0.2:4739'; then
+  ok "a box that is exporting says where to"
+else
+  bad "an exporting box said nothing: $(printf '%s\n' "$OUTPUT" | grep -i export || echo '<nothing>')"
+fi
+if said '\[FAIL\].*export'; then
+  bad "and it was still counted as a failure"
+else
+  ok "and it is not a failed check"
+fi
+
+echo "--- a dynamic pool with no transport at all ---"
+printf '\n' > "$FAKE/hexarouting.conf"
+logging disabled "none: nothing is sent over UDP"
+printf 'cgnat pool din\n mode dynamic\n' > "$FAKE/bpa_config"
+run
+if said '\[warn\] a pool runs in dynamic mode and NOTHING is being exported'; then
+  ok "translating traffic and recording none of it is said out loud"
+else
+  bad "a dynamic pool with no export was passed over in silence"
+fi
+if said '\[FAIL\].*dynamic mode and NOTHING'; then
+  bad "and it was failed for it, which an operator may legitimately mean"
+else
+  ok "and it is a warning, not a failure"
+fi
+: > "$FAKE/bpa_config"
+rm -f "$FAKE/vppctl_ok" "$FAKE/hexarouting.conf"
+unset HEXA_CONFIG
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

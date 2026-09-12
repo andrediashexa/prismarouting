@@ -109,31 +109,113 @@ RFC 7011 permits SCTP, TCP and UDP.
 Compliance logging **SHOULD** use TCP. UDP **MAY** be used for telemetry, and
 both **MAY** be enabled at once.
 
-### UDP export cannot be turned on from the VTY
-
-`bpa logging enable` hands the records to VPP's own flow-report infrastructure,
-which is refused when no IPFIX exporter is configured — and nothing configures
-one. The exporter is set with `set ipfix exporter collector <ip> src <ip>`,
-which is a VPP CLI command: `hexash` has no statement for it and
-`appliance/etc/vpp-base.conf` does not carry one, so on an installed box
-`nat cgnat logging enable` is refused by the dataplane.
-
-Until #76 moved the statement onto the binary API the refusal was **discarded**
-— `self.dp.run()` returned a status nobody read, `vppctl` exits 0 either way,
-and the operator got `commit complete` from a box that exported nothing. Moving
-it made the gap visible rather than creating it, and it now reports:
+### UDP implementation
 
 ```
-error: cgnat logging enable: the dataplane refused it: invalid value
-(bpa_log_enable: no IPFIX collector configured; use 'set ipfix exporter
-collector <ip> src <ip>' first)
+nat cgnat logging udp <collector> src <source> [port <n>]   where it goes
+nat cgnat logging enable                                    turn it on
+nat cgnat logging udp disable                               clear the exporter
 ```
 
-Closing it means a VTY statement for the exporter's collector and source
-address, which is logging work rather than #76's. The TCP transport is
-unaffected: `nat cgnat logging tcp <collector>` carries its destination in the
-statement itself, and that path is the one `lab/ipfix-tcp.sh` drives end to
-end.
+`bpa logging enable` hands the records to VPP's own flow-report
+infrastructure, which refuses to start a report while VPP's IPFIX exporter has
+no collector. **For the life of the project nothing configured one**: the
+exporter is set with `set ipfix exporter collector <ip> src <ip>`, a VPP CLI
+command, and `hexash` had no statement for it and
+`appliance/etc/vpp-base.conf` carried none. So UDP export was refused on every
+installed box — permanently, because it was not a state an operator could
+leave ([#209](https://github.com/andrediashexa/hexarouting/issues/209)). Until
+[#76](https://github.com/andrediashexa/hexarouting/issues/76) the VTY
+**discarded** that refusal — `self.dp.run()` returned a status nobody read,
+`vppctl` exits 0 either way — and the operator got `commit complete` from a
+box that exported nothing.
+
+`nat cgnat logging udp` is the statement that closes it. It is committed,
+rolled back and read back like every other setting: `show bpa config` emits it
+from the exporter the dataplane actually holds, so a saved configuration
+carries the destination and a rollback restores it.
+
+#### Where it goes, and what VPP requires
+
+The statement sends VPP's own `set_ipfix_exporter` message, **not** the
+plugin's `bpa_logging_set` that carries the other two halves. The exporter is
+core state shared with anything else that exports, and `nm -D libvnet.so`
+lists `vnet_flow_report_add_del`, `vnet_flow_reports_reset` and
+`vnet_ipfix_exporter_lookup` and nothing that sets a collector — so putting it
+on the plugin's message would mean copying the core handler into the plugin,
+where the copy drifts with every VPP bump. It is still the binary API, which
+is what #76 asks for.
+
+What the message requires, measured against `vpp v26.06-release`:
+
+| Field | Behaviour |
+|---|---|
+| `src_address` | **required**: `0.0.0.0` is refused (retval -7) whatever the collector is |
+| `collector_address` | `0.0.0.0` **with a non-zero source** is how the exporter is cleared |
+| `path_mtu` | 68–1450; 0, 67, 1451 and 1500 are all refused |
+| `collector_port` | 0 is accepted and exports to port 0 — the caller must supply 4739 |
+| `template_interval` | 0 is accepted |
+| `vrf_id` | `~0` and `0` both accepted |
+
+The exporter starts **zeroed** — `ipfix_exporter_dump` on an untouched box
+reports every field 0 except `vrf_id` — so there is no dataplane default to
+read back and no "leave it alone" encoding. The VTY therefore reads the
+exporter before it writes it, sends back whatever the box already has for the
+fields the statement does not name, and fills a zero with VPP's own CLI
+defaults: port 4739, path MTU 512, template resend 20 s. Those three numbers
+are measured from a dump taken straight after `set ipfix exporter collector
+<ip> src <ip>`, which is the path that fills them in.
+
+There is no `show ipfix exporter` command in VPP 26.06 — `show: unknown input`
+— so the exporter can only be read through the API or through the plugin.
+`show cgnat logging` prints it, which is the line the boot self-test reads.
+
+#### The refusal happens at `commit check`
+
+```
+nat cgnat logging enable
+commit check
+error: cgnat logging enable: UDP export has no collector, so nothing would
+leave this box
+    add 'nat cgnat logging udp <collector> src <source>' beside it, or export
+    over TCP with 'nat cgnat logging tcp <collector>'
+```
+
+Refused **before** anything is applied, rather than by the dataplane half way
+through the apply with the pools already changed. `nat cgnat logging tcp` does
+not satisfy it: the two transports are separate paths in the plugin and
+`enable` names the UDP one.
+
+#### The saved configuration is written exporter-first
+
+`cgnat logging enable` sorts alphabetically **before** `cgnat logging udp
+...`, so a configuration written in plain sorted order refuses its own second
+line when it is reloaded — on the boot path, which is the one nobody types by
+hand and the one the appliance takes every time it starts. `Config.text()` and
+the apply both put the export state last for that reason.
+
+#### The boot self-test says whether export is RUNNING
+
+A setting that was refused looks, from the configuration, exactly like one
+that is working — the same shape as the OOM drop-in in
+[#172](https://github.com/andrediashexa/hexarouting/issues/172). So
+`appliance/selftest` reads two different places and compares them: the file
+`hexarouting.service` hands to `hexash`, and the state the dataplane holds.
+
+* the file names a collector and the dataplane has none → **FAIL**, the
+  statement was refused when it was applied;
+* the file turns export on and the dataplane has it off → **FAIL**, and the
+  line says what is not being recorded;
+* the dataplane has export on with no collector → **FAIL**. Clearing VPP's
+  exporter leaves the export state enabled — measured — so `state enabled` on
+  its own is not evidence that anything is being sent;
+* a pool in dynamic mode with neither transport on → **warning**: the box is
+  translating traffic and keeping no record of it.
+
+It configures nothing. A check that arranges the condition it is checking for
+cannot report its absence, which is
+[#184](https://github.com/andrediashexa/hexarouting/issues/184) in one
+sentence.
 
 ### TCP implementation
 

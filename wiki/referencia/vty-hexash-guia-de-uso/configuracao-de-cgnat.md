@@ -42,9 +42,13 @@ Um pool pode sobrescrever esses valores — ver a página de configuração de p
 
 | Comando | O que faz |
 |---------|-----------|
+| `nat cgnat logging udp <coletor> src <origem> [port <n>]` | para onde vai a exportação por UDP |
 | `nat cgnat logging enable` | habilita exportação por UDP |
 | `nat cgnat logging disable` | desabilita exportação por UDP |
+| `nat cgnat logging udp disable` | apaga o destino UDP |
 | `nat cgnat logging tcp <coletor> [port <n>]` | exporta por TCP |
+
+`src` não é opcional, e o destino tem que existir antes de `enable`: sem ele, `commit check` recusa e nada é aplicado. Sem `port`, vale 4739.
 
 TCP existe porque a pergunta que importa não é "o coletor recebeu?", é **"o que acontece quando o coletor cai?"** — e com UDP a resposta é silêncio.
 

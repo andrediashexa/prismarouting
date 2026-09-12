@@ -38,40 +38,79 @@ Um registro por **alocação de bloco** (RFC 8158) — não por fluxo. É a dife
 
 ## Configurando
 
+A exportação por UDP precisa saber **para onde** ir antes de ser ligada. São
+dois comandos, nesta ordem:
+
 ```
 configure
- nat cgnat logging enable                        exportação por UDP
- nat cgnat logging tcp <coletor> [port <n>]      exportação por TCP
- nat cgnat logging tcp disable                   desliga o transporte TCP
- nat cgnat logging disable                       desliga a exportação
+ nat cgnat logging udp <coletor> src <origem> [port <n>]   destino do UDP
+ nat cgnat logging enable                                  liga a exportação UDP
  commit
 ```
 
+`src` é o endereço de origem dos pacotes IPFIX e **não é opcional**: sem ele a
+caixa recusa. Use um endereço que o coletor reconheça como sendo desta caixa —
+normalmente o de gerência. Sem `port`, vale 4739, a porta registrada pelo
+RFC 7011.
+
+Os demais comandos da hierarquia:
+
+| Comando | O que faz |
+|---|---|
+| `nat cgnat logging tcp <coletor> [port <n>]` | exportação por TCP |
+| `nat cgnat logging tcp disable` | desliga o transporte TCP |
+| `nat cgnat logging udp disable` | apaga o destino UDP |
+| `nat cgnat logging disable` | desliga a exportação UDP |
+
+O destino UDP volta em `show running-config`, sobrevive a `save`, a `rollback`
+e ao boot — e é reaplicado na ordem certa, o destino antes do estado.
+
+### Se você ligar a exportação sem dizer para onde
+
+`commit check` recusa antes de aplicar qualquer coisa:
+
+```
+error: cgnat logging enable: UDP export has no collector, so nothing would leave this box
+    add 'nat cgnat logging udp <collector> src <source>' beside it, or export over TCP with 'nat cgnat logging tcp <collector>'
+```
+
+`nat cgnat logging tcp` **não** satisfaz esse requisito: os dois transportes
+são caminhos independentes, e `logging enable` liga o de UDP.
+
 :::warning
-**`nat cgnat logging enable` — a exportação por UDP — é recusada nesta
-appliance.**
+**Em versões até a 0.63.0 a exportação por UDP não funcionava em nenhuma
+appliance instalada.** Não havia comando na VTY que dissesse para qual
+coletor enviar, então o dataplane recusava `logging enable` — e, até a 0.63.0,
+o `commit` respondia `commit complete` por cima dessa recusa. Uma operação que
+acreditava estar guardando registros de retenção legal não estava guardando
+nada.
 
-O exportador IPFIX do dataplane precisa saber para qual coletor enviar, e não
-há comando na VTY que diga isso. Sem esse destino, a caixa recusa:
-
-```
-error: cgnat logging enable: the dataplane refused it: invalid value
-(no IPFIX collector configured)
-```
-
-A recusa sempre existiu; o que mudou é que ela agora é dita. Antes, o `commit`
-respondia `commit complete` e a caixa não exportava nada — uma operação que
-achava estar guardando registros de retenção legal e não estava.
-
-**Use `nat cgnat logging tcp <coletor>`.** O destino viaja no próprio comando,
-volta em `show running-config` e sobrevive a um `save` e a uma recarga — e é o
-transporte que o produto verifica derrubando o coletor.
+Se você opera modo dinâmico e ligou a exportação por UDP em versão anterior,
+trate isso como uma lacuna de retenção no período: os registros daquele
+intervalo não existem. A exportação por TCP nunca foi afetada.
 :::
 
+### Conferindo que está mesmo exportando
+
 ```
-show cgnat logging       estado da exportação
+show cgnat logging       estado da exportação e para onde ela vai
+```
+
+Uma linha `exporter` com endereço é a prova de que existe destino; `exporter
+none` significa que nada sai por UDP, **mesmo com o estado `enabled`** — apagar
+o destino não desliga a exportação, só a deixa sem para onde ir.
+
+O autoteste de boot também confere isso, e compara duas coisas diferentes: o
+que a caixa foi mandada fazer e o que o dataplane realmente tem. Se a
+configuração pede exportação e o dataplane está sem ela, o boot falha e diz
+qual das duas metades não pegou — porque uma configuração recusada é
+indistinguível de uma que está funcionando quando se olha só para o arquivo.
+
+```
 show cgnat blocks        blocos atualmente alocados
 ```
+
+Os blocos em uso agora; os registros já exportados estão no coletor.
 
 ## Por que TCP existe
 

@@ -39,7 +39,8 @@ are to be interpreted as described in
 [#165](https://github.com/andrediashexa/hexarouting/issues/165),
 [#198](https://github.com/andrediashexa/hexarouting/issues/198),
 [#14](https://github.com/andrediashexa/hexarouting/issues/14),
-[#206](https://github.com/andrediashexa/hexarouting/issues/206).
+[#206](https://github.com/andrediashexa/hexarouting/issues/206),
+[#209](https://github.com/andrediashexa/hexarouting/issues/209).
 
 ### Added
 
@@ -82,6 +83,61 @@ are to be interpreted as described in
   multi-edit offset arithmetic without VPP.
 
 ### Fixed
+
+* **UDP IPFIX export had never worked on an installed box, and the box said
+  `commit complete`.** In dynamic mode the allocation log *is* the connection
+  record the Marco Civil requires to be kept for a year, and on a shipped
+  appliance it could not be exported over UDP at all: VPP's own IPFIX exporter
+  needs a collector, nothing in the installer, the tuner, the unit files or
+  the VTY ever set one, and the dataplane therefore refused `bpa logging
+  enable` — permanently, because it was not a state an operator could leave.
+  Until [#76](https://github.com/andrediashexa/hexarouting/issues/76) landed
+  the VTY discarded that refusal and printed `commit complete`
+  ([#209](https://github.com/andrediashexa/hexarouting/issues/209)).
+
+  `nat cgnat logging udp <collector> src <source> [port <n>]` is the statement
+  that was missing. It goes to VPP's own `set_ipfix_exporter` over the binary
+  API and not onto the plugin's message, because the exporter is core state
+  and `libvnet` exports no setter a plugin could call — copying the core
+  handler into the plugin would be a copy that drifts with every VPP bump. The
+  plugin reads it back in `show bpa config`, so the destination is saved,
+  rolled back and audited like every other setting, and `nat cgnat logging udp
+  disable` clears it.
+
+  Three things travel with it. **`commit check` now refuses `logging enable`
+  with no exporter**, before anything is applied, rather than letting the
+  dataplane refuse it half way through the apply. **The saved configuration is
+  written exporter-first**: `cgnat logging enable` sorts alphabetically before
+  the statement that makes it possible, so a file written in plain sorted
+  order refused its own second line on reload — on the boot path, which is the
+  one nobody types by hand. And **the boot self-test says whether export is
+  running**, not merely configured, by comparing the file the box was loaded
+  from against the state the dataplane holds: a refused setting looks exactly
+  like a working one, which is the shape of
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172).
+
+  How it survived: `lab/ipfix.sh` exercised the UDP path and **configured the
+  exporter itself**, with `vppctl`, because it needed one — the product's
+  missing step performed by the lab, which is the shape of
+  [#99](https://github.com/andrediashexa/hexarouting/issues/99),
+  [#168](https://github.com/andrediashexa/hexarouting/issues/168),
+  [#182](https://github.com/andrediashexa/hexarouting/issues/182) and
+  [#184](https://github.com/andrediashexa/hexarouting/issues/184), and the
+  fifth time this repository has been caught by it. The lab now configures the
+  exporter **through the VTY** and asserts a record decoded off the wire on a
+  box the product configured; `sh tools/lab.sh ipfix no-exporter` leaves the
+  statement out and fails 9 of its 13 checks.
+
+  Measured against `vpp v26.06-release` while doing it, and written down in
+  `docs/logging.md` because none of it is discoverable: the exporter starts
+  **zeroed**, so there is no dataplane default to read back and no "leave it
+  alone" encoding; `set_ipfix_exporter` refuses a source address of `0.0.0.0`
+  whatever the collector is, and a path MTU outside 68–1450; clearing the
+  exporter is a collector of `0.0.0.0` with the source left in place; a
+  collector port of 0 is *accepted*, so the caller has to supply 4739; and
+  clearing the exporter leaves `bpa logging` reporting **enabled**, which is
+  why `show cgnat logging` now prints where the records go and why the
+  self-test reads that line and not the state.
 
 * **The IS-IS IPv6 warning fired on a working configuration, including this
   repository's own lab.** `ipv6 router isis <tag>` without `topology

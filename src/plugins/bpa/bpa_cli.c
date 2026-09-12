@@ -8,6 +8,7 @@
 #include "bpa_errors.h"
 #include "bpa_log.h"
 #include <vnet/fib/fib_table.h>
+#include <vnet/ipfix-export/flow_report.h>
 
 u8 *
 format_bpa_policy (u8 *s, va_list *args)
@@ -2311,10 +2312,29 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			     vlib_cli_command_t *cmd)
 {
   bpa_log_main_t *lm = &bpa_log_main;
+  ipfix_exporter_t *exp;
 
   vlib_cli_output (vm, "IPFIX export of block events (RFC 8158)");
   vlib_cli_output (vm, "  state       %s",
 		   lm->enabled ? "enabled" : "disabled");
+
+  /*
+   * WHERE the UDP records go, which this never said. "state enabled" is true
+   * of a box whose exporter was cleared afterwards - measured: clearing the
+   * collector leaves lm->enabled set and stops every record - so the state
+   * line on its own cannot tell an exporting box from a silent one, and the
+   * boot self-test reads these two lines together for exactly that reason.
+   */
+  exp = pool_elt_at_index (flow_report_main.exporters, 0);
+  if (ip_address_is_zero (&exp->ipfix_collector))
+    vlib_cli_output (vm, "  exporter    none: nothing is sent over UDP");
+  else
+    vlib_cli_output (vm,
+		     "  exporter    %U:%u src %U (path mtu %u, template "
+		     "every %us)",
+		     format_ip_address, &exp->ipfix_collector,
+		     exp->collector_port, format_ip_address, &exp->src_address,
+		     exp->path_mtu, exp->template_interval);
   vlib_cli_output (vm, "  template    %u (%u bytes per record)",
 		   lm->template_id, BPA_LOG_RECORD_SIZE);
   vlib_cli_output (vm, "  records     %Lu emitted, %Lu dropped",
@@ -2404,6 +2424,7 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
   bpa_main_t *bm = &bpa_main;
   vnet_main_t *vnm = vnet_get_main ();
   vnet_sw_interface_t *si;
+  ipfix_exporter_t *exp;
   bpa_pool_t *p;
   u8 *s = 0;
   u32 i;
@@ -2530,6 +2551,26 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
     s = format (s, "cgnat timeout tcp-established %u\n", bm->timeouts.tcp_estab);
   if (bm->block_holddown != BPA_BLOCK_HOLDDOWN)
     s = format (s, "cgnat block-holddown %u\n", bm->block_holddown);
+  /*
+   * VPP's own UDP exporter. It is core state, not this plugin's - hexash
+   * sets it with VPP's set_ipfix_exporter message, because libvnet exports
+   * no setter a plugin could call and copying the handler's field
+   * assignments here would be a copy that drifts with every VPP bump.
+   *
+   * It is READ here because this is the one place the CGNAT running
+   * configuration is produced, and a statement that cannot be read back
+   * cannot be saved, rolled back or audited - which is what #116 cost the
+   * TCP collector.
+   *
+   * Emitted BEFORE the enable line and not after it: the dataplane refuses
+   * 'cgnat logging enable' while there is no collector, so a configuration
+   * that reloaded in the other order would refuse its own second line.
+   */
+  exp = pool_elt_at_index (flow_report_main.exporters, 0);
+  if (!ip_address_is_zero (&exp->ipfix_collector))
+    s = format (s, "cgnat logging udp %U src %U port %u\n", format_ip_address,
+		&exp->ipfix_collector, format_ip_address, &exp->src_address,
+		exp->collector_port);
   if (bpa_log_main.enabled)
     s = format (s, "cgnat logging enable\n");
   /*

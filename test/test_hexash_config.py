@@ -427,5 +427,50 @@ check(mixed.routing == ["ip route 0.0.0.0/0 10.0.0.2",
       f"both static-route spellings: {mixed.routing}")
 
 
+# ---------------------------------------------------------------------------
+# The order a saved configuration is written in (#209).
+#
+# `cgnat logging enable` is refused by the dataplane while the IPFIX exporter
+# has no collector, and alphabetical order puts it BEFORE the statement that
+# gives it one. A file written that way refuses its own second line when it is
+# reloaded - on the boot path, which is the one nobody types by hand and the
+# one an appliance takes every time it starts.
+print("\n=== the export state is written after the exporter it needs ===")
+
+cfg = config.Config()
+cfg.globals = ["cgnat logging enable",
+               "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739",
+               "cgnat block-holddown 11"]
+written = [l for l in cfg.text().splitlines() if l.startswith("cgnat logging")]
+check(written == ["cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739",
+                  "cgnat logging enable"],
+      f"the exporter comes first however the statements were typed: {written}")
+
+# The rest stays alphabetical, so two boxes holding the same configuration
+# write the same file and a diff of two saved files is a diff of the settings.
+allg = [l for l in cfg.text().splitlines() if l.startswith("cgnat ")]
+check(allg[0] == "cgnat block-holddown 11",
+      f"and everything else keeps its order: {allg}")
+
+# Read back and written again: a file the box wrote must survive the trip,
+# because that is what `rollback` replays and what the boot applies.
+again = [l for l in config.Config.parse(cfg.text()).text().splitlines()
+         if l.startswith("cgnat logging")]
+check(again == written, f"and the order survives a round trip: {again}")
+
+# `enable` and `disable` are ONE setting and two values. Keyed on the value,
+# both stayed in the candidate and the commit applied both - in whatever order
+# they happened to be in, which is not a state anybody asked for.
+check(config.global_key("cgnat logging enable")
+      == config.global_key("cgnat logging disable"),
+      "turning the export off replaces turning it on, not joins it")
+check(config.global_key("cgnat logging udp 10.0.0.2 src 10.0.0.1")
+      != config.global_key("cgnat logging enable"),
+      "and the exporter is a different setting from the state")
+check(config.global_key("cgnat logging tcp 10.0.0.2")
+      != config.global_key("cgnat logging udp 10.0.0.2"),
+      "as are the two transports")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
