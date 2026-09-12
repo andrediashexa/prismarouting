@@ -721,17 +721,24 @@ using it the way an operator does rather than the way a test does.
 
 | | | |
 |---|---|---|
-| [#211](https://github.com/andrediashexa/hexarouting/issues/211) | the getty offers a login before the box is ready, and the first `configure` poisons every commit in that session | **open**, VTY half fixed |
+| [#211](https://github.com/andrediashexa/hexarouting/issues/211) | the getty offers a login before the box is ready, and the first `configure` poisons every commit in that session | *fixed* |
 | [#212](https://github.com/andrediashexa/hexarouting/issues/212) | `commit confirmed` dies with the session that made it, so it protects nothing | **open** |
 
-#211 is two defects wearing one hat. The VTY half is fixed: `Vpp.run` now
-honours the exit status, and `configure` refuses to build a candidate from a
-dataplane that is not answering rather than putting vppctl's error text into
-the candidate as configuration lines. The getty half is the ordering drop-in,
-which the live image has had since
+#211 was two defects wearing one hat. The VTY half: `Vpp.run` ignored
+`vppctl`'s exit status, and `vppctl` exits 0 whenever VPP *answered*, a refusal
+included - so the error text came back as though it were configuration. The
+getty half: the ordering drop-in, which the live image has had since
 [#93](https://github.com/andrediashexa/hexarouting/issues/93) and an installed
-box has never had: the ordering and the autologin shared one file, and the
-installer correctly deletes the autologin, taking the ordering with it.
+box had never had, because the ordering and the autologin shared one file and
+the installer correctly deletes the autologin. Both fixed, and the drop-in is
+two files now so the installer can take one and leave the other.
+
+What made it worth a release of its own is the lab. `lab/install-iso.sh` had a
+comment DESCRIBING this defect, stepping around it, and telling whoever came
+next not to move the wait earlier without dealing with the bug first. The lab
+now starts at the first prompt the box offers, which is where the operator
+starts, and both assertions were shown red on a full ISO build, install and
+second boot before the fix.
 
 #### Installation — blocked by nothing, paid on every box
 
