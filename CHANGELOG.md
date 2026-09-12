@@ -120,6 +120,84 @@ are to be interpreted as described in
   bytes the page held, twice around
   ([#165](https://github.com/andrediashexa/hexarouting/issues/165)).
 
+## Unreleased
+
+[#67](https://github.com/andrediashexa/hexarouting/issues/67),
+[#76](https://github.com/andrediashexa/hexarouting/issues/76),
+[#165](https://github.com/andrediashexa/hexarouting/issues/165),
+[#197](https://github.com/andrediashexa/hexarouting/issues/197) (partly),
+[#198](https://github.com/andrediashexa/hexarouting/issues/198),
+[#203](https://github.com/andrediashexa/hexarouting/issues/203) (partly),
+[#204](https://github.com/andrediashexa/hexarouting/issues/204),
+[#205](https://github.com/andrediashexa/hexarouting/issues/205),
+[#206](https://github.com/andrediashexa/hexarouting/issues/206),
+[#207](https://github.com/andrediashexa/hexarouting/issues/207),
+[#210](https://github.com/andrediashexa/hexarouting/issues/210) (partly).
+
+### Fixed
+
+* **A session pointer was held across a second `pool_get`, in two places.**
+  `bpa_alg_reserve_pair()` kept the pointer the first `bpa_session_bind()`
+  returned across a second one, and that call ends in `pool_get_zero()`, which
+  may move the whole session vector — so both writes below it landed in memory
+  the allocator had already given back. The visible consequence was the smaller
+  half: one of a reserved media pair kept `is_expect = 0`, sat on the UDP
+  timeout instead of the ALG's, and an announced port nobody used was held for
+  hours rather than seconds. Intermittent by construction — it needs the second
+  bind to cross a growth boundary — which is why it read as a loaded runner and
+  why it survived. Second instance on the PPTP control path, where both callers
+  dereference their own session immediately after the ALG may have created a
+  GRE session. `bpa_ftp.c` had written the lesson down; it had not been applied
+  everywhere.
+* **PMTUD works for an IPsec tunnel.** An ESP tunnel has no MSS to clamp, so
+  when a router on the path cannot carry the subscriber's packet the ICMP
+  `fragmentation needed` is the whole of what tells them, and this box dropped
+  it: the tunnel comes up, small packets work, and the first large transfer
+  hangs. The protocol with no identifier of its own turns out to be the easy
+  one — an ESP session is keyed on (our public address, peer) and **both** are
+  in the embedded IP header of the error, so it carries the whole key, needs no
+  payload bytes at all, and resolves on whatever worker it landed on. GRE stays
+  refused, with the reason now written where somebody will look for it.
+* **`nat cgnat logging enable` was refused by the dataplane and the box said
+  `commit complete`.** The status of the CLI write was discarded. It now says
+  what the dataplane said — and that refusal turns out to be permanent on a
+  shipped box, because nothing in the product ever configures VPP's UDP IPFIX
+  exporter ([#209](https://github.com/andrediashexa/hexarouting/issues/209)).
+* **`bpa pool ... alg <x> off` was accepted and ignored**, so the pool came up
+  with the ALG on — and it took `lab/ftp-alg.sh`'s whole `off` mode with it,
+  which the file's own header says must fail and which passed.
+* **The OSPF check warned about the only spelling FRR acts on.**
+  `passive-interface` has to be written with the name FRR knows, and the check
+  matched it against the dataplane's names — so the correct spelling triggered
+  the warning and the wrong one silenced it. Two more came out of the same
+  reading: FRR does not store `passive-interface` at all (it rewrites it to
+  `ip ospf passive`, so every commit after the first saw a spelling the parser
+  did not know), and `passive-interface default` was read as an interface name.
+* **The IS-IS IPv6 warning fired on a configuration this repository's own lab
+  proves works**, and printed itself five more times per lab run on commits
+  with nothing to do with IS-IS. Withdrawn.
+* **A commit that asked FRR for changes and got none no longer says `commit
+  complete`.** The general read-back check cannot be built on this tooling and
+  the measurement is on the issue; what is decidable is the worst case, and it
+  is now caught.
+* **`wiki-pull` and `wiki-push` round-trip.** The title was duplicated into the
+  body on every pass.
+
+### Changed
+
+* **The last two CLI writes move to the binary API**, so `show` passthrough is
+  the only remaining use of that socket and it is read-only — checkable now,
+  by a lab that lists what is **allowed** rather than what is forbidden. This
+  is an **authority** boundary and not an availability one; none of #172's
+  three failures is addressed by it, and the code, the docs and the lab all say
+  so.
+* **A dynamic pool stops claiming a capacity it cannot deliver.** Blocks are
+  sharded per worker and a subscriber draws only from its own worker's slice,
+  so `usable` was a ceiling nobody is promised; the smallest slice is printed
+  beside it. The mechanism is unchanged and the decision is the maintainer's.
+* **Any lab can be run with workers** (`LAB_WORKERS=1`), and the suite runs the
+  forwarding labs both ways.
+
 ## 0.63.0 — the configuration the product ships had never been tested
 
 [#48](https://github.com/andrediashexa/hexarouting/issues/48),
