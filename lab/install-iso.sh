@@ -72,6 +72,13 @@ crypt_hash() {  # <plaintext> -> md5-crypt hash, as `user ... password` takes
 OP_HASH=$(crypt_hash "$OP_PW")
 RO_HASH=$(crypt_hash "$RO_PW")
 
+# The account a "commit confirmed" creates and never confirms (#212). It is an
+# account and not a pool because creating one is what `touches_access` means:
+# it is the change this VTY turns into a confirmed commit whether or not the
+# operator asked, which is how the gap was found in the first place.
+TMP_USER=${TMP_USER:-nevercnf}
+TMP_HASH=$(crypt_hash "tmp-secret-42")
+
 # The password the driver TYPES at the console, which is the answer the
 # installer was given and is deliberately a SECOND name for it. Making them
 # differ is the only way to see what this lab does when the box answers and
@@ -624,14 +631,148 @@ drive_console() {
   CONSOLE_POS=$_cfg_at
   wait_for "cgnat pool lab-a" 60 \
     "the read-only account to read the pool back from the dataplane" || return 1
+  send "exit"
+  wait_for "$NEW_HOST login:" 120 \
+    "the getty to come back after the read-only account logs out" || return 1
+
+  # ------------------- a 'commit confirmed' with nobody logged in to enforce it
+  #
+  # The one case the feature exists for, and the one it did not cover (#212).
+  # The deadline used to live in the hexash process that made the commit, so
+  # the operator logging out cancelled it - and the failure it guards against
+  # is precisely the one that ends that session.
+  #
+  # Nothing below prompts the box. Between the logout and the box's own
+  # sentence there is no hexash on this machine at all, which is the whole
+  # point: a lab that had to go and trigger the revert would be performing the
+  # step the product is missing.
+  echo "  -- a commit nobody confirms, made by a session that then ends"
+  send "root"
+  wait_for "Password:" 60 "login to ask for root's password again" || return 1
+  send "$LOGIN_PW"
+  wait_for "HexaRouting VTY" 180 "root to land in the VTY again" || return 1
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open" || return 1
+  send 'echo "HX""LAB section=confirm"'
+  wait_for "HXLAB section=confirm" 30 \
+    "the marker that separates this from the read-only session" || return 1
+  send "exit"
+  wait_for "back in the HexaRouting VTY" 60 \
+    "the shell escape to return to the VTY" || return 1
+
+  send "configure"
+  wait_for "entering configuration mode" 60 \
+    "the VTY to enter configuration mode" || return 1
+  send "user $TMP_USER"
+  wait_for "[edit user $TMP_USER]" 30 \
+    "the block for the account nobody will confirm to open" || return 1
+  send "password $TMP_HASH"
+  send "role administrator"
+  send "exit"
+  wait_for "[edit]" 30 "that user block to close" || return 1
+  # One minute, so the lab can wait it out. The mechanism is the same one a
+  # ten-minute window uses; only the number differs.
+  # Rewound after the wait below, deliberately, and for the reason the
+  # read-only account's two halves are: the VTY prints "commit complete" and
+  # what it promises about the revert in one go, so by the time a one-second
+  # poll notices the first the second is already in the buffer - and wait_for
+  # moves the reader past everything it has seen. Waiting for them in order
+  # times out on a sentence that was on the screen before the wait started.
+  _commit_at=$CONSOLE_POS
+  send "commit confirmed 1"
+  wait_for "commit complete" 300 "the confirmed commit to apply" || return 1
+  CONSOLE_POS=$_commit_at
+  # What the box PROMISES, in its own words, before anything here tests
+  # whether it keeps it. The wording IS half the defect: the old one described
+  # a revert that outlived the session over a product that implemented one
+  # dying with it, so an operator reading it was less likely to keep a second
+  # session open.
+  #
+  # Not a return, for the same reason the wait below is not: a box that makes
+  # the wrong promise is a box this lab has to go on and catch breaking it.
+  if wait_for "armed on the box" 30 \
+       "the box to say where the revert it just promised lives"
+  then
+    CONFIRM_PROMISED=1
+  else
+    CONFIRM_PROMISED=0
+    CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+  fi
+  send "exit"
+  wait_for "hexarouting> " 30 "the VTY to leave configuration mode" || return 1
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open" || return 1
+  # Out of /etc/passwd, not out of what the VTY said. The account has to be
+  # there now, or "it is gone later" proves nothing.
+  send 'echo "HX""LAB confirm-before=$(getent passwd '"$TMP_USER"' | cut -d: -f1)"'
+  wait_for "HXLAB confirm-before=" 30 \
+    "the box to say the account was really created" || return 1
+  # And whether the deadline reached the DISK, asked while the window is open.
+  # This is the whole of #212 in one stat: a deadline that exists only inside
+  # the process that made the commit leaves nothing here, and the assertion
+  # about the account being gone later would otherwise be the first place that
+  # shows.
+  send 'echo "HX""LAB confirm-armed=$(ls /etc/hexarouting/confirm-pending 2>/dev/null | wc -l)"'
+  wait_for "HXLAB confirm-armed=" 30 \
+    "the box to say whether the deadline reached the disk" || return 1
+  send "exit"
+  wait_for "back in the HexaRouting VTY" 60 \
+    "the shell escape to return to the VTY" || return 1
+  send "exit"
+  wait_for "$NEW_HOST login:" 120 \
+    "the VTY to log root out, ending the session that made the commit" || return 1
+
+  # From here nothing is typed. The box is alone with a change nobody
+  # confirmed, and it either says this on its own or it does not.
+  echo "  -- nobody is logged in; waiting for the box to act on its own"
+  if wait_for "put the previous configuration back" 180 \
+       "the box to roll back a commit nobody confirmed, with nobody logged in"
+  then
+    CONFIRM_ANNOUNCED=1
+  else
+    # NOT a return. The console driver has not failed - the product has, and
+    # the assertion that says so needs the session that comes next. Returning
+    # here would report this as "nothing was proved" and take every other
+    # assertion in this lab down with it.
+    CONFIRM_ANNOUNCED=0
+    CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+  fi
+
+  send ""
+  wait_for "$NEW_HOST login:" 120 \
+    "the getty to draw a login prompt after the wait" || return 1
+  send "root"
+  wait_for "Password:" 60 "login to ask for root's password" || return 1
+  send "$LOGIN_PW"
+  wait_for "HexaRouting VTY" 180 \
+    "root to log back in after the window has passed" || return 1
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open" || return 1
+  send 'echo "HX""LAB confirm-after=$(getent passwd '"$TMP_USER"' | cut -d: -f1)"'
+  wait_for "HXLAB confirm-after=" 30 \
+    "the box to say whether the account is still there" || return 1
+  # What systemd thinks it is running, asked of systemd. A unit that was
+  # installed and never enabled is indistinguishable from one that works, on
+  # a feature nobody notices working.
+  send 'echo "HX""LAB confirm-unit=$(systemctl is-enabled hexarouting-confirm.timer 2>&1) $(systemctl is-active hexarouting-confirm.timer 2>&1)"'
+  wait_for "HXLAB confirm-unit=" 30 \
+    "systemd to say whether the timer is enabled and running" || return 1
+  send 'echo "HX""LAB confirm-left=$(ls /etc/hexarouting/confirm-pending 2>/dev/null | wc -l)"'
+  wait_for "HXLAB confirm-left=" 30 \
+    "the box to say whether anything is still pending" || return 1
   return 0
 }
 
-# BOOT_SECS is the ceiling on the whole driven session now - the boot, three
-# logins and a re-run of the self-test - and not a schedule. Every wait above
-# has its own timeout and the machine is killed the moment the last account
-# has been held to its role.
-timeout "${BOOT_SECS:-900}" qemu-system-x86_64 \
+# BOOT_SECS is the ceiling on the whole driven session now - the boot, five
+# logins, a re-run of the self-test and one minute in which nobody is logged
+# in at all - and not a schedule. Every wait above has its own timeout and the
+# machine is killed the moment the last answer is in.
+#
+# 1200 and not 900: the window a "commit confirmed 1" opens has to be waited
+# out with no session on the box, and shortening it would test something else.
+# A minute of that is the product's own deadline and the rest is two more
+# logins around it.
+timeout "${BOOT_SECS:-1200}" qemu-system-x86_64 \
   $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
   -drive file="$DISK",format=qcow2,if=virtio \
   < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
@@ -642,6 +783,13 @@ QEMU_PID=$!
 exec 3> "$CONSOLE_IN"
 
 CONSOLE_DRIVEN=1
+# 0 until the box says, unprompted, that it put the configuration back. It is
+# set here so that a driver which never reaches that point reports a silence
+# rather than an unset variable.
+CONFIRM_ANNOUNCED=0
+# 0 until the box states, at the moment of the commit, where the revert it is
+# promising actually lives.
+CONFIRM_PROMISED=0
 if ! drive_console; then
   CONSOLE_DRIVEN=0
   fail=1
@@ -860,7 +1008,8 @@ else
   # asserting on what the VTY printed.
   sed -n '/^HXLAB section=op/,/^HXLAB section=ro/p' /tmp/disk-clean.log \
     > /tmp/sec-op.log
-  sed -n '/^HXLAB section=ro/,$p' /tmp/disk-clean.log > /tmp/sec-ro.log
+  sed -n '/^HXLAB section=ro/,/^HXLAB section=confirm/p' /tmp/disk-clean.log \
+    > /tmp/sec-ro.log
   field() { sed -n "s/^HXLAB $1=//p" /tmp/disk-clean.log | head -1; }
   OP_GROUPS=" $(field groups-op) "
   RO_GROUPS=" $(field groups-ro) "
@@ -994,6 +1143,96 @@ else
     echo "  [FAIL] the account with no role cannot read the box either, so it"
     echo "         is not read-only - it is locked out, and the operator will"
     echo "         conclude the box is broken"
+    fail=1
+  fi
+
+  # --- the revert that has to outlive the session that armed it (#212) ---
+  #
+  # Every answer here was read out of /etc/passwd and out of systemd, on the
+  # installed box, in a session that did not exist when the commit was made.
+  echo
+  echo "  --- 'commit confirmed' with nobody logged in ---"
+  CONF_BEFORE=$(field confirm-before)
+  CONF_AFTER=$(field confirm-after)
+  CONF_UNIT=$(field confirm-unit)
+  CONF_ARMED=$(field confirm-armed)
+  CONF_LEFT=$(field confirm-left)
+  if [ "$CONF_BEFORE" = "$TMP_USER" ]; then
+    echo "  [ ok ] the confirmed commit really applied: $TMP_USER is in"
+    echo "         /etc/passwd on this box"
+  else
+    echo "  [FAIL] the commit did not create $TMP_USER at all, so nothing"
+    echo "         below is about a revert - it is about a commit that did"
+    echo "         not happen. /etc/passwd said: '${CONF_BEFORE:-<nothing>}'"
+    fail=1
+  fi
+  if [ "${CONF_ARMED:-0}" = 1 ]; then
+    echo "  [ ok ] and the deadline reached the disk: while the window was"
+    echo "         open, /etc/hexarouting/confirm-pending was on this box"
+  else
+    echo "  [FAIL] nothing was written to /etc/hexarouting/confirm-pending"
+    echo "         while the window was open, so the deadline exists only"
+    echo "         inside the hexash process that made the commit - and that"
+    echo "         process is what the change this guards against destroys"
+    fail=1
+  fi
+  if [ "$CONFIRM_PROMISED" = 1 ]; then
+    echo "  [ ok ] and it said where the revert lives, at the moment it made"
+    echo "         the promise:"
+    grep -o "the revert is armed on the box.*" /tmp/disk-clean.log | head -1 \
+      | sed 's/^/         /'
+  else
+    echo "  [FAIL] the box never said where the revert it promised lives. The"
+    echo "         wording is half of #212: a message describing a revert that"
+    echo "         outlives the session, over a product whose revert dies with"
+    echo "         it, makes an operator LESS likely to keep a second session"
+    echo "         open. What it said instead:"
+    grep -o "rollback .*confirm.*" /tmp/disk-clean.log | head -2 \
+      | sed 's/^/         /'
+    fail=1
+  fi
+  if [ "$CONFIRM_ANNOUNCED" = 1 ]; then
+    echo "  [ ok ] and the box said, on a console nobody was logged into,"
+    echo "         that it had put the previous configuration back:"
+    grep -o "nobody confirmed it within.*" /tmp/disk-clean.log | head -1 \
+      | sed 's/^/         /'
+  else
+    echo "  [FAIL] with nobody logged in, this box said NOTHING and did"
+    echo "         nothing. That is #212: the deadline lived in the hexash"
+    echo "         process that made the commit, so logging out cancelled it"
+    echo "         - and the change it guards against is the one that ends"
+    echo "         that session. It reverts in every case where it is not"
+    echo "         needed and in none of the cases where it is."
+    fail=1
+  fi
+  if [ -z "$CONF_AFTER" ]; then
+    echo "  [ ok ] and the account is gone from the box that was logged back"
+    echo "         into: the revert outlived the session that armed it"
+  else
+    echo "  [FAIL] '$CONF_AFTER' is still in /etc/passwd after the window"
+    echo "         passed with nobody logged in. An operator was told this"
+    echo "         box would come back on its own and it did not - which is"
+    echo "         worse than not having the feature, because they are less"
+    echo "         likely to have kept a second session open"
+    fail=1
+  fi
+  case "$CONF_UNIT" in
+    "enabled active")
+      echo "  [ ok ] and systemd is what enforces it: hexarouting-confirm.timer"
+      echo "         is enabled and active on this box" ;;
+    *)
+      echo "  [FAIL] hexarouting-confirm.timer is '${CONF_UNIT:-<no answer>}',"
+      echo "         not 'enabled active'. A unit that was installed and never"
+      echo "         enabled reads exactly like one that works, on a feature"
+      echo "         whose whole job is to do nothing most of the time"
+      fail=1 ;;
+  esac
+  if [ "${CONF_LEFT:-1}" = 0 ]; then
+    echo "  [ ok ] and nothing is left pending, so the next boot reverts"
+    echo "         nothing a second time"
+  else
+    echo "  [FAIL] /etc/hexarouting/confirm-pending is still on the box after"
+    echo "         the revert ran, so the box would do it again at every boot"
     fail=1
   fi
 fi

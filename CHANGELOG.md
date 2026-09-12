@@ -34,6 +34,98 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## 0.65.0 — `commit confirmed` now outlives the session that made it
+
+[#212](https://github.com/andrediashexa/hexarouting/issues/212).
+
+### Fixed
+
+* **`commit confirmed` reverted from a timer inside the `hexash` process that
+  made the commit, so logging out cancelled it**
+  ([#212](https://github.com/andrediashexa/hexarouting/issues/212)). The
+  deadline and the backup were instance state on that `Shell`, checked from
+  its own REPL loop. The failure the feature guards against is *"this change
+  cut off the session I am typing in"* - and in that scenario the session is
+  exactly what does not survive. It reverted in every case where it was not
+  needed and in none of the cases where it was.
+
+  The deadline now lives on the box. A commit with a window writes
+  `/etc/hexarouting/confirm-pending` - the configuration to go back to and the
+  absolute time it is due, mode 0660 group `hexa-cgnat`, because it holds a
+  whole configuration and every password hash in it.
+  `hexarouting-confirm.timer` elapses every fifteen seconds and sixty seconds
+  after boot; `hexarouting-confirm.service` carries `ConditionPathExists` on
+  that file, so systemd stats one path and starts nothing at all while nothing
+  is pending. What it runs is `hexash --confirm-expired`, as root.
+
+  Polled rather than armed at commit time because the account that commits is
+  not root: arming a transient unit from an operator's session would grant
+  every account holding a role the ability to make the box run units, which is
+  a far larger grant than the feature is worth. The cost is fifteen seconds of
+  error on a deadline given in minutes. The error being removed is infinite.
+
+* **There was no way to confirm a `commit confirmed` at all.** The message said
+  to type `commit` again; `commit` with nothing left to change returned at "no
+  changes to commit" with the deadline still armed, and nothing anywhere else
+  cleared it. So the box also rolled back changes the operator HAD confirmed.
+  Any commit that is not `commit check` now confirms an open window, and says
+  so.
+
+* **A box rebooted inside the window can tell a confirmed change from an
+  unconfirmed one.** The pending file is the record of the confirmation and is
+  removed at the moment the operator confirms, not at the end of the window -
+  so a box restarted after a confirmation reverts nothing, and one restarted
+  before its deadline still has the deadline it was given. The deadline is an
+  absolute time, so a box that was off past it comes back and reverts at once.
+  What the design deliberately cannot tell apart is a reboot that is the
+  operator recovering from one in the middle of the maintenance: both revert,
+  which is the direction where confirming costs a word and an unreachable box
+  costs a journey.
+
+### Changed
+
+* **The VTY no longer describes a guarantee it does not provide.** A change to
+  SSH or accounts is still applied as `commit confirmed 10` whether or not it
+  was asked for and still says why, but what the revert IS is stated once,
+  after the box has found out whether it could arm one:
+
+  ```
+  rollback at 2026-02-11T14:32:07Z, in 10 minute(s), unless you type 'commit' to confirm
+      the revert is armed on the box, not in this session: logging out, losing this
+      session or rebooting does not cancel it, and confirming does
+  ```
+
+  A store that cannot be written is not papered over: the in-session timer is
+  still set, and the box says that is all it is worth and to keep a second
+  session open. A weaker promise that is kept beats a strong one that is not.
+
+* **The VTY banner names an open window,** with the time the box will revert.
+  The operator this feature exists for is the one logging in after losing the
+  session that armed it, and nothing else on that screen said the box was
+  about to undo a change under them.
+
+* **`save` inside an open window says so.** The revert puts the running
+  configuration back and does not rewrite the file the next boot reads, so
+  saving an unconfirmed change would revert now and come back at the next
+  reboot.
+
+* **A revert the box cannot perform stops after five attempts and says so,**
+  moving the configuration to `confirm-pending.failed` and pointing at
+  `rollback 1`. A unit firing every fifteen seconds printing the same failure
+  onto the console forever is the same as printing nothing.
+
+### Internal
+
+* `test/test_hexash_confirm.py`: every check is made from a `Shell` that did
+  not make the commit, because a test that asks the committing shell whether
+  it still intends to revert is asking the half the failure removes.
+* `lab/install-iso.sh` drives the whole thing on an installed box: an account
+  created with `commit confirmed 1`, read back out of `/etc/passwd`, the
+  session logged out, one minute in which nobody is logged in at all, and the
+  box saying on its own console that it put the previous configuration back.
+  Nothing in that minute is typed - a lab that had to trigger the revert would
+  be performing the step the product is missing.
+
 ## 0.64.0 — the labs ran the box the way it ships, and seven things fell out
 
 [#14](https://github.com/andrediashexa/hexarouting/issues/14),

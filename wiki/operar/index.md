@@ -19,7 +19,7 @@ O que fazer com a máquina já em produção: tarefas do dia a dia, diagnóstico
 
 
 1. **A interface de gerência não vai para o CGNAT.** Entregá-la ao DPDK deixa a máquina inalcançável remotamente.
-2. **Mudança remota vai com** `**commit confirmed**`**.** Se cortar o próprio acesso, a máquina se recupera sozinha.
+2. **Mudança remota vai com** `**commit confirmed**`**.** Se cortar o próprio acesso, a máquina se recupera sozinha — quem desfaz é o equipamento, não a sua sessão, então sair da VTY ou perder o SSH não cancela nada. Só `commit` cancela.
 3. `**commit**` **não é** `**save**`**.** O primeiro faz valer agora; o segundo faz sobreviver ao boot.
 
 # Ver também

@@ -45,6 +45,22 @@ readline = None
 CONFIG_PATH = os.environ.get("HEXA_CONFIG", "/etc/hexarouting/hexarouting.conf")
 ROLLBACK_DIR = os.environ.get("HEXA_ROLLBACK", "/etc/hexarouting/rollback")
 ROLLBACK_KEEP = 20
+# Where a "commit confirmed" waits for its confirmation.
+#
+# A file, in the same directory and with the same group, because the deadline
+# has to outlive the session that set it - see ConfirmPending (#212).
+CONFIRM_PATH = os.environ.get("HEXA_CONFIRM",
+                              "/etc/hexarouting/confirm-pending")
+# How many times the box may fail to put the old configuration back before it
+# stops trying and says so.
+#
+# Not unlimited: the unit that does this runs every few seconds, and a revert
+# that cannot succeed would otherwise print its failure onto the console
+# forever - which is the same as printing nothing, because nobody reads it.
+# Not one either: the first attempt after a reboot can lose a race with a
+# dataplane that is still starting, and giving up on that would turn a boot
+# into a box that stayed broken.
+CONFIRM_ATTEMPTS = 5
 # What the VTY may do to the mode of the configuration store, which is:
 # create it no wider than the group, and nothing else.
 #
@@ -2347,6 +2363,136 @@ class Rollback:
             os.umask(old_umask)
 
 
+class ConfirmPending:
+    """
+    The revert a "commit confirmed" is waiting for, on disk.
+
+    On disk and not in the Shell that armed it, because the change this guards
+    against is the one that ends that session. A deadline held in the process
+    that made the commit is cancelled by precisely the failure it exists for:
+    it fired in every case where it was not needed and in none of the cases
+    where it was (#212).
+
+    The FILE is the record of the confirmation, and it is removed the moment
+    the operator confirms rather than when the window ends. That is what lets
+    a box tell a confirmed change from an unconfirmed one across a reboot: a
+    box restarted after a confirmation has nothing here and reverts nothing,
+    and one restarted before the deadline still carries it and still has the
+    deadline it was given.
+
+    The deadline is stored as an absolute time, so it is a promise about a
+    moment and not about uptime. A box that was off past its own deadline
+    comes back and reverts at once, which is the right answer - nobody
+    confirmed.
+
+    It holds a whole configuration, password hashes included, so it lives
+    under the same group and the same umask as the rollback store.
+    """
+
+    HEADER = "# hexarouting commit confirmed"
+
+    def __init__(self, path=CONFIRM_PATH):
+        self.path = path
+
+    def arm(self, deadline, config_text, minutes, attempts=0):
+        """
+        Record the configuration to go back to, and when.
+
+        Written whole and then renamed into place. A reader here is a unit
+        firing every few seconds, and a half-written file it happened to catch
+        would be a configuration this box would then apply to itself.
+        """
+        tmp = self.path + ".new"
+        old_umask = os.umask(CONFIG_UMASK)
+        try:
+            d = os.path.dirname(self.path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(tmp, "w") as fh:
+                fh.write(f"{self.HEADER}\n")
+                fh.write(f"# deadline {int(deadline)}\n")
+                fh.write(f"# minutes {minutes}\n")
+                fh.write(f"# attempts {int(attempts)}\n")
+                fh.write(config_text)
+            os.replace(tmp, self.path)
+        finally:
+            os.umask(old_umask)
+
+    def read(self):
+        """
+        What is pending, or None - which is also the answer for "confirmed".
+
+        A file that cannot be parsed is NOT treated as nothing pending. It is
+        reported as pending with a deadline already passed, so the box acts on
+        it instead of quietly dropping a revert somebody is relying on.
+
+        A file this account cannot READ is a different thing and answers None.
+        This is called from the banner, which every login draws - including a
+        read-only account, which is outside the group that owns
+        /etc/hexarouting and gets EACCES here. Raising made hexash exit 1 on
+        that login, and hexash-login then handed the account a bash prompt to
+        keep the box reachable: the whole VTY replaced by a shell, for every
+        account without a role, because of a window that may not even be open.
+        Nothing this process could do about it either way - the box's own copy
+        of the deadline is enforced by root.
+        """
+        try:
+            with open(self.path) as fh:
+                lines = fh.read().splitlines(True)
+        except OSError:
+            return None
+        head = {}
+        body = []
+        for line in lines:
+            if line.startswith("# ") and not body:
+                w = line[2:].split()
+                if len(w) == 2:
+                    head[w[0]] = w[1]
+                continue
+            body.append(line)
+        try:
+            deadline = float(head["deadline"])
+        except (KeyError, ValueError):
+            deadline = 0.0
+        try:
+            attempts = int(head.get("attempts", 0))
+        except ValueError:
+            attempts = 0
+        return {"deadline": deadline,
+                "minutes": head.get("minutes", "?"),
+                "attempts": attempts,
+                "config": "".join(body)}
+
+    def count_attempt(self, pending):
+        """Record that a revert was tried, so a hopeless one stops trying."""
+        pending["attempts"] += 1
+        self.arm(pending["deadline"], pending["config"], pending["minutes"],
+                 pending["attempts"])
+        return pending["attempts"]
+
+    def clear(self):
+        """Confirmed, or reverted. Either way there is nothing left to do."""
+        try:
+            os.unlink(self.path)
+        except FileNotFoundError:
+            pass
+
+    def give_up(self):
+        """
+        Move a revert this box could not perform out of the way.
+
+        Kept rather than deleted: it is the configuration somebody has to put
+        back by hand, and deleting it would leave them with the change they
+        did not confirm and no statement of what preceded it.
+        """
+        dead = self.path + ".failed"
+        try:
+            os.replace(self.path, dead)
+        except OSError:
+            self.clear()
+        return dead
+
+
 class Shell:
     def __init__(self):
         self.sys = System()
@@ -2355,6 +2501,7 @@ class Shell:
         self.api = vppapi.Vat2()
         self.frr = Frr()
         self.rb = Rollback()
+        self.confirm = ConfirmPending()
         self.caps = capabilities()
         # Lines the dataplane returned about subscribers changing mapping,
         # refilled by every check. A commit that would move them is refused
@@ -2367,8 +2514,12 @@ class Shell:
         self.candidate = None          # Config being edited
         self.frr_ctx = []              # FRR block context inside config mode
         self.failed = 0
-        self.confirm_deadline = None   # for "commit confirmed"
+        # The in-session half of "commit confirmed". It is the fast path and
+        # the fallback, never the promise: what makes the promise true is the
+        # file ConfirmPending writes (#212).
+        self.confirm_deadline = None
         self.confirm_backup = None
+        self.confirm_on_box = False
 
     # ---------------------------------------------------------- prompt
 
@@ -4297,8 +4448,40 @@ class Shell:
         if remap_ok:
             args = args[1:]
 
+        # THIS is the confirmation the message has always talked about, and
+        # until now there was no such thing: `commit` with nothing left to
+        # change returned at "no changes to commit" below with the deadline
+        # still armed, and no other path cleared it. The box reverted a change
+        # the operator had confirmed, and confirming one was impossible (#212).
+        #
+        # Any commit confirms, not only an empty one - an operator who answers
+        # "the session still works" by making the next change has answered the
+        # question. `commit confirmed` does not: that is a new window, and it
+        # re-arms below. `commit check` never reaches here.
+        confirmed = None
+        if args[:1] != ["confirmed"]:
+            confirmed = self.confirm.read()
+        if confirmed:
+            when = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                 time.gmtime(confirmed["deadline"]))
+            try:
+                self.confirm.clear()
+                self.confirm_deadline = None
+                self.confirm_backup = None
+                self.confirm_on_box = False
+                print("confirmed: the box will not roll this change back")
+            except OSError as e:
+                # Said as a failure, because it is one. The window is still
+                # armed and the box will still revert at its deadline, and an
+                # operator told "confirmed" over that loses the change hours
+                # later with nothing on the screen that predicted it.
+                self.err(f"cannot confirm: {self.confirm.path}: {e.strerror}")
+                print(f"    the box still rolls back at {when}; "
+                      "'rollback 0' and commit again, or remove that file")
+
         if running.is_same(self.candidate):
-            print("no changes to commit")
+            if not confirmed:
+                print("no changes to commit")
             return
 
         # Validated ONCE. This used to run here to discover re-mappings and
@@ -4340,8 +4523,13 @@ class Shell:
             confirm_min = 10
             print("this commit changes SSH or accounts, which can cut off the "
                   "session you are using")
-            print("applying it as 'commit confirmed 10': it reverts on its own "
-                  "unless you enter 'commit' again from a session that works")
+            print("applying it as 'commit confirmed 10' rather than as a "
+                  "plain commit")
+            # What the revert IS gets said once, below, after the box has
+            # found out whether it could arm one. Promising it here and
+            # discovering afterwards that the store could not be written is
+            # how this VTY came to describe a guarantee it did not provide
+            # (#212).
 
         backup = running.text()
         if not self.apply(self.candidate):
@@ -4377,21 +4565,133 @@ class Shell:
             print("commit complete")
 
         if confirm_min:
-            # The point of "commit confirmed" is surviving a change that cuts
-            # your own access: if the operator cannot type "commit" again, the
-            # box returns on its own.
-            self.confirm_deadline = time.time() + confirm_min * 60
-            self.confirm_backup = backup
-            print(f"rollback in {confirm_min} minute(s) unless you enter "
-                  f"'commit' to confirm")
+            self.arm_confirm(confirm_min, backup)
+
+    def arm_confirm(self, minutes, backup):
+        """
+        Arm the revert, on the box and in this session, and say which.
+
+        The point of "commit confirmed" is surviving a change that cuts your
+        own access, and the session is exactly what that change takes away -
+        so the deadline that counts is the one on disk. This session keeps a
+        copy for two reasons and neither of them is the promise: it makes the
+        revert punctual, firing at the deadline rather than at the next tick
+        of the unit that watches the file, and it is the whole mechanism
+        anywhere there is no systemd to run that unit - which is every lab
+        container and every developer's tree.
+
+        Whichever fires first clears the file, so the other finds nothing to
+        do.
+        """
+        deadline = time.time() + minutes * 60
+        when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(deadline))
+        self.confirm_deadline = deadline
+        self.confirm_backup = backup
+        self.confirm_on_box = False
+        try:
+            self.confirm.arm(deadline, backup, minutes)
+            self.confirm_on_box = True
+        except OSError as e:
+            why = f"{e.filename or self.confirm.path}: {e.strerror}"
+        if self.confirm_on_box:
+            print(f"rollback at {when}, in {minutes} minute(s), unless you "
+                  "type 'commit' to confirm")
+            print("    the revert is armed on the box, not in this session: "
+                  "logging out, losing this")
+            print("    session or rebooting does not cancel it, and "
+                  "confirming does")
+        else:
+            # A weaker promise, stated. The revert still happens for an
+            # operator who stays and waits, and that is all it does - so this
+            # says so rather than repeating the sentence above, which would be
+            # the defect #212 is about with a different cause.
+            # Also a warning rather than an error, and for the same reason
+            # as `save` above: the commit is applied. What failed is the
+            # promise about undoing it, which is what the three lines below
+            # are for.
+            print(f"warning: the revert could NOT be armed on the box: {why}")
+            print(f"    it will run in {minutes} minute(s) IF THIS SESSION "
+                  "LASTS THAT LONG, and not otherwise")
+            print("    which is not the case it exists for: keep a second "
+                  "session open, and use")
+            print("    'rollback 1' there if this one stops answering")
+
+    def revert_confirm(self, pending, why):
+        """
+        Put back the configuration a "commit confirmed" was measured against.
+
+        Returns True when the box is back on it. The caller says what to do
+        about False, because the two callers are in different situations: an
+        operator is reading one of them and a unit firing every few seconds is
+        the other.
+        """
+        target = Config.parse(pending["config"])
+        if target.unknown:
+            self.err("the configuration to roll back to has lines this VTY "
+                     "does not understand:")
+            for lineno, text, unknown_why in target.unknown:
+                print(f"    line {lineno}: {text}    ({unknown_why})")
+            return False
+        # Checked before it is applied, and refused whole if the check
+        # refuses - the same argument load() makes, and for the same reason.
+        # This runs unattended, so a revert that fails part way would leave
+        # the box in neither the configuration the operator made nor the one
+        # they were promised back, on a machine nobody is watching.
+        before = self.failed
+        if not self.apply(target, check_only=True):
+            self.err("the configuration to roll back to does not validate on "
+                     "this box")
+            return False
+        self.failed = before
+        print(why)
+        if not self.apply(target):
+            return False
+        try:
+            self.confirm.clear()
+        except OSError as e:
+            # The box IS back on the old configuration - that half succeeded.
+            # What is left is a record saying a revert is still due, which the
+            # unit will act on again, so it is said rather than swallowed.
+            self.err(f"rolled back, but {self.confirm.path} could not be "
+                     f"removed: {e.strerror}")
+        self.confirm_deadline = None
+        self.confirm_backup = None
+        self.confirm_on_box = False
+        return True
 
     def check_confirm_timeout(self):
-        if self.confirm_deadline and time.time() > self.confirm_deadline:
-            print("\ncommit was not confirmed: rolling back")
-            self.apply(Config.parse(self.confirm_backup))
-            self.candidate = self.running_config()
+        """
+        The in-session half of the deadline. See arm_confirm().
+
+        It asks the file first. A window this session armed can be confirmed
+        from another session or reverted by the unit that watches the file,
+        and a session that went on counting to its own copy of the deadline
+        would roll back a change somebody had already confirmed.
+        """
+        if not self.confirm_deadline:
+            return
+        pending = self.confirm.read()
+        if self.confirm_on_box and pending is None:
+            # Confirmed elsewhere, or already reverted. Either way this
+            # session has nothing left to enforce.
             self.confirm_deadline = None
             self.confirm_backup = None
+            self.confirm_on_box = False
+            return
+        if time.time() <= self.confirm_deadline:
+            return
+        if pending is None:
+            pending = {"config": self.confirm_backup}
+        if not self.revert_confirm(pending,
+                                   "\ncommit was not confirmed: rolling back"):
+            # Said once, and then this session stops trying. Every command the
+            # operator types would otherwise reprint the same failure, and the
+            # durable copy on the box is still armed - the unit that watches
+            # it keeps trying and reports when it gives up.
+            self.err("the box is still on the unconfirmed configuration")
+            self.confirm_deadline = None
+            self.confirm_backup = None
+        self.candidate = self.running_config()
 
     def do_rollback(self, args):
         try:
@@ -6622,6 +6922,29 @@ class Shell:
         finally:
             os.umask(old_umask)
         print(f"configuration saved to {CONFIG_PATH}")
+        # The one place the two halves of this can disagree.
+        #
+        # "commit confirmed" puts the RUNNING configuration back; `save`
+        # decides what the box boots into. An operator who saves inside an
+        # open window has written the unconfirmed change into the file the
+        # next boot reads, and the revert does not go back and rewrite it -
+        # so the box would revert and then come back on the change at the
+        # next reboot. Said here rather than fixed by having `save` refuse:
+        # saving a change you are still testing is a reasonable thing to do,
+        # and the two commands are deliberately separate (#212).
+        pending = self.confirm.read()
+        if pending:
+            when = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                 time.gmtime(pending["deadline"]))
+            # A warning and not an error: the save DID happen, and a script
+            # that reads the exit status must not be told it did not.
+            print("warning: what you just saved has NOT been confirmed")
+            print(f"    this box rolls the running configuration back at "
+                  f"{when}, and does not")
+            print("    touch the file you just wrote - so a reboot after "
+                  "that would bring the")
+            print("    unconfirmed change back. Type 'commit' to confirm, "
+                  "then 'save' again")
 
     # ---------------------------------------------------------- completion
 
@@ -7115,6 +7438,47 @@ class Shell:
                 self.err("loaded, but no rollback revision could be "
                          f"recorded: {e}")
 
+    def confirm_expired(self):
+        """
+        Roll back a "commit confirmed" whose deadline has passed.
+
+        This is what hexarouting-confirm.service runs, as root, every few
+        seconds while a window is open - and it is the answer to #212: the
+        deadline is enforced by the box rather than by the session that set
+        it, so the operator who lost that session is the one it now protects.
+
+        Returns 0 when there is nothing to do or the box is back on the old
+        configuration, and 1 when it tried and failed.
+        """
+        pending = self.confirm.read()
+        if pending is None:
+            return 0
+        if time.time() < pending["deadline"]:
+            return 0
+        minutes = pending["minutes"]
+        if self.revert_confirm(
+                pending,
+                f"commit confirmed {minutes}: nobody confirmed it within "
+                f"{minutes} minute(s), so this box has put the previous "
+                "configuration back"):
+            return 0
+        n = self.confirm.count_attempt(pending)
+        if n < CONFIRM_ATTEMPTS:
+            self.err(f"the rollback failed (attempt {n} of "
+                     f"{CONFIRM_ATTEMPTS}); it will be tried again")
+            return 1
+        # The one outcome this must never do quietly. The box is holding a
+        # change nobody confirmed and it has stopped trying to undo it, which
+        # is the state the operator has to be told about in the words they
+        # will search for.
+        dead = self.confirm.give_up()
+        self.err(f"giving up after {n} attempts: this box is still on the "
+                 "configuration that was never confirmed")
+        print(f"    the configuration it was to go back to is in {dead}")
+        print("    put it back by hand: 'rollback 1' loads the revision "
+              "before that commit")
+        return 1
+
     def repl(self):
         global readline
         try:
@@ -7151,6 +7515,18 @@ class Shell:
                 print("This is the installation medium: nothing here survives "
                       "a reboot.")
                 print("Type 'install' to install HexaRouting onto a disk.")
+            # The operator this window exists for is the one logging in right
+            # now, after losing the session that armed it. Nothing else on
+            # this screen would tell them the box is about to undo a change
+            # under them, or that typing one word keeps it.
+            pending = self.confirm.read()
+            if pending:
+                when = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                     time.gmtime(pending["deadline"]))
+                print()
+                print(f"A 'commit confirmed' is waiting: this box rolls the "
+                      f"last change back at {when}")
+                print("unless you type 'commit' to confirm it.")
             print()
         while True:
             try:
@@ -7169,6 +7545,13 @@ def main():
     if args and args[0] == "--load":
         sh.load(args[1] if len(args) > 1 else CONFIG_PATH)
         return 1 if sh.failed else 0
+
+    # Not a command an operator types: it is the one thing a unit file needs
+    # to be able to run, and it prints nothing at all unless a deadline has
+    # actually passed - hexarouting-confirm.service fires it every few
+    # seconds while a window is open.
+    if args and args[0] == "--confirm-expired":
+        return sh.confirm_expired()
 
     cmds = []
     while args:
