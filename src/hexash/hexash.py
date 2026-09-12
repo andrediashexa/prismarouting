@@ -967,6 +967,41 @@ FRR_OMITS_IN_CONTEXT = (
 )
 
 
+# Statements FRR writes back with a `seq <n>` it inserted itself.
+#
+# Measured, typed with no seq at all:
+#
+#   ip prefix-list PLNOSEQ permit 10.9.0.0/16
+#     -> ip prefix-list PLNOSEQ seq 5 permit 10.9.0.0/16
+#   bgp as-path access-list A1 permit ^65001$   -> ... seq 5 permit ^65001$
+#   bgp as-path access-list A1 permit ^65002$   -> ... seq 10 permit ^65002$
+#   bgp as-path access-list A1 permit ^65003$   -> ... seq 15 permit ^65003$
+#
+# It is a REWRITE, and one FRR_REWRITES cannot express: the number depends on
+# what is already in the list, so the target is not computable from the typed
+# statement. It has to be matched by normalising both sides instead.
+#
+# This is the one that refused a working commit in lab/bgp-policy.sh - the
+# policy took, the route it names was filtered, and the box still said the
+# statement had been thrown away.
+FRR_INSERTS_SEQ = (
+    "ip prefix-list ", "ipv6 prefix-list ",
+    "bgp as-path access-list ", "bgp community-list ",
+    "bgp large-community-list ",
+)
+
+
+def frr_without_seq(stmt):
+    """The statement with an inserted `seq <n>` taken back out, or None."""
+    if not any(stmt.startswith(k) for k in FRR_INSERTS_SEQ):
+        return None
+    w = stmt.split()
+    for i in range(len(w) - 1):
+        if w[i] == "seq" and w[i + 1].isdigit():
+            return " ".join(w[:i] + w[i + 2:])
+    return stmt
+
+
 def frr_keeps(stmt, context=()):
     """
     Would FRR store this statement as typed, so that its absence means a drop?
@@ -1021,8 +1056,16 @@ def statements_frr_dropped(added, running):
     it simply does not contain the statement, which is a question this can ask.
     """
     have = {l.strip() for l in running}
+    # The same set with any inserted seq removed, so a policy list statement
+    # typed without one is found under the number FRR gave it.
+    loose = {frr_without_seq(l) for l in have}
+    loose.discard(None)
     out = []
     for stmt in added:
+        if frr_without_seq(stmt) is not None:
+            if frr_without_seq(stmt) not in loose:
+                out.append((stmt, None))
+            continue
         instead = frr_writes_instead(stmt)
         if instead is not None:
             if instead not in have:
@@ -4918,10 +4961,35 @@ class Shell:
             if not dropped:
                 stalled = self.nothing_took(added)
         if dropped:
-            # NOT "commit complete", for the reason the block below gives: the
-            # one sentence an operator builds every later diagnosis on.
-            self.err(f"FRR accepted {len(dropped)} statement(s) of this "
-                     "commit and did not keep them")
+            # WARNED, NOT REFUSED, and this is the whole posture of the check.
+            #
+            # A refusal here would be right in principle: a statement FRR threw
+            # away is a commit that did not happen, and `commit complete` over
+            # it is the one sentence an operator builds every later diagnosis
+            # on. It is not right YET, because the list of statements FRR does
+            # not read back verbatim is demonstrably incomplete. Five encounters
+            # with real configuration produced four false positives:
+            #
+            #   lab/igp.sh      three OSPF defaults and a passive-interface
+            #                   rewrite - and nothing_took fired on them too
+            #   lab/routing.sh  `neighbor <x> activate`, omitted only while
+            #                   `bgp default ipv4-unicast` is on
+            #   lab/igp.sh      three IS-IS defaults nobody had probed
+            #   lab/bgp-policy  a `seq` FRR inserts, on a policy that WORKED:
+            #                   the route it names was filtered and the box
+            #                   still said the statement had been thrown away
+            #
+            # Refusing a correct commit is the exact harm #208 was filed for,
+            # and shipping a refusal built on a list that four labs in a row
+            # have extended would repeat it on a box nobody can run a lab on.
+            #
+            # THE PROMOTION CONDITION IS MEASURABLE, not a feeling: this
+            # becomes `self.err` and `ok = False` when the full lab suite has
+            # run clean with it refusing. Until then the operator gets the
+            # sentence and keeps their commit, which is the side that costs
+            # them nothing if the list is wrong.
+            print(f"warning: FRR accepted {len(dropped)} statement(s) of this "
+                  "commit and did not keep them")
             for stmt, instead in dropped[:5]:
                 print("    " + as_hierarchy(stmt))
                 if instead:

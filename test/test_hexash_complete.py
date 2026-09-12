@@ -2910,7 +2910,7 @@ print("\n=== what FRR keeps, and what it does not (#197) ===")
 # keeps it honest against an FRR upgrade. What is asserted here is the
 # arithmetic on top of it: that the value decides, not the statement alone, and
 # that a rewrite is not a drop.
-from hexash import (frr_keeps, frr_writes_instead,                # noqa: E402
+from hexash import (frr_keeps, frr_writes_instead, frr_without_seq,  # noqa: E402
                     statements_frr_dropped)                       # noqa: E402
 
 # The finding that unblocked #197. A prefix match alone would excuse the second
@@ -3008,6 +3008,29 @@ check(statements_frr_dropped(["ip route 10.0.0.0/8 10.0.0.1"],
       "an ordinary statement that is there is not reported")
 check(statements_frr_dropped([], ["anything"]) == [],
       "and a commit that introduced no routing statement asks nothing")
+
+# The seq FRR inserts into every policy list statement. A rewrite whose target
+# is NOT computable from the typed statement - the number depends on what is
+# already in the list (5, then 10, then 15) - so it is matched by normalising
+# both sides instead of by construction. This is the one that refused a working
+# commit in lab/bgp-policy.sh: the policy took, the route it names was
+# filtered, and the box still said the statement had been thrown away.
+_POL = ["bgp as-path access-list AS-ORIGIN2 seq 5 permit _65002$",
+        "ip prefix-list PL seq 5 permit 10.9.0.0/16"]
+check(statements_frr_dropped(
+          ["bgp as-path access-list AS-ORIGIN2 permit _65002$"], _POL) == [],
+      "a policy list found under the seq FRR gave it is not a drop")
+check(statements_frr_dropped(["ip prefix-list PL permit 10.9.0.0/16"],
+                             _POL) == [],
+      "and the same for a prefix-list")
+# The half that keeps it a check rather than an excuse: a DIFFERENT statement
+# of the same shape is still reported. Without this, normalising the seq would
+# have switched the check off for every policy list on the box.
+check(statements_frr_dropped(["ip prefix-list PL permit 10.0.0.0/8"], _POL)
+      == [("ip prefix-list PL permit 10.0.0.0/8", None)],
+      "while a prefix the list does not carry still is")
+check(frr_without_seq("ip route 10.0.0.0/8 10.0.0.1") is None,
+      "and a statement FRR does not do this to is left out of it entirely")
 
 # nothing_took() ITSELF, through a stand-in frr that reports everything as
 # outstanding - which is what frr-reload really does for these statements.
