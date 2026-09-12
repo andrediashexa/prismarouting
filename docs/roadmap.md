@@ -626,6 +626,58 @@ redesign.
 `commit` returning success is the one thing in this product an operator has to
 be able to trust, because every diagnosis they make afterwards starts from it.
 
+#### What running the labs the way the product ships found
+
+The labs proved the forwarding path single-threaded while every appliance with
+more than one core runs VPP workers. Running all forty with `LAB_WORKERS=1`
+found three defects, and the work that followed found four more of the same
+family. They are grouped here because the family is the point: **every one of
+them is the product claiming something it did not do, with a counter saying it
+had.**
+
+| | | |
+|---|---|---|
+| [#199](https://github.com/andrediashexa/hexarouting/issues/199) | every translated packet blackholed, on every appliance | *fixed, v0.63.0* |
+| [#200](https://github.com/andrediashexa/hexarouting/issues/200) | every cross-worker hairpin dropped | *fixed, v0.63.0* |
+| [#201](https://github.com/andrediashexa/hexarouting/issues/201) | an ICMP error steered to a worker that had never heard of the session, and a counter that blamed the internet for it | *fixed, v0.63.0* |
+| [#207](https://github.com/andrediashexa/hexarouting/issues/207) | a session pointer held across a second `pool_get`, twice | *fixed* |
+| [#206](https://github.com/andrediashexa/hexarouting/issues/206) | `alg <x> off` on the pool line accepted and ignored, taking a lab's whole `off` mode with it | *fixed* |
+| [#209](https://github.com/andrediashexa/hexarouting/issues/209) | UDP IPFIX export has never worked on an installed box | **open** |
+| [#210](https://github.com/andrediashexa/hexarouting/issues/210) | a subscriber refused while blocks stand free, and the pool reporting capacity it cannot deliver | **open**; the claim is fixed, the mechanism is a decision |
+
+**#209 is the one to do next and it is not close.** In dynamic mode the
+allocation log *is* the connection record — kept a year, on its own filesystem,
+and what answers a court order under the Marco Civil. A CGNAT that cannot say
+which subscriber held a public port at a given moment cannot answer the one
+question it exists to answer. It survived because `lab/ipfix.sh` configures the
+exporter itself, with `vppctl`, because it needs one: the lab performing the
+product's missing step, for the fifth time in this repository
+([#99](https://github.com/andrediashexa/hexarouting/issues/99),
+[#168](https://github.com/andrediashexa/hexarouting/issues/168),
+[#182](https://github.com/andrediashexa/hexarouting/issues/182),
+[#184](https://github.com/andrediashexa/hexarouting/issues/184) were the others).
+
+#### The checks that fire on correct configurations
+
+A second family, found by asking one question of every finding function: *can
+this fire on an ordinary, correct configuration?* The answer was yes four
+times, and `docs/routing.md` already says why that matters more than it sounds
+— an alarm that is always on is one nobody reads, and these findings are this
+box's strongest claim, the diagnoses FRR cannot make.
+
+| | | |
+|---|---|---|
+| [#198](https://github.com/andrediashexa/hexarouting/issues/198) | the IS-IS IPv6 warning, disproved by this repository's own lab on every run | *withdrawn* |
+| [#205](https://github.com/andrediashexa/hexarouting/issues/205) | the OSPF check silenced by the wrong spelling of `passive-interface` and fired by the right one | *fixed* |
+| [#208](https://github.com/andrediashexa/hexarouting/issues/208) | BGP unnumbered refused, failing the whole commit | **open** |
+| — | `route_map_findings` evaluating clauses in written order where FRR uses `seq`; `undefined_policy_lists` refusing a forward reference FRR accepts; an `IndexError` on a half-typed statement | **open**, folded into #208 |
+
+#208 matters beyond its own line: it refuses the **whole commit**, so a CGNAT
+change in the same candidate is refused with it, over a BGP statement the
+operator may not have touched. And the only way round it is `vtysh`, which is
+the tool this VTY exists to keep them out of — a routing change made there is
+invisible to `commit`, `rollback` and the audit trail.
+
 #### Installation — blocked by nothing, paid on every box
 
 [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the installer
