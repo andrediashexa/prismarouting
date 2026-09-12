@@ -628,6 +628,46 @@ def _address_family_error(keyword: str, prefix: str):
 UNCHECKED_MARK = "    <- not checked by this VTY"
 
 
+def global_key(line: str) -> str:
+    """
+    Which SETTING a top-level `cgnat ...` statement gives a value to.
+
+    Two statements with the same key are the same setting said twice, and the
+    later one replaces the earlier in the candidate. The first three words
+    answer that for every one of them but the export state: `cgnat logging
+    enable` and `cgnat logging disable` are ONE setting and two values, so
+    keying on the value kept both - and the commit then applied both, in
+    whatever order they had been typed in.
+
+    Keys are compared whole. The candidate used to test the stored line
+    against the key as a PREFIX, which is the same answer for every statement
+    this hierarchy has and is one for reasons that hold by accident.
+    """
+    w = line.split()
+    if w[:3] in (["cgnat", "logging", "enable"],
+                 ["cgnat", "logging", "disable"]):
+        return "cgnat logging"
+    return " ".join(w[:3])
+
+
+def ordered_globals(lines) -> list:
+    """
+    The `cgnat ...` statements in an order that can be applied as it stands.
+
+    Alphabetical order puts `cgnat logging enable` before `cgnat logging udp
+    <collector> src <source>`, and the dataplane refuses the first while the
+    second has not been applied - so a saved configuration, which is written
+    sorted, refused its own line on reload. That path is the one nobody types
+    by hand: it is what the appliance runs at every boot and what `rollback`
+    replays.
+
+    The export state therefore goes last, and everything else stays
+    alphabetical so that two boxes with the same configuration write the same
+    file.
+    """
+    return sorted(lines, key=lambda l: (global_key(l) == "cgnat logging", l))
+
+
 def _is_loopback(name: str) -> bool:
     """
     Is this VPP's spelling of a loopback?
@@ -839,7 +879,7 @@ class Config:
             out.append(f"snmp community {c}")
         for name in sorted(self.snmp_users):
             out += self.snmp_users[name].lines()
-        out += sorted(self.globals)
+        out += ordered_globals(self.globals)
         out.append(ROUTING_HEADER)
         out += group_static(self.routing)
         return "\n".join(out) + "\n"

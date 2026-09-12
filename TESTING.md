@@ -159,7 +159,7 @@ sh tools/lab.sh extblocks      # a second block for a subscriber that fills one
 sh tools/lab.sh pptp           # PPTP call IDs and GRE (also: pptp off)
 sh tools/lab.sh esp            # IPsec ESP passthrough (also: esp off)
 sh tools/lab.sh routing        # BGP, OSPF and IS-IS into the VPP FIB
-sh tools/lab.sh ipfix          # RFC 8158 export with a decoding collector
+sh tools/lab.sh ipfix          # RFC 8158 export over UDP (also: ipfix no-exporter)
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
 sh tools/lab.sh vty            # the VTY configuring routing and CGNAT
 sh tools/lab.sh vty-pool       # per-pool settings from the VTY to the dataplane
@@ -185,6 +185,7 @@ The most instructive to run:
 |-----|----------------------|
 | `handoff` | Predicts which thread each subscriber lands on, then proves it |
 | `frag` | The byte-order bug that created phantom sessions |
+| `ipfix` | Configures the UDP exporter **through the VTY** and decodes a record off the wire — the exporter used to be set here with `vppctl`, so the lab performed the product's missing step and UDP export had never once run on a box the product configured. `sh tools/lab.sh ipfix no-exporter` leaves the statement out and drops 9 of its 13 assertions |
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
 | `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch twelve assertions drop |

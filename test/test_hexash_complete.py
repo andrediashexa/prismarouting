@@ -2667,5 +2667,140 @@ check(_off.get("collector") != "disable",
       f"'disable' is not a collector address: {_off}")
 
 
+print("\n=== the UDP exporter the product never had (#209) ===")
+# UDP export was refused on every shipped box for the life of the project:
+# VPP's own exporter needs a collector, nothing set one, and no statement
+# reached it. lab/ipfix.sh asserts the export end to end on a box the product
+# configured; these check the SHAPE of the message and the refusal that has to
+# come before it.
+
+
+def udp_call(line, exporter=None):
+    """
+    What `line` sends: (one API call or None, the CLI commands, the dump args).
+
+    The dump is stubbed because the statement READS the exporter before it
+    writes it - everything the statement does not name is sent back as the box
+    already has it. `exporter` is what the box answers with; None is a
+    dataplane that reports no exporter at all.
+    """
+    sh = hexash.Shell()
+    api, cli, dumps = [], [], []
+
+    def api_call(_message, _args):
+        api.append((_message, _args))
+        return _vppapi.Reply(_vppapi.OK)
+
+    class _Api:
+        def dump(self, message, args):
+            dumps.append(message)
+            rows = [] if exporter is None else [exporter]
+            return _vppapi.Reply(_vppapi.OK, fields={"rows": rows})
+
+    sh.api_call = api_call
+    sh.api = _Api()
+    sh.dp = type("D", (), {
+        "TRACE": False,
+        "run": lambda _s, c: (cli.append(c), (0, ""))[1]})()
+    sh.apply_global(line)
+    return (api[0] if len(api) == 1 else None), cli, dumps
+
+
+# An untouched box: every field zero except vrf_id. Captured with
+# ipfix_exporter_dump on a VPP that nothing had configured.
+FRESH = {"collector_address": "0.0.0.0", "collector_port": 0,
+         "src_address": "0.0.0.0", "vrf_id": 4294967295,
+         "path_mtu": 0, "template_interval": 0, "udp_checksum": False}
+
+_a, _cli, _dumps = udp_call(
+    "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739", FRESH)
+check(_cli == [], f"the exporter must not go down the CLI socket: {_cli}")
+check(_a is not None and _a[0] == "set_ipfix_exporter",
+      f"it goes on VPP's own message, once: {_a}")
+check(_dumps == ["ipfix_exporter_dump"],
+      f"and the box is read before it is written: {_dumps}")
+
+
+def udp_fields(line, exporter):
+    """
+    The fields the call `line` makes, or {} when it made none.
+
+    Indexing the call directly crashes the moment the statement stops making
+    one, and a test that CRASHES on the defect reports a broken test rather
+    than a broken product - which is the same trap logging_call() above was
+    written around.
+    """
+    _c, _, _ = udp_call(line, exporter)
+    return _c[1] if _c else {}
+
+
+_u = udp_fields("cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739", FRESH)
+check(_u.get("collector_address") == "10.0.0.2"
+      and _u.get("src_address") == "10.0.0.1"
+      and _u.get("collector_port") == 4739,
+      f"where to and from where: {_u}")
+# The zeros a fresh box reports are not values to send back: the message
+# refuses a path MTU of 0 outright (retval -7, measured), so there is no
+# "leave it alone" and the caller has to name them. These are VPP's own CLI
+# defaults, which is what a box configured any other way would have.
+check(_u.get("path_mtu") == 512 and _u.get("template_interval") == 20,
+      f"a zeroed exporter is filled with VPP's own defaults: {_u}")
+
+# A box that already has an exporter: the statement changes what it names and
+# nothing else. A path MTU somebody chose must survive a change of collector.
+TUNED = dict(FRESH, collector_address="10.0.0.9", collector_port=9995,
+             src_address="10.0.0.1", path_mtu=1400, template_interval=60)
+_u = udp_fields("cgnat logging udp 10.0.0.2 src 10.0.0.1", TUNED)
+check(_u.get("path_mtu") == 1400 and _u.get("template_interval") == 60,
+      f"what the statement does not name is left alone: {_u}")
+check(_u.get("collector_port") == 9995,
+      f"and an omitted port keeps the one in force: {_u}")
+
+# "disable" is a word an operator types and it is NOT an address.
+_u = udp_fields("cgnat logging udp disable", TUNED)
+check(_u.get("collector_address") == "0.0.0.0",
+      f"disable clears the collector: {_u}")
+# Measured: VPP refuses a source address of 0.0.0.0 whatever the collector is,
+# so clearing the source as well has no encoding - the only way to say "no
+# collector" is a collector of 0.0.0.0 with the source left where it was.
+check(_u.get("src_address") == "10.0.0.1",
+      f"and leaves the source, which VPP will not take as zero: {_u}")
+
+# Nothing to turn off is not a message to send.
+_a, _, _ = udp_call("cgnat logging udp disable", FRESH)
+check(_a is None, f"disabling an exporter that was never set sends nothing: {_a}")
+
+# A dataplane that reports no exporter at all is not one to guess at.
+_a, _, _ = udp_call("cgnat logging udp 10.0.0.2 src 10.0.0.1", None)
+check(_a is None, f"no exporter reported: nothing is sent: {_a}")
+
+# The source address is not optional - VPP refuses the message without it -
+# so the statement must not be accepted without it either.
+_a, _, _ = udp_call("cgnat logging udp 10.0.0.2", FRESH)
+check(_a is None, f"a collector with no source is refused, not sent: {_a}")
+
+# The refusal `commit check` owes the operator. The dataplane's own refusal
+# arrives half way through the apply, with the pools already changed.
+_w = hexash.udp_export_without_collector
+check(_w(["cgnat logging enable"]),
+      "enable on its own is export with nowhere to send it")
+check(not _w(["cgnat logging enable",
+              "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739"]),
+      "with the exporter beside it, it is fine")
+check(_w(["cgnat logging enable", "cgnat logging udp disable"]),
+      "and 'udp disable' is not an exporter")
+check(_w(["cgnat logging enable", "cgnat logging tcp 10.0.0.2 port 4740"]),
+      "nor is the TCP collector: the two transports are separate paths")
+check(not _w(["cgnat logging disable"]),
+      "an export nobody asked for needs no collector")
+check(not _w(["cgnat block-holddown 11"]),
+      "and neither does a configuration that says nothing about logging")
+
+# Offered in the tree, or an operator cannot find the statement that makes
+# their box legal.
+_o = hexash.CGNAT_CONFIG["logging"][1]
+check("udp" in _o, f"'udp' is offered under cgnat logging: {sorted(_o)}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

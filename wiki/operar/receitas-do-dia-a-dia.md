@@ -266,6 +266,17 @@ show cgnat logging
 
 Prefira TCP: com UDP, a queda do coletor é silenciosa, e registros de guarda legal somem sem ninguém notar.
 
+Por UDP são dois comandos, e o destino vem primeiro — sem ele `commit check` recusa:
+
+```
+configure
+ nat cgnat logging udp 198.51.100.10 src 198.51.100.1
+ nat cgnat logging enable
+ commit
+ exit
+save
+```
+
 # Ver também
 
 * [Comandos show](/doc/comandos-show-YlNji1X5W4) — como ler cada resposta

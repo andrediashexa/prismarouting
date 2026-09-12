@@ -421,6 +421,85 @@ if [ -d /var/log/hexarouting ]; then
   fi
 fi
 
+# --- is the allocation log actually LEAVING the box? ---
+#
+# In dynamic mode the IPFIX export IS the connection record the Marco Civil
+# requires to be kept for a year, and until #209 it could not run at all over
+# UDP: VPP's own exporter needs a collector, nothing on an installed box set
+# one, and no VTY statement reached it. The dataplane refused `bpa logging
+# enable` and - before #76 - the VTY discarded the refusal and said "commit
+# complete".
+#
+# Which is the shape this check exists for, and it is the OOM drop-in's shape
+# exactly: a setting that was REFUSED looks, from the configuration, identical
+# to one that is working. So the two are read from different places and
+# compared - what the box was TOLD at boot, from the file hexarouting.service
+# hands to hexash, against what the dataplane HAS. Nothing here configures
+# anything: a check that arranges the condition it is checking for cannot
+# report its absence (#184).
+# The same variable hexash reads, so this looks at the file the box was
+# actually loaded from and not at a second guess about where it lives.
+LOGCONF=${HEXA_CONFIG:-/etc/hexarouting/hexarouting.conf}
+if vppctl show version >/dev/null 2>&1; then
+  log=$(vppctl show bpa logging 2>/dev/null)
+  # The value the dataplane acts on, not the word "enabled" anywhere in the
+  # output: the TCP block below carries "enabled" too.
+  udp_on=no
+  echo "$log" | grep -qE "^  state +enabled" && udp_on=yes
+  udp_dst=$(echo "$log" | sed -n 's/^  exporter  *\(.*\)$/\1/p')
+  case "$udp_dst" in none*|"") udp_dst="" ;; esac
+  want_on=no; want_dst=no
+  if [ -f "$LOGCONF" ]; then
+    grep -q "^cgnat logging enable" "$LOGCONF" && want_on=yes
+    grep -q "^cgnat logging udp " "$LOGCONF" && want_dst=yes
+  fi
+
+  if [ "$want_dst" = yes ] && [ -z "$udp_dst" ]; then
+    bad "the saved configuration names an IPFIX collector and the dataplane"
+    say "        has none: '$(grep -m1 "^cgnat logging udp " "$LOGCONF")' was"
+    say "        refused when it was applied. 'journalctl -u hexarouting' has"
+    say "        the reason."
+  elif [ "$want_on" = yes ] && [ "$udp_on" = no ]; then
+    # The exact failure #209 is about, and the one that used to be invisible.
+    bad "the saved configuration turns UDP export ON and the dataplane has it"
+    say "        OFF: the allocation log is not being exported. In dynamic"
+    say "        mode that log is the connection record, so this box cannot"
+    say "        say who held a public port at a given moment."
+    say "        'hexash -c \"show cgnat logging\"' says what it has."
+  elif [ "$udp_on" = yes ] && [ -z "$udp_dst" ]; then
+    # Measured: clearing the exporter leaves the export state enabled, so
+    # "state enabled" on its own is not evidence that anything is sent.
+    bad "UDP export is enabled and the IPFIX exporter has no collector:"
+    say "        every record is produced and none leaves this box. Set one"
+    say "        with 'nat cgnat logging udp <collector> src <source>'."
+  elif [ "$udp_on" = yes ]; then
+    ok "UDP export running to $udp_dst"
+  fi
+
+  # TCP, which has a state UDP does not: a collector that is named, accepted,
+  # and never reached. The records are on disk in the spill file rather than
+  # lost, so this is a warning and not a failure - but nothing else on the box
+  # would say so.
+  tcp_dst=$(echo "$log" | sed -n 's/^  collector  *\([0-9][^ ]*\)  *\([a-z]*\)$/\1 \2/p')
+  case "$tcp_dst" in
+    *connected) ok "TCP export ${tcp_dst% *} connected" ;;
+    *disconnected|*connecting)
+      say "  [warn] the TCP collector ${tcp_dst% *} is ${tcp_dst##* }:"
+      say "         records are spilling to /var/log/hexarouting and will be"
+      say "         replayed when it comes back" ;;
+  esac
+
+  # A dynamic pool and no transport at all. Not a failure - an operator may
+  # run a collector elsewhere, or be mid-deployment - but it is the state in
+  # which the box is translating traffic and keeping no record of it.
+  if [ "$udp_on" = no ] && [ -z "$tcp_dst" ] \
+     && vppctl show bpa config 2>/dev/null | grep -q "^ mode dynamic"; then
+    say "  [warn] a pool runs in dynamic mode and NOTHING is being exported:"
+    say "         block allocations are not being recorded anywhere. In"
+    say "         dynamic mode that log is the connection record."
+  fi
+fi
+
 # --- the unit that APPLIES the configuration ---
 #
 # The self-test measured the dataplane, the routing, the tuning and the VTY,

@@ -31,7 +31,8 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     strip_nat, as_hierarchy, group_static,
                     block_paths, frr_block_lines, opens_frr_block,
-                    _address_family_error, _is_loopback)
+                    _address_family_error, _is_loopback,
+                    global_key, ordered_globals)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
                     snmp_redact, validate_snmp, validate_ssh, validate_role,
@@ -709,6 +710,8 @@ CGNAT_CONFIG = {
     "logging": ("IPFIX export of block events", {
         "enable": ("enable UDP export", None),
         "disable": ("disable UDP export", None),
+        "udp": ("where UDP export goes; required before 'enable'",
+                "<collector> src <source> [port <n>]"),
         "tcp": ("export over TCP", "<collector> [port <n>]"),
     }),
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
@@ -816,6 +819,52 @@ DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
                "loopback_add", "loopback_del", "lcp_set", "lcp_del",
                "mac_set", "ra_on", "ra_off")
+
+
+# What `set_ipfix_exporter` needs and the box cannot supply.
+#
+# VPP's exporter 0 starts ZEROED - measured with ipfix_exporter_dump on an
+# untouched dataplane, every field 0 except vrf_id, which is ~0 - and the API
+# message has no "leave it alone" encoding: a path MTU of 0 comes back
+# refused, retval -7. So there is no default to read off the box, and a caller
+# that names a collector has to name these too.
+#
+# They are VPP's OWN defaults, not this VTY's opinion: measured from a dump
+# taken straight after `set ipfix exporter collector <ip> src <ip>` with
+# nothing else typed, which is the path that fills them in. They are used only
+# where the box has a zero, so a value already in force is never replaced by
+# one of these.
+#
+# The bounds the message enforces, measured the same way: path MTU 68 is
+# accepted and 67 is not, 1450 is accepted and 1451 is not, and a source
+# address of 0.0.0.0 is refused whatever the collector is.
+IPFIX_COLLECTOR_PORT = 4739       # RFC 7011's registered port
+IPFIX_PATH_MTU = 512
+IPFIX_TEMPLATE_INTERVAL = 20      # seconds between template resends
+
+
+def udp_export_without_collector(globals_) -> bool:
+    """
+    Would these statements ask for UDP export with nowhere to send it?
+
+    `cgnat logging enable` turns on VPP's flow-report export, and VPP refuses
+    to start a report while its exporter has no collector. Measured on an
+    untouched box:
+
+        vppctl bpa logging enable
+        bpa logging: no IPFIX collector configured
+
+    The refusal is the dataplane's and it arrives during the apply, with the
+    pools already changed - so it is reached here instead, where `commit
+    check` can say no before anything is touched. `cgnat logging tcp` does
+    NOT satisfy it: the two transports are separate paths in the plugin and
+    `enable` names the UDP one.
+    """
+    words = [g.split() for g in globals_]
+    if not any(w[:3] == ["cgnat", "logging", "enable"] for w in words):
+        return False
+    return not any(w[:3] == ["cgnat", "logging", "udp"] and len(w) > 3
+                   and w[3] != "disable" for w in words)
 
 
 def cap_needed(delta):
@@ -3433,6 +3482,32 @@ class Shell:
                 print(f"    give another account 'role {ROLE_ADMIN}' first, "
                       "or allow root to log in over SSH")
                 ok = False
+            # UDP export turned on with nowhere to send it. Refused HERE
+            # and not by the dataplane, which is where it used to be refused:
+            # by then the rest of the commit is applied, and until #76 the
+            # VTY discarded the refusal and printed "commit complete" over a
+            # box that exported nothing (#209).
+            #
+            # Refused only when THIS CHANGE is what causes it, the same guard
+            # the lockout checks above use. A box already in that state -
+            # export enabled and the exporter cleared underneath it - must
+            # still be able to commit the statement that fixes it.
+            if udp_export_without_collector(target.globals):
+                said = ("cgnat logging enable: UDP export has no collector, "
+                        "so nothing would leave this box")
+                advice = ("    add 'nat cgnat logging udp <collector> src "
+                          "<source>' beside it, or export over TCP with "
+                          "'nat cgnat logging tcp <collector>'")
+                if udp_export_without_collector(running.globals):
+                    print(f"warning: {said}")
+                    print(advice)
+                else:
+                    self.err(said)
+                    print(advice)
+                    print("    the dataplane refuses the statement, and it "
+                          "would refuse it half way through this commit")
+                    ok = False
+
             # An interface this box does not have.
             #
             # "interface Ten0" - a typo for TenGigabitEthernet0/8/0 - creates
@@ -4104,7 +4179,10 @@ class Shell:
             print(f"note: mtu removed from {ifname}; the driver default "
                   "applies after the interface is recreated")
 
-        for g in d["globals"]:
+        # Ordered, not as they were typed: `cgnat logging enable` is refused
+        # by the dataplane until the exporter statement has been applied, and
+        # an operator types the two in whichever order occurs to them.
+        for g in ordered_globals(d["globals"]):
             self.apply_global(g)
 
         if d["routing_changed"]:
@@ -4327,6 +4405,9 @@ class Shell:
         if w[2] in ("enable", "disable"):
             args["set_enable"] = True
             args["enable"] = w[2] == "enable"
+        elif w[2] == "udp" and len(w) >= 4:
+            self.apply_logging_udp(w)
+            return
         elif w[2] == "tcp" and len(w) >= 4:
             args["set_tcp"] = True
             if w[3] != "disable":
@@ -4343,12 +4424,98 @@ class Shell:
                     args["port"] = int(w[5])
         else:
             self.err("usage: nat cgnat logging enable|disable | "
+                     "nat cgnat logging udp <collector> src <source> "
+                     "[port <n>] | nat cgnat logging udp disable | "
                      "nat cgnat logging tcp <collector> [port <n>] | "
                      "nat cgnat logging tcp disable")
             return
         r = self.api_call("bpa_logging_set", args)
         if r.state != vppapi.OK:
             self.err(f"cgnat {' '.join(w[1:])}: {r.reason}")
+
+    def apply_logging_udp(self, w):
+        """
+        Where the UDP export goes: VPP's own IPFIX exporter.
+
+        `cgnat logging enable` hands the block events to VPP's flow-report
+        infrastructure, which refuses to start a report while that exporter
+        has no collector. Nothing in this product ever configured one and no
+        statement reached it, so on every shipped box UDP export was refused -
+        permanently, and in dynamic mode the allocation log IS the connection
+        record the Marco Civil requires (#209).
+
+        This goes to VPP's OWN `set_ipfix_exporter` message and not onto
+        `bpa_logging_set`, which carries the other two halves. The exporter is
+        core state shared with anything else that exports, and libvnet exports
+        no setter a plugin could call - `nm -D` lists
+        vnet_flow_report_add_del, vnet_flow_reports_reset and
+        vnet_ipfix_exporter_lookup and nothing that sets a collector. Putting
+        it on the plugin's message would mean copying the core handler's field
+        assignments into the plugin, and that copy would drift with every VPP
+        bump. It is still the binary API, which is what #76 asks for; the
+        plugin READS the exporter back in `show bpa config`, because that is
+        the one place the CGNAT running configuration is produced.
+
+        Everything the statement does not name - path MTU, template interval,
+        VRF, UDP checksum - is sent back as the exporter already has it, read
+        with ipfix_exporter_dump, so this statement changes exactly what it
+        names. Where the box has nothing at all, IPFIX_PATH_MTU and its
+        neighbours fill in; the comment on them says why there is no way to
+        avoid that.
+        """
+        r = self.api.dump("ipfix_exporter_dump", {})
+        if r.state != vppapi.OK:
+            self.err(f"cgnat {' '.join(w[1:])}: cannot read the IPFIX "
+                     f"exporter: {r.reason}")
+            return
+        rows = r.fields.get("rows") or []
+        if not rows:
+            # Exporter 0 exists on every VPP whether or not it has a
+            # destination, so an empty dump is a dataplane this VTY does not
+            # recognise - and guessing the fields it did not report would put
+            # this VTY's idea of VPP's defaults onto the box.
+            self.err(f"cgnat {' '.join(w[1:])}: the dataplane reports no "
+                     "IPFIX exporter at all")
+            return
+        cur = rows[0]
+
+        off = w[3] == "disable"
+        src = cur["src_address"]
+        collector = "0.0.0.0" if off else w[3]
+        port = int(cur["collector_port"]) or IPFIX_COLLECTOR_PORT
+
+        if not off:
+            if len(w) < 6 or w[4] != "src":
+                self.err("usage: nat cgnat logging udp <collector> src "
+                         "<source> [port <n>]")
+                return
+            src = w[5]
+            if len(w) >= 8 and w[6] == "port":
+                if not w[7].isdigit() or int(w[7]) > 65535:
+                    self.err(f"cgnat logging udp: port {w[7]} is not one")
+                    return
+                port = int(w[7])
+        elif src == "0.0.0.0":
+            # Nothing to turn off, and saying so beats sending a message the
+            # dataplane refuses: VPP rejects a source address of 0.0.0.0 even
+            # when the collector being set is 0.0.0.0 too - measured, retval
+            # -7 - so "clear an exporter that was never set" has no encoding.
+            return
+
+        args = {"collector_address": collector,
+                "collector_port": port,
+                # Kept, not cleared. VPP refuses src 0.0.0.0 outright, so the
+                # only way to say "no collector" is to name a collector of
+                # 0.0.0.0 and leave the source where it was.
+                "src_address": src,
+                "vrf_id": int(cur["vrf_id"]),
+                "path_mtu": int(cur["path_mtu"]) or IPFIX_PATH_MTU,
+                "template_interval": (int(cur["template_interval"])
+                                      or IPFIX_TEMPLATE_INTERVAL),
+                "udp_checksum": bool(cur["udp_checksum"])}
+        rep = self.api_call("set_ipfix_exporter", args)
+        if rep.state != vppapi.OK:
+            self.err(f"cgnat {' '.join(w[1:])}: {rep.reason}")
 
     #: Terminators, which are structure rather than configuration.
     #:
@@ -4901,9 +5068,9 @@ class Shell:
             self.candidate.interfaces.pop(w[3], None)
             return True
         if line.startswith("cgnat "):
-            key = " ".join(w[:3])
+            key = global_key(line)
             self.candidate.globals = [g for g in self.candidate.globals
-                                      if not g.startswith(key)]
+                                      if global_key(g) != key]
             self.candidate.globals.append(line)
             return True
 

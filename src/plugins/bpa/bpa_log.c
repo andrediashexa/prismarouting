@@ -65,10 +65,16 @@ bpa_log_enable (int enable)
 
   exp = pool_elt_at_index (frm->exporters, 0);
 
+  /* The refusal that made UDP export impossible on a shipped box for the
+   * life of the product (#209): VPP's own exporter has no destination unless
+   * something sets one, and until the VTY grew a statement for it nothing
+   * did. The advice names the VTY statement and not VPP's CLI command,
+   * because this sentence is now carried to the operator's screen by the
+   * binary API reply (#76) and the operator is at the VTY. */
   if (enable && ip_address_is_zero (&exp->ipfix_collector))
     return clib_error_return (
       0, "no IPFIX collector configured; use "
-	 "'set ipfix exporter collector <ip> src <ip>' first");
+	 "'cgnat logging udp <collector> src <source>' first");
 
   clib_memset (&a, 0, sizeof (a));
   a.is_add = enable;

@@ -485,16 +485,14 @@ echo "=========== every configuration change goes over the binary API (#76) ====
 # at all - so `bpa logging tcp` sat on the socket while the criterion read as
 # met, and no lab was looking where it would have shown up.
 #
-# `cgnat logging enable` is in the list on purpose and is REFUSED here, by a
-# box in the state the product ships: VPP's UDP exporter needs a collector set
-# with `set ipfix exporter`, which nothing in this product configures and no
-# VTY statement reaches. Nothing below arranges it - a lab that configures the
-# box under test cannot notice the box failing to configure itself, which is
-# the shape of #184 and the reason this section drives the appliance as it is.
-#
-# The refusal is asserted instead, because it is the second half of what this
-# change fixed: `self.dp.run()` returned a status the caller discarded, so the
-# operator read "commit complete" off a box that exports nothing.
+# `cgnat logging enable` is in the list with the statement that makes it
+# possible beside it. It used to be here and REFUSED, because VPP's UDP
+# exporter needs a collector and no statement in this product reached it -
+# nothing below arranged one, deliberately, since a lab that configures the
+# box under test cannot notice the box failing to configure itself. #209 gave
+# the VTY that statement, so what is asserted here is now that both halves go
+# over the API and both read back. The refusal itself did not go away and is
+# asserted where it belongs, by lab/ipfix.sh, on a box with no exporter.
 API_TRACE=$(HEXA_TRACE=1 $HX -c "configure" \
     -c "cgnat pool provider-a" \
     -c "max-sessions 2000" \
@@ -507,6 +505,7 @@ API_TRACE=$(HEXA_TRACE=1 $HX -c "configure" \
     -c "cgnat interface host-veth-vpp outside" \
     -c "cgnat timeout icmp 90" \
     -c "cgnat block-holddown 11" \
+    -c "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" \
     -c "cgnat logging enable" \
     -c "cgnat logging tcp 10.0.0.2 port 4740" \
     -c "interface pg0" \
@@ -1077,12 +1076,21 @@ expect_in "and so did the IPFIX export, which did not before (#172)" \
 # Read back off the dataplane, not off the trace: a message that was sent and
 # ignored leaves the same trace line as one that was applied, and the old CLI
 # path threw the answer away for exactly that reason.
-# The refusal the CLI path swallowed. Asserted on the REASON and not only on
-# the word "error": a commit that failed for some other cause prints one too.
-expect_in "a refused export state now reaches the operator" \
-  "no IPFIX collector configured" "$COMMIT_OUT"
-expect_in "and its collector with it" "cgnat logging tcp 10.0.0.2 port 4740" \
-  "$BPA_CONFIG_AFTER"
+# The export state the box used to refuse, now in force - and read off the
+# dataplane, not off the trace. Until #209 this line could not be committed at
+# all on a box the product had configured, and before #76 the VTY discarded
+# the refusal and printed "commit complete" over it.
+expect_in "the export state the box used to refuse is now in force" \
+  "cgnat logging enable" "$BPA_CONFIG_AFTER"
+expect_in "with the exporter that makes it possible (#209)" \
+  "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739" "$BPA_CONFIG_AFTER"
+# VPP's own message and not the plugin's: the exporter is core state and
+# libvnet exports no setter a plugin could call. Still the binary API, which
+# is what this section is about.
+expect_in "and it went over VPP's own API message, not the CLI socket" \
+  "set_ipfix_exporter" "$TRACE_MSGS"
+expect_in "and its TCP collector with it" \
+  "cgnat logging tcp 10.0.0.2 port 4740" "$BPA_CONFIG_AFTER"
 expect_in "and the global setting that travelled beside them" \
   "cgnat block-holddown 11" "$BPA_CONFIG_AFTER"
 # The pool the two probes above asked the box to delete. Asserted on the POOL
