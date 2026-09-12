@@ -26,8 +26,11 @@ and `TESTING.md` answer it; these pages are the thing being corrected.
 
 ## What this is not
 
-**It is not where the wiki is edited.** Outline is the live copy and the one
-people read; a file changed here is overwritten by the next pull, silently.
+**It is not where a page is published.** Outline is the live copy and the one
+people read. An edit is *drafted* here, against what the page actually says,
+and `tools/wiki-push.sh <document-id> <file>` is what publishes it. A file
+changed here and never pushed reaches nobody, and the next pull overwrites it
+silently.
 
 **It is not a second source of truth about the product.** `docs/`, `README.md`
 and `TESTING.md` are authoritative — the wiki is a usage layer on top of them,

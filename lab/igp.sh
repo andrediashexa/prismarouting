@@ -494,6 +494,22 @@ vppctl show ip6 fib 2001:db8:19::/64 | sed 's/^/    /'
 expect "an IPv6 prefix learned by IS-IS reached the VPP IPv6 FIB (${n}s)" \
   in_fib6 2001:db8:19::/64
 
+# And therefore the commit that configured it must not have said it would not.
+#
+# This instance has no `topology ipv6-unicast` - Multi-Topology IS-IS, a second
+# SPF for IPv6 (RFC 5120) - and the line above is the proof it does not need
+# one: IPv6 floods in the single legacy topology and forwards when both ends
+# agree, which is the ordinary single-vendor core and is what this lab is. The
+# box used to warn here anyway, on every run of its own acceptance test, and
+# then on every unrelated commit further down this file. An alarm that is
+# always on is one nobody reads, and these IGP findings are the diagnoses FRR
+# cannot make (#198, docs/routing.md).
+#
+# Read from the commit that configured THIS instance, so it cannot be
+# satisfied by a box that simply has no IS-IS.
+expect_not_in "and the commit that configured it never claimed it would not" \
+  "topology ipv6-unicast" "$ISISUP"
+
 # =============================================================================
 # 3. Withdrawal: what leaves the FIB when the far end goes
 # =============================================================================

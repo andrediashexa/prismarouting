@@ -1474,6 +1474,14 @@ check(any("area 0" in w for _, _, w in r),
 check(not find(["router ospf", "network 200.150.0.0/24 area 1",
                 "network 100.64.0.0/22 area 0"]),
       "and having a backbone is not")
+# A virtual link IS the backbone attachment, and RFC 2328 section 15 exists
+# for precisely the box with no physical area-0 interface. Warning there
+# describes a working design back to the operator who had to think hardest
+# about it.
+check(not find(["router ospf", "network 200.150.0.0/24 area 1",
+                "network 100.64.0.0/22 area 2",
+                "area 1 virtual-link 10.255.0.9"]),
+      "nor is an area reached through a virtual link")
 
 # THE cross-half check: a subscriber-facing port speaking OSPF. FRR does not
 # know what a CGNAT pool is and the dataplane does not know what OSPF is.
@@ -1534,13 +1542,18 @@ r = isis_findings(["router isis HEXA", "net 49.0001.0000.0000.0001.00"])
 check(any("no interface joins it" in w for _, _, w in r),
       f"an instance nobody joins is reported: {r}")
 
-# The IPv6 half silently absent while IPv4 works.
+# Single-topology IPv6 IS-IS is a CORRECT configuration and nothing is said
+# about it (#198). `topology ipv6-unicast` turns on Multi-Topology IS-IS (RFC
+# 5120); without it IPv6 floods in the one legacy topology and forwards, which
+# is what lab/igp.sh commits and then watches reach the VPP IPv6 FIB. The
+# warning that used to be here fired on that lab on every run, and on every
+# unrelated commit after it.
 v6 = ["router isis HEXA", "net 49.0001.0000.0000.0001.00",
       "interface Gi0", "ipv6 router isis HEXA"]
-check(any("topology ipv6-unicast" in w for _, _, w in isis_findings(v6)),
-      "IPv6 with no topology statement is reported")
+check(not isis_findings(v6),
+      f"single-topology IPv6 is not warned about: {isis_findings(v6)}")
 check(not isis_findings(v6[:2] + ["topology ipv6-unicast"] + v6[2:]),
-      "and with it, nothing is")
+      "and neither is multi-topology")
 
 # Narrow metrics cap at 63 - the classic silent limitation on a 10G box.
 narrow = GOOD[:2] + ["interface Gi0", "ip router isis HEXA", "isis metric 100"]
@@ -1548,6 +1561,17 @@ check(any("metric-style wide" in w for _, _, w in isis_findings(narrow)),
       "a metric above 63 with narrow encoding is reported")
 check(not isis_findings(GOOD + ["isis metric 100"]),
       "and with wide it is not")
+# Against the instance that CARRIES the port, not against every instance on
+# the box. A metric a wide instance expresses perfectly is not evidence about
+# a narrow one that never touches it, and the sentence named the wrong tag.
+two = ["router isis CORE", "net 49.0001.0000.0000.0001.00",
+       "metric-style wide",
+       "router isis EDGE", "net 49.0002.0000.0000.0001.00",
+       "interface Gi0", "ip router isis CORE", "isis metric 1000",
+       "interface Gi1", "ip router isis EDGE", "isis metric 10"]
+check(not isis_findings(two),
+      f"a wide instance's metric is not charged to a narrow one: "
+      f"{isis_findings(two)}")
 
 # A level-2-only instance with a level-1 circuit forms no adjacency, and both
 # halves are accepted by FRR.

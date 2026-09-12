@@ -269,8 +269,9 @@ ISIS_BLOCK = {
         "transition": ("send both while a network is being migrated", None),
     }),
     "topology": ("carry a second address family over the same adjacency", {
-        "ipv6-unicast": ("IPv6, which needs this even when the interfaces "
-                         "already have addresses", None),
+        "ipv6-unicast": ("a separate SPF for IPv6 (RFC 5120). Without it IPv6 "
+                         "still rides the one topology, which is correct when "
+                         "every router in the area agrees", None),
     }),
     "set-overload-bit": ("tell everybody not to transit through this box - "
                          "IS-IS's maintenance drain", "[on-startup <1-86400>]"),
@@ -424,9 +425,8 @@ INTERFACE_BLOCK = {
             "suppress-ra": ("stop advertising this box as a router", None),
         }),
         "router": ("join a routing instance", {
-            "isis": ("run IS-IS for IPv6 on this interface - which also needs "
-                     "'topology ipv6-unicast' on the instance",
-                     ARG_ISIS_TAG),
+            "isis": ("run IS-IS for IPv6 on this interface, in whatever "
+                     "topology the instance has", ARG_ISIS_TAG),
         }),
     }),
     "shutdown": ("take the interface administratively down", None),
@@ -1207,7 +1207,7 @@ def isis_findings(routing):
     which is the line this project draws: whether the neighbour agrees is not
     in the configuration and is not claimed.
     """
-    instances = {}      # tag -> {net, is_type, metric_style, topologies}
+    instances = {}      # tag -> {net, is_type, metric_style}
     joined = {}         # tag -> [(interface, family, statement)]
     circuits = {}       # tag -> [(interface, circuit_type, statement)]
     metrics = []        # (interface, value, statement)
@@ -1220,7 +1220,7 @@ def isis_findings(routing):
         if w[:2] == ["router", "isis"] and len(w) > 2:
             tag, iface = w[2], None
             instances.setdefault(tag, {"net": False, "is_type": None,
-                                       "metric_style": None, "v6": False})
+                                       "metric_style": None})
             continue
         if w[0] == "interface" and len(w) > 1:
             tag, iface = None, w[1]
@@ -1236,8 +1236,6 @@ def isis_findings(routing):
                 inst["is_type"] = w[1]
             elif w[0] == "metric-style" and len(w) > 1:
                 inst["metric_style"] = w[1]
-            elif w[:2] == ["topology", "ipv6-unicast"]:
-                inst["v6"] = True
         elif iface:
             if w[:3] in (["ip", "router", "isis"], ["ipv6", "router", "isis"]) \
                     and len(w) > 3:
@@ -1264,15 +1262,31 @@ def isis_findings(routing):
             out.append(("warning", f"router isis {tag}",
                         "no interface joins it, so it runs and carries "
                         "nothing"))
-        # The IPv6 half, silently absent while IPv4 works.
-        v6_joins = [j for j in joined.get(tag, []) if j[1] == "ipv6"]
-        if v6_joins and not inst["v6"]:
-            out.append(("warning", v6_joins[0][2],
-                        f"instance {tag} has no 'topology ipv6-unicast', so "
-                        "the IPv6 half carries nothing while IPv4 works"))
+        # NOTHING is said about an instance that carries IPv6 without
+        # `topology ipv6-unicast`, and the silence is the point (#198). That
+        # statement turns on Multi-Topology IS-IS (RFC 5120), a second SPF for
+        # IPv6; without it IPv6 reachability still floods in the single legacy
+        # topology and forwards, which is the ordinary single-vendor core.
+        # lab/igp.sh commits exactly that configuration, and the assertion
+        # beside this one in that file watches 2001:db8:19::/64 reach the VPP
+        # IPv6 FIB over the adjacency it builds - so the warning that used to
+        # be here was disproved by this product's own acceptance test on every
+        # run, and printed again on every later commit in it, about BGP and
+        # about OSPF. That is how an operator learns to skip the whole class,
+        # and the IGP findings are the diagnoses FRR cannot make.
+        #
+        # What IS a fault is MT on at one end and off at the other. It is not
+        # in this box's configuration - it is read from the neighbour's LSP -
+        # so it belongs in the operational view and not in a commit check.
+        #
         # Narrow metrics cap at 63. The classic silent limitation.
         if inst["metric_style"] in (None, "narrow"):
-            big = [m for m in metrics if m[1] > 63]
+            # Only the interfaces that joined THIS instance. The metric of a
+            # port in a wide-metric instance is not evidence about a narrow
+            # one that never carries it, and a box with two instances is
+            # exactly where that sentence names the wrong tag.
+            mine = {j[0] for j in joined.get(tag, [])}
+            big = [m for m in metrics if m[1] > 63 and m[0] in mine]
             if big:
                 out.append(("warning", big[0][2],
                             f"{big[0][1]} needs 'metric-style wide' on "
@@ -1537,9 +1551,15 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
 
     # An area border router with no backbone. Inter-area routes never
     # propagate, and FRR says nothing.
+    #
+    # Unless a virtual link carries it. RFC 2328 section 15 exists for exactly
+    # the box that has no physical area-0 interface, and it belongs to the
+    # backbone through the link instead - so warning there is a sentence about
+    # a working design, told to the operator who had to think hardest about it.
     areas = {a for _, a, _ in networks} | set(iface_area.values())
     backbone = {"0", "0.0.0.0"}
-    if len(areas - backbone) >= 2 and not (areas & backbone):
+    virtual = any("virtual-link" in l.split() for l in routing)
+    if len(areas - backbone) >= 2 and not (areas & backbone) and not virtual:
         out.append(("warning", f"router ospf ({len(areas)} areas)",
                     "interfaces in two or more areas and none in area 0: "
                     "inter-area routes will not propagate"))
