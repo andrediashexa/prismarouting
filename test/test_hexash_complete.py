@@ -2905,5 +2905,62 @@ check(not _vpp.reachable(),
       "and reachable() is that same status, asked once")
 
 
+print("\n=== what FRR keeps, and what it does not (#197) ===")
+# The table these read is MEASURED, by lab/frr-readback.sh, and the lab is what
+# keeps it honest against an FRR upgrade. What is asserted here is the
+# arithmetic on top of it: that the value decides, not the statement alone, and
+# that a rewrite is not a drop.
+from hexash import (frr_keeps, frr_writes_instead,                # noqa: E402
+                    statements_frr_dropped)                       # noqa: E402
+
+# The finding that unblocked #197. A prefix match alone would excuse the second
+# of these, which is a real drop of a statement an operator really typed.
+check(not frr_keeps("ip ospf hello-interval 10"),
+      "FRR omits hello-interval at its default")
+check(frr_keeps("ip ospf hello-interval 7"),
+      "and keeps it at any other value, so the VALUE decides")
+check(not frr_keeps("ip ospf retransmit-interval 5"),
+      "same for retransmit-interval")
+check(frr_keeps("ip ospf retransmit-interval 9"), "and the same the other way")
+check(not frr_keeps("timers throttle spf 0 50 5000"),
+      "a multi-word default is matched on all of its words")
+check(frr_keeps("timers throttle spf 0 50 4999"),
+      "and one word different is a statement FRR keeps")
+# The pair that refutes "omission follows the default". Both of these ARE the
+# FRR default and both come back, which is why there is no arithmetic here.
+check(frr_keeps("ip ospf dead-interval 40"),
+      "dead-interval comes back AT its default, so this is not a default rule")
+check(frr_keeps("ip ospf cost 10"), "and so does cost")
+
+check(frr_writes_instead("passive-interface dum9") == "ip ospf passive",
+      "passive-interface is rewritten, not dropped (#205)")
+check(frr_writes_instead("continue 30") == "on-match goto 30",
+      "and continue becomes on-match goto (#208)")
+check(frr_writes_instead("ip route 10.0.0.0/8 10.0.0.1") is None,
+      "an ordinary statement is not rewritten")
+
+# A rewritten statement whose rewrite IS there is not a drop. Without this the
+# check would refuse every commit containing a passive-interface.
+check(statements_frr_dropped(["passive-interface dum9"],
+                             ["interface dum9", " ip ospf passive"]) == [],
+      "a rewrite that is present is not a drop")
+# And when even the rewrite is absent, the message has to name what FRR would
+# have written - an operator told "passive-interface is missing" will grep for
+# it and find nothing.
+check(statements_frr_dropped(["passive-interface dum9"], ["interface dum9"])
+      == [("passive-interface dum9", "ip ospf passive")],
+      "and when the rewrite is absent too, the report names it")
+
+check(statements_frr_dropped(["ip ospf hello-interval 10"], []) == [],
+      "a statement FRR omits is not reported as dropped")
+check(statements_frr_dropped(["ip ospf hello-interval 7"], [])
+      == [("ip ospf hello-interval 7", None)],
+      "but the same statement at another value is")
+check(statements_frr_dropped(["ip route 10.0.0.0/8 10.0.0.1"],
+                             [" ip route 10.0.0.0/8 10.0.0.1"]) == [],
+      "an ordinary statement that is there is not reported")
+check(statements_frr_dropped([], ["anything"]) == [],
+      "and a commit that introduced no routing statement asks nothing")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

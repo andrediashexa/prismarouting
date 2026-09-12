@@ -868,6 +868,114 @@ def udp_export_without_collector(globals_) -> bool:
                    and w[3] != "disable" for w in words)
 
 
+# What FRR does NOT read back the way it was typed.
+#
+# Measured on FRR 10.7.1 by lab/frr-readback.sh, one statement at a time, each
+# undone before the next - and the lab is what keeps this table honest, because
+# an FRR upgrade that changes one of these answers fails there rather than
+# silently changing what this VTY refuses.
+#
+# The assumption everybody had, including this file until #197 was measured,
+# was "FRR omits a statement whose value equals a default". It does not.
+# Omission is per STATEMENT, not per value:
+#
+#   OMITTED     ip ospf hello-interval 10     ROUNDTRIPS  ip ospf dead-interval 40
+#   OMITTED     ip ospf retransmit-interval 5 ROUNDTRIPS  ip ospf cost 10
+#
+# All four of those are the FRR default. So there is no table of FRR defaults
+# to chase across versions, and no arithmetic to get right. There is a short
+# list, and it is here.
+
+# Read back as DIFFERENT WORDS meaning the same thing. Keyed on what an
+# operator types, valued by what to look for instead.
+#
+# Both of these were already known to this codebase from somewhere else - the
+# first to ospf_findings (#205), the second to route_map_findings (#208) -
+# which is the evidence that this list is discoverable rather than open-ended.
+# A statement that arrives here having been rewritten is NOT a dropped
+# statement, and refusing it would refuse a correct configuration.
+FRR_REWRITES = (
+    # (prefix an operator types, how to build what FRR writes instead)
+    ("passive-interface ", lambda w: "ip ospf passive"),
+    ("continue ", lambda w: "on-match goto " + w[-1]),
+)
+
+# Accepted, and left out of the read-back entirely. Matched on the whole
+# statement's leading words, because the VALUE is what decides: `ip ospf
+# hello-interval 10` is omitted and `ip ospf hello-interval 7` is not, so a
+# prefix match alone would excuse a real drop of the second one.
+#
+# The list is short on purpose. A statement that is not here and not in FRR's
+# read-back afterwards is a statement FRR took and did not keep, which is
+# exactly what #197 is about - so this list growing by guesswork would turn the
+# check back off one entry at a time. Anything added here MUST come with a
+# probe in lab/frr-readback.sh.
+FRR_OMITS_AT = {
+    "timers throttle spf": ("0", "50", "5000"),
+    "ip ospf hello-interval": ("10",),
+    "ip ospf retransmit-interval": ("5",),
+    "bgp default ipv4-unicast": (),
+}
+
+
+def frr_keeps(stmt):
+    """
+    Would FRR store this statement as typed, so that its absence means a drop?
+
+    False for the statements measured NOT to come back - and for those the
+    caller must not conclude anything from absence. Everything else is
+    expected back verbatim, and absence is a failed commit.
+    """
+    w = stmt.split()
+    for k, vals in FRR_OMITS_AT.items():
+        kw = k.split()
+        if w[:len(kw)] != kw:
+            continue
+        # No values listed means the statement itself is the default, so it is
+        # omitted whenever it appears at all.
+        if not vals or tuple(w[len(kw):]) == vals:
+            return False
+    return True
+
+
+def frr_writes_instead(stmt):
+    """What FRR writes for a statement it rewrites, or None."""
+    for prefix, build in FRR_REWRITES:
+        if stmt.startswith(prefix):
+            return build(stmt.split())
+    return None
+
+
+def statements_frr_dropped(added, running):
+    """
+    Of the statements this commit introduced, which are not in FRR afterwards.
+
+    This is #197's general check, and it is decidable for the reason
+    lab/frr-readback.sh measures: absence means dropped, EXCEPT for a short,
+    measured list where FRR writes something else or nothing at all.
+
+    `running` is FRR's own read-back, not frr-reload's idea of what is
+    outstanding. That distinction is the whole reason this is possible now and
+    was not before: `frr-reload --test` reports a default-valued statement
+    under "Lines To Add" for ever, so a check built on it calls every commit
+    carrying one a failure. FRR's running configuration does not lie that way -
+    it simply does not contain the statement, which is a question this can ask.
+    """
+    have = {l.strip() for l in running}
+    out = []
+    for stmt in added:
+        instead = frr_writes_instead(stmt)
+        if instead is not None:
+            if instead not in have:
+                out.append((stmt, instead))
+            continue
+        if not frr_keeps(stmt):
+            continue
+        if stmt not in have:
+            out.append((stmt, None))
+    return out
+
+
 def cap_needed(delta):
     """
     The capability a change requires, or None when it changes nothing.
@@ -4719,9 +4827,41 @@ class Shell:
             self.err("the change is applied, but no rollback revision could "
                      f"be recorded: {e}")
             print("    'rollback' will not be able to undo this commit")
-        stalled = self.nothing_took(self.routing_added(running.routing,
-                                                       self.candidate.routing))
-        if stalled:
+        added = self.routing_added(running.routing, self.candidate.routing)
+        # The GENERAL check (#197), which is now possible: read FRR's own
+        # running configuration back and see which of the statements this
+        # commit introduced are not in it.
+        #
+        # `nothing_took` below stays, and the two are not redundant. This one
+        # names the statements FRR dropped; that one catches the case where
+        # frr-reload could not be asked at all, and it fires on a partial
+        # answer this check might explain away. Neither subsumes the other, and
+        # a commit that fails both says so once, because this one returns first.
+        dropped, stalled = [], []
+        if added:
+            dropped = statements_frr_dropped(added, self.frr.running())
+            # Asked once. It shells out to frr-reload, which is the slowest
+            # thing on the commit path, and calling it in the condition and
+            # again in the body doubles that for every commit that hits it.
+            if not dropped:
+                stalled = self.nothing_took(added)
+        if dropped:
+            # NOT "commit complete", for the reason the block below gives: the
+            # one sentence an operator builds every later diagnosis on.
+            self.err(f"FRR accepted {len(dropped)} statement(s) of this "
+                     "commit and did not keep them")
+            for stmt, instead in dropped[:5]:
+                print("    " + as_hierarchy(stmt))
+                if instead:
+                    print(f"      FRR writes '{instead}' for this, and that "
+                          "is not there either")
+            if len(dropped) > 5:
+                print(f"    ... and {len(dropped) - 5} more")
+            print("    the configuration this box holds and the one FRR is "
+                  "running are not the same; 'show configuration' is this "
+                  "box's, 'start shell' then 'vtysh -c \"show "
+                  "running-config\"' is FRR's")
+        elif stalled:
             # NOT "commit complete". The CGNAT half and the box's own
             # configuration are applied - this is not a rollback - but the
             # routing half reached nothing, and saying "complete" over that is
