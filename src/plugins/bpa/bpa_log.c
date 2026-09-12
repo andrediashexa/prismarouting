@@ -87,6 +87,14 @@ bpa_log_enable (int enable)
   lm->template_id = template_id;
   lm->flow_report_index = a.flow_report_index;
   lm->enabled = enable ? 1 : 0;
+
+  /* A transport coming up where there was none: every block that is pinned
+   * right now has an allocation nobody has recorded, and a pinned block never
+   * produces another event of its own until the operator removes the forward.
+   * Guarded on the transition so that turning the second transport on does not
+   * announce them all again. */
+  if (lm->enabled && !bpa_log_tcp.enabled)
+    bpa_log_pins_replay ();
   return 0;
 }
 

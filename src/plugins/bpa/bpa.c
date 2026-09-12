@@ -86,23 +86,24 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
   priv.as_u32 = clib_host_to_net_u32 (sf->ip_priv);
 
   /*
-   * Deterministic only, and not from lack of effort.
+   * Both modes, and the same arithmetic decides in both.
    *
-   * In dynamic mode a block belongs to whoever currently holds it, and it is
-   * released when that subscriber goes idle. A port pinned inside one would
-   * follow the block to the next subscriber - the forward would keep working
-   * and start reaching a different customer, which is worse than not working.
-   * Pinning the block itself is a feature of its own, not a detail of this
-   * one.
+   * In deterministic mode the subscriber's block is the formula's answer and
+   * nothing can move it. In dynamic mode the block moves, so the forward
+   * makes it stop: bpa_static_pin() holds the block whose index IS the
+   * subscriber's dense index - the one bpa_split() would have given it - for
+   * as long as the forward exists.
+   *
+   * Deriving the block from the subscriber instead of letting the operator
+   * name one is what lets every other line of this feature serve both modes
+   * unchanged. bpa_reverse_sub() still recovers the block from (address,
+   * port); the handoff still lands both directions on one worker, because
+   * block_idx == sub_idx takes the same remainder; and
+   * bpa_session_static_open() still finds the block by asking bpa_forward().
+   * An operator-chosen block would have broken all three, and on a box with
+   * workers it would have made most (address, port) pairs unpinnable for a
+   * given subscriber for a reason no operator can be expected to hear.
    */
-  if (p->mode != BPA_MODE_DETERMINISTIC)
-    return clib_error_return (
-      0,
-      "pool '%v' is in dynamic mode: a forwarded port would follow the block "
-      "to whichever subscriber holds it next, so forwards are accepted only "
-      "on a deterministic pool",
-      p->name);
-
   if (sf->proto != BPA_PROTO_TCP && sf->proto != BPA_PROTO_UDP)
     return clib_error_return (0, "only tcp and udp can be forwarded");
 
@@ -115,10 +116,29 @@ bpa_static_validate (const bpa_pool_t *p, bpa_static_t *sf)
       sf->port_pub, p->name, p->port_min, p->port_max);
 
   if (bpa_forward (p, sf->ip_priv, &blk))
-    return clib_error_return (
-      0, "%U is not a subscriber of pool '%v', or is beyond its capacity of "
-	 "%u",
-      format_ip4_address, &priv, p->name, p->capacity);
+    {
+      /*
+       * A dynamic pool is oversubscribed on purpose - that is what it is for -
+       * so "beyond capacity" is the ordinary case there and not an error the
+       * operator made. It still has no block to pin, and saying so in the
+       * pool's own numbers is the difference between a refusal that can be
+       * acted on and one that reads like a bug.
+       */
+      if (p->mode == BPA_MODE_DYNAMIC
+	  && bpa_set_index_of (&p->inside, sf->ip_priv, &other) == 0)
+	return clib_error_return (
+	  0,
+	  "%U is subscriber %u of pool '%v', which has %u blocks. A forward "
+	  "pins the block the pool's arithmetic gives the subscriber, and "
+	  "there is none this far in: enlarge the public set, or serve this "
+	  "customer from a pool that reaches it",
+	  format_ip4_address, &priv, other, p->name, p->capacity);
+
+      return clib_error_return (
+	0, "%U is not a subscriber of pool '%v', or is beyond its capacity of "
+	   "%u",
+	format_ip4_address, &priv, p->name, p->capacity);
+    }
 
   /*
    * The port has to be in this subscriber's own block.
@@ -247,6 +267,258 @@ bpa_statics_validate (bpa_pool_t *p, bpa_static_t *in)
   return e;
 }
 
+/* ------------------------------------------------------------------ */
+/* pinning a dynamic block to the subscriber a forward belongs to      */
+
+/*
+ * Where a forward's pin lives, and why it is derived rather than stored.
+ *
+ * Everything here comes out of the configuration and nothing else. The
+ * subscriber's dense index comes from its address; the block index IS that
+ * index, because the block a subscriber is entitled to is bpa_split() of its
+ * own index in both modes; and the worker comes from the index too. There is
+ * no pin table to write, to load, or to disagree with the forwards - and the
+ * repository has already learned that lesson once, over the second index on
+ * p->statics that bpa_pool.h decided not to keep.
+ *
+ * That is also the whole of "the pin survives a restart". A box that reboots
+ * replays its configuration; the replay creates the pool and its forwards; and
+ * creating a forward is what pins. Nothing else has to be persisted, so
+ * nothing else can come back stale.
+ *
+ * Returns -1 when there is no pin to make: a deterministic pool, where the
+ * block cannot move in the first place, or an address the pool's arithmetic
+ * does not reach.
+ */
+static int
+bpa_static_pin_site (const bpa_pool_t *p, const bpa_static_t *sf, u32 *ti,
+		     u32 *block_idx, u32 *w, u32 *nw, bpa_block_t *blk)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  if (p->mode != BPA_MODE_DYNAMIC || bpa_forward (p, sf->ip_priv, blk))
+    return -1;
+
+  *block_idx = blk->sub_idx;
+  *ti = bpa_sub_thread (bm, blk->sub_idx);
+  bpa_worker_id (bm, *ti, w, nw);
+  return 0;
+}
+
+/* The allocator that owns a pool's blocks on one thread, or 0. */
+static bpa_dyn_t *
+bpa_static_dyn (u32 pool_index, u32 ti)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_per_thread_t *pt;
+
+  if (ti >= vec_len (bm->per_thread))
+    return 0;
+  pt = vec_elt_at_index (bm->per_thread, ti);
+  if (pool_index >= vec_len (pt->dyn))
+    return 0;
+  return vec_elt_at_index (pt->dyn, pool_index);
+}
+
+/*
+ * Refuses a forward whose block another subscriber is holding right now.
+ *
+ * Taking it would end that customer's live sessions so that a different one
+ * can have an inbound port, which is not a trade a box makes on its own. The
+ * refusal names them, because the operator's next move depends on who it is -
+ * wait for them to go idle, move the forward, or move the customer.
+ *
+ * Not inside bpa_static_validate(): that one judges a CONFIGURATION, and is
+ * run on a candidate pool that has no allocator yet. This is a fact about
+ * running state, and only the paths that have a pool index can ask it. A
+ * candidate pool needs no such check anyway - committing it frees the old
+ * pool's blocks with the pool, so at the instant it is applied nobody holds
+ * anything.
+ */
+static clib_error_t *
+bpa_static_holder (u32 pool_index, const bpa_pool_t *p, const bpa_static_t *sf)
+{
+  u32 ti, block_idx, w, nw, held = 0, held_addr = 0;
+  ip4_address_t a, pub;
+  bpa_block_t blk;
+  bpa_dyn_t *d;
+
+  if (bpa_static_pin_site (p, sf, &ti, &block_idx, &w, &nw, &blk))
+    return 0;
+
+  d = bpa_static_dyn (pool_index, ti);
+  if (!d)
+    return 0;
+
+  if (bpa_dyn_owner (d, block_idx, nw, &held) || held == blk.sub_idx)
+    return 0;
+
+  if (bpa_set_addr_of (&p->inside, held, &held_addr))
+    return 0;
+
+  a.as_u32 = clib_host_to_net_u32 (held_addr);
+  pub.as_u32 = clib_host_to_net_u32 (blk.ip_pub);
+  return clib_error_return (
+    0,
+    "public port %u is in block %U:%u-%u, which %U is holding now. Pinning it "
+    "would end that subscriber's sessions to give this one an inbound port; "
+    "the block is free again once they go idle",
+    sf->port_pub, format_ip4_address, &pub, blk.port_lo, blk.port_hi,
+    format_ip4_address, &a);
+}
+
+/*
+ * Pins the block a forward sits in, or gives it back.
+ *
+ * MUST be called under the worker barrier: it reaches into another thread's
+ * allocator and into that thread's log queue.
+ *
+ * The block event is queued rather than emitted here for the reason
+ * docs/logging.md gives about templates: a pin usually happens while the
+ * configuration is being replayed, which is before any IPFIX template has gone
+ * out, and a record emitted then is one no collector can decode. The queue is
+ * drained by bpa-expire-process, which is also where every other block event
+ * leaves from.
+ *
+ * The event fires on the block, not on the forward. A second forward in the
+ * same block pins nothing new, and a second natEvent 16 with no natEvent 17
+ * between them is precisely the hole that makes a retention log answer a court
+ * order wrongly.
+ */
+static void
+bpa_static_pin (u32 pool_index, const bpa_pool_t *p, const bpa_static_t *sf,
+		int is_add)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 ti, block_idx, w, nw, held = 0;
+  bpa_per_thread_t *pt;
+  bpa_block_t blk;
+  bpa_dyn_t *d;
+  int changed = 0;
+
+  if (bpa_static_pin_site (p, sf, &ti, &block_idx, &w, &nw, &blk))
+    return;
+
+  d = bpa_static_dyn (pool_index, ti);
+  if (!d)
+    return;
+  pt = vec_elt_at_index (bm->per_thread, ti);
+
+  if (is_add)
+    {
+      if (bpa_dyn_pin (d, block_idx, blk.sub_idx, nw,
+		       vlib_time_now (bm->vlib_main), &held, &changed))
+	return;
+
+      /*
+       * The subscriber may already be translating out of a different block -
+       * in dynamic mode the allocator gave it whichever was free - and from
+       * this instant its forwarded socket lives in the pinned one. The
+       * per-worker record is what bpa_session_static_open() searches, so a
+       * record that never heard of the pinned block is a forward that shows in
+       * the configuration and translates nothing until the customer's last
+       * session expires.
+       */
+      bpa_sub_adopt_block (pt, p, pool_index, &blk);
+    }
+  else
+    bpa_dyn_unpin (d, block_idx, nw, &changed);
+
+  if (changed)
+    bpa_log_queue_event (pt,
+			 is_add ? BPA_NAT_EVENT_BLOCK_ALLOC
+				: BPA_NAT_EVENT_BLOCK_DEALLOC,
+			 sf->ip_priv, blk.ip_pub, blk.port_lo, blk.port_hi,
+			 pool_index);
+}
+
+/* Is this the first forward of its subscriber in the sorted vector? The block
+ * is the subscriber's own, so that makes it the one forward that stands for
+ * the block. */
+static int
+bpa_static_first_in_block (const bpa_pool_t *p, const bpa_static_t *sf)
+{
+  u32 i;
+
+  vec_foreach_index (i, p->statics)
+    if (p->statics[i].ip_priv == sf->ip_priv)
+      return &p->statics[i] == sf;
+  return 0;
+}
+
+/*
+ * Re-announces every pinned block, when the log is switched on.
+ *
+ * A pin is made once, by a configuration change, and then holds a block for as
+ * long as the forward exists. On a box that has just booted, the configuration
+ * replay creates the pools - and their pins - BEFORE it turns the export on,
+ * which is the order hexash applies a configuration in. Without this, every
+ * pinned block on that box is held from then on with no allocation record
+ * anywhere, which is the one outcome docs/logging.md exists to prevent: a
+ * mapping nobody can attribute to a subscriber later.
+ *
+ * Only the pinned ones. An ordinary dynamic block held across the same moment
+ * is released within a hold-down and reallocated with a record of its own, so
+ * the gap closes by itself; a pinned block never gets that second chance.
+ *
+ * The record is stamped when the log was enabled and not when the pin was
+ * made, because that is the truth this box can tell: it says the block is this
+ * subscriber's as of now. A record that guessed at the earlier instant would
+ * be a fabricated one.
+ */
+void
+bpa_log_pins_replay (void)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+
+  vlib_worker_thread_barrier_sync (bm->vlib_main);
+  pool_foreach (p, bm->pools)
+    {
+      u32 pool_index = p - bm->pools, i;
+
+      if (p->mode != BPA_MODE_DYNAMIC)
+	continue;
+
+      for (i = 0; i < vec_len (p->statics); i++)
+	{
+	  u32 ti, block_idx, w, nw;
+	  bpa_block_t blk;
+	  bpa_dyn_t *d;
+
+	  if (bpa_static_pin_site (p, &p->statics[i], &ti, &block_idx, &w, &nw,
+				   &blk))
+	    continue;
+	  d = bpa_static_dyn (pool_index, ti);
+	  /* One record per BLOCK: two forwards in one block are one pin, and
+	   * two allocations with no release between them is the hole this is
+	   * closing, not a second copy of the fix. */
+	  if (!d || !bpa_dyn_is_pinned (d, block_idx, nw)
+	      || bpa_static_first_in_block (p, &p->statics[i]) == 0)
+	    continue;
+
+	  bpa_log_queue_event (vec_elt_at_index (bm->per_thread, ti),
+			       BPA_NAT_EVENT_BLOCK_ALLOC, p->statics[i].ip_priv,
+			       blk.ip_pub, blk.port_lo, blk.port_hi,
+			       pool_index);
+	}
+    }
+  vlib_worker_thread_barrier_release (bm->vlib_main);
+}
+
+/* Is any forward left in the block this one was in? The block is the
+ * subscriber's own, so the question is whether the subscriber has another. */
+static int
+bpa_static_last_in_block (const bpa_pool_t *p, const bpa_static_t *sf)
+{
+  u32 i;
+
+  vec_foreach_index (i, p->statics)
+    if (p->statics[i].ip_priv == sf->ip_priv)
+      return 0;
+  return 1;
+}
+
 /*
  * Adds or removes one static port forward on a running pool.
  *
@@ -296,6 +568,10 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
       vlib_worker_thread_barrier_sync (bm->vlib_main);
       bpa_static_uninstall (pool_index, &gone);
       vec_delete (p->statics, 1, i);
+      /* After the removal, so "is anything still forwarded in this block"
+       * is asked of the configuration that is about to be in force. */
+      if (bpa_static_last_in_block (p, &gone))
+	bpa_static_pin (pool_index, p, &gone, 0);
       vlib_worker_thread_barrier_release (bm->vlib_main);
       bpa_audit ("forward-del", p, 0);
       return 0;
@@ -306,12 +582,23 @@ bpa_static_add_del (u8 *name, bpa_static_t *sf, int is_add, int is_check)
     return e;
 
   e = bpa_static_conflict (p, sf);
+  if (e)
+    return e;
+
+  /* Last, because it is the only refusal that depends on what the box is
+   * doing this second rather than on what it was told. An operator who gets
+   * it has a configuration that is legal and a moment that is not. */
+  e = bpa_static_holder (pool_index, p, sf);
   if (e || is_check)
     return e;
 
   i = bpa_static_position (p, sf);
   vlib_worker_thread_barrier_sync (bm->vlib_main);
   vec_insert_elts (p->statics, sf, 1, i);
+  /* Before the install: the install reserves the forwarded port in the
+   * subscriber's bitmap, and on a dynamic pool the block that bitmap belongs
+   * to is the one this is about to pin. */
+  bpa_static_pin (pool_index, p, &p->statics[i], 1);
   bpa_static_install (pool_index, &p->statics[i]);
   vlib_worker_thread_barrier_release (bm->vlib_main);
 
@@ -936,6 +1223,20 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 	      return e;
 	    }
 	}
+
+      /*
+       * And the pins, once every slice exists.
+       *
+       * This is the path a restart takes. The configuration replay creates the
+       * pool with the forwards it carries, and a forward on a dynamic pool is
+       * a pin - so a box comes back holding exactly the blocks its
+       * configuration says, without anything having been saved but the
+       * configuration. Nothing is checked for a current holder here: the
+       * allocators above were created empty a few lines ago, so there is
+       * nobody to take a block from.
+       */
+      for (i = 0; i < vec_len (p->statics); i++)
+	bpa_static_pin (p - bm->pools, p, &p->statics[i], 1);
     }
 
   vlib_worker_thread_barrier_release (bm->vlib_main);

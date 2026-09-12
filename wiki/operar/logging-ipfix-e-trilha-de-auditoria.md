@@ -48,8 +48,14 @@ configure
 
 ```
 show cgnat logging       estado da exportação
-show cgnat blocks        blocos atualmente alocados
+show cgnat blocks        blocos atualmente alocados (e quantos estão presos)
 ```
+
+## Bloco preso por encaminhamento de porta também é evento
+
+Um [encaminhamento de porta](/doc/encaminhamento-de-porta-epIZfdmzU3) num pool dinâmico prende o bloco do assinante enquanto o forward existir. Prender gera uma **alocação** e soltar gera uma **liberação**, como qualquer outro bloco: em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado sem registro é um mapeamento que ninguém consegue atribuir depois.
+
+Um segundo forward dentro de um bloco que já está preso **não** gera outro registro — o evento é do bloco, não do forward. Duas alocações do mesmo bloco sem uma liberação entre elas é exatamente a lacuna que faz uma consulta futura responder errado.
 
 ## Por que TCP existe
 

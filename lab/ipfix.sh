@@ -59,11 +59,11 @@ vppctl bpa logging enable
 vppctl show bpa logging | sed 's/^/  /'
 
 # collector on the far side of the wire
-ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 30 > /tmp/collector.out 2>&1 &
+ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 60 > /tmp/collector.out 2>&1 &
 COL=$!
 # captures the wire in parallel: separates "VPP did not send" from "the
 # collector lost it"
-ip netns exec peer timeout 28 tcpdump -nni veth-out -c 40 "udp port 4739" > /tmp/tcpdump.out 2>&1 &
+ip netns exec peer timeout 58 tcpdump -nni veth-out -c 80 "udp port 4739" > /tmp/tcpdump.out 2>&1 &
 sleep 2
 
 echo
@@ -94,6 +94,38 @@ echo "  blocos devolvidos em ${n}s"
 vppctl show bpa blocks | tail -1 | sed 's/^/  /'
 
 echo
+echo "=== a block held by the configuration is an allocation too ==="
+# A static port forward on a dynamic pool pins the subscriber's block: it is
+# held for as long as the forward exists and no hold-down takes it back. That
+# is a block held by an operator's decision rather than by a packet, and in
+# dynamic mode the log is the ONLY record of who held a block - so it has to
+# produce the same two events as any other block, or the pin is a mapping
+# nobody can attribute later.
+#
+#   100.64.0.1 is subscriber 1 -> 200.150.0.16, block 17408-33791
+vppctl bpa forward din tcp 20000 to 100.64.0.1 80
+sleep 2
+vppctl show bpa blocks | tail -1 | sed 's/^/  /'
+vppctl bpa forward din tcp 20000 del
+sleep 3
+
+echo
+echo "=== a block pinned while the log was off is announced when it comes on ==="
+# The order a configuration is applied in: the pools and their forwards first,
+# the export afterwards. A pin made in that window is a block held from then
+# on with nothing anywhere saying whose it is - and unlike an ordinary dynamic
+# block, it never comes up for release and gets a second chance at a record.
+#
+#   100.64.0.2 is subscriber 2 -> 200.150.0.16, block 33792-50175
+vppctl bpa logging disable
+vppctl bpa forward din tcp 40000 to 100.64.0.2 80
+vppctl show bpa blocks | tail -1 | sed 's/^/  pinned with the log off: /'
+vppctl bpa logging enable
+sleep 4
+vppctl bpa forward din tcp 40000 del
+sleep 3
+
+echo
 echo "=== contadores do exportador ==="
 vppctl show bpa logging | sed 's/^/  /'
 
@@ -114,6 +146,26 @@ expect_in "the collector decoded the template" "TEMPLATE 256" "$C"
 expect_in "allocations arrived" "ALLOCATION" "$C"
 expect_in "de-allocations arrived" "DEALLOCATION" "$C"
 expect_in "every allocation had its release" "Every allocation had its matching" "$C"
+
+# Pinning a block for a forward, and giving it back. The subscriber and the
+# port range are asserted, not just the event: a record that names the wrong
+# block is worse than no record.
+PIN_A=$(printf '%s\n' "$C" | grep -cE " ALLOCATION +100\.64\.0\.1 -> 200\.150\.0\.16 portas 17408-33791")
+PIN_D=$(printf '%s\n' "$C" | grep -cE " DEALLOCATION +100\.64\.0\.1 -> 200\.150\.0\.16 portas 17408-33791")
+expect "pinning a block for a forward was logged as one allocation (got ${PIN_A})" \
+  test "${PIN_A:-0}" -eq 1
+expect "and unpinning it as one release (got ${PIN_D})" \
+  test "${PIN_D:-0}" -eq 1
+
+# And the pin that was made while nothing was exporting. Without the replay
+# this block is held with no record at all, which is the state a rebooted box
+# would be in for every forward it carries.
+OFF_A=$(printf '%s\n' "$C" | grep -cE " ALLOCATION +100\.64\.0\.2 -> 200\.150\.0\.16 portas 33792-50175")
+OFF_D=$(printf '%s\n' "$C" | grep -cE " DEALLOCATION +100\.64\.0\.2 -> 200\.150\.0\.16 portas 33792-50175")
+expect "a block pinned while the log was off is announced when it comes on (got ${OFF_A})" \
+  test "${OFF_A:-0}" -eq 1
+expect "and its release still arrives (got ${OFF_D})" \
+  test "${OFF_D:-0}" -eq 1
 
 # The record's own timestamp, against the box's clock.
 #

@@ -872,15 +872,6 @@ VLIB_CLI_COMMAND (bpa_show_session_command, static) = {
  * is worse than no "show".
  */
 
-/* Which worker owns a subscriber, as a thread index. */
-static u32
-bpa_sub_thread (const bpa_main_t *bm, u32 sub_idx)
-{
-  if (bm->n_workers == 0)
-    return 0;
-  return bpa_owner_worker (&bm->workers, sub_idx) + 1;
-}
-
 static bpa_sub_t *
 bpa_sub_find (bpa_main_t *bm, u32 pool_index, u32 sub_idx,
 	      bpa_per_thread_t **pt_out)
@@ -928,6 +919,32 @@ bpa_sub_block_held (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
   bpa_dyn_block_addr (p, block_idx, blk);
   blk->sub_idx = sub_idx;
   return 1;
+}
+
+/*
+ * Is this subscriber's block held by the configuration rather than by its
+ * traffic?
+ *
+ * Asked with the subscriber's index alone, because the pinned block is always
+ * the one whose index IS that index - a forward is pinned to the block the
+ * pool's arithmetic gives the subscriber, and nothing else can be pinned.
+ */
+static int
+bpa_sub_block_pinned (bpa_main_t *bm, const bpa_pool_t *p, u32 pool_index,
+		      u32 sub_idx)
+{
+  u32 ti = bpa_sub_thread (bm, sub_idx), w, nw;
+  bpa_per_thread_t *pt;
+
+  if (p->mode != BPA_MODE_DYNAMIC || ti >= vec_len (bm->per_thread))
+    return 0;
+  pt = vec_elt_at_index (bm->per_thread, ti);
+  if (pool_index >= vec_len (pt->dyn))
+    return 0;
+
+  bpa_worker_id (bm, ti, &w, &nw);
+  return bpa_dyn_is_pinned (vec_elt_at_index (pt->dyn, pool_index), sub_idx,
+			    nw);
 }
 
 /*
@@ -1056,11 +1073,12 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	    ip4_address_t pub;
 
 	    pub.as_u32 = clib_host_to_net_u32 (blk.ip_pub);
-	    vlib_cli_output (vm,
-			     "  holds %U ports %u-%u, and has no sessions on "
-			     "this box",
-			     format_ip4_address, &pub, blk.port_lo,
-			     blk.port_hi);
+	    vlib_cli_output (
+	      vm, "  holds %U ports %u-%u, and has no sessions on this box%s",
+	      format_ip4_address, &pub, blk.port_lo, blk.port_hi,
+	      bpa_sub_block_pinned (bm, p, pool_index, sub_idx)
+		? " - PINNED by a forward, so no hold-down will take it"
+		: "");
 	  }
 	else
 	  vlib_cli_output (vm, "  no live state: this subscriber holds no "
@@ -1068,20 +1086,36 @@ bpa_show_subscriber_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	goto done;
       }
 
-    for (i = 0; i < vec_len (sub->blocks); i++)
-      {
-	bpa_subblock_t *sb = vec_elt_at_index (sub->blocks, i);
-	u32 used = sb->map.n_ports - sb->map.n_free;
-	ip4_address_t pub;
+    {
+      int pinned = bpa_sub_block_pinned (bm, p, pool_index, sub_idx);
+      bpa_block_t own;
+      int have_own = bpa_forward (p, clib_net_to_host_u32 (addr.as_u32),
+				  &own) == 0;
 
-	pub.as_u32 = clib_host_to_net_u32 (sb->blk.ip_pub);
-	vlib_cli_output (
-	  vm, "  block %u  %U  ports %u-%u   %u of %u in use (%u%%), %u free%s",
-	  i, format_ip4_address, &pub, sb->blk.port_lo,
-	  sb->blk.port_hi, used, sb->map.n_ports,
-	  sb->map.n_ports ? (used * 100) / sb->map.n_ports : 0, sb->map.n_free,
-	  i ? "   (extension)" : "");
-      }
+      for (i = 0; i < vec_len (sub->blocks); i++)
+	{
+	  bpa_subblock_t *sb = vec_elt_at_index (sub->blocks, i);
+	  u32 used = sb->map.n_ports - sb->map.n_free;
+	  ip4_address_t pub;
+	  /* The pin is on the subscriber's own block, which is not
+	   * necessarily blocks[0]: a pin that arrived while the subscriber
+	   * was translating out of another one leaves that other one behind
+	   * as an extension. */
+	  int this_pinned = pinned && have_own
+			    && sb->blk.ip_pub == own.ip_pub
+			    && sb->blk.port_lo == own.port_lo;
+
+	  pub.as_u32 = clib_host_to_net_u32 (sb->blk.ip_pub);
+	  vlib_cli_output (
+	    vm,
+	    "  block %u  %U  ports %u-%u   %u of %u in use (%u%%), %u free%s",
+	    i, format_ip4_address, &pub, sb->blk.port_lo, sb->blk.port_hi,
+	    used, sb->map.n_ports,
+	    sb->map.n_ports ? (used * 100) / sb->map.n_ports : 0, sb->map.n_free,
+	    this_pinned ? "   (pinned by a forward)"
+			: (i ? "   (extension)" : ""));
+	}
+    }
     vlib_cli_output (vm,
 		     "  sessions %u   refusals: ports %u, session cap %u, "
 		     "rate cap %u",
@@ -2214,6 +2248,7 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       u32 pi = p - bm->pools;
       u64 total = 0, alloc = 0, allocs = 0, rels = 0, exh = 0, exts = 0;
+      u64 pinned = 0;
 
       if (p->mode != BPA_MODE_DYNAMIC)
 	continue;
@@ -2234,20 +2269,30 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
 	  vlib_cli_output (vm,
 			   "  thread %u: %u/%u blocks in use, %Lu allocations "
-			   "(%Lu extensions), %Lu releases, %Lu refusals",
+			   "(%Lu extensions), %Lu releases, %Lu refusals, "
+			   "%u pinned",
 			   i, d->n_alloc, d->n_local, d->n_allocations,
-			   d->n_extensions, d->n_releases, d->n_exhausted);
+			   d->n_extensions, d->n_releases, d->n_exhausted,
+			   d->n_pinned);
 	  total += d->n_local;
 	  alloc += d->n_alloc;
 	  allocs += d->n_allocations;
 	  exts += d->n_extensions;
 	  rels += d->n_releases;
 	  exh += d->n_exhausted;
+	  pinned += d->n_pinned;
 	}
+      /*
+       * Pinned is counted apart from "in use" and is a subset of it. An
+       * operator reading a pool that looks full needs to know how much of it
+       * no hold-down will ever give back: a pinned block is a forward the
+       * operator sold, not a subscriber that is slow to go quiet.
+       */
       vlib_cli_output (vm,
 		       "  total: %Lu/%Lu in use, %Lu allocations "
-		       "(%Lu extensions), %Lu releases, %Lu refusals",
-		       alloc, total, allocs, exts, rels, exh);
+		       "(%Lu extensions), %Lu releases, %Lu refusals, "
+		       "%Lu pinned",
+		       alloc, total, allocs, exts, rels, exh, pinned);
     }
 
   if (!any)

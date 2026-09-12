@@ -51,10 +51,21 @@ typedef struct
 {
   u32 *owner;	    /* local idx -> sub_idx, BPA_NO_BLOCK when free */
   f64 *idle_since;  /* local idx -> when it went idle; 0 while in use */
+  /*
+   * local idx -> the configuration says this block is one subscriber's.
+   *
+   * Parallel to owner[] rather than a flag inside it because the two answer
+   * different questions: owner[] says who is holding the block now, pinned[]
+   * says why it may not be taken away. A block can be pinned and idle at the
+   * same time - that is the whole point of the pin - and a sentinel owner
+   * would have had to encode both in one word.
+   */
+  u8 *pinned;
   u32 *free_list;   /* stack of free local idx */
   uword *by_sub;    /* sub_idx -> local idx + 1, so 0 means "none" */
   u32 n_local;	    /* blocks in this worker's slice */
   u32 n_alloc;	    /* currently held */
+  u32 n_pinned;	    /* of those, held because a forward says so */
   u64 n_allocations;
   u64 n_extensions;   /* blocks handed out as extensions *//* lifetime; becomes natEvent 16 count */
   u64 n_releases;   /* lifetime; becomes natEvent 17 count */
@@ -103,6 +114,52 @@ int bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
 			   u32 worker, u32 n_workers, bpa_block_t *b,
 			   int *is_new);
 
+/*
+ * Holds one block for one subscriber until the configuration says otherwise.
+ *
+ * This is what makes a static port forward possible on a dynamic pool: the
+ * unit an operator sells is an inbound port, and the unit this allocator moves
+ * is a block, so the block is what has to stop moving. A pinned block is never
+ * handed to anybody else and never reaped, whatever the hold-down says.
+ *
+ * Returns 0 when the block is this subscriber's afterwards, -1 when another
+ * subscriber is holding it right now - its index goes in *held_by, because
+ * "refused" is only useful to an operator who is told whose sessions the pin
+ * would have broken - and -2 when the block is not in this worker's slice,
+ * which is a caller that resolved the wrong worker rather than anything an
+ * operator can act on.
+ *
+ * *is_new is set only when the block came off the free list, which is the
+ * moment that is an RFC 8158 natEvent 16. Pinning a block the subscriber is
+ * already holding allocates nothing, and a second allocation record with no
+ * release between them is exactly the gap docs/logging.md exists to close.
+ */
+int bpa_dyn_pin (bpa_dyn_t *d, u32 block_idx, u32 sub_idx, u32 n_workers,
+		 f64 now, u32 *held_by, int *is_new);
+
+/*
+ * The mirror: the last forward in the block is gone, so the block is an
+ * ordinary dynamic block again.
+ *
+ * *released is set when the block went straight back to the free list, which
+ * is a natEvent 17 the caller has to emit. That happens when nothing is using
+ * it - the pin was the only reason it was held - and does not when the
+ * subscriber still has sessions on it, which then leave by the hold-down like
+ * any other block.
+ */
+void bpa_dyn_unpin (bpa_dyn_t *d, u32 block_idx, u32 n_workers, int *released);
+
+/* Is this block held by configuration rather than by traffic? */
+static_always_inline int
+bpa_dyn_is_pinned (const bpa_dyn_t *d, u32 block_idx, u32 n_workers)
+{
+  u32 local = block_idx / n_workers;
+
+  if (PREDICT_FALSE (!d->active || local >= d->n_local))
+    return 0;
+  return d->pinned[local] != 0;
+}
+
 /* Subscriber's last session ended: start the hold-down. */
 void bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now);
 
@@ -112,6 +169,11 @@ void bpa_dyn_active (bpa_dyn_t *d, u32 sub_idx);
 /*
  * Release blocks idle for longer than holddown. Fills `out` with what was
  * released so the caller can emit natEvent 17, and returns how many.
+ *
+ * A pinned block is never among them, however long it has been idle. That is
+ * the half of the pin that the operator actually sold: the forwarded port has
+ * to still be the subscriber's after a night with no traffic, and the
+ * hold-down is measured in minutes.
  */
 u32 bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker,
 		  u32 n_workers, bpa_dyn_release_t *out, u32 max_out);

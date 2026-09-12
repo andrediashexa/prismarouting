@@ -125,6 +125,20 @@ void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
 			  u32 ip_pub, u16 port_lo, u16 port_hi, u32 pool_id);
 
 /*
+ * Re-announces every pinned block as an allocation, when the log is switched
+ * on. A pin is made once and then holds a block for as long as the forward
+ * exists, and a configuration replay pins before it enables the export - so
+ * without this a rebooted box holds pinned blocks with no record of who has
+ * them. Takes the barrier itself.
+ */
+void bpa_log_pins_replay (void);
+
+/* Adds a pinned block to a subscriber's live record on one worker, if it has
+ * one and does not already carry the block. Under the barrier. */
+void bpa_sub_adopt_block (bpa_per_thread_t *pt, const bpa_pool_t *p,
+			  u32 pool_index, const bpa_block_t *b);
+
+/*
  * Who is asking, for the duration of one API request.
  *
  * Set before the change and cleared after it, so that an entry can only carry
@@ -305,6 +319,22 @@ bpa_worker_id (const bpa_main_t *bm, u32 thread_index, u32 *w, u32 *nw)
       *nw = 1;
       *w = 0;
     }
+}
+
+/*
+ * The inverse: which thread holds a subscriber's state.
+ *
+ * In bpa.h rather than beside its first caller because the configuration path
+ * now needs it too - pinning a block reaches into the allocator of exactly one
+ * worker, and a pin applied to the wrong one is a block held where no packet
+ * of that subscriber will ever look.
+ */
+static_always_inline u32
+bpa_sub_thread (const bpa_main_t *bm, u32 sub_idx)
+{
+  if (bm->n_workers == 0)
+    return 0;
+  return bpa_owner_worker (&bm->workers, sub_idx) + 1;
 }
 
 /* IP protocol number -> bpa_proto_t, or -1 when we do not translate it. */

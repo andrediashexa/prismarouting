@@ -155,6 +155,11 @@ mode `block_idx == sub_idx`, so one line of code serves both modes.
   is a log record**. Hold-down is the primary lever on log volume.
 * Oversubscription is measured **per worker**, not globally. One slice **MAY**
   exhaust while another still has free blocks.
+* A block carrying a [static port forward](#static-port-forwarding) is
+  **pinned**: no hold-down releases it and no other subscriber is given it,
+  for as long as the forward exists. `show bpa blocks` counts pinned blocks
+  apart from blocks in use, because an operator reading a pool that looks full
+  needs to know how much of it no hold-down will ever give back.
 
 ## Extended blocks
 
@@ -975,14 +980,71 @@ public port 2048 belongs to 100.64.0.9's block, not to 100.64.0.5's.
 
 The operator finds the block with `show bpa subscriber <address>`.
 
-### Deterministic pools only
+### On a dynamic pool, the block is what gets pinned
 
-A forward on a **dynamic** pool is refused. There, a block belongs to whoever
-holds it now and is released when that subscriber goes idle, so a pinned port
-would follow the block to the next subscriber: the forward would keep working
-and start reaching a different customer, which is worse than not working.
-Pinning a block to a subscriber is a feature of its own, not a detail of this
-one.
+A dynamic pool hands blocks out on the first flow and takes them back after the
+hold-down, so a port pinned inside one would follow its block to the next
+subscriber: the forward would keep working and start reaching a **different
+customer**, which is worse than not working, because nothing looks broken.
+
+The forward is not the unit to pin; the **block** is. Configuring a forward on
+a dynamic pool pins the block that carries it, and a pinned block is never
+handed to anybody else and never reaped, however long its subscriber has been
+idle.
+
+Which block? The one the pool's arithmetic gives that subscriber — the same
+block a deterministic pool would have given it, `block_idx == sub_idx`. Nothing
+about the forward's shape changes between the modes, and that is the point:
+
+* `bpa_reverse_sub()` still recovers the block from `(public address, port)`,
+  so the return path still shards with no shared table.
+* The handoff still lands both directions of the subscriber on one worker,
+  because `block_idx == sub_idx` takes the same remainder. An operator-chosen
+  block would have made most `(address, port)` pairs unpinnable for a given
+  subscriber on a box with workers, for a reason no operator can be expected
+  to hear.
+* `bpa_session_static_open()` still finds the block by asking `bpa_forward()`.
+
+A dynamic pool is oversubscribed on purpose, so a subscriber whose index is
+beyond the pool's block count has no block to pin, and the forward is refused
+saying so in the pool's own numbers.
+
+### The pin is derived, never stored
+
+There is no pin table. The subscriber's index comes from its address, the
+block index **is** that index, and the worker comes from the index too — so
+the set of pinned blocks is a function of the forwards, and of nothing else.
+
+That is also the whole of "the pin survives a restart". A box that reboots
+replays its configuration; the replay creates the pool with the forwards it
+carries; and creating a forward is what pins. Nothing else is persisted, so
+nothing else can come back disagreeing with the configuration — the same
+reason `p->statics` has one ordering and no second index.
+
+### A block somebody else is holding is refused
+
+Pinning a block that another subscriber currently holds would end that
+customer's live sessions so a different one can have an inbound port. That is
+not a trade the box makes on its own, so it is refused at `commit check`,
+naming them:
+
+```
+public port 1030 is in block 203.0.113.17:1024-1087, which 10.0.0.21 is
+holding now. Pinning it would end that subscriber's sessions to give this one
+an inbound port; the block is free again once they go idle
+```
+
+The check reads running state, so it is asked only where there is a pool index
+to ask it of. A candidate **pool definition** needs no such check: committing
+one frees the old pool's blocks with the pool, so at the instant it is applied
+nobody holds anything.
+
+A pin can also land on a subscriber that is already translating out of a
+different block, because the allocator gave it whichever was free. The pinned
+block becomes its primary and the old one becomes an extension, keeping its
+sessions and leaving by the hold-down like any other. Without that the
+subscriber's own outbound traffic would leave from a block that does not
+contain the operator's forward.
 
 ### Reservation, and why it is not a check
 
@@ -1043,9 +1105,19 @@ mode can be recomputed from the pool definition, and a forwarded port cannot.
 A trail that omitted them would answer a court order confidently and wrongly
 for exactly those ports. See [logging.md](logging.md).
 
+Pinning and unpinning a block are logged as `natEvent` 16 and 17 like every
+other block event, because in dynamic mode the log is the only record of who
+held a block. Turning the export on also re-announces every block that is
+pinned at that moment, because a configuration is applied pools first and
+export afterwards — so without it a rebooted box would hold every one of its
+pinned blocks with no record at all. See [logging.md](logging.md).
+
 `lab/forward.sh` asserts the behaviour on packets, and
 `sh tools/lab.sh forward off` runs the same lab with no forward configured,
-where ten of its checks **MUST** fail.
+where sixteen of its checks **MUST** fail. Its dynamic-pool section leaves the
+subscriber idle for **six times the hold-down**, with two unpinned blocks as
+the control: if those are still held, the hold-down never ran and the section
+would have been asserting something the hold-down gives it anyway.
 
 ## Application-level gateways
 

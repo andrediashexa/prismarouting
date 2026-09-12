@@ -192,7 +192,8 @@ SHOW_CGNAT = {
     "drops": ("why packets did not get through", None),
     "pool": ("configured CGNAT pools", None),
     "session": ("active sessions per thread", None),
-    "blocks": ("blocks allocated in dynamic mode", None),
+    "blocks": ("blocks allocated in dynamic mode, and how many a forward pins",
+               None),
     "logging": ("IPFIX export state", None),
     "history": ("dated configuration trail", None),
 }

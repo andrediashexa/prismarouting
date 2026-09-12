@@ -85,11 +85,15 @@ echo
 # Not every lab, either: one that asserts what the VTY prints, or what a
 # counter says about a refusal, exercises the same code whatever the thread
 # count, and a second run of it would double the suite to re-prove what cannot
-# differ. These thirteen touch the packet.
+# differ. These fourteen touch the packet.
 #
 # handoff, dynamic-workers and pool-del are absent because they ask for workers
 # THEMSELVES - a "+workers" run of those would be the same run twice.
-BOTH_WAYS="bypass esp extblocks frag ftp-alg hairpin icmp-tcp mss
+#
+# forward joined the list when a forward became possible on a dynamic pool: the
+# block a pin holds has to be in the slice of the same worker the subscriber's
+# own traffic lands on, and that is a sentence only a worker run can check.
+BOTH_WAYS="bypass esp extblocks forward frag ftp-alg hairpin icmp-tcp mss
            nat-behaviour pptp rtsp sip two-pools"
 # The list, in the order the summary will print.
 LABS=""

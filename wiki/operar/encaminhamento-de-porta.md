@@ -52,13 +52,44 @@ Na prática o roteiro é: consulte o bloco do assinante, escolha uma porta **den
 
 :::
 
-# Só em pools determinísticos
+# Em pool dinâmico, quem fica preso é o bloco
+
+Num pool dinâmico o bloco é entregue no primeiro fluxo e devolvido depois que o assinante fica ocioso. Uma porta fixada dentro dele seguiria o bloco para o próximo assinante: o forward continuaria funcionando e passaria a alcançar **outro cliente** — pior do que não funcionar, porque nada parece quebrado.
+
+Por isso o que fica preso não é a porta, é o **bloco**. Configurar um forward num pool dinâmico prende o bloco daquele assinante, e bloco preso **não é devolvido por ociosidade nem entregue a mais ninguém** enquanto o forward existir. O comando é o mesmo dos demais pools — você continua informando só a porta pública.
 
 
-:::warning
-**Um forward em pool dinâmico é recusado.** Ali um bloco pertence a quem o segura **agora** e é liberado quando aquele assinante fica ocioso. Uma porta fixada seguiria o bloco para o próximo assinante: o forward continuaria funcionando e passaria a alcançar **outro cliente** — o que é pior do que não funcionar.
+:::info
+Prender é permanente por definição, e o custo é esse: aquele bloco sai da rotatividade do pool. `show cgnat blocks` conta os blocos presos à parte dos blocos em uso, justamente para você saber quanto do pool nenhuma ociosidade vai devolver.
 
 :::
+
+## Três recusas que você vai encontrar
+
+| Recusa | O que fazer |
+|--------|-------------|
+| o bloco está **com outro assinante agora** — a recusa nomeia quem | esperar aquele cliente ficar ocioso, ou atender este por outra porta/pool. Tomar o bloco encerraria as sessões vivas dele |
+| o assinante está **além da contagem de blocos do pool** | pool dinâmico é sobrevendido de propósito; para esse assinante não existe bloco. Amplie o conjunto público ou atenda-o por um pool que o alcance |
+| a porta está **fora do bloco** daquele assinante | a mesma regra dos pools determinísticos: consulte o bloco antes de escolher a porta |
+
+A recusa por bloco ocupado aparece já no `commit check`, antes de qualquer mudança no equipamento.
+
+## Depois de um reinício
+
+O bloco volta preso, e você não precisa fazer nada para isso. Qual bloco está preso não é um estado guardado à parte: é deduzido do próprio forward na configuração, então basta a configuração voltar. Não existe um segundo lugar para ficar desatualizado.
+
+## No log
+
+Prender um bloco é registrado como **alocação** e soltá-lo como **liberação**, exatamente como qualquer outro bloco (RFC 8158). Em modo dinâmico o log é o único registro de quem segurou um bloco, e um bloco segurado por um ano sem registro é um mapeamento que ninguém consegue atribuir a um assinante depois — o que aqui é obrigação legal, não capricho.
+
+Uma configuração é aplicada com os pools primeiro e a exportação depois, que é a ordem de todo boot. Por isso, quando a exportação é ligada, o equipamento reanuncia como alocação todos os blocos que estão presos naquele instante — senão a caixa recém-reiniciada seguraria cada um deles sem registro nenhum.
+
+## Onde ver
+
+```
+show cgnat blocks                    quantos blocos estão presos
+show cgnat subscriber 100.64.0.5     diz que o bloco está preso por um forward
+```
 
 # Como conferir
 
