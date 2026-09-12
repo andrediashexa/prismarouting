@@ -1693,7 +1693,7 @@ stands:
 | MTU | binary API (`sw_interface_set_mtu`) |
 | uRPF | binary API (`urpf_update`) |
 | timeouts, block-holddown, session-table | binary API (`bpa_global_set`) |
-| logging | **still the CLI socket**, deliberately: the maintainer asked for logging work to wait |
+| IPFIX export state and its collector | binary API (`bpa_logging_set`) |
 | the `check` path | **still the CLI socket**, and has no API message of its own ([#3](https://github.com/andrediashexa/hexarouting/issues/3)) |
 | every `show` | the CLI socket, read-only, and intended to stay |
 
@@ -1788,6 +1788,59 @@ trail: the message carries no `audit_user`
 ([#124](https://github.com/andrediashexa/hexarouting/issues/124)). It was a
 `vppctl` call before, so it was never attributable — moving it to the API made
 the gap visible rather than creating it.
+
+`bpa_logging_set` carries the IPFIX export state and its TCP collector, which
+were the last configuration changes made with `vppctl`. It carries no
+`audit_user` either, and for a different reason: the trail in `bpa_audit.c` is
+per-pool and records nothing global at all, so `bpa_global_set` has no identity
+on it and this message would be naming an operator on a line nobody writes.
+
+Moving it fixed something that was not the socket. `self.dp.run()` returned a
+status the caller discarded, and the dataplane **refuses** `bpa logging enable`
+when no IPFIX exporter is configured — so an operator who turned the export on
+read `commit complete` off a box that exports nothing. `vppctl` exits 0 either
+way, which is the reason `vppapi.py` exists. It now says so:
+
+```
+error: cgnat logging enable: the dataplane refused it: invalid value
+(bpa_log_enable: no IPFIX collector configured; use 'set ipfix exporter
+collector <ip> src <ip>' first)
+```
+
+### What the acceptance criterion is, and what it is not
+
+`lab/vty.sh` drives one commit that changes a pool, a pool setting, a bypass
+list, an interface attachment, two global settings, the IPFIX collector, an MTU
+and a uRPF mode — and asks for an export state the box refuses — with
+`HEXA_TRACE=1`, and asserts that every `[device]` line in the trace is a `show`
+or a `check`. It asserts beside it that the commit was not vacuous — a commit
+that changes nothing sends nothing and would satisfy the rule without testing
+it — and that the refusal above reaches the operator, which is the half the
+discarded `dp.run()` status used to swallow.
+
+The other clause of the criterion is that what stays is **read-only**, and
+`show cgnat subscriber|translation|top <argument>` is the one place an
+operator's own text reaches the socket — with the read-only role holding it.
+`Vpp.run()` passes `shlex.split(cmd)` as **argv**, so the argument stays an
+argument. Measured rather than reasoned: with a pool named `trace-only` on the
+box, `show cgnat subscriber 1.2.3.4; vppctl bpa pool trace-only del` and the
+same with an embedded newline both leave the pool standing, and `lab/vty.sh`
+asserts it. The same lab run against a `Vpp.run()` that hands the string to a
+shell instead deletes the pool.
+
+An assertion of this shape already existed in `lab/commit.sh`, and it did not
+catch `bpa logging tcp`. It was about `commit check` alone: a check applies
+nothing, so the writes a **commit** makes were never in a trace anybody looked
+at. `lab/commit.sh` had also already learned the other half of this — list what
+is *allowed* rather than what is forbidden, because an assertion that names the
+forbidden commands stops testing the moment one of them changes shape — and
+that lesson is why the gap was a missing scope rather than a missing rule.
+
+This is an **authority** boundary and not an availability one
+([#172](https://github.com/andrediashexa/hexarouting/issues/172)). Every change
+above is still reachable over the binary API; moving a write there decides
+**who may make it**, not what it costs when it is made. "The planes are
+separated" is not a conclusion this supports.
 
 ## A pool's public prefix that nothing announces
 

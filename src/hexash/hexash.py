@@ -3950,10 +3950,7 @@ class Shell:
             if r.state != vppapi.OK:
                 self.err(f"cgnat block-holddown {w[2]}: {r.reason}")
         elif w[1] == "logging" and len(w) >= 3:
-            if w[2] == "tcp":
-                self.dp.run("bpa logging tcp " + " ".join(w[3:]))
-            else:
-                self.dp.run(f"bpa logging {w[2]}")
+            self.apply_logging(w)
         elif w[1] == "session-table":
             # "session-table buckets <n> memory <MB>", in either order.
             got = {}
@@ -3972,6 +3969,52 @@ class Shell:
                 # tables are allocated with the first pool and a new size
                 # would describe a table nobody is using.
                 self.err(f"cgnat session-table: {r.reason}")
+
+    def apply_logging(self, w):
+        """
+        The IPFIX export state and its collector, over the binary API.
+
+        Two things were wrong with the `vppctl bpa logging ...` this replaces,
+        and the socket was only one of them. The other is that the answer was
+        thrown away: the dataplane refuses `bpa logging enable` when no IPFIX
+        collector is configured, and an operator who typed it read "commit
+        complete" off a box that exports nothing. `vppctl` exits 0 either way,
+        so there was nothing for the caller to notice even if it had looked -
+        which is the reason vppapi.py exists at all.
+
+        The two halves go in one message rather than two calls: a
+        configuration that names a collector AND turns the export on is one
+        operator decision, and sending it as two leaves the box between them
+        if the second is refused.
+        """
+        args = {"set_enable": False, "enable": False,
+                "set_tcp": False, "tcp_enable": False,
+                "collector": "0.0.0.0", "port": 0}
+        if w[2] in ("enable", "disable"):
+            args["set_enable"] = True
+            args["enable"] = w[2] == "enable"
+        elif w[2] == "tcp" and len(w) >= 4:
+            args["set_tcp"] = True
+            if w[3] != "disable":
+                args["tcp_enable"] = True
+                args["collector"] = w[3]
+                if len(w) >= 6 and w[4] == "port":
+                    if not w[5].isdigit() or int(w[5]) > 65535:
+                        self.err(f"cgnat logging tcp: port {w[5]} is not one")
+                        return
+                    # Zero, not 4739, when no port was typed: the default
+                    # belongs to the dataplane, which is where the running
+                    # configuration is read back from. A default invented
+                    # here would be a second opinion about it.
+                    args["port"] = int(w[5])
+        else:
+            self.err("usage: nat cgnat logging enable|disable | "
+                     "nat cgnat logging tcp <collector> [port <n>] | "
+                     "nat cgnat logging tcp disable")
+            return
+        r = self.api_call("bpa_logging_set", args)
+        if r.state != vppapi.OK:
+            self.err(f"cgnat {' '.join(w[1:])}: {r.reason}")
 
     #: Terminators, which are structure rather than configuration.
     #:
