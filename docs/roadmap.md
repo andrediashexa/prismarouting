@@ -779,8 +779,18 @@ nobody reviewed, and the issue is the only place the measurement survives.
 |---|---|---|
 | [#213](https://github.com/andrediashexa/hexarouting/issues/213) | IPv6 link-local multicast is not punted over a `linux_cp` pair, so an unnumbered BGP session reaches Active and never Established — and IPv6 ND, OSPFv3 and IS-IS over IPv6 have the same hole | **open** |
 | [#214](https://github.com/andrediashexa/hexarouting/issues/214) | a public port can be forwarded once per **pool** rather than once per public address, so on an interleaved pool with N addresses only one subscriber in N can hold a forward at a given offset | **open** |
-| [#215](https://github.com/andrediashexa/hexarouting/issues/215) | deleting a pool emits no `natEvent 17`, so every block it held stays **open** in the retention log — the answer to a court order then names a subscriber who had already been disconnected | **open** |
+| [#215](https://github.com/andrediashexa/hexarouting/issues/215) | deleting a pool emits no `natEvent 17`, so every block it held stays **open** in the retention log — the answer to a court order then names a subscriber who had already been disconnected | *fixed* |
+| [#217](https://github.com/andrediashexa/hexarouting/issues/217) | and a box that is **stopped** does the same, on every planned reboot — with a second allocation and no release between them when it comes back | **open** |
 | [#216](https://github.com/andrediashexa/hexarouting/issues/216) | `bpa_dyn_active()` has no callers; either it is unnecessary or a call is missing, and nothing in the code says which | **open** |
+
+#215's fix also covers a pool being **replaced**, which was not obvious: a
+`commit remap` is applied as a delete and an add, so it went through the same
+hole. What is left in #217 is the commonest of the three - the box itself going
+down, on every planned reboot and every upgrade - and it is deliberately not a
+one-line follow-up: a power loss can never emit the record, so a drain on
+graceful stop alone would *look* like a fix and leave the ambiguity that makes
+the log unreadable after a crash. It needs a restart marker beside it, and what
+shape that takes is a decision.
 
 #213 is the one that matters most, for the reason that puts anything at the top
 of this file: **the product accepts the configuration and cannot deliver it.**
