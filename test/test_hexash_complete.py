@@ -2939,6 +2939,18 @@ check(frr_writes_instead("continue 30") == "on-match goto 30",
 check(frr_writes_instead("ip route 10.0.0.0/8 10.0.0.1") is None,
       "an ordinary statement is not rewritten")
 
+# The entry that is not about a value. What decides is the LAST word, so the
+# address between them is anything - a table keyed on leading words and fixed
+# values cannot express that, which is why it is a separate list.
+check(not frr_keeps("neighbor 10.0.0.2 activate"),
+      "'neighbor activate' is implied by bgp default ipv4-unicast, so omitted")
+check(not frr_keeps("neighbor vppwan0 activate"),
+      "whatever the neighbour is named")
+check(frr_keeps("neighbor 10.0.0.2 remote-as 65001"),
+      "while another neighbor statement is kept")
+check(frr_keeps("neighbor 10.0.0.2 route-map RM in"),
+      "including one in the same address family")
+
 # A rewritten statement whose rewrite IS there is not a drop. Without this the
 # check would refuse every commit containing a passive-interface.
 check(statements_frr_dropped(["passive-interface dum9"],

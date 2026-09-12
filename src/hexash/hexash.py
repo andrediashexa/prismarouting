@@ -917,6 +917,27 @@ FRR_OMITS_AT = {
     "bgp default ipv4-unicast": (),
 }
 
+# The one entry that is not about a VALUE, and it needs its own shape.
+#
+# `neighbor <x> activate` inside `address-family ipv4 unicast` is implied by
+# `bgp default ipv4-unicast`, which is on unless somebody turns it off - so FRR
+# accepts the statement and writes nothing. Measured, and the probe is in
+# lab/frr-readback.sh with the others.
+#
+# It is here rather than in FRR_OMITS_AT because the thing that decides is the
+# LAST word and not the value of a setting: `neighbor 10.0.0.2 activate` and
+# `neighbor vppwan0 activate` are both omitted and the address between them is
+# anything. FRR_OMITS_AT matches leading words against fixed values, which
+# cannot express that.
+#
+# This one is the reason `lab/routing.sh` refused a BGP session the first time
+# this check ran on a real box: the lab configures a session the ordinary way,
+# with an activate line, and the box called it a dropped statement. The lab
+# caught it, which is what the lab is for.
+FRR_OMITS_TRAILING = (
+    ("neighbor", "activate"),
+)
+
 
 def frr_keeps(stmt):
     """
@@ -927,6 +948,9 @@ def frr_keeps(stmt):
     expected back verbatim, and absence is a failed commit.
     """
     w = stmt.split()
+    for first, last in FRR_OMITS_TRAILING:
+        if len(w) >= 3 and w[0] == first and w[-1] == last:
+            return False
     for k, vals in FRR_OMITS_AT.items():
         kw = k.split()
         if w[:len(kw)] != kw:

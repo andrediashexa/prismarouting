@@ -171,6 +171,29 @@ expect "turning it off writes the 'no' line" \
 run "router bgp 65000" " bgp default ipv4-unicast"
 
 echo
+echo "=========== 4b. omitted because something ELSE is on ==========="
+# The one entry in the table that is not about a value. `neighbor <x> activate`
+# inside an ipv4-unicast address family is implied by `bgp default
+# ipv4-unicast`, which is on unless somebody turns it off - so FRR accepts the
+# line and writes nothing.
+#
+# This is the probe that would have saved a run: the check refused a BGP
+# session in lab/routing.sh the first time it met one, because the ordinary way
+# to configure a peer includes an activate line.
+run "router bgp 65000" " neighbor 10.9.9.9 remote-as 65001"
+run "router bgp 65000" " address-family ipv4 unicast" \
+    "  neighbor 10.9.9.9 activate" "  exit-address-family"
+expect "'neighbor activate' is not read back" \
+       sh -c '! vtysh -c "show running-config" 2>/dev/null | grep -qF "neighbor 10.9.9.9 activate"'
+# The control, in the same address family, so "not read back" is not simply
+# what this box says about everything under address-family.
+run "router bgp 65000" " address-family ipv4 unicast" \
+    "  neighbor 10.9.9.9 soft-reconfiguration inbound" "  exit-address-family"
+expect "while another statement in the same family is" \
+       sh -c 'vtysh -c "show running-config" 2>/dev/null | grep -qF "neighbor 10.9.9.9 soft-reconfiguration inbound"'
+run "router bgp 65000" " no neighbor 10.9.9.9"
+
+echo
 echo "=========== 5. the ordinary case, for contrast ==========="
 # Most statements do come back. If these went ABSENT the whole read-back idea
 # would be dead, and the lab would be saying so instead of asserting a list.
@@ -189,7 +212,7 @@ echo "=========== 6. the undo worked ==========="
 # The assertion that makes every one above mean something. If a probe's undo
 # silently failed, the next probe read a configuration the previous one had
 # written, and this file would be measuring its own order.
-LEFT=$(cfg | grep -cE "^ (ip ospf|timers throttle|neighbor (10\.9\.9\.9|dum9))|^ip route 192\.0\.2\.0" || true)
+LEFT=$(cfg | grep -cE "^ +(ip ospf|timers throttle|neighbor (10\.9\.9\.9|dum9))|^ip route 192\.0\.2\.0" || true)
 cfg | sed 's/^/  /'
 expect "nothing a probe typed is left behind (found $LEFT)" test "${LEFT:-1}" -eq 0
 
