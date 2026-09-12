@@ -50,8 +50,14 @@ LAB_T0=$(date +%s)
 start_frr zebra staticd bgpd ospfd isisd
 sleep 2
 
-ip link add dum9 type dummy 2>/dev/null
-ip link set dum9 up 2>/dev/null
+# Three, because section 4d needs one interface per value: a probe that types
+# into the same interface it just typed into cannot tell FRR's answer from its
+# own keystrokes, which is how a rewrite that does not exist got into the table
+# once.
+for _i in 9 8 7; do
+  ip link add "dum$_i" type dummy 2>/dev/null
+  ip link set "dum$_i" up 2>/dev/null
+done
 
 fail=0
 pass=0
@@ -210,6 +216,57 @@ run "router bgp 65000" " no bgp default ipv4-unicast" \
 expect "and IS read back once that default is turned off" \
        sh -c 'vtysh -c "show running-config" 2>/dev/null | grep -qF "neighbor 10.9.9.9 activate"'
 run "no router bgp 65000"
+
+echo
+echo "=========== 4c. IS-IS, and the control that tells omission from refusal ==="
+# Probed because lab/igp.sh configures IS-IS and nothing had asked. Each
+# statement is typed twice, at its default and at another value - a statement
+# FRR REJECTED outright also fails to come back, and a table entry written off
+# the absence alone would excuse the very thing this check exists for.
+run "router isis lab" " net 49.0001.0000.0000.0001.00"
+run "interface dum9" " ip router isis lab"
+probe ABSENT     "metric-style wide" \
+      "router isis lab" " metric-style narrow" -- \
+      "router isis lab" " metric-style wide"
+probe ROUNDTRIPS "metric-style narrow" \
+      "router isis lab" " metric-style wide" -- \
+      "router isis lab" " metric-style narrow"
+probe ABSENT     "isis hello-interval 3" \
+      "interface dum9" " no isis hello-interval" -- \
+      "interface dum9" " isis hello-interval 3"
+probe ROUNDTRIPS "isis hello-interval 5" \
+      "interface dum9" " no isis hello-interval" -- \
+      "interface dum9" " isis hello-interval 5"
+probe ABSENT     "isis metric 10" \
+      "interface dum9" " no isis metric" -- \
+      "interface dum9" " isis metric 10"
+probe ROUNDTRIPS "isis metric 77" \
+      "interface dum9" " no isis metric" -- \
+      "interface dum9" " isis metric 77"
+run "interface dum9" " no ip router isis lab"
+run "no router isis lab"
+
+echo
+echo "=========== 4d. an area number is NOT rewritten, and this refutes an entry ==="
+# A table entry claiming `ip ospf area 0` comes back as `ip ospf area 0.0.0.0`
+# was written and then removed, and the refutation is worth more than the entry
+# would have been: the probe that produced it TYPED the dotted form before
+# looking for it, so what it found was its own keystrokes.
+#
+# ONE INTERFACE PER VALUE, so nothing typed earlier can be what is read later.
+# That is the whole correction: `probe` above types and then looks, which is
+# fine when the two forms are the same string and is a trap when they are not.
+run "interface dum9" " ip ospf area 0"
+run "interface dum8" " ip ospf area 5"
+run "interface dum7" " ip ospf area 0.0.0.7"
+cfg | grep -E "ip ospf area" | sed 's/^/    /'
+expect "an area number typed plain comes back plain" \
+       sh -c 'vtysh -c "show running-config" 2>/dev/null | grep -qE "ip ospf area 0$"'
+expect "a non-zero one too" \
+       sh -c 'vtysh -c "show running-config" 2>/dev/null | grep -qE "ip ospf area 5$"'
+expect "and a dotted one stays dotted" \
+       sh -c 'vtysh -c "show running-config" 2>/dev/null | grep -qF "ip ospf area 0.0.0.7"'
+for _i in 9 8 7; do run "interface dum$_i" " no ip ospf area"; done
 
 echo
 echo "=========== 5. the ordinary case, for contrast ==========="

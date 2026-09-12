@@ -2957,6 +2957,30 @@ check(not frr_keeps("neighbor vppwan0 activate", _AF_ON),
       "whatever the neighbour is named")
 check(not frr_keeps("neighbor 10.0.0.2 activate"),
       "with no context at all it reads as omitted, which is the quiet side")
+
+# IS-IS, probed because lab/igp.sh configures it and nothing had asked. Each
+# has a control at a non-default value, which is what tells an omission from a
+# REFUSAL: a statement FRR rejected outright also fails to come back, and
+# excusing that would hide the very thing this check exists for.
+check(not frr_keeps("metric-style wide"), "metric-style wide is omitted")
+check(frr_keeps("metric-style narrow"), "and narrow is not")
+check(not frr_keeps("isis hello-interval 3"), "isis hello 3 is omitted")
+check(frr_keeps("isis hello-interval 5"), "and 5 is not")
+check(not frr_keeps("isis metric 10"), "isis metric 10 is omitted")
+check(frr_keeps("isis metric 77"), "and 77 is not")
+
+# The entry that was written and then refuted. A probe appeared to show
+# `ip ospf area 0` coming back dotted - but it TYPED the dotted form before
+# looking for it, so what it found was its own keystrokes. Measured properly,
+# one interface per value, FRR keeps the form it was given. The assertion is
+# kept in the NEGATIVE so the wrong entry cannot come back quietly.
+check(frr_writes_instead("ip ospf area 0") is None,
+      "FRR keeps an area number as typed, so this is not a rewrite")
+check(frr_writes_instead("ip ospf area 0.0.0.7") is None,
+      "in either form")
+check(statements_frr_dropped(["ip ospf area 0"],
+                             ["interface dum9", " ip ospf area 0"]) == [],
+      "and it is satisfied by the same form coming back")
 check(frr_keeps("neighbor 10.0.0.2 remote-as 65001"),
       "while another neighbor statement is kept")
 check(frr_keeps("neighbor 10.0.0.2 route-map RM in"),

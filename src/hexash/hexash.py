@@ -894,6 +894,19 @@ def udp_export_without_collector(globals_) -> bool:
 # which is the evidence that this list is discoverable rather than open-ended.
 # A statement that arrives here having been rewritten is NOT a dropped
 # statement, and refusing it would refuse a correct configuration.
+# An `ip ospf area <n>` entry was written here and then REMOVED, and the
+# refutation is worth more than the entry would have been. A probe appeared to
+# show `ip ospf area 0` coming back as `ip ospf area 0.0.0.0` - but that probe
+# TYPED the dotted form before it looked for it, so what it found was its own
+# keystrokes. Measured properly, one interface per value so nothing typed
+# earlier can be what is read later:
+#
+#   typed `ip ospf area 0`        read back `ip ospf area 0`
+#   typed `ip ospf area 5`        read back `ip ospf area 5`
+#   typed `ip ospf area 0.0.0.7`  read back `ip ospf area 0.0.0.7`
+#
+# FRR keeps the form it was given. lab/frr-readback.sh is what caught the wrong
+# entry, one run after it was added.
 FRR_REWRITES = (
     # (prefix an operator types, how to build what FRR writes instead)
     ("passive-interface ", lambda w: "ip ospf passive"),
@@ -915,6 +928,14 @@ FRR_OMITS_AT = {
     "ip ospf hello-interval": ("10",),
     "ip ospf retransmit-interval": ("5",),
     "bgp default ipv4-unicast": (),
+    # IS-IS, probed because lab/igp.sh configures it and nothing had asked.
+    # Each of these has a control in lab/frr-readback.sh at a NON-default
+    # value, which is what tells an omission from a refusal: a statement FRR
+    # rejected outright also fails to come back, and excusing that would hide
+    # the very thing this check exists for.
+    "metric-style": ("wide",),
+    "isis hello-interval": ("3",),
+    "isis metric": ("10",),
 }
 
 # The one entry whose answer depends on the REST of the configuration, and the
