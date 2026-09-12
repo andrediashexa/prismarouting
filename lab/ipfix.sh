@@ -177,6 +177,47 @@ vppctl bpa forward din tcp 40000 del
 sleep 3
 
 echo
+echo "=== deleting the pool releases every block it was still holding ==="
+# A block held at the instant its pool is deleted is freed by bpa_pool_del()
+# itself and never reaches the reap, so the ordinary release path never runs
+# for it. Without a record of its own that allocation stays OPEN in the
+# retention log for as long as the log is kept - and in dynamic mode that log
+# IS the connection record, so "who held 200.150.0.16:1030 at 14:22" is
+# answered with a subscriber who had already been disconnected (#215).
+#
+# Nothing may expire underneath this. The blocks have to still be held when
+# the delete frees them, or the reap has already emitted their releases and
+# this section is measuring the path it is not about.
+vppctl bpa timeouts udp 3600
+vppctl bpa block-holddown 3600
+# The pin goes first: it takes the block the pool's arithmetic gives the
+# subscriber, and a dynamic allocation that got there first would refuse it.
+# Subscriber 0 because blocks 1 and 2 are the ones the sections above pin.
+#
+#   100.64.0.0 is subscriber 0 -> 200.150.0.16, block 1024-17407, and the
+#   forwarded public port has to be inside that block: a forward is a port of
+#   the subscriber's OWN block, and 20002 is subscriber 1's.
+vppctl bpa forward din tcp 5000 to 100.64.0.0 80
+# Two more blocks held by traffic rather than by configuration, because the
+# two are freed by the same line of the delete and a fix that only covered
+# pinned blocks would look identical from here.
+for sub in 7 8; do
+  vppctl packet-generator new "name d$sub limit 1 node ip4-input interface pg0 size 60-60 \
+      data { UDP: 100.64.0.$sub -> 8.8.8.8 \
+             UDP: 41000 -> 53 \
+             incrementing 8 }"
+done
+vppctl packet-generator enable >/dev/null; sleep 1
+for sub in 7 8; do vppctl packet-generator delete d$sub >/dev/null 2>&1; done
+BLOCKS_HELD=$(vppctl show bpa blocks | tail -1 | tr -d '\r')
+echo "  held when the delete runs: $BLOCKS_HELD"
+vppctl bpa pool din del
+# The delete queues its records where every other block event is queued; the
+# expire process is what puts them on the wire, once a second.
+sleep 3
+vppctl show bpa blocks | sed 's/^/  after the delete: /'
+
+echo
 echo "=== contadores do exportador ==="
 vppctl show bpa logging | sed 's/^/  /'
 
@@ -271,6 +312,51 @@ expect "a block pinned while the log was off is announced when it comes on (got 
   test "${OFF_A:-0}" -eq 1
 expect "and its release still arrives (got ${OFF_D})" \
   test "${OFF_D:-0}" -eq 1
+
+# --- a pool deleted while it was holding blocks (#215) ---
+#
+# The precondition first. With no block held at the instant of the delete
+# there is nothing for the delete to release, and every assertion below would
+# pass on a box that never emitted a thing.
+expect_in "the pool was holding all three of its blocks when it was deleted" \
+  "total: 3/3 in use" "$BLOCKS_HELD"
+
+# Every allocation in the capture against its release, paired by SUBSCRIBER
+# and PORT RANGE rather than counted. Counts match while the records name
+# different blocks, and a release that names the wrong block is worse than no
+# release at all: it closes somebody else's allocation and leaves this one
+# open, so the log now answers two questions wrongly instead of one.
+unmatched() {
+  printf '%s\n' "$C" | awk '
+    $2 == "ALLOCATION"   { a[$3 " " $5 " " $7]++; next }
+    $2 == "DEALLOCATION" { d[$3 " " $5 " " $7]++; next }
+    END { for (k in a) if (a[k] != d[k] + 0)
+            printf "%s allocated %d released %d\n", k, a[k], d[k] + 0 }'
+}
+UNMATCHED=$(unmatched)
+expect "every allocation has its release, for the same subscriber and range" \
+  test -z "$UNMATCHED"
+[ -n "$UNMATCHED" ] && printf '%s\n' "$UNMATCHED" | sed 's/^/         still open: /'
+
+# And named, block by block. The range is read back out of the allocation
+# record rather than written here, because the dynamic allocator decides which
+# block a subscriber gets: a lab that hardcoded one would be asserting a range
+# the box may never have used, and would still be green the day the release
+# started naming a block that was somebody else's.
+rec_block() {
+  printf '%s\n' "$C" |
+    awk -v ev="$1" -v s="$2" '$2 == ev && $3 == s { print $5, $7 }'
+}
+for sub in 100.64.0.0 100.64.0.7 100.64.0.8; do
+  DEL_A=$(rec_block ALLOCATION "$sub")
+  DEL_D=$(rec_block DEALLOCATION "$sub")
+  expect "$sub was recorded holding a block at the delete (${DEL_A:-none})" \
+    test -n "$DEL_A"
+  # Defaults that differ, so two empty strings are a failure rather than a
+  # match: a subscriber with no record at all would otherwise satisfy this.
+  expect "and the delete released that same block (held ${DEL_A:-none}, released ${DEL_D:-none})" \
+    test "${DEL_A:-held nothing}" = "${DEL_D:-released nothing}"
+done
 
 # The record's own timestamp, against the box's clock.
 #

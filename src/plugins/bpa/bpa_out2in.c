@@ -429,9 +429,19 @@ VLIB_NODE_FN (bpa_out2in_node)
 	   * independently. They can only disagree if the pool was redefined
 	   * under a forward that survived it, and translating on the older of
 	   * two answers is how a customer receives another customer's traffic.
+	   *
+	   * dst_host is the address the packet was addressed to, so the
+	   * forward can be looked up on the socket it was configured on
+	   * rather than on the port alone. Without it this lookup answered
+	   * with whichever subscriber held that port offset on ANY address of
+	   * the pool, and the agreement check below then threw the packet
+	   * away - so the customer on the second address got a drop while the
+	   * configuration said the port was theirs (issue #214). The check
+	   * stays: it is what catches a forward that outlived a redefinition,
+	   * which the address in the key cannot.
 	   */
 	  if (PREDICT_FALSE (vec_len (p->statics) != 0))
-	    sf = bpa_static_by_pub (p, port_pub, (u8) proto);
+	    sf = bpa_static_by_pub (p, dst_host, port_pub, (u8) proto);
 
 	  if (PREDICT_FALSE (sf != 0 && sf->ip_priv == ip_priv))
 	    s = bpa_session_static_open (pt, p, pool_index, sf, now);

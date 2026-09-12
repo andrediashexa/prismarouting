@@ -52,6 +52,47 @@ Na prática o roteiro é: consulte o bloco do assinante, escolha uma porta **den
 
 :::
 
+## A mesma porta serve um assinante por endereço público
+
+O pool tem tantos endereços públicos quantos você deu a ele, e entrega **a mesma faixa de portas a um assinante de cada endereço**. Então `203.0.113.16:1100` e `203.0.113.17:1100` não são a mesma coisa: são duas tomadas, em dois endereços, que o pool já entregou a dois clientes diferentes.
+
+Por isso a porta 1100 pode ser vendida uma vez **em cada endereço público** do pool:
+
+```
+203.0.113.16:1100 -> 10.0.0.4:8080
+203.0.113.17:1100 -> 10.0.0.5:80
+```
+
+Num pool com quatro endereços públicos isso é a diferença entre vender aquela porta a um cliente e vendê-la a quatro. Você não escolhe em qual endereço o forward cai: ele cai no endereço do próprio assinante, como sempre.
+
+O que continua recusado é **a mesma tomada duas vezes**: a mesma porta, no mesmo endereço público, apontando para dois lugares. A recusa nomeia quem já a tem:
+
+```
+public port 1600 on 200.150.0.17 is already forwarded to 100.64.0.5:80
+```
+
+E também o contrário, dois forwards diferentes apontando para a mesma porta do mesmo assinante, porque um cliente que responde em duas portas públicas deixa de estar pareado.
+
+## Como remover
+
+```
+configure
+ nat cgnat pool residencial
+  no forward tcp 6200 to 100.64.0.5 80
+  exit
+ commit
+ exit
+save
+```
+
+`no forward tcp 6200` sozinho também serve, enquanto aquela porta estiver encaminhada em **um** endereço público só. Se estiver em mais de um, o equipamento recusa e nomeia os assinantes envolvidos, em vez de remover o primeiro que encontrar. Remover o forward de um cliente que você não citou é o tipo de coisa que se descobre pelo telefone:
+
+```
+forward tcp 6200 is configured for 10.0.0.4, 10.0.0.5 on different public
+addresses; name the subscriber: no forward tcp 6200 to <private-ip>
+<private-port>
+```
+
 # Em pool dinâmico, quem fica preso é o bloco
 
 Num pool dinâmico o bloco é entregue no primeiro fluxo e devolvido depois que o assinante fica ocioso. Uma porta fixada dentro dele seguiria o bloco para o próximo assinante: o forward continuaria funcionando e passaria a alcançar **outro cliente** — pior do que não funcionar, porque nada parece quebrado.

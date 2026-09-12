@@ -100,8 +100,16 @@ MARK=$(wc -l < $TRAIL 2>/dev/null || echo 0)
 # A second forward, on a pool that already exists. This one must NOT redefine
 # the pool: redefining it drops every session it holds, which is the whole
 # subscriber base disconnected to give one customer an inbound port.
+#
+# The third forward is the same public PORT as the first, for a subscriber on
+# a different public address of the same pool: 10.0.0.4 sends from
+# 203.0.113.16 and 10.0.0.5 from 203.0.113.17, so 1100 on each of them is two
+# sockets the pool has already given to two customers. The VTY has to let it
+# through - it cannot judge which address a subscriber sends from, and
+# refusing here made a port sellable once per pool.
 $HX -c "configure" -c "cgnat pool fwd" \
-    -c "forward udp 1101 to 10.0.0.5 53" -c "exit" -c "commit" 2>&1 |
+    -c "forward udp 1101 to 10.0.0.5 53" \
+    -c "forward tcp 1100 to 10.0.0.4 8080" -c "exit" -c "commit" 2>&1 |
   sed 's/^/  /'
 FWD=$(vppctl show bpa forward)
 CFG2=$(vppctl show bpa config)
@@ -163,8 +171,12 @@ expect_in "a forward typed into the VTY reached the dataplane" \
   "203.0.113.17:1100 -> 10.0.0.5:80" "$FWD"
 expect_in "a forward added to an existing pool reached it too" \
   "203.0.113.17:1101 -> 10.0.0.5:53" "$FWD"
+expect_in "the same port for a subscriber on another public address reached it" \
+  "203.0.113.16:1100 -> 10.0.0.4:8080" "$FWD"
 expect_in "and both are in the running configuration" \
   " forward tcp 1100 to 10.0.0.5 80" "$CFG2"
+expect_in "including the one that shares a public port" \
+  " forward tcp 1100 to 10.0.0.4 8080" "$CFG2"
 expect_in "adding one was recorded in the configuration trail" \
   "forward-add pool fwd" "$NEW"
 # The one that matters: a pool carrying traffic must not be torn down to add
