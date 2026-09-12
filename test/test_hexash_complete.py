@@ -340,9 +340,14 @@ print(f"  interface -> {sorted(opts)}")
 opts, _, _ = sh._options("interface Ten", True)
 check(list(opts) == ["TenGigabitEthernet0/8/0"],
       f"a prefix narrows to one: {sorted(opts)}")
-# A single match must COMPLETE. Offering one option and making the operator
-# type it is completion that did not complete.
-check(len(opts) == 1, "and a single match is a single match")
+# `len(opts) == 1` used to stand here, which the line above already entails:
+# a dict whose key list equals a one-element list has one key, necessarily.
+# What is worth its own line is the other direction - a prefix that matches
+# nothing must offer nothing rather than fall back to the whole list, which is
+# the failure that turns completion into a menu of everything the box has.
+none_opts, _, _ = sh._options("interface Nosuch", True)
+check(none_opts == {},
+      f"and a prefix that matches nothing offers nothing: {sorted(none_opts)}")
 print(f"  interface Ten -> {sorted(opts)}")
 
 print("\n=== names the CANDIDATE knows ===")
@@ -424,8 +429,12 @@ check(not missing,
 tree_text = open(hexash.__file__).read()
 const_of = {v: k for k, v in vars(hexash).items()
             if isinstance(v, str) and k.startswith("ARG_")}
+# Three, not two. Every marker in DYNAMIC carries two occurrences of its
+# constant BY CONSTRUCTION - the `ARG_X = "<x>"` that defines it and the key of
+# the DYNAMIC entry itself - so a threshold of two was below the floor and no
+# marker could ever reach it. A marker the command tree offers has a third.
 unused = [m for m in hexash.Shell.DYNAMIC
-          if tree_text.count(const_of.get(m, "\x00")) < 2]
+          if tree_text.count(const_of.get(m, "\x00")) < 3]
 check(not unused, f"markers nothing in the tree offers: {unused}")
 for marker, method in hexash.Shell.DYNAMIC.items():
     check(hasattr(hexash.Shell, method),
@@ -766,12 +775,20 @@ check("interface TenGigabitEthernet0/8/0" in sh.prompt(),
 print(f"  {sh.prompt().strip()}")
 
 # An 80-column serial console is what a racked box is seen through.
-for probe in ("cgnat pool residential", "interface TenGigabitEthernet0/8/0"):
-    pass
-check(len(sh.prompt()) <= 60,
-      f"the prompt is {len(sh.prompt())} columns; a racked box has 80 and a "
-      f"prompt that pushes the cursor off the line is worse than a vague one")
+#
+# Each context entered, and its own prompt measured. The loop that used to be
+# here had `pass` for a body: it entered nothing, and the one prompt the check
+# below read was whichever the shell happened to be left holding - so the pool
+# prompt's width, which is the shorter of the two and the one a longer pool
+# name would grow, was never looked at.
 sh.feed("exit")
+for probe in ("cgnat pool residential", "interface TenGigabitEthernet0/8/0"):
+    sh.feed(probe)
+    check(len(sh.prompt()) <= 60,
+          f"the prompt in {probe!r} is {len(sh.prompt())} columns; a racked "
+          f"box has 80 and a prompt that pushes the cursor off the line is "
+          f"worse than a vague one")
+    sh.feed("exit")
 
 sh.feed("user noc")
 check("user noc" in sh.prompt(), f"a user names the account: {sh.prompt()!r}")
@@ -2883,9 +2900,13 @@ _fake = os.path.join(_dir, "vppctl")
 with open(_fake, "w") as _f:
     # What the real one does, measured: it prints this on stdout and exits 1
     # when it cannot reach VPP, and exits 0 whenever VPP answered at all.
+    # "show version" answers, because a real vppctl does: reachable() asks
+    # that one command, and a stand-in that refuses it would be measuring a
+    # refusal rather than a dataplane that is not there.
     _f.write("#!/bin/sh\n"
              "case \"$*\" in\n"
              "  *unreachable*) echo 'Could not find VPP CLI socket'; exit 1 ;;\n"
+             "  *version*) echo 'vpp v26.06-release'; exit 0 ;;\n"
              "  *) echo \"unknown input \\`x'\"; exit 0 ;;\n"
              "esac\n")
 os.chmod(_fake, os.stat(_fake).st_mode | _stat.S_IEXEC)
@@ -2893,6 +2914,21 @@ _saved, hexash.VPPCTL = hexash.VPPCTL, _fake
 _vpp = hexash.Vpp()
 _rc_unreach, _out_unreach = _vpp.run("unreachable")
 _rc_refused, _ = _vpp.run("something")
+# reachable() asked while the stand-in is STILL in place. Vpp.run reads the
+# module global at call time, so asking after the restore below put the
+# question to the host's own vppctl, which is not installed here - the answer
+# was False for a reason that had nothing to do with anything this section set
+# up, and a reachable() that returned a constant passed.
+#
+# Both directions, because one of them is the whole of #211: a vppctl that
+# ANSWERS, even to refuse, means the dataplane is there.
+_reach_answering = _vpp.reachable()
+_dead = os.path.join(_dir, "vppctl-dead")
+with open(_dead, "w") as _f:
+    _f.write("#!/bin/sh\necho 'Could not find VPP CLI socket'; exit 1\n")
+os.chmod(_dead, os.stat(_dead).st_mode | _stat.S_IEXEC)
+hexash.VPPCTL = _dead
+_reach_dead = hexash.Vpp().reachable()
 hexash.VPPCTL = _saved
 
 check(_rc_unreach == 1,
@@ -2901,8 +2937,12 @@ check("Could not find" in _out_unreach,
       "and the text still reaches the caller, for the operator to read")
 check(_rc_refused == 1,
       "a command VPP itself refused is still an error, by the text")
-check(not _vpp.reachable(),
-      "and reachable() is that same status, asked once")
+check(_reach_answering,
+      "a vppctl that answers - even to refuse the command - is a dataplane "
+      "that is there")
+check(not _reach_dead,
+      "and one that cannot reach VPP is not, which is the distinction #211 "
+      "turned on")
 
 
 print("\n=== what FRR keeps, and what it does not (#197) ===")

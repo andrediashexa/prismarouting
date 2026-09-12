@@ -71,7 +71,8 @@ fi
 
 say "systemd"
 for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.service \
-         hexarouting-installer.service; do
+         hexarouting-installer.service hexarouting-confirm.service \
+         hexarouting-confirm.timer; do
   install -D -m 0644 "$REPO/appliance/systemd/$u" "$DESTDIR/lib/systemd/system/$u"
 done
 # A drop-in on VPP's own unit, not a unit of ours: it has to run every time the
@@ -281,7 +282,8 @@ if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
   say "enabling services"
   systemctl daemon-reload
   systemctl enable hexarouting-tune.service hexarouting.service \
-    hexarouting-selftest.service hexarouting-installer.service
+    hexarouting-selftest.service hexarouting-installer.service \
+    hexarouting-confirm.timer
   echo
   echo "Installed. Adjust /etc/hexarouting/tune.env and reboot so that"
   echo "isolcpus and hugepages take effect."
@@ -293,5 +295,12 @@ else
     ln -sf "/lib/systemd/system/$u" \
       "$DESTDIR/etc/systemd/system/multi-user.target.wants/$u"
   done
+  # The timer is wanted by timers.target and not by multi-user.target, so it
+  # needs its own directory. Linking it into the wrong one installs a timer
+  # that exists, parses, and never elapses - and the feature it enforces is
+  # one nobody notices working, so nobody would notice that either.
+  install -d -m 0755 "$DESTDIR/etc/systemd/system/timers.target.wants"
+  ln -sf "/lib/systemd/system/hexarouting-confirm.timer" \
+    "$DESTDIR/etc/systemd/system/timers.target.wants/hexarouting-confirm.timer"
   say "installed into ${DESTDIR:-/} (services enabled offline)"
 fi

@@ -251,18 +251,31 @@ print("\n=== sudo: the person, not the account they became ===")
 # root is the account nobody is.
 saved = os.environ.get("SUDO_USER")
 try:
-    os.environ["SUDO_USER"] = "marina"
-    name, uid = vppapi.identity()
-    check(name == "marina", f"sudo must name the person who ran it: {name}")
-    check(uid == os.geteuid(),
-          "and the uid it is acting as, so the line says both")
-    print(f"  under sudo: {name} uid {uid}")
+    # The uid checked against a KNOWN value rather than against os.geteuid(),
+    # which is the one expression identity() itself evaluates: comparing the
+    # two asserted os.geteuid() == os.geteuid() and would have held for any
+    # uid identity() cared to return. Stood in for, so the number under test
+    # is not the number the test host happens to run as - and so the case the
+    # docstring is about, an operator who has BECOME root, is actually
+    # produced: under sudo the effective uid is 0 and the real one is not.
+    _real_geteuid = vppapi.os.geteuid
+    vppapi.os.geteuid = lambda: 0
+    try:
+        os.environ["SUDO_USER"] = "marina"
+        name, uid = vppapi.identity()
+        check(name == "marina", f"sudo must name the person who ran it: {name}")
+        check(uid == 0,
+              f"and the uid it is ACTING as, which under sudo is root: {uid}")
+        print(f"  under sudo: {name} uid {uid}")
 
-    os.environ.pop("SUDO_USER", None)
-    name, uid = vppapi.identity()
-    check(name != "", "without sudo the account name is still resolved")
-    check(uid == os.geteuid(), "and the uid is the real one")
-    print(f"  without:    {name} uid {uid}")
+        os.environ.pop("SUDO_USER", None)
+        vppapi.os.geteuid = lambda: 1000
+        name, uid = vppapi.identity()
+        check(name != "", "without sudo the account name is still resolved")
+        check(uid == 1000, f"and the uid is the one it is running as: {uid}")
+        print(f"  without:    {name} uid {uid}")
+    finally:
+        vppapi.os.geteuid = _real_geteuid
 finally:
     if saved is None:
         os.environ.pop("SUDO_USER", None)

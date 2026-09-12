@@ -305,19 +305,6 @@ bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now)
       d->idle_since[e->local] = now;
 }
 
-void
-bpa_dyn_active (bpa_dyn_t *d, u32 sub_idx)
-{
-  uword *q = hash_get (d->by_sub, sub_idx);
-  bpa_dyn_extra_t *e;
-
-  if (q)
-    d->idle_since[q[0] - 1] = 0;
-  vec_foreach (e, d->extras)
-    if (e->sub_idx == sub_idx)
-      d->idle_since[e->local] = 0;
-}
-
 u32
 bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
 	      bpa_dyn_release_t *out, u32 max_out)

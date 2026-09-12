@@ -59,6 +59,63 @@ hexarouting# [edit] commit confirmed 5
 
 Aplica agora, e desfaz automaticamente em 5 minutos a menos que você confirme. É o que permite mexer em roteamento numa máquina remota: se a mudança cortar seu próprio acesso, a máquina se recupera sozinha.
 
+A caixa responde dizendo onde o desfazer está armado:
+
+```
+rollback at 2026-02-11T14:32:07Z, in 5 minute(s), unless you type 'commit' to confirm
+    the revert is armed on the box, not in this session: logging out, losing this
+    session or rebooting does not cancel it, and confirming does
+```
+
+**Quem desfaz é a máquina, não a sua sessão.** O prazo fica gravado no equipamento. Sair da VTY, perder o SSH, fechar o console serial ou reiniciar a máquina **não** cancela nada — só `commit` cancela. Isso é o que torna o comando útil: a falha contra a qual ele protege é exatamente a que derruba a sessão em que você está digitando.
+
+#### Confirmar
+
+Qualquer `commit` confirma a janela aberta:
+
+```
+hexarouting# [edit] commit
+confirmed: the box will not roll this change back
+```
+
+Enquanto a janela estiver aberta, quem entrar na VTY é avisado logo no banner:
+
+```
+A 'commit confirmed' is waiting: this box rolls the last change back at 2026-02-11T14:32:07Z
+unless you type 'commit' to confirm it.
+```
+
+#### Reboot dentro da janela
+
+* Reiniciou **depois** de confirmar: nada é desfeito. A confirmação é registrada no momento em que você a dá, não no fim da janela.
+* Reiniciou **antes** do prazo: o prazo continua valendo, e é um horário — não uma contagem que recomeça. Uma caixa que ficou desligada além do próprio prazo volta e desfaz na hora, porque ninguém confirmou.
+
+:::warning
+A máquina não distingue "reiniciei porque a mudança deu errado" de "reiniciei no meio da manutenção". Nos dois casos ela desfaz. É o lado seguro: confirmar custa uma palavra, e recuperar uma caixa inalcançável não custa palavra nenhuma — custa uma viagem.
+:::
+
+#### Mudanças de SSH e de contas
+
+Qualquer mudança em `ssh` ou em `user` vira `commit confirmed 10` **mesmo que você não peça**, e a caixa diz por quê:
+
+```
+this commit changes SSH or accounts, which can cut off the session you are using
+applying it as 'commit confirmed 10' rather than as a plain commit
+```
+
+#### Quando a promessa não pode ser feita
+
+Se o equipamento não conseguir gravar o prazo — disco cheio, permissão negada em `/etc/hexarouting` —, ele **não** finge:
+
+```
+warning: the revert could NOT be armed on the box: /etc/hexarouting: Permission denied
+    it will run in 10 minute(s) IF THIS SESSION LASTS THAT LONG, and not otherwise
+    which is not the case it exists for: keep a second session open, and use
+    'rollback 1' there if this one stops answering
+```
+
+Nesse estado o desfazer vale só enquanto a sessão durar. Abra uma segunda sessão antes de mexer.
+
 ## `rollback`
 
 ```
@@ -80,6 +137,19 @@ Funciona nos modos operacional e de configuração.
 **São coisas diferentes e nenhuma implica a outra.** Uma configuração commitada e não salva desaparece no próximo boot. Uma configuração salva mas com a candidata ainda modificada não é o que está valendo.
 
 A separação é proposital: *"passe a valer agora"* e *"continue valendo depois de reiniciar"* são duas decisões, e o `commit confirmed` só faz sentido se a segunda não for automática.
+
+:::warning
+`save` dentro de uma janela de `commit confirmed` grava no disco uma mudança que ainda não foi confirmada. O desfazer devolve o que está **valendo** e não reescreve o arquivo — então a caixa desfaria agora e traria a mudança de volta no próximo boot. Por isso o `save` avisa:
+
+```
+warning: what you just saved has NOT been confirmed
+    this box rolls the running configuration back at 2026-02-11T14:32:07Z, and does not
+    touch the file you just wrote - so a reboot after that would bring the
+    unconfirmed change back. Type 'commit' to confirm, then 'save' again
+```
+
+Confirme primeiro, salve depois.
+:::
 
 ## Inspecionando antes de aplicar
 
