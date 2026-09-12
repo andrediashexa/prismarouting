@@ -2117,5 +2117,106 @@ o, hint = offered("clear isis adjacency ")
 check(not o and hint == "[<system-id>]", f"a system id is typed: {o} {hint!r}")
 
 
+
+# ---------------------------------------------------------------------------
+# "nothing took": the decidable half of #197
+#
+# The general check - is every statement of this candidate in effect - cannot be
+# built on frr-reload, and that was MEASURED rather than reasoned about. A
+# candidate carrying `timers throttle spf 0 50 5000` applies cleanly, FRR
+# declines to store it because it equals the default, and frr-reload then
+# reports it under "Lines To Add" for ever. What is decidable is the worst case:
+# every statement this commit introduced is still outstanding, so nothing took.
+
+# frr-reload's own report, copied off a run rather than written here: the
+# heading, the row of '=', and a nested statement indented while the same
+# statement typed at this VTY is not.
+FRR_REPORT = """
+Lines To Add
+============
+router ospf
+ timers throttle spf 0 50 5000
+exit
+"""
+check(hexash.Frr.outstanding(FRR_REPORT)
+      == ["router ospf", "timers throttle spf 0 50 5000", "exit"],
+      f"the report is read stripped: {hexash.Frr.outstanding(FRR_REPORT)}")
+check(hexash.Frr.outstanding("") == [], "no report is nothing outstanding")
+# The other section must not be read as this one. A statement being REMOVED is
+# not a statement that failed to apply, and counting it as one would report a
+# successful removal as a failed commit.
+check(hexash.Frr.outstanding(
+        "Lines To Delete\n===============\nno router bgp 65000\n") == [],
+      "the delete section is not the add section")
+check(hexash.Frr.outstanding(
+        "Lines To Delete\n====\nno router ospf\n\nLines To Add\n====\nip route 1.2.3.0/24 blackhole\n")
+      == ["ip route 1.2.3.0/24 blackhole"],
+      "and a report carrying both reads only the adds")
+
+
+def box_197(outstanding_text, rc=0):
+    sh = shell_with_box()
+    sh.candidate = hexash.Config()
+    sh.frr = type("F", (), {
+        "available": lambda s: True,
+        "running": lambda s: [],
+        "show": lambda s, c: (1, ""),
+        "reload": lambda s, lines, check_only=False: (rc, outstanding_text),
+        "outstanding": staticmethod(hexash.Frr.outstanding),
+    })()
+    return sh
+
+
+ADDED = ["ip route 10.0.0.0/8 1.2.3.4", "ip route 10.1.0.0/16 blackhole"]
+REPORT_BOTH = ("Lines To Add\n====\nip route 10.0.0.0/8 1.2.3.4\n"
+               "ip route 10.1.0.0/16 blackhole\n")
+REPORT_ONE = "Lines To Add\n====\nip route 10.1.0.0/16 blackhole\n"
+
+sh = box_197(REPORT_BOTH)
+check(sh.nothing_took(ADDED) == ADDED,
+      "every new statement still outstanding is 'nothing took'")
+# The half that keeps this usable. Nine statements of ten is a PARTIAL failure
+# and this check does not fire on it - a check that cried wolf on every commit
+# with one default-valued statement in it would be turned off within a week.
+sh = box_197(REPORT_ONE)
+check(sh.nothing_took(ADDED) == [],
+      f"one of two outstanding is not: {sh.nothing_took(ADDED)}")
+sh = box_197("")
+check(sh.nothing_took(ADDED) == [], "an empty report is a clean apply")
+# A check that cannot run must not become a failure of the commit it was
+# checking.
+sh = box_197(REPORT_BOTH, rc=1)
+check(sh.nothing_took(ADDED) == [],
+      "frr-reload refusing to answer is not a verdict")
+check(sh.nothing_took([]) == [], "a commit that adds no routing is not checked")
+
+# What counts as "a statement this commit introduced". A block header and a
+# terminator are structure: they appear in frr-reload's report as context for
+# what is nested under them, and counting them would let a block header decide
+# that a commit failed.
+sh = box_197("")
+check(sh.routing_added(["router bgp 65000"],
+                       ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+                        " exit", "!"])
+      == ["neighbor 10.0.0.2 remote-as 65001"],
+      f"only the new statement: {sh.routing_added(['router bgp 65000'], ['router bgp 65000', ' neighbor 10.0.0.2 remote-as 65001', ' exit', '!'])}")
+check(sh.routing_added([" ip route 1.2.3.0/24 blackhole"],
+                       ["ip route 1.2.3.0/24 blackhole"]) == [],
+      "a statement FRR read back indented is the same statement typed flat")
+# The case that was MEASURED rather than foreseen, and it fired on two ordinary
+# operations before the labs caught it. Creating a loopback and setting an MTU
+# stage a block HEADER in the routing half while everything inside the block is
+# applied by this VTY to the dataplane - so the commit adds a header and nothing
+# else, FRR does not store an empty interface stanza, and "nothing took" was
+# true of a commit that did exactly what it was asked.
+for _hdr in ("interface loop0", "router ospf", "route-map X permit 10",
+             "vrf red", "rpki", "address-family ipv4 unicast"):
+    check(sh.routing_added([], [_hdr]) == [],
+          f"a block header is context, not a statement: {_hdr}")
+check(sh.routing_added([], ["interface loop0", " ipv6 nd suppress-ra"])
+      == ["ipv6 nd suppress-ra"],
+      "and what is inside one still counts")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

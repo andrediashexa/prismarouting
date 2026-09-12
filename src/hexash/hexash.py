@@ -1996,6 +1996,35 @@ class Frr:
             shutil.rmtree(work, ignore_errors=True)
 
     @staticmethod
+    def outstanding(out):
+        """
+        The statements frr-reload says are still to be added.
+
+        Its report has two sections, each under a heading and a row of '=':
+
+            Lines To Add
+            ============
+            router ospf
+             timers throttle spf 0 50 5000
+            exit
+
+        Stripped, because a nested statement is indented there and the same
+        statement typed at this VTY is not - the difference feed() removes on
+        the way in and this has to remove on the way back.
+        """
+        lines, inside = [], False
+        for raw in (out or "").splitlines():
+            s = raw.strip()
+            if s.startswith("Lines To "):
+                inside = s == "Lines To Add"
+                continue
+            if not s or set(s) == {"="}:
+                continue
+            if inside:
+                lines.append(s)
+        return lines
+
+    @staticmethod
     def diagnostics(out):
         """
         What FRR said during a SUCCESSFUL apply, and nothing else.
@@ -3944,6 +3973,69 @@ class Shell:
                 # would describe a table nobody is using.
                 self.err(f"cgnat session-table: {r.reason}")
 
+    #: Terminators, which are structure rather than configuration.
+    #:
+    #: Block OPENERS are excluded too, by opens_frr_block(), and they are the
+    #: half that was measured rather than foreseen. `interface loop0` and
+    #: `interface Gi0/1` are staged in the routing half when a loopback is
+    #: created or an MTU is set, while everything INSIDE them is applied by
+    #: this VTY to the dataplane - so those commits add a block header and
+    #: nothing else. FRR does not store an empty interface stanza, the header
+    #: was therefore still outstanding afterwards, and "nothing took" fired on
+    #: two perfectly ordinary operations: creating a loopback, and setting an
+    #: MTU. Both labs caught it before this shipped.
+    NOT_A_STATEMENT = ("exit", "exit-address-family", "exit-vrf", "end", "!")
+
+    def routing_added(self, before, after):
+        """The statements this commit introduces, stripped and deduplicated."""
+        had = {l.strip() for l in before}
+        out = []
+        for line in after:
+            s = line.strip()
+            if (not s or s in self.NOT_A_STATEMENT or s.startswith("!")
+                    or opens_frr_block(s)):
+                continue
+            if s in had or s in out:
+                continue
+            out.append(s)
+        return out
+
+    def nothing_took(self, added):
+        """
+        Did the apply change nothing FRR can see, although it asked for changes?
+
+        The narrow half of #197, and narrow on purpose. The general question -
+        "is every statement of this candidate in effect" - CANNOT be answered
+        with this tooling, and that was measured rather than assumed: a
+        candidate carrying `timers throttle spf 0 50 5000` applies cleanly, FRR
+        declines to store it because it equals the default, and frr-reload then
+        reports it under "Lines To Add" for ever. A check built on that would
+        call every commit containing such a statement a failure.
+
+        What IS decidable without a single false positive from defaults is the
+        worst case rather than the general one: EVERY statement this commit
+        introduced is still outstanding afterwards, so nothing took at all.
+        That is the failure #197 was filed for - frr-reload exiting 0 having
+        applied nothing, and the box printing "commit complete" over it - and a
+        partial failure, nine statements of ten, does not trigger it.
+
+        The residual false positive is a commit whose new statements are ALL
+        equal to FRR's own defaults. It is rare, and the message names the
+        statements so an operator sees at once that it is what happened.
+
+        Returns the outstanding statements when nothing took, and nothing
+        otherwise - including when frr-reload cannot be asked, because a check
+        that cannot run must not become a failure of the commit it was checking.
+        """
+        if not added:
+            return []
+        rc, out = self.frr.reload(self.candidate.routing, check_only=True)
+        if rc:
+            return []
+        left = set(self.frr.outstanding(out))
+        still = [a for a in added if a in left]
+        return still if len(still) == len(added) else []
+
     def do_commit(self, args):
         """commit [check | remap | confirmed <min> | comment <text>]"""
         if self.candidate is None:
@@ -4067,7 +4159,26 @@ class Shell:
             self.err("the change is applied, but no rollback revision could "
                      f"be recorded: {e}")
             print("    'rollback' will not be able to undo this commit")
-        print("commit complete")
+        stalled = self.nothing_took(self.routing_added(running.routing,
+                                                       self.candidate.routing))
+        if stalled:
+            # NOT "commit complete". The CGNAT half and the box's own
+            # configuration are applied - this is not a rollback - but the
+            # routing half reached nothing, and saying "complete" over that is
+            # the one sentence an operator builds every later diagnosis on.
+            self.err("the routing half of this commit reached FRR and changed "
+                     "nothing: all " + str(len(stalled)) +
+                     " new statement(s) are still outstanding")
+            for line in stalled[:5]:
+                print("    " + as_hierarchy(line))
+            if len(stalled) > 5:
+                print(f"    ... and {len(stalled) - 5} more")
+            print("    the usual cause is a daemon that is not running; "
+                  "'show version' says which are")
+            print("    if these statements are all at FRR's own default "
+                  "values, FRR does not store them and this is expected")
+        else:
+            print("commit complete")
 
         if confirm_min:
             # The point of "commit confirmed" is surviving a change that cuts
