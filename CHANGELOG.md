@@ -39,9 +39,9 @@ are to be interpreted as described in
 [#48](https://github.com/andrediashexa/hexarouting/issues/48),
 [#170](https://github.com/andrediashexa/hexarouting/issues/170),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
+[#176](https://github.com/andrediashexa/hexarouting/issues/176),
 [#180](https://github.com/andrediashexa/hexarouting/issues/180),
 [#199](https://github.com/andrediashexa/hexarouting/issues/199),
-[#176](https://github.com/andrediashexa/hexarouting/issues/176),
 [#200](https://github.com/andrediashexa/hexarouting/issues/200),
 [#201](https://github.com/andrediashexa/hexarouting/issues/201).
 
@@ -134,11 +134,6 @@ are to be interpreted as described in
 
 ### Fixed
 
-## Unreleased
-
-
-### Fixed
-
 * **On a box with workers, a translated ICMP error was dropped as malformed.**
   The identical packet was translated correctly single-threaded. An ICMP error
   carries no L4 ports in its outer header - it is a router reporting on somebody
@@ -189,17 +184,6 @@ are to be interpreted as described in
 
 ### Changed
 
-* **`tools/run-all-labs.sh` runs the forwarding labs twice**, once plain and once
-  with workers, listed in `BOTH_WAYS`. `hexarouting-tune` gives every appliance
-  with more than one core at least two workers and a smaller box everything on
-  the main thread; both configurations ship and neither proves the other. #199
-  and #201 were both found by a person typing `LAB_WORKERS=1`, because the suite
-  had only ever run one way. Hardcoding workers in the labs was the alternative,
-  and it would have moved the blind spot to the small box rather than closing it.
-  `lab/icmp-tcp.sh` also asserts, on a worker run, that the handoff identified a
-  subscriber for the ICMP error **and** that the error really did cross a worker
-  to reach it - without the second check the first passes by luck whenever the
-  session happens to belong to the arriving worker, measured.
 * **`make test` gained `test_bpa_icmp`.** The ICMP error parse is the only place
   this plugin walks headers a remote wrote inside another packet, and its
   refusals cannot be seen from a lab: a packet dropped by a bounds check and one
@@ -277,13 +261,6 @@ are to be interpreted as described in
   `no session for destination`, which on that thread is the plain truth; the
   in2out no-peer counter belongs to ESP alone, whose binding table is global for
   exactly this reason.
-* **The suite runs the packet labs twice, once with workers.** Eleven labs
-  assert a packet leaving the box and every one of them ran single-threaded.
-  Both defects above were invisible for the life of the product because of that,
-  and between them they are "the box forwards" and "two neighbours can reach
-  each other". `lab/hairpin.sh` also asserts, from `show bpa session`, that the
-  two subscribers really are on different workers — otherwise the whole lab
-  passes by luck on a build where every cross-worker hairpin is dropped.
 * **On a box with workers, every translated packet was blackholed.** `bpa-in2out`
   translated the packet, counted it as translated, and sent it to `error-drop`.
   Nothing left the box. `hexarouting-tune` configures workers on every
@@ -308,7 +285,6 @@ are to be interpreted as described in
   startup file with no workers, so the forwarding path had only ever been proved
   in a configuration the product does not ship.
 
-### Changed
 
 * **`tools/run-all-labs.sh` runs the forwarding labs twice**, once plain and once
   with workers, listed in `BOTH_WAYS`. `hexarouting-tune` gives every appliance
@@ -320,7 +296,16 @@ are to be interpreted as described in
   `lab/icmp-tcp.sh` also asserts, on a worker run, that the handoff identified a
   subscriber for the ICMP error **and** that the error really did cross a worker
   to reach it - without the second check the first passes by luck whenever the
-  session happens to belong to the arriving worker, measured.
+  session happens to belong to the arriving worker, measured. `lab/hairpin.sh`
+  asserts the same kind of precondition from `show bpa session` - that the two
+  subscribers really are on different workers - for the same reason: a hairpin
+  between two subscribers the hash put on one worker succeeds even on the build
+  where every cross-worker hairpin is dropped. #200 was found the same way, and
+  `bypass`, `esp`, `extblocks`, `frag`, `ftp-alg`, `hairpin`, `icmp-tcp`, `mss`,
+  `nat-behaviour`, `pptp`, `rtsp` and `two-pools` are all in the list, each
+  measured both ways rather than assumed to forward something. `handoff`,
+  `dynamic-workers` and `pool-del` are deliberately absent: they ask for workers
+  themselves, so a second run of those would be the same run twice.
 * **`make test` gained `test_bpa_icmp`.** The ICMP error parse is the only place
   this plugin walks headers a remote wrote inside another packet, and its
   refusals cannot be seen from a lab: a packet dropped by a bounds check and one
