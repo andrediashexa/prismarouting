@@ -25,10 +25,20 @@ ExecStart=/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf
 # a bug in one unit, instead of becoming a machine-wide shortage that lets the
 # kernel choose a victim (#172).
 #
-# Deliberately NOT applied to frr.service. bgpd's working set scales with the
-# table it carries, nothing in this repository states what a full one costs,
-# and a bound guessed too low does not degrade BGP - it kills it, on exactly
-# the box that has the most to lose. No bound is better than that one.
+# Deliberately NOT applied to frr.service, and now for a measured reason rather
+# than for the absence of one. One full IPv4 table fed to bgpd costs 837 MB
+# resident with zebra at 553 MB behind it: 1.37 GB of FRR, against 37 MB on a
+# box that takes default routes only. That spread belongs to the operator's
+# peering and not to this product, and one number in a shipped unit file would
+# have to serve both ends of it on boxes whose share of RAM for everything that
+# is not VPP differs by a factor of eight.
+#
+# Guessed low it does not degrade BGP, it kills it. bgpd under memory.max=512M
+# was killed ten seconds into convergence holding 428 MB, with pgscan 100 and
+# pgsteal 4 beside it - there was nothing reclaimable, so the limit went
+# straight from full to a kill - and frr.service carries Restart=always with
+# RestartSec=5, which turns that into a loop on the box with the most to lose.
+# docs/appliance.md carries the numbers and how they were taken (#172).
 #
 # Reach: this is a oneshot, so the bound holds while the configuration is being
 # applied and not afterwards - the unit keeps its cgroup but no processes. The

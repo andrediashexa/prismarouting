@@ -444,6 +444,33 @@ if [ "$up" = 1 ]; then
   fi
 fi
 
+# Is the dataplane out of the OOM killer's selection on the INSTALLED box?
+#
+# The protection is a drop-in on vpp.service, and a drop-in that was never
+# installed - or that systemd parsed and refused - is indistinguishable from
+# one that is working. lab/oom.sh shows the kernel making that choice both
+# ways, but it has to apply the value itself: there is no systemd in a lab
+# container. Whether the unit file arrived and took effect can only be seen
+# where there is one, and this is the only place in the repository that boots
+# a real installed box under real systemd (#172).
+#
+# What is read back is the self-test's line, which it prints from
+# /proc/<vpp pid>/oom_score_adj and not from the drop-in file.
+if [ "$up" = 1 ]; then
+  if grep -q "out of the OOM killer's selection" /tmp/disk-clean.log; then
+    echo "  [ ok ] the installed dataplane is out of the OOM killer's selection"
+    grep -o "dataplane out of the OOM killer's selection.*" /tmp/disk-clean.log \
+      | head -1 | sed 's/^/         /'
+  else
+    echo "  [FAIL] the drop-in did not take effect on the installed box: the"
+    echo "         dataplane can still be chosen as the victim of somebody"
+    echo "         else's allocation, which is how it was killed at 19 MB"
+    grep -iE "oom_score_adj|vpp.service owns no process" /tmp/disk-clean.log \
+      | head -3 | sed 's/^/         /'
+    fail=1
+  fi
+fi
+
 # Did the tuning survive the install?
 #
 # The evidence is the KERNEL COMMAND LINE, not the profile. isolcpus and the

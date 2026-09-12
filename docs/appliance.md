@@ -158,9 +158,15 @@ overlay, but 4 GB remains the sensible floor for a dataplane.
 
 Session tables are sized with `bpa session-table buckets <n> memory <MB>`,
 defaulting to 16k buckets and 16 MB per table. The size is a virtual
-reservation, but the OOM killer counts virtual memory — hence the modest
-default. A 200k-subscriber deployment **SHOULD** raise it; a small box **MUST
-NOT** pay for it.
+reservation, and the OOM killer does **not** count it: the kernel scores a
+process by what it holds **resident** (RSS, swap and page tables), not by what
+it maps. Measured in `lab/oom.sh`: VPP with 17 GB mapped and 354 MB resident,
+inside a 502 MB cgroup, has `oom_score` 670 out of 1000, which is its resident
+share and not its mapped one, and the kernel's own kill line for it reads
+`total-vm:17476328kB, anon-rss:247984kB`. Raising the table therefore raises
+VPP's badness only as the table is used. A 200k-subscriber deployment
+**SHOULD** raise it; a small box **MUST NOT** pay for it, because the memory is
+eventually touched and a small box does not have it.
 
 Raising the floor to 4 GB did nothing for the victim. `vpp.service` therefore
 carries `OOMScoreAdjust=-1000`, shipped as the drop-in
@@ -175,10 +181,74 @@ still kills it.
 event: the control plane must not be what empties a box sized to the floor. On
 4 GB the tuner leaves a quarter of RAM outside the hugepage pool, and 512M is a
 quarter of that — against a measured 13 MB peak for loading a configuration,
-which does not grow with the routing table or the session count. `frr.service`
-carries **no** bound on purpose: `bgpd`'s working set scales with the table it
-carries, nothing here states what a full one costs, and a bound guessed too low
-kills BGP rather than degrading it.
+which does not grow with the routing table or the session count.
+
+The behaviour itself is asserted, in three states, by `lab/oom.sh`: real VPP
+and one growing control-plane process in a cgroup of their own, with the
+adjustment taken from the shipped drop-in rather than typed into the lab. With
+it the kernel kills the control-plane process and VPP goes on answering; with
+it removed and **nothing else changed** the kernel kills VPP, although the
+balloon is the smaller of the two; restored, it kills the balloon again. What
+that lab cannot show is that *systemd* applies the drop-in, because there is no
+systemd in a lab container: the boot self-test reads
+`/proc/<vpp pid>/oom_score_adj` on the running box and says so on the console,
+and `lab/install-iso.sh` reads that line back off a box it installed and
+booted.
+
+### What a full BGP table costs, and why `frr.service` has no bound
+
+`frr.service` carries **no** `MemoryMax=`, and that is now a measured decision.
+One full IPv4 table was fed to `bgpd` on this build over a single eBGP session:
+1,000,000 prefixes, ~60k distinct origin AS paths and three communities per
+route, which is the attribute diversity that stops FRR interning one attribute
+set for the whole table. Convergence took 40 s, and 998,034 routes reached the
+kernel FIB.
+
+| Daemon | RSS, no table | RSS, one full IPv4 table |
+|---|---|---|
+| `bgpd` | 13 MB | **837 MB** |
+| `zebra` | 10 MB | **553 MB** |
+| `mgmtd` + `staticd` | 14 MB | 14 MB |
+| **all of FRR** | **37 MB** | **1.37 GB** |
+
+Three things follow.
+
+**The number belongs to the operator, not to the product.** A box taking
+default routes only stays at 37 MB. A second full-table session adds another
+path per prefix; IPv6 adds again; `soft-reconfiguration inbound` would add a
+whole Adj-RIB-In. One number in a shipped unit file has to serve all of them.
+
+**And the boxes differ as much as the deployments.** The tuner leaves
+`max(2, RAM/4)` GB outside the hugepage pool for everything that is not VPP, so
+the same 1.37 GB is 69% of what a 4 GB box has and 9% of what a 64 GB box has.
+A bound safe on the large box bounds nothing on the small one, and a bound that
+bites on the small one kills the large one.
+
+**A bound guessed low does not slow BGP down, it kills it.** Measured with
+`bgpd` in a cgroup at `memory.max=512M` while that same table converged: killed
+after ten seconds holding 428 MB, with `pgscan 100` and `pgsteal 4` beside it,
+so the kernel found nothing reclaimable and went straight from the limit to the
+kill. `frr.service` carries `Restart=always` and `RestartSec=5`, which makes
+that a five-second restart loop on the box with the most to lose.
+
+`MemoryHigh=` is not the softer answer it looks like, and was measured too.
+Under `memory.high=512M` the same convergence had not finished after **nine
+minutes**: 189,578 throttling events, `pgscan 2880 / pgsteal 12` (anonymous
+memory, no swap, so there is nothing to reclaim and the throttle never lifts),
+PSI `full avg10=75%`, `bgpd` parked in `D` state having used 6 s of CPU in
+9 minutes of wall clock, and `vtysh show bgp summary` returning nothing within
+30 s. No kill, and no working router either: an operator would find a box that
+neither converges nor answers its own CLI.
+
+So the protection against a control plane that grows is the one already in
+place, from the other end: the dataplane is out of the kernel's selection, and
+the largest resident process on a box in trouble is `bgpd` itself, which is
+what the kernel will choose without being told to.
+
+**Sizing, then, rather than bounding.** 4 GB is the floor for a box that does
+not carry a full table. A box that does needs the 1.37 GB above to sit inside
+`max(2, RAM/4)` GB with the kernel and the page cache beside it, so **16 GB**
+is the sensible floor for a full-table deployment and 8 GB is already tight.
 
 ## CPU requirement
 

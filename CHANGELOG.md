@@ -45,7 +45,8 @@ are to be interpreted as described in
 [#193](https://github.com/andrediashexa/hexarouting/issues/193),
 [#194](https://github.com/andrediashexa/hexarouting/issues/194),
 [#195](https://github.com/andrediashexa/hexarouting/issues/195),
-[#196](https://github.com/andrediashexa/hexarouting/issues/196).
+[#196](https://github.com/andrediashexa/hexarouting/issues/196),
+[#172](https://github.com/andrediashexa/hexarouting/issues/172).
 
 ### Added
 
@@ -139,6 +140,28 @@ are to be interpreted as described in
   boundary; the capability check is, and a command nobody can find is a command
   the maintainer has to ask for.
 
+* **`lab/oom.sh`: the kernel is shown making its choice, both ways.** Real VPP
+  and one growing control-plane process share a cgroup with a `memory.max` of
+  their own, so the shortage is real and the lab's own shell is not in the
+  draw. With the drop-in's adjustment applied the kernel kills the control-plane
+  process and VPP goes on answering with its pool; with it removed and **nothing
+  else changed** the kernel kills VPP, although the balloon is the smaller of
+  the two by design; restored, it kills the balloon again. The number is read
+  out of `appliance/systemd/vpp-oom-protect.conf` and never typed in the lab,
+  and the lab checks that `install.sh` puts that same file under
+  `vpp.service.d`, so deleting the drop-in fails the lab rather than leaving it
+  green. `sh tools/lab.sh oom off` fails 10 of its 24 checks.
+* **The boot self-test says whether the dataplane is actually out of the OOM
+  killer's selection**, read from `/proc/<vpp pid>/oom_score_adj` on the running
+  box and never written by the self-test. A drop-in that was not installed, or
+  that systemd refused, used to look exactly like one that was working. A
+  merely lowered score is reported as still selectable rather than accepted, an
+  unreadable one is a failed check rather than a silence, and a VPP running
+  outside `vpp.service` is named because no drop-in on that unit reaches it.
+  `lab/install-iso.sh` reads the line back off a box it installed and booted,
+  which is the only place in this repository where real systemd applies the
+  unit.
+
 ### Fixed
 
 * **A non-root administrator could `commit check` a routing change and not
@@ -209,6 +232,26 @@ are to be interpreted as described in
   `lab/bgp-policy.sh` failed seven checks, quietly, because a bgpd with no RPKI
   answers as though the feature were simply off; and the wait is on
   `mgmtd_fe.sock` rather than a `sleep`.
+
+* **The OOM killer does not count virtual memory**, and both this repository's
+  documentation and the drop-in's own rationale said it did. Measured: VPP with
+  17 GB mapped and 354 MB resident inside a 502 MB cgroup has `oom_score` 670
+  out of 1000, its resident share, and the kernel's kill line reads
+  `total-vm:17476328kB, anon-rss:247984kB`. So raising `session-table memory`
+  raises VPP's badness only as the table is used. The protection stands for the
+  plainer reason, which is the one the original event showed: on a box where
+  nothing else is resident, the dataplane is the biggest thing there.
+* **What a full BGP table costs is now measured**, and `frr.service` still
+  carries no bound because of it rather than for want of a number. One full
+  IPv4 table over one session, 1M prefixes with realistic attribute diversity:
+  `bgpd` 837 MB and `zebra` 553 MB, against 37 MB for all of FRR on a box
+  taking default routes only. A `MemoryMax=` guessed low kills rather than
+  degrades - `bgpd` under `memory.max=512M` was killed ten seconds into
+  convergence at 428 MB, and `frr.service` restarts it every five seconds -
+  and `MemoryHigh=` is no softer: under `memory.high=512M` the same convergence
+  had not finished after nine minutes, with `bgpd` in `D` state having used 6 s
+  of CPU and `vtysh` returning nothing in 30 s. `docs/appliance.md` carries the
+  numbers and recommends 16 GB for a full-table box instead of a bound.
 
 ### Found and not fixed
 
