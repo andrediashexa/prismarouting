@@ -2962,5 +2962,53 @@ check(statements_frr_dropped(["ip route 10.0.0.0/8 10.0.0.1"],
 check(statements_frr_dropped([], ["anything"]) == [],
       "and a commit that introduced no routing statement asks nothing")
 
+# nothing_took() ITSELF, through a stand-in frr that reports everything as
+# outstanding - which is what frr-reload really does for these statements.
+#
+# Written this way after the first version could not fail: it repeated the
+# filter expression inline instead of calling the method, so removing the
+# filter from nothing_took() left it green. An assertion that reimplements the
+# thing it is checking is checking itself.
+#
+# The false positive this removes was a REAL refusal of a working commit:
+# lab/igp.sh typed `ip ospf hello-interval 10`, `ip ospf retransmit-interval 5`
+# and `passive-interface vppwan0` in one commit, FRR stored the effect of all
+# three, and the box refused it. frr-reload reports every one of them under
+# "Lines To Add" for ever, so "all of them are still outstanding" was true of a
+# commit that had worked.
+
+
+class _AllOutstanding:
+    """An frr that says every line the candidate holds is still to be added."""
+
+    def __init__(self, lines):
+        self._lines = lines
+
+    def reload(self, _lines, check_only=False):
+        return 0, "outstanding"
+
+    def outstanding(self, _out):
+        return self._lines
+
+
+def _nothing_took(added, candidate=None):
+    sh = hexash.Shell()
+    sh.candidate = type("C", (), {"routing": candidate or added})()
+    sh.frr = _AllOutstanding(added)
+    return sh.nothing_took(added)
+
+
+_OMITTED_ONLY = ["ip ospf hello-interval 10", "ip ospf retransmit-interval 5",
+                 "passive-interface vppwan0"]
+check(_nothing_took(_OMITTED_ONLY) == [],
+      f"a commit of only statements FRR does not read back is not 'nothing "
+      f"took': {_nothing_took(_OMITTED_ONLY)}")
+check(_nothing_took(["ip ospf hello-interval 7"])
+      == ["ip ospf hello-interval 7"],
+      "while a statement FRR does keep, still outstanding, is")
+check(_nothing_took(_OMITTED_ONLY + ["ip route 10.0.0.0/8 10.0.0.1"])
+      == ["ip route 10.0.0.0/8 10.0.0.1"],
+      "and a mixed commit is judged on the statements that mean something")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

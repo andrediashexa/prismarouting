@@ -4687,14 +4687,26 @@ class Shell:
         applied nothing, and the box printing "commit complete" over it - and a
         partial failure, nine statements of ten, does not trigger it.
 
-        The residual false positive is a commit whose new statements are ALL
-        equal to FRR's own defaults. It is rare, and the message names the
-        statements so an operator sees at once that it is what happened.
+        The residual false positive this used to carry is gone. It was a
+        commit whose new statements are ALL ones FRR does not read back, and
+        it was written off as rare - `lab/igp.sh` then committed three of them
+        together and the box refused a commit that had worked perfectly. So
+        the statements FRR is MEASURED not to keep are dropped from the
+        question before it is asked: frr-reload reports them under "Lines To
+        Add" for ever, and counting a statement as outstanding because FRR
+        stores it under another name, or does not store its own default, is
+        the box blaming the operator for FRR's bookkeeping.
 
         Returns the outstanding statements when nothing took, and nothing
         otherwise - including when frr-reload cannot be asked, because a check
         that cannot run must not become a failure of the commit it was checking.
         """
+        # Only the statements whose absence would MEAN something. A rewritten
+        # or omitted statement is outstanding in frr-reload's ledger whatever
+        # the box does, so leaving it in makes "all of them are outstanding"
+        # true for a commit that worked.
+        added = [a for a in added
+                 if frr_keeps(a) and frr_writes_instead(a) is None]
         if not added:
             return []
         rc, out = self.frr.reload(self.candidate.routing, check_only=True)
