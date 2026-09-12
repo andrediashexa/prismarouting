@@ -2043,6 +2043,140 @@ table *and* in the **VPP FIB**. Withdraw it and assert it leaves both. FRR
 holding a route is a different claim from the box forwarding on it, and the two
 have to be made separately.
 
+## The IGP commands an operator runs while something is wrong
+
+`show ip ospf neighbor` and `show isis neighbor` were handed to `vtysh`
+untouched, and **FRR's table is not the table that forwards**. OSPF was not in
+the `show` tree at all — `show ?` offered `bgp` and `isis`, and both IGP entries
+ended the command
+([#176](https://github.com/andrediashexa/hexarouting/issues/176)).
+
+```
+show ospf neighbor          show isis adjacency
+show ospf interface         show isis interface
+clear ospf process          clear isis adjacency [<system-id>]
+clear ospf neighbor <id>
+```
+
+FRR's own spellings still work and still reach FRR: `show ip ospf neighbor` and
+`show isis neighbor` land on the same screens, `show ospf database` is passed
+through in FRR's words, and bare **`show ip ospf`** is still the process summary
+an operator arriving from another vendor expects. The product's tree offers the
+short forms, and `adjacency` rather than `neighbor` for IS-IS because that is
+what the protocol calls them.
+
+### An adjacency that will not leave Exchange
+
+```
+  Neighbour         Interface      State            Dead       Up
+  10.0.0.2          vppwan0        Exchange/DR      38.328s    6.679s
+
+  1 adjacency(ies), 0 full
+  10.0.0.2 on vppwan0 is in Exchange, which is where the two ends compare MTU;
+  this end advertises 9000
+    an adjacency that stops here is the far end running a smaller one, and
+    neither side logs a word about it
+    'show ospf interface' has both of this box's MTUs; 'mtu <n>' sets them
+    together, and 'ip ospf mtu-ignore' is the escape hatch
+```
+
+That is Pitfall 1 above, on the screen an operator is already looking at. OSPF
+carries the interface MTU in its Database Description packets and the receiver
+drops any claiming one larger than its own; `linux_cp` starts the TAP at 9000,
+so what ospfd advertises is more often wrong than right. **FRR's own answer to
+the same question contains no mention of MTU at all** — `lab/igp.sh` asserts
+that, so the claim is measured rather than made.
+
+`show ospf interface` carries both of this box's MTUs, in two columns:
+
+```
+  Interface      Area       State              Cost   Adjacent   OSPF MTU  Dataplane
+  vppwan0        0.0.0.0    Backup             10     0 of 1     9000      1400  (host-veth-vpp)
+```
+
+The left one is what ospfd sees, which is the TAP's; the right one is the
+dataplane's, with the name an operator can type at this VTY. When they disagree
+the screen prints **the sentence `commit check` already prints, from the same
+function** — two diagnoses of one fact that disagree are worse than one.
+
+A `passive-interface` or `ip ospf mtu-ignore` silences it, and until now did
+not: both name the interface the way FRR does — the Linux name — while the MTU
+is the dataplane's and keyed by the dataplane's name, so neither ever matched.
+
+### A circuit that is Up and Active with nobody on it
+
+```
+  no IS-IS adjacency
+  circuit vppwan0 in area HEXA is Up and Active with no adjacency
+  the dataplane is NOT punting IS-IS to the kernel (NLPID 0x83), so no hello
+  ever reaches isisd
+    34 frame(s) counted in osi-input as an unknown OSI protocol, which is the
+    hellos arriving and being dropped
+    committing an IS-IS instance through this VTY turns the punt on; a box
+    configured through vtysh never had it
+```
+
+Pitfall 2, said out loud. The count is the evidence that separates "the punt is
+off" from "the neighbour is switched off": the frames **arrived** and were
+dropped for want of a registered receiver.
+
+It is said the other way round too. When the punt is on and a circuit is still
+silent the screen says so and sends the operator to the far end, because "the
+punt is on" is what stops somebody chasing this box's best-known trap.
+
+### The count that ties back to the dataplane
+
+Every one of these screens ends with the number
+[#148](https://github.com/andrediashexa/hexarouting/issues/148) put on `show bgp
+summary`, in the same words:
+
+```
+  all 1 OSPF prefix(es) are in the forwarding table
+  2 of 14 IS-IS prefix(es) are NOT in the forwarding table
+    198.19.0.0/24
+    'show route verbose' compares the two tables in full
+```
+
+Only the routes **zebra selected** are counted, and that is not a detail: an
+IS-IS box learns its own connected link back from its neighbour, zebra keeps the
+connected route, and the IS-IS copy is held and never installed. Counting it
+would put a permanent fault on a box where nothing is wrong.
+
+### The overload bit
+
+`set-overload-bit` is IS-IS's maintenance drain, and the failure mode is leaving
+it on. `show isis adjacency` reports it — **read from the LSP this box is
+flooding**, not from the configuration that asked for it, because a drain
+reported by the words that requested it is reported by a line that may not have
+taken effect. `lab/igp.sh` asserts it in the **neighbour's** copy of this box's
+LSP, and asserts that taking it off reaches the neighbour too.
+
+### `clear`
+
+`clear ospf process`, `clear ospf neighbor <id>` and `clear isis adjacency
+[<system-id>]`, administrators only, the way `clear bgp` is. OSPF has no
+per-session reset: tearing the process down takes every adjacency with it, which
+is why the word is `process`.
+
+They are asserted in the lab **by what they do** — the IS-IS adjacency's flap
+count going up, the OSPF adjacency's uptime going backwards — and never by what
+they print. A `clear` that printed "cleared" and did nothing would satisfy any
+assertion about its output, and it is the one command an operator runs
+*because* they want something to happen.
+
+### What is not claimed
+
+* IPv4 only, like `show route` and `show bgp summary`: the FIB parser reads
+  `show ip fib`. An IS-IS instance carrying IPv6 gets its adjacency state and
+  its circuits here, and nothing about whether its v6 prefixes reached the v6
+  FIB.
+* The far end's MTU is not knowable from this box. What is advertised from this
+  end is, and that is what the screen says.
+* The RIB/FIB divergence is asserted in `test/test_hexash_igp.py` and not in
+  the lab: producing one live means breaking `linux_nl`, and taking a route out
+  of the FIB by hand does not hold — `linux_nl` puts it straight back. The lab
+  asserts the other half, that a healthy box says so and does not cry wolf.
+
 ## AS-path and community lists
 
 `bgp as-path access-list` and `bgp community-list` are what a route-map matches

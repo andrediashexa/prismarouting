@@ -156,6 +156,40 @@ check(routes.parse_rib("this is not json") == {},
       "unparseable output is empty, not a guess")
 check(routes.parse_rib("") == {}, "and so is no output at all")
 
+print("\n=== which prefixes came from which protocol ===")
+# Real "show ip route json", trimmed to the four prefixes that matter, from a
+# box with OSPF and IS-IS both converged. 10.0.0.0/24 is the subtlety: an
+# IS-IS box learns its own connected link back from its neighbour, zebra keeps
+# the connected route, and the IS-IS copy is held and never installed.
+IGP_RIB = json.dumps({
+    "0.0.0.0/0": [{"protocol": "kernel", "selected": True, "installed": True,
+                   "nexthops": [{"ip": "172.17.0.1",
+                                 "interfaceName": "eth0"}]}],
+    "10.0.0.0/24": [
+        {"protocol": "isis", "distance": 115, "metric": 20,
+         "nexthops": [{"ip": "10.0.0.2", "interfaceName": "vppwan0"}]},
+        {"protocol": "connected", "selected": True, "installed": True,
+         "nexthops": [{"interfaceName": "vppwan0"}]}],
+    "198.18.0.0/24": [{"protocol": "ospf", "selected": True, "installed": True,
+                       "nexthops": [{"ip": "10.0.0.2",
+                                     "interfaceName": "vppwan0"}]}],
+    "198.19.0.0/24": [{"protocol": "isis", "selected": True, "installed": True,
+                       "nexthops": [{"ip": "10.0.0.2",
+                                     "interfaceName": "vppwan0"}]}],
+})
+igp = routes.parse_rib(IGP_RIB)
+check(routes.protocol_prefixes(igp, "ospf") == ["198.18.0.0/24"],
+      f"the OSPF prefix: {routes.protocol_prefixes(igp, 'ospf')}")
+check(routes.protocol_prefixes(igp, "isis") == ["198.19.0.0/24"],
+      f"the IS-IS prefix, and NOT the copy zebra did not choose: "
+      f"{routes.protocol_prefixes(igp, 'isis')}")
+check("10.0.0.0/24" in igp and len(igp["10.0.0.0/24"]) == 2,
+      "though both entries for it were parsed, so this is a choice")
+check(routes.protocol_prefixes(igp, "bgp") == [],
+      "a protocol with nothing in the table has nothing")
+check(routes.protocol_prefixes({}, "ospf") == [],
+      "and an empty table is not a crash")
+
 print("\n=== the comparison, which is the point ===")
 rows = routes.compare(table, rib)
 by_prefix = {r[0]: r for r in rows}

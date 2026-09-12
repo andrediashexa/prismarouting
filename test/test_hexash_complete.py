@@ -1810,6 +1810,35 @@ _src = open(_hx.__file__).read()
 check("usage: cgnat " not in _src,
       "no usage line still teaches the old top-level spelling")
 
+print("\n=== the IGPs are in the tree, which is where they were not ===")
+# `show ?` offered bgp and isis and not OSPF, and both IGP entries ended the
+# command: after `show ospf` the operator was told nothing, on a VTY whose
+# reason for existing is that they do not have to know FRR is underneath.
+
+
+def offered(line):
+    """Options at `line`, in operational mode. `opts` above is long rebound."""
+    sh = hexash.Shell()
+    sh.mode = "operational"
+    o, hint, _ = sh._options(line, False)
+    return set(o), hint
+
+
+check({"ospf", "isis", "bgp", "route"} <= offered("show ")[0],
+      f"missing: {sorted(offered('show ')[0])}")
+check(offered("show ospf ")[0] == {"neighbor", "interface"},
+      f"show ospf offers: {sorted(offered('show ospf ')[0])}")
+check(offered("show isis ")[0] == {"adjacency", "interface"},
+      f"show isis offers: {sorted(offered('show isis ')[0])}")
+
+print("\n=== clear reaches the IGPs too ===")
+check(offered("clear ")[0] == {"bgp", "ospf", "isis"},
+      f"clear offers: {sorted(offered('clear ')[0])}")
+check(offered("clear ospf ")[0] == {"process", "neighbor"},
+      f"clear ospf offers: {sorted(offered('clear ospf ')[0])}")
+o, hint = offered("clear isis adjacency ")
+check(not o and hint == "[<system-id>]", f"a system id is typed: {o} {hint!r}")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

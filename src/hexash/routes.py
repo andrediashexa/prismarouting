@@ -155,6 +155,23 @@ def forwarding(table: dict) -> dict:
             if e["kind"] in (FORWARD, CONNECTED)}
 
 
+def protocol_prefixes(rib: dict, protocol: str) -> list:
+    """
+    The prefixes FRR CHOSE from one protocol, in address order.
+
+    Only the entries zebra selected, and that is the whole subtlety. An IS-IS
+    box learns its own connected networks back from its neighbour - 10.0.0.0/24
+    arrives by IS-IS on the very link it is configured on - and zebra keeps the
+    connected route, so the IS-IS copy is held and never installed. Counting it
+    as a prefix the dataplane is missing would put a permanent fault on a box
+    where nothing is wrong, which is how a report stops being read.
+    """
+    return sorted((p for p, entries in rib.items()
+                   if any(e.get("selected") and e.get("protocol") == protocol
+                          for e in entries)),
+                  key=_sort_key)
+
+
 def vpp_host_interfaces(lcp_text: str) -> set:
     """
     The Linux-side names of the interfaces VPP owns, from "show lcp".

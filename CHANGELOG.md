@@ -40,6 +40,7 @@ are to be interpreted as described in
 [#170](https://github.com/andrediashexa/hexarouting/issues/170),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#199](https://github.com/andrediashexa/hexarouting/issues/199),
+[#176](https://github.com/andrediashexa/hexarouting/issues/176),
 [#200](https://github.com/andrediashexa/hexarouting/issues/200).
 
 ### Added
@@ -85,6 +86,49 @@ are to be interpreted as described in
   had not finished after nine minutes, with `bgpd` in `D` state having used 6 s
   of CPU and `vtysh` returning nothing in 30 s. `docs/appliance.md` carries the
   numbers and recommends 16 GB for a full-table box instead of a bound.
+
+* **`show ospf neighbor`, `show ospf interface`, `show isis adjacency` and
+  `show isis interface`** — the IGP half of what
+  [#148](https://github.com/andrediashexa/hexarouting/issues/148) did for BGP.
+  `show ip ospf neighbor` was handed to `vtysh` untouched and FRR's table is
+  not the table that forwards, so each of these puts the count of IGP prefixes
+  that reached the **VPP FIB** on the same screen as the adjacency state. OSPF
+  was not in the `show` tree at all: `show ?` offered `bgp` and `isis` and not
+  OSPF, and both IGP entries ended the command. FRR's own spellings still work
+  and still reach FRR — bare `show ip ospf` is still the process summary an
+  operator arriving from another vendor expects.
+* **An OSPF adjacency that stops in Exchange is told why.** OSPF compares the
+  MTU in Database Description packets and drops any claiming one larger than
+  its own, with no log line on either side; on this box `linux_cp` starts the
+  TAP at 9000, so what ospfd advertises is more often wrong than right. The
+  screen names the state, the MTU this end is advertising, and — when the
+  box's own two halves disagree — the sentence `commit check` already printed,
+  from the same place, because two diagnoses of one fact that disagree are
+  worse than one. `show ospf interface` carries both MTUs in two columns.
+* **An IS-IS circuit that is Up and Active with no adjacency is told why.**
+  IS-IS is not carried over IP, so without `lcp osi-proto enable 0x83` the
+  hellos never reach isisd and the only evidence is a VPP error counter
+  ([#168](https://github.com/andrediashexa/hexarouting/issues/168)). The screen
+  says whether the dataplane is punting, and counts the frames `osi-input`
+  dropped as an unknown OSI protocol. It says so either way: "the punt is on"
+  is what stops an operator chasing this box's best-known trap and sends them
+  to the far end.
+* **This box advertising the IS-IS overload bit is reported**, read from the
+  LSP it is flooding rather than from the configuration that asked for it —
+  a maintenance drain reported by the words that requested it is reported by a
+  line that may not have taken effect. `lab/igp.sh` asserts it in the
+  **neighbour's** copy of this box's LSP, and asserts that taking it off
+  reaches the neighbour too.
+* **`clear ospf process`, `clear ospf neighbor <id>` and `clear isis
+  adjacency [<system-id>]`**, administrators only, the way `clear bgp` is.
+  Asserted in the lab by what they do — the IS-IS adjacency's flap count going
+  up, the OSPF adjacency's uptime going backwards — never by what they print.
+* **`passive-interface` did not silence the OSPF MTU warning** it exists to
+  silence, and neither did `ip ospf mtu-ignore`. Both name the interface the
+  way FRR does - the Linux name - while the MTU being compared is the
+  dataplane's and keyed by the dataplane's name, so neither ever matched. The
+  escape hatch an operator had deliberately used came back on the next commit,
+  naming an interface they had never typed.
 
 ### Fixed
 
@@ -172,6 +216,42 @@ are to be interpreted as described in
 
 ### Added
 
+* **`show ospf neighbor`, `show ospf interface`, `show isis adjacency` and
+  `show isis interface`** — the IGP half of what
+  [#148](https://github.com/andrediashexa/hexarouting/issues/148) did for BGP.
+  `show ip ospf neighbor` was handed to `vtysh` untouched and FRR's table is
+  not the table that forwards, so each of these puts the count of IGP prefixes
+  that reached the **VPP FIB** on the same screen as the adjacency state. OSPF
+  was not in the `show` tree at all: `show ?` offered `bgp` and `isis` and not
+  OSPF, and both IGP entries ended the command. FRR's own spellings still work
+  and still reach FRR — bare `show ip ospf` is still the process summary an
+  operator arriving from another vendor expects.
+* **An OSPF adjacency that stops in Exchange is told why.** OSPF compares the
+  MTU in Database Description packets and drops any claiming one larger than
+  its own, with no log line on either side; on this box `linux_cp` starts the
+  TAP at 9000, so what ospfd advertises is more often wrong than right. The
+  screen names the state, the MTU this end is advertising, and — when the
+  box's own two halves disagree — the sentence `commit check` already printed,
+  from the same place, because two diagnoses of one fact that disagree are
+  worse than one. `show ospf interface` carries both MTUs in two columns.
+* **An IS-IS circuit that is Up and Active with no adjacency is told why.**
+  IS-IS is not carried over IP, so without `lcp osi-proto enable 0x83` the
+  hellos never reach isisd and the only evidence is a VPP error counter
+  ([#168](https://github.com/andrediashexa/hexarouting/issues/168)). The screen
+  says whether the dataplane is punting, and counts the frames `osi-input`
+  dropped as an unknown OSI protocol. It says so either way: "the punt is on"
+  is what stops an operator chasing this box's best-known trap and sends them
+  to the far end.
+* **This box advertising the IS-IS overload bit is reported**, read from the
+  LSP it is flooding rather than from the configuration that asked for it —
+  a maintenance drain reported by the words that requested it is reported by a
+  line that may not have taken effect. `lab/igp.sh` asserts it in the
+  **neighbour's** copy of this box's LSP, and asserts that taking it off
+  reaches the neighbour too.
+* **`clear ospf process`, `clear ospf neighbor <id>` and `clear isis
+  adjacency [<system-id>]`**, administrators only, the way `clear bgp` is.
+  Asserted in the lab by what they do — the IS-IS adjacency's flap count going
+  up, the OSPF adjacency's uptime going backwards — never by what they print.
 * **IPsec ESP passthrough, on by default**, the fourth entry in the ALG
   registry and the first that is not an ALG: it parses nothing and rewrites
   nothing but the addresses. The SPI in particular is left alone — RFC 4303
@@ -286,6 +366,12 @@ are to be interpreted as described in
 
 ### Fixed
 
+* **`passive-interface` did not silence the OSPF MTU warning** it exists to
+  silence, and neither did `ip ospf mtu-ignore`. Both name the interface the
+  way FRR does - the Linux name - while the MTU being compared is the
+  dataplane's and keyed by the dataplane's name, so neither ever matched. The
+  escape hatch an operator had deliberately used came back on the next commit,
+  naming an interface they had never typed.
 * **A non-root administrator could `commit check` a routing change and not
   `commit` it.** Applying one needs three paths that belong to FRR and not to
   this product: `/var/log/frr` (`drwxr-x--- frr:frr`, where `frr-reload` opens
