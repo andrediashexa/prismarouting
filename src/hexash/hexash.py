@@ -1477,14 +1477,22 @@ def ospf_state(routing):
     """
     What the configuration says about OSPF, gathered once.
 
-    Returns (networks, areas_by_interface, passive, redistribute, has_ospf) -
-    parsed by statement rather than by indentation, for the reason
-    route_map_findings and bgp_errors both had to learn: a configuration read
-    back from FRR is indented and the same line typed at this VTY is not.
+    Returns (networks, areas_by_interface, passive, unpassive, redistribute,
+    has_ospf) - parsed by statement rather than by indentation, for the
+    reason route_map_findings and bgp_errors both had to learn: a
+    configuration read back from FRR is indented and the same line typed at
+    this VTY is not.
+
+    `passive` and `unpassive` are separate because `passive-interface
+    default` is a statement about every interface and `no passive-interface
+    <name>` is how one is taken back out of it. Reading only the first and
+    treating "default" as an interface name made the CGNAT check fire on the
+    posture this VTY's own help text recommends for a subscriber-facing port.
     """
     networks = []          # (prefix, area, statement)
     iface_area = {}        # interface -> area, from `ip ospf area`
-    passive = []           # (interface, statement)
+    passive = []           # (interface or "default", statement)
+    unpassive = []         # (interface, statement) from `no passive-interface`
     redist = []            # (statement, has_route_map)
     has_ospf = False
     in_ospf = False
@@ -1507,15 +1515,37 @@ def ospf_state(routing):
                 networks.append((w[1], w[3], line.strip()))
             elif w[:1] == ["passive-interface"] and len(w) >= 2:
                 passive.append((w[1], line.strip()))
+            elif w[:2] == ["no", "passive-interface"] and len(w) >= 3:
+                unpassive.append((w[2], line.strip()))
             elif w[:1] == ["redistribute"] and len(w) >= 2:
                 redist.append((line.strip(), "route-map" in w))
         elif iface and w[:3] == ["ip", "ospf", "area"] and len(w) >= 4:
             iface_area[iface] = w[3]
             has_ospf = True
-    return networks, iface_area, passive, redist, has_ospf
+        elif iface and w[:3] == ["ip", "ospf", "passive"]:
+            # The same statement after a round trip through FRR. Measured:
+            # `passive-interface vppwan0` is accepted with a deprecation
+            # notice and comes back out of `show running-config` as
+            #
+            #   interface vppwan0
+            #    ip ospf passive
+            #
+            # and cfg.routing is read from FRR, so THIS is the spelling every
+            # commit after the first one sees. Reading only `passive-interface`
+            # meant an operator who had made a port passive was warned about
+            # it again on the next unrelated commit, under a statement they
+            # never typed. It is also a spelling this VTY offers in its own
+            # right, under `interface <name>` / `ip ospf passive`.
+            #
+            # Does not set has_ospf: passive with no area is not an OSPF
+            # instance, and saying it was would let every other check in
+            # ospf_findings fire on a box that runs no OSPF at all.
+            passive.append((iface, line.strip()))
+    return networks, iface_area, passive, unpassive, redist, has_ospf
 
 
-def ospf_findings(routing, addresses, have_interfaces, pools):
+def ospf_findings(routing, addresses, have_interfaces, pools,
+                  lcp_pairs=None, device_interfaces=None):
     """
     What an OSPF configuration says that will not do what it looks like.
 
@@ -1524,11 +1554,72 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
     operator did not mean. The rule this project holds a check to is that it
     must catch something FRR does not, and must not refuse a configuration
     that is fine.
+
+    `lcp_pairs` is routes.lcp_pairs() over `show lcp` and `device_interfaces`
+    is the dataplane's OWN interface names - not the union of both namespaces
+    that `have_interfaces` carries. Both are optional, and what is lost
+    without them is described under `frr_acts_on` below.
     """
-    networks, iface_area, passive, redist, has_ospf = ospf_state(routing)
+    networks, iface_area, passive, unpassive, redist, has_ospf = \
+        ospf_state(routing)
     out = []
     if not has_ospf:
         return out
+
+    # ------------------------------------------------------------------
+    # Which namespace this function works in, and why it has to choose one.
+    #
+    # It works in FRR's. Every statement ospf_state() parses is an FRR
+    # statement that only FRR ever reads, so the name in it means whatever
+    # FRR takes it to mean and nothing else. `addresses` is the other side of
+    # each comparison and is keyed by the DATAPLANE's names when it was read
+    # back off the box, and by whatever the operator typed when it came from
+    # a staged `interface` block - which docs/routing.md says may be either
+    # name. So the two sides are matched through the linux_cp pair, and the
+    # configuration side is additionally required to be a spelling FRR can
+    # act on. Comparing the names as strings, which is what this replaces,
+    # was wrong in both directions at once (#205).
+    #
+    # Measured on the lab's own pair rather than reasoned about, because the
+    # answer decides which spelling is the mistake:
+    #
+    #   itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+    #
+    #   * only vppwan0 is a Linux netdev, and FRR's interface list holds
+    #     vppwan0 and not the other two;
+    #   * `passive-interface host-veth-vpp` is ACCEPTED - a deprecation
+    #     notice, no error - and makes nothing passive: `show ip ospf
+    #     interface vppwan0` does not say "No Hellos", and the statement does
+    #     not survive into the running configuration at all;
+    #   * `passive-interface vppwan0` does say "No Hellos (Passive
+    #     interface)".
+    #
+    # The pair's Linux end is therefore the one FRR acts on, and it is the
+    # one member of the pair the DATAPLANE does not also have - which is how
+    # frr_acts_on() finds it without reading a field by position. The order
+    # of names on that line is a VPP detail routes.lcp_pairs() deliberately
+    # does not depend on, having already seen it differ between two labs
+    # here.
+    # ------------------------------------------------------------------
+    pairs = lcp_pairs or {}
+    dp_names = set(device_interfaces or ())
+
+    def same(name):
+        """Every name this interface answers to, itself included."""
+        return set(pairs.get(name, ())) | {name}
+
+    def frr_acts_on(name):
+        """
+        Whether a statement spelling the interface this way does anything.
+
+        With no dataplane list to subtract there is nothing to tell the
+        members of a pair apart, and the answer is yes for every one of them.
+        "Could not ask" must not become a warning the operator cannot silence
+        - which is the posture the interface-existence check below takes with
+        an empty `have_interfaces`, for the same reason.
+        """
+        frr_side = same(name) - dp_names
+        return not frr_side or name in frr_side
 
     # REFUSED: a passive-interface naming an interface the box does not have.
     # It commits, and the port the operator meant to keep quiet is not the one
@@ -1539,6 +1630,27 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
             out.append(("error", stmt,
                         f"this box has no interface {ifname}, so nothing is "
                         "made passive"))
+
+    # The same outcome reached through a name the box DOES have: the
+    # dataplane's end of a linux_cp pair. FRR has no such interface, accepts
+    # the statement anyway, and makes nothing passive - measured above. This
+    # is the spelling `passive-interface <TAB>` offers, because the
+    # completion lists what `show interface` reports, so it is the one an
+    # operator is most likely to be holding.
+    #
+    # Warned and not refused. The name FRR wants is not one the dataplane
+    # reports, so an error here would refuse a commit an operator cannot
+    # rewrite from anything this VTY offers them; and the check below now
+    # says out loud that the port is still not passive, which is the
+    # consequence they need to see.
+    for ifname, stmt in passive:
+        if ifname == "default" or frr_acts_on(ifname):
+            continue
+        out.append(("warning", stmt,
+                    "FRR knows this interface as "
+                    + "/".join(sorted(same(ifname) - dp_names))
+                    + f", not {ifname}: written this way nothing is made "
+                    "passive"))
 
     # A network statement matching no address on this box: OSPF runs on
     # nothing and the configuration reads correctly.
@@ -1569,12 +1681,44 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
     # A subscriber-facing port speaking OSPF. The cross-half check only this
     # product can make: FRR does not know what a CGNAT pool is, and the
     # dataplane does not know what OSPF is.
-    quiet = {i for i, _ in passive}
+    # A statement silences this only when FRR acts on the name it uses, and
+    # then for every name that interface answers to, so the dataplane-keyed
+    # side of the comparison matches. Without the first half the operator who
+    # typed the name this VTY's own TAB completion offers - a dataplane name,
+    # which FRR will never match - was reassured by a statement that did
+    # nothing.
+    quiet = set()
+    for ifname, _ in passive:
+        if frr_acts_on(ifname):
+            quiet |= same(ifname)
+    # `ip ospf area` is the other door into "this interface speaks OSPF", and
+    # it sits in an FRR stanza, so it is spelled the way FRR spells
+    # interfaces while `addresses` usually is not. Matched as a name against
+    # a dataplane-keyed dictionary it never matched anything, which left this
+    # warning unable to fire at all on an interface configured that way.
+    in_area = set()
+    for ifname in iface_area:
+        if frr_acts_on(ifname):
+            in_area |= same(ifname)
+    # `passive-interface default` is a statement about EVERY interface, and
+    # `no passive-interface <name>` is how one is taken back out of it. It is
+    # the posture this VTY's own help text calls "what every subscriber-facing
+    # port should be", so treating "default" as an interface name - which is
+    # what comparing names as strings did - fired this warning on the box that
+    # had got it exactly right.
+    all_quiet = any(i == "default" for i, _ in passive)
+    loud = set()
+    for ifname, _ in unpassive:
+        if frr_acts_on(ifname):
+            loud |= same(ifname)
     inside = [p for pool in pools.values() for p in (pool.inside or [])]
     for ifname, addrs in addresses.items():
-        if ifname in quiet or not inside:
+        mine = same(ifname)
+        if mine & quiet or not inside:
             continue
-        speaks = ifname in iface_area or any(
+        if all_quiet and not mine & loud:
+            continue
+        speaks = bool(mine & in_area) or any(
             routes.covers_prefix(prefix, a)
             for prefix, _, _ in networks for a in addrs)
         if not speaks:
@@ -3130,6 +3274,13 @@ class Shell:
             # now offer the interfaces the box has. It did not make it
             # impossible: a runbook, a copy-paste or a habit still types it.
             known_interfaces = set()
+            # Both carried down to ospf_findings, which cannot work from the
+            # flattened set: it needs to know which names are one interface,
+            # and which member of a pair is the dataplane's (#205). The
+            # flattened set cannot say either, and building it destroys the
+            # answer to the second.
+            pairs = {}
+            dp_interfaces = set()
             rc_i, iface_out = self.dp.run("show interface")
             if rc_i == 0 and iface_out.strip():
                 # BOTH names. A linux_cp pair has a VPP name and a Linux one,
@@ -3139,9 +3290,11 @@ class Shell:
                 # is every box that routes - and lab/routing.sh caught exactly
                 # that, on "interface vppwan0".
                 _, lcp_out = self.dp.run("show lcp")
-                have = known_interfaces = set(routes.parse_interfaces(iface_out))
+                pairs = routes.lcp_pairs(lcp_out)
+                dp_interfaces = set(routes.parse_interfaces(iface_out))
+                have = known_interfaces = set(dp_interfaces)
                 # Every name every pair answers to. All of them are real.
-                for names in routes.lcp_pairs(lcp_out).values():
+                for names in pairs.values():
                     have.update(names)
                 # Every place an interface name can be staged, which is four
                 # and not one: the CGNAT feature, an FRR block, and the mtu and
@@ -3321,7 +3474,7 @@ class Shell:
             # list to refuse it against.
             for sev, stmt, why in ospf_findings(
                     target.routing, target.addresses,
-                    known_interfaces, target.pools):
+                    known_interfaces, target.pools, pairs, dp_interfaces):
                 if sev == "error":
                     self.err(f"{stmt}: {why}")
                     ok = False
@@ -3808,7 +3961,7 @@ class Shell:
         escape hatch and a deliberate asymmetry is legitimate; what is not
         legitimate is nobody saying so.
         """
-        _, iface_area, passive, _, has_ospf = ospf_state(routing)
+        _, iface_area, passive, _, _, has_ospf = ospf_state(routing)
         if not has_ospf:
             return []
         ignoring = set()

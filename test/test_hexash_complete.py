@@ -1494,6 +1494,105 @@ check(not find(["router ospf", "network 100.64.0.0/22 area 0",
 check(not find(["router ospf", "network 200.150.0.0/24 area 0"], pools=POOLS),
       "while a port that is not inside a pool is never reported")
 
+# The same check on a box that has linux_cp, which is every box that routes.
+# A pair answers to three names, only one of them is FRR's, and the two halves
+# of this check arrive in different ones: the addresses are keyed by the
+# DATAPLANE's names and `passive-interface` has to carry FRR's (#205).
+#
+# The names and the behaviour are the labs' own, measured rather than
+# invented, and lab/igp.sh now asserts the same three cases against a real
+# FRR over a real pair. `show lcp` prints
+#
+#   itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+#
+# only vppwan0 is a Linux netdev, FRR's interface list holds vppwan0 and
+# neither of the others, and `passive-interface host-veth-vpp` is accepted
+# with a deprecation notice while `show ip ospf interface vppwan0` goes on
+# saying nothing about hellos.
+LCP = ["host-veth-vpp", "tap4096", "vppwan0"]
+PAIRS = {n: LCP for n in LCP}
+DPIF = {"host-veth-vpp", "tap4096"}
+LCP_HAVE = set(LCP) | DPIF
+LCP_ADDRS = {"host-veth-vpp": ["100.64.0.1/22"]}
+FACING = ["router ospf", "network 100.64.0.0/22 area 0"]
+
+
+def lcp_find(lines, addrs=None):
+    return ospf_findings(lines, addrs or LCP_ADDRS, LCP_HAVE, POOLS,
+                         PAIRS, DPIF)
+
+
+check(any("facing subscribers" in w for _, _, w in lcp_find(FACING)),
+      "a subscriber-facing pair speaking OSPF is reported")
+# The false positive: the ONLY spelling FRR acts on used to silence nothing,
+# so the operator who did the right thing was told off for it.
+check(not lcp_find(FACING + ["passive-interface vppwan0"]),
+      f"and the spelling FRR acts on silences it: "
+      f"{lcp_find(FACING + ['passive-interface vppwan0'])}")
+# Its mirror, and the reason the false positive was not merely noise: the
+# spelling FRR ignores used to silence it, so the operator who typed a name
+# that does nothing was reassured.
+r = lcp_find(FACING + ["passive-interface host-veth-vpp"])
+check(any("facing subscribers" in w for _, _, w in r),
+      f"while the dataplane's name silences nothing: {r}")
+check(any("nothing is made passive" in w for _, _, w in r),
+      f"and the statement that will not work is named: {r}")
+# The false negative next door. `ip ospf area` sits in an FRR stanza and so
+# is spelled FRR's way; matched as a string against a dataplane-keyed address
+# dictionary it never matched anything, and this warning could not fire
+# through that door at all.
+r = lcp_find(["interface vppwan0", "ip ospf area 0"])
+check(any("facing subscribers" in w for _, _, w in r),
+      f"an area set on the interface reaches the same check: {r}")
+check(not lcp_find(["interface vppwan0", "ip ospf area 0",
+                    "router ospf", "passive-interface vppwan0"]),
+      "and the same statement silences it")
+# The other keying, which is why neither side can simply be translated: a
+# staged `interface` block puts whatever the operator typed into the address
+# dictionary, and docs/routing.md says either name is correct there.
+check(not lcp_find(FACING + ["passive-interface vppwan0"],
+                   addrs={"vppwan0": ["100.64.0.1/22"]}),
+      "addresses keyed the other way behave the same")
+check(any("facing subscribers" in w for _, _, w in
+          lcp_find(FACING, addrs={"vppwan0": ["100.64.0.1/22"]})),
+      "and still report the port that is not passive")
+# Could not ask. With no dataplane list the members of a pair cannot be told
+# apart, and "cannot tell" must not become a warning nobody can silence.
+check(not ospf_findings(FACING + ["passive-interface host-veth-vpp"],
+                        LCP_ADDRS, LCP_HAVE, POOLS, PAIRS),
+      "and with no dataplane names to subtract, nothing is claimed")
+
+# The same statement after a round trip through FRR, which is where every
+# commit but the first one reads it from: cfg.routing comes back from
+# `show running-config`, and FRR 10 does not store `passive-interface` -
+# measured, it answers "This command is deprecated" and files the statement
+# under the interface instead, exactly like this.
+ROUNDTRIP = ["router ospf", "network 100.64.0.0/22 area 0",
+             "interface vppwan0", " ip ospf passive"]
+check(not lcp_find(ROUNDTRIP),
+      f"the spelling FRR stores silences it too: {lcp_find(ROUNDTRIP)}")
+# And it is not a way to invent an OSPF instance: a box with only this line
+# runs no OSPF, and nothing else in here may fire on it.
+check(not find(["interface Gi1", " ip ospf passive"], pools=POOLS),
+      "while on its own it is not an OSPF instance")
+
+# `passive-interface default`, which is the posture the help text for this
+# very statement recommends for a subscriber-facing port. It is a statement
+# about every interface, not the name of one, and reading it as a name meant
+# this warning fired on the box that had got it exactly right.
+DEFAULT_QUIET = FACING + ["passive-interface default"]
+check(not lcp_find(DEFAULT_QUIET),
+      f"passive-interface default silences it: {lcp_find(DEFAULT_QUIET)}")
+# And `no passive-interface <name>` is how an interface is taken back out of
+# it, so the warning has to come back for the one that was.
+r = lcp_find(DEFAULT_QUIET + ["no passive-interface vppwan0"])
+check(any("facing subscribers" in w for _, _, w in r),
+      f"and taking one back out brings it back: {r}")
+# ... only in a spelling FRR acts on. `no passive-interface host-veth-vpp`
+# takes nothing back out, so the port is still passive and still quiet.
+check(not lcp_find(DEFAULT_QUIET + ["no passive-interface host-veth-vpp"]),
+      "while a spelling FRR ignores takes nothing back out")
+
 # A full table into the IGP.
 check(any("whole BGP" in w for _, _, w in find(
           ["router ospf", "redistribute bgp"])),

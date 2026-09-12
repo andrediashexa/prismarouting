@@ -761,6 +761,48 @@ expect_not_in "and the box stops saying it" "overload bit set" \
   "$($HX -c 'show isis adjacency' 2>&1)"
 
 echo
+echo "=========== a subscriber-facing port speaking OSPF, in both spellings ==========="
+# The cross-half check - FRR does not know what a CGNAT pool is and the
+# dataplane does not know what OSPF is - on the only box that can disprove it.
+# Its two halves arrive in different namespaces: the addresses are the
+# dataplane's, keyed `host-veth-vpp`, while `passive-interface` is read by FRR
+# and FRR knows this pair as `vppwan0` and by no other name. Neither spelling
+# is invented here; both come off this box's one linux_cp pair.
+#
+# Before #205 the warning fired on the spelling FRR acts on and went quiet on
+# the one it ignores, so the operator who did the right thing was told off and
+# the one who typed a name FRR will never match was reassured - and this VTY's
+# own completion offers the second, because it lists what `show interface`
+# reports.
+#
+# `commit check` throughout, never `commit`: the pool that makes this
+# interface subscriber-facing is staged and thrown away, so nothing this lab
+# forwards is touched by it.
+facing_check() {   # extra VTY lines, then commit check
+  $HX -c "configure" \
+      -c "cgnat pool facing" -c "inside 10.0.0.0/24" \
+      -c "outside 203.0.113.8/32" -c "block-size 512" -c "exit" \
+      "$@" -c "commit check" 2>&1
+}
+FACING_BARE=$(facing_check)
+FACING_TAP=$(facing_check -c "router ospf" \
+             -c "passive-interface vppwan0" -c "exit")
+FACING_DP=$(facing_check -c "router ospf" \
+            -c "passive-interface host-veth-vpp" -c "exit")
+printf '%s\n' "$FACING_BARE" | grep -i "facing subscribers" | sed 's/^/  bare:    /'
+printf '%s\n' "$FACING_TAP" | grep -i "facing subscribers\|made passive" | sed 's/^/  vppwan0: /'
+printf '%s\n' "$FACING_DP" | grep -i "facing subscribers\|made passive" | sed 's/^/  host-:   /'
+SAYS="it is facing subscribers, and it is not passive"
+expect_in "a port inside a CGNAT pool speaking OSPF is reported at all" \
+  "$SAYS" "$FACING_BARE"
+expect_in "and it is the dataplane's name the warning names" \
+  "interface host-veth-vpp" "$FACING_BARE"
+expect_not_in "the spelling FRR acts on silences it" "$SAYS" "$FACING_TAP"
+expect_in "while the one FRR ignores silences nothing" "$SAYS" "$FACING_DP"
+expect_in "and the statement that does nothing is named, with the name FRR wants" \
+  "FRR knows this interface as vppwan0, not host-veth-vpp" "$FACING_DP"
+
+echo
 echo "=========== the MTU this box's two halves disagree about ==========="
 # The other MTU fault, and a different one from section 1. There the two ends
 # of the WIRE disagreed; here the two halves of THIS BOX do - the dataplane and

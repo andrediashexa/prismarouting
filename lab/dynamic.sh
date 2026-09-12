@@ -134,6 +134,28 @@ ALLOCS=$(printf '%s\n' "$B" \
 echo "  allocations counted: ${ALLOCS:-<none>}"
 expect "a block was allocated for each of the three subscribers" \
   test "${ALLOCS:-0}" -ge 3
+# Examined under #204 and deliberately left as it is.
+#
+# The worry was #201's: with workers "show bpa blocks" prints a row per thread
+# AND a total, and this needle matches a per-thread row as readily as the
+# total line. It cannot pass wrongly all the same, and the reason is
+# arithmetic rather than luck - the total is the SUM of the rows above it,
+# summed from the same values in the same pass, so a row carrying a refusal
+# count of 1 puts the total at 1 or more. What this asserts is "at least one
+# refusal was counted", and a match anywhere in the block is exactly that. A
+# box that refused nothing prints "0 refusals" on every row and on the total,
+# and this needle is in none of it.
+#
+# No box could be constructed on which it passes wrongly, so it was NOT
+# anchored on the total: that would have made it "exactly one", and the
+# number of refusals this section produces is not one on every box. Measured:
+# LAB_WORKERS=1 gives one refusal (2 workers, blocks split 2/1), and
+# LAB_WORKER_COUNT=3 gives three, because a dynamic pool's blocks are
+# partitioned per worker and four subscribers hashing onto three one-block
+# workers collide. Both are the box doing what it is built to do; it is the
+# section's premise - three blocks reachable by any subscriber - that a
+# worker count of three takes away. Anchoring would have reported the first
+# of those as broken, which is #201 in reverse.
 expect_in "exhaustion was counted, not silent" "1 refusals" "$B"
 # The hold-down is proved by the release counter, not by an instantaneous
 # reading: the lab reallocates a block right after, so "0 in use" is true only
