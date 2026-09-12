@@ -200,4 +200,12 @@ judge_batch
 
 echo
 echo "  pass=$pass  fail=$fail  ran=$ran"
-[ "$fail" -eq 0 ]
+# "ran (no verdict yet)" counts against the suite too. The comment forty lines
+# up worries about a number that never reaches zero, and the fix it got was to
+# stop counting the two libraries - which left the number able to reach zero
+# and still unable to fail anything. A lab that exits 0 having printed neither
+# LAB PASSED nor LAB FAILED produced no verdict, and a suite that reports
+# success over a lab that said nothing is the shape this suite exists to find.
+# Every lab in the list ends in `verdict`, so this is zero today; the day one
+# loses it, the suite says so instead of reading the way it always did.
+[ "$fail" -eq 0 ] && [ "$ran" -eq 0 ]

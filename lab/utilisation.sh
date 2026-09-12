@@ -62,7 +62,11 @@ fill() {
     i=$(( i + 1 ))
   done
 }
-alarms() { vppctl show logging 2>/dev/null | grep -c "alarm"; }
+# THIS alarm, not the word. "alarm" on its own counts any line of VPP's log
+# that happens to carry it, so the counts below would move for a reason that
+# has nothing to do with a subscriber filling its block.
+alarms() { vppctl show logging 2>/dev/null | grep -c "past the 75% alarm"; }
+last_alarm() { vppctl show logging 2>/dev/null | grep "past the 75% alarm" | tail -1; }
 
 echo "=========== 1. a subscriber below the threshold ==========="
 echo "100.64.0.5 takes 4 of its 8 ports - 50%, under the 75% alarm."
@@ -76,7 +80,7 @@ echo "=========== 2. and then crosses it ==========="
 echo "two more ports takes it to 75%."
 fill 100.64.0.5 31000 2
 CROSSED=$(alarms)
-ALARM_TEXT=$(vppctl show logging 2>/dev/null | grep "alarm" | tail -1)
+ALARM_TEXT=$(last_alarm)
 echo "  alarms now: $CROSSED"
 printf '%s\n' "$ALARM_TEXT" | sed 's/^/  /'
 
@@ -93,10 +97,12 @@ echo "subscriber: the shape has to change when somebody else fills."
 HIST_BEFORE=$(vppctl show bpa pool | sed -n '/utilisation/,/alarm at/p')
 printf '%s\n' "$HIST_BEFORE" | sed 's/^/  /'
 fill 100.64.0.9 33000 7
+ALARM2_TEXT=$(last_alarm)
 HIST_AFTER=$(vppctl show bpa pool | sed -n '/utilisation/,/alarm at/p')
 echo "  after 100.64.0.9 takes 7 of 8:"
 printf '%s\n' "$HIST_AFTER" | sed 's/^/  /'
 TWO_ALARMS=$(alarms)
+printf '%s\n' "$ALARM2_TEXT" | sed 's/^/  /'
 
 echo
 echo "=========== 5. the mean would have hidden both ==========="
@@ -115,19 +121,44 @@ echo "=========== VERDICT ==========="
 
 expect "nothing is reported below the threshold" test "${LOW:-1}" -eq 0
 expect "crossing it reports once" test "${CROSSED:-0}" -eq 1
+# WHICH subscriber, and not only how full. The sentence claims the report
+# names the subscriber; "through its 8 ports" says nothing about who, so an
+# alarm that named the wrong subscriber every time passed this line - and
+# naming the wrong subscriber is the whole of what this alarm is for.
+# 100.64.0.5 is subscriber index 5 of a pool whose inside starts at 100.64.0.0.
 expect_in "and the report names the subscriber and how full it is" \
-  "through its 8 ports" "$ALARM_TEXT"
+  "subscriber 5 of pool lab is 75% through its 8 ports" "$ALARM_TEXT"
 expect_in "and says what it is ahead of" "natEvent 12" "$ALARM_TEXT"
 # Once per CROSSING. A line per allocation past the threshold is a log nobody
 # can keep, and the subscriber that trips it is the one allocating fastest.
 expect "filling further does not report again" test "${AGAIN:-9}" -eq 1
 expect "a second subscriber crossing reports once more" \
   test "${TWO_ALARMS:-0}" -eq 2
+# And that the one more is about the subscriber that crossed. A count of two
+# is also what a box produces when it reports 100.64.0.5 a second time and
+# never notices 100.64.0.9 at all, which is the failure this section exists
+# to catch: a counter read for one subscriber only. The alarm fires on the
+# CROSSING, so the percentage on it is 75 - the sixth of eight ports - and not
+# the 87% the subscriber ends the section holding.
+expect_in "and the second report is about the second subscriber" \
+  "subscriber 9 of pool lab is 75% through its 8 ports" "$ALARM2_TEXT"
 
-expect_in "the histogram exists" "utilisation" "$HIST_BEFORE"
-# The half that catches a counter read for one subscriber only.
-expect "and it moved when a second subscriber filled" \
-  test "$HIST_BEFORE" != "$HIST_AFTER"
+# The BUCKET, not the heading. "utilisation" is the string the sed above used
+# to cut this text out of "show bpa pool", so matching it back reports nothing
+# but that the extract is non-empty - and the heading line is printed for every
+# dynamic pool whether or not a single bucket follows it. A box with no
+# histogram at all passed "the histogram exists", and passed "it moved" too,
+# because the subscriber count on the heading moves on its own.
+expect_in "the histogram counts the subscriber holding a block" \
+  "utilisation  1 subscriber(s) holding a block" "$HIST_BEFORE"
+expect_in "and puts it in the bucket its usage falls in" "100%  1" "$HIST_BEFORE"
+# The half that catches a counter read for one subscriber only: the SHAPE has
+# to change, not just the total. 100.64.0.9 holds 7 of 8, which is 87%.
+expect_in "a second subscriber is counted too" \
+  "utilisation  2 subscriber(s) holding a block" "$HIST_AFTER"
+expect_in "and lands in its own bucket, which is what a mean would hide" \
+  "75-89%  1" "$HIST_AFTER"
+expect_in "with the first one still where it was" "100%  1" "$HIST_AFTER"
 expect_in "the threshold is in the running configuration" \
   " utilisation-alarm 75" "$CONF"
 
