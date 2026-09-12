@@ -634,8 +634,14 @@ mkdir -p "$MNT/var/log/hexarouting"
 # installed system must not do. Leaving these behind produces a box that mounts
 # a squashfs that is no longer there, and one that anyone with console access
 # owns.
-rm -f "$MNT/etc/systemd/system/getty@tty1.service.d/autologin.conf" \
-      "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf" \
+# The AUTOLOGIN only. 10-after-selftest.conf stays, and the two are separate
+# files for exactly this reason: they used to be one, this line took the
+# ordering with the autologin, and an installed box drew a login prompt while
+# hexarouting.service was still waiting for VPP - so the first `configure` of
+# the first session built a candidate out of vppctl's error text and refused
+# every commit after it (#211). A glob here would take it again.
+rm -f "$MNT/etc/systemd/system/getty@tty1.service.d/20-autologin.conf" \
+      "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/20-autologin.conf" \
       2>/dev/null || true
 
 say "identity"

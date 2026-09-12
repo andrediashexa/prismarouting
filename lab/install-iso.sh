@@ -361,6 +361,31 @@ console_since() {
 
 send() { printf '%s\n' "$*" >&3; }
 
+# The whole console from the top, for the one question `console_since` cannot
+# answer: what order two strings arrived in. Everything else here reads from
+# the last thing recognised forward, deliberately - but "the box said it was
+# ready BEFORE it offered a login prompt" is a claim about the transcript, not
+# about what has happened since.
+console_all() {
+  tr -d '\r' < "$CONSOLE_LOG" 2>/dev/null | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g'
+}
+
+# Did <first> appear before <second> in everything printed so far?
+#
+# Byte offsets and not line numbers: the login prompt has no line ending of its
+# own, so whatever the box printed last shares a line with it and a line
+# comparison puts the two in the wrong order exactly when it matters.
+printed_before() {  # <first> <second>
+  console_all | awk -v a="$1" -v b="$2" '
+    BEGIN { pa = -1; pb = -1; off = 0 }
+    {
+      if (pa < 0 && index($0, a)) pa = off + index($0, a)
+      if (pb < 0 && index($0, b)) pb = off + index($0, b)
+      off += length($0) + 1
+    }
+    END { exit !(pa > 0 && pb > 0 && pa < pb) }'
+}
+
 console_gave_up() {  # <string> <what the driver was doing> <how long>
   echo
   echo "=========== THE CONSOLE DRIVER GAVE UP ==========="
@@ -424,38 +449,139 @@ wait_for() {  # <string> <seconds> <what the driver was doing>
   done
 }
 
+# Wait until the box prints ONE of two strings, and say which.
+#
+# `wait_for` is the right shape when there is one right answer and everything
+# else is a timeout. It is the wrong shape when the box has two answers and
+# one of them is the defect: waiting for the good one turns a refusal the box
+# printed in a second into a five-minute wait, and the report then blames the
+# timing for something the screen said at once. Answers 0 for the first
+# string, 1 for the second, 2 for neither.
+expect_one_of() {  # <good> <bad> <seconds> <what the driver was doing>
+  _g=$1; _b=$2; _t=$3; _why=$4; _n=0
+  while :; do
+    if console_since | grep -qF "$_g"; then
+      CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 )); return 0
+    fi
+    if console_since | grep -qF "$_b"; then
+      CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 )); return 1
+    fi
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+      console_gave_up "$_g' or '$_b" "$_why" "${_n}s, and then the machine exited"
+      return 2
+    fi
+    if [ "$_n" -ge "$_t" ]; then
+      console_gave_up "$_g' or '$_b" "$_why" "${_t}s"
+      return 2
+    fi
+    sleep 1
+    _n=$((_n + 1))
+  done
+}
+
 # The markers the box is made to print are split in the command - echo
 # "HX""LAB" - so that what comes back is the box's ANSWER and never the
 # driver's own keystrokes echoed back at it. Every assertion below anchors on
 # the start of a line for the same reason.
 drive_console() {
-  # The box's OWN statement that it is ready, not a login prompt and not a
-  # clock. They are not the same moment on an installed box, and the
-  # difference is a defect this lab found on its first run:
+  # ------------------------------------- the FIRST prompt the box ever offers
   #
-  #   the serial getty draws "cgnat-lab login:" while hexarouting.service is
-  #   still waiting for the dataplane, so `configure` typed at that prompt
-  #   builds its candidate out of vppctl's "Could not find VPP CLI socket"
-  #   and every commit in that session is then refused with "there are
-  #   configuration lines this VTY does not understand". The VTY recovers -
-  #   it waits and the dataplane answers - but the candidate keeps the error
-  #   text as a configuration line.
+  # This lab used to start at "HexaRouting ready." and then ask for a prompt,
+  # and the comment here said why: the getty drew "cgnat-lab login:" while
+  # hexarouting.service was still waiting for the dataplane, so `configure`
+  # typed at that prompt built its candidate out of vppctl's "Could not find
+  # VPP CLI socket" and every commit in the session was then refused. Starting
+  # later was the right call for a lab about ROLES - and it left the defect
+  # untested, described in a comment, on a box somebody receives (#211).
   #
-  # That is a real bug on a box somebody receives and it is NOT the one this
-  # lab is about. Starting here is the same decision the installer answers
-  # above are: a test that logs in at the earliest instant the getty allows is
-  # testing the timing of the login against the boot, and it would report that
-  # race as a role failure. Do not replace this with a sleep, and do not move
-  # it earlier without dealing with the bug first.
-  wait_for "HexaRouting ready." 420 \
-    "the installed box to boot and report itself ready" || return 1
-  # The self-test writes its report over whatever the getty has already drawn,
-  # because the ordering that stops it doing so is installed on the LIVE image
-  # only (#93) - so the login prompt above is scrolled off and has to be asked
-  # for again. An empty line is what the operator standing there does too.
-  send ""
+  # So the lab now starts where the operator does. The first thing anybody
+  # does with a new router is log in at the first prompt it shows them, and
+  # what happens next is the product's answer, not the timing of this driver.
+  #
+  # The fix has two halves and this exercises both. The getty is ordered after
+  # the self-test, which is ordered after hexarouting.service, whose
+  # ExecStartPre waits for VPP - so a prompt offered at all means the dataplane
+  # is up. And the VTY refuses to build a candidate from a dataplane that is
+  # not answering, rather than building one out of the error text.
+  #
+  # 420s because this is a cold boot of an installed disk, not a wait for any
+  # particular ordering: the prompt arrives when the box has finished starting.
+  wait_for "$NEW_HOST login:" 420 \
+    "the installed box to boot and offer its first login prompt" || return 1
+
+  # Half one, read off the transcript: the readiness line came FIRST.
+  #
+  # Not a proxy for it. "HexaRouting ready." is printed by the self-test, which
+  # is ordered after hexarouting.service, so its position in the transcript is
+  # the ordering itself. Before the drop-in was split in two, the installer
+  # deleted the file carrying this ordering along with the autologin it was
+  # sharing a file with, and an installed box had no ordering at all.
+  if printed_before "HexaRouting ready." "$NEW_HOST login:"; then
+    echo "  [ ok ] the box reports itself ready before it offers a login"
+  else
+    echo "  [FAIL] the box offered a login prompt before it was ready"
+    echo "         the getty reached the console ahead of the self-test, so"
+    echo "         the prompt is drawn while hexarouting.service is still"
+    echo "         waiting for VPP. An operator who logs in there is in a VTY"
+    echo "         that cannot read the box (#211). On the live image the"
+    echo "         ordering is in 10-after-selftest.conf; on an installed box"
+    echo "         it is the same file, and the installer must delete only"
+    echo "         20-autologin.conf beside it."
+    fail=1
+  fi
+
+  send "root"
+  wait_for "Password:" 60 \
+    "the first login to ask for root's password" || return 1
+  send "$LOGIN_PW"
+  wait_for "HexaRouting VTY" 180 \
+    "root's first login to land in the VTY" || return 1
+
+  # Half two: what that session can actually do.
+  #
+  # `configure` and `commit`, with nothing typed in between. It is the smallest
+  # thing an operator does and it is the whole defect: the candidate is built
+  # at `configure` time out of what the box reads back, so a dataplane that is
+  # not answering puts its error text in the candidate as configuration lines,
+  # and the refusal lands on the FIRST REAL COMMIT of the session - by which
+  # time the operator has typed a pool and has every reason to think the pool
+  # is what was refused.
+  echo "  -- the first session: configure and commit, with nothing typed"
+  send "configure"
+  expect_one_of "entering configuration mode" "the dataplane is not answering" \
+    90 "the first session to enter configuration mode"
+  case $? in
+    0) echo "  [ ok ] the first session can enter configuration mode" ;;
+    1) echo "  [FAIL] the VTY refused to build a candidate: the dataplane was"
+       echo "         not answering at the prompt the box had just offered."
+       echo "         The VTY is right to refuse - this is the getty half of"
+       echo "         #211, and the ordering drop-in did not survive the"
+       echo "         install."
+       fail=1; return 1 ;;
+    *) return 1 ;;
+  esac
+
+  send "commit"
+  expect_one_of "no changes to commit" "does not understand" \
+    300 "the first session's empty commit to be answered"
+  case $? in
+    0) echo "  [ ok ] an empty commit is answered with nothing to do" ;;
+    1) echo "  [FAIL] the commit was refused for a line nobody typed"
+       echo "         the candidate was built out of the dataplane's error"
+       echo "         text and carries it as configuration. Every commit in"
+       echo "         this session is refused from here on, including the"
+       echo "         operator's first real one (#211)."
+       fail=1; return 1 ;;
+    *) return 1 ;;
+  esac
+  send "exit"
+  wait_for "hexarouting> " 60 \
+    "the first session to leave configuration mode" || return 1
+  send "exit"
   wait_for "$NEW_HOST login:" 120 \
-    "the getty to draw a login prompt again" || return 1
+    "the first session to log out and the getty to come back" || return 1
+
+  # ------------------------------------------ the roles, from here on as ever
   send "root"
   wait_for "Password:" 60 "login to ask for root's password" || return 1
   send "$LOGIN_PW"
