@@ -1299,11 +1299,21 @@ class Config:
                 return f"forward: '{w[4]}' is not an IPv4 address"
             # Refused rather than deduplicated. Silently dropping the second
             # line leaves a configuration whose text does not round-trip, and
-            # the device refuses it for the same reason: one public port
-            # serves one socket.
-            if any(f[0] == w[1] and f[1] == int(w[2]) for f in pool.forwards):
+            # the device refuses it for the same reason: one public socket
+            # serves one subscriber socket.
+            #
+            # The socket is the public ADDRESS and the port, and the address
+            # is the subscriber's own - which only the device can work out.
+            # So what is refused here is the same port for the same
+            # subscriber, which is a collision whatever the arithmetic says.
+            # The same port for a DIFFERENT subscriber is left to the device:
+            # on a pool with several public addresses those are two sockets,
+            # and refusing them here made a port sellable once per pool
+            # instead of once per address (issue #214).
+            if any(f[0] == w[1] and f[1] == int(w[2]) and f[2] == w[4]
+                   for f in pool.forwards):
                 return (f"forward {w[1]} {w[2]}: this pool already forwards "
-                        "that port")
+                        f"that port for {w[4]}")
             pool.forwards.append((w[1], int(w[2]), w[4], int(w[5])))
         elif w[0] == "exit":
             pass

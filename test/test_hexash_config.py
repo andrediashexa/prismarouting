@@ -472,5 +472,40 @@ check(config.global_key("cgnat logging tcp 10.0.0.2")
       "as are the two transports")
 
 
+print("\n=== a public port is one socket per public address, not per pool ===")
+# The VTY does not know the pool's arithmetic - which public address a
+# subscriber sends from is the device's answer - so the only duplicate it can
+# judge is the same port for the same subscriber. Refusing the same port for a
+# DIFFERENT subscriber made a port sellable once per pool when a pool has as
+# many public addresses as the operator gave it (issue #214), and the operator
+# saw it as "this pool already forwards that port" naming nobody.
+fp = config.Pool("p")
+check(config.Config._pool_line(fp, "forward tcp 1650 to 100.64.0.5 8080")
+      is None, "the first forward is accepted")
+why = config.Config._pool_line(fp, "forward tcp 1650 to 100.64.0.6 8081")
+check(why is None,
+      f"the same port for another subscriber is the device's call: {why}")
+check(len(fp.forwards) == 2,
+      f"and both lines stay in the candidate: {fp.forwards}")
+why = config.Config._pool_line(fp, "forward tcp 1650 to 100.64.0.5 9090")
+check(why is not None,
+      "the same port for the SAME subscriber is one socket twice")
+check("100.64.0.5" in (why or ""),
+      f"and the refusal names the subscriber it collided with: {why}")
+check(len(fp.forwards) == 2,
+      f"a refused line is not added: {fp.forwards}")
+# Round trip: two forwards that share a public port must both survive being
+# rendered and read back, or the running configuration read off a device that
+# has both comes back with one and the next commit deletes the other. Built by
+# hand rather than through the parser, so that this asserts the round trip and
+# not what the check above already asserted.
+rt = config.Pool("p")
+rt.forwards = [("tcp", 1650, "100.64.0.5", 8080),
+               ("tcp", 1650, "100.64.0.6", 8081)]
+back = config.Config.parse("\n".join(["! cgnat", "cgnat pool p"]
+                                     + rt.lines()))
+check(sorted(back.pools["p"].forwards) == sorted(rt.forwards),
+      f"both survive a round trip through the text: {back.pools['p'].forwards}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

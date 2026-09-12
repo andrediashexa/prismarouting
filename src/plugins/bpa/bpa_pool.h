@@ -656,20 +656,29 @@ bpa_static_lower (const bpa_static_t *v, u32 n, u16 port)
 }
 
 /*
- * The forward that owns (public port, protocol), or 0.
+ * The forward that owns (public address, public port, protocol), or 0.
+ *
+ * The ADDRESS is part of the key because a pool has more than one, and a port
+ * on one of them is not the same socket as the same port on another: the
+ * pool's own arithmetic has already given 203.0.113.16:1100 and
+ * 203.0.113.17:1100 to two different subscribers. Keyed on the port alone,
+ * one forward made the port unsellable to the N-1 subscribers who share its
+ * offset on the other addresses (issue #214).
  *
  * Consulted on the out2in path only when the session lookup missed, which is
  * unsolicited inbound traffic: a forwarded port that is in use answers from
- * the session table like any other mapping.
+ * the session table like any other mapping. The address costs that path
+ * nothing - the packet arrived at it, and the arithmetic above the call has
+ * already used it to find the block.
  */
 static_always_inline const bpa_static_t *
-bpa_static_by_pub (const bpa_pool_t *p, u16 port_pub, u8 proto)
+bpa_static_by_pub (const bpa_pool_t *p, u32 ip_pub, u16 port_pub, u8 proto)
 {
   u32 n = vec_len (p->statics);
   u32 i = bpa_static_lower (p->statics, n, port_pub);
 
   for (; i < n && p->statics[i].port_pub == port_pub; i++)
-    if (p->statics[i].proto == proto)
+    if (p->statics[i].proto == proto && p->statics[i].ip_pub == ip_pub)
       return &p->statics[i];
   return 0;
 }
