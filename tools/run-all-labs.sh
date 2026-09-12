@@ -65,6 +65,25 @@ else
 fi
 echo
 
+# Labs that are run a SECOND time with workers.
+#
+# hexarouting-tune gives every appliance with more than one core at least two
+# workers, and a box too small for that everything on the main thread. Both are
+# configurations the product ships and neither proves the other: #199 was a
+# translation that was correct single-threaded and blackholed with workers, and
+# #201 an ICMP error that was translated single-threaded and dropped as
+# malformed with workers. Both were found by a person typing LAB_WORKERS=1,
+# because the suite had only ever run one way - which is why the second run
+# lives here rather than in the labs. A lab that hardcoded workers would move
+# the blind spot to the small box instead of closing it.
+#
+# The list is short on purpose. A lab goes in it once it has been MEASURED both
+# ways, not because it looks as though it forwards something; putting one here
+# untested turns the suite red for a defect nobody is holding. lab/handoff.sh,
+# lab/dynamic-workers.sh and lab/pool-del.sh are absent because they already ask
+# for workers themselves. lab/hairpin.sh belongs here when #200 is fixed.
+BOTH_WAYS="icmp-tcp extblocks"
+
 # The list, in the order the summary will print.
 LABS=""
 for f in "$REPO"/lab/*.sh; do
@@ -79,6 +98,7 @@ for f in "$REPO"/lab/*.sh; do
   case "$n" in hw-lab|hw-vpp|boot-iso|install-iso|verdict|lib) continue ;; esac
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
   LABS="$LABS $n"
+  case " $BOTH_WAYS " in *" $n "*) LABS="$LABS $n+workers" ;; esac
 done
 
 # Run them, at most $JOBS at a time, each into its own file.
@@ -143,7 +163,15 @@ for n in $LABS; do
     # state needs a window wider than the interval VPP schedules its initial
     # advertisements in. Killed at 300, it was reported as a failure, which is
     # the cap telling the reader something false about the lab.
-    out=$(timeout 900 sh "$REPO/tools/lab.sh" "$n" 2>&1); rc=$?
+    # "<lab>+workers" is the second pass of a lab in BOTH_WAYS. The suffix is
+    # carried in the name so the two runs have separate output files and
+    # separate lines in the summary - a lab that passes one way and fails the
+    # other has to be readable as exactly that.
+    case "$n" in
+      *+workers) lab=${n%+workers}; workers=1 ;;
+      *)	 lab=$n; workers=0 ;;
+    esac
+    out=$(LAB_WORKERS=$workers timeout 900 sh "$REPO/tools/lab.sh" "$lab" 2>&1); rc=$?
     printf '%s\n' "$out" > "$OUT/$n.out"
     echo "$rc" > "$OUT/$n.rc"
   ) &

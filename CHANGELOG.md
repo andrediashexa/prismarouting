@@ -37,10 +37,35 @@ are to be interpreted as described in
 ## Unreleased
 
 [#48](https://github.com/andrediashexa/hexarouting/issues/48),
-[#199](https://github.com/andrediashexa/hexarouting/issues/199).
+[#199](https://github.com/andrediashexa/hexarouting/issues/199),
+[#201](https://github.com/andrediashexa/hexarouting/issues/201).
 
 ### Fixed
 
+* **On a box with workers, a translated ICMP error was dropped as malformed.**
+  The identical packet was translated correctly single-threaded. An ICMP error
+  carries no L4 ports in its outer header - it is a router reporting on somebody
+  else's datagram, and the datagram is embedded inside it - so the out2in handoff
+  found nothing to resolve a subscriber from, counted `packets with no
+  identifiable subscriber` and left the packet on whatever worker the NIC chose.
+  `bpa-out2in` then searched **that** worker's session table, which was never
+  going to hold a session belonging to another worker. The handoff now reads the
+  embedded header, through the same parse `bpa-out2in` uses, so the worker it
+  picks is by construction the worker that node searches. The consequence for an
+  operator is PMTUD: a subscriber's TCP connections hang on exactly the paths
+  that need a "fragmentation needed", and traceroute stops working through the
+  CGNAT - on every appliance with more than one core.
+* **And the counter that sent the diagnosis in the wrong direction.** A session
+  that simply lived on another worker was reported as `truncated or malformed
+  ICMP error`, because the bounds failures and the session lookup shared one
+  return value. A miss now counts `no session for destination`, like every other
+  miss; `truncated or malformed ICMP error` means what it says. A counter that
+  describes the packet when the fault is in the box is worse than no counter.
+* **A lab parse that was right only on one thread.** `lab/extblocks.sh` read the
+  extension count off the **first** matching row of `show bpa blocks`, which with
+  workers is a per-thread row. The lab failed `the subscriber filled its first
+  block and got a second` while the total said the extension had happened and the
+  box was behaving correctly. It reads the total line now. Not a product defect.
 * **On a box with workers, every translated packet was blackholed.** `bpa-in2out`
   translated the packet, counted it as translated, and sent it to `error-drop`.
   Nothing left the box. `hexarouting-tune` configures workers on every
@@ -67,6 +92,23 @@ are to be interpreted as described in
 
 ### Changed
 
+* **`tools/run-all-labs.sh` runs the forwarding labs twice**, once plain and once
+  with workers, listed in `BOTH_WAYS`. `hexarouting-tune` gives every appliance
+  with more than one core at least two workers and a smaller box everything on
+  the main thread; both configurations ship and neither proves the other. #199
+  and #201 were both found by a person typing `LAB_WORKERS=1`, because the suite
+  had only ever run one way. Hardcoding workers in the labs was the alternative,
+  and it would have moved the blind spot to the small box rather than closing it.
+  `lab/icmp-tcp.sh` also asserts, on a worker run, that the handoff identified a
+  subscriber for the ICMP error **and** that the error really did cross a worker
+  to reach it - without the second check the first passes by luck whenever the
+  session happens to belong to the arriving worker, measured.
+* **`make test` gained `test_bpa_icmp`.** The ICMP error parse is the only place
+  this plugin walks headers a remote wrote inside another packet, and its
+  refusals cannot be seen from a lab: a packet dropped by a bounds check and one
+  dropped after reading past the buffer look identical from outside. Every packet
+  in it is placed against an unmapped page, so an over-read is a crash rather
+  than a judgement call.
 * **One TCP sequence-correction mechanism, not two.** `sizeof (bpa_session_t)`
   96 → 88. The FTP ALG kept its own set of correction fields beside the general
   one; a connection is either FTP or RTSP, so the duplication cost bytes rather

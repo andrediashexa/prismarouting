@@ -52,7 +52,23 @@ vppctl packet-generator new "name icmperr limit 1 node ip4-input interface pg1 \
 vppctl clear trace >/dev/null; vppctl trace add pg-input 5 >/dev/null
 vppctl packet-generator enable >/dev/null; sleep 2
 vppctl packet-generator delete icmperr >/dev/null 2>&1
-vppctl show errors | grep -iE "erros ICMP|malformado" | sed 's/^/    /'
+# The counter names are the ones bpa_errors.h prints, in English. This line
+# used to grep for "erros ICMP|malformado", which no counter has ever been
+# called, so the section's only diagnostic printed nothing on a working box
+# and nothing on a broken one alike.
+vppctl show errors | grep -iE "ICMP error|identifiable subscriber|owning worker|another worker" \
+  | sed 's/^/    /'
+# Where the out2in handoff sent it. Nothing else has crossed out2in yet in
+# this lab, so these counters are about the ICMP error and nothing else.
+#
+# An ICMP error names its session in the EMBEDDED header - the outer one is a
+# router talking to our public address, with no port anywhere in it. A handoff
+# that cannot read that leaves the packet on the worker the NIC picked, and
+# bpa-out2in then looks for the session in a table that never held it (#201).
+NO_OWNER=$(vppctl show errors \
+           | sed -n 's/^ *\([0-9][0-9]*\) *bpa-out2in-handoff *packets with no identifiable subscr.*/\1/p')
+HANDED=$(vppctl show errors \
+         | sed -n 's/^ *\([0-9][0-9]*\) *bpa-out2in-handoff *packets handed to another worker.*/\1/p')
 echo "  --- diagnostico da captura ---"
 ls -l /tmp/cap.pcap 2>&1 | sed 's/^/    /'
 vppctl show trace | grep -E "bpa-out2in|ip4-lookup|pg0|error-drop" | head -5 | sed 's/^/    /'
@@ -149,6 +165,29 @@ echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 expect "the translated ICMP error passed every checksum" sh -c "python3 /src/lab/checkicmp.py /tmp/cap.pcap 200.150.0.17 100.64.0.5 12345 >/dev/null 2>&1"
+
+# This lab runs both ways - plain for a small box, where hexarouting-tune puts
+# everything on the main thread, and LAB_WORKERS=1 for every appliance with
+# more than one core. Neither configuration proves the other: #201 was a
+# translation that was correct single-threaded and a drop with workers, and
+# hardcoding workers here would only move the blind spot to the small box.
+# tools/run-all-labs.sh is what runs it twice.
+if [ "${LAB_WORKERS:-0}" = 1 ]; then
+  # The defect itself. Unfixed, the out2in handoff finds no port in the outer
+  # header of an ICMP error, counts it here and leaves it where it landed.
+  expect "the out2in handoff identified the subscriber the ICMP error is about" \
+    test "${NO_OWNER:-0}" = "0"
+  # And the guard that keeps the check above from passing by luck. With one
+  # worker, or with two where the session happens to belong to the worker the
+  # packet arrived on, the UNFIXED plugin translates this correctly - measured,
+  # with LAB_WORKER_COUNT=1 - so a worker run that never crossed a boundary
+  # says nothing about #201. Subscriber 100.64.0.5 is index 5, which is odd,
+  # so with two workers it is not the worker pg1's input node runs on.
+  if [ "${LAB_WORKER_COUNT:-2}" -ge 2 ]; then
+    expect "and it really did have to cross a worker to get there" \
+      test "${HANDED:-0}" -ge 1
+  fi
+fi
 expect_in "RST released the port" "total: 1 sessions" "$(vppctl show bpa session)"
 
 # Half-open sessions are on their own timer. Without the distinction they sit

@@ -17,6 +17,7 @@
 #include "bpa_errors.h"
 #include "bpa_esp.h"
 #include "bpa_ftp.h"
+#include "bpa_icmp.h"
 #include "bpa_l4.h"
 #include "bpa_alg.h"
 #include "bpa_mss.h"
@@ -75,32 +76,8 @@ typedef enum
 
 
 /*
- * ICMP errors carry the original packet embedded, and it is the embedded one
- * that says who they are about.
- *
- * Without translating it, PMTUD's "fragmentation needed" never reaches the
- * subscriber: the TCP connection hangs and the symptom that reaches support
- * is "some sites do not open". Traceroute also stops working through the
- * CGNAT.
- */
-static_always_inline int
-bpa_icmp_is_error (u8 type)
-{
-  switch (type)
-    {
-    case ICMP4_destination_unreachable:
-    case ICMP4_time_exceeded:
-    case ICMP4_parameter_problem:
-    case ICMP4_source_quench:
-    case ICMP4_redirect:
-      return 1;
-    default:
-      return 0;
-    }
-}
-
-/*
- * Translates an ICMP error coming from the internet.
+ * Translates an ICMP error coming from the internet, from the embedded packet
+ * bpa_icmp_err_parse() has already located and bounds-checked.
  *
  * Structure: outer IP (dst = our public) / ICMP / embedded IP
  * (src = our public, dst = remote) / 8 bytes of the original L4.
@@ -109,48 +86,30 @@ bpa_icmp_is_error (u8 type)
  * covers the whole embedded packet, so every change in there - including the
  * embedded IP's own checksum - has to be reflected in it.
  *
- * Returns 0 when it translated.
+ * Returns 0 when it translated, -1 when this worker holds no session for the
+ * flow the error is about. The two used to be one return value together with
+ * every bounds failure above, and the caller counted all of them as a
+ * malformed packet - so a session that simply lived on another worker was
+ * reported as the internet sending rubbish (#201). A counter that describes
+ * the packet when the fault is in the box is worse than no counter: it sends
+ * whoever reads it looking outward.
  */
 static_always_inline int
-bpa_icmp_error_out2in (vlib_buffer_t *b, ip4_header_t *ip,
+bpa_icmp_error_out2in (ip4_header_t *ip, const bpa_icmp_err_t *e,
 		       bpa_per_thread_t *pt, u32 *ip_priv_out)
 {
-  u8 *end = (u8 *) vlib_buffer_get_current (b) + b->current_length;
-  icmp46_header_t *icmp = (icmp46_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
   clib_bihash_kv_16_8_t kv, value;
   bpa_session_t *s;
-  ip4_header_t *inner;
-  u16 *inner_port;
-  u32 inner_hlen, inner_src;
+  ip4_header_t *inner = e->inner;
+  u16 *inner_port = e->port;
+  icmp46_header_t *icmp =
+    (icmp46_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
   ip_csum_t sum;
-  int inner_proto;
+  int inner_proto = bpa_proto_of (e->ip_proto);
   u16 old_port;
   u32 old_addr;
 
-  /* ICMP (4) + 4 unused + minimum IP (20) + 8 of the original L4 */
-  if (PREDICT_FALSE ((u8 *) icmp + 8 + 20 + 8 > end))
-    return -1;
-
-  inner = (ip4_header_t *) ((u8 *) icmp + 8);
-  inner_hlen = ip4_header_bytes (inner);
-  if (PREDICT_FALSE (inner_hlen < 20 || (u8 *) inner + inner_hlen + 8 > end))
-    return -1;
-
-  inner_proto = bpa_proto_of (inner->protocol);
-  if (PREDICT_FALSE (inner_proto < 0))
-    return -1;
-
-  /* For TCP and UDP the source port is the first two bytes of the L4;
-   * for embedded ICMP, the identifier sits right after the header. */
-  inner_port = (u16 *) ((u8 *) inner + inner_hlen);
-  if (inner_proto == BPA_PROTO_ICMP)
-    inner_port = (u16 *) ((u8 *) inner + inner_hlen + 4);
-  if (PREDICT_FALSE ((u8 *) inner_port + 2 > end))
-    return -1;
-
-  inner_src = clib_net_to_host_u32 (inner->src_address.as_u32);
-  bpa_key_out (&kv, inner_src, clib_net_to_host_u16 (inner_port[0]),
-	       (u8) inner_proto);
+  bpa_key_out (&kv, e->pub_addr, e->pub_port, (u8) inner_proto);
   if (PREDICT_FALSE (clib_bihash_search_16_8 (&pt->out2in, &kv, &value)))
     return -1;
 
@@ -248,17 +207,27 @@ VLIB_NODE_FN (bpa_out2in_node)
       if (PREDICT_FALSE (proto == BPA_PROTO_ICMP
 			 && !vnet_buffer (b[0])->ip.reass.is_non_first_fragment))
 	{
+	  u8 *end =
+	    (u8 *) vlib_buffer_get_current (b[0]) + b[0]->current_length;
 	  icmp46_header_t *ic =
 	    (icmp46_header_t *) ((u8 *) ip + ip4_header_bytes (ip));
+	  bpa_icmp_err_t e;
 
-	  if ((u8 *) ic + 4 <= (u8 *) vlib_buffer_get_current (b[0])
-				 + b[0]->current_length
-	      && bpa_icmp_is_error (ic->type))
+	  /* The type is read here as well as inside the parse, and it has to
+	   * be: an echo is not an error and belongs on the ordinary path
+	   * below, so "this did not parse" must not be allowed to mean both
+	   * "malformed" and "not for this branch". */
+	  if ((u8 *) ic + 4 <= end && bpa_icmp_is_error (ic->type))
 	    {
-	      if (bpa_icmp_error_out2in (b[0], ip, pt, &ip_priv))
+	      if (bpa_icmp_err_parse (ip, end, &e))
 		{
 		  b[0]->error =
 		    node->errors[BPA_OUT2IN_ERROR_ICMP_MALFORMED];
+		  goto trace;
+		}
+	      if (bpa_icmp_error_out2in (ip, &e, pt, &ip_priv))
+		{
+		  b[0]->error = node->errors[BPA_OUT2IN_ERROR_NO_SESSION];
 		  goto trace;
 		}
 	      matched = 1;
