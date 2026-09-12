@@ -311,14 +311,16 @@ Se o número vier muito maior do que você esperava, falta âncora. Se vier zero
 Quando a caixa ainda não recebeu nenhum caminho, o equipamento diz isso em vez de responder zero. "Casou 0" e "não havia contra o que casar" são respostas diferentes, e só uma delas fala da sua expressão.
 :::
 
-## Um nome que ninguém definiu é recusado
+## Um nome que ninguém definiu é avisado
 
 ```
-error: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
-defined; the clause would match nothing
+warning: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
+defined; until one is, the clause matches nothing
 ```
 
-É o mesmo problema da route-map que não existe: commita, a política lê certo, e a cláusula não casa nada — para sempre. O FRR não recusa; o equipamento recusa.
+A cláusula commita e não casa nada enquanto a lista não existir. **Não é recusa**: o roteamento aceita a cláusula e passa a usá-la sozinho no momento em que a lista aparecer, então escrever a política primeiro e as listas depois é uma ordem de trabalho legítima — e recusar o commit por causa disso derrubaria junto qualquer outra mudança que estivesse nele.
+
+O aviso continua valendo a leitura: se a lista não vai aparecer, o nome tem um erro de digitação e a cláusula não casa nada para sempre — e nada mais na caixa fala sobre isso.
 
 As duas grafias de lista de comunidade valem como definição: `bgp community-list standard NOME` e `bgp community-list NOME`.
 
@@ -366,6 +368,10 @@ unfinished
 Se era a intenção, o aviso é ruído de uma linha. Se não era, é a diferença entre uma política que filtra e uma que deixa passar tudo.
 
 **Cláusula que nenhuma rota alcança é avisada.** Se a cláusula 10 libera tudo, a 20 nunca é consultada. Os números de sequência são seus e o equipamento não renumera nada — mas uma política que parece certa e não faz nada merece uma frase.
+
+Quem manda na ordem é o **número de sequência**, não a ordem em que as cláusulas foram digitadas. Inserir uma cláusula 5 depois de já existir uma 10 que libera tudo põe a nova na frente, e é para isso que os números existem: o equipamento lê na mesma ordem que o roteamento e não avisa nada.
+
+`on-match next` e `continue` mudam esse percurso — a cláusula que casa não termina a política, a leitura segue adiante. Numa route-map que tem uma dessas, o equipamento não diz mais quais cláusulas são alcançáveis: para onde a leitura vai depende de a cláusula ter casado ou não, e isso não está na configuração.
 
 ## O que não foi conferido aparece marcado
 

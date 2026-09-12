@@ -1165,23 +1165,61 @@ def as_path_matches(regex, paths):
     return hit, example
 
 
+def list_name(w):
+    """
+    The name a `bgp community-list` / `bgp large-community-list` declares.
+
+    `standard` and `expanded` are the type, not the name, and they are
+    optional in what an operator types - FRR 10.7.1 puts one of them back on
+    the way out, so both spellings reach this and only one of them is ever
+    read back off the box. Returns None when the statement stops before the
+    name, which is what a half-typed line looks like.
+    """
+    if len(w) >= 3 and w[2] in ("standard", "expanded"):
+        return w[3] if len(w) >= 4 else None
+    return w[2] if len(w) >= 3 else None
+
+
 def undefined_policy_lists(routing):
     """
     Names a route-map matches on that nothing in the configuration defines.
 
     Same failure as the undefined route-map: the statement commits, the policy
-    reads correctly, and the clause matches nothing forever. FRR does not
-    refuse it, so this does.
+    reads correctly, and the clause matches nothing.
+
+    REPORTED, NOT REFUSED, which is a change from what this did (#208). FRR
+    accepts `match community NOTYET` against a list that does not exist,
+    stores it, and BINDS IT when the list arrives - measured on 10.7.1, where
+    `show route-map` prints the match clause before the list exists and
+    matches on it afterwards with nothing retyped. So an operator building a
+    policy in that order - the map now, the lists in the next commit - was
+    having a correct configuration refused, and the whole commit with it.
+    That is the posture rpki_findings' docstring already argues for a clause
+    that will not do anything YET, and this is the same case.
+
+    What survives is the true positive underneath: a list name with a typo in
+    it is never reported by anything else, and the clause matches nothing
+    forever rather than until the next commit.
     """
     have_as, have_comm, have_large = set(), set(), set()
     for line in routing:
         w = line.split()
+        # `bgp community-list standard` and nothing after it - a statement
+        # half typed, or a line truncated in a file - raised IndexError and
+        # put a Python traceback in front of the operator instead of a
+        # refusal. Every name is read with a length check for that reason, and
+        # test_hexash_complete fuzzes truncations of every statement these
+        # functions parse to keep it that way.
         if len(w) >= 4 and w[:3] == ["bgp", "as-path", "access-list"]:
             have_as.add(w[3])
         elif len(w) >= 3 and w[0] == "bgp" and w[1] == "community-list":
-            have_comm.add(w[3] if w[2] in ("standard", "expanded") else w[2])
+            named = list_name(w)
+            if named:
+                have_comm.add(named)
         elif len(w) >= 3 and w[0] == "bgp" and w[1] == "large-community-list":
-            have_large.add(w[3] if w[2] in ("standard", "expanded") else w[2])
+            named = list_name(w)
+            if named:
+                have_large.add(named)
 
     out = []
     for line in routing:
@@ -1191,13 +1229,14 @@ def undefined_policy_lists(routing):
         kind, name = w[1], w[2]
         if kind == "as-path" and name not in have_as:
             out.append((line.strip(), f"no AS-path list called '{name}' is "
-                        "defined; the clause would match nothing"))
+                        "defined; until one is, the clause matches nothing"))
         elif kind == "community" and name not in have_comm:
             out.append((line.strip(), f"no community list called '{name}' is "
-                        "defined; the clause would match nothing"))
+                        "defined; until one is, the clause matches nothing"))
         elif kind == "large-community" and name not in have_large:
             out.append((line.strip(), f"no large-community list called "
-                        f"'{name}' is defined; the clause would match nothing"))
+                        f"'{name}' is defined; until one is, the clause "
+                        "matches nothing"))
     return out
 
 
@@ -1473,6 +1512,40 @@ def apply_pipe(text, stages):
     return lines, None
 
 
+def interface_aliases(name, pairs):
+    """Every name this interface answers to, itself included."""
+    return set((pairs or {}).get(name, ())) | {name}
+
+
+def frr_side_names(name, pairs, dp_names):
+    """The member(s) of this interface's linux_cp pair that FRR can act on."""
+    return interface_aliases(name, pairs) - set(dp_names or ())
+
+
+def frr_acts_on(name, pairs, dp_names):
+    """
+    Whether an FRR statement spelling the interface this way does anything.
+
+    A linux_cp pair answers to several names and only one of them is a Linux
+    netdev, which is the only one FRR ever sees. The dataplane's own names are
+    the ones `show interface` reports, so they are the ones an operator is
+    holding - and a statement written with one of them is accepted by FRR and
+    acts on nothing. The Linux end is found by subtraction rather than by
+    position, because the order of names on VPP's `itf-pair` line has already
+    differed between two labs here.
+
+    With no dataplane list to subtract there is nothing to tell the members of
+    a pair apart, and the answer is yes for every one of them. "Could not ask"
+    must not become a warning the operator cannot silence.
+
+    Shared by ospf_findings (#205) and bgp_errors (#208) because it is the
+    same question about the same pair: the second one was written by copying
+    the first, which is how two answers to one question start to drift.
+    """
+    frr_side = frr_side_names(name, pairs, dp_names)
+    return not frr_side or name in frr_side
+
+
 def ospf_state(routing):
     """
     What the configuration says about OSPF, gathered once.
@@ -1605,21 +1678,13 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     dp_names = set(device_interfaces or ())
 
     def same(name):
-        """Every name this interface answers to, itself included."""
-        return set(pairs.get(name, ())) | {name}
+        return interface_aliases(name, pairs)
 
-    def frr_acts_on(name):
-        """
-        Whether a statement spelling the interface this way does anything.
-
-        With no dataplane list to subtract there is nothing to tell the
-        members of a pair apart, and the answer is yes for every one of them.
-        "Could not ask" must not become a warning the operator cannot silence
-        - which is the posture the interface-existence check below takes with
-        an empty `have_interfaces`, for the same reason.
-        """
-        frr_side = same(name) - dp_names
-        return not frr_side or name in frr_side
+    def acts_on(name):
+        # The posture the interface-existence check below takes with an empty
+        # `have_interfaces`, for the same reason: could not ask is not a
+        # warning.
+        return frr_acts_on(name, pairs, dp_names)
 
     # REFUSED: a passive-interface naming an interface the box does not have.
     # It commits, and the port the operator meant to keep quiet is not the one
@@ -1644,7 +1709,7 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     # says out loud that the port is still not passive, which is the
     # consequence they need to see.
     for ifname, stmt in passive:
-        if ifname == "default" or frr_acts_on(ifname):
+        if ifname == "default" or acts_on(ifname):
             continue
         out.append(("warning", stmt,
                     "FRR knows this interface as "
@@ -1689,7 +1754,7 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     # nothing.
     quiet = set()
     for ifname, _ in passive:
-        if frr_acts_on(ifname):
+        if acts_on(ifname):
             quiet |= same(ifname)
     # `ip ospf area` is the other door into "this interface speaks OSPF", and
     # it sits in an FRR stanza, so it is spelled the way FRR spells
@@ -1698,7 +1763,7 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     # warning unable to fire at all on an interface configured that way.
     in_area = set()
     for ifname in iface_area:
-        if frr_acts_on(ifname):
+        if acts_on(ifname):
             in_area |= same(ifname)
     # `passive-interface default` is a statement about EVERY interface, and
     # `no passive-interface <name>` is how one is taken back out of it. It is
@@ -1709,7 +1774,7 @@ def ospf_findings(routing, addresses, have_interfaces, pools,
     all_quiet = any(i == "default" for i, _ in passive)
     loud = set()
     for ifname, _ in unpassive:
-        if frr_acts_on(ifname):
+        if acts_on(ifname):
             loud |= same(ifname)
     inside = [p for pool in pools.values() for p in (pool.inside or [])]
     for ifname, addrs in addresses.items():
@@ -1793,6 +1858,22 @@ def route_map_findings(routing):
       route-map matches everything. Sequence numbers are the operator's and
       this MUST NOT renumber them - but a policy that looks right and does
       nothing is worth a sentence.
+
+      "Earlier" means earlier BY SEQ, which is the only order FRR has. This
+      read the clauses in the order they were WRITTEN, so inserting a low-seq
+      clause after a catch-all - which is the ordinary way to add a clause to
+      the front of a policy, and the reason sequence numbers exist - was
+      reported unreachable while FRR reaches it first (#208). Measured: `route-
+      map ORD permit 20` then `route-map ORD permit 10`, and FRR's own
+      `show route-map ORD` lists 10 before 20.
+
+      And a clause that steers its own flow - `on-match next`, `on-match goto`,
+      the `continue` an operator types for the second - does not end the
+      policy: the clauses after it ARE reached. Those were parsed and then
+      ignored, so one of them poisoned the verdict on every later clause. The
+      whole claim is withdrawn for a route-map that contains one, rather than
+      guessed at: what `on-match goto 30` skips depends on whether the clause
+      matched, which is not in the configuration.
     """
     maps = {}          # name -> list of clauses, in the order written
     clause = None
@@ -1809,7 +1890,7 @@ def route_map_findings(routing):
         if w[0] == "route-map" and len(w) >= 4:
             clause = {"name": w[1], "action": w[2], "seq": w[3],
                       "header": line.strip(), "match": [], "set": [],
-                      "other": []}
+                      "other": [], "steers": False}
             maps.setdefault(w[1], []).append(clause)
             continue
         if clause is None:
@@ -1818,15 +1899,30 @@ def route_map_findings(routing):
             clause["match"].append(line.strip())
         elif w[0] == "set":
             clause["set"].append(line.strip())
-        elif w[0] in ("call", "on-match", "description"):
+        elif w[0] in ("call", "on-match", "continue", "description"):
+            # `continue 30` is what an operator types and `on-match goto 30`
+            # is what FRR stores it as - measured, both spellings of one
+            # statement. Not knowing the typed one meant it fell through to
+            # the line below and ENDED the clause, so every `match` and `set`
+            # after it was read as belonging to nothing: a deny clause with a
+            # set in it, written that way, was not refused.
             clause["other"].append(line.strip())
+            if w[0] in ("on-match", "continue"):
+                clause["steers"] = True
         elif w[0] != "exit":
             clause = None          # some other block began
+
+    # FRR's order, not the file's. A clause whose seq is not a number is not
+    # one FRR will take at all, and sorting it to the front would invent a
+    # catch-all out of a typo: it goes last instead.
+    def by_seq(c):
+        return (0, int(c["seq"])) if c["seq"].isdigit() else (1, 0)
 
     out = []
     for name, clauses in maps.items():
         catch_all = None
-        for c in clauses:
+        steered = any(c["steers"] for c in clauses)
+        for c in sorted(clauses, key=by_seq):
             if c["action"] == "deny" and c["set"]:
                 out.append(("error", c["header"],
                             f"a deny clause with {len(c['set'])} 'set' "
@@ -1843,17 +1939,19 @@ def route_map_findings(routing):
                                 "no 'match': this permits every route. If "
                                 "that is meant, it is the end of the policy; "
                                 "if not, the policy is unfinished"))
-                    catch_all = c["header"]
-                else:
-                    # `deny` with no match denies everything after it too, and
-                    # is the other half of the same trap.
+                # A catch-all is only a dead end when nothing jumps past it.
+                # `deny` with no match denies everything after it too, and is
+                # the other half of the same trap - but both halves are
+                # undone by an `on-match` anywhere in the same route-map.
+                if not steered:
                     catch_all = c["header"]
     return out
 
 
-def bgp_errors(routing):
+def bgp_errors(routing, have_interfaces=None, lcp_pairs=None,
+               device_interfaces=None):
     """
-    What a BGP configuration says that cannot work, as (statement, why).
+    What a BGP configuration says that cannot work, as (severity, stmt, why).
 
     Structural only. Whether the neighbour ANSWERS is not knowable from the
     configuration, and this does not pretend otherwise - it catches the shapes
@@ -1863,13 +1961,32 @@ def bgp_errors(routing):
     Peer groups are the reason this is not a two-line check: a member inherits
     `remote-as` from its group, so a neighbour with no AS of its own is
     perfectly correct when it is in a group that has one.
+
+    BGP unnumbered is the reason it is not a three-line one. A session to a
+    peer on a link-local address is written
+
+        neighbor vppwan0 interface remote-as external
+
+    where the "neighbour" is an INTERFACE name, `remote-as` is a later word on
+    the same line rather than a statement of its own, and `external` and
+    `internal` are values as legitimate as a number. Read positionally, all of
+    that was a neighbour with no AS - so the ordinary way to run eBGP to a
+    directly connected peer was refused, and with it the whole commit it
+    happened to be in (#208).
+
+    `have_interfaces`, `lcp_pairs` and `device_interfaces` are what the
+    interface name in that form is validated against, and each is optional:
+    with none of them the AS checks still run and the name is taken on trust.
     """
     entities = {}          # name -> what has been said about it
     groups = set()         # names declared as peer groups
+    pairs = lcp_pairs or {}
+    dp_names = set(device_interfaces or ())
 
     def ent(name):
         return entities.setdefault(
-            name, {"remote_as": False, "group": None, "stmts": [], "af": False})
+            name, {"remote_as": False, "group": None, "stmts": [], "af": False,
+                   "iface": None})
 
     # Only inside a `router bgp` stanza. `neighbor` is not a BGP word: OSPF
     # uses it for NBMA and point-to-multipoint, and scanning every routing line
@@ -1907,7 +2024,24 @@ def bgp_errors(routing):
             continue
         e = ent(name)
         e["stmts"].append(line.strip())
-        if len(w) >= 4 and w[2] == "remote-as":
+        if len(w) >= 3 and w[2] == "interface":
+            # The unnumbered form, read by KEYWORD and not by position. FRR's
+            # grammar here is `neighbor WORD interface [v6only] [peer-group
+            # PGNAME | remote-as <ASN|external|internal>]`, so what follows
+            # `interface` is a short closed set and scanning it is safe -
+            # which is not true of the address form, where `neighbor X
+            # description remote-as 65001` is a description and not an AS.
+            if e["iface"] is None:
+                e["iface"] = line.strip()
+            rest = w[3:]
+            for i, word in enumerate(rest):
+                if i + 1 >= len(rest):
+                    break
+                if word == "remote-as":
+                    e["remote_as"] = True
+                elif word == "peer-group":
+                    e["group"] = rest[i + 1]
+        elif len(w) >= 4 and w[2] == "remote-as":
             e["remote_as"] = True
         elif len(w) >= 4 and w[2] == "peer-group":
             e["group"] = w[3]
@@ -1920,8 +2054,34 @@ def bgp_errors(routing):
             continue
         if not e["stmts"]:
             continue
+        # The interface name in an unnumbered session, held to the same rule
+        # as every other interface name in an FRR statement (#205): it must be
+        # a spelling FRR can act on.
+        #
+        # Measured on FRR 10.7.1 rather than assumed, because the answer
+        # decides whether this is worth saying at all: `neighbor nosuchif0
+        # interface remote-as external` is ACCEPTED, stored, and shows in
+        # `show bgp summary` as a peer that is Idle and stays Idle. Nothing
+        # in FRR ever says the interface does not exist, so this is a
+        # diagnosis only the box that has both halves can make.
+        if e["iface"] and have_interfaces and name not in have_interfaces:
+            out.append(("error", e["iface"],
+                        f"this box has no interface {name}, so the session "
+                        "has nothing to run over"))
+            continue
+        if e["iface"] and not frr_acts_on(name, pairs, dp_names):
+            # Warned and not refused, for the reason ospf_findings gives: the
+            # name FRR wants is not one `show interface` reports, so an error
+            # would refuse a commit the operator cannot rewrite from anything
+            # this VTY offers them.
+            out.append(("warning", e["iface"],
+                        "FRR knows this interface as "
+                        + "/".join(sorted(frr_side_names(name, pairs,
+                                                         dp_names)))
+                        + f", not {name}: written this way the session has "
+                        "nothing to run over"))
         if e["group"] and e["group"] not in groups:
-            out.append((e["stmts"][0],
+            out.append(("error", e["stmts"][0],
                         f"peer group '{e['group']}' is not declared; declare "
                         f"it with 'neighbor {e['group']} peer-group'"))
             continue
@@ -1931,11 +2091,22 @@ def bgp_errors(routing):
             g = entities.get(e["group"], {})
             if g.get("remote_as"):
                 continue
-            out.append((e["stmts"][0],
+            out.append(("error", e["stmts"][0],
                         f"neither {name} nor peer group '{e['group']}' has a "
                         "remote-as, so the session has no AS to open with"))
             continue
-        out.append((e["stmts"][0],
+        if e["iface"]:
+            # `neighbor X interface` on its own is ACCEPTED by FRR, unlike the
+            # address form, which it refuses with "Specify remote-as or
+            # peer-group commands first". Measured: the peer appears in `show
+            # bgp summary` with AS 0, state Idle, and never leaves it. So this
+            # is not a refusal borrowed from FRR - it is the silent half of
+            # the same mistake, which is the half this function exists for.
+            out.append(("error", e["stmts"][0],
+                        f"{name} has no 'remote-as': FRR accepts this and "
+                        "leaves the peer Idle with no AS, forever"))
+            continue
+        out.append(("error", e["stmts"][0],
                     f"{name} has no 'remote-as': FRR refuses every other "
                     "statement for a neighbour whose AS it has not been told"))
     return out
@@ -3442,9 +3613,17 @@ class Shell:
             # group nobody declared. Not "will the session come up" - that is
             # not in the configuration - but the shapes that cannot work
             # whatever the other end does (#142).
-            for stmt, why in bgp_errors(target.routing):
-                self.err(f"{stmt}: {why}")
-                ok = False
+            # The interface set and the pair map are the same three the OSPF
+            # findings get, and for the same reason: BGP unnumbered names an
+            # interface in an FRR statement, so the name has to be one FRR can
+            # act on (#208).
+            for sev, stmt, why in bgp_errors(
+                    target.routing, known_interfaces, pairs, dp_interfaces):
+                if sev == "error":
+                    self.err(f"{stmt}: {why}")
+                    ok = False
+                else:
+                    print(f"warning: {stmt}: {why}")
 
             # An AS-path regex FRR would refuse, refused at the prompt
             # instead of mid-commit (#146).
@@ -3454,10 +3633,12 @@ class Shell:
                     self.err(f"{stmt.strip()}: {why}")
                     ok = False
 
-            # A name a route-map matches on that nothing defines.
+            # A name a route-map matches on that nothing defines. Said and not
+            # refused: FRR accepts the clause and binds it when the list
+            # arrives, so refusing it blocked building a policy map-first
+            # (#208).
             for stmt, why in undefined_policy_lists(target.routing):
-                self.err(f"{stmt}: {why}")
-                ok = False
+                print(f"warning: {stmt}: {why}")
 
             # What each AS-path regex actually matches, against the paths this
             # box has received. A regex that compiles and matches nothing - or

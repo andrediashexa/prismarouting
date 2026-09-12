@@ -42,6 +42,15 @@ ip link set veth-out netns peer
 ip netns exec peer ip link set lo up
 ip netns exec peer ip link set veth-out up
 ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
+
+# A SECOND link with no address on either end, for BGP unnumbered (#208). The
+# whole point of the form is that neither side has an IPv4 address, so it
+# cannot share the link above: a peer that can be reached at 10.0.0.2 is not
+# a demonstration of anything.
+ip link add veth9-out type veth peer name veth9-vpp 2>/dev/null
+ip link set veth9-vpp up
+ip link set veth9-out netns peer
+ip netns exec peer ip link set veth9-out up
 # one prefix per protocol, so there is no doubt about which brought which
 for d in bgp:203.0.113.1/24 ospf:198.18.0.1/24 isis:198.19.0.1/24; do
   n=${d%%:*}; a=${d##*:}
@@ -72,6 +81,15 @@ vppctl set interface mtu 1500 host-veth-vpp
 # or the assertion tests nothing.
 
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
+
+# The second pair, and no address on it. vppwan9 is the name FRR will be given
+# in the unnumbered statement below, and it is a linux_cp TAP like any other -
+# which is the point: the statement has to name the spelling FRR acts on.
+vppctl create host-interface name veth9-vpp
+vppctl set interface state host-veth9-vpp up
+vppctl lcp create host-veth9-vpp host-if vppwan9
+vppctl set interface mtu 1500 host-veth9-vpp
+ip link set vppwan9 up
 
 # Recorded before anything commits, so the assertion after the first commit is
 # a CHANGE rather than a state that might have been there all along.
@@ -133,9 +151,11 @@ router bgp 65001
  bgp router-id 10.0.0.2
  no bgp ebgp-requires-policy
  neighbor 10.0.0.1 remote-as 65000
+ neighbor veth9-out interface remote-as external
  address-family ipv4 unicast
   network 203.0.113.0/24
   neighbor 10.0.0.1 activate
+  neighbor veth9-out activate
  exit-address-family
 EOF
 cat > /etc/frr/peer/ospfd.conf <<'EOF'
@@ -191,6 +211,97 @@ BGPUP=$($HX -c "configure" -c "router bgp 65000" \
         -c "exit-address-family" -c "exit" -c "commit" 2>&1)
 echo "$BGPUP" | tail -3 | sed 's/^/  /'
 expect_in "the VTY commits a BGP session" "commit complete" "$BGPUP"
+
+# --- BGP unnumbered over the linux_cp pair (#208) ---
+#
+# The form an operator writes for eBGP to a directly connected peer without
+# spending a /30 on the link:
+#
+#   neighbor vppwan9 interface remote-as external
+#
+# The VTY refused it - "vppwan9 has no 'remote-as'", with the AS on that same
+# line - and refused the WHOLE candidate with it, so a CGNAT change typed
+# beside it went down too. There is no way round that inside the product: the
+# statement cannot be typed, and vtysh is the tool this VTY exists to keep an
+# operator out of.
+#
+# Asserted HERE rather than in lab/bgp-policy.sh because this is where the
+# linux_cp pair is: the name in the statement is a TAP's, the candidate is
+# read back from FRR afterwards, and both of those are the parts a unit test
+# cannot hold.
+echo "=========== BGP unnumbered, on a link with no address ==========="
+UNN=$($HX -c "configure" -c "router bgp 65000" \
+      -c "neighbor vppwan9 interface remote-as external" \
+      -c "address-family ipv4 unicast" \
+      -c "neighbor vppwan9 activate" \
+      -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$UNN" | grep -vE "^note" | tail -4 | sed 's/^/  /'
+expect_in "the VTY commits an unnumbered neighbour" "commit complete" "$UNN"
+expect_not_in "and does not claim the AS is missing" "has no 'remote-as'" "$UNN"
+
+# It reached FRR, which is the half a check on the VTY's own output cannot
+# make: a refusal and an acceptance that never left the box look the same
+# from here.
+RUNFRR=$(vtysh -c "show running-config" 2>&1)
+expect_in "FRR holds the statement" \
+  "neighbor vppwan9 interface remote-as external" "$RUNFRR"
+expect_in "and the peer is in FRR's own summary" "vppwan9" \
+  "$(vtysh -c 'show bgp summary' 2>&1)"
+
+# The round trip, which is where a parser that only understands what an
+# operator TYPES comes apart. cfg.routing is read back FROM FRR, so from the
+# next commit on this is the spelling every check sees - including this one.
+# An unnumbered box would otherwise have had its first commit accepted and
+# every one after it refused, for a statement nobody typed twice.
+NEXT=$($HX -c "configure" -c "interface host-veth-vpp" \
+       -c "description enlace de transito" -c "exit" -c "commit check" 2>&1)
+printf '%s\n' "$NEXT" | grep -vE "^note" | tail -3 | sed 's/^/  /'
+expect_in "an unrelated change commits cleanly afterwards" \
+  "configuration check succeeds" "$NEXT"
+expect_not_in "the statement read back from FRR is not refused on the way in" \
+  "has no 'remote-as'" "$NEXT"
+
+# --- and whether the session comes up, which is a different question ---
+#
+# It does not, and the reason is in the DATAPLANE and not in anything above.
+# Measured on this topology with tcpdump on both ends of the pair:
+#
+#   * our Router Advertisements leave the TAP, cross VPP and arrive on the
+#     wire - the peer learns our link-local and goes to Active, trying to
+#     open the session;
+#   * the peer's Router Advertisements arrive on the wire and NEVER reach the
+#     TAP. `show ip6 mfib` says why: ff02::1/128 is (*, Accept) with a chain
+#     of one `dpo-receive` and no path to the pair's TAP, so VPP receives the
+#     advertisement itself - `show errors` counts it - and linux_cp has
+#     nothing on the ip6-multicast arc to punt it with.
+#
+# FRR learns an unnumbered peer's address from that advertisement and from
+# nothing else, so zebra never has one and bgpd sits at Idle with "remote AS
+# 0". It is a punt gap for IPv6 multicast over linux_cp, it is the same shape
+# as #168 (IS-IS frames that no lab and no product punted), and it belongs in
+# an issue of its own rather than in a vppctl line here that would make this
+# lab prove a box nobody receives.
+#
+# So this prints the state and asserts the half that IS this box's: the
+# session is configured, known to bgpd, and attempted. Nothing here asserts
+# Established, because on today's dataplane that would be asserting a wish.
+echo "=== o estado da sessao unnumbered ==="
+n=0
+while [ "$n" -lt 60 ]; do
+  vtysh -c "show bgp summary" 2>/dev/null | grep -qE "^vppwan9" && break
+  sleep 2; n=$((n + 2))
+done
+vtysh -c "show bgp summary" 2>&1 | grep -E "^Neighbor|^vppwan9" | sed 's/^/  /'
+ip netns exec peer vtysh -N peer -c "show bgp summary" 2>&1 \
+  | grep -E "^veth9-out" | sed 's/^/  peer: /'
+echo "  ff02::1 no MFIB do VPP:"
+vppctl show ip6 mfib | grep -A4 "ff02::1/128" | head -5 | sed 's/^/    /'
+# The peer reached Active, which is the half of the exchange that DOES cross
+# the pair: it only knows where to send a SYN because our advertisement got
+# there. That is the assertion the punt gap leaves standing.
+expect "the far end learned this box over the pair and is opening the session" \
+  sh -c "ip netns exec peer vtysh -N peer -c 'show bgp summary' 2>/dev/null \
+         | grep -E '^veth9-out' | grep -qvE ' Idle '"
 
 # --- IS-IS frames are punted because the PRODUCT punts them (#168) ---
 #

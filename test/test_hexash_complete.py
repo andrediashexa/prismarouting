@@ -1193,6 +1193,269 @@ check(not bgp_errors(["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
                       "exit", "router ospf",
                       " neighbor 10.0.0.9 poll-interval 60"]),
       "and an OSPF stanza after a BGP one is out of context again")
+
+
+# --- BGP unnumbered (#208) ---
+#
+# `neighbor <ifname> interface remote-as external` is the ordinary way to run
+# eBGP to a directly connected peer without spending a /30 on the link. It was
+# refused with "has no 'remote-as'" - the AS is on that same line - and the
+# refusal failed the WHOLE commit, so a CGNAT change typed beside it was
+# refused with it.
+#
+# Everything asserted here about FRR was measured on FRR 10.7.1 and is
+# re-measured on a live one by lab/bgp-policy.sh. lab/routing.sh puts the
+# statement on a real linux_cp pair and records how far the session gets: the
+# far end learns this box and opens, and this end never learns the far end,
+# because the dataplane does not punt the Router Advertisement that carries
+# its address. That is a defect of its own and it is written down there.
+print("\n=== BGP unnumbered is a configuration, not a mistake ===")
+
+# lab/routing.sh's own pair, which is the topology the lab half of this runs
+# on: three names for one interface, and only vppwan0 is a Linux netdev.
+LCP = {n: ["host-veth-vpp", "tap4096", "vppwan0"]
+       for n in ("host-veth-vpp", "tap4096", "vppwan0")}
+DPNAMES = {"host-veth-vpp", "tap4096"}
+HAVE = {"host-veth-vpp", "tap4096", "vppwan0"}
+
+for form in ("neighbor vppwan0 interface remote-as external",
+             "neighbor vppwan0 interface remote-as internal",
+             "neighbor vppwan0 interface remote-as 65001",
+             "neighbor vppwan0 interface v6only remote-as external"):
+    check(not bgp_errors(["router bgp 65000", " " + form],
+                         HAVE, LCP, DPNAMES),
+          f"accepted: {form}")
+check(not bgp_errors(["router bgp 65000",
+                      " neighbor UP peer-group",
+                      " neighbor UP remote-as external",
+                      " neighbor vppwan0 interface peer-group UP"],
+                     HAVE, LCP, DPNAMES),
+      "and the peer-group spelling of the same form")
+# The AS given as a statement of its own, which is what an operator types
+# line by line - FRR folds the two into one line on the way back out.
+check(not bgp_errors(["router bgp 65000",
+                      " neighbor vppwan0 interface",
+                      " neighbor vppwan0 remote-as external"],
+                     HAVE, LCP, DPNAMES),
+      "the split spelling, which FRR stores as the single line")
+
+# The half of the check that was always right, and must not be lost: FRR
+# itself answers the address form with "% Specify remote-as or peer-group
+# commands first", so this is the refusal arriving earlier.
+addr = bgp_errors(["router bgp 65000", " neighbor 10.0.0.9 description x"])
+check(len(addr) == 1 and addr[0][0] == "error",
+      f"an address-form neighbour with no remote-as is still refused: {addr}")
+# `description` takes free text, so the AS keyword may not be read out of it.
+check(len(bgp_errors(["router bgp 65000",
+                      " neighbor 10.0.0.9 description remote-as 65001"])) == 1,
+      "a description that CONTAINS 'remote-as' is not an AS")
+# Measured: FRR accepts `neighbor X interface` alone - it refuses only the
+# address form - and leaves the peer in `show bgp summary` at AS 0, Idle,
+# forever. Silent, so this says it.
+bare = bgp_errors(["router bgp 65000", " neighbor vppwan0 interface"],
+                  HAVE, LCP, DPNAMES)
+check(len(bare) == 1 and bare[0][0] == "error" and "Idle" in bare[0][2],
+      f"an interface peer with no AS anywhere is refused, saying why: {bare}")
+
+# The interface name, held to #205's rule: it is an FRR statement, so it must
+# be a spelling FRR can act on. FRR accepts an interface it does not have and
+# never says so - measured, `neighbor nosuchif0 interface remote-as external`
+# commits and sits Idle - which makes this a diagnosis only this box can make.
+gone = bgp_errors(["router bgp 65000",
+                   " neighbor nosuchif0 interface remote-as external"],
+                  HAVE, LCP, DPNAMES)
+check(len(gone) == 1 and gone[0][0] == "error"
+      and "no interface nosuchif0" in gone[0][2],
+      f"an unnumbered session on an interface the box has not got: {gone}")
+dpname = bgp_errors(["router bgp 65000",
+                     " neighbor host-veth-vpp interface remote-as external"],
+                    HAVE, LCP, DPNAMES)
+check(len(dpname) == 1 and dpname[0][0] == "warning"
+      and "vppwan0" in dpname[0][2],
+      f"the dataplane's end of the pair is warned about, not refused, and "
+      f"names the one FRR wants: {dpname}")
+# "Could not ask" must not become a refusal. With no interface list read off
+# the box - which is what a dataplane that did not answer looks like - the
+# name is taken on trust and only the AS checks run.
+check(not bgp_errors(["router bgp 65000",
+                      " neighbor nosuchif0 interface remote-as external"]),
+      "with no interface list to check against, the name is taken on trust")
+
+
+# --- a policy list that is not defined YET (#208) ---
+#
+# Measured on FRR 10.7.1: `match community NOTYET` against a list that does
+# not exist is ACCEPTED, stored, and bound when the list arrives - `show
+# route-map` prints the match clause both before and after, with nothing
+# retyped. Refusing it made the map-first order of building a policy
+# impossible, and refused every unrelated change in the same commit.
+print("\n=== a policy list that is not defined yet is said, not refused ===")
+late = undefined_policy_lists(["route-map R permit 10",
+                               " match community CM-LATER"])
+check(len(late) == 1, f"the clause is still reported: {late}")
+check("until one is" in late[0][1],
+      f"and the wording says it is a state, not a fault: {late[0][1]}")
+# The true positive underneath, which is why this is narrowed and not
+# withdrawn: a name with a typo in it matches nothing forever, and nothing
+# else on the box ever mentions it.
+check(len(undefined_policy_lists(
+    ["bgp community-list standard CM1 seq 5 permit 65000:1",
+     "route-map R permit 10", " match community CM1x"])) == 1,
+    "a typo next to the list it was meant to name is still caught")
+# Order within the candidate was never the question: the definitions are
+# collected in a pass of their own, so a map written above its lists is
+# clean. Asserted because the fix could plausibly have been "sort it first",
+# and that would have fixed nothing.
+check(not undefined_policy_lists(
+    ["route-map R permit 10", " match as-path AS1",
+     "bgp as-path access-list AS1 seq 5 permit ^65001$"]),
+    "a route-map written above the list it names is not a finding")
+# FRR 10.7.1 rewrites every one of these on the way out - `seq 5` inserted,
+# `standard` put back - and cfg.routing is read back from FRR, so the
+# rewritten spelling is the one every commit after the first one sees.
+for defn, m in (("bgp as-path access-list AS1 seq 5 permit ^65001$",
+                 "match as-path AS1"),
+                ("bgp community-list standard CM1 seq 5 permit 65000:1",
+                 "match community CM1"),
+                ("bgp community-list 100 seq 5 permit 65000:3",
+                 "match community 100"),
+                ("bgp large-community-list standard LC1 seq 5 permit 1:1:1",
+                 "match large-community LC1")):
+    check(not undefined_policy_lists([defn, "route-map R permit 10", " " + m]),
+          f"FRR's own spelling counts as a definition: {defn}")
+
+
+# --- route-map clauses run in FRR's order, which is `seq` (#208) ---
+#
+# Measured: `route-map ORD permit 20` typed first and `route-map ORD permit
+# 10` second, and FRR's `show route-map ORD` lists 10 before 20. Reading the
+# written order called clause 10 unreachable - and inserting a low-seq clause
+# in front of a catch-all is the ordinary way to add to a policy, which is
+# what sequence numbers are for.
+print("\n=== route-map clauses are ordered by seq, not by line ===")
+from hexash import route_map_findings                            # noqa: E402
+
+inserted = route_map_findings(["route-map R permit 20",
+                               " set local-preference 200",
+                               "route-map R permit 10",
+                               " match ip address prefix-list P",
+                               " set local-preference 300"])
+check(not [f for f in inserted if "unreachable" in f[2]],
+      f"a low-seq clause written after a catch-all is reached: {inserted}")
+check(len(inserted) == 1 and "permits every route" in inserted[1 - 1][2],
+      f"and the catch-all itself is still called out: {inserted}")
+# The real one, which must survive the reordering.
+after = route_map_findings(["route-map R permit 10",
+                            "route-map R permit 20", " match as-path AS1"])
+check([f for f in after if "unreachable" in f[2]],
+      f"a clause after a catch-all BY SEQ is still unreachable: {after}")
+
+# `on-match next` and the `continue` an operator types for it were parsed and
+# then ignored, so a catch-all carrying one poisoned every later clause.
+# Measured: FRR stores `continue 30` as `on-match goto 30`, and `show
+# route-map` prints "Continue to next entry" for `on-match next`.
+steered = route_map_findings(["route-map S permit 10",
+                              " set local-preference 200",
+                              " on-match next",
+                              "route-map S permit 20",
+                              " match as-path AS1",
+                              " set community 65000:1"])
+check(not [f for f in steered if "unreachable" in f[2]],
+      f"a catch-all that continues does not end the policy: {steered}")
+for word in ("on-match goto 30", "continue 30"):
+    s = route_map_findings(["route-map S permit 10", " " + word,
+                            "route-map S permit 20", " match as-path AS1"])
+    check(not [f for f in s if "unreachable" in f[2]],
+          f"both spellings of the same statement are honoured: {word} {s}")
+# `continue` ENDED the clause, because it was not one of the words the parser
+# knew - so the `set` after it belonged to nothing and a deny clause carrying
+# one was not refused. The false negative the same neglect created.
+cont = route_map_findings(["route-map C deny 10", " match as-path AS1",
+                           " continue 30", " set local-preference 150"])
+check([f for f in cont if f[0] == "error"],
+      f"a set after a 'continue' still belongs to its clause: {cont}")
+
+
+# --- no input may put a traceback in front of an operator (#208) ---
+#
+# `bgp community-list standard`, with the name not typed yet, raised
+# IndexError: a Python traceback in a maintenance window is not a refusal, it
+# is a crash. Three hand-picked strings would not have found it and will not
+# find the next one, so every statement these functions parse is truncated at
+# every word AND every character, in every context, and fed back in.
+print("\n=== every truncation of every statement, and no traceback ===")
+from hexash import (as_path_parts, as_path_regex_error,          # noqa: E402
+                    list_name, prefix_range_error, rpki_findings,
+                    isis_findings, ospf_state)
+
+FUZZ_CORPUS = [
+    "router bgp 65000", "neighbor 10.0.0.2 remote-as 65001",
+    "neighbor 10.0.0.2 peer-group UP", "neighbor UP peer-group",
+    "neighbor vppwan0 interface remote-as external",
+    "neighbor vppwan0 interface v6only peer-group UP",
+    "neighbor 10.0.0.2 activate", "no neighbor 10.0.0.2 remote-as 65001",
+    "address-family ipv4 unicast", "exit-address-family", "exit",
+    "bgp as-path access-list AS1 seq 5 permit ^65001$",
+    "bgp community-list standard CM1 seq 5 permit 65000:1",
+    "bgp community-list 100 seq 5 permit 65000:3",
+    "bgp large-community-list standard LC1 seq 5 permit 65000:1:1",
+    "route-map R permit 10", "route-map R deny 20",
+    "match as-path AS1", "match community CM1", "match large-community LC1",
+    "match ip address prefix-list PL", "match rpki notfound",
+    "set local-preference 200", "set community 65000:1",
+    "on-match next", "on-match goto 30", "continue 30", "call OTHER",
+    "description upstream", "rpki cache 10.0.0.9 3323 preference 1",
+    "ip prefix-list PL seq 5 permit 10.0.0.0/8 ge 24 le 16",
+    "router ospf", "network 10.0.0.0/8 area 0", "passive-interface vppwan0",
+    "no passive-interface vppwan0", "redistribute bgp route-map R",
+    "interface vppwan0", "ip ospf area 0", "ip ospf passive",
+    "router isis 1", "net 49.0001.0000.0000.0001.00",
+    "topology ipv6-unicast", "ipv6 router isis 1",
+]
+# The context matters as much as the line: these functions all track which
+# block they are in, so a fragment has to be tried inside each of them.
+FUZZ_CONTEXT = [[], ["router bgp 65000"], ["route-map R permit 10"],
+                ["router ospf"], ["router isis 1"], ["interface vppwan0"]]
+MANY = [lambda r: hexash.bgp_errors(r, HAVE, LCP, DPNAMES),
+        hexash.bgp_errors, undefined_policy_lists, route_map_findings,
+        rpki_findings, isis_findings, ospf_state]
+ONE = [as_path_parts, as_path_regex_error, prefix_range_error]
+
+tried, crashed = 0, []
+for stmt in FUZZ_CORPUS:
+    frags = set()
+    words = stmt.split()
+    for k in range(len(words) + 1):          # truncated at a word boundary
+        frags.add(" ".join(words[:k]))
+    for k in range(len(stmt) + 1):           # and in the middle of one
+        frags.add(stmt[:k])
+        frags.add(stmt[k:])
+    for frag in frags:
+        # Indented as FRR gives it back, unindented as it is typed, and with
+        # the trailing space a half-typed line carries.
+        for line in (frag, " " + frag, frag + " "):
+            for ctx in FUZZ_CONTEXT:
+                for f in MANY:
+                    tried += 1
+                    try:
+                        f(ctx + [line])
+                    except Exception as e:
+                        crashed.append((f, line, repr(e)))
+            for f in ONE:
+                tried += 1
+                try:
+                    f(line)
+                except Exception as e:
+                    crashed.append((f, line, repr(e)))
+            tried += 1
+            try:
+                list_name(line.split())
+            except Exception as e:
+                crashed.append((list_name, line, repr(e)))
+check(tried > 100000, f"the fuzz is a fuzz: {tried} inputs")
+check(not crashed,
+      f"{len(crashed)} of {tried} truncations raised: {crashed[:5]}")
+print(f"  {tried} truncated inputs, {len(crashed)} tracebacks")
 # --- IGP authentication keys are secrets too (#169) ---
 #
 # `redact()` covered an account's password and a BGP neighbour's and stopped
