@@ -55,16 +55,32 @@ typedef struct
   u32 hash_memory;
 
   /*
-   * (public address, peer address) -> the subscriber running an IPsec tunnel
-   * to that peer, packed by bpa_esp_value().
+   * The one table in this plugin that is shared across workers. Both of the
+   * things it holds are packed by bpa_shared_value(): whom to give the packet
+   * to, and which VRF to give it back into.
    *
-   * The one table in this plugin that is shared across workers, and bpa_esp.h
-   * says at length why it has to be: an inbound ESP packet carries no port,
-   * so the arithmetic that steers every other reply to the worker holding the
-   * subscriber cannot run on it. A bihash is multi-writer, so the price is a
-   * bucket lock paid by ESP packets alone.
+   *   (public address, peer address)
+   *     -> the subscriber running an IPsec tunnel to that peer
+   *   (public address, the SERVER's Call ID, server address)
+   *     -> the subscriber running a PPTP call the server assigned that ID
+   *
+   * bpa_esp.h says at length why the first has to be shared, and the argument
+   * is about a packet carrying no identifier this box can steer on rather
+   * than about ESP: the arithmetic that sends every other reply to the worker
+   * holding the subscriber cannot run on it.
+   *
+   * The second is here for the same reason one step removed (#203). PPTP data
+   * IS steerable - inbound GRE carries the Call ID this box handed out, drawn
+   * from the subscriber's port block - but an ICMP error about an OUTBOUND
+   * GRE packet quotes the Call ID the SERVER chose, which is in no block, so
+   * bpa_reverse_sub() cannot recover an owner from it and no worker can be
+   * picked. The packet is therefore answered wherever it lands.
+   *
+   * A bihash is multi-writer by construction, so the price is a bucket lock
+   * paid by ESP packets and by PPTP call setup and teardown - not by PPTP
+   * data, which never reads this.
    */
-  clib_bihash_16_8_t esp;
+  clib_bihash_16_8_t shared;
 
   /* handoff */
   u32 in2out_fq_index;

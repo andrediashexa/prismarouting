@@ -34,11 +34,61 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+[#203](https://github.com/andrediashexa/hexarouting/issues/203).
+
+### Fixed
+
+* **An ICMP error about a PPTP tunnel was dropped, so PMTUD was a black hole
+  for every PPTP subscriber.** A GRE packet carries no MSS to clamp, so the
+  ICMP *fragmentation needed* is not one signal among several - it is the only
+  one. The symptom is a tunnel that authenticates, carries small packets, and
+  hangs on the first large transfer, with nothing anywhere saying why
+  ([#203](https://github.com/andrediashexa/hexarouting/issues/203)).
+
+  It had never worked, and before
+  [#201](https://github.com/andrediashexa/hexarouting/issues/201) it was worse
+  than a drop: the session key was read at **offset 0** of the embedded GRE
+  header, which is the flags and version word - a constant. The reverse lookup
+  was built out of `0x3001` and matched nothing, on any box, for the life of
+  the project.
+
+  The Call ID is at offset 6, two bytes inside the eight RFC 792 requires an
+  error to quote. What was missing was somewhere to look it up: an **outbound**
+  GRE packet carries the Call ID the *server* assigned, and no per-worker table
+  is keyed on it - the outbound table is keyed on the subscriber's private
+  address, the inbound one on the Call ID this box handed out. A shared binding
+  on (public address, server's Call ID, server address) is now written when the
+  call establishes and removed when it ends. Unlike the ESP binding beside it,
+  this key is **unambiguous**: RFC 2637 §2.1 makes a Call ID unique within the
+  server's control connection, so two subscribers sharing a public address and
+  talking to the same server have different ones.
+
+  Nothing inside the embedded GRE header is rewritten, and `lab/pptp.sh`
+  asserts that on the captured packet: the Call ID in there is the server's,
+  which this box never translated. It also asserts the negative halves - an
+  error about a Call ID no call has reaches nobody, and the binding goes when
+  the call is disconnected - because without them the delivery assertion passes
+  on a box that hands every unresolvable ICMP error to whoever owns the public
+  address.
+
+  Two pieces of housekeeping came with it, each the same defect class this
+  repository has already paid for. The GRE header layout was about to exist in
+  two places, which is what
+  [#199](https://github.com/andrediashexa/hexarouting/issues/199) was - two
+  copies of one arithmetic drifting apart in this same plugin, blackholing
+  every translated packet on every appliance with workers; it is now one
+  `bpa_gre.h` that the data path and the ICMP path both include, and that
+  `test/test_bpa_icmp.c` can reach without VPP. And the shared table was called
+  `esp` while holding GRE bindings, so it is called `shared`.
+
 ## 0.65.0 — the box refused correct configurations, exported nothing, and let you in too early
 
 [#208](https://github.com/andrediashexa/hexarouting/issues/208),
 [#209](https://github.com/andrediashexa/hexarouting/issues/209),
-[#211](https://github.com/andrediashexa/hexarouting/issues/211).
+[#211](https://github.com/andrediashexa/hexarouting/issues/211),
+[#203](https://github.com/andrediashexa/hexarouting/issues/203).
 
 ### Fixed
 

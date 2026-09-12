@@ -1208,7 +1208,7 @@ bpa_init (vlib_main_t *vm)
    * virtual reservation and the OOM killer counts virtual - that lesson is
    * written up over BPA_HASH_BUCKETS_DEFAULT, and it applies here too.
    */
-  clib_bihash_init_16_8 (&bm->esp, "bpa-esp", BPA_ESP_BUCKETS_DEFAULT,
+  clib_bihash_init_16_8 (&bm->shared, "bpa-shared", BPA_SHARED_BUCKETS_DEFAULT,
 			 BPA_ESP_MEMORY_DEFAULT);
 
   /* One session table per vlib main, worker or not: index by thread. */

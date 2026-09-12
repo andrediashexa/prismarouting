@@ -134,7 +134,37 @@ seen | sed 's/^/  /'
 A_AGAIN_DST=$(field 3); A_AGAIN_CID=$(field 5)
 
 echo
-echo "=========== 8. plain GRE is refused, and says so ==========="
+echo "=========== 8. PMTUD: an ICMP error about A's outbound tunnel ==========="
+# The only signal a PPTP tunnel has. There is no MSS inside a GRE packet to
+# clamp, so when a router on the path cannot carry the subscriber's packet this
+# error is the whole of what tells them - and a CGNAT that drops it is the
+# classic PMTUD black hole: the tunnel authenticates, small packets work, and
+# the first large transfer hangs with nothing anywhere saying why (#203).
+#
+# The Call ID quoted here is the SERVER's, 0x9001, because that is what an
+# OUTBOUND GRE packet carries - and it is the one field no per-worker table is
+# keyed on. It resolves through the shared binding written when the call
+# established.
+arm pg0
+send pg1 "$(python3 /src/lab/mkicmperr.py 4.4.4.4 "${A_PUB:-200.150.0.17}" \
+            8.8.8.8 0 0 gre 36865)"
+PMTUD=$(seen)
+printf '%s\n' "${PMTUD:-  <nothing reached the subscriber>}" | sed 's/^/  /'
+PMTUD_DST=$(field 3); PMTUD_INNER=$(field 4); PMTUD_CID=$(field 6)
+PMTUD_CK=$(field 7); PMTUD_ICK=$(field 8)
+echo "  reached ${PMTUD_DST:-nobody}, embedded source now ${PMTUD_INNER:-?}"
+
+# And one about a call nobody has. Without this the assertion above passes on a
+# box that delivers every ICMP error it cannot resolve to whoever owns the
+# public address, which is a different product and a worse one.
+arm pg0
+send pg1 "$(python3 /src/lab/mkicmperr.py 4.4.4.4 "${A_PUB:-200.150.0.17}" \
+            8.8.8.8 0 0 gre 4660)"
+PMTUD_STRAY=$(seen)
+echo "  an error about Call ID 4660, which no call has: ${PMTUD_STRAY:-nothing arrived}"
+echo
+
+echo "=========== 9. plain GRE is refused, and says so ==========="
 # RFC 2784 GRE carries no per-flow identifier, so several subscribers behind
 # one address cannot be told apart. Dropping it is right; dropping it under
 # the counter for a truncated packet would send the diagnosis somewhere else.
@@ -143,7 +173,7 @@ PLAIN=$(vppctl show errors | grep -c "not the enhanced GRE")
 vppctl show errors | grep "enhanced GRE" | sed 's/^/  /'
 
 echo
-echo "=========== 9. a refused call does not keep its Call ID ==========="
+echo "=========== 10. a refused call does not keep its Call ID ==========="
 # A subscriber retrying against a server that keeps saying no would otherwise
 # spend one entry of its block per attempt, and the block is 512 entries.
 arm pg1
@@ -170,7 +200,7 @@ C_AFTER=$(seen)
 echo "  GRE for the refused call afterwards: ${C_AFTER:-nothing arrived}"
 
 echo
-echo "=========== 10. a disconnected call stops carrying traffic ==========="
+echo "=========== 11. a disconnected call stops carrying traffic ==========="
 # Step 7 already proved this same packet reaches A. If it still does after the
 # disconnect, nothing was torn down - and the assertion below would otherwise
 # pass by there being nothing to capture in the first place.
@@ -182,9 +212,19 @@ arm pg0
 send pg1 "$(python3 /src/lab/mkpptp.py gre 8.8.8.8 "$A_PUB" "${A_CID:-0}")"
 A_GONE=$(seen)
 echo "  GRE for the disconnected call afterwards: ${A_GONE:-nothing arrived}"
+# And the shared binding the ICMP path reads, which is a SECOND table entry
+# written when the call established. Section 8 proved this exact packet reaches
+# A, so an empty capture here is the teardown and not the packet: a binding
+# left behind would keep sending errors about a call that ended to a
+# subscriber who is no longer in it.
+arm pg0
+send pg1 "$(python3 /src/lab/mkicmperr.py 4.4.4.4 "${A_PUB:-200.150.0.17}" \
+            8.8.8.8 0 0 gre 36865)"
+PMTUD_GONE=$(seen)
+echo "  and an ICMP error about it: ${PMTUD_GONE:-nothing arrived}"
 
 echo
-echo "=========== 11. switched off, the ALG rewrites nothing ==========="
+echo "=========== 12. switched off, the ALG rewrites nothing ==========="
 vppctl bpa alg lab pptp off | sed 's/^/  /'
 arm pg1
 send pg0 "$(python3 /src/lab/mkpptp.py syn 100.64.0.6 8.8.8.8 41000 1723)"
@@ -238,4 +278,33 @@ expect "the disconnect reaches the subscriber as its own Call ID" \
        test "${A_DISC:-0}" -eq 1
 expect "a disconnected call carries nothing afterwards" test -z "${A_GONE:-}"
 expect "with the ALG off the Call ID is left alone" test "${OFF_CID:-0}" -eq 33
+# PMTUD, asserted on the captured packet. The error has to arrive at the
+# subscriber's PRIVATE address, or it reaches a host that does not exist.
+expect "an ICMP error about the tunnel reaches the subscriber" \
+       test "${PMTUD_DST:-}" = "100.64.0.5"
+# The half that decides whether it is worth anything: the subscriber's stack
+# matches the error against its own socket by the packet quoted INSIDE it, so
+# an error delivered to the right host still tells it nothing if the embedded
+# header still names the public address.
+expect "and the embedded packet names the subscriber, not the public address" \
+       test "${PMTUD_INNER:-}" = "100.64.0.5"
+# The Call ID must be UNCHANGED. It is the server's, which this box never
+# translated - the one it did translate is the subscriber's own, and that one
+# is not in an outbound packet at all. Without this a box that rewrote it
+# would pass every other assertion here and hand the subscriber's stack a
+# packet it cannot match against its own call.
+expect "and the embedded Call ID is the server's, untouched" \
+       test "${PMTUD_CID:-0}" -eq 36865
+expect "the outer IP checksum still covers what was rewritten" \
+       test "${PMTUD_CK:-BAD}" = "ok"
+# The ICMP checksum covers the whole embedded packet. Rewriting an address in
+# there without it is a packet the subscriber's kernel drops in silence.
+expect "and so does the ICMP checksum, which covers the embedded packet" \
+       test "${PMTUD_ICK:-BAD}" = "ok"
+# The negative half. Without it the delivery above passes on a box that hands
+# every unresolvable ICMP error to whoever owns the public address.
+expect "an error about a Call ID no call has reaches nobody" \
+       test -z "${PMTUD_STRAY:-}"
+expect "and the binding goes when the call is disconnected" \
+       test -z "${PMTUD_GONE:-}"
 verdict

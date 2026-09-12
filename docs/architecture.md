@@ -303,6 +303,46 @@ it. Translating with a wrong checksum is worse than not translating: the
 subscriber's stack discards the packet, PMTUD stays broken, and the counter
 claims success.
 
+**The tunnels are the hard half, and they are the half that needs it most.** An
+ESP or GRE packet carries no MSS to clamp, so the ICMP error is not one signal
+among several — it is the *only* one. A CGNAT that drops it gives the
+subscriber a tunnel that authenticates, carries small packets, and hangs on the
+first large transfer, with nothing anywhere saying why.
+
+Neither is keyed the way TCP and UDP are, and they are keyed differently from
+each other:
+
+| | what identifies the flow | where the error's key comes from |
+|---|---|---|
+| TCP, UDP | (public address, public port) | the embedded L4 header |
+| ICMP echo | (public address, echo identifier) | four bytes into the embedded ICMP header |
+| **ESP** | (public address, peer address) | the embedded **IP header alone** |
+| **GRE (PPTP)** | (public address, the *server's* Call ID, server address) | the embedded IP header plus the Call ID at offset 6 |
+
+ESP is the easy one, and that is the opposite of how it looks: it has no
+identifier this box may key on, which is what makes its binding global — and
+being global is what makes it reachable from an error that landed on whatever
+worker the internet happened to send it to.
+
+GRE is the one that looks easy and is not. An **outbound** GRE packet carries
+the Call ID the *server* assigned, and no per-worker table is keyed on it: the
+outbound table is keyed on the subscriber's private address, the inbound one on
+the Call ID this box handed out. So a second shared binding is written when the
+call establishes, on (public address, server's Call ID, server address). Unlike
+ESP's key it is unambiguous — a server hands out one Call ID per call from its
+own table (RFC 2637 §2.1), so two subscribers sharing a public address and
+talking to the same server have different ones.
+
+Nothing inside an embedded GRE header is rewritten. The Call ID in there is the
+server's, which this box never translated; the one it did translate is the
+subscriber's own, and that one does not appear in an outbound packet at all.
+
+Both shared bindings live in the same table, and the reason it is shared has
+nothing to do with either protocol in particular: it is that the arithmetic
+which steers every other reply to the worker holding the subscriber cannot run
+on these packets. ESP has no port; GRE's Call ID is not drawn from the
+subscriber's port block, so it cannot be turned back into an owner.
+
 ## Hairpinning
 
 Two subscribers behind the same CGNAT reaching each other through a public

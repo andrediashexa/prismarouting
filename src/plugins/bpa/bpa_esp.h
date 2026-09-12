@@ -109,19 +109,24 @@ bpa_key_esp_pub (clib_bihash_kv_16_8_t *kv, u32 pub, u32 remote)
  * The binding's value, which is everything the inbound path needs and nothing
  * more: whom to give the packet to, and which VRF to give it back into.
  *
+ * Named for the TABLE and not for ESP, because PPTP GRE puts the same two
+ * fields in the same table for the same reason (#203), and a value helper
+ * called bpa_esp_value() holding a GRE binding is how the next reader is
+ * misled about what the table contains.
+ *
  * Packed into the bihash's own 64-bit value rather than pointing at a record.
  * A record would be a pool that the datapath allocates from on several workers
  * at once, and pool_get() is not that; two u32 fields fit exactly, so there is
  * nothing to allocate and nothing to race on.
  */
 static_always_inline u64
-bpa_esp_value (u32 ip_priv, u32 fib)
+bpa_shared_value (u32 ip_priv, u32 fib)
 {
   return (u64) ip_priv | ((u64) fib << 32);
 }
 
 static_always_inline void
-bpa_esp_unpack (u64 v, u32 *ip_priv, u32 *fib)
+bpa_shared_unpack (u64 v, u32 *ip_priv, u32 *fib)
 {
   *ip_priv = (u32) v;
   *fib = (u32) (v >> 32);
@@ -141,9 +146,9 @@ bpa_esp_lookup (u32 pub, u32 remote, u32 *ip_priv, u32 *fib)
   clib_bihash_kv_16_8_t kv, value;
 
   bpa_key_esp_pub (&kv, pub, remote);
-  if (PREDICT_FALSE (clib_bihash_search_16_8 (&bm->esp, &kv, &value)))
+  if (PREDICT_FALSE (clib_bihash_search_16_8 (&bm->shared, &kv, &value)))
     return -1;
-  bpa_esp_unpack (value.value, ip_priv, fib);
+  bpa_shared_unpack (value.value, ip_priv, fib);
   return 0;
 }
 

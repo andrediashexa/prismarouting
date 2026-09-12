@@ -109,7 +109,31 @@ bpa_icmp_error_out2in (ip4_header_t *ip, const bpa_icmp_err_t *e,
   u16 old_port;
   u32 old_addr, ip_priv, new_port = 0;
 
-  if (e->ip_proto == IP_PROTOCOL_IPSEC_ESP)
+  if (e->ip_proto == IP_PROTOCOL_GRE)
+    {
+      /*
+       * The PPTP call this error is about, out of the shared table for the
+       * reason bpa.h gives: the embedded packet carries the Call ID the
+       * SERVER chose, which is in no subscriber's port block, so there is no
+       * worker to steer to and the error is answered wherever it landed.
+       *
+       * Unlike ESP's key this one is unambiguous, and bpa_pptp.h says why:
+       * a server hands out one Call ID per call from its own table, so two
+       * subscribers sharing a public address and talking to the same server
+       * have different ones.
+       *
+       * Nothing inside the embedded GRE header is rewritten. The Call ID in
+       * there is the SERVER's, which this box never translated - the one it
+       * did translate is the subscriber's own, and that one is not in an
+       * outbound packet at all. So the rewrite below is the addresses and the
+       * checksums, and that is the whole list.
+       */
+      if (PREDICT_FALSE (bpa_gre_lookup (e->pub_addr, e->call_id, e->peer,
+					 &ip_priv, fib_out)))
+	return -1;
+      *ip_priv_out = ip_priv;
+    }
+  else if (e->ip_proto == IP_PROTOCOL_IPSEC_ESP)
     {
       /*
        * The tunnel this error is about, out of the table that is global for

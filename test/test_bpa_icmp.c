@@ -92,6 +92,24 @@ mk (u8 *p)
   p[O_INNER_L4 + 2] = 0x00; p[O_INNER_L4 + 3] = 0x35;	    /* dst port 53 */
 }
 
+/*
+ * Turns the packet mk() built into one quoting an enhanced GRE header.
+ *
+ * The payload-length field and the Call ID are deliberately unequal and
+ * unlike the flags word, so that reading the wrong 16-bit field gives a
+ * visibly wrong answer rather than a plausible one.
+ */
+static void
+gre (u8 *p)
+{
+  p[O_INNER_PROTO] = IP_PROTOCOL_GRE;
+  p[O_INNER_L4 + 0] = BPA_GRE_FLAG_KEY;			/* K set, C and R 0 */
+  p[O_INNER_L4 + 1] = 0x01;				/* version 1 */
+  p[O_INNER_L4 + 2] = 0x88; p[O_INNER_L4 + 3] = 0x0b;	/* PPP */
+  p[O_INNER_L4 + 4] = 0x00; p[O_INNER_L4 + 5] = 0x64;	/* payload length */
+  p[O_INNER_L4 + 6] = 0xbe; p[O_INNER_L4 + 7] = 0xef;	/* Call ID */
+}
+
 /* One past the last readable byte; an unmapped page starts here. */
 static u8 *guard_end;
 
@@ -111,10 +129,42 @@ parse (const u8 *pkt, u32 len, bpa_icmp_err_t *e)
   return bpa_icmp_err_parse (ip, guard_end, e);
 }
 
+/*
+ * Parses with the packet fully present but `end` brought in, which is the
+ * OTHER way a datagram runs short: bpa_icmp_err_parse()'s contract is that
+ * `end` is one past the last readable byte of THIS buffer, and on a chained
+ * buffer that is the first segment's end rather than the page's.
+ *
+ * It exists because the guard page alone could not show one bound failing.
+ * Truncating physically puts the byte after the datagram on an unmapped page,
+ * so removing the check gives a SIGSEGV - a real failure, and the reason the
+ * page is there, but not one that names the assertion that caught it. Here
+ * the bytes past `end` are ordinary readable memory holding the rest of the
+ * packet, so a parse that ignores the bound returns a Call ID it was not
+ * given and the assertion says so by name.
+ */
+static int
+parse_to (const u8 *pkt, u32 len, u32 readable, bpa_icmp_err_t *e)
+{
+  ip4_header_t *ip = place (pkt, len);
+  return bpa_icmp_err_parse (ip, (const u8 *) ip + readable, e);
+}
+
+
 int
 main (void)
 {
   long pagesz = sysconf (_SC_PAGESIZE);
+  /*
+   * Unbuffered, because this test is DESIGNED to die: the guard page below
+   * turns a read past the sender's bytes into a SIGSEGV, which is the only
+   * way to observe it at all. A crash with the output still in stdio's buffer
+   * reports nothing, so the one failure mode this file exists for arrives as
+   * a silent exit 139 and whoever reads it has to bisect eleven checks to
+   * find out which one. Measured: with the GRE bound removed, this is the
+   * difference between an empty log and a named FAIL followed by the crash.
+   */
+  setvbuf (stdout, NULL, _IONBF, 0);
   u8 pkt[PKT_LEN];
   bpa_icmp_err_t e;
   u8 *region;
@@ -178,11 +228,76 @@ main (void)
   pkt[O_ICMP_TYPE] = ICMP4_echo_request;
   CHECK (parse (pkt, PKT_LEN, &e) != 0, "nor is an echo request");
 
+  /*
+   * PPTP GRE. What is read here is the Call ID at offset 6 - the SERVER's,
+   * because that is what an OUTBOUND packet carries - and #203 is the whole
+   * story of that offset: the old code read offset 0, the flags and version
+   * word, which is a constant, so the reverse lookup matched nothing on any
+   * box for the life of the project.
+   *
+   * The offset is asserted against a value that is DIFFERENT in every byte
+   * pair of the header, so a read from 0, 2 or 4 gives a different answer
+   * from a read from 6. An assertion whose expected value also appears at the
+   * wrong offset cannot catch the defect it was written for.
+   */
   mk (pkt);
-  pkt[O_INNER_PROTO] = IP_PROTOCOL_GRE;
-  CHECK (parse (pkt, PKT_LEN, &e) != 0,
-	 "embedded GRE is refused: the Call ID an outbound packet carries is "
-	 "the server's, and no table is keyed on it with our public address");
+  gre (pkt);
+  CHECK (parse (pkt, PKT_LEN, &e) == 0, "embedded PPTP GRE parses");
+  CHECK (e.call_id == 0xbeef,
+	 "and the Call ID comes from offset 6, not 0: 0x%04x", e.call_id);
+  CHECK (e.pub_addr == 0xc8960011 && e.peer == 0x08080808,
+	 "with both addresses of the key");
+  CHECK (e.port == 0,
+	 "and no port pointer: nothing in the embedded GRE is rewritten");
+  CHECK (e.ip_proto == IP_PROTOCOL_GRE, "and it says which protocol");
+
+  /*
+   * Not the enhanced GRE PPTP uses. The same test the data path applies, and
+   * it matters here more than there: the two bytes at offset 6 of an ordinary
+   * GRE header are not a Call ID at all, and keying on them would resolve to
+   * whichever call happened to collide.
+   */
+  mk (pkt);
+  gre (pkt);
+  pkt[O_INNER_L4] &= (u8) ~BPA_GRE_FLAG_KEY;	  /* K clear */
+  CHECK (parse (pkt, PKT_LEN, &e) != 0, "GRE without the key bit is refused");
+  mk (pkt);
+  gre (pkt);
+  pkt[O_INNER_L4 + 1] = 0;			  /* version 0 */
+  CHECK (parse (pkt, PKT_LEN, &e) != 0, "nor version 0 GRE");
+  mk (pkt);
+  gre (pkt);
+  pkt[O_INNER_L4 + 2] = 0x08; pkt[O_INNER_L4 + 3] = 0x00;   /* IPv4, not PPP */
+  CHECK (parse (pkt, PKT_LEN, &e) != 0, "nor GRE carrying something else");
+
+  /*
+   * Truncated below the Call ID. RFC 792 requires eight bytes of payload and
+   * the Call ID ends exactly at the eighth, so an error quoting seven has to
+   * come out refused rather than read one byte past what the sender sent.
+   */
+  mk (pkt);
+  gre (pkt);
+  /*
+   * The readable-past-`end` form FIRST, and the order is the assertion's own
+   * design rather than taste. With the bound removed, the physically
+   * truncated form below segfaults on the guard page - which is a real
+   * failure and the reason the page exists, but it kills the process, so
+   * whatever came after it is never reported. Run this one first and a broken
+   * bound prints a check that NAMES itself before the crash, instead of
+   * leaving whoever reads the output to work out which of eleven checks the
+   * segfault belonged to.
+   */
+  CHECK (parse_to (pkt, PKT_LEN, PKT_LEN - 1, &e) != 0,
+	 "an embedded GRE header one byte short is refused");
+  CHECK (parse_to (pkt, PKT_LEN, PKT_LEN - 2, &e) != 0, "and two bytes short");
+  CHECK (parse_to (pkt, PKT_LEN, PKT_LEN, &e) == 0,
+	 "while the full eight bytes parse, so the bound is the Call ID's end "
+	 "and not merely 'short'");
+  /* And physically truncated, where the byte after the datagram is on an
+   * unmapped page. Same two bounds, read past instead of read wrong. */
+  CHECK (parse (pkt, PKT_LEN - 1, &e) != 0,
+	 "and refused when the byte after it is not there at all");
+  CHECK (parse (pkt, PKT_LEN - 2, &e) != 0, "nor the two after it");
 
   /*
    * ESP is the one with no identifier of its own, and it is the one that

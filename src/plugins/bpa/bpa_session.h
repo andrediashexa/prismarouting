@@ -478,7 +478,7 @@ bpa_tcp_track (bpa_session_t *s, u8 flags)
 
 /* The shared ESP binding table. One entry per public address and peer
  * gateway, not per flow, so it is an order of magnitude smaller. */
-#define BPA_ESP_BUCKETS_DEFAULT (1024)
+#define BPA_SHARED_BUCKETS_DEFAULT (1024)
 #define BPA_ESP_MEMORY_DEFAULT	(2 << 20)
 
 clib_error_t *bpa_per_thread_init (bpa_per_thread_t *pt, u32 thread_index);
