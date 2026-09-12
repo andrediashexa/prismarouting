@@ -74,6 +74,63 @@ echo "  sessions now: ${SESS2:-0}   refusals: ${REFUSED:-0}"
 vppctl show bpa blocks | sed 's/^/  /'
 
 echo
+echo
+echo "=========== an extension the subscriber stopped needing goes back ==="
+# #216 asked whether bpa_dyn_active() - declared, defined, documented, and
+# called by nothing - is a missing call or a dead function. This section is
+# the answer, measured on the box rather than read off the source.
+#
+# What bpa_dyn_active() would do is clear the idle stamp on EVERY block a
+# subscriber holds, extensions included. bpa_dyn_idle() sets those stamps, and
+# it is called at one moment only: when the subscriber's session count reaches
+# ZERO. At that moment every block it holds is empty, extension and primary
+# alike.
+#
+# So a subscriber that goes quiet and comes back with ONE session needs ONE
+# block. Its extension is empty and should go back to the pool - and it does,
+# because bpa_dyn_acquire() clears the stamp on the PRIMARY only. Calling
+# bpa_dyn_active() there would clear the extension's stamp too and keep an
+# empty block owned forever, which is exactly the leak the comment above
+# bpa_dyn_idle() exists to warn about.
+#
+# That makes the function not merely unused but WRONG to call, and this
+# assertion is what would go red if somebody wired it in "to fix the gap".
+vppctl bpa block-holddown 5
+vppctl bpa timeouts udp 3 >/dev/null
+EXT_BEFORE=$(vppctl show bpa blocks \
+             | sed -n 's/^ *total: \([0-9][0-9]*\)\/.*/\1/p')
+echo "  blocks in use with the extension live: ${EXT_BEFORE:-?}"
+
+# Everything expires, so the subscriber's session count reaches zero and BOTH
+# of its blocks are stamped. That is the only moment bpa_dyn_idle() runs.
+sleep 6
+
+# THE TIMEOUT GOES BACK UP BEFORE THE FLOW THAT BRINGS THE SUBSCRIBER BACK,
+# and the order is the measurement rather than housekeeping. The first version
+# of this section left it at 3 seconds, so the returning session expired after
+# three, the subscriber reached zero sessions again, bpa_dyn_idle() stamped
+# both blocks a second time, and the hold-down took them BOTH - 0 in use, which
+# says nothing about extensions at all.
+#
+# What has to be true for the question to be asked is that the subscriber is
+# still ACTIVE on its primary while the extension's stale stamp expires. A
+# long-lived session is what makes that window exist.
+vppctl bpa timeouts udp 600 >/dev/null
+send 5 30000
+sleep 1
+echo "  one flow back from the same subscriber:"
+vppctl show bpa blocks | sed 's/^/  /'
+
+# Longer than the hold-down, so the stamp that was NOT cleared expires while
+# the session that cleared the primary's is still alive.
+sleep 8
+EXT_AFTER=$(vppctl show bpa blocks \
+            | sed -n 's/^ *total: \([0-9][0-9]*\)\/.*/\1/p')
+SUB_AFTER=$(vppctl show bpa subscriber 100.64.0.5)
+echo "  blocks in use afterwards: ${EXT_AFTER:-?}"
+echo "$SUB_AFTER" | sed 's/^/  /'
+vppctl bpa block-holddown 300 >/dev/null
+
 echo "=========== VERDICT ==========="
 expect "the subscriber filled its first block and got a second" \
   test "${EXTS:-0}" -ge 1
@@ -88,4 +145,24 @@ ALLOCS=$(vppctl show bpa blocks \
 echo "  allocations counted: ${ALLOCS:-<none>}   extensions: ${EXTS:-0}"
 expect "the extension counted as an allocation of its own" \
   test "${ALLOCS:-0}" -ge 2
+# The precondition. Without it "one block afterwards" is also what a box that
+# never handed out an extension at all would say, and the assertion below
+# would be measuring nothing.
+expect "the subscriber really was holding two blocks first" \
+  test "${EXT_BEFORE:-0}" -ge 2
+# The answer to #216. One block, not two: the extension went back while the
+# subscriber was ACTIVE on its primary, which is what makes bpa_dyn_active()
+# wrong to call rather than merely unused.
+expect "and holds one after coming back with a single flow" \
+  test "${EXT_AFTER:-0}" -eq 1
+# And it is still translating, so the block that stayed is the right one. A
+# subscriber whose primary had been reaped too would also report one block:
+# the next one it was given.
+expect_in "the block it kept is its own, and it is still translating" \
+  "200.150.0.16" "$SUB_AFTER"
+# The session outliving the hold-down is what makes the window real. Without
+# this the run above could have reached "one block" by the subscriber going
+# quiet a second time and being given a fresh one, which is a different box.
+expect_not_in "and it never went quiet again while we were watching" \
+  "no live state" "$SUB_AFTER"
 verdict

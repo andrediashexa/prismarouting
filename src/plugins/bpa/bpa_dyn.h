@@ -163,8 +163,29 @@ bpa_dyn_is_pinned (const bpa_dyn_t *d, u32 block_idx, u32 n_workers)
 /* Subscriber's last session ended: start the hold-down. */
 void bpa_dyn_idle (bpa_dyn_t *d, u32 sub_idx, f64 now);
 
-/* Subscriber became active again before hold-down expired. */
-void bpa_dyn_active (bpa_dyn_t *d, u32 sub_idx);
+/*
+ * There was a bpa_dyn_active() here - declared, defined, documented
+ * "subscriber became active again before hold-down expired", and called by
+ * nothing. #216 asked whether that was a missing call or a dead function. It
+ * is neither: it would have been WRONG to call, and it is gone.
+ *
+ * What it did was clear the idle stamp on every block a subscriber holds,
+ * extensions included. bpa_dyn_idle() sets those stamps at one moment only -
+ * when the subscriber's session count reaches ZERO - and at that moment every
+ * block it holds is empty, extension and primary alike. A subscriber that
+ * comes back with one session needs one block, so its extension SHOULD go
+ * back to the pool, and it does, because bpa_dyn_acquire() clears the stamp on
+ * the primary alone.
+ *
+ * Wiring bpa_dyn_active() in would have kept the empty extension owned - the
+ * leak the comment on bpa_dyn_idle() exists to warn about, arriving through
+ * the function that looked like its counterpart.
+ *
+ * Measured rather than argued: lab/extblocks.sh takes a subscriber to two
+ * blocks, lets it go quiet, brings it back with ONE flow and waits out the
+ * hold-down. It ends holding one block, its own, still translating. With
+ * bpa_dyn_active() called from bpa_dyn_acquire() it ends holding two.
+ */
 
 /*
  * Release blocks idle for longer than holddown. Fills `out` with what was
