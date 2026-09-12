@@ -48,6 +48,41 @@ router bgp 65000
 
 Dentro de `address-family`, o mesmo vizinho entende `activate`, `route-map`, `prefix-list`, `soft-reconfiguration inbound`, `remove-private-AS` e `default-originate`.
 
+# Sessão sem endereço no enlace (BGP unnumbered)
+
+Um trânsito ou um peering com um vizinho diretamente conectado não precisa de um /30 no enlace. A sessão sobe pelo endereço de enlace local que os dois lados já têm, e o vizinho é a **interface**:
+
+```
+router bgp 65000
+ neighbor vppwan0 interface remote-as external
+ address-family ipv4 unicast
+  neighbor vppwan0 activate
+ exit-address-family
+ exit
+```
+
+`remote-as` vai na mesma linha, e aceita `external`, `internal` ou o número do AS. `external` é o caso comum: qualquer AS diferente do seu serve, o que é exatamente o que se quer num enlace ponto a ponto onde o outro lado é quem diz quem é.
+
+A forma com peer group é a mesma:
+
+```
+ neighbor UPLINKS peer-group
+ neighbor UPLINKS remote-as external
+ neighbor vppwan0 interface peer-group UPLINKS
+```
+
+O nome ali é o nome pelo qual **o roteamento** conhece a interface — o mesmo que vale em `passive-interface` e nas estrofes de OSPF e IS-IS. Uma interface do `linux_cp` atende por mais de um nome, e quem escrever o nome do dataplane recebe um aviso dizendo qual é o outro:
+
+```
+warning: neighbor host-veth-vpp interface remote-as external: FRR knows this
+interface as vppwan0, not host-veth-vpp: written this way the session has
+nothing to run over
+```
+
+:::warning
+O enlace precisa carregar os anúncios de roteador do vizinho (router advertisement) para que o roteamento descubra o endereço de enlace local do outro lado. É assim que uma sessão sem endereço encontra com quem falar; sem isso a sessão fica em Idle com AS 0, mesmo com a configuração inteira certa. Confira com `show bgp summary`.
+:::
+
 # Peer groups
 
 Quarenta peerings não são quarenta estrofes. Declara-se o grupo, dá-se o AS a ele, e os membros herdam:
@@ -67,7 +102,8 @@ Ao completar `neighbor` com TAB, o equipamento mostra os vizinhos que existem co
 
 São recusas de **forma**, não de funcionamento: se o vizinho vai responder não está na configuração, e o equipamento não finge saber.
 
-* **vizinho sem** `**remote-as**` — o FRR recusa qualquer outra sentença dele;
+* **vizinho sem** `**remote-as**` — o FRR recusa qualquer outra sentença dele; numa sessão sem endereço o FRR aceita e deixa o vizinho parado em Idle com AS 0 para sempre, que é pior, então a recusa vale para as duas formas;
+* **sessão sem endereço apontada para uma interface que a caixa não tem** — o FRR aceita, o vizinho fica em Idle e nada mais é dito sobre ele;
 * **peer group que ninguém declarou** — `neighbor X peer-group IX` sem o `neighbor IX peer-group` que cria o grupo;
 * **membro cujo grupo também não tem AS** — o membro herda o AS do grupo, então um vizinho sem AS próprio está certo quando o grupo tem um; o que não pode é nenhum dos dois ter;
 * `**update-source**` **apontando para uma interface que a caixa não tem** — o FRR aceita, a sessão sai de lugar nenhum e nunca sobe, e a configuração continua lendo bem.

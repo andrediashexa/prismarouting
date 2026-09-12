@@ -752,14 +752,19 @@ sys.exit(1 if e(stmt) else 0)"; then
   [ "$FRR_SAYS" = "$VTY_SAYS" ] || echo "      frr: $FRR_SAYS   vty: $VTY_SAYS"
 done
 
-# A name a route-map matches on that nothing defines. FRR accepts it; the
-# clause then matches nothing, forever, and the policy reads correctly.
+# A name a route-map matches on that nothing defines. Said, not refused: FRR
+# accepts the clause, stores it and binds it when the list turns up - measured
+# further down, against this same FRR - so refusing it made building a policy
+# map-first impossible and took every unrelated change in the commit with it.
+# The wording says which of the two this is, and the commit completing is half
+# the assertion (#208).
 UNDEF=$($HX -c "configure" \
         -c "route-map RM-UNDEF permit 10" \
         -c "match as-path AS-NAO-EXISTE" \
         -c "exit" -c "commit" 2>&1)
-expect_in "matching a list nothing defines is refused" \
-  "would match nothing" "$UNDEF"
+expect_in "matching a list nothing defines is reported" \
+  "until one is, the clause matches nothing" "$UNDEF"
+expect_in "and the commit is not refused for it" "commit complete" "$UNDEF"
 
 # THE report this exists for. `permit 65001` compiles and is legal, and it also
 # matches 165001 and 650012 - the mistake nobody sees by reading their own
@@ -1026,5 +1031,141 @@ expect_in "and says what that costs, without overstating it" \
 # has not started yet.
 expect "the prefixes the cache already sent are still there" \
   sh -c "vtysh -c 'show rpki prefix-table' | grep -q 'Number of IPv4 Prefixes: 2'"
+
+echo "=========== what FRR does with the shapes these checks judge (#208) ==========="
+#
+# Every opinion the VTY holds about BGP is an opinion about FRR, and an opinion
+# that drifts from FRR refuses configurations that are fine. So each one is put
+# to the FRR in this container and the answer is the assertion - the same
+# arrangement as the prefix-range rule and the AS-path regex.
+#
+# Accepting a statement proves the parser and nothing else. What happens to it
+# on a real pair - and why an unnumbered session does not reach Established on
+# today's dataplane - is lab/routing.sh, where the linux_cp pair is.
+ip link add dum-unnum type dummy 2>/dev/null; ip link set dum-unnum up
+
+# --- BGP unnumbered: FRR takes it, so the VTY must ---
+UNN=$(vtysh -c "conf t" -c "router bgp 65000" \
+      -c "neighbor dum-unnum interface remote-as external" 2>&1)
+echo "  FRR on 'neighbor dum-unnum interface remote-as external': ${UNN:-accepted, no output}"
+expect_in "FRR accepts the unnumbered form" \
+  " neighbor dum-unnum interface remote-as external" \
+  "$(vtysh -c 'show running-config')"
+# And on an interface that does not exist. FRR accepts THAT too and says
+# nothing ever again, which is why the VTY checks the name at all.
+GONE=$(vtysh -c "conf t" -c "router bgp 65000" \
+       -c "neighbor nosuchif0 interface remote-as external" 2>&1)
+echo "  FRR on an interface it has not got: ${GONE:-accepted, no output}"
+expect_in "FRR accepts an unnumbered peer on an interface that does not exist" \
+  " neighbor nosuchif0 interface remote-as external" \
+  "$(vtysh -c 'show running-config')"
+expect_in "and leaves it Idle, saying nothing" "nosuchif0" \
+  "$(vtysh -c 'show bgp summary' | grep nosuchif0)"
+vtysh -c "conf t" -c "router bgp 65000" -c "no neighbor nosuchif0" \
+      -c "no neighbor dum-unnum" >/dev/null 2>&1
+
+# --- the legacy `ip ...` spellings of a policy list ---
+#
+# Recorded because the answer was not what was expected. FRR 10.7.1 does not
+# have them at all, so a check that refused them was refusing nothing an
+# operator can type on this box - and being tolerant of them would be
+# tolerance for a statement FRR rejects.
+for legacy in "ip community-list standard CMX permit 65000:1" \
+              "ip as-path access-list ASX permit ^65001$"; do
+  OUTL=$(vtysh -c "conf t" -c "$legacy" 2>&1)
+  echo "  FRR on '$legacy': $OUTL"
+  expect_in "FRR 10.7.1 has no '$(echo "$legacy" | cut -d' ' -f1-2)' spelling" \
+    "Unknown command" "$OUTL"
+done
+
+# --- a route-map matching a list that does not exist YET ---
+#
+# THE measurement behind narrowing that refusal to a warning: FRR takes the
+# clause, stores it, and binds it when the list turns up, with nothing retyped.
+vtysh -c "conf t" -c "route-map RM-LATE permit 10" \
+      -c "match community CM-LATE" >/dev/null 2>&1
+expect_in "FRR accepts a match on a community list that does not exist" \
+  "match community CM-LATE" "$(vtysh -c 'show running-config')"
+vtysh -c "conf t" -c "bgp community-list standard CM-LATE permit 65000:9" \
+      >/dev/null 2>&1
+expect_in "and binds it when the list arrives, with nothing retyped" \
+  "community CM-LATE" "$(vtysh -c 'show route-map RM-LATE')"
+
+# --- the order clauses run in ---
+vtysh -c "conf t" -c "route-map RM-ORD permit 20" -c "exit" >/dev/null 2>&1
+vtysh -c "conf t" -c "route-map RM-ORD permit 10" \
+      -c "match ip address prefix-list PL-ORD" -c "exit" >/dev/null 2>&1
+FIRST=$(vtysh -c "show route-map RM-ORD" | grep "sequence" | head -1)
+echo "  first clause FRR lists, having been typed second: $FIRST"
+expect_in "FRR orders clauses by seq, not by the order they were written" \
+  "sequence 10" "$FIRST"
+
+# --- `continue` and `on-match`, which are one statement with two spellings ---
+vtysh -c "conf t" -c "route-map RM-CNT permit 10" -c "continue 30" \
+      -c "exit" >/dev/null 2>&1
+expect_in "FRR stores an operator's 'continue 30' as 'on-match goto 30'" \
+  "on-match goto 30" "$(vtysh -c 'show running-config')"
+
+echo "=========== and what the VTY makes of the same statements ==========="
+# The defect as it was reported: an unnumbered neighbour refused the WHOLE
+# candidate, so a CGNAT pool typed beside it was refused with it.
+UNNCK=$($HX -c "configure" \
+        -c "cgnat pool lab-unnum" -c "inside 100.64.16.0/22" \
+        -c "outside 200.150.9.32/28" -c "block-size 1024" -c "exit" \
+        -c "router bgp 65000" \
+        -c "neighbor vppwan1 interface remote-as external" \
+        -c "exit" -c "commit check" 2>&1)
+printf '%s\n' "$UNNCK" | grep -vE "^note" | tail -8 | sed 's/^/  /'
+expect_in "an unnumbered neighbour does not fail the check" \
+  "configuration check succeeds" "$UNNCK"
+expect_not_in "and nothing claims the AS is missing" \
+  "has no 'remote-as'" "$UNNCK"
+expect_in "the unrelated pool in the same candidate is still judged on its own merits" \
+  "200.150.9.32/28" "$UNNCK"
+
+# The half of the check that was right all along, and had to survive.
+NORAS=$($HX -c "configure" -c "router bgp 65000" \
+        -c "neighbor 10.0.0.77 description sem-as" \
+        -c "exit" -c "commit check" 2>&1)
+printf '%s\n' "$NORAS" | grep -iE "error" | head -3 | sed 's/^/  /'
+expect_in "a neighbour declared with no remote-as at all is still refused" \
+  "has no 'remote-as'" "$NORAS"
+
+# The name in an unnumbered statement, held to #205's rule.
+BADIF=$($HX -c "configure" -c "router bgp 65000" \
+        -c "neighbor vppwan99 interface remote-as external" \
+        -c "exit" -c "commit check" 2>&1)
+printf '%s\n' "$BADIF" | grep -iE "error" | head -3 | sed 's/^/  /'
+expect_in "an unnumbered session on an interface the box has not got is refused" \
+  "no interface vppwan99" "$BADIF"
+
+# The dataplane's end of the linux_cp pair: FRR accepts it and peers with
+# nothing. Said, not refused - the operator cannot get the other name from
+# anything `show interface` prints.
+DPIF=$($HX -c "configure" -c "router bgp 65000" \
+       -c "neighbor host-veth2-vpp interface remote-as external" \
+       -c "exit" -c "commit check" 2>&1)
+printf '%s\n' "$DPIF" | grep -i "warning" | head -3 | sed 's/^/  /'
+expect_in "the dataplane's name for the pair is warned about" \
+  "FRR knows this interface as vppwan1" "$DPIF"
+expect_in "and the commit is not refused for it" "configuration check succeeds" "$DPIF"
+
+# A policy list that is not defined yet: said, and NOT a refusal any more.
+LATE=$($HX -c "configure" -c "route-map RM-FUT permit 10" \
+       -c "match community CM-FUTURA" -c "exit" -c "commit check" 2>&1)
+printf '%s\n' "$LATE" | grep -i "warning" | head -3 | sed 's/^/  /'
+expect_in "a list that is not defined yet is reported" \
+  "no community list called 'CM-FUTURA'" "$LATE"
+expect_in "and reported as a state rather than a fault" "until one is" "$LATE"
+expect_in "and does not fail the commit, because FRR binds it later" \
+  "configuration check succeeds" "$LATE"
+
+# The clause inserted in front of a catch-all, which is what seq is for.
+SEQ=$($HX -c "configure" -c "route-map RM-SEQ permit 20" -c "exit" \
+      -c "route-map RM-SEQ permit 10" -c "match as-path RX1" -c "exit" \
+      -c "commit check" 2>&1)
+printf '%s\n' "$SEQ" | grep -i "warning" | head -4 | sed 's/^/  /'
+expect_not_in "a low-seq clause inserted after a catch-all is not called unreachable" \
+  "unreachable" "$SEQ"
 
 verdict

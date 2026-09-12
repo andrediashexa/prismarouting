@@ -1938,7 +1938,9 @@ Structural only. Whether the neighbour *answers* is not in the configuration
 and is not claimed.
 
 * **A neighbour with no `remote-as`.** FRR refuses every other statement for a
-  neighbour whose AS it has not been told.
+  neighbour whose AS it has not been told — except in the unnumbered form,
+  which it accepts and leaves Idle at AS 0 forever. Measured on 10.7.1; both
+  are refused here, and the message says which of the two it is.
 * **A peer group nobody declared.** `neighbor X peer-group PG` where `PG` was
   never created by `neighbor PG peer-group`.
 * **A member whose group has no AS either.** A member inherits `remote-as` from
@@ -1947,6 +1949,49 @@ and is not claimed.
 * **`update-source` naming an interface this box does not have.** FRR accepts
   it, the session sources from nothing and never comes up, and the
   configuration reads correctly.
+* **An unnumbered neighbour on an interface this box does not have.** The same
+  fault through the other door. FRR accepts `neighbor nosuchif0 interface
+  remote-as external`, lists the peer in `show bgp summary`, and never
+  mentions the missing interface again.
+
+### BGP unnumbered
+
+```
+neighbor vppwan0 interface remote-as external
+neighbor vppwan0 interface peer-group UPLINKS
+```
+
+eBGP to a directly connected peer with no address on the link, which is the
+ordinary way to build a fabric or a simple handoff without spending a /30 per
+link. The neighbour is an **interface name**, `remote-as` is a later word on
+the same line rather than a statement of its own, and `external` and
+`internal` are values as legitimate as a number.
+
+Read positionally, all of that was "a neighbour with no AS", so the statement
+could not be typed — and because a refusal fails the candidate **whole**, a
+CGNAT or interface change in the same commit was refused with it. That is the
+worst shape a false positive can take, and it is what #208 was filed for.
+
+The interface name is held to the rule #205 established for `passive-interface`:
+it is an FRR statement, so the name must be a spelling FRR can act on. A
+linux_cp pair answers to several names and only its Linux end is a netdev FRR
+has; naming the dataplane's end is **warned about, not refused**, because that
+name is the one `show interface` reports and the operator cannot get the other
+one from anything this VTY prints. `frr_acts_on()` is shared with
+`ospf_findings()` rather than copied, which is how two answers to one question
+start to drift.
+
+**The session does not come up yet, and the reason is not here.** Measured on
+`lab/routing.sh`'s pair with tcpdump on both ends: our Router Advertisements
+cross VPP and reach the wire, so the far end learns this box and goes to
+Active — and the far end's advertisements reach the wire and never reach the
+TAP. `show ip6 mfib` says why: `ff02::1/128` is a receive-only entry with no
+path to the pair's TAP, and linux_cp puts nothing on the `ip6-multicast` arc
+to punt it with. FRR learns an unnumbered peer's address from that
+advertisement and from nothing else, so bgpd sits at Idle with "remote AS 0".
+That is an IPv6 multicast punt gap over linux_cp — the same shape as #168 —
+and it is a separate defect from the parser one, filed rather than papered
+over with a `vppctl` line in the lab.
 
 ### The password
 
@@ -2329,14 +2374,23 @@ only one of them is about the regex.
 ### A name nothing defines
 
 ```
-error: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
-defined; the clause would match nothing
+warning: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
+defined; until one is, the clause matches nothing
 ```
 
-Same failure as the undefined route-map: it commits, the policy reads
-correctly, and the clause matches nothing forever. FRR does not refuse it, so
-the VTY does. Both spellings of a community list — `bgp community-list standard
-NAME` and `bgp community-list NAME` — count as defining it.
+**Reported, not refused** — a change from what this did, and the argument is
+the one `rpki_findings` already makes in its own docstring. Measured on FRR
+10.7.1: the clause is accepted, stored, and **bound when the list arrives**,
+with nothing retyped. So building a policy map-first and lists-second is a
+correct order of work, and refusing it took every unrelated change in the same
+commit down with it.
+
+What is left is the true positive: a list name with a typo in it matches
+nothing forever, and nothing else on the box ever mentions it. Both spellings
+of a community list — `bgp community-list standard NAME` and `bgp
+community-list NAME` — count as defining it. The legacy `ip community-list` and
+`ip as-path access-list` spellings do **not**, and do not need to: FRR 10.7.1
+answers both with "Unknown command", measured in `lab/bgp-policy.sh`.
 
 ### How it is tested
 
@@ -2391,6 +2445,20 @@ unfinished
 **A clause an earlier catch-all makes unreachable is reported.** Sequence
 numbers are the operator's and this MUST NOT renumber them, but a policy that
 looks right and does nothing is worth a sentence.
+
+"Earlier" means **earlier by `seq`**, which is the only order FRR has —
+measured: `route-map ORD permit 20` typed first and `permit 10` second, and
+FRR's own `show route-map` lists 10 before 20. Reading the written order
+called the inserted clause unreachable, and inserting a low-seq clause in
+front of a catch-all is what sequence numbers are *for*.
+
+`on-match next`, `on-match goto` and the `continue` an operator types for the
+second were parsed and then ignored, so one of them poisoned the verdict on
+every later clause. A route-map containing one gets **no** reachability claim
+at all: where the reading goes next depends on whether the clause matched,
+which is not in the configuration. `continue` was also not a word the parser
+knew, so it ended the clause — and a `deny` clause carrying a `set` after one
+was not refused.
 
 ### What was not checked is marked
 
