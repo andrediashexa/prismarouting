@@ -38,6 +38,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 	@echo
 	@python3 test/test_hexash_perms.py
 	@echo
+	@python3 test/test_hexash_igp.py
+	@echo
 	@sh test/test_hexash_login.sh
 	@echo
 	@sh test/test_selftest.sh

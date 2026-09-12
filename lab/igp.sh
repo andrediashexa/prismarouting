@@ -256,6 +256,37 @@ expect "with the TAP at $(tap_mtu) and the wire at 1500 the adjacency never reac
 expect "and the OSPF prefix is NOT in the VPP FIB" \
   sh -c "! vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24'"
 
+# --- what the BOX says about the stall it is sitting in -----------------------
+#
+# FRR is not wrong above: the adjacency really is in Exchange. What FRR does
+# not say - anywhere, in any command - is why, and the reason is the shape of
+# this box. ospfd sees the TAP and puts the TAP's MTU in its Database
+# Description packets while the wire runs at 1500, the far end drops them, and
+# neither side logs a word. #176 is that screen.
+echo "  --- show ospf neighbor, with the MTUs apart ---"
+OSPFSTALL=$($HX -c "show ospf neighbor" 2>&1)
+printf '%s\n' "$OSPFSTALL" | sed 's/^/    /'
+expect_in "the VTY reports the state FRR reports" "Exchange" "$OSPFSTALL"
+expect_in "and names what this end is advertising, which FRR never mentions" \
+  "which is where the two ends compare MTU; this end advertises $(tap_mtu)" \
+  "$OSPFSTALL"
+expect_in "and that neither side will log it" \
+  "neither side logs a word about it" "$OSPFSTALL"
+# The contrast that makes the point, asserted rather than asserted about: FRR's
+# own answer to the same question contains no mention of MTU at all.
+expect_not_in "while FRR's own answer says nothing about MTU" \
+  "MTU" "$(vtysh -c 'show ip ospf neighbor' 2>&1)"
+
+echo "  --- show ospf interface ---"
+OSPFIF=$($HX -c "show ospf interface" 2>&1)
+printf '%s\n' "$OSPFIF" | sed 's/^/    /'
+# Read as FIELDS of the vppwan0 row. "9000 appears in the output" is satisfied
+# by the header, by a counter, and by the other MTU on the same line.
+OSPFIF_ROW=$(printf '%s\n' "$OSPFIF" | awk '$1 == "vppwan0" {print $(NF-2), $(NF-1), $NF}')
+echo "    vppwan0 row, last three fields: $OSPFIF_ROW"
+expect "the two MTUs are on one screen with the dataplane's own name" \
+  test "$OSPFIF_ROW" = "$(tap_mtu) $(mtu_of) (host-veth-vpp)"
+
 echo "=========== the MTU aligned, through the VTY ==========="
 MTUFIX=$($HX -c "configure" -c "interface host-veth-vpp" -c "mtu 1500" \
          -c "exit" -c "commit" 2>&1)
@@ -284,6 +315,21 @@ until in_fib 198.18.0.0/24 || [ "$n" -ge 90 ]; do sleep 1; n=$((n + 1)); done
 echo "  --- 198.18.0.0/24 in the VPP FIB, raw ---"
 vppctl show ip fib 198.18.0.0/24 | sed 's/^/    /'
 expect "the OSPF prefix reached the VPP FIB (${n}s)" in_fib 198.18.0.0/24
+
+# The same screen on a box where nothing is wrong. Without this half, every
+# assertion above is also satisfied by a command that prints the stall
+# unconditionally.
+OSPFOK=$($HX -c "show ospf neighbor" 2>&1)
+printf '%s\n' "$OSPFOK" | sed 's/^/    /'
+expect_in "the adjacency is reported Full" "Full" "$OSPFOK"
+expect_not_in "and nothing is said about an MTU stall that is not happening" \
+  "compare MTU" "$OSPFOK"
+# The number #148 put on `show bgp summary`, for an IGP: FRR holding the route
+# and the box forwarding on it are two claims, and this is the second one.
+expect_in "and it says the OSPF prefix reached the forwarding table" \
+  "OSPF prefix(es) are in the forwarding table" "$OSPFOK"
+expect_not_in "with nothing missing from it" "NOT in the forwarding table" \
+  "$OSPFOK"
 # The punt is still off. OSPF is carried over IP and needs nothing from
 # linux_cp's OSI handling, so this says the section above proved the MTU and
 # not something else - and it is the precondition the IS-IS section below needs.
@@ -356,6 +402,24 @@ expect "nor is its IPv6 prefix in the IPv6 FIB" \
 # sending.
 expect "the frames reached VPP and were dropped as an unknown OSI protocol" \
   sh -c "vppctl show errors | grep -qi 'unknown osi protocol'"
+
+# --- and the box saying so, which is what #176 is about ----------------------
+#
+# Everything above is this lab reading a VPP error counter. An operator has
+# `show isis neighbor`, which prints a header and no rows, and nothing
+# anywhere that connects the two. This is the box making the connection.
+echo "  --- show isis adjacency, with no punt ---"
+ISISNOPUNT=$($HX -c "show isis adjacency" 2>&1)
+printf '%s\n' "$ISISNOPUNT" | sed 's/^/    /'
+expect_in "the VTY reports the circuit is Up and Active with nobody on it" \
+  "is Up and Active with no adjacency" "$ISISNOPUNT"
+expect_in "and names the punt as the reason" \
+  "NOT punting IS-IS to the kernel" "$ISISNOPUNT"
+expect_in "with the counter that proves the frames were arriving" \
+  "counted in osi-input as an unknown OSI protocol" "$ISISNOPUNT"
+# The contrast: FRR's own answer to the same question is a header and no rows.
+expect_not_in "while FRR's own answer says nothing about a punt" \
+  "punt" "$(vtysh -c 'show isis neighbor' 2>&1)"
 
 # Taken away again, so the commit below is a real change rather than a no-op
 # the VTY would decline to apply. The configuration that goes back is compared
@@ -540,6 +604,187 @@ expect_not_in "and nothing was applied" "commit complete" "$OSPF6"
 expect "while ospfd and isisd, which are running, committed and forward" \
   sh -c "vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24' \
          && vppctl show ip fib 198.19.0.0/24 | grep -q '^198.19.0.0/24'"
+
+# =============================================================================
+# 5. The commands an operator runs while an IGP is wrong (#176)
+# =============================================================================
+#
+# Sections 1 and 2 assert the two screens in the states they exist for - an
+# adjacency that will not finish, and a circuit with nobody on it. This section
+# is the other half of every one of those: the same screens on a box where
+# nothing is wrong. Without it each of those assertions is also satisfied by a
+# command that prints its diagnosis unconditionally.
+#
+# One thing is deliberately NOT staged here. `show ospf neighbor` counts the
+# prefixes FRR holds that the VPP FIB does not, and producing that divergence
+# live means breaking linux_nl: lab/routing.sh records that taking a route out
+# of the FIB by hand does not hold, because linux_nl puts it straight back. The
+# missing-prefix arm is asserted in test/test_hexash_igp.py against a FIB where
+# the fault can be stated exactly; what is asserted here is that a healthy box
+# says so and does not cry wolf.
+echo
+echo "=========== the IS-IS screens on a box that is working ==========="
+ISISADJ=$($HX -c "show isis adjacency" 2>&1)
+printf '%s\n' "$ISISADJ" | sed 's/^/  /'
+# Read as FIELDS of the adjacency's row. The peer's IS-IS hostname is literally
+# "upstream", so any grep for "up" matches the System Id column and passes with
+# the adjacency in Init or Down - which is every state except the one asserted.
+#
+# Keyed on the INTERFACE column and not on the system id, which is what the
+# first version did: isisd prints the raw system id until the hostname TLV has
+# been learned, so `$1 == "upstream"` matched nothing for the first few seconds
+# of every adjacency and the assertion was a race against LSP flooding.
+ADJROW=$(printf '%s\n' "$ISISADJ" | awk '$2 == "vppwan0" {print $3, $4}')
+ADJID=$(printf '%s\n' "$ISISADJ" | awk '$2 == "vppwan0" {print $1}')
+echo "  the adjacency row: id=$ADJID level and state=$ADJROW"
+expect "the adjacency is a row of fields, not a line that mentions the words" \
+  test "$ADJROW" = "L2 Up"
+expect "and it names the system on the other end" test -n "$ADJID"
+expect_in "with the IS-IS prefixes counted against the forwarding table" \
+  "IS-IS prefix(es) are in the forwarding table" "$ISISADJ"
+expect_not_in "and nothing missing from it" "NOT in the forwarding table" \
+  "$ISISADJ"
+expect_not_in "and the punt is not blamed for a silence there is not" \
+  "NOT punting" "$ISISADJ"
+
+ISISIF=$($HX -c "show isis interface" 2>&1)
+printf '%s\n' "$ISISIF" | sed 's/^/  /'
+IFROW=$(printf '%s\n' "$ISISIF" | awk '$1 == "vppwan0" {print $4, $NF}')
+echo "  the circuit row, state and neighbours: $IFROW"
+expect "show isis interface has the circuit Up with one neighbour on it" \
+  test "$IFROW" = "Up 1"
+
+echo
+echo "=========== clear, asserted by what it does ==========="
+# Never by what it prints. A `clear` that printed "cleared" and did nothing
+# would pass any assertion about its output, and it is the one command an
+# operator runs precisely because they want something to happen.
+#
+# The adjacency has to be GONE the moment the command returns, and back on its
+# own afterwards. Both halves: an adjacency that never went down is a `clear`
+# that did nothing, and one that never came back is a lab that broke the box.
+#
+# Not the flap counter, which was the first attempt and does not work: isisd
+# deletes the adjacency and builds a new one, and the new one starts at 1 - the
+# same number the old one was showing. A counter that reads the same either way
+# is not evidence.
+expect "the adjacency is up before it is cleared" isis_up
+CLEARISIS=$($HX -c "clear isis adjacency" 2>&1)
+DOWN_NOW=$(isis_state)
+printf '%s\n' "$CLEARISIS" | sed 's/^/  /'
+echo "  the adjacency immediately after the clear: ${DOWN_NOW:-gone}"
+# Nothing races this: the hello interval is 3 seconds, so the earliest the
+# adjacency can be back is three seconds after the command returned.
+expect "clearing it took the adjacency down there and then" test -z "$DOWN_NOW"
+n=0
+until isis_up || [ "$n" -ge 90 ]; do sleep 1; n=$((n + 1)); done
+echo "  and back up after ${n}s"
+expect "and it came back on its own" isis_up
+
+ospf_uptime_ms() {
+  vtysh -c 'show ip ospf neighbor json' 2>/dev/null \
+    | tr ',' '\n' | awk -F: '/upTimeInMsec/ {gsub(/[^0-9]/,"",$2); print $2; exit}'
+}
+expect "the OSPF adjacency is Full before the process is cleared" ospf_full
+UP_BEFORE=$(ospf_uptime_ms)
+CLEAROSPF=$($HX -c "clear ospf process" 2>&1)
+OSPF_NOW=$(ospf_state)
+printf '%s\n' "$CLEAROSPF" | sed 's/^/  /'
+echo "  the adjacency immediately after the clear: ${OSPF_NOW:-gone}"
+expect "clearing the process took the adjacency out of Full there and then" \
+  sh -c "[ \"$OSPF_NOW\" != \"Full/DR\" ] && [ \"$OSPF_NOW\" != \"Full/Backup\" ]"
+n=0
+until ospf_full || [ "$n" -ge 120 ]; do sleep 1; n=$((n + 1)); done
+UP_AFTER=$(ospf_uptime_ms)
+echo "  adjacency uptime: ${UP_BEFORE}ms -> ${UP_AFTER}ms, Full again after ${n}s"
+expect "and it reached Full again" ospf_full
+# The uptime is the time since it reached Full, so it cannot be larger after a
+# process that was torn down and rebuilt than it was before.
+expect "on a process that really was rebuilt" \
+  test "${UP_AFTER:-0}" -lt "${UP_BEFORE:-0}"
+
+echo
+echo "=========== set-overload-bit, by its effect on the neighbour ==========="
+# Asserted where it has to be true - in the NEIGHBOUR's copy of this box's LSP
+# - and never by the configuration containing the words (#176). ATT/P/OL is the
+# last column of the database listing and OL is the third of the three.
+# Matched on either name this box's LSP can appear under: isisd prints the raw
+# system id until it has learned the hostname TLV, and the system id is the one
+# this lab put there - `net 49.0001.0000.0000.0001.00`.
+peer_ol() {
+  ip netns exec peer vtysh -N peer -c 'show isis database' 2>/dev/null \
+    | awk '$1 == "hexarouting.00-00" || $1 == "0000.0000.0001.00-00" \
+           {print $NF; exit}'
+}
+echo "  the neighbour's copy of this box's LSP, before: $(peer_ol)"
+expect "the neighbour does not see this box as overloaded yet" \
+  test "$(peer_ol)" = "0/0/0"
+OL=$($HX -c "configure" -c "router isis HEXA" -c "set-overload-bit" \
+     -c "exit" -c "commit" 2>&1)
+printf '%s\n' "$OL" | tail -2 | sed 's/^/  /'
+expect_in "the VTY commits it" "commit complete" "$OL"
+n=0
+until [ "$(peer_ol)" = "0/0/1" ] || [ "$n" -ge 90 ]; do sleep 1; n=$((n + 1)); done
+echo "  after (${n}s): $(peer_ol)"
+expect "the NEIGHBOUR sees this box as overloaded" test "$(peer_ol)" = "0/0/1"
+OLSHOW=$($HX -c "show isis adjacency" 2>&1)
+printf '%s\n' "$OLSHOW" | sed 's/^/  /'
+expect_in "and the box says so on the screen an operator is already looking at" \
+  "overload bit set" "$OLSHOW"
+
+# Off again. A maintenance drain that cannot be switched back is not one, and
+# the box must stop saying it the moment the LSP stops carrying it.
+$HX -c "configure" -c "router isis HEXA" -c "no set-overload-bit" \
+    -c "exit" -c "commit" > /tmp/ol-off.log 2>&1
+tail -2 /tmp/ol-off.log | sed 's/^/  commit: /'
+n=0
+until [ "$(peer_ol)" = "0/0/0" ] || [ "$n" -ge 90 ]; do sleep 1; n=$((n + 1)); done
+echo "  after taking it off (${n}s): $(peer_ol)"
+expect "taking it off reaches the neighbour too" test "$(peer_ol)" = "0/0/0"
+expect_not_in "and the box stops saying it" "overload bit set" \
+  "$($HX -c 'show isis adjacency' 2>&1)"
+
+echo
+echo "=========== the MTU this box's two halves disagree about ==========="
+# The other MTU fault, and a different one from section 1. There the two ends
+# of the WIRE disagreed; here the two halves of THIS BOX do - the dataplane and
+# its TAP - which is what the check at commit time has always been about.
+#
+# It has to be staged, and the way it is staged is recorded because it took a
+# while to find (lab/routing.sh, same section): lcp-sync mirrors VPP's MTU onto
+# the TAP, so the two are equal on a box nobody has interfered with, and `mtu`
+# at this VTY sets both halves on purpose. Setting the Linux side propagates
+# back into VPP even with lcp-sync off. Only vppctl, with lcp-sync off, pulls
+# them apart - which also takes the OSPF adjacency down, so this is last.
+vppctl lcp lcp-sync off
+THERE=$(tap_mtu)
+vppctl set interface mtu packet 1400 host-veth-vpp
+HERE=$(mtu_of)
+echo "  the dataplane is at $HERE, its Linux side at $THERE"
+expect "the two halves really do disagree, or the rest of this proves nothing" \
+  sh -c "[ \"$HERE\" != \"$THERE\" ]"
+SPLITIF=$($HX -c "show ospf interface" 2>&1)
+printf '%s\n' "$SPLITIF" | sed 's/^/  /'
+SPLITROW=$(printf '%s\n' "$SPLITIF" | awk '$1 == "vppwan0" {print $(NF-2), $(NF-1), $NF}')
+echo "  the vppwan0 row, last three fields: $SPLITROW"
+expect "show ospf interface has what OSPF believes and what the dataplane has" \
+  test "$SPLITROW" = "$THERE $HERE (host-veth-vpp)"
+# The same sentence the commit check prints, from the same place, because two
+# diagnoses of one fact that disagree are worse than one.
+expect_in "and the stall is named in the words commit already used" \
+  "carries OSPF and its MTU is $HERE while its Linux side vppwan0 is at $THERE" \
+  "$SPLITIF"
+MTUWARN=$($HX -c "configure" -c "router static" \
+          -c "route 10.77.0.0/16 blackhole" -c "commit check" 2>&1)
+expect_in "which is the sentence commit check prints, word for word" \
+  "carries OSPF and its MTU is $HERE while its Linux side vppwan0 is at $THERE" \
+  "$MTUWARN"
+# Put them back the same and it must go quiet, or the sentence is
+# unconditional and says nothing.
+vppctl set interface mtu packet "$THERE" host-veth-vpp
+vppctl lcp lcp-sync on
+expect_not_in "and it is silent once the two halves agree again" \
+  "carries OSPF and its MTU is" "$($HX -c 'show ospf interface' 2>&1)"
 
 echo
 echo "=========== adjacencias ==========="
