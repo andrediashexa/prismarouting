@@ -270,6 +270,7 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
     {
       bpa_subblock_t *sb = vec_elt_at_index (sub->blocks, blk_idx);
       bpa_session_t *s0, *s1;
+      u32 i0, i1;
       int off;
 
       if (sb->blk.ip_pub != want_ip_pub)
@@ -279,11 +280,40 @@ bpa_alg_reserve_pair (bpa_per_thread_t *pt, const bpa_pool_t *p,
       if (off < 0)
 	continue;
 
+      /*
+       * INDICES, not pointers, across the second bind.
+       *
+       * bpa_session_bind() ends in pool_get_zero(), which may grow the session
+       * vector and move every element of it. So the pointer the FIRST bind
+       * returned is dangling the moment the second one reallocates - and the
+       * two writes below used it. One of the pair silently kept is_expect = 0,
+       * sat on the UDP timeout instead of the two-second alg-expect timer, and
+       * an announced media port nobody used was held for hours; the write
+       * itself landed in memory the allocator had already given back.
+       *
+       * Intermittent by nature - it needs the second bind to cross a growth
+       * boundary - which is what made it look like a loaded runner: two runs
+       * in three failed. lab/rtsp.sh sees it as "2 left" where 1 is right.
+       *
+       * bpa_ftp.c learned this in its own words - "Installing the expectation
+       * allocates from the session pool, which may move it. Everything below -
+       * including the caller's own pointer - has to come from the index, not
+       * from the pointer we walked in with." The same sentence belongs here.
+       */
       s0 = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx, (u16) off,
 			     priv_lo, proto, fib, now);
+      i0 = s0 ? (u32) (s0 - pt->sessions) : ~0u;
       s1 = bpa_session_bind (pt, p, pool_index, sub, sb, blk_idx,
 			     (u16) (off + 1), (u16) (priv_lo + 1), proto, fib,
 			     now);
+      i1 = s1 ? (u32) (s1 - pt->sessions) : ~0u;
+
+      /* Both re-resolved before either is touched, including on the error
+       * path: handing a moved pointer to bpa_session_free() frees whatever
+       * occupies that slot now. */
+      s0 = (i0 != ~0u) ? pool_elt_at_index (pt->sessions, i0) : 0;
+      s1 = (i1 != ~0u) ? pool_elt_at_index (pt->sessions, i1) : 0;
+
       if (s0 == 0 || s1 == 0)
 	{
 	  /* Only reachable when the subscriber index stopped resolving, which

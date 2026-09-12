@@ -42,9 +42,31 @@ Um registro por **alocação de bloco** (RFC 8158) — não por fluxo. É a dife
 configure
  nat cgnat logging enable                        exportação por UDP
  nat cgnat logging tcp <coletor> [port <n>]      exportação por TCP
- nat cgnat logging disable                       desliga
+ nat cgnat logging tcp disable                   desliga o transporte TCP
+ nat cgnat logging disable                       desliga a exportação
  commit
 ```
+
+:::warning
+**`nat cgnat logging enable` — a exportação por UDP — é recusada nesta
+appliance.**
+
+O exportador IPFIX do dataplane precisa saber para qual coletor enviar, e não
+há comando na VTY que diga isso. Sem esse destino, a caixa recusa:
+
+```
+error: cgnat logging enable: the dataplane refused it: invalid value
+(no IPFIX collector configured)
+```
+
+A recusa sempre existiu; o que mudou é que ela agora é dita. Antes, o `commit`
+respondia `commit complete` e a caixa não exportava nada — uma operação que
+achava estar guardando registros de retenção legal e não estava.
+
+**Use `nat cgnat logging tcp <coletor>`.** O destino viaja no próprio comando,
+volta em `show running-config` e sobrevive a um `save` e a uma recarga — e é o
+transporte que o produto verifica derrubando o coletor.
+:::
 
 ```
 show cgnat logging       estado da exportação

@@ -463,6 +463,93 @@ AFTER_ROUTE=$(printf '%s\n' "$THIS_AFTER" | grep -x " route 198.18.0.0/24 10.0.0
 echo "    mid-edit line: '${MID_ROUTE:-<nothing>}'"
 echo "    after commit:  '${AFTER_ROUTE:-<nothing>}'"
 
+echo
+echo "=========== every configuration change goes over the binary API (#76) ==========="
+# The acceptance criterion of #76, made checkable rather than believed: drive a
+# commit that changes a representative piece of everything this box holds, and
+# assert that nothing MUTATING went down the VPP CLI socket. An account that
+# reaches that socket can run `bpa pool <name> del` and disconnect every
+# subscriber behind it, so one write left on it is the whole boundary.
+#
+# What this does NOT assert, and must not be read as: that the control plane
+# can no longer hurt the dataplane. #172 is explicit that #76 is an AUTHORITY
+# boundary - who may do what - and not an availability one. Every change below
+# is still reachable over the binary API, and moving a write there decides who
+# gets to make it, not what it costs when it is made.
+#
+# The rule is written as a list of what a commit is ALLOWED to send, which is
+# the form lab/commit.sh settled on for `commit check` and for the same
+# reason: an assertion that names the forbidden commands stops testing the
+# moment one of them changes shape. That is not hypothetical here. The
+# `commit check` assertion existed, passed, and never looked at a real commit
+# at all - so `bpa logging tcp` sat on the socket while the criterion read as
+# met, and no lab was looking where it would have shown up.
+#
+# `cgnat logging enable` is in the list on purpose and is REFUSED here, by a
+# box in the state the product ships: VPP's UDP exporter needs a collector set
+# with `set ipfix exporter`, which nothing in this product configures and no
+# VTY statement reaches. Nothing below arranges it - a lab that configures the
+# box under test cannot notice the box failing to configure itself, which is
+# the shape of #184 and the reason this section drives the appliance as it is.
+#
+# The refusal is asserted instead, because it is the second half of what this
+# change fixed: `self.dp.run()` returned a status the caller discarded, so the
+# operator read "commit complete" off a box that exports nothing.
+API_TRACE=$(HEXA_TRACE=1 $HX -c "configure" \
+    -c "cgnat pool provider-a" \
+    -c "max-sessions 2000" \
+    -c "bypass destination 198.51.100.0/24" \
+    -c "exit" \
+    -c "cgnat pool trace-only" \
+    -c "inside 100.65.0.0/22" \
+    -c "outside 45.170.17.0/26" \
+    -c "exit" \
+    -c "cgnat interface host-veth-vpp outside" \
+    -c "cgnat timeout icmp 90" \
+    -c "cgnat block-holddown 11" \
+    -c "cgnat logging enable" \
+    -c "cgnat logging tcp 10.0.0.2 port 4740" \
+    -c "interface pg0" \
+    -c "mtu 1480" \
+    -c "urpf strict" \
+    -c "exit" \
+    -c "commit" 2>&1 >/tmp/trace-commit.out)
+COMMIT_OUT=$(cat /tmp/trace-commit.out)
+sed 's/^/  /' /tmp/trace-commit.out
+echo "  -- what this commit sent down the CLI socket:"
+printf '%s\n' "$API_TRACE" | grep "^\[device\] " | sort -u | sed 's/^/    /'
+# Every [device] line that is neither a read nor a check. `bpa pool ... check`
+# and `bpa forward ... check` are the commit-check path, which #76 lists as
+# still on the socket and #3 records as having no API message of its own; they
+# are read-only, and the labs that exist say so.
+CLI_WRITES=$(printf '%s\n' "$API_TRACE" \
+  | grep "^\[device\] " \
+  | grep -vE "^\[device\] show " \
+  | grep -vE "^\[device\] bpa (pool|forward) .* check$")
+# A commit that changed nothing sends nothing and would satisfy the rule
+# above without testing it, so what the commit DID is asserted beside it - by
+# name, from the trace, and read back off the box afterwards.
+TRACE_WRITES=$(printf '%s\n' "$API_TRACE" | grep -c "^\[api\] bpa_")
+TRACE_MSGS=$(printf '%s\n' "$API_TRACE" | sed -n 's/^\[api\] \([a-z0-9_]*\) .*/\1/p' \
+             | sort -u | tr '\n' ' ')
+echo "  -- and over the binary API: $TRACE_MSGS"
+BPA_CONFIG_AFTER=$(vppctl show bpa config | tr -d '\r')
+
+# The other half of the criterion: the passthrough that stays is READ-ONLY.
+# `show cgnat subscriber <x>` forwards its argument to the socket untouched -
+# it is the ONE place an operator's own text reaches that socket, and the
+# read-only role has it - so the argument has to stay an argument and must
+# never become a second command. Probed with both separators that would make
+# it one, against a pool that is carrying the answer.
+NL='
+'
+$HX -c "show cgnat subscriber 1.2.3.4; vppctl bpa pool trace-only del" \
+  >/dev/null 2>&1
+$HX -c "show cgnat subscriber 1.2.3.4${NL}bpa pool trace-only del" \
+  >/dev/null 2>&1
+INJECT_SURVIVED=$(vppctl show bpa pool | grep -c "trace-only")
+echo "  -- pool rows after two show arguments that try to be a command: $INJECT_SURVIVED"
+
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 R=$($HX -c "show running-config" 2>/dev/null)
@@ -964,5 +1051,44 @@ expect "and its static route still reaches FRR" \
 expect_in "the box writes CGNAT under nat" "nat cgnat pool provider-a" "$NEW_TEXT"
 expect_in "and static routes as a block under router" "router static" "$NEW_TEXT"
 expect "a box can read back the file it just wrote" sh -c "[ \"$ROUND\" -ge 1 ]"
+
+# --- issue #76: the CLI socket carries reads, and nothing else ---
+#
+# Stated as "what came back is empty", with the offending lines printed: a
+# count would say how many and not which, and the which is the whole
+# diagnosis. The commit that produced this trace is above; it changes a pool,
+# a pool setting, a bypass list, an interface attachment, two global
+# settings, the IPFIX collector, an MTU and a uRPF mode, and asks for an
+# export state the box refuses.
+echo "  CLI writes during that commit: ${CLI_WRITES:-<none>}"
+expect "a commit sends no mutating command down the VPP CLI socket" \
+  test -z "${CLI_WRITES:-}"
+expect "which is only worth asserting if the commit changed something" \
+  sh -c "[ \"${TRACE_WRITES:-0}\" -ge 5 ]"
+# By name, because "five bpa_ calls happened" is satisfied by five of the same
+# one. These three are the settings that used to be unreachable without the
+# socket, and the last is the one #172 found still on it.
+expect_in "the pool went over the API" "bpa_pool_add_del" "$TRACE_MSGS"
+expect_in "the global settings did" "bpa_global_set" "$TRACE_MSGS"
+expect_in "the interface attachment did" "bpa_interface_add_del_feature" \
+  "$TRACE_MSGS"
+expect_in "and so did the IPFIX export, which did not before (#172)" \
+  "bpa_logging_set" "$TRACE_MSGS"
+# Read back off the dataplane, not off the trace: a message that was sent and
+# ignored leaves the same trace line as one that was applied, and the old CLI
+# path threw the answer away for exactly that reason.
+# The refusal the CLI path swallowed. Asserted on the REASON and not only on
+# the word "error": a commit that failed for some other cause prints one too.
+expect_in "a refused export state now reaches the operator" \
+  "no IPFIX collector configured" "$COMMIT_OUT"
+expect_in "and its collector with it" "cgnat logging tcp 10.0.0.2 port 4740" \
+  "$BPA_CONFIG_AFTER"
+expect_in "and the global setting that travelled beside them" \
+  "cgnat block-holddown 11" "$BPA_CONFIG_AFTER"
+# The pool the two probes above asked the box to delete. Asserted on the POOL
+# and not on what the VTY printed: a refusal message is this VTY's own
+# sentence, and the question is what the dataplane did.
+expect "a show argument cannot become a second command" \
+  sh -c "[ \"${INJECT_SURVIVED:-0}\" -ge 1 ]"
 
 verdict

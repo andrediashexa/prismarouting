@@ -11,8 +11,17 @@ bytes on the wire settle both.
 
 Prints one line per packet, meant to be read by the shell:
 
-  esp <src> <dst> <spi> <seq> <payload sha-ish> <ipcsum>
-  udp <src> <dst> <sport> <dport> <ipcsum>
+  esp  <src> <dst> <spi> <seq> <payload sha-ish> <ipcsum>
+  udp  <src> <dst> <sport> <dport> <ipcsum>
+  icmp <src> <dst> <inner-src> <inner-dst> <ipcsum> <icmpcsum>
+
+The icmp line carries the EMBEDDED addresses because that is the half that
+has to be translated: a subscriber's stack matches an ICMP error against its
+own socket by the packet quoted inside it, so an error delivered to the right
+host still tells it nothing if the embedded header still names the public
+address. And <icmpcsum>, because the ICMP checksum covers the whole embedded
+packet - rewriting an address in there without it is a packet the subscriber's
+kernel drops without a word.
 
 <ipcsum> is "ok" or "BAD". A translated packet whose IP checksum no longer
 covers it is dropped by the first router that looks at it, and this box's own
@@ -75,3 +84,9 @@ for raw in pkts:
     elif proto == 17 and len(l4) >= 8:
         sport, dport = struct.unpack("!HH", l4[0:4])
         print(f"udp {src} {dst} {sport} {dport} {ck}")
+    elif proto == 1 and len(l4) >= 8 + 20:
+        icmp_ck = "ok" if csum(l4) == 0 else "BAD"
+        inner = l4[8:]
+        isrc = str(ipaddress.IPv4Address(inner[12:16]))
+        idst = str(ipaddress.IPv4Address(inner[16:20]))
+        print(f"icmp {src} {dst} {isrc} {idst} {ck} {icmp_ck}")

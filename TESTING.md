@@ -58,7 +58,8 @@ against `ref/bpa_model.py`, which is the executable specification: any
 divergence **MUST** break the build.
 
 Catches: mapping arithmetic, block collisions, port allocator behaviour,
-consecutive even-aligned media port pairs, the RTSP parser's refusals,
+consecutive even-aligned media port pairs, the RTSP and SIP parsers'
+refusals and the SIP multi-edit arithmetic,
 `isolcpus` and hugepage computation, command-tree completion, and every answer
 the installer must refuse — each of those is a disk that has to stay untouched,
 and reaching one in a virtual machine costs a whole boot cycle.
@@ -150,6 +151,8 @@ sh tools/lab.sh icmp-tcp       # ICMP errors (PMTUD) and TCP state
 sh tools/lab.sh ftp-alg        # FTP ALG: payload rewrite and sequence shift
 sh tools/lab.sh ftp-alg off    # the same lab with the ALG off: MUST fail
 sh tools/lab.sh rtsp           # the RTSP ALG, asserted on the captured packet
+sh tools/lab.sh sip            # the SIP ALG over UDP: Via, Contact, SDP, RTP pair
+sh tools/lab.sh sip off        # the same lab with the ALG off: MUST fail
 sh tools/lab.sh hairpin        # one subscriber reaching another (RFC 4787 REQ-9)
 sh tools/lab.sh nat-behaviour  # RFC 4787 mapping and filtering
 sh tools/lab.sh extblocks      # a second block for a subscriber that fills one
@@ -186,6 +189,7 @@ The most instructive to run:
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
 | `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch twelve assertions drop |
 | `rtsp` | Reads the rewritten `Transport:` header out of the wire, and `BPA_RTSP_OFF=1 sh tools/lab.sh rtsp` drops 11 of its 18 assertions |
+| `sip` | Reads every rewritten field off the wire, and every field that must **not** have moved byte for byte against the payload as it was injected. `sh tools/lab.sh sip off` drops exactly 7 of its 18 assertions, and the lab header names which |
 | `pptp` | Two subscribers choose the same Call ID and both tunnels work |
 | `esp` | Two subscribers share one public address and each keeps its own IPsec tunnel — and the SPI is asserted **unchanged**, because rewriting it is the failure. `sh tools/lab.sh esp off` drops 21 of its 27 assertions |
 | `vty-pool` | Sets a pool setting with `vppctl`, commits something unrelated through the VTY, and proves the first one survived |

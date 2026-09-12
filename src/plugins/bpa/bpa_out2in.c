@@ -96,7 +96,7 @@ typedef enum
  */
 static_always_inline int
 bpa_icmp_error_out2in (ip4_header_t *ip, const bpa_icmp_err_t *e,
-		       bpa_per_thread_t *pt, u32 *ip_priv_out)
+		       bpa_per_thread_t *pt, u32 *ip_priv_out, u32 *fib_out)
 {
   clib_bihash_kv_16_8_t kv, value;
   bpa_session_t *s;
@@ -107,22 +107,49 @@ bpa_icmp_error_out2in (ip4_header_t *ip, const bpa_icmp_err_t *e,
   ip_csum_t sum;
   int inner_proto = bpa_proto_of (e->ip_proto);
   u16 old_port;
-  u32 old_addr;
+  u32 old_addr, ip_priv, new_port = 0;
 
-  bpa_key_out (&kv, e->pub_addr, e->pub_port, (u8) inner_proto);
-  if (PREDICT_FALSE (clib_bihash_search_16_8 (&pt->out2in, &kv, &value)))
-    return -1;
+  if (e->ip_proto == IP_PROTOCOL_IPSEC_ESP)
+    {
+      /*
+       * The tunnel this error is about, out of the table that is global for
+       * the reason bpa_esp.h gives - and being global is what makes it
+       * reachable here, on whatever worker the error arrived on, with no
+       * steer to arrange. The ordinary inbound ESP path a few hundred lines
+       * below resolves the identical key.
+       *
+       * It inherits the ambiguity that path documents, exactly: two
+       * subscribers on one public address with tunnels to the same peer
+       * cannot be told apart, so the second one's PMTUD stays broken. That is
+       * a smaller failure than the one being fixed - the first subscriber's
+       * tunnel black-holed large packets with no signal at all - and it is
+       * the same trade already made for the tunnel itself.
+       */
+      if (PREDICT_FALSE (bpa_esp_lookup (e->pub_addr, e->peer, &ip_priv,
+					 fib_out)))
+	return -1;
+      *ip_priv_out = ip_priv;
+    }
+  else
+    {
+      bpa_key_out (&kv, e->pub_addr, e->pub_port, (u8) inner_proto);
+      if (PREDICT_FALSE (clib_bihash_search_16_8 (&pt->out2in, &kv, &value)))
+	return -1;
 
-  s = pool_elt_at_index (pt->sessions, value.value);
-  *ip_priv_out = s->ip_priv;
+      s = pool_elt_at_index (pt->sessions, value.value);
+      ip_priv = s->ip_priv;
+      new_port = s->port_priv;
+      *ip_priv_out = ip_priv;
+      *fib_out = s->fib_index;
+    }
 
   /* --- outer destination: our public address -> subscriber --- */
   sum = ip->checksum;
   sum = ip_csum_update (sum, ip->dst_address.as_u32,
-			clib_host_to_net_u32 (s->ip_priv), ip4_header_t,
+			clib_host_to_net_u32 (ip_priv), ip4_header_t,
 			dst_address);
   ip->checksum = ip_csum_fold (sum);
-  ip->dst_address.as_u32 = clib_host_to_net_u32 (s->ip_priv);
+  ip->dst_address.as_u32 = clib_host_to_net_u32 (ip_priv);
 
   /* --- embedded source, with the ICMP checksum following all of it --- */
   {
@@ -131,23 +158,31 @@ bpa_icmp_error_out2in (ip4_header_t *ip, const bpa_icmp_err_t *e,
     ip_csum_t inner_sum;
 
     old_addr = inner->src_address.as_u32;
-    old_port = inner_port[0];
 
     inner_sum = inner->checksum;
     inner_sum = ip_csum_update (inner_sum, old_addr,
-				clib_host_to_net_u32 (s->ip_priv),
+				clib_host_to_net_u32 (ip_priv),
 				ip4_header_t, src_address);
     inner->checksum = ip_csum_fold (inner_sum);
-    inner->src_address.as_u32 = clib_host_to_net_u32 (s->ip_priv);
-    inner_port[0] = clib_host_to_net_u16 (s->port_priv);
+    inner->src_address.as_u32 = clib_host_to_net_u32 (ip_priv);
 
     icmp_sum = ip_csum_update (icmp_sum, old_addr,
 			       inner->src_address.as_u32, ip4_header_t,
 			       src_address);
     icmp_sum = ip_csum_update (icmp_sum, old_inner_csum, inner->checksum,
 			       ip4_header_t, checksum);
-    icmp_sum = ip_csum_update (icmp_sum, old_port, inner_port[0],
-			       udp_header_t, src_port);
+
+    /* ESP has no port to put back, and the embedded packet may not even carry
+     * the two bytes one would sit in. Guarded on the pointer the parse handed
+     * over rather than on the protocol, so a protocol added to that switch
+     * without a port cannot reach a write through a null here. */
+    if (inner_port)
+      {
+	old_port = inner_port[0];
+	inner_port[0] = clib_host_to_net_u16 (new_port);
+	icmp_sum = ip_csum_update (icmp_sum, old_port, inner_port[0],
+				   udp_header_t, src_port);
+      }
     icmp->checksum = ip_csum_fold (icmp_sum);
   }
 
@@ -164,7 +199,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_icmp_err = 0, n_seq_adj = 0, n_rtsp = 0;
+  u32 n_translated = 0, n_icmp_err = 0, n_seq_adj = 0, n_rtsp = 0, n_sip = 0;
   u32 n_forwarded = 0, n_mss = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
   u32 n_esp = 0;
@@ -225,11 +260,22 @@ VLIB_NODE_FN (bpa_out2in_node)
 		    node->errors[BPA_OUT2IN_ERROR_ICMP_MALFORMED];
 		  goto trace;
 		}
-	      if (bpa_icmp_error_out2in (ip, &e, pt, &ip_priv))
-		{
-		  b[0]->error = node->errors[BPA_OUT2IN_ERROR_NO_SESSION];
-		  goto trace;
-		}
+	      {
+		u32 err_fib = ~0;
+
+		if (bpa_icmp_error_out2in (ip, &e, pt, &ip_priv, &err_fib))
+		  {
+		    b[0]->error = node->errors[BPA_OUT2IN_ERROR_NO_SESSION];
+		    goto trace;
+		  }
+		/* Into the VRF the subscriber's own traffic came from. The
+		 * outside interface's table has no route to a private
+		 * address, which the ordinary paths both say in their own
+		 * words - and an ICMP error is the one that used to be sent
+		 * on without it. */
+		if (err_fib != ~0u)
+		  vnet_buffer (b[0])->sw_if_index[VLIB_TX] = err_fib;
+	      }
 	      matched = 1;
 	      n_icmp_err++;
 	      bpa_next_after (&next[0], b[0], BPA_OUT2IN_NEXT_LOOKUP);
@@ -442,6 +488,16 @@ VLIB_NODE_FN (bpa_out2in_node)
 		  pool_elt_at_index (bm->pools, pool_index)->alg,
 		  BPA_ALG_PPTP)))
 	    {
+	      /*
+	       * The index, because the ALG may create a GRE session and
+	       * pool_get() moves the whole vector. `s` is a pointer into it
+	       * and everything below this block dereferences it - the VRF, the
+	       * counters, the trace. bpa_ftp.c and bpa_rtsp both re-resolve
+	       * for this reason and say so; PPTP was the one that did not
+	       * (#207).
+	       */
+	      u32 s_index = (u32) (s - pt->sessions);
+
 	      switch (bpa_pptp_in (pt, b[0], tcp, s, now))
 		{
 		case BPA_PPTP_MANGLED:
@@ -456,6 +512,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 		default:
 		  break;
 		}
+	      /* Re-resolved: the ALG may have moved the pool under us. */
+	      s = pool_elt_at_index (pt->sessions, s_index);
 	    }
 	}
 
@@ -526,6 +584,48 @@ VLIB_NODE_FN (bpa_out2in_node)
 					     &s->adj[BPA_DIR_OUT]);
 	}
 
+      /*
+       * SIP ALG, internet -> subscriber: the response, whose topmost Via is
+       * the one this box rewrote on the way out. Left as it arrived, the
+       * phone discards its own answers (RFC 3261 s18.1.2) and every outbound
+       * call rings nowhere.
+       *
+       * Matched on the SOURCE port, or on the subscriber's own private port -
+       * never on udp->dst_port, which bpa_rewrite_dst has already replaced
+       * with the private one by the time this runs.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_UDP && l4h != 0))
+	{
+	  udp_header_t *udp = l4h;
+	  bpa_pool_t *sp = pool_elt_at_index (bm->pools, pool_index);
+
+	  if (bpa_alg_on (sp->alg, BPA_ALG_SIP)
+	      && (clib_net_to_host_u16 (udp->src_port) == BPA_SIP_PORT
+		  || s->port_priv == BPA_SIP_PORT))
+	    {
+	      switch (bpa_sip_out2in (vm, b[0], ip, udp, s))
+		{
+		case BPA_ALG_DONE:
+		  n_sip++;
+		  break;
+		case BPA_ALG_UNPARSED:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_SIP_UNPARSED, 1);
+		  break;
+		case BPA_ALG_PARTIAL:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_SIP_PARTIAL, 1);
+		  break;
+		case BPA_ALG_NO_ROOM:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_SIP_NO_ROOM, 1);
+		  break;
+		default:
+		  break;
+		}
+	    }
+	}
+
       bpa_next_after (&next[0], b[0], BPA_OUT2IN_NEXT_LOOKUP);
 
     trace:
@@ -560,6 +660,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_SEQ_ADJUSTED, n_seq_adj);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_RTSP_REWRITTEN, n_rtsp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_SIP_REWRITTEN, n_sip);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_PPTP_MANGLED, n_pptp);
   vlib_node_increment_counter (vm, node->node_index,

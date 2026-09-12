@@ -204,7 +204,7 @@ VLIB_NODE_FN (bpa_in2out_node)
   u32 n_bypass_src = 0, n_bypass_dst = 0;
   u32 n_hairpin = 0;
   u32 n_ftp = 0, n_ftp_untouched = 0, n_ftp_noport = 0, n_seq_adj = 0;
-  u32 n_rtsp = 0;
+  u32 n_rtsp = 0, n_sip = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_nocid = 0, n_pptp_bad = 0;
   u32 n_esp = 0;
 
@@ -558,6 +558,16 @@ VLIB_NODE_FN (bpa_in2out_node)
 		  pool_elt_at_index (bm->pools, s->pool_index)->alg,
 		  BPA_ALG_PPTP)))
 	    {
+	      /*
+	       * The index, because the ALG may create a GRE session and
+	       * pool_get() moves the whole vector. `s` is a pointer into it
+	       * and everything below this block dereferences it - the VRF, the
+	       * counters, the trace. bpa_ftp.c and bpa_rtsp both re-resolve
+	       * for this reason and say so; PPTP was the one that did not
+	       * (#207).
+	       */
+	      u32 s_index = (u32) (s - pt->sessions);
+
 	      switch (bpa_pptp_out (pt, b[0], tcp, s, now))
 		{
 		case BPA_PPTP_MANGLED:
@@ -575,6 +585,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 		default:
 		  break;
 		}
+	      /* Re-resolved: the ALG may have moved the pool under us. */
+	      s = pool_elt_at_index (pt->sessions, s_index);
 	    }
 	}
 
@@ -691,6 +703,65 @@ VLIB_NODE_FN (bpa_in2out_node)
 			     | s->adj[BPA_DIR_IN].off_before))
 	    n_seq_adj += bpa_tcp_seq_adjust (tcp, &s->adj[BPA_DIR_OUT],
 					     &s->adj[BPA_DIR_IN]);
+	}
+
+      /*
+       * SIP ALG, subscriber -> internet. UDP only - see the transports note
+       * at the head of bpa_sip.h.
+       *
+       * Same ordering as the two above: after the address rewrite, so the
+       * address written into the payload is the one the subscriber now appears
+       * to have and the checksum covers the pseudo-header the datagram will
+       * travel with. Nothing follows it, because a datagram has no sequence
+       * numbers to correct.
+       *
+       * Matched on the DESTINATION port, or on the subscriber's own PRIVATE
+       * port - never on udp->src_port, which bpa_rewrite_src has already
+       * replaced with the public one by the time this runs. The private port
+       * is what catches the other half of SIP: a phone listening on 5060 sends
+       * its responses and its in-dialog requests FROM 5060 to wherever the
+       * far end asked to be answered, which is very often not 5060.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_UDP && l4h != 0))
+	{
+	  udp_header_t *udp = l4h;
+	  bpa_pool_t *sp = pool_is_free_index (bm->pools, s->pool_index)
+			     ? 0
+			     : pool_elt_at_index (bm->pools, s->pool_index);
+
+	  if (sp && bpa_alg_on (sp->alg, BPA_ALG_SIP)
+	      && (clib_net_to_host_u16 (udp->dst_port) == BPA_SIP_PORT
+		  || s->port_priv == BPA_SIP_PORT))
+	    {
+	      u32 s_index = s - pt->sessions;
+
+	      switch (bpa_sip_in2out (vm, b[0], ip, udp, pt, sp, s_index, now))
+		{
+		case BPA_ALG_DONE:
+		  n_sip++;
+		  break;
+		case BPA_ALG_UNPARSED:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_SIP_UNPARSED, 1);
+		  break;
+		case BPA_ALG_PARTIAL:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_SIP_PARTIAL, 1);
+		  break;
+		case BPA_ALG_NO_ROOM:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_SIP_NO_ROOM, 1);
+		  break;
+		case BPA_ALG_NO_PORTS:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_IN2OUT_ERROR_SIP_NO_PORTS, 1);
+		  break;
+		default:
+		  break;
+		}
+	      /* Opening the media sessions may have reallocated the pool. */
+	      s = pool_elt_at_index (pt->sessions, s_index);
+	    }
 	}
 
       /*
@@ -843,6 +914,8 @@ VLIB_NODE_FN (bpa_in2out_node)
 			       BPA_IN2OUT_ERROR_SEQ_ADJUSTED, n_seq_adj);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_RTSP_REWRITTEN, n_rtsp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_IN2OUT_ERROR_SIP_REWRITTEN, n_sip);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_IN2OUT_ERROR_PPTP_MANGLED, n_pptp);
   vlib_node_increment_counter (vm, node->node_index,

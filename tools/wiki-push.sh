@@ -13,6 +13,11 @@
 # removing pages. Nothing was lost, and only because the stale text failed to
 # match rather than because anything noticed.
 #
+# The mirror's files open with `# <title>`, which Outline does NOT keep in the
+# body - the title is a field of its own. That heading is stripped here before
+# the text is sent, so pull, edit, push is a no-op on a file nobody edited. It
+# was not, and each round trip grew the page a second title (#165).
+#
 # NO TOKEN OR HOST LIVES HERE. WIKI_TOKEN and WIKI_URL come from the
 # environment; PADRAO-DOCUMENTACAO.md says credentials never go into the wiki,
 # and the same applies to the repository that mirrors it.
@@ -30,14 +35,18 @@ URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 STAMP="$REPO/wiki/.pulled"
+PAYLOAD=/tmp/wiki-push-payload.json
 
 live=$(curl -sk -X POST "$URL/api/documents.info" \
   -H "Authorization: Bearer $WIKI_TOKEN" -H "Content-Type: application/json" \
   -d "{\"id\":\"$ID\"}")
 
-python3 - "$live" "$STAMP" "$ID" <<'PYEOF'
+# One block, and the payload is built here rather than a step later, because
+# the TITLE the staleness check reads is the same title the body has to be
+# stripped of. Two reads of the live document could disagree.
+python3 - "$live" "$STAMP" "$ID" "$FILE" "$PAYLOAD" <<'PYEOF'
 import json, os, sys
-live, stamp_path, doc_id = sys.argv[1], sys.argv[2], sys.argv[3]
+live, stamp_path, doc_id, path, payload = sys.argv[1:6]
 try:
     d = json.loads(live)["data"]
 except Exception:
@@ -57,17 +66,36 @@ if updated > pulled:
         "Pushing would\n       discard whoever made that change."
         % (d.get("title", doc_id), updated, pulled))
 print("  %s last changed %s; mirror pulled %s" % (d.get("title"), updated, pulled))
-PYEOF
 
-python3 -c "
-import json, sys
-print(json.dumps({'id': sys.argv[1], 'text': open(sys.argv[2]).read(),
-                  'publish': True}))
-" "$ID" "$FILE" > /tmp/wiki-push-payload.json
+# Outline keeps the title in a field of its own and NOT in the body.
+# tools/wiki-pull.sh writes it into the file as a heading so the mirror reads
+# as a page and diffs legibly; sending that heading back stores a second title
+# above the opening sentence, which PADRAO-DOCUMENTACAO.md section 1 forbids,
+# and every further round trip adds another one (#165).
+#
+# The heading has to MATCH. A file whose first line is some other heading is
+# not a pulled page with a title on it - it is an edit that means something
+# else, and quietly publishing it as the body is how the defect above happened
+# in the first place. So that case stops, loudly, rather than guessing.
+title = d.get("title") or ""
+text = open(path).read()
+head = "# %s\n" % title
+if text.startswith(head):
+    body = text[len(head):].lstrip("\n")
+elif text.lstrip().startswith("# "):
+    first = text.lstrip().split("\n", 1)[0]
+    sys.exit("error: %s opens with %r, which is not this document's title "
+             "%r.\n       A heading sent as the body becomes a second title "
+             "on the page.\n       Pull the mirror again and edit what it "
+             "writes." % (path, first, title))
+else:
+    body = text
+json.dump({"id": doc_id, "text": body, "publish": True}, open(payload, "w"))
+PYEOF
 
 curl -sk -X POST "$URL/api/documents.update" \
   -H "Authorization: Bearer $WIKI_TOKEN" -H "Content-Type: application/json" \
-  -d @/tmp/wiki-push-payload.json |
+  -d @"$PAYLOAD" |
   python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -75,4 +103,4 @@ if not d.get('ok'):
     sys.exit('error: the wiki refused the update: %s' % d)
 print('  published:', d['data']['title'])
 "
-rm -f /tmp/wiki-push-payload.json
+rm -f "$PAYLOAD"

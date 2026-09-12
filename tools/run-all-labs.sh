@@ -85,13 +85,12 @@ echo
 # Not every lab, either: one that asserts what the VTY prints, or what a
 # counter says about a refusal, exercises the same code whatever the thread
 # count, and a second run of it would double the suite to re-prove what cannot
-# differ. These twelve touch the packet.
+# differ. These thirteen touch the packet.
 #
 # handoff, dynamic-workers and pool-del are absent because they ask for workers
 # THEMSELVES - a "+workers" run of those would be the same run twice.
 BOTH_WAYS="bypass esp extblocks frag ftp-alg hairpin icmp-tcp mss
-           nat-behaviour pptp rtsp two-pools"
-
+           nat-behaviour pptp rtsp sip two-pools"
 # The list, in the order the summary will print.
 LABS=""
 for f in "$REPO"/lab/*.sh; do

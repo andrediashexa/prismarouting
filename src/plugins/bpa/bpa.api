@@ -68,7 +68,17 @@
  * ~0 means "every VRF", which is what every configuration written before this
  * existed means. Zero is VRF 0 and is a different answer.
  */
-option version = "0.9.0";
+/*
+ * 0.11.0 adds bpa_logging_set: the IPFIX export state and its TCP collector,
+ * which were the last configuration changes hexash made over the VPP CLI
+ * socket (issue #76). A new message, so no existing layout moves and no
+ * client has to be rebuilt for it.
+ *
+ * The line said 0.9.0 until now. The 0.10.0 note below - the audit fields -
+ * was written and this was not bumped with it, so the file described a
+ * version of itself that the option had never reached.
+ */
+option version = "0.11.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -339,6 +349,42 @@ autoreply define bpa_global_set
   bool set_session_table;
   u32 session_buckets;
   u32 session_memory_mb;
+};
+
+/** \brief IPFIX export of block events: whether it runs, and where it goes.
+
+    One message for two statements - `cgnat logging enable|disable` and
+    `cgnat logging tcp <collector> [port <n>]` - because they are one
+    exporter, and a caller that had to send two would have two chances to
+    leave it half configured. Each half carries its own flag: "off" is a value
+    an operator means, not the absence of one, so it cannot be spelled as a
+    zero the way a timeout can.
+
+    Like bpa_global_set, this carries no audit_user. The trail in bpa_audit.c
+    is per-pool and records nothing global at all, so a field here would name
+    an operator on a line that is never written.
+
+    @param set_enable - whether the export state is being set
+    @param enable - export on or off
+    @param set_tcp - whether the transport is being set
+    @param tcp_enable - TCP transport on or off; off disconnects the collector
+                        and stops that transport, and does NOT turn the UDP
+                        export on - the two are separate paths in the plugin
+    @param collector - the TCP collector, read only when tcp_enable is true
+    @param port - its port; 0 means the IPFIX default, which the dataplane
+                  applies rather than the caller, so every client agrees on it
+*/
+autoreply define bpa_logging_set
+{
+  u32 client_index;
+  u32 context;
+
+  bool set_enable;
+  bool enable;
+  bool set_tcp;
+  bool tcp_enable;
+  vl_api_ip4_address_t collector;
+  u16 port;
 };
 
 /** \brief Lists the configured pools. */

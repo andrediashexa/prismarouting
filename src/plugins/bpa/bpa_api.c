@@ -7,6 +7,7 @@
 #include <vnet/format_fns.h>
 
 #include "bpa.h"
+#include "bpa_log.h"
 #include <vnet/fib/fib_table.h>
 
 #include <bpa/bpa.api_enum.h>
@@ -307,6 +308,54 @@ vl_api_bpa_global_set_t_handler (vl_api_bpa_global_set_t *mp)
     }
 
   REPLY_MACRO (VL_API_BPA_GLOBAL_SET_REPLY);
+}
+
+static void
+vl_api_bpa_logging_set_t_handler (vl_api_bpa_logging_set_t *mp)
+{
+  vl_api_bpa_logging_set_reply_t *rmp;
+  ip4_address_t collector;
+  clib_error_t *e;
+  int rv = 0;
+
+  /* Both halves, in the order the configuration states them: where the
+   * records go, then whether they are produced. The two are independent in
+   * the dataplane - bpa_log_enable checks VPP's own IPFIX exporter, and the
+   * TCP transport is a path of its own - so this is about the box ending
+   * where the message says, not about one making the other succeed.
+   *
+   * A refused transport stops here rather than going on to the state: the
+   * caller is about to be told the message failed, and applying half of what
+   * it asked for leaves a box nobody described. */
+  if (mp->set_tcp)
+    {
+      ip4_address_decode (mp->collector, &collector);
+      e = bpa_log_tcp_enable (&collector, clib_net_to_host_u16 (mp->port),
+			      mp->tcp_enable);
+      if (e)
+	{
+	  /* The sentence goes to the log, where the client reads it back and
+	   * attaches it to the code - see the session-table refusal above. */
+	  vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+	  clib_error_free (e);
+	  rv = VNET_API_ERROR_INVALID_VALUE;
+	  goto reply;
+	}
+    }
+
+  if (mp->set_enable)
+    {
+      e = bpa_log_enable (mp->enable);
+      if (e)
+	{
+	  vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
+	  clib_error_free (e);
+	  rv = VNET_API_ERROR_INVALID_VALUE;
+	}
+    }
+
+reply:
+  REPLY_MACRO (VL_API_BPA_LOGGING_SET_REPLY);
 }
 
 static void

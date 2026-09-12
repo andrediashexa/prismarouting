@@ -125,9 +125,17 @@ sobre o que você acabou de mudar.
 
 ## Armadilhas já pagas — não repita
 
-**O espelho `wiki/` pode estar desatualizado.** Ele é somente leitura e o
-`tools/wiki-pull.sh` o atualiza. Editar arquivo lá não muda nada. Para auditar,
-leia o que a wiki diz **hoje**, pela API.
+**O espelho `wiki/` pode estar desatualizado.** O `tools/wiki-pull.sh` o
+atualiza. Editar arquivo lá é rascunhar: só chega em alguém depois do
+`tools/wiki-push.sh`, e o próximo pull apaga o que não foi publicado. Para
+auditar, leia o que a wiki diz **hoje**, pela API.
+
+**Cada arquivo do espelho abre com `# <título>`, e esse título NÃO é corpo da
+página.** O Outline guarda o título em campo próprio; o `wiki-push.sh` tira
+essa linha antes de enviar, para que pull → push num arquivo não editado não
+mude nada. Antes ele mandava o arquivo inteiro e a página ganhava um segundo
+título a cada volta (#165). Se o arquivo abrir com um `#` que não é o título do
+documento, o push **para e diz** - não adivinhe, puxe o espelho de novo.
 
 **No espelho, `` `**vppctl**` `` parece markdown quebrado. Não é.** É artefato
 do serializador do Outline na exportação; ao vivo renderiza

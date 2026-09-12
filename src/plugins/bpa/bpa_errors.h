@@ -41,6 +41,11 @@
   _ (RTSP_PARTIAL, 0, "RTSP message spans segments") \
   _ (RTSP_NO_ROOM, 0, "RTSP rewrite would not fit") \
   _ (RTSP_NO_PORTS, 0, "RTSP media port pair unavailable") \
+  _ (SIP_REWRITTEN, 0, "SIP messages rewritten") \
+  _ (SIP_UNPARSED, 0, "SIP message not understood, left untouched") \
+  _ (SIP_PARTIAL, 0, "SIP datagram spans buffers") \
+  _ (SIP_NO_ROOM, 0, "SIP rewrite would not fit") \
+  _ (SIP_NO_PORTS, 0, "SIP media port pair unavailable") \
   _ (GRE_NOT_ENHANCED, 1, "GRE that is not the enhanced GRE of RFC 2637") \
   _ (GRE_NO_CALL, 1, "GRE for a call the control channel never announced") \
   _ (PPTP_MANGLED, 0, "PPTP control messages rewritten") \
@@ -69,6 +74,10 @@
   _ (RTSP_UNPARSED, 0, "RTSP reply not understood") \
   _ (RTSP_PARTIAL, 0, "RTSP reply spans segments") \
   _ (RTSP_NO_ROOM, 0, "RTSP reply rewrite would not fit") \
+  _ (SIP_REWRITTEN, 0, "SIP responses rewritten") \
+  _ (SIP_UNPARSED, 0, "SIP response not understood, left untouched") \
+  _ (SIP_PARTIAL, 0, "SIP response spans buffers") \
+  _ (SIP_NO_ROOM, 0, "SIP response rewrite would not fit") \
   _ (GRE_NOT_ENHANCED, 1, "GRE that is not the enhanced GRE of RFC 2637") \
   _ (PPTP_MANGLED, 0, "PPTP control messages rewritten") \
   _ (PPTP_UNKNOWN, 0, "PPTP message about an unknown call") \

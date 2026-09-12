@@ -101,7 +101,14 @@ n=0
 until vppctl show bpa session | grep -q "^total: 1 sessions" || [ "$n" -ge 15 ]; do
   sleep 1; n=$((n+1))
 done
-echo "  apos ${n}s: $(vppctl show bpa session | tail -1)"
+# Captured where it is measured. The assertion below used to read the session
+# table again from the VERDICT block, at the end of the file, so "the RST
+# released the port" was really "nothing between here and the end of the lab
+# changed the count" - and section 5 opening one session of its own was
+# enough to fail it. A reading taken three sections away from what it is
+# about is not evidence about it.
+RSTSESS=$(vppctl show bpa session)
+echo "  apos ${n}s: $(printf '%s\n' "$RSTSESS" | tail -1)"
 echo "  (the UDP session from test 1 remains; the TCP one left via the RST)"
 
 echo
@@ -143,17 +150,60 @@ echo
 echo "=========== 5. a released port waits out its hold-down ==========="
 # A port freed and handed out again immediately can collide with a delayed
 # segment from the connection that just ended: a reset nobody can reproduce.
-vppctl bpa timeouts port-holddown 6 udp 2 >/dev/null
-vppctl packet-generator new "name q limit 1 node ip4-input interface pg0 \
-    size 60-60 data { UDP: 100.64.0.9 -> 8.8.8.8 UDP: 33333 -> 53 incrementing 8 }"
-vppctl packet-generator enable >/dev/null; sleep 1
-vppctl packet-generator delete q >/dev/null 2>&1
-QPORT=$(vppctl show bpa session | grep "100.64.0.9" | head -1 | awk '{print $NF}')
-echo "  session created, waiting for it to expire (udp 2s)"
+vppctl bpa timeouts port-holddown 60 udp 2 tcp-syn 60 tcp-established 7440 >/dev/null
+# The subscriber keeps one TCP session open through all of this, for two
+# reasons, and neither is decoration.
+#
+# It gives the expiry wait below a baseline that does not move. Measured
+# without it: the loop was satisfied on its first read, waited 0s, and the
+# section went on to compare two ports while the first flow was still alive -
+# which is a comparison about nothing, and is the shape the rest of this
+# section exists to get rid of.
+#
+# And bpa_sub_put() frees a subscriber's port map when its LAST session ends,
+# quarantined ports and all. Whatever that means for the hold-down is the
+# plugin's business and not this section's subject; asserting across that
+# boundary would be asserting the wrong thing about the wrong code.
+anchor() {
+  H=$(python3 /src/lab/mktcp.py 100.64.0.9 8.8.8.8 44499 443 "$1")
+  L=$(( ${#H} / 2 - 1 ))
+  vppctl packet-generator delete a >/dev/null 2>&1
+  vppctl packet-generator new "name a limit 1 node ip4-input interface pg0 \
+      size ${L}-${L} data { hex $H }"
+  vppctl packet-generator enable >/dev/null; sleep 1
+  vppctl packet-generator delete a >/dev/null 2>&1
+}
+anchor syn; anchor ack
+# The public port, off the trace, because there is nowhere else to read it:
+# "show bpa session" prints a count per thread and a total and no rows at all.
+# The line this replaces read the port out of that output with grep and awk
+# and captured an empty string on every run there has ever been - and so did
+# the loop below it, which waited for a subscriber to leave an output it was
+# never in and therefore waited for nothing. This section has been reporting
+# "session gone after 0s" and asserting neither the port nor the wait (#204).
+qsend() {   # source port -> the public port it was translated to
+  vppctl packet-generator delete q >/dev/null 2>&1
+  vppctl packet-generator new "name q limit 1 node ip4-input interface pg0 \
+      size 60-60 data { UDP: 100.64.0.9 -> 8.8.8.8 UDP: $1 -> 53 incrementing 8 }"
+  vppctl clear trace >/dev/null; vppctl trace add pg-input 3 >/dev/null
+  vppctl packet-generator enable >/dev/null; sleep 1
+  vppctl packet-generator delete q >/dev/null 2>&1
+  vppctl show trace \
+    | sed -n 's/.*BPA in2out 100\.64\.0\.9:[0-9]* -> [0-9.]*:\([0-9][0-9]*\) .*/\1/p' \
+    | head -1
+}
+HOLDING=$(sess)
+QPORT=$(qsend 33333)
+echo "  100.64.0.9:33333 was given public port ${QPORT:-<none>}"
 n=0
-until [ "$(vppctl show bpa session | grep -c '100.64.0.9' || true)" = 0 ] \
-      || [ "$n" -ge 15 ]; do sleep 1; n=$((n+1)); done
-echo "  session gone after ${n}s; the port is now in hold-down for 6s"
+until [ "$(sess)" -le "$HOLDING" ] || [ "$n" -ge 15 ]; do sleep 1; n=$((n+1)); done
+echo "  that session expired after ${n}s; its port is in hold-down for 60s"
+# The allocator hands out the lowest free offset in the block, so a port
+# handed back the moment its session ends is handed straight out again to the
+# next flow. A DIFFERENT port here is the hold-down; the same one is its
+# absence.
+QPORT2=$(qsend 33334)
+echo "  the next flow was given ${QPORT2:-<none>}"
 # "port-holddown [0-9]*" never captured the number: the column is printed
 # with %6u, so the digits are several spaces away and grep -o returned the
 # bare label. Anchored on the row and the width instead.
@@ -188,7 +238,7 @@ if [ "${LAB_WORKERS:-0}" = 1 ]; then
       test "${HANDED:-0}" -ge 1
   fi
 fi
-expect_in "RST released the port" "total: 1 sessions" "$(vppctl show bpa session)"
+expect_in "RST released the port" "total: 1 sessions" "$RSTSESS"
 
 # Half-open sessions are on their own timer. Without the distinction they sit
 # on the transitory timeout - 600s here - and are still there.
@@ -201,8 +251,16 @@ expect "and they expired on the SYN timer, not the transitory one" \
   test "$HALFLEFT" = "0"
 # The label, not the value. "port-holddown" is a column heading that
 # "bpa timeouts" prints on every box whatever the setting is, so this passed
-# without ever looking at the 6 set above - the one thing the section is
+# without ever looking at the value set above - the one thing the section is
 # about. Asserted on the number the box reports back.
 expect "the hold-down the lab set is the one the box reports" \
-  test "${HELD:-}" = "6"
+  test "${HELD:-}" = "60"
+# The hold-down itself, and not the number it is configured with. Both flows
+# have to have been translated at all, or "the two ports differ" is true
+# because neither exists - which is how the assertion above first passed.
+expect "the flow whose port goes into hold-down was translated" \
+  test -n "${QPORT:-}"
+expect "and so was the one that followed it" test -n "${QPORT2:-}"
+expect "a port in hold-down is not handed straight back out" \
+  test "${QPORT:-x}" != "${QPORT2:-y}"
 verdict

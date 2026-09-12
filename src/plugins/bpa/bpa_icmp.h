@@ -78,6 +78,7 @@ typedef struct
   ip4_header_t *inner; /* the embedded IP header, for the rewrite */
   u16 *port;	       /* where the public port sits inside it */
   u32 pub_addr;	       /* host order: the embedded SOURCE address */
+  u32 peer;	       /* host order: the embedded DESTINATION address */
   u16 pub_port;	       /* host order: the embedded SOURCE port */
   u8 ip_proto;	       /* the embedded packet's IP protocol number */
 } bpa_icmp_err_t;
@@ -143,13 +144,46 @@ bpa_icmp_err_parse (ip4_header_t *ip, const u8 *end, bpa_icmp_err_t *e)
        * RFC 792 requires an error to quote. */
       port_off = 4;
       break;
+    case IP_PROTOCOL_IPSEC_ESP:
+      /*
+       * No port, and none needed. An ESP session is keyed on the PEER, in the
+       * one table this plugin shares between workers, and both of the
+       * addresses that key it are in the embedded IP header: its source is
+       * our public address and its destination is the peer. So an ICMP error
+       * about an outbound ESP packet carries exactly the key - and nothing
+       * below the embedded IP header is read at all, which is why this needs
+       * no payload bytes where the others need two.
+       *
+       * That is the opposite of what it looks like from the outside. ESP has
+       * no identifier this box may key on, which is what makes the binding
+       * global - and being global is what makes it reachable from an ICMP
+       * error on whatever worker the error happened to land on. The protocol
+       * with no identifier is the easy one here.
+       */
+      e->inner = inner;
+      e->port = 0;
+      e->pub_addr = clib_net_to_host_u32 (inner->src_address.as_u32);
+      e->peer = clib_net_to_host_u32 (inner->dst_address.as_u32);
+      e->pub_port = 0;
+      e->ip_proto = inner->protocol;
+      return 0;
     default:
       /*
-       * GRE and ESP reach the ordinary return path but not this one. Neither
-       * keeps an identifier in the first bytes of its header - the PPTP Call
-       * ID is at offset 6, and ESP has none this box may key on at all - so
-       * reading a port here would build a session key out of a flags word.
-       * Refused rather than looked up on a value that means something else.
+       * GRE reaches the ordinary return path but not this one, and the reason
+       * is not the bounds - the PPTP Call ID is at offset 6, inside the eight
+       * bytes RFC 792 requires, and reading it would be easy.
+       *
+       * It is that the Call ID an OUTBOUND GRE packet carries is the one the
+       * SERVER assigned, and no table here is keyed on it together with our
+       * public address: in2out is keyed on the subscriber's PRIVATE address
+       * and out2in on the Call ID this box handed out, which is the other
+       * one. Worse, with workers the handoff has nothing to steer by either -
+       * the server's Call ID is not drawn from the subscriber's port block,
+       * so bpa_reverse_sub() cannot recover an owner from it.
+       *
+       * Making it work needs a global binding of the shape ESP already has,
+       * and that is its own change (#203). Refused here rather than looked up
+       * on a value that means something else.
        */
       return -1;
     }
@@ -160,6 +194,7 @@ bpa_icmp_err_parse (ip4_header_t *ip, const u8 *end, bpa_icmp_err_t *e)
   e->inner = inner;
   e->port = (u16 *) ((u8 *) inner + inner_hlen + port_off);
   e->pub_addr = clib_net_to_host_u32 (inner->src_address.as_u32);
+  e->peer = clib_net_to_host_u32 (inner->dst_address.as_u32);
   e->pub_port = clib_net_to_host_u16 (e->port[0]);
   e->ip_proto = inner->protocol;
   return 0;

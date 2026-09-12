@@ -269,8 +269,9 @@ ISIS_BLOCK = {
         "transition": ("send both while a network is being migrated", None),
     }),
     "topology": ("carry a second address family over the same adjacency", {
-        "ipv6-unicast": ("IPv6, which needs this even when the interfaces "
-                         "already have addresses", None),
+        "ipv6-unicast": ("a separate SPF for IPv6 (RFC 5120). Without it IPv6 "
+                         "still rides the one topology, which is correct when "
+                         "every router in the area agrees", None),
     }),
     "set-overload-bit": ("tell everybody not to transit through this box - "
                          "IS-IS's maintenance drain", "[on-startup <1-86400>]"),
@@ -424,9 +425,8 @@ INTERFACE_BLOCK = {
             "suppress-ra": ("stop advertising this box as a router", None),
         }),
         "router": ("join a routing instance", {
-            "isis": ("run IS-IS for IPv6 on this interface - which also needs "
-                     "'topology ipv6-unicast' on the instance",
-                     ARG_ISIS_TAG),
+            "isis": ("run IS-IS for IPv6 on this interface, in whatever "
+                     "topology the instance has", ARG_ISIS_TAG),
         }),
     }),
     "shutdown": ("take the interface administratively down", None),
@@ -681,6 +681,8 @@ CGNAT_POOL = {
         "rtsp": ("RTSP Transport client_port", "<on|off>"),
         "pptp": ("PPTP control channel and its GRE data channel", "<on|off>"),
         "esp": ("IPsec ESP passthrough, bound to the peer gateway",
+                "<on|off>"),
+        "sip": ("SIP over UDP: Via, Contact and the SDP media pair",
                 "<on|off>"),
     }),
     "vrf": ("the VRF whose subscribers this pool serves; absent means every "
@@ -1207,7 +1209,7 @@ def isis_findings(routing):
     which is the line this project draws: whether the neighbour agrees is not
     in the configuration and is not claimed.
     """
-    instances = {}      # tag -> {net, is_type, metric_style, topologies}
+    instances = {}      # tag -> {net, is_type, metric_style}
     joined = {}         # tag -> [(interface, family, statement)]
     circuits = {}       # tag -> [(interface, circuit_type, statement)]
     metrics = []        # (interface, value, statement)
@@ -1220,7 +1222,7 @@ def isis_findings(routing):
         if w[:2] == ["router", "isis"] and len(w) > 2:
             tag, iface = w[2], None
             instances.setdefault(tag, {"net": False, "is_type": None,
-                                       "metric_style": None, "v6": False})
+                                       "metric_style": None})
             continue
         if w[0] == "interface" and len(w) > 1:
             tag, iface = None, w[1]
@@ -1236,8 +1238,6 @@ def isis_findings(routing):
                 inst["is_type"] = w[1]
             elif w[0] == "metric-style" and len(w) > 1:
                 inst["metric_style"] = w[1]
-            elif w[:2] == ["topology", "ipv6-unicast"]:
-                inst["v6"] = True
         elif iface:
             if w[:3] in (["ip", "router", "isis"], ["ipv6", "router", "isis"]) \
                     and len(w) > 3:
@@ -1264,15 +1264,31 @@ def isis_findings(routing):
             out.append(("warning", f"router isis {tag}",
                         "no interface joins it, so it runs and carries "
                         "nothing"))
-        # The IPv6 half, silently absent while IPv4 works.
-        v6_joins = [j for j in joined.get(tag, []) if j[1] == "ipv6"]
-        if v6_joins and not inst["v6"]:
-            out.append(("warning", v6_joins[0][2],
-                        f"instance {tag} has no 'topology ipv6-unicast', so "
-                        "the IPv6 half carries nothing while IPv4 works"))
+        # NOTHING is said about an instance that carries IPv6 without
+        # `topology ipv6-unicast`, and the silence is the point (#198). That
+        # statement turns on Multi-Topology IS-IS (RFC 5120), a second SPF for
+        # IPv6; without it IPv6 reachability still floods in the single legacy
+        # topology and forwards, which is the ordinary single-vendor core.
+        # lab/igp.sh commits exactly that configuration, and the assertion
+        # beside this one in that file watches 2001:db8:19::/64 reach the VPP
+        # IPv6 FIB over the adjacency it builds - so the warning that used to
+        # be here was disproved by this product's own acceptance test on every
+        # run, and printed again on every later commit in it, about BGP and
+        # about OSPF. That is how an operator learns to skip the whole class,
+        # and the IGP findings are the diagnoses FRR cannot make.
+        #
+        # What IS a fault is MT on at one end and off at the other. It is not
+        # in this box's configuration - it is read from the neighbour's LSP -
+        # so it belongs in the operational view and not in a commit check.
+        #
         # Narrow metrics cap at 63. The classic silent limitation.
         if inst["metric_style"] in (None, "narrow"):
-            big = [m for m in metrics if m[1] > 63]
+            # Only the interfaces that joined THIS instance. The metric of a
+            # port in a wide-metric instance is not evidence about a narrow
+            # one that never carries it, and a box with two instances is
+            # exactly where that sentence names the wrong tag.
+            mine = {j[0] for j in joined.get(tag, [])}
+            big = [m for m in metrics if m[1] > 63 and m[0] in mine]
             if big:
                 out.append(("warning", big[0][2],
                             f"{big[0][1]} needs 'metric-style wide' on "
@@ -1461,14 +1477,22 @@ def ospf_state(routing):
     """
     What the configuration says about OSPF, gathered once.
 
-    Returns (networks, areas_by_interface, passive, redistribute, has_ospf) -
-    parsed by statement rather than by indentation, for the reason
-    route_map_findings and bgp_errors both had to learn: a configuration read
-    back from FRR is indented and the same line typed at this VTY is not.
+    Returns (networks, areas_by_interface, passive, unpassive, redistribute,
+    has_ospf) - parsed by statement rather than by indentation, for the
+    reason route_map_findings and bgp_errors both had to learn: a
+    configuration read back from FRR is indented and the same line typed at
+    this VTY is not.
+
+    `passive` and `unpassive` are separate because `passive-interface
+    default` is a statement about every interface and `no passive-interface
+    <name>` is how one is taken back out of it. Reading only the first and
+    treating "default" as an interface name made the CGNAT check fire on the
+    posture this VTY's own help text recommends for a subscriber-facing port.
     """
     networks = []          # (prefix, area, statement)
     iface_area = {}        # interface -> area, from `ip ospf area`
-    passive = []           # (interface, statement)
+    passive = []           # (interface or "default", statement)
+    unpassive = []         # (interface, statement) from `no passive-interface`
     redist = []            # (statement, has_route_map)
     has_ospf = False
     in_ospf = False
@@ -1491,15 +1515,37 @@ def ospf_state(routing):
                 networks.append((w[1], w[3], line.strip()))
             elif w[:1] == ["passive-interface"] and len(w) >= 2:
                 passive.append((w[1], line.strip()))
+            elif w[:2] == ["no", "passive-interface"] and len(w) >= 3:
+                unpassive.append((w[2], line.strip()))
             elif w[:1] == ["redistribute"] and len(w) >= 2:
                 redist.append((line.strip(), "route-map" in w))
         elif iface and w[:3] == ["ip", "ospf", "area"] and len(w) >= 4:
             iface_area[iface] = w[3]
             has_ospf = True
-    return networks, iface_area, passive, redist, has_ospf
+        elif iface and w[:3] == ["ip", "ospf", "passive"]:
+            # The same statement after a round trip through FRR. Measured:
+            # `passive-interface vppwan0` is accepted with a deprecation
+            # notice and comes back out of `show running-config` as
+            #
+            #   interface vppwan0
+            #    ip ospf passive
+            #
+            # and cfg.routing is read from FRR, so THIS is the spelling every
+            # commit after the first one sees. Reading only `passive-interface`
+            # meant an operator who had made a port passive was warned about
+            # it again on the next unrelated commit, under a statement they
+            # never typed. It is also a spelling this VTY offers in its own
+            # right, under `interface <name>` / `ip ospf passive`.
+            #
+            # Does not set has_ospf: passive with no area is not an OSPF
+            # instance, and saying it was would let every other check in
+            # ospf_findings fire on a box that runs no OSPF at all.
+            passive.append((iface, line.strip()))
+    return networks, iface_area, passive, unpassive, redist, has_ospf
 
 
-def ospf_findings(routing, addresses, have_interfaces, pools):
+def ospf_findings(routing, addresses, have_interfaces, pools,
+                  lcp_pairs=None, device_interfaces=None):
     """
     What an OSPF configuration says that will not do what it looks like.
 
@@ -1508,11 +1554,72 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
     operator did not mean. The rule this project holds a check to is that it
     must catch something FRR does not, and must not refuse a configuration
     that is fine.
+
+    `lcp_pairs` is routes.lcp_pairs() over `show lcp` and `device_interfaces`
+    is the dataplane's OWN interface names - not the union of both namespaces
+    that `have_interfaces` carries. Both are optional, and what is lost
+    without them is described under `frr_acts_on` below.
     """
-    networks, iface_area, passive, redist, has_ospf = ospf_state(routing)
+    networks, iface_area, passive, unpassive, redist, has_ospf = \
+        ospf_state(routing)
     out = []
     if not has_ospf:
         return out
+
+    # ------------------------------------------------------------------
+    # Which namespace this function works in, and why it has to choose one.
+    #
+    # It works in FRR's. Every statement ospf_state() parses is an FRR
+    # statement that only FRR ever reads, so the name in it means whatever
+    # FRR takes it to mean and nothing else. `addresses` is the other side of
+    # each comparison and is keyed by the DATAPLANE's names when it was read
+    # back off the box, and by whatever the operator typed when it came from
+    # a staged `interface` block - which docs/routing.md says may be either
+    # name. So the two sides are matched through the linux_cp pair, and the
+    # configuration side is additionally required to be a spelling FRR can
+    # act on. Comparing the names as strings, which is what this replaces,
+    # was wrong in both directions at once (#205).
+    #
+    # Measured on the lab's own pair rather than reasoned about, because the
+    # answer decides which spelling is the mistake:
+    #
+    #   itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+    #
+    #   * only vppwan0 is a Linux netdev, and FRR's interface list holds
+    #     vppwan0 and not the other two;
+    #   * `passive-interface host-veth-vpp` is ACCEPTED - a deprecation
+    #     notice, no error - and makes nothing passive: `show ip ospf
+    #     interface vppwan0` does not say "No Hellos", and the statement does
+    #     not survive into the running configuration at all;
+    #   * `passive-interface vppwan0` does say "No Hellos (Passive
+    #     interface)".
+    #
+    # The pair's Linux end is therefore the one FRR acts on, and it is the
+    # one member of the pair the DATAPLANE does not also have - which is how
+    # frr_acts_on() finds it without reading a field by position. The order
+    # of names on that line is a VPP detail routes.lcp_pairs() deliberately
+    # does not depend on, having already seen it differ between two labs
+    # here.
+    # ------------------------------------------------------------------
+    pairs = lcp_pairs or {}
+    dp_names = set(device_interfaces or ())
+
+    def same(name):
+        """Every name this interface answers to, itself included."""
+        return set(pairs.get(name, ())) | {name}
+
+    def frr_acts_on(name):
+        """
+        Whether a statement spelling the interface this way does anything.
+
+        With no dataplane list to subtract there is nothing to tell the
+        members of a pair apart, and the answer is yes for every one of them.
+        "Could not ask" must not become a warning the operator cannot silence
+        - which is the posture the interface-existence check below takes with
+        an empty `have_interfaces`, for the same reason.
+        """
+        frr_side = same(name) - dp_names
+        return not frr_side or name in frr_side
 
     # REFUSED: a passive-interface naming an interface the box does not have.
     # It commits, and the port the operator meant to keep quiet is not the one
@@ -1523,6 +1630,27 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
             out.append(("error", stmt,
                         f"this box has no interface {ifname}, so nothing is "
                         "made passive"))
+
+    # The same outcome reached through a name the box DOES have: the
+    # dataplane's end of a linux_cp pair. FRR has no such interface, accepts
+    # the statement anyway, and makes nothing passive - measured above. This
+    # is the spelling `passive-interface <TAB>` offers, because the
+    # completion lists what `show interface` reports, so it is the one an
+    # operator is most likely to be holding.
+    #
+    # Warned and not refused. The name FRR wants is not one the dataplane
+    # reports, so an error here would refuse a commit an operator cannot
+    # rewrite from anything this VTY offers them; and the check below now
+    # says out loud that the port is still not passive, which is the
+    # consequence they need to see.
+    for ifname, stmt in passive:
+        if ifname == "default" or frr_acts_on(ifname):
+            continue
+        out.append(("warning", stmt,
+                    "FRR knows this interface as "
+                    + "/".join(sorted(same(ifname) - dp_names))
+                    + f", not {ifname}: written this way nothing is made "
+                    "passive"))
 
     # A network statement matching no address on this box: OSPF runs on
     # nothing and the configuration reads correctly.
@@ -1537,9 +1665,15 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
 
     # An area border router with no backbone. Inter-area routes never
     # propagate, and FRR says nothing.
+    #
+    # Unless a virtual link carries it. RFC 2328 section 15 exists for exactly
+    # the box that has no physical area-0 interface, and it belongs to the
+    # backbone through the link instead - so warning there is a sentence about
+    # a working design, told to the operator who had to think hardest about it.
     areas = {a for _, a, _ in networks} | set(iface_area.values())
     backbone = {"0", "0.0.0.0"}
-    if len(areas - backbone) >= 2 and not (areas & backbone):
+    virtual = any("virtual-link" in l.split() for l in routing)
+    if len(areas - backbone) >= 2 and not (areas & backbone) and not virtual:
         out.append(("warning", f"router ospf ({len(areas)} areas)",
                     "interfaces in two or more areas and none in area 0: "
                     "inter-area routes will not propagate"))
@@ -1547,12 +1681,44 @@ def ospf_findings(routing, addresses, have_interfaces, pools):
     # A subscriber-facing port speaking OSPF. The cross-half check only this
     # product can make: FRR does not know what a CGNAT pool is, and the
     # dataplane does not know what OSPF is.
-    quiet = {i for i, _ in passive}
+    # A statement silences this only when FRR acts on the name it uses, and
+    # then for every name that interface answers to, so the dataplane-keyed
+    # side of the comparison matches. Without the first half the operator who
+    # typed the name this VTY's own TAB completion offers - a dataplane name,
+    # which FRR will never match - was reassured by a statement that did
+    # nothing.
+    quiet = set()
+    for ifname, _ in passive:
+        if frr_acts_on(ifname):
+            quiet |= same(ifname)
+    # `ip ospf area` is the other door into "this interface speaks OSPF", and
+    # it sits in an FRR stanza, so it is spelled the way FRR spells
+    # interfaces while `addresses` usually is not. Matched as a name against
+    # a dataplane-keyed dictionary it never matched anything, which left this
+    # warning unable to fire at all on an interface configured that way.
+    in_area = set()
+    for ifname in iface_area:
+        if frr_acts_on(ifname):
+            in_area |= same(ifname)
+    # `passive-interface default` is a statement about EVERY interface, and
+    # `no passive-interface <name>` is how one is taken back out of it. It is
+    # the posture this VTY's own help text calls "what every subscriber-facing
+    # port should be", so treating "default" as an interface name - which is
+    # what comparing names as strings did - fired this warning on the box that
+    # had got it exactly right.
+    all_quiet = any(i == "default" for i, _ in passive)
+    loud = set()
+    for ifname, _ in unpassive:
+        if frr_acts_on(ifname):
+            loud |= same(ifname)
     inside = [p for pool in pools.values() for p in (pool.inside or [])]
     for ifname, addrs in addresses.items():
-        if ifname in quiet or not inside:
+        mine = same(ifname)
+        if mine & quiet or not inside:
             continue
-        speaks = ifname in iface_area or any(
+        if all_quiet and not mine & loud:
+            continue
+        speaks = bool(mine & in_area) or any(
             routes.covers_prefix(prefix, a)
             for prefix, _, _ in networks for a in addrs)
         if not speaks:
@@ -1972,6 +2138,35 @@ class Frr:
             return 1, "frr-reload timed out"
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+    @staticmethod
+    def outstanding(out):
+        """
+        The statements frr-reload says are still to be added.
+
+        Its report has two sections, each under a heading and a row of '=':
+
+            Lines To Add
+            ============
+            router ospf
+             timers throttle spf 0 50 5000
+            exit
+
+        Stripped, because a nested statement is indented there and the same
+        statement typed at this VTY is not - the difference feed() removes on
+        the way in and this has to remove on the way back.
+        """
+        lines, inside = [], False
+        for raw in (out or "").splitlines():
+            s = raw.strip()
+            if s.startswith("Lines To "):
+                inside = s == "Lines To Add"
+                continue
+            if not s or set(s) == {"="}:
+                continue
+            if inside:
+                lines.append(s)
+        return lines
 
     @staticmethod
     def diagnostics(out):
@@ -3079,6 +3274,13 @@ class Shell:
             # now offer the interfaces the box has. It did not make it
             # impossible: a runbook, a copy-paste or a habit still types it.
             known_interfaces = set()
+            # Both carried down to ospf_findings, which cannot work from the
+            # flattened set: it needs to know which names are one interface,
+            # and which member of a pair is the dataplane's (#205). The
+            # flattened set cannot say either, and building it destroys the
+            # answer to the second.
+            pairs = {}
+            dp_interfaces = set()
             rc_i, iface_out = self.dp.run("show interface")
             if rc_i == 0 and iface_out.strip():
                 # BOTH names. A linux_cp pair has a VPP name and a Linux one,
@@ -3088,9 +3290,11 @@ class Shell:
                 # is every box that routes - and lab/routing.sh caught exactly
                 # that, on "interface vppwan0".
                 _, lcp_out = self.dp.run("show lcp")
-                have = known_interfaces = set(routes.parse_interfaces(iface_out))
+                pairs = routes.lcp_pairs(lcp_out)
+                dp_interfaces = set(routes.parse_interfaces(iface_out))
+                have = known_interfaces = set(dp_interfaces)
                 # Every name every pair answers to. All of them are real.
-                for names in routes.lcp_pairs(lcp_out).values():
+                for names in pairs.values():
                     have.update(names)
                 # Every place an interface name can be staged, which is four
                 # and not one: the CGNAT feature, an FRR block, and the mtu and
@@ -3270,7 +3474,7 @@ class Shell:
             # list to refuse it against.
             for sev, stmt, why in ospf_findings(
                     target.routing, target.addresses,
-                    known_interfaces, target.pools):
+                    known_interfaces, target.pools, pairs, dp_interfaces):
                 if sev == "error":
                     self.err(f"{stmt}: {why}")
                     ok = False
@@ -3757,7 +3961,7 @@ class Shell:
         escape hatch and a deliberate asymmetry is legitimate; what is not
         legitimate is nobody saying so.
         """
-        _, iface_area, passive, _, has_ospf = ospf_state(routing)
+        _, iface_area, passive, _, _, has_ospf = ospf_state(routing)
         if not has_ospf:
             return []
         ignoring = set()
@@ -3899,10 +4103,7 @@ class Shell:
             if r.state != vppapi.OK:
                 self.err(f"cgnat block-holddown {w[2]}: {r.reason}")
         elif w[1] == "logging" and len(w) >= 3:
-            if w[2] == "tcp":
-                self.dp.run("bpa logging tcp " + " ".join(w[3:]))
-            else:
-                self.dp.run(f"bpa logging {w[2]}")
+            self.apply_logging(w)
         elif w[1] == "session-table":
             # "session-table buckets <n> memory <MB>", in either order.
             got = {}
@@ -3921,6 +4122,115 @@ class Shell:
                 # tables are allocated with the first pool and a new size
                 # would describe a table nobody is using.
                 self.err(f"cgnat session-table: {r.reason}")
+
+    def apply_logging(self, w):
+        """
+        The IPFIX export state and its collector, over the binary API.
+
+        Two things were wrong with the `vppctl bpa logging ...` this replaces,
+        and the socket was only one of them. The other is that the answer was
+        thrown away: the dataplane refuses `bpa logging enable` when no IPFIX
+        collector is configured, and an operator who typed it read "commit
+        complete" off a box that exports nothing. `vppctl` exits 0 either way,
+        so there was nothing for the caller to notice even if it had looked -
+        which is the reason vppapi.py exists at all.
+
+        The two halves go in one message rather than two calls: a
+        configuration that names a collector AND turns the export on is one
+        operator decision, and sending it as two leaves the box between them
+        if the second is refused.
+        """
+        args = {"set_enable": False, "enable": False,
+                "set_tcp": False, "tcp_enable": False,
+                "collector": "0.0.0.0", "port": 0}
+        if w[2] in ("enable", "disable"):
+            args["set_enable"] = True
+            args["enable"] = w[2] == "enable"
+        elif w[2] == "tcp" and len(w) >= 4:
+            args["set_tcp"] = True
+            if w[3] != "disable":
+                args["tcp_enable"] = True
+                args["collector"] = w[3]
+                if len(w) >= 6 and w[4] == "port":
+                    if not w[5].isdigit() or int(w[5]) > 65535:
+                        self.err(f"cgnat logging tcp: port {w[5]} is not one")
+                        return
+                    # Zero, not 4739, when no port was typed: the default
+                    # belongs to the dataplane, which is where the running
+                    # configuration is read back from. A default invented
+                    # here would be a second opinion about it.
+                    args["port"] = int(w[5])
+        else:
+            self.err("usage: nat cgnat logging enable|disable | "
+                     "nat cgnat logging tcp <collector> [port <n>] | "
+                     "nat cgnat logging tcp disable")
+            return
+        r = self.api_call("bpa_logging_set", args)
+        if r.state != vppapi.OK:
+            self.err(f"cgnat {' '.join(w[1:])}: {r.reason}")
+
+    #: Terminators, which are structure rather than configuration.
+    #:
+    #: Block OPENERS are excluded too, by opens_frr_block(), and they are the
+    #: half that was measured rather than foreseen. `interface loop0` and
+    #: `interface Gi0/1` are staged in the routing half when a loopback is
+    #: created or an MTU is set, while everything INSIDE them is applied by
+    #: this VTY to the dataplane - so those commits add a block header and
+    #: nothing else. FRR does not store an empty interface stanza, the header
+    #: was therefore still outstanding afterwards, and "nothing took" fired on
+    #: two perfectly ordinary operations: creating a loopback, and setting an
+    #: MTU. Both labs caught it before this shipped.
+    NOT_A_STATEMENT = ("exit", "exit-address-family", "exit-vrf", "end", "!")
+
+    def routing_added(self, before, after):
+        """The statements this commit introduces, stripped and deduplicated."""
+        had = {l.strip() for l in before}
+        out = []
+        for line in after:
+            s = line.strip()
+            if (not s or s in self.NOT_A_STATEMENT or s.startswith("!")
+                    or opens_frr_block(s)):
+                continue
+            if s in had or s in out:
+                continue
+            out.append(s)
+        return out
+
+    def nothing_took(self, added):
+        """
+        Did the apply change nothing FRR can see, although it asked for changes?
+
+        The narrow half of #197, and narrow on purpose. The general question -
+        "is every statement of this candidate in effect" - CANNOT be answered
+        with this tooling, and that was measured rather than assumed: a
+        candidate carrying `timers throttle spf 0 50 5000` applies cleanly, FRR
+        declines to store it because it equals the default, and frr-reload then
+        reports it under "Lines To Add" for ever. A check built on that would
+        call every commit containing such a statement a failure.
+
+        What IS decidable without a single false positive from defaults is the
+        worst case rather than the general one: EVERY statement this commit
+        introduced is still outstanding afterwards, so nothing took at all.
+        That is the failure #197 was filed for - frr-reload exiting 0 having
+        applied nothing, and the box printing "commit complete" over it - and a
+        partial failure, nine statements of ten, does not trigger it.
+
+        The residual false positive is a commit whose new statements are ALL
+        equal to FRR's own defaults. It is rare, and the message names the
+        statements so an operator sees at once that it is what happened.
+
+        Returns the outstanding statements when nothing took, and nothing
+        otherwise - including when frr-reload cannot be asked, because a check
+        that cannot run must not become a failure of the commit it was checking.
+        """
+        if not added:
+            return []
+        rc, out = self.frr.reload(self.candidate.routing, check_only=True)
+        if rc:
+            return []
+        left = set(self.frr.outstanding(out))
+        still = [a for a in added if a in left]
+        return still if len(still) == len(added) else []
 
     def do_commit(self, args):
         """commit [check | remap | confirmed <min> | comment <text>]"""
@@ -4045,7 +4355,26 @@ class Shell:
             self.err("the change is applied, but no rollback revision could "
                      f"be recorded: {e}")
             print("    'rollback' will not be able to undo this commit")
-        print("commit complete")
+        stalled = self.nothing_took(self.routing_added(running.routing,
+                                                       self.candidate.routing))
+        if stalled:
+            # NOT "commit complete". The CGNAT half and the box's own
+            # configuration are applied - this is not a rollback - but the
+            # routing half reached nothing, and saying "complete" over that is
+            # the one sentence an operator builds every later diagnosis on.
+            self.err("the routing half of this commit reached FRR and changed "
+                     "nothing: all " + str(len(stalled)) +
+                     " new statement(s) are still outstanding")
+            for line in stalled[:5]:
+                print("    " + as_hierarchy(line))
+            if len(stalled) > 5:
+                print(f"    ... and {len(stalled) - 5} more")
+            print("    the usual cause is a daemon that is not running; "
+                  "'show version' says which are")
+            print("    if these statements are all at FRR's own default "
+                  "values, FRR does not store them and this is expected")
+        else:
+            print("commit complete")
 
         if confirm_min:
             # The point of "commit confirmed" is surviving a change that cuts

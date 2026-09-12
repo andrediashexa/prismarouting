@@ -195,6 +195,35 @@ OFFOUT=$(python3 /src/lab/checkftp.py /tmp/ftp-off.pcap 2>&1); OFFRC=$?
 printf '%s\n' "$OFFOUT" | sed 's/^/  /'
 OFFAFTER=$(errc "FTP ALG payloads rewritten")
 echo "  rewrite counter with the ALG off: $OFFBEFORE -> $OFFAFTER"
+# The OTHER spelling of the same switch, and the one that was broken.
+#
+# There are two ways to turn an ALG off - on the `bpa pool` line when the pool
+# is created, and with `bpa alg <pool>` afterwards - and nothing asserted that
+# they agree. They did not: the pool line was parsed by a duplicate branch that
+# set the bit and not the "an opinion was stated" flag, so bpa_pool_init()
+# resolved it straight back to the default and the pool came up with the ALG ON
+# (#206). It was accepted and it printed nothing.
+#
+# That took this lab's own off mode with it - the header says `ftp-alg off`
+# must FAIL and it passed, because the mode is exactly that spelling. One lab
+# used it and it is the one that went quiet.
+#
+# A pool of its own, so the assertion does not depend on which mode this run is
+# in, and read off `show bpa pool` rather than the configuration emitter: the
+# emitter prints what was asked for, and what is being checked here is what the
+# box DID with it.
+vppctl bpa pool algline inside 100.64.8.0/24 outside 200.150.1.0/30 block 512 \
+  alg ftp off >/dev/null
+# The alg line of THAT pool. `show bpa pool` prints every pool, so a grep for
+# "alg" across the whole output answers about whichever pool came first.
+POOLLINE=$(vppctl show bpa pool | awk '/^pool algline/{p=1;next} /^pool /{p=0} p && /alg/{print; exit}')
+echo "  pool line said 'alg ftp off', box says:${POOLLINE:- <nothing>}"
+# Removed again as soon as it has answered. Every assertion below reads
+# `show bpa config` across ALL pools - the duplicate-emitter check counts
+# occurrences of one line - so a second pool carrying the same setting would
+# make this section break the next one, which is a lab testing itself.
+vppctl bpa pool algline del >/dev/null 2>&1
+
 CFG=$(vppctl show bpa config)
 # Counted, not merely found. Two branches each added the ALG block to this
 # emitter and the merge kept both, so "alg ftp off" came out TWICE - which a
@@ -266,6 +295,8 @@ expect "the running configuration records it exactly once, not twice" \
   test "${ALG_LINES:-0}" -eq 1
 expect_in "the running configuration records the pool's ALG being off" \
   "alg ftp off" "$CFG"
+expect_in "an ALG turned off on the pool line is really off" \
+  "ftp off" "$POOLLINE"
 expect_in "and show bpa pool reports the switch either way" "alg          ftp" \
   "$SHOWPOOL"
 verdict

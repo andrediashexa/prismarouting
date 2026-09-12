@@ -119,8 +119,37 @@ printf '%s\n' "$SESS6" | sed -n '/total:/p' | sed 's/^/  |/'
 printf '%s\n' "$HELD" | sed -n '/total:/p' | sed 's/^/  |/'
 
 echo
+echo "=========== what the pool can serve whatever the addresses are ==========="
+# `usable` is a ceiling nobody is promised once there are workers: block
+# allocation is sharded so it needs no lock, a subscriber draws only from its
+# own worker's slice, and a subscriber index is the offset of its address
+# within the inside set rather than a counter - so on any real address plan the
+# two do not balance. This pool has three blocks; with two workers the slices
+# are two and one, and three subscribers whose offsets land 1, 0, 1 leave one
+# refused with a block free on the other worker (#210).
+#
+# The mechanism is not fixed here. What is fixed is the box claiming a number
+# it cannot deliver, so the assertion is on what `show bpa pool` SAYS.
+POOLCAP=$(vppctl show bpa pool | sed -n '/^pool /,/^$/p' | grep -A1 "capacity")
+printf '%s\n' "$POOLCAP" | sed 's/^/  /'
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
+if [ "${LAB_WORKERS:-0}" = 1 ]; then
+  # Three blocks over two workers: the smallest slice is one, and one is what
+  # the pool can serve however the addresses fall.
+  expect_in "the pool reports what it can serve whatever the addresses are" \
+    "whatever the addresses are" "$POOLCAP"
+  expect_in "and that number is the smallest slice, not the total" \
+    "1 whatever" "$POOLCAP"
+else
+  # Single-threaded there is one slice and it is the whole pool, so the line
+  # must NOT appear: a caveat printed where it does not apply is a caveat
+  # people learn to skip.
+  expect_not_in "with one thread there is no shard, and no caveat printed" \
+    "whatever the addresses are" "$POOLCAP"
+fi
 expect_in "the subscriber's sessions are gone" "total: 0 sessions" "$SESS6"
 expect_not_in "and it is not reported as holding no block while it holds one" \
   "holds no block" "$SUB6"
@@ -134,6 +163,28 @@ ALLOCS=$(printf '%s\n' "$B" \
 echo "  allocations counted: ${ALLOCS:-<none>}"
 expect "a block was allocated for each of the three subscribers" \
   test "${ALLOCS:-0}" -ge 3
+# Examined under #204 and deliberately left as it is.
+#
+# The worry was #201's: with workers "show bpa blocks" prints a row per thread
+# AND a total, and this needle matches a per-thread row as readily as the
+# total line. It cannot pass wrongly all the same, and the reason is
+# arithmetic rather than luck - the total is the SUM of the rows above it,
+# summed from the same values in the same pass, so a row carrying a refusal
+# count of 1 puts the total at 1 or more. What this asserts is "at least one
+# refusal was counted", and a match anywhere in the block is exactly that. A
+# box that refused nothing prints "0 refusals" on every row and on the total,
+# and this needle is in none of it.
+#
+# No box could be constructed on which it passes wrongly, so it was NOT
+# anchored on the total: that would have made it "exactly one", and the
+# number of refusals this section produces is not one on every box. Measured:
+# LAB_WORKERS=1 gives one refusal (2 workers, blocks split 2/1), and
+# LAB_WORKER_COUNT=3 gives three, because a dynamic pool's blocks are
+# partitioned per worker and four subscribers hashing onto three one-block
+# workers collide. Both are the box doing what it is built to do; it is the
+# section's premise - three blocks reachable by any subscriber - that a
+# worker count of three takes away. Anchoring would have reported the first
+# of those as broken, which is #201 in reverse.
 expect_in "exhaustion was counted, not silent" "1 refusals" "$B"
 # The hold-down is proved by the release counter, not by an instantaneous
 # reading: the lab reallocates a block right after, so "0 in use" is true only

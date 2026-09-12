@@ -142,14 +142,16 @@ Still missing, now tracked as
 between the blocks one subscriber holds, and **per-pool block-size ranges** so a
 pool can start subscribers small and grow only those who need it.
 
-### 2.3 ALG — FTP, RTSP and PPTP built; SIP, TFTP and ESP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
+### 2.3 ALG — FTP, RTSP, PPTP, ESP and SIP-over-UDP built; TFTP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
 Protocols that carry an address or port inside the payload break behind any
 NAT unless the NAT rewrites the payload too.
 
-**FTP, RTSP and PPTP/GRE are built** (v0.5.0), switchable per pool with
-`bpa alg <pool> <name> <on|off>` and on by default. The design of each, and
-what each deliberately refuses to do, is in
+**FTP, RTSP and PPTP/GRE are built** (v0.5.0), **ESP passthrough** after them,
+and **SIP over UDP** once [#48](https://github.com/andrediashexa/hexarouting/issues/48)
+had left exactly one sequence-correction mechanism to inherit. All are
+switchable per pool with `bpa alg <pool> <name> <on|off>` and on by default.
+The design of each, and what each deliberately refuses to do, is in
 [architecture.md](architecture.md#application-level-gateways).
 
 | ALG | Symptom without it | Priority |
@@ -157,9 +159,10 @@ what each deliberately refuses to do, is in
 | **FTP** (active mode, `PORT`/`227`) | FTP works passively, fails actively. Still common with industrial and legacy equipment. | **Built**, [#42](https://github.com/andrediashexa/hexarouting/issues/42) |
 | **RTSP** | IP cameras and some streaming boxes: works on the LAN, black frame from outside. | **Built**, [#43](https://github.com/andrediashexa/hexarouting/issues/43) |
 | **PPTP / GRE** | VPNs to older corporate concentrators do not connect at all. GRE has no ports, so the Call ID has to play the part one plays. | **Built**, [#44](https://github.com/andrediashexa/hexarouting/issues/44) |
-| **SIP** | VoIP registers but has no audio, or one-way audio. The single most expensive support call an ISP receives. | High |
+| **SIP over UDP** | VoIP registers and nobody can call the subscriber, or the call connects with no audio. The single most expensive support call an ISP receives. | **Built**, [#14](https://github.com/andrediashexa/hexarouting/issues/14) |
+| **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | **Built** |
+| **SIP over TCP/TLS** | A SIP message over TCP is a stream, so an honest ALG needs reassembly, and TLS is untouchable by any NAT. | **Not being built**, stated as a decision |
 | **TFTP** | Provisioning of some CPE. | Low |
-| **IPsec passthrough (ESP)** | Multiple subscribers behind one public address cannot run IPsec without NAT-T; ESP has no ports to demultiplex. | Medium |
 
 Each ALG **MUST** be individually switchable per pool, and a malformed or
 unexpected payload **MUST** leave the packet untouched and increment a counter:
@@ -168,12 +171,16 @@ corrupts traffic that would otherwise merely fail to connect.
 
 The defaults were decided on
 [#14](https://github.com/andrediashexa/hexarouting/issues/14) and are the
-reverse of what this section originally said. Every ALG built here is **on**
-except **SIP**, which is off and whose enabling **MUST** be a deliberate act:
-VoIP providers routinely tell customers to disable SIP ALG on their CPE,
-because one that misparses SDP produces one-way audio and registrations that
-drop — failures harder to diagnose than the ones it prevents, and modern SIP
-solves NAT traversal from the endpoint. H.323, MGCP, SCCP, MSRPC, NetBIOS,
+reverse of what this section originally said. Every ALG built here is **on**,
+SIP included — and SIP being on is a change from what this section used to
+require, so the argument is written down rather than assumed. VoIP providers
+routinely tell customers to disable SIP ALG on their CPE because one that
+misparses SDP produces one-way audio and registrations that drop. That is an
+argument against a *guessing* ALG. This one rewrites only a literal IPv4
+address equal to the subscriber's own private address, so a message it misreads
+is a message it leaves alone, and a CPE that already knows its public address
+is untouched by construction rather than by luck — which is exactly the case
+those providers are protecting against. H.323, MGCP, SCCP, MSRPC, NetBIOS,
 IRC/DCC, TFTP and DNS are **not** being built; the reasoning is on #14.
 Each ALG **MUST** be individually switchable per pool, and **SHOULD** default
 to off unless its parse is cheap to make safe: an ALG that rewrites a payload
@@ -619,6 +626,58 @@ redesign.
 `commit` returning success is the one thing in this product an operator has to
 be able to trust, because every diagnosis they make afterwards starts from it.
 
+#### What running the labs the way the product ships found
+
+The labs proved the forwarding path single-threaded while every appliance with
+more than one core runs VPP workers. Running all forty with `LAB_WORKERS=1`
+found three defects, and the work that followed found four more of the same
+family. They are grouped here because the family is the point: **every one of
+them is the product claiming something it did not do, with a counter saying it
+had.**
+
+| | | |
+|---|---|---|
+| [#199](https://github.com/andrediashexa/hexarouting/issues/199) | every translated packet blackholed, on every appliance | *fixed, v0.63.0* |
+| [#200](https://github.com/andrediashexa/hexarouting/issues/200) | every cross-worker hairpin dropped | *fixed, v0.63.0* |
+| [#201](https://github.com/andrediashexa/hexarouting/issues/201) | an ICMP error steered to a worker that had never heard of the session, and a counter that blamed the internet for it | *fixed, v0.63.0* |
+| [#207](https://github.com/andrediashexa/hexarouting/issues/207) | a session pointer held across a second `pool_get`, twice | *fixed* |
+| [#206](https://github.com/andrediashexa/hexarouting/issues/206) | `alg <x> off` on the pool line accepted and ignored, taking a lab's whole `off` mode with it | *fixed* |
+| [#209](https://github.com/andrediashexa/hexarouting/issues/209) | UDP IPFIX export has never worked on an installed box | **open** |
+| [#210](https://github.com/andrediashexa/hexarouting/issues/210) | a subscriber refused while blocks stand free, and the pool reporting capacity it cannot deliver | **open**; the claim is fixed, the mechanism is a decision |
+
+**#209 is the one to do next and it is not close.** In dynamic mode the
+allocation log *is* the connection record — kept a year, on its own filesystem,
+and what answers a court order under the Marco Civil. A CGNAT that cannot say
+which subscriber held a public port at a given moment cannot answer the one
+question it exists to answer. It survived because `lab/ipfix.sh` configures the
+exporter itself, with `vppctl`, because it needs one: the lab performing the
+product's missing step, for the fifth time in this repository
+([#99](https://github.com/andrediashexa/hexarouting/issues/99),
+[#168](https://github.com/andrediashexa/hexarouting/issues/168),
+[#182](https://github.com/andrediashexa/hexarouting/issues/182),
+[#184](https://github.com/andrediashexa/hexarouting/issues/184) were the others).
+
+#### The checks that fire on correct configurations
+
+A second family, found by asking one question of every finding function: *can
+this fire on an ordinary, correct configuration?* The answer was yes four
+times, and `docs/routing.md` already says why that matters more than it sounds
+— an alarm that is always on is one nobody reads, and these findings are this
+box's strongest claim, the diagnoses FRR cannot make.
+
+| | | |
+|---|---|---|
+| [#198](https://github.com/andrediashexa/hexarouting/issues/198) | the IS-IS IPv6 warning, disproved by this repository's own lab on every run | *withdrawn* |
+| [#205](https://github.com/andrediashexa/hexarouting/issues/205) | the OSPF check silenced by the wrong spelling of `passive-interface` and fired by the right one | *fixed* |
+| [#208](https://github.com/andrediashexa/hexarouting/issues/208) | BGP unnumbered refused, failing the whole commit | **open** |
+| — | `route_map_findings` evaluating clauses in written order where FRR uses `seq`; `undefined_policy_lists` refusing a forward reference FRR accepts; an `IndexError` on a half-typed statement | **open**, folded into #208 |
+
+#208 matters beyond its own line: it refuses the **whole commit**, so a CGNAT
+change in the same candidate is refused with it, over a BGP statement the
+operator may not have touched. And the only way round it is `vtysh`, which is
+the tool this VTY exists to keep them out of — a routing change made there is
+invisible to `commit`, `rollback` and the audit trail.
+
 #### Installation — blocked by nothing, paid on every box
 
 [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the installer
@@ -656,13 +715,17 @@ being deferred. The management address alone is paid on every single install.
 
 #### Phase 5 — applications
 
-[#48](https://github.com/andrediashexa/hexarouting/issues/48) first: two TCP sequence-adjustment mechanisms do the same job and
-are carried by every session. A third ALG that lengthens a payload — **SIP** —
-would have to pick one, and half of any reader's mental model would then be
-wrong.
+[#48](https://github.com/andrediashexa/hexarouting/issues/48) came first and is
+done: there is now exactly one sequence-correction mechanism, so the ALG that
+lengthens a payload next had nothing to choose between.
 
-Then [#14](https://github.com/andrediashexa/hexarouting/issues/14) SIP, the most expensive support call an ISP takes;
-[#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on dynamic pools, which needs the block pinned; and
+[#14](https://github.com/andrediashexa/hexarouting/issues/14) **SIP over UDP**
+followed, and is built — the most expensive support call an ISP takes. It
+turned out not to need #48's work at all, which is the useful thing to record:
+a datagram has no stream to renumber, so the ALG carries none of that
+apparatus. **SIP over TCP** is written up as not done rather than half done.
+
+Still open here: [#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on dynamic pools, which needs the block pinned; and
 [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP last — now unblocked, since it depends on #17 and should be
 bounded by #18, both delivered.
 

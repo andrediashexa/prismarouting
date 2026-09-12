@@ -5,8 +5,13 @@
 #
 # The wiki (Outline) is the live copy and the one people read. This mirror
 # exists so the pages can be read, searched and diffed from inside the
-# repository - not as a second place to edit them. Editing a file under wiki/
-# changes nothing: the next pull overwrites it.
+# repository, and so an edit can be DRAFTED against what the page actually
+# says. A file changed under wiki/ reaches nobody until tools/wiki-push.sh
+# publishes it, and the next pull overwrites whatever was not published.
+#
+# Each file opens with `# <title>`, which is the document's title field and
+# NOT part of its body. wiki-push.sh strips that line back off before sending,
+# so the round trip is a no-op; the two halves have to stay in step (#165).
 #
 # NO CREDENTIALS LIVE HERE. WIKI_TOKEN and WIKI_URL come from the environment.
 # PADRAO-DOCUMENTACAO.md says passwords, keys, management addresses and

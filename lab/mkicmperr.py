@@ -28,9 +28,22 @@ def ip4(src, dst, proto, payload_len, total=None):
 router, pub, remote = sys.argv[1], sys.argv[2], sys.argv[3]
 pub_port, remote_port, mtu = int(sys.argv[4]), int(sys.argv[5]), 1500
 
-# the original packet the router is reporting on: subscriber -> remote
-inner_udp = struct.pack("!HHHH", pub_port, remote_port, 8, 0)
-inner_ip = ip4(pub, remote, 17, len(inner_udp), total=1500)
+# The embedded protocol. UDP unless asked otherwise; "esp" builds the error a
+# router sends about an outbound IPsec packet, which is the only PMTUD signal
+# a tunnel has - there is no MSS in an ESP packet to clamp.
+kind = sys.argv[6] if len(sys.argv) > 6 else "udp"
+
+if kind == "esp":
+    # SPI and sequence number: the eight bytes RFC 792 asks an error to quote.
+    # Neither is read by this box - the tunnel is identified by the two
+    # ADDRESSES in the embedded IP header - and they are here so the packet is
+    # the one a real router would send rather than the smallest one that works.
+    inner_l4 = struct.pack("!II", 0x11111111, 7)
+    inner_ip = ip4(pub, remote, 50, len(inner_l4), total=1500)
+else:
+    inner_l4 = struct.pack("!HHHH", pub_port, remote_port, 8, 0)
+    inner_ip = ip4(pub, remote, 17, len(inner_l4), total=1500)
+inner_udp = inner_l4
 
 # ICMP body: type 3 code 4, carrying the next-hop MTU
 icmp_body = struct.pack("!HH", 0, mtu) + inner_ip + inner_udp

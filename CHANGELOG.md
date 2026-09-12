@@ -34,6 +34,170 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## 0.64.0 — the labs ran the box the way it ships, and seven things fell out
+
+[#165](https://github.com/andrediashexa/hexarouting/issues/165),
+[#198](https://github.com/andrediashexa/hexarouting/issues/198),
+[#14](https://github.com/andrediashexa/hexarouting/issues/14),
+[#206](https://github.com/andrediashexa/hexarouting/issues/206).
+
+### Added
+
+* **A SIP ALG, over UDP, and it says so.** `alg sip on|off` per pool, on by
+  default ([#14](https://github.com/andrediashexa/hexarouting/issues/14)). It
+  rewrites the topmost `Via` sent-by, the `Contact` URI host, the SDP `c=`
+  address and each SDP `m=` port — reserving a consecutive RTP/RTCP pair for
+  each stream through the same machinery the RTSP `SETUP` uses, because an ALG
+  that rewrites SDP and opens no mapping delivers signalling and no audio. It
+  recomputes `Content-Length`, which is a third length over the same bytes that
+  neither IP nor UDP can see. On the way back it restores the response `Via`
+  the phone insists on (RFC 3261 §18.1.2).
+
+  One rule keeps a small parser safe in front of a large protocol: **a span is
+  rewritten only when the literal IPv4 address in it is the address the session
+  belongs to.** A response the subscriber sends carries the caller's `Via` and
+  is therefore not touched, with no direction flag needed to work that out; a
+  CPE that already knows its public address is not interfered with, which is
+  the failure operators know as "the ALG broke my phone"; and a message whose
+  syntax does not come apart is refused **whole**, counted, and passed through.
+  `From`, `To`, `Call-ID`, `Route`, the SDP `o=` line and the `received=` and
+  `rport=` parameters are deliberately left alone, each for a reason recorded in
+  `bpa_sip.h`.
+
+  **TCP is not handled, as a decision rather than an omission.** A SIP message
+  over TCP is a stream whose end one segment cannot show, and an INVITE with SDP
+  regularly exceeds one; the honest answer is reassembly, which is different
+  work. A TCP connection to 5060 is translated like any other and never
+  inspected — and because the ALG is UDP-only it carries none of the sequence
+  correction of `bpa_seq.h`: what a UDP payload rewrite invalidates is the IP
+  total length, the UDP length and the UDP checksum, and that is the whole list.
+
+  Evidence: `lab/sip.sh`, which asserts on the captured packet — every rewritten
+  field, every field that must not have moved (byte for byte against the payload
+  as it was injected), both lengths, the UDP checksum, `Content-Length` against
+  the body that arrived, and the media reaching the phone on the announced
+  ports. `sh tools/lab.sh sip off` fails exactly 7 of its 18 checks and the
+  lab header names which; it also passes under `LAB_WORKERS=1` and is in
+  `WORKER_LABS`. `test/test_bpa_sip.c` unit-tests the parser's refusals and the
+  multi-edit offset arithmetic without VPP.
+
+### Fixed
+
+* **The IS-IS IPv6 warning fired on a working configuration, including this
+  repository's own lab.** `ipv6 router isis <tag>` without `topology
+  ipv6-unicast` was reported as "the IPv6 half carries nothing while IPv4
+  works". That statement turns on Multi-Topology IS-IS (RFC 5120), a second SPF
+  for IPv6; without it IPv6 reachability floods in the single legacy topology
+  and forwards perfectly well when both ends agree, which is the ordinary
+  single-vendor core. `lab/igp.sh` commits exactly that configuration and then
+  watches `2001:db8:19::/64` reach the VPP IPv6 FIB over the adjacency, so the
+  box was contradicting its own acceptance test on every run — and, because the
+  check runs at every commit, printing the same sentence again over an OSPF
+  NBMA neighbour, a BGP refusal and `router ospf6`. The warning is withdrawn
+  rather than narrowed: what would be a real fault is Multi-Topology on at one
+  end and off at the other, which is not in this box's configuration at all.
+  The lab now asserts the commit stays silent about it, so it cannot come back
+  unnoticed ([#198](https://github.com/andrediashexa/hexarouting/issues/198)).
+* **Two more IGP findings fired on correct configurations.** The IS-IS
+  `metric-style wide` warning charged every interface metric on the box to
+  every instance, so a metric a wide instance expresses perfectly named a
+  narrow instance that never carries that port; it is now read from the
+  interfaces that joined the instance being judged. The OSPF "no area 0"
+  warning ignored `area <n> virtual-link`, which is precisely how RFC 2328
+  section 15 attaches a box with no physical backbone interface — the warning
+  described a working design back to the operator who had to think hardest
+  about it.
+* **`tools/wiki-pull.sh` and `tools/wiki-push.sh` did not round-trip.** The
+  mirror writes each page as `# <title>` followed by the body; Outline keeps
+  the title in a field of its own, and push sent the file verbatim — so a page
+  that made the documented pull, edit, push cycle grew a second title above its
+  opening sentence, which `PADRAO-DOCUMENTACAO.md` section 1 forbids, and every
+  further round trip added another. push now strips a leading heading that
+  matches the live document's title, and **stops** when the first line is a
+  heading that does not, rather than guessing. `test/test_wiki_roundtrip.sh`
+  drives both scripts against a stubbed `curl` — there is no wiki and no token
+  in the test — and compares the bytes that would have been sent against the
+  bytes the page held, twice around
+  ([#165](https://github.com/andrediashexa/hexarouting/issues/165)).
+
+## Unreleased
+
+[#67](https://github.com/andrediashexa/hexarouting/issues/67),
+[#76](https://github.com/andrediashexa/hexarouting/issues/76),
+[#165](https://github.com/andrediashexa/hexarouting/issues/165),
+[#197](https://github.com/andrediashexa/hexarouting/issues/197) (partly),
+[#198](https://github.com/andrediashexa/hexarouting/issues/198),
+[#203](https://github.com/andrediashexa/hexarouting/issues/203) (partly),
+[#204](https://github.com/andrediashexa/hexarouting/issues/204),
+[#205](https://github.com/andrediashexa/hexarouting/issues/205),
+[#206](https://github.com/andrediashexa/hexarouting/issues/206),
+[#207](https://github.com/andrediashexa/hexarouting/issues/207),
+[#210](https://github.com/andrediashexa/hexarouting/issues/210) (partly).
+
+### Fixed
+
+* **A session pointer was held across a second `pool_get`, in two places.**
+  `bpa_alg_reserve_pair()` kept the pointer the first `bpa_session_bind()`
+  returned across a second one, and that call ends in `pool_get_zero()`, which
+  may move the whole session vector — so both writes below it landed in memory
+  the allocator had already given back. The visible consequence was the smaller
+  half: one of a reserved media pair kept `is_expect = 0`, sat on the UDP
+  timeout instead of the ALG's, and an announced port nobody used was held for
+  hours rather than seconds. Intermittent by construction — it needs the second
+  bind to cross a growth boundary — which is why it read as a loaded runner and
+  why it survived. Second instance on the PPTP control path, where both callers
+  dereference their own session immediately after the ALG may have created a
+  GRE session. `bpa_ftp.c` had written the lesson down; it had not been applied
+  everywhere.
+* **PMTUD works for an IPsec tunnel.** An ESP tunnel has no MSS to clamp, so
+  when a router on the path cannot carry the subscriber's packet the ICMP
+  `fragmentation needed` is the whole of what tells them, and this box dropped
+  it: the tunnel comes up, small packets work, and the first large transfer
+  hangs. The protocol with no identifier of its own turns out to be the easy
+  one — an ESP session is keyed on (our public address, peer) and **both** are
+  in the embedded IP header of the error, so it carries the whole key, needs no
+  payload bytes at all, and resolves on whatever worker it landed on. GRE stays
+  refused, with the reason now written where somebody will look for it.
+* **`nat cgnat logging enable` was refused by the dataplane and the box said
+  `commit complete`.** The status of the CLI write was discarded. It now says
+  what the dataplane said — and that refusal turns out to be permanent on a
+  shipped box, because nothing in the product ever configures VPP's UDP IPFIX
+  exporter ([#209](https://github.com/andrediashexa/hexarouting/issues/209)).
+* **`bpa pool ... alg <x> off` was accepted and ignored**, so the pool came up
+  with the ALG on — and it took `lab/ftp-alg.sh`'s whole `off` mode with it,
+  which the file's own header says must fail and which passed.
+* **The OSPF check warned about the only spelling FRR acts on.**
+  `passive-interface` has to be written with the name FRR knows, and the check
+  matched it against the dataplane's names — so the correct spelling triggered
+  the warning and the wrong one silenced it. Two more came out of the same
+  reading: FRR does not store `passive-interface` at all (it rewrites it to
+  `ip ospf passive`, so every commit after the first saw a spelling the parser
+  did not know), and `passive-interface default` was read as an interface name.
+* **The IS-IS IPv6 warning fired on a configuration this repository's own lab
+  proves works**, and printed itself five more times per lab run on commits
+  with nothing to do with IS-IS. Withdrawn.
+* **A commit that asked FRR for changes and got none no longer says `commit
+  complete`.** The general read-back check cannot be built on this tooling and
+  the measurement is on the issue; what is decidable is the worst case, and it
+  is now caught.
+* **`wiki-pull` and `wiki-push` round-trip.** The title was duplicated into the
+  body on every pass.
+
+### Changed
+
+* **The last two CLI writes move to the binary API**, so `show` passthrough is
+  the only remaining use of that socket and it is read-only — checkable now,
+  by a lab that lists what is **allowed** rather than what is forbidden. This
+  is an **authority** boundary and not an availability one; none of #172's
+  three failures is addressed by it, and the code, the docs and the lab all say
+  so.
+* **A dynamic pool stops claiming a capacity it cannot deliver.** Blocks are
+  sharded per worker and a subscriber draws only from its own worker's slice,
+  so `usable` was a ceiling nobody is promised; the smallest slice is printed
+  beside it. The mechanism is unchanged and the decision is the maintainer's.
+* **Any lab can be run with workers** (`LAB_WORKERS=1`), and the suite runs the
+  forwarding labs both ways.
+
 ## 0.63.0 — the configuration the product ships had never been tested
 
 [#48](https://github.com/andrediashexa/hexarouting/issues/48),
@@ -47,6 +211,43 @@ are to be interpreted as described in
 
 ### Added
 
+* **A SIP ALG, over UDP, and it says so.** `alg sip on|off` per pool, on by
+  default ([#14](https://github.com/andrediashexa/hexarouting/issues/14)). It
+  rewrites the topmost `Via` sent-by, the `Contact` URI host, the SDP `c=`
+  address and each SDP `m=` port — reserving a consecutive RTP/RTCP pair for
+  each stream through the same machinery the RTSP `SETUP` uses, because an ALG
+  that rewrites SDP and opens no mapping delivers signalling and no audio. It
+  recomputes `Content-Length`, which is a third length over the same bytes that
+  neither IP nor UDP can see. On the way back it restores the response `Via`
+  the phone insists on (RFC 3261 §18.1.2).
+
+  One rule keeps a small parser safe in front of a large protocol: **a span is
+  rewritten only when the literal IPv4 address in it is the address the session
+  belongs to.** A response the subscriber sends carries the caller's `Via` and
+  is therefore not touched, with no direction flag needed to work that out; a
+  CPE that already knows its public address is not interfered with, which is
+  the failure operators know as "the ALG broke my phone"; and a message whose
+  syntax does not come apart is refused **whole**, counted, and passed through.
+  `From`, `To`, `Call-ID`, `Route`, the SDP `o=` line and the `received=` and
+  `rport=` parameters are deliberately left alone, each for a reason recorded in
+  `bpa_sip.h`.
+
+  **TCP is not handled, as a decision rather than an omission.** A SIP message
+  over TCP is a stream whose end one segment cannot show, and an INVITE with SDP
+  regularly exceeds one; the honest answer is reassembly, which is different
+  work. A TCP connection to 5060 is translated like any other and never
+  inspected — and because the ALG is UDP-only it carries none of the sequence
+  correction of `bpa_seq.h`: what a UDP payload rewrite invalidates is the IP
+  total length, the UDP length and the UDP checksum, and that is the whole list.
+
+  Evidence: `lab/sip.sh`, which asserts on the captured packet — every rewritten
+  field, every field that must not have moved (byte for byte against the payload
+  as it was injected), both lengths, the UDP checksum, `Content-Length` against
+  the body that arrived, and the media reaching the phone on the announced
+  ports. `sh tools/lab.sh sip off` fails exactly 7 of its 18 checks and the
+  lab header names which; it also passes under `LAB_WORKERS=1` and is in
+  `WORKER_LABS`. `test/test_bpa_sip.c` unit-tests the parser's refusals and the
+  multi-edit offset arithmetic without VPP.
 * **`lab/oom.sh`: the kernel is shown making its choice, both ways.** Real VPP
   and one growing control-plane process share a cgroup with a `memory.max` of
   their own, so the shortage is real and the lab's own shell is not in the

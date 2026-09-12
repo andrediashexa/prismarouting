@@ -1474,6 +1474,14 @@ check(any("area 0" in w for _, _, w in r),
 check(not find(["router ospf", "network 200.150.0.0/24 area 1",
                 "network 100.64.0.0/22 area 0"]),
       "and having a backbone is not")
+# A virtual link IS the backbone attachment, and RFC 2328 section 15 exists
+# for precisely the box with no physical area-0 interface. Warning there
+# describes a working design back to the operator who had to think hardest
+# about it.
+check(not find(["router ospf", "network 200.150.0.0/24 area 1",
+                "network 100.64.0.0/22 area 2",
+                "area 1 virtual-link 10.255.0.9"]),
+      "nor is an area reached through a virtual link")
 
 # THE cross-half check: a subscriber-facing port speaking OSPF. FRR does not
 # know what a CGNAT pool is and the dataplane does not know what OSPF is.
@@ -1485,6 +1493,105 @@ check(not find(["router ospf", "network 100.64.0.0/22 area 0",
       "and making it passive silences it")
 check(not find(["router ospf", "network 200.150.0.0/24 area 0"], pools=POOLS),
       "while a port that is not inside a pool is never reported")
+
+# The same check on a box that has linux_cp, which is every box that routes.
+# A pair answers to three names, only one of them is FRR's, and the two halves
+# of this check arrive in different ones: the addresses are keyed by the
+# DATAPLANE's names and `passive-interface` has to carry FRR's (#205).
+#
+# The names and the behaviour are the labs' own, measured rather than
+# invented, and lab/igp.sh now asserts the same three cases against a real
+# FRR over a real pair. `show lcp` prints
+#
+#   itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+#
+# only vppwan0 is a Linux netdev, FRR's interface list holds vppwan0 and
+# neither of the others, and `passive-interface host-veth-vpp` is accepted
+# with a deprecation notice while `show ip ospf interface vppwan0` goes on
+# saying nothing about hellos.
+LCP = ["host-veth-vpp", "tap4096", "vppwan0"]
+PAIRS = {n: LCP for n in LCP}
+DPIF = {"host-veth-vpp", "tap4096"}
+LCP_HAVE = set(LCP) | DPIF
+LCP_ADDRS = {"host-veth-vpp": ["100.64.0.1/22"]}
+FACING = ["router ospf", "network 100.64.0.0/22 area 0"]
+
+
+def lcp_find(lines, addrs=None):
+    return ospf_findings(lines, addrs or LCP_ADDRS, LCP_HAVE, POOLS,
+                         PAIRS, DPIF)
+
+
+check(any("facing subscribers" in w for _, _, w in lcp_find(FACING)),
+      "a subscriber-facing pair speaking OSPF is reported")
+# The false positive: the ONLY spelling FRR acts on used to silence nothing,
+# so the operator who did the right thing was told off for it.
+check(not lcp_find(FACING + ["passive-interface vppwan0"]),
+      f"and the spelling FRR acts on silences it: "
+      f"{lcp_find(FACING + ['passive-interface vppwan0'])}")
+# Its mirror, and the reason the false positive was not merely noise: the
+# spelling FRR ignores used to silence it, so the operator who typed a name
+# that does nothing was reassured.
+r = lcp_find(FACING + ["passive-interface host-veth-vpp"])
+check(any("facing subscribers" in w for _, _, w in r),
+      f"while the dataplane's name silences nothing: {r}")
+check(any("nothing is made passive" in w for _, _, w in r),
+      f"and the statement that will not work is named: {r}")
+# The false negative next door. `ip ospf area` sits in an FRR stanza and so
+# is spelled FRR's way; matched as a string against a dataplane-keyed address
+# dictionary it never matched anything, and this warning could not fire
+# through that door at all.
+r = lcp_find(["interface vppwan0", "ip ospf area 0"])
+check(any("facing subscribers" in w for _, _, w in r),
+      f"an area set on the interface reaches the same check: {r}")
+check(not lcp_find(["interface vppwan0", "ip ospf area 0",
+                    "router ospf", "passive-interface vppwan0"]),
+      "and the same statement silences it")
+# The other keying, which is why neither side can simply be translated: a
+# staged `interface` block puts whatever the operator typed into the address
+# dictionary, and docs/routing.md says either name is correct there.
+check(not lcp_find(FACING + ["passive-interface vppwan0"],
+                   addrs={"vppwan0": ["100.64.0.1/22"]}),
+      "addresses keyed the other way behave the same")
+check(any("facing subscribers" in w for _, _, w in
+          lcp_find(FACING, addrs={"vppwan0": ["100.64.0.1/22"]})),
+      "and still report the port that is not passive")
+# Could not ask. With no dataplane list the members of a pair cannot be told
+# apart, and "cannot tell" must not become a warning nobody can silence.
+check(not ospf_findings(FACING + ["passive-interface host-veth-vpp"],
+                        LCP_ADDRS, LCP_HAVE, POOLS, PAIRS),
+      "and with no dataplane names to subtract, nothing is claimed")
+
+# The same statement after a round trip through FRR, which is where every
+# commit but the first one reads it from: cfg.routing comes back from
+# `show running-config`, and FRR 10 does not store `passive-interface` -
+# measured, it answers "This command is deprecated" and files the statement
+# under the interface instead, exactly like this.
+ROUNDTRIP = ["router ospf", "network 100.64.0.0/22 area 0",
+             "interface vppwan0", " ip ospf passive"]
+check(not lcp_find(ROUNDTRIP),
+      f"the spelling FRR stores silences it too: {lcp_find(ROUNDTRIP)}")
+# And it is not a way to invent an OSPF instance: a box with only this line
+# runs no OSPF, and nothing else in here may fire on it.
+check(not find(["interface Gi1", " ip ospf passive"], pools=POOLS),
+      "while on its own it is not an OSPF instance")
+
+# `passive-interface default`, which is the posture the help text for this
+# very statement recommends for a subscriber-facing port. It is a statement
+# about every interface, not the name of one, and reading it as a name meant
+# this warning fired on the box that had got it exactly right.
+DEFAULT_QUIET = FACING + ["passive-interface default"]
+check(not lcp_find(DEFAULT_QUIET),
+      f"passive-interface default silences it: {lcp_find(DEFAULT_QUIET)}")
+# And `no passive-interface <name>` is how an interface is taken back out of
+# it, so the warning has to come back for the one that was.
+r = lcp_find(DEFAULT_QUIET + ["no passive-interface vppwan0"])
+check(any("facing subscribers" in w for _, _, w in r),
+      f"and taking one back out brings it back: {r}")
+# ... only in a spelling FRR acts on. `no passive-interface host-veth-vpp`
+# takes nothing back out, so the port is still passive and still quiet.
+check(not lcp_find(DEFAULT_QUIET + ["no passive-interface host-veth-vpp"]),
+      "while a spelling FRR ignores takes nothing back out")
 
 # A full table into the IGP.
 check(any("whole BGP" in w for _, _, w in find(
@@ -1534,13 +1641,18 @@ r = isis_findings(["router isis HEXA", "net 49.0001.0000.0000.0001.00"])
 check(any("no interface joins it" in w for _, _, w in r),
       f"an instance nobody joins is reported: {r}")
 
-# The IPv6 half silently absent while IPv4 works.
+# Single-topology IPv6 IS-IS is a CORRECT configuration and nothing is said
+# about it (#198). `topology ipv6-unicast` turns on Multi-Topology IS-IS (RFC
+# 5120); without it IPv6 floods in the one legacy topology and forwards, which
+# is what lab/igp.sh commits and then watches reach the VPP IPv6 FIB. The
+# warning that used to be here fired on that lab on every run, and on every
+# unrelated commit after it.
 v6 = ["router isis HEXA", "net 49.0001.0000.0000.0001.00",
       "interface Gi0", "ipv6 router isis HEXA"]
-check(any("topology ipv6-unicast" in w for _, _, w in isis_findings(v6)),
-      "IPv6 with no topology statement is reported")
+check(not isis_findings(v6),
+      f"single-topology IPv6 is not warned about: {isis_findings(v6)}")
 check(not isis_findings(v6[:2] + ["topology ipv6-unicast"] + v6[2:]),
-      "and with it, nothing is")
+      "and neither is multi-topology")
 
 # Narrow metrics cap at 63 - the classic silent limitation on a 10G box.
 narrow = GOOD[:2] + ["interface Gi0", "ip router isis HEXA", "isis metric 100"]
@@ -1548,6 +1660,17 @@ check(any("metric-style wide" in w for _, _, w in isis_findings(narrow)),
       "a metric above 63 with narrow encoding is reported")
 check(not isis_findings(GOOD + ["isis metric 100"]),
       "and with wide it is not")
+# Against the instance that CARRIES the port, not against every instance on
+# the box. A metric a wide instance expresses perfectly is not evidence about
+# a narrow one that never touches it, and the sentence named the wrong tag.
+two = ["router isis CORE", "net 49.0001.0000.0000.0001.00",
+       "metric-style wide",
+       "router isis EDGE", "net 49.0002.0000.0000.0001.00",
+       "interface Gi0", "ip router isis CORE", "isis metric 1000",
+       "interface Gi1", "ip router isis EDGE", "isis metric 10"]
+check(not isis_findings(two),
+      f"a wide instance's metric is not charged to a narrow one: "
+      f"{isis_findings(two)}")
 
 # A level-2-only instance with a level-1 circuit forms no adjacency, and both
 # halves are accepted by FRR.
@@ -2091,6 +2214,194 @@ check(offered("clear ospf ")[0] == {"process", "neighbor"},
       f"clear ospf offers: {sorted(offered('clear ospf ')[0])}")
 o, hint = offered("clear isis adjacency ")
 check(not o and hint == "[<system-id>]", f"a system id is typed: {o} {hint!r}")
+
+
+
+# ---------------------------------------------------------------------------
+# "nothing took": the decidable half of #197
+#
+# The general check - is every statement of this candidate in effect - cannot be
+# built on frr-reload, and that was MEASURED rather than reasoned about. A
+# candidate carrying `timers throttle spf 0 50 5000` applies cleanly, FRR
+# declines to store it because it equals the default, and frr-reload then
+# reports it under "Lines To Add" for ever. What is decidable is the worst case:
+# every statement this commit introduced is still outstanding, so nothing took.
+
+# frr-reload's own report, copied off a run rather than written here: the
+# heading, the row of '=', and a nested statement indented while the same
+# statement typed at this VTY is not.
+FRR_REPORT = """
+Lines To Add
+============
+router ospf
+ timers throttle spf 0 50 5000
+exit
+"""
+check(hexash.Frr.outstanding(FRR_REPORT)
+      == ["router ospf", "timers throttle spf 0 50 5000", "exit"],
+      f"the report is read stripped: {hexash.Frr.outstanding(FRR_REPORT)}")
+check(hexash.Frr.outstanding("") == [], "no report is nothing outstanding")
+# The other section must not be read as this one. A statement being REMOVED is
+# not a statement that failed to apply, and counting it as one would report a
+# successful removal as a failed commit.
+check(hexash.Frr.outstanding(
+        "Lines To Delete\n===============\nno router bgp 65000\n") == [],
+      "the delete section is not the add section")
+check(hexash.Frr.outstanding(
+        "Lines To Delete\n====\nno router ospf\n\nLines To Add\n====\nip route 1.2.3.0/24 blackhole\n")
+      == ["ip route 1.2.3.0/24 blackhole"],
+      "and a report carrying both reads only the adds")
+
+
+def box_197(outstanding_text, rc=0):
+    sh = shell_with_box()
+    sh.candidate = hexash.Config()
+    sh.frr = type("F", (), {
+        "available": lambda s: True,
+        "running": lambda s: [],
+        "show": lambda s, c: (1, ""),
+        "reload": lambda s, lines, check_only=False: (rc, outstanding_text),
+        "outstanding": staticmethod(hexash.Frr.outstanding),
+    })()
+    return sh
+
+
+ADDED = ["ip route 10.0.0.0/8 1.2.3.4", "ip route 10.1.0.0/16 blackhole"]
+REPORT_BOTH = ("Lines To Add\n====\nip route 10.0.0.0/8 1.2.3.4\n"
+               "ip route 10.1.0.0/16 blackhole\n")
+REPORT_ONE = "Lines To Add\n====\nip route 10.1.0.0/16 blackhole\n"
+
+sh = box_197(REPORT_BOTH)
+check(sh.nothing_took(ADDED) == ADDED,
+      "every new statement still outstanding is 'nothing took'")
+# The half that keeps this usable. Nine statements of ten is a PARTIAL failure
+# and this check does not fire on it - a check that cried wolf on every commit
+# with one default-valued statement in it would be turned off within a week.
+sh = box_197(REPORT_ONE)
+check(sh.nothing_took(ADDED) == [],
+      f"one of two outstanding is not: {sh.nothing_took(ADDED)}")
+sh = box_197("")
+check(sh.nothing_took(ADDED) == [], "an empty report is a clean apply")
+# A check that cannot run must not become a failure of the commit it was
+# checking.
+sh = box_197(REPORT_BOTH, rc=1)
+check(sh.nothing_took(ADDED) == [],
+      "frr-reload refusing to answer is not a verdict")
+check(sh.nothing_took([]) == [], "a commit that adds no routing is not checked")
+
+# What counts as "a statement this commit introduced". A block header and a
+# terminator are structure: they appear in frr-reload's report as context for
+# what is nested under them, and counting them would let a block header decide
+# that a commit failed.
+sh = box_197("")
+check(sh.routing_added(["router bgp 65000"],
+                       ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+                        " exit", "!"])
+      == ["neighbor 10.0.0.2 remote-as 65001"],
+      f"only the new statement: {sh.routing_added(['router bgp 65000'], ['router bgp 65000', ' neighbor 10.0.0.2 remote-as 65001', ' exit', '!'])}")
+check(sh.routing_added([" ip route 1.2.3.0/24 blackhole"],
+                       ["ip route 1.2.3.0/24 blackhole"]) == [],
+      "a statement FRR read back indented is the same statement typed flat")
+# The case that was MEASURED rather than foreseen, and it fired on two ordinary
+# operations before the labs caught it. Creating a loopback and setting an MTU
+# stage a block HEADER in the routing half while everything inside the block is
+# applied by this VTY to the dataplane - so the commit adds a header and nothing
+# else, FRR does not store an empty interface stanza, and "nothing took" was
+# true of a commit that did exactly what it was asked.
+for _hdr in ("interface loop0", "router ospf", "route-map X permit 10",
+             "vrf red", "rpki", "address-family ipv4 unicast"):
+    check(sh.routing_added([], [_hdr]) == [],
+          f"a block header is context, not a statement: {_hdr}")
+check(sh.routing_added([], ["interface loop0", " ipv6 nd suppress-ra"])
+      == ["ipv6 nd suppress-ra"],
+      "and what is inside one still counts")
+
+
+print("\n=== the IPFIX export goes over the binary API, not the CLI socket ===")
+# #76: `cgnat logging` was the last configuration statement hexash applied with
+# vppctl, and #172 found it still there while the acceptance criterion read as
+# met. lab/vty.sh asserts the property against a real box; these check the
+# SHAPE of what goes on the wire, including two forms no lab drives - `tcp
+# disable`, and a collector named without a port.
+import vppapi as _vppapi                                          # noqa: E402
+
+
+def logging_call(line):
+    """
+    What `line` sends: (one API call or None, the list of CLI commands).
+
+    Written to survive the regression it exists to catch. A version that
+    indexed the API call directly raised a TypeError the moment the statement
+    went back to the socket, and a test that CRASHES on the defect reports a
+    broken test rather than a broken product.
+    """
+    sh = hexash.Shell()
+    api, cli = [], []
+
+    def api_call(_message, _args):
+        api.append((_message, _args))
+        return _vppapi.Reply(_vppapi.OK)
+
+    sh.api_call = api_call
+    sh.dp = type("D", (), {
+        "TRACE": False,
+        "run": lambda _s, c: (cli.append(c), (0, ""))[1]})()
+    # apply_global, not apply_logging: the statement has to REACH the API
+    # path, and a test that called the new method directly went on passing
+    # with the dispatcher handing the line back to the socket - which is the
+    # defect, not the parsing.
+    sh.apply_global(line)
+    return (api[0] if len(api) == 1 else None), cli
+
+
+for _line in ("cgnat logging enable", "cgnat logging disable",
+              "cgnat logging tcp 10.0.0.2", "cgnat logging tcp disable",
+              "cgnat logging tcp 10.0.0.2 port 4740"):
+    _a, _cli = logging_call(_line)
+    check(_cli == [], f"'{_line}' must send nothing to the CLI socket: {_cli}")
+    check(_a is not None and _a[0] == "bpa_logging_set",
+          f"'{_line}' must be one bpa_logging_set and no more: {_a}")
+
+
+def _f(line):
+    """The fields of the call `line` makes, or {} if it made none."""
+    _a, _ = logging_call(line)
+    return _a[1] if _a else {}
+
+
+check(_f("cgnat logging enable").get("set_enable") is True
+      and _f("cgnat logging enable").get("enable") is True,
+      f"enable: {_f('cgnat logging enable')}")
+check(_f("cgnat logging enable").get("set_tcp") is False,
+      f"and says nothing about the transport it was not asked about: "
+      f"{_f('cgnat logging enable')}")
+check(_f("cgnat logging disable").get("set_enable") is True
+      and _f("cgnat logging disable").get("enable") is False,
+      f"disable: {_f('cgnat logging disable')}")
+
+_tcp = _f("cgnat logging tcp 10.0.0.2 port 4740")
+check(_tcp.get("set_tcp") is True and _tcp.get("tcp_enable") is True,
+      f"tcp on: {_tcp}")
+check(_tcp.get("collector") == "10.0.0.2" and _tcp.get("port") == 4740,
+      f"and where to: {_tcp}")
+check(_tcp.get("set_enable") is False,
+      f"naming a collector does not also turn the export on: {_tcp}")
+
+# Zero, not 4739. The default belongs to the dataplane, which is where the
+# running configuration is read back from - a default invented on this side
+# would be a second opinion about it, and the two would drift apart silently.
+check(_f("cgnat logging tcp 10.0.0.2").get("port") == 0,
+      f"an omitted port is the dataplane's to fill: "
+      f"{_f('cgnat logging tcp 10.0.0.2')}")
+
+# `tcp disable` is the word an operator types and it is NOT an address. Read as
+# one it would go on the wire as the collector, and the export would keep
+# running to whatever the encoder made of it.
+_off = _f("cgnat logging tcp disable")
+check(_off.get("set_tcp") is True and _off.get("tcp_enable") is False,
+      f"tcp off: {_off}")
+check(_off.get("collector") != "disable",
+      f"'disable' is not a collector address: {_off}")
 
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

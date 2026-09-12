@@ -39,7 +39,7 @@ format_bpa_proto (u8 *s, va_list *args)
     }
 }
 
-/* The whole mask at once: "ftp on rtsp off pptp on esp on". One line an
+/* The whole mask at once: "ftp on rtsp off pptp on esp on sip on". One line an
  * operator can read, rather than one line per ALG that has to be assembled by
  * eye. */
 u8 *
@@ -120,6 +120,37 @@ format_bpa_pool (u8 *s, va_list *args)
 	      p->blocks_per_ip);
   s = format (s, "\n%Ucapacity     %u subscribers (usable %u)",
 	      format_white_space, indent + 2, p->capacity, usable);
+  /*
+   * In dynamic mode with workers that figure is a ceiling nobody is promised.
+   *
+   * Block allocation is sharded so it needs no lock: worker w owns every
+   * block whose index is congruent to w, and a subscriber may only draw from
+   * the worker its own index maps to. Both halves are right on their own -
+   * one keeps allocation worker-local, the other keeps a flow's two
+   * directions on one worker - and neither was designed against the other.
+   * A subscriber index is the offset of its address within the inside set,
+   * not a counter, so on any real address plan the two do not balance.
+   *
+   * Measured on a three-block pool with two workers: subscribers at offsets
+   * 5, 6 and 9 land on workers 1, 0 and 1, the slices hold two blocks and
+   * one, and the third subscriber is refused with a block standing free on
+   * the other worker - while this line said "usable 3".
+   *
+   * So the smallest slice is printed beside it. It is what the pool can serve
+   * whatever the addresses happen to be, which is the number to size against;
+   * the difference between the two is what an even spread would buy. Fixing
+   * the mechanism is a design decision with a cost either way and is #210 -
+   * this is the half that stops the box claiming what it cannot do.
+   */
+  if (p->mode == BPA_MODE_DYNAMIC && bpa_main.n_workers > 1)
+    {
+      u32 nw = bpa_main.n_workers;
+
+      s = format (s, "\n%U             %u whatever the addresses are: blocks "
+		     "are sharded %u ways and a subscriber draws only from "
+		     "its own worker's slice",
+		  format_white_space, indent + 2, usable / nw, nw);
+    }
   s = format (s, "\n%Udivisor      %u (%s)", format_white_space, indent + 2,
 	      p->div.d, p->div.is_pow2 ? "shift" : "reciprocal");
   /* Printed whichever way each one is set. "The ALG is off" and "the ALG saw
@@ -350,14 +381,6 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	cfg.timeouts.tcp_trans = tv;
       else if (unformat (line_input, "timeout tcp-established %u", &tv))
 	cfg.timeouts.tcp_estab = tv;
-      /* "alg <name> off" in a candidate configuration. Only the departures
-       * from the default are ever written out, so a configuration file does
-       * not grow a line per ALG per pool. */
-#define _(sym, nm, desc)                                                      \
-  else if (unformat (line_input, "alg " nm " off")) cfg.alg &= ~BPA_ALG_##sym; \
-  else if (unformat (line_input, "alg " nm " on")) cfg.alg |= BPA_ALG_##sym;
-      foreach_bpa_alg
-#undef _
       else if (unformat (line_input, "timeout gre %u", &tv))
 	cfg.timeouts.gre = tv;
       else if (unformat (line_input, "timeout port-holddown %u", &tv))
@@ -426,9 +449,27 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	    }
 	  cfg.tcp_mss = (u16) mss;
 	}
-      /* "alg <name> on|off" in a candidate configuration. alg_set records
+      /*
+       * "alg <name> on|off" in a candidate configuration. alg_set records
        * that an opinion was stated, so bpa_pool_init() leaves it alone
-       * instead of resolving it back to the default. */
+       * instead of resolving it back to the default.
+       *
+       * There were TWO of these chains, from two branches that each added one
+       * and a merge that kept both - the same accident lab/ftp-alg.sh records
+       * for the configuration emitter a few hundred lines away, in the same
+       * file, found separately. The first one reached matched "on" and "off",
+       * set cfg.alg and never cfg.alg_set, so bpa_pool_init() resolved the bit
+       * straight back to the shipped default: `bpa pool lab ... alg ftp off`
+       * was accepted, printed nothing, and produced a pool with the ALG ON
+       * (#206).
+       *
+       * It took lab/ftp-alg.sh's own off mode with it. That lab's header says
+       * "sh tools/lab.sh ftp-alg off -> LAB FAILED", it passed, and it is the
+       * only lab that spells the switch this way: rtsp writes "disable", which
+       * this chain matched and that one did not, and pptp, esp and sip use the
+       * runtime command. One lab used the broken spelling and it is the one
+       * that went quiet.
+       */
 #define _(sym, nm, desc)                                                      \
   else if (unformat (line_input, "alg " nm " on")                             \
 	   || unformat (line_input, "alg " nm " enable"))                     \
@@ -707,7 +748,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "outside <pfx>/<len> [outside <pfx>/<len> ...] "
     "[block <n>] [ports <min>-<max>] "
     "[policy interleaved|blocked] [mode deterministic|dynamic] "
-    "[alg <ftp|rtsp|pptp|esp> on|off] "
+    "[alg <ftp|rtsp|pptp|esp|sip> on|off] "
     "[bypass <destination|source> <pfx>/<len>] "
     "[vrf <id>] [outside-vrf <id>] "
     "[utilisation-alarm <percent>] "
@@ -1984,7 +2025,7 @@ bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   if (!unformat_user (input, unformat_line_input, line_input))
     return clib_error_return (
-      0, "usage: bpa alg <pool> <ftp|rtsp|pptp|esp> <on|off>");
+      0, "usage: bpa alg <pool> <ftp|rtsp|pptp|esp|sip> <on|off>");
 
   if (!unformat (line_input, "%v", &name))
     {
@@ -1999,7 +2040,7 @@ bpa_alg_command_fn (vlib_main_t *vm, unformat_input_t *input,
 #undef _
     {
       error =
-	clib_error_return (0, "expected an ALG name (ftp, rtsp, pptp, esp)");
+	clib_error_return (0, "expected an ALG name (ftp, rtsp, pptp, esp, sip)");
       goto done;
     }
   /* "enable"/"disable" are accepted as well as "on"/"off": the three ALGs
@@ -2041,7 +2082,7 @@ done:
 
 VLIB_CLI_COMMAND (bpa_alg_command, static) = {
   .path = "bpa alg",
-  .short_help = "bpa alg <pool> <ftp|rtsp|pptp|esp> <on|off>",
+  .short_help = "bpa alg <pool> <ftp|rtsp|pptp|esp|sip> <on|off>",
   .function = bpa_alg_command_fn,
 };
 
