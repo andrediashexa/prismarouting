@@ -1066,15 +1066,16 @@ which is a worse outcome than the one it exists to prevent.
 | RTSP (RFC 2326 `Transport:`) | on | built |
 | PPTP/GRE (RFC 2637) | on | built |
 | IPsec ESP passthrough (RFC 4303) | on | built |
-| SIP | **off** | not built |
+| SIP over UDP (RFC 3261, RFC 4566) | on | built |
+| SIP over TCP | — | **deliberately not built**, see below |
 
 One registry drives all of them: adding an ALG is one line in
 `foreach_bpa_alg`, and the CLI, the running configuration and `show bpa alg`
 follow from it.
 
 ```
-bpa pool <name> ... [alg <ftp|rtsp|pptp|esp> on|off]
-bpa alg <pool> <ftp|rtsp|pptp|esp> <on|off>   # in place, keeps sessions
+bpa pool <name> ... [alg <ftp|rtsp|pptp|esp|sip> on|off]
+bpa alg <pool> <ftp|rtsp|pptp|esp|sip> <on|off>   # in place, keeps sessions
 show bpa alg
 ```
 
@@ -1084,8 +1085,8 @@ CLI or by the binary API — therefore gets the documented defaults without ever
 creation path restating them, and an ALG that ships **off** stays expressible
 rather than becoming a special case.
 
-The reasoning behind that list — including why SIP is built off, and which
-conventional ALGs are deliberately not built at all — is recorded on
+The reasoning behind that list — including which conventional ALGs are
+deliberately not built at all — is recorded on
 [issue #14](https://github.com/andrediashexa/hexarouting/issues/14).
 
 ### FTP
@@ -1343,6 +1344,144 @@ sequence numbers of the segments that follow. `BPA_RTSP_OFF=1 sh tools/lab.sh
 rtsp` runs it against a pool with the ALG disabled, where 11 of its 18
 assertions fail. The parser's refusals are unit-tested without VPP in
 `test/test_bpa_rtsp.c`, and the port-pair allocator in `test/test_bpa_ports.c`.
+
+### SIP
+
+`bpa alg <pool> sip <on|off>`, on by default, **UDP port 5060 only**.
+
+Two failures, and an ISP pays for both. The phone registers a `Contact` nobody
+can route to, so every inbound call rings nowhere — "I can call out but nobody
+can call me". Or the call connects and there is no audio, because the SDP
+announced a private address and a port on it. The second is the most expensive
+support call an ISP takes, because it does not look like a network fault to
+anybody: the signalling worked.
+
+#### One rule, and everything follows from it
+
+The parser locates spans; it decides nothing. A span is rewritten **only when
+the literal IPv4 address in it is the address the session belongs to**. That
+single rule settles three things that otherwise need special cases:
+
+* **A response the subscriber sends carries the caller's `Via`.** Rewriting it
+  would send the caller's own responses into this box. The address does not
+  match, so it is not touched — and no request/response flag was needed to work
+  that out.
+* **A CPE that already knows its public address**, from STUN or from a previous
+  `rport`, puts the public address in `Via`, `Contact` and SDP. None of it
+  matches the private address, nothing is rewritten, and the two NAT traversals
+  do not fight. This is the failure operators know as "the ALG broke my phone",
+  and it is designed out rather than documented.
+* **A message that does not come apart cleanly is refused whole**, counted, and
+  passed through untouched. Half a rewritten SIP message is the one outcome
+  worse than none.
+
+#### What is rewritten
+
+| | Outbound | Inbound |
+|---|---|---|
+| topmost `Via` sent-by | → public address**:**public port | restored on a **response** whose `Via` names this session's public address and port |
+| `Contact` URI host | → public address**:**public port | — |
+| SDP `c=IN IP4` | → public address | — |
+| SDP `m=` port | → a reserved **RTP/RTCP pair**, RTP even | — |
+| `Content-Length` | recomputed when the body changed length | — |
+
+The port is always written, even where the header carried none. A `Via` naming
+the public address without a port names 5060 on it, and this box maps no such
+thing. The cost is that a UA which wrote no port gets one back; RFC 3261 §17.1.3
+matches responses on the `branch` parameter, which is untouched, and every
+in-kernel SIP ALG makes the same trade.
+
+`Content-Length` is not optional. It is a third length over the same bytes,
+invisible to IP and to UDP: a body that grew by two bytes under a header that
+did not is a `400 Bad Request` from a proxy, or silence from a phone.
+
+#### What is deliberately not rewritten
+
+| | Why |
+|---|---|
+| `From`, `To` | Identities, not places. They are covered by the digest a registrar computes and are what a dialog is matched by. Nobody sends a packet to a `From` header. |
+| `Call-ID` | Often contains the host part. An opaque identifier both ends compare byte for byte. |
+| `Route`, `Record-Route` | Proxy addresses. Never the subscriber's. |
+| Request-URI | Outbound it names the callee. Inbound it names this box's public address, because that is what the published `Contact` said; most user agents route on the dialog instead. Written down as not done. |
+| SDP `o=` | RFC 4566 §5.2 makes it part of the session *identifier*; some stacks compare it across re-INVITEs. Rewriting it can turn a re-INVITE into a new session. It is not a destination. |
+| `a=rtcp:` | Would put RTCP somewhere other than port+1. Reading it without being able to reserve that exact port is worse than not reading it. |
+| `received=`, `rport=` | The far end stating what it actually saw — true, and how a CPE discovers it is behind NAT. Rewriting them replaces a fact with a lie. |
+| `Contact` in a response | The remote's. In a `200` to a `REGISTER` it is the registrar echoing the binding it really holds, which is the public one. |
+
+#### The media expectation
+
+An SDP offer announces where the far end is to send RTP. Rewriting the address
+and the port and opening no mapping delivers signalling and no audio, which is
+the failure the ALG was deployed to remove. So each `m=` line whose governing
+`c=` names the subscriber reserves a **consecutive pair** — RTP on the even
+port, RTCP above it (RFC 3550 §11) — through the same `bpa_alg_reserve_pair`
+the RTSP `SETUP` uses, and each pair lives on `alg-expect` until something uses
+it.
+
+Up to four media streams per body. Each costs a pair out of a 512-port block,
+so that number is also the bound on what one offer can take from a subscriber;
+an offer with more is refused rather than half-mapped. A stream offered at port
+`0` is one being *refused* (RFC 3264 §6) and is not mapped, and neither is a
+`port/count` range or a multicast `c=` with a TTL.
+
+#### Where it must not fire, and what a hostile payload can do
+
+Port 5060 is scanned continuously, so the inbound path is reachable by anyone.
+Every read is bounded, and two bounds are structural rather than incidental:
+
+* **A UDP datagram carries its own length as well as the IP header's**, and the
+  two disagreeing is a truncated or crafted packet. Both are checked before a
+  payload byte is read.
+* **`Content-Length` must equal the body that actually arrived.** Otherwise the
+  body this box would walk is not the body the endpoints will read.
+
+Port pairs are reserved on the **outbound** path only, so nothing an attacker
+sends can consume a subscriber's ports; the subscriber's own phone can, bounded
+by its block and by `alg-expect`.
+
+#### Why UDP only
+
+SIP over TCP is legal and is what a message larger than the path MTU falls back
+to (RFC 3261 §18.1.1). It is not handled, and the reason is not effort:
+
+* A TCP SIP message is a **stream**. A parser that sees one segment cannot see
+  the end of a message, and an INVITE with SDP and a few `Route` headers is
+  regularly larger than one segment — so the honest TCP answer is reassembly,
+  which is a different piece of work with a different memory story. RTSP gets
+  away with one segment because its requests are small; SIP would refuse the
+  very messages it exists for.
+* SIP over TLS (`sips:`, 5061) cannot be touched by anything, and a UA
+  configured for TCP is usually one configured for TLS.
+
+A TCP connection to port 5060 is therefore never inspected. It is translated
+like any other connection, which is what happens today — and because the ALG is
+UDP-only it carries none of TCP's sequence-correction apparatus: what a UDP
+payload rewrite invalidates is the IP total length, the UDP length and the UDP
+checksum, and that is the whole list.
+
+#### Counters
+
+| Node | Counter | Meaning |
+|---|---|---|
+| `bpa-in2out` | SIP messages rewritten | a message left with this box's addresses in it |
+| `bpa-in2out` | SIP message not understood | refused whole and passed through |
+| `bpa-in2out` | SIP datagram spans buffers | the message is not in one buffer |
+| `bpa-in2out` | SIP rewrite would not fit | the longer message exceeds the buffer |
+| `bpa-in2out` | SIP media port pair unavailable | no even-aligned free pair in the block |
+| `bpa-out2in` | SIP responses rewritten | a response `Via` was restored |
+| `bpa-out2in` | SIP response not understood | as above, inbound |
+| `bpa-out2in` | SIP response spans buffers | as above, inbound |
+| `bpa-out2in` | SIP response rewrite would not fit | as above, inbound |
+
+Evidence: `lab/sip.sh`, which asserts on the captured packet — every rewritten
+field, every field that must *not* have moved (byte for byte, against the
+payload as it was injected), the IP and UDP lengths, the UDP checksum,
+`Content-Length` against the body that arrived, and the media actually reaching
+the phone on the announced ports. `sh tools/lab.sh sip off` runs it against a
+pool with the ALG disabled, where exactly 7 of its 18 assertions fail — the
+header names which. It also runs under `LAB_WORKERS=1`. The parser's refusals
+and the multi-edit arithmetic are unit-tested without VPP in
+`test/test_bpa_sip.c`.
 
 ### PPTP, and the Call ID problem
 

@@ -205,7 +205,7 @@ VLIB_NODE_FN (bpa_out2in_node)
   vlib_buffer_t *bufs[VLIB_FRAME_SIZE], **b = bufs;
   u16 nexts[VLIB_FRAME_SIZE], *next = nexts;
   f64 now = vlib_time_now (vm);
-  u32 n_translated = 0, n_icmp_err = 0, n_seq_adj = 0, n_rtsp = 0;
+  u32 n_translated = 0, n_icmp_err = 0, n_seq_adj = 0, n_rtsp = 0, n_sip = 0;
   u32 n_forwarded = 0, n_mss = 0;
   u32 n_pptp = 0, n_pptp_unknown = 0, n_pptp_bad = 0;
   u32 n_esp = 0;
@@ -557,6 +557,48 @@ VLIB_NODE_FN (bpa_out2in_node)
 					     &s->adj[BPA_DIR_OUT]);
 	}
 
+      /*
+       * SIP ALG, internet -> subscriber: the response, whose topmost Via is
+       * the one this box rewrote on the way out. Left as it arrived, the
+       * phone discards its own answers (RFC 3261 s18.1.2) and every outbound
+       * call rings nowhere.
+       *
+       * Matched on the SOURCE port, or on the subscriber's own private port -
+       * never on udp->dst_port, which bpa_rewrite_dst has already replaced
+       * with the private one by the time this runs.
+       */
+      if (PREDICT_FALSE (proto == BPA_PROTO_UDP && l4h != 0))
+	{
+	  udp_header_t *udp = l4h;
+	  bpa_pool_t *sp = pool_elt_at_index (bm->pools, pool_index);
+
+	  if (bpa_alg_on (sp->alg, BPA_ALG_SIP)
+	      && (clib_net_to_host_u16 (udp->src_port) == BPA_SIP_PORT
+		  || s->port_priv == BPA_SIP_PORT))
+	    {
+	      switch (bpa_sip_out2in (vm, b[0], ip, udp, s))
+		{
+		case BPA_ALG_DONE:
+		  n_sip++;
+		  break;
+		case BPA_ALG_UNPARSED:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_SIP_UNPARSED, 1);
+		  break;
+		case BPA_ALG_PARTIAL:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_SIP_PARTIAL, 1);
+		  break;
+		case BPA_ALG_NO_ROOM:
+		  vlib_node_increment_counter (
+		    vm, node->node_index, BPA_OUT2IN_ERROR_SIP_NO_ROOM, 1);
+		  break;
+		default:
+		  break;
+		}
+	    }
+	}
+
       bpa_next_after (&next[0], b[0], BPA_OUT2IN_NEXT_LOOKUP);
 
     trace:
@@ -591,6 +633,8 @@ VLIB_NODE_FN (bpa_out2in_node)
 			       BPA_OUT2IN_ERROR_SEQ_ADJUSTED, n_seq_adj);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_RTSP_REWRITTEN, n_rtsp);
+  vlib_node_increment_counter (vm, node->node_index,
+			       BPA_OUT2IN_ERROR_SIP_REWRITTEN, n_sip);
   vlib_node_increment_counter (vm, node->node_index,
 			       BPA_OUT2IN_ERROR_PPTP_MANGLED, n_pptp);
   vlib_node_increment_counter (vm, node->node_index,

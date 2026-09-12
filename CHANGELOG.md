@@ -42,10 +42,48 @@ are to be interpreted as described in
 [#180](https://github.com/andrediashexa/hexarouting/issues/180),
 [#199](https://github.com/andrediashexa/hexarouting/issues/199),
 [#176](https://github.com/andrediashexa/hexarouting/issues/176),
-[#200](https://github.com/andrediashexa/hexarouting/issues/200).
+[#200](https://github.com/andrediashexa/hexarouting/issues/200),
+[#14](https://github.com/andrediashexa/hexarouting/issues/14).
 
 ### Added
 
+* **A SIP ALG, over UDP, and it says so.** `alg sip on|off` per pool, on by
+  default ([#14](https://github.com/andrediashexa/hexarouting/issues/14)). It
+  rewrites the topmost `Via` sent-by, the `Contact` URI host, the SDP `c=`
+  address and each SDP `m=` port — reserving a consecutive RTP/RTCP pair for
+  each stream through the same machinery the RTSP `SETUP` uses, because an ALG
+  that rewrites SDP and opens no mapping delivers signalling and no audio. It
+  recomputes `Content-Length`, which is a third length over the same bytes that
+  neither IP nor UDP can see. On the way back it restores the response `Via`
+  the phone insists on (RFC 3261 §18.1.2).
+
+  One rule keeps a small parser safe in front of a large protocol: **a span is
+  rewritten only when the literal IPv4 address in it is the address the session
+  belongs to.** A response the subscriber sends carries the caller's `Via` and
+  is therefore not touched, with no direction flag needed to work that out; a
+  CPE that already knows its public address is not interfered with, which is
+  the failure operators know as "the ALG broke my phone"; and a message whose
+  syntax does not come apart is refused **whole**, counted, and passed through.
+  `From`, `To`, `Call-ID`, `Route`, the SDP `o=` line and the `received=` and
+  `rport=` parameters are deliberately left alone, each for a reason recorded in
+  `bpa_sip.h`.
+
+  **TCP is not handled, as a decision rather than an omission.** A SIP message
+  over TCP is a stream whose end one segment cannot show, and an INVITE with SDP
+  regularly exceeds one; the honest answer is reassembly, which is different
+  work. A TCP connection to 5060 is translated like any other and never
+  inspected — and because the ALG is UDP-only it carries none of the sequence
+  correction of `bpa_seq.h`: what a UDP payload rewrite invalidates is the IP
+  total length, the UDP length and the UDP checksum, and that is the whole list.
+
+  Evidence: `lab/sip.sh`, which asserts on the captured packet — every rewritten
+  field, every field that must not have moved (byte for byte against the payload
+  as it was injected), both lengths, the UDP checksum, `Content-Length` against
+  the body that arrived, and the media reaching the phone on the announced
+  ports. `sh tools/lab.sh sip off` fails exactly 7 of its 18 checks and the
+  lab header names which; it also passes under `LAB_WORKERS=1` and is in
+  `WORKER_LABS`. `test/test_bpa_sip.c` unit-tests the parser's refusals and the
+  multi-edit offset arithmetic without VPP.
 * **`lab/oom.sh`: the kernel is shown making its choice, both ways.** Real VPP
   and one growing control-plane process share a cgroup with a `memory.max` of
   their own, so the shortage is real and the lab's own shell is not in the

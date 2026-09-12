@@ -178,7 +178,7 @@ Not what it contains — what question it is the answer to.
 | `src/plugins/bpa/bpa_in2out.c`, `bpa_out2in.c` | What happens to one packet, in each direction. |
 | `src/plugins/bpa/bpa_handoff.c` | Which worker owns this subscriber, and how do both directions reach the same one? |
 | `src/plugins/bpa/bpa_dyn.c` | When blocks are allocated on demand rather than computed. |
-| `src/plugins/bpa/bpa_ftp.c`, `bpa_pptp.c`, `bpa_rtsp.h` | Protocols that carry an address in their payload. |
+| `src/plugins/bpa/bpa_ftp.c`, `bpa_pptp.c`, `bpa_rtsp.h`, `bpa_sip.h` | Protocols that carry an address in their payload. |
 | `src/plugins/bpa/bpa_esp.h` | IPsec ESP passthrough: no payload to rewrite, only the question of whose tunnel it is. |
 | `src/plugins/bpa/bpa_log.c`, `bpa_log_tcp.c` | What is exported, to whom, and what happens when the collector goes away. |
 | `src/plugins/bpa/bpa_audit.c` | Which configuration was in force on the date in the court order, and who put it there. |
@@ -198,7 +198,7 @@ Not what it contains — what question it is the answer to.
 |---|---|
 | change the mapping | 1.1, 1.3 · `bpa_pool.h` · `ref/bpa_model.py` · [pool-resize.md](pool-resize.md) · `lab/datapath.sh` |
 | add a per-pool setting | 1.7 · `config.py` `Pool.lines` · `bpa.api` · `lab/in-place.sh` |
-| add an ALG | 1.4 · `bpa_alg.h` · `bpa_rtsp.h` and `test/test_bpa_rtsp.c` as the pattern · [#48](https://github.com/andrediashexa/hexarouting/issues/48) first |
+| add an ALG | 1.4 · `bpa_alg.h` · `bpa_rtsp.h` (TCP) or `bpa_sip.h` (UDP) with `test/test_bpa_sip.c` as the pattern · one sequence-correction mechanism, `bpa_seq.h`, and UDP needs none of it |
 | touch logging or the trail | 1.2 · [logging.md](logging.md) · `lab/audit.sh`, `lab/ipfix.sh` |
 | change the VTY | 1.6, 1.7 · `hexash.py` · `test/test_hexash_complete.py` · `lab/vty.sh` |
 | work on the appliance | 1.5 · [appliance.md](appliance.md) · `appliance/hexarouting-install` · [#83](https://github.com/andrediashexa/hexarouting/issues/83) |

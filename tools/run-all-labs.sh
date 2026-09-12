@@ -80,9 +80,9 @@ echo
 # selection: a lab that asserts what the VTY prints, or what a counter says
 # about a refusal, tests the same code whatever the thread count, and running
 # it twice would double the suite to re-prove things that cannot differ. These
-# eleven touch the packet.
+# twelve touch the packet.
 WORKER_LABS="bypass esp frag ftp-alg hairpin handoff icmp-tcp mss
-             nat-behaviour pptp rtsp two-pools"
+             nat-behaviour pptp rtsp sip two-pools"
 
 # The list, in the order the summary will print.
 LABS=""

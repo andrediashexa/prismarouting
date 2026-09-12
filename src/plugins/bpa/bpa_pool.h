@@ -219,7 +219,8 @@ typedef enum
   _ (FTP, "ftp", "FTP PORT/EPRT and the 227/229 replies")                     \
   _ (RTSP, "rtsp", "RTSP Transport client_port, and the media pair it needs") \
   _ (PPTP, "pptp", "PPTP control channel and its GRE data channel")         \
-  _ (ESP, "esp", "IPsec ESP passthrough, bound to the peer gateway")
+  _ (ESP, "esp", "IPsec ESP passthrough, bound to the peer gateway")        \
+  _ (SIP, "sip", "SIP over UDP: Via, Contact, SDP, and the RTP pair it needs")
 
 typedef enum
 {
@@ -239,7 +240,7 @@ typedef enum
 /*
  * What ships on.
  *
- * All four, and each for its own reason rather than by a blanket rule. The
+ * All five, and each for its own reason rather than by a blanket rule. The
  * general rule stands - an ALG that misparses corrupts traffic that would
  * otherwise merely fail, so an ambiguous parse defaults off - and these are
  * the ones whose parse can be made strict:
@@ -252,9 +253,15 @@ typedef enum
  *   ESP  - it parses nothing and rewrites nothing but the addresses, so there
  *          is no payload it can corrupt. Without it an ESP packet is an
  *          unsupported protocol and the tunnel does not come up at all.
+ *   SIP  - #14 names it as one of the two that pay for themselves. It is on
+ *          for a stricter reason than the others: it rewrites ONLY a literal
+ *          IPv4 address equal to the subscriber's own private address, so a
+ *          message it misreads is a message it leaves alone, and a CPE that
+ *          already knows its public address is untouched by construction.
+ *          Without it the subscriber can call out and nobody can call in.
  */
 #define BPA_ALG_DEFAULT                                                       \
-  (BPA_ALG_FTP | BPA_ALG_RTSP | BPA_ALG_PPTP | BPA_ALG_ESP)
+  (BPA_ALG_FTP | BPA_ALG_RTSP | BPA_ALG_PPTP | BPA_ALG_ESP | BPA_ALG_SIP)
 
 static_always_inline int
 bpa_alg_on (u32 enabled, u32 bit)

@@ -24,8 +24,6 @@
 #include <string.h>
 #include "bpa_shim.h"
 
-typedef int32_t i32;
-
 /* This test runs on a little-endian host; the byte order helpers are spelled
  * out rather than pulled from <endian.h> so the file says what it assumes. */
 static inline u16
