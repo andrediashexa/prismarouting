@@ -16,9 +16,16 @@
  * That second line is the reason the deterministic mapping matters beyond
  * logging: without it the return path could not find its owner without a
  * lookup in a structure shared across workers.
+ *
+ * It also says where the difficulty is. The pair has to come from the packet,
+ * and an ICMP error does not carry one in its outer header - it is a router
+ * reporting on somebody else's datagram, and the datagram is inside. So the
+ * out2in side reads the embedded header (bpa_icmp.h), with the same parse
+ * bpa-out2in will use on the worker this sends it to.
  */
 
 #include "bpa.h"
+#include "bpa_icmp.h"
 #include "bpa_l4.h"
 
 typedef struct
@@ -99,26 +106,81 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
       else
 	{
 	  u32 dst = clib_net_to_host_u32 (ip->dst_address.as_u32);
+
+	  /* The same gate bpa-out2in opens with, and it stays first for the
+	   * same reason it is first there: a packet not addressed to one of
+	   * our public addresses is none of this node's business, and nothing
+	   * further inside it may decide which worker it lands on. */
 	  if (bpa_pool_by_outside (bm, dst, &pool_index) == 0)
 	    {
 	      int proto = bpa_proto_of (ip->protocol);
+	      bpa_icmp_err_t e;
+	      u32 pub = dst;
 	      void *l4h;
 	      u16 port;
+	      int have_id = 1;
 
+	      /*
+	       * An ICMP error has no port of its own - the outer header is a
+	       * router talking to our public address and nothing more - so
+	       * the pair that names the session is inside the packet embedded
+	       * in it. Read it here, or the error is left on whatever worker
+	       * the NIC chose and bpa-out2in looks for the session in a table
+	       * that was never going to hold it (#201).
+	       *
+	       * The same parse bpa-out2in will use, from bpa_icmp.h, so the
+	       * worker this picks is by construction the worker that node
+	       * searches. A truncated or unkeyable error is refused here
+	       * exactly as it is refused there: it stays put, and the
+	       * translation node is the one that counts it.
+	       *
+	       * Only for a first fragment, because that is the only case
+	       * where bpa-out2in takes the embedded path at all. A later
+	       * fragment carries no embedded header to read, and steering it
+	       * on one parsed out of payload bytes would send it where the
+	       * other node does not look.
+	       */
+	      if (PREDICT_FALSE (
+		    proto == BPA_PROTO_ICMP
+		    && !vnet_buffer (b[0])->ip.reass.is_non_first_fragment
+		    && bpa_icmp_err_parse (ip,
+					   (u8 *) vlib_buffer_get_current (b[0])
+					     + b[0]->current_length,
+					   &e)
+			 == 0))
+		{
+		  /* The embedded SOURCE, not the outer destination. RFC 792
+		   * makes them the same address, and when a sender disagrees
+		   * it is the embedded one that keys the session - so it is
+		   * the embedded one that has to choose the worker. */
+		  pub = e.pub_addr;
+		  port = e.pub_port;
+		}
 	      /*
 	       * ESP comes out of here unmatched, and that is the design
 	       * rather than a gap: it carries no port, so bpa_reverse_sub()
 	       * has nothing to work from and no rule computable from the
 	       * packet alone would put the two directions of a tunnel on one
-	       * worker. It is left on whatever thread it arrived on, and
-	       * bpa-out2in resolves it in the shared binding table that
-	       * exists for exactly this reason (bpa_esp.h).
+	       * worker. bpa_l4_dst() hands it port 0, which is outside every
+	       * block, so the arithmetic below refuses it and it stays on
+	       * whatever thread it arrived on - where bpa-out2in resolves it
+	       * in the shared binding table that exists for exactly this
+	       * reason (bpa_esp.h).
 	       */
-	      if (proto >= 0
-		  && bpa_l4_dst (b[0], ip, (u8) proto, &port, &l4h) == 0)
+	      else if (proto < 0
+		       || bpa_l4_dst (b[0], ip, (u8) proto, &port, &l4h) != 0)
+		have_id = 0; /* nothing in this packet names a subscriber */
+
+	      /* A second pool lookup only when the embedded header named a
+	       * different public address from the outer one, which is a
+	       * sender disagreeing with RFC 792. The ordinary packet, and the
+	       * ordinary ICMP error, pay nothing for this. */
+	      if (have_id
+		  && (pub == dst
+		      || bpa_pool_by_outside (bm, pub, &pool_index) == 0))
 		{
 		  bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
-		  matched = (bpa_reverse_sub (p, dst, port, &sub_idx) == 0);
+		  matched = (bpa_reverse_sub (p, pub, port, &sub_idx) == 0);
 		}
 	    }
 	}

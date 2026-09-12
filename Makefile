@@ -7,7 +7,7 @@ BUILD  := .build
         model vectors clean
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
-      $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp
+      $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp
 	@$(BUILD)/test_bpa
 	@echo
 	@$(BUILD)/test_bpa_ports
@@ -17,6 +17,8 @@ test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
 	@$(BUILD)/test_bpa_mss
 	@echo
 	@$(BUILD)/test_bpa_ftp
+	@echo
+	@$(BUILD)/test_bpa_icmp
 	@echo
 	@python3 appliance/test_tune.py
 	@echo
@@ -81,6 +83,17 @@ $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
                        test/bpa_shim.h test/bpa_tcp_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_ftp.c
+
+# The ICMP error parse: the only walk this plugin does through headers a remote
+# wrote inside another packet. Standalone because its REFUSALS are the half
+# that matters and a lab cannot see them - a packet dropped by a bounds check
+# and a packet dropped after reading past the buffer look identical from
+# outside. This one puts an unmapped page behind every packet so the difference
+# is a crash instead of a judgement call.
+$(BUILD)/test_bpa_icmp: test/test_bpa_icmp.c src/plugins/bpa/bpa_icmp.h \
+                        test/bpa_shim.h test/bpa_tcp_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_icmp.c
 
 # Tests that need VPP, so they run in the build container.
 test-appliance:

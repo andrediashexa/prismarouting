@@ -42,7 +42,8 @@ are to be interpreted as described in
 [#180](https://github.com/andrediashexa/hexarouting/issues/180),
 [#199](https://github.com/andrediashexa/hexarouting/issues/199),
 [#176](https://github.com/andrediashexa/hexarouting/issues/176),
-[#200](https://github.com/andrediashexa/hexarouting/issues/200).
+[#200](https://github.com/andrediashexa/hexarouting/issues/200),
+[#201](https://github.com/andrediashexa/hexarouting/issues/201).
 
 ### Added
 
@@ -133,6 +134,94 @@ are to be interpreted as described in
 
 ### Fixed
 
+## Unreleased
+
+
+### Fixed
+
+* **On a box with workers, a translated ICMP error was dropped as malformed.**
+  The identical packet was translated correctly single-threaded. An ICMP error
+  carries no L4 ports in its outer header - it is a router reporting on somebody
+  else's datagram, and the datagram is embedded inside it - so the out2in handoff
+  found nothing to resolve a subscriber from, counted `packets with no
+  identifiable subscriber` and left the packet on whatever worker the NIC chose.
+  `bpa-out2in` then searched **that** worker's session table, which was never
+  going to hold a session belonging to another worker. The handoff now reads the
+  embedded header, through the same parse `bpa-out2in` uses, so the worker it
+  picks is by construction the worker that node searches. The consequence for an
+  operator is PMTUD: a subscriber's TCP connections hang on exactly the paths
+  that need a "fragmentation needed", and traceroute stops working through the
+  CGNAT - on every appliance with more than one core.
+* **And the counter that sent the diagnosis in the wrong direction.** A session
+  that simply lived on another worker was reported as `truncated or malformed
+  ICMP error`, because the bounds failures and the session lookup shared one
+  return value. A miss now counts `no session for destination`, like every other
+  miss; `truncated or malformed ICMP error` means what it says. A counter that
+  describes the packet when the fault is in the box is worse than no counter.
+* **A lab parse that was right only on one thread.** `lab/extblocks.sh` read the
+  extension count off the **first** matching row of `show bpa blocks`, which with
+  workers is a per-thread row. The lab failed `the subscriber filled its first
+  block and got a second` while the total said the extension had happened and the
+  box was behaving correctly. It reads the total line now. Not a product defect.
+* **On a box with workers, every translated packet was blackholed.** `bpa-in2out`
+  translated the packet, counted it as translated, and sent it to `error-drop`.
+  Nothing left the box. `hexarouting-tune` configures workers on every
+  appliance, so **that was the shipped configuration**. With workers the node on
+  the `ip4-unicast` arc is the HANDOFF node, not the translation node: the
+  feature machinery stores each chain entry's next as an index into the
+  next-node list of the node that consumes it, and the translation node applied
+  the handoff node's index to its own list, whose only member was `error-drop`.
+  It now sends the packet to `ip4-lookup` itself when there are workers, which
+  is where the chain was going — the arc is already terminated at the handoff,
+  because that node enqueues to a thread and never consults the chain. With
+  workers, a feature some *other* plugin enables between BPA and `ip4-lookup` is
+  skipped; this product enables nothing there, and the alternative on offer was
+  a dropped packet.
+* **The assertion that would have caught it.** `lab/handoff.sh` is the only lab
+  that runs with workers and every check in it was a **counter** — which says
+  what a node decided, not what came out of the box. It passed on a box that
+  dropped every packet, and did. It now sends a packet in each direction and
+  asserts on the **captured packet** that it left the far interface with the
+  right address. On the unfixed build four of the five new checks fail and all
+  three old ones still say `ok`. Every other lab that asserts forwarding uses a
+  startup file with no workers, so the forwarding path had only ever been proved
+  in a configuration the product does not ship.
+
+### Changed
+
+* **`tools/run-all-labs.sh` runs the forwarding labs twice**, once plain and once
+  with workers, listed in `BOTH_WAYS`. `hexarouting-tune` gives every appliance
+  with more than one core at least two workers and a smaller box everything on
+  the main thread; both configurations ship and neither proves the other. #199
+  and #201 were both found by a person typing `LAB_WORKERS=1`, because the suite
+  had only ever run one way. Hardcoding workers in the labs was the alternative,
+  and it would have moved the blind spot to the small box rather than closing it.
+  `lab/icmp-tcp.sh` also asserts, on a worker run, that the handoff identified a
+  subscriber for the ICMP error **and** that the error really did cross a worker
+  to reach it - without the second check the first passes by luck whenever the
+  session happens to belong to the arriving worker, measured.
+* **`make test` gained `test_bpa_icmp`.** The ICMP error parse is the only place
+  this plugin walks headers a remote wrote inside another packet, and its
+  refusals cannot be seen from a lab: a packet dropped by a bounds check and one
+  dropped after reading past the buffer look identical from outside. Every packet
+  in it is placed against an unmapped page, so an over-read is a crash rather
+  than a judgement call.
+* **One TCP sequence-correction mechanism, not two.** `sizeof (bpa_session_t)`
+  96 → 88. The FTP ALG kept its own set of correction fields beside the general
+  one; a connection is either FTP or RTSP, so the duplication cost bytes rather
+  than correctness — and cost the next ALG that lengthens a payload a choice
+  between two mechanisms of which only one could be right. The one kept has the
+  better retransmission guard: a rewritten segment arriving again, already
+  accounted for, must not push a second correction, and the deleted one would
+  have **doubled** the offset for exactly that case. `lab/ftp-alg.sh` asserts it
+  now, on the segment after the retransmission; with the guard removed it fails
+  with `unexpected: seq=1025`. FTP's own payload splice went with it, so there
+  is one rewriter and one correction. The session's `alg` flag field is gone
+  rather than renamed — it held one bit that was redundant with the offsets
+  themselves. **The counter names changed with it**: two FTP-specific names
+  became one per node describing the mechanism, and RTSP's corrections, which
+  had no counter at all, are visible for the first time.
+
 * **`show this` printed the block header and stopped, for anything typed in
   the session.** The routing half of the candidate is a flat list of verbatim
   FRR statements with no record of which block each one is in, and it arrives
@@ -221,6 +310,23 @@ are to be interpreted as described in
 
 ### Changed
 
+* **`tools/run-all-labs.sh` runs the forwarding labs twice**, once plain and once
+  with workers, listed in `BOTH_WAYS`. `hexarouting-tune` gives every appliance
+  with more than one core at least two workers and a smaller box everything on
+  the main thread; both configurations ship and neither proves the other. #199
+  and #201 were both found by a person typing `LAB_WORKERS=1`, because the suite
+  had only ever run one way. Hardcoding workers in the labs was the alternative,
+  and it would have moved the blind spot to the small box rather than closing it.
+  `lab/icmp-tcp.sh` also asserts, on a worker run, that the handoff identified a
+  subscriber for the ICMP error **and** that the error really did cross a worker
+  to reach it - without the second check the first passes by luck whenever the
+  session happens to belong to the arriving worker, measured.
+* **`make test` gained `test_bpa_icmp`.** The ICMP error parse is the only place
+  this plugin walks headers a remote wrote inside another packet, and its
+  refusals cannot be seen from a lab: a packet dropped by a bounds check and one
+  dropped after reading past the buffer look identical from outside. Every packet
+  in it is placed against an unmapped page, so an over-read is a crash rather
+  than a judgement call.
 * **One TCP sequence-correction mechanism, not two.** `sizeof (bpa_session_t)`
   96 → 88. The FTP ALG kept its own set of correction fields beside the general
   one; a connection is either FTP or RTSP, so the duplication cost bytes rather

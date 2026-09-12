@@ -49,12 +49,18 @@ send() {   # subscriber, source port
 echo
 echo "=========== one subscriber, five flows into a four-port block ==========="
 for sp in 5001 5002 5003 5004; do send 5 $sp; done
-FIRST=$(vppctl show bpa blocks | grep -o "total: [0-9]*" | awk '{print $2}')
 echo "  after four flows: $(vppctl show bpa blocks | grep total | sed 's/^ *//')"
 
 send 5 5005
 echo "  after the fifth:  $(vppctl show bpa blocks | grep total | sed 's/^ *//')"
-EXTS=$(vppctl show bpa blocks | grep -o "([0-9]* extensions)" | grep -o "[0-9]*" | head -1)
+# The total line, not the first line that matches. "show bpa blocks" prints a
+# row per thread and then the total, so "head -1" read a PER-THREAD row - and
+# with workers the subscriber's blocks are all on its owner, which is not
+# thread 0. The lab then reported 0 extensions while the total said 1 and the
+# box was behaving correctly. It only ever worked because a single-threaded
+# box has one thread row and it equals the total.
+EXTS=$(vppctl show bpa blocks \
+       | sed -n 's/^ *total: .* allocations (\([0-9][0-9]*\) extensions).*/\1/p')
 SESS=$(vppctl show bpa session | grep -o "total: [0-9]*" | awk '{print $2}')
 echo "  extensions: ${EXTS:-0}   sessions: ${SESS:-0}"
 
