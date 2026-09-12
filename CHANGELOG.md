@@ -34,7 +34,7 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
-## Unreleased
+## 0.65.0 — the box refused correct configurations, exported nothing, and let you in too early
 
 [#208](https://github.com/andrediashexa/hexarouting/issues/208),
 [#209](https://github.com/andrediashexa/hexarouting/issues/209),
@@ -195,6 +195,27 @@ are to be interpreted as described in
   smallest thing an operator does: `configure`, then `commit`, with nothing
   typed in between. Shown failing on a full ISO build, install and second boot
   before the fix, both assertions red.
+
+### Internal
+
+* **The changelog said thirteen things twice, and the release gate now refuses
+  it.** The mechanism is mechanical rather than careless: a branch cut while
+  the top section is still called `## Unreleased` is merged after master has
+  renamed that same section to `## <VERSION>`, so git sees the branch's copy of
+  every bullet as an **addition**, raises a conflict only over the heading, and
+  drops the whole body back into the released section. The merge looks clean.
+  Each of the thirteen was told apart by asking v0.62.0, v0.63.0 and v0.64.0
+  what their own CHANGELOG said, not by reading the two copies and preferring
+  one. The tags keep their duplicates - they are published artifacts, and
+  rewriting one would be worse than the defect.
+
+* **`lab/install-iso.sh` gained `expect_one_of()` and `printed_before()`.** The
+  first is for a box that has two answers where one of them is the defect:
+  waiting for the good one turns a refusal printed in a second into a
+  five-minute timeout, and the report then blames the timing for something the
+  screen said at once. The second compares **byte offsets** rather than line
+  numbers, because a login prompt has no line ending of its own and whatever
+  the box printed last shares a line with it.
 
 ## 0.64.0 — the labs ran the box the way it ships, and seven things fell out
 
