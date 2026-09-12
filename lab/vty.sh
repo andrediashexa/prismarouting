@@ -397,11 +397,71 @@ print("BGP_AF_STMT:", " ".join(sorted(o)))
 # assertion anchored on the full list breaks every time a statement is added,
 # and reads as a regression when it is not one.
 print("BGP_AF_HAS_REMOTE_AS:", "yes" if "remote-as" in o else "no")
+# A statement FRR cannot already be holding. `neighbor 10.0.0.2 activate` is
+# written into this family by FRR itself under `bgp default ipv4-unicast`, so
+# an assertion on that line would be satisfied by what was read back from FRR
+# indented - which is the shape that never broke.
+sh.feed("maximum-paths 4")
+# `show this` in the middle of an edit, which is the only time anybody runs
+# it. NOTHING in this session has been committed, so every line it reports
+# exists only in the candidate - the case where it printed the header and
+# stopped, because a statement typed here reaches the candidate unindented and
+# the block was walked by indentation (#180).
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show this")
+print("AF_THIS:", " ".join("[" + l + "]" for l in out.getvalue().splitlines()))
 sh.feed("exit-address-family")
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show this")
+print("BGP_THIS:", " ".join("[" + l + "]" for l in out.getvalue().splitlines()))
+sh.feed("exit")
+# The block whose statements do NOT reach the candidate in the form they were
+# typed: FRR has no `router static`, so they are held as top-level `ip route`
+# lines. The operator is being shown the hierarchy they are editing, so they
+# have to come back in that hierarchy's own words.
+sh.feed("router static")
+sh.feed("route 198.18.0.0/24 10.0.0.2")
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    sh.feed("show this")
+print("STATIC_THIS:",
+      " ".join("[" + l + "]" for l in out.getvalue().splitlines()))
 sh.feed("exit")
 PYEOF
 )
 printf '%s\n' "$COMP" | sed 's/^/  /'
+
+echo
+echo "=========== show this: mid-edit, and the same block after a commit ==========="
+# The two shapes the routing half arrives in, against a real FRR. Read back
+# from FRR a block is INDENTED; typed at this VTY it is not, because feed()
+# strips leading whitespace before dispatch. `show this` walked it by
+# indentation, so it reported a block being built RIGHT NOW as empty - the one
+# moment anybody runs it (#180).
+#
+# Both runs ask for the same route in the same block, and both must answer in
+# the block's own words: FRR has no `router static` and holds these as
+# top-level `ip route` lines, so what comes back is a transform either way.
+THIS_MID=$($HX -c "configure" -c "router static" \
+               -c "route 198.18.0.0/24 10.0.0.2" -c "show this" 2>&1)
+echo "  -- mid-edit, nothing committed:"
+printf '%s\n' "$THIS_MID" | sed 's/^/    /'
+$HX -c "configure" -c "router static" -c "route 198.18.0.0/24 10.0.0.2" \
+    -c "exit" -c "commit" >/dev/null 2>&1
+FRR_STATIC=$(vtysh -c "show running-config" 2>/dev/null \
+             | grep -c "ip route 198.18.0.0/24 10.0.0.2")
+THIS_AFTER=$($HX -c "configure" -c "router static" -c "show this" 2>&1)
+echo "  -- and after the commit, read back from FRR:"
+printf '%s\n' "$THIS_AFTER" | sed 's/^/    /'
+# The route's own line, whole and with its indentation, not the blob: the
+# header `router static` is in both outputs and matches any substring test for
+# "route", which is how an assertion here passes with nothing under the header.
+MID_ROUTE=$(printf '%s\n' "$THIS_MID" | grep -x " route 198.18.0.0/24 10.0.0.2")
+AFTER_ROUTE=$(printf '%s\n' "$THIS_AFTER" | grep -x " route 198.18.0.0/24 10.0.0.2")
+echo "    mid-edit line: '${MID_ROUTE:-<nothing>}'"
+echo "    after commit:  '${AFTER_ROUTE:-<nothing>}'"
 
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
@@ -693,6 +753,54 @@ echo "  show interface's own row for pg0: '${PG0_ROW:-<none>}'"
 expect_in "show interface reports the dataplane's interfaces" "pg0" "$PG0_ROW"
 expect_in "with their state, on that same row" "up" "$PG0_ROW"
 expect_in "with the statements inside it" "inside 100.64.0.0/22" "$COMP"
+
+# --- issue #180: show this, for what is being typed right now ---
+#
+# Each of these reads ONE line of the output, whole and with its leading space,
+# rather than looking for a word in the blob: every one of these blocks prints
+# its own header, and a header is a substring match for the block's name, for
+# "neighbor" in BGP's case and for "route" in the static block's. That is
+# exactly how this defect survived - the lab re-entered the block AFTER
+# committing, where the lines come back from FRR indented and display fine.
+COMP_BGP_THIS=$(printf '%s\n' "$COMP" | sed -n 's/^ *BGP_THIS: *//p')
+COMP_AF_THIS=$(printf '%s\n' "$COMP" | sed -n 's/^ *AF_THIS: *//p')
+COMP_STATIC_THIS=$(printf '%s\n' "$COMP" | sed -n 's/^ *STATIC_THIS: *//p')
+echo "  mid-edit, in router bgp: ${COMP_BGP_THIS:-<nothing>}"
+echo "  mid-edit, in router static: ${COMP_STATIC_THIS:-<nothing>}"
+# `neighbor 10.0.0.2 remote-as 65001` is committed and would come back from
+# FRR indented whatever this code did. The peer group was typed in this
+# session and exists nowhere else, so it is the one that carries the defect.
+expect_in "a statement typed in this session shows inside its block" \
+  "[ neighbor TRANSITO peer-group]" "$COMP_BGP_THIS"
+# `bgp router-id` was committed by an earlier $HX run and is typed nowhere in
+# this session, so it can only have come back from FRR. The remote-as beside
+# it is BOTH committed and retyped here, which makes it no evidence at all.
+expect_in "beside what FRR already had, which came back indented" \
+  "[ bgp router-id 10.0.0.1]" "$COMP_BGP_THIS"
+expect_in "a nested address-family shows what was typed in it" \
+  "[ maximum-paths 4]" "$COMP_AF_THIS"
+# ...and only its own. The router above it has a remote-as for the same
+# neighbour, and printing the level above is the other half of #98.
+expect_not_in "and not the router's, one level up" \
+  "remote-as" "$COMP_AF_THIS"
+expect_in "the router above shows the family under it" \
+  "[ address-family ipv4 unicast]" "$COMP_BGP_THIS"
+expect_in "with its statements one level deeper" \
+  "[  maximum-paths 4]" "$COMP_BGP_THIS"
+expect_in "a static route shows in the block's own words" \
+  "[ route 198.18.0.0/24 10.0.0.2]" "$COMP_STATIC_THIS"
+expect_not_in "and not in FRR's, which is not the hierarchy being edited" \
+  "ip route" "$COMP_STATIC_THIS"
+
+# The same block, the two shapes the candidate arrives in, against a real FRR.
+expect "mid-edit, the route is shown before anything is committed" \
+  test -n "${MID_ROUTE:-}"
+expect "and after the commit, read back from FRR, it is shown the same way" \
+  test -n "${AFTER_ROUTE:-}"
+# What was shown is what committed. Without this the two above could agree
+# with each other about a route that never reached the router.
+expect "and FRR holds the route those two lines were describing" \
+  test "${FRR_STATIC:-0}" -ge 1
 
 
 # ---------------------------------------------------------------------------
