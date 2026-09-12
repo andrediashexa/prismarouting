@@ -119,8 +119,37 @@ printf '%s\n' "$SESS6" | sed -n '/total:/p' | sed 's/^/  |/'
 printf '%s\n' "$HELD" | sed -n '/total:/p' | sed 's/^/  |/'
 
 echo
+echo "=========== what the pool can serve whatever the addresses are ==========="
+# `usable` is a ceiling nobody is promised once there are workers: block
+# allocation is sharded so it needs no lock, a subscriber draws only from its
+# own worker's slice, and a subscriber index is the offset of its address
+# within the inside set rather than a counter - so on any real address plan the
+# two do not balance. This pool has three blocks; with two workers the slices
+# are two and one, and three subscribers whose offsets land 1, 0, 1 leave one
+# refused with a block free on the other worker (#210).
+#
+# The mechanism is not fixed here. What is fixed is the box claiming a number
+# it cannot deliver, so the assertion is on what `show bpa pool` SAYS.
+POOLCAP=$(vppctl show bpa pool | sed -n '/^pool /,/^$/p' | grep -A1 "capacity")
+printf '%s\n' "$POOLCAP" | sed 's/^/  /'
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
+if [ "${LAB_WORKERS:-0}" = 1 ]; then
+  # Three blocks over two workers: the smallest slice is one, and one is what
+  # the pool can serve however the addresses fall.
+  expect_in "the pool reports what it can serve whatever the addresses are" \
+    "whatever the addresses are" "$POOLCAP"
+  expect_in "and that number is the smallest slice, not the total" \
+    "1 whatever" "$POOLCAP"
+else
+  # Single-threaded there is one slice and it is the whole pool, so the line
+  # must NOT appear: a caveat printed where it does not apply is a caveat
+  # people learn to skip.
+  expect_not_in "with one thread there is no shard, and no caveat printed" \
+    "whatever the addresses are" "$POOLCAP"
+fi
 expect_in "the subscriber's sessions are gone" "total: 0 sessions" "$SESS6"
 expect_not_in "and it is not reported as holding no block while it holds one" \
   "holds no block" "$SUB6"

@@ -120,6 +120,37 @@ format_bpa_pool (u8 *s, va_list *args)
 	      p->blocks_per_ip);
   s = format (s, "\n%Ucapacity     %u subscribers (usable %u)",
 	      format_white_space, indent + 2, p->capacity, usable);
+  /*
+   * In dynamic mode with workers that figure is a ceiling nobody is promised.
+   *
+   * Block allocation is sharded so it needs no lock: worker w owns every
+   * block whose index is congruent to w, and a subscriber may only draw from
+   * the worker its own index maps to. Both halves are right on their own -
+   * one keeps allocation worker-local, the other keeps a flow's two
+   * directions on one worker - and neither was designed against the other.
+   * A subscriber index is the offset of its address within the inside set,
+   * not a counter, so on any real address plan the two do not balance.
+   *
+   * Measured on a three-block pool with two workers: subscribers at offsets
+   * 5, 6 and 9 land on workers 1, 0 and 1, the slices hold two blocks and
+   * one, and the third subscriber is refused with a block standing free on
+   * the other worker - while this line said "usable 3".
+   *
+   * So the smallest slice is printed beside it. It is what the pool can serve
+   * whatever the addresses happen to be, which is the number to size against;
+   * the difference between the two is what an even spread would buy. Fixing
+   * the mechanism is a design decision with a cost either way and is #210 -
+   * this is the half that stops the box claiming what it cannot do.
+   */
+  if (p->mode == BPA_MODE_DYNAMIC && bpa_main.n_workers > 1)
+    {
+      u32 nw = bpa_main.n_workers;
+
+      s = format (s, "\n%U             %u whatever the addresses are: blocks "
+		     "are sharded %u ways and a subscriber draws only from "
+		     "its own worker's slice",
+		  format_white_space, indent + 2, usable / nw, nw);
+    }
   s = format (s, "\n%Udivisor      %u (%s)", format_white_space, indent + 2,
 	      p->div.d, p->div.is_pow2 ? "shift" : "reciprocal");
   /* Printed whichever way each one is set. "The ALG is off" and "the ALG saw
