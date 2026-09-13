@@ -10,6 +10,28 @@ after it changed, the BGP page's table of what the VTY checks, the wiki titles,
 RFC 8158 record written out in three places. A second copy of a truth is fine.
 A second copy nothing compares is not.
 
+WHAT DOES NOT WORK, measured three times, so nobody spends the afternoon on it
+again. Comparing a MESSAGE against the source that prints it is unsound in both
+directions, and every variant tried here was rejected on its own numbers:
+
+  * the wiki's quoted messages against `hexash.py`: 14 headings, 11 reported
+    missing, ALL 11 false positives. Real messages are split across two string
+    literals, so a whole-sentence match cannot find them, and Portuguese prose
+    headings are not messages at all.
+  * `lab/*.sh`'s `expect_not_in` needles against the whole product: 118
+    needles, 42 reported unproducible, almost all false. A needle is usually
+    composed at run time from a fixture the lab set up - a pool name, an
+    address, an interface - so its absence from the source proves nothing. And
+    it had false NEGATIVES from the same line-split literals: `no digest:
+    written before the chain existed` IS printed by `bpa_audit.c`, across two
+    lines.
+  * documentation tokens beside a lab reference: 26 findings, about a quarter
+    false, written up on #247.
+
+So: compare a truth against the OTHER PLACE IT IS WRITTEN DOWN, never against
+the code that would produce it. Every check in this file does the former, and
+that is why none of them needs an allowlist.
+
 WHICH ALGs SHIP ON, written down in the plugin and in the documentation.
 
 `BPA_ALG_DEFAULT` in `src/plugins/bpa/bpa_pool.h` is what the box does.
@@ -123,6 +145,86 @@ if missing:
         f"names it, so the box has an ALG an operator is not told about")
 else:
     ok("and the roadmap names every one of them")
+
+print("\n=== no document times or counts make test for itself ===")
+# #231 took `25 suites in ~21 s` out of the README, because both numbers go up
+# whenever somebody adds a test and a check holding a document to them would go
+# red on the day a test is written. The same line was in TESTING.md, which is
+# where the README sends the reader next, and it survived the fix: 21 seconds
+# against 36 measured on this machine with a lab suite beside it, and 25 suites
+# against 38.
+#
+# So the rule is the one #231 argued for, applied to every document that quotes
+# the command rather than to the one that was noticed. The claim each number
+# was making - no root, no VPP - is kept.
+_TIMED = re.compile(r"make test[^\n]*#[^\n]*?(\d+)\s*(s|sec|seconds|m|min|minutes)\b")
+_COUNTED = re.compile(r"make test[^\n]*#[^\n]*?(\d+)\s*suites?\b")
+_stated = []
+for _name in ("README.md", "TESTING.md", "CONTRIBUTING.md"):
+    _path = os.path.join(REPO, _name)
+    if not os.path.exists(_path):
+        continue
+    _text = open(_path, encoding="utf-8").read()
+    for _rx, _what in ((_TIMED, "a time"), (_COUNTED, "a suite count")):
+        for _m in _rx.finditer(_text):
+            _stated.append(f"{_name} states {_what} for `make test`: {_m.group(0)!r}")
+if _stated:
+    for _t in _stated:
+        bad(f"{_t}. Both go up whenever a test is added, so the document is "
+            f"wrong on the day somebody writes one. Say what it needs, not how "
+            f"long it takes")
+else:
+    ok("README, TESTING and CONTRIBUTING leave the count and the clock to the "
+       "run that produces them")
+
+print("\n=== the sizing an ISP buys a prefix on ===")
+# README.md's 5W2H table answers "How much" with a number somebody spends money
+# on: 200k subscribers in deterministic mode with 512 port blocks require a /21
+# of public IPv4. It is arithmetic, the reference model does that arithmetic,
+# and nothing compared them.
+#
+# It is not a safe over-estimate either, which is what makes it worth holding
+# in both directions: a /21 gives 258,048 and a /22 gives 129,024, so the claim
+# is TIGHT. A default block size that grew, or a usable port range that
+# narrowed, would move the answer to /20 and leave an ISP having bought half
+# the addresses they need - and the box would be right and the README wrong.
+sys.path.insert(0, os.path.join(REPO, "ref"))
+try:
+    from bpa_model import PoolConfig                              # noqa: E402
+except ImportError as _e:                                        # pragma: no cover
+    bad(f"the reference model could not be imported, so the sizing claim is "
+        f"compared against nothing: {_e}")
+    PoolConfig = None
+
+_README = read("README.md")
+_m = re.search(r"(\d+)k subscribers in deterministic mode with (\d+)-port "
+               r"blocks require an? `(/\d+)`", _README)
+if not _m:
+    bad("README.md no longer states how much public IPv4 a subscriber count "
+        "needs, in the words this reads, so nothing below is checking it")
+elif PoolConfig is not None:
+    _subs = int(_m.group(1)) * 1000
+    _block = int(_m.group(2))
+    _bits = int(_m.group(3)[1:])
+
+    def _capacity(bits):
+        return PoolConfig("sizing", ["100.64.0.0/10"],
+                          [f"200.150.0.0/{bits}"], block_size=_block).capacity
+
+    _got = _capacity(_bits)
+    _smaller = _capacity(_bits + 1)     # one bit smaller is half the addresses
+    if _got < _subs:
+        bad(f"README.md says {_subs:,} subscribers fit in a /{_bits} with "
+            f"{_block} port blocks, and the model says that prefix holds "
+            f"{_got:,}. An ISP sizing a purchase on this line buys too few "
+            f"addresses")
+    elif _smaller >= _subs:
+        bad(f"README.md says {_subs:,} subscribers need a /{_bits}, and a "
+            f"/{_bits + 1} already holds {_smaller:,}. The line asks an ISP to "
+            f"buy twice what it needs")
+    else:
+        ok(f"{_subs:,} subscribers at {_block} ports fit in a /{_bits} "
+           f"({_got:,}) and not in a /{_bits + 1} ({_smaller:,})")
 
 print("\n=== the VPP version is pinned in one place and quoted in another ===")
 # A pin, unlike a suite count, does not drift on correct work: it changes when

@@ -1750,6 +1750,23 @@ are to be interpreted as described in
   exactly the day both copies must move. `test/test_doc_copies.py` reads it out
   of `tools/build.sh` and out of the README and compares them.
 
+  **And the number an ISP buys a prefix on.** The 5W2H table answers *How
+  much* with `200k subscribers in deterministic mode with 512-port blocks
+  require a /21 of public IPv4` - arithmetic the reference model does, that
+  nothing compared it against. It is correct, and it is **tight**: a /21 holds
+  258,048 and a /22 holds 129,024, so it is not a safe over-estimate either. A
+  default block size that grew or a usable port range that narrowed would move
+  the answer to /20 and leave somebody having bought half the addresses they
+  need, with the box right and the README wrong. Held in both directions now,
+  because a line that asked for twice what is needed is a defect too.
+
+  **And the same line was in `TESTING.md`, which survived the fix.** `21 s`
+  against 36 measured on this machine, and the README's `25 suites` against 38
+  - one file was noticed and the other was not, which is the shape this entry
+  is about happening to the fix for it. `test/test_doc_copies.py` now refuses a
+  time or a suite count for `make test` in any of the three documents that
+  quote the command, so the next one cannot be added quietly either.
+
   The duplicated listing line hid from the repeated-sentence check added beside
   it, because that check strips fenced blocks on purpose: an example command
   repeated in two places is an example. A directory listed twice is a claim
