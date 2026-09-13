@@ -128,7 +128,7 @@ commit                       recusa, e imprime quantos se movem e para onde
 commit remap                 aplica de fato
 ```
 
-Os números saem do `commit` comum, na recusa — não do `commit check`. E não são estimativa: o dataplane roda a mesma aritmética que rodaria depois, então a contagem é exata e vem com dois assinantes de exemplo. Registre esse número no chamado — é quantos clientes vão ligar.
+Os números saem do `commit check`, antes de aplicar, e o `commit` comum imprime os mesmos ao recusar. Não são estimativa: o dataplane roda a mesma aritmética que rodaria depois, então a contagem é exata e vem com dois assinantes de exemplo. Registre esse número no chamado — é quantos clientes vão ligar.
 
 O procedimento completo dos dois caminhos, com o que muda e o que não muda, está em [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
 

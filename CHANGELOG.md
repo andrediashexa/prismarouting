@@ -74,6 +74,44 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`commit check` promised to report which subscribers a change re-maps, and
+  reported nothing** ([#278](https://github.com/andrediashexa/hexarouting/issues/278)).
+  The VTY's own `?` help says so and six pages of the operator wiki repeated
+  it. Staging an `outside` change over a running pool and running `commit
+  check` printed `configuration check succeeds` and nothing else.
+
+  The numbers were never missing: `self.remap` is filled by the same
+  `apply(check_only=True)` that `check` runs, and was only printed inside the
+  plain `commit` refusal, which `check` returns before reaching.
+
+  It is the worst shape for this fact. An operator runs `check` in a
+  maintenance window to learn what the commit will do before doing it, and a
+  re-mapping is the most consequential thing a commit here can do: one added
+  prefix moves every subscriber and ends every session on the pool, with
+  nothing unusual reported afterwards because nothing unusual happened
+  ([#23](https://github.com/andrediashexa/hexarouting/issues/23)). `commit`
+  refusing later is the backstop, not the answer - by then the operator has
+  already decided to go ahead.
+
+  ```
+  configuration check succeeds
+    this change RE-MAPS subscribers that already have mappings
+      194 of 256 subscribers move
+      100.64.0.1 -> 200.150.0.9 port 1536-2047
+      100.64.0.2 -> 200.150.0.10 port 1024-1535
+    'commit' refuses this until it is asked for by name, with 'commit remap'
+  ```
+
+  Not printed as a refusal, because `check` applied nothing and an operator who
+  reads it as a failure runs it again. And not printed on every check: a change
+  that moves nobody says nothing, for the reason
+  [#205](https://github.com/andrediashexa/hexarouting/issues/205) and
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208) give - a
+  warning that is always on is one nobody reads. Both are asserted.
+
+  The code moved and not the help. Making the help true by deleting half of it
+  would leave the operator no way to learn this before applying.
+
 * **Six wiki sentences promised that `commit check` reports re-mappings, and
   it reports nothing.** Staged an `outside` change over a running pool and fed
   it to `commit check`: the output is `configuration check succeeds` and

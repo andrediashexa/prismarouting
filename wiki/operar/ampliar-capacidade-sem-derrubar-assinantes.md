@@ -32,7 +32,7 @@ configure
  commit
 ```
 
-É o `commit` comum que mede — ele **recusa** a mudança e, ao recusar, imprime a conta. O `commit check` valida a candidata sem tocar no equipamento e não fala em re-mapeamento.
+O `commit check` mede, sem tocar no equipamento: ele imprime a conta e dois assinantes de exemplo. O `commit` comum imprime a mesma conta ao **recusar** a mudança, e só aplica quando ela é pedida pelo nome.
 
 E a conta **não é estimativa**: o dataplane segura as duas definições e roda a mesma aritmética que rodaria depois. Ele responde quantos assinantes se movem, quantos têm estado vivo naquele instante, e para onde dois deles vão.
 

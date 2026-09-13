@@ -5451,5 +5451,88 @@ check(_rows272(_wide272).get("running") == sorted(_MANY272.split()),
 print("  the hint's destination answers the hint")
 
 
+
+print("\n=== 'commit check' reports the re-mapping it promises (#278) ===")
+# `commit check`'s own help says it will "report which subscribers a change
+# would re-map", and six pages of the operator wiki repeated it. It printed
+# "configuration check succeeds" and nothing else.
+#
+# The numbers were never missing: self.remap is filled by the same
+# apply(check_only=True) that `check` runs, and was only printed inside the
+# plain `commit` refusal, which `check` returns before reaching.
+#
+# The shape is the worst one for this fact. An operator runs `check` in a
+# maintenance window to learn what the commit will do before doing it, and a
+# re-mapping is the most consequential thing a commit on this box can do: one
+# added prefix moves every subscriber and ends every session on the pool, with
+# nothing unusual reported afterwards because nothing unusual happened (#23).
+
+
+class _DpRemap:
+    """A dataplane that answers a pool validation the way a re-map looks.
+
+    Keyed on the command ENDING in " check" rather than on a prefix: the
+    prefix stub above would answer this text to every command that starts with
+    the pool line, and a re-map report attached to the wrong command is a
+    fixture that proves the opposite of what it looks like.
+    """
+
+    TRACE = False
+
+    def run(self, cmd):
+        if cmd.endswith(" check"):
+            return 0, ("remap: 194 of 256 subscribers move\n"
+                       "remap: 100.64.0.1 -> 200.150.0.9 port 1536-2047\n"
+                       "remap: 100.64.0.2 -> 200.150.0.10 port 1024-1535\n")
+        return 0, ""
+
+    def running(self):
+        return 0, ""
+
+
+_RUN278 = ("cgnat pool p\n inside 100.64.0.0/22\n"
+           " outside 200.150.0.8/30\n")
+_CAND278 = _RUN278.replace("200.150.0.8/30", "200.150.0.8/29")
+
+_sh = _shell271(_CAND278, _RUN278, dp=_DpRemap())
+_out = io.StringIO()
+with contextlib.redirect_stdout(_out):
+    _sh.do_commit(["check"])
+_said = _out.getvalue()
+
+check("RE-MAPS" in _said,
+      f"'commit check' does not say the change re-maps anybody, and its own "
+      f"help promises it does: {_said!r}")
+check("194 of 256 subscribers move" in _said,
+      f"'commit check' has the count the dataplane reported and does not "
+      f"print it: {_said!r}")
+check("100.64.0.1 -> 200.150.0.9 port 1536-2047" in _said,
+      f"'commit check' does not name where a subscriber goes: {_said!r}")
+check("commit remap" in _said,
+      f"'commit check' warns about the re-mapping and does not say what to "
+      f"type: an operator told only that a commit will be refused has to go "
+      f"and find the word: {_said!r}")
+# It must not read as a refusal: `check` applied nothing, so there is nothing
+# to have refused, and an operator who reads this as a failure re-runs it.
+check("error:" not in _said,
+      f"'commit check' reports the re-mapping as an error, and it applied "
+      f"nothing: {_said!r}")
+
+# The other direction, and it is what keeps the report from being printed on
+# every check: a change that moves nobody must say nothing about re-mapping.
+# A warning that is always on is one nobody reads (#205, #208).
+_sh = _shell271(_RUN278 + " block-size 512\n", _RUN278, dp=_DpRemap())
+_quiet = io.StringIO()
+with contextlib.redirect_stdout(_quiet):
+    _sh.do_commit(["check"])
+check("RE-MAPS" not in _quiet.getvalue(),
+      f"'commit check' warns about a re-mapping the dataplane did not report: "
+      f"{_quiet.getvalue()!r}")
+
+for _row in _said.splitlines():
+    check(len(_row) <= CONSOLE_COLUMNS or _row.strip().startswith("100."),
+          f"this wraps on a serial console ({len(_row)}): {_row!r}")
+print("  the count, where two of them go, and what to type")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -27,10 +27,10 @@ O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fecha
 ```
 show configuration compare    o que muda
 commit check                  valida sem tocar no equipamento
-commit                        recusa, e é aí que sai quem seria re-mapeado
+commit                        aplica, ou recusa se houver re-mapeamento
 ```
 
-O `commit check` **não** informa re-mapeamento: quem informa é o `commit` comum, que recusa a mudança e imprime a conta exata e dois assinantes de exemplo antes de pedir `commit remap`. Se aparecer re-mapeamento, você vai derrubar todos os assinantes daquele pool ao aplicar. Isso é o esperado — mas precisa ser uma decisão, com janela.
+O `commit check` informa o re-mapeamento: a conta exata e dois assinantes de exemplo, sem tocar no equipamento. Se aparecer, você vai derrubar todos os assinantes daquele pool ao aplicar. Isso é o esperado — mas precisa ser uma decisão, com janela. O `commit` comum recusa a mudança até ser pedida pelo nome, com `commit remap`.
 
 ## Recuperar uma caixa que ficou inalcançável
 

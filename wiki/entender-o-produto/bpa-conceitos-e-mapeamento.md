@@ -44,7 +44,7 @@ Acrescentar um prefixo público move **todos** os assinantes naquele instante e 
 * todos os clientes caem ao mesmo tempo;
 * a máquina não reporta nada de anormal, porque nada de anormal aconteceu.
 
-Por isso o `commit` recusa mudanças assim até que sejam pedidas pelo nome, com `**commit remap**`. E por isso a recusa traz a conta — quantos assinantes se movem, e para onde dois deles vão — antes de qualquer coisa acontecer.
+Por isso o `commit` recusa mudanças assim até que sejam pedidas pelo nome, com `**commit remap**`. E por isso a conta — quantos assinantes se movem, e para onde dois deles vão — sai no `commit check`, antes de qualquer coisa acontecer, e de novo na recusa do `commit`.
 
 # Sharding: por que o handoff existe
 

@@ -6562,6 +6562,42 @@ class Shell:
         still = [a for a in added if a in left]
         return still if len(still) == len(added) else []
 
+    def report_remap(self):
+        """
+        What `commit` will refuse until it is asked by name, said by `check`.
+
+        `commit check`'s own help has always promised this - "report which
+        subscribers a change would re-map" - and six pages of the operator
+        wiki repeated it. It printed nothing. The numbers were there: they are
+        filled by the same apply(check_only=True) that `check` runs, and were
+        only ever printed inside the plain `commit` refusal, which `check`
+        returns before reaching.
+
+        The gap is the worst possible shape for this particular fact. An
+        operator runs `check` in a maintenance window to find out what the
+        commit will do BEFORE doing it, and the re-mapping is the most
+        consequential thing a commit on this box can do: in deterministic mode
+        one added prefix moves every subscriber and ends every session on the
+        pool, and the box reports nothing unusual afterwards because nothing
+        unusual happened (#23). "configuration check succeeds" over that is
+        the sentence the operator acts on.
+
+        Not a refusal here, and the wording has to keep that clear: `check`
+        applies nothing, so there is nothing to refuse. It is the warning the
+        command exists to give.
+        """
+        if not self.remap:
+            return
+        print_prose("this change RE-MAPS subscribers that already have "
+                    "mappings", indent="  ")
+        for line in self.remap:
+            # Printed whole, like every other quoted line: these carry counts
+            # and addresses the operator will compare against what they
+            # expected, and a wrapped address is one they cannot grep for.
+            print("    " + line[len("remap:"):].strip())
+        print_prose("'commit' refuses this until it is asked for by name, "
+                    "with 'commit remap'", indent="  ")
+
     def do_commit(self, args):
         """commit [check | remap | cutoff | confirmed <min> | comment <text>]"""
         if self.candidate is None:
@@ -6636,6 +6672,7 @@ class Shell:
                                 "still refuse one", indent="  ")
                 else:
                     print("configuration check succeeds")
+                self.report_remap()
             return
 
         # A change that re-maps existing subscribers is refused until it is

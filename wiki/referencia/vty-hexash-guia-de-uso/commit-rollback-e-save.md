@@ -30,7 +30,20 @@ flowchart LR
 
 É o comando que responde *"isso passa na validação?"* antes de aplicar. Ele confere a candidata inteira sem tocar no equipamento — só comandos de leitura vão para o dataplane.
 
-**Ele não diz quem seria re-mapeado.** Quem diz é o `commit` comum, ao recusar a mudança; está descrito em *`commit remap`*, logo abaixo. Um `commit check` aprovado sobre uma mudança de mapeamento imprime apenas que a validação passou.
+**Ele diz quem seria re-mapeado**, que é a razão de existir de perguntar antes:
+
+```
+configuration check succeeds
+  this change RE-MAPS subscribers that already have mappings
+    194 of 256 subscribers move
+    100.64.0.1 -> 200.150.0.9 port 1536-2047
+    100.64.0.2 -> 200.150.0.10 port 1024-1535
+  'commit' refuses this until it is asked for by name, with 'commit remap'
+```
+
+A conta não é estimativa: quem faz é o dataplane, com as duas definições e a mesma aritmética que rodaria depois. Não é recusa — o `check` não aplicou nada, então não há o que recusar; é o aviso que o comando existe para dar. Quem recusa é o `commit` comum, descrito em *`commit remap`*, logo abaixo.
+
+Uma mudança que não move ninguém não imprime nada disso. Aviso que aparece sempre é aviso que ninguém lê.
 
 Ele também diz **o que não verificou**:
 
