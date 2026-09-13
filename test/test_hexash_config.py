@@ -73,6 +73,12 @@ MUTATIONS = {
     # --- settings the dataplane changes under a worker barrier, in place.
     "timeouts":     (lambda p: p.timeouts.update({"udp": 900}), "settings_set"),
     "max_blocks":   (lambda p: setattr(p, "max_blocks", 2), "settings_set"),
+    # In place, and the reason is the whole argument for it being a setting:
+    # a stride says where the NEXT extension goes. Nothing already handed out
+    # moves, and bpa_forward() never reads it, so no subscriber's own block
+    # changes. If it ever rebuilt the pool it would be a mapping change and
+    # would belong to the capacity-change procedure instead.
+    "block_stride": (lambda p: setattr(p, "block_stride", 1), "settings_set"),
     "tcp_mss":      (lambda p: setattr(p, "tcp_mss", "1400"), "settings_set"),
     "util_alarm":   (lambda p: setattr(p, "util_alarm", 80), "settings_set"),
     "filter":       (lambda p: setattr(p, "filter", "address-dependent"),
@@ -639,6 +645,41 @@ interface tap4096
 """).interface_names()
 check(named == {"loop3", "tap4096"}, f"the interfaces a file names: {named}")
 
+
+# --- a statement that is typed and never reaches the dataplane -------------
+#
+# The shape of #47: `filter`, `max-blocks`, the per-pool timeouts and the ALG
+# switches were accepted at the prompt, accepted at commit, and arrived
+# nowhere. A pool setting has FOUR renderings that must all carry it - the
+# configuration text it is read back as, the device command, the pool-creation
+# message and the in-place settings message - and a field added to one of them
+# is a feature that exists through whichever path the author happened to test.
+print("\n=== block-stride survives every rendering of a pool ===")
+_p = config.Config.parse("""cgnat pool striding
+ inside 100.64.0.0/22
+ outside 200.150.0.16/28
+ block-stride 3
+ exit
+""").pools["striding"]
+check(_p.block_stride == 3, f"parsed: {_p.block_stride}")
+check(" block-stride 3" in _p.lines(),
+      f"read back as configuration: {_p.lines()}")
+check("block-stride 3" in _p.device_command(),
+      f"as a device command: {_p.device_command()}")
+check(_p.api_args()["block_stride"] == 3,
+      f"in the pool-creation message: {_p.api_args().get('block_stride')}")
+# In the settings message above all, because that is the one that says it can
+# be changed without dropping every session on the pool. Missing here, the
+# statement would be accepted, committed, and silently need a pool rebuild it
+# never gets.
+check(_p.settings_api_args()["block_stride"] == 3,
+      f"in the in-place settings message: "
+      f"{_p.settings_api_args().get('block_stride')}")
+# And absent from the text when it is not set, so a pool that says nothing
+# about the stride does not acquire a line for it on the next commit.
+check(" block-stride 0" not in config.Pool("plain").lines(),
+      "a pool with no stride emits no stride line")
+print("  parsed, read back, and in both API messages")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

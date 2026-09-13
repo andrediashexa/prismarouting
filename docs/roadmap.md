@@ -124,7 +124,7 @@ What did **not** ship with it: RFC 5382 sets minimums an implementation
 **SHOULD** honour, and nothing warns an operator who goes below them. That is
 [#54](https://github.com/andrediashexa/hexarouting/issues/54).
 
-### 2.2 BPA step control — extended blocks delivered in v0.4.0 — [#13](https://github.com/andrediashexa/hexarouting/issues/13)
+### 2.2 BPA step control - delivered: extended blocks in v0.4.0, the stride in [#55](https://github.com/andrediashexa/hexarouting/issues/55)
 
 **Extended blocks** shipped: a subscriber that fills its block is given another,
 bounded by a per-pool `max-blocks`, and each one produces its own RFC 8158
@@ -140,10 +140,25 @@ subscriber, which is [#39](https://github.com/andrediashexa/hexarouting/issues/3
 and depends on the capacity-change procedure
 ([#23](https://github.com/andrediashexa/hexarouting/issues/23)).
 
-Still missing, now tracked as
-[#55](https://github.com/andrediashexa/hexarouting/issues/55): the **stride**
-between the blocks one subscriber holds, and **per-pool block-size ranges** so a
-pool can start subscribers small and grow only those who need it.
+**Stride** shipped with [#55](https://github.com/andrediashexa/hexarouting/issues/55):
+`block-stride` puts the nth block a subscriber holds `n × stride × block-size`
+ports above its first, on the same public address - side by side at one, spread
+at more - with zero, the historical behaviour, as the default. It is not part of
+the mapping and moves no existing subscriber, which is asserted rather than
+promised, and each block is still its own `natEvent 16` wherever it lands. Where
+the worker sharding cannot honour a stride the box warns and names one that
+works, rather than refusing and leaving a pool unable to come up after a
+restart.
+
+**Per-pool block-size ranges** were measured and found to be **already
+delivered** by `block-size` with `max-blocks`: a subscriber starts at
+`block-size` ports and grows one block at a time, only when it fills one, as far
+as `block-size × max-blocks`. What was missing was that nothing said so, and
+`show bpa pool` now prints the range in ports. A **growth step** - handing out
+several blocks at once - was measured and not built: it hands out the same
+blocks in fewer events and changes nothing a session pays, because a session
+walks the blocks a subscriber holds rather than the events that produced them.
+The reading is in `ref/validate.py` and is re-taken on every `make model`.
 
 ### 2.3 ALG — FTP, RTSP, PPTP, ESP and SIP-over-UDP built; TFTP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 

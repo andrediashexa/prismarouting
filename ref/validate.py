@@ -2,7 +2,8 @@
 """Exhaustive validation of the BPA model, including non-contiguous pools."""
 
 import ipaddress, sys, random
-from bpa_model import PoolConfig, AddrSet, MapPolicy, PoolMode, plan, BpaError
+from bpa_model import (PoolConfig, AddrSet, MapPolicy, PoolMode, plan,
+                       bitmap_walk, BpaError)
 
 FAIL = 0
 
@@ -139,6 +140,144 @@ merged = AddrSet(["200.150.0.0/25", "200.150.0.128/25", "45.170.16.0/24"])
 check(len(merged.ranges) == 2, f"expected 2 ranges after merging, got {len(merged.ranges)}")
 check(merged.count == 512, f"expected 512 addresses, got {merged.count}")
 print(f"  3 prefixes -> {len(merged.ranges)} ranges, {merged.count} addresses: {merged.describe()}")
+
+print("\n" + "=" * 64)
+print("BLOCK STRIDE: WHERE A SUBSCRIBER'S SECOND BLOCK GOES")
+
+# The default is today's behaviour, and "today's behaviour" is not a formula:
+# an extension is whatever comes off the free list, which depends on what the
+# pool has already handed out. The model says so by refusing to predict it,
+# and this is the assertion that an upgrade changes nothing - there is no
+# stride arithmetic to apply until somebody configures one.
+for p in pools:
+    none_for_all = all(p.extension_block(b, n) is None
+                       for b in range(min(p.capacity, 64)) for n in (1, 2, 3))
+    check(none_for_all,
+          f"'{p.name}': stride 0 predicted a block; the default must stay "
+          f"whatever the allocator hands out next")
+print(f"  OK  {len(pools)} pools: with no stride the model predicts nothing, "
+      f"which is what the allocator does today")
+
+# THE #23 REQUIREMENT, as arithmetic rather than as a promise: a stride must
+# not move an existing subscriber. It cannot, because forward() does not read
+# it - and that is only worth stating if it is checked, because the day
+# somebody threads the stride into the mapping this is what goes red.
+moved = 0
+strides_tried = 0
+for p in pools:
+    base = {sub: p.forward(p.inside.addr_of(sub))
+            for sub in range(min(p.capacity, p.inside.count))}
+    for stride in range(0, min(p.blocks_per_ip, 8)):
+        q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                       block_size=p.block_size, policy=p.policy,
+                       block_stride=stride)
+        strides_tried += 1
+        for sub, f in base.items():
+            if q.forward(q.inside.addr_of(sub)) != f:
+                moved += 1
+check(moved == 0,
+      f"{moved} subscribers changed public address or port block when only "
+      f"the stride changed; that belongs to the capacity-change procedure")
+print(f"  OK  {strides_tried} pool/stride combinations move 0 subscribers: "
+      f"a stride is not part of the mapping")
+
+# Where the stride says the blocks go, in ports rather than in indices,
+# because that is the sentence an operator reads and the log records.
+for p in pools:
+    bad = 0
+    for stride in (1, 2, 5):
+        if stride >= p.blocks_per_ip:
+            continue
+        q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                       block_size=p.block_size, policy=p.policy,
+                       block_stride=stride)
+        for sub in range(min(q.capacity, 200)):
+            first = q.forward(q.inside.addr_of(sub))
+            for nth in (1, 2, 3):
+                blk = q.extension_block(sub, nth)
+                if blk is None:
+                    # only legal at the end of the public address
+                    if first["blk_idx"] + nth * stride < q.blocks_per_ip:
+                        bad += 1
+                    continue
+                pub_idx, blk_idx = q.split(blk)
+                want = first["port_lo"] + nth * stride * q.block_size
+                if pub_idx != first["pub_idx"]:
+                    bad += 1
+                if q.port_min + blk_idx * q.block_size != want:
+                    bad += 1
+    check(bad == 0, f"'{p.name}': {bad} striden blocks landed off their stride")
+print(f"  OK  the nth block starts nth*stride*block_size ports above the "
+      f"first, on the same public address")
+
+# A stride that cannot place anything is refused rather than accepted and
+# silently inert. blocks_per_ip is the first stride whose first extension is
+# already past the end of the subscriber's own public address.
+for p in pools:
+    try:
+        PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                   block_size=p.block_size, policy=p.policy,
+                   block_stride=p.blocks_per_ip)
+        check(False, f"'{p.name}': a stride of blocks_per_ip was accepted")
+    except BpaError:
+        pass
+print(f"  OK  a stride that steps off the public address on its first "
+      f"extension is refused")
+
+print("\n" + "=" * 64)
+print("BLOCK STRIDE UNDER WORKER SHARDING")
+print("  A dynamic pool partitions blocks by block_idx % n_workers and a")
+print("  subscriber draws only from its own worker's slice, so a stride whose")
+print("  step is not a multiple of the worker count names a block this worker")
+print("  may not hand out - for EVERY subscriber, not for some.")
+for p in pools[:2]:
+    print(f"  {p.name}: policy {p.policy.value}, {p.outside.count} public "
+          f"addresses, one stride step = {p.stride_unit} block indices")
+    for nw in (1, 2, 3, 4, 8):
+        ok = [s for s in range(1, 9)
+              if PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                            block_size=p.block_size, policy=p.policy,
+                            block_stride=s).stride_reachable(1, nw)]
+        print(f"    {nw} worker(s): strides 1-8 that can be honoured: "
+              f"{ok if ok else 'none'}")
+# The one that must hold whatever the policy: a single-threaded box has one
+# slice, so every stride is reachable. If this ever goes red the sharding
+# arithmetic has stopped agreeing with "there is only one worker".
+for p in pools:
+    for s in range(1, min(p.blocks_per_ip, 9)):
+        q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                       block_size=p.block_size, policy=p.policy,
+                       block_stride=s)
+        check(q.stride_reachable(1, 1),
+              f"'{p.name}': stride {s} unreachable on a single-threaded box")
+print("  OK  every stride is reachable with one worker")
+
+print("\n" + "=" * 64)
+print("PER-POOL BLOCK-SIZE RANGE: WHAT block_size AND max_blocks ALREADY GIVE")
+print("  A subscriber starts at block_size ports and grows one block at a")
+print("  time, only when it fills one. The range is already two numbers; what")
+print("  the small steps cost is the question, so here it is measured.")
+print()
+print("   layout                    ports  ranges  grants    probes   probe ns")
+for bs, mb, grow, merge in ((4096, 1, 1, False), (1024, 4, 1, False),
+                            (256, 16, 1, False), (64, 64, 1, False),
+                            (64, 64, 2, False), (64, 64, 2, True)):
+    w = bitmap_walk(4096, bs, mb, grow, merge)
+    label = f"block {bs} x{mb}" + (f" grow {grow}" if grow > 1 else "")
+    label += " merged" if merge else ""
+    print(f"   {label:<24} {w['ports']:6d}  {w['ranges']:6d}  {w['grants']:6d}"
+          f"  {w['probes']:8,}  {w['probe_ns']:9,.0f}")
+# The reading the growth step has to beat. A grant that is not merged into one
+# range changes the number of exhaustion events and NOTHING a session pays:
+# the walk is over the blocks held, not over how they were handed out.
+check(bitmap_walk(4096, 64, 64, 1, False)["probes"]
+      == bitmap_walk(4096, 64, 64, 2, False)["probes"],
+      "a growth step changed the session walk without merging the grant; "
+      "the measurement behind not building one no longer holds")
+print()
+print(f"  OK  a growth step alone saves 0 of the "
+      f"{bitmap_walk(4096, 64, 64)['probes']:,} probes: it hands out the same")
+print(f"      blocks in fewer events, and a session walks blocks, not events")
 
 print("\n" + "=" * 64)
 print(f"RESULT: {'ALL TESTS PASSED' if FAIL == 0 else str(FAIL) + ' FAILURES'}")

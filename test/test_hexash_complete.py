@@ -4017,11 +4017,11 @@ _sh = pool_shell()
 for _line in ("no timeout udp", "no alg ftp", "no max-blocks", "no tcp-mss",
               "no filter", "no max-sessions", "no max-session-rate",
               "no utilisation-alarm", "no bypass source",
-              "no bypass destination"):
+              "no bypass destination", "no block-stride"):
     check(said(_sh, _line) == "",
           f"'{_line}' on a pool that has none must be quiet: "
           f"{said(_sh, _line)!r}")
-print(f"  {10} removals on a pool with nothing to remove: all silent")
+print(f"  {11} removals on a pool with nothing to remove: all silent")
 
 # --- the word after `no` is the one that is wrong ---
 _sh = pool_shell()

@@ -352,6 +352,10 @@ class Pool:
         # global change into a diff against every pool.
         self.timeouts: dict[str, int] = {}
         self.max_blocks = 0             # 0 means the device default of one
+        # Blocks between the ones a subscriber holds. 0 is the device's own
+        # behaviour and every configuration written before this existed:
+        # an extra block goes wherever the pool has one free.
+        self.block_stride = 0
         # TCP MSS clamp: "" is off, "auto" derives it from the interface
         # MTUs, anything else is the number of bytes.
         self.tcp_mss = ""
@@ -416,6 +420,8 @@ class Pool:
                     out.append(f" timeout {t} {self.timeouts[t]}")
             if self.max_blocks > 1:
                 out.append(f" max-blocks {self.max_blocks}")
+            if self.block_stride:
+                out.append(f" block-stride {self.block_stride}")
         if in_place:
             out += [f" bypass source {p}" for p in sorted(self.bypass_src)]
             out += [f" bypass destination {p}"
@@ -461,6 +467,8 @@ class Pool:
                 parts += ["timeout", t, str(self.timeouts[t])]
         if self.max_blocks > 1:
             parts += ["max-blocks", str(self.max_blocks)]
+        if self.block_stride:
+            parts += ["block-stride", str(self.block_stride)]
         for p in sorted(self.bypass_src):
             parts += ["bypass", "source", p]
         for p in sorted(self.bypass_dst):
@@ -525,6 +533,7 @@ class Pool:
             "filter": "BPA_API_FILTER_"
                       + self.filter.upper().replace("-", "_"),
             "max_blocks": int(self.max_blocks),
+            "block_stride": int(self.block_stride),
             "alg": alg,
             "alg_set": alg_set,
             "tcp_mss": 0 if self.tcp_mss in ("", "auto") else int(self.tcp_mss),
@@ -608,6 +617,7 @@ class Pool:
             "filter": "BPA_API_FILTER_"
                       + self.filter.upper().replace("-", "_"),
             "max_blocks": int(self.max_blocks),
+            "block_stride": int(self.block_stride),
             "tcp_mss": 0 if self.tcp_mss in ("", "auto") else int(self.tcp_mss),
             "tcp_mss_auto": self.tcp_mss == "auto",
             "alg": alg,
@@ -1367,6 +1377,10 @@ class Config:
             if not w[1].isdigit() or int(w[1]) < 1:
                 return f"max-blocks '{w[1]}': expected a number of at least 1"
             pool.max_blocks = int(w[1])
+        elif w[0] == "block-stride" and len(w) > 1:
+            if not w[1].isdigit() or int(w[1]) > 65535:
+                return f"block-stride '{w[1]}': expected 0-65535 blocks"
+            pool.block_stride = int(w[1])
         elif w[0] == "bypass" and len(w) > 2:
             if w[1] not in ("source", "destination"):
                 return f"bypass '{w[1]}': expected source or destination"

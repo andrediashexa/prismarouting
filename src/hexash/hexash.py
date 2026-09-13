@@ -814,6 +814,8 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_NUM),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "block-stride": ("blocks between the ones a subscriber holds; 1 puts them "
+                     "side by side, 0 lets the pool place them", ARG_NUM),
     "bypass": ("prefixes that leave untranslated", {
         "source": ("a source that must keep its own address", ARG_PREFIX),
         "destination": ("a destination that must see the real source",
@@ -980,6 +982,9 @@ POOL_NEGATE = {
                 "again", CGNAT_POOL["timeout"][1], _pool_no_timeout),
     "max-blocks": ("go back to one block per subscriber", None,
                    _pool_no_clear("max_blocks", 0)),
+    "block-stride": ("let the pool place a subscriber's extra blocks wherever "
+                     "it has one free", None,
+                     _pool_no_clear("block_stride", 0)),
     "bypass": ("stop excluding a prefix from translation",
                CGNAT_POOL["bypass"][1], _pool_no_bypass),
     "utilisation-alarm": ("stop alarming on block utilisation", None,
@@ -6879,6 +6884,10 @@ class Shell:
                 if int(w[1]) < 1:
                     raise ValueError("max-blocks must be at least 1")
                 p.max_blocks = int(w[1])
+            elif w[0] == "block-stride":
+                if not 0 <= int(w[1]) <= 65535:
+                    raise ValueError("block-stride must be 0-65535")
+                p.block_stride = int(w[1])
             elif w[0] == "bypass":
                 why = Config._pool_line(p, " ".join(w))
                 if why:

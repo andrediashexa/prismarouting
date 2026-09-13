@@ -1139,10 +1139,65 @@ bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
   bpa_timeouts_check (t, bpa_floor_warn, &ctx);
 }
 
+/*
+ * A stride the worker sharding cannot honour, said once where the operator
+ * can act on it.
+ *
+ * A WARNING and not a refusal, and the difference matters more than it looks.
+ * Whether a stride is reachable depends on the worker count, which is a
+ * startup setting rather than part of the pool: a configuration accepted on a
+ * single-threaded box would be REFUSED after the same box is given four
+ * workers, and the pool would then fail to come up at all. A pool that does
+ * not exist is every subscriber on it losing traffic; a stride not honoured is
+ * a preference about layout that the counters in "show bpa blocks" report.
+ * The first is not an acceptable price for the second.
+ *
+ * `vm` may be null, and then only the log hears about it - the API path has an
+ * operator at the other end of a message rather than a terminal.
+ */
+void
+bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 nw = bm->n_workers ? bm->n_workers : 1;
+  u32 ok;
+
+  if (p->block_stride == 0 || bpa_stride_reachable (p, nw))
+    return;
+
+  ok = bpa_stride_next_ok (p, p->block_stride, nw);
+
+  if (vm)
+    {
+      vlib_cli_output (vm,
+		       "warning: block-stride %u on pool %v cannot be honoured: "
+		       "blocks are sharded %u ways and a stride step moves by "
+		       "%u, so every block the stride names belongs to another "
+		       "worker",
+		       p->block_stride, p->name, nw, bpa_stride_unit (p));
+      if (ok)
+	vlib_cli_output (vm, "         the nearest stride that can be: %u",
+			 ok);
+      else
+	vlib_cli_output (vm, "         no stride fits this pool at %u workers",
+			 nw);
+      vlib_cli_output (vm,
+		       "         the setting is applied and extensions fall "
+		       "back to the free list; this is a warning, not a "
+		       "refusal");
+    }
+  vlib_log_warn (bm->log_class,
+		 "pool %v: block-stride %u unreachable at %u workers "
+		 "(a step moves by %u)%s%u",
+		 p->name, p->block_stride, nw, bpa_stride_unit (p),
+		 ok ? "; nearest that is: " : "; none fits", ok);
+}
+
 clib_error_t *
 bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 		       u32 alg_set, u16 tcp_mss, u8 tcp_mss_auto,
-		       u8 util_alarm, const bpa_timeouts_t *timeouts)
+		       u8 util_alarm, u16 block_stride,
+		       const bpa_timeouts_t *timeouts)
 {
   bpa_main_t *bm = &bpa_main;
   bpa_pool_t *p;
@@ -1161,6 +1216,16 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 
   p = pool_elt_at_index (bm->pools, q[0]);
 
+  /* The one stride refusal that is a fact about the pool itself rather than
+   * about this box's thread count: a stride at or past the blocks one public
+   * address holds steps off the end on the first extension, on every box and
+   * after every restart. */
+  if (block_stride >= p->blocks_per_ip)
+    return clib_error_return (
+      0, "block-stride %u does not fit pool '%v': a public address holds %u "
+	 "blocks",
+      block_stride, p->name, p->blocks_per_ip);
+
   /* Under the barrier: the datapath reads the filtering mode, the ALG mask and
    * the clamp on the packet path, and a half-applied set of them is a pool
    * behaving as neither the old configuration nor the new one. */
@@ -1172,6 +1237,10 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
   p->tcp_mss = tcp_mss;
   p->tcp_mss_auto = tcp_mss_auto;
   p->util_alarm = util_alarm;
+  /* In place, and safe there: the stride decides where the NEXT extension
+   * goes. Nothing already handed out moves, and bpa_forward() never reads it,
+   * so no subscriber's own block changes (docs/pool-resize.md). */
+  p->block_stride = block_stride;
   p->timeouts = *timeouts;
   vlib_worker_thread_barrier_release (bm->vlib_main);
 
@@ -1179,6 +1248,7 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
    * warned about. No vlib_main_t: the operator is at the other end of an API
    * call, and hexash relays it from "show bpa timeouts". */
   bpa_timeouts_warn (0, timeouts, p->name);
+  bpa_stride_warn (0, p);
 
   bpa_audit ("settings", p, 0);
   return 0;
