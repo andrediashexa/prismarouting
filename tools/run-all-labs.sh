@@ -183,7 +183,17 @@ for f in "$REPO"/lab/*.sh; do
   # library as "ran (no verdict yet)" leaves a number in the summary that never
   # reaches zero, and the day a real lab loses its verdict the line reads the
   # same as it always did.
-  case "$n" in hw-lab|hw-vpp|boot-iso|install-iso|verdict|lib) continue ;; esac
+  #
+  # crossaddr is out for a different reason, and it is worth writing down.
+  # Its checks assert what a dynamic pool's extension DOES today, which is a
+  # defect (#226): it lands on another public address and the box claims
+  # paired address pooling. A lab that pins a defect's current behaviour is a
+  # record, not a regression test - it would go red the day somebody FIXES the
+  # thing it measures, which is the opposite of what a release gate is for.
+  # It is run by hand from the issue.
+  case "$n" in hw-lab|hw-vpp|boot-iso|install-iso|verdict|lib|crossaddr)
+    continue ;;
+  esac
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
   LABS="$LABS $n"
   case " $BOTH_WAYS " in *" $n "*) LABS="$LABS $n+workers" ;; esac

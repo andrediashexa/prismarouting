@@ -52,7 +52,8 @@ are to be interpreted as described in
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223),
 [#224](https://github.com/andrediashexa/hexarouting/issues/224),
-[#225](https://github.com/andrediashexa/hexarouting/issues/225).
+[#225](https://github.com/andrediashexa/hexarouting/issues/225),
+[#226](https://github.com/andrediashexa/hexarouting/issues/226).
 
 ### Added
 
@@ -314,6 +315,30 @@ are to be interpreted as described in
 
   The guard found six the first draft of that page had missed or paraphrased,
   which is the check doing its job on the work that introduced it.
+
+* **The box claimed paired address pooling in four places and does not have it
+  in every mode.** RFC 4787 REQ-2 is stated as a property this product has in
+  `docs/roadmap.md`, `docs/architecture.md`, `src/plugins/bpa/bpa_pool.h` and
+  the wiki. It is true unconditionally in deterministic mode, and in dynamic
+  mode only until a subscriber fills its block: the extension comes from the
+  free list, and under `policy interleaved` the next block index **is** the
+  next public address, so it normally lands on a different one - and more often
+  as the pool grows, because staying put needs the gap to be a multiple of the
+  address count. Measured: an arrival pattern that left 0 of 4 subscribers
+  split at four public addresses split 4 of 4 at sixteen
+  ([#226](https://github.com/andrediashexa/hexarouting/issues/226)).
+
+  The four statements now say where the property holds and where it stops. The
+  mechanism is untouched and the choice between the ways of restoring it is on
+  the issue with the cost of each: it changes where every extension in a
+  dynamic pool lands, which is the maintainer's to make. What is not a choice
+  is the claim - an operator sizes and sells against a conformance statement,
+  so one the box cannot honour is worse than the absent property.
+
+  `lab/crossaddr.sh` carries the measurement and is deliberately **out** of the
+  suite: its checks assert what the box does today, so it would go red the day
+  somebody fixes what it measures, and that is a record rather than a
+  regression test.
 
 ### Added
 

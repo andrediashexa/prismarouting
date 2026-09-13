@@ -30,7 +30,7 @@ Dois motivos, e os dois são propriedades que o resto do equipamento já garante
 
 | Motivo | O que quebraria se fosse diferente |
 |--------|------------------------------------|
-| **Pareamento de endereço** (RFC 4787 REQ-2) | um assinante que recebe tráfego num endereço e envia de outro não está pareado, e aplicações que conferem de onde veio a resposta enxergariam dois pares diferentes |
+| **Pareamento de endereço** (RFC 4787 REQ-2) | um assinante que recebe tráfego num endereço e envia de outro não está pareado, e aplicações que conferem de onde veio a resposta enxergariam dois pares diferentes. Vale dizer onde essa propriedade vale: sempre em modo determinístico, e em modo dinâmico até o assinante encher o bloco dele - a partir daí o bloco de extensão normalmente cai em **outro** endereço público. O encaminhamento continua recusado em qualquer endereço que não seja o primeiro do assinante, que é o lado conservador disso |
 | **A aritmética reversa** | é ela que recupera o assinante a partir de (endereço público, porta) sem consulta a tabela. Um forward em outro endereço seria um mapeamento que a fórmula não produz, e todo leitor da trilha calcularia a resposta errada exatamente para aquelas portas |
 
 Por isso a porta pública **precisa cair dentro do bloco** que o pool atribui àquele assinante. Um forward fora do bloco é recusado, nomeando o assinante cujo bloco ele teria tomado:
