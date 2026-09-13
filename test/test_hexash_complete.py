@@ -3120,5 +3120,49 @@ check(_nothing_took(_OMITTED_ONLY + ["ip route 10.0.0.0/8 10.0.0.1"])
       == ["ip route 10.0.0.0/8 10.0.0.1"],
       "and a mixed commit is judged on the statements that mean something")
 
+print("\n=== inside a block, `show` is offered and so is the tree under it ===")
+#
+# `show this` is the only way to read back what has been typed into a block
+# before committing, and it WORKS in every block. `?` and TAB listed it in the
+# FRR blocks only: a pool, a user and an SNMP user are modes rather than
+# frr_ctx entries, so the injection that adds `show` never reached them, while
+# the comment beside it said "every block" (#221).
+#
+# The pool is the one that mattered: it is this product's whole subject, and
+# the wiki uses a pool as its example of `show this`.
+#
+# Asserted in both halves, because either alone is satisfiable by an accident:
+# that the word is offered, and that the sub-commands under it are, since a
+# `show` with nothing after it leaves the operator exactly where they were.
+for _blk, _mode in (("cgnat pool residential", "pool"),
+                    ("user bob", "user"),
+                    ("snmp-user u1", "snmp-user"),
+                    ("interface TenGigabitEthernet0/8/0", "config"),
+                    ("router bgp 65000", "config")):
+    _sh = shell_with_box()
+    with contextlib.redirect_stdout(io.StringIO()):
+        _sh.feed("configure")
+        _sh.feed(_blk)
+    _o, _, _ = _sh._options("", False)
+    check("show" in _o, f"inside '{_blk}', `?` does not offer show: {sorted(_o)}")
+    _o2, _, _ = _sh._options("show ", False)
+    check("this" in _o2,
+          f"inside '{_blk}', `show ?` does not offer this: {sorted(_o2)}")
+    check("version" in _o2 and "configuration" in _o2,
+          f"inside '{_blk}', `show ?` offers less than the show tree, which "
+          f"all answers from in here: {sorted(_o2)}")
+
+# And it must still be the block's own grammar that starts a line, rather than
+# the level above leaking back in with show as the excuse (#112).
+_sh = shell_with_box()
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.feed("configure")
+    _sh.feed("cgnat pool residential")
+_o, _, _ = _sh._options("", False)
+check("interface" not in _o and "user" not in _o,
+      f"the level above leaked into a pool block: {sorted(_o)}")
+check("block-size" in _o,
+      f"the pool's own statements are gone from a pool block: {sorted(_o)}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

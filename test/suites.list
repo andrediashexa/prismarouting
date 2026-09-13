@@ -25,6 +25,7 @@ python3 test/test_routes.py
 sh test/test_boot_wait.sh
 sh test/test_version_stamp.sh
 sh test/test_wiki_roundtrip.sh
+python3 test/test_wiki_commands.py
 python3 test/test_vppapi.py
 python3 test/test_hexash_apply.py
 python3 test/test_hexash_perms.py

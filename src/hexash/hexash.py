@@ -3076,6 +3076,13 @@ class ConfirmPending:
         return dead
 
 
+#: The blocks this product models itself, as opposed to the FRR blocks tracked
+#: in `frr_ctx`. They are modes rather than context entries, which is why they
+#: needed naming: two places have to know the same list, and before #221 only
+#: one of them did.
+BLOCK_MODES = ("pool", "user", "snmp-user")
+
+
 class Shell:
     def __init__(self):
         self.sys = System()
@@ -8199,7 +8206,16 @@ class Shell:
         #
         # The blocks the tree knows about were always right: a pool offers its
         # own, a user its own. Only these needed narrowing.
-        if self.frr_ctx:
+        # Inside a block, `show` is the whole show tree and not just the word.
+        # Every one of its sub-commands works there - measured, not assumed:
+        # `show this`, `show version`, `show configuration` and the rest all
+        # answer from inside a pool and from inside an interface. What `?`
+        # offered after the word was nothing, in every block, so `show this`
+        # could be reached only by typing it blind - and it is the only way to
+        # read a block back before committing (#221).
+        if words[:1] == ["show"] and (self.frr_ctx or self.mode in BLOCK_MODES):
+            node, hint = walk_from(SHOW, words[1:])
+        elif self.frr_ctx:
             grammar = self.block_grammar(words)
             if grammar is not None:
                 node, bhint = walk_from(grammar, words)
@@ -8225,6 +8241,20 @@ class Shell:
                 return dyn, hint, prefix
             return {}, hint, prefix
         opts = {k: v[0] for k, v in node.items() if _starts(k, prefix)}
+        # The same `show` the FRR branch above adds, for the blocks this
+        # product models itself. They are not in frr_ctx - a pool, a user and
+        # an SNMP user are MODES, walked by tree_walk - so they never reached
+        # that branch, and the comment there says "every block" while the code
+        # covered half of them.
+        #
+        # It is the shape of #187 and #99: `show this` is the only way to read
+        # back what has been typed into a block before committing, it works in
+        # all six blocks, and in three of them it could only be reached by
+        # typing it blind. The pool is the one an operator needs most and the
+        # one the wiki uses as its example (#221).
+        if not words and self.mode in BLOCK_MODES:
+            if _starts("show", prefix):
+                opts["show"] = "display information"
         # A node can offer keywords AND take a name - `show interface` offers
         # `terse` and every interface on the box. Before this, a node with a
         # subtree discarded the hint, so adding `terse` to `show interface`
