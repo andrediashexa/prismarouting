@@ -74,6 +74,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`commit`'s refusal printed a 178-column line on an 80-column console**
+  ([#252](https://github.com/andrediashexa/hexarouting/issues/252)). The
+  message that says a commit did not take effect is read on the serial console
+  an operator opens because routing is down, and five of its lines were wider
+  than that console: 82 and 178 in the read-back refusal, 82, 105 and 116 in
+  the branch beside it. The 82 is the evidence for the fix rather than just
+  another line over budget - it was wrapped by hand, at what its author took
+  for 80 columns, and it was over.
+
+  A message's own prose is now wrapped by measurement against one constant,
+  `CONSOLE_COLUMNS`, which the configuration display's existing 80-column
+  assertion also spends - two literals is how the refusal came to print 178
+  columns while that assertion stayed green.
+
+  **A statement the refusal quotes is printed whole**, past the margin if it
+  has to be: not wrapped and not truncated. An operator does two things with
+  that line, greps `show configuration` for it or types it back in, and both
+  want the bytes contiguous. Truncating is the one that looks cheapest and is
+  not - `<- not checked` sits at the end of the line, so the cut removes the
+  marker first. What the box guarantees instead is that a statement which can
+  fit does fit: 59 columns of statement, and nothing on that line but the
+  indent and the mark.
+
 * **`commit` asked the global routing table whether a VRF's static route had a
   reachable next hop**
   ([#255](https://github.com/andrediashexa/hexarouting/issues/255)).

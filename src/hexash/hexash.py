@@ -25,9 +25,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 
 from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
+                    CONSOLE_COLUMNS,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
                     strip_nat, as_hierarchy, group_static,
@@ -1841,6 +1843,58 @@ def mark_routing(lines, ctx=()):
         n += 1
         out.append(f"{line}{UNCHECKED_MARK}")
     return out, n
+
+
+def console_prose(text, indent="    "):
+    """
+    A message's OWN words, wrapped to the console by measurement.
+
+    Not the statements the message quotes, and that split is the rule (#252).
+    It follows from what an operator does with each half. Prose is read once
+    and then it is over, so where it breaks does not matter as long as it
+    breaks inside the screen. A quoted statement is the opposite: it is
+    grepped for in `show configuration` or typed back in at the prompt, and
+    both of those want the bytes whole and on one line.
+
+    So a statement is printed as it stands, past the margin if it has to be:
+
+      * WRAPPED, it stops being greppable. The newline this code would insert
+        is a real newline in the scrollback and in anything the operator pipes
+        the session through, and it lands inside a token as often as not.
+        `neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff route-server-client`
+        broken after column 59 is a string that matches nothing the operator
+        can search for, including itself.
+      * TRUNCATED, it stops being typeable, and it loses the end. #251 put the
+        block at the FRONT of the line because a VRF route has no top-level
+        spelling to look for, and what FRR declined is usually the last word
+        of the statement. Cutting either end throws away the half that was
+        worth printing, and which half that is cannot be known here.
+      * Left alone, the terminal soft-wraps it onto a second row and every
+        byte survives, in order, as one logical line. That costs the SHAPE of
+        the message, which is the cheapest of the three things on offer.
+
+    WHY this is a function and not the hand-wrapped print() calls it replaces:
+    that refusal was wrapped by eye and shipped an 82-column line and a
+    178-column line under the belief that both were inside 80 (#252). Wrapping
+    by eye cannot be reviewed and cannot be re-measured after an edit, and
+    what it is protecting is the message that says a commit did not take
+    effect, read on the console an operator opened because routing is down.
+
+    A word is never split here either, so prose carrying a token longer than
+    the budget runs over rather than being cut in half. Deliberate: the long
+    tokens in these messages are commands the reader is meant to retype, such
+    as `vtysh -c "show running-config"`. The width assertion over these
+    messages is what says nobody has since written a longer one.
+    """
+    return textwrap.wrap(text, width=CONSOLE_COLUMNS,
+                         initial_indent=indent, subsequent_indent=indent,
+                         break_long_words=False, break_on_hyphens=False)
+
+
+def print_prose(text, indent="    "):
+    """`console_prose`, printed. The refusals say a paragraph at a time."""
+    for line in console_prose(text, indent):
+        print(line)
 
 
 def unchecked_note(n):
@@ -6750,42 +6804,55 @@ class Shell:
                 # likely to have declined and the operator has least context
                 # for.
                 mark = UNCHECKED_MARK if stmt in unread else ""
+                # QUOTED, so printed whole: not wrapped and not truncated,
+                # whatever it measures. The argument is in `console_prose`,
+                # and the short of it is that this is the one line on the
+                # screen the operator will grep for or type back in. The
+                # prose around it is wrapped instead, and the width assertion
+                # covers the prose.
                 print("    " + as_hierarchy(
                     stmt, block_of(self.candidate.routing, stmt)) + mark)
                 if instead:
-                    print(f"      FRR writes '{instead}' for this, and that "
-                          "is not there either")
+                    print_prose(f"FRR writes '{instead}' for this, and that "
+                                "is not there either", indent="      ")
             if len(dropped) > 5:
                 print(f"    ... and {len(dropped) - 5} more")
             if any(stmt in unread for stmt, _ in shown):
-                print(f"    a statement marked '{UNCHECKED_MARK.strip()}' has "
-                      "no grammar in this VTY: it went")
-                print("    to FRR word for word, so this box never read it "
-                      "either")
-            print("    this commit is NOT in effect as written, and nothing "
-                  "was rolled back: the rest")
-            print("    of it is applied. 'rollback 1' puts the box back")
-            print("    the configuration this box holds and the one FRR is "
-                  "running are not the same; 'show configuration' is this "
-                  "box's, 'start shell' then 'vtysh -c \"show "
-                  "running-config\"' is FRR's")
+                print_prose(f"a statement marked '{UNCHECKED_MARK.strip()}' "
+                            "has no grammar in this VTY: it went to FRR word "
+                            "for word, so this box never read it either")
+            print_prose("this commit is NOT in effect as written, and nothing "
+                        "was rolled back: the rest of it is applied. "
+                        "'rollback 1' puts the box back")
+            print_prose("the configuration this box holds and the one FRR is "
+                        "running are not the same; 'show configuration' is "
+                        "this box's, 'start shell' then 'vtysh -c \"show "
+                        "running-config\"' is FRR's")
         elif stalled:
             # NOT "commit complete". The CGNAT half and the box's own
             # configuration are applied - this is not a rollback - but the
             # routing half reached nothing, and saying "complete" over that is
             # the one sentence an operator builds every later diagnosis on.
+            # The count is on the second line rather than in the headline, and
+            # the reason is the width budget rather than taste: with the count
+            # appended the headline measured 116 columns, and `err` prints one
+            # line with no wrap of its own (#252). What the headline has to
+            # carry is the verdict, which is that nothing took.
             self.err("the routing half of this commit reached FRR and changed "
-                     "nothing: all " + str(len(stalled)) +
-                     " new statement(s) are still outstanding")
+                     "nothing")
+            print_prose(f"all {len(stalled)} new statement(s) are still "
+                        "outstanding")
             for line in stalled[:5]:
+                # Quoted whole, for the reason in `console_prose`.
                 print("    " + as_hierarchy(
                     line, block_of(self.candidate.routing, line)))
             if len(stalled) > 5:
                 print(f"    ... and {len(stalled) - 5} more")
-            print("    the usual cause is a daemon that is not running; "
-                  "'show version' says which are")
-            print("    if these statements are all at FRR's own default "
-                  "values, FRR does not store them and this is expected")
+            print_prose("the usual cause is a daemon that is not running; "
+                        "'show version' says which are")
+            print_prose("if these statements are all at FRR's own default "
+                        "values, FRR does not store them and this is "
+                        "expected")
         else:
             print("commit complete")
 

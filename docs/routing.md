@@ -933,7 +933,9 @@ most likely to be marked are the long ones -
 columns before anything is appended. The marker this replaced was
 `    <- not checked by this VTY`, which put that line at 89 columns and wrapped
 it; a marker that wraps stops being read. An assertion holds every marked line
-of a realistic configuration under 80 columns.
+of a realistic configuration under 80 columns, and the commit refusal that
+quotes these same lines is held to the same number, from the same constant -
+see *The prose is wrapped by measurement* below.
 
 **Once at the end**, a two-line note saying what the mark means and **how
 many** there were. The count is the number an operator reviewing a change
@@ -3438,9 +3440,13 @@ and it carries the same `<- not checked` mark
 hexarouting# [edit] commit
 error: FRR accepted 1 statement(s) of this commit and did not keep them
     coalesce-time 2000  <- not checked
-    a statement marked '<- not checked' has no grammar in this VTY: it went
-    to FRR word for word, so this box never read it either
-    this commit is NOT in effect as written, and nothing was rolled back: ...
+    a statement marked '<- not checked' has no grammar in this VTY: it went to
+    FRR word for word, so this box never read it either
+    this commit is NOT in effect as written, and nothing was rolled back: the
+    rest of it is applied. 'rollback 1' puts the box back
+    the configuration this box holds and the one FRR is running are not the
+    same; 'show configuration' is this box's, 'start shell' then 'vtysh -c
+    "show running-config"' is FRR's
 ```
 
 Without the mark, that refusal and the refusal over `bgp router-id 10.0.0.1`
@@ -3489,6 +3495,75 @@ a statement named as unread by a refusal and printed clean by
 appear in two blocks counts as read when any occurrence was read, because
 `neighbor <ip> soft-reconfiguration inbound` is modelled inside the address
 family and not in the block above it.
+
+### The prose is wrapped by measurement; the statements are not wrapped at all
+
+The console an operator reaches this box on when routing is down is 80
+columns, which is the same argument that cut the marker to sixteen characters
+above. It was never applied to the message the marker now appears in. Measured
+on the merged tree, in columns:
+
+| | Plain | With a VRF | Marked | `... and N more` |
+|---|---|---|---|---|
+| `error: FRR accepted N statement(s) ...` | 71 | 71 | 71 | 71 |
+| the statement | 26 | 59 | 38 | 37 |
+| `a statement marked ... it went` | | 75 | 75 | |
+| `to FRR word for word ...` | | 58 | 58 | |
+| `... and N more` | | | | 18 |
+| `this commit is NOT in effect ...` | **82** | **82** | **82** | **82** |
+| `of it is applied. 'rollback 1' ...` | 52 | 52 | 52 | 52 |
+| `the configuration this box holds ...` | **178** | **178** | **178** | **178** |
+
+The branch beside it, over statements FRR took and stored none of, was worse:
+its error line measured **116**, its first hint **82** and its second **105**.
+
+The 82-column line is the evidence for the rule rather than just another line
+over budget: it is a line somebody wrapped **by hand**, at what they took for
+80 columns, and it was over. Hand wrapping cannot be reviewed and cannot be
+re-measured after somebody edits the sentence.
+
+So the refusal is split in two, and the two halves are treated differently
+([#252](https://github.com/andrediashexa/hexarouting/issues/252)):
+
+* A message's **own prose MUST** be wrapped by `hexash.console_prose()` to
+  `config.CONSOLE_COLUMNS`, and **MUST NOT** be wrapped by hand. It is
+  asserted, over every shape both refusals have.
+* A **statement the refusal quotes MUST** be printed whole: not wrapped, not
+  truncated, past the margin if it has to be.
+
+The second half is the trade the issue left open, and it is decided by what an
+operator does with that line. They do two things with it, and both want the
+bytes whole and contiguous: they grep for it in `show configuration`, or they
+type it back in at the prompt.
+
+| | Greppable | Typeable | Costs |
+|---|---|---|---|
+| Wrapped at the margin | no | yes | the newline is a real newline in the scrollback and in anything the session is piped through, and it lands inside a token as often as not |
+| Truncated | only from the start | no | loses an end, and which end mattered cannot be known here |
+| Continuation indent | no | yes | the same newline, plus columns, plus statement lines that look like configuration and are not |
+| Printed whole | **yes** | **yes** | the shape of the message on that one line |
+
+Truncation is the one that looks cheapest and is not. `<- not checked` sits at
+the **end** of the line, so a cut takes the marker off first: a truncating
+refusal prints `... route-server-client  <- not` and says nothing about the
+mark it just removed. And #251 put the block at the **front** of the statement
+precisely because a VRF route has no top-level spelling to go and look for, so
+neither end of the line is the disposable one.
+
+What the box owes the operator instead is that a statement which **can** fit
+does fit. The refusal adds the four-space indent and nothing else beside the
+mark, so the budget is 79 less four less sixteen: **59 columns** of statement,
+which holds `neighbor 2001:db8:aaaa:bbbb::1 soft-reconfiguration inbound` at
+59 and does not hold
+`neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff route-server-client` at 66.
+That arithmetic is asserted against the same two constants the code uses, so a
+third thing appearing on the line fails, and widening the mark moves both
+sides of it together.
+
+`config.CONSOLE_COLUMNS` is one number in one place for the same reason
+`UNCHECKED_MARK` is: the display's width assertion and the refusal's now spend
+the same budget, and two literals is how a 178-column line came to be printed
+while the display's assertion stayed green for two releases.
 
 
 ## FRR version
