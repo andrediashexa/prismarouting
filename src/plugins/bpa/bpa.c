@@ -1802,6 +1802,7 @@ bpa_stop_drain (vlib_main_t *vm)
 {
   bpa_main_t *bm = &bpa_main;
   u32 saved;
+  u64 before, lost;
 
   if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
     return 0;
@@ -1827,12 +1828,41 @@ bpa_stop_drain (vlib_main_t *vm)
    * So this runs on both paths and after both of them. It is the last point at
    * which anything can be done about those bytes.
    */
+  /*
+   * What was LOST, as well as what was saved, and at a level that leaves the
+   * process.
+   *
+   * docs/logging.md says a discard MUST be counted and never silent. On every
+   * other path the counter is enough: the box keeps running and
+   * `show bpa logging` reads it back. Here it is not. This function runs from
+   * VLIB_MAIN_LOOP_EXIT, so the counter it increments dies with the process
+   * moments later, and a number nobody can read is not a count (#270).
+   *
+   * journalctl is the only place this can still be read after the box has
+   * stopped, and the notice below does not reach it at VPP's default log
+   * level - measured on a run that spilled 82935 bytes, where the line is
+   * absent from the process output entirely. Losing a record is an error, so
+   * it goes out as one.
+   */
+  before = bpa_log_tcp.n_dropped;
   saved = bpa_log_tcp_flush_exit ();
+  lost = bpa_log_tcp.n_dropped - before;
+
   if (saved)
     vlib_log_notice (bm->log_class,
 		     "stopping: %u byte(s) the collector had not taken went to "
 		     "the spill file, to be replayed on the next connection",
 		     saved);
+  if (lost)
+    vlib_log_err (bm->log_class,
+		  "stopping: %llu byte(s) of connection records could NOT be "
+		  "written and are lost. The spill file at %s could not be "
+		  "opened or could not be written to; these records are in no "
+		  "file and in no collector, and this is the only place that "
+		  "is said",
+		  (unsigned long long) lost,
+		  bpa_log_tcp.spill_path ? (char *) bpa_log_tcp.spill_path
+					 : "(no path configured)");
   return 0;
 }
 

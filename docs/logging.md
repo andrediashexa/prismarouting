@@ -431,6 +431,16 @@ bending the UDP exporter around.
   VPP's main thread.
 * Pending bytes **MUST** spill to disk when the collector is unreachable. If
   even that fails, the discard **MUST** be counted, never silent.
+* **On the exit path, counted is not enough: it MUST be said.** Every other
+  discard happens on a box that keeps running, where the counter is readable
+  afterwards with `show bpa logging`. The flush in `bpa_stop_drain()` runs from
+  `VLIB_MAIN_LOOP_EXIT`, so the counter it increments dies with the process
+  moments later. `journalctl -u vpp` is the only place the loss can still be
+  read after the box has stopped, and a `notice` does not reach it at VPP's
+  default log level - measured on a run that spilled 82,935 bytes, where the
+  line is absent from the process output entirely. So a loss on this path goes
+  out at **error** level, which is what it is
+  ([#270](https://github.com/andrediashexa/hexarouting/issues/270)).
 * The spill **MUST** be prepended on reconnect, not appended: an allocation has
   to reach the collector before its release, or the collector reconstructs an
   impossible history.

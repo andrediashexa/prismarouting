@@ -184,6 +184,35 @@ version has a chance of seeing it.
 
 ### Internal
 
+* **The exit path counted what it could not write into a process that was
+  leaving** ([#270](https://github.com/andrediashexa/hexarouting/issues/270)).
+  `docs/logging.md` says a discard MUST be counted and never silent. On every
+  other path the counter is enough: the box keeps running and
+  `show bpa logging` reads it back. `bpa_stop_drain()` runs from
+  `VLIB_MAIN_LOOP_EXIT`, so the counter it increments dies with the process
+  moments later - there is nothing left to ask.
+
+  It now says how many bytes were lost, and at **error** level, because a
+  `notice` does not reach the process output at VPP's default log level:
+  measured on a run that spilled 82,935 bytes, where that line is absent
+  entirely. `journalctl -u vpp` is the only place this can still be read after
+  the box has stopped, which the message says in as many words.
+
+  Shown on a box whose records filesystem had no room left at the stop:
+
+  ```
+  vpp[5497]: bpa: stopping: 458640 byte(s) of connection records could NOT be
+  written and are lost. The spill file at /var/log/hexarouting/ipfix-spill.bin
+  could not be opened or could not be written to; these records are in no file
+  and in no collector, and this is the only place that is said
+  ```
+
+  The lab boots the box again afterwards, because a lab that ends with no
+  dataplane is reported `NO VPP` whatever it measured - right in general, and
+  wrong for the one lab that stops the box on purpose and already has its
+  answer.
+
+
 * **A named FIB table's prefixes were filed under the table above it**
   ([#268](https://github.com/andrediashexa/hexarouting/issues/268)).
   `show ip fib` prints a table with no name as `ipv4-VRF:10` and a table WITH a
