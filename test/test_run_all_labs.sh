@@ -80,6 +80,25 @@ case "$1 ${2:-}" in
   "ee-silent ")
     exit 0 ;;
 
+  # icmp-tcp's capture from the release suite of 2026-09-13: vppctl was
+  # refused on the SECOND line of the run, so nothing was ever measured - and
+  # the verdict still carried three greens, because an assertion written as
+  # `test "${X:-0}" = "0"` passes on an empty X. Each is guarded by a
+  # precondition that fails beside it, which is why the lab reports FAILED;
+  # what they are not is evidence that the box answered.
+  "ii-deadstart ")
+    echo "=========== 1. outbound UDP session ==========="
+    echo "connect: Connection refused"
+    echo "connect: Connection refused"
+    echo ""
+    echo "=========== VERDICT ==========="
+    echo "  [FAIL] the translated ICMP error passed every checksum"
+    echo "  [ ok ] the out2in handoff identified the subscriber"
+    echo "  [FAIL] and it really did have to cross a worker to get there"
+    echo "  [ ok ] and they expired on the SYN timer, not the transitory one"
+    echo "  [FAIL] three half-open sessions were created"
+    echo "LAB FAILED: 3 check(s)"; exit 1 ;;
+
   # igp's capture: the box cleared an adjacency, the reading was taken after
   # the hello interval, and the check says so rather than reporting a product
   # defect. It measured everything else first, which is what separates it from
@@ -118,7 +137,7 @@ EOF
 chmod +x "$d/tools/build.sh" "$d/tools/lab.sh"
 
 for n in aa-good bb-broken cc-panic dd-refused ee-silent ff-halfdead \
-         gg-late vrf audit urpf; do
+         gg-late ii-deadstart vrf audit urpf; do
   echo '#!/bin/sh' > "$d/lab/$n.sh"
 done
 # The lab with a floor in its header, and a lab file is where the floor lives
@@ -160,6 +179,24 @@ case "$out" in
   *"audit+off          FAIL - PASSED with the feature off"*)
     ok "and an off run that passed is the suite's own failure" ;;
   *) bad "an off mode that passed was not caught" ;;
+esac
+
+echo "=== green AFTER the first refusal is not evidence the box answered ==="
+# The boundary between this and ff-halfdead, and it is the whole of why
+# lab_no_vpp reads the ORDER rather than the presence of a green check. A lab
+# whose dataplane never came up reaches its verdict with every value empty, and
+# a guarded assertion passes on an empty value - correctly, with its
+# precondition failing beside it. Those greens are not a measurement.
+case "$out" in
+  *"ii-deadstart       NO VPP"*)
+    ok "a run refused before it measured anything is NO VPP, greens and all" ;;
+  *) bad "a lab that never reached the dataplane was called something else; got:
+$(printf '%s' "$out" | grep ii-deadstart)" ;;
+esac
+case "$out" in
+  *"ff-halfdead        FAIL"*)
+    ok "and one that measured something first is still a FAIL" ;;
+  *) bad "the half-dead case moved with it, which is the case this must not take" ;;
 esac
 
 echo "=== an off run that lost assertions is caught by its own floor ==="
@@ -211,7 +248,7 @@ esac
 
 echo "=== the summary counts them apart, and the suite still exits non-zero ==="
 case "$out" in
-  *"pass=7  fail=4  notmeasured=1  novpp=3  ran=1"*) ok "the five states are counted apart" ;;
+  *"pass=7  fail=4  notmeasured=1  novpp=4  ran=1"*) ok "the five states are counted apart" ;;
   *) bad "the summary line is not what was counted; got:
 $(printf '%s' "$out" | tail -12)" ;;
 esac
