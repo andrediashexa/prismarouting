@@ -122,6 +122,9 @@ case "$*" in
   # The two listings the pair check reads. Absent from $FAKE they are empty,
   # which is what a dataplane holding nothing but local0 looks like.
   "show interface")   cat "$FAKE/show_interface" 2>/dev/null ;;
+  # The addresses, read separately from the interface list because the
+  # dataplane reports them separately and the self-test reads them that way.
+  "show interface addr") cat "$FAKE/show_interface_addr" 2>/dev/null ;;
   "show lcp")         cat "$FAKE/show_lcp" 2>/dev/null ;;
   # The plugin listing. Empty in $FAKE is a dataplane that came up without
   # the CGNAT plugin, which is a box that forwards nothing and fails every
@@ -1596,6 +1599,63 @@ else
   ok "a box that never asked for uRPF is not told about it"
 fi
 rm -f "$FAKE/bpa_urpf"
+
+echo "=== the addresses in the file, against the ones the dataplane has (#172) ==="
+# The one that can leave the box unreachable. An address the dataplane did not
+# take is not a degraded box: it answers on one fewer address than whoever
+# configured it believes, and if that was the management address nobody can
+# reach it to find out.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet0/0/0           2      up          1500/0/0/0     rx packets                  12
+host-veth-vpp                     1      up          1500/0/0/0
+IFACE
+cat > "$FAKE/show_interface_addr" <<'ADDR'
+TenGigabitEthernet0/0/0 (up):
+  L3 200.150.0.1/24
+host-veth-vpp (up):
+  L3 10.0.0.1/30
+ADDR
+printf 'interface TenGigabitEthernet0/0/0\n ipv4 address 200.150.0.1/24\n exit\ninterface host-veth-vpp\n ipv4 address 10.0.0.1/30\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+run
+if said 'address\(es\) the dataplane does not'; then
+  bad "both addresses were there and the box complained: $(printf '%s\n' "$OUTPUT" | grep -i 'address(es)')"
+else
+  ok "a box whose addresses all took is not told about them"
+fi
+# The one that matters: the file has an address the dataplane never got.
+printf 'interface TenGigabitEthernet0/0/0\n ipv4 address 200.150.0.1/24\n ipv4 address 203.0.113.1/24\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+run
+if said '\[FAIL\] the saved configuration has address\(es\) the dataplane does not: TenGigabitEthernet0/0/0:203.0.113.1/24'; then
+  ok "an address the dataplane did not take is a FAILED check, named with its interface"
+else
+  bad "a refused address passed: $(printf '%s\n' "$OUTPUT" | grep -i 'address' | head -2 || echo '<nothing>')"
+fi
+# The sentence wraps across two say() lines, so the needle is the half that
+# is on one of them - a needle that spans a line break can never match.
+if said 'can reach it to find out'; then
+  ok "and the failure says what the worst case is"
+else
+  bad "the failure does not say what a missing address costs"
+fi
+# The address is on the box but on the WRONG interface. Matching it anywhere in
+# the output would call this correct, which is a box whose management address
+# answers on the subscriber-facing port.
+cat > "$FAKE/show_interface_addr" <<'ADDR'
+TenGigabitEthernet0/0/0 (up):
+  L3 200.150.0.1/24
+host-veth-vpp (up):
+  L3 203.0.113.1/24
+ADDR
+run
+if said 'TenGigabitEthernet0/0/0:203.0.113.1/24'; then
+  ok "an address that landed on another interface is still missing from this one"
+else
+  bad "an address on the wrong interface was accepted: $(printf '%s\n' "$OUTPUT" | grep -i 'address(es)' || echo '<nothing>')"
+fi
+rm -f "$FAKE/show_interface_addr"
 
 echo "=== the MTU in the file, against the MTU the dataplane has (#172) ==="
 # The mismatch this project has already paid for twice. An interface whose

@@ -460,7 +460,16 @@ are to be interpreted as described in
   rebooted. The failure names both numbers, and an interface the box does not
   have is left to the pair check that is about exactly that.
 
-  57 checks on master before this run of work, **137** after.
+  **And the addresses, which is the one that can leave the box unreachable.**
+  An address in the saved file that the dataplane did not take is not a
+  degraded box: it answers on one fewer address than whoever configured it
+  believes, and if that was the management address nobody can reach it to find
+  out. The check reads the block `show interface addr` prints for that
+  interface and not the whole output, because an address that landed on
+  another port is still missing from this one - a management address answering
+  on the subscriber-facing interface would otherwise read as correct.
+
+  57 checks on master before this run of work, **141** after.
 
 ### Added
 
