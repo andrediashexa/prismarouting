@@ -601,8 +601,6 @@ are to be interpreted as described in
 [#215](https://github.com/andrediashexa/hexarouting/issues/215),
 [#216](https://github.com/andrediashexa/hexarouting/issues/216).
 
-[#213](https://github.com/andrediashexa/hexarouting/issues/213).
-
 ### Fixed
 
 * **Nothing in the product created a `linux_cp` pair, so FRR saw no dataplane
