@@ -34,6 +34,43 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+[#255](https://github.com/andrediashexa/hexarouting/issues/255).
+
+### Fixed
+
+* **`commit` asked the global routing table whether a VRF's static route had a
+  reachable next hop**
+  ([#255](https://github.com/andrediashexa/hexarouting/issues/255)).
+  The check that refuses a next hop on no connected network
+  ([#95](https://github.com/andrediashexa/hexarouting/issues/95)) read FIB
+  table 0 for every static route in the candidate, `vrf red` ones included, so
+  a VRF route was judged against a table it does not forward in - and both
+  answers were wrong.
+
+  Measured at a live VPP 26.06 and a live FRR 10.7.1, with `172.31.99.0/24`
+  connected only in table 10 and `200.150.0.0/24` connected only in table 0:
+  a `vrf red` route via `172.31.99.1` was **refused**, and one via
+  `200.150.0.2` was **accepted**. The second is the inert route the check
+  exists to catch, committed without a word. The first is the one that costs
+  more - a configuration that works, turned away at the prompt, which is the
+  harm [#208](https://github.com/andrediashexa/hexarouting/issues/208) was
+  filed for.
+
+  The next hop is now resolved in the table the route is in. Which table a VRF
+  is, is FRR's answer and not this VTY's: an interface's `vrf` here is a
+  number and an FRR block is a name, so the mapping is read from `show vrf`.
+  Measured that the number is the one the FIB is keyed by - a kernel route in
+  table 10 arrives in VPP as `ipv4-VRF:10`, because `linux_nl` builds the FIB
+  from the kernel's own table id.
+
+  **A VRF the box cannot place is reported, not passed over.** An `inactive`
+  VRF has no table to resolve anything against, so its routes are named as
+  unchecked with the reason. A note and not a refusal: the VRF may be about to
+  exist, and refusing a configuration this VTY merely cannot see is the same
+  harm again.
+
 ## 0.67.0 — nine MUSTs nothing was holding, and an ISO that shipped its own keys
 
 [#55](https://github.com/andrediashexa/hexarouting/issues/55),
@@ -76,8 +113,7 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247),
-[#255](https://github.com/andrediashexa/hexarouting/issues/255).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247).
 
 ### Added
 
@@ -254,37 +290,6 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
-
-* **`commit` asked the global routing table whether a VRF's static route had a
-  reachable next hop**
-  ([#255](https://github.com/andrediashexa/hexarouting/issues/255)).
-  The check that refuses a next hop on no connected network
-  ([#95](https://github.com/andrediashexa/hexarouting/issues/95)) read FIB
-  table 0 for every static route in the candidate, `vrf red` ones included, so
-  a VRF route was judged against a table it does not forward in - and both
-  answers were wrong.
-
-  Measured at a live VPP 26.06 and a live FRR 10.7.1, with `172.31.99.0/24`
-  connected only in table 10 and `200.150.0.0/24` connected only in table 0:
-  a `vrf red` route via `172.31.99.1` was **refused**, and one via
-  `200.150.0.2` was **accepted**. The second is the inert route the check
-  exists to catch, committed without a word. The first is the one that costs
-  more - a configuration that works, turned away at the prompt, which is the
-  harm [#208](https://github.com/andrediashexa/hexarouting/issues/208) was
-  filed for.
-
-  The next hop is now resolved in the table the route is in. Which table a VRF
-  is, is FRR's answer and not this VTY's: an interface's `vrf` here is a
-  number and an FRR block is a name, so the mapping is read from `show vrf`.
-  Measured that the number is the one the FIB is keyed by - a kernel route in
-  table 10 arrives in VPP as `ipv4-VRF:10`, because `linux_nl` builds the FIB
-  from the kernel's own table id.
-
-  **A VRF the box cannot place is reported, not passed over.** An `inactive`
-  VRF has no table to resolve anything against, so its routes are named as
-  unchecked with the reason. A note and not a refusal: the VRF may be about to
-  exist, and refusing a configuration this VTY merely cannot see is the same
-  harm again.
 
 * **Nothing stopped the ISO build from shipping an answer file, and the ISO it
   did ship carried three SSH host private keys.** `docs/appliance.md` says the
