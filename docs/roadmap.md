@@ -946,6 +946,19 @@ It matters most in the `off` path, which is why the two landed together: an
 off run whose VPP never started fails every check, which is exactly what the
 inverted verdict would otherwise call a pass.
 
+**The verdict was right and empty**, which cost a second release run two
+months later
+([#253](https://github.com/andrediashexa/hexarouting/issues/253)). Telling the
+reader to look at the machine is only half an instruction: a box too slow to
+bring a dataplane up and a dataplane that died are different repairs, and the
+one artefact that separates them was `/tmp/vpp.log` inside a container
+`tools/lab.sh` throws away. So the lab now prints the tail of it on its way
+out, whenever it ends without passing and `vppctl` can no longer reach
+anything, and the suite prints that under the verdict with which of the two it
+was. The tail is evidence and not a verdict: a lab that measured something
+first and then lost its box stays a `FAIL`, because reclassifying that would
+excuse a real crash.
+
 **A third finding, and it is the same shape one level down: `make test` could
 not say which check had failed.** The report was "about one run in three under
 a lab suite", and the only evidence anybody could keep was a count of summary

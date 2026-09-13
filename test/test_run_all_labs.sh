@@ -9,6 +9,13 @@
 # said it in the words it uses for a product defect - the same hole
 # lab/install-iso.sh's console_gave_up() exists to close on the console.
 #
+# Since #253 it covers both halves of that instrument: the classifier here, and
+# what a NO VPP verdict CARRIES. The verdict was one line with nothing under it
+# while FAIL printed its red checks, so the one state that means "look at the
+# machine" was the one with nothing to look at, and a release run lost
+# extblocks+workers without being able to say whether the wait had expired or
+# VPP had gone.
+#
 # Driven with STUB labs, not real ones. The state this is about is a VPP that
 # did not start, and a test that had to arrange one would need a container, a
 # dataplane and a machine under load - so it would never be part of `make
@@ -75,7 +82,27 @@ case "$1 ${2:-}" in
     echo "  [ ok ] and the subscriber was translated"
     echo "clib_socket_init: connect: Connection refused"
     echo "  [FAIL] the session expired (missing: total: 0 sessions)"
-    echo "LAB FAILED: 1 check(s)"; exit 1 ;;
+    echo "LAB FAILED: 1 check(s)"
+    # lab/verdict.sh dumps the log whenever a lab ends without passing and
+    # vppctl cannot reach VPP, so a half-dead lab carries this marker too. It
+    # is evidence and not a verdict: this run measured two things before the
+    # box went, and calling it a machine problem would hide a real crash.
+    echo "NO DATAPLANE at the verdict: vppctl cannot reach VPP. Last of /tmp/vpp.log:"
+    echo "  | vlib_worker_thread_barrier_sync_int: worker thread deadlock"
+    exit 1 ;;
+
+  # A lab that reached its verdict with no dataplane under it and no wait
+  # guard above it to have said so. Ten labs start VPP without that guard -
+  # icmp-tcp among them - so lab/verdict.sh's marker is the only place their
+  # log can reach a reader at all.
+  "hh-died ")
+    echo "connect: Connection refused"
+    echo "  [FAIL] the subscriber was translated (missing: 200.150.0.17)"
+    echo "LAB FAILED: 1 check(s)"
+    echo "NO DATAPLANE at the verdict: vppctl cannot reach VPP. Last of /tmp/vpp.log:"
+    echo "  | received signal SIGSEGV, PC 0x7f2a1c0b4e21"
+    echo "  | #3 bpa_in2out_node_fn + 0x1a4 from /vpp_plugins/bpa_plugin.so"
+    exit 1 ;;
 
   "ee-silent ")
     exit 0 ;;
@@ -137,7 +164,7 @@ EOF
 chmod +x "$d/tools/build.sh" "$d/tools/lab.sh"
 
 for n in aa-good bb-broken cc-panic dd-refused ee-silent ff-halfdead \
-         gg-late ii-deadstart vrf audit urpf; do
+         gg-late hh-died ii-deadstart vrf audit urpf; do
   echo '#!/bin/sh' > "$d/lab/$n.sh"
 done
 # The lab with a floor in its header, and a lab file is where the floor lives
@@ -162,6 +189,76 @@ case "$out" in
   *"ff-halfdead        FAIL"*)
     ok "a lab that measured something first is still a FAIL" ;;
   *) bad "a half-dead run was excused as a machine problem" ;;
+esac
+
+echo "=== and a NO VPP verdict carries the reason, not just the verdict ==="
+# The verdict tells the reader to look at the machine. Which part of the
+# machine is a different question, and it has two answers that need opposite
+# work: a box too slow to bring a dataplane up, and a dataplane that died. The
+# capture already held both and the report threw them away (#253).
+#
+# Read as the BLOCK under one lab's verdict line, never grepped out of the
+# whole run. Three labs here are NO VPP, so a sentence found anywhere would
+# pass while the report printed it for a different one - which is exactly what
+# the first mutation of this section did: with report() no longer printing any
+# reason at all, "a wait that expired" stayed green on the line report_off()
+# had printed for urpf+off.
+lab_block() {  # <lab> -> its verdict line and everything indented under it
+  printf '%s\n' "$out" | awk -v n="$1" '
+    index($0, "  " n " ") == 1 { take = 1; print; next }
+    take && /^     / { print; next }
+    take { exit }
+  '
+}
+
+b=$(lab_block cc-panic)
+case "$b" in
+  *"the wait for the dataplane expired. VPP never answered:"*)
+    ok "a wait that expired is reported as a wait that expired" ;;
+  *) bad "the NO VPP line did not say the wait expired; got:
+$b" ;;
+esac
+case "$b" in
+  *"lldp_plugin.so"*)
+    ok "and VPP's own log comes with it, down to the plugin that faulted" ;;
+  *) bad "the startup backtrace did not reach the report; got:
+$b" ;;
+esac
+
+b=$(lab_block hh-died)
+case "$b" in
+  *"the dataplane was gone by the verdict. VPP's log:"*)
+    ok "a dataplane that went after answering is reported as that instead" ;;
+  *) bad "a lab whose VPP died mid-run was not told apart from one that never
+started; got:
+$b" ;;
+esac
+case "$b" in
+  *"bpa_in2out_node_fn"*)
+    ok "and its log reaches the report the same way" ;;
+  *) bad "lab/verdict.sh printed a log and the suite dropped it; got:
+$b" ;;
+esac
+
+# The third answer, and it is an answer. A capture with neither marker means
+# nothing printed a log, which points at the 900 s cap or the cgroup rather
+# than at VPP - and saying so beats an empty line under the verdict.
+b=$(lab_block dd-refused)
+case "$b" in
+  *"the capture carries no VPP log"*)
+    ok "and a capture with no log at all says that, rather than nothing" ;;
+  *) bad "a NO VPP with no log in it printed nothing under the verdict; got:
+$b" ;;
+esac
+# The marker is evidence and not a verdict. lab/verdict.sh prints it whenever a
+# lab ends without passing and vppctl cannot reach VPP, so the half-dead lab
+# carries one too - and that lab measured two things before the box went. If
+# the marker were read as a classifier it would become a machine problem and a
+# real crash would be excused.
+case "$out" in
+  *"ff-halfdead        FAIL"*)
+    ok "a half-dead lab carrying the marker is still a FAIL" ;;
+  *) bad "the NO DATAPLANE marker was read as a verdict and excused a crash" ;;
 esac
 
 echo "=== an off run that could not start VPP is not a pass ==="
@@ -248,7 +345,7 @@ esac
 
 echo "=== the summary counts them apart, and the suite still exits non-zero ==="
 case "$out" in
-  *"pass=7  fail=4  notmeasured=1  novpp=4  ran=1"*) ok "the five states are counted apart" ;;
+  *"pass=7  fail=4  notmeasured=1  novpp=5  ran=1"*) ok "the five states are counted apart" ;;
   *) bad "the summary line is not what was counted; got:
 $(printf '%s' "$out" | tail -12)" ;;
 esac
@@ -388,6 +485,83 @@ if grep -q 'echo "not running, each for its own reason' "$RA"; then
 else
   bad "the suite excludes labs and never prints that it did"
 fi
+
+echo
+echo "=== and the lab half: the log has to survive the container at all ==="
+# The other half of the same instrument, and the half the report above cannot
+# invent. tools/lab.sh gives each lab a container it throws away, so
+# /tmp/vpp.log dies with it and stdout is the only channel out. Every lab ends
+# in verdict(), which is why the dump lives there rather than in 36 labs -
+# and ten of those labs have no wait guard at all, so it is the only place
+# their log can reach a reader.
+#
+# No container here either. verdict() is sourced and called directly, with a
+# vppctl on PATH that answers or refuses on demand, the way test_lab_workers.sh
+# reads startup_conf's output without a box (#229).
+V=$(mktemp -d); trap 'rm -rf "$d" "$V"' EXIT
+mkdir -p "$V/bin" "$V/tmp"
+cat > "$V/bin/vppctl" <<'EOF'
+#!/bin/sh
+[ -f "$LAB_TMP/answering" ] && exit 0
+exit 1
+EOF
+chmod +x "$V/bin/vppctl"
+printf 'vlib_worker_thread_barrier_sync_int: worker thread deadlock
+vpp exited
+' \
+  > "$V/tmp/vpp.log"
+
+run_verdict() {  # <failures> <notmeasured> <answering?> -> what it prints
+  rm -f "$V/tmp/answering"
+  [ "$3" = answering ] && : > "$V/tmp/answering"
+  PATH="$V/bin:$PATH" LAB_TMP="$V/tmp" sh -c \
+    ". $REPO/lab/verdict.sh
+     VERDICT_FAILURES=$1; VERDICT_NOMEASURE=$2; verdict" 2>&1
+}
+
+got=$(run_verdict 1 0 gone)
+case "$got" in
+  *"NO DATAPLANE at the verdict"*"worker thread deadlock"*)
+    ok "a failing lab with no dataplane prints VPP's log at its verdict" ;;
+  *) bad "the container was thrown away with the only account of why; got:
+$got" ;;
+esac
+
+# Not on a pass. ipfix-stop, ipfix-outbuf, oom and snmp each kill VPP on
+# purpose and assert what happens next, so an unconditional dump puts a page of
+# log underneath a green run.
+got=$(run_verdict 0 0 gone)
+case "$got" in
+  *"NO DATAPLANE"*) bad "a lab that stops VPP on purpose got a log dump under
+its pass; got:
+$got" ;;
+  *"LAB PASSED"*) ok "and a lab that killed VPP itself and passed does not" ;;
+  *) bad "the passing verdict changed shape; got:
+$got" ;;
+esac
+
+# And not when VPP is there. A lab that fails for a product reason is answered
+# by its red checks, not by a page of a healthy box's log.
+got=$(run_verdict 1 0 answering)
+case "$got" in
+  *"NO DATAPLANE"*) bad "a live dataplane's log was dumped under a product
+failure; got:
+$got" ;;
+  *"LAB FAILED"*) ok "and neither does a red lab whose dataplane is answering" ;;
+  *) bad "the failing verdict changed shape; got:
+$got" ;;
+esac
+
+# NOT MEASURED is the other verdict that is not a pass, and it has the same
+# question under it: a check whose timing was missed on a box whose dataplane
+# has gone is not a box that was slow, it is a box that is not there.
+got=$(run_verdict 0 1 gone)
+case "$got" in
+  *"LAB NOT MEASURED"*"NO DATAPLANE at the verdict"*)
+    ok "and a NOT MEASURED verdict with no dataplane carries the log too" ;;
+  *) bad "NOT MEASURED was left with nothing to say about a missing box; got:
+$got" ;;
+esac
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
