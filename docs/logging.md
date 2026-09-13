@@ -23,7 +23,7 @@ the wrong subscriber.
 | **Why** | Marco Civil (Law 12.965/2014, arts. 13–15) requires one year of connection records. Identifying a subscriber from (public IP, port, timestamp) requires the mapping. |
 | **Who** | The provider's compliance and legal teams answer with this data; the collector is theirs. |
 | **When** | On block allocation, on release, and on exhaustion. Never per flow. |
-| **Where** | Exported from the box to a collector reachable by the **Linux** stack — the exporter uses a kernel socket, not the VPP dataplane. |
+| **Where** | Exported to a collector the box can reach: over **UDP** the dataplane sends the packet, so the collector has to be reachable through the **VPP FIB**; over **TCP** the exporter owns a kernel socket and the collector is reached through **Linux**. |
 | **How** | UDP via VPP's `ipfix-export`, or TCP with local spill for compliance-grade delivery. |
 | **How much** | ~25 bytes per record; ~80 MB/day at 200k subscribers in dynamic mode. |
 
@@ -294,7 +294,7 @@ subscriber, ~25 bytes of data per record and ~40 bytes with IPFIX framing.
 | Scenario | Records/day | Raw volume/day |
 |----------|------------:|---------------:|
 | BPA dynamic (alloc + release) | ~2 million | ~80 MB |
-| Per-flow NAT (reference) | ~40 million | ~2.4 GB |
+| Per-flow NAT (reference) | ~40 million | ~1.6 GB |
 | BPA deterministic | 0 | 0 |
 
 One year of retention in dynamic mode is tens of gigabytes, not tens of
@@ -383,6 +383,8 @@ error: cgnat logging enable: UDP export has no collector
     nothing would leave this box; add 'nat cgnat logging udp <collector> src
     <source>' beside it, or export over TCP with 'nat cgnat logging tcp
     <collector>'
+    the dataplane refuses the statement, and it would refuse it half way
+    through this commit
 ```
 
 Refused **before** anything is applied, rather than by the dataplane half way
@@ -601,10 +603,14 @@ appended to a file, dated in UTC, with the complete definition:
 ```
 2026-09-05T02:07:58Z add pool provedor-a by marina uid 1001 via api \
   inside 100.64.0.0+1024 outside 45.170.16.0+64 outside 200.150.0.0+256 \
-  block 512 ports 1024-65535 policy interleaved mode deterministic
+  block 512 ports 1024-65535 policy interleaved mode deterministic \
+  seq 41 sha256 4e98...81f4
 2026-09-05T02:08:00Z del pool provedor-a by marina uid 1001 via api ...
 2026-09-05T02:08:01Z add pool provedor-a by unattributed via cli ... block 1024 ...
 ```
+
+Every line ends with ` seq <n> sha256 <64 hex>`; the examples below elide it to
+keep the definition readable.
 
 The question this answers: *what block size was in effect on the date named in
 the court order?* Without the trail, the **current** formula answers with the
@@ -617,9 +623,9 @@ subscriber with full confidence.
   operations that change one are recorded like any other pool change:
 
   ```
-  2026-09-06T21:41:03Z forward-add pool residential inside 100.64.0.0+1024 \
-    outside 200.150.0.16+4 block 512 ports 1024-65535 policy interleaved \
-    mode deterministic forward tcp/6200->100.64.0.5:80
+  2026-09-06T21:41:03Z forward-add pool residential by marina uid 1001 via api \
+    inside 100.64.0.0+1024 outside 200.150.0.16+4 block 512 ports 1024-65535 \
+    policy interleaved mode deterministic forward tcp/6200->100.64.0.5:80
   ```
 
   A forward is the one part of a deterministic pool that the formula **cannot**
@@ -660,7 +666,7 @@ instant" — and if the configuration itself is disputed, a record nobody can
 attribute is one that anybody with an interest can question
 ([#34](https://github.com/andrediashexa/hexarouting/issues/34)).
 
-Every entry carries one of four forms:
+Every entry names the actor in one of these shapes:
 
 | On the line | What it means |
 |---|---|
@@ -705,6 +711,7 @@ the line it is on.
 
 ```
 show bpa pool history verify
+configuration trail: /var/log/hexarouting/config-history.log
   7 entries checked, chain intact
   head  seq 7 sha256 4e98de83…81f4
   a chain that verifies proves the file was not edited, not that it is the
@@ -719,7 +726,7 @@ to their evidence:
 |---|---|
 | an entry's text was changed | `BROKEN at entry 2` — the whole entry, and that it does not match its own digest |
 | an entry was removed from the middle | `BROKEN before entry 4` — the sequence jumps from 2 to 4 |
-| entries were removed from the end | `TRUNCATED: the file ends at entry 5 and this dataplane wrote up to 7` |
+| entries were removed from the end | `TRUNCATED: the file ends at entry 5 and this dataplane wrote up to 7 - 2 entries were removed from the end` |
 
 The **sequence is checked before the digest**, and that order is the diagnosis.
 Removing an entry also breaks the digest of the entry that followed it, so a
@@ -826,5 +833,6 @@ to the subscriber it was issued to
 - [x] End-to-end test with a decoding collector (`lab/ipfix.sh`,
       `lab/ipfix-tcp.sh`, `lab/ipfix-stop.sh`), confirming every allocation has
       its matching release, and that the ones that do not are readable
-- [ ] Collector selection via a dedicated CLI; today the UDP path inherits
-      VPP's exporter configuration
+- [x] Collector selection from the VTY (`nat cgnat logging udp <collector> src
+      <source>`), which writes VPP's core exporter rather than plugin-owned
+      state - the consequence of that is stated above

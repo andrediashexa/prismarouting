@@ -16,10 +16,15 @@ because nothing unusual happened.
 
 ```
 error: this change re-maps subscribers that already have mappings
-    252 of 256 subscribers change public address or port block
-    100.64.0.4 moves from 200.150.0.16:1536-2047 to 200.150.0.16:2048-3071
+    1024 of 1024 subscribers change public address or port block; 61 hold live state right now
+    100.64.0.0 moves from 200.150.0.16:1024-1535 to 45.170.16.0:1024-1535
+    100.64.0.1 moves from 200.150.0.17:1024-1535 to 45.170.16.1:1024-1535
+    every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not.
     if that is what you mean, type: commit remap
 ```
+
+Two examples and not one: that is how many the dataplane carries back
+(`ARRAY_LEN (example)` in `bpa_cli.c`).
 
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY**
 > in this document are to be interpreted as described in
@@ -49,10 +54,11 @@ changes the **divisor** changes the answer for nearly everybody.
 | change `block-size` | blocks per address change: almost every subscriber — the ones whose block still starts at the same port stay |
 | change `ports` | same as block size |
 | change `policy` | interleaved and blocked split the index differently: **every** subscriber |
-| change `mode` | deterministic and dynamic are not the same mapping at all |
+| change `mode` | deterministic and dynamic are not the same mapping at all — and this is the one mapping change `commit` does **not** offer to refuse: `bpa_pool_remap_count()` is only reached when the definition on the box and the candidate are both deterministic, so a mode switch commits without the warning above |
 | add or remove an **inside** prefix | changes the subscriber index of every address after it |
 | change `block-stride` | **nothing**: it decides where a subscriber's *next* block goes and `bpa_forward()` never reads it, so no existing subscriber moves - measured across every pool and stride in the model's vectors rather than assumed |
-| everything else — timeouts, ALGs, `max-blocks`, the MSS clamp, the bounds, forwards, bypass lists | **nothing**: these are in-place settings ([#69](https://github.com/andrediashexa/hexarouting/issues/69)) |
+| change `vrf` or `outside-vrf` | **no subscriber moves** and every session still ends: the arithmetic is untouched, so `commit` never asks for `commit remap`, but the pool is rebuilt because these are outside `Pool.lines(in_place=True)` |
+| everything else — timeouts, ALGs, `max-blocks`, the MSS clamp, the bounds, forwards, bypass lists, the filter mode | **nothing**: these are in-place settings ([#69](https://github.com/andrediashexa/hexarouting/issues/69)) |
 
 ## What does not change
 

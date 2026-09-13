@@ -29,7 +29,7 @@ claim, against a repository that has moved several releases since.
 | **Where** | Outline, edited through its API. The mirror under `wiki/` is for reading. |
 | **When** | Before the wiki is treated as documentation by anybody. |
 | **How** | Claim by claim against `docs/`, never the reverse. |
-| **How much** | 29 pages. Two passes already done — see section 5. |
+| **How much** | Every page in the mirror; `wiki/README.md` records how many the last snapshot held. Two passes already done — see section 5. |
 
 ## 1. What is authoritative, and what is not
 
@@ -103,8 +103,8 @@ That is now:
 
 The **home** carried the cause rather than the error: the reader met
 "Determinístico" and "Dinâmico" for the first time as table headings, with no
-sentence introducing them as the two modes of BPA. A section **"Os dois modos
-do BPA"** now precedes that table.
+sentence introducing them as the two modes of BPA. Under **"Por que BPA"** the
+page now names each of them as a mode before anything compares them.
 
 ## 3. Access
 
@@ -275,8 +275,8 @@ it, because reading the standard once did not stop me breaking it on the first
 page I touched.
 
 **Two internal links in the new page were invented rather than looked up**, and
-were published broken before being corrected. Every `/doc/` link across all 30
-pages was then checked against the live list: zero broken.
+were published broken before being corrected. Every `/doc/` link on every page
+was then checked against the live list: zero broken.
 
 **Not verified in a browser.** The standard asks for it and this session has no
 browser. Mermaid rendering, CSP and chunk loading are exactly what `curl`
@@ -329,8 +329,9 @@ Stale content corrected in the same pass:
 | *Operação e diagnóstico* | the boot wait did not explain itself (v0.31.0) |
 | *BPA*, *Ampliar capacidade* | a `:::warning` on each held only its first sentence, the rest having fallen outside the block — Outline's markdown round-trip splits a callout whose source was a one-line blockquote. Check this after every edit that touches one. |
 
-**A trap worth not paying twice:** in the `wiki/` mirror, 21 places read
-`` `**vppctl**` `` and look like broken markdown. They are not — the live page
+**A trap worth not paying twice:** in the `wiki/` mirror, one place today
+(`operar/operacao-e-diagnostico.md`) reads `` `**vppctl**` `` and looks like
+broken markdown. They are not — the live page
 renders `<strong><code>vppctl</code></strong>` with no literal asterisks. It is
 an artefact of Outline's markdown serialiser on export. Correcting it in the
 mirror would corrupt what is already right.

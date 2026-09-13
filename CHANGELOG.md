@@ -48,6 +48,65 @@ version has a chance of seeing it.
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+### Fixed
+
+* **`docs/` claimed behaviour the box does not have, in sixty-odd places.**
+  `README.md` makes `docs/` the reference every other document is corrected
+  against, so a wrong sentence here becomes a wrong wiki page and then a wrong
+  answer to an operator on the phone. A wiki sweep had been done; nothing had
+  swept `docs/`. Every claim below was established from the product - by
+  driving `hexash` in-process the way `test/test_hexash_*.py` do, by computing
+  mappings with `ref/bpa_model.py`, or by reading the code that prints the
+  thing - and the counts were taken from what they count.
+
+  The shapes, because they repeat. **Quoted output that the box does not
+  print**: the `commit remap` refusal in `pool-resize.md` and
+  `architecture.md` was missing the live-state count, the second example and
+  the closing paragraph, and `architecture.md` had hand-wrapped a line the VTY
+  deliberately prints whole; the UDP-export refusal in `logging.md` was
+  missing its last paragraph; `routing.md`'s `show cgnat ?` listed four of
+  eleven sub-commands, `ip ?` offered a `route` keyword removed two releases
+  ago, an interface block listed six of fifteen options, `show route` and
+  `show interface utilization` were in orders `sorted()` cannot produce,
+  `show interface <name>` was two columns under-indented, and one block showed
+  `hexarouting(config-cgnat-pool)#`, a prompt this VTY has never printed;
+  `appliance.md` quoted the medium's banner at version 0.5.0 and a
+  confirmation that types the disk path back when the installer asks for the
+  word `yes`. **Features documented as missing that shipped**: `roadmap.md`
+  said BGP policy was "not in the grammar at all" (v0.48.0, v0.51.0-v0.55.0),
+  an interface understood "`mtu` and `urpf` and nothing else" (v0.40.0-v0.44.0),
+  there was no documented pool-resize procedure (v0.19.0), nothing detected
+  tampering in the trail (v0.23.0), nothing warned below the RFC floors
+  (v0.16.0), the suite never ran an `off` mode, and the read-back check was
+  not written. **Counts that had drifted**: `context.md`'s "12,000-line
+  dataplane, 4,400-line VTY and 35 labs" against 18,903, 13,939 and 50, and
+  its "30,000+ vectors" against 13,670 generated ones; `routing.md`'s "four
+  statements of twenty-five" against three of twenty-four, and "twenty-eight"
+  console lines against thirty. Where a number had no stable source it was
+  replaced by the property rather than by a fresher number, for the reason
+  `README.md` gives.
+
+  Two statements were the opposite of the product, and both change what an
+  operator does: `logging.md` said the exporter uses a kernel socket, when the
+  **UDP** export is a packet the dataplane sends - so a UDP collector must be
+  reachable through the VPP FIB, not through Linux; and `context.md` said the
+  VTY reaches the dataplane through vat2 and "not `vppctl` text", when
+  thirty-eight read sites and the pool validation behind `commit check` are
+  still `vppctl`. `routing.md` also told the operator the refusal names a
+  statement in FRR's spelling, when `as_hierarchy()` exists precisely to name
+  it in this VTY's.
+
+  Three things are reported and **not** repaired, because the fix is a
+  decision rather than an edit: `bpa_log.c` schedules the boot marker before
+  replaying pins but emits it after them in the same drain, so `logging.md`
+  and `bpa_log.h` both describe an order the wire does not carry;
+  `show interface <name>` drops the first counter VPP prints, because VPP puts
+  it on the interface's own line and the reader skips that row; and
+  `roadmap.md` now has two `Phase 4` and two `Phase 5` headings, which cannot
+  be renumbered without breaking the `phase 6` that `ha.md` points at.
+
 ## 0.68.0 — what the box said it did, and a release gate that could not be passed
 
 [#9](https://github.com/andrediashexa/hexarouting/issues/9),
