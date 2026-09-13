@@ -735,72 +735,71 @@ fi
 EFI=0
 [ -d /sys/firmware/efi ] && EFI=1
 
-# A box being REINSTALLED already has arrays on these disks, and the medium
-# starts them before anybody types anything: udev on the live system finds the
-# superblocks and assembles them. A partition held by a running array is one
+# A disk this install is about to erase has to be RELEASED first, and a box
+# being reinstalled is where that bites: the medium's udev finds the md
+# superblocks left by the previous install and assembles the array before
+# anybody has typed anything. A partition held by a running array is one
 # sfdisk will not rewrite.
 #
-# MEASURED, on 2026-09-13, by installing twice onto the same two disks
-# (lab/install-iso.sh mirror). The second install got as far as its own
-# summary - which showed the array it was about to destroy -
+# Measured three times on 2026-09-13, each reading naming the next step
+# (lab/install-iso.sh mirror, phase 5):
 #
-#   vda3       2G linux_raid_member
-#     md127    2G ext4
+#   1. with nothing done about it, the FIRST write stopped:
+#        Checking that no-one is using this disk right now ... FAILED
+#      and the summary above it had already shown what was in the way -
+#        vda3  linux_raid_member / md127
+#   2. stopping the array let sfdisk through, and rewriting the table made
+#      udev re-probe the partitions and assemble it AGAIN, because the md
+#      superblock lives 4 KB INTO the partition and wiping a partition table
+#      never touches it:
+#        [   35.026739] md/raid1:md127: active with 1 out of 2 mirrors
+#        mdadm: super1.x cannot open /dev/vda3: Device or resource busy
+#   3. stopping and erasing the superblocks on both disks got the system disk
+#      partitioned, and then the SECOND disk was refused the same way - the
+#      window between the two sfdisks is long enough for udev to act in.
 #
-# and then stopped at the first write:
+# So it is done per disk, immediately before that disk is written, and never
+# once for both. Erasing the superblock is inside what the operator confirmed:
+# they were shown both disks and the word was "yes".
 #
-#   Checking that no-one is using this disk right now ... FAILED
-#   This disk is currently in use - repartitioning is probably a bad idea.
-#
-# The disk was untouched, which is the right failure, but every mirrored box
-# gets reinstalled eventually and this one could not be. So the arrays built
-# from the disks this install is about to erase are stopped first, by name,
-# and said out loud - the operator has already confirmed these two disks, and
-# stopping an array reads nothing and writes nothing.
-if command -v mdadm >/dev/null 2>&1 && [ -r /proc/mdstat ]; then
-  for _d in $DISK $MIRROR; do
-    awk -v b="$(basename "$_d")" '
-      $1 ~ /^md[0-9]/ {
-        for (i = 3; i <= NF; i++) {
-          m = $i
-          # "vda3[0]" and "vda3[0](S)" both name vda3.
-          sub(/\[[0-9]+\](\([A-Z]\))?$/, "", m)
-          if (m == b || m ~ "^" b "p?[0-9]+$") { print $1; next }
-        }
-      }' /proc/mdstat
-  done | sort -u | while read -r _a; do
-    say "stopping /dev/$_a, an array on a disk this install erases"
+# It reports what it found. A disk that will not be released is a refusal
+# somebody has to diagnose from the console they are standing at, and
+# "sfdisk failed" on its own sends them to the partitioner.
+release_disk() {   # <disk>; stop and erase what would hold it open
+  command -v mdadm >/dev/null 2>&1 || return 0
+  [ -r /proc/mdstat ] || return 0
+  _rd=$1
+  _rb=$(basename "$_rd")
+  for _a in $(awk -v b="$_rb" '
+        $1 ~ /^md[0-9]/ {
+          for (i = 3; i <= NF; i++) {
+            m = $i
+            # "vda3[0]" and "vda3[0](S)" both name vda3.
+            sub(/\[[0-9]+\](\([A-Z]\))?$/, "", m)
+            if (m == b || m ~ "^" b "p?[0-9]+$") { print $1; next }
+          }
+        }' /proc/mdstat); do
+    say "stopping /dev/$_a, an array on $_rd, which this install erases"
     mdadm --stop "/dev/$_a" >/dev/null 2>&1 \
-      || say "  (/dev/$_a would not stop; sfdisk will say so in a moment)"
+      || say "  (/dev/$_a would not stop)"
   done
-
-  # And the superblocks that array was built from, BEFORE the partitioning
-  # rather than after it.
-  #
-  # MEASURED, same lab, the run after the stop above was added: stopping the
-  # array let sfdisk through, and then
-  #
-  #   ==> partitioning /dev/vda (UEFI=0)
-  #   [   34.986202]  vda: vda1 vda2 vda3
-  #   [   35.026739] md/raid1:md127: active with 1 out of 2 mirrors
-  #
-  # - rewriting the table made udev re-probe the partitions, the md superblock
-  # inside vda3 was still there because it lives 4 KB INTO the partition and
-  # nothing had touched it, and udev assembled the array again. mdadm then
-  # refused to build the new one: "super1.x cannot open /dev/vda3: Device or
-  # resource busy".
-  #
-  # Erasing it is inside what the operator confirmed - they were shown both
-  # disks and the word was "yes" - and it is the last moment at which erasing
-  # anything is still a choice.
-  for _d in $DISK $MIRROR; do
-    for _p in $(lsblk -lnpo NAME "$_d" 2>/dev/null); do
-      mdadm --zero-superblock --force "$_p" >/dev/null 2>&1 || true
-    done
+  # The superblocks those arrays were built from, so that re-reading the
+  # partition table cannot bring one back.
+  for _p in $(lsblk -lnpo NAME "$_rd" 2>/dev/null); do
+    mdadm --zero-superblock --force "$_p" >/dev/null 2>&1 || true
   done
-fi
+  command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
+  # Anything left is the thing that will refuse the write, named here rather
+  # than left to be deduced from what sfdisk says next.
+  if grep -qE "^md[0-9]+ : .*[^a-z]$_rb" /proc/mdstat 2>/dev/null; then
+    say "  $_rd is still held by an array:"
+    sed 's/^/    /' /proc/mdstat >&2
+  fi
+}
 
-say "partitioning $DISK (UEFI=$EFI)"
+release_disk "$DISK"
+
+say "partitioning $DISK (UEFI=$EFI)"say "partitioning $DISK (UEFI=$EFI)"
 # udev opens a freshly attached disk to probe it, and sfdisk wants an exclusive
 # lock on the same device. Losing that race makes sfdisk WAIT - printing
 # nothing, so the install looks hung rather than blocked.
@@ -854,6 +853,11 @@ esac
 RECORDS_DEV=$P3
 if [ -n "$MIRROR" ]; then
   say "the records mirror on $MIRROR"
+  # Released here, a second time and immediately before its own write. The run
+  # that only did this once got the system disk partitioned and was then
+  # refused on this one: the gap between the two sfdisks is long enough for
+  # udev to assemble something out of what is still on the second disk.
+  release_disk "$MIRROR"
   # One partition over the whole disk rather than a sized one. The array is as
   # big as its smallest member either way, and a whole-disk leg is what makes a
   # replacement disk of a different size usable without re-doing arithmetic
