@@ -1046,6 +1046,8 @@ COMMIT = {
               "subscribers a change would re-map", None),
     "remap": ("apply a change that moves existing subscribers to new public "
               "addresses and port blocks", None),
+    "cutoff": ("apply a change that stops advertising the prefix this session "
+               "runs over", None),
     "confirmed": ("apply, and roll back unless confirmed", "<1-60> minutes"),
     "comment": ("record a note with this commit", "<text>"),
 }
@@ -2798,6 +2800,156 @@ def route_map_findings(routing):
     return out
 
 
+# The places a route-map name is USED, by the shape of the statement, and what
+# FRR was measured to do at each of them when nothing defines the name.
+#
+# Not one blanket refusal, because the answer is not the same at all of them,
+# and that difference is what keeps this off a configuration that works (#208).
+# Measured on FRR 10.7.1, two speakers over a veth pair, asserting on the
+# receiving side's table rather than on the text:
+#
+#   neighbor 10.9.0.2 route-map RM-MISSING in    peer offers 2, this box holds
+#                                                0; defining the map brings
+#                                                both back with nothing retyped
+#   neighbor 10.9.0.1 route-map OUT-MISSING out  the other end holds 0
+#   redistribute kernel route-map RM-NOPE        originates nothing; defined,
+#                                                it originates the route
+#   network 203.0.113.0/24 route-map RM-NONE     the same
+#
+# In every one of those FRR printed `The route-map 'X' does not exist.`, kept
+# the statement, and denied everything the statement governs.
+ROUTE_MAP_FATAL = ("neighbor-in-out", "redistribute", "network")
+
+
+def route_map_references(routing):
+    """
+    Every place `routing` names a route-map, as (statement, name, kind).
+
+    `kind` is one of ROUTE_MAP_FATAL for the three shapes measured to deny
+    everything, and "other" for the rest - `call`, `table-map`,
+    `default-originate route-map`, the `*-map` family of BGP conditional
+    advertisement. The list is deliberately wider than the refusal: a name
+    used ANYWHERE is a name that is not unused, and the reverse check reads
+    this same function. A reference this did not know about would report a
+    route-map that is doing its job as dead configuration.
+    """
+    out = []
+    for raw in routing:
+        line = raw.strip()
+        w = line.split()
+        if not w or w[0] == "no":
+            continue
+        # `route-map RM permit 10` DEFINES; it does not reference. And
+        # `bgp route-map delay-timer 10` is not a route-map name at all - the
+        # word after `route-map` there is a knob, and reading it as a name
+        # would refuse a commit over a timer.
+        if w[0] == "route-map" or w[:2] == ["bgp", "route-map"]:
+            continue
+        # Free text, and an operator who writes "upstream, see route-map RM-IN"
+        # in one has named nothing. Read as a reference it would warn about a
+        # sentence, or refuse a commit over it.
+        if w[0] == "description" or (w[0] == "neighbor" and len(w) >= 3
+                                     and w[2] == "description"):
+            continue
+        if w[0] == "call" and len(w) >= 2:
+            out.append((line, w[1], "other"))
+            continue
+        for i, word in enumerate(w[:-1]):
+            name = w[i + 1]
+            if word == "route-map":
+                if w[0] == "neighbor" and len(w) >= 3 and w[2] == "route-map":
+                    out.append((line, name, "neighbor-in-out"))
+                elif w[0] == "redistribute":
+                    out.append((line, name, "redistribute"))
+                elif w[0] == "network":
+                    out.append((line, name, "network"))
+                else:
+                    out.append((line, name, "other"))
+            elif word in ("table-map", "suppress-map", "unsuppress-map",
+                          "advertise-map", "exist-map", "non-exist-map"):
+                out.append((line, name, "other"))
+    return out
+
+
+def route_maps_defined(routing):
+    """
+    The route-map names this configuration defines, and where each begins.
+
+    A definition is a clause header - `route-map NAME permit|deny [seq]` - and
+    nothing else. A name that appears only in a reference is not defined by
+    being referenced, which is the entire point of the check above.
+    """
+    seen = {}
+    for raw in routing:
+        w = raw.strip().split()
+        if len(w) >= 3 and w[0] == "route-map" and w[2] in ("permit", "deny"):
+            seen.setdefault(w[1], raw.strip())
+    return seen
+
+
+def route_map_reference_findings(routing):
+    """
+    Route-maps named and never defined, and route-maps defined and never used.
+
+    Returns (severity, statement, why), the shape route_map_findings returns.
+
+    REFUSED where it was measured to deny everything, which is the three
+    shapes in ROUTE_MAP_FATAL. The session comes up, carries no routes, and
+    the box says nothing: FRR's own `The route-map 'X' does not exist.` goes
+    to the vtysh session, and this VTY hands whole configurations to
+    frr-reload.py, whose output is filtered down to lines carrying `Exiting:`,
+    `ERROR`, `% `, `Failed` or `Exception:`. FRR's warning matches none of
+    them and is thrown away before the operator sees it.
+
+    This is not the posture undefined_policy_lists settled on, and the
+    difference is measured rather than argued. An undefined COMMUNITY LIST
+    inside a route-map is bound when the list arrives, so building a policy in
+    two commits works and refusing it was the defect #208 named. An undefined
+    ROUTE-MAP is not that: for the window between the two commits the session
+    carries nothing, and there is no order of typing in which that is what the
+    operator meant.
+
+    `call` is in the same file and behaves differently, which is why it is a
+    warning. Measured, same pair of speakers: a `permit` clause carrying
+    `call RM-MISSING` with nothing defining RM-MISSING advertises the prefix
+    anyway - FRR skips a call it cannot resolve and the clause simply
+    continues. `show route-map OUT` prints the call clause and the route is in
+    the peer's table. So the statement is dead rather than deadly, and
+    refusing a whole commit for it would be refusing a configuration that
+    works.
+
+    The reverse - a map defined that nothing names - is a warning for the
+    reason the issue asking for this gave: dead configuration is untidy, not
+    dangerous. It is also what an operator building a policy map-first has on
+    the box between two commits, which is the case that MUST still commit.
+    """
+    defined = route_maps_defined(routing)
+    used = route_map_references(routing)
+    out = []
+    for stmt, name, kind in used:
+        if name in defined:
+            continue
+        if kind in ROUTE_MAP_FATAL:
+            out.append(("error", stmt,
+                        f"no route-map called '{name}' is defined, and FRR "
+                        "denies everything this statement governs until one "
+                        f"is; define it, or write 'route-map {name} permit "
+                        "10' to let everything through"))
+        elif stmt.split()[0] == "call":
+            out.append(("warning", stmt,
+                        f"no route-map called '{name}' is defined; FRR skips "
+                        "a call it cannot resolve, so this line does nothing"))
+        else:
+            out.append(("warning", stmt,
+                        f"no route-map called '{name}' is defined"))
+    named = {name for _, name, _ in used}
+    for name, header in sorted(defined.items()):
+        if name not in named:
+            out.append(("warning", header,
+                        f"route-map {name} is defined and nothing uses it"))
+    return out
+
+
 def bgp_errors(routing, have_interfaces=None, lcp_pairs=None,
                device_interfaces=None):
     """
@@ -3135,6 +3287,375 @@ def pool_announce_findings(routing, pools):
                  "announce it from another box, or originate it here with",
                  f"'ip route {pfx} blackhole' and 'network {pfx}' under the "
                  "BGP address family"]))
+    return out
+
+
+def session_local_address(environ=None):
+    """
+    The address on THIS box that the session applying the change arrived on.
+
+    `SSH_CONNECTION` is "<client> <client port> <server> <server port>", set by
+    sshd for the session's own process, and the SERVER half is the one that
+    matters here. Reachability of the client's address is the client network's
+    business; reachability of the address the session terminates on is what
+    this box advertises, and what an outbound policy can take away.
+
+    None when the session did not arrive over SSH - a serial console, `--load`
+    from a script, the boot-time apply. That is not a failure and MUST NOT be
+    treated as one, but it MUST NOT be silent either: the caller says which
+    check it could not make rather than letting the operator assume it was
+    made and passed.
+    """
+    env = os.environ if environ is None else environ
+    w = (env.get("SSH_CONNECTION") or "").split()
+    if len(w) != 4:
+        return None
+    return w[2] or None
+
+
+def prefix_list_verdict(routing, name, prefix):
+    """
+    "permit", "deny", or None for `prefix` against the named prefix-list.
+
+    None means "this function will not say", and every caller treats that as
+    "cannot tell" rather than as a permit or a deny. An entry it cannot read
+    is exactly where a guess turns into a refusal of a correct configuration.
+
+    The rule is FRR's: an entry matches when the route's prefix is inside the
+    entry's, AND the route's LENGTH is in the range the entry allows - which
+    is the entry's own length unless `ge`/`le` widen it. First match wins, in
+    sequence order, and a prefix-list that matches nothing denies.
+    """
+    try:
+        want = ipaddress.ip_network(prefix, strict=False)
+    except ValueError:
+        return None
+    entries = []
+    for raw in routing:
+        w = raw.strip().split()
+        if len(w) < 4 or w[0] not in ("ip", "ipv6") or w[1] != "prefix-list":
+            continue
+        if w[2] != name:
+            continue
+        rest = w[3:]
+        seq = None
+        if rest[0] == "seq" and len(rest) >= 2:
+            try:
+                seq = int(rest[1])
+            except ValueError:
+                return None
+            rest = rest[2:]
+        if not rest:
+            continue
+        if rest[0] == "description":
+            continue
+        if rest[0] not in ("permit", "deny"):
+            return None                  # a spelling this does not read
+        action, rest = rest[0], rest[1:]
+        if not rest:
+            return None
+        entries.append((seq, action, rest))
+    if not entries:
+        return None                      # no such list: FRR's answer, not ours
+    # Sequence order, which is the order FRR walks. Entries written without a
+    # seq are numbered by FRR as it stores them, so they keep the order they
+    # were written in, after the numbered ones they follow.
+    ordered = []
+    last = 0
+    for seq, action, rest in entries:
+        last = seq if seq is not None else last + 1
+        ordered.append((last, action, rest))
+    for _, action, rest in sorted(ordered, key=lambda e: e[0]):
+        if rest[0] == "any":
+            return action
+        try:
+            net = ipaddress.ip_network(rest[0], strict=False)
+        except ValueError:
+            return None
+        lo = hi = net.prefixlen
+        i = 1
+        while i < len(rest):
+            if rest[i] in ("ge", "le") and i + 1 < len(rest):
+                try:
+                    n = int(rest[i + 1])
+                except ValueError:
+                    return None
+                if rest[i] == "ge":
+                    lo = n
+                    hi = max(hi, net.max_prefixlen)
+                else:
+                    hi = n
+                i += 2
+                continue
+            return None                  # a word this does not read
+        if net.version != want.version:
+            continue
+        if lo <= want.prefixlen <= hi and want.subnet_of(net):
+            return action
+    return "deny"                        # the implicit one at the end
+
+
+def route_map_verdict(routing, name, prefix):
+    """
+    "permit", "deny", or None for `prefix` through the named route-map.
+
+    Only the clauses this can read to the end: a clause with no `match` at
+    all, or one whose single match is `match ip address prefix-list <list>`
+    against a list prefix_list_verdict() can read. Anything else - a community
+    match, an AS-path match, a `call`, an `on-match` - returns None, because
+    what the map does then depends on the route's attributes and on flow this
+    does not follow, and a guess would be a refusal aimed at a working policy.
+
+    An empty or missing map denies, measured on FRR 10.7.1: `neighbor X
+    route-map RM-MISSING out` with nothing defining RM-MISSING leaves the
+    other end holding zero prefixes.
+    """
+    clauses = []
+    current = None
+    for raw in routing:
+        w = raw.strip().split()
+        if not w:
+            continue
+        if w[0] == "route-map" and len(w) >= 3 and w[2] in ("permit", "deny"):
+            current = None
+            if w[1] == name:
+                seq = w[3] if len(w) >= 4 and w[3].isdigit() else "0"
+                current = {"action": w[2], "seq": int(seq),
+                           "match": [], "opaque": False}
+                clauses.append(current)
+            continue
+        if current is None:
+            continue
+        if w[0] == "match":
+            current["match"].append(w[1:])
+        elif w[0] in ("call", "on-match", "continue"):
+            current["opaque"] = True
+        elif w[0] not in ("set", "description", "exit"):
+            current = None               # some other block began
+    if not clauses:
+        return "deny"
+    for c in sorted(clauses, key=lambda c: c["seq"]):
+        if c["opaque"]:
+            return None
+        if not c["match"]:
+            return c["action"]
+        if len(c["match"]) != 1:
+            return None                  # several clauses, several rules
+        m = c["match"][0]
+        if m[:3] != ["ip", "address", "prefix-list"] or len(m) < 4:
+            return None
+        said = prefix_list_verdict(routing, m[3], prefix)
+        if said is None:
+            return None
+        if said == "permit":
+            return c["action"]
+    return "deny"                        # the implicit deny at the end of a map
+
+
+def advertised_out(routing, prefix):
+    """
+    ([neighbours that would be sent `prefix`], [neighbours it cannot tell for]).
+
+    Outbound policy only, and only the two forms whose effect on one prefix is
+    in the text: `neighbor X route-map RM out` and `neighbor X prefix-list PL
+    out`. A `distribute-list` or a `filter-list` puts the neighbour in the
+    second list instead, because an AS-path filter decides on an attribute and
+    not on the prefix.
+
+    Measured on FRR 10.7.1 with two speakers, this box originating
+    203.0.113.0/24 and 198.18.0.0/24 and the assertion on the PEER's table:
+
+        route-map OUT permit 10, matching a prefix-list that holds only
+        198.18.0.0/24                          peer keeps 198.18.0.0/24 only
+        route-map OUT deny 5 matching a list
+        holding 203.0.113.0/24                 the same
+        neighbor prefix-list PL-OUT out, with
+        `deny 203.0.113.0/24` before a permit   the same
+        the policy removed again                both prefixes back
+
+    So the implicit deny at the end of a route-map withdraws a prefix as
+    surely as a deny clause naming it, and both are worth reading from the
+    text.
+
+    Peer groups are followed: a member with no policy of its own inherits the
+    group's, and one with its own does not. A neighbour under `shutdown` - its
+    own or its group's - is not a carrier: the configuration holds the session
+    down, and that is readable here in a way "has never come up" is not.
+    """
+    paths = block_paths(routing)
+    policy = {}          # neighbour or group -> {"route-map": n, "prefix-list": n, "opaque": bool}
+    member = {}          # neighbour -> group
+    groups = set()
+    shut = set()         # neighbours and groups administratively down
+    seen = []
+    for path, raw in zip(paths, routing):
+        if path is None:
+            continue
+        line = raw.strip()
+        w = line.split()
+        if not w or w[0] == "no" or w[0] != "neighbor" or len(w) < 3:
+            continue
+        if not (path[0] if path else line).startswith("router bgp"):
+            continue
+        name = w[1]
+        if w[2] == "peer-group" and len(w) == 3:
+            groups.add(name)
+            continue
+        if w[2] == "peer-group" and len(w) >= 4:
+            member[name] = w[3]
+        if name not in seen:
+            seen.append(name)
+        # A session the configuration holds down carries nothing, and that is
+        # in the text rather than in the session table - so unlike a neighbour
+        # that merely never came up, it can be read here.
+        if w[2] == "shutdown":
+            shut.add(name)
+        if len(w) >= 5 and w[4] == "out" and w[2] in ("route-map",
+                                                      "prefix-list"):
+            policy.setdefault(name, {})[w[2]] = w[3]
+        elif len(w) >= 5 and w[4] == "out" and w[2] in ("distribute-list",
+                                                        "filter-list"):
+            policy.setdefault(name, {})["opaque"] = True
+
+    carries, unsure = [], []
+    for name in seen:
+        if name in groups:
+            continue
+        if name in shut or member.get(name, "") in shut:
+            continue
+        mine = dict(policy.get(member.get(name, ""), {}))
+        mine.update(policy.get(name, {}))
+        if mine.get("opaque"):
+            unsure.append(name)
+            continue
+        verdict = "permit"
+        if "prefix-list" in mine:
+            verdict = prefix_list_verdict(routing, mine["prefix-list"], prefix)
+        if verdict == "permit" and "route-map" in mine:
+            verdict = route_map_verdict(routing, mine["route-map"], prefix)
+        if verdict is None:
+            unsure.append(name)
+        elif verdict == "permit":
+            carries.append(name)
+    return carries, unsure
+
+
+def session_cut_findings(running_routing, target_routing, local_addr):
+    """
+    Whether this change stops advertising the prefix carrying this session.
+
+    The SSH lockout check refuses a configuration nobody could log in with
+    (#35); this is the same failure one layer down, and the box is the only
+    thing that can see it coming. An operator on the other side of the country
+    applies an outbound policy, the prefix their own session runs over stops
+    being advertised, the session drops mid-commit, and if the commit was not
+    confirmed the rollback timer is the only way back.
+
+    Returns [(subject, why, advice)] - the shape pool_announce_findings
+    returns, and for the same reason: the sentence that names the fault is not
+    the sentence the operator acts on.
+
+    NOT a refusal. The gate is `commit cutoff`, the shape #23 established for
+    a change that re-maps subscribers: a change that is a mistake most times
+    it is typed and deliberate some of them cannot be refused outright, and it
+    MUST NOT be applied by an operator who has not said the word. Withdrawing
+    a prefix is an ordinary thing to do on purpose - a maintenance drain, a
+    customer leaving - and the box cannot tell that apart from the mistake.
+
+    Silent in every case where it cannot be sure, and the cases are the point:
+
+    * The box does not originate a covering prefix today. Somebody else
+      announces it, which is the ordinary shape for a CGNAT behind an edge
+      router, and nothing in this configuration governs it.
+    * Nothing would advertise it today either. Then this change is not what
+      takes it away.
+    * Any neighbour whose outbound policy this cannot read to the end. The
+      prefix may still leave the box through that one, and a finding would be
+      aimed at a configuration that works.
+    * `bgp_originations` is blind - an `aggregate-address`, a `network` with a
+      route-map, a `redistribute connected`. Then the candidate may originate
+      the prefix by a route not in the text.
+
+    A neighbour that is configured and has NEVER come up counts as a carrier,
+    because this reads the configuration and not the session table. That is
+    deliberate and it is a real limit: lab/bgp-policy.sh found it, with a
+    third neighbour in a peer group that stays Idle, and the finding did not
+    fire. The alternative is worse - gating a commit on whether a session
+    happens to be established at that instant makes the same change gated or
+    not depending on a flap, and a gate nobody can predict is one nobody
+    trusts.
+    """
+    if not local_addr:
+        return []
+    run_announced, run_blind, run_bgp = bgp_originations(running_routing)
+    new_announced, new_blind, new_bgp = bgp_originations(target_routing)
+    if not run_bgp or not new_bgp or run_blind or new_blind:
+        return []
+    covering = [p for p in run_announced
+                if routes.covers_address(p, local_addr)]
+    if not covering:
+        return []
+    # ANY covering prefix reaching ANY neighbour is the box being reachable,
+    # so both halves are asked over the whole set rather than over the first
+    # prefix that happens to cover the address. A box announcing a /24 and a
+    # /25 over it loses nothing when one of the two goes.
+    if not any(advertised_out(running_routing, p)[0] for p in covering):
+        return []
+    still = [p for p in new_announced
+             if routes.covers_address(p, local_addr)]
+    if not still:
+        return [(covering[0],
+                 f"this change stops originating it, and it covers "
+                 f"{local_addr} - the address this session arrived on",
+                 ["nothing here would advertise a route back to this box's "
+                  "end of your own session",
+                  "if that is what you mean, type: commit cutoff"])]
+    for p in still:
+        carries, unsure = advertised_out(target_routing, p)
+        if carries or unsure:
+            return []
+    return [(still[0],
+             f"no neighbour would be sent it after this change, and it covers "
+             f"{local_addr} - the address this session arrived on",
+             ["the outbound policy denies it to every neighbour that has one, "
+              "so nothing would advertise a route back to this box's end of "
+              "your own session",
+              "if that is what you mean, type: commit cutoff"])]
+
+
+def advertisement_fingerprint(routing):
+    """
+    Everything in `routing` that decides what this box advertises, and to whom.
+
+    Two configurations with the same fingerprint cannot differ in what leaves
+    the box over BGP, so a change that leaves it untouched cannot be the
+    change session_cut_findings exists to catch. That is what lets the "could
+    not check" note stay quiet: on a serial console it is printed only when
+    the commit actually moves one of these lines, rather than on every commit,
+    which is how an always-on alarm becomes one nobody reads.
+    """
+    paths = block_paths(routing)
+    out = []
+    for path, raw in zip(paths, routing):
+        if path is None:
+            continue
+        line = raw.strip()
+        w = line.split()
+        if not w:
+            continue
+        if w[0] in ("route-map", "match", "set", "call", "on-match",
+                    "continue"):
+            out.append(line)
+            continue
+        if len(w) >= 2 and w[0] in ("ip", "ipv6") and w[1] == "prefix-list":
+            out.append(line)
+            continue
+        if not (path[0] if path else line).startswith("router bgp"):
+            continue
+        if w[0] in ("network", "redistribute", "aggregate-address"):
+            out.append(line)
+        elif w[0] == "neighbor" and "out" in w:
+            out.append(line)
     return out
 
 
@@ -3695,6 +4216,11 @@ class Shell:
         # refilled by every check. A commit that would move them is refused
         # until the operator says so in as many words.
         self.remap = []
+        # The prefix carrying THIS session that the candidate would stop
+        # advertising, refilled by every check. Same posture as `remap` above
+        # and for the same reason: a change that is a mistake most times it is
+        # typed and deliberate some of them is gated, not refused.
+        self.cutoff = []
         self.mode = "operational"      # operational | config | pool | user
         self.pool = None               # pool being edited
         self.user = None               # user being edited
@@ -4565,6 +5091,7 @@ class Shell:
         running = self.running_config()
         d = running.delta_to(target)
         self.remap = []
+        self.cutoff = []
 
         # THE authorization check, here because this is where the change is
         # applied. The gates on `configure` and on the shell escape are
@@ -4917,6 +5444,67 @@ class Shell:
                     ok = False
                 else:
                     print(f"warning: {stmt}: {why}")
+
+            # A route-map named and never defined (#145). REFUSED, and the
+            # difference from the policy lists above is measured rather than
+            # argued: an undefined community list is bound when the list
+            # arrives, and an undefined route-map denies everything the
+            # statement governs for as long as it is missing. FRR says so
+            # once, to the vtysh session, in a line `Frr._summarise()` throws
+            # away - so on this box nothing says it at all.
+            #
+            # Refused only when THIS CHANGE is what causes it, the same guard
+            # the lockout checks above use, and here it is what keeps a box
+            # bootable. `--load` runs this check at boot and refuses the file
+            # WHOLE if it fails, so a box whose saved configuration already
+            # carries the reference would come up with nothing on it at all -
+            # which is a worse outcome than the fault being refused, and the
+            # same trap the stale `tap<n>` stanza in Shell.load() exists for.
+            already = {stmt for sev, stmt, _
+                       in route_map_reference_findings(running.routing)
+                       if sev == "error"}
+            for sev, stmt, why in route_map_reference_findings(target.routing):
+                if sev == "error" and stmt not in already:
+                    self.err(f"{stmt}: {why}")
+                    ok = False
+                else:
+                    print(f"warning: {stmt}: {why}")
+
+            # A policy that withdraws the prefix carrying THIS session (#145).
+            # The SSH lockout check above refuses a configuration nobody could
+            # log in with; this is the same failure one layer down, and the
+            # only difference is that it cannot be refused - withdrawing a
+            # prefix on purpose is an ordinary thing to do. It is gated on
+            # `commit cutoff` instead, the shape #23 established.
+            here = session_local_address()
+            why_not = None
+            if here is None:
+                why_not = ("this session did not arrive over SSH, so there "
+                           "is no address to check it against. A serial "
+                           "console cannot be cut off by a withdrawal; a "
+                           "session reaching this box through another one "
+                           "can")
+            elif ":" in here:
+                # What this box originates is read in IPv4 only, the way the
+                # rest of `routes` is: the CGNAT's public side is IPv4 by
+                # definition. An IPv6 session is a real session all the same,
+                # and skipping it without a word would be the silence this
+                # note exists to prevent.
+                why_not = (f"this session arrived on {here}, and what this "
+                           "box originates is read in IPv4 only")
+                here = None
+            self.cutoff = [(pfx, why, advice) for pfx, why, advice
+                           in session_cut_findings(running.routing,
+                                                   target.routing, here)]
+            if why_not and (advertisement_fingerprint(running.routing)
+                            != advertisement_fingerprint(target.routing)):
+                # Said, not skipped. A check that quietly does not run is one
+                # the operator believes ran and passed. Printed only when the
+                # change touches what this box advertises, because a note on
+                # every commit from the console is an alarm nobody reads.
+                print("note: this change alters what this box advertises, "
+                      "and the prefix carrying this session was not checked")
+                print("    " + why_not)
 
             if d["routing_changed"] and target.routing:
                 rc_fib, fib_text = self.dp.run("show ip fib")
@@ -5754,7 +6342,7 @@ class Shell:
         return still if len(still) == len(added) else []
 
     def do_commit(self, args):
-        """commit [check | remap | confirmed <min> | comment <text>]"""
+        """commit [check | remap | cutoff | confirmed <min> | comment <text>]"""
         if self.candidate is None:
             self.err("no candidate configuration")
             return
@@ -5832,11 +6420,22 @@ class Shell:
         # nothing unusual afterwards, because nothing unusual happened - it did
         # what it was told. An operator learning that from the consequence
         # learns it during an outage.
-        # "remap" is a prefix rather than the whole word, so it combines with
-        # comment and confirmed: an operator who has to acknowledge a
-        # re-mapping should not lose the ability to record why.
-        remap_ok = bool(args) and args[0] == "remap"
-        if remap_ok:
+        # Each is a prefix rather than the whole word, so they combine with
+        # comment and confirmed - and with each other, in either order: an
+        # operator who has to acknowledge a re-mapping should not lose the
+        # ability to record why, and a change that does both has two
+        # consequences to acknowledge rather than one.
+        #
+        # `cutoff` is a word of its own and not `remap` because they are
+        # different consequences: one moves the subscribers, the other costs
+        # the operator the session they are typing in, and somebody who has
+        # acknowledged one has not been told about the other.
+        remap_ok = cutoff_ok = False
+        while args and args[0] in ("remap", "cutoff"):
+            if args[0] == "remap":
+                remap_ok = True
+            else:
+                cutoff_ok = True
             args = args[1:]
 
         # THIS is the confirmation the message has always talked about, and
@@ -5893,6 +6492,13 @@ class Shell:
                 return
             self.remap = []
 
+        if not cutoff_ok and self.cutoff:
+            for pfx, why, advice in self.cutoff:
+                self.err(f"{pfx}: {why}")
+                for line in advice:
+                    print("    " + line)
+            return
+
         confirm_min = 0
         comment = ""
         # A change to SSH or to accounts is the one change that can cost the
@@ -5900,7 +6506,13 @@ class Shell:
         # as "commit confirmed" whether or not they asked, and the VTY says so
         # - choosing it silently would be a surprise in the other direction.
         d0 = running.delta_to(self.candidate)
-        touches_access = d0["ssh_changed"] or d0["users_changed"]
+        # And the change that withdraws the prefix carrying this session is
+        # the same class of danger by a different route: the operator has said
+        # the word, and the word does not give them a way back. The rollback
+        # timer is the way back, and it has to be armed before the session it
+        # is protecting goes away.
+        touches_access = (d0["ssh_changed"] or d0["users_changed"]
+                          or (cutoff_ok and self.cutoff))
         if args and args[0] == "confirmed":
             try:
                 confirm_min = int(args[1]) if len(args) > 1 else 10
@@ -5912,8 +6524,9 @@ class Shell:
 
         if touches_access and not confirm_min:
             confirm_min = 10
-            print("this commit changes SSH or accounts, which can cut off the "
-                  "session you are using")
+            print("this commit can cut off the session you are using: it "
+                  "changes SSH or accounts, or stops advertising the prefix "
+                  "this session runs over")
             print("applying it as 'commit confirmed 10' rather than as a "
                   "plain commit")
             # What the revert IS gets said once, below, after the box has

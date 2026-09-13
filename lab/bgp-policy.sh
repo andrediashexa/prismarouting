@@ -1008,25 +1008,87 @@ AFTERBAD=$($HX -c "configure" \
            -c "commit" 2>&1)
 expect_in "and the NEXT commit is unharmed" "commit complete" "$AFTERBAD"
 
-echo "=========== a route-map that does not exist ==========="
+# What THIS box holds, which is the table an inbound policy decides.
+peer_has2() {
+  vtysh -c "show bgp ipv4 unicast $1" 2>/dev/null | grep -c "$1" || true
+}
+
+echo "=========== a route-map referenced and not defined (#145) ==========="
+# REFUSED now, where this section used to assert the commit succeeding. The
+# behaviour it asserted was FRR's and it is unchanged - FRR warns, keeps the
+# statement and exits 0 - and what changed is that the statement never reaches
+# FRR, because what FRR then does to the routes was measured against this very
+# pair of speakers and it is not survivable:
+#
+#   neighbor 10.0.0.2 route-map RM-MISSING in, nothing defining it
+#     the peer offers two prefixes, the session reaches Established, and this
+#     box holds ZERO. Defining the map brings both back with nothing retyped.
+#
+# So "the session comes up, carries no routes, and nothing says why" is true,
+# and the last clause of it is true TWICE over on this box: FRR's own warning
+# goes to the vtysh session, and Frr._summarise() keeps only lines carrying
+# Exiting:, ERROR, %, Failed or Exception: - which that warning is not.
 RM=$($HX -c "configure" -c "router bgp 65000" \
      -c "address-family ipv4 unicast" \
      -c "neighbor 10.0.0.2 route-map RM-MISSING in" \
      -c "exit-address-family" -c "exit" -c "commit" 2>&1)
 echo "$RM" | tail -6 | sed 's/^/  /'
-expect_in "the commit succeeds, because FRR accepts it" "commit complete" "$RM"
-expect_in "and FRR's warning reaches the operator" "does not exist" "$RM"
+expect_in "the commit is refused" "nothing applied" "$RM"
+expect_in "and the missing map is named" "RM-MISSING" "$RM"
+expect_in "and what it would cost is said" "denies everything" "$RM"
+expect_not_in "and nothing claims it was applied" "commit complete" "$RM"
+# The statement must not have reached FRR at all. A refusal that arrives after
+# the box is already denying everything is not a refusal.
+expect_not_in "and FRR never saw the statement" "RM-MISSING" \
+  "$(vtysh -c 'show running-config')"
 
-# The noise filter has to keep the commit readable, or the warning is lost in
-# progress output and nothing has been gained.
-expect_not_in "without frr-reload's progress chatter" "Waiting for children" "$RM"
+# THE legitimate neighbour of it, which MUST still commit: the same statement
+# with the map defined beside it, which is how a policy is written. Asserted
+# on the prefixes the session carries afterwards, not on the commit's output -
+# a map that commits and denies everything would pass that.
+RMOK=$($HX -c "configure" \
+       -c "route-map RM-MISSING permit 10" -c "exit" \
+       -c "router bgp 65000" -c "address-family ipv4 unicast" \
+       -c "neighbor 10.0.0.2 route-map RM-MISSING in" \
+       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$RMOK" | tail -4 | sed 's/^/  /'
+expect_in "defining it in the same commit applies it" "commit complete" "$RMOK"
+# The noise filter has to keep a commit readable, or a warning that does reach
+# the operator is lost in progress output and nothing has been gained.
+expect_not_in "without frr-reload's progress chatter" "Waiting for children" "$RMOK"
 # frr-reload echoes the commands it sends as a Python list repr, split across
 # lines. Those fragments are not diagnostics, and letting them through buried
 # the one line that matters in punctuation.
-expect_not_in "and without fragments of its command echo" "frr: '" "$RM"
+expect_not_in "and without fragments of its command echo" "frr: '" "$RMOK"
 # frr-reload narrates itself at INFO. Four lines of that around one line that
 # matters is the warning being buried in a different way.
-expect_not_in "and without the tool narrating itself" "INFO:" "$RM"
+expect_not_in "and without the tool narrating itself" "INFO:" "$RMOK"
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$(peer_has2 203.0.113.0/24)" -ge 1 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  through the defined map the session carries: $(peer_has2 203.0.113.0/24) (${n}s)"
+expect "and the session carries routes through it" \
+  test "$(peer_has2 203.0.113.0/24)" -ge 1
+
+# FRR's own diagnostic still has to reach the operator where the VTY does NOT
+# refuse. `neighbor X default-originate route-map RM-NOPE` is such a place:
+# measured on FRR 10.7.1, it answers "The route-map 'RM-NOPE' does not exist."
+# and stores the statement, and the VTY reports it rather than refusing,
+# because what it costs there was not measured.
+DEFO=$($HX -c "configure" -c "router bgp 65000" \
+       -c "address-family ipv4 unicast" \
+       -c "neighbor 10.0.0.2 default-originate route-map RM-NOPE" \
+       -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$DEFO" | grep -iE "warning|frr:" | head -3 | sed 's/^/  /'
+expect_in "a reference the VTY does not refuse still commits" "commit complete" "$DEFO"
+expect_in "and FRR's own warning reaches the operator" "does not exist" "$DEFO"
+$HX -c "configure" -c "router bgp 65000" -c "address-family ipv4 unicast" \
+    -c "no neighbor 10.0.0.2 default-originate route-map RM-NOPE" \
+    -c "no neighbor 10.0.0.2 route-map RM-MISSING in" \
+    -c "exit-address-family" -c "exit" \
+    -c "no route-map RM-MISSING permit 10" -c "commit" >/dev/null 2>&1 || true
 
 # --- origin validation, with a cache that is really running (#147) ---
 #
@@ -1271,5 +1333,128 @@ SEQ=$($HX -c "configure" -c "route-map RM-SEQ permit 20" -c "exit" \
 printf '%s\n' "$SEQ" | grep -i "warning" | head -4 | sed 's/^/  /'
 expect_not_in "a low-seq clause inserted after a catch-all is not called unreachable" \
   "unreachable" "$SEQ"
+
+echo "=========== a policy that withdraws the prefix carrying this session ==========="
+# The SSH lockout check refuses a configuration nobody could log in with; this
+# is the same failure one layer down. It cannot be refused - withdrawing a
+# prefix on purpose is an ordinary thing to do - so it is gated on the word,
+# the shape #23 established for a change that re-maps subscribers.
+#
+# SSH_CONNECTION is what sshd sets for the session's own process, and on the
+# appliance hexash IS the login shell, so it is there. It is supplied here
+# because this lab runs hexash directly rather than through sshd; nothing in
+# the product writes that variable, and nothing here stands in for a step the
+# product is missing.
+#
+# The assertion is on the PEER's table both times. A policy that commits and
+# changes nothing would pass a check made on the configuration text.
+#
+# The policy goes on the peer group TRANSITO as well as on the two addressed
+# sessions, because the check fires only when NO neighbour would be sent the
+# prefix - and this box also carries 10.0.0.9, a member of that group. Leaving
+# it out is a box that still advertises the prefix somewhere, which is not the
+# case being tested; it also means the group's inheritance is exercised rather
+# than assumed.
+SESSION_ADDR="203.0.115.9"
+SESSION_ENV="10.0.0.2 51234 $SESSION_ADDR 22"
+CARRIER=$($HX -c "configure" -c "ip route 203.0.115.0/24 blackhole" \
+          -c "router bgp 65000" -c "address-family ipv4 unicast" \
+          -c "network 203.0.115.0/24" \
+          -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+expect_in "the prefix this session runs over is announced" "commit complete" "$CARRIER"
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$(peer_has 203.0.115.0/24)" -ge 1 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  the neighbour has it: $(peer_has 203.0.115.0/24)   (${n}s)"
+expect "and the neighbour has it before anything is changed" \
+  test "$(peer_has 203.0.115.0/24)" -ge 1
+
+# The legitimate neighbour FIRST, because it must leave the prefix where it
+# is: an outbound policy that still permits the prefix is not a withdrawal,
+# and a gate that fires on it is one the operator learns to type past.
+KEEPS=$(SSH_CONNECTION="$SESSION_ENV" $HX -c "configure" \
+        -c "ip prefix-list PL-KEEP seq 5 permit 203.0.115.0/24" \
+        -c "route-map RM-KEEP permit 10" \
+        -c "match ip address prefix-list PL-KEEP" -c "exit" \
+        -c "router bgp 65000" -c "address-family ipv4 unicast" \
+        -c "neighbor 10.0.0.2 route-map RM-KEEP out" \
+        -c "neighbor 10.1.0.2 route-map RM-KEEP out" \
+        -c "neighbor TRANSITO route-map RM-KEEP out" \
+        -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$KEEPS" | tail -3 | sed 's/^/  /'
+expect_in "a policy that still permits it commits with no gate" \
+  "commit complete" "$KEEPS"
+expect_not_in "and the operator is not asked for a word" "commit cutoff" "$KEEPS"
+expect "and the neighbour still has it" test "$(peer_has 203.0.115.0/24)" -ge 1
+
+# And the dangerous one: the same shape, permitting something else. The
+# implicit deny at the end of a route-map is what takes the prefix away, which
+# is the case an operator does not see by reading their own policy back.
+CUT=$(SSH_CONNECTION="$SESSION_ENV" $HX -c "configure" \
+      -c "ip prefix-list PL-OTHER seq 5 permit 203.0.113.0/24" \
+      -c "route-map RM-CUT permit 10" \
+      -c "match ip address prefix-list PL-OTHER" -c "exit" \
+      -c "router bgp 65000" -c "address-family ipv4 unicast" \
+      -c "neighbor 10.0.0.2 route-map RM-CUT out" \
+      -c "neighbor 10.1.0.2 route-map RM-CUT out" \
+      -c "neighbor TRANSITO route-map RM-CUT out" \
+      -c "exit-address-family" -c "exit" -c "commit" 2>&1)
+echo "$CUT" | grep -iE "error|cutoff|session" | head -4 | sed 's/^/  /'
+expect_in "the box says which prefix would stop being advertised" \
+  "203.0.115.0/24" "$CUT"
+expect_in "and names the address the session arrived on" "$SESSION_ADDR" "$CUT"
+expect_in "and asks for the commit by name" "commit cutoff" "$CUT"
+expect_not_in "and nothing is applied" "commit complete" "$CUT"
+expect "and the neighbour still has the prefix" \
+  test "$(peer_has 203.0.115.0/24)" -ge 1
+
+# Asked for by name: applied, and applied as a confirmed commit, because the
+# word does not itself give the operator a way back.
+CUTOK=$(SSH_CONNECTION="$SESSION_ENV" $HX -c "configure" \
+        -c "ip prefix-list PL-OTHER seq 5 permit 203.0.113.0/24" \
+        -c "route-map RM-CUT permit 10" \
+        -c "match ip address prefix-list PL-OTHER" -c "exit" \
+        -c "router bgp 65000" -c "address-family ipv4 unicast" \
+        -c "neighbor 10.0.0.2 route-map RM-CUT out" \
+        -c "neighbor 10.1.0.2 route-map RM-CUT out" \
+        -c "neighbor TRANSITO route-map RM-CUT out" \
+        -c "exit-address-family" -c "exit" -c "commit cutoff" 2>&1)
+echo "$CUTOK" | tail -4 | sed 's/^/  /'
+expect_in "'commit cutoff' applies it" "commit complete" "$CUTOK"
+expect_in "and arms a rollback, because the session may not survive it" \
+  "commit confirmed 10" "$CUTOK"
+n=0
+while [ "$n" -lt 40 ]; do
+  [ "$(peer_has 203.0.115.0/24)" -eq 0 ] && break
+  sleep 1; n=$((n + 1))
+done
+echo "  after the policy: the neighbour has $(peer_has 203.0.115.0/24)   (${n}s)"
+expect "and the neighbour really stops seeing the prefix" \
+  test "$(peer_has 203.0.115.0/24)" -eq 0
+expect "while the one the policy permits is still there" \
+  test "$(peer_has 203.0.113.0/24)" -ge 1
+
+# The confirmation, which also proves the revert was armed on the box rather
+# than promised. Left unconfirmed, the lab would be reverted under itself ten
+# minutes later.
+# `configure` first: a fresh hexash process has no candidate until it is
+# entered, and `commit` on its own answers "no candidate configuration" -
+# which is not a confirmation, and the box would have reverted the change
+# under the lab ten minutes later.
+CONF=$($HX -c "configure" -c "commit" 2>&1)
+expect_in "and a later commit confirms it" "confirmed" "$CONF"
+
+# A session that did not arrive over SSH has no address to check, and the box
+# says which check it could not make rather than letting it be assumed.
+CONSOLE=$($HX -c "configure" \
+          -c "ip prefix-list PL-KEEP seq 6 permit 198.18.0.0/24" \
+          -c "commit" 2>&1)
+echo "$CONSOLE" | grep -i "note:" | head -2 | sed 's/^/  /'
+expect_in "a console session is told the check did not run" \
+  "did not arrive over SSH" "$CONSOLE"
+expect_in "and is not gated on a check nobody could make" \
+  "commit complete" "$CONSOLE"
 
 verdict

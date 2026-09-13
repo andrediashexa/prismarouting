@@ -68,6 +68,63 @@ are to be interpreted as described in
 
 ### Added
 
+* **`commit` refuses a route-map that is referenced and never defined**, and
+  names it ([#145](https://github.com/andrediashexa/hexarouting/issues/145)).
+  FRR takes the statement, warns once and denies everything it governs: the
+  session comes up Established, carries **zero** prefixes, and nothing on the
+  box says why. Measured on FRR 10.7.1 with two speakers over a veth pair,
+  asserted on the receiving side's table - `neighbor X route-map RM-MISSING
+  in` holds zero where the same configuration with the map defined holds both
+  prefixes, and `redistribute ... route-map` and `network ... route-map`
+  originate nothing. Those three shapes are refused and no others.
+
+  **The warning it replaces was reaching nobody.** FRR prints `The route-map
+  'X' does not exist.` to the vtysh session; this VTY hands whole
+  configurations to `frr-reload.py`, whose output is filtered to lines
+  carrying `Exiting:`, `ERROR`, `% `, `Failed` or `Exception:`. That line is
+  none of them.
+
+  **A `call` to an undefined map is reported and not refused**, because it was
+  measured to behave differently: FRR skips a call it cannot resolve, the
+  clause continues, and the prefix is still advertised. So is every other
+  place a map can be named, where the cost was not measured - and so is a map
+  that is defined and used by nobody, which is what an operator building a
+  policy map-first has on the box between two commits.
+
+  **Refused only when this change is what causes it**, the guard the SSH
+  lockout checks already use. A box whose saved configuration already carries
+  the reference is warned and can still be worked on: `--load` runs this same
+  check at boot and refuses the file whole, so refusing there would bring the
+  box up with nothing on it, which is worse than the fault.
+
+* **`commit` says when a change would stop advertising the prefix carrying
+  the operator's own session**, and requires `commit cutoff`
+  ([#145](https://github.com/andrediashexa/hexarouting/issues/145)). The SSH
+  lockout check refuses a configuration nobody could log in with
+  ([#35](https://github.com/andrediashexa/hexarouting/issues/35)); this is the
+  same failure one layer down, and the box is the only thing that can see it
+  coming. The address comes from `SSH_CONNECTION`, whose **server** half is
+  the address this box advertises a route to.
+
+  Gated rather than refused, the shape
+  [#23](https://github.com/andrediashexa/hexarouting/issues/23) established:
+  withdrawing a prefix on purpose is ordinary, and the box cannot tell that
+  apart from the mistake. It is then applied as `commit confirmed 10` whether
+  or not that was asked for, because the word acknowledges the consequence and
+  does not provide a way back.
+
+  **It fires only when it is sure.** Every neighbour that has an outbound
+  policy must deny the prefix and none may be unreadable: a `match` on a
+  community or an AS-path, a `call`, a `distribute-list`, a `filter-list`, or
+  an origination `bgp_originations()` is blind to withdraws the whole finding.
+  Measured on FRR 10.7.1 against the peer's table, a route-map's **implicit
+  deny** withdraws a prefix as surely as a deny clause naming it, which is the
+  case an operator does not see by reading their own policy back.
+
+  **On a serial console it says it could not check**, rather than passing
+  silently - and only when the change moves something that decides what this
+  box advertises.
+
 * **`block-stride`: the distance between the blocks one subscriber holds**
   ([#55](https://github.com/andrediashexa/hexarouting/issues/55)). An
   extension used to be whatever came off the free list next. With a stride,

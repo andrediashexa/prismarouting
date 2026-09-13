@@ -466,16 +466,24 @@ and a configuration hiding the difference lies about how much it checked.
 Three outages this box could refuse:
 
 * **A route-map referenced and never defined.** FRR denies everything. The
-  session comes up, carries no routes, and nothing says why.
+  session comes up, carries no routes, and nothing says why. **Delivered**, as
+  a refusal, for the three shapes measured to deny everything: `neighbor ...
+  route-map ... in|out`, `redistribute ... route-map` and `network ...
+  route-map`. A `call` to an undefined map was measured NOT to deny, and is
+  reported.
 * **A policy that withdraws the prefix carrying the operator's own session.**
   The same failure as the SSH lockout check
   ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), one layer
-  down, and the box is the only thing that can see it coming.
+  down, and the box is the only thing that can see it coming. **Delivered**,
+  gated on `commit cutoff` rather than refused, and applied as a confirmed
+  commit. The address comes from `SSH_CONNECTION`; a console session is told
+  the check could not be made.
 * **A pool's public prefix that nothing announces.** Specific to this product.
   Configure `nat cgnat pool clientes outside 200.150.0.16/28` and, unless
   something separately advertises that prefix, every subscriber behind it is
   translated to an address the internet cannot route back to. CGNAT correct,
-  BGP correct, service dead. Nothing connects the two today.
+  BGP correct, service dead. **Delivered**, as a warning and never a refusal,
+  for the reason `pool_announce_findings()` measures out.
 
 **Testing.** Counting configuration proves nothing — the lesson this
 repository keeps relearning. Every policy issue needs two routers and real
