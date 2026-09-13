@@ -127,6 +127,122 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`docs/` claimed behaviour the box does not have, in sixty-odd places.**
+  `README.md` makes `docs/` the reference every other document is corrected
+  against, so a wrong sentence here becomes a wrong wiki page and then a wrong
+  answer to an operator on the phone. A wiki sweep had been done; nothing had
+  swept `docs/`. Every claim below was established from the product - by
+  driving `hexash` in-process the way `test/test_hexash_*.py` do, by computing
+  mappings with `ref/bpa_model.py`, or by reading the code that prints the
+  thing - and the counts were taken from what they count.
+
+  The shapes, because they repeat. **Quoted output that the box does not
+  print**: the `commit remap` refusal in `pool-resize.md` and
+  `architecture.md` was missing the live-state count, the second example and
+  the closing paragraph, and `architecture.md` had hand-wrapped a line the VTY
+  deliberately prints whole; the UDP-export refusal in `logging.md` was
+  missing its last paragraph; `routing.md`'s `show cgnat ?` listed four of
+  eleven sub-commands, `ip ?` offered a `route` keyword removed two releases
+  ago, an interface block listed six of fifteen options, `show route` and
+  `show interface utilization` were in orders `sorted()` cannot produce,
+  `show interface <name>` was two columns under-indented, and one block showed
+  `hexarouting(config-cgnat-pool)#`, a prompt this VTY has never printed;
+  `appliance.md` quoted the medium's banner at version 0.5.0 and a
+  confirmation that types the disk path back when the installer asks for the
+  word `yes`. **Features documented as missing that shipped**: `roadmap.md`
+  said BGP policy was "not in the grammar at all" (v0.48.0, v0.51.0-v0.55.0),
+  an interface understood "`mtu` and `urpf` and nothing else" (v0.40.0-v0.44.0),
+  there was no documented pool-resize procedure (v0.19.0), nothing detected
+  tampering in the trail (v0.23.0), nothing warned below the RFC floors
+  (v0.16.0), the suite never ran an `off` mode, and the read-back check was
+  not written. **Counts that had drifted**: `context.md`'s "12,000-line
+  dataplane, 4,400-line VTY and 35 labs" against 18,903, 13,939 and 50, and
+  its "30,000+ vectors" against 13,670 generated ones; `routing.md`'s "four
+  statements of twenty-five" against three of twenty-four, and "twenty-eight"
+  console lines against thirty. Where a number had no stable source it was
+  replaced by the property rather than by a fresher number, for the reason
+  `README.md` gives.
+
+  Two statements were the opposite of the product, and both change what an
+  operator does: `logging.md` said the exporter uses a kernel socket, when the
+  **UDP** export is a packet the dataplane sends - so a UDP collector must be
+  reachable through the VPP FIB, not through Linux; and `context.md` said the
+  VTY reaches the dataplane through vat2 and "not `vppctl` text", when
+  thirty-eight read sites and the pool validation behind `commit check` are
+  still `vppctl`. `routing.md` also told the operator the refusal names a
+  statement in FRR's spelling, when `as_hierarchy()` exists precisely to name
+  it in this VTY's.
+
+  Three things are reported and **not** repaired, because the fix is a
+  decision rather than an edit: `bpa_log.c` schedules the boot marker before
+  replaying pins but emits it after them in the same drain, so `logging.md`
+  and `bpa_log.h` both describe an order the wire does not carry;
+  `show interface <name>` drops the first counter VPP prints, because VPP puts
+  it on the interface's own line and the reader skips that row; and
+  `roadmap.md` now has two `Phase 4` and two `Phase 5` headings, which cannot
+  be renumbered without breaking the `phase 6` that `ha.md` points at.
+
+## 0.68.0 — what the box said it did, and a release gate that could not be passed
+
+[#9](https://github.com/andrediashexa/hexarouting/issues/9),
+[#226](https://github.com/andrediashexa/hexarouting/issues/226),
+[#227](https://github.com/andrediashexa/hexarouting/issues/227),
+[#249](https://github.com/andrediashexa/hexarouting/issues/249),
+[#250](https://github.com/andrediashexa/hexarouting/issues/250),
+[#251](https://github.com/andrediashexa/hexarouting/issues/251),
+[#252](https://github.com/andrediashexa/hexarouting/issues/252),
+[#253](https://github.com/andrediashexa/hexarouting/issues/253),
+[#254](https://github.com/andrediashexa/hexarouting/issues/254),
+[#255](https://github.com/andrediashexa/hexarouting/issues/255),
+[#256](https://github.com/andrediashexa/hexarouting/issues/256),
+[#257](https://github.com/andrediashexa/hexarouting/issues/257),
+[#258](https://github.com/andrediashexa/hexarouting/issues/258),
+[#259](https://github.com/andrediashexa/hexarouting/issues/259),
+[#260](https://github.com/andrediashexa/hexarouting/issues/260),
+[#261](https://github.com/andrediashexa/hexarouting/issues/261),
+[#262](https://github.com/andrediashexa/hexarouting/issues/262),
+[#263](https://github.com/andrediashexa/hexarouting/issues/263),
+[#265](https://github.com/andrediashexa/hexarouting/issues/265),
+[#266](https://github.com/andrediashexa/hexarouting/issues/266),
+[#267](https://github.com/andrediashexa/hexarouting/issues/267),
+[#268](https://github.com/andrediashexa/hexarouting/issues/268),
+[#269](https://github.com/andrediashexa/hexarouting/issues/269),
+[#270](https://github.com/andrediashexa/hexarouting/issues/270),
+[#271](https://github.com/andrediashexa/hexarouting/issues/271),
+[#272](https://github.com/andrediashexa/hexarouting/issues/272),
+[#273](https://github.com/andrediashexa/hexarouting/issues/273),
+[#274](https://github.com/andrediashexa/hexarouting/issues/274),
+[#275](https://github.com/andrediashexa/hexarouting/issues/275),
+[#278](https://github.com/andrediashexa/hexarouting/issues/278),
+[#279](https://github.com/andrediashexa/hexarouting/issues/279),
+[#280](https://github.com/andrediashexa/hexarouting/issues/280),
+[#281](https://github.com/andrediashexa/hexarouting/issues/281).
+
+### Fixed
+
+* **`show interface <name>` silently dropped `rx packets`, the first counter
+  the dataplane prints** ([#280](https://github.com/andrediashexa/hexarouting/issues/280)).
+  The code removed the column header with `[1:]` and then removed another row
+  with a second `[1:]` - and that row is the interface's own line, which is
+  where VPP puts the first counter.
+
+  It did not look like a gap. The list began at `rx bytes` and ran to `drops`
+  with nothing on the screen saying a row had gone, so a reader concluded the
+  box has no `rx packets` or that it is zero. "Is anything arriving on this
+  port" is the question this screen gets opened for, and it also broke the
+  promise made two lines above the code: an operator comparing this against
+  the dataplane during a fault got a different set of rows, which is what
+  "straight from the dataplane, uninterpreted" exists to prevent.
+
+  The identity in front of that first counter - name, index, state, MTU - is
+  stripped rather than printed, because all four are already on the lines
+  above and the row would not line up with the others. An interface with
+  nothing after its MTU has no counters and says `all zero`, rather than
+  presenting its own identity as though it were a reading. Both are asserted,
+  and both go red on their own mutation.
+
+  Found while checking `docs/` against the product.
+
 * **A re-wrapped message silently broke two lab needles**
   ([#279](https://github.com/andrediashexa/hexarouting/issues/279)).
   `lab/routing.sh` went red in the release suite on `systemctl restart frr` and
@@ -155,6 +271,7 @@ version has a chance of seeing it.
   The timeout matters as much as the address family. A lab that fails says so
   in its verdict and the suite classifies it; a lab that hangs takes a slot out
   of the suite for as long as nobody is looking.
+
 * **`commit check` promised to report which subscribers a change re-maps, and
   reported nothing** ([#278](https://github.com/andrediashexa/hexarouting/issues/278)).
   The VTY's own `?` help says so and six pages of the operator wiki repeated
@@ -965,153 +1082,6 @@ version has a chance of seeing it.
   compares headings now, within a section, naming which release and which line.
   The red needed no fixture either, and it found two older releases carrying
   it too.
-
-### Fixed
-
-* **`docs/` claimed behaviour the box does not have, in sixty-odd places.**
-  `README.md` makes `docs/` the reference every other document is corrected
-  against, so a wrong sentence here becomes a wrong wiki page and then a wrong
-  answer to an operator on the phone. A wiki sweep had been done; nothing had
-  swept `docs/`. Every claim below was established from the product - by
-  driving `hexash` in-process the way `test/test_hexash_*.py` do, by computing
-  mappings with `ref/bpa_model.py`, or by reading the code that prints the
-  thing - and the counts were taken from what they count.
-
-  The shapes, because they repeat. **Quoted output that the box does not
-  print**: the `commit remap` refusal in `pool-resize.md` and
-  `architecture.md` was missing the live-state count, the second example and
-  the closing paragraph, and `architecture.md` had hand-wrapped a line the VTY
-  deliberately prints whole; the UDP-export refusal in `logging.md` was
-  missing its last paragraph; `routing.md`'s `show cgnat ?` listed four of
-  eleven sub-commands, `ip ?` offered a `route` keyword removed two releases
-  ago, an interface block listed six of fifteen options, `show route` and
-  `show interface utilization` were in orders `sorted()` cannot produce,
-  `show interface <name>` was two columns under-indented, and one block showed
-  `hexarouting(config-cgnat-pool)#`, a prompt this VTY has never printed;
-  `appliance.md` quoted the medium's banner at version 0.5.0 and a
-  confirmation that types the disk path back when the installer asks for the
-  word `yes`. **Features documented as missing that shipped**: `roadmap.md`
-  said BGP policy was "not in the grammar at all" (v0.48.0, v0.51.0-v0.55.0),
-  an interface understood "`mtu` and `urpf` and nothing else" (v0.40.0-v0.44.0),
-  there was no documented pool-resize procedure (v0.19.0), nothing detected
-  tampering in the trail (v0.23.0), nothing warned below the RFC floors
-  (v0.16.0), the suite never ran an `off` mode, and the read-back check was
-  not written. **Counts that had drifted**: `context.md`'s "12,000-line
-  dataplane, 4,400-line VTY and 35 labs" against 18,903, 13,939 and 50, and
-  its "30,000+ vectors" against 13,670 generated ones; `routing.md`'s "four
-  statements of twenty-five" against three of twenty-four, and "twenty-eight"
-  console lines against thirty. Where a number had no stable source it was
-  replaced by the property rather than by a fresher number, for the reason
-  `README.md` gives.
-
-  Two statements were the opposite of the product, and both change what an
-  operator does: `logging.md` said the exporter uses a kernel socket, when the
-  **UDP** export is a packet the dataplane sends - so a UDP collector must be
-  reachable through the VPP FIB, not through Linux; and `context.md` said the
-  VTY reaches the dataplane through vat2 and "not `vppctl` text", when
-  thirty-eight read sites and the pool validation behind `commit check` are
-  still `vppctl`. `routing.md` also told the operator the refusal names a
-  statement in FRR's spelling, when `as_hierarchy()` exists precisely to name
-  it in this VTY's.
-
-  Three things are reported and **not** repaired, because the fix is a
-  decision rather than an edit: `bpa_log.c` schedules the boot marker before
-  replaying pins but emits it after them in the same drain, so `logging.md`
-  and `bpa_log.h` both describe an order the wire does not carry;
-  `show interface <name>` drops the first counter VPP prints, because VPP puts
-  it on the interface's own line and the reader skips that row; and
-  `roadmap.md` now has two `Phase 4` and two `Phase 5` headings, which cannot
-  be renumbered without breaking the `phase 6` that `ha.md` points at.
-
-## 0.68.0 — what the box said it did, and a release gate that could not be passed
-
-[#9](https://github.com/andrediashexa/hexarouting/issues/9),
-[#226](https://github.com/andrediashexa/hexarouting/issues/226),
-[#227](https://github.com/andrediashexa/hexarouting/issues/227),
-[#249](https://github.com/andrediashexa/hexarouting/issues/249),
-[#250](https://github.com/andrediashexa/hexarouting/issues/250),
-[#251](https://github.com/andrediashexa/hexarouting/issues/251),
-[#252](https://github.com/andrediashexa/hexarouting/issues/252),
-[#253](https://github.com/andrediashexa/hexarouting/issues/253),
-[#254](https://github.com/andrediashexa/hexarouting/issues/254),
-[#255](https://github.com/andrediashexa/hexarouting/issues/255),
-[#256](https://github.com/andrediashexa/hexarouting/issues/256),
-[#257](https://github.com/andrediashexa/hexarouting/issues/257),
-[#258](https://github.com/andrediashexa/hexarouting/issues/258),
-[#259](https://github.com/andrediashexa/hexarouting/issues/259),
-[#260](https://github.com/andrediashexa/hexarouting/issues/260),
-[#261](https://github.com/andrediashexa/hexarouting/issues/261),
-[#262](https://github.com/andrediashexa/hexarouting/issues/262),
-[#263](https://github.com/andrediashexa/hexarouting/issues/263),
-[#265](https://github.com/andrediashexa/hexarouting/issues/265),
-[#266](https://github.com/andrediashexa/hexarouting/issues/266),
-[#267](https://github.com/andrediashexa/hexarouting/issues/267),
-[#268](https://github.com/andrediashexa/hexarouting/issues/268),
-[#269](https://github.com/andrediashexa/hexarouting/issues/269),
-[#270](https://github.com/andrediashexa/hexarouting/issues/270),
-[#271](https://github.com/andrediashexa/hexarouting/issues/271),
-[#272](https://github.com/andrediashexa/hexarouting/issues/272),
-[#273](https://github.com/andrediashexa/hexarouting/issues/273),
-[#274](https://github.com/andrediashexa/hexarouting/issues/274),
-[#275](https://github.com/andrediashexa/hexarouting/issues/275),
-[#278](https://github.com/andrediashexa/hexarouting/issues/278),
-[#279](https://github.com/andrediashexa/hexarouting/issues/279),
-[#280](https://github.com/andrediashexa/hexarouting/issues/280),
-[#281](https://github.com/andrediashexa/hexarouting/issues/281).
-
-### Fixed
-
-* **`show interface <name>` silently dropped `rx packets`, the first counter
-  the dataplane prints** ([#280](https://github.com/andrediashexa/hexarouting/issues/280)).
-  The code removed the column header with `[1:]` and then removed another row
-  with a second `[1:]` - and that row is the interface's own line, which is
-  where VPP puts the first counter.
-
-  It did not look like a gap. The list began at `rx bytes` and ran to `drops`
-  with nothing on the screen saying a row had gone, so a reader concluded the
-  box has no `rx packets` or that it is zero. "Is anything arriving on this
-  port" is the question this screen gets opened for, and it also broke the
-  promise made two lines above the code: an operator comparing this against
-  the dataplane during a fault got a different set of rows, which is what
-  "straight from the dataplane, uninterpreted" exists to prevent.
-
-  The identity in front of that first counter - name, index, state, MTU - is
-  stripped rather than printed, because all four are already on the lines
-  above and the row would not line up with the others. An interface with
-  nothing after its MTU has no counters and says `all zero`, rather than
-  presenting its own identity as though it were a reading. Both are asserted,
-  and both go red on their own mutation.
-
-  Found while checking `docs/` against the product.
-
-* **A re-wrapped message silently broke two lab needles**
-  ([#279](https://github.com/andrediashexa/hexarouting/issues/279)).
-  `lab/routing.sh` went red in the release suite on `systemctl restart frr` and
-  `FRR validates them at commit`. Neither message changed a word: #271 folded
-  them to fit an 80-column console and the fold landed inside both needles -
-  `'systemctl` ends one row and `restart frr'` starts the next.
-
-  `expect_in` searches the raw text, so a needle only matches while the message
-  it is in happens to fold somewhere else. All 40 unit suites were green,
-  because none of them reads a lab; the only thing that could say so was a lab
-  run, an hour into a release suite.
-
-  `expect_said` in `lab/verdict.sh` collapses whitespace on both sides, so a
-  sentence matches wherever it folds. It is the shell half of `unwrapped()` in
-  `test/test_hexash_bgp.py`. `expect_in` stays for anything printed WHOLE - a
-  statement, a path, a configuration line, a counter - because those must not
-  wrap and collapsing first would hide it if they did.
-
-* **A lab held a runner for 29 minutes without printing a line or failing.**
-  `lab/oom.sh off` sat in `apt-get update` while the release suite waited on
-  it. Measured inside the container: `getent hosts deb.debian.org` returns only
-  IPv6 addresses, `curl -4` gets 200 and `curl -6` gets nothing, so apt chose a
-  family this box cannot route and blocked. `tools/lab.sh` now forces IPv4 and
-  sets a timeout, and the same lab finishes in 107 seconds.
-
-  The timeout matters as much as the address family. A lab that fails says so
-  in its verdict and the suite classifies it; a lab that hangs takes a slot out
-  of the suite for as long as nobody is looking.
 
 ## 0.67.0 — nine MUSTs nothing was holding, and an ISO that shipped its own keys
 
