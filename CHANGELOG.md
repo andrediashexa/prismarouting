@@ -754,8 +754,15 @@ are to be interpreted as described in
   helper - `vc()` in `lab/lib.sh` - and `test/test_lab_crlf.py` refuses the
   extraction shapes that carry a carriage return at all: the last `awk` field,
   a whole line, `grep -x`, a `sed` that prints the rest of a line, an
-  end-anchored regex. Sixteen sites were converted, including the fifteen that
-  were verdict-neutral, so the rule has no allowlist for anybody to grow.
+  end-anchored regex. Seventeen sites were converted, including the sixteen
+  that were verdict-neutral, so the rule has no allowlist for anybody to grow.
+
+  **The guard reads two steps, not one.** A lab can park a whole output in a
+  variable on one line and extract from it on another, and the second line
+  never says `vppctl` - `lab/icmp-tcp.sh` was doing exactly that. What it does
+  not follow is stated in its own docstring rather than left to be discovered:
+  a value through a file, through a function's return, or built by string
+  arithmetic is out of reach of a source check.
 
 * **A dead `expect_not_in` in `lab/vty.sh`**, found on the way and the same
   defect class with no carriage return in it

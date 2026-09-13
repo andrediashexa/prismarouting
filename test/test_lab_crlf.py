@@ -32,6 +32,18 @@ the extraction shapes that carry a CR at all. They are a closed list, and the
 labs pass it today with none of them unstripped, so the rule costs nothing to
 keep and there is no allowlist for anybody to grow.
 
+It reads two steps, not one. A lab can park a whole output in a variable on
+one line and extract from it on another, and the second line never says
+"vppctl" - lab/icmp-tcp.sh did exactly that. So the file is read first for
+variables holding unstripped vppctl output, and an extraction shape applied to
+one of them is the same offence as one applied to the pipeline.
+
+What it does NOT follow, stated rather than discovered later: a value that
+reaches a FILE and is read back from it, one that goes through a lab function
+returning it, or one built by string arithmetic the rule does not model. Those
+are out of reach of a source check, and the answer for them is the same one as
+here - call vc().
+
 The strip belongs at the extraction and not at the pipe. That was decided by
 counting: of the 280 assertion sites in lab/*.sh that read a vppctl-derived
 value, the needle is a literal string in all but a handful, and a literal
@@ -80,6 +92,7 @@ SHAPES = [
 STRIPPED = re.compile(r"tr\s+-d\s+['\"]\\r['\"]")
 # A pipeline that begins at vc() is already stripped: lab/lib.sh does it there.
 CALLS_VPPCTL = re.compile(r"(^|[^\w./-])vppctl\s")
+ASSIGNED_FROM_VPPCTL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=\$\((.*)")
 
 
 def logical_lines(path):
@@ -100,16 +113,42 @@ def logical_lines(path):
     return out
 
 
-def offences(line):
-    """The shapes this line writes over unstripped vppctl output."""
+def offences(line, raw_vars=()):
+    """The shapes this line writes over unstripped vppctl output.
+
+    `raw_vars` closes the gap a one-line rule leaves open: a lab can park the
+    whole output in a variable on one line and extract from it on another, and
+    the second line never says "vppctl". Those are passed in by the caller,
+    which reads the file first.
+    """
     s = line.strip()
     if s.startswith("#"):
         return []
-    if not CALLS_VPPCTL.search(s):
+    reads_raw = CALLS_VPPCTL.search(s) is not None
+    if not reads_raw:
+        for v in raw_vars:
+            if re.search(r"\$\{?" + re.escape(v) + r"\b", s):
+                reads_raw = True
+                break
+    if not reads_raw:
         return []
     if STRIPPED.search(s):
         return []
     return [why for rx, why in SHAPES if rx.search(s)]
+
+
+def raw_vppctl_vars(lines):
+    """Variables holding vppctl output that still has its carriage returns."""
+    out = set()
+    for _ln, line in lines:
+        s = line.strip()
+        if s.startswith("#"):
+            continue
+        for m in ASSIGNED_FROM_VPPCTL.finditer(s):
+            body = m.group(2)
+            if CALLS_VPPCTL.search(body) and not STRIPPED.search(body):
+                out.add(m.group(1))
+    return out
 
 
 # --- the checker has to be able to see a violation ---------------------------
@@ -139,6 +178,19 @@ for bad, good in SAMPLES:
 check(offences("X=$(vc show interface pg0 | awk '{print $NF}')") == [],
       "the checker flags vc(), which is the helper it is meant to steer "
       "people towards")
+# The two-line shape: the extraction never says "vppctl", so a rule that reads
+# one line at a time would walk straight past it.
+TWO_LINE = [(1, 'RAW=$(vppctl show interface pg0)'),
+            (2, 'X=$(printf "%s\\n" "$RAW" | awk \'{print $NF}\')')]
+check(raw_vppctl_vars(TWO_LINE) == {"RAW"},
+      "the checker does not notice a variable holding unstripped vppctl "
+      "output, so an extraction on a later line would go unread")
+check(offences(TWO_LINE[1][1], raw_vppctl_vars(TWO_LINE)) != [],
+      "the checker misses an extraction taken from a variable rather than "
+      "from the pipeline, which is the same defect one line down")
+check(raw_vppctl_vars([(1, "RAW=$(vppctl show bpa pool | tr -d '\\r')")]) == set(),
+      "the checker treats an already-stripped variable as raw, which would "
+      "flag correct labs and teach the next author to add an exception")
 
 # --- lab/lib.sh has to carry the helper --------------------------------------
 lib = open(os.path.join(LAB, "lib.sh")).read()
@@ -156,11 +208,13 @@ read_vppctl = 0
 scanned = 0
 for path in labs:
     name = os.path.basename(path)
-    for ln, line in logical_lines(path):
+    lines = logical_lines(path)
+    raw_vars = raw_vppctl_vars(lines)
+    for ln, line in lines:
         scanned += 1
         if CALLS_VPPCTL.search(line) and not line.strip().startswith("#"):
             read_vppctl += 1
-        for why in offences(line):
+        for why in offences(line, raw_vars):
             check(False,
                   f"lab/{name}:{ln} takes a value out of vppctl without "
                   f"removing the carriage return - {why}\n"
