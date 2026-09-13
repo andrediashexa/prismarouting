@@ -226,6 +226,38 @@ chroot "$ROOT" passwd -l root >/dev/null
 # installer unmasks it on the target and writes the sshd policy there.
 chroot "$ROOT" systemctl mask ssh.service >/dev/null 2>&1 || true
 
+# AND THE SSH HOST KEYS, which are a credential in exactly the same sense and
+# shipped in every ISO this project has published (#245).
+#
+# openssh-server's postinst generates them inside the build container, so the
+# private halves were squashed into the image with everything else. The
+# installer unpacks that squashfs onto the disk and then enables sshd with
+# PermitRootLogin yes: every box installed from one release therefore answered
+# with the SAME host key, and its private half was in the download. Anybody who
+# fetched the ISO could impersonate any of those boxes on the management
+# channel, and the operator's client would say nothing, because the key it was
+# pinned to is the key it was handed.
+#
+# Nothing is lost on the live image: sshd is masked above. hexarouting-install
+# generates a fresh set on the target, per box, before it enables the service.
+say "removing the live image's ssh host keys"
+rm -f "$ROOT"/etc/ssh/ssh_host_*_key "$ROOT"/etc/ssh/ssh_host_*_key.pub
+
+# The refusal. Everything above this line is what the image is ALLOWED to
+# carry; this says what it must not, and it runs on the root while it is still
+# a directory - after which the only way to look inside is to unsquash it.
+#
+# docs/appliance.md: "No answer file is shipped in the ISO, and the build MUST
+# NOT put one there." Nothing held that rule. Writing an answer file into this
+# root left all 34 suites green, and an answer file carries the root password
+# (#245).
+#
+# The same script is driven against fake roots by test/test_no_credentials.sh,
+# so the refusal is proved in seconds instead of in a ten-minute build that
+# needs root.
+say "no credentials in the image"
+sh "$REPO/appliance/no-credentials-in-image" "$ROOT" || exit 1
+
 say "squashfs"
 chroot "$ROOT" /bin/sh -c "apt-get clean; rm -rf /var/lib/apt/lists/*"
 KVER=$(basename "$(ls -d "$ROOT"/lib/modules/* | head -1)")
@@ -269,6 +301,14 @@ menuentry "HexaRouting (recovery: single user, shell)" {
     initrd /live/initrd
 }
 EOF
+
+# And again on the ISO tree, because the root is not the only thing that ends
+# up on the medium. /run/live/medium/hexarouting.answers - the path
+# "hexarouting.answers" reads with no argument - is the ROOT OF THE MEDIUM,
+# which is this directory and not the squashfs. A check that looked only at the
+# root would miss the one file the installer picks up without being asked.
+say "no credentials on the medium"
+sh "$REPO/appliance/no-credentials-in-image" "$WORK/iso" || exit 1
 
 say "ISO hibrida"
 grub-mkrescue -o "$OUT" "$WORK/iso" -- -volid HEXAROUTING

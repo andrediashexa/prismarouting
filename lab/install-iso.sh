@@ -132,15 +132,64 @@ cp /mnt/iso/live/vmlinuz /mnt/iso/live/initrd /tmp/bf/
 # The live image must carry no usable credentials. Read its /etc/shadow out of
 # the squashfs before anything else touches it - this is the file that used to
 # travel onto the disk with a published password in it.
+#
+# The WHOLE squashfs is unpacked, not just that one file. /etc/shadow was the
+# credential this lab knew about; it is not the only one an image can carry,
+# and the rule in docs/appliance.md is about all of them - "a credential in a
+# published image is the defect the locked live root account exists to
+# prevent". Unpacking the lot costs about 2.5 seconds and a gigabyte of the
+# runner, against an install that boots two virtual machines.
 rm -rf /tmp/sq
 SHADOW_READ=1
 if ! unsquashfs -d /tmp/sq -no-progress /mnt/iso/live/filesystem.squashfs \
-       etc/shadow > /tmp/unsq.log 2>&1; then
-  echo "  could not read the live image's /etc/shadow:"
+       > /tmp/unsq.log 2>&1; then
+  echo "  could not unpack the live image:"
   tail -3 /tmp/unsq.log | sed 's/^/    /'
   SHADOW_READ=0
 fi
 LIVE_ROOT=$(grep "^root:" /tmp/sq/etc/shadow 2>/dev/null | cut -d: -f2)
+
+# THE ASSERTION ON THE ARTEFACT (#245).
+#
+# test/test_no_credentials.sh proves this script refuses, in milliseconds,
+# against roots it made up. Only this proves the image that was actually built
+# went through it: the fast suite cannot tell a build that runs the refusal
+# from one that quietly stopped calling it, because it never reads an ISO.
+#
+# Both trees, and the second is not the first. The squashfs is what lands on
+# the disk; /mnt/iso is the root of the MEDIUM, which is where
+# "hexarouting.answers" with no argument reads
+# /run/live/medium/hexarouting.answers from.
+#
+# An unread image is not a clean image - the same argument the /etc/shadow
+# check below makes, and for the same reason: the moment this matters is the
+# moment nobody is looking.
+echo "=========== the image carries no credential ==========="
+if [ "$SHADOW_READ" != 1 ]; then
+  echo "  [FAIL] the live image could not be unpacked, so nothing here proves"
+  echo "         what it carries"
+  fail=1
+elif sh /src/appliance/no-credentials-in-image /tmp/sq /mnt/iso; then
+  echo "  [ ok ] no answer file, no private key and no usable password hash"
+  echo "         in the squashfs or on the medium"
+else
+  echo "  [FAIL] the ISO that was just built carries a credential, above."
+  echo "         An ISO is published: it goes on a USB stick and onto a"
+  echo "         download page. See docs/appliance.md and #245."
+  fail=1
+fi
+# The host keys are the case this found: every released ISO carried the build
+# container's own set. The image must have none, and phase 2 checks that the
+# installed box grew its own.
+LIVE_HOSTKEYS=$(ls /tmp/sq/etc/ssh/ssh_host_*_key 2>/dev/null | wc -l)
+if [ "$SHADOW_READ" = 1 ] && [ "$LIVE_HOSTKEYS" != 0 ]; then
+  echo "  [FAIL] the image carries $LIVE_HOSTKEYS ssh host private key(s)"
+  fail=1
+fi
+
+# Given back before the install starts: a gigabyte of unpacked root on the same
+# runner that is about to hold two qcow2 disks.
+rm -rf /tmp/sq
 umount /mnt/iso
 echo "live image root entry: '${LIVE_ROOT:-<unreadable>}'"
 
@@ -318,6 +367,12 @@ if [ -n "$START" ] \
   INST_REC_UUID=$(awk '$2 == "/var/log/hexarouting" { print $1 }' \
       /tmp/target/etc/fstab 2>/dev/null | sed 's/^UUID=//')
   INST_MDCONF=$(grep "^ARRAY" /tmp/target/etc/mdadm/mdadm.conf 2>/dev/null || true)
+  # The other half of #245. The medium carries no ssh host keys, so the
+  # installer has to make this box its own - and sshd, which the installer
+  # enables with PermitRootLogin yes, does not start without them. A box
+  # installed at a site with no management path is found by somebody who
+  # drove there.
+  INST_HOSTKEYS=$(ls /tmp/target/etc/ssh/ssh_host_*_key 2>/dev/null | wc -l)
   echo "  hostname  ${INST_HOST:-<none>}"
   echo "  timezone  ${INST_TZ:-<none>}"
   echo "  root      $(printf '%s' "${INST_ROOT:-<none>}" | cut -c1-12)..."
@@ -370,6 +425,13 @@ if [ "$DISK_FAIL" = 0 ]; then
          echo "         network is rootable by anyone who has read the release"
          fail=1 ;;
     esac
+  fi
+  if [ "${INST_HOSTKEYS:-0}" -ge 1 ]; then
+    echo "  [ ok ] the installed box generated its own ssh host keys"
+  else
+    echo "  [FAIL] the installed box has no ssh host key, so sshd will not"
+    echo "         start and the box has no management path over the network"
+    fail=1
   fi
   if [ "${INST_HOST:-}" = "$NEW_HOST" ]; then
     echo "  [ ok ] the hostname answer reached the disk"
