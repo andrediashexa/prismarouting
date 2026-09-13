@@ -1056,8 +1056,8 @@ right. An alarm that is always on is one nobody reads.
 
 ```
 hexarouting# [edit] interface host-veth-vpp
-hexarouting# [edit]  mtu 1500
-hexarouting# [edit]  exit
+hexarouting# [edit interface host-veth-vpp] mtu 1500
+hexarouting# [edit interface host-veth-vpp] exit
 hexarouting# [edit] commit
 ```
 
@@ -1683,7 +1683,7 @@ identifies the build, and an operator on the phone needs the second.
 Tab completes; `?` lists the valid options at the cursor with a description:
 
 ```
-hexarouting# show cgnat ?
+hexarouting> show cgnat ?
   blocks   blocks allocated in dynamic mode
   logging  IPFIX export state
   pool     configured CGNAT pools
