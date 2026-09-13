@@ -1,7 +1,5 @@
 # Instalação da appliance
 
-# Instalação da appliance
-
 A ISO é um **meio de instalação**, não uma appliance para uso direto. Ela dá boot sem credencial nenhuma, roda o produto para inspeção, e oferece um comando que a transforma em uma máquina com dono.
 
 ```mermaid

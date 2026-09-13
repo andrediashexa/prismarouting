@@ -49,7 +49,8 @@ are to be interpreted as described in
 [#221](https://github.com/andrediashexa/hexarouting/issues/221),
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223),
-[#224](https://github.com/andrediashexa/hexarouting/issues/224).
+[#224](https://github.com/andrediashexa/hexarouting/issues/224),
+[#225](https://github.com/andrediashexa/hexarouting/issues/225).
 
 ### Changed
 
@@ -128,6 +129,25 @@ are to be interpreted as described in
   whether the page names the statement, not whether it explains it well,
   because the pages are laid out differently and a guard that demanded one
   shape would fail on prose that is perfectly clear.
+
+* **Five wiki pages opened with their own title two, three and four times.**
+  The mirror's contract is that each file starts with one `# <title>` line,
+  which is the document's title field and not part of its body:
+  `tools/wiki-pull.sh` writes it and `tools/wiki-push.sh` strips **that line**
+  back off. Push strips one, so a file carrying four publishes a page whose
+  body opens with its own title three times over. It is the accumulation
+  [#165](https://github.com/andrediashexa/hexarouting/issues/165) describes,
+  surviving in the data after the code that caused it was fixed
+  ([#225](https://github.com/andrediashexa/hexarouting/issues/225)).
+
+  `test/test_wiki_roundtrip.sh` drove the two scripts against a stub and
+  asserted they agree with each other, which is where the defect was; nothing
+  looked at the mirror, so the mirror drifted silently. It now reads all 32
+  pages and requires each to open with exactly one title. A level-1 heading
+  further down stays allowed, because several pages legitimately have them.
+
+  The pages are not published - that needs a token the maintainer holds - so
+  this is a repair before anybody read it.
 
 ### Added
 

@@ -1,7 +1,5 @@
 # Configuração de interface
 
-# Configuração de interface
-
 Tudo o que se configura dentro de uma interface: endereços, VLAN, VRF, MTU, estado administrativo e o filtro de origem. Para quem está subindo um enlace, terminando assinantes em VLAN ou investigando uma porta que não passa tráfego.
 
 Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
