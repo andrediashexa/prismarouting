@@ -39,6 +39,7 @@ are to be interpreted as described in
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#218](https://github.com/andrediashexa/hexarouting/issues/218),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
+[#221](https://github.com/andrediashexa/hexarouting/issues/221),
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
 [#213](https://github.com/andrediashexa/hexarouting/issues/213),
@@ -122,6 +123,17 @@ are to be interpreted as described in
   in the lab suite, and it is not a pass: the run still exits non-zero and says
   it proved nothing, so a quiet period that shrank cannot reach green by
   waiting for a busy machine.
+
+* **`test/test_wiki_commands.py`: every command the wiki tells an operator to
+  type, typed at the command tree.** The wiki is where this product promises
+  things to somebody who does not have the source, and nothing checked that
+  what it shows exists. It reads the prompt lines inside fenced blocks, puts a
+  shell in the mode and the block the prompt says the reader is in, and walks
+  each command as far as the tree enumerates - a command that is not there and
+  a sub-command that is not there both fail; arguments are not checked, which
+  is the same boundary `?` and TAB have at the real VTY. It found both of the
+  defects above. `install` is the one deliberate exception, and the exception
+  requires the page to explain itself, so it cannot rot into a hole.
 
 ### Fixed
 
@@ -321,6 +333,27 @@ are to be interpreted as described in
   size the first one made it. With the `--add` put back it fails with
   `the configuration grew from 2 line(s) to 7 over five more runs`
   ([#220](https://github.com/andrediashexa/hexarouting/issues/220)).
+
+* **`show this` worked inside a pool, a user and an SNMP user block and `?`
+  listed it in none of them.** Inside an `interface`, `router bgp` or `rpki`
+  block it did, because the line that adds it sits in the branch for FRR
+  blocks and this product's own blocks are modes rather than context entries.
+  The comment beside that line said "every block" while the code covered half
+  of them. `show this` is the only way to read a block back before committing,
+  and the block where an operator needs it most is the pool, which is this
+  product's whole subject and the example the wiki uses
+  ([#221](https://github.com/andrediashexa/hexarouting/issues/221)).
+
+  The word alone was not the whole of it: `show ?` inside a block offered
+  nothing, in **every** block including the FRR ones, so `this` could still
+  only be reached by typing it blind. Every sub-command of `show` answers from
+  inside a block - measured, not assumed - so the whole tree is offered there
+  now.
+
+* **Two wiki pages showed `hexarouting# configure`.** `configure` is an
+  operational command and `#` is the configuration-mode prompt, so that is a
+  transcript no box produces: at `#` the reader is already in configuration
+  mode, where `configure` is not in the tree at all.
 
 ### Internal
 

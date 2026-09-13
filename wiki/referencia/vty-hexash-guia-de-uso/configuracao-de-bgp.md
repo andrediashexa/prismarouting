@@ -5,7 +5,7 @@ Como configurar sessões BGP pelo `hexash`: vizinhos, peer groups, famílias de 
 Entra-se no BGP a partir do modo de configuração:
 
 ```
-hexarouting# configure
+hexarouting> configure
 hexarouting# [edit] router bgp 65000
 hexarouting# [edit router bgp 65000]
 ```
