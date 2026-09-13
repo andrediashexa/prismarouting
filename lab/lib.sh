@@ -84,6 +84,7 @@ start_frr() {
 #   startup_conf lcp             lab/startup-lcp.conf
 #   startup_conf test workers    the same, plus workers, always
 #   LAB_WORKERS=1 sh tools/lab.sh <lab>    the same, plus workers, for any lab
+#   LAB_WORKERS=4 sh tools/lab.sh <lab>    and with four of them
 #
 # This exists because of #199, and #199 is the reason to read the rest of this
 # comment. Every lab that asserted a packet LEAVING the box ran single-threaded,
@@ -103,15 +104,57 @@ start_frr() {
 # that used to exist, lab/startup-workers.conf, differed from lab/startup-test.conf
 # by exactly the cpu stanza - and two files that must differ by exactly one
 # stanza are two files that will one day differ by two.
+# How many workers the box ACTUALLY has, which is a different question from what
+# LAB_WORKERS asked for and is the one a lab wants answered. Three labs used to
+# gate their worker sections on `[ "${LAB_WORKERS:-0}" = 1 ]`, which is #229 one
+# layer up: now that a count above one really starts that many workers,
+# `LAB_WORKERS=4` would give a box with four workers and skip every section that
+# is about workers, silently. Read the box instead.
+box_workers() {
+  _c=$(vppctl show threads 2>/dev/null | grep -c 'vpp_wk_')
+  echo "${_c:-0}"
+}
+
 startup_conf() {
   _base=${1:-test}
-  _src=/src/lab/startup-$_base.conf
+  # LAB_SRC so the three cases below can be read without a container. It is
+  # /src everywhere a lab actually runs, and the same arrangement
+  # HEXA_SELFTEST_ROOT and HEXA_MEMINFO already have, for the same reason: a
+  # rule about how an argument is read is checkable by arithmetic and should
+  # not need a VM to check it.
+  _src=${LAB_SRC:-/src}/lab/startup-$_base.conf
   [ -f "$_src" ] || { echo "startup_conf: no $_src" >&2; return 1; }
-  if [ "${2:-}" = workers ] || [ "${LAB_WORKERS:-0}" = 1 ]; then
+  # LAB_WORKERS IS A COUNT, and it was a 0/1 flag with the name of a count.
+  # `LAB_WORKERS=2` is not `1`, so it fell to the else and the box came up with
+  # no workers at all - a lab that then measured a single-threaded box while
+  # whoever ran it believed they had asked for two. It cost a run on the day
+  # the stride lab was repaired, verifying the very case the repair was for
+  # (#229).
+  #
+  # 0 and 1 keep their meanings exactly, because tools/run-all-labs.sh passes
+  # those two and nothing else: 0 is off, 1 is on with LAB_WORKER_COUNT. Above
+  # 1 the number is the count, which is what the name says. Anything else is
+  # refused rather than quietly read as off.
+  _want=${LAB_WORKERS:-0}
+  case "$_want" in
+    ''|*[!0-9]*)
+      echo "startup_conf: LAB_WORKERS='$_want' is not a number of workers." >&2
+      echo "  0 or unset for none, 1 for the default count, N for N." >&2
+      return 1 ;;
+  esac
+  _n=0
+  if [ "${2:-}" = workers ]; then
+    _n=${LAB_WORKER_COUNT:-2}
+  elif [ "$_want" = 1 ]; then
+    _n=${LAB_WORKER_COUNT:-2}
+  elif [ "$_want" -gt 1 ]; then
+    _n=$_want
+  fi
+  if [ "$_n" -gt 0 ]; then
     _out=/tmp/startup-$_base-workers.conf
     {
       cat "$_src"
-      printf '\ncpu {\n  workers %s\n}\n' "${LAB_WORKER_COUNT:-2}"
+      printf '\ncpu {\n  workers %s\n}\n' "$_n"
     } > "$_out"
     echo "$_out"
   else

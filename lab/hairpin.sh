@@ -101,10 +101,12 @@ expect_in "with A's PUBLIC address as source, not its private one" \
 # answer to an address it cannot route to.
 expect_not_in "A's private address must not reach B" "100.64.0.5 -> 100.64.0.6" \
   "$HPTRACE"
-# Only when the lab was asked for workers: single-threaded there is one thread
-# and nothing to steer to, and demanding a steer there would be demanding a
-# different box.
-if [ "${LAB_WORKERS:-0}" = 1 ]; then
+# Only when the box HAS two workers to steer between: with one thread there is
+# nothing to steer to, and demanding a steer there would be demanding a
+# different box. Asked of the box rather than of LAB_WORKERS, which is a request
+# and not an answer (#229) - and two is the number this assertion needs, so a
+# one-worker box is out of it as well as a no-worker one.
+if [ "$(box_workers)" -ge 2 ]; then
   expect "the two subscribers are on different workers, so this is the real case" \
     sh -c "[ \"${BUSY_THREADS:-0}\" -ge 2 ]"
 fi
