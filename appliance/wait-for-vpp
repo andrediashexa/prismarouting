@@ -37,10 +37,17 @@ QUIET=${HEXA_WAIT_QUIET:-3}
 # Pointed at a file, only the last line survived.
 say() { echo "$@" >> "$OUT" 2>/dev/null || true; }
 
+# n is the SECONDS waited so far, and it has to be, because every message
+# below prints it as one. It is incremented after the sleep rather than before
+# it: counting the poll instead of the second made n one larger than the time
+# that had actually passed, so a 60-second wait gave up after 59 and said 60,
+# and the quiet period of 3 fell at 2.009 s measured. That second was the whole
+# of #218 - test_boot_wait.sh stimulates a two-second wait against it, and two
+# events ten milliseconds apart are a coin toss on a machine with sixteen
+# containers on it.
 n=0
 announced=0
 until vppctl show version >/dev/null 2>&1; do
-  n=$((n + 1))
   if [ "$n" -ge "$TIMEOUT" ]; then
     # A timeout and a wait that ended because VPP answered are different
     # outcomes needing different actions, and they must not read the same.
@@ -63,6 +70,7 @@ until vppctl show version >/dev/null 2>&1; do
     fi
   fi
   sleep 1
+  n=$((n + 1))
 done
 
 # Only when something was said. A wait that ended before anybody noticed it

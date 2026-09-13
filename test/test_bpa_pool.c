@@ -327,7 +327,5 @@ main (void)
 	    s.n_ranges, s.count);
   }
 
-  printf ("\n%s  (%u checks, %d failures)\n",
-	  failures ? "FAILED" : "ALL TESTS PASSED", checks, failures);
-  return failures ? 1 : 0;
+  return bpa_test_verdict (checks, failures);
 }

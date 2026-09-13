@@ -332,7 +332,5 @@ main (void)
 
   last_option_byte_against_a_guard_page ();
 
-  printf ("\n%u checks, %d failures\n", checks, failures);
-  printf ("%s\n", failures ? "TESTS FAILED" : "ALL TESTS PASSED");
-  return failures ? 1 : 0;
+  return bpa_test_verdict (checks, failures);
 }

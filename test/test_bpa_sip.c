@@ -713,6 +713,5 @@ main (void)
     }
   }
 
-  printf ("%u checks, %d failures\n", checks, failures);
-  return failures ? 1 : 0;
+  return bpa_test_verdict (checks, failures);
 }

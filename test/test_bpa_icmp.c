@@ -30,10 +30,12 @@
 #include "../src/plugins/bpa/bpa_icmp.h"
 
 static int failures = 0;
+static u32 checks = 0;
 
 #define CHECK(cond, ...)                                                      \
   do                                                                          \
     {                                                                         \
+      checks++;                                                               \
       if (cond)                                                               \
 	printf ("  ok   " __VA_ARGS__);                                       \
       else                                                                    \
@@ -432,6 +434,5 @@ main (void)
   CHECK (parse (pkt, O_INNER_L4 + 6, &e) == 0,
 	 "and is accepted once the identifier is there");
 
-  printf ("\n%s\n", failures ? "FAILED" : "test_bpa_icmp: all checks passed");
-  return failures != 0;
+  return bpa_test_verdict (checks, failures);
 }

@@ -37,6 +37,7 @@ are to be interpreted as described in
 ## Unreleased
 
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
+[#218](https://github.com/andrediashexa/hexarouting/issues/218),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
 [#213](https://github.com/andrediashexa/hexarouting/issues/213),
@@ -111,6 +112,15 @@ are to be interpreted as described in
   absence is as deliberate as the presence - a `MemoryMax` that appeared on
   `frr.service` by accident is a five-second restart loop on the box with the
   most to lose.
+
+* **A third state for a check whose timing the machine could not keep:
+  `NOT MEASURED`.** `test_boot_wait.sh` measures the STIMULUS, not the run: a
+  dataplane that answered on time and was announced anyway is a `FAIL`, which
+  is that check's whole subject, while one that answered a margin late says
+  nothing about the quiet period. It is the shape `lab_no_vpp()` already took
+  in the lab suite, and it is not a pass: the run still exits non-zero and says
+  it proved nothing, so a quiet period that shrank cannot reach green by
+  waiting for a busy machine.
 
 ### Fixed
 
@@ -267,6 +277,32 @@ are to be interpreted as described in
   which succeeds on empty input, so a box whose profile names no
   `num-rx-queues` printed the label and no value - an assertion that cannot
   fail, in the reporting half. Seen on an installed box. `test/test_selftest.sh` now holds it against a fake box whose profile names no `num-rx-queues`, which is the common case rather than an odd one: the old form fails it with `the rx-queues line printed a label and no value at all`.
+
+* **`wait-for-vpp` counted polls and printed them as seconds, so the boot
+  banner fell a second early and a timeout gave up a second short.** `n` was
+  incremented before the `sleep 1`, which made it one larger than the time that
+  had actually passed. Measured directly, with a dataplane that never answers:
+  the quiet period of three ended at **2007 ms** and a thirty second timeout
+  gave up at **29069 ms** while printing "within 30s". With the increment after
+  the sleep: **3009 ms** and **30073 ms**
+  ([#218](https://github.com/andrediashexa/hexarouting/issues/218)).
+
+  That missing second was the whole of the intermittent failure. `make test`
+  fails about one run in three under a lab suite, and the check that lost was
+  `test_boot_wait.sh`'s "a SHORT wait is still silent": it stimulates a two
+  second wait, the banner fell at 2.009 s against a stimulus at 2.000 s, and
+  which of the two won was decided by how long a `fork` took. Under sixteen
+  containers running `apt-get` the fork loses. Pure CPU saturation never
+  reproduced it, because that slows the poll loop too.
+
+* **A killed test suite and a failing one were the same thing from outside.**
+  The `make test` recipe ran each suite and read its exit status, so a suite
+  that was interrupted, crashed or never started reported like one that had
+  been read. `tools/run-tests.sh` reads the verdict line instead and reports
+  four states: `pass`, `FAIL`, `NOT MEASURED` and `NO VERDICT`, numbers the
+  suites `[13/25]`, and names where a stopped suite stopped. The seven C
+  suites and `test_hexash_confirm.py` had five spellings of a verdict between
+  them and two printed none at all; they now share `bpa_test_verdict()`.
 
 ### Internal
 

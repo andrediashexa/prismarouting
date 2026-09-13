@@ -1,0 +1,37 @@
+# Every suite `make test` runs, in order. One command per line, relative to
+# the repository root; the name in the report is the last word's basename.
+#
+# The list lives here rather than in the Makefile because tools/run-tests.sh
+# has to be able to say "suite 11 of 22", and because a test can then drive
+# the runner against a list of its own (test/test_run_tests.sh does).
+#
+# Every suite must end by printing one of the three verdict lines the runner
+# reads: "ALL TESTS PASSED", "<n> FAILURES", or "<n> NOT MEASURED". A suite
+# that exits without one has not been read, it has been interrupted, and the
+# runner says so instead of guessing.
+
+.build/test_bpa
+.build/test_bpa_ports
+.build/test_bpa_rtsp
+.build/test_bpa_mss
+.build/test_bpa_ftp
+.build/test_bpa_icmp
+.build/test_bpa_sip
+python3 appliance/test_tune.py
+python3 test/test_hexash_complete.py
+python3 test/test_hexash_config.py
+python3 test/test_context_map.py
+python3 test/test_routes.py
+sh test/test_boot_wait.sh
+sh test/test_version_stamp.sh
+sh test/test_wiki_roundtrip.sh
+python3 test/test_vppapi.py
+python3 test/test_hexash_apply.py
+python3 test/test_hexash_perms.py
+python3 test/test_hexash_confirm.py
+python3 test/test_hexash_igp.py
+sh test/test_hexash_login.sh
+sh test/test_run_all_labs.sh
+sh test/test_run_tests.sh
+sh test/test_selftest.sh
+sh test/test_installer.sh

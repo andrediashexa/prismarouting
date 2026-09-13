@@ -8,8 +8,15 @@
 # not going to finish" (#97).
 set -u
 fail=0
+skip=0
 ok()  { echo "  [ ok ] $*"; }
 bad() { echo "  FAIL: $*"; fail=$((fail+1)); }
+# Neither a pass nor a failure, and it must not be reported as either. A check
+# whose timing the machine could not keep has said nothing about the product,
+# and this is the same third state tools/run-all-labs.sh gives a lab whose
+# dataplane never came up: reporting it green would be a claim nothing
+# measured, and reporting it red would blame the product for the scheduler.
+nomeasure() { echo "  NOT MEASURED: $*"; skip=$((skip+1)); }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WAIT="$REPO/appliance/wait-for-vpp"
@@ -50,17 +57,60 @@ echo "=== a SHORT wait is still silent ==="
 # with no wait at all, silence is true whatever the setting. A boot where the
 # dataplane answers in two seconds must still say nothing, or the banner
 # appears on every boot and stops meaning anything.
+#
+# UP_AT seconds against a shipped quiet period of three leaves MARGIN seconds,
+# and that margin is the whole assertion. It used to be nothing: the wait
+# counted polls as seconds, so the banner fell at 2.009 s measured against a
+# stimulus at 2.000 s, and which of the two won was decided by how long a fork
+# took. Under a release lab suite with sixteen containers up that lost about
+# one run in three (#218), and the only record kept was a count of summary
+# lines, so the check doing it was never named.
+#
+# The margin cannot be made large enough to be safe on any machine, because a
+# box that is thrashing will miss any margin at all. So what gets measured is
+# not the product but the STIMULUS: the moment the fake dataplane actually
+# started answering. That is the one number that separates the two stories.
+#
+#   the dataplane answered on time and the banner still appeared
+#       -> the quiet period is too short, which is this check's whole subject
+#   the dataplane answered a margin late
+#       -> nothing was asked of the quiet period, because the wait the banner
+#          described really did happen
+#
+# Both can be true at once on a loaded box, and then this says NOT MEASURED
+# over a defect. That is the safe direction only because NOT MEASURED is not a
+# pass: the suite still exits non-zero and says the run proved nothing, so a
+# quiet period that shrank cannot reach green by waiting for a busy machine.
+UP_AT=2
+MARGIN=1
 vppctl_says "[ -f $BIN/up ] && exit 0
 exit 1"
-rm -f "$BIN/up"; ( sleep 2; touch "$BIN/up" ) &
+rm -f "$BIN/up" "$OUTD/up_at"
+t0=$(date +%s%N)
+( sleep "$UP_AT"; date +%s%N > "$OUTD/up_at"; touch "$BIN/up" ) &
 run 10; rc=$?
+# Empty when the stimulus never got as far as recording itself, which is a box
+# that could not run the subshell at all. Reading that as "answered in 1970"
+# would send it to the branch that blames the product.
+up_ns=$(cat "$OUTD/up_at" 2>/dev/null || true)
+if [ -n "$up_ns" ]; then
+  up_ms=$(( (up_ns - t0) / 1000000 )); when="${up_ms}ms"
+else
+  up_ms=""; when="a moment it never recorded"
+fi
 out=$(cat "$OUTD/out" 2>/dev/null || true)
 rm -f "$BIN/up"
 [ "$rc" = 0 ] || bad "a short wait must still succeed, got $rc"
-if [ -n "$out" ]; then
-  bad "a two-second wait was announced: $out"
+if [ -z "$out" ]; then
+  ok "${UP_AT} seconds passes without a word (answered at $when)"
+elif [ -z "$up_ms" ]; then
+  nomeasure "the fake dataplane never recorded when it answered, so there is nothing to compare the banner against"
+elif [ "$up_ms" -gt $(( (UP_AT + MARGIN) * 1000 )) ]; then
+  nomeasure "the fake dataplane was asked to answer at ${UP_AT}000ms and answered at ${up_ms}ms, past the ${MARGIN}s margin: the banner describes a wait that really happened, so this says nothing about the quiet period"
 else
-  ok "two seconds passes without a word"
+  # It answered on time and the banner appeared anyway: the quiet period is
+  # shorter than the wait it is supposed to cover.
+  bad "a ${UP_AT}-second wait that answered at ${up_ms}ms was announced: $out"
 fi
 
 echo "=== a wait that ends WELL says what it was waiting for, and that it ended ==="
@@ -106,5 +156,14 @@ case "$out" in
   *) ok "and cannot be mistaken for a success" ;;
 esac
 
-if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
-echo; echo "$fail FAILURES"; exit 1
+if [ "$fail" -gt 0 ]; then echo; echo "$fail FAILURES"; exit 1; fi
+if [ "$skip" -gt 0 ]; then
+  echo
+  echo "$skip NOT MEASURED"
+  echo "  The machine could not keep the timing those checks need, so they"
+  echo "  said nothing about the product either way. That is not a pass, and"
+  echo "  it is not a defect: run it again on a box that is not doing"
+  echo "  something else at the same time."
+  exit 1
+fi
+echo; echo "ALL TESTS PASSED"; exit 0

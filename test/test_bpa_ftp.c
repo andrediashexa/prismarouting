@@ -354,7 +354,5 @@ main (void)
 	      "in force when those bytes were sent",
 	      &s, 2004, TCP_FLAG_ACK, 1, 1996);
 
-  printf ("\n%u checks, %d failures\n", checks, failures);
-  printf ("%s\n", failures ? "TESTS FAILED" : "ALL TESTS PASSED");
-  return failures ? 1 : 0;
+  return bpa_test_verdict (checks, failures);
 }

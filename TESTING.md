@@ -6,7 +6,7 @@ Four levels, cheapest first. Each catches a different class of defect and none
 replaces the next.
 
 ```sh
-make test                 # 3 s   — core, no root, no VPP
+make test                 # 21 s  - core, no root, no VPP
 sh tools/lab.sh <name>    # min   — dataplane labs with injected packets
 sh tools/lab.sh hw-lab    # min   — two VMs, real Internet traffic
 sh tools/lab.sh boot-iso  # s/min — the appliance actually booting
@@ -73,12 +73,37 @@ lab is going to notice it:
 | `test_bpa_ftp.c` | The FTP sequence shift: `bpa_seq_after` across the 2^32 boundary, a retransmission of data sent **before** a rewrite, and a control connection rewritten twice. No lab is going to send four gigabytes to reach the wrap. |
 | `test_context_map.py` | That every repository path named in `docs/context.md` exists, and that `README.md` still reaches it. A map naming files that are no longer there is worse than no map — it is confidently wrong, and this is the half of it that rots without anyone noticing. |
 | `test_run_all_labs.sh` | That the lab suite tells a defect apart from a machine that could not run it. A VPP that never started, or a capture in which every `vppctl` call was refused and not one check went green, is reported `NO VPP` and counted apart - reporting it as `FAIL` sends whoever reads it to the product when the answer is the machine's load. Driven with stub labs, because arranging a real VPP that fails to start is not something `make test` can do. |
+| `test_run_tests.sh` | That `make test` tells a failed assertion apart from a suite that never reached one. A killed suite, and one that could not start at all, are reported `NO VERDICT` with how far they got; a suite that prints a pass and then exits non-zero is not a pass. Driven with stub suites written to end in each of those ways. |
+| `test_boot_wait.sh` | The three outcomes of the boot wait, and - since #218 - the difference between the quiet period being too short and the machine being unable to time it. The check stimulates a two-second wait against a three-second quiet period and measures when the fake dataplane actually answered: on time and announced anyway is a defect, a margin late is `NOT MEASURED`. |
 | `test_hexash_config.py` | Which changes rebuild a pool and which apply in place. Classified as a table, with an assertion that the table **covers every field a pool has** — so a field added later is a failure rather than a silent default. |
 
 Each assertion in that table was run against deliberately broken code and
 required to fail before being kept. An assertion that has never failed has not
 been shown to test anything, which is the defect class this project keeps
 hitting — see `CONTRIBUTING.md`.
+
+### What a `make test` result means
+
+`tools/run-tests.sh` runs the list in `test/suites.list` and reports every
+suite, in the four states `tools/run-all-labs.sh` reports a lab in:
+
+| State | What it means | Where to look |
+|---|---|---|
+| `pass` | Ran to its end, every check green. | - |
+| `FAIL` | Ran to its end, named checks red. | The product, or the check. |
+| `NOT MEASURED` | Ran to its end and said the machine could not keep the timing it needed. **Not a pass** - nothing was learned about the product - and not a defect. | The machine's load. Run it again on a box that is not doing something else. |
+| `NO VERDICT` | Never reached its end: killed, crashed, or could not start. | Whatever killed it. The report gives the exit status, how many lines it printed and the last of them. |
+
+`NO VERDICT` is the state that did not exist, and its absence cost two
+`make test` failures nobody could name: a suite that dies half way through and
+a suite whose last assertion failed are the same thing to anything reading an
+exit status. Every suite therefore MUST end by printing one of three lines -
+`ALL TESTS PASSED`, `<n> FAILURES` or `<n> NOT MEASURED` - and a suite that
+exits without one is reported as interrupted rather than judged.
+
+A run is green only when all four counts but `passed` are zero. `NOT MEASURED`
+and `NO VERDICT` each fail the run on their own, for the reason `NO VPP` fails
+the lab suite on its own: a suite that was not run has cleared nothing.
 
 ## Cutting a release
 

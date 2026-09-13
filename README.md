@@ -12,7 +12,7 @@ to the exact public addresses the reference model predicts, ICMP and HTTPS
 flowing, BGP/OSPF/IS-IS routes reaching the VPP FIB.
 
 ```sh
-make test              # 15 suites in seconds, no root, no VPP required
+make test              # 25 suites in ~21 s, no root, no VPP required
 sh tools/lab.sh        # list the labs
 sh tools/run-all-labs.sh   # the whole dataplane suite, several at a time
 sh tools/vty.sh        # open the VTY
