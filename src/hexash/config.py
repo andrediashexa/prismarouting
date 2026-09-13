@@ -180,7 +180,29 @@ def block_paths(routing: list) -> list:
     return out
 
 
-def as_hierarchy(stmt: str) -> str:
+def block_of(routing: list, stmt: str) -> list:
+    """
+    The block path `routing` holds `stmt` in, outermost first.
+
+    `as_hierarchy` needs it and cannot derive it: a refusal is handed a
+    STRIPPED statement, because `routing_added` deduplicates the candidate
+    into bare words and `unreachable_next_hops` returns the same shape. The
+    position the statement was typed in is left behind there, and position is
+    the whole question for a static route.
+
+    The FIRST occurrence answers, and a configuration holding the same route
+    in the global table and in a VRF is therefore named by the global one. It
+    is the safe way round: the two are different routes, the operator is
+    looking at a prefix that really is in `router static`, and the alternative
+    is a message naming a VRF for a route that is also outside it.
+    """
+    for path, line in zip(block_paths(routing), routing):
+        if path is not None and line.strip() == stmt.strip():
+            return path
+    return []
+
+
+def as_hierarchy(stmt: str, ctx=()) -> str:
     """
     A canonical FRR statement, named in the words the VTY takes for it.
 
@@ -190,9 +212,29 @@ def as_hierarchy(stmt: str) -> str:
     appears nowhere in what the operator typed and nowhere in `show
     configuration` either - which now prints the block. Searching for `ip
     route` after reading the error found nothing.
+
+    `ctx` is where the statement sits, as `block_paths` reports it, and it is
+    a parameter because `router static` is the GLOBAL table and a route is
+    only in it when nothing encloses it. MEASURED at FRR 10.7.1: a route typed
+    into `vrf red` is read back INSIDE that block, indented, still spelled `ip
+    route 10.9.0.0/16 10.0.0.9` - so `router static / route ...` names a table
+    the route is not in. An operator sent there finds nothing, and typing the
+    route where the message said it was puts it in the global table (#251).
     """
     s = stmt.strip()
     if s.split()[:2] in (["ip", "route"], ["ipv6", "route"]):
+        # `router static` in the path IS the global table, not an enclosing
+        # block: it is this VTY's own word for where a top-level `ip route`
+        # goes. The VTY never puts it in `cfg.routing` - `hierarchy_rewrite`
+        # consumes it and `Config.parse` calls `ungroup_static` - but a caller
+        # holding a configuration in the block spelling would otherwise be
+        # told the route is one level deeper than it is.
+        path = [c.strip() for c in ctx if c.strip() != STATIC_BLOCK]
+        if path:
+            # Named the way `show configuration` prints it: FRR keeps a VRF's
+            # static routes in their own spelling inside the block, and
+            # `group_static` only ever hoists the top-level ones.
+            return " / ".join(path + [s])
         return f"{STATIC_BLOCK} / route " + " ".join(s.split()[2:])
     return s
 

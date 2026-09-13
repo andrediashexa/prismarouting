@@ -31,7 +31,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     ROUTING_HEADER,
                     strip_nat, as_hierarchy, group_static,
-                    block_paths, frr_block_lines, opens_frr_block,
+                    block_paths, block_of, frr_block_lines, opens_frr_block,
                     is_static_route,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     global_key, ordered_globals)
@@ -5342,7 +5342,10 @@ class Shell:
                             continue
                         self.err(f"{len(statics)} static route(s) need "
                                  f"{need}, which is not running")
-                        print(f"    first one: {as_hierarchy(statics[0])}")
+                        print("    first one: "
+                              + as_hierarchy(statics[0],
+                                             block_of(target.routing,
+                                                      statics[0])))
                         print("    they would commit and forward nothing. "
                               + enable_daemon_advice(need))
                         ok = False
@@ -5513,7 +5516,9 @@ class Shell:
                     table = fibs.get(0, {})
                     for stmt, nexthop in routes.unreachable_next_hops(
                             target.routing, table):
-                        self.err(f"{as_hierarchy(stmt)}: {nexthop} is on "
+                        named = as_hierarchy(stmt,
+                                             block_of(target.routing, stmt))
+                        self.err(f"{named}: {nexthop} is on "
                                  "no connected network")
                         print("    the route would be accepted and never "
                               "reach the forwarding table")
@@ -6611,7 +6616,8 @@ class Shell:
             self.err(f"FRR accepted {len(dropped)} statement(s) of this "
                      "commit and did not keep them")
             for stmt, instead in dropped[:5]:
-                print("    " + as_hierarchy(stmt))
+                print("    " + as_hierarchy(
+                    stmt, block_of(self.candidate.routing, stmt)))
                 if instead:
                     print(f"      FRR writes '{instead}' for this, and that "
                           "is not there either")
@@ -6633,7 +6639,8 @@ class Shell:
                      "nothing: all " + str(len(stalled)) +
                      " new statement(s) are still outstanding")
             for line in stalled[:5]:
-                print("    " + as_hierarchy(line))
+                print("    " + as_hierarchy(
+                    line, block_of(self.candidate.routing, line)))
             if len(stalled) > 5:
                 print(f"    ... and {len(stalled) - 5} more")
             print("    the usual cause is a daemon that is not running; "

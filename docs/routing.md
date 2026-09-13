@@ -1170,7 +1170,27 @@ Two consequences worth knowing, because both are visible on a screen:
 The static routes of a VRF are **not** hoisted into the block: FRR writes them
 inside the `vrf red` stanza, indented, and moving one out of it would move the
 route to another table - a display transform that changes where packets go. So
-`config.is_static_route()` reads the column as well as the statement.
+`config.group_static()` hoists a route only where `config.block_paths()` says
+nothing encloses it; the statement alone cannot answer this, which is why
+`config.is_static_route()` deliberately does not try.
+
+**A message that NAMES one MUST name the block too.** `router static` is the
+global table, so a refusal that calls a VRF's route `router static / route
+10.9.0.0/16 10.0.0.9` sends the operator to a table the route is not in - and
+if they type it where the message said it was, they have put a route meant for
+a VRF in the global table. Measured at FRR 10.7.1: a route typed into `vrf red`
+is read back inside that block, indented, still spelled `ip route`. So a
+refusal names it the way `show configuration` prints it:
+
+```
+error: FRR accepted 1 statement(s) of this commit and did not keep them
+    vrf red / ip route 10.9.0.0/16 10.0.0.9
+```
+
+`config.as_hierarchy()` takes the block path for this reason and `config.block_of()`
+finds it, because a refusal is handed a statement with its position already
+stripped off - and position is the whole question for a static route
+([#251](https://github.com/andrediashexa/hexarouting/issues/251)).
 
 ## Static routes
 
@@ -1194,7 +1214,7 @@ removes it from the **FIB**, which is the only place that matters.
 `commit check` refuses a next hop that is on no connected network:
 
 ```
-error: ip route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
+error: router static / route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
     the route would be accepted and never reach the forwarding table
 ```
 
