@@ -441,7 +441,15 @@ are to be interpreted as described in
   told nothing, because an operator who has not made one yet is not a box with
   a defect.
 
-  57 checks on master before this run of work, **117** after.
+  **uRPF the same way, and more is at stake there.** It is the check that stops
+  a spoofed source being translated, and therefore what stops a packet nobody
+  sent being attributed to a subscriber in the retention log - a record
+  indistinguishable from a true one. A box whose saved configuration turns it
+  on and whose dataplane has it nowhere forwards, translates, logs and answers
+  everything: there is no counter for a protection that is simply absent. A box
+  that never asked for uRPF is told nothing, because most do not run it.
+
+  57 checks on master before this run of work, **121** after.
 
 ### Added
 

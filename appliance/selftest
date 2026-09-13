@@ -813,6 +813,32 @@ if vppctl show version >/dev/null 2>&1 && [ -f "$LOGCONF" ]; then
   elif [ -n "$want_pools" ]; then
     ok "and every pool the saved configuration names is on the dataplane"
   fi
+
+  # And uRPF, for the same reason and with more at stake.
+  #
+  # uRPF is the check that stops a spoofed source being translated, and
+  # therefore stops a packet nobody sent being attributed to a subscriber in
+  # the retention log - a record indistinguishable from a true one
+  # (docs/architecture.md). A box whose saved configuration turns it on and
+  # whose dataplane does not have it forwards, translates, logs and answers
+  # everything: there is no counter for a protection that is simply absent.
+  #
+  # Interface names only, and the mode is compared with them because "strict
+  # where the file says loose" is a different box from "off where the file
+  # says strict", and an operator reading this line has to be able to tell.
+  want_urpf=$(sed -n 's/^ *urpf  *\([a-z]*\).*/\1/p' "$LOGCONF" | sort -u)
+  if [ -n "$want_urpf" ] && [ "$want_urpf" != "off" ]; then
+    have_urpf=$(vppctl show bpa urpf 2>/dev/null)
+    case "$have_urpf" in
+      *"no interface has uRPF enabled"*|"")
+        bad "the saved configuration turns uRPF on and the dataplane has it on"
+        say "        no interface. A spoofed source is translated and attributed"
+        say "        to a subscriber who did not send it, and nothing counts it."
+        say "        'journalctl -u hexarouting' has the reason it was refused." ;;
+      *)
+        ok "uRPF is on in the dataplane, as the saved configuration asks: $(printf '%s' "$have_urpf" | tr '\n' ';' | cut -c1-60)" ;;
+    esac
+  fi
 fi
 
 # A live system says so, and says how to stop being one. Without this the

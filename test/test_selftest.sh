@@ -131,6 +131,10 @@ case "$*" in
   # an operator looks at to see whether the thing they configured is
   # there at all.
   "show bpa pool")    cat "$FAKE/bpa_pools" 2>/dev/null ;;
+  # The uRPF listing. Absent from $FAKE it is empty, which the self-test reads
+  # the same way as "no interface has uRPF enabled" - both mean the dataplane
+  # has none.
+  "show bpa urpf")    cat "$FAKE/bpa_urpf" 2>/dev/null ;;
 esac
 exit 0
 EOF
@@ -1381,6 +1385,48 @@ if said 'saved configuration has pool'; then
 else
   ok "a box that has configured no pool is not told one is missing"
 fi
+
+echo "=== uRPF: on in the file, and on in the dataplane (#172) ==="
+# More at stake than the pools. uRPF is what stops a spoofed source being
+# translated, and therefore what stops a packet nobody sent being attributed to
+# a subscriber in the retention log - a record indistinguishable from a true
+# one. A box whose saved configuration turns it on and whose dataplane does not
+# have it forwards, translates, logs and answers everything, and there is no
+# counter anywhere for a protection that is simply absent.
+printf 'nat cgnat pool alpha\n exit\ninterface TenGigabitEthernet0/0/0\n urpf strict\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+printf 'pool alpha [deterministic / interleaved]\n' > "$FAKE/bpa_pools"
+printf 'TenGigabitEthernet0/0/0 strict\n' > "$FAKE/bpa_urpf"
+run
+if said '\[ ok \] uRPF is on in the dataplane, as the saved configuration asks'; then
+  ok "a box whose uRPF really is on is reported so, with what the box has"
+else
+  bad "uRPF was on in both and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i urpf || echo '<nothing>')"
+fi
+# The one that matters: the file asks for it and the dataplane has it nowhere.
+printf 'no interface has uRPF enabled\n' > "$FAKE/bpa_urpf"
+run
+if said '\[FAIL\] the saved configuration turns uRPF on and the dataplane has it on'; then
+  ok "uRPF asked for and absent is a FAILED check"
+else
+  bad "a box with no uRPF at all passed: $(printf '%s\n' "$OUTPUT" | grep -i urpf || echo '<nothing>')"
+fi
+if said 'attributed'; then
+  ok "and the failure says what it costs, which is a record about the wrong subscriber"
+else
+  bad "the failure does not say what an absent uRPF means"
+fi
+# A box that never asked for uRPF is told nothing: most boxes do not run it,
+# and an alarm that is always on is one nobody reads.
+printf 'nat cgnat pool alpha\n exit\n' > "$FAKE/hexarouting.conf"
+run
+if said 'uRPF'; then
+  bad "a box that never configured uRPF was told about it: $(printf '%s\n' "$OUTPUT" | grep -i urpf | head -1)"
+else
+  ok "a box that never asked for uRPF is not told about it"
+fi
+rm -f "$FAKE/bpa_urpf"
+
 rm -f "$FAKE/show_plugins" "$FAKE/bpa_pools"
 printf '\n' > "$FAKE/hexarouting.conf"
 unset HEXA_CONFIG
