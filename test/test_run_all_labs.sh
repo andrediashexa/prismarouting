@@ -642,5 +642,49 @@ done
   && ok "and each one says why" \
   || bad "these carry the marker with no reason after it:$_bare"
 
+echo
+echo "=== a lab that takes an off mode is given one by the suite ==="
+# The off run is what makes a green lab worth anything: seventeen labs said in
+# their own header that their checks MUST fail with the feature off, and until
+# OFF_MODES existed nothing ever performed one. #151 is a list of assertions
+# that could not fail, found that way.
+#
+# OFF_MODES is a second copy of a fact each lab already states by taking a mode
+# argument, and nothing compared the two. lab/detreserve.sh was written with an
+# off run described in its header, in the words "the extension assertions MUST
+# then go red", and was not in the list: the control never ran.
+#
+# The signal is `MODE=${1:-...}` at the top of the lab, which is how every lab
+# that takes one spells it. ONE DIRECTION ONLY: three labs in OFF_MODES do not
+# have that shape because the opposite of what they test is not a mode of the
+# lab - rtsp switches on an environment variable, ftp-alg and sip spell theirs
+# differently - so requiring the shape of everything in the list would go red
+# on three labs that are right.
+_off_names=$(sed -n '/^OFF_MODES="/,/"$/p' "$RA" | tr ' ' '\n' \
+             | sed 's/^OFF_MODES="//' | grep ':' | cut -d: -f1)
+_ungiven=""
+for _f in "$REPO"/lab/*.sh; do
+  grep -qE '^[[:space:]]*MODE=\$\{1:-' "$_f" || continue
+  _n=$(basename "$_f" .sh)
+  printf '%s\n' "$_off_names" | grep -qx "$_n" || _ungiven="$_ungiven $_n"
+done
+[ -z "$_ungiven" ] \
+  && ok "every lab that takes a mode argument is in OFF_MODES" \
+  || bad "these labs take a mode argument and the suite never gives them one, "\
+"so the run that is supposed to go red never happens and their green run "\
+"proves nothing:$_ungiven"
+
+# And OFF_MODES may not name a lab that is not there. A typo would silently
+# stop giving a real lab its off run, which is the same defect spelled the
+# other way.
+_ghost=""
+for _n in $_off_names; do
+  [ -f "$REPO/lab/$_n.sh" ] || _ghost="$_ghost $_n"
+done
+[ -z "$_ghost" ] \
+  && ok "and every name in OFF_MODES is a lab that exists" \
+  || bad "OFF_MODES names these and there is no such lab, so whatever it was "\
+"meant to be is getting no off run:$_ghost"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

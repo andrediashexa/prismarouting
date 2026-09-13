@@ -191,7 +191,8 @@ BOTH_WAYS="bypass dynamic esp extblocks forward frag ftp-alg hairpin
 # check until #259, #262 and #263 were asserted there; it is eight now, because
 # the spill-failure phase cannot be produced without stalling the collector
 # either, and the header says so.
-OFF_MODES="audit:off ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off in-place:off
+OFF_MODES="audit:off detreserve:off ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off
+           in-place:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off urpf:off utilisation:off vrf:off"
