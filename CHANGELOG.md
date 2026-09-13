@@ -196,9 +196,16 @@ are to be interpreted as described in
   exactly there. `cfg.routing` is read back from FRR, so that is the shape of
   **every commit after the first one** - it was the pool-announce check above
   that found it, warning about a pool the box was announcing correctly. Only a
-  `!` at column 0 returns to the top now. Found because the assertion was
-  written against text a live FRR had actually printed rather than against
-  indented text that looked right.
+  `!` at column 0 returns to the top now.
+
+  It also **moved a route between tables**. A `vrf red` stanza whose static
+  route follows an indented `!` had that route hoisted into the global `router
+  static` block, so the file said the route was global and the operator had
+  put it in a VRF - which is exactly the defect
+  [#180](https://github.com/andrediashexa/hexarouting/issues/180) fixed,
+  reintroduced through a line nobody types. The assertion that existed for
+  #180 had no `!` in it and was green against this the whole time; the new one
+  is written against what a live daemon printed.
 
 * **A received Router Advertisement never reached the Linux side of a
   `linux_cp` pair, so BGP unnumbered never came up.** The VTY takes

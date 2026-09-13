@@ -400,6 +400,22 @@ check(" route 10.0.0.0/8 192.0.2.1" not in lines,
 check(back.routing.index("vrf red") < back.routing.index(" ip route 10.0.0.0/8 192.0.2.1"),
       "and is still inside it after a round trip")
 
+# The same route with the separator FRR 10.7.1 actually writes between the
+# statements of a stanza: an INDENTED `!`. `block_paths` read any `!` as the
+# top-level separator and cleared the block stack, so everything after this one
+# looked top-level - and this route was hoisted out of `vrf red` into `router
+# static`, which is the other routing table and is the whole defect #180 was
+# about, reintroduced by a line the operator never typed.
+#
+# Written with the ` !` because that is what came back off a live daemon. The
+# case above has no separator and was green against this the entire time.
+bang = config.group_static(["vrf red", " !", " ip route 10.0.0.0/8 192.0.2.1",
+                            "exit-vrf"])
+check("router static" not in bang,
+      f"an indented '!' does not hoist a vrf's route out of it: {bang}")
+check(" ip route 10.0.0.0/8 192.0.2.1" in bang,
+      f"and the route is left exactly where FRR put it: {bang}")
+
 # The family comes from the prefix, not from a keyword: a prefix with a colon
 # in it is IPv6 and nothing else, and asking for it twice is asking the
 # operator to contradict themselves.
