@@ -667,10 +667,20 @@ for the fifth time in this repository
 [#184](https://github.com/andrediashexa/hexarouting/issues/184) were the
 others). The lab now contains no `vppctl set ipfix exporter` anywhere, and one
 of its assertions greps the lab file itself so the trap cannot come back
-quietly. **#182 is the one still open in that family**, and it is the one with
-the widest blast radius: nothing in the product creates a `linux_cp` pair, so
-FRR has no interface for the dataplane port and every routing feature this
-product ships is configurable and inert on a box installed from the ISO.
+quietly. **#182 was the one still open in that family, and it is closed.** It
+had the widest blast radius of any of them: nothing in the product created a
+`linux_cp` pair, so FRR had no interface for the dataplane port and every
+routing feature this product ships was configurable and inert on a box
+installed from the ISO. `linux-name <name>` under `interface` creates it over
+the binary API, and the name is the operator's rather than derived, because
+FRR, `ip` and their own scripts act on it.
+
+Asking out loud whether the pair survives a reboot found two more, and both
+ended with the box coming up with **no configuration at all**: `save` wrote the
+pair's own TAP into the file, and a loopback was shut down *before* it was
+created, so every loopback survived exactly until the next reboot. The family
+is closed, and the pattern it taught is the one worth keeping: **a lab that
+performs the product's missing step proves nothing**, six times over.
 
 The boot self-test now reports the state this defect lived in. It reads what
 the box was **told** at boot against what the dataplane **has**, from two
@@ -751,7 +761,7 @@ using it the way an operator does rather than the way a test does.
 | | | |
 |---|---|---|
 | [#211](https://github.com/andrediashexa/hexarouting/issues/211) | the getty offers a login before the box is ready, and the first `configure` poisons every commit in that session | *fixed* |
-| [#212](https://github.com/andrediashexa/hexarouting/issues/212) | `commit confirmed` dies with the session that made it, so it protects nothing | **open** |
+| [#212](https://github.com/andrediashexa/hexarouting/issues/212) | `commit confirmed` dies with the session that made it, so it protects nothing | *fixed* |
 
 #211 was two defects wearing one hat. The VTY half: `Vpp.run` ignored
 `vppctl`'s exit status, and `vppctl` exits 0 whenever VPP *answered*, a refusal
@@ -827,6 +837,40 @@ of this file: **the product accepts the configuration and cannot deliver it.**
 The VTY takes an unnumbered neighbour, FRR holds the statement, the peer appears
 in `show bgp summary` — at `Idle`, `remote AS 0`, forever. It is also a
 dependency of [#187](https://github.com/andrediashexa/hexarouting/issues/187).
+
+#### The machinery that checks the product, checked
+
+Two findings, and the second is about the suite itself rather than the box.
+
+**Seventeen labs take an `off` mode and the suite never ran one.** Each of
+those headers names the number of checks that **must** go red with the feature
+disabled, which is the only evidence a lab can fail at all — and nothing
+automatic had ever asked. Every one was run: **every one fails as its header
+says**, so the worst case (an off mode that passes, which is an assertion that
+cannot fail sitting inside the machinery meant to catch exactly that) does not
+exist today. Three headers are exact; three counts in `TESTING.md` were stale
+and are now the measured values.
+
+The cost was **measured rather than estimated**, which changed the decision:
+`+25%`, not the doubling that kept it out. `1524/4` and `1907/5` are both 381 —
+at `LAB_JOBS=16` the clock is batches times the slowest lab in a batch, and the
+estimate had counted runs.
+
+**A lab whose dataplane never came up is not a failure, it is a lab that could
+not be run**, and the suite said both in the same words. Measured on a release
+run: one lab ended in a VPP startup panic with no `[FAIL]` line at all, another
+was `connect: Connection refused` on every call with six assertions failing on
+empty values, and both passed in isolation — one of them three times. That is
+now a `NO VPP` state of its own, counted separately and still failing the
+suite, because a suite that could not run two labs has not cleared them.
+`lab/install-iso.sh` had already made this distinction and said why: a driver
+that cannot tell *the box never answered* from *the box answered and refused*
+is worse than no driver, because both look like a timeout and they need
+opposite work.
+
+It matters most in the `off` path, which is why the two landed together: an
+off run whose VPP never started fails every check, which is exactly what the
+inverted verdict would otherwise call a pass.
 
 #### Installation — blocked by nothing, paid on every box
 
