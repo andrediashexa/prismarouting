@@ -48,7 +48,16 @@ unusual happened. `commit` refuses such a change until it is asked for by name.
 There are no allocation events, so there is nothing to export. The proof
 offered to an authority is *"the algorithm, plus the configuration in force at
 that instant"* — which holds only while it is known **which** configuration was
-in force. That is what `bpa_audit.c` exists for, and why it is append-only,
+in force.
+
+**One exception, and it proves the rule.** A pool with a `reserve` holds blocks
+out of the formula and gives them to subscribers that fill their own
+([#39](https://github.com/andrediashexa/hexarouting/issues/39)). Those blocks
+are exactly the ones the algorithm does **not** produce, so the configuration
+cannot answer for them and each one is exported as an RFC 8158 `natEvent 16`
+with its release as a `natEvent 17`, like a dynamic block. The reserve is also
+part of the definition the trail records, because it is part of the arithmetic:
+without it a reader recomputes the wrong mapping, confidently. That is what `bpa_audit.c` exists for, and why it is append-only,
 `fsync`ed, carries the whole definition rather than a diff, and now carries the
 operator who made the change.
 
@@ -109,8 +118,10 @@ that identity against.
 
 ### 1.7 Some settings rebuild the pool and some do not, and the split is load-bearing
 
-Changing a prefix, block size, port range, policy, mode or VRF changes the
-mapping, so the pool is rebuilt and every session on it ends. Everything else —
+Changing a prefix, block size, port range, policy, mode, VRF or `reserve`
+changes the mapping, so the pool is rebuilt and every session on it ends. The
+reserve is on that list because it is taken out of capacity, and capacity is
+the mapping. Everything else —
 timeouts, ALG switches, bounds, the MSS clamp, bypass lists, forwards — is
 applied **in place** on a pool that is carrying traffic.
 

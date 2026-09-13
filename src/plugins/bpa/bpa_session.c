@@ -994,16 +994,22 @@ bpa_session_free (bpa_per_thread_t *pt, bpa_session_t *s, f64 now)
 	sub->n_sessions--;
 
       /*
-       * Last session gone: in dynamic mode the block enters hold-down
+       * Last session gone: a block that was ALLOCATED enters hold-down
        * instead of being released right away. Releasing immediately would
        * make a subscriber who pauses for a second churn a release and an
        * allocation, and each of those is a log record.
+       *
+       * A deterministic pool with a reserve has allocated blocks too - the
+       * reserve ones - and they have to come back the same way. Missing this
+       * leaks a reserve block per subscriber that ever extended: owned
+       * forever, never reaped, and visible only as a reserve that slowly
+       * stops having anything to give.
        */
       if (sub->n_sessions == 0
 	  && !pool_is_free_index (bm->pools, s->pool_index))
 	{
 	  p = pool_elt_at_index (bm->pools, s->pool_index);
-	  if (p->mode == BPA_MODE_DYNAMIC
+	  if ((p->mode == BPA_MODE_DYNAMIC || p->block_reserve)
 	      && s->pool_index < vec_len (pt->dyn))
 	    bpa_dyn_idle (vec_elt_at_index (pt->dyn, s->pool_index),
 			  s->sub_idx, now);
@@ -1402,7 +1408,9 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 
 		  if (bpa_set_addr_of (&p->inside, rel[k].sub_idx, &ip_priv))
 		    continue;
-		  bpa_dyn_block_addr (p, rel[k].block_idx, &blk);
+		  if (bpa_dyn_addr (vec_elt_at_index (pt->dyn, j), p,
+				    rel[k].block_idx, &blk))
+		    continue;
 
 		  /* runs on the main thread, so the IPFIX buffer is that
 		   * thread's. One call, not one per transport: this site used

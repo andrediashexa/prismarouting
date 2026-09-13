@@ -31,7 +31,7 @@ the wrong subscriber.
 
 | Mode | What is logged | Volume |
 |------|----------------|--------|
-| Deterministic | **nothing** per subscriber; only configuration changes | ~zero |
+| Deterministic | **nothing** per subscriber, except a block handed out of a `reserve`; and configuration changes | ~zero |
 | Dynamic (PBA) | block allocation and release | ~1 record per block |
 | Per-flow NAT (reference) | every flow | 1 record per connection |
 
@@ -39,6 +39,17 @@ In deterministic mode the proof of who used `(public IP, port, instant)` is the
 algorithm plus the pool configuration. There is no event to record — which is
 precisely why the mode exists. What **MUST** exist instead is a dated
 configuration trail; see below.
+
+**A `reserve` is the one exception, and it is the exception that proves the
+rule.** Those blocks are held *out* of the formula so that a subscriber which
+fills its own has something to be given
+([#39](https://github.com/andrediashexa/hexarouting/issues/39)), which makes
+them precisely the blocks the algorithm does **not** produce. Each one
+therefore **MUST** be exported as a `natEvent 16` with its own port range, and
+its release as a `natEvent 17`, exactly like a dynamic block. The reserve
+itself is part of the definition the trail records, because it is part of the
+arithmetic: a reader who recomputes the mapping without it gets a different
+answer and gets it confidently.
 
 ## Record format (RFC 8158, Table 21)
 
@@ -159,9 +170,14 @@ somebody who had already been disconnected
 * Pinned blocks make this likelier rather than worse: a pinned block is by
   definition held at delete time, so a pool carrying static forwards left one
   open record per forward, every time.
-* Deterministic pools have nothing to close. They allocate no blocks and emit
-  no events at all, so a release from there would be the second half of a pair
-  whose first half was never written.
+* A deterministic pool with no reserve has nothing to close. It allocates no
+  blocks and emits no events at all, so a release from there would be the
+  second half of a pair whose first half was never written.
+* A deterministic pool **with** a reserve does have blocks to close, and for
+  the same reason: a reserve block was announced with a `natEvent 16` when it
+  was handed out, so a delete that took it back in silence would leave the
+  collector holding an allocation that never ends — naming a subscriber who has
+  been disconnected, for as long as the log is kept.
 
 `lab/ipfix.sh` allocates three blocks, pins one of them, deletes the pool and
 asserts at a real collector that every allocation in the capture has its
@@ -628,8 +644,10 @@ subscriber with full confidence.
     policy interleaved mode deterministic forward tcp/6200->100.64.0.5:80
   ```
 
-  A forward is the one part of a deterministic pool that the formula **cannot**
-  reproduce. Everything else in a record exists so that the mapping can be
+  A forward is one of two parts of a deterministic pool that the formula
+  **cannot** reproduce; the other is a block handed out of a `reserve`, and
+  that one is answered for by an exported `natEvent 16` rather than by the
+  trail. Everything else in a record exists so that the mapping can be
   recomputed; a forwarded port is a mapping that was decided rather than
   computed, so a trail that omitted it would answer for that port with the
   subscriber the formula names — who is the wrong one, with full confidence.

@@ -1193,6 +1193,54 @@ bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p)
 		 ok ? "; nearest that is: " : "; none fits", ok);
 }
 
+/*
+ * A reserve too small for the worker count, said at creation.
+ *
+ * The reserve is sharded the way every other block is - worker w hands out
+ * only the indices congruent to w, because the return path resolves the
+ * thread from the index it reads off the packet - so a reserve of two blocks
+ * on a box with four workers leaves two workers with nothing to give. The
+ * subscribers that hash to those workers are refused an extension every time,
+ * and from outside that is indistinguishable from a reserve that is merely
+ * busy.
+ *
+ * A warning and not a refusal, for the reason bpa_stride_warn() gives: the
+ * worker count is a startup setting, so refusing here would stop a pool
+ * accepted on one box from coming up on the same box with more workers, and
+ * every subscriber on it would lose traffic to enforce a property about
+ * extensions.
+ *
+ * `vm` may be null, and then only the log hears about it.
+ */
+void
+bpa_reserve_warn (vlib_main_t *vm, const bpa_pool_t *p)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 nw = bm->n_workers ? bm->n_workers : 1;
+
+  if (p->block_reserve == 0 || p->reserve_count >= nw)
+    return;
+
+  if (vm)
+    {
+      vlib_cli_output (
+	vm, "warning: the reserve on pool %v is %u block(s) and this box has "
+	    "%u workers: %u of them hold no reserve at all, and their "
+	    "subscribers can never be given a second block",
+	p->name, p->reserve_count, nw, nw - p->reserve_count);
+      vlib_cli_output (vm,
+		       "         raise the reserve to at least %u, or add "
+		       "public addresses; each reserve block per address is "
+		       "%u more",
+		       nw, p->outside.count);
+      vlib_cli_output (vm, "         the pool is created either way; this is "
+			   "a warning, not a refusal");
+    }
+  vlib_log_warn (bm->log_class,
+		 "pool %v: reserve of %u blocks does not reach all %u workers",
+		 p->name, p->reserve_count, nw);
+}
+
 clib_error_t *
 bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
 		       u32 alg_set, u16 tcp_mss, u8 tcp_mss_auto,
@@ -1378,9 +1426,19 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
   }
   bpa_outside_window_update ();
 
-  if (p->mode == BPA_MODE_DYNAMIC)
+  /*
+   * One allocator per worker, in both modes that have blocks to hand out.
+   *
+   * Dynamic pools allocate every block on demand. A deterministic pool
+   * allocates nothing at all UNLESS it carries a reserve, and then it
+   * allocates only out of that: the reserve is the only set of blocks the
+   * formula has not already given to somebody. Both use the same allocator
+   * over a different index space (issue #39).
+   */
+  if (p->mode == BPA_MODE_DYNAMIC || p->block_reserve)
     {
       u32 i, nw, w;
+      int reserve = p->mode != BPA_MODE_DYNAMIC;
 
       for (i = 0; i < vec_len (bm->per_thread); i++)
 	{
@@ -1393,7 +1451,7 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
 	  bpa_worker_id (bm, i, &w, &nw);
 	  vec_validate (pt->dyn, p - bm->pools);
 	  e = bpa_dyn_init (vec_elt_at_index (pt->dyn, p - bm->pools), p, w,
-			    nw);
+			    nw, reserve);
 	  if (e)
 	    {
 	      hash_unset_mem (bm->pool_by_name, p->name);
@@ -1510,13 +1568,20 @@ bpa_barrier_yield (vlib_main_t *vm)
  * and the export path may only be reached from process context - the queue is
  * what bpa-expire-process drains, under the barrier, a second later.
  *
- * DETERMINISTIC POOLS ARE NOT AFFECTED, and the check says so rather than
- * relying on the loop finding nothing: bpa_dyn_init() is called only for
- * BPA_MODE_DYNAMIC, so a deterministic pool has no allocator here. It also has
- * no events at all - the mapping is the formula plus the dated configuration
- * trail, which is why that mode logs nothing per subscriber - so a release
- * emitted here would be the second half of a pair whose first half was never
- * written, and a collector reading it would have to invent the allocation.
+ * A DETERMINISTIC POOL WITH NO RESERVE IS NOT AFFECTED, and the check says so
+ * rather than relying on the loop finding nothing: it has no allocator here
+ * and no events at all - the mapping is the formula plus the dated
+ * configuration trail, which is why that mode logs nothing per subscriber - so
+ * a release emitted here would be the second half of a pair whose first half
+ * was never written, and a collector reading it would have to invent the
+ * allocation.
+ *
+ * With a reserve it IS affected, and for exactly the reason the paragraph
+ * above gives. A reserve block is the one thing on a deterministic pool the
+ * formula does NOT produce, so it was announced with a natEvent 16 when it was
+ * handed out, and a delete that took it back in silence would leave the
+ * collector holding an allocation that never ends - naming a subscriber who
+ * has been disconnected, for as long as the log is kept (#215).
  */
 static u32
 bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
@@ -1524,7 +1589,7 @@ bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
   bpa_main_t *bm = &bpa_main;
   u32 i, n = 0;
 
-  if (p->mode != BPA_MODE_DYNAMIC)
+  if (p->mode != BPA_MODE_DYNAMIC && p->block_reserve == 0)
     return 0;
 
   for (i = 0; i < vec_len (bm->per_thread); i++)
@@ -1557,7 +1622,8 @@ bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
 	  if (bpa_set_addr_of (&p->inside, d->owner[local], &ip_priv))
 	    continue;
 
-	  bpa_dyn_block_addr (p, local * nw + w, &blk);
+	  if (bpa_dyn_addr (d, p, local * nw + w, &blk))
+	    continue;
 	  bpa_log_queue_event (pt, event, ip_priv, blk.ip_pub, blk.port_lo,
 			       blk.port_hi, pool_index);
 	  n++;

@@ -201,10 +201,11 @@ typedef struct
 /*
  * One port block held by a subscriber, with its bitmap.
  *
- * A subscriber usually holds exactly one. It gets a second only in dynamic
- * mode, when the first fills and the per-subscriber cap allows it - a
- * deterministic pool has no spare block to give, because the formula already
- * assigns every block to somebody (see issue #39).
+ * A subscriber usually holds exactly one. It gets a second when the first
+ * fills, the per-subscriber cap allows it, and the pool has a block to give:
+ * off the free list in dynamic mode, out of the reserve in deterministic mode.
+ * A deterministic pool with NO reserve has none to give, because the formula
+ * already assigns every mapped block to somebody (issue #39).
  */
 typedef struct
 {

@@ -163,8 +163,18 @@ format_bpa_pool (u8 *s, va_list *args)
 	      indent + 2, p->port_min, p->port_max, p->port_count);
   s = format (s, "\n%Ublock        %u ports -> %u blocks per public IP",
 	      format_white_space, indent + 2, p->block_size, p->blocks_per_ip);
+  /*
+   * Both numbers, and the capacity below is computed from the second one.
+   * A reserve that appeared only as a setting, with a capacity still counted
+   * off blocks_per_ip, would promise subscribers the pool will drop.
+   */
+  if (p->block_reserve)
+    s = format (s, "\n%Ureserve      %u block(s) per public IP -> %u mapped, "
+		   "%u held for extensions",
+		format_white_space, indent + 2, p->block_reserve,
+		p->blocks_mapped, p->reserve_count);
   s = format (s, "\n%Usharing      %u:1", format_white_space, indent + 2,
-	      p->blocks_per_ip);
+	      p->blocks_mapped);
   /*
    * The range of ports one subscriber can end up with, in ports.
    *
@@ -172,10 +182,14 @@ format_bpa_pool (u8 *s, va_list *args)
    * max-blocks 8" is already a per-pool range - a subscriber starts at 64
    * ports and grows one block at a time, only when it fills one, as far as
    * 512. Nothing said so, and a range nobody can see is a range nobody sizes
-   * a pool with. Only in dynamic mode, because a deterministic pool never
-   * extends: there the minimum is the maximum by construction (#39).
+   * a pool with.
+   *
+   * A deterministic pool joins this only once it has a reserve. Without one
+   * the minimum IS the maximum by construction - the formula assigns every
+   * block to somebody, so there is none to give - and max-blocks above 1 on
+   * such a pool describes a growth that cannot happen (#39).
    */
-  if (p->mode == BPA_MODE_DYNAMIC && p->max_blocks > 1)
+  if ((p->mode == BPA_MODE_DYNAMIC || p->block_reserve) && p->max_blocks > 1)
     s = format (s, "\n%Uper sub      %u-%u ports (1-%u blocks, grown one at a "
 		   "time as each fills)",
 		format_white_space, indent + 2, p->block_size,
@@ -380,7 +394,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 block = 512, port_min = 1024, port_max = 65535, mss = 0, vrf = 0;
   u32 tv = 0;
 
-  u32 maxb = 0, stride = 0;
+  u32 maxb = 0, stride = 0, reserve = 0;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   u32 *bys_b = 0, *bys_c = 0, *byd_b = 0, *byd_c = 0;
   bpa_pool_t cfg = { 0 };
@@ -476,6 +490,17 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	      goto done;
 	    }
 	  cfg.block_stride = (u16) stride;
+	}
+      else if (unformat (line_input, "reserve %u", &reserve))
+	{
+	  if (reserve > 65535)
+	    {
+	      error = clib_error_return (
+		0, "reserve %u: expected 0-65535 blocks per public address",
+		reserve);
+	      goto done;
+	    }
+	  cfg.block_reserve = (u16) reserve;
 	}
       else if (unformat (line_input, "bypass destination %U/%d",
 			 unformat_ip4_address, &addr, &len))
@@ -821,7 +846,10 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       probe.statics = 0;
       bpa_timeouts_warn (vm, &cfg.timeouts, name);
       if (!bpa_pool_init (&probe))
-	bpa_stride_warn (vm, &probe);
+	{
+	  bpa_stride_warn (vm, &probe);
+	  bpa_reserve_warn (vm, &probe);
+	}
     }
 
 done:
@@ -853,6 +881,7 @@ VLIB_CLI_COMMAND (bpa_pool_add_command, static) = {
     "[utilisation-alarm <percent>] "
     "[max-sessions <n>] [max-session-rate <n>] "
     "[tcp-mss <bytes|auto>] "
+    "[max-blocks <n>] [block-stride <n>] [reserve <n>] "
     "[forward <tcp|udp> <public-port> to <private-ip> <private-port>] "
     "[check] | bpa pool <name> del",
   .function = bpa_pool_add_command_fn,
@@ -2380,12 +2409,31 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
       u64 total = 0, alloc = 0, allocs = 0, rels = 0, exh = 0, exts = 0;
       u64 pinned = 0, placed = 0, missed = 0;
 
-      if (p->mode != BPA_MODE_DYNAMIC)
+      /*
+       * Both kinds of allocator, because both hand out blocks that have to be
+       * given back and both can run out. A deterministic pool with a reserve
+       * is the one place that mode counts a refusal at all, and a refusal
+       * nobody can see is the support call arriving with nothing behind it.
+       */
+      if (p->mode != BPA_MODE_DYNAMIC && p->block_reserve == 0)
 	continue;
       any = 1;
 
-      vlib_cli_output (vm, "pool %v (hold-down %us)", p->name,
-		       bm->block_holddown);
+      if (p->mode == BPA_MODE_DYNAMIC)
+	vlib_cli_output (vm, "pool %v (hold-down %us)", p->name,
+			 bm->block_holddown);
+      else
+	/*
+	 * Said as a reserve, not as a block count, because the number an
+	 * operator acts on is different: these blocks came OUT of capacity,
+	 * and the answer to running out of them is to enlarge the reserve
+	 * (which re-maps subscribers) or to add public addresses, never to
+	 * wait for a hold-down.
+	 */
+	vlib_cli_output (
+	  vm, "pool %v (deterministic reserve, %u block(s) per public "
+	      "address, %u in all, hold-down %us)",
+	  p->name, p->block_reserve, p->reserve_count, bm->block_holddown);
       for (i = 0; i < vec_len (bm->per_thread); i++)
 	{
 	  bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
@@ -2437,15 +2485,32 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
        * of them, and that is only visible next to the number that was
        * placed.
        */
-      if (p->block_stride)
+      if (p->block_stride && p->mode == BPA_MODE_DYNAMIC)
 	vlib_cli_output (vm,
 			 "  stride %u: %Lu extensions placed where it says, "
 			 "%Lu fell back to the free list",
 			 p->block_stride, placed, missed);
+      /*
+       * The refusals above, named for what they mean on this pool and kept
+       * apart from the OTHER way a subscriber is refused an extension:
+       * reaching max-blocks. They need different operator actions - enlarge
+       * the reserve against one, raise the cap against the other - and one
+       * counter for both would say neither (issue #39, criterion 5). The cap
+       * refusals are in "show bpa errors" as block-exhausted, on the node.
+       */
+      if (p->mode != BPA_MODE_DYNAMIC)
+	vlib_cli_output (
+	  vm, "  reserve exhausted %Lu time(s): a subscriber filled its block, "
+	      "was under max-blocks %u, and the reserve had nothing left",
+	  exh, p->max_blocks);
     }
 
   if (!any)
-    vlib_cli_output (vm, "no dynamic pools configured");
+    /* Both kinds, because both appear above. A box with a deterministic pool
+     * and a reserve was told "no dynamic pools configured" and its reserve
+     * was right there. */
+    vlib_cli_output (vm, "no pool on this box allocates blocks: no dynamic "
+			 "pool, and no deterministic pool with a reserve");
   return 0;
 }
 
@@ -2744,6 +2809,8 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	s = format (s, " max-blocks %u\n", p->max_blocks);
       if (p->block_stride)
 	s = format (s, " block-stride %u\n", p->block_stride);
+      if (p->block_reserve)
+	s = format (s, " reserve %u\n", p->block_reserve);
       for (i = 0; i < p->bypass_src.n_ranges; i++)
 	s = format (s, "%U", format_bpa_range_as_prefixes,
 		    p->bypass_src.ranges[i].base,

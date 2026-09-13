@@ -204,6 +204,25 @@ bpa_handoff_inline (vlib_main_t *vm, vlib_node_runtime_t *node,
 		{
 		  bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
 		  matched = (bpa_reverse_sub (p, pub, port, &sub_idx) == 0);
+		  /*
+		   * A port in a deterministic pool's reserve names no
+		   * subscriber by arithmetic, which is why bpa_reverse_sub()
+		   * refuses it - but it still has to reach the worker holding
+		   * the block, and the only thing this node can read off the
+		   * packet is the reserve index.
+		   *
+		   * That works because the allocator is constrained to match:
+		   * worker w hands out only the reserve indices congruent to
+		   * w, exactly as it owns only the dynamic blocks congruent to
+		   * w, and a subscriber is owned by sub_idx % n_workers. So
+		   * steering on the reserve index lands on the same thread the
+		   * subscriber's own outbound packets do. Without this the
+		   * reply stays where the NIC put it and bpa-out2in searches a
+		   * session table that was never going to hold it.
+		   */
+		  if (!matched)
+		    matched =
+		      (bpa_reserve_index_of (p, pub, port, &sub_idx) == 0);
 		}
 	    }
 	}

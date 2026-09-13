@@ -355,12 +355,18 @@ VLIB_NODE_FN (bpa_in2out_node)
        * Every block this subscriber holds is full. Give it another, if the
        * pool allows more and there is one to give.
        *
-       * Only in dynamic mode. A deterministic pool has no spare block by
-       * construction - the formula assigns every block to some subscriber, so
-       * any block handed out here is one taken from somebody else, and their
-       * mapping would break with no error anywhere. That needs a reserve
-       * carved out of capacity, which changes the mapping for everyone and is
-       * therefore its own change (issue #39).
+       * In dynamic mode it comes off the free list. In deterministic mode it
+       * comes out of the RESERVE and from nowhere else: the formula assigns
+       * every mapped block to some subscriber, so a block handed out from
+       * there would be one taken from somebody else and their mapping would
+       * break with no error anywhere. A pool with no reserve therefore still
+       * drops the packet, which is what every configuration written before
+       * this existed does (issue #39).
+       *
+       * One test for both, because pt->dyn holds whichever allocator the pool
+       * has and the slice knows which index space it is over. A second branch
+       * here would be two ways to hand out a block, and the log record, the
+       * hold-down and the release would each have to be written twice.
        */
       /*
        * Another block, only when the block was the problem. After a cap
@@ -368,7 +374,7 @@ VLIB_NODE_FN (bpa_in2out_node)
        * operator has just told the box to bound.
        */
       if (PREDICT_FALSE (s == 0 && why == BPA_CREATE_NO_PORT
-			 && p->mode == BPA_MODE_DYNAMIC
+			 && (p->mode == BPA_MODE_DYNAMIC || p->block_reserve)
 			 && bpa_sub_n_blocks (pt, pool_index, sub_idx)
 			      < p->max_blocks))
 	{

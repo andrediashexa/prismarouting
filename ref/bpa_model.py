@@ -8,8 +8,12 @@ generated here feed the C unit tests.
 
 Two modes:
   DETERMINISTIC - fixed algorithmic mapping, reversible by formula.
-                  Zero allocation logging. The proof for the authority is
-                  the algorithm plus the pool configuration.
+                  Zero allocation logging, except for the blocks a `reserve`
+                  holds OUT of the formula: those are the ones the algorithm
+                  does not produce, so they are logged like dynamic ones.
+                  The proof for the authority is the algorithm plus the pool
+                  configuration, and the reserve is part of that
+                  configuration.
   DYNAMIC (PBA) - block allocated on demand at the first flow and released
                   on inactivity. Produces one log record per allocation and
                   release. Allows oversubscribing the public pool.
@@ -146,10 +150,30 @@ class PoolConfig:
     # is what makes it harder to profile a subscriber by watching one range.
     block_stride: int = 0
 
+    # Blocks held out of the formula on every public address, so a
+    # deterministic subscriber that fills its block has somewhere to be given
+    # a second one.
+    #
+    # Counted PER PUBLIC ADDRESS and not as a pool-wide total, for three
+    # reasons that all point the same way. A subscriber's extension has to
+    # land on the subscriber's OWN public address (RFC 4787 REQ-2 paired
+    # address pooling), so a total that did not divide evenly would leave some
+    # addresses with no reserve and the subscribers on them unservable. The
+    # reverse arithmetic tests one comparison - is this block above the mapped
+    # ones - and an uneven total makes that test depend on which address the
+    # packet arrived on. And blocks_per_ip is uniform across the pool, which is
+    # the property the whole formula rests on.
+    #
+    # Zero is every configuration written before this existed, and MUST leave
+    # the mapping and the capacity exactly as they were.
+    block_reserve: int = 0
+
     inside: AddrSet = field(init=False)
     outside: AddrSet = field(init=False)
     port_count: int = field(init=False)
     blocks_per_ip: int = field(init=False)
+    blocks_mapped: int = field(init=False)
+    reserve_count: int = field(init=False)
     capacity: int = field(init=False)
 
     def __post_init__(self):
@@ -166,7 +190,35 @@ class PoolConfig:
             raise BpaError("block_size larger than the port range")
 
         self.blocks_per_ip = self.port_count // self.block_size
-        self.capacity = self.outside.count * self.blocks_per_ip
+
+        if self.block_reserve < 0:
+            raise BpaError(
+                f"block_reserve must not be negative, got {self.block_reserve}")
+        # A reserve that takes every block leaves a pool that maps nobody. It
+        # is refused rather than accepted as a pool of capacity zero, because
+        # the second reads as a configuration that works and serves no one.
+        if self.block_reserve >= self.blocks_per_ip:
+            raise BpaError(
+                f"block_reserve {self.block_reserve} leaves no blocks to map: "
+                f"a public address holds {self.blocks_per_ip} blocks")
+
+        # blocks_per_ip stays what a public address HOLDS; blocks_mapped is
+        # what the formula may hand out. Keeping them apart is what lets the
+        # reverse direction tell a reserve port from a port of nobody's.
+        self.blocks_mapped = self.blocks_per_ip - self.block_reserve
+        self.reserve_count = self.outside.count * self.block_reserve
+        self.capacity = self.outside.count * self.blocks_mapped
+
+        # A dynamic pool already has spare blocks: every block not currently
+        # held is on the free list, and that list is exactly where an
+        # extension comes from. A reserve there would take blocks OUT of the
+        # list the extension is drawn from, which makes the pool smaller and
+        # buys nothing. Refused rather than accepted and inert, so that a pool
+        # switched from deterministic to dynamic says what it lost.
+        if self.block_reserve and self.mode is not PoolMode.DETERMINISTIC:
+            raise BpaError(
+                "block_reserve applies to deterministic pools only: a dynamic "
+                "pool's extension already comes off the free list")
 
         if self.block_stride < 0:
             raise BpaError(f"block_stride must not be negative, got {self.block_stride}")
@@ -174,11 +226,11 @@ class PoolConfig:
         # subscriber's own public address on its very first extension, so it
         # can never place anything. Refused rather than accepted and silently
         # inert.
-        if self.block_stride >= self.blocks_per_ip:
+        if self.block_stride >= self.blocks_mapped:
             raise BpaError(
                 f"block_stride {self.block_stride} does not fit: a public "
-                f"address holds {self.blocks_per_ip} blocks, so the first "
-                f"extension would land past the end of it")
+                f"address holds {self.blocks_mapped} mappable blocks, so the "
+                f"first extension would land past the end of them")
 
     # read-only shortcuts
     @property
@@ -201,14 +253,14 @@ class PoolConfig:
     def split(self, sub_idx: int):
         """sub_idx -> (pub_idx, blk_idx) conforme a politica do pool."""
         if self.policy is MapPolicy.BLOCKED:
-            return divmod(sub_idx, self.blocks_per_ip)
+            return divmod(sub_idx, self.blocks_mapped)
         blk_idx, pub_idx = divmod(sub_idx, self.outside.count)
         return pub_idx, blk_idx
 
     def join(self, pub_idx: int, blk_idx: int) -> int:
         """(pub_idx, blk_idx) -> sub_idx. Inverso exato de split()."""
         if self.policy is MapPolicy.BLOCKED:
-            return pub_idx * self.blocks_per_ip + blk_idx
+            return pub_idx * self.blocks_mapped + blk_idx
         return blk_idx * self.outside.count + pub_idx
 
     def forward(self, ip_priv) -> dict:
@@ -264,7 +316,7 @@ class PoolConfig:
             return None
         pub_idx, blk_idx = self.split(primary_block)
         target = blk_idx + nth * self.block_stride
-        if target >= self.blocks_per_ip:
+        if target >= self.blocks_mapped:
             return None
         return self.join(pub_idx, target)
 
@@ -301,12 +353,114 @@ class PoolConfig:
         blk_idx = (port - self.port_min) // self.block_size
         if blk_idx >= self.blocks_per_ip:
             raise BpaError(f"block {blk_idx} outside the pool")
+        # A reserve block has no subscriber the formula can name. Saying so is
+        # the point: the reverse direction has to tell "nobody's port" from
+        # "somebody the algorithm cannot identify", because the second one is
+        # resolved by the allocator and the first one is dropped.
+        if blk_idx >= self.blocks_mapped:
+            raise BpaError(
+                f"block {blk_idx} is reserve block "
+                f"{self.reserve_index(pub_idx, blk_idx)}: held for an "
+                f"extension, so only the allocator knows whose it is")
 
         sub_idx = self.join(pub_idx, blk_idx)
         ip_priv = self.inside.addr_of(sub_idx)
         if ip_priv is None:
             raise BpaError(f"sub_idx {sub_idx} has no matching subscriber")
         return str(ipaddress.IPv4Address(ip_priv))
+
+    # ---------------- the reserve ----------------
+    #
+    # The blocks above blocks_mapped on every public address, presented as
+    # their own dense index space [0, reserve_count). A separate space and not
+    # a continuation of the subscriber index, because under the blocked policy
+    # a block index above blocks_mapped is ANOTHER SUBSCRIBER'S block: join()
+    # divides by blocks_mapped, so pub 0 block blocks_mapped and pub 1 block 0
+    # are the same number. Handing the reserve its own index is what keeps the
+    # two from colliding under either policy.
+
+    def is_reserve_block(self, blk_idx: int) -> bool:
+        """Is this block, within one public address, held out of the formula?"""
+        return self.blocks_mapped <= blk_idx < self.blocks_per_ip
+
+    def reserve_index(self, pub_idx: int, blk_idx: int) -> int:
+        """(public address, block within it) -> dense reserve index."""
+        if not self.is_reserve_block(blk_idx):
+            raise BpaError(f"block {blk_idx} is not in the reserve")
+        if pub_idx < 0 or pub_idx >= self.outside.count:
+            raise BpaError(f"public index {pub_idx} outside the set")
+        off = blk_idx - self.blocks_mapped
+        # Laid out the way the policy lays out subscribers, so that
+        # consecutive reserve blocks spread across public addresses under
+        # interleaved exactly as consecutive subscribers do. Under interleaved
+        # this also makes the reserve index the global block index minus
+        # capacity, which is why the two spaces never have to be reconciled.
+        if self.policy is MapPolicy.INTERLEAVED:
+            return off * self.outside.count + pub_idx
+        return pub_idx * self.block_reserve + off
+
+    def reserve_split(self, res_idx: int):
+        """dense reserve index -> (public address index, block within it)."""
+        if res_idx < 0 or res_idx >= self.reserve_count:
+            raise BpaError(
+                f"reserve index {res_idx} outside [0, {self.reserve_count})")
+        if self.policy is MapPolicy.INTERLEAVED:
+            off, pub_idx = divmod(res_idx, self.outside.count)
+        else:
+            pub_idx, off = divmod(res_idx, self.block_reserve)
+        return pub_idx, self.blocks_mapped + off
+
+    def reserve_forward(self, res_idx: int) -> dict:
+        """Where a reserve block is, in the shape forward() answers in."""
+        pub_idx, blk_idx = self.reserve_split(res_idx)
+        port_lo = self.port_min + blk_idx * self.block_size
+        return {
+            "res_idx": res_idx,
+            "pub_idx": pub_idx,
+            "blk_idx": blk_idx,
+            "ip_pub": str(ipaddress.IPv4Address(self.outside.addr_of(pub_idx))),
+            "port_lo": port_lo,
+            "port_hi": port_lo + self.block_size - 1,
+        }
+
+    def reserve_index_of(self, ip_pub, port: int):
+        """(public address, port) -> reserve index, or None when it is not one.
+
+        This is the question the return path asks about every packet whose
+        port the formula refused: a reserve port is resolved by the allocator,
+        and anything else is dropped."""
+        v = int(ipaddress.IPv4Address(ip_pub)) if isinstance(ip_pub, str) else ip_pub
+        pub_idx = self.outside.index_of(v)
+        if pub_idx is None or port < self.port_min or port > self.port_max:
+            return None
+        blk_idx = (port - self.port_min) // self.block_size
+        if not self.is_reserve_block(blk_idx):
+            return None
+        return self.reserve_index(pub_idx, blk_idx)
+
+    def reserve_worker(self, res_idx: int, n_workers: int) -> int:
+        """
+        Which worker may hand this reserve block out.
+
+        A subscriber is owned by sub_idx % n_workers in both directions, and
+        the return path resolves the worker from what it can read off the
+        packet - which for a reserve port is the reserve index and nothing
+        else. So the two only meet when the reserve block a subscriber is
+        given is congruent to it, and that is a constraint on the allocator
+        rather than an observation about it.
+        """
+        return res_idx % n_workers
+
+    def reserve_serves_every_worker(self, n_workers: int) -> bool:
+        """
+        Whether every worker has a reserve block at all.
+
+        Worker w holds the reserve indices congruent to w, so it holds none
+        when w >= reserve_count - and its subscribers then have a reserve they
+        can never draw from. Refused at configuration time rather than found
+        as an exhaustion counter on some workers and not others.
+        """
+        return self.reserve_count >= n_workers
 
     # ---------------- planning ----------------
 
@@ -320,7 +474,11 @@ class PoolConfig:
             f"  public     {self.outside.describe()}  ({self.outside.count:,} addresses, {len(self.outside.ranges)} range(s))",
             f"  ports      {self.port_min}-{self.port_max}  ({self.port_count:,} per IP)",
             f"  block      {self.block_size} ports  -> {self.blocks_per_ip} blocks per public IP",
-            f"  sharing    {self.blocks_per_ip}:1  (subscribers per public IP)",
+            f"  reserve    {self.block_reserve} block(s) per public IP  "
+            + ("(none: every block is mapped by the formula)"
+               if self.block_reserve == 0
+               else f"({self.reserve_count:,} blocks held for extensions)"),
+            f"  sharing    {self.blocks_mapped}:1  (subscribers per public IP)",
             f"  stride     {self.block_stride}  "
             + ("(extensions go wherever the allocator has one free)"
                if self.block_stride == 0

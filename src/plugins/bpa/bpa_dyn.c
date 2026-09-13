@@ -9,24 +9,47 @@
 static void bpa_dyn_unfree (bpa_dyn_t *d, u32 local);
 
 clib_error_t *
-bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers)
+bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers,
+	      int reserve)
 {
-  u32 i, n;
+  u32 i, n, total = reserve ? p->reserve_count : p->capacity;
 
   clib_memset (d, 0, sizeof (*d));
+  d->reserve = reserve ? 1 : 0;
 
-  /* blocks in [0, capacity) whose index is congruent to worker */
-  n = p->capacity / n_workers;
-  if (worker < p->capacity % n_workers)
+  /* indices in [0, total) whose value is congruent to worker */
+  n = total / n_workers;
+  if (worker < total % n_workers)
     n++;
 
-  if (n == 0)
+  /*
+   * A dynamic pool whose capacity does not reach this worker cannot translate
+   * for the subscribers that hash to it at all, so it is refused.
+   *
+   * A RESERVE that does not reach this worker is refused nowhere, and that is
+   * a decision rather than an omission. The worker count is a startup setting,
+   * not part of the pool: refusing here would mean a configuration accepted on
+   * a single-threaded box stops the pool from coming up after the same box is
+   * given four workers - every subscriber on it losing traffic, to enforce a
+   * property about extensions. So the slice is created empty instead. Every
+   * extension it is asked for is refused and counted, which is what
+   * "show bpa blocks" reports and what bpa_reserve_warn() says at creation
+   * time. Same argument as bpa_stride_warn(), same conclusion.
+   */
+  if (n == 0 && !reserve)
     return clib_error_return (
       0, "pool '%v': capacity %u does not reach worker %u; reduce the worker "
 	 "count or enlarge the pool",
-      p->name, p->capacity, worker);
+      p->name, total, worker);
 
   d->n_local = n;
+  if (n == 0)
+    {
+      d->by_sub = hash_create (0, sizeof (uword));
+      d->active = 1;
+      return 0;
+    }
+
   vec_validate (d->owner, n - 1);
   vec_validate (d->idle_since, n - 1);
   vec_validate (d->pinned, n - 1);
@@ -93,7 +116,8 @@ bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
 found:
   block_idx = local * n_workers + worker;
   b->sub_idx = sub_idx;
-  bpa_dyn_block_addr (p, block_idx, b);
+  if (PREDICT_FALSE (bpa_dyn_addr (d, p, block_idx, b)))
+    return -1;
   return 0;
 }
 
@@ -113,7 +137,55 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
     }
 
   local = BPA_NO_BLOCK;
-  if (PREDICT_FALSE (p->block_stride != 0))
+
+  /*
+   * A reserve block on the subscriber's OWN public address, when there is
+   * one free in this worker's slice.
+   *
+   * RFC 4787 REQ-2, paired address pooling: a subscriber should send from one
+   * public address, because a peer that sees two is looking at what appears
+   * to be two hosts. The deterministic mode has that property by construction
+   * for the block the formula gives, and a reserve block taken off the top of
+   * the free stack would be the first thing in this mode to break it.
+   *
+   * A PREFERENCE and not a rule, exactly like the stride below and for the
+   * same reason. The reserve is sharded by index, so the blocks on the
+   * subscriber's own address are not all in its worker's slice, and the ones
+   * that are may be held by somebody else. Refusing the extension rather than
+   * taking a block elsewhere would turn a property about layout into a
+   * customer losing traffic.
+   *
+   * The loop is over block_reserve entries - a handful, and only on the
+   * packet that found no free port anywhere.
+   */
+  if (PREDICT_FALSE (d->reserve != 0))
+    {
+      u32 pub_idx, blk_idx, off;
+
+      bpa_split (p, sub_idx, &pub_idx, &blk_idx);
+      for (off = 0; off < p->block_reserve; off++)
+	{
+	  u32 r = bpa_reserve_index (p, pub_idx, p->blocks_mapped + off);
+	  u32 cand;
+
+	  if (r % n_workers != worker)
+	    continue;
+	  cand = r / n_workers;
+	  if (cand >= d->n_local || d->owner[cand] != BPA_NO_BLOCK)
+	    continue;
+	  bpa_dyn_unfree (d, cand);
+	  local = cand;
+	  break;
+	}
+    }
+
+  /*
+   * No stride over a reserve. bpa_stride_block() steps along the MAPPED
+   * blocks of a public address, and a reserve index is a different space
+   * entirely: applying one here would name an index that is somebody else's
+   * reserve block, or none at all.
+   */
+  if (PREDICT_FALSE (p->block_stride != 0 && !d->reserve))
     {
       u32 cand = BPA_NO_BLOCK;
 
@@ -165,7 +237,8 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
 
   block_idx = local * n_workers + worker;
   b->sub_idx = sub_idx;
-  bpa_dyn_block_addr (p, block_idx, b);
+  if (PREDICT_FALSE (bpa_dyn_addr (d, p, block_idx, b)))
+    return -1;
   return 0;
 }
 

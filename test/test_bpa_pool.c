@@ -43,6 +43,7 @@ load_pool (bpa_pool_t *p, const bpa_vec_pool_t *v)
   p->port_min = v->port_min;
   p->port_max = v->port_max;
   p->block_size = v->block_size;
+  p->block_reserve = v->reserve;
   p->policy = (bpa_policy_t) v->policy;
   p->mode = BPA_MODE_DETERMINISTIC;
 
@@ -87,6 +88,19 @@ main (void)
       CHECK (pools[i].blocks_per_ip == v->exp_blocks_per_ip,
 	     "'%s': blocks_per_ip C=%u ref=%u", v->name,
 	     pools[i].blocks_per_ip, v->exp_blocks_per_ip);
+      CHECK (pools[i].blocks_mapped == v->exp_blocks_mapped,
+	     "'%s': blocks_mapped C=%u ref=%u", v->name,
+	     pools[i].blocks_mapped, v->exp_blocks_mapped);
+      CHECK (pools[i].reserve_count == v->exp_reserve_count,
+	     "'%s': reserve_count C=%u ref=%u", v->name,
+	     pools[i].reserve_count, v->exp_reserve_count);
+      /*
+       * The number the box reports and the number the model predicts are the
+       * same number, and this is where that is enforced. A reserve is paid
+       * for in capacity, so a plugin that carved one out and went on
+       * reporting the old capacity would tell an operator the pool serves
+       * subscribers it will drop.
+       */
       CHECK (pools[i].capacity == v->exp_capacity, "'%s': capacity C=%u ref=%u",
 	     v->name, pools[i].capacity, v->exp_capacity);
 
@@ -96,6 +110,9 @@ main (void)
 	      pools[i].outside.count, pools[i].outside.n_ranges,
 	      pools[i].blocks_per_ip, pools[i].capacity, pools[i].div.d,
 	      pools[i].div.is_pow2 ? " (shift)" : " (reciprocal)");
+      if (v->reserve)
+	printf ("  %-18s reserve %u block(s)/IP -> %u mapped, %u held\n", "",
+		v->reserve, pools[i].blocks_mapped, pools[i].reserve_count);
     }
 
   printf ("\n=== address <-> index bijection ===\n");
@@ -542,6 +559,279 @@ main (void)
 	   "the largest stride that fits was refused");
     printf ("  the first stride that cannot fit is refused; the one below it "
 	    "is not\n");
+  }
+
+  printf ("\n=== the reserve: blocks held out of the formula ===\n");
+  {
+    unsigned k, n_reserved = 0;
+
+    for (k = 0; k < BPA_VEC_N_RESERVE; k++)
+      {
+	const bpa_vec_reserve_t *v = &bpa_vec_reserve[k];
+	bpa_pool_t *p = &pools[v->pool];
+	bpa_block_t b = { 0 };
+	u32 back = 0, got = 0;
+
+	CHECK (bpa_reserve_addr (p, v->res, &b) == 0,
+	       "'%s': reserve block %u has no address", (char *) p->name,
+	       v->res);
+	CHECK (b.pub_idx == v->pub_idx && b.blk_idx == v->blk_idx,
+	       "'%s': reserve %u lands at (pub %u, block %u), ref says "
+	       "(pub %u, block %u)",
+	       (char *) p->name, v->res, b.pub_idx, b.blk_idx, v->pub_idx,
+	       v->blk_idx);
+	/* In the units the RFC 8158 record carries and an operator reads. A
+	 * block index agreeing is not the same claim as a port range
+	 * agreeing, and the port range is what the log has to attribute. */
+	CHECK (b.ip_pub == v->ip_pub && b.port_lo == v->port_lo
+		 && b.port_hi == v->port_hi,
+	       "'%s': reserve %u is %u:%u-%u, ref says %u:%u-%u",
+	       (char *) p->name, v->res, b.ip_pub, b.port_lo, b.port_hi,
+	       v->ip_pub, v->port_lo, v->port_hi);
+
+	back = bpa_reserve_index (p, v->pub_idx, v->blk_idx);
+	CHECK (back == v->res,
+	       "'%s': (pub %u, block %u) is reserve index %u, not %u",
+	       (char *) p->name, v->pub_idx, v->blk_idx, back, v->res);
+	CHECK (bpa_is_reserve_block (p, v->blk_idx),
+	       "'%s': block %u is in the reserve and was not recognised",
+	       (char *) p->name, v->blk_idx);
+
+	/*
+	 * What the return path does with a packet addressed to a reserve
+	 * port. bpa_reverse_sub() MUST refuse it: under the blocked policy
+	 * the arithmetic there would produce a real and different
+	 * subscriber, and that customer would receive somebody else's
+	 * traffic. Only the allocator knows whose the block is.
+	 */
+	CHECK (bpa_reserve_index_of (p, v->ip_pub, v->port_lo, &got) == 0
+		 && got == v->res,
+	       "'%s': %u:%u did not resolve to reserve index %u",
+	       (char *) p->name, v->ip_pub, v->port_lo, v->res);
+	CHECK (bpa_reserve_index_of (p, v->ip_pub, v->port_hi, &got) == 0
+		 && got == v->res,
+	       "'%s': %u:%u did not resolve to reserve index %u",
+	       (char *) p->name, v->ip_pub, v->port_hi, v->res);
+	CHECK (bpa_reverse_sub (p, v->ip_pub, v->port_lo, &got) != 0,
+	       "'%s': %u:%u is a reserve port and bpa_reverse_sub() named "
+	       "subscriber %u for it",
+	       (char *) p->name, v->ip_pub, v->port_lo, got);
+	CHECK (bpa_reverse_sub (p, v->ip_pub, v->port_hi, &got) != 0,
+	       "'%s': %u:%u is a reserve port and bpa_reverse_sub() named "
+	       "subscriber %u for it",
+	       (char *) p->name, v->ip_pub, v->port_hi, got);
+	n_reserved++;
+      }
+
+    /* An empty vector table would leave every assertion above unexecuted and
+     * the section reading green. */
+    CHECK (n_reserved > 0, "no reserve vectors at all");
+    printf ("  %u reserve blocks: each one addressable, indexable both ways, "
+	    "and refused by the subscriber arithmetic\n",
+	    n_reserved);
+  }
+
+  printf ("\n=== no reserve block is any subscriber's ===\n");
+  {
+    unsigned clash = 0, checked = 0;
+
+    /*
+     * The property the whole feature rests on. An extension handed out of the
+     * reserve must not be a block the formula gives to somebody else, because
+     * that subscriber's mapping would break with no error anywhere - the
+     * failure the deterministic proof exists to prevent.
+     */
+    for (i = 0; i < BPA_VEC_N_POOLS; i++)
+      {
+	bpa_pool_t *p = &pools[i];
+	u32 sub, res;
+
+	if (p->block_reserve == 0)
+	  continue;
+	for (sub = 0; sub < p->capacity; sub++)
+	  {
+	    u32 pub_idx, blk_idx;
+
+	    bpa_split (p, sub, &pub_idx, &blk_idx);
+	    checked++;
+	    if (bpa_is_reserve_block (p, blk_idx))
+	      clash++;
+	  }
+	/* And the other direction: every reserve block resolves to a block
+	 * index the formula never produces. */
+	for (res = 0; res < p->reserve_count; res++)
+	  {
+	    bpa_block_t b;
+	    u32 sub2;
+
+	    if (bpa_reserve_addr (p, res, &b))
+	      {
+		clash++;
+		continue;
+	      }
+	    checked++;
+	    if (bpa_reverse_sub (p, b.ip_pub, b.port_lo, &sub2) == 0)
+	      clash++;
+	  }
+      }
+    CHECK (clash == 0, "%u blocks are claimed by both the formula and the "
+		       "reserve",
+	   clash);
+    CHECK (checked > 0, "no pool in the vectors carries a reserve");
+    printf ("  %u block claims checked, %u conflicts\n", checked, clash);
+  }
+
+  printf ("\n=== a reserve of zero changes nothing ===\n");
+  {
+    unsigned inert = 0;
+
+    /*
+     * The upgrade guarantee, asserted rather than promised: a box that
+     * upgrades and is not reconfigured must map every subscriber onto the
+     * byte-identical address and port block it had before this feature
+     * existed. Every pool below carries no reserve, so the reserve machinery
+     * has to be invisible to all of them.
+     */
+    for (i = 0; i < BPA_VEC_N_POOLS; i++)
+      {
+	bpa_pool_t *p = &pools[i];
+	u32 res = 0;
+	int port;
+
+	if (p->block_reserve != 0)
+	  continue;
+	CHECK (p->blocks_mapped == p->blocks_per_ip,
+	       "'%s': no reserve, yet %u of %u blocks are unmapped",
+	       (char *) p->name, p->blocks_per_ip - p->blocks_mapped,
+	       p->blocks_per_ip);
+	CHECK (p->reserve_count == 0, "'%s': no reserve, yet %u blocks held",
+	       (char *) p->name, p->reserve_count);
+	/* Including the very last port of the range, which is the one a
+	 * reserve would have taken first. */
+	for (port = (int) p->port_max; port > (int) p->port_max - 4; port--)
+	  {
+	    u32 pub0 = 0;
+
+	    if (bpa_set_addr_of (&p->outside, 0, &pub0))
+	      continue;
+	    CHECK (bpa_reserve_index_of (p, pub0, (u16) port, &res) != 0,
+		   "'%s': port %u was called a reserve port on a pool with no "
+		   "reserve",
+		   (char *) p->name, port);
+	  }
+	inert++;
+      }
+    CHECK (inert > 0, "every pool in the vectors carries a reserve, so the "
+		      "default was never exercised");
+    printf ("  %u pools with no reserve: nothing held, no port reserved\n",
+	    inert);
+  }
+
+  printf ("\n=== what a reserve costs, by policy ===\n");
+  {
+    /*
+     * The #23 measurement, in C, against the same pair of definitions the
+     * model measures. Under interleaved the divisor is the public address
+     * count, which a reserve does not touch, so every subscriber the smaller
+     * pool still holds keeps the block it had: the change is a truncation of
+     * the tail. Under blocked the divisor IS the mapped block count, so a
+     * reserve re-divides and moves everybody past the first public address.
+     *
+     * Both numbers go to the operator at commit. Asserting them here is what
+     * keeps the two policies from being described by one sentence.
+     */
+    struct
+    {
+      const char *before, *after;
+      int expect_moved;
+    } pairs[2] = { { "frag-interleaved", "reserved-interleaved", 0 },
+		   { "frag-blocked", "reserved-blocked", 1 } };
+    unsigned pi;
+
+    for (pi = 0; pi < 2; pi++)
+      {
+	bpa_pool_t *a = 0, *b = 0;
+	u32 sub, moved = 0, dropped = 0, kept = 0;
+
+	for (i = 0; i < BPA_VEC_N_POOLS; i++)
+	  {
+	    if (!strcmp (bpa_vec_pools[i].name, pairs[pi].before))
+	      a = &pools[i];
+	    if (!strcmp (bpa_vec_pools[i].name, pairs[pi].after))
+	      b = &pools[i];
+	  }
+	CHECK (a != 0 && b != 0, "pair %s/%s missing from the vectors",
+	       pairs[pi].before, pairs[pi].after);
+	if (!a || !b)
+	  continue;
+
+	for (sub = 0; sub < a->capacity && sub < a->inside.count; sub++)
+	  {
+	    bpa_block_t x, y;
+	    u32 ip_priv;
+
+	    if (bpa_set_addr_of (&a->inside, sub, &ip_priv)
+		|| bpa_forward (a, ip_priv, &x))
+	      continue;
+	    if (bpa_forward (b, ip_priv, &y))
+	      {
+		dropped++;
+		continue;
+	      }
+	    if (x.ip_pub != y.ip_pub || x.port_lo != y.port_lo)
+	      moved++;
+	    else
+	      kept++;
+	  }
+
+	printf ("  %-20s -> %-20s  capacity %u -> %u, %u moved, %u dropped, "
+		"%u kept\n",
+		pairs[pi].before, pairs[pi].after, a->capacity, b->capacity,
+		moved, dropped, kept);
+	CHECK (b->capacity < a->capacity,
+	       "'%s': a reserve did not reduce the capacity", (char *) b->name);
+	CHECK (dropped == a->capacity - b->capacity,
+	       "'%s': capacity fell by %u and %u subscribers lost their block",
+	       (char *) b->name, a->capacity - b->capacity, dropped);
+	if (pairs[pi].expect_moved)
+	  CHECK (moved > 0,
+		 "'%s': blocked policy and a reserve moved nobody; the split "
+		 "divides by the mapped blocks and must",
+		 (char *) b->name);
+	else
+	  CHECK (moved == 0,
+		 "'%s': interleaved policy, yet %u retained subscribers moved "
+		 "when only the reserve changed",
+		 (char *) b->name, moved);
+      }
+  }
+
+  printf ("\n=== a reserve that maps nobody is refused ===\n");
+  {
+    bpa_pool_t p;
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_reserve = (u16) p.blocks_per_ip;
+    CHECK (bpa_pool_init (&p) != 0,
+	   "a reserve of every block was accepted, leaving a pool that maps "
+	   "nobody");
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_reserve = (u16) (p.blocks_per_ip - 1);
+    CHECK (bpa_pool_init (&p) == 0, "the largest reserve that fits was "
+				    "refused");
+    CHECK (p.capacity == p.outside.count,
+	   "one mapped block per address should give a capacity of %u, got %u",
+	   p.outside.count, p.capacity);
+
+    /* A dynamic pool's extension already comes off the free list, so a
+     * reserve there removes blocks from the very list it is drawn from. */
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_reserve = 1;
+    p.mode = BPA_MODE_DYNAMIC;
+    CHECK (bpa_pool_init (&p) != 0, "a reserve on a dynamic pool was accepted");
+    printf ("  a reserve that leaves no mapped block, and one on a dynamic "
+	    "pool, are both refused\n");
   }
 
   return bpa_test_verdict (checks, failures);

@@ -79,6 +79,22 @@
  * version of itself that the option had never reached.
  */
 /*
+ * 0.13.0 adds block_reserve to bpa_pool_add_del and bpa_pool_details, and
+ * blocks_mapped and reserve_count to bpa_pool_details: blocks held out of the
+ * deterministic formula so a subscriber that fills its block can be given
+ * another (issue #39).
+ *
+ * NOT on bpa_pool_settings_set, and that is the whole point of where it sits.
+ * A reserve is taken out of capacity, which changes blocks_mapped, which is
+ * the divisor under the blocked policy - so changing it re-maps subscribers
+ * and rebuilds the pool, exactly like a prefix or a block size. A field that
+ * re-maps subscribers on the message whose contract is "safe on a pool
+ * carrying traffic" would be the worst possible place for it.
+ *
+ * It CHANGES THE LAYOUT of both messages, so a client built against 0.12.0
+ * must be rebuilt.
+ */
+/*
  * 0.12.0 adds block_stride to bpa_pool_add_del, bpa_pool_settings_set and
  * bpa_pool_details: the distance between the blocks one subscriber holds
  * (issue #55). On the settings message as well as the add one, because it
@@ -91,7 +107,7 @@
  * than discovered by a client that silently stops working; lab/api.sh pins
  * the JSON shape and is what fails when this happens.
  */
-option version = "0.12.0";
+option version = "0.13.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -138,6 +154,11 @@ typedef bpa_timeouts
                           between the blocks it holds; 0 is whatever the
                           allocator has free, which is the historical
                           behaviour
+    @param block_reserve - blocks per public address held out of the
+                           deterministic formula, so a subscriber that fills
+                           its block can be given another. Paid for in
+                           capacity, and RE-MAPS SUBSCRIBERS: 0 is every
+                           configuration written before this existed
     @param alg - bitmask of the ALGs enabled for this pool
     @param alg_set - which bits of alg the operator actually chose; the rest
                      take the shipped default, so a caller that does not care
@@ -192,6 +213,7 @@ autoreply define bpa_pool_add_del
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
   u16 block_stride;
+  u16 block_reserve;
   u32 alg;
   u32 alg_set;
   vl_api_bpa_timeouts_t timeouts;
@@ -437,6 +459,7 @@ define bpa_pool_details
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
   u16 block_stride;
+  u16 block_reserve;
   u32 alg;
   vl_api_bpa_timeouts_t timeouts;
   u16 tcp_mss;
@@ -444,6 +467,12 @@ define bpa_pool_details
   u32 max_sessions;
   u32 max_rate;
   u32 blocks_per_ip;
+  /* What the formula may hand out, and what is held back. blocks_per_ip is
+   * what a public address HOLDS; the two differ by the reserve, and capacity
+   * is computed from blocks_mapped. A caller that reports capacity from
+   * blocks_per_ip would promise subscribers the pool will drop. */
+  u32 blocks_mapped;
+  u32 reserve_count;
   u32 capacity;
   u32 inside_count;
   u32 outside_count;

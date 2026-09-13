@@ -177,34 +177,113 @@ Every extension **MUST** be logged as `natEvent 16`, and its release as
 formula, not from the first block — so a block the log does not record cannot be
 attributed to anyone, which is the entire reason blocks are logged.
 
-### Only in dynamic mode, and why
+### Where the spare block comes from, in each mode
 
 Dynamic pools have spare blocks by construction: `bpa_dyn_acquire()` draws from
 a free list, so handing out a second block is the same operation as the first.
 
-Deterministic pools have none. `capacity = outside.count * blocks_per_ip` and
-`bpa_forward()` assigns **every** block to some subscriber. A block handed out
-as an extension is a block the formula gives to somebody else, and giving it
-away breaks their mapping with no error anywhere — the exact failure the
-deterministic proof exists to prevent.
+Deterministic pools have none, unless they are given one.
+`bpa_forward()` assigns **every** mapped block to some subscriber, so a block
+handed out as an extension is a block the formula gives to somebody else, and
+giving it away breaks their mapping with no error anywhere — the exact failure
+the deterministic proof exists to prevent.
 
-Making it work there needs a reserve held out of the formula, which reduces
-capacity, which re-maps every existing subscriber. That is
-[#39](https://github.com/andrediashexa/hexarouting/issues/39), and it depends on
-the documented procedure for a capacity change
-([#23](https://github.com/andrediashexa/hexarouting/issues/23)) — not something
-to arrive as a side effect of a feature about something else.
+`reserve` is the answer, and it is the subject of the next section. Without
+one, a deterministic pool still drops the packet, which is what every
+configuration written before `reserve` existed means and what it keeps meaning
+after an upgrade.
 
 ```mermaid
 flowchart TD
     A["subscriber's blocks all full"] --> B{"mode?"}
     B -->|dynamic| C{"blocks held &lt; max-blocks?"}
-    B -->|deterministic| D["drop, natEvent 12<br/>no spare block exists"]
-    C -->|yes| E{"free block in the pool?"}
+    B -->|deterministic| R{"reserve configured?"}
+    R -->|no| D["drop, natEvent 12<br/>no spare block exists"]
+    R -->|yes| C
+    C -->|yes| E{"free block in the pool<br/>or in the reserve?"}
     C -->|no| F["drop: the cap is the cap"]
     E -->|yes| G["extend, log natEvent 16"]
     E -->|no| H["drop, natEvent 12"]
 ```
+
+### The deterministic reserve: `reserve`
+
+`reserve <n>` holds **n blocks of every public address** out of the formula.
+What is left is what the mapping may use:
+
+```
+blocks_per_ip  = ports per address / block-size      what an address HOLDS
+blocks_mapped  = blocks_per_ip - reserve             what the FORMULA may use
+capacity       = outside.count × blocks_mapped
+reserve_count  = outside.count × reserve
+```
+
+The reserve is counted **per public address** and not as a pool-wide total, for
+three reasons that all point the same way. A subscriber's extension has to land
+on the subscriber's own public address (RFC 4787 REQ-2, paired address pooling),
+so a total that did not divide evenly would leave some addresses with no reserve
+and the subscribers on them with nothing to be given. The reverse direction
+tests one comparison — is this block above the mapped ones — and an uneven total
+would make that test depend on which address the packet arrived on. And
+`blocks_per_ip` is uniform across the pool, which is the property the whole
+formula rests on.
+
+**Enabling or resizing a reserve is a capacity change**, with everything
+[pool-resize.md](pool-resize.md) says about one: the pool is rebuilt, every
+session on it ends, and `commit` refuses it until it is asked for by name with
+`commit remap`. How much it moves depends on the policy, and the two answers are
+not close — measured in `ref/validate.py` and again in `test/test_bpa_pool.c`,
+on a pair of definitions that differ only in the reserve:
+
+| policy | what a reserve of 1 does |
+|---|---|
+| `interleaved` | the divisor is `outside.count`, which a reserve does not touch, so **no retained subscriber moves**. The pool is truncated: the subscribers above the new capacity lose their block, and there are `outside.count × reserve` of them |
+| `blocked` | the divisor **is** `blocks_mapped`, so it re-divides: 738 of 882 subscribers moved in the model's own fragmented pool, plus the 21 the truncation dropped |
+
+The reserve blocks live in **an index space of their own**, `[0, reserve_count)`,
+and not at the end of the subscriber index. Under the blocked policy a block
+index above `blocks_mapped` is another subscriber's block — `bpa_join()`
+multiplies by `blocks_mapped`, so *(address 0, block `blocks_mapped`)* and
+*(address 1, block 0)* are the same number — and giving the reserve its own
+index is what keeps the two apart under either policy.
+
+That index is also what the **return path** resolves a reserve port to.
+`bpa_reverse_sub()` refuses a reserve port on purpose: the arithmetic there
+would name whichever subscriber the formula produces, which under the blocked
+policy is a real and different customer, and that customer would receive
+somebody else's traffic. So a reserve port is resolved through the allocator,
+exactly as a dynamic block is — and the handoff steers on the reserve index,
+because worker `w` hands out only the indices congruent to `w`, which is the
+same partition that puts a subscriber on `sub_idx % n_workers`.
+
+Consequences worth stating, because each one is a limit somebody will otherwise
+discover:
+
+* **A reserve too small for the worker count is a warning, not a refusal.** With
+  four workers and a reserve of two, two workers hold none and their
+  subscribers can never be given a second block. Refusing at configuration time
+  would stop a pool accepted on a single-threaded box from coming up after the
+  same box is given workers, which is every subscriber on it losing traffic to
+  enforce a property about extensions — the same argument `block-stride` makes.
+* **The subscriber's own address is a preference, not a guarantee.** The
+  allocator takes a reserve block on the subscriber's own public address when
+  its worker's slice has one free, and falls back otherwise. Refusing instead
+  would turn a property about layout into a customer losing traffic.
+* **`block-stride` does not apply to the reserve.** A stride steps along the
+  *mapped* blocks of an address, and a reserve index is a different space; a
+  stride applied there would name somebody else's reserve block or none at all.
+* **A reserve on a dynamic pool is refused.** That pool's extension already
+  comes off the free list, so a reserve would take blocks out of the very list
+  it is drawn from.
+* **Every reserve block is its own `natEvent 16`**, and its release its own
+  `natEvent 17`, exactly like a dynamic one. This is the one thing a
+  deterministic pool logs per subscriber, and it has to be: the reserve block is
+  the only block in that mode the formula does **not** produce, so the
+  configuration trail cannot answer for it.
+* **Running out of reserve is counted apart** from a subscriber reaching
+  `max-blocks`. They need different operator actions — a larger reserve against
+  one, a larger cap against the other — and one counter for both would say
+  neither. `show bpa blocks` prints the reserve pools with their own heading.
 
 ### Where the extra blocks land: `block-stride`
 

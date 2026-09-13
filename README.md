@@ -24,7 +24,7 @@ make release-gate      # build the installation medium from a tag and boot it
 | | |
 |---|---|
 | **What** | An IPv4 software router whose CGNAT allocates a contiguous **port block** per subscriber instead of logging every flow. |
-| **Why** | Brazilian regulation (Marco Civil, Law 12.965/2014) requires one year of connection records. Per-flow NAT logging produces terabytes; BPA reduces this to one record per block — or to **zero** in deterministic mode. |
+| **Why** | Brazilian regulation (Marco Civil, Law 12.965/2014) requires one year of connection records. Per-flow NAT logging produces terabytes; BPA reduces this to one record per block — or to **zero** in deterministic mode, where the proof is the algorithm and the dated configuration instead. |
 | **Who** | ISPs deploying CGNAT. The product is installed per provider, not multi-tenant. |
 | **When** | Deployed when public IPv4 runs out and subscribers must share addresses. |
 | **Where** | On the provider's border, between the subscriber network (RFC 6598) and the upstream. |
