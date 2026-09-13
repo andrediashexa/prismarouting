@@ -310,7 +310,57 @@ main (void)
     load_pool (&p, &bpa_vec_pools[0]);
     p.block_size = 0;
     CHECK (bpa_pool_init (&p) != 0, "a zero block_size was accepted");
-    printf ("  7 invalid configurations refused\n");
+
+    /*
+     * The capacity bound, which docs/architecture.md calls a MUST NOT and
+     * nothing held: removing the guard left every suite green (#240). It is
+     * not a matter of taste. The mapping divides by the pool's capacity with
+     * a precomputed reciprocal, and the proof that the reciprocal is exact -
+     * ref/check_magic.py - only covers divisors below this number, because
+     * above it the multiplication leaves u64. A pool past the bound does not
+     * fail loudly: it maps subscribers to the wrong public address.
+     *
+     * Both sides, and the boundary itself, because a guard written `>=` by
+     * mistake would refuse a pool that is exactly at the documented limit and
+     * the test above would not notice.
+     *
+     * 4096 usable ports with block_size 1 gives 4096 blocks per address, so
+     * 65536 addresses is exactly 2^28 and one more address is one block over.
+     */
+    {
+      u32 base[1], cnt[1];
+      u64 want = (u64) 1 << 28;
+
+      base[0] = 0x0A000000u; cnt[0] = 65536;   /* 10.0.0.0/16 */
+      load_pool (&p, &bpa_vec_pools[0]);
+      CHECK (bpa_addr_set_build (&p.outside, base, cnt, 1) == 0,
+	     "a /16 public set was refused, so the bound below is untested");
+      p.block_size = 1;
+      p.port_min = 1024;
+      p.port_max = 1024 + 4096 - 1;
+      CHECK (bpa_pool_init (&p) == 0,
+	     "a pool of exactly %llu subscribers was refused, and that is the "
+	     "documented limit rather than one past it",
+	     (unsigned long long) want);
+      CHECK (p.capacity == want,
+	     "the pool at the limit reports capacity %llu, not %llu, so this "
+	     "section is not measuring what it says",
+	     (unsigned long long) p.capacity, (unsigned long long) want);
+
+      cnt[0] = 65537;                          /* one address more */
+      load_pool (&p, &bpa_vec_pools[0]);
+      CHECK (bpa_addr_set_build (&p.outside, base, cnt, 1) == 0,
+	     "a 65537 address public set was refused for another reason");
+      p.block_size = 1;
+      p.port_min = 1024;
+      p.port_max = 1024 + 4096 - 1;
+      CHECK (bpa_pool_init (&p) != 0,
+	     "a pool of %llu subscribers was accepted, past the 2^28 bound "
+	     "that keeps the reciprocal multiplication inside u64",
+	     (unsigned long long) want + 4096);
+    }
+    printf ("  10 invalid configurations refused, and the capacity bound "
+	    "holds on both sides of 2^28\n");
   }
 
   printf ("\n=== merging of adjacent ranges ===\n");
