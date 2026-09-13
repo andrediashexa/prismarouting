@@ -56,7 +56,9 @@ are to be interpreted as described in
 [#225](https://github.com/andrediashexa/hexarouting/issues/225),
 [#226](https://github.com/andrediashexa/hexarouting/issues/226),
 [#228](https://github.com/andrediashexa/hexarouting/issues/228),
-[#229](https://github.com/andrediashexa/hexarouting/issues/229).
+[#229](https://github.com/andrediashexa/hexarouting/issues/229),
+[#230](https://github.com/andrediashexa/hexarouting/issues/230),
+[#231](https://github.com/andrediashexa/hexarouting/issues/231).
 
 ### Added
 
@@ -1248,6 +1250,33 @@ are to be interpreted as described in
 
 ### Fixed
 
+* **The README repeated four numbers about itself, and three had already become
+  two numbers** ([#231](https://github.com/andrediashexa/hexarouting/issues/231)).
+  The same file says, of the version: *deliberately not repeated here, since a
+  number written in two places becomes two numbers.* Measured on master:
+  `make test  # 25 suites in ~21 s` against 32 suites and 39 s; *Verified -
+  35,335 checks against the Python reference model* against a suite that prints
+  32,805 and 4,905 checks and 9,120 comparisons and **no program anywhere that
+  prints 35,335**; and the `Layout` block listing `docs/context.md` twice.
+
+  **The two counts were removed rather than corrected**, and that is the point
+  of the entry. A suite count and a model check count go up whenever somebody
+  adds a test, so a check holding the README to them would go red on the day a
+  test is added, which is the worst kind of check there is. The claim each was
+  making is kept: `make test` needs no root and no VPP, and the mapping core is
+  checked against the reference model one mapping at a time, with the counts
+  printed by the run rather than written down here.
+
+  **The VPP pin is the opposite case and is now checked.** It does not drift on
+  correct work: it changes the day the project moves to a new VPP, and that is
+  exactly the day both copies must move. `test/test_doc_copies.py` reads it out
+  of `tools/build.sh` and out of the README and compares them.
+
+  The duplicated listing line hid from the repeated-sentence check added beside
+  it, because that check strips fenced blocks on purpose: an example command
+  repeated in two places is an example. A directory listed twice is a claim
+  about the tree. Repeated whole LINES inside a listing are now compared too.
+
 * **The roadmap told an operator that RTSP and ESP ship off, and they ship on**
   ([#230](https://github.com/andrediashexa/hexarouting/issues/230)).
   `docs/roadmap.md` section 2.3 stated the rule for ALG defaults twice. The
@@ -1265,7 +1294,7 @@ are to be interpreted as described in
 
   The stale paragraph is gone and the argument for each of the five now sits
   with the decision rather than as an exception to a rule that no longer
-  exists. `test/test_alg_defaults.py` compares `BPA_ALG_DEFAULT` in
+  exists. `test/test_doc_copies.py` compares `BPA_ALG_DEFAULT` in
   `src/plugins/bpa/bpa_pool.h` against the registry beside it and against what
   the section claims, so a sixth ALG cannot arrive in the header with the
   document left behind.

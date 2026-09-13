@@ -12,7 +12,7 @@ to the exact public addresses the reference model predicts, ICMP and HTTPS
 flowing, BGP/OSPF/IS-IS routes reaching the VPP FIB.
 
 ```sh
-make test              # 25 suites in ~21 s, no root, no VPP required
+make test              # the core suites: no root, no VPP required
 sh tools/lab.sh        # list the labs
 sh tools/run-all-labs.sh   # the whole dataplane suite, several at a time
 sh tools/vty.sh        # open the VTY
@@ -63,7 +63,6 @@ docs/logging.md        BPA log export over IPFIX (RFC 8158)
 docs/appliance.md      boot tuning, systemd, install, ISO
 docs/roadmap.md        what a CGNAT still needs, and why each item matters
 docs/ha.md             high-availability analysis (NOT implemented)
-docs/context.md        start here: the invariants, the map, the reading order
 docs/wiki-audit.md     the brief for auditing the wiki against this repository
 PADRAO-DOCUMENTACAO.md how a wiki page is written (not the same as CONTRIBUTING)
 wiki/                  read-only mirror of the wiki, refreshed by tools/wiki-pull.sh
@@ -121,7 +120,7 @@ stays on `0.x.x` until it is declared ready for production; see
 
 | Component | State |
 |---|---|
-| BPA mapping core | Verified — 35,335 checks against the Python reference model |
+| BPA mapping core | Verified against the Python reference model, every mapping in the pool one by one; `make test` prints the counts |
 | Dataplane (translation, handoff, dynamic mode, fragments, ICMP errors, TCP state) | Verified with injected and real traffic |
 | Routing (BGP, OSPF, IS-IS) | Verified — routes reach the VPP FIB |
 | IPFIX logging (UDP and TCP) | Verified with a decoding collector |
