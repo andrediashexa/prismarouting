@@ -120,7 +120,14 @@ are to be interpreted as described in
   never appears. `test/test_doc_commands.py` now reads the table and the
   address-family sentence off the page and compares them with `BGP_NEIGHBOUR`
   and `BGP_AF_NEIGHBOUR`, so a statement added to the grammar and nowhere else
-  fails.
+  fails. It also asks, of the pool page and the interface page, whether
+  every statement those blocks take is **named** somewhere on the page - one
+  step earlier than #221 and #224, which were both a thing the box does that an
+  operator cannot find. A statement that reaches the grammar and no page is
+  that same defect at the moment it is introduced. Deliberately weak: it asks
+  whether the page names the statement, not whether it explains it well,
+  because the pages are laid out differently and a guard that demanded one
+  shape would fail on prose that is perfectly clear.
 
 ### Added
 
