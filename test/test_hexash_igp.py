@@ -868,5 +868,81 @@ check(sh.ospf_mtu_mismatch(["router bgp 65000"], MTUS) == [],
       "a box running neither OSPF is not warned about an MTU it does not compare")
 
 
+
+print("\n=== 'show interface <name>' keeps the first counter (#280) ===")
+# The counters are relayed "straight from the dataplane, uninterpreted", and
+# one of them was being thrown away. VPP puts the FIRST counter on the
+# interface's own row, after the name, index, state and MTU; the code dropped
+# the header with [1:] and then dropped that row with a second [1:].
+#
+# What made it cost something is that it did not look like a gap. The list
+# began at `rx bytes` and ran to the end with nothing saying a row had gone,
+# so `rx packets` - the counter somebody opens this screen to read - was
+# simply absent, and an operator comparing it against the dataplane during a
+# fault gets a different set of rows from the one the comment above it
+# promises.
+
+def _ip_stub(argv, **kw):
+    """`ip` answering for vppwan0, with the fields subprocess.run really has.
+
+    The stub in shell() above predates the interface-detail path, which reads
+    stderr; a stub missing a field the product uses fails as an AttributeError
+    inside the product, which reads like a defect in it.
+    """
+    dev = argv[-1] if isinstance(argv, (list, tuple)) else ""
+    ok = dev == "vppwan0"
+    return type("R", (), {"returncode": 0 if ok else 1,
+                          "stdout": IP_LINK_VPPWAN0 if ok else "",
+                          "stderr": ""})()
+
+
+_ONE_IF = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+host-veth-vpp                     1      up          9000/0/0/0     rx packets                 12345
+                                                                    rx bytes                 6789012
+                                                                    tx packets                  9876
+                                                                    drops                          7
+"""
+_QUIET_IF = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+loop0                             3      up          9000/0/0/0
+"""
+
+# Driven through the command an operator types, not through the helper, so
+# the name resolution and the table read are exercised with it.
+_sh = shell({}, {"show interface host-veth-vpp": _ONE_IF,
+                 "show interface": VPP_SHOW_INTERFACE,
+                 "show lcp": VPP_SHOW_LCP})
+hexash.subprocess.run = _ip_stub
+_said = out_of(_sh.show_interfaces, ["host-veth-vpp"])
+check("rx packets" in _said,
+      f"the first counter the dataplane printed is missing from 'show "
+      f"interface host-veth-vpp', and nothing on the screen says a row was "
+      f"dropped: {_said!r}")
+for _c in ("rx bytes", "tx packets", "drops"):
+    check(_c in _said, f"{_c} is missing too: {_said!r}")
+# The identity is printed above the counters already, so it must not appear
+# again inside them: a row reading "host-veth-vpp 1 up 9000/0/0/0 rx packets
+# 12345" is not a counter line and does not line up with the rest.
+check("host-veth-vpp" not in _said.split("counters", 1)[1],
+      f"the interface's name, index and MTU are inside the counter list, "
+      f"where they do not line up with the other rows: {_said!r}")
+
+# An interface with nothing after its MTU has no counters, and must say so
+# rather than presenting its own identity as a reading.
+_QUIET_TABLE = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+loop0                             3      up          9000/0/0/0
+"""
+_sh = shell({}, {"show interface loop0": _QUIET_IF,
+                 "show interface": _QUIET_TABLE,
+                 "show lcp": ""})
+hexash.subprocess.run = _ip_stub
+_quiet = out_of(_sh.show_interfaces, ["loop0"])
+check("all zero" in _quiet,
+      f"an interface the dataplane reports no counters for does not say so: "
+      f"{_quiet!r}")
+check("9000/0/0/0" not in _quiet.split("counters", 1)[-1],
+      f"an interface with no counters printed its own row as though it were "
+      f"one: {_quiet!r}")
+print("  every counter the dataplane printed, and none of the identity")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
