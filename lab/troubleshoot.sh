@@ -80,7 +80,7 @@ vppctl bpa pool dyn inside 10.0.0.0/24 outside 203.0.113.16/30 block 512 mode dy
 vppctl set ip neighbor pg0 10.0.0.5 02:00:00:00:02:05 >/dev/null 2>&1
 vppctl clear trace >/dev/null; vppctl trace add pg-input 3 >/dev/null
 send 10.0.0.5 40000
-DPUB=$(vppctl show trace | grep -m1 "BPA in2out 10.0.0.5" | grep -oE "> [0-9.]+:[0-9]+" | tail -1 | cut -d' ' -f2)
+DPUB=$(vc show trace | grep -m1 "BPA in2out 10.0.0.5" | grep -oE "> [0-9.]+:[0-9]+" | tail -1 | cut -d' ' -f2)
 echo "  dynamic pool gave 10.0.0.5 -> ${DPUB:-nothing}"
 DTR=$($HX -c "show cgnat translation ${DPUB%%:*} ${DPUB##*:}" 2>&1)
 printf '%s\n' "$DTR" | sed 's/^/  /'

@@ -747,6 +747,10 @@ COMP_IN_BLOCK=$(printf '%s\n' "$COMP" | sed -n 's/^ *IN_BLOCK: *//p')
 # A whole word off a space-separated list: "mtu" must not be matched by a
 # statement that merely starts with it, and an empty list must not match at all.
 has_word() { printf ' %s ' "$2" | grep -q " $1 "; }
+# The negative half. It has to be a function, not `sh -c "! has_word ..."`:
+# sh -c starts a shell that has never seen has_word, so that spelling would
+# report "not found" as a pass and be the very thing it was written to refuse.
+lacks_word() { ! has_word "$1" "$2"; }
 echo "  the interface block offers: ${COMP_IN_BLOCK:-<nothing>}"
 expect_in "inside an interface, '?' offers its own statements" \
   "IN_BLOCK: description " "$COMP"
@@ -776,8 +780,23 @@ expect_in "inside 'router bgp', '?' offers its own statements" \
 # to create one, which is the whole of #142.
 expect "including the one that creates a session" \
   has_word neighbor "$COMP_BGP_BLOCK"
-expect_not_in "and nothing from the level above leaks in" \
-  "BGP_BLOCK: cgnat" "$COMP"
+# Against the WORD LIST, not against the label. This was
+#
+#   expect_not_in "..." "BGP_BLOCK: cgnat" "$COMP"
+#
+# and it had been green since the day it was written, whatever the grammar
+# did. The generator prints `BGP_BLOCK:` followed by the offered words
+# SORTED, so the label is only ever followed by the alphabetically first one -
+# and the assertion nine lines up pins that first word to "address-family",
+# which sorts before "cgnat". So "BGP_BLOCK: cgnat" could not match on a
+# leaking box either, and the check said nothing in both directions (#249).
+#
+# The same trap does not catch the two neighbouring negatives: "cgnat" sorts
+# BEFORE "description" in IN_BLOCK, and "address-family" before "bfd" in
+# BGP_STMT, so a leak there really does reach the first position and really
+# does turn them red.
+expect "and nothing from the level above leaks in" \
+  lacks_word cgnat "$COMP_BGP_BLOCK"
 # A neighbour completes from what is configured, not from a fixed list.
 expect_in "a neighbour completes by address once it exists" \
   "BGP_NEIGH: 10.0.0.2" "$COMP"

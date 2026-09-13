@@ -58,7 +58,7 @@ clocks() {
 # Vectors per call: how many packets VPP handled in one node invocation. A
 # figure taken at a vector size of one is measuring call overhead, not the node.
 vectors() {
-  vppctl show runtime | awk -v n="$1" '$1==n && $2=="active" {print $NF}' | head -1
+  vc show runtime | awk -v n="$1" '$1==n && $2=="active" {print $NF}' | head -1
 }
 
 # run <name> <size> <src-spec> <sport-spec>

@@ -107,7 +107,7 @@ echo "measuring the reservation rather than this session:"
 tcp 100.64.0.5 8.8.8.8 1600 443 rst pg0
 n=0
 until [ "$(sess)" = "0" ] || [ "$n" -ge 20 ]; do sleep 1; n=$((n+1)); done
-EMPTY=$(vppctl show bpa session | tail -1)
+EMPTY=$(vc show bpa session | tail -1)
 echo "  $EMPTY (after ${n}s)"
 
 echo

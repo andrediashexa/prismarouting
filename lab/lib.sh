@@ -161,3 +161,44 @@ startup_conf() {
     echo "$_src"
   fi
 }
+
+# vc <vppctl arguments> - vppctl, with the carriage returns taken off.
+#
+# vppctl ends every line it prints with CR+LF. awk's field splitting and sh's
+# IFS both count only space, tab and newline as whitespace, so the CR stays
+# attached to the LAST FIELD of every line: a value taken from the end of a
+# line comes out as "600<CR>" while the terminal shows "600".
+#
+# It fails in the direction that hides, and which half survives is not a
+# guess. Measured under dash, which is the shell tools/lab.sh runs the labs
+# with:
+#
+#   [ "600<CR>" -eq 600 ]     true     the number parser calls isspace(),
+#                                      and isspace('\r') is true
+#   [ "600<CR>" = "600" ]     FALSE
+#   case 600<CR> in 600)      no match
+#   grep -x 600               no match
+#
+# So every arithmetic comparison survives it and every string comparison does
+# not. A needle that can never match makes "this must appear" red on a correct
+# box, which somebody notices, and "this must NOT appear" green on a broken
+# one, which nobody does.
+#
+# This is deliberately NOT wrapped around every vppctl call in the labs, and
+# the reason was measured rather than assumed (#249). Of the 280 assertion
+# sites that read a vppctl-derived value, the needle is a literal string in
+# all but a handful, and a literal needle has no CR to lose: it matches inside
+# "...bpa-in2out<CR>" like any other substring. Putting roughly a thousand
+# call sites behind a filter to repair the few that EXTRACT a value would move
+# the input of every lab in order to change no lab's verdict, and each of them
+# would then have to be shown not to have moved.
+#
+# The strip therefore belongs where the value is extracted. The shapes that
+# carry a CR out of a pipeline are a closed list - the last awk field, a whole
+# line, a whole-line grep, a sed that prints the rest of a line - and
+# test/test_lab_crlf.py goes red when a lab writes one of them over vppctl
+# without stripping. The helper is the one place that knows; the suite is what
+# stops the next lab reintroducing it in silence.
+#
+# Found by #239 in lab/frag.sh, swept by #249.
+vc() { vppctl "$@" | tr -d '\r'; }

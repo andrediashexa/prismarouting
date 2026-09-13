@@ -159,7 +159,7 @@ vppctl bpa timeouts udp 2
 n=0
 until vppctl show bpa blocks | grep -q "total: 0/3" || [ "$n" -ge 25 ]; do sleep 1; n=$((n+1)); done
 echo "  blocks handed back in ${n}s"
-vppctl show bpa blocks | tail -1 | sed 's/^/  /'
+vc show bpa blocks | tail -1 | sed 's/^/  /'
 
 echo
 echo "=== a block held by the configuration is an allocation too ==="
@@ -173,7 +173,7 @@ echo "=== a block held by the configuration is an allocation too ==="
 #   100.64.0.1 is subscriber 1 -> 200.150.0.16, block 17408-33791
 vppctl bpa forward din tcp 20000 to 100.64.0.1 80
 sleep 2
-vppctl show bpa blocks | tail -1 | sed 's/^/  /'
+vc show bpa blocks | tail -1 | sed 's/^/  /'
 vppctl bpa forward din tcp 20000 del
 sleep 3
 
@@ -187,7 +187,7 @@ echo "=== a block pinned while the log was off is announced when it comes on ===
 #   100.64.0.2 is subscriber 2 -> 200.150.0.16, block 33792-50175
 vppctl bpa logging disable
 vppctl bpa forward din tcp 40000 to 100.64.0.2 80
-vppctl show bpa blocks | tail -1 | sed 's/^/  pinned with the log off: /'
+vc show bpa blocks | tail -1 | sed 's/^/  pinned with the log off: /'
 vppctl bpa logging enable
 sleep 4
 vppctl bpa forward din tcp 40000 del

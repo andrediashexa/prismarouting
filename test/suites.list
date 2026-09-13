@@ -48,3 +48,4 @@ sh test/test_no_credentials.sh
 sh test/test_lab_workers.sh
 python3 test/test_doc_copies.py
 python3 test/test_english_only.py
+python3 test/test_lab_crlf.py

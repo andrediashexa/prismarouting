@@ -86,7 +86,7 @@ send_tcp() {
   vppctl clear trace >/dev/null; vppctl trace add pg-input 3 >/dev/null
   vppctl packet-generator enable >/dev/null; sleep 1
   vppctl packet-generator delete t >/dev/null 2>&1
-  printf "  %-8s -> %s\n" "$1" "$(vppctl show bpa session | tail -1)"
+  printf "  %-8s -> %s\n" "$1" "$(vc show bpa session | tail -1)"
 }
 
 echo "  timeouts: estabelecida 7440s, transitoria 240s"
@@ -107,7 +107,7 @@ done
 # changed the count" - and section 5 opening one session of its own was
 # enough to fail it. A reading taken three sections away from what it is
 # about is not evidence about it.
-RSTSESS=$(vppctl show bpa session)
+RSTSESS=$(vc show bpa session)
 echo "  after ${n}s: $(printf '%s\n' "$RSTSESS" | tail -1)"
 echo "  (the UDP session from test 1 remains; the TCP one left via the RST)"
 
