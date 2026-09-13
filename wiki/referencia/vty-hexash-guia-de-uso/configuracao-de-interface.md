@@ -1,6 +1,6 @@
 # Configuração de interface
 
-Tudo o que se configura dentro de uma interface: endereços, VLAN, VRF, MTU, estado administrativo e o filtro de origem. Para quem está subindo um enlace, terminando assinantes em VLAN ou investigando uma porta que não passa tráfego.
+Tudo o que se configura dentro de uma interface: o par que o roteamento enxerga, endereços, VLAN, VRF, MTU, estado administrativo e o filtro de origem. Para quem está subindo um enlace, terminando assinantes em VLAN ou investigando uma porta que não passa tráfego.
 
 Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
 
@@ -23,6 +23,7 @@ O prompt diz em qual interface você está. `?` ou TAB listam o que vale ali den
 | `ipv6 address` | `<prefixo>` | endereço IPv6; pode repetir |
 | `no ipv4 address` | `<prefixo>` | remove **um** endereço, sem tocar nos outros |
 | `mtu`   | `<576-9216>` | MTU, na interface e no par Linux dela |
+| `linux-name` | `<nome>` | o nome pelo qual o roteamento e o `ip` enxergam esta interface; **sem ele o roteamento não a enxerga de jeito nenhum** |
 | `vrf`   | `<tabela>` | tabela de roteamento onde os endereços vivem |
 | `vlan`  | `<1-4094> [inner <1-4094>]` | tag da sub-interface |
 | `mac-address` | `<xx:xx:xx:xx:xx:xx>` | o MAC ao qual a interface responde |
@@ -55,6 +56,51 @@ Isso não é preciosismo. Sem a checagem o endereço seria aceito e configurado 
 Ao trocar um endereço por outro, o antigo sai antes de o novo entrar — quem escreve as duas linhas no mesmo commit termina com um endereço, não com dois por um instante.
 
 :::
+
+## `linux-name` — sem ela o roteamento não vê a porta
+
+O dataplane e o sistema operacional são dois mundos, e o roteamento mora no segundo. `linux-name` é o que cria o par: o nome pelo qual o kernel, o `ip` e o FRR passam a enxergar esta interface.
+
+```
+interface GigabitEthernet0/12/0
+ linux-name vppwan0
+ ipv4 address 200.150.0.1/24
+ exit
+```
+
+
+:::warning
+**Numa interface sem** `**linux-name**`**, BGP, OSPF e IS-IS são configuráveis e inertes.** A configuração é aceita, commita limpa, a estrofe aparece na configuração em vigor — e nenhuma adjacência sobe, porque o roteamento não tem interface nenhuma com aquele nome para usar.
+
+:::
+
+O nome é do Linux, e as regras dele valem: no máximo 15 caracteres e nenhuma barra. Copiar o nome do dataplane — que é cheio de barras — é o engano óbvio, e é recusado dizendo por quê:
+
+```
+error: linux-name: 'GigabitEthernet0/12/0' cannot be a Linux interface name (15 characters, no '/')
+```
+
+O par é **lido de volta** do equipamento, não lembrado pela VTY: um estado que se liga e não se lê de volta é um estado que o operador não consegue desligar.
+
+## Loopbacks
+
+Um endereço numa porta física some junto com a porta. Um `router-id` de BGP, de OSPF ou de IS-IS, um `update-source` de iBGP que sobrevive à queda de um enlace, um endereço de origem de SNMP ou de log que não muda de lugar — todos querem uma interface que está sempre no ar.
+
+**Nomear um loopback é o que o cria**, do mesmo jeito que nomear uma sub-interface: não há mais nada no equipamento de onde criá-lo.
+
+```
+configure
+ interface loop0
+  linux-name loop0
+  ipv4 address 10.99.0.1/32
+  description router-id, que uma porta não leva junto
+  exit
+ commit
+```
+
+`loop<n>` é a grafia do próprio dataplane, e o número que você escrever é o número que ele recebe: `loop3` produz `loop3`, e não o próximo livre. Assim a configuração e o `show interface` não podem discordar sobre como a coisa se chama.
+
+`no interface loop0` desfaz o caminho inteiro — endereço, par e interface. Uma **porta física** continua sendo recusada: não é algo que uma configuração possa remover, e aceitar as palavras prometeria o que o `commit` não entrega.
 
 ## Sub-interfaces e VLAN
 

@@ -18,14 +18,19 @@ flowchart LR
 | Comando | Argumento | O que faz |
 |---------|-----------|-----------|
 | `commit` |           | aplica a candidata |
-| `commit check` |           | valida sem aplicar, e reporta **quais assinantes uma mudança re-mapearia** |
+| `commit check` |           | valida sem aplicar |
 | `commit remap` |           | aplica uma mudança que move assinantes existentes para novos endereços públicos e blocos |
+| `commit cutoff` |           | aplica uma mudança que deixa de anunciar o prefixo por onde esta sessão chegou |
 | `commit confirmed <1-60>` | minutos   | aplica, e desfaz sozinho a menos que seja confirmado |
 | `commit comment "<texto>"` |           | registra uma nota junto com este commit |
 
+`remap`, `cutoff`, `confirmed` e `comment` combinam entre si, em qualquer ordem: uma mudança com duas consequências a reconhecer não custa a chance de registrar por quê.
+
 ### `commit check` antes de qualquer coisa
 
-É o comando que responde *"o que isso vai quebrar?"* antes de quebrar. Ele valida a candidata e, o que mais importa, informa quantos e quais assinantes seriam re-mapeados.
+É o comando que responde *"isso passa na validação?"* antes de aplicar. Ele confere a candidata inteira sem tocar no equipamento — só comandos de leitura vão para o dataplane.
+
+**Ele não diz quem seria re-mapeado.** Quem diz é o `commit` comum, ao recusar a mudança; está descrito em *`commit remap`*, logo abaixo. Um `commit check` aprovado sobre uma mudança de mapeamento imprime apenas que a validação passou.
 
 Ele também diz **o que não verificou**:
 
@@ -58,6 +63,41 @@ Antes esse comando dizia apenas *"configuration check succeeds"*, o que prometia
 Um `commit` comum **recusa** mudanças que alterem o mapeamento de assinantes existentes. Elas precisam ser pedidas pelo nome, com `commit remap`.
 
 O motivo é que esse é o pior tipo de falha possível neste equipamento: acrescentar um prefixo público derruba **toda** a base de assinantes ao mesmo tempo, e a máquina não reporta nada de anormal — porque, do ponto de vista dela, nada de anormal aconteceu. A recusa transforma um acidente silencioso numa decisão explícita.
+
+**É nessa recusa que aparecem os números.** O dataplane segura as duas definições e roda a mesma aritmética que rodaria depois, então a conta é exata e não uma estimativa — e vem com dois assinantes de exemplo, de onde para onde:
+
+```
+error: this change re-maps subscribers that already have mappings
+    1024 of 1024 subscribers change public address or port block; 512 hold live state right now
+    100.64.0.5 moves from 200.150.0.17:1536-2047 to 200.150.0.33:2048-2559
+    100.64.0.9 moves from 200.150.0.17:2048-2559 to 200.150.0.34:1536-2047
+    every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not.
+    if that is what you mean, type: commit remap
+```
+
+Registre esse primeiro número no chamado de mudança: é quantos clientes vão ligar.
+
+### `commit cutoff` — a mesma trava para o prefixo que carrega a sua sessão
+
+A outra mudança que o equipamento não aplica sem ouvir a palavra: a que deixa de anunciar o prefixo por onde a **sua própria sessão** chegou. Retirar um prefixo de propósito é rotina — uma drenagem de manutenção, um cliente que saiu —, e a caixa não distingue isso de um erro de política. Então ela não recusa para sempre: ela pede o nome.
+
+Duas formas, conforme o que a mudança faz:
+
+```
+error: 200.150.0.0/24: this change stops originating it, and it covers 200.150.0.7 - the address this session arrived on
+    nothing here would advertise a route back to this box's end of your own session
+    if that is what you mean, type: commit cutoff
+```
+
+```
+error: 200.150.0.0/24: no neighbour would be sent it after this change, and it covers 200.150.0.7 - the address this session arrived on
+    the outbound policy denies it to every neighbour that has one, so nothing would advertise a route back to this box's end of your own session
+    if that is what you mean, type: commit cutoff
+```
+
+Ela **se cala** quando não consegue ter certeza: quando esta caixa não origina hoje um prefixo que cubra o endereço, quando nada o anunciaria de qualquer jeito, quando a política de saída de algum vizinho não pode ser lida até o fim, ou quando há `redistribute` e `aggregate-address` no meio. Numa sessão de console serial não há endereço contra o que conferir, e a caixa diz isso em vez de deixar você acreditar que a checagem rodou.
+
+E `commit cutoff` **não** é uma licença para se trancar do lado de fora: ele é aplicado como `commit confirmed 10` — veja logo abaixo.
 
 ### `commit confirmed` — a rede de segurança para mudar remoto
 
@@ -103,9 +143,9 @@ unless you type 'commit' to confirm it.
 A máquina não distingue "reiniciei porque a mudança deu errado" de "reiniciei no meio da manutenção". Nos dois casos ela desfaz. É o lado seguro: confirmar custa uma palavra, e recuperar uma caixa inalcançável não custa palavra nenhuma — custa uma viagem.
 :::
 
-#### Mudanças de SSH e de contas
+#### As mudanças que viram `commit confirmed` sozinhas
 
-Qualquer mudança em `ssh` ou em `user` vira `commit confirmed 10` **mesmo que você não peça**, e a caixa diz por quê:
+Três casos viram `commit confirmed 10` **mesmo que você não peça**: qualquer mudança em `ssh`, qualquer mudança em `user`, e o `commit cutoff` que você acabou de digitar. Os três podem cortar a sessão em que você está digitando, e a caixa diz por quê:
 
 ```
 this commit can cut off the session you are using
@@ -209,9 +249,11 @@ roteamento tem mais chance de ter descartado.
 A última frase é o que fazer em seguida. As duas configurações divergiram, e há
 um comando para ler cada uma: `show configuration` mostra a desta caixa.
 
-### E a que não é uma recusa, e sim um pedido explícito
+### E as duas que não são recusa, e sim pedido explícito
 
-`commit remap` existe porque re-mapear assinantes é a pior falha possível aqui. Está descrito acima, e a diferença é que essa mudança **pode** ser feita: ela só não pode ser feita por acidente.
+`commit remap` e `commit cutoff` existem porque re-mapear assinantes e retirar o prefixo que carrega a sua sessão são as duas piores coisas que se faz aqui sem querer. Estão descritas acima, e a diferença é que essas mudanças **podem** ser feitas: elas só não podem ser feitas por acidente.
+
+São palavras diferentes de propósito: uma move os assinantes, a outra custa a sessão em que você está digitando, e quem reconheceu uma não foi avisado da outra.
 
 ## `rollback`
 
@@ -253,8 +295,10 @@ Confirme primeiro, salve depois.
 ```
 show configuration            a candidata inteira
 show configuration compare    só o que muda em relação ao que está valendo
-commit check                  valida, e diz quem seria re-mapeado
+commit check                  valida sem tocar no equipamento
 ```
+
+Quem seria re-mapeado sai do `commit` comum, na recusa que pede `commit remap`.
 
 ## No boot
 
