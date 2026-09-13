@@ -714,6 +714,6 @@ bpa_audit_path_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
 VLIB_CLI_COMMAND (bpa_audit_path_command, static) = {
   .path = "bpa audit-path",
-  .short_help = "bpa audit-path [<caminho>]",
+  .short_help = "bpa audit-path [<path>]",
   .function = bpa_audit_path_command_fn,
 };

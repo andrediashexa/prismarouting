@@ -176,7 +176,6 @@ bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv, u32 ip_pub,
  * Leaving this to flow_data_callback is not enough: the buffer written in one
  * pass was lost before the next callback fired, and only the last batch ever
  * reached the collector. Writing and dispatching have to be the same pass.
- * mesma operacao.
  */
 static void
 bpa_log_flush (vlib_main_t *vm)

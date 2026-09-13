@@ -1,9 +1,9 @@
 #!/bin/sh
 # Dynamic mode (PBA): block allocated on demand, returned after hold-down.
 #
-# Pool proposital de borda: 1024 assinantes possiveis contra 3 blocos.
+# A deliberately marginal pool: 1024 possible subscribers against 3 blocks.
 #   64512 ports / 16384-port block = 3 blocks on a single public IP
-# Blocos previstos, em ordem de alocacao: portas 1024, 17408, 33792.
+# The blocks expected, in the order they are allocated: ports 1024, 17408, 33792.
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 mkdir -p /run/vpp /vpp_plugins

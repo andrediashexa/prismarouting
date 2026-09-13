@@ -76,7 +76,7 @@ bpa_tcp_msg_start (u8 **b)
   u32 at = vec_len (*b);
 
   bpa_tcp_put_u16 (b, 10); /* version */
-  bpa_tcp_put_u16 (b, 0);  /* tamanho, preenchido em msg_end */
+  bpa_tcp_put_u16 (b, 0);  /* length, filled in by msg_end */
   /* RFC 7011 Export Time: seconds since the UNIX epoch. It used to be the
    * f64 the caller had at hand, which was vlib_time_now() - seconds since VPP
    * started. Read here, so there is nothing for a caller to get wrong. */

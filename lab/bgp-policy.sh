@@ -225,7 +225,7 @@ printf '%s' "$BGPUP" | grep -q "commit complete" || {
 # what that section asserts is that the local preference it holds is NOT zero -
 # which a prefix that has not arrived yet satisfies by being absent. An
 # assertion that passes because the table is empty is not an assertion.
-echo "=== aguardando as rotas das duas AS chegarem na FIB do VPP ==="
+echo "=== waiting for both AS routes to reach the VPP FIB ==="
 in_fib0() { vppctl show ip fib "$1" 2>/dev/null | grep -c "^$1" || true; }
 n=0
 while [ "$n" -lt 90 ]; do

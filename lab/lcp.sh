@@ -4,7 +4,7 @@
 #   linux_cp: a VPP interface becomes a TAP in Linux, with a synced address
 #   linux_nl: a route installed in Linux appears in the VPP FIB
 #
-# Se isto funciona, o FRR funciona: ele so enxerga netdev normal.
+# If this works, FRR works: all it ever sees is an ordinary netdev.
 #
 # The pair is created BY THE PRODUCT here, and that is the point of the file.
 # Until #182 this lab ran `vppctl lcp create` itself, so it proved the glue on
@@ -23,7 +23,7 @@ export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
 cd /src
 use_binary_api
 
-# par veth: um lado fica no Linux "de fora", o outro entra no VPP
+# A veth pair: one end stays on the "outside" Linux, the other goes into VPP
 ip link add veth-out type veth peer name veth-vpp 2>/dev/null
 ip link set veth-out up
 ip link set veth-vpp up
@@ -38,7 +38,7 @@ echo "=== plugins de plano de controle carregados ==="
 vppctl show plugins | grep -iE "linux_cp|linux_nl" | sed 's/^/  /'
 
 echo
-echo "=== VPP absorve o veth, e por enquanto o Linux nao ve nada ==="
+echo "=== VPP takes the veth, and for now Linux sees nothing ==="
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
 # The negative half (#182). Recorded BEFORE the product is asked for a pair,
@@ -62,7 +62,7 @@ echo "  netdevs Linux has:"; printf '%s\n' "$NOPAIR_LINKS" \
 echo "  show lcp:"; printf '%s\n' "$NOPAIR_LCP" | sed 's/^/    /'
 
 echo
-echo "=== o produto cria o par: linux-name, pela API binaria ==="
+echo "=== the product creates the pair: linux-name, over the binary API ==="
 # `lcp_itf_pair_add_del`, not `vppctl lcp create`: the VTY is off the CLI
 # socket (#76), and the name is the operator's own so that FRR, `ip` and every
 # script they have can be written against a spelling that is predictable.
@@ -92,7 +92,7 @@ sleep 2
 echo "FIB do VPP:"; vppctl show ip fib 10.99.0.0/24 | grep -E "10.99|via|unicast" | head -6 | sed 's/^/  /'
 
 echo
-echo "=== o caminho do boot: o arquivo salvo recria o par ==="
+echo "=== the boot path: the saved file recreates the pair ==="
 # `ExecStart=/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf` is how an
 # installed box comes up, and it is the same apply() a commit goes through - so
 # the pair a box has at boot is the pair its saved file names. Shown rather than

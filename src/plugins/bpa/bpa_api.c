@@ -1,4 +1,4 @@
-/* bpa_api.c - implementacao da API binaria. */
+/* bpa_api.c - the binary API implementation. */
 
 #include <vnet/vnet.h>
 #include <vlibapi/api.h>

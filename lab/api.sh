@@ -18,11 +18,11 @@ use_binary_api
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 
-echo "=== a API foi registrada? ==="
+echo "=== was the API registered? ==="
 vppctl show api message-table 2>/dev/null | grep -i bpa | head -6 | sed 's/^/  /'
 
 echo
-echo "=== criando um pool pela API binaria ==="
+echo "=== creating a pool through the binary API ==="
 # Every field spelled out, including the ones hexash would fill in. That is
 # the point of this lab: it drives the WIRE FORMAT, not hexash's model of it,
 # so a field added to one and forgotten in the other is caught here.
@@ -54,11 +54,11 @@ vat2 bpa_pool_add_del '{
 }' 2>&1 | sed 's/^/  /'
 
 echo
-echo "=== o dataplane recebeu? ==="
+echo "=== did the dataplane receive it? ==="
 vppctl show bpa pool | head -4 | sed 's/^/  /'
 
 echo
-echo "=== dump pela API ==="
+echo "=== dump over the API ==="
 vat2 bpa_pool_dump '{}' 2>&1 | head -14 | sed 's/^/  /'
 
 echo

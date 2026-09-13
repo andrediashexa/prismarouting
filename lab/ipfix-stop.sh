@@ -242,11 +242,11 @@ wait $COL 2>/dev/null
 wait $COLT 2>/dev/null
 
 echo
-echo "=========== O QUE O COLETOR RECEBEU PELO UDP ==========="
+echo "=========== WHAT THE COLLECTOR RECEIVED OVER UDP ==========="
 cat /tmp/collector.out
 
 echo
-echo "=========== E PELO TCP ==========="
+echo "=========== AND OVER TCP ==========="
 cat /tmp/collector-tcp.out
 
 echo

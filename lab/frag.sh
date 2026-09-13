@@ -55,7 +55,7 @@ vat2 bpa_interface_add_del_feature \
 PG2_FEATURES=$(vppctl show interface features pg2)
 
 echo
-echo "=== reassembly virtual raso ficou ligado nas duas interfaces? ==="
+echo "=== is shallow virtual reassembly on for both interfaces? ==="
 for i in pg0 pg2; do
   printf '  %s: ' "$i"
   vppctl show interface features $i | grep -iE "reass" | tr -d ' \n' \
