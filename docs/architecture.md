@@ -1067,6 +1067,17 @@ Two reasons, and both are properties the rest of the box already guarantees:
 * **Paired address pooling** (RFC 4787 REQ-2). A subscriber that received
   traffic on one address and sent from another is not paired, and applications
   that check where a reply came from would see two different peers.
+
+  Said exactly: this box has that property unconditionally in **deterministic**
+  mode, and in **dynamic** mode until a subscriber fills its block. The
+  extension then comes from the free list, and under `policy interleaved` the
+  next block index is the next public address, so it normally lands on a
+  different one - more often as the pool grows, because alignment needs the
+  gap to be a multiple of the address count. That is measured rather than
+  argued, and it is
+  [#226](https://github.com/andrediashexa/hexarouting/issues/226); the sentence
+  above described the property this box was designed around and not the one it
+  currently has in every mode.
 * **The reverse arithmetic**. `bpa_reverse()` recovers the subscriber from
   `(public address, port)` without a lookup, and that is what makes the return
   path shard cleanly and the deterministic mode auditable. A forward on some

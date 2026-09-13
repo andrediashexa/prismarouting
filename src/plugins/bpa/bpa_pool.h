@@ -331,7 +331,14 @@ typedef struct
  * the one bpa_forward() gives it. Letting the operator name a different one
  * would break paired address pooling (RFC 4787 REQ-2) - the subscriber would
  * answer on an address it never sends from - and would make the deterministic
- * reverse arithmetic disagree with the session table. So the operator states
+ * reverse arithmetic disagree with the session table.
+ *
+ * That argument stands on its own, and the property it protects is not
+ * unconditional: in dynamic mode an extension block normally lands on another
+ * public address (#226). A forward is still refused on any address but the
+ * subscriber's own first one, which is the conservative side of that.
+ *
+ * So the operator states
  * the public PORT, and it MUST fall inside that subscriber's own block; a port
  * in someone else's block is refused rather than quietly taken from them.
  *
