@@ -85,7 +85,11 @@ def shell_with(api, running_text="", caps=None):
     sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT} if caps is None else caps
     sh.api = api
     sh.dp = FakeVpp()
-    sh.frr = type("F", (), {"available": lambda self: False,
+    # Based on the real Frr so that daemons() is the product's own, asking
+    # through show(): a stub that answered daemons() directly would let the
+    # commit check pass over a method that never ran.
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda self: False,
+                            "show": lambda self, c: (1, ""),
                             "reload": lambda self, l, check_only=False: (0, "")})()
     sh._running_text = running_text
     sh.running_config = lambda: config.Config.parse(running_text)

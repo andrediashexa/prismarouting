@@ -1110,6 +1110,73 @@ rather than a failure - a box deliberately running fewer daemons is a
 legitimate deployment, and a box that cannot run BGP should say so before
 somebody configures BGP on it.
 
+### `show version` names them, because seven messages send the operator there
+
+Seven of the VTY's own messages named `show version` as the way to find out
+which daemons are running: the `commit` branch where nothing took, `show bgp`
+with no answer, `show ospf` twice, `show isis` twice, and `configure` refusing a
+box whose dataplane is still starting. `show version` printed three version
+strings and said nothing about daemons, so every one of those hints ended at a
+command that could not answer it
+([#272](https://github.com/andrediashexa/hexarouting/issues/272)) - which costs
+more than no hint at all, because a reader who finds no mention of `bgpd`
+concludes `bgpd` is fine.
+
+It now prints both halves:
+
+```
+HexaRouting 0.67.0
+  dataplane: vpp v26.06-release
+  routing:   FRRouting 10.7.1 (hexarouting).
+  daemons:   running  mgmtd ospfd staticd watchfrr zebra
+             stopped  bgpd isisd ospf6d
+             a stopped daemon takes the configuration that needs it and reaches
+             nothing; enable it in /etc/frr/daemons and restart frr
+```
+
+The **stopped** row **MUST** be printed, and it is the one the operator came
+for. They arrived from a message that named a single daemon - "bgpd may not be
+running" - so the answer has to name that daemon too. A list of what is up
+answers "is bgpd running" only by an absence the reader has to notice, and a
+reader scanning for a word that is not there is how the wrong conclusion gets
+drawn.
+
+The **running** row is whatever FRR reports, not only what this VTY can
+configure: that half is a measurement, and narrowing a measurement to a list
+loses whatever the list forgot. The stopped row can only be the other way
+round, and the daemons it expects are read off the command tree rather than
+kept by hand - which is exactly what #187 was, every list on the box missing
+`ospf6d` while the grammar offered `router ospf6`. A daemon `ROUTER_DAEMON`
+knows but the grammar does not offer, `ripd` among them, is **not** reported:
+that map validates whatever reaches FRR, and "ripd stopped" on every box would
+be true and useless.
+
+An FRR that is not answering **MUST** be reported as such and **MUST NOT** be
+reported as no daemons running:
+
+```
+  daemons:   FRR is not answering, so which daemons are running is not known
+             this box's routing control plane is down rather than idle:
+             'systemctl status frr' and its journal say why
+```
+
+Those are different faults and the next move differs: one is a control plane
+that is down, the other is a box whose daemons were never enabled in
+`/etc/frr/daemons`. Reporting the first as the second sends the operator to edit
+a file on a box that would not have read it. `Frr.daemons()` returns `None` for
+the first and a set for the second, and it is the **one** place that asks FRR -
+the `commit check` refusal above reads the same call, so the two answers cannot
+come to disagree.
+
+Both rows are wrapped against `CONSOLE_COLUMNS` rather than printed whole. The
+running row's length is not the VTY's to predict - a box with `ldpd`, `bfdd`,
+`pathd` and the rest enabled runs well past the 80 columns of the serial
+console these messages are read on
+([#252](https://github.com/andrediashexa/hexarouting/issues/252)) - and
+truncating it would drop the end, which is where the name somebody is looking
+for is as likely to be as anywhere else. No daemon name is ever split, so each
+one stays greppable.
+
 ## Two hierarchies the tools underneath do not have
 
 CGNAT is configured under `nat`, and static routes inside a `router static`

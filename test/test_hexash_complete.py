@@ -325,7 +325,7 @@ def shell_with_box(iface_text=IFACES, dp_rc=0):
     # It answers through run(), the way the real one does.
     sh.dp = type("D", (), {"TRACE": False, "run": run,
                            "reachable": lambda _s: run(_s, "show version")[0] == 0})()
-    sh.frr = type("F", (), {"available": lambda s: False,
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
     return sh
@@ -621,7 +621,7 @@ def commit_check(sh):
 
 def shell_with_frr(dp_rc=0):
     sh = shell_with_box(dp_rc=dp_rc)
-    sh.frr = type("F", (), {"available": lambda s: False,
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, ""),
                             "reload": lambda s, l, check_only=False: (0, "")})()
@@ -2219,7 +2219,7 @@ def box_192(iface_text, hw_text=HW, counters=None, descs=None, elapsed=None,
     # It answers through run(), the way the real one does.
     sh.dp = type("D", (), {"TRACE": False, "run": run,
                            "reachable": lambda _s: run(_s, "show version")[0] == 0})()
-    sh.frr = type("F", (), {"available": lambda s: False,
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
     sh.device_descriptions = lambda: dict(descs or {})
@@ -2371,7 +2371,7 @@ check("pg0" in opts and "terse" not in opts,
 
 def box_193():
     sh = shell_with_box()
-    sh.frr = type("F", (), {"available": lambda s: True,
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: True,
                             "running": lambda s: ["router bgp 65000"],
                             "show": lambda s, c: (1, "")})()
     sh.sys = type("S", (), {"read_ssh": lambda s: {},
@@ -2586,7 +2586,7 @@ check(hexash.Frr.outstanding(
 def box_197(outstanding_text, rc=0):
     sh = shell_with_box()
     sh.candidate = hexash.Config()
-    sh.frr = type("F", (), {
+    sh.frr = type("F", (hexash.Frr,), {
         "available": lambda s: True,
         "running": lambda s: [],
         "show": lambda s, c: (1, ""),
@@ -2891,7 +2891,7 @@ def box_211(reachable, cfg_text):
 
     sh.dp = type("D", (), {"TRACE": False, "run": run,
                            "reachable": lambda _s: run(_s, "show version")[0] == 0})()
-    sh.frr = type("F", (), {"available": lambda s: False, "running": lambda s: [],
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False, "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
     sh.sys = type("S", (), {"read_ssh": lambda s: {}, "read_users": lambda s: {}})()
     sh.snmp = type("N", (), {"read": lambda s: ({}, [], {})})()
@@ -3701,7 +3701,7 @@ import tempfile                                                  # noqa: E402
 
 _sh = shell_with_box()
 _handed = []
-_sh.frr = type("F", (), {
+_sh.frr = type("F", (hexash.Frr,), {
     "available": lambda s: True,
     "running": lambda s: [],
     "reload": lambda s, lines, check_only=False: (
@@ -3889,7 +3889,7 @@ print("\n=== commit check says how many statements it could not read ===")
 
 def check_output(routing):
     s = shell_with_box()
-    s.frr = type("F", (), {"available": lambda _s: True,
+    s.frr = type("F", (hexash.Frr,), {"available": lambda _s: True,
                            "running": lambda _s: [],
                            "reload": lambda _s, l, check_only=False: (0, ""),
                            "show": lambda _s, c: (1, "")})()
@@ -4119,7 +4119,7 @@ def _commit_nh(candidate, show_vrf=_SHOW_VRF, fib=_FIB_TWO_TABLES):
     # `show_vrf=None` is an FRR that could not be asked at all, which is a
     # different fixture from one that answers with no VRFs in it.
     _vrf_answer = (1, "") if show_vrf is None else (0, show_vrf)
-    sh.frr = type("F", (), {
+    sh.frr = type("F", (hexash.Frr,), {
         "available": lambda _s: True,
         "running": lambda _s: [],
         "reload": lambda _s, l, check_only=False: (0, ""),
@@ -4954,6 +4954,138 @@ for _line, _want in (("show cgnat alg", "show bpa alg"),
         _sh.feed(_line)
     check(_sent == [_want],
           f"{_line!r} sent {_sent!r} to the dataplane, not {[_want]!r}")
+
+print("\n=== 'show version' says which daemons are running (#272) ===")
+# Seven of this VTY's own messages sent the operator to `show version` to find
+# out which routing daemons are running: the commit branch where nothing took,
+# `show bgp`, `show ospf` twice, `show isis` twice, and `configure` refusing a
+# box that is still starting. It printed three version strings and said nothing
+# about daemons, so the hint was a dead end at the moment a failed commit had
+# just named a daemon as the likely cause - and a hint naming a command that
+# does not answer costs more than no hint, because the reader concludes the
+# daemon is fine.
+#
+# Driven through the REAL Frr against a stand-in vtysh, deliberately. A stub
+# answering daemons() directly would be testing nothing: the exit status, the
+# parse and the "FRR said nothing" case all live inside the method the hint now
+# depends on, and a fixture that replaces it passes whatever that method does.
+import stat as _st272, tempfile as _tf272
+
+_d272 = _tf272.mkdtemp()
+
+
+def _vtysh272(name, daemons):
+    """A stand-in vtysh. `daemons` None is one whose FRR is not answering."""
+    path = os.path.join(_d272, name)
+    with open(path, "w") as f:
+        f.write("#!/bin/sh\ncase \"$*\" in\n")
+        if daemons is None:
+            # What vtysh does with no daemon to talk to, measured: it prints
+            # its own complaint and exits non-zero. It never prints a daemon
+            # list, which is the distinction the second assertion is about.
+            f.write("  *) echo 'Exiting: failed to connect to any daemons.'; "
+                    "exit 1 ;;\n")
+        else:
+            f.write("  *'show daemons'*) echo '%s' ;;\n" % daemons)
+            f.write("  *'show version'*) echo 'FRRouting 10.7.1 (box).' ;;\n")
+            f.write("  *) : ;;\n")
+        f.write("esac\nexit 0\n")
+    os.chmod(path, os.stat(path).st_mode | _st272.S_IEXEC)
+    return path
+
+
+def _version272(vtysh_path):
+    """What `show version` prints on a box whose vtysh is this one."""
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh.dp = type("D", (), {"TRACE": False,
+                           "run": lambda _s, c: (1, "not here"),
+                           "reachable": lambda _s: False})()
+    sh.frr = hexash.Frr()
+    saved, hexash.VTYSH = hexash.VTYSH, vtysh_path
+    try:
+        return capture(sh, "show version")
+    finally:
+        hexash.VTYSH = saved
+
+
+#: Where a daemon name starts on the page, under "  daemons:   running  ".
+_NAMES272 = 22
+
+
+def _rows272(text):
+    """The running and stopped rows, with any wrapped continuation folded in."""
+    rows, cur = {}, None
+    for line in text.splitlines():
+        words = line.replace("daemons:", "").split()
+        if words[:1] in (["running"], ["stopped"]):
+            cur = words[0]
+            rows[cur] = list(words[1:])
+        elif cur and words and line.startswith(" " * _NAMES272):
+            rows[cur] += words
+        else:
+            cur = None
+    return rows
+
+
+# A box the installer stopped half way through: FRR's own three are up, OSPFv2
+# is up, and the three protocols somebody would configure next are not.
+_UP272 = "zebra mgmtd staticd ospfd watchfrr"
+_out272 = _version272(_vtysh272("vtysh-partial", _UP272))
+_r272 = _rows272(_out272)
+
+check(_r272.get("running") == sorted(_UP272.split()),
+      f"'show version' does not report what FRR named: {_out272}")
+# The half the operator actually came for. They arrived from a message naming
+# ONE daemon - "bgpd may not be running" - so bgpd has to be answered BY NAME.
+# A list of what is up answers that only by an absence the reader has to
+# notice, and a reader scanning for a word that is not there is exactly how the
+# wrong conclusion gets drawn.
+check("bgpd" in _r272.get("stopped", []),
+      f"bgpd is stopped and 'show version' does not say so: {_out272}")
+check("isisd" in _r272.get("stopped", []),
+      f"isisd is stopped and 'show version' does not say so: {_out272}")
+# ospf6d for the reason #187 existed: it was missing from every list the box
+# kept by hand, so OSPFv3 was the one protocol a box could be configured for
+# and never run. Here it is derived from the grammar instead.
+check("ospf6d" in _r272.get("stopped", []),
+      f"ospf6d is stopped and 'show version' does not say so: {_out272}")
+# And the other direction, which is why the list is read THROUGH the grammar
+# rather than off ROUTER_DAEMON whole: ROUTER_DAEMON validates whatever reaches
+# FRR, `router rip` included, and reporting ripd stopped on every box would be
+# true and useless.
+check("ripd" not in _r272.get("stopped", []),
+      f"ripd is not a protocol this VTY offers and is reported anyway: {_out272}")
+
+# An FRR that is not answering is NOT a box with no daemons running. The faults
+# differ and so does the next move: one is a control plane that is down, the
+# other is a box whose daemons were never enabled in /etc/frr/daemons. Printing
+# the first as the second sends the operator to edit a file on a box that would
+# not have read it.
+_silent272 = _version272(_vtysh272("vtysh-silent", None))
+check("not answering" in _silent272,
+      f"an FRR that is down must be reported as down: {_silent272}")
+check(not _rows272(_silent272),
+      f"a daemon list was printed over an FRR that never answered: {_silent272}")
+
+# The running half is a measurement, so its length is not this VTY's to
+# predict: a box with ldpd, bfdd, pathd and the rest enabled runs well past the
+# 80 columns of the serial console these messages are read on (#252).
+_MANY272 = ("zebra bgpd ospfd ospf6d ripd ripngd isisd pimd pim6d ldpd nhrpd "
+            "eigrpd babeld sharpd pbrd staticd bfdd fabricd vrrpd pathd mgmtd "
+            "watchfrr")
+_wide272 = _version272(_vtysh272("vtysh-many", _MANY272))
+check(all(len(l) <= hexash.CONSOLE_COLUMNS for l in _wide272.splitlines()),
+      "a daemon list ran over the console: "
+      + repr([l for l in _wide272.splitlines()
+              if len(l) > hexash.CONSOLE_COLUMNS]))
+# Wrapped, not truncated: which name the operator came looking for cannot be
+# known here, so losing the end loses the answer for whoever asked about the
+# last one.
+check(_rows272(_wide272).get("running") == sorted(_MANY272.split()),
+      f"names were lost from a daemon list that did not fit: {_wide272}")
+print("  the hint's destination answers the hint")
+
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
