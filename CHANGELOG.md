@@ -61,7 +61,8 @@ are to be interpreted as described in
 [#230](https://github.com/andrediashexa/hexarouting/issues/230),
 [#231](https://github.com/andrediashexa/hexarouting/issues/231),
 [#232](https://github.com/andrediashexa/hexarouting/issues/232),
-[#233](https://github.com/andrediashexa/hexarouting/issues/233).
+[#233](https://github.com/andrediashexa/hexarouting/issues/233),
+[#234](https://github.com/andrediashexa/hexarouting/issues/234).
 
 ### Added
 
@@ -1329,6 +1330,24 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **Nothing compared what the installer reads with what the ISO carries**
+  ([#234](https://github.com/andrediashexa/hexarouting/issues/234)).
+  `appliance/build-iso.sh` copies four top level directories into the chroot
+  the installer runs inside; `appliance/install.sh` reads from four. They
+  agreed, and the agreement was a coincidence that had held rather than a rule.
+
+  A path named outside those four exists in the repository, so both directions
+  `test/test_install_manifest.py` already checked stayed green, and the ISO
+  build failed from inside a debootstrap with the path buried in the log -
+  which is the exact case that file's own docstring says is a second's work to
+  catch earlier. An installer that guards the read with `[ -f ... ]` is worse:
+  the medium builds, the box installs, and whatever that file configured is
+  absent, which is the `appliance/systemd/` shape one layer out.
+
+  The third direction is checked now, and refuses to pass when either list
+  comes back empty rather than reporting agreement between two things it could
+  not read.
 
 * **The lab suite excluded five labs and never said so**
   ([#233](https://github.com/andrediashexa/hexarouting/issues/233)).
