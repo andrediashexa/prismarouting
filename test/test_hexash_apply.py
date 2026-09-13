@@ -607,5 +607,101 @@ print(f"  tap0 mtu calls: {mtus}")
 os.unlink(saved)
 os.unlink(own)
 
+print("\n=== a commit that fails halfway puts back what it took away ===")
+# docs/routing.md:1528 is one sentence with two halves - `commit` MUST validate
+# before applying, AND MUST restore the previous state if application fails
+# halfway - and only the first half had an assertion. Deleting the restore left
+# all 33 suites green while a failed commit emptied a production pool and
+# printed that it had rolled back: a report of success with no effect behind
+# it, which is the defect class this repository is organised against.
+#
+# The dataplane is modelled with STATE here, and that is the whole point. An
+# API that only records calls cannot answer the question this section asks,
+# which is what the box is holding once the commit has finished failing.
+
+
+class DeviceApi:
+    """A dataplane that keeps the pools it is given, and refuses to make one."""
+
+    def __init__(self, known, holds=(), refuse=()):
+        self.known = known          # name -> the definition, as the box got it
+        self.holds = list(holds)    # what the box is holding right now
+        self.refuse = set(refuse)
+        self.calls = []
+
+    def available(self):
+        return (vppapi.OK, "stub")
+
+    def call(self, message, args):
+        self.calls.append((message, args))
+        if message != "bpa_pool_add_del":
+            return vppapi.Reply(vppapi.OK)
+        name = args.get("name")
+        if not args.get("is_add"):
+            if name in self.holds:
+                self.holds.remove(name)
+            return vppapi.Reply(vppapi.OK)
+        if name in self.refuse:
+            return vppapi.Reply(vppapi.REFUSED, retval=-7,
+                                reason="the dataplane refused it: invalid value")
+        if name not in self.holds:
+            self.holds.append(name)
+        return vppapi.Reply(vppapi.OK)
+
+    def held_config(self):
+        cfg = config.Config()
+        for name in self.holds:
+            cfg.pools[name] = self.known[name]
+        return cfg
+
+
+def pool_named(name, inside, outside):
+    p = config.Pool(name)
+    p.inside = [inside]
+    p.outside = [outside]
+    p.block_size = "512"
+    return p
+
+
+keep = pool_named("keep", "100.64.0.0/22", "200.150.0.16/28")
+doomed = pool_named("doomed", "100.64.4.0/22", "200.150.0.32/28")
+
+api = DeviceApi({"keep": keep, "doomed": doomed}, holds=["keep"],
+                refuse=["doomed"])
+sh = shell_with(api)
+sh.running_config = api.held_config
+# The two stores commit writes to. Neither is reached on the failure path, and
+# stubbing them keeps this suite off the invoking account's filesystem.
+sh.confirm = type("C", (), {"read": lambda s: None})()
+sh.rb = type("R", (), {"push": lambda s, text, comment="": None})()
+candidate = config.Config()
+candidate.pools["doomed"] = doomed
+sh.candidate = candidate
+
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    with contextlib.redirect_stderr(buf):
+        sh.do_commit([])
+said = buf.getvalue()
+pool_calls = [(a.get("name"), a.get("is_add")) for m, a in api.calls
+              if m == "bpa_pool_add_del"]
+
+check("commit failed" in said,
+      f"a write the dataplane refuses must fail the commit: {said!r}")
+# THE CONTROL. Without it every assertion below passes on a box that never
+# removed anything, which is the one way this section could prove nothing:
+# "restored" and "never touched" look identical from the end state alone.
+check(("keep", False) in pool_calls,
+      f"the apply really did take the running pool off the box: {pool_calls}")
+check(api.holds == ["keep"],
+      f"the box must hold what it held before the commit: {api.holds}")
+check(("keep", True) in pool_calls
+      and pool_calls.index(("keep", True))
+      > pool_calls.index(("doomed", True)),
+      "and it must be put back AFTER the refusal, which is what makes it a "
+      f"restore rather than an accident of ordering: {pool_calls}")
+print(f"  pool calls: {pool_calls}")
+print(f"  the box holds: {api.holds}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
