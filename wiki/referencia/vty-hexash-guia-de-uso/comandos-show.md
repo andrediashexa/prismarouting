@@ -272,6 +272,47 @@ Zero vizinhos num circuito que está `Up` é o sintoma do IS-IS não estar sendo
 
 `show isis adjacency` é a mesma leitura por vizinho, com a mesma última linha sobre a tabela que encaminha.
 
+## `show version` — e quais daemons estão de pé
+
+Quando um `show bgp`, um `show ospf` ou um `show isis` não responde, e quando um
+`commit` recusa uma instância de roteamento, a caixa manda você para cá. Esta
+tela responde: ela nomeia os daemons rodando e os parados, um por um.
+
+```
+hexarouting> show version
+HexaRouting 0.67.0
+  dataplane: 26.06
+  routing:   FRRouting 10.7.1
+  daemons:   running  bgpd mgmtd ospfd staticd zebra
+             stopped  isisd ospf6d
+             a stopped daemon takes the configuration that needs it and reaches
+             nothing; enable it in /etc/frr/daemons and restart frr
+```
+
+A última linha diz o que fazer: um daemon parado recebe a configuração que
+depende dele e não chega a lugar nenhum. Habilite em `/etc/frr/daemons` e
+reinicie o `frr`. Se quem estiver parado for um dos que o próprio FRR sobe
+sozinho, a mensagem é outra — nesse caso o FRR não terminou de subir, e editar
+`/etc/frr/daemons` não muda nada.
+
+Os parados aparecem **por nome**, e não como ausência na lista dos que rodam.
+Quem chega aqui veio de uma mensagem que citou **um** daemon, e procurar por
+uma palavra que não está lá é exatamente como se tira a conclusão errada.
+
+Se o FRR não responder, a tela diz isso, e não "nenhum daemon rodando":
+
+```
+  daemons:   FRR is not answering, so which daemons are running is not known
+             this box's routing control plane is down rather than idle:
+             'systemctl status frr' and its journal say why
+```
+
+São falhas diferentes com correções diferentes: um FRR que não responde é o plano
+de controle fora do ar, e a correção é levantar o FRR; um FRR que responde sem
+nada de pé é uma caixa cujos daemons nunca foram habilitados, e a correção está
+em `/etc/frr/daemons`. Ler a primeira como a segunda manda o operador editar um
+arquivo numa caixa que não o teria lido.
+
 ## `show` — restante
 
 | Comando | Mostra |
@@ -280,7 +321,7 @@ Zero vizinhos num circuito que está `Up` é o sintoma do IS-IS não estar sendo
 | `show configuration compare` | diferenças da candidata contra a configuração em vigor |
 | `show running-config` | a configuração em efeito, CGNAT e roteamento |
 | `show rollback` | revisões commitadas disponíveis |
-| `show version` | versões do HexaRouting, do VPP e do FRR |
+| `show version` | versões do HexaRouting, do VPP e do FRR, e **quais daemons de roteamento estão rodando** |
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show bgp ...` | informação de BGP (FRR) |
 | `show isis ...` | informação de IS-IS (FRR) |

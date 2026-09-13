@@ -152,6 +152,7 @@ flowchart TD
 | "quem mudou o quê, e quando?" | `show cgnat history` |
 | "o que estou prestes a aplicar?" | `show configuration compare` |
 | "que versão é essa máquina?" | `show version` |
+| "quais daemons de roteamento estão de pé?" | `show version` |
 | "a porta caiu ou alguém deu shutdown?" | `show interface terse` |
 | "para que serve essa porta?" | `show interface description` |
 | "o enlace está cheio?" | `show interface utilization <nome>` |
@@ -168,6 +169,7 @@ flowchart TD
 | Serviço não sobe no primeiro boot | ver `hexarouting.service`; o self-test imprime a última mensagem dela |
 | Autoteste diz `the records mirror is DEGRADED` | um dos dois discos de registros morreu; a caixa funciona, a guarda está por um fio |
 | Tudo caiu ao mesmo tempo, sem alarme | mudança de mapeamento aplicada com `commit remap` |
+| `show bgp` (ou `ospf`, ou `isis`) não responde | `show version` nomeia os daemons parados; um parado recebe configuração e não chega a lugar nenhum |
 
 ## Duas armadilhas de diagnóstico
 
