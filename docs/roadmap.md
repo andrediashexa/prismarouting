@@ -204,7 +204,7 @@ IRC/DCC, TFTP and DNS are **not** being built; the reasoning is on #14.
 
 Each of the five has its own argument for being on, written beside
 `BPA_ALG_DEFAULT` in `src/plugins/bpa/bpa_pool.h` and checked against this
-section by `test/test_alg_defaults.py`. **PPTP** is the one that looks like an
+section by `test/test_doc_copies.py`. **PPTP** is the one that looks like an
 exception and is not: its rewrite changes no length, so no sequence number
 moves, and every message is guarded by a 32-bit magic cookie and its own length
 field before a single byte is touched. Without it PPTP does not work for anyone

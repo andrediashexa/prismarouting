@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-Which ALGs ship on, written down in the plugin and in the documentation.
+Second copies of a truth in the documentation, with the first copy to compare
+them against.
+
+Three subjects, one file, because they are one defect shape. This project has
+paid for it repeatedly: the `<- not checked` marker text quoted in three places
+after it changed, the BGP page's table of what the VTY checks, the wiki titles,
+`ip_csum_add_even` defined one way in VPP and the other way in a test shim, the
+RFC 8158 record written out in three places. A second copy of a truth is fine.
+A second copy nothing compares is not.
+
+WHICH ALGs SHIP ON, written down in the plugin and in the documentation.
 
 `BPA_ALG_DEFAULT` in `src/plugins/bpa/bpa_pool.h` is what the box does.
 `docs/roadmap.md` section 2.3 is what an operator is told. They were different
@@ -26,6 +36,13 @@ statement made twice in one document is a statement that can disagree with
 itself, and that shape has cost this project four separate defects. Measured
 across the five documents an operator reads: zero repeated sentences once this
 paragraph is gone, so the rule costs nothing to hold.
+
+And, from #231, the two things that check found nothing about because they are
+not sentences: a version pinned in two files, and a line repeated inside a
+fenced file listing. The listing is why the sentence rule strips fences and
+this one does not. An example command repeated in two places is an example; a
+directory listed twice is a claim about the tree, and README.md listed
+`docs/context.md` twice for long enough that nobody saw it.
 """
 import collections
 import os
@@ -107,6 +124,26 @@ if missing:
 else:
     ok("and the roadmap names every one of them")
 
+print("\n=== the VPP version is pinned in one place and quoted in another ===")
+# A pin, unlike a suite count, does not drift on correct work: it changes when
+# somebody moves the project to a new VPP, and that is exactly the day both
+# copies must move. The README's number is the one an operator builds from.
+README = read("README.md")
+BUILD = read("tools/build.sh")
+pinned = re.search(r"IMAGE=\$\{IMAGE:-hexarouting-dev:([0-9.]+)\}", BUILD)
+quoted = re.findall(r"VPP pinned to ([0-9.]+)", README)
+if not pinned:
+    bad("tools/build.sh no longer pins an image version, so the line below is "
+        "comparing the README against nothing")
+elif not quoted:
+    bad("README.md no longer says which VPP the build pins, which is the "
+        "number somebody building this needs")
+elif set(quoted) != {pinned.group(1)}:
+    bad(f"README.md says VPP {quoted} and tools/build.sh pins "
+        f"{pinned.group(1)}")
+else:
+    ok(f"both say VPP {pinned.group(1)}")
+
 print("\n=== and no document states the same thing twice ===")
 # The shape that produced #230, checked without knowing what the sentence is
 # about. Code fences are dropped first: an example command repeated in two
@@ -126,6 +163,20 @@ for path in ("docs/roadmap.md", "docs/architecture.md", "docs/logging.md",
                 f"one of them did: {s[:120]!r}")
     else:
         ok(f"{path}: {len(sents)} sentence(s), none repeated")
+
+    # Whole repeated lines INSIDE the fences, which the pass above strips. A
+    # file listing is a claim about the tree and a duplicate in one is a wrong
+    # claim; an example command repeated in two places is an example, so only
+    # lines that look like a listing row are compared: a path, whitespace, and
+    # a description of it.
+    rows = [ln.rstrip() for ln in read(path).split("\n")
+            if re.match(r"^[\w./-]+/?\s{2,}\S", ln)]
+    dup_rows = [r for r, n in collections.Counter(rows).items() if n > 1]
+    if dup_rows:
+        for r in dup_rows[:3]:
+            bad(f"{path} lists this twice: {r.strip()!r}")
+    elif rows:
+        ok(f"    and {len(rows)} listing row(s), none repeated")
 
 if fail == 0:
     print()
