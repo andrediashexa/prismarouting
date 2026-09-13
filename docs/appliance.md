@@ -34,7 +34,7 @@ knob at a time rather than switched on and declared an improvement.
 | **When** | Tuning is computed on every boot; kernel-level changes take effect on the **next** one. |
 | **Where** | `/etc/vpp/startup.conf` and `/etc/default/grub.d/hexarouting.cfg`, both generated. |
 | **How** | Reads `/sys` topology, NIC NUMA affinity, reserved hugepages and isolated CPUs. |
-| **How much** | 512-port blocks and 200k subscribers ⇒ roughly 6 × 1 GB hugepages, computed rather than guessed. |
+| **How much** | 200k subscribers on an eight-core box ⇒ roughly 6 × 1 GB hugepages, computed from the subscriber count and the worker count rather than guessed. |
 
 ## Boot tuning
 
@@ -323,9 +323,9 @@ component that made the decision:
 and prints three lines:
 
 ```
-[ ok ] dataplane workers hold the cores the profile names: 1
-[ ok ] and the kernel is isolating every one of them
-[ ok ] control plane has 1 cpu(s): 0, with VPP's main thread
+  [ ok ] dataplane workers hold the cores the profile names: 1
+  [ ok ] and the kernel is isolating every one of them
+  [ ok ] control plane has 1 cpu(s): 0, with VPP's main thread
 ```
 
 Deliberately **not** `vppctl show threads`, which also carries the lcore: that
@@ -396,12 +396,12 @@ on the same run. `lab/install-iso.sh` takes the reading on the installed box
 (`isolcpus=1`, two cpus) and records it:
 
 ```
-[meas] cpu-iso:     1 online=0-1
-[meas] cpu-init:    Cpus_allowed_list:0
-[meas] cpu-bgpd:    Cpus_allowed_list:0
-[meas] bgpd-from:   pid:381 ppid:1 starttime:898
-[meas] cpu-escape:  Cpus_allowed_list:1
-[meas] isolspell:   isolcpus=1
+  [meas] cpu-iso: 1 online=0-1
+  [meas] cpu-bgpd: Cpus_allowed_list:0
+  [meas] cpu-escape: Cpus_allowed_list:1
+  [meas] cpu-init: Cpus_allowed_list:0
+  [meas] bgpd-from: pid:381 ppid:1 starttime:898
+  [meas] isolspell: isolcpus=1
 ```
 
 `bgpd`'s own mask is **`0`**, not `0-1`, and the line above it says where that
@@ -535,7 +535,7 @@ rather than warning about it. The refusal is printed:
 
 ```
 REFUSED to give 'eth0' to the dataplane: it carries the default route,
-and the box would lose management. No device is claimed
+and the box would lose management. No device is claimed; using node 0
 ```
 
 The test that had to change is the finding worth keeping. `test_tune.py`
@@ -771,7 +771,9 @@ with no credentials at all, runs the product so you can look at it, and offers
 one command that turns it into a box somebody owns.
 
 ```
-HexaRouting VTY 0.5.0
+<the HexaRouting banner>
+HexaRouting VTY <version>
+'?' for help, TAB to complete, 'configure' to edit, 'exit' to leave.
 
 This is the installation medium: nothing here survives a reboot.
 Type 'install' to install HexaRouting onto a disk.
@@ -938,7 +940,7 @@ and the second failure is the one that loses the year.
 | both legs, still copying | the same, with `synchronising 20.0%` |
 | one leg, a rebuild running | `[warn] the records mirror is REBUILDING` |
 | one leg, no rebuild | `[FAIL] the records mirror is DEGRADED` |
-| an array in `mdadm.conf` and none carrying the records | `[FAIL] installed with a records mirror and is not using it` |
+| an array in `mdadm.conf` and none carrying the records | `[FAIL] this box was installed with a records mirror and is not using it` |
 
 Degraded is a **failed** check and a rebuild is a **warning**: the first is a
 box one failure from losing what it is required to keep, and the second is the
@@ -952,12 +954,14 @@ that console to skip the line that matters.
 | Target disk | not a block device, or the medium this system booted from |
 | Hostname | it contains characters a hostname may not have |
 | Timezone | there is no such zone in `/usr/share/zoneinfo` |
+| Gigabytes for connection records | not a whole number, below 1 GB, or it would leave the system less than 8 GB |
 | Records mirror | it is the target, the medium, a partition, or too small for the records |
 | Root password | it is empty, or the two entries do not match |
 
-Then a summary, then the disk path typed back — a yes/no is answered
-reflexively, and an installer that guesses its target destroys a machine that
-was already doing something. Then it installs and **reboots**, after saying to
+Then a summary, then the disk repeated back with its size and model, and the
+word `yes` typed in full — a bare Enter is not an answer here, and neither is
+`y`, because an installer that guesses its target destroys a machine that was
+already doing something. Then it installs and **reboots**, after saying to
 remove the medium.
 
 Asking first is not cosmetic. It used to ask for the password **last**, after
@@ -1098,6 +1102,7 @@ command line:
 | `hexarouting.timezone=<zone>` | answer the timezone question |
 | `hexarouting.password=<pw>` | answer the root password question |
 | `hexarouting.log-gb=<n>` | gigabytes for the connection records |
+| `hexarouting.mirror=<disk>` | the second disk the records are mirrored onto |
 | `hexarouting.answers[=<file>]` | read the answers from a file instead |
 | `hexarouting.yes` | skip the confirmations, then **power off** |
 
@@ -1135,6 +1140,7 @@ whoever boots it do not have to agree on a path from memory.
 | `hostname` | the hostname |
 | `timezone` | the timezone |
 | `log-gb` | gigabytes for the connection records |
+| `mirror` | the second disk the records are mirrored onto |
 | `password` | the root password |
 | `yes` | skip the confirmations, then power off |
 

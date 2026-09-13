@@ -52,8 +52,8 @@ So the VTY has its own:
 hexarouting> show route
   Destination          Next hop          Interface    Kind
   0.0.0.0/0            10.0.0.2          host-veth-vpp forward
-  203.0.113.0/24       10.0.0.2          host-veth-vpp forward
   10.0.0.0/24          connected         host-veth-vpp connected
+  203.0.113.0/24       10.0.0.2          host-veth-vpp forward
 
   3 entries carrying traffic
 ```
@@ -95,9 +95,10 @@ words:
 
 ```
 hexarouting# [edit] interface ?
-  host-veth-vpp             interface (up)
-  pg0                       interface (up)
-  TenGigabitEthernet0/8/0   interface (up)
+  TenGigabitEthernet0/8/0  interface (up)
+  host-veth-vpp            interface (up)
+  pg0                      interface (up)
+  <interface>
 ```
 
 Interfaces come from the dataplane; pools, accounts and SNMP users come from
@@ -115,15 +116,28 @@ Dentro de um bloco, `?` oferece **apenas o que vale ali**:
 
 ```
 hexarouting# [edit interface GigabitEthernet0/12/0] ?
-  exit   leave the interface
-  mtu    MTU, on both the dataplane interface and its TAP
-  show   display information
-  urpf   drop packets whose source does not route back this way
+  description  what this interface is for
+  exit         leave the interface
+  ip           routing-protocol settings FRR owns on this interface
+  ipv4         IPv4 addressing
+  ipv6         IPv6 addressing
+  isis         IS-IS settings on this interface
+  linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
+  mac-address  the MAC this interface answers to
+  mtu          MTU, on both the dataplane interface and its TAP
+  no           remove a statement from this interface
+  show         display information
+  shutdown     take the interface administratively down
+  urpf         drop packets whose source does not route back this way
+  vlan         VLAN tag, on a sub-interface
+  vrf          the routing table this interface's addresses live in
 ```
 
 Antes oferecia a árvore de configuração inteira — quinze opções, das quais três
 valiam ali. Oferecer o nível de cima convida alguém a digitar `cgnat pool`
-dentro de uma interface e descobrir depois o que aquilo significou.
+dentro de uma interface e descobrir depois o que aquilo significou. As quinze
+de hoje são outras quinze: todas valem dentro de uma interface, porque a
+interface passou a ser um objeto de primeira classe.
 
 Um bloco do FRR oferece `exit` e `show` e nada mais: este VTY não modela as
 declarações do FRR, e oferecer algumas seria **um palpite apresentado como
@@ -147,6 +161,8 @@ hexarouting> show interface
   GigabitEthernet0/12/0      up     9000   203.0.113.1/24      tap0
   TenGigabitEthernet0/8/0    up     1500   -                   -
   local0                     down   0      -                   -
+
+  3 interface(s) on the dataplane
 ```
 
 Responde pelo **dataplane**. Antes era repassado ao `vtysh`, que enxerga só o
@@ -232,12 +248,12 @@ hexarouting> show interface utilization
   sampling every 2s, 5 time(s) - 10s in total; Ctrl-C stops early
 
   Interface                             rx            tx  rx history tx history
-  TenGigabitEthernet0/8/0    675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
   GigabitEthernet0/12/0        8.40 Mbit/s   3.10 Mbit/s  ▁▁▁▂▁      ▁▁▁▁▁
+  TenGigabitEthernet0/8/0    675.56 Mbit/s   1.24 Gbit/s  ▃▄▄▅▄      ▆▇▇█▇
 
   bars are each interface's share of its own line rate
-    TenGigabitEthernet0/8/0   12.4% of 10.00 Gbit/s
     GigabitEthernet0/12/0      0.8% of 1.00 Gbit/s
+    TenGigabitEthernet0/8/0   12.4% of 10.00 Gbit/s
 ```
 
 `show interface` prints a counter, which is a total since boot. Nobody wants the
@@ -280,6 +296,7 @@ to have hung.
 ```
 error: interface Ten0: this box has no such interface
     it has: GigabitEthernet0/12/0, TenGigabitEthernet0/8/0, local0
+    (a linux_cp pair answers to both its dataplane name and its Linux one)
     the statement would commit and do nothing
 ```
 
@@ -308,10 +325,19 @@ da seção de roteamento.
 hexarouting# [edit interface GigabitEthernet0/12/0] ?
   description  what this interface is for
   exit         leave the interface
+  ip           routing-protocol settings FRR owns on this interface
+  ipv4         IPv4 addressing
+  ipv6         IPv6 addressing
+  isis         IS-IS settings on this interface
+  linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
+  mac-address  the MAC this interface answers to
   mtu          MTU, on both the dataplane interface and its TAP
+  no           remove a statement from this interface
   show         display information
   shutdown     take the interface administratively down
   urpf         drop packets whose source does not route back this way
+  vlan         VLAN tag, on a sub-interface
+  vrf          the routing table this interface's addresses live in
 ```
 
 **`description` lives in the dataplane**, as a VPP interface tag returned by
@@ -580,10 +606,12 @@ offered no way to make one — which is worse than not offering the statement.
 
 ### How it is tested
 
-There is no `vppctl lcp create` anywhere in this repository any more. Every
-lab that needed a pair — `lcp`, `routing`, `vty`, `igp`, `bgp-policy`,
-`ipfix-tcp` — now gets one the way a box gets one, by committing `linux-name`
-through the VTY. While those lines existed each of those labs performed the
+No lab that exercises the VTY creates a pair by hand any more. Every one that
+needed a pair — `lcp`, `routing`, `vty`, `igp`, `bgp-policy`, `ipfix-tcp` — now
+gets one the way a box gets one, by committing `linux-name` through the VTY.
+Two labs that are about the log rather than about the VTY still run `vppctl
+lcp create` to stand their topology up: `lab/ipfix-outbuf.sh` and
+`lab/ipfix-stop.sh`. While those lines existed each of those labs performed the
 product's missing step, and a lab that does that does not test the product; it
 tests a box nobody receives. That is the same conclusion as the routing
 daemons ([#99](https://github.com/andrediashexa/hexarouting/issues/99)) and OSI
@@ -702,18 +730,18 @@ of the setting.
 ### `show interface <name>`
 
 ```
-pg0
-  state       up
-  mtu         9000
-  addresses   10.0.0.1/24
-  linux       vppwan0
-  vrf         0 (default)
-  mac         02:fe:c1:ed:07:aa
-  urpf        off
-  cgnat       not attached
-  counters
-    rx bytes                     120
-    punt                           2
+  pg0
+    state       up
+    mtu         9000
+    addresses   10.0.0.1/24
+    linux       vppwan0
+    vrf         0 (default)
+    mac         02:fe:c1:ed:07:aa
+    urpf        off
+    cgnat       not attached
+    counters
+      rx bytes                     120
+      punt                           2
 ```
 
 A summary answers "is the link up". A fault report needs the counters: *up*
@@ -766,6 +794,8 @@ cgnat pool residential
  inside 100.64.0.0/22
  outside 200.150.0.16/30
  block-size 512
+ policy interleaved
+ mode deterministic
  tcp-mss 1400
  exit
 ```
@@ -921,6 +951,8 @@ statement was not*:
 hexarouting# [edit vrf red] show this
 vrf red  <- not checked
  ip route 10.9.0.0/16 10.0.0.9  <- not checked
+! hexash: 2 statement(s) above are marked '<- not checked': this VTY has no
+! hexash: grammar for them and handed them to FRR word for word
 ```
 
 ### How it is shown, and why it is sixteen characters
@@ -1038,11 +1070,10 @@ cannot come to be spelled differently.
 Measured, not estimated. A provider edge was configured at a live FRR 10.7.1 -
 prefix-list, route-map with `match` and `set`, an eBGP transit session with
 policy, OSPF, a default route - and its `show running-config` read back and put
-through the display. **Four statements of twenty-five** are marked:
+through the display. **Three statements of twenty-four** are marked:
 
 ```
 hostname hexarouting  <- not checked
-hostname c89defb68a9c  <- not checked
 service integrated-vtysh-config  <- not checked
 ...
  no bgp ebgp-requires-policy  <- not checked
@@ -1258,7 +1289,7 @@ refusal names it the way `show configuration` prints it:
 
 ```
 error: FRR accepted 1 statement(s) of this commit and did not keep them
-    vrf red / ip route 10.9.0.0/16 10.0.0.9
+    vrf red / ip route 10.9.0.0/16 10.0.0.9  <- not checked
 ```
 
 `config.as_hierarchy()` takes the block path for this reason and `config.block_of()`
@@ -1297,11 +1328,12 @@ Accepted, such a route sits in FRR and never reaches the FIB - the exact
 failure `show route verbose` exists to find afterwards, and cheaper to say at
 the prompt than to have somebody find during an outage.
 
-The refusal names the statement in FRR's spelling, not in the one that was
-typed: by the time it is checked the line has been translated, and the check
-runs over the routing text the commit would hand to `frr-reload`. That is worth
-saying on the page an operator reads, because searching the screen for the first
-word they typed finds nothing.
+The refusal names the statement the way `show configuration` prints it, which
+is what the operator has on the screen. A top-level `ip route` is translated
+back to `router static / route ...`, this VTY's own spelling, precisely because
+searching the screen for `ip route` after reading the error found nothing. A
+route inside a block this VTY has no grammar for keeps FRR's spelling, because
+that is how the block is printed too.
 
 ### The question is asked of the table the route is in
 
@@ -1433,14 +1465,14 @@ and reproduces the mismatch this exists to prevent.
 
 Two details that cost time to find:
 
-* The command is `set interface mtu **packet** <n>`, not `set interface mtu
-  <n>`. The second changes the hardware maximum frame size, which most drivers
-  refuse - and refuse while `vppctl` still exits **0**, so the failure is
-  invisible. The first sets the L3 MTU, which is what OSPF compares.
-* The result is therefore **read back** rather than inferred from the exit
-  status. Until MTU moves to the binary API alongside the pool operations
-  ([#3](https://github.com/andrediashexa/hexarouting/issues/3)), verifying the
-  effect is the only honest check.
+* Over the CLI the command was `set interface mtu **packet** <n>`, not `set
+  interface mtu <n>`: the second changes the hardware maximum frame size, which
+  most drivers refuse - and refuse while `vppctl` still exits **0**, so the
+  failure is invisible. The MTU now goes over the binary API instead
+  (`sw_interface_set_mtu`), which removes that particular trap.
+* The result is still **read back** rather than inferred from the reply. A
+  retval of 0 says VPP accepted the message, not that the driver took the
+  number, and those are different answers.
 
 A third, found late: **the Linux half was never being set at all**
 ([#114](https://github.com/andrediashexa/hexarouting/issues/114)). The code
@@ -1574,7 +1606,8 @@ and every ISO, and it is versioned with VPP by construction. The cost is a
 process per call rather than a persistent connection - irrelevant for
 configuration, which happens at human speed and is all `hexash` does.
 
-Five outcomes are distinguished, because they need different actions:
+Six failure states are distinguished, beside `ok`, because they need different
+actions:
 
 | State | Means | What the operator does |
 |---|---|---|
@@ -1583,15 +1616,17 @@ Five outcomes are distinguished, because they need different actions:
 | `not-running` | no reply at all | start the dataplane |
 | `no-plugin` | VPP is up, the CGNAT API is not registered | fix the install |
 | `no-client` | `vat2` is missing | install the `vpp` package |
+| `bad-reply` | it answered something this client cannot read | a version mismatch; fix the install |
+| `cannot-send` | the client could not encode it, and VPP never saw it | change what was asked for, not the dataplane |
 
 Collapsing these into "it failed" is how an unplugged dataplane and a rejected
-configuration become indistinguishable. A refusal **MUST** carry the return
-value, the name from `vnet/error.h`, and the sentence the plugin sent to VPP's
-log - the number alone is not actionable:
+configuration become indistinguishable. A refusal **MUST** carry the name from
+`vnet/error.h` and the sentence the plugin sent to VPP's log, and **MUST** name
+what was refused - a return value alone is not actionable, and is not shown:
 
 ```
-refused -7: the dataplane refused it: invalid value
-            (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
+error: pool 'client-bad': the dataplane refused it: invalid value
+    (bpa_pool_init: pool 'client-bad': block size 500 must be a power of two)
 ```
 
 ### What goes over the API, and what does not
@@ -1619,7 +1654,9 @@ configuration a box actually runs.
 ### Design
 
 The goal is one CLI in the style operators expect: `configure terminal`,
-`show running-config`, `write memory`, covering routing **and** CGNAT.
+`show running-config`, `save`, covering routing **and** CGNAT. `write memory`
+is not this VTY's word: it falls through to `vtysh` and saves FRR's
+configuration, not the box's.
 
 | Option | How | Cost |
 |--------|-----|------|
@@ -1906,8 +1943,9 @@ the country, so it has three guards rather than one.
 Password hashes are in `hexarouting.conf` and in every rollback revision -
 they have to be, or a rollback could not restore a password. So:
 
-* `/etc/hexarouting` and everything under it is **root-only**, set by the
-  installer and again on every write.
+* `/etc/hexarouting` and its rollback store are `2770` and group-owned by
+  `hexa-cgnat`, and the files under them are `0660` - set once by the
+  installer, and deliberately not re-stated on every write. See *Roles*.
 * `show running-config` prints `password <set, not shown>`. A hash on a screen
   shared during an incident is a hash that has left the building, and it is
   crackable offline at the attacker's leisure.
@@ -1985,8 +2023,8 @@ not see those NICs, so `snmpd` has nothing to report about them.
 
 ### Commands for the question an operator arrives with
 
-The first five `show cgnat` commands report aggregates - *"thread 0: 3 sessions,
-2 active subscribers"*. That is enough to know the box is working and useless
+Most of the `show cgnat` sub-commands report aggregates - *"thread 0: 3
+sessions, 2 active subscribers"*. That is enough to know the box is working and useless
 for the question people actually arrive with, which is always about one
 customer.
 
@@ -2047,12 +2085,19 @@ Tab completes; `?` lists the valid options at the cursor with a description:
 
 ```
 hexarouting> show cgnat ?
-  blocks   blocks allocated in dynamic mode
-  logging  IPFIX export state
-  pool     configured CGNAT pools
-  session  active sessions per thread
+  alg          which ALGs the dataplane has on, per pool
+  blocks       blocks allocated in dynamic mode, and how many a forward pins
+  drops        why packets did not get through
+  forward      the port forwards the dataplane holds
+  history      dated configuration trail
+  logging      IPFIX export state
+  pool         configured CGNAT pools
+  session      active sessions per thread
+  subscriber   everything about one subscriber
+  top          subscribers closest to exhausting their blocks
+  translation  who was behind a public address and port
 
-hexarouting(config-cgnat-pool)# inside ?
+hexarouting# [edit cgnat pool residential] inside ?
   <A.B.C.D/M>
 ```
 
@@ -2091,14 +2136,18 @@ The list is short on purpose. Every entry answers a question an operator asks on
 this box, and the one thing it **MUST NOT** become is a shell: a pipe implemented
 by handing the text to `grep` is a shell escape wearing a filter's clothes,
 reachable by a read-only account, on a product that restricts the shell to
-administrators on purpose. The argument is therefore a plain substring - quotes
-would be part of it - and `section` knows one structure only: a line at column 0
+administrators on purpose. The argument is therefore a plain substring,
+with a matched pair of surrounding quotes taken off because everybody types
+them - and `section` knows one structure only: a line at column 0
 and everything indented under it, which is the shape of this configuration.
 
 ### Limits of this version
 
-* The dataplane error check is textual, because `vppctl` returns 0 even on
-  failure. Migrating `hexash` to the binary API **SHOULD** replace it.
+* The error check on what is still read over `vppctl` is textual, because
+  `vppctl` returns 0 even on failure. The configuration writes no longer are:
+  they go over the binary API, which answers with a retval. What remains on the
+  CLI socket is the `show`s and `bpa pool ... check`, which has no API message
+  of its own.
 * A box running CGNAT with no routing daemon is a legitimate deployment, so a
   missing or silent FRR **MUST NOT** block a CGNAT-only commit.
 * `hexash` is written in Python. It is an interactive control-plane shell,
@@ -3159,6 +3208,9 @@ defined, and FRR denies everything this statement governs until one is;
 define it, or write 'route-map RM-IN permit 10' to let everything through
 ```
 
+Reflowed here. `err()` wraps nothing, so the box prints that as one line of 221
+columns; the width section at the end of this page says why it was left alone.
+
 **REFUSED.** The commit does not happen and the statement never reaches FRR
 ([#145](https://github.com/andrediashexa/hexarouting/issues/145)).
 
@@ -3199,10 +3251,13 @@ that is what the operator meant.
 
 The second reason is local to this box. FRR's warning goes to the vtysh
 session; this VTY hands whole configurations to `frr-reload.py`, and
-`Frr._summarise()` keeps only lines carrying `Exiting:`, `ERROR`, `% `,
-`Failed` or `Exception:`. `The route-map 'X' does not exist.` matches none of
-them, so on this box the warning is not merely easy to miss - it is thrown
-away.
+`Frr._summarise()` runs only when the reload **fails**. FRR exits 0 over an
+undefined route-map, so nothing on this box ever looks at that output, and the
+warning is not merely easy to miss - it is never read. (`_summarise()` keeps
+lines carrying `Exiting:`, `ERROR`, `% `, `Failed` or `Exception:`, and falls
+back to everything the daemon said when the only match is the
+`% Configuration failed.` footer, which a reason-less footer had made it print
+twice.)
 
 ### Refused only when this change is what causes it
 
@@ -3341,10 +3396,10 @@ peer groups included, which is what the lab now does.
 ```
 hexarouting# [edit] ip ?
   prefix-list  a named list of prefixes, for matching in policy
-  route        a static route
 hexarouting# [edit] ip prefix-list <TAB>
-  PL-CLIENTES   ip prefix-list
-  PL-BOGONS     ip prefix-list
+  PL-BOGONS    ip prefix-list
+  PL-CLIENTES  ip prefix-list
+  <prefix-list>
 ```
 
 **The statements themselves are still passed through to FRR**, and that is a
@@ -3643,7 +3698,7 @@ while the display's assertion stayed green for two releases.
 [#252](https://github.com/andrediashexa/hexarouting/issues/252) fixed the two
 read-back branches and stopped there, listing four more lines it had measured
 on the way. Driving the two commands instead of reading the source found
-**twenty-eight**, from 80 to 231 columns, and the widest of them was on nobody's
+**thirty**, from 81 to 231 columns, and the widest of them was on nobody's
 list — a warning printed every time a QinQ sub-interface is created. That gap is
 the point: the four were what happened to be driven while fixing something else,
 and a line nobody drives is a line nobody measures.
@@ -3659,7 +3714,7 @@ and a line nobody drives is a line nobody measures.
 | the UDP-export advice | 127 |
 | "no rollback revision could be recorded" | 118 |
 | what `commit check` says it verified | 107 |
-| eighteen more, between 80 and 104 | |
+| twenty-one more, between 81 and 104 | |
 
 Three shapes account for all of them, and each has one answer:
 
@@ -3688,11 +3743,16 @@ row the operator goes and edits. What the box no longer does is put prose on
 that row as well — which is what made it 133.
 
 One shape is deliberately **not** changed: `err(f"{stmt}: {why}")`, which the
-BGP, IS-IS, OSPF, route-map and AS-path checks all use. None of them measured
-over the budget on any fixture driven here, and restructuring eight messages on
-no measurement is the wording change #252 refused to mix into a width fix. It
-is recorded as a limit rather than left implicit: a long enough statement makes
-any of them exceed the console, and the answer when one does is the split above.
+BGP, IS-IS, OSPF, route-map and AS-path checks all use. The sweep above covered
+what `commit` and `commit check` print on their own account; these are printed
+by the policy checks and were left where they were, because restructuring eight
+messages was the wording change #252 refused to mix into a width fix.
+
+**They are over the budget, and the widest is the page's own example.** The
+undefined-route-map refusal quoted earlier measures **221 columns** as the box
+prints it, on one line. The blocks that quote messages of this shape are
+reflowed on the page so they can be read here; the console does not reflow
+them. The answer when one is restructured is the split above.
 
 
 ## FRR version
@@ -3711,4 +3771,4 @@ happens to carry.
 - [x] `hexash` with completion and contextual help
 - [x] Candidate/commit/rollback covering CGNAT and routing
 - [x] MTU as an explicit interface parameter in the VTY, on both sides of the pair
-- [ ] Migrate configuration writes to the binary API
+- [x] Migrate configuration writes to the binary API

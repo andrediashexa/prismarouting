@@ -294,9 +294,12 @@ of bitmaps and one list of blocks. `bpa_session_create()` then allocated from
 whichever block had a free port, which could be the other pool's. Measured:
 
 ```
-BPA in2out 100.64.0.5:40000 -> 200.150.0.17:1536   (pool A, correct)
-BPA in2out 10.0.0.5:40000   -> 200.150.0.17:1537   (pool B, on pool A's address)
+BPA in2out 100.64.0.5:40000 -> 200.150.0.17:1536 proto tcp (new session)
+BPA in2out 10.0.0.5:40000 -> 200.150.0.17:1537 proto tcp (new session)
 ```
+
+The first line is pool A doing its job. The second is a subscriber of pool B on
+pool A's public address.
 
 The address is the visible half. The serious half is the log: a `natEvent 16`
 naming pool A's block for a subscriber of pool B is the record an operator
@@ -316,7 +319,7 @@ unique by accident. `lab/two-pools.sh` is the one that does not.
 |---|---|---|
 | Port bitmap | `block_size` bits per active subscriber | 64 bytes at 512 ports; ~13 MB for 200k |
 | Session tables | Two bihash tables per worker | Default 16 MB each, configurable via `bpa session-table` |
-| Block ownership (dynamic) | 4 bytes per block per worker slice | |
+| Block ownership (dynamic) | 17 bytes per block per worker slice | owner, idle-since, pinned flag and free-list slot, one array each |
 
 Session table size is a **virtual** reservation, but the OOM killer counts
 virtual memory. The default is therefore modest: a deployment with 200k
@@ -623,11 +626,16 @@ numbers what it would do:
 
 ```
 error: this change re-maps subscribers that already have mappings
-    240 of 256 subscribers change public address or port block; 0 hold live
-    state right now
-    100.64.64.16 moves from 203.0.113.0:1536-2047 to 203.0.113.0:2048-3071
+    248 of 256 subscribers change public address or port block; 0 hold live state right now
+    100.64.64.8 moves from 203.0.113.0:1536-2047 to 203.0.113.0:2048-3071
+    100.64.64.9 moves from 203.0.113.1:1536-2047 to 203.0.113.1:2048-3071
+    every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not.
     if that is what you mean, type: commit remap
 ```
+
+Every line after the first is printed whole rather than wrapped, because the
+counts and addresses in them are what the operator compares against what they
+expected, and a wrapped address cannot be grepped for.
 
 The count comes from the **dataplane**, which holds both definitions and runs
 the same arithmetic it would run afterwards — not from a second implementation
@@ -858,8 +866,12 @@ nothing to keep.
 customer's address and the question *is it the box or is it them*:
 
 ```
-sessions 4   refusals: ports 0, session cap 6, rate cap 0
+  sessions 4   refusals: ports 0, session cap 6, rate cap 0
+  session-cap refusals: the cap is doing its job, or it is too low for this customer
 ```
+
+The second line appears only when that counter is not zero; there is one like
+it for each of the three.
 
 | Counter | Means | What to do |
 |---|---|---|
@@ -938,8 +950,8 @@ some throughput; a clamp larger than necessary protects nothing.
 It is recomputed when an interface joins or leaves the CGNAT, and once a second
 by the process node that already walks the session table, because an MTU can
 change under a running box and a clamp derived from a stale one is a clamp that
-quietly does nothing. `show bpa pool` prints the **resolved** number, not the
-word `auto`, for the same reason.
+quietly does nothing. `show bpa pool` prints the **resolved** number beside the
+word — `tcp-mss      auto -> 1460` — for the same reason.
 
 ### What it deliberately does not do
 
@@ -958,11 +970,11 @@ word `auto`, for the same reason.
   box.
 
 Turning the clamp on with `bpa tcp-mss` changes it **in place** and keeps every
-session. Turning it on through the VTY does not: `hexash` replaces any pool
-whose configuration text differs, so the commit tears the pool down and rebuilds
-it. That is true of every per-pool setting today and is tracked as
-[#69](https://github.com/andrediashexa/hexarouting/issues/69) — worth knowing
-before answering a support call with a commit.
+session, and so does a commit: `hexash` compares only the mapping half of a
+pool's text (`Pool.lines(in_place=False)`), so a clamp change leaves as
+`bpa_pool_settings_set` and the pool is not rebuilt
+([#69](https://github.com/andrediashexa/hexarouting/issues/69), asserted on a
+pool carrying traffic by `lab/in-place.sh`).
 
 The TCP checksum is updated incrementally against the two bytes that changed.
 It has to be exact: a wrong checksum fails **silently** — the peer drops the
@@ -1404,8 +1416,9 @@ but the datapath keeps renumbering sessions it already lengthened, because
 otherwise turning the knob off would break exactly the connections the operator
 was trying to stop interfering with.
 
-That state costs **eight bytes on every session**, FTP or not — `sizeof
-(bpa_session_t)` goes from 40 to 48. A side table keyed on the session index
+That state costs **twenty-four bytes on every session**, FTP or not: `adj[]` in
+`bpa_session_t` is one `bpa_seq_adj_t` per direction, and each is three
+four-byte fields. A side table keyed on the session index
 would have avoided it and would have needed its own lifecycle hanging off
 `bpa_session_free()`; this project has already learned that a second thing to
 keep in step is a second thing to get wrong.
@@ -1439,7 +1452,7 @@ that arithmetic wrong.
 the IP total length against the bytes actually on the wire, the rewritten
 payload byte for byte, the shifted sequence and acknowledgement numbers, and the
 data connection arriving at the subscriber. `sh tools/lab.sh ftp-alg off` runs
-the same lab with the ALG switched off and **MUST** fail; twelve of its
+the same lab with the ALG switched off and **MUST** fail; thirteen of its
 assertions drop, which is what makes the other run mean something.
 
 ### RTSP (RFC 2326)
@@ -1568,8 +1581,10 @@ is on — both are needed, because a zero counter means nothing on its own.
 | `bpa-out2in` | RTSP reply spans segments | as above, inbound |
 | `bpa-out2in` | RTSP reply rewrite would not fit | as above, inbound |
 
-Reason strings are kept under **35 characters**: `show errors` truncates there,
-and a counter whose name cannot be read whole is a counter no script can match.
+These nine reason strings are kept under **35 characters**, because `show
+errors` truncates there and a counter whose name cannot be read whole is a
+counter no script can match. It is a local rule, not a codebase-wide one: a
+third of the counters in `bpa_errors.h` are longer, the longest at 78.
 
 Evidence: `lab/rtsp.sh`, which asserts on the captured packet — the rewritten
 pair, its parity, both checksums, the IP length, the delivered media, and the
@@ -1697,12 +1712,12 @@ checksum, and that is the whole list.
 | Node | Counter | Meaning |
 |---|---|---|
 | `bpa-in2out` | SIP messages rewritten | a message left with this box's addresses in it |
-| `bpa-in2out` | SIP message not understood | refused whole and passed through |
+| `bpa-in2out` | SIP message not understood, left untouched | refused whole and passed through |
 | `bpa-in2out` | SIP datagram spans buffers | the message is not in one buffer |
 | `bpa-in2out` | SIP rewrite would not fit | the longer message exceeds the buffer |
 | `bpa-in2out` | SIP media port pair unavailable | no even-aligned free pair in the block |
 | `bpa-out2in` | SIP responses rewritten | a response `Via` was restored |
-| `bpa-out2in` | SIP response not understood | as above, inbound |
+| `bpa-out2in` | SIP response not understood, left untouched | as above, inbound |
 | `bpa-out2in` | SIP response spans buffers | as above, inbound |
 | `bpa-out2in` | SIP response rewrite would not fit | as above, inbound |
 
@@ -1835,8 +1850,10 @@ directions of a tunnel on one worker.
 The alternative — steering ESP by the peer address — would put the session on a
 worker that does not hold the subscriber's port block, and in dynamic mode that
 worker cannot learn the subscriber's public address at all. So the binding table
-is global (`bpa_main_t.esp`). A `clib_bihash` is multi-writer, so the price is a
-bucket lock paid by ESP packets alone, and the table has no lifetime of its own:
+is global (`bpa_main_t.shared`, which also holds the PPTP Call-ID binding). A
+`clib_bihash` is multi-writer, so the price is a bucket lock paid by ESP packets
+and by PPTP call setup and teardown — not by PPTP data — and the table has no
+lifetime of its own:
 entries are written by the outbound datapath and removed by
 `bpa_session_free()`, which runs under the worker barrier.
 
@@ -1865,7 +1882,7 @@ entries are written by the outbound datapath and removed by
 Evidence: `lab/esp.sh`, which reads the SPI, the sequence number, the
 ciphertext and the IP checksum off the captured packet — the SPI assertion is
 that it did **not** change. `sh tools/lab.sh esp off` runs the same lab with
-passthrough disabled, where 21 of its 27 assertions drop.
+passthrough disabled, where 25 of its 31 assertions drop.
 
 ## Fragments
 

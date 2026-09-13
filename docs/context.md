@@ -19,8 +19,8 @@ per task. Roughly fifteen minutes.
 
 | | |
 |---|---|
-| **What** | The orientation needed to read a 12,000-line dataplane, a 4,400-line VTY and 35 labs without reconstructing the shape first. |
-| **Why** | The design is recorded, in sixteen places, each written for a reader who already knows why that file exists. None of them is written first. |
+| **What** | The orientation needed to read a dataplane and a VTY of more than ten thousand lines each, and a lab per subject, without reconstructing the shape first. |
+| **Why** | The design is recorded across the files section 2 maps, each written for a reader who already knows why that file exists. None of them is written first. |
 | **Who** | Anyone starting an analysis — a new maintainer, a reviewer, or a model. |
 | **Where** | Here; every claim points at the file that owns it. |
 | **When** | Before the first question. Several pieces of work in this repository started from an assumption one of the invariants below would have corrected. |
@@ -61,8 +61,9 @@ would be indistinguishable from an entry where nobody was accountable.
 
 `src/plugins/bpa/bpa_pool.h` is the implementation. `ref/bpa_model.py` is the
 **executable specification**: it computes the same mapping from the
-specification rather than from the implementation, and `make test` checks
-30,000+ vectors against it. Any divergence **MUST** break the build.
+specification rather than from the implementation, and `make test` compares
+every generated vector against it and prints the counts. Any divergence
+**MUST** break the build.
 
 This is why a test that asks the dataplane to confirm its own arithmetic is
 worth nothing here — the oracle exists precisely so it does not have to.
@@ -92,13 +93,17 @@ lab machines this is `ens18`.
 
 *Authoritative:* [appliance.md](appliance.md), `lab/hw-lab.sh`.
 
-### 1.6 The VTY reaches the dataplane through vat2 — one process per call
+### 1.6 The VTY changes the dataplane through vat2 — one process per call
 
-Not a persistent connection, and not `vppctl` text. This one fact decides more
-than it looks: it is why an identity has to travel *inside each API message*
-(there is no connection to attach it to), and why the transport — shared
-memory — carries no peer credentials the plugin could check that identity
-against.
+Not a persistent connection. Every change goes over the binary API; what still
+goes over `vppctl` text is reading — `show interface`, `show lcp`,
+`show bpa config` — and the pool validation behind `commit check`, which has no
+API message of its own.
+
+The API half decides more than it looks: it is why an identity has to travel
+*inside each API message* (there is no connection to attach it to), and why the
+transport — shared memory — carries no peer credentials the plugin could check
+that identity against.
 
 *Authoritative:* `src/hexash/vppapi.py`, `bpa.api`.
 
@@ -133,9 +138,12 @@ wiki at `hexarouting.hexanetworks.com.br` says how somebody *uses* it, and
 `wiki/` here is a read-only mirror so it can be read and diffed without leaving
 the repository — editing that mirror changes nothing.
 
-The wiki is a **draft**: still being written, and known to contain errors about
-the purpose of the project and about how deterministic mode relates to BPA. It
-is not a source — never answer a question about the product from it.
+The wiki is a **draft**: still being written, and still being corrected against
+this repository page by page. The conceptual error it was known for — the
+purpose of the project, and how deterministic mode relates to BPA — was found
+and corrected; [wiki-audit.md](wiki-audit.md) section 2 records what it was, so
+that nobody hunts it again. It is not a source — never answer a question about
+the product from it.
 
 Where the two disagree, the repository is right and the wiki page is a defect.
 Every task asks whether a page needs writing or changing, and records the
@@ -244,7 +252,10 @@ that is confidently wrong, which is the failure mode this whole project is
 organised against.
 
 `test/test_context_map.py` reads this file, extracts every repository path it
-names, and fails when one does not exist. It runs in `make test`.
+names, and fails when one does not exist. It also counts the invariants below
+and requires the TL;DR, the heading over them and `README.md` to say the same
+number in words, and requires `README.md` to link here at all. It runs in
+`make test`.
 
 It does **not** check that the prose is still true — nothing can. What it
 catches is the half that rots silently.
