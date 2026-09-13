@@ -87,17 +87,18 @@ flowchart TD
 These are stated here because two of them were asked for as if missing. A
 claim about current behaviour is worth nothing without the code that shows it.
 
-**These are now asserted, not read.** `lab/nat-behaviour.sh` measures them
-against a running dataplane; the evidence column below points at code because
-that is where the property comes from, but a change that breaks it fails a test
-rather than shipping.
+**These are now asserted, not read.** Every one of them is measured against a
+running dataplane, and the evidence column says by which lab and in what words,
+because an evidence column that points only at the code it came from is a map
+to the intention rather than to the proof. A change that breaks one of these
+fails a lab rather than shipping.
 
 | Behaviour | Why it already holds | Evidence |
 |---|---|---|
 | **Endpoint-Independent Mapping** (RFC 4787 REQ-1) | The `in2out` session key is `(private ip, private port, protocol)`. The remote address is not part of it, so one internal socket always maps to the same external port regardless of destination. | Measured: one socket reaching 8.8.8.8 then 1.1.1.1 keeps one public port (`lab/nat-behaviour.sh`) |
-| **Endpoint-Independent Filtering** (RFC 4787 REQ-8, full-cone) | The `out2in` key is `(public ip, public port, protocol)`. Any external host may reach an open mapping. | same key function, `bpa_out2in.c` |
+| **Endpoint-Independent Filtering** (RFC 4787 REQ-8, full-cone) | The `out2in` key is `(public ip, public port, protocol)`. Any external host may reach an open mapping. | Measured: *"endpoint-independent filtering lets an uninvited remote through"* and *"it arrives at the subscriber's own address and port"* (`lab/nat-behaviour.sh`); the key function is `bpa_out2in.c` |
 | **Paired address pooling** (RFC 4787 REQ-2) | A subscriber's FIRST public address comes from `bpa_forward()`, a function of the subscriber index alone, and cannot vary between sessions. In **dynamic** mode a subscriber that fills its block gets an extension from the free list, and under `policy interleaved` that block is normally on a **different** public address - measured, and it gets more likely as the pool grows ([#226](https://github.com/andrediashexa/hexarouting/issues/226)). So the property holds unconditionally in deterministic mode and until the first extension in dynamic mode. | `bpa_pool.h`, `ref/bpa_model.py` |
-| **Port preservation where possible** | The allocator honours the original port when it is inside the block and free. | `bpa_ports.h`, `test/test_bpa_ports.c` |
+| **Port preservation where possible** | The allocator honours the original port when it is inside the block and free. | Measured: *"port 1600 was available before the forward existed"* asserts `100.64.0.5:1600 -> 200.150.0.17:1600` off a running box (`lab/forward.sh`), where it is the precondition of the reservation test; the arithmetic is `bpa_ports.h` and `test/test_bpa_ports.c` |
 
 EIF is **not** universally desirable: it means unsolicited inbound traffic
 reaches the subscriber. That is why item 3.3 below is about making it a
