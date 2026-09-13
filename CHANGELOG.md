@@ -320,6 +320,23 @@ version has a chance of seeing it.
   `show bpa blocks`, because the two need different actions: a larger reserve
   against one and a larger cap against the other.
 
+  **The control the case rests on was not being performed.** `lab/detreserve.sh`
+  says in its header that running with `reserve 0` must turn the extension
+  assertions red, and that "that argument is the only thing that makes the
+  green run worth anything". The lab was not in `OFF_MODES`, so the suite never
+  ran it - and the off run would not have been a control anyway: the extension
+  assertions sat inside `if [ "$RESERVE" -gt 0 ]`, with three different
+  assertions in the else branch, so it passed with nothing red. Since
+  `tools/run-all-labs.sh` INVERTS an off run's verdict, that pass would have
+  been counted as a failure of the suite.
+
+  The extension assertions run in both modes now. With `reserve 0` nine of them
+  go red - measured, and written into `# OFF-RED-AT-LEAST: 9` - and the three
+  that say what the box does instead stay green. A tenth check stays green in
+  both modes and is deliberately not counted: "the second subscriber found the
+  reserve empty" is true for free when there is no reserve, and an assertion
+  that cannot discriminate is not evidence.
+
   Three limits, stated rather than left to be discovered. A reserve smaller
   than the worker count leaves some workers with none, and that is a **warning
   and not a refusal**, for the reason `block-stride` gives: refusing would stop

@@ -30,6 +30,33 @@
 # the same pool with `reserve 0`, which is what every configuration written
 # before this existed means, and the extension assertions MUST then go red.
 # That argument is the only thing that makes the green run worth anything.
+# OFF-RED-AT-LEAST: 9
+#
+# A FLOOR, not a target, and measured rather than chosen: `sh tools/lab.sh
+# detreserve off` on 2026-09-13 went red on exactly these nine, which are the
+# nine that depend on a block the formula does not produce:
+#
+#   the subscriber that filled its block was given a second one
+#   and it is the block the model holds out of the formula
+#   on the subscriber's own public address, so it is still one host
+#   a reply addressed to the reserve block was translated back
+#   and the box counted the refusal as a reserve exhaustion
+#   which is a different number from the extensions it did hand out
+#   the reserve block arrived at the collector as its own natEvent 16
+#   and its release as its own natEvent 17, at the same port range
+#   one allocation record per block, not one for the pair
+#
+# The three that stay green are the ones asserting what the box does INSTEAD,
+# and one more - "the second subscriber found the reserve empty and stayed on
+# one block" - which is true for free when there is no reserve. It is left in
+# rather than counted: an assertion that cannot discriminate in this mode is
+# not evidence, and pretending it is would put the floor one too high.
+#
+# tools/run-all-labs.sh refuses an off run that goes red on fewer, because a
+# lab that used to fail nine checks and now fails one has lost eight
+# assertions without losing its verdict. Gaining assertions needs no edit
+# here; losing them has to be deliberate.
+
 set -u
 . /src/lab/lib.sh   # startup_conf, use_binary_api
 . /src/lab/verdict.sh
@@ -239,44 +266,58 @@ expect "the box and the model agree on the capacity" \
   test -n "${BOX_CAP:-}" -a "${BOX_CAP:-x}" = "${MODEL_CAP:-y}"
 expect "and the model was actually asked" test -n "${MODEL_CAP:-}"
 
-if [ "$RESERVE" -gt 0 ]; then
-  # 2. The extension itself, and where it landed.
-  expect "the subscriber that filled its block was given a second one" \
-    test "${NBLK:-0}" -eq 2
-  # The block it got is the one the MODEL places, not merely some block. A
-  # box that handed out a mapped block would also report two blocks, and that
-  # is the failure this whole feature exists to prevent: the block would be
-  # somebody else's by formula and their mapping would break in silence.
-  expect "and it is the block the model holds out of the formula" \
-    test "${B2_LO:-x}" = "${MODEL_RES_LO:-y}" -a "${B2_HI:-x}" = "${MODEL_RES_HI:-y}"
-  # RFC 4787 REQ-2. The reserve is preferred on the subscriber's own public
-  # address, so a peer still sees one host.
-  expect "on the subscriber's own public address, so it is still one host" \
-    test -n "${B1_IP:-}" -a "${B1_IP:-x}" = "${B2_IP:-y}"
-  # 3. The return path. Without the allocator lookup the arithmetic refuses
-  #    this port and the reply is counted as out of every block.
-  expect "a reply addressed to the reserve block was translated back" \
-    test "${OUT2IN_AFTER:-0}" -gt "${OUT2IN_BEFORE:-0}"
-  # 5. Exhaustion, counted and named.
-  expect "the second subscriber found the reserve empty and stayed on one block" \
-    test "${NBLK2:-0}" -eq 1
-  expect "and the box counted the refusal as a reserve exhaustion" \
-    test "${EXH:-0}" -ge 1
-  expect "which is a different number from the extensions it did hand out" \
-    test "${EXTS:-0}" -ge 1
-  # 4. The log. Both halves, because an allocation with no release names a
-  #    subscriber who still holds those ports for as long as the log is kept.
-  expect "the reserve block arrived at the collector as its own natEvent 16" \
-    test "${ALLOC_RES:-0}" -ge 1
-  expect "and its release as its own natEvent 17, at the same port range" \
-    test "${DEALLOC_RES:-0}" -ge 1
-  expect "one allocation record per block, not one for the pair" \
-    test "${ALLOC_ANY:-0}" -eq 1
-else
-  # THE CONTROL. Every assertion above depends on the reserve existing, so
-  # with reserve 0 the box must do what it did before this feature: refuse the
-  # fifth flow and leave the subscriber on one block. If this run ever goes
-  # green on the checks above, they were measuring nothing.
+# THE EXTENSION ASSERTIONS RUN IN BOTH MODES, and that is what makes the off
+# run a control rather than a second scenario.
+#
+# They used to be inside `if [ "$RESERVE" -gt 0 ]`, with three different
+# assertions in the else branch. That off run passed, with nothing red - so
+# tools/run-all-labs.sh, which INVERTS an off run's verdict, would have counted
+# it as a failure of the suite, and the header's claim that "the extension
+# assertions MUST then go red" was describing a run nobody performed. A lab
+# whose off mode passes is an assertion that cannot fail, which is #151.
+#
+# With reserve 0 every one of them goes red, because every one depends on a
+# block the formula does not produce. That is the argument the green run rests
+# on, and now it is made rather than asserted.
+
+# 2. The extension itself, and where it landed.
+expect "the subscriber that filled its block was given a second one" \
+  test "${NBLK:-0}" -eq 2
+# The block it got is the one the MODEL places, not merely some block. A
+# box that handed out a mapped block would also report two blocks, and that
+# is the failure this whole feature exists to prevent: the block would be
+# somebody else's by formula and their mapping would break in silence.
+expect "and it is the block the model holds out of the formula" \
+  test "${B2_LO:-x}" = "${MODEL_RES_LO:-y}" -a "${B2_HI:-x}" = "${MODEL_RES_HI:-y}"
+# RFC 4787 REQ-2. The reserve is preferred on the subscriber's own public
+# address, so a peer still sees one host.
+expect "on the subscriber's own public address, so it is still one host" \
+  test -n "${B1_IP:-}" -a "${B1_IP:-x}" = "${B2_IP:-y}"
+# 3. The return path. Without the allocator lookup the arithmetic refuses
+#    this port and the reply is counted as out of every block.
+expect "a reply addressed to the reserve block was translated back" \
+  test "${OUT2IN_AFTER:-0}" -gt "${OUT2IN_BEFORE:-0}"
+# 5. Exhaustion, counted and named.
+expect "the second subscriber found the reserve empty and stayed on one block" \
+  test "${NBLK2:-0}" -eq 1
+expect "and the box counted the refusal as a reserve exhaustion" \
+  test "${EXH:-0}" -ge 1
+expect "which is a different number from the extensions it did hand out" \
+  test "${EXTS:-0}" -ge 1
+# 4. The log. Both halves, because an allocation with no release names a
+#    subscriber who still holds those ports for as long as the log is kept.
+expect "the reserve block arrived at the collector as its own natEvent 16" \
+  test "${ALLOC_RES:-0}" -ge 1
+expect "and its release as its own natEvent 17, at the same port range" \
+  test "${DEALLOC_RES:-0}" -ge 1
+expect "one allocation record per block, not one for the pair" \
+  test "${ALLOC_ANY:-0}" -eq 1
+
+# And what the box does INSTEAD with no reserve, which the assertions above
+# cannot say: it must do what it did before this feature existed rather than
+# fail in some new way. Only meaningful on the off run - with a reserve these
+# are false by design.
+if [ "$RESERVE" -eq 0 ]; then
   expect "with no reserve the subscriber stays on one block" \
     test "${NBLK:-0}" -eq 1
   expect "and nothing was handed out of a reserve that does not exist" \
