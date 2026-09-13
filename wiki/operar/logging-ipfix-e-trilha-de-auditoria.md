@@ -72,10 +72,17 @@ e ao boot — e é reaplicado na ordem certa, o destino antes do estado.
 ```
 error: cgnat logging enable: UDP export has no collector, so nothing would leave this box
     add 'nat cgnat logging udp <collector> src <source>' beside it, or export over TCP with 'nat cgnat logging tcp <collector>'
+    the dataplane refuses the statement, and it would refuse it half way through this commit
 ```
 
 `nat cgnat logging tcp` **não** satisfaz esse requisito: os dois transportes
 são caminhos independentes, e `logging enable` liga o de UDP.
+
+A recusa vale quando é **esta mudança** que cria o problema. Numa caixa que já
+está nesse estado — exportação ligada e o destino apagado por baixo dela — a
+mesma frase sai como `warning:` e o commit passa, porque senão a única
+configuração que a caixa não conseguiria aplicar seria justamente a que
+conserta isso.
 
 :::warning
 **Em versões até a 0.63.0 a exportação por UDP não funcionava em nenhuma

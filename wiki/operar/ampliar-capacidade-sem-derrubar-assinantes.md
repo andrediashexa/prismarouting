@@ -29,16 +29,27 @@ configure
  nat cgnat pool residencial
   outside 45.170.16.0/26
   exit
- commit check
+ commit
 ```
 
-`commit check` **não estima**: o dataplane segura as duas definições e roda a mesma aritmética que rodaria depois. Ele responde quantos assinantes se movem e para onde dois deles vão.
+É o `commit` comum que mede — ele **recusa** a mudança e, ao recusar, imprime a conta. O `commit check` valida a candidata sem tocar no equipamento e não fala em re-mapeamento.
+
+E a conta **não é estimativa**: o dataplane segura as duas definições e roda a mesma aritmética que rodaria depois. Ele responde quantos assinantes se movem, quantos têm estado vivo naquele instante, e para onde dois deles vão.
+
+```
+error: this change re-maps subscribers that already have mappings
+    1024 of 1024 subscribers change public address or port block; 512 hold live state right now
+    100.64.0.5 moves from 200.150.0.17:1536-2047 to 200.150.0.33:2048-2559
+    100.64.0.9 moves from 200.150.0.17:2048-2559 to 200.150.0.34:1536-2047
+    every session on this pool ends when it is applied. Past answers stay resolvable - the configuration trail records which definition was in force - but the subscribers do not.
+    if that is what you mean, type: commit remap
+```
 
 
 :::info
-A diferença entre um operador que ouve *"isso muda o mapeamento"* e um que ouve *"1024 de 1024 assinantes se movem, e 100.64.0.5 sai de 200.150.0.17:1536-2047 para 200.150.0.33:2048-2559"* é saber o que está prestes a fazer.
+A diferença entre um operador que ouve *"isso muda o mapeamento"* e um que lê a linha acima é saber o que está prestes a fazer.
 
-Registre esse número no chamado de mudança: **é o número de clientes que vão ligar.**
+Registre esse primeiro número no chamado de mudança: **é o número de clientes que vão ligar.**
 
 :::
 
@@ -47,7 +58,7 @@ Registre esse número no chamado de mudança: **é o número de clientes que vã
 Aceite quando o pool é pequeno, a janela está acordada, ou a alternativa abaixo não pode ser arranjada.
 
 
-1. `commit check` e leia a contagem. Registre no chamado.
+1. `commit` e leia a contagem da recusa. Registre no chamado.
 2. Escolha uma janela. Toda sessão do pool termina — não graciosamente, não após um timeout, mas **no instante do commit**.
 3. `commit remap`.
 4. Confirme no pacote, não na configuração:

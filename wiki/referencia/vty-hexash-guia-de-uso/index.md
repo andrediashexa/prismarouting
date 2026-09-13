@@ -153,6 +153,8 @@ error: interface Ten0: this box has no such interface
 
 Vale para as quatro formas de nomear uma interface: o bloco do FRR, o `nat cgnat interface`, e as declarações `mtu` e `urpf`.
 
+A exceção é o **loopback**: `interface loop<n>` num nome que a caixa ainda não tem é o que **cria** o loopback, porque não há mais nada de onde criá-lo. Está na página de configuração de interface.
+
 
 :::info
 Uma interface do `linux_cp` atende por **mais de um nome** — o do dataplane (`GigabitEthernet0/12/0`) e o do Linux (`vppwan0`). Os dois são aceitos, porque os dois são reais e o FRR usa o segundo.
@@ -171,7 +173,7 @@ Com o dataplane inalcançável a checagem é **pulada, não reprovada**: uma VTY
 
 O bloco BGP tem página própria também: [Configuração de BGP](/doc/configuracao-de-bgp-9wJnuicEDZ) — vizinho, peer group, família de endereço, e o que o equipamento recusa antes de mandar para o roteamento.
 
-O bloco de interface tem dez declarações — endereços IPv4 e IPv6, VLAN, VRF, MTU, MAC, estado administrativo, descrição, anúncio de roteador IPv6 e uRPF — e ganhou página própria: [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
+O bloco de interface tem onze declarações — endereços IPv4 e IPv6, VLAN, VRF, MTU, MAC, `linux-name`, estado administrativo, descrição, anúncio de roteador IPv6 e uRPF — e ganhou página própria: [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ). É lá que está o `linux-name`, sem o qual o roteamento não enxerga a porta, e a criação de loopbacks.
 
 # Ver também
 

@@ -16,7 +16,7 @@ commit confirmed 5
 
 Aplica agora e desfaz sozinho em 5 minutos se você não confirmar. Se a mudança cortar seu próprio acesso, a máquina se recupera.
 
-O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fechar o console ou reiniciar a máquina não cancela o desfazer. Só `commit` cancela. E uma mudança em `ssh` ou em `user` vira `commit confirmed 10` mesmo sem você pedir, porque é a mudança que pode cortar a sessão em que você está digitando.
+O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fechar o console ou reiniciar a máquina não cancela o desfazer. Só `commit` cancela. E três mudanças viram `commit confirmed 10` mesmo sem você pedir — qualquer coisa em `ssh`, qualquer coisa em `user`, e um `commit cutoff` —, porque são as que podem cortar a sessão em que você está digitando.
 
 ## `commit` não é `save`
 
@@ -26,10 +26,11 @@ O prazo é do **equipamento**, não da sessão: sair da VTY, perder o SSH, fecha
 
 ```
 show configuration compare    o que muda
-commit check                  quem seria re-mapeado
+commit check                  valida sem tocar no equipamento
+commit                        recusa, e é aí que sai quem seria re-mapeado
 ```
 
-Se aparecer re-mapeamento, você vai derrubar todos os assinantes daquele pool ao aplicar. Isso é o esperado — mas precisa ser uma decisão, com janela.
+O `commit check` **não** informa re-mapeamento: quem informa é o `commit` comum, que recusa a mudança e imprime a conta exata e dois assinantes de exemplo antes de pedir `commit remap`. Se aparecer re-mapeamento, você vai derrubar todos os assinantes daquele pool ao aplicar. Isso é o esperado — mas precisa ser uma decisão, com janela.
 
 ## Recuperar uma caixa que ficou inalcançável
 

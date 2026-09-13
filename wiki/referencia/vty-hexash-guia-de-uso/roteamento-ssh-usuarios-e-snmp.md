@@ -88,10 +88,10 @@ flowchart LR
 
 ```
 hexarouting> show route
-  Destination          Next hop          Interface      Kind
-  0.0.0.0/0            200.150.0.1       TenGig0/8/0    forward
-  203.0.113.0/24       200.150.0.1       TenGig0/8/0    forward
-  200.150.0.0/24       connected         TenGig0/8/0    connected
+  Destination          Next hop          Interface    Kind
+  0.0.0.0/0            200.150.0.1       TenGigabitEthernet0/8/0 forward
+  203.0.113.0/24       200.150.0.1       TenGigabitEthernet0/8/0 forward
+  200.150.0.0/24       connected         TenGigabitEthernet0/8/0 connected
 
   3 entries carrying traffic
 ```
@@ -157,6 +157,7 @@ Na prática, endereços de pool normalmente **não** são endereços de interfac
 ```
 configure
  interface <nome>
+  linux-name <nome-no-linux>
   mtu <576-9216>
   urpf strict|loose|off
   exit
@@ -164,12 +165,23 @@ configure
 
 | Comando | Efeito |
 |---------|--------|
+| `linux-name` | cria o par pelo qual o roteamento e o `ip` enxergam esta interface |
 | `mtu`   | ajusta a MTU **na interface do dataplane e no TAP dela** — as duas juntas |
 | `urpf strict` | a origem precisa rotear de volta por esta interface |
 | `urpf loose` | a origem precisa ter rota em algum lugar |
 | `urpf off` | sem checagem (padrão) |
 
 uRPF numa interface interna é o que impede uma origem forjada de ser traduzida.
+
+
+:::warning
+**Uma interface sem** `**linux-name**` **não existe para o roteamento.** BGP, OSPF e IS-IS aceitam ser configurados sobre ela, o `commit` passa limpo, a estrofe aparece na configuração em vigor — e nenhuma adjacência sobe, porque o roteamento não tem interface nenhuma com aquele nome.
+
+É a primeira coisa a conferir numa porta nova que "está configurada e não fala com ninguém".
+
+:::
+
+O bloco de interface inteiro — endereços, VLAN, VRF, MAC, descrição, loopbacks — está em [Configuração de interface](/doc/configuracao-de-interface-j1q58jKWTQ).
 
 # SSH
 
@@ -193,8 +205,10 @@ configure
 ```
 configure
  user <nome>
+  role administrator|cgnat-operator
   ssh-key <tipo> <chave> [comentário]
   password <hash>
+  no role
   no ssh-key <chave>
   no password
   exit
@@ -206,7 +220,29 @@ configure
 openssl passwd -6
 ```
 
-O que a conta pode fazer é decidido pelos grupos do sistema (`hexa-admin`, `hexa-cgnat`), não por nada guardado aqui.
+## `role` — o que a conta pode mudar
+
+| Valor | O que a conta pode mudar |
+|-------|--------------------------|
+| `role administrator` | roteamento, CGNAT, contas e a própria máquina |
+| `role cgnat-operator` | só configuração de CGNAT |
+| sem `role` | somente leitura |
+
+**A configuração é quem decide.** O papel é escrito no bloco do usuário, sai em `show running-config` e sobrevive ao `save` — e o `commit` o materializa nos grupos do sistema, acrescentando os que o papel exige e **retirando** os que ele não exige mais. Uma promoção feita por fora, direto no grupo, é desfeita no commit seguinte: é aqui que ela se escreve.
+
+Além do grupo do papel, toda conta criada aqui entra nos grupos que dão **alcance** — os sockets do dataplane e os do roteamento. Sem eles a conta tem posto e não consegue exercê-lo: todo comando falha por permissão, inclusive os de leitura. É por isso que reaplicar o papel pela VTY conserta uma conta cujas participações saíram do lugar.
+
+`no role` devolve a conta a somente leitura. Um papel que não existe é recusado com a lista do que existe:
+
+```
+error: role 'supervisor': expected one of administrator, cgnat-operator
+```
+
+E `root` não recebe papel — os direitos dele vêm de ser root, não de grupo:
+
+```
+error: root's rights come from being root, not from a group: this VTY does not manage root's memberships
+```
 
 # SNMP
 

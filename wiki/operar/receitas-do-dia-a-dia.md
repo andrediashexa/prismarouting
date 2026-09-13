@@ -123,11 +123,12 @@ Se ampliar o pool existente for inevitável, aí sim é janela:
 
 ```
 show configuration compare
-commit check                 quantos assinantes se movem, e para onde
+commit check                 valida sem tocar no equipamento
+commit                       recusa, e imprime quantos se movem e para onde
 commit remap                 aplica de fato
 ```
 
-O `commit check` não estima: ele responde a contagem exata e mostra para onde dois assinantes vão. Registre esse número no chamado — é quantos clientes vão ligar.
+Os números saem do `commit` comum, na recusa — não do `commit check`. E não são estimativa: o dataplane roda a mesma aritmética que rodaria depois, então a contagem é exata e vem com dois assinantes de exemplo. Registre esse número no chamado — é quantos clientes vão ligar.
 
 O procedimento completo dos dois caminhos, com o que muda e o que não muda, está em [Ampliar capacidade sem derrubar assinantes](/doc/ampliar-capacidade-sem-derrubar-assinantes-rWQkaj9r1u).
 
@@ -201,7 +202,7 @@ show running-config | include timeout | count   quantas linhas casam
 show logging | last 40                          o fim do log
 ```
 
-`section` mantém a linha que casa e tudo que está indentado embaixo dela — é como se pede um bloco inteiro sem ler a caixa toda. O texto procurado vai **sem aspas** e pode ter espaços.
+`section` mantém a linha que casa e tudo que está indentado embaixo dela — é como se pede um bloco inteiro sem ler a caixa toda. O texto procurado pode ter espaços, e um par de aspas em volta dele inteiro é retirado antes da busca (`section "interface Gi"` procura `interface Gi`).
 
 O filtro roda sobre o que o comando já imprimiu, **depois** das ocultações: `show running-config | include password` mostra `<set, not shown>`, a mesma linha que apareceria sem filtro. Nenhum filtro alcança o valor por trás dela.
 
@@ -237,18 +238,23 @@ Não use `save` antes de confirmar. O desfazer devolve o que está valendo e nã
 ```
 configure
  user joao
+  role cgnat-operator
   ssh-key ssh-ed25519 AAAAC3Nza... joao@noc
   exit
  commit
+ exit
+save
 ```
 
-O que a conta pode fazer vem dos **grupos do sistema**, não daqui:
+**Sem a linha** `**role**` **a conta entra somente leitura.** É o `role` que decide o que ela pode mudar, e o `commit` é quem o materializa nos grupos do sistema — acrescentando os que o papel exige e retirando os que ele não exige mais:
 
-| Grupo | Pode |
-|-------|------|
-| `hexa-admin` | tudo: roteamento, sistema e CGNAT |
-| `hexa-cgnat` | somente CGNAT |
-| nenhum | somente leitura |
+| `role` | Pode mudar |
+|--------|------------|
+| `administrator` | tudo: roteamento, sistema, contas e CGNAT |
+| `cgnat-operator` | somente CGNAT |
+| ausente | somente leitura |
+
+Confira com `show running-config`: o papel aparece dentro do bloco da conta. Uma promoção feita direto no grupo, por fora da VTY, é desfeita no commit seguinte.
 
 Senha, se for usar, é **hash crypt** — nunca texto claro:
 

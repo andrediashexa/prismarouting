@@ -131,7 +131,9 @@ show configuration compare
 commit check
 ```
 
-`commit check` valida sem aplicar e informa **quantos assinantes seriam re-mapeados**. Em pool novo, nenhum. Em pool existente, esse número é literalmente quanta gente vai cair.
+`commit check` valida sem aplicar e sem tocar no equipamento. Num pool novo é tudo o que há para conferir.
+
+Num pool que **já existe**, a pergunta que importa é outra — quanta gente vai cair —, e quem a responde é o `commit` comum: ele recusa a mudança de mapeamento e imprime a contagem exata antes de pedir `commit remap`.
 
 ## 8. Aplicar
 

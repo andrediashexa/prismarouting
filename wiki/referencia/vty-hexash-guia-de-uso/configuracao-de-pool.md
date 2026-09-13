@@ -219,6 +219,8 @@ Vale notar o modo de falha que isso corrige: sem clamp, o par descarta o segment
 alg ftp  <on|off>
 alg rtsp <on|off>
 alg pptp <on|off>
+alg esp  <on|off>
+alg sip  <on|off>
 ```
 
 | ALG | O que reescreve |
@@ -226,8 +228,12 @@ alg pptp <on|off>
 | `ftp` | PORT/EPRT e as respostas 227/229 |
 | `rtsp` | o `client_port` do cabeçalho Transport |
 | `pptp` | o canal de controle e o canal de dados GRE |
+| `esp` | nada do payload: amarra o túnel IPsec ao gateway remoto |
+| `sip` | `Via`, `Contact` e o SDP do SIP sobre UDP, e abre o par RTP/RTCP |
 
-São os protocolos que carregam um endereço dentro do payload. Sem o ALG correspondente, eles anunciam o endereço privado para o outro lado e a conexão de dados nunca se estabelece.
+São os protocolos que carregam um endereço dentro do payload — ou, no caso do `esp`, que não têm porta nenhuma para o CGNAT usar. Sem o ALG correspondente, eles anunciam o endereço privado para o outro lado e a conexão de dados nunca se estabelece.
+
+Os cinco vêm **ligados**. `alg <nome> off` é a exceção escrita no pool, e `no alg <nome>` devolve o ALG ao padrão do equipamento em vez de fixá-lo num valor.
 
 # Removendo um ajuste: `no`
 

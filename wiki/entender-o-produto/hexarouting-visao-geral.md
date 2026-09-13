@@ -43,7 +43,7 @@ A VTY conversa com o dataplane via **vat2**, um processo por chamada — não é
 
 | Componente | Estado |
 |------------|--------|
-| Núcleo de mapeamento BPA | Verificado — 35.335 checagens contra o modelo de referência em Python |
+| Núcleo de mapeamento BPA | Verificado contra o modelo de referência em Python, mapeamento a mapeamento, o pool inteiro |
 | Dataplane (tradução, handoff, modo dinâmico, fragmentos, erros ICMP, estado TCP) | Verificado com tráfego injetado e real |
 | Roteamento (BGP, OSPF, IS-IS) | Verificado — rotas chegam à FIB do VPP |
 | Logging IPFIX (UDP e TCP) | Verificado com coletor decodificando |

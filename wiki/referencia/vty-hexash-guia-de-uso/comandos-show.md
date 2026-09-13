@@ -14,7 +14,7 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 | `show cgnat drops` |           | por que pacotes não passaram |
 | `show cgnat pool` |           | pools de CGNAT configurados |
 | `show cgnat session` |           | sessões ativas por thread |
-| `show cgnat blocks` |           | blocos alocados em modo dinâmico |
+| `show cgnat blocks` |           | blocos alocados em modo dinâmico, e quantos um encaminhamento de porta prende |
 | `show cgnat logging` |           | estado da exportação IPFIX |
 | `show cgnat history` |           | trilha datada de configuração |
 
@@ -29,17 +29,18 @@ As duas respondem uma pergunta diferente da que o `show configuration` responde.
 ```
 hexarouting> show cgnat alg
 provider-a
-  ftp    on   FTP: PORT e PASV no controle
-  rtsp   off  RTSP: Transport
-  pptp   on   PPTP: Call ID
-  sip    on   SIP sobre UDP
+  ftp    on   FTP PORT/EPRT and the 227/229 replies
+  rtsp   off  RTSP Transport client_port, and the media pair it needs
+  pptp   on   PPTP control channel and its GRE data channel
+  esp    on   IPsec ESP passthrough, bound to the peer gateway
+  sip    on   SIP over UDP: Via, Contact, SDP, and the RTP pair it needs
 ```
 
-É a tela para "as transferências FTP deste cliente travam": ela diz se o ALG está ligado **no dataplane**, que não é a mesma pergunta que se ele está no arquivo.
+São os **cinco** ALGs do produto, um por linha, com a descrição que a caixa imprime em inglês. É a tela para "as transferências FTP deste cliente travam": ela diz se o ALG está ligado **no dataplane**, que não é a mesma pergunta que se ele está no arquivo.
 
 ```
 hexarouting> show cgnat forward
-provider-a
+pool provider-a
   tcp 200.150.0.17:8080 -> 100.64.0.5:80
 ```
 
@@ -55,9 +56,9 @@ E esta é a primeira coisa a estabelecer quando alguém liga dizendo que o encam
 
 ```
 hexarouting> show route
-  Destination          Next hop          Interface      Kind
-  0.0.0.0/0            200.150.0.1       TenGig0/8/0    forward
-  200.150.0.0/24       connected         TenGig0/8/0    connected
+  Destination          Next hop          Interface    Kind
+  0.0.0.0/0            200.150.0.1       TenGigabitEthernet0/8/0 forward
+  200.150.0.0/24       connected         TenGigabitEthernet0/8/0 connected
 
   2 entries carrying traffic
 ```
@@ -78,6 +79,8 @@ hexarouting> show interface
   GigabitEthernet0/12/0      up     9000   203.0.113.1/24      tap0
   TenGigabitEthernet0/8/0    up     1500   -                   -
   local0                     down   0      -                   -
+
+  3 interface(s) on the dataplane
 ```
 
 Responde pelo **dataplane**, com estado, MTU, endereços e o par do `linux_cp`. Esse último porque é o nome que o FRR e o `ip` usam, e quem transita entre as duas ferramentas precisa dos dois lado a lado.
@@ -230,9 +233,11 @@ A marca é **só de tela**. Ela não entra no arquivo que o `save` grava, não v
 
 A linha final só aparece quando há alguma coisa marcada. Um aviso que aparece sempre é um aviso que ninguém lê.
 
-## `show ospf` e `show isis` — a adjacência, e o que dela chegou a encaminhar
+## `show bgp summary`, `show ospf` e `show isis` — a adjacência, e o que dela chegou a encaminhar
 
-São quatro comandos, e o que eles acrescentam ao que o roteamento já responde é a **última linha**: quantos prefixos daquele protocolo estão na tabela que de fato encaminha. Uma rota que o roteamento tem e o dataplane nunca recebeu é invisível em qualquer comando que responda pelo roteamento, e as duas metades ficam com cara de saudáveis olhadas separadamente.
+São cinco comandos — `show bgp summary`, `show ospf neighbor`, `show ospf interface`, `show isis adjacency` e `show isis interface` — e o que eles acrescentam ao que o roteamento já responde é a **última linha**: quantos prefixos daquele protocolo estão na tabela que de fato encaminha. Uma rota que o roteamento tem e o dataplane nunca recebeu é invisível em qualquer comando que responda pelo roteamento, e as duas metades ficam com cara de saudáveis olhadas separadamente.
+
+`show bgp summary` traz uma linha por sessão — vizinho, AS, estado, prefixos recebidos e há quanto tempo está de pé —, depois a contagem de sessões estabelecidas e então a mesma última linha sobre a tabela que encaminha. O resto de `show bgp` é repassado ao roteamento sem alteração.
 
 ```
 hexarouting> show ospf neighbor
@@ -282,7 +287,8 @@ Zero vizinhos num circuito que está `Up` é o sintoma do IS-IS não estar sendo
 | `show rollback` | revisões commitadas disponíveis |
 | `show version` | versões do HexaRouting, do VPP e do FRR |
 | `show ip ...` | informação de IP (repassado ao FRR) |
-| `show bgp ...` | informação de BGP (FRR) |
+| `show bgp summary` | uma linha por sessão BGP, com o que chegou à tabela que encaminha |
+| `show bgp ...` | o restante do BGP (repassado ao FRR) |
 | `show isis ...` | informação de IS-IS (FRR) |
 | `show ip interface` | interfaces como o FRR as enxerga |
 | `show logging` | log do sistema (FRR) |
@@ -309,7 +315,7 @@ show logging | exclude bgpd | last 20
 | `first <n>` | as primeiras n linhas |
 | `last <n>` | as últimas n linhas |
 
-O argumento vai **sem aspas**, e pode ter espaços: `include mode deterministic` procura essas duas palavras juntas. Aspas digitadas viram parte do texto procurado e a busca não casa nada.
+O argumento pode ter espaços: `include mode deterministic` procura essas duas palavras juntas. Um par de aspas **em volta do argumento inteiro** é retirado antes da busca — `section "interface Gi"` procura `interface Gi` —, porque é assim que um pipe se escreve em qualquer shell e ninguém digitaria diferente. Uma aspa no meio do texto continua sendo um caractere procurado.
 
 Um filtro que a caixa não conhece é **recusado**, com a lista do que existe — não ignorado. Ignorar responderia a pergunta que ninguém fez, sem nada na tela dizendo que foi isso que aconteceu. `first` e `last` sem número, ou com algo que não é número, também são recusados (`needs a number, not 'x'`).
 
