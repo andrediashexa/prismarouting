@@ -294,6 +294,27 @@ are to be interpreted as described in
   against - that keeps the comparison at three copies rather than adding a
   fourth. They agree today; the guard is for the day one of them moves.
 
+* **Nine things `commit` refuses, and the page an operator would look at
+  carried none of them.** Refusing is the strongest thing this box does: it
+  knows the state of the box and the change at the same time, and there are
+  cases where applying means losing the box - nobody able to log in, nobody
+  able to configure, a log that is on and goes nowhere, routing staged against
+  an FRR that is not answering. The commit page described `commit remap` and
+  the structure-only caveat and said nothing about any of the rest, so an
+  operator who met one had nowhere to look it up.
+
+  The page now carries all nine, quoted **in the words the box prints**,
+  because that is the string somebody searches for, with the Portuguese
+  explanation and the way out beside each. `test/test_doc_commands.py` reads
+  them out of `hexash.py` rather than from a list of its own, so a refusal
+  added to the code and to no page fails - and it demands only the runs of at
+  least 25 characters that carry no interpolation, because shorter ones are too
+  generic to be a useful needle and demanding them would red a page that is
+  right.
+
+  The guard found six the first draft of that page had missed or paraphrased,
+  which is the check doing its job on the work that introduced it.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside

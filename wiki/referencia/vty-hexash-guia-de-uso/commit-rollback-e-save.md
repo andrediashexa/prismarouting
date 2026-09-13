@@ -120,6 +120,54 @@ warning: the revert could NOT be armed on the box: /etc/hexarouting: Permission 
 
 Nesse estado o desfazer vale só enquanto a sessão durar. Abra uma segunda sessão antes de mexer.
 
+## O que o `commit` recusa, e o que fazer
+
+Recusar é a coisa mais forte que este equipamento faz: ele conhece o estado da caixa e a mudança ao mesmo tempo, e há casos em que aplicar significa perder a caixa. Quando isso acontece **nada é aplicado** - a candidata fica como está e você continua na sessão.
+
+As mensagens aparecem em inglês, porque é o que a caixa imprime. Elas estão aqui para você achar a sua.
+
+### `this change locks everybody out: no account could log in over SSH afterwards`
+
+Depois dessa mudança nenhuma conta entraria por SSH: ou nenhuma tem chave autorizada, ou a autenticação por senha ficaria desligada para todas as que têm senha. Dê uma chave a alguma conta, ou volte a permitir senha para uma que tenha.
+
+### `this change leaves nobody able to configure the box: afterwards no account that can log in over SSH holds the administrator role`
+
+Alguém ainda entra, mas ninguém que entre tem o papel de administrador. Um operador de CGNAT não concede papel, então a volta seria por um shell de root que talvez ninguém tenha. Dê `role administrator` a outra conta antes, ou permita o root por SSH.
+
+### `cgnat logging enable: UDP export has no collector, so nothing would leave this box`
+
+O log está ligado e não há para onde mandar. Uma caixa nesse estado parece registrar tudo e não entrega nada - e o registro é justamente o que precisa existir um ano depois. Acrescente `nat cgnat logging udp <coletor> src <origem>`, ou exporte por TCP com `nat cgnat logging tcp <coletor>`.
+
+Vale notar onde isso é recusado: **aqui**, e não no dataplane. Recusado lá, o resto da mudança já teria sido aplicado.
+
+### `routing is configured and FRR is not answering; check 'systemctl status frr'`
+
+Há configuração de roteamento na candidata e o roteamento não responde. Aplicar agora significaria perder silenciosamente tudo o que é de roteamento. Veja `systemctl status frr` antes de insistir.
+
+### `pool '<nome>': inside and outside required`
+
+Um pool sem um dos dois lados não traduz nada. Não é um ajuste que se completa depois: um pool assim aceito seria um pool que existe e não serve.
+
+### `pool '<nome>' would be refused`
+
+O dataplane olhou a definição inteira - tamanho de bloco, sobreposição de prefixo, capacidade, e se a faixa pública colide com um endereço local - e disse que não. A linha seguinte traz o motivo dele, nas palavras dele.
+
+### `<statement>: this box has no interface <nome>` e `interface <nome>: this box has no such interface`
+
+Um statement nomeia uma interface que não existe aqui. A primeira forma vem de uma linha de roteamento ou de CGNAT que aponta para ela; a segunda, de entrar num bloco `interface` que a caixa não tem. `show interface` lista os nomes que ela tem, e é dali que o nome deve sair - inventar um é como o problema começa.
+
+### `<rota>: <próximo salto> is on no connected network`
+
+Uma rota estática cujo próximo salto não está em nenhuma rede conectada desta caixa. Ela seria aceita e nunca encaminharia nada, porque não há interface por onde alcançar aquele endereço. Confira o endereço, ou configure a interface que deveria carregá-lo.
+
+### `cannot reach the dataplane: <motivo>`
+
+A VTY não conseguiu falar com o dataplane, então ela não pode nem aplicar nem conferir. Não é uma recusa sobre a sua mudança: é a caixa dizendo que metade dela não está respondendo. `show version` diz quais serviços estão de pé.
+
+### E a que não é uma recusa, e sim um pedido explícito
+
+`commit remap` existe porque re-mapear assinantes é a pior falha possível aqui. Está descrito acima, e a diferença é que essa mudança **pode** ser feita: ela só não pode ser feita por acidente.
+
 ## `rollback`
 
 ```
