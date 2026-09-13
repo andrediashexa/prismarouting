@@ -47,7 +47,8 @@ are to be interpreted as described in
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#221](https://github.com/andrediashexa/hexarouting/issues/221),
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
-[#223](https://github.com/andrediashexa/hexarouting/issues/223).
+[#223](https://github.com/andrediashexa/hexarouting/issues/223),
+[#224](https://github.com/andrediashexa/hexarouting/issues/224).
 
 ### Added
 
@@ -196,6 +197,85 @@ are to be interpreted as described in
   not a statement at all. Both are fixed.
 
 ### Fixed
+
+* **`no <statement>` inside a pool block was accepted in silence and did
+  nothing.** `no block-size 512`, `no policy interleaved`,
+  `no mode deterministic`, `no ports 4096`, `no vrf 7`: each printed nothing,
+  removed nothing, and `show this` went on showing the setting. The operator
+  walked away believing it was gone. The `no` branch of the pool handler was an
+  if/elif chain with no `else` - twelve statements had a negation handler and
+  every other `no` fell out of the bottom of it - while an unknown word in the
+  same block was refused correctly, so the machinery for refusing was there and
+  this path went round it
+  ([#224](https://github.com/andrediashexa/hexarouting/issues/224)).
+
+  Every `no` now either does the thing or says why not, and **which of the two
+  is read off the model, not chosen**: a pool statement can be negated exactly
+  when `Pool.lines()` is able to leave it out. `block-size`, `policy` and
+  `mode` are written unconditionally - a pool has one whatever the
+  configuration says - so `no block-size 512` has nothing to mean, and removing
+  the line would only stop the configuration saying what the pool is doing
+  while the pool went on doing it. Those three are refused, and the refusal
+  names the value to set instead. `ports`, `vrf` and `outside-vrf` go the other
+  way and are **newly removable**: each is written only when set, "" is a state
+  the model already has and already means something distinct - the device's own
+  port range, and "every VRF", which the model says out loud is not the same
+  answer as VRF 0 - and that state had become unreachable, because once `vrf 7`
+  was typed there was no line that took it back. There is an assertion that
+  walks every pool statement and holds the VTY's answer against the model's, so
+  a statement added later cannot fall into the same hole.
+
+  The user block was measured too, and it is a smaller fault than the issue
+  reported: `no role`, `no password` and `no ssh-key` all did what they say. It
+  is the refusal that was wrong - `no wibble` answered "unknown statement in
+  user mode: **no**", naming the one word in the line that is not the problem,
+  and sending an operator off to find out whether the block has a `no` at all
+  when it has three of them. It names the word after `no` now.
+
+* **`no <dataplane statement>` inside an interface was handed to FRR.**
+  `no mac-address aa:bb:cc:dd:ee:ff` fell through to the routing passthrough
+  and was staged for FRR, which has no opinion about the MAC of a VPP
+  interface: at commit it is a statement FRR does not know, arriving in the
+  middle of applying. `Config.parse` had always understood that line - only the
+  VTY did not - so the same statement meant two different things depending on
+  whether it was typed or loaded from a file
+  ([#224](https://github.com/andrediashexa/hexarouting/issues/224)).
+
+  `no mac-address` now does what `no mtu` does: the candidate stops naming a
+  MAC for the interface, so the commit sets none and the interface keeps the
+  one it has. Which of an interface's statements are this box's and which are
+  FRR's is now one table that **both directions read** - the branch that
+  intercepts `mtu 9000` and the branch that refuses a `no` with no handler -
+  because a set written out beside the handlers would go stale the next time a
+  dataplane statement was added, and that statement's `no` would go straight
+  back to leaking into FRR. `no vlan` is refused rather than handled: a
+  sub-interface is named after its tag, so one without a tag is not something
+  the dataplane can hold, and the refusal says to remove the sub-interface
+  instead. `no` on a statement FRR owns - `no ip ospf cost 10` - still goes to
+  FRR, because that is FRR's to remove.
+
+* **`?` offered `no` in no block at all**, so the only way to reach any of the
+  negations above was to type them blind
+  ([#224](https://github.com/andrediashexa/hexarouting/issues/224)). A pool, a
+  user and an interface now offer `no`, and what follows it is **derived from
+  what can actually be negated** - the pool's from its negation handlers, the
+  interface's from the block's own statements minus the ones it refuses, the
+  user's from its statements - never from a hand-written second list. An
+  assertion types every word the completer offers after `no` into the block and
+  fails if the block refuses it.
+
+  `no` on its own is refused too, wherever it is typed. It was staged for FRR
+  as the bare word, which FRR answers with an unknown command in the middle of
+  applying - and `no` alone is not a command anywhere, so there was nothing it
+  could have meant.
+
+  One measured consequence, said out loud: putting `no` into the interface
+  grammar means #141's `<- not checked` marker can now walk it, so
+  `no ip ospf cost 10` is no longer marked - which is the marker agreeing with
+  itself, since the positive `ip ospf cost 10` was never marked and both are
+  forwarded to FRR. `no ip ospf wibble 3` is still marked, and so is anything
+  else the tree cannot read; the marker follows the grammar, and the grammar
+  grew.
 
 * **A received Router Advertisement never reached the Linux side of a
   `linux_cp` pair, so BGP unnumbered never came up.** The VTY takes
