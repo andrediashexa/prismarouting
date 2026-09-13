@@ -327,4 +327,18 @@ def main():
               f"the difference is blocks still in use, or records lost.")
     report_open()
 
-main()
+
+# Only when run as a program. Without the guard, `import` STARTS A COLLECTOR:
+# test/test_collector_marker.py loads this file to drive report_open() against
+# a fixed timeline, and that import bound udp/4739 and sat there for 25
+# seconds inside `make test` - on a box where a lab may already hold that port.
+# A module that cannot be read without being run is a module nothing can
+# assert about, which is how the rule in report_open() went three days
+# unguarded (#223).
+#
+# Every caller runs this as a program - four labs invoke it with `python3
+# tools/ipfix_collector.py ...`, and appliance/install.sh installs it as
+# /usr/lib/hexarouting/ipfix-collector - so for all of them __name__ is
+# "__main__" and nothing changes.
+if __name__ == "__main__":
+    main()
