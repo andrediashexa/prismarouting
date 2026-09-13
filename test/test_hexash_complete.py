@@ -4013,6 +4013,40 @@ check(_failed == 0 and "commit complete" in _out,
       f"and the rewrite being present is not a refusal: {_out!r}")
 
 
+# The block a refused static route is named in (#251).
+#
+# `router static` is this VTY's word for the GLOBAL table, and a route inside
+# `vrf red` is not in it. MEASURED at a live FRR 10.7.1: a route typed into
+# `vrf red` is read back inside that block, indented, still spelled `ip route
+# 10.9.0.0/16 10.0.0.9` - so a refusal naming `router static / route ...` for
+# it sends the operator to a table the route was never in, and retyping it
+# there puts it in the global table.
+#
+# Both tables, because a fix that simply stopped saying `router static` would
+# pass a check that only looked at the VRF.
+_out, _failed = _commit(_STATIC, [])
+check(_failed == 1 and "router static / route 203.0.113.0/24 blackhole" in _out,
+      f"a refused GLOBAL static route is still named in 'router static': "
+      f"{_out!r}")
+
+_VRF_STATIC = ["vrf red", "ip route 10.9.0.0/16 10.0.0.9", "exit"]
+_out, _failed = _commit(_VRF_STATIC, [])
+check(_failed == 1 and "vrf red / ip route 10.9.0.0/16 10.0.0.9" in _out,
+      f"a refused VRF static route is named in the block it is in: {_out!r}")
+check("router static" not in _out,
+      f"and never in the global table it is not in: {_out!r}")
+
+# The display path is where the operator goes next, so the refusal has to
+# agree with it. `group_static` hoists TOP-LEVEL `ip route` lines only, which
+# is why `show configuration` was right about this all along - the assumption
+# was in the one renderer that had no block path to read.
+_text = _cfg_with(_VRF_STATIC).text()
+check("vrf red\nip route 10.9.0.0/16 10.0.0.9" in _text,
+      f"'show configuration' keeps the route inside the VRF: {_text!r}")
+check("router static" not in _text,
+      f"and does not open a 'router static' block for it: {_text!r}")
+
+
 # =====================================================================
 # `no <statement>` inside a block: accepted in silence, doing nothing (#224)
 #

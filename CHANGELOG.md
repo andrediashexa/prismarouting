@@ -76,7 +76,8 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247),
+[#251](https://github.com/andrediashexa/hexarouting/issues/251).
 
 ### Added
 
@@ -253,6 +254,31 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
+
+* **A `commit` refusal named a static route that lives in a VRF as though it
+  were in `router static`**
+  ([#251](https://github.com/andrediashexa/hexarouting/issues/251)).
+  `router static` is this VTY's word for the **global** table. An operator
+  told that `router static / route 10.9.0.0/16 10.0.0.9` was dropped went to
+  `router static`, found nothing there, and had been sent to the wrong table
+  by the one message whose whole job is to name a statement they can find -
+  and typing the route where the message said it was would have put it in the
+  global table instead of the VRF it was meant for.
+
+  Measured at a live FRR 10.7.1 rather than read off the code: a route typed
+  into `vrf red` is read back **inside** that block, indented, still spelled
+  `ip route 10.9.0.0/16 10.0.0.9`. The refusal now names it
+  `vrf red / ip route 10.9.0.0/16 10.0.0.9`, which is where `show
+  configuration` prints it; a route in the global table is still named
+  `router static / route ...`.
+
+  **The display renderers never had this wrong.** `show configuration`, `show
+  this` and the rollback diff all go through `group_static`, which hoists
+  top-level `ip route` lines and only those, and the `<- not checked` marker
+  reads `block_paths` for the same reason. The assumption was in
+  `as_hierarchy` alone, because it was the one renderer given a statement and
+  no position - so the fix is a block path passed in, not a new rule about
+  static routes.
 
 * **Nothing stopped the ISO build from shipping an answer file, and the ISO it
   did ship carried three SSH host private keys.** `docs/appliance.md` says the
