@@ -41,6 +41,7 @@ are to be interpreted as described in
 [#83](https://github.com/andrediashexa/hexarouting/issues/83),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
 [#145](https://github.com/andrediashexa/hexarouting/issues/145),
+[#163](https://github.com/andrediashexa/hexarouting/issues/163),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
@@ -1807,6 +1808,81 @@ are to be interpreted as described in
   box saying on its own console that it put the previous configuration back.
   Nothing in that minute is typed - a lab that had to trigger the revert would
   be performing the step the product is missing.
+
+### Not shipped, with the reason
+
+* **No custom-built kernel, and the analysis is now written down instead of
+  being re-derived.** "We should upgrade or rebuild the kernel for performance"
+  came back again, and `docs/appliance.md` answered only the upgrade half. It
+  now answers both, and the two answers are different in kind: the upgrade is
+  *not yet*, which a measurement can overturn; the rebuild is **no**, which one
+  cannot. Every performance argument for a rebuild either does not touch the
+  datapath (`PREEMPT_RT` bounds kernel-thread latency and the packet path has
+  no kernel thread), is already on in Debian's kernel (`CONFIG_NO_HZ_FULL=y`,
+  `CONFIG_RCU_NOCB_CPU=y`, `pdpe1gb`), or is an argument for a newer
+  **distribution** kernel rather than for a rebuild
+  ([#36](https://github.com/andrediashexa/hexarouting/issues/36)). Against all
+  of them stands the cost that does not expire: the appliance would stop
+  receiving kernel security updates from Debian, and this project would become
+  the thing that tracks kernel CVEs by hand for a box sitting in a provider's
+  rack. So the bar is a defect **caused by** the distribution kernel and
+  **unfixable by configuration**, and three cheaper answers must be exhausted
+  first, each of which keeps the updates
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+
+* **No new boot-tuning knobs: nine candidates are recorded as hypotheses with
+  costs, and none of them is applied.** `nmi_watchdog=0`, `skew_tick=1`,
+  `tsc=reliable`, `clocksource=tsc`, `nosoftlockup`, `audit=0`, the writeback
+  workqueue mask, `kthread_cpus` and uncore frequency pinning are all plausible
+  for a poll-mode dataplane and none of them can be justified yet, because this
+  project still has no throughput measurement
+  ([#28](https://github.com/andrediashexa/hexarouting/issues/28)). Switching
+  them on and reporting an improvement would be asserting a gain nobody
+  measured. Each row names its cost - the two watchdogs and `audit=0` are
+  diagnostics on a box nobody can walk to, and `audit=0` may collide with a
+  provider's own policy - so that the next proposal starts from the price
+  rather than from the name.
+
+  **What could be read here was read**, on the development machine, and it
+  settled two of the nine without a NIC: `kthread_cpus` does not occur anywhere
+  in the Debian 6.1 kernel image, so it is a downstream patch other
+  distributions carry and there is nothing on this kernel to set; and the
+  writeback workqueue mask reads `ffffffff` on 32 cpus, so kernel writeback is
+  genuinely permitted on every core the tuner isolates, which makes it the
+  strongest of the nine and still unmeasured. The rest could not be measured,
+  and the reason is the one this file already gives for having no `CPUQuota=`:
+  the machine is a KVM guest, the host scheduler preempts vCPUs whatever the
+  guest isolates - 1 708 seconds of stolen vCPU time in three days of uptime -
+  and a knob that saves a timer tick cannot be seen through that. The readings
+  are in `docs/appliance.md` with the commands that produced them.
+
+* **`kthread_cpus` is not merely unmeasured, it is rejected**, and that is the
+  only one of the nine that #28 cannot revive. It returns to the table if the
+  appliance ever moves to a kernel that has the parameter.
+
+### Internal
+
+* **`test/test_kernel_tuning.py`: the kernel command line is written down
+  twice, and now something compares the two.** `render_grub()` builds the line
+  and `docs/appliance.md` states it parameter by parameter; nothing made them
+  agree, which is the shape that already cost this project the IPFIX record,
+  the `docs/context.md` paths and the VTY transcripts. The suite renders the
+  real tuner against a synthetic topology and asserts four things: the two
+  lists of parameters are the same list, every literal value matches
+  (`iommu=pt` and `iommu=on` are different machines), `HEXA_LOW_LATENCY=0`
+  drops exactly the parameters the document marks conditional, and **none** of
+  the candidates above is set - not on either command line, not in
+  `apply-tuning`, not in `sysctl.conf`, and no candidate sysfs path is touched
+  by anything under `appliance/`. That last one is what stops the list rotting
+  into "we probably do that already": a knob applied without being measured and
+  moved out of the table fails the suite. Nine mutations were run against it,
+  each red, including one that renamed a heading - which is how the suite
+  learned to fail with a verdict line instead of a traceback.
+
+  It also found the gap it was written to find: `intel_iommu=on`, `iommu=pt`,
+  `default_hugepagesz=1G` and `hugepagesz=1G` had been on every appliance's
+  kernel command line since the tuner existed and were named nowhere in
+  `docs/appliance.md`.
 
 ## 0.65.0 — the box refused correct configurations, exported nothing, and let you in too early
 
