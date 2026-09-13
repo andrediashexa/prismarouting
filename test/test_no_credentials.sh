@@ -252,6 +252,40 @@ run 0 "src, appliance, tools and docs carry no credential" \
     "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs"
 
 echo
+echo "=== and the repository, which is the wider rule ==="
+# CONTRIBUTING.md section 2 says secrets "MUST NOT go into this repository
+# either", not only into what the image carries. A private key in lab/ never
+# reaches an ISO and is published just as thoroughly: this repository is
+# public, and so is the wiki mirror inside it.
+#
+# The directories are ENUMERATED rather than listed. A list is something
+# somebody has to remember to extend, and the two defects this check sits
+# between - a lab excluded from every run (#233) and a test file nothing
+# compiled (#235) - were both exactly that. A directory added next year is
+# covered without anybody deciding to cover it.
+#
+# CRED_SUBJECT and CRED_RULE because the same script answers two questions, and
+# a message saying "in the image" to somebody looking at lab/ sends them to the
+# wrong place.
+dirs=""
+for d in "$REPO"/*/; do
+  case "$(basename "$d")" in
+    .git|.build-vpp|__pycache__) continue ;;
+  esac
+  dirs="$dirs $d"
+done
+n_dirs=$(printf '%s\n' $dirs | grep -c . || true)
+if [ "${n_dirs:-0}" -ge 6 ]; then
+  ok "$n_dirs directory(s) in scope, found rather than listed"
+else
+  bad "only ${n_dirs:-0} directory(s) resolved, so the check below is looking "\
+"at almost nothing"
+fi
+CRED_SUBJECT=repository \
+CRED_RULE="a secret MUST NOT go into this repository (CONTRIBUTING.md section 2)" \
+  run 0 "no credential anywhere in the repository" $dirs
+
+echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
 exit 1
