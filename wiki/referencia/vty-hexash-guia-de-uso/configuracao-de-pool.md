@@ -141,6 +141,66 @@ alg pptp <on|off>
 
 São os protocolos que carregam um endereço dentro do payload. Sem o ALG correspondente, eles anunciam o endereço privado para o outro lado e a conexão de dados nunca se estabelece.
 
+# Removendo um ajuste: `no`
+
+Dentro do bloco, `no <ajuste>` tira o ajuste. `no ?` lista o que pode ser tirado, e `?` depois da palavra continua oferecendo o argumento:
+
+```
+hexarouting# [edit cgnat pool residencial] no ?
+  alg                stop choosing for one ALG; the pool takes the device default again
+  bypass             stop excluding a prefix from translation
+  filter             go back to endpoint-independent filtering
+  forward            remove one inbound port forward
+  inside             remove one inside prefix
+  max-blocks         go back to one block per subscriber
+  max-session-rate   no per-subscriber session rate cap
+  max-sessions       no per-subscriber session cap
+  outside            remove one public prefix
+  outside-vrf        leave translated traffic where it was
+  ports              go back to the device's own port range
+  tcp-mss            stop clamping the MSS
+  timeout            stop overriding one timeout; the pool inherits the global again
+  utilisation-alarm  stop alarming on block utilisation
+  vrf                serve every VRF again
+```
+
+Tirar um timeout, um ALG ou um limite **não é o mesmo que ajustá-lo para o valor padrão**: o pool volta a **herdar** o global, e a linha desaparece da configuração em vez de aparecer nela com um número dentro. Um `timeout udp 300` global mudado depois passa a valer para o pool de novo.
+
+## Três ajustes não podem ser removidos, e a caixa diz isso
+
+`block-size`, `policy` e `mode` **sempre têm um valor**. Não existe pool sem tamanho de bloco, sem política e sem modo - então `no block-size 512` não teria o que significar: tirar a linha não tiraria o ajuste, só faria a configuração parar de dizer o que o pool está fazendo, enquanto o pool continua fazendo. A caixa recusa e diz o que digitar no lugar:
+
+Digitar `no block-size 512` dentro do pool é recusado, e a recusa diz o que fazer no lugar:
+
+```
+error: block-size cannot be removed: every pool has one, so there is no state
+without it. Set the value you want instead: block-size <64-65536>
+```
+
+Para mudar qualquer um dos três, digite o valor que você quer. São campos de mapeamento: a mudança reconstrói o pool e exige `commit remap`.
+
+## `ports`, `vrf` e `outside-vrf` têm um estado "não dito"
+
+Estes três aceitam `no`, e o estado para onde eles voltam não é um valor - é a **ausência** dele, que significa outra coisa:
+
+| Comando | Para onde volta |
+|---------|-----------------|
+| `no ports` | a faixa de portas do próprio equipamento |
+| `no vrf` | atende **todas** as VRFs, que não é a mesma resposta que `vrf 0` |
+| `no outside-vrf` | deixa o tráfego traduzido onde ele já estava |
+
+Os três também são campos de mapeamento: removê-los reconstrói o pool.
+
+## Remover algo que não está lá é recusado
+
+`no inside 10.0.0.0/8` num pool que não tem esse prefixo é recusado, com o prefixo escrito de volta. O pool continua com o prefixo que você queria, e quase sempre o que aconteceu foi um erro de digitação:
+
+```
+error: the pool has no inside 10.0.0.0/8
+```
+
+Já `no timeout udp` num pool que não sobrescreve o timeout de UDP é aceito em silêncio: o estado depois é exatamente o estado pedido - este pool não sobrescreve nada.
+
 # Exemplo completo
 
 ```

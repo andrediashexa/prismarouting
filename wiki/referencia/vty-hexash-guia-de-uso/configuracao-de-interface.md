@@ -1,7 +1,5 @@
 # Configuração de interface
 
-# Configuração de interface
-
 Tudo o que se configura dentro de uma interface: endereços, VLAN, VRF, MTU, estado administrativo e o filtro de origem. Para quem está subindo um enlace, terminando assinantes em VLAN ou investigando uma porta que não passa tráfego.
 
 Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
@@ -123,6 +121,28 @@ Ligado, o anúncio sai a cada 200 segundos com validade de 600 segundos, e mais 
 `ipv6 nd suppress-ra` também é aceito. Ele não muda nada — diz em voz alta o que já vale — e serve para deixar a intenção escrita na configuração, ou para desfazer a exceção numa interface onde ela foi ligada.
 
 :::
+
+## Removendo um ajuste: `no`
+
+`no ?` dentro da interface lista o que pode ser tirado, e depois da palavra o argumento continua sendo oferecido - `no urpf ?` mostra `strict`, `loose` e `off`.
+
+Tirar um ajuste **não é o mesmo que ajustá-lo para o padrão**: a configuração deixa de dizer aquilo, e a interface fica com o que a caixa já tinha. `mac-address aa:bb:cc:dd:ee:ff` seguido de `no mac-address` devolve a interface ao MAC dela, que é o que se quer de quem digitou e voltou atrás.
+
+A interface carrega dois tipos de linha: as desta caixa - `mtu`, `urpf`, `vlan`, `vrf`, `mac-address`, `linux-name`, endereços - e as dos protocolos de roteamento - `ip ospf ...`, `isis ...`. `no` funciona nos dois, e em cada caso vai para quem é dono do ajuste.
+
+### `no vlan` não existe, e a caixa diz o que fazer no lugar
+
+Uma sub-interface **é** a tag dela: o nome `GigabitEthernet0/12/0.700` e a VLAN 700 são a mesma informação, e a caixa recusa criar uma em que os dois discordem. Não existe, portanto, sub-interface sem tag - o que se quer é a sub-interface fora:
+
+Digitar `no vlan 700` dentro da sub-interface é recusado, e a recusa diz o que fazer no lugar:
+
+```
+error: vlan cannot be removed: a sub-interface is named after its tag, so one
+without a tag is not something the dataplane can hold. Remove the
+sub-interface itself: no interface <name>
+```
+
+`no interface GigabitEthernet0/12/0.700`, no nível de cima, remove a sub-interface e tudo o que estava nela.
 
 ## Uma interface em detalhe
 

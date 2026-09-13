@@ -261,6 +261,177 @@ for cmd, must_say in LIVE_MEDIUM_ONLY.items():
             f"page explains that it exists only on the installation medium: "
             f"a reader on a running box will look for it and not find it")
 
+print("\n=== every quotation of the unchecked marker is the one the box emits ===")
+#
+# The marker text changed from "    <- not checked by this VTY" to
+# "  <- not checked" when the long form was measured putting a real statement
+# at 89 columns on an 80-column console. Three places kept quoting the old one:
+# a wiki page, a docs line, and an assertion in lab/bgp-policy.sh that had been
+# green for three days and went red the first time anything ran it.
+#
+# A literal the product emits and other files quote is exactly the shape
+# test_context_map.py guards for paths: confidently wrong, and silent until
+# somebody meets it. Labs are the ones that matter, because a lab quoting a
+# marker the box no longer prints is a check that cannot pass.
+sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
+from config import UNCHECKED_MARK                                # noqa: E402
+
+_mark = UNCHECKED_MARK.strip()
+_quoters = []
+for _root, _dirs, _files in os.walk(os.path.join(REPO, "lab")):
+    for _f in sorted(_files):
+        if _f.endswith(".sh"):
+            _quoters.append(os.path.join(_root, _f))
+_bad = []
+for _path in _quoters:
+    for _n, _line in enumerate(open(_path, encoding="utf-8"), 1):
+        if "<- not checked" not in _line:
+            continue
+        _at = _line.index("<- not checked")
+        # Only a QUOTED needle. A comment may mention the marker while
+        # explaining why an assertion is written the way it is, and reading
+        # prose as a needle made this check fail on a lab that was right -
+        # which is the worst kind of check there is.
+        if '"' not in _line[:_at] or '"' not in _line[_at:]:
+            continue
+        # The quoted needle has to be a prefix of what the box prints. A
+        # longer one cannot match, which is the failure that happened.
+        _quoted = _line[_at:].split('"')[0].rstrip()
+        if not _mark.startswith(_quoted):
+            _bad.append(f"{os.path.relpath(_path, REPO)}:{_n} quotes "
+                        f"{_quoted!r}, and the box prints {_mark!r}")
+if _bad:
+    for _b in _bad:
+        bad(_b)
+else:
+    ok(f"{len(_quoters)} lab(s) checked; every quotation matches {_mark!r}")
+
+print("\n=== the BGP page's table is what the VTY actually checks ===")
+#
+# The page says of that table, in as many words, "essa tabela e o que o hexash
+# confere" - and then explains that what is NOT in it is passed through unread
+# and comes back marked `<- not checked`. So the table is a claim about the
+# grammar, and a reader uses it to predict what their own `show this` will
+# look like.
+#
+# It had drifted: `capability` was in the grammar and not on the page, and so
+# were `maximum-prefix` and `next-hop-self` inside an address family. Nothing
+# on the page claimed a statement the box lacks, which is the safer direction,
+# but the sentence "this table is what it checks" was false either way and an
+# operator would have expected a marker that does not appear.
+from hexash import BGP_NEIGHBOUR, BGP_AF_NEIGHBOUR                # noqa: E402
+
+_bgp_page = os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso",
+                         "configuracao-de-bgp.md")
+_text = open(_bgp_page, encoding="utf-8").read()
+# The first word of the first cell of each row: the page writes
+# `capability extended-nexthop` as one command, and the grammar keys on the
+# first word.
+_rows = set()
+for _line in _text.split("\n"):
+    if not _line.startswith("| `"):
+        continue
+    _cell = _line.split("|")[1].strip()
+    if _cell.startswith("`"):
+        _rows.add(_cell.strip("`").split()[0])
+_missing = sorted(set(BGP_NEIGHBOUR) - _rows)
+_extra = sorted(_rows - set(BGP_NEIGHBOUR) - {"remote-as"})
+if _missing:
+    bad(f"the neighbour table does not list {_missing}, which the VTY checks: "
+        f"a reader expects those to come back marked and they do not")
+else:
+    ok(f"every one of the {len(BGP_NEIGHBOUR)} neighbour statements is on the page")
+
+# The address-family list is prose rather than a table, so it is read as prose.
+_af_line = [l for l in _text.split("\n")
+            if l.startswith("Dentro de `address-family`")]
+if not _af_line:
+    bad("the address-family sentence is gone from the page, so nothing here "
+        "is being compared")
+else:
+    _af_missing = sorted(k for k in BGP_AF_NEIGHBOUR if f"`{k}" not in _af_line[0])
+    if _af_missing:
+        bad(f"the address-family sentence does not name {_af_missing}, which "
+            f"the VTY checks inside an address family")
+    else:
+        ok(f"and all {len(BGP_AF_NEIGHBOUR)} of the address-family ones are named")
+
+print("\n=== every statement a block takes is named on that block's page ===")
+#
+# One step earlier than #221 and #224, which were both a thing the box does
+# that an operator cannot find. A statement that reaches the grammar and no
+# page is the same defect at the moment it is introduced: the box grows a
+# feature nobody can discover, and the only way to learn it exists is to read
+# the source.
+#
+# Deliberately weak: it asks whether the page NAMES the statement, not whether
+# it explains it well. The pages are laid out differently - the pool page puts
+# `alg` and `timeout` in sub-tables keyed by protocol - and a guard that
+# demanded one shape would fail on prose that is perfectly clear. What it
+# catches is the statement nobody wrote about at all.
+from hexash import CGNAT_POOL, INTERFACE_BLOCK                    # noqa: E402
+
+_ref = os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso")
+for _page, _grammar, _what in (
+        ("configuracao-de-pool.md", CGNAT_POOL, "a CGNAT pool"),
+        ("configuracao-de-interface.md", INTERFACE_BLOCK, "an interface")):
+    _path = os.path.join(_ref, _page)
+    if not os.path.exists(_path):
+        bad(f"{_page} is gone, so nothing here is comparing {_what}'s grammar "
+            f"against anything")
+        continue
+    _text = open(_path, encoding="utf-8").read()
+    # `exit`, `show` and `no` are in every block and are documented once, on
+    # the pages about moving around and about removing things.
+    _keys = sorted(set(_grammar) - {"exit", "show", "no"})
+    _unnamed = [k for k in _keys if f"`{k}" not in _text]
+    if _unnamed:
+        bad(f"{_page} never names {_unnamed}, which {_what} takes: a statement "
+            f"in the grammar and on no page can only be found by reading the "
+            f"source")
+    else:
+        ok(f"all {len(_keys)} statements {_what} takes are named on {_page}")
+
+print("\n=== every show command is named somewhere in the wiki ===")
+#
+# The same argument as the block statements above, for the commands an
+# operator runs while something is wrong. Four were in the grammar and on no
+# page at all: `show ospf neighbor`, `show ospf interface`, `show isis
+# adjacency` and `show isis interface` - and those four carry the box's
+# strongest claim, which is the comparison between what the routing daemon
+# holds and what the table that forwards actually has.
+#
+# Read at two levels and no deeper. A command's ARGUMENTS are written the way
+# a reader meets them - the utilisation page writes
+# `show interface utilization [<nome>] [interval <segundos>] [count <n>]`,
+# which names `interval` and `count` perfectly well without ever writing them
+# as a command. Demanding the leaf string would go red on a page that is
+# right, which is how a check gets switched off.
+from hexash import SHOW                                           # noqa: E402
+
+_wiki_text = ""
+for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
+    for _f in sorted(_files):
+        if _f.endswith(".md"):
+            _wiki_text += open(os.path.join(_root, _f), encoding="utf-8").read()
+_named = []
+for _k, _v in SHOW.items():
+    _d, _sub = _v if isinstance(_v, tuple) else (None, None)
+    if isinstance(_sub, dict):
+        for _k2 in _sub:
+            if _k2.startswith("<"):
+                continue            # an argument, not a sub-command
+            _named.append(f"show {_k} {_k2}")
+    else:
+        _named.append(f"show {_k}")
+_unnamed = sorted(n for n in _named if n not in _wiki_text)
+if _unnamed:
+    bad(f"the wiki never names {_unnamed}: a command an operator runs while "
+        f"something is wrong, that they can only find by pressing '?' at the "
+        f"right moment")
+else:
+    ok(f"all {len(_named)} show commands are named in the wiki")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

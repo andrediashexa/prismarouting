@@ -196,7 +196,7 @@ loud that the warning is one line of noise when the catch-all was deliberate,
 because an operator who reads it as an error will go looking for a bug that is
 not there.
 
-The "not checked by this VTY" marker is documented **with its limits**: it is
+The "not checked" marker is documented **with its limits**: it is
 display only, it does not reach the saved configuration or a rollback revision,
 and copying the screen into a file is safe because the marker is stripped on
 the way back in. That last property is asserted in the test suite; without it

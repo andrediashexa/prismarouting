@@ -36,6 +36,7 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#63](https://github.com/andrediashexa/hexarouting/issues/63),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
 [#145](https://github.com/andrediashexa/hexarouting/issues/145),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
@@ -48,7 +49,160 @@ are to be interpreted as described in
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#221](https://github.com/andrediashexa/hexarouting/issues/221),
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
+[#223](https://github.com/andrediashexa/hexarouting/issues/223),
+[#224](https://github.com/andrediashexa/hexarouting/issues/224),
+[#225](https://github.com/andrediashexa/hexarouting/issues/225).
+
+### Changed
+
+* **The outbound rewrite carries its checksum corrections on the session
+  instead of recomputing them per packet.** `bpa_rewrite_src` was the largest
+  remaining piece of what `bpa-in2out` costs per packet, about half of it in
+  the IPv4 header checksum and half in the L4 one. The correction is constant
+  for the life of a session - the subscriber always sends from the same address
+  and port, and the session always rewrites them to the same pair - so it is
+  worked out once at session creation and added per packet.
+
+  **`bpa-in2out` goes from 470 to 346 clocks per packet, a 26% reduction.**
+  Three alternating pairs on one Xeon E5-2680 v4 at 2400 MHz, 64-byte frames,
+  one session, 256 vectors per call, rebuilding between every arm:
+
+  | pair | before | after | baseline `ip4-input` | `ip4-input` with the CGNAT |
+  |---|---|---|---|---|
+  | 1 | 468 | 345 | 21.2 / 20.6 | 32.1 / 32.4 |
+  | 2 | 469 | 343 | 21.2 / 20.9 | 32.6 / 32.0 |
+  | 3 | 472 | 351 | 21.2 / 21.2 | 32.3 / 34.1 |
+
+  Alternating, and with both of the lab's own load witnesses printed, because a
+  single pair proves nothing on a machine other work shares: the first "after"
+  run taken on this branch read 440 with `ip4-input` at 51, which is a busy
+  box, not a result. At 2400 MHz this is 5.11 Mpps per core before and 6.93
+  after, so 100 Gbps of 64-byte frames is about 22 cores in this node rather
+  than 29.
+
+  This optimisation was written once before, measured at a 28% saving and
+  reverted for producing `ipsum=BAD tcpsum=BAD` on every translated packet. The
+  reason, settled against VPP 26.06's own header and printed by
+  `test/test_bpa_rewrite.c`: **`ip_csum_add_even()` SUBTRACTS.** VPP names its
+  two primitives for what happens to the DATA, while the value they operate on
+  is the checksum, which is the one's complement of the sum over that data - so
+  `ip_csum_add_even` subtracts and `ip_csum_sub_even` adds. A delta applied
+  with the one whose name reads like addition lands with the wrong sign and
+  misses by exactly twice itself, on 199988 of 200000 random packets.
+
+  Three further ways to get it wrong are asserted rather than argued: the
+  corrections for the IPv4 header and for L4 are NOT interchangeable (the
+  pseudo-header carries the ports, the IPv4 header does not), an ICMP echo
+  takes the identifier and no address at all (RFC 792: no pseudo-header), and
+  operands must be converted to network order before the correction is built.
+
+### Fixed
+
+* **A translated UDP datagram could leave with a checksum of wire zero, which
+  means "not computed".** The per-packet form folded a 64-bit accumulator, and
+  an accumulator lands on exactly zero whenever `stored + old_address +
+  old_port == new_address + new_port` as plain integers. RFC 768 requires a
+  computed zero to be sent as `0xffff`; sending it as zero tells the receiver
+  not to check the very thing that was just rewritten. The session-carried
+  correction cannot reach it - it folds `stored + delta`, two sixteen-bit
+  values, zero only when both are, and the branch has already established that
+  `stored` is not - and `test/test_bpa_rewrite.c` builds the datagram that
+  reached it, so the claim is a printed number rather than an argument.
+[#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223).
+
+* **The BGP page's table of what the VTY checks had drifted from the grammar.**
+  The page says of it, in as many words, that this table is what `hexash`
+  verifies, and then explains that anything not in it is passed through unread
+  and comes back marked `<- not checked`. So the table is a claim about the
+  grammar, and a reader uses it to predict their own `show this`. It omitted
+  `capability` from the neighbour list and `maximum-prefix` and `next-hop-self`
+  from the address-family one - three statements the VTY does check, and whose
+  absence from the page would have had an operator expecting a marker that
+  never appears. `test/test_doc_commands.py` now reads the table and the
+  address-family sentence off the page and compares them with `BGP_NEIGHBOUR`
+  and `BGP_AF_NEIGHBOUR`, so a statement added to the grammar and nowhere else
+  fails. It also asks, of the pool page and the interface page, whether
+  every statement those blocks take is **named** somewhere on the page - one
+  step earlier than #221 and #224, which were both a thing the box does that an
+  operator cannot find. A statement that reaches the grammar and no page is
+  that same defect at the moment it is introduced. Deliberately weak: it asks
+  whether the page names the statement, not whether it explains it well,
+  because the pages are laid out differently and a guard that demanded one
+  shape would fail on prose that is perfectly clear.
+
+* **Five wiki pages opened with their own title two, three and four times.**
+  The mirror's contract is that each file starts with one `# <title>` line,
+  which is the document's title field and not part of its body:
+  `tools/wiki-pull.sh` writes it and `tools/wiki-push.sh` strips **that line**
+  back off. Push strips one, so a file carrying four publishes a page whose
+  body opens with its own title three times over. It is the accumulation
+  [#165](https://github.com/andrediashexa/hexarouting/issues/165) describes,
+  surviving in the data after the code that caused it was fixed
+  ([#225](https://github.com/andrediashexa/hexarouting/issues/225)).
+
+  `test/test_wiki_roundtrip.sh` drove the two scripts against a stub and
+  asserted they agree with each other, which is where the defect was; nothing
+  looked at the mirror, so the mirror drifted silently. It now reads all 32
+  pages and requires each to open with exactly one title. A level-1 heading
+  further down stays allowed, because several pages legitimately have them.
+
+  The pages are not published - that needs a token the maintainer holds - so
+  this is a repair before anybody read it.
+
+* **Four commands the box has for the moment routing does not come up were in
+  the grammar and on no page.** `show ospf neighbor`, `show ospf interface`,
+  `show isis adjacency` and `show isis interface` could be found only by
+  pressing `?` at the right moment - and those four carry this box's strongest
+  claim, the comparison between what the routing daemon holds and what the
+  table that actually forwards has. A route that stops half way leaves both
+  halves looking healthy on their own, and these are the screens that say so.
+
+  The wiki now has them, including the two diagnoses that are the reason they
+  exist: an OSPF adjacency that will not leave `Exchange` is almost always the
+  interface MTU, which neither side logs, and an IS-IS circuit that is `Up`
+  with zero neighbours is IS-IS frames not being delivered to the system.
+  `test/test_doc_commands.py` requires every `show` command to be named
+  somewhere in the wiki, read two levels deep and no further: arguments are
+  written the way a reader meets them, so demanding the leaf string would go
+  red on a page that is right.
+
+* **Two labs matched a `show` line exactly and
+  [#141](https://github.com/andrediashexa/hexarouting/issues/141) put a marker
+  after it.** `lab/vty.sh` asserts where a statement appears - its block and its
+  indentation - by requiring the whole line, and `maximum-paths` is a statement
+  this VTY has no grammar for, so it now shows with `  <- not checked` after
+  it. A nesting assertion failed over a marker, which is a check measuring the
+  wrong thing. The needles stop at the statement now, and the marker is
+  asserted once on its own, where it is the point rather than an accident.
+
+  `lab/bgp-policy.sh` had the same shape and its repair was wrong the first
+  time: the replacement needle named `set local-preference 120`, which belongs
+  to a route-map this lab types at `commit check` and never commits, so it is
+  in no running configuration. The suite said so. It names a statement from the
+  route-map that IS committed now.
+
+  And the guard added with that repair had a false positive of its own: it read
+  the marker out of a COMMENT explaining an assertion and compared prose
+  against the product's string. It only reads quoted needles now. A check that
+  goes red on work that is right is the worst kind there is.
+
+* **A lab check whose timing the machine could not keep now says so instead of
+  reporting a product defect.** `lab/igp.sh` clears an IS-IS adjacency and then
+  asserts it is gone. The hello interval is three seconds, so an adjacency that
+  is back by then re-formed rather than survived the clear - and on a box
+  running eight labs at once a `vtysh` call can take longer than that. It
+  reported `clearing it took the adjacency down there and then` as a failure in
+  a release suite and passed in isolation, which cost an investigation
+  ([#218](https://github.com/andrediashexa/hexarouting/issues/218)).
+
+  `expect_timed` in `lab/verdict.sh` measures the **reading**: on time and
+  wrong is a failure, which is that check's whole subject, and late is nothing
+  learnt. `LAB NOT MEASURED` is a verdict of its own, the lab exits non-zero,
+  and `tools/run-all-labs.sh` counts it in its own column - beside `NO VPP`,
+  for the same reason: "nothing found a defect, one check could not be taken"
+  has to be readable as that sentence rather than as a failure. It is the shape
+  `test_boot_wait.sh` and `lab_no_vpp()` already took.
 
 ### Added
 
@@ -278,6 +432,85 @@ are to be interpreted as described in
   reintroduced through a line nobody types. The assertion that existed for
   #180 had no `!` in it and was green against this the whole time; the new one
   is written against what a live daemon printed.
+
+* **`no <statement>` inside a pool block was accepted in silence and did
+  nothing.** `no block-size 512`, `no policy interleaved`,
+  `no mode deterministic`, `no ports 4096`, `no vrf 7`: each printed nothing,
+  removed nothing, and `show this` went on showing the setting. The operator
+  walked away believing it was gone. The `no` branch of the pool handler was an
+  if/elif chain with no `else` - twelve statements had a negation handler and
+  every other `no` fell out of the bottom of it - while an unknown word in the
+  same block was refused correctly, so the machinery for refusing was there and
+  this path went round it
+  ([#224](https://github.com/andrediashexa/hexarouting/issues/224)).
+
+  Every `no` now either does the thing or says why not, and **which of the two
+  is read off the model, not chosen**: a pool statement can be negated exactly
+  when `Pool.lines()` is able to leave it out. `block-size`, `policy` and
+  `mode` are written unconditionally - a pool has one whatever the
+  configuration says - so `no block-size 512` has nothing to mean, and removing
+  the line would only stop the configuration saying what the pool is doing
+  while the pool went on doing it. Those three are refused, and the refusal
+  names the value to set instead. `ports`, `vrf` and `outside-vrf` go the other
+  way and are **newly removable**: each is written only when set, "" is a state
+  the model already has and already means something distinct - the device's own
+  port range, and "every VRF", which the model says out loud is not the same
+  answer as VRF 0 - and that state had become unreachable, because once `vrf 7`
+  was typed there was no line that took it back. There is an assertion that
+  walks every pool statement and holds the VTY's answer against the model's, so
+  a statement added later cannot fall into the same hole.
+
+  The user block was measured too, and it is a smaller fault than the issue
+  reported: `no role`, `no password` and `no ssh-key` all did what they say. It
+  is the refusal that was wrong - `no wibble` answered "unknown statement in
+  user mode: **no**", naming the one word in the line that is not the problem,
+  and sending an operator off to find out whether the block has a `no` at all
+  when it has three of them. It names the word after `no` now.
+
+* **`no <dataplane statement>` inside an interface was handed to FRR.**
+  `no mac-address aa:bb:cc:dd:ee:ff` fell through to the routing passthrough
+  and was staged for FRR, which has no opinion about the MAC of a VPP
+  interface: at commit it is a statement FRR does not know, arriving in the
+  middle of applying. `Config.parse` had always understood that line - only the
+  VTY did not - so the same statement meant two different things depending on
+  whether it was typed or loaded from a file
+  ([#224](https://github.com/andrediashexa/hexarouting/issues/224)).
+
+  `no mac-address` now does what `no mtu` does: the candidate stops naming a
+  MAC for the interface, so the commit sets none and the interface keeps the
+  one it has. Which of an interface's statements are this box's and which are
+  FRR's is now one table that **both directions read** - the branch that
+  intercepts `mtu 9000` and the branch that refuses a `no` with no handler -
+  because a set written out beside the handlers would go stale the next time a
+  dataplane statement was added, and that statement's `no` would go straight
+  back to leaking into FRR. `no vlan` is refused rather than handled: a
+  sub-interface is named after its tag, so one without a tag is not something
+  the dataplane can hold, and the refusal says to remove the sub-interface
+  instead. `no` on a statement FRR owns - `no ip ospf cost 10` - still goes to
+  FRR, because that is FRR's to remove.
+
+* **`?` offered `no` in no block at all**, so the only way to reach any of the
+  negations above was to type them blind
+  ([#224](https://github.com/andrediashexa/hexarouting/issues/224)). A pool, a
+  user and an interface now offer `no`, and what follows it is **derived from
+  what can actually be negated** - the pool's from its negation handlers, the
+  interface's from the block's own statements minus the ones it refuses, the
+  user's from its statements - never from a hand-written second list. An
+  assertion types every word the completer offers after `no` into the block and
+  fails if the block refuses it.
+
+  `no` on its own is refused too, wherever it is typed. It was staged for FRR
+  as the bare word, which FRR answers with an unknown command in the middle of
+  applying - and `no` alone is not a command anywhere, so there was nothing it
+  could have meant.
+
+  One measured consequence, said out loud: putting `no` into the interface
+  grammar means #141's `<- not checked` marker can now walk it, so
+  `no ip ospf cost 10` is no longer marked - which is the marker agreeing with
+  itself, since the positive `ip ospf cost 10` was never marked and both are
+  forwarded to FRR. `no ip ospf wibble 3` is still marked, and so is anything
+  else the tree cannot read; the marker follows the grammar, and the grammar
+  grew.
 
 * **A received Router Advertisement never reached the Linux side of a
   `linux_cp` pair, so BGP unnumbered never came up.** The VTY takes
@@ -561,6 +794,15 @@ are to be interpreted as described in
   is how this reached a release. `test/test_collector_marker.py` is new and
   drives the captured timeline to the second, so it fails on the rule rather
   than on the machine's mood.
+
+  Adding that suite exposed a second thing: `tools/ipfix_collector.py` ended
+  with a bare `main()`, so **importing** it started a collector - it bound
+  udp/4739 and listened for 25 seconds inside `make test`, on a box where a lab
+  may already hold that port. It runs under `__name__ == "__main__"` now, which
+  changes nothing for the four labs and the appliance that run it as a program,
+  and means the file can be read without being run. A module that cannot be
+  read without being run is a module nothing can assert about, which is part of
+  why the rule above went unguarded.
 * **Half the boot self-test's statements had nothing holding them.** The
   self-test makes 52 statements about a box and `test/test_selftest.sh` held
   about half; the rest could stop firing, or start firing on the wrong
@@ -615,7 +857,38 @@ are to be interpreted as described in
   than a tidier one: 3 GB is a warning and not a refusal, and a missing `avx2`
   is a throughput statement, because VPP runs on that box.
 
-  57 checks before, **103** after.
+  A second round took the four that were left and were reachable: the **`vpp`
+  group** (without it the only account that can configure a pool is root, which
+  is the whole of #35 and #184 undone), **the API reach proven and disproven**
+  as separate states, **`hexarouting.service` failing** (the box comes up
+  forwarding nothing it was configured to forward while VPP, FRR and the VTY
+  all answer perfectly), and **how many pools the box ended up carrying**. Two
+  of those were unreachable for the same reason `NRestarts` was: the fake box
+  answered `systemctl is-failed` with a constant, and it had no `show bpa pool`
+  at all.
+
+  57 checks on master before any of this, **112** after.
+
+* **The `<- not checked` marker is shorter, and three places were still
+  quoting the old text.** It shipped in 0.66.0 as
+  `    <- not checked by this VTY`, which put a real statement at **89
+  columns** on the 80-column serial console a racked box is seen through, so
+  [#141](https://github.com/andrediashexa/hexarouting/issues/141) shortened it
+  to `  <- not checked` while making it mark far more. The change did not reach
+  `lab/bgp-policy.sh`, a wiki page or `docs/wiki-audit.md`, and the lab
+  assertion went red the first time anything ran it after the merge - three
+  days after the text changed.
+
+  `test/test_doc_commands.py` now reads every `lab/*.sh` that quotes the marker
+  and requires the quotation to be a prefix of what `config.UNCHECKED_MARK`
+  actually holds. A literal the product emits and other files quote is the same
+  shape `test_context_map.py` guards for paths: confidently wrong and silent
+  until somebody meets it.
+
+  The neighbouring assertion was vacuous and is fixed with it: it looked for
+  `set local-preference 200    <-`, and neither that value nor that marker was
+  anywhere in the lab's configuration, so it passed whatever the box did. It
+  now names a statement the lab really commits and the VTY really models.
 
 ### Internal
 
@@ -682,8 +955,6 @@ are to be interpreted as described in
 [#214](https://github.com/andrediashexa/hexarouting/issues/214),
 [#215](https://github.com/andrediashexa/hexarouting/issues/215),
 [#216](https://github.com/andrediashexa/hexarouting/issues/216).
-
-[#213](https://github.com/andrediashexa/hexarouting/issues/213).
 
 ### Fixed
 

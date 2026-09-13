@@ -1,11 +1,5 @@
 # Roteamento, SSH, usuários e SNMP
 
-# Roteamento, SSH, usuários e SNMP
-
-# Roteamento, SSH, usuários e SNMP
-
-# Roteamento, SSH, usuários e SNMP
-
 Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças exigem a capacidade de **administrador** (`hexa-admin` ou root).
 
 # Roteamento (FRR)
@@ -416,7 +410,7 @@ A maior parte de uma route-map continua passando direto para o roteamento. Sem m
 ```
 route-map RM-CLIENTES permit 10
  match ip address prefix-list PL-CLIENTES
- set tag 100    <- not checked by this VTY
+ set tag 100  <- not checked
 ```
 
 A marca é só da exibição: ela não vai para a configuração salva, nem para uma revisão de rollback, nem para o roteamento. E se você copiar a tela para um arquivo e carregar de volta, ela é retirada na leitura — a tela e o arquivo não divergem.

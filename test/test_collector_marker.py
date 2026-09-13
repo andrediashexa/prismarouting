@@ -16,10 +16,11 @@ suite and passed the other times: the window is the marker interval, so whether
 the lab sees it depends on when a periodic marker lands. A fixed timeline fails
 on the rule instead of on the machine's mood.
 """
-import io
 import contextlib
+import io
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import importlib.util                                           # noqa: E402
@@ -29,7 +30,16 @@ _spec = importlib.util.spec_from_file_location(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools",
                  "ipfix_collector.py"))
 col = importlib.util.module_from_spec(_spec)
+# Timed, because this import is also an assertion. The file ended with a bare
+# `main()` call, so loading it BOUND udp/4739 and listened for 25 seconds -
+# inside `make test`, on a box where a lab may already hold that port. The
+# collector's own rule went three days unguarded for want of a test, and a
+# module that cannot be read without being run is a module nothing can assert
+# about. A guarded import is milliseconds; an unguarded one is the collector's
+# whole run.
+_t0 = time.monotonic()
 _spec.loader.exec_module(col)
+_import_secs = time.monotonic() - _t0
 
 fail = 0
 
@@ -91,6 +101,14 @@ CAPTURE = [
     marker("05:19:22", "05:18:17"),
     marker("05:19:52", "05:18:17"),
 ]
+
+print("=== importing the collector does not start one (#223) ===")
+check(_import_secs < 5.0,
+      f"importing tools/ipfix_collector.py took {_import_secs:.1f}s, which is "
+      f"a collector running: the file must call main() only under "
+      f"__name__ == '__main__', or every reader of it becomes a listener")
+if _import_secs < 5.0:
+    ok(f"the module loads in {_import_secs * 1000:.0f}ms and binds nothing")
 
 print("=== an allocation made after the last restart is still in force (#223) ===")
 text = report(CAPTURE)

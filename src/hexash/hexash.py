@@ -533,6 +533,75 @@ INTERFACE_BLOCK = {
     "exit": ("leave the interface", None),
 }
 
+# WHERE THE BOUNDARY IS, inside an `interface` block that carries both halves.
+#
+# These statements are this box's: they are applied to the VPP interface by
+# the commit, and FRR neither owns them nor, in most cases, can act on them at
+# all. Everything else in the block - `ip ospf ...`, `isis ...`, `ipv6 ospf6
+# ...` - is FRR's and is handed over word for word, `no` included, because
+# `no ip ospf cost` is a statement FRR does know.
+#
+# This tuple is the ONE place that list lives. Both directions read it: the
+# branch that intercepts `mtu 9000` and the branch that refuses `no
+# mac-address`. That is deliberate and it is the difference between a fix and
+# a second list - a set written out beside the handlers would go stale the
+# next time a dataplane statement is added, and the new statement's `no` would
+# go back to leaking into FRR exactly as `no mac-address` did (#224). Delete
+# an entry from here and the POSITIVE statement leaks too, which the existing
+# tests for each of them catch immediately.
+#
+# Matched longest-first. No entry is a prefix of another today, so the order
+# changes nothing yet - it is here so that one added later cannot be shadowed
+# by a shorter entry above it and silently stop being intercepted.
+INTERFACE_DATAPLANE = (
+    ("ipv6", "nd", "suppress-ra"),
+    ("ipv4", "address"),
+    ("ipv6", "address"),
+    ("description",),
+    ("linux-name",),
+    ("mac-address",),
+    ("shutdown",),
+    ("mtu",),
+    ("urpf",),
+    ("vlan",),
+    ("vrf",),
+)
+
+# The dataplane statements `no` cannot mean anything for, and what to type
+# instead. An entry here is a refusal; absence means a handler negates it.
+#
+# `vlan` is the only one. A sub-interface IS its tag - the VTY refuses to
+# create one whose name and tag disagree, because the dataplane names a
+# sub-interface after its sub_id - so "this sub-interface with no VLAN" is not
+# a thing that can exist on the box. What the operator wants is the
+# sub-interface gone, and that statement already exists.
+INTERFACE_NO_REFUSED = {
+    "vlan": ("vlan cannot be removed: a sub-interface is named after its tag, "
+             "so one without a tag is not something the dataplane can hold. "
+             "Remove the sub-interface itself: no interface <name>"),
+}
+
+# `no` inside an interface, derived. Every statement the block offers can be
+# negated except the ones refused above - the dataplane ones by the handlers
+# in do_config, FRR's own by being handed to FRR.
+INTERFACE_BLOCK["no"] = ("remove a statement from this interface",
+                         {k: v for k, v in INTERFACE_BLOCK.items()
+                          if k not in ("exit",)
+                          and k not in INTERFACE_NO_REFUSED})
+
+
+def dataplane_statement(words):
+    """
+    Which dataplane statement `words` is, as a string, or None for FRR's.
+
+    Answers for the words of a statement WITHOUT its `no`: the caller strips
+    it, so one table serves both directions.
+    """
+    for stmt in INTERFACE_DATAPLANE:
+        if tuple(words[:len(stmt)]) == stmt:
+            return " ".join(stmt)
+    return None
+
 # Offered inside `router bgp <asn>`, and inside an `address-family` under it.
 #
 # The VTY passed these through and understood none of them: no completion, no
@@ -789,6 +858,154 @@ CGNAT_POOL = {
     }),
     "exit": ("leave the pool", None),
 }
+
+
+# ---------------------------------------------------------------- negation
+#
+# What `no <statement>` does in a pool block, one entry per statement that can
+# be negated at all. Each entry is (what the removal means, what `?` offers
+# after the word, the handler) and the handler returns None or why it was
+# refused.
+#
+# THE RULE THAT DECIDES WHO IS IN HERE, and it is read off the model rather
+# than chosen: a pool statement can be negated exactly when `Pool.lines()` is
+# able to omit it. `block-size`, `policy` and `mode` are written
+# unconditionally - `Pool.__init__` gives each of them a value and there is no
+# state in which a pool has none - so `no block-size 512` has nothing to mean.
+# Removing the line would not remove the setting; it would only stop the
+# configuration from saying what the pool is doing, while the pool goes on
+# doing it. Those three are refused, and the refusal says to set the value
+# wanted instead.
+#
+# `ports`, `vrf` and `outside-vrf` go the other way and are new here. Each is
+# written only when non-empty, and "" is a state the model already has and
+# already means something distinct: the device's own port range, and "every
+# VRF", which the model says out loud is NOT the same answer as VRF 0. That
+# state was unreachable - once `vrf 7` was typed there was no line that took
+# it back, because `vrf 0` means VRF 0. Negating them is not a reset semantic
+# invented here; it is the same "drop the override and the line disappears"
+# the block already had for `timeout`, `alg`, `max-blocks` and `tcp-mss`, on
+# the three fields that had the state and no way to reach it.
+#
+# The `?` tree for `no` is BUILT from this dict, below, so the two cannot
+# drift: a statement is offered after `no` because a handler for it exists,
+# and for no other reason.
+def _pool_no_item(lst, what, w):
+    """`no inside <prefix>` and its siblings: remove one named member."""
+    if len(w) < 3:
+        return f"usage: no {what} <prefix>"
+    if w[2] not in lst:
+        # Refused rather than passed over in silence. The operator named a
+        # member the pool does not have, which is a typo far more often than
+        # it is a second attempt - and the pool still carries the prefix they
+        # meant. This is NOT the same case as dropping an override that is
+        # already absent (`no timeout udp` on a pool with no udp override),
+        # where the state afterwards is exactly the state asked for.
+        return f"the pool has no {what} {w[2]}"
+    lst.remove(w[2])
+    return None
+
+
+def _pool_no_timeout(p, w):
+    if len(w) < 3 or w[2] not in Pool.TIMEOUTS:
+        return "usage: no timeout <" + "|".join(Pool.TIMEOUTS) + ">"
+    p.timeouts.pop(w[2], None)
+    return None
+
+
+def _pool_no_alg(p, w):
+    if len(w) < 3 or w[2] not in Pool.ALG_BITS:
+        return "usage: no alg <" + "|".join(Pool.ALG_BITS) + ">"
+    p.algs.pop(w[2], None)
+    return None
+
+
+def _pool_no_bypass(p, w):
+    """`no bypass source <prefix>`, or `no bypass source` to clear the list."""
+    if len(w) < 3 or w[2] not in ("source", "destination"):
+        return "usage: no bypass <source|destination> [<prefix>]"
+    lst = p.bypass_dst if w[2] == "destination" else p.bypass_src
+    if len(w) > 3:
+        return _pool_no_item(lst, f"bypass {w[2]}", ["no", f"bypass {w[2]}",
+                                                     w[3]])
+    lst.clear()
+    return None
+
+
+def _pool_no_forward(p, w):
+    """
+    `no forward tcp 1100`, and the subscriber when the port alone is not
+    enough. The public ADDRESS is the subscriber's own and is never typed, so
+    one port names one forward per public address the pool has - and removing
+    every one of them would take an inbound port from a customer who was never
+    mentioned. The trailing "to <private-ip> <private-port>" is accepted so
+    that removing a forward can be the line that added it with "no" in front.
+    """
+    if len(w) < 4:
+        return "usage: no forward <tcp|udp> <port> [to <private-ip> <port>]"
+    ip = None
+    if len(w) > 5 and w[4] == "to":
+        ip = w[5]
+    elif len(w) > 4:
+        ip = w[4]
+    hit = [f for f in p.forwards
+           if f[0] == w[2] and str(f[1]) == w[3] and (ip is None or f[2] == ip)]
+    if len(hit) > 1:
+        return (f"forward {w[2]} {w[3]} is configured for "
+                + ", ".join(f[2] for f in hit)
+                + " on different public addresses; name the subscriber: "
+                f"no forward {w[2]} {w[3]} to <private-ip> <private-port>")
+    if not hit:
+        return f"the pool has no forward {w[2]} {w[3]}"
+    p.forwards = [f for f in p.forwards if f not in hit]
+    return None
+
+
+def _pool_no_clear(attr, value):
+    """Set one field back to the value at which `Pool.lines()` omits it."""
+    def go(p, _w):
+        setattr(p, attr, value)
+        return None
+    return go
+
+
+POOL_NEGATE = {
+    "inside": ("remove one inside prefix", ARG_PREFIX,
+               lambda p, w: _pool_no_item(p.inside, "inside", w)),
+    "outside": ("remove one public prefix", ARG_PREFIX,
+                lambda p, w: _pool_no_item(p.outside, "outside", w)),
+    "ports": ("go back to the device's own port range", None,
+              _pool_no_clear("ports", "")),
+    "timeout": ("stop overriding one timeout; the pool inherits the global "
+                "again", CGNAT_POOL["timeout"][1], _pool_no_timeout),
+    "max-blocks": ("go back to one block per subscriber", None,
+                   _pool_no_clear("max_blocks", 0)),
+    "bypass": ("stop excluding a prefix from translation",
+               CGNAT_POOL["bypass"][1], _pool_no_bypass),
+    "utilisation-alarm": ("stop alarming on block utilisation", None,
+                          _pool_no_clear("util_alarm", 0)),
+    "max-sessions": ("no per-subscriber session cap", None,
+                     _pool_no_clear("max_sessions", 0)),
+    "max-session-rate": ("no per-subscriber session rate cap", None,
+                         _pool_no_clear("max_rate", 0)),
+    "tcp-mss": ("stop clamping the MSS", None, _pool_no_clear("tcp_mss", "")),
+    "forward": ("remove one inbound port forward", CGNAT_POOL["forward"][1],
+                _pool_no_forward),
+    "filter": ("go back to endpoint-independent filtering", None,
+               _pool_no_clear("filter", "endpoint-independent")),
+    "alg": ("stop choosing for one ALG; the pool takes the device default "
+            "again", CGNAT_POOL["alg"][1], _pool_no_alg),
+    "vrf": ("serve every VRF again", None, _pool_no_clear("vrf", "")),
+    "outside-vrf": ("leave translated traffic where it was", None,
+                    _pool_no_clear("outside_vrf", "")),
+}
+# The `?` tree, derived. A hand-written copy of this list is the failure this
+# repository calls confidently wrong: it would go stale against the handlers
+# and then offer a statement that does nothing, which is the defect the
+# handlers are here to close (#224).
+CGNAT_POOL["no"] = ("remove a setting from this pool",
+                    {k: (v[0], v[1]) for k, v in POOL_NEGATE.items()})
+
 
 CGNAT_CONFIG = {
     "pool": ("create or edit a pool", ARG_POOL),
@@ -1323,12 +1540,23 @@ TREE = {
                     "authorized_keys", "<type> <key> [comment]"),
         "password": ("a crypt hash, never a plaintext password "
                      "(openssl passwd -6)", "<hash>"),
-        "no": ("remove", {"ssh-key": ("remove a key", "<key>"),
-                          "role": ("make the account read-only again", None),
-                          "password": ("remove the password", None)}),
         "exit": ("leave the user", None),
     },
 }
+
+# `no` in a user block, derived from the block's own statements rather than
+# listed a second time. All three CAN be negated - do_user has a handler for
+# each - so "every statement except `exit`" is the true list and not a
+# convenient approximation of one. What stood here was a copy: three entries
+# with their own wording, which would have gone stale the first time a fourth
+# statement was added, and would then have offered nothing for it (#224).
+#
+# `no ssh-key` keeps the key as its argument, because a user may have several
+# and the removal has to say which.
+TREE["user"]["no"] = ("remove a statement from this account",
+                      {k: (f"remove: {v[0]}",
+                           "<key>" if k == "ssh-key" else None)
+                       for k, v in TREE["user"].items() if k != "exit"})
 
 if running_from_live_medium():
     TREE["operational"]["install"] = (
@@ -6264,37 +6492,55 @@ class Shell:
             self.candidate.globals.append(line)
             return True
 
+        # The interface this line is inside, and which dataplane statement it
+        # is. Both asked once, because every branch below asks the same two
+        # questions and the second one IS the boundary between what this box
+        # applies and what FRR is handed.
+        iface = (self.frr_ctx[-1].split()[1]
+                 if self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
+                 else None)
+        neg = w[0] == "no"
+        dp = dataplane_statement(w[1:] if neg else w)
+
         # `mtu` inside an interface block belongs to the device, not to FRR.
         # FRR would accept it and set it on the TAP alone, which is the half
         # that does not matter: the packet path is the VPP interface, and an
         # MTU set on one side only reproduces the mismatch this exists to
         # prevent. Everything else in the block is still FRR's.
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "mtu"):
-            ifname = self.frr_ctx[-1].split()[1]
+        if iface and not neg and dp == "mtu":
             if len(w) < 2 or not w[1].isdigit():
                 self.err("usage: mtu <576-9216>")
             elif not 576 <= int(w[1]) <= 9216:
                 self.err(f"mtu {w[1]} out of range (576-9216)")
             else:
-                self.candidate.mtus[ifname] = int(w[1])
+                self.candidate.mtus[iface] = int(w[1])
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:2] == ["no", "mtu"]):
-            self.candidate.mtus.pop(self.frr_ctx[-1].split()[1], None)
+        if iface and neg and dp == "mtu":
+            self.candidate.mtus.pop(iface, None)
             return True
 
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "mac-address"):
-            ifname = self.frr_ctx[-1].split()[1]
+        if iface and not neg and dp == "mac-address":
             if len(w) < 2 or len(w[1].split(":")) != 6:
                 self.err("usage: mac-address <xx:xx:xx:xx:xx:xx>")
             else:
-                self.candidate.macs[ifname] = w[1].lower()
+                self.candidate.macs[iface] = w[1].lower()
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "linux-name"):
-            ifname = self.frr_ctx[-1].split()[1]
+        # `no mac-address`, which went to FRR until #224: the MAC of a VPP
+        # interface is nothing FRR can act on, so at commit it was a statement
+        # FRR does not know, arriving in the middle of applying. It reads the
+        # same way as `no mtu` and does the same thing - the candidate stops
+        # naming a MAC for this interface, so the commit sets none and the
+        # interface keeps the one it has. Which is exactly what an operator
+        # who typed a MAC and then took it back is asking for.
+        #
+        # `Config.parse` has ALWAYS understood this line; only the VTY did
+        # not. One statement meaning two different things depending on whether
+        # it was typed or loaded from a file is the defect the `forward`
+        # comment in do_pool warns about, and it was real here.
+        if iface and neg and dp == "mac-address":
+            self.candidate.macs.pop(iface, None)
+            return True
+        if iface and not neg and dp == "linux-name":
             if len(w) < 2:
                 self.err("usage: linux-name <name>")
             elif len(w[1]) > 15 or "/" in w[1]:
@@ -6305,58 +6551,52 @@ class Shell:
                 self.err(f"linux-name: '{w[1]}' cannot be a Linux interface "
                          "name (15 characters, no '/')")
             else:
-                self.candidate.linux_names[ifname] = w[1]
+                self.candidate.linux_names[iface] = w[1]
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:2] == ["no", "linux-name"]):
-            self.candidate.linux_names.pop(self.frr_ctx[-1].split()[1], None)
+        if iface and neg and dp == "linux-name":
+            self.candidate.linux_names.pop(iface, None)
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:3] == ["ipv6", "nd", "suppress-ra"]):
+        if iface and not neg and dp == "ipv6 nd suppress-ra":
             # The default already. Accepted so an operator can write it to
             # say so, and so a configuration saved from an older box loads.
-            self.candidate.ra_enabled.discard(self.frr_ctx[-1].split()[1])
+            self.candidate.ra_enabled.discard(iface)
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:4] == ["no", "ipv6", "nd", "suppress-ra"]):
-            self.candidate.ra_enabled.add(self.frr_ctx[-1].split()[1])
+        if iface and neg and dp == "ipv6 nd suppress-ra":
+            self.candidate.ra_enabled.add(iface)
             return True
 
         # `vrf` moves the interface between routing tables. The device's, and
         # not something FRR can be told about after the fact.
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "vrf"):
-            ifname = self.frr_ctx[-1].split()[1]
+        if iface and not neg and dp == "vrf":
             if len(w) < 2 or not w[1].isdigit():
                 self.err("usage: vrf <table>")
             elif int(w[1]):
-                self.candidate.vrfs[ifname] = int(w[1])
+                self.candidate.vrfs[iface] = int(w[1])
             else:
-                self.candidate.vrfs.pop(ifname, None)
+                self.candidate.vrfs.pop(iface, None)
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:2] == ["no", "vrf"]):
-            self.candidate.vrfs.pop(self.frr_ctx[-1].split()[1], None)
+        if iface and neg and dp == "vrf":
+            self.candidate.vrfs.pop(iface, None)
             return True
 
         # `vlan` creates the sub-interface. It is the device's for the same
         # reason as an address, and more so: FRR cannot create one at all.
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "vlan"):
-            ifname = self.frr_ctx[-1].split()[1]
+        # There is no `no vlan`: see INTERFACE_NO_REFUSED for why, and for
+        # what an operator is told to type instead.
+        if iface and not neg and dp == "vlan":
             why = None
             if len(w) < 2 or not w[1].isdigit():
                 why = "usage: vlan <1-4094> [inner <1-4094>]"
-            elif "." not in ifname:
-                why = (f"{ifname} is not a sub-interface; a VLAN tag belongs "
+            elif "." not in iface:
+                why = (f"{iface} is not a sub-interface; a VLAN tag belongs "
                        "to one, named <parent>.<n>")
-            elif ifname.rsplit(".", 1)[1] != w[1]:
+            elif iface.rsplit(".", 1)[1] != w[1]:
                 # VPP names a sub-interface after its sub_id, so accepting
                 # `interface Gi0/1.7` with `vlan 100` would produce a box
                 # calling it Gi0/1.100 while the configuration called it
                 # Gi0/1.7 - and the running configuration is read from the
                 # box. The two names have to be the same name.
-                why = (f"{ifname} must carry vlan {ifname.rsplit('.', 1)[1]}: "
+                why = (f"{iface} must carry vlan {iface.rsplit('.', 1)[1]}: "
                        "the dataplane names a sub-interface after its tag")
             if why:
                 self.err(why)
@@ -6367,14 +6607,12 @@ class Shell:
             elif len(w) != 2:
                 self.err("usage: vlan <1-4094> [inner <1-4094>]")
                 return True
-            self.candidate.vlans[ifname] = tag
+            self.candidate.vlans[iface] = tag
             return True
 
         # Addresses are the device's: they belong to the packet path, and FRR
         # sees them only because linux_cp mirrors them onto the TAP.
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] in ("ipv4", "ipv6") and w[1:2] == ["address"]):
-            ifname = self.frr_ctx[-1].split()[1]
+        if iface and not neg and dp in ("ipv4 address", "ipv6 address"):
             if len(w) < 3:
                 self.err(f"usage: {w[0]} address <prefix>")
             else:
@@ -6382,20 +6620,17 @@ class Shell:
                 if why:
                     self.err(why)
                 else:
-                    self.candidate.addresses.setdefault(ifname, [])
-                    if w[2] not in self.candidate.addresses[ifname]:
-                        self.candidate.addresses[ifname].append(w[2])
+                    self.candidate.addresses.setdefault(iface, [])
+                    if w[2] not in self.candidate.addresses[iface]:
+                        self.candidate.addresses[iface].append(w[2])
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:1] == ["no"] and w[1:2] in (["ipv4"], ["ipv6"])
-                and w[2:3] == ["address"]):
-            ifname = self.frr_ctx[-1].split()[1]
+        if iface and neg and dp in ("ipv4 address", "ipv6 address"):
             if len(w) < 4:
                 self.err(f"usage: no {w[1]} address <prefix>")
-            elif w[3] in self.candidate.addresses.get(ifname, []):
-                self.candidate.addresses[ifname].remove(w[3])
+            elif w[3] in self.candidate.addresses.get(iface, []):
+                self.candidate.addresses[iface].remove(w[3])
             else:
-                self.err(f"{ifname} does not have {w[3]}")
+                self.err(f"{iface} does not have {w[3]}")
             return True
 
         # `description` and `shutdown` are the device's, for the same reason as
@@ -6409,42 +6644,63 @@ class Shell:
         # includes FRR's half, so it matched the copy that had gone to the
         # wrong place. Three assertions in that lab were vacuous for this
         # reason.
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "description"):
-            ifname = self.frr_ctx[-1].split()[1]
+        if iface and not neg and dp == "description":
             if len(w) < 2:
                 self.err("usage: description <text>")
             else:
-                self.candidate.descriptions[ifname] = line.strip().split(None, 1)[1]
+                self.candidate.descriptions[iface] = line.strip().split(None, 1)[1]
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:2] == ["no", "description"]):
-            self.candidate.descriptions.pop(self.frr_ctx[-1].split()[1], None)
+        if iface and neg and dp == "description":
+            self.candidate.descriptions.pop(iface, None)
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "shutdown"):
-            self.candidate.admin_down.add(self.frr_ctx[-1].split()[1])
+        if iface and not neg and dp == "shutdown":
+            self.candidate.admin_down.add(iface)
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:2] == ["no", "shutdown"]):
-            self.candidate.admin_down.discard(self.frr_ctx[-1].split()[1])
+        if iface and neg and dp == "shutdown":
+            self.candidate.admin_down.discard(iface)
             return True
 
         # `urpf` is the device's too, for the same reason as `mtu`: the check
         # has to run on the packet path, and FRR does not own that.
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[0] == "urpf"):
-            ifname = self.frr_ctx[-1].split()[1]
+        if iface and not neg and dp == "urpf":
             if len(w) < 2 or w[1] not in URPF_MODES:
                 self.err("usage: urpf <" + "|".join(URPF_MODES) + ">")
             elif w[1] == "off":
-                self.candidate.urpf.pop(ifname, None)
+                self.candidate.urpf.pop(iface, None)
             else:
-                self.candidate.urpf[ifname] = w[1]
+                self.candidate.urpf[iface] = w[1]
             return True
-        if (self.frr_ctx and self.frr_ctx[-1].startswith("interface ")
-                and w[:2] == ["no", "urpf"]):
-            self.candidate.urpf.pop(self.frr_ctx[-1].split()[1], None)
+        if iface and neg and dp == "urpf":
+            self.candidate.urpf.pop(iface, None)
+            return True
+
+        # THE HOLE THIS CLOSES: every `no <dataplane statement>` with a
+        # handler has returned by now, so reaching here with one means the VTY
+        # has no handler for it - and the next thing below is the routing
+        # passthrough, which would stage it for FRR. `no mac-address
+        # aa:bb:cc:dd:ee:ff` did exactly that: staged, marked `<- not checked`
+        # by #141, and handed to a daemon with no opinion about the MAC of a
+        # VPP interface, in the middle of a commit (#224).
+        #
+        # Refused, and named. This is also the safety net for a dataplane
+        # statement added later without deciding what `no` means for it: the
+        # answer is a refusal that says so, never a silent trip to FRR.
+        if iface and neg and dp:
+            self.err(INTERFACE_NO_REFUSED.get(
+                dp, f"no {dp}: this VTY has no way to remove it, and it is "
+                    f"not FRR's to remove. Set the value you want with "
+                    f"'{dp} ...', or remove the interface with "
+                    f"'no interface {iface}'"))
+            return True
+
+        # `no` on its own is not a command anywhere - not at `[edit]`, not in
+        # a block - and staging it sent the word by itself to FRR, which
+        # answers with an unknown command in the middle of applying. The
+        # refusal says where to look, because the thing the operator wants is
+        # one TAB away (#224).
+        if w == ["no"]:
+            self.err("no <statement>: say which statement to remove "
+                     "('no ?' lists them)")
             return True
 
         # anything else is routing: staged in the candidate, applied on commit
@@ -6561,6 +6817,20 @@ class Shell:
                 u.role = ""
         elif w[:2] == ["no", "password"]:
             u.password = ""
+        elif w[0] == "no":
+            # Reached only when no negation handler above took the line, so
+            # the word that is wrong is the one AFTER `no`. Naming `no` itself
+            # - which is what the shared refusal below did - sends an operator
+            # off to find out whether this block has a `no` at all, when it
+            # has three of them (#224).
+            if len(w) < 2:
+                self.err("no <statement>: say which statement to remove "
+                         "('no ?' lists them)")
+            elif w[1] in TREE["user"]:
+                self.err(f"usage: no {w[1]} "
+                         f"{TREE['user']['no'][1][w[1]][1] or ''}".rstrip())
+            else:
+                self.err(f"unknown statement in user mode: {w[1]}")
         else:
             self.err(f"unknown statement in user mode: {w[0]}")
         return True
@@ -6650,66 +6920,40 @@ class Shell:
                 why = Config._pool_line(p, " ".join(w))
                 if why:
                     raise ValueError(why)
-            elif w[0] == "no" and len(w) > 2:
-                if w[1] == "inside" and w[2] in p.inside:
-                    p.inside.remove(w[2])
-                elif w[1] == "outside" and w[2] in p.outside:
-                    p.outside.remove(w[2])
-                # "no timeout udp" and "no alg ftp" drop the OVERRIDE, which
-                # is not the same as setting it to something: the pool goes
-                # back to inheriting, and the line disappears from the
-                # configuration instead of appearing with a default in it.
-                elif w[1] == "timeout":
-                    p.timeouts.pop(w[2], None)
-                elif w[1] == "alg":
-                    p.algs.pop(w[2], None)
-                # "no forward tcp 1100", and the subscriber when the port
-                # alone is not enough. The public ADDRESS is the subscriber's
-                # own and is never typed, so one port names one forward per
-                # public address the pool has - and removing every one of them
-                # would take an inbound port from a customer who was never
-                # mentioned. The trailing "to <private-ip> <private-port>" is
-                # accepted so that removing a forward can be the line that
-                # added it with "no" on the front.
-                elif w[1] == "forward" and len(w) > 3:
-                    ip = None
-                    if len(w) > 5 and w[4] == "to":
-                        ip = w[5]
-                    elif len(w) > 4:
-                        ip = w[4]
-                    hit = [f for f in p.forwards
-                           if f[0] == w[2] and str(f[1]) == w[3]
-                           and (ip is None or f[2] == ip)]
-                    if len(hit) > 1:
-                        raise ValueError(
-                            f"forward {w[2]} {w[3]} is configured for "
-                            + ", ".join(f[2] for f in hit)
-                            + " on different public addresses; name the "
-                            "subscriber: no forward " + w[2] + " " + w[3]
-                            + " to <private-ip> <private-port>")
-                    p.forwards = [f for f in p.forwards if f not in hit]
-            elif w[0] == "no" and len(w) > 1 and w[1] == "max-blocks":
-                p.max_blocks = 0
-            elif w[0] == "no" and len(w) > 1 and w[1] == "tcp-mss":
-                p.tcp_mss = ""
-            elif w[0] == "no" and len(w) > 2 and w[1] == "bypass":
-                # "no bypass source 10.0.0.0/8", or "no bypass source" to
-                # clear the list.
-                lst = (p.bypass_dst if w[2] == "destination"
-                       else p.bypass_src)
-                if len(w) > 3:
-                    if w[3] in lst:
-                        lst.remove(w[3])
+            elif w[0] == "no":
+                # ONE branch for every negation, dispatched from POOL_NEGATE,
+                # and it ends in a refusal. What stood here was an if/elif
+                # chain with no `else`: twelve statements had a handler and
+                # every other `no` fell out of the bottom of it, accepted in
+                # silence, removing nothing, with `show this` still showing
+                # the setting (#224). An operator typing `no block-size 512`
+                # walked away believing they had taken it off.
+                #
+                # The refusal has to be here rather than in the outer `else`,
+                # because the outer one would answer "unknown statement: no"
+                # and `no` is not the unknown word.
+                if len(w) < 2:
+                    self.err("no <statement>: say which statement to remove "
+                             "('no ?' lists them)")
+                    return True
+                h = POOL_NEGATE.get(w[1])
+                if h:
+                    why = h[2](p, w)
+                    if why:
+                        self.err(why)
+                elif w[1] in CGNAT_POOL:
+                    # In the grammar, and cannot be absent: see the rule above
+                    # POOL_NEGATE. Saying what to type instead is the point -
+                    # "no" alone leaves the operator with a refusal and no
+                    # next move.
+                    hint = CGNAT_POOL[w[1]][1]
+                    if isinstance(hint, dict):
+                        hint = "|".join(hint)
+                    self.err(f"{w[1]} cannot be removed: every pool has one, "
+                             f"so there is no state without it. Set the value "
+                             f"you want instead: {w[1]} {hint or ''}".rstrip())
                 else:
-                    lst.clear()
-            elif w[0] == "no" and len(w) > 1 and w[1] == "utilisation-alarm":
-                p.util_alarm = 0
-            elif w[0] == "no" and len(w) > 1 and w[1] == "max-sessions":
-                p.max_sessions = 0
-            elif w[0] == "no" and len(w) > 1 and w[1] == "max-session-rate":
-                p.max_rate = 0
-            elif w[0] == "no" and len(w) > 1 and w[1] == "filter":
-                p.filter = "endpoint-independent"
+                    self.err(f"unknown statement in pool mode: {w[1]}")
             else:
                 self.err(f"unknown statement in pool mode: {w[0]}")
         except (IndexError, ValueError) as e:

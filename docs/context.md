@@ -176,6 +176,7 @@ Not what it contains — what question it is the answer to.
 | `src/plugins/bpa/bpa_pool.h` | Given a subscriber, which public address and port block? And the reverse. |
 | `src/plugins/bpa/bpa_session.c`, `bpa_session.h` | What state does a translated flow need, and how is it keyed so two VRFs cannot collide? |
 | `src/plugins/bpa/bpa_in2out.c`, `bpa_out2in.c` | What happens to one packet, in each direction. |
+| `src/plugins/bpa/bpa_rewrite.h` | The outbound rewrite and the checksum corrections it carries on the session. Where the per-packet cost of a translation lives. |
 | `src/plugins/bpa/bpa_handoff.c` | Which worker owns this subscriber, and how do both directions reach the same one? |
 | `src/plugins/bpa/bpa_dyn.c` | When blocks are allocated on demand rather than computed. |
 | `src/plugins/bpa/bpa_ftp.c`, `bpa_pptp.c`, `bpa_rtsp.h`, `bpa_sip.h` | Protocols that carry an address in their payload. |

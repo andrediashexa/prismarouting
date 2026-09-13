@@ -214,5 +214,57 @@ else
   bad "a plain file sent nothing"
 fi
 
+echo "=== and the mirror itself keeps to that format (#225) ==="
+# Everything above drives the two scripts against a stub and asserts they agree
+# with each other about the format. That is where the #165 defect was, and it
+# is fixed. What nothing looked at is the MIRROR: five pages had accumulated
+# their own title two, three and four times before anybody noticed, because
+# wiki-push.sh strips exactly one and the rest go out as body.
+#
+# A level-1 heading further down a page is ordinary and stays allowed:
+# wiki/operar/receitas-do-dia-a-dia.md has several and is right. What is
+# checked is the RUN at the top - the title, then the same title again before
+# any body text.
+python3 - "$REPO" <<'PY'
+import os, sys
+repo = sys.argv[1]
+bad = []
+seen = 0
+for root, _, files in os.walk(os.path.join(repo, "wiki")):
+    for f in sorted(files):
+        if not f.endswith(".md"):
+            continue
+        path = os.path.join(root, f)
+        lines = open(path, encoding="utf-8").read().split("\n")
+        rel = os.path.relpath(path, repo)
+        seen += 1
+        if not lines or not lines[0].startswith("# "):
+            bad.append(f"{rel} does not open with '# <title>', which is what "
+                       f"wiki-push.sh strips and Outline keeps as the title")
+            continue
+        title, i, n = lines[0], 1, 1
+        while i < len(lines):
+            if lines[i].strip() == "":
+                i += 1
+                continue
+            if lines[i] == title:
+                n += 1
+                i += 1
+                continue
+            break
+        if n > 1:
+            bad.append(f"{rel} opens with its title {n} times; push strips one "
+                       f"and the other {n - 1} are published as body")
+for b in bad:
+    print(f"  FAIL: {b}")
+print(f"  checked {seen} page(s)")
+sys.exit(1 if bad else 0)
+PY
+if [ $? -eq 0 ]; then
+  ok "every page in the mirror opens with exactly one title"
+else
+  bad "the mirror has drifted from the format the two scripts agree on"
+fi
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

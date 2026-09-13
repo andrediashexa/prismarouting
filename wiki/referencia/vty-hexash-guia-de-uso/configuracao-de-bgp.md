@@ -45,8 +45,9 @@ router bgp 65000
 | `bfd`   |           | acompanha a sessão por BFD, para a falha ser de segundos e não de minutos |
 | `shutdown` |           | segura a sessão derrubada, mantendo a configuração |
 | `peer-group` | `<nome>`  | põe o vizinho num peer group |
+| `capability extended-nexthop` |     | rotas IPv4 por cima de uma sessão IPv6; é o que uma sessão sem endereço no enlace usa |
 
-Dentro de `address-family`, o mesmo vizinho entende `activate`, `route-map`, `prefix-list`, `soft-reconfiguration inbound`, `remove-private-AS` e `default-originate`.
+Dentro de `address-family`, o mesmo vizinho entende `activate`, `route-map`, `prefix-list`, `soft-reconfiguration inbound`, `remove-private-AS`, `default-originate`, `maximum-prefix` e `next-hop-self`. Os dois últimos aparecem nas duas listas de propósito: valem por família, e o roteamento aceita os dois lugares.
 
 Essa tabela é o que o `hexash` **confere**. O BGP do roteamento entende muito mais do que isso, e o que não está aqui é repassado sem leitura - o que é legítimo, e é por isso que sai marcado com `<- not checked` no `show this` e no `show configuration`. Vale reparar que `soft-reconfiguration inbound` está na lista da família de endereço e não na lista de cima: digitada direto dentro de `router bgp`, ela sai marcada.
 

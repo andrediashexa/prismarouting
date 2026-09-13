@@ -3893,5 +3893,385 @@ check("were not read at all" not in _quiet,
 check("configuration check succeeds" in _quiet,
       f"while still answering the question asked: {_quiet!r}")
 
+
+# =====================================================================
+# `no <statement>` inside a block: accepted in silence, doing nothing (#224)
+#
+# Three defects, and the first two are of the class this project puts above
+# everything else - the product accepts a command and does not do it.
+#
+#   1. In a pool block, `no block-size 512` printed nothing, removed nothing,
+#      and `show this` still showed the setting. The `no` branch of do_pool
+#      was an if/elif chain with no `else`: twelve statements had a handler
+#      and every other `no` fell out of the bottom of it. An operator walked
+#      away believing the setting was gone.
+#   2. Inside an interface, `no mac-address aa:bb:cc:dd:ee:ff` fell through to
+#      the routing passthrough and was staged for FRR, which has no opinion
+#      about the MAC of a VPP interface. At commit that is a statement FRR
+#      does not know, arriving in the middle of applying. It became visible on
+#      the first day of #141's `<- not checked` marker.
+#   3. `?` offered `no` in no block at all.
+#
+# What is asserted here is BEHAVIOUR, measured by feeding lines to a Shell and
+# reading what came out - not the shape of the tables the fix introduced. A
+# test that read POOL_NEGATE to decide what to expect would agree with any
+# mistake in POOL_NEGATE.
+print("\n=== 'no' in a pool block: refused or done, never silent (#224) ===")
+
+
+def pool_shell():
+    """A shell parked inside `cgnat pool residential`, with one prefix."""
+    s = shell_with_frr()
+    s.mode = "config"
+    s.candidate = hexash.Config()
+    s.feed("nat cgnat pool residential")
+    s.feed("inside 100.64.0.0/22")
+    return s
+
+
+def said(s, line):
+    """What `line` printed, stripped."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        s.feed(line)
+    return out.getvalue().strip()
+
+
+def pool_text(s):
+    return "\n".join(s.candidate.pools["residential"].lines())
+
+
+def tree_opts(mode, line):
+    """What `?` offers at `line` in `mode`. `opts` is taken by a value here."""
+    s = hexash.Shell()
+    s.mode = mode
+    o, _hint, _pfx = s._options(line, bool(line) and not line.endswith(" "))
+    return set(o)
+
+
+# --- the four the issue measured, and what they answer now ---
+for _line, _word in (("no block-size 512", "block-size"),
+                     ("no policy interleaved", "policy"),
+                     ("no mode deterministic", "mode")):
+    _sh = pool_shell()
+    _before = pool_text(_sh)
+    _out = said(_sh, _line)
+    check(_out.startswith("error:"),
+          f"'{_line}' must refuse rather than say nothing: {_out!r}")
+    check(_word in _out,
+          f"and must name the statement it refused: {_out!r}")
+    # A refusal that only refuses leaves the operator with no next move. The
+    # standing rule in this repository is that it has to say what to do
+    # instead, and here there IS something to do: set the value wanted.
+    check(f"{_word} " in _out.split("instead:")[-1],
+          f"and must say what to type instead: {_out!r}")
+    check(pool_text(_sh) == _before,
+          f"and must change nothing: {pool_text(_sh)}")
+    print(f"  {_line} -> {_out}")
+
+# --- and the three that CAN be removed, because the model has the state ---
+#
+# `ports`, `vrf` and `outside-vrf` are written by Pool.lines() only when they
+# are set, and "" is a state that already means something distinct: the
+# device's own port range, and every VRF - which the model says out loud is
+# not the same answer as VRF 0. Before this there was no line that took `vrf
+# 7` back, because `vrf 0` means VRF 0.
+_sh = pool_shell()
+_sh.feed("ports 1024 65535")
+_sh.feed("vrf 7")
+_sh.feed("outside-vrf 9")
+check("ports 1024 65535" in pool_text(_sh) and " vrf 7" in pool_text(_sh),
+      f"set first: {pool_text(_sh)}")
+for _line, _gone in (("no ports", "ports"), ("no vrf", " vrf 7"),
+                     ("no outside-vrf", "outside-vrf")):
+    _out = said(_sh, _line)
+    check(_out == "", f"'{_line}' is a removal the model can hold: {_out!r}")
+    check(_gone not in pool_text(_sh),
+          f"and it must be gone from the pool: {pool_text(_sh)}")
+print(f"  no ports / no vrf / no outside-vrf -> {pool_text(_sh)!r}")
+
+# --- naming a member the pool does not have ---
+#
+# Refused rather than passed over, because the operator named a prefix that is
+# not there and the pool still carries the one they meant. NOT the same case
+# as clearing an override that is already clear, below.
+_sh = pool_shell()
+_out = said(_sh, "no inside 10.0.0.0/8")
+check(_out.startswith("error:") and "10.0.0.0/8" in _out,
+      f"a prefix the pool does not have is refused and named: {_out!r}")
+check("100.64.0.0/22" in pool_text(_sh),
+      f"and the prefix it does have survives: {pool_text(_sh)}")
+check(said(_sh, "no inside 100.64.0.0/22") == "",
+      "and the one it does have is removed quietly")
+check("100.64.0.0/22" not in pool_text(_sh),
+      f"really removed: {pool_text(_sh)}")
+print(f"  no inside 10.0.0.0/8 -> {_out}")
+
+# --- the quiet cases: clearing an override that is already clear ---
+#
+# These say nothing on purpose and the distinction is argued, not assumed:
+# after `no timeout udp` the pool does not override the udp timeout, which is
+# exactly the state asked for, whether or not it overrode one a moment ago.
+print("\n=== the quiet half: a removal that lands says nothing ===")
+_sh = pool_shell()
+for _line in ("no timeout udp", "no alg ftp", "no max-blocks", "no tcp-mss",
+              "no filter", "no max-sessions", "no max-session-rate",
+              "no utilisation-alarm", "no bypass source",
+              "no bypass destination"):
+    check(said(_sh, _line) == "",
+          f"'{_line}' on a pool that has none must be quiet: "
+          f"{said(_sh, _line)!r}")
+print(f"  {10} removals on a pool with nothing to remove: all silent")
+
+# --- the word after `no` is the one that is wrong ---
+_sh = pool_shell()
+_out = said(_sh, "no wibble")
+check("wibble" in _out,
+      f"an unknown statement after 'no' names itself: {_out!r}")
+check("in pool mode: no" not in _out,
+      f"and never blames the word 'no', which is not the unknown one: {_out!r}")
+_bare = said(_sh, "no")
+check(_bare.startswith("error:") and "?" in _bare,
+      f"'no' alone says what is missing and how to find it: {_bare!r}")
+print(f"  no wibble -> {_out}")
+print(f"  no        -> {_bare}")
+
+# --- THE RULE, read off the model rather than off the fix ---
+#
+# A pool statement can be negated exactly when Pool.lines() is able to omit
+# it. That is not a restatement of POOL_NEGATE - it is the model asked
+# directly, and it is what stops the two from drifting: a statement added to
+# the pool grammar later fails here until somebody decides what `no` means for
+# it, instead of falling into the hole this issue is about.
+print("\n=== which statements can be negated, decided by the model ===")
+_default = "\n".join(hexash.Pool("x").lines())
+_verdicts = []
+for _stmt, _entry in hexash.CGNAT_POOL.items():
+    if _stmt in ("exit", "no"):
+        continue
+    # Does a pool with nothing set still write this line? Then the pool always
+    # has one and there is no state in which it has none.
+    _always = any(l.strip().split()[0] == _stmt
+                  for l in _default.splitlines() if l.startswith(" "))
+    _sh = pool_shell()
+    # An argument is given where the grammar wants one, so that a refusal is
+    # the statement being refused and not a usage message about arity.
+    _arg = {"inside": " 100.64.0.0/22", "outside": " 200.0.2.0/30",
+            "timeout": " udp", "alg": " ftp", "bypass": " source",
+            "forward": " tcp 1100"}.get(_stmt, "")
+    _out = said(_sh, f"no {_stmt}{_arg}")
+    _refused = _out.startswith("error:") and "cannot be removed" in _out
+    _verdicts.append((_stmt, _always, _refused))
+    check(_always == _refused,
+          f"'no {_stmt}': Pool.lines() always writes it = {_always}, "
+          f"but the VTY refusing it = {_refused} ({_out!r})")
+    check(_out == "" or _out.startswith("error:"),
+          f"'no {_stmt}' must either do it or say why, never both nor "
+          f"neither: {_out!r}")
+print("  " + ", ".join(f"{s}{'*' if r else ''}" for s, _a, r in _verdicts))
+print("  (* refused: the pool always has one)")
+
+# --- nothing offered after `no` may be a statement that refuses it ---
+#
+# The other direction of the same rule, and the one that makes `?` honest:
+# every word the completer offers after `no` has to be a word the block
+# actually accepts after `no`.
+print("\n=== '?' after 'no' offers only what 'no' really takes ===")
+_o = tree_opts("pool", "no ")
+check(_o, "a pool must offer something after 'no'")
+for _stmt in _o:
+    _arg = {"inside": " 100.64.0.0/22", "outside": " 200.0.2.0/30",
+            "timeout": " udp", "alg": " ftp", "bypass": " source",
+            "forward": " tcp 1100"}.get(_stmt, "")
+    _out = said(pool_shell(), f"no {_stmt}{_arg}")
+    check("cannot be removed" not in _out and "unknown statement" not in _out,
+          f"'?' offers 'no {_stmt}' and the block refuses it: {_out!r}")
+for _stmt in ("block-size", "policy", "mode"):
+    check(_stmt not in _o,
+          f"'{_stmt}' cannot be negated and must not be offered after 'no'")
+print(f"  no ? -> {sorted(_o)}")
+# The argument goes on being offered after the negated word, because `no
+# timeout` alone is not a statement either.
+_o2 = tree_opts("pool", "no timeout ")
+check({"udp", "icmp", "tcp-established"} <= set(_o2),
+      f"'no timeout ?' offers the timeouts: {sorted(_o2)}")
+print(f"  no timeout ? -> {sorted(_o2)}")
+
+# --- `no` is offered at all, which is what this issue was opened about ---
+print("\n=== 'no' is offered in the blocks that have one ===")
+for _mode in ("pool", "user"):
+    _o = tree_opts(_mode, "")
+    check("no" in _o, f"'{_mode}' must offer 'no': {sorted(_o)}")
+_ifsh = shell_with_box()
+_ifsh.feed("configure")
+_ifsh.feed("interface TenGigabitEthernet0/8/0")
+_o, _, _ = _ifsh._options("", False)
+check("no" in _o, f"an interface must offer 'no': {sorted(_o)}")
+_o, _, _ = _ifsh._options("no ", False)
+check("mtu" in _o and "mac-address" in _o and "ip" in _o,
+      f"and after it, what can be negated - this box's and FRR's: "
+      f"{sorted(_o)}")
+check("vlan" not in _o,
+      f"but not 'vlan', which is refused: {sorted(_o)}")
+check("exit" not in _o, f"and not 'exit', which is not a setting: {sorted(_o)}")
+print(f"  interface 'no ?' -> {sorted(_o)}")
+
+# =====================================================================
+print("\n=== 'no <dataplane statement>' never reaches FRR (#224) ===")
+# The boundary an interface block sits on: `mtu`, `urpf`, `mac-address`,
+# `vlan` and `linux-name` are this box's, and `ip ospf ...` and `isis ...` are
+# FRR's. `no` on one of FRR's legitimately goes to FRR. `no` on one of this
+# box's must never, and until #224 `no mac-address` did.
+
+
+def iface_shell():
+    s = shell_with_frr()
+    s.feed("configure")
+    s.feed("interface TenGigabitEthernet0/8/0")
+    return s
+
+
+_sh = iface_shell()
+_sh.feed("mac-address aa:bb:cc:dd:ee:ff")
+check(_sh.candidate.macs.get("TenGigabitEthernet0/8/0") == "aa:bb:cc:dd:ee:ff",
+      f"the MAC is this box's to set: {_sh.candidate.macs}")
+_out = said(_sh, "no mac-address aa:bb:cc:dd:ee:ff")
+check(_out == "", f"and taking it back is quiet: {_out!r}")
+check("TenGigabitEthernet0/8/0" not in _sh.candidate.macs,
+      f"and really takes it back: {_sh.candidate.macs}")
+check(not any("mac-address" in r for r in _sh.candidate.routing),
+      f"and NOTHING about it is staged for FRR: {_sh.candidate.routing}")
+# The marker from #141 is how this was found, so it is also how it is checked
+# as gone. Not removed and not weakened: still on, and now with nothing to say.
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.feed("show this")
+check(hexash.UNCHECKED_MARK not in _buf.getvalue(),
+      f"and the boundary marker has nothing to mark: {_buf.getvalue()!r}")
+print(f"  no mac-address -> routing {_sh.candidate.routing}")
+
+# `vlan` is the one dataplane statement `no` cannot mean anything for: a
+# sub-interface is named after its tag, so one without a tag cannot exist. The
+# refusal has to name the statement that DOES do what was wanted.
+_sh = iface_shell()
+_out = said(_sh, "no vlan 7")
+check(_out.startswith("error:") and "vlan" in _out,
+      f"'no vlan' is refused and names itself: {_out!r}")
+check("no interface" in _out,
+      f"and says what removes a sub-interface instead: {_out!r}")
+check(not any("vlan" in r for r in _sh.candidate.routing),
+      f"and is not staged for FRR either: {_sh.candidate.routing}")
+print(f"  no vlan 7 -> {_out}")
+
+# FRR's half is untouched: `no` on a statement FRR owns still goes to FRR,
+# because `no ip ospf cost` is a statement FRR knows.
+_sh = iface_shell()
+_sh.feed("no ip ospf cost 10")
+check("no ip ospf cost 10" in _sh.candidate.routing,
+      f"FRR's own 'no' still reaches FRR: {_sh.candidate.routing}")
+print(f"  no ip ospf cost 10 -> staged: "
+      f"{'no ip ospf cost 10' in _sh.candidate.routing}")
+
+# --- the sweep, so a dataplane statement added later cannot slip out ---
+#
+# Every statement this VTY owns inside an interface, negated, and checked for
+# the one thing that must never happen: the line being handed to FRR. Each is
+# either applied or refused, and neither of those stages anything.
+print("\n=== every dataplane statement, negated, stays out of the routing "
+      "section ===")
+_probe = {"ipv6 nd suppress-ra": "", "ipv4 address": " 10.0.0.1/30",
+          "ipv6 address": " 2001:db8::1/64", "description": "",
+          "linux-name": "", "mac-address": " aa:bb:cc:dd:ee:ff",
+          "shutdown": "", "mtu": "", "urpf": " strict", "vlan": " 7",
+          "vrf": ""}
+for _stmt in hexash.INTERFACE_DATAPLANE:
+    _name = " ".join(_stmt)
+    _sh = iface_shell()
+    _out = said(_sh, f"no {_name}{_probe.get(_name, '')}")
+    _staged = [r for r in _sh.candidate.routing if r.startswith("no ")]
+    check(not _staged,
+          f"'no {_name}' was handed to FRR: {_staged}")
+    check(_out == "" or _out.startswith("error:"),
+          f"'no {_name}' must do it or say why: {_out!r}")
+print(f"  {len(hexash.INTERFACE_DATAPLANE)} statements, none staged for FRR")
+
+# --- and the word after `no` is the wrong one in a user block too ---
+print("\n=== a user block names the word it did not understand ===")
+_sh = shell_with_box()
+_sh.feed("configure")
+_sh.feed("user bob")
+_out = said(_sh, "no wibble")
+check("wibble" in _out and "mode: no" not in _out,
+      f"'no wibble' names wibble, not 'no': {_out!r}")
+_o = tree_opts("user", "no ")
+check({"role", "password", "ssh-key"} == set(_o),
+      f"and 'no ?' offers every statement the block has: {sorted(_o)}")
+print(f"  no wibble -> {_out}")
+print(f"  user 'no ?' -> {sorted(_o)}")
+
+
+
+# =====================================================================
+print("\n=== the #141 marker still marks, and now marks less because the "
+      "grammar grew ===")
+# MEASURED CHANGE, said out loud rather than left to be discovered. Putting
+# `no` into the interface grammar means `statement_checked` can walk it, so a
+# statement like `no ip ospf cost 10` - which is FRR's, is handed to FRR, and
+# is what `no` on an FRR statement is supposed to do - is no longer marked
+# `<- not checked`. Before, the VTY marked it while leaving the positive `ip
+# ospf cost 10` unmarked, which was the marker disagreeing with itself about
+# one statement.
+#
+# That is the marker following the grammar, which is how #141 built it: it
+# asks the tree rather than carrying a list. The grammar got bigger, so fewer
+# statements fall outside it. What must NOT happen is the marker going quiet
+# for a statement the tree cannot read, and that is what is pinned here.
+_IFACE = ["interface Gi0/1"]
+check(hexash.statement_checked("no ip ospf cost 10", _IFACE),
+      "`no` on an FRR statement the tree reads is read, like the positive")
+check(hexash.statement_checked("ip ospf cost 10", _IFACE),
+      "which is the answer the positive form always got")
+check(not hexash.statement_checked("no ip ospf wibble 3", _IFACE),
+      "but a word the tree has no entry for is still unread, `no` or not")
+check(not hexash.statement_checked("no wibble 3", _IFACE),
+      "and so is a statement that is nothing the block knows")
+# Other blocks are untouched: only the interface grammar grew a `no`.
+check(not hexash.statement_checked("no bgp ebgp-requires-policy",
+                                   ["router bgp 65000"]),
+      "a block with no `no` in its grammar marks exactly as it did")
+print("  no ip ospf cost 10 -> read;  no ip ospf wibble 3 -> still marked")
+
+# `no` on its own is not a command in any block, and was staged for FRR as
+# the bare word - which FRR answers with an unknown command, in the middle of
+# applying. Measured inside an interface and at the top of configuration mode,
+# because the passthrough is the same one for both.
+for _where, _enter in (("an interface", ["interface TenGigabitEthernet0/8/0"]),
+                       ("[edit]", [])):
+    _sh = shell_with_frr()
+    _sh.feed("configure")
+    for _l in _enter:
+        _sh.feed(_l)
+    _out = said(_sh, "no")
+    check(_out.startswith("error:"),
+          f"'no' alone in {_where} must be refused: {_out!r}")
+    check("no" not in [r.strip() for r in _sh.candidate.routing],
+          f"and never staged for FRR as a bare word: {_sh.candidate.routing}")
+    print(f"  {_where}: no -> {_out}")
+
+# The derived subtree carries FRR's half through, so `?` keeps working past
+# the negated word.
+_ifsh = shell_with_box()
+_ifsh.feed("configure")
+_ifsh.feed("interface TenGigabitEthernet0/8/0")
+_ospf, _, _ = _ifsh._options("no ip ospf ", False)
+check("cost" in _ospf and "area" in _ospf,
+      f"'no ip ospf ?' offers what `ip ospf ?` offers: {sorted(_ospf)}")
+_urpf, _, _ = _ifsh._options("no urpf ", False)
+check({"strict", "loose", "off"} <= set(_urpf),
+      f"'no urpf ?' keeps the argument: {sorted(_urpf)}")
+print(f"  no ip ospf ? -> {sorted(_ospf)}")
+print(f"  no urpf ?    -> {sorted(_urpf)}")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

@@ -50,43 +50,80 @@ bpa_bswap32 (u32 v)
 
 typedef uint64_t ip_csum_t;
 
+/*
+ * Copied from VPP 26.06, /usr/include/vnet/ip/ip_packet.h, names and all.
+ *
+ * The names say the opposite of what the functions do, and that is not a
+ * transcription slip - it is the trap that cost issue #63 a revert. They are
+ * named for what happens to the DATA, while the value they operate on is the
+ * checksum, which is the one's complement of the sum over that data:
+ *
+ *   ip_csum_add_even (c, x)   a field of value x is ADDED to the data,
+ *                             so x is SUBTRACTED from c
+ *   ip_csum_sub_even (c, x)   a field of value x LEAVES the data,
+ *                             so x is ADDED to c
+ *
+ * This shim used to define them the intuitive way round and compose
+ * ip_csum_update the other way round to compensate. The composite agreed with
+ * VPP, so every test passed - and any code that reached for a primitive
+ * directly got the opposite of what the same call does on the box, with no
+ * test able to see it. That is exactly the mistake issue #63 shipped and
+ * reverted, so the shim now mirrors VPP instead of correcting it.
+ */
 static inline ip_csum_t
-ip_csum_sub_even (ip_csum_t c, ip_csum_t x)
+ip_csum_with_carry (ip_csum_t sum, ip_csum_t x)
 {
-  ip_csum_t d = c - x;
-  if (d > c)
-    d--;
-  return d;
+  ip_csum_t t = sum + x;
+  return t + (t < x);
 }
 
+/* Update checksum changing field at even byte offset from x -> 0. */
 static inline ip_csum_t
 ip_csum_add_even (ip_csum_t c, ip_csum_t x)
 {
-  ip_csum_t t = c + x;
-  if (t < c)
-    t++;
-  return t;
+  ip_csum_t d;
+
+  d = c - x;
+
+  /* Fold in carry from high bit. */
+  d -= d > c;
+
+  return d;
+}
+
+/* Update checksum changing field at even byte offset from 0 -> x. */
+static inline ip_csum_t
+ip_csum_sub_even (ip_csum_t c, ip_csum_t x)
+{
+  return ip_csum_with_carry (c, x);
 }
 
 /*
- * The `type, field` pair exists in VPP's macro to size the operand; both
- * operands here are already the right width, so it is accepted and unused.
+ * The `type, field` pair exists in VPP's macro to derive the field's offset
+ * and size. VPP 26.06 uses them for one thing only: a field of ODD SIZE is
+ * shifted a byte into place. Every field this plugin rewrites - the IPv4
+ * source address, a TCP or UDP source port, an ICMP echo identifier - is two
+ * or four bytes, so the shift never fires and the pair is accepted and
+ * unused here. There is no odd-OFFSET byte swap in this release; do not add
+ * one on the strength of older VPP.
  *
- * `sum` is the checksum as it is STORED, which is the one's complement of the
- * sum over the segment. On that inverted value the correction is to add the
- * word that is going away and subtract the one replacing it:
+ * `sum` is the checksum as it is STORED, the one's complement of the sum over
+ * the segment. On that inverted value the correction is to add the word that
+ * is going away and subtract the one replacing it:
  *
  *   HC  = ~S                    the field as stored
  *   S'  = S - old + new         the sum after the change
  *   HC' = ~S' = ~S + old - new
  *
- * Written the other way round it is wrong by exactly 2*(old-new), which is
- * near enough to right that a segment with a small clamp can still checksum
- * correctly by luck. The full recomputation in the tests is what settled the
- * direction, and is what would catch it moving again.
+ * which is what sub_even-then-add_even spells, given what those two names
+ * mean above. Written the other way round it is wrong by exactly
+ * 2*(old-new), which is near enough to right that a segment with a small
+ * clamp can still checksum correctly by luck. The full recomputation in the
+ * tests is what settled the direction, and is what would catch it moving
+ * again.
  */
 #define ip_csum_update(sum, old, new, type, field)                            \
-  ip_csum_sub_even (ip_csum_add_even ((sum), (ip_csum_t) (old)),              \
+  ip_csum_add_even (ip_csum_sub_even ((sum), (ip_csum_t) (old)),              \
 		    (ip_csum_t) (new))
 
 static inline u16
@@ -191,12 +228,48 @@ tcp_header_bytes (const tcp_header_t *t)
 #define TCP_FLAG_SYN 0x02
 #define TCP_FLAG_ACK 0x10
 
+/*
+ * The echo header, so that the `type, field` pair the rewrite passes to
+ * ip_csum_update names something that exists here too. The macro discards the
+ * pair, so a missing type would still compile - and a mirror that compiles
+ * whatever it is given mirrors nothing.
+ */
+typedef struct
+{
+  u16 identifier;
+  u16 sequence;
+} icmp_echo_header_t;
+
+/*
+ * VPP compiles ASSERT out of a release build, and so does this. The suites
+ * assert the same invariants by name, where a broken one prints a red line
+ * saying which check it was instead of dropping a core.
+ */
+#define ASSERT(x) ((void) 0)
+
 /* -------------------------------------------------------------- session */
+
+/* Mirrors bpa_proto_t. The rewrite branches on it, so the ORDER matters as
+ * much as the names: these are stored in a session and compared, never
+ * printed. */
+typedef enum
+{
+  BPA_PROTO_TCP = 0,
+  BPA_PROTO_UDP,
+  BPA_PROTO_ICMP,
+  BPA_PROTO_GRE,
+  BPA_PROTO_ESP,
+  BPA_N_PROTO,
+} bpa_proto_t;
 
 #include "../src/plugins/bpa/bpa_seq.h"
 
 typedef struct
 {
+  u32 ip_priv, ip_pub;
+  u16 port_pub;
+  u16 csum_d_addr, csum_d_l4;
+  u8 proto;
   u16 port_priv;
   /* The correction an ALG left behind, which is now ONE mechanism shared by
    * all of them (#48). This mirror carries the real field so that renaming it

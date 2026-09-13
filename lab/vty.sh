@@ -870,8 +870,19 @@ expect_in "a statement typed in this session shows inside its block" \
 # it is BOTH committed and retyped here, which makes it no evidence at all.
 expect_in "beside what FRR already had, which came back indented" \
   "[ bgp router-id 10.0.0.1]" "$COMP_BGP_THIS"
+# The closing bracket is deliberately not required. These two assertions are
+# about WHERE a statement shows - its block and its indentation - and
+# `maximum-paths` is a statement this VTY has no grammar for, so since #141 it
+# shows with `  <- not checked` after it. Demanding the line end there made a
+# nesting assertion fail over a marker, which is a check measuring the wrong
+# thing.
 expect_in "a nested address-family shows what was typed in it" \
-  "[ maximum-paths 4]" "$COMP_AF_THIS"
+  "[ maximum-paths 4" "$COMP_AF_THIS"
+# And the marker itself, said once rather than smuggled into the assertions
+# above: it is true, it is the point of #141, and a lab that quotes it is
+# checked against the product's own string by test_doc_commands.py.
+expect_in "and it carries the mark, because the VTY has no grammar for it" \
+  "maximum-paths 4  <- not checked" "$COMP_AF_THIS"
 # ...and only its own. The router above it has a remote-as for the same
 # neighbour, and printing the level above is the other half of #98.
 expect_not_in "and not the router's, one level up" \
@@ -879,7 +890,7 @@ expect_not_in "and not the router's, one level up" \
 expect_in "the router above shows the family under it" \
   "[ address-family ipv4 unicast]" "$COMP_BGP_THIS"
 expect_in "with its statements one level deeper" \
-  "[  maximum-paths 4]" "$COMP_BGP_THIS"
+  "[  maximum-paths 4" "$COMP_BGP_THIS"
 expect_in "a static route shows in the block's own words" \
   "[ route 198.18.0.0/24 10.0.0.2]" "$COMP_STATIC_THIS"
 expect_not_in "and not in FRR's, which is not the hierarchy being edited" \

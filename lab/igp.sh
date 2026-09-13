@@ -846,12 +846,18 @@ echo "=========== clear, asserted by what it does ==========="
 # is not evidence.
 expect "the adjacency is up before it is cleared" isis_up
 CLEARISIS=$($HX -c "clear isis adjacency" 2>&1)
+# When the reading was taken, not only what it said. The hello interval is 3
+# seconds, so an adjacency that is back by then is one that re-formed rather
+# than one the clear failed to remove - and on a box running eight labs at once
+# a vtysh call can take longer than that. This check reported a product defect
+# for exactly that reason in one release suite and passed in isolation (#218).
+_CLEARED_AT=$(date +%s)
 DOWN_NOW=$(isis_state)
+_READ_AFTER=$(( $(date +%s) - _CLEARED_AT ))
 printf '%s\n' "$CLEARISIS" | sed 's/^/  /'
 echo "  the adjacency immediately after the clear: ${DOWN_NOW:-gone}"
-# Nothing races this: the hello interval is 3 seconds, so the earliest the
-# adjacency can be back is three seconds after the command returned.
-expect "clearing it took the adjacency down there and then" test -z "$DOWN_NOW"
+expect_timed "clearing it took the adjacency down there and then" \
+  3 "$_READ_AFTER" test -z "$DOWN_NOW"
 n=0
 until isis_up || [ "$n" -ge 90 ]; do sleep 1; n=$((n + 1)); done
 echo "  and back up after ${n}s"
