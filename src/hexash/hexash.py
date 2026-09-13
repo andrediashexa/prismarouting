@@ -8622,11 +8622,70 @@ class Shell:
                     "or it carries the default route - which is refused on "
                     "purpose, so a remote box is not cut off."]
         if "dev 0000:" in conf:
-            return ["a NIC is named in the startup configuration and the "
-                    "dataplane did not bring it up.",
-                    "'show log' and the VPP journal say why; the usual cause "
-                    "is the NIC still bound to a kernel driver."]
+            return self.why_named_nic_absent(conf)
         return []
+
+    #: Where Linux says which driver owns a PCI device, and which drivers exist.
+    PCI_DEVICES = os.environ.get("HEXA_PCI_DEVICES", "/sys/bus/pci/devices")
+    PCI_DRIVERS = os.environ.get("HEXA_PCI_DRIVERS", "/sys/bus/pci/drivers")
+
+    #: The drivers DPDK can take a device through. vfio-pci is the one to use;
+    #: the other two are older and are recognised so a box already set up that
+    #: way is not told it is wrong.
+    DPDK_DRIVERS = ("vfio-pci", "uio_pci_generic", "igb_uio")
+
+    def why_named_nic_absent(self, conf):
+        """
+        A NIC is named in startup.conf and the dataplane does not have it.
+
+        This used to say "the usual cause is the NIC still bound to a kernel
+        driver". That is a guess printed as a finding, and the box can simply
+        look: Linux says which driver owns the device, and whether a driver
+        DPDK can use is loaded at all. docs/context.md 1.4 - a counter is not
+        evidence - and neither is a likely explanation (#283).
+
+        It matters because the three states read identically on the screen and
+        need different work. Nothing in `appliance/` binds a NIC or loads
+        vfio-pci, so an operator who did exactly what the self-test told them -
+        name the interface - lands in the second state with no way to tell it
+        from the first.
+        """
+        m = re.search(r"dev (0000:[0-9a-fA-F:.]+)", conf)
+        if not m:
+            return []
+        addr = m.group(1)
+        said = [f"'{addr}' is named in the startup configuration and the "
+                f"dataplane does not have it."]
+
+        driver = None
+        link = os.path.join(self.PCI_DEVICES, addr, "driver")
+        if os.path.islink(link):
+            driver = os.path.basename(os.path.realpath(link))
+
+        if driver in self.DPDK_DRIVERS:
+            # Bound the right way, so the cause is somewhere this cannot see.
+            # Said as that rather than left out: an operator who has already
+            # done the binding needs to be told it is not the binding.
+            said.append(f"It is bound to {driver}, which DPDK can use, so the "
+                        f"binding is not the problem.")
+            said.append("'show log' and the VPP journal say why the dataplane "
+                        "refused it.")
+            return said
+
+        have = [d for d in self.DPDK_DRIVERS
+                if os.path.isdir(os.path.join(self.PCI_DRIVERS, d))]
+        if driver:
+            said.append(f"It is bound to '{driver}', which DPDK cannot take it "
+                        f"through.")
+        else:
+            said.append("No driver is bound to it at all.")
+        if have:
+            said.append(f"{have[0]} is loaded on this box, and nothing has "
+                        f"bound the device to it.")
+        else:
+            said.append("No driver DPDK can use is loaded: none of "
+                        + ", ".join(self.DPDK_DRIVERS) + ".")
+        return said
 
     def show_interfaces(self, args):
         """

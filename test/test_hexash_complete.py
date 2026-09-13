@@ -2060,9 +2060,64 @@ check(r and "ens19" in r[0],
 check(any("default route" in l for l in r),
       "including the one that is a deliberate refusal")
 
-r = why("dpdk {\n  dev 0000:01:00.0\n}")
-check(r and "did not bring it up" in r[0],
-      f"a NIC that was named and did not appear is a different answer: {r[:1]}")
+# A NIC that was named and did not appear. This used to end "the usual cause
+# is the NIC still bound to a kernel driver" - a guess printed as a finding,
+# and the box can simply look (#283). Nothing in appliance/ binds a NIC or
+# loads vfio-pci, so an operator who did what the box told them lands exactly
+# here, and the three states below need different work and read identically
+# without this.
+
+
+def why_pci(driver=None, loaded=()):
+    """The same explanation, with a PCI tree Linux would have."""
+    dev = os.path.join(_d, "pci", "devices", "0000:01:00.0")
+    drv = os.path.join(_d, "pci", "drivers")
+    shutil.rmtree(os.path.join(_d, "pci"), ignore_errors=True)
+    os.makedirs(dev)
+    os.makedirs(drv)
+    for d in loaded:
+        os.makedirs(os.path.join(drv, d))
+    if driver:
+        target = os.path.join(drv, driver) if driver in loaded else \
+                 os.path.join(_d, "pci", driver)
+        os.makedirs(target, exist_ok=True)
+        os.symlink(target, os.path.join(dev, "driver"))
+    c = os.path.join(_d, "startup.conf")
+    open(c, "w").write("dpdk {\n  dev 0000:01:00.0\n}")
+    probe = hexash.Shell.__new__(hexash.Shell)
+    probe.STARTUP_CONF, probe.TUNE_ENV = c, os.path.join(_d, "tune.env")
+    probe.PCI_DEVICES = os.path.join(_d, "pci", "devices")
+    probe.PCI_DRIVERS = drv
+    return probe.why_no_dataplane_interface()
+
+
+import shutil                                                    # noqa: E402
+
+r = why_pci(driver="ixgbe")
+check(r and "0000:01:00.0" in r[0],
+      f"the address the box was told to use is quoted back: {r[:1]}")
+check(any("'ixgbe'" in l for l in r),
+      f"the driver actually holding the NIC is named, not guessed at: {r}")
+check(any("none of vfio-pci" in l for l in r),
+      f"and a box with no DPDK driver loaded is told that: {r}")
+
+r = why_pci(driver="ixgbe", loaded=("vfio-pci",))
+check(any("vfio-pci is loaded" in l and "nothing has bound" in l for l in r),
+      f"a loaded driver with nothing bound to it is a different answer, "
+      f"because it is different work: {r}")
+check(not any("none of vfio-pci" in l for l in r),
+      f"and it does not also say no driver is loaded: {r}")
+
+r = why_pci(driver="vfio-pci", loaded=("vfio-pci",))
+check(any("binding is not the problem" in l for l in r),
+      f"a NIC already bound for DPDK is told the binding is not the cause, "
+      f"so an operator who has done that work is not sent to do it again: {r}")
+check(any("journal" in l for l in r),
+      f"and pointed somewhere this cannot see: {r}")
+
+r = why_pci(driver=None)
+check(any("No driver is bound to it at all" in l for l in r),
+      f"a device with no driver at all is its own answer: {r}")
 
 # A box that is not an appliance has no startup.conf, and inventing an
 # explanation for it would be worse than saying nothing.
