@@ -2049,8 +2049,16 @@ check(any("Reboot" in l for l in r),
 r = why("dpdk {\n  no-pci\n}", "HEXA_DATAPLANE_IF=\n")
 check(r and "no interface was named" in r[0],
       f"an empty HEXA_DATAPLANE_IF is named as the cause: {r[:1]}")
-check(any("tune.env" in l for l in r),
-      "and the file to edit is named")
+# The COMMAND, not the file. Until #283 there was no way to name the card that
+# was not an editor in Linux, so this advice named a path; now the box has a
+# command for it, and advice that still sends the operator to Linux is advice
+# that contradicts the feature. The words are the boot self-test's, on purpose.
+check(any("dataplane interface" in l for l in r),
+      f"the statement that gives the box a card is not named: {r!r}")
+check(any("commit" in l for l in r),
+      f"and nothing says the change has to be committed: {r!r}")
+check(not any("tune.env" in l for l in r),
+      f"it still sends the operator to a file in Linux: {r!r}")
 
 r = why("dpdk {\n  no-pci\n}", 'HEXA_DATAPLANE_IF="ens19"\n')
 check(r and "ens19" in r[0],

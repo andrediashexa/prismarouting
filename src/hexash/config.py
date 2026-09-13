@@ -926,6 +926,24 @@ class Config:
         self.snmp: dict = dict(SNMP_DEFAULTS)
         self.snmp_communities: list = []
         self.snmp_users: dict = {}
+        # The card the DATAPLANE forwards on, by the name LINUX gives it.
+        #
+        # Not one of the interfaces above, and the difference is the whole
+        # reason this exists. Those are interfaces VPP already has; this one
+        # names the card VPP is to be GIVEN, and until it has been given one
+        # VPP has nothing at all - so the setting that fixes an appliance with
+        # no dataplane interface cannot be expressed in the words that
+        # describe interfaces the dataplane has.
+        #
+        # A Linux name and not a VPP name for the same reason: before the
+        # handover the card exists only to Linux, and Linux's name is the one
+        # written on every other screen the operator can reach.
+        #
+        # Empty means no card is claimed, which is what a fresh appliance
+        # ships as and is deliberate: with nothing named VPP probes and takes
+        # whatever NIC it finds, and on a single-NIC box that is the
+        # management port.
+        self.dataplane_if: str = ""
         self.globals: list[str] = []           # other cgnat statements
         self.routing: list[str] = []           # verbatim FRR statements
         # How many statements the text actually held. Counted rather than
@@ -1015,6 +1033,18 @@ class Config:
             out.append(f"interface {ifname}")
             out += self.interface_lines(ifname)
             out.append(" exit")
+        # With the box's own configuration - the SSH daemon, the accounts,
+        # SNMP - and not with the interface blocks above, because it is the
+        # same kind of statement as those: a property of the machine, applied
+        # by writing a file on it and running a program, rather than something
+        # handed to the dataplane over its API.
+        #
+        # Written only when there is one. A box that has not been given a card
+        # carries no statement, the same way an interface nobody shut down
+        # carries no `shutdown`: recording an absence would put a line on every
+        # box and make the file describe a decision nobody took.
+        if self.dataplane_if:
+            out.append(f"dataplane interface {self.dataplane_if}")
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
         for name in sorted(self.users):
@@ -1207,6 +1237,24 @@ class Config:
                         cfg.unknown.append((lineno, s, why))
                     else:
                         cfg.ssh[w[1]] = w[2]
+                continue
+            if s == "no dataplane interface":
+                cfg.dataplane_if = ""
+                continue
+            if s.startswith("dataplane"):
+                w = s.split()
+                # Shape only. WHETHER the box has this card, and whether it is
+                # the one carrying the default route, is not decided here: a
+                # file is parsed where no box can be asked - `hexash --load`
+                # runs before anything has been reached - and a parser that
+                # answered those questions would answer them wrongly. The
+                # Shell checks them where the box is in reach, which is at the
+                # prompt and again at commit.
+                if w[1:2] != ["interface"] or len(w) != 3:
+                    cfg.unknown.append(
+                        (lineno, s, "expected: dataplane interface <name>"))
+                else:
+                    cfg.dataplane_if = w[2]
                 continue
             if s.startswith("user "):
                 w = s.split()
@@ -1720,6 +1768,12 @@ class Config:
                                 for k in self.users if k in other.users))
 
         return {
+            # One flag, like ssh: the tuner takes the whole setting and either
+            # the box has been given a card or it has not. Both directions are
+            # a change - removing the statement has to make the box stop
+            # claiming the card, or a rollback could hand one over and never
+            # take it back.
+            "dataplane_if_changed": self.dataplane_if != other.dataplane_if,
             "snmp_changed": snmp_changed,
             "ssh_changed": ssh_changed,
             "users_changed": users_changed,

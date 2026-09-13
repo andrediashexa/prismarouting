@@ -34,21 +34,25 @@ O `commit check` informa o re-mapeamento: a conta exata e dois assinantes de exe
 
 ## Recuperar uma caixa que ficou inalcançável
 
-Se o dataplane tomou a placa de gerência, a caixa saiu da rede no instante em que o VPP subiu. Pelo console:
+Se o dataplane tomou a placa de gerência, a caixa saiu da rede no instante em que o VPP subiu. Pelo console, aponte-a para a placa dos assinantes — ou para nenhuma, até decidir:
 
 ```
-HEXA_DATAPLANE_IF=<placa dos assinantes>   em /etc/hexarouting/tune.env
+hexarouting> configure
+hexarouting# [edit] dataplane interface enp2s0
+hexarouting# [edit] commit
+hexarouting# [edit] exit
+hexarouting> save
 ```
 
-ou acrescente `no-pci` ao bloco `dpdk {}` de `/etc/vpp/startup.conf`. **Depois reinicie.**
+`no dataplane interface` é a versão sem escolher: a caixa passa a não pegar placa nenhuma, que é o estado seguro e alcançável por rede. **Depois reinicie.**
 
 
 :::warning
-Reiniciar não é zelo: o DPDK amarrou a placa a um driver de espaço de usuário, e parar o VPP **não a devolve ao kernel de forma confiável**.
+Reiniciar não é zelo: o DPDK amarrou a placa a um driver de espaço de usuário, e parar o VPP **não a devolve ao kernel de forma confiável**. É também por isso que o `commit` não reinicia o dataplane sozinho — quem escolhe a janela é você.
 
 :::
 
-Uma caixa sem interface de dataplane parece uma caixa funcionando — ela responde, loga e aceita configuração, só não encaminha. Por isso o self-test diz que ela não tem interface de dataplane e nomeia o arquivo a editar.
+Uma caixa sem interface de dataplane parece uma caixa funcionando — ela responde, loga e aceita configuração, só não encaminha. Por isso o self-test diz que ela não tem interface de dataplane e diz o que digitar para dar uma a ela.
 
 ## Um disco morreu debaixo do espelho dos registros
 
