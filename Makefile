@@ -8,7 +8,7 @@ BUILD  := .build
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
-      $(BUILD)/test_bpa_sip
+      $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite
 	@sh tools/run-tests.sh
 
 vectors:
@@ -41,6 +41,18 @@ $(BUILD)/test_bpa_mss: test/test_bpa_mss.c src/plugins/bpa/bpa_mss.h \
                        test/bpa_shim.h test/bpa_tcp_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_mss.c
+
+# The outbound rewrite: two checksum corrections per session, applied per
+# packet. Standalone because this exact optimisation has already been written,
+# measured at a 28% saving and shipped WRONG once (#63) - the arithmetic was
+# off by a sign, every translated packet left with both checksums bad, and the
+# only thing that said so was three ALG labs at the end of the change. A
+# checksum this cheap to check does not belong behind a container.
+$(BUILD)/test_bpa_rewrite: test/test_bpa_rewrite.c \
+                           src/plugins/bpa/bpa_rewrite.h \
+                           test/bpa_shim.h test/bpa_tcp_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rewrite.c
 
 $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
                        test/bpa_shim.h test/bpa_tcp_shim.h

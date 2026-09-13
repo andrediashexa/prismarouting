@@ -138,6 +138,21 @@ typedef struct
    */
   u16 peer_call_id;
   u8 gre_state;
+  /*
+   * The two checksum corrections the outbound rewrite runs on, worked out
+   * once by bpa_csum_deltas() when the session is created.
+   *
+   * They can be worked out once because they cannot change: the subscriber
+   * always sends from (ip_priv, port_priv) and this session always rewrites
+   * that to (ip_pub, port_pub). Recomputing them per packet was 201 of the
+   * 395 clocks bpa-in2out cost (#63).
+   *
+   * Set at the END of every path that creates a session, after ip_priv has
+   * been resolved - a correction built from a zero ip_priv is wrong on every
+   * packet of that session and there is no later packet that would repair it.
+   */
+  u16 csum_d_addr; /* the IPv4 header checksum: the address change only */
+  u16 csum_d_l4;   /* TCP and UDP: address and port. ICMP: the echo id. */
   f64 last_heard;
 
   /*

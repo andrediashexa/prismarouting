@@ -3,6 +3,7 @@
 #include "bpa.h"
 #include "bpa_esp.h"
 #include "bpa_pptp.h"
+#include "bpa_rewrite.h"
 #include "bpa_log.h"
 
 /*
@@ -231,6 +232,13 @@ bpa_session_bind (bpa_per_thread_t *pt, const bpa_pool_t *p, u32 pool_index,
   bpa_key_out (&kv, s->ip_pub, s->port_pub, proto);
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->out2in, &kv, 1);
+
+  /*
+   * Last, because it reads ip_priv, which bpa_set_addr_of() resolved above and
+   * which every early return here skips. A session that leaves this function
+   * carries a correction; a session that does not leave it has none to carry.
+   */
+  bpa_session_csum_deltas (s);
 
   return s;
 }
@@ -636,6 +644,13 @@ bpa_session_create_gre (bpa_per_thread_t *pt, const bpa_pool_t *p,
   kv.value = s - pt->sessions;
   clib_bihash_add_del_16_8 (&pt->in2out, &kv, 1);
 
+  /*
+   * Last, because it reads ip_priv, which bpa_set_addr_of() resolved above and
+   * which every early return here skips. A session that leaves this function
+   * carries a correction; a session that does not leave it has none to carry.
+   */
+  bpa_session_csum_deltas (s);
+
   return s;
 }
 
@@ -736,6 +751,13 @@ bpa_session_create_esp (bpa_per_thread_t *pt, const bpa_pool_t *p,
   bpa_key_esp_pub (&kv, b->ip_pub, remote);
   kv.value = bpa_shared_value (ip_priv, fib);
   clib_bihash_add_del_16_8 (&bm->shared, &kv, 1);
+
+  /*
+   * Last, because it reads ip_priv, which bpa_set_addr_of() resolved above and
+   * which every early return here skips. A session that leaves this function
+   * carries a correction; a session that does not leave it has none to carry.
+   */
+  bpa_session_csum_deltas (s);
 
   return s;
 }

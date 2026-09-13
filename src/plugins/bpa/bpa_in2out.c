@@ -17,6 +17,7 @@
 #include "bpa_alg.h"
 #include "bpa_mss.h"
 #include "bpa_pptp.h"
+#include "bpa_rewrite.h"
 
 typedef struct
 {
@@ -75,88 +76,6 @@ typedef enum
   BPA_IN2OUT_NEXT_HAIRPIN,
   BPA_IN2OUT_N_NEXT,
 } bpa_in2out_next_t;
-
-
-static_always_inline void
-bpa_rewrite_src (ip4_header_t *ip, void *l4h, u8 proto, u32 new_addr,
-		 u16 new_port)
-{
-  u32 old_addr = clib_net_to_host_u32 (ip->src_address.as_u32);
-  ip_csum_t sum;
-
-  if (old_addr != new_addr)
-    {
-      sum = ip->checksum;
-      sum = ip_csum_update (sum, ip->src_address.as_u32,
-			    clib_host_to_net_u32 (new_addr), ip4_header_t,
-			    src_address);
-      ip->checksum = ip_csum_fold (sum);
-    }
-
-  /* Nothing below the IP header to touch: a non-first fragment, whose ports
-   * and L4 checksum live in the first one, or ESP, which has neither. Only
-   * the address changes. */
-  if (PREDICT_FALSE (l4h == 0))
-    {
-      ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
-      return;
-    }
-
-  /*
-   * GRE going out carries the Call ID the SERVER assigned, and the server
-   * expects to see it come back unchanged. Only the address is ours to
-   * rewrite here - the Call ID this box allocated appears in the other
-   * direction, which is where bpa_rewrite_dst() puts it.
-   */
-  if (proto == BPA_PROTO_GRE)
-    {
-      ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
-      return;
-    }
-
-  if (proto == BPA_PROTO_ICMP)
-    {
-      icmp46_header_t *icmp = l4h;
-      u16 *id = (u16 *) (icmp + 1);
-      sum = icmp->checksum;
-      sum = ip_csum_update (sum, id[0], clib_host_to_net_u16 (new_port),
-			    icmp_echo_header_t, identifier);
-      icmp->checksum = ip_csum_fold (sum);
-      id[0] = clib_host_to_net_u16 (new_port);
-    }
-  else if (proto == BPA_PROTO_TCP)
-    {
-      tcp_header_t *tcp = l4h;
-      sum = tcp->checksum;
-      sum = ip_csum_update (sum, ip->src_address.as_u32,
-			    clib_host_to_net_u32 (new_addr), ip4_header_t,
-			    src_address);
-      sum = ip_csum_update (sum, tcp->src_port,
-			    clib_host_to_net_u16 (new_port), tcp_header_t,
-			    src_port);
-      tcp->checksum = ip_csum_fold (sum);
-      tcp->src_port = clib_host_to_net_u16 (new_port);
-    }
-  else
-    {
-      udp_header_t *udp = l4h;
-      /* A zero UDP checksum means "not computed" and must stay zero. */
-      if (udp->checksum)
-	{
-	  sum = udp->checksum;
-	  sum = ip_csum_update (sum, ip->src_address.as_u32,
-				clib_host_to_net_u32 (new_addr), ip4_header_t,
-				src_address);
-	  sum = ip_csum_update (sum, udp->src_port,
-				clib_host_to_net_u16 (new_port),
-				udp_header_t, src_port);
-	  udp->checksum = ip_csum_fold (sum);
-	}
-      udp->src_port = clib_host_to_net_u16 (new_port);
-    }
-
-  ip->src_address.as_u32 = clib_host_to_net_u32 (new_addr);
-}
 
 /*
  * Lets a packet past untranslated, and says so.
@@ -597,7 +516,8 @@ VLIB_NODE_FN (bpa_in2out_node)
       if (PREDICT_FALSE (s->out_fib_index != ~0u))
 	vnet_buffer (b[0])->sw_if_index[VLIB_TX] = s->out_fib_index;
 
-      bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub);
+      bpa_rewrite_src (ip, l4h, (u8) proto, s->ip_pub, s->port_pub,
+		       s->csum_d_addr, s->csum_d_l4);
       n_translated++;
 
       /*
