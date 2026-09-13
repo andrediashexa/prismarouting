@@ -127,6 +127,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box whose dataplane had no interface passed its own self-test, and the
+  VTY guessed at why** ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
+  Reported from a real box: VPP still has no interfaces, and the only way to
+  give it one is to edit a file in Linux.
+
+  Two things were wrong before the missing feature is even reached.
+
+  `appliance/selftest` reported `[ ok ] dataplane NIC: <address>` as soon as a
+  device appeared in `startup.conf`. A name in a file is not a NIC: a box whose
+  dataplane holds nothing but `local0` passed the one screen meant to find
+  that. It now asks the dataplane, and a named device VPP does not have is a
+  **FAILED** check.
+
+  `show interface` ended its explanation with "the usual cause is the NIC still
+  bound to a kernel driver" - a guess printed as a finding, when Linux will
+  simply say. It now reads the driver actually holding the device and whether a
+  driver DPDK can use is loaded at all, and tells the three states apart,
+  because they need different work and read identically otherwise: bound to a
+  kernel driver with nothing loaded, bound to a kernel driver with `vfio-pci`
+  loaded and nothing bound to it, and already bound for DPDK - where the answer
+  is that the binding is *not* the problem, so an operator who has done that
+  work is not sent to do it again.
+
+  **Nothing in `appliance/` binds a NIC or loads `vfio-pci`**, so an operator
+  who does exactly what the box tells them - name the interface - lands in the
+  second state and is still forwarding nothing. Naming it from the VTY, and the
+  binding itself, are what #283 stays open for.
+
 * **A check that a message is ABSENT stopped being able to fail**
   ([#279](https://github.com/andrediashexa/hexarouting/issues/279)).
   Reflowing the OSPF findings above split the sentence `it is facing

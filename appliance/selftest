@@ -569,8 +569,50 @@ elif grep -q "no-pci" "$STARTUP" 2>/dev/null; then
   say "         hexarouting-tune and vpp. The management interface is refused"
   say "         even if named there."
 elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
-  ok "dataplane NIC: $(grep -o 'dev 0000:[0-9a-f:.]*' "$STARTUP" \
-| head -1 | cut -d' ' -f2)"
+  # A NAME IN A FILE IS NOT A NIC. This said [ ok ] as soon as a device
+  # appeared in startup.conf, so a box whose dataplane has no interface at all
+  # passed its own self-test on the strength of a line somebody wrote (#283).
+  # That is docs/context.md 1.4 one more time: the configuration is the
+  # intention, and the dataplane is the fact.
+  #
+  # Nothing in this appliance binds a NIC to vfio-pci or loads it, so an
+  # operator who did exactly what the warning above tells them - name the
+  # interface - lands here, is told the NIC is fine, and still forwards
+  # nothing.
+  NICPCI=$(grep -o 'dev 0000:[0-9a-f:.]*' "$STARTUP" | head -1 | cut -d' ' -f2)
+  # "any interface that is not local0" and not a count: local0 is VPP's own
+  # loopback and is present on a box with no NIC whatever.
+  if vppctl show interface 2>/dev/null \
+       | awk 'NR>1 && $1 != "" && $1 != "local0" {found=1} END {exit !found}'
+  then
+    ok "dataplane NIC: $NICPCI"
+  else
+    bad "the dataplane has no interface: $NICPCI is named and VPP does not have it"
+    NICDRV=$(basename "$(readlink -f "/sys/bus/pci/devices/$NICPCI/driver" \
+                         2>/dev/null)" 2>/dev/null)
+    case "$NICDRV" in
+      vfio-pci|uio_pci_generic|igb_uio)
+        say "         it is bound to $NICDRV, which DPDK can use, so the"
+        say "         binding is not the problem. The VPP journal says why." ;;
+      "" |.)
+        say "         no driver is bound to it at all." ;;
+      *)
+        say "         it is bound to '$NICDRV', which DPDK cannot take it"
+        say "         through." ;;
+    esac
+    for d in vfio-pci uio_pci_generic igb_uio; do
+      [ -d "/sys/bus/pci/drivers/$d" ] && { HAVEDRV=$d; break; }
+    done
+    if [ -n "${HAVEDRV:-}" ]; then
+      case "$NICDRV" in
+        vfio-pci|uio_pci_generic|igb_uio) : ;;
+        *) say "         $HAVEDRV is loaded, and nothing has bound the device to it." ;;
+      esac
+    else
+      say "         no driver DPDK can use is loaded: none of vfio-pci,"
+      say "         uio_pci_generic, igb_uio."
+    fi
+  fi
 else
   bad "the dataplane may claim any NIC it finds, including this box's"
   say "         management interface. /etc/vpp/startup.conf names no device"

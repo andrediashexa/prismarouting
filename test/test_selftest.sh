@@ -1248,15 +1248,52 @@ nicconf() {  # <extra lines for the startup.conf of an otherwise tuned box>
   printf '%s\n' "$1" >> "$FAKE/root/etc/vpp/startup.conf"
 }
 : > "$FAKE/vppctl_ok"
+# The dataplane HAS an interface. A name in startup.conf used to be the whole
+# check, so this section passed on a box whose dataplane had nothing but
+# local0 - which is the state an operator reaches by doing what the warning
+# above tells them to do, since nothing in the appliance binds the NIC (#283).
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet3/0/0           1      up          9000/0/0/0     rx packets                  12
+local0                            0     down          0/0/0/0
+IFACE
 nicconf 'dpdk {
   dev 0000:03:00.0
 }'
 run
 if said '\[ ok \] dataplane NIC: 0000:03:00.0'; then
-  ok "a named device is reported, with the address it names"
+  ok "a named device the dataplane really has is reported, with its address"
 else
-  bad "a startup.conf naming a device said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+  bad "a startup.conf naming a device the dataplane HAS said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
 fi
+# THE STATE AN OPERATOR ACTUALLY REACHES. They read the no-pci warning above,
+# name the interface as it tells them to, and the dataplane still has nothing -
+# because nothing in this appliance binds the NIC or loads vfio-pci. The box
+# used to answer that with `[ ok ] dataplane NIC`, so the one screen meant to
+# find this reported the box as sound (#283).
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+local0                            0     down          0/0/0/0
+IFACE
+nicconf 'dpdk {
+  dev 0000:03:00.0
+}'
+run
+if said '\[FAIL\] the dataplane has no interface: 0000:03:00.0 is named'; then
+  ok "a named device the dataplane does NOT have is a FAILED check, not an ok"
+else
+  bad "a box whose dataplane has only local0 passed on the strength of a name "\
+"in a file: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+# And it says WHICH of the three states it is, because they need different
+# work and read identically otherwise. The fake root has no PCI tree, so this
+# is the "no driver at all" arm.
+if said 'no driver DPDK can use is loaded'; then
+  ok "and it names what is missing rather than guessing at a likely cause"
+else
+  bad "it failed without saying why: $(printf '%s\n' "$OUTPUT" | grep -A4 -i 'no interface' || echo '<nothing>')"
+fi
+
 nicconf 'plugin dpdk_plugin.so { disable }'
 run
 if said '\[info\] DPDK is off until hugepages exist'; then
