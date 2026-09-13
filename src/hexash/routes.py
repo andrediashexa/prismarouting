@@ -27,7 +27,18 @@ import re
 
 # A prefix on its own at the start of a line opens an entry in "show ip fib".
 _PREFIX = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}/\d{1,2})\b")
+# The header "show ip fib" prints above each table, in its two forms.
+#
+# A table with no name prints `ipv4-VRF:10`. A table WITH a name prints the
+# name instead - `vrf7, fib_index:2` - and this pattern used to match only the
+# first, so every prefix in a named table was filed under whichever table came
+# before it. `Shell.set_vrf()` names every table it creates, so that was every
+# box where an operator had typed `interface <name> / vrf <n>` (#268).
+#
+# fib_index is NOT the table id and must never be used as one: measured on VPP
+# 26.06, table 10 is fib_index:1.
 _VRF = re.compile(r"^ipv4-VRF:(\d+)")
+_NAMED = re.compile(r"^(\S+), fib_index:(\d+)")
 _VIA = re.compile(r"ipv4 via (\d{1,3}(?:\.\d{1,3}){3}) ([^:\s]+)")
 _GLEAN = re.compile(r"ipv4-glean: \[src:([^\]]+)\] ([^:\s]+)")
 _RECEIVE = re.compile(r"dpo-receive: (\d{1,3}(?:\.\d{1,3}){3}) on (\S+)")
@@ -42,7 +53,30 @@ NEIGHBOUR = "neighbour"  # a resolved neighbour, not a route anybody configured
 DROP = "drop"            # explicitly discarded
 
 
-def parse_fib(text: str) -> dict:
+def table_names(details) -> dict:
+    """
+    {name: table_id} from an `ip_table_dump`.
+
+    The name-to-id map exists nowhere in `vppctl`: `show ip fib summary` and
+    `show ip fib mem` print the same description the parser cannot resolve, and
+    `show fib tables` does not exist. The binary API carries both together,
+    which is why this takes a dump rather than text.
+
+    Reading `vrf<n>` out of the name would work for the tables this product
+    happens to create and for no others, which is a guess dressed as a rule.
+    """
+    out = {}
+    for d in details or []:
+        t = d.get("table") or {}
+        if t.get("is_ip6"):
+            continue
+        name = (t.get("name") or "").strip()
+        if name:
+            out[name] = int(t["table_id"])
+    return out
+
+
+def parse_fib(text: str, names: dict = None) -> dict:
     """
     "show ip fib" as {prefix: entry}, per VRF.
 
@@ -58,6 +92,21 @@ def parse_fib(text: str) -> dict:
         m = _VRF.match(raw)
         if m:
             vrf = int(m.group(1))
+            tables.setdefault(vrf, {})
+            prefix = None
+            continue
+
+        m = _NAMED.match(raw)
+        if m:
+            # A named table, keyed by the id the NAME maps to. When the map
+            # does not have it - no API, or a table created outside this
+            # product - the key is the name itself. That is deliberately not a
+            # number: a caller asking for table 7 will not find it, so the
+            # answer degrades to "not known" instead of being attributed to
+            # the table above, which is what the defect did. Dropping the
+            # prefixes would be wrong too, because `show route` would lose a
+            # VRF without saying so.
+            vrf = (names or {}).get(m.group(1), m.group(1))
             tables.setdefault(vrf, {})
             prefix = None
             continue

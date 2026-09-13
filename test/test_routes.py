@@ -343,5 +343,64 @@ check(routes.lcp_pairs("") == {}, "no output is no pairs, not a crash")
 check(routes.lcp_pairs("Linux-CP Interface Pairs:\n") == {},
       "a header with no pairs is no pairs")
 
+print("\n=== a NAMED fib table is not the table above it (#268) ===")
+# `show ip fib` prints a table with no name as `ipv4-VRF:10` and a table WITH a
+# name as `vrf7, fib_index:2`. The parser matched only the first, so every
+# prefix in a named table was filed under whichever table came before it - and
+# `Shell.set_vrf()` names every table it creates, so this was every box where
+# an operator had typed `interface <name> / vrf <n>`.
+#
+# It reported MORE than the box has, which is the hard direction to notice:
+# `show route` listed a VRF's routes as the global table's, and the next-hop
+# reachability check accepted a route whose next hop is connected only in some
+# other table - the exact silent-and-inert route it exists to refuse.
+NAMED_FIB = """ipv4-VRF:0, fib_index:0, flow hash:[src dst ] epoch:0 flags:none locks:[default-route:1, ]
+200.150.0.0/24
+  unicast-ip4-chain
+    [0] [@4]: ipv4-glean: [src:200.150.0.0/24] pg1: mtu:9000
+vrf7, fib_index:2, flow hash:[src dst ] epoch:0 flags:none locks:[CLI:1, ]
+10.7.0.0/24
+  unicast-ip4-chain
+    [0] [@4]: ipv4-glean: [src:10.7.0.0/24] pg2: mtu:9000
+"""
+
+_NAMES = routes.table_names(
+    [{"table": {"table_id": 7, "is_ip6": False, "name": "vrf7"}},
+     {"table": {"table_id": 7, "is_ip6": True, "name": "vrf7-v6"}}])
+check(_NAMES == {"vrf7": 7},
+      f"the name-to-id map is not what ip_table_dump says, or it took the v6 "
+      f"table's name for the v4 one: {_NAMES}")
+
+_t = routes.parse_fib(NAMED_FIB, _NAMES)
+check("10.7.0.0/24" not in _t.get(0, {}),
+      f"a prefix that is only in table 7 is reported as the global table's. "
+      f"show route would list a VRF's routes as table 0's, and the next-hop "
+      f"check would accept a route whose next hop is connected nowhere near "
+      f"it: {sorted(_t.get(0, {}))}")
+check(sorted(_t.get(7, {})) == ["10.7.0.0/24"],
+      f"the named table's prefix did not land in table 7: {_t}")
+check(sorted(_t.get(0, {})) == ["200.150.0.0/24"],
+      f"the global table lost or gained a prefix: {_t}")
+
+# And with no map at all, which is what a box with no binary API gives. The
+# prefixes must still not be attributed to the table above: keyed by the name,
+# no numeric lookup finds them, so the answer is "not known here".
+_u = routes.parse_fib(NAMED_FIB)
+check("10.7.0.0/24" not in _u.get(0, {}),
+      f"with no name map the named table's prefix was filed under the table "
+      f"above it, which is the defect itself: {sorted(_u.get(0, {}))}")
+check("vrf7" in _u,
+      f"with no name map the named table's prefixes were dropped, so a box "
+      f"with no API would silently lose a VRF from show route: {sorted(_u, key=str)}")
+
+# The unnamed form has to keep working, or this section trades one wrong answer
+# for another.
+_v = routes.parse_fib(NAMED_FIB.replace("vrf7, fib_index:2", "ipv4-VRF:7, fib_index:2"))
+check(sorted(_v.get(7, {})) == ["10.7.0.0/24"],
+      f"an unnamed table stopped being read: {_v}")
+print("  a named table lands under its own id, and under its name when "
+      "nobody can be asked")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
