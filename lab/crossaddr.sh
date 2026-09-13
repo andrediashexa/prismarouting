@@ -8,6 +8,22 @@
 # retention log then looks like, and what breaks.
 #
 # It changes no default. It is the reading behind issue #226.
+#
+# SINGLE-THREADED BY CONSTRUCTION, and that is a limit rather than an
+# oversight. Every count here depends on which blocks the free list hands out
+# in what order, and with workers the free list is sharded: a subscriber draws
+# only from its own worker's slice, so the gap between two blocks is n_workers
+# indices rather than one and the subscribers below would not even share a
+# slice. Run with LAB_WORKERS it would still print numbers, and they would be
+# numbers about a different arrangement than the one it claims to measure -
+# which is the defect lab/extblocks.sh had and this file is not going to
+# repeat.
+#
+# The line below is the machine-readable half of that, because the paragraph
+# above is a sentence and the list it talks about is in another file. Nothing
+# compared the two, so adding this lab to BOTH_WAYS would have left a comment
+# saying it was not there. test/test_run_all_labs.sh reads the marker.
+# NOT-BOTH-WAYS: the free list is sharded per worker, so every gap this lab counts would be about a different arrangement
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh

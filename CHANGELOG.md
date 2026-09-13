@@ -217,6 +217,24 @@ version has a chance of seeing it.
 
 ### Internal
 
+* **A lab that says it is single-threaded, and a list in another file that
+  decides** ([#226](https://github.com/andrediashexa/hexarouting/issues/226)).
+  `lab/crossaddr.sh` counts blocks in the order the free list hands them out.
+  With workers that list is sharded per worker, so the two subscribers it
+  compares would not share a slice and every gap it measures would be about a
+  different arrangement - it would print numbers, and they would be about
+  something else. That is the defect `lab/extblocks.sh` had at two workers.
+
+  The header said so in a sentence, and `BOTH_WAYS` is in
+  `tools/run-all-labs.sh`, with nothing comparing the two: a lab added to that
+  list would have carried a comment saying it was not in it. The lab carries a
+  `# NOT-BOTH-WAYS:` marker now and `test/test_run_all_labs.sh` reads it, the
+  way the suite already holds its `NOT_LABS` reasons as data rather than as
+  prose.
+
+  Three reds: the lab added to `BOTH_WAYS`, the marker renamed so the check
+  reads nothing, and the marker left with no reason after it.
+
 * **The acceptance test for high availability, written before high
   availability, and red**
   ([#9](https://github.com/andrediashexa/hexarouting/issues/9)).

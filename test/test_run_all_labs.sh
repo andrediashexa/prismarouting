@@ -594,5 +594,53 @@ rm -f "$_probe"
   || bad "these reasons come back as a single word, so the announcement prints "\
 "a fragment:$short"
 
+echo
+echo "=== a lab that says it is single-threaded is not run with workers ==="
+# A lab whose counts depend on the order the free list hands blocks out cannot
+# be run with workers: the list is sharded per worker, so the same lab measures
+# a different arrangement and still prints numbers. lab/crossaddr.sh says so in
+# its header, and the list it talks about is in another file, with nothing
+# comparing the two - which is the shape this repository keeps finding.
+#
+# The marker is the comparable half. A lab carrying it MUST NOT be in
+# BOTH_WAYS.
+_both=$(sed -n '/^BOTH_WAYS="/,/"$/p' "$RA" | tr -d '"' | sed 's/^BOTH_WAYS=//')
+_marked=""
+_wrong=""
+for _f in "$REPO"/lab/*.sh; do
+  grep -q '^# NOT-BOTH-WAYS:' "$_f" || continue
+  _n=$(basename "$_f" .sh)
+  _marked="$_marked $_n"
+  case " $_both " in *" $_n "*) _wrong="$_wrong $_n" ;; esac
+done
+[ -z "$_wrong" ] \
+  && ok "none of the marked lab(s) is in BOTH_WAYS:$_marked" \
+  || bad "these labs say they are single-threaded by construction and the "\
+"suite runs them with workers anyway, where every count they print is about "\
+"an arrangement they are not measuring:$_wrong"
+
+# And the check is reading something. Without this it passes on a marker that
+# has been renamed, which is how a check stops checking without going red.
+if [ -n "$_marked" ]; then
+  ok "the marker was found, so the comparison above happened"
+else
+  bad "no lab carries '# NOT-BOTH-WAYS:', so the check above compared nothing. "\
+"Either the marker was renamed or the last lab using it was deleted"
+fi
+
+# The reason has to be there too. A bare marker is a rule with no why, and the
+# next person reads the list rather than the argument.
+_bare=""
+for _n in $_marked; do
+  _r=$(sed -n 's/^# NOT-BOTH-WAYS:[[:space:]]*//p' "$REPO/lab/$_n.sh")
+  case "$_r" in
+    ?*" "?*) : ;;
+    *) _bare="$_bare $_n" ;;
+  esac
+done
+[ -z "$_bare" ] \
+  && ok "and each one says why" \
+  || bad "these carry the marker with no reason after it:$_bare"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
