@@ -808,6 +808,43 @@ fi
 rm -rf "$mstat"
 
 echo
+echo "=== the control that keeps the console driver honest is invoked ==="
+# lab/install-iso.sh has a wrong-password mode, TESTING.md calls it "how the
+# driver is kept honest", and nothing ran it: not the suite, which excludes
+# install-iso, not the Makefile, and not the release gate (#256). A control
+# that is optional is a control nobody runs.
+#
+# Checked HERE rather than only in the Makefile, because a recipe nobody
+# invokes cannot fail either. This asserts the wiring; the recipe's own three
+# branches were driven against a stub, which the CHANGELOG entry records.
+MK=$REPO/Makefile
+if grep -q "install-iso.sh wrong-password" "$MK"; then
+  ok "make test-install runs the wrong-password control too"
+else
+  bad "lab/install-iso.sh has a wrong-password mode that nothing invokes: "\
+"TESTING.md calls it how the driver is kept honest, and a driver that stopped "\
+"noticing a refused login would let the install lab run its whole session "\
+"against a login prompt and report a pass"
+fi
+
+# And it must demand a FAILURE. Running the control and accepting whatever it
+# did reads like a check and asserts nothing.
+if grep -q "the control PASSED" "$MK"; then
+  ok "and fails if the control ever starts passing"
+else
+  bad "the Makefile runs the wrong-password control and does not require it "\
+"to fail, so the control cannot report anything"
+fi
+
+# And it must be the LOGIN that failed. A hang would satisfy "it failed".
+if grep -q "ANSWERED and REFUSED the credentials" "$MK"; then
+  ok "and requires it to have failed at the login, not by hanging"
+else
+  bad "the Makefile requires the control to fail and does not check WHERE: a "\
+"console driver whose failure mode is a hang proves nothing"
+fi
+
+echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
 exit 1

@@ -130,11 +130,38 @@ iso:
 
 # Installs the ISO onto a blank disk and boots that disk with the ISO gone.
 # The second boot is the assertion: a live image cannot prove it.
+# The wrong-password run goes WITH it, in the same container, and is not a
+# separate target anybody can forget. TESTING.md calls it "how the driver is
+# kept honest" and nothing invoked it: not the suite, which excludes
+# install-iso, not this file, and not the release gate (#256). A control that
+# is optional is a control nobody runs, and what it controls is the thing that
+# would otherwise let this lab run a whole session against a login prompt and
+# report a pass.
+#
+# Three conditions, because two of them are easy to write in a way that cannot
+# go red: the run must FAIL, it must fail AT THE LOGIN, and this recipe must
+# fail if it ever starts passing.
 test-install: iso
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 qemu-utils squashfs-tools \
 	      fdisk mdadm >/dev/null 2>&1; \
-	    sh /src/lab/install-iso.sh)
+	    sh /src/lab/install-iso.sh; \
+	    echo; echo "=========== THE CONTROL: a password the box refuses ==========="; \
+	    if sh /src/lab/install-iso.sh wrong-password > /tmp/wrong-password.log 2>&1; then \
+	      echo "  FAIL: the control PASSED. The driver no longer notices a"; \
+	      echo "        refused login, so this lab could run its whole session"; \
+	      echo "        against a login prompt and report a pass."; \
+	      tail -30 /tmp/wrong-password.log | sed "s/^/        | /"; \
+	      exit 1; \
+	    fi; \
+	    if grep -q "ANSWERED and REFUSED the credentials" /tmp/wrong-password.log; then \
+	      echo "  [ ok ] the control failed at the login, and the driver said so"; \
+	    else \
+	      echo "  FAIL: the control failed, but NOT at the login. A driver whose"; \
+	      echo "        failure mode is a hang proves nothing."; \
+	      tail -30 /tmp/wrong-password.log | sed "s/^/        | /"; \
+	      exit 1; \
+	    fi)
 
 # The same install onto TWO disks, then the same box booted with one of them
 # pulled out. It is a separate target and not a flag on the one above because
