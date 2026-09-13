@@ -416,7 +416,7 @@ A maior parte de uma route-map continua passando direto para o roteamento. Sem m
 ```
 route-map RM-CLIENTES permit 10
  match ip address prefix-list PL-CLIENTES
- set tag 100    <- not checked by this VTY
+ set tag 100  <- not checked
 ```
 
 A marca é só da exibição: ela não vai para a configuração salva, nem para uma revisão de rollback, nem para o roteamento. E se você copiar a tela para um arquivo e carregar de volta, ela é retirada na leitura — a tela e o arquivo não divergem.

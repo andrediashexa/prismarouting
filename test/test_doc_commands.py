@@ -261,6 +261,44 @@ for cmd, must_say in LIVE_MEDIUM_ONLY.items():
             f"page explains that it exists only on the installation medium: "
             f"a reader on a running box will look for it and not find it")
 
+print("\n=== every quotation of the unchecked marker is the one the box emits ===")
+#
+# The marker text changed from "    <- not checked by this VTY" to
+# "  <- not checked" when the long form was measured putting a real statement
+# at 89 columns on an 80-column console. Three places kept quoting the old one:
+# a wiki page, a docs line, and an assertion in lab/bgp-policy.sh that had been
+# green for three days and went red the first time anything ran it.
+#
+# A literal the product emits and other files quote is exactly the shape
+# test_context_map.py guards for paths: confidently wrong, and silent until
+# somebody meets it. Labs are the ones that matter, because a lab quoting a
+# marker the box no longer prints is a check that cannot pass.
+sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
+from config import UNCHECKED_MARK                                # noqa: E402
+
+_mark = UNCHECKED_MARK.strip()
+_quoters = []
+for _root, _dirs, _files in os.walk(os.path.join(REPO, "lab")):
+    for _f in sorted(_files):
+        if _f.endswith(".sh"):
+            _quoters.append(os.path.join(_root, _f))
+_bad = []
+for _path in _quoters:
+    for _n, _line in enumerate(open(_path, encoding="utf-8"), 1):
+        if "<- not checked" not in _line:
+            continue
+        # The quoted needle has to be a prefix of what the box prints. A
+        # longer one cannot match, which is the failure that happened.
+        _quoted = _line[_line.index("<- not checked"):].split('"')[0].rstrip()
+        if not _mark.startswith(_quoted):
+            _bad.append(f"{os.path.relpath(_path, REPO)}:{_n} quotes "
+                        f"{_quoted!r}, and the box prints {_mark!r}")
+if _bad:
+    for _b in _bad:
+        bad(_b)
+else:
+    ok(f"{len(_quoters)} lab(s) checked; every quotation matches {_mark!r}")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
