@@ -74,6 +74,34 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release gate refused every future release, for duplicates in sections
+  it also forbids editing**
+  ([#274](https://github.com/andrediashexa/hexarouting/issues/274)). The
+  duplicate-heading check added for #267 read the whole file. The whole file is
+  where the six duplicates already are - three in 0.67.0, two in 0.66.0, one in
+  0.14.0 - and every one is in a section that has shipped, which the check
+  above it refuses to let anyone edit. Measured on a dry run of 0.68.0: the
+  gate refuses, naming six duplicates across three releases, none of which
+  anyone is allowed to touch.
+
+  It reads the section being released now. The tagged sections are not going
+  unchecked; they are held by the stronger rule, which is not "has no duplicate
+  headings" but "is byte-for-byte what its tag shipped", duplicates and all. A
+  duplicate that shipped is part of a medium somebody is running.
+
+  A gate nobody can pass is a gate somebody switches off, and this is the only
+  thing in the project that has ever caught a release mistake.
+
+  An empty extraction is a refusal of its own now. A check that stops reading
+  passes silently, which is worse than the defect it looks for; shown by
+  blinding the section match, and the guard fires.
+
+* **The same entry appeared twice, and one release section had two `### Fixed`
+  headings.** Both are the merge artifact the checks above describe: a branch
+  cut before a release rename re-adds its whole entry, git files both sides,
+  and each side brings its heading. Repaired under `## Unreleased`, where they
+  were, before they reached a tag.
+
 * **`cgnat <anything>` was accepted, saved, shown back, and applied to
   nothing** ([#273](https://github.com/andrediashexa/hexarouting/issues/273)).
   A catch-all in `do_config` took any line beginning `cgnat `. It passed
