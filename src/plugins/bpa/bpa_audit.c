@@ -312,6 +312,7 @@ bpa_audit_entry (const char *op, const char *kind, u8 *subject, bpa_pool_t *p,
   time_t now;
   u8 *line = 0;
   int fd;
+  off_t at;
 
   now = (time_t) unix_time_now ();
   gmtime_r (&now, &tm);
@@ -334,14 +335,32 @@ bpa_audit_entry (const char *op, const char *kind, u8 *subject, bpa_pool_t *p,
    * cover itself - and the digest of the entry before it.
    */
   line = format (line, " seq %llu", bm->audit_seq + 1);
-  {
-    u8 digest[32];
-
-    bpa_audit_digest (bm->audit_head, line, vec_len (line), digest);
-    clib_memcpy (bm->audit_head, digest, 32);
-    bm->audit_seq++;
-    line = format (line, " sha256 %U", format_hex_bytes, digest, 32);
-  }
+  u8 digest[32];
+  bpa_audit_digest (bm->audit_head, line, vec_len (line), digest);
+  line = format (line, " sha256 %U", format_hex_bytes, digest, 32);
+  /*
+   * The chain is NOT advanced here, and that is the whole of #236.
+   *
+   * It used to advance before the write and whether or not the write happened.
+   * One entry the box could not write then left the head pointing at a line
+   * the file does not contain and the sequence one ahead of it, so the next
+   * entry that DID get written landed with a gap - and `bpa_audit_verify`
+   * reported "1 entry was removed from the middle" over a file nobody had
+   * touched. Measured on a box whose records filesystem had gone read-only,
+   * which is what ext4 does to itself when the disk under it fails:
+   *
+   *   BROKEN before entry 5
+   *     the sequence jumps from 3 to 5: 1 entry was removed from the middle
+   *
+   * That is the exact misdiagnosis the paragraph above bpa_audit_verify says
+   * the function was built to avoid, produced by the writer rather than by an
+   * attacker, and handed to whoever is investigating a court order.
+   *
+   * So the head advances below, only once the bytes are in the file, and a
+   * failure is counted in audit_lost instead. What is in the file is then
+   * always a chain that verifies, and the entry that never made it is
+   * reported as what it is.
+   */
 
   /*
    * Also to VPP's log: a local file survives a reboot, not a lost disk.
@@ -354,6 +373,7 @@ bpa_audit_entry (const char *op, const char *kind, u8 *subject, bpa_pool_t *p,
   fd = open ((char *) bm->audit_path, O_WRONLY | O_APPEND | O_CREAT, 0640);
   if (fd < 0)
     {
+      bm->audit_lost++;
       vlib_log_err (bm->log_class,
 		    "cannot open the configuration trail at %v: the proof for "
 		    "deterministic mode depends on it",
@@ -361,11 +381,38 @@ bpa_audit_entry (const char *op, const char *kind, u8 *subject, bpa_pool_t *p,
       goto done;
     }
 
+  /*
+   * Where the file ended before this entry, so a short write can be taken
+   * back. A filesystem that fills mid-write returns fewer bytes than it was
+   * given and leaves a fragment behind: no newline, no digest, and both
+   * readers then treat it as a line written before the chain existed, which
+   * is a wrong answer to give an investigator. lseek on an O_APPEND fd is the
+   * length, and it is taken before the write for that reason.
+   */
+  at = lseek (fd, 0, SEEK_END);
+
   line = format (line, "\n");
   if (write (fd, line, vec_len (line)) != (ssize_t) vec_len (line))
-    vlib_log_err (bm->log_class, "incomplete write to the configuration trail");
+    {
+      bm->audit_lost++;
+      if (at >= 0)
+	{
+	  if (ftruncate (fd, at) != 0)
+	    vlib_log_err (bm->log_class,
+			  "a partly written entry is in the trail and could "
+			  "not be removed: the file ends mid-entry");
+	}
+      vlib_log_err (bm->log_class,
+		    "incomplete write to the configuration trail: entry %llu "
+		    "was not recorded",
+		    bm->audit_seq + 1);
+    }
   else
-    fsync (fd); /* compliance: it must not live only in the cache */
+    {
+      fsync (fd); /* compliance: it must not live only in the cache */
+      clib_memcpy (bm->audit_head, digest, 32);
+      bm->audit_seq++;
+    }
   close (fd);
 
 done:
@@ -412,7 +459,7 @@ bpa_audit_verify (vlib_main_t *vm)
   u8 *data = 0;
   char *line, *next, *end;
   u64 seq = 0, expect = 0, unchained = 0, checked = 0;
-  int fd, n, broken = 0;
+  int fd, n, broken = 0, last_nl;
   u8 buf[65536];
 
   fd = open ((char *) bm->audit_path, O_RDONLY);
@@ -428,6 +475,9 @@ bpa_audit_verify (vlib_main_t *vm)
 
   line = (char *) data;
   end = (char *) data + vec_len (data) - 1;
+  /* Whether the file's last byte closed its last line. Read once, before the
+   * loop chops the buffer into strings. */
+  last_nl = (end > (char *) data && end[-1] == '\n');
 
   for (; line < end && *line; line = next)
     {
@@ -444,6 +494,30 @@ bpa_audit_verify (vlib_main_t *vm)
       sha = strstr (line, " sha256 ");
       if (!sha || strlen (sha + 8) < 64)
 	{
+	  /*
+	   * The LAST line with no digest is a different event from any other
+	   * line with no digest, and they used to be reported the same way.
+	   *
+	   * An entry written before the chain existed is followed by the
+	   * entries that came after it. A fragment is the end of the file: no
+	   * newline closed it, so it is what a write that stopped half way
+	   * leaves behind. Calling that "written before the chain existed"
+	   * tells an investigator the trail is old where it is actually cut
+	   * (#236).
+	   */
+	  if (next >= end && !last_nl)
+	    {
+	      vlib_cli_output (vm, "  TRUNCATED: the file ends mid-entry");
+	      vlib_cli_output (vm,
+			       "    %.*s", (int) (end - line), line);
+	      vlib_cli_output (vm,
+			       "    a write stopped part way through this "
+			       "entry. It is not an entry written before the "
+			       "chain existed, and it is not one somebody "
+			       "removed");
+	      broken = 1;
+	      break;
+	    }
 	  /* Written before the chain existed. Readable, and counted, but not
 	   * covered: saying so is the difference between "this trail is
 	   * intact" and "this part of it is not claimed to be". */
@@ -508,6 +582,29 @@ bpa_audit_verify (vlib_main_t *vm)
 		     "chain existed, readable but not covered",
 		     unchained, unchained == 1 ? "y" : "ies",
 		     unchained == 1 ? "ies" : "y");
+
+  /*
+   * Said whether or not the chain verifies, and said in these words.
+   *
+   * The file cannot carry this: the news is precisely that a write to it
+   * failed. Only this process knows, and only until it restarts. A chain that
+   * verifies over a file missing entries is a true statement about the file
+   * and a false impression about the box, so the count goes out with the
+   * verdict rather than beside it (#236).
+   *
+   * "could not be written" and not "removed": nobody removed anything, and an
+   * investigator sent looking for whoever edited the file is an investigator
+   * sent to the wrong place.
+   */
+  if (bm->audit_lost)
+    vlib_cli_output (vm,
+		     "  INCOMPLETE: %llu entr%s could not be written since "
+		     "this dataplane started, so %s missing from this file "
+		     "and %s nowhere else either. Check the disk under %v",
+		     bm->audit_lost, bm->audit_lost == 1 ? "y" : "ies",
+		     bm->audit_lost == 1 ? "it is" : "they are",
+		     bm->audit_lost == 1 ? "it is" : "they are",
+		     bm->audit_path);
 
   if (broken)
     return;

@@ -121,6 +121,23 @@ typedef struct
   u8 audit_head[32];
   u64 audit_seq;
 
+  /*
+   * Entries this dataplane could not write, and would otherwise have lost in
+   * silence (#236).
+   *
+   * `audit_head` and `audit_seq` advance only when the entry reached the file,
+   * so what is in the file stays a valid chain: a lost entry must not make the
+   * NEXT one read as tampering. But a chain that is quietly short is worse
+   * than one that is loudly broken, and the file cannot carry the news of an
+   * entry that could not be written to it. This counter is the only place that
+   * news exists, so `show bpa pool history verify` and the boot self-test read
+   * it and say the evidence is incomplete.
+   *
+   * It is lost on a restart, deliberately. Reconstructing it would mean
+   * writing it somewhere, and the thing that has just failed is writing.
+   */
+  u64 audit_lost;
+
   u8 *actor_user;  /* the account the client named, or 0 */
   u32 actor_uid;   /* the uid it was running as, or ~0 */
   u8 actor_is_api; /* the change arrived over the binary API */

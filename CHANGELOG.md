@@ -63,7 +63,8 @@ are to be interpreted as described in
 [#232](https://github.com/andrediashexa/hexarouting/issues/232),
 [#233](https://github.com/andrediashexa/hexarouting/issues/233),
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
-[#235](https://github.com/andrediashexa/hexarouting/issues/235).
+[#235](https://github.com/andrediashexa/hexarouting/issues/235),
+[#236](https://github.com/andrediashexa/hexarouting/issues/236).
 
 ### Added
 
@@ -1254,6 +1255,63 @@ are to be interpreted as described in
   now names a statement the lab really commits and the VTY really models.
 
 ### Fixed
+
+* **An entry the box could not write made the next one read as tampering**
+  ([#236](https://github.com/andrediashexa/hexarouting/issues/236)).
+  `bpa_audit_entry()` advanced the hash chain before it wrote, and advanced it
+  whether or not the write happened. One entry the box could not record left
+  the head pointing at a line the file does not contain and the sequence one
+  ahead of it, so the next entry that DID get written landed with a gap.
+
+  Measured, on a box whose records filesystem had gone read-only, which is what
+  ext4 does to itself when the disk under it fails:
+
+  ```
+  BROKEN before entry 5
+    the sequence jumps from 3 to 5: 1 entry was removed from the middle
+  ```
+
+  Nobody removed anything. That is the exact misdiagnosis the paragraph above
+  `bpa_audit_verify()` says the function was built to avoid - *a verifier that
+  checks the hash first reports every removal as an alteration of the innocent
+  line after it* - produced by the writer rather than by an attacker, and
+  handed to whoever is reading the trail for a court order.
+
+  The chain now advances only once the bytes are in the file, so what is in the
+  file is always a chain that verifies. A lost entry is counted and reported in
+  those words, because a chain that is quietly short is worse than one that is
+  loudly broken and the file cannot carry news of a write to it that failed:
+
+  ```
+  INCOMPLETE: 1 entry could not be written since this dataplane started, so it
+  is missing from this file and it is nowhere else either. Check the disk under
+  /var/log/hexarouting/config-history.log
+  ```
+
+  **A short write is taken back.** A filesystem that fills mid-write leaves a
+  fragment with no newline and no digest, and both readers counted that as an
+  entry written before the chain existed. `ftruncate` puts the file back to
+  where the entry started.
+
+  **And a file that is cut mid-entry is now named as cut.** The last line with
+  no digest is a different event from any other line with no digest: the
+  entries before the chain existed are followed by the ones that came after,
+  while a fragment is the end of the file. An investigator was being told the
+  trail is old where it is in fact cut.
+
+  `lab/records-full.sh` measures all of it against a real box, and it corrected
+  the reasoning behind this entry twice. **A full filesystem does not reliably
+  lose the entry**: appending a few hundred bytes to a file whose last page
+  still has room needs no new block, so the write fits. The lab's first run
+  padded the filesystem, read `0 bytes` out of `df`, watched the entry be
+  written anyway, and would have reported the product sound. It now proves the
+  filesystem refuses a one byte write before it measures anything, and uses the
+  read-only remount for the deterministic case.
+
+  **Not done, with the reason:** the count is not in the boot self-test. It
+  lives in this dataplane's memory and is deliberately not persisted - the
+  thing that has just failed is writing - so at boot it is always zero, and a
+  check that can only ever say zero is one people learn to skip.
 
 * **The page every new reader is sent to first counted its own invariants
   three times and got two of them wrong**
