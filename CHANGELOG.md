@@ -640,22 +640,9 @@ version has a chance of seeing it.
   **The red needed no fixture: `v0.66.0` is in this repository and the check
   refuses it.** All four words on one line, the way `v0.64.0` names them,
   because loose matching passes on any note that mentions an installed box -
-  which every note about this product eventually does.
-
-
-* **The release gate refuses a note that does not record the boot and the
-  install** ([#260](https://github.com/andrediashexa/hexarouting/issues/260)).
-  `CONTRIBUTING.md` section 5 says the note MUST record that the medium was
-  built, booted, installed and booted again. The gate PERFORMS both and never
-  read the note, and the rule decayed across two releases without a word:
-  `v0.64.0` carries the sentence, `v0.65.0` has one of the words, and
-  `v0.66.0` says nothing about either.
-
-  It is the note and not the steps, because the steps are already refused if
-  they fail. The note is what an operator who does not clone this repository
-  reads. **The red needed no fixture: `v0.66.0` is in this repository and the
-  check refuses it** - and it then refused the `v0.67.0` tag I had written
-  without mentioning the boots, which is the only reason that tag says it.
+  which every note about this product eventually does. It then refused
+  the `v0.67.0` tag written without mentioning the boots, which is the
+  only reason that tag says it.
 
 * **A release section could carry the same heading three times, and 0.67.0
   does** ([#267](https://github.com/andrediashexa/hexarouting/issues/267)).
