@@ -357,6 +357,29 @@ are to be interpreted as described in
   directions, because moving it the other way would excuse the half-dead run,
   and that is the case this must never take.
 
+* **Nothing compared what `appliance/install.sh` puts on the box with what the
+  repository has.** Two directions, and the dangerous one has no symptom at
+  all: a drop-in that exists under `appliance/systemd/` and that the installer
+  never names is a setting nobody applied, on a box that boots, runs and says
+  nothing. That is
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172) one step
+  earlier - there, a drop-in systemd had parsed and **refused** read
+  identically to one that was working - and
+  [#182](https://github.com/andrediashexa/hexarouting/issues/182) again, for a
+  `linux_cp` pair the product never created.
+
+  `test/test_install_manifest.py` checks both ways, expanding the two `for`
+  loops so the nine files they cover are checked rather than skipped. Only
+  `appliance/systemd/` is required to be fully installed: the rest of
+  `appliance/` legitimately holds things the installer does not copy, and a
+  rule demanding everything would be one somebody switches off.
+
+  Everything agrees today. Writing the check found a defect in the check
+  itself, which is recorded in it: `install.sh` uses the loop variable `d`
+  twice, over the FRR daemons and over the three documents, and resolving it by
+  name took the first list for the second and reported four files missing that
+  nothing installs.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
