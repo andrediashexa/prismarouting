@@ -17,6 +17,7 @@
 .build/test_bpa_ftp
 .build/test_bpa_icmp
 .build/test_bpa_sip
+.build/test_bpa_rewrite
 python3 appliance/test_tune.py
 python3 test/test_hexash_complete.py
 python3 test/test_hexash_config.py

@@ -36,6 +36,7 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#63](https://github.com/andrediashexa/hexarouting/issues/63),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
@@ -46,6 +47,64 @@ are to be interpreted as described in
 [#219](https://github.com/andrediashexa/hexarouting/issues/219),
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#221](https://github.com/andrediashexa/hexarouting/issues/221),
+[#222](https://github.com/andrediashexa/hexarouting/issues/222),
+[#223](https://github.com/andrediashexa/hexarouting/issues/223).
+
+### Changed
+
+* **The outbound rewrite carries its checksum corrections on the session
+  instead of recomputing them per packet.** `bpa_rewrite_src` was the largest
+  remaining piece of what `bpa-in2out` costs per packet, about half of it in
+  the IPv4 header checksum and half in the L4 one. The correction is constant
+  for the life of a session - the subscriber always sends from the same address
+  and port, and the session always rewrites them to the same pair - so it is
+  worked out once at session creation and added per packet.
+
+  **`bpa-in2out` goes from 470 to 346 clocks per packet, a 26% reduction.**
+  Three alternating pairs on one Xeon E5-2680 v4 at 2400 MHz, 64-byte frames,
+  one session, 256 vectors per call, rebuilding between every arm:
+
+  | pair | before | after | baseline `ip4-input` | `ip4-input` with the CGNAT |
+  |---|---|---|---|---|
+  | 1 | 468 | 345 | 21.2 / 20.6 | 32.1 / 32.4 |
+  | 2 | 469 | 343 | 21.2 / 20.9 | 32.6 / 32.0 |
+  | 3 | 472 | 351 | 21.2 / 21.2 | 32.3 / 34.1 |
+
+  Alternating, and with both of the lab's own load witnesses printed, because a
+  single pair proves nothing on a machine other work shares: the first "after"
+  run taken on this branch read 440 with `ip4-input` at 51, which is a busy
+  box, not a result. At 2400 MHz this is 5.11 Mpps per core before and 6.93
+  after, so 100 Gbps of 64-byte frames is about 22 cores in this node rather
+  than 29.
+
+  This optimisation was written once before, measured at a 28% saving and
+  reverted for producing `ipsum=BAD tcpsum=BAD` on every translated packet. The
+  reason, settled against VPP 26.06's own header and printed by
+  `test/test_bpa_rewrite.c`: **`ip_csum_add_even()` SUBTRACTS.** VPP names its
+  two primitives for what happens to the DATA, while the value they operate on
+  is the checksum, which is the one's complement of the sum over that data - so
+  `ip_csum_add_even` subtracts and `ip_csum_sub_even` adds. A delta applied
+  with the one whose name reads like addition lands with the wrong sign and
+  misses by exactly twice itself, on 199988 of 200000 random packets.
+
+  Three further ways to get it wrong are asserted rather than argued: the
+  corrections for the IPv4 header and for L4 are NOT interchangeable (the
+  pseudo-header carries the ports, the IPv4 header does not), an ICMP echo
+  takes the identifier and no address at all (RFC 792: no pseudo-header), and
+  operands must be converted to network order before the correction is built.
+
+### Fixed
+
+* **A translated UDP datagram could leave with a checksum of wire zero, which
+  means "not computed".** The per-packet form folded a 64-bit accumulator, and
+  an accumulator lands on exactly zero whenever `stored + old_address +
+  old_port == new_address + new_port` as plain integers. RFC 768 requires a
+  computed zero to be sent as `0xffff`; sending it as zero tells the receiver
+  not to check the very thing that was just rewritten. The session-carried
+  correction cannot reach it - it folds `stored + delta`, two sixteen-bit
+  values, zero only when both are, and the branch has already established that
+  `stored` is not - and `test/test_bpa_rewrite.c` builds the datagram that
+  reached it, so the claim is a printed number rather than an argument.
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223).
 
