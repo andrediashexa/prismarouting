@@ -1024,5 +1024,73 @@ fi
 rm -f "$FAKE/mnt_root" "$FAKE/mnt_records"
 rm -rf "$FAKE/root"
 
+echo "=== which NIC the dataplane may claim (#222, #123) ==="
+# The failure this replaces was silent and cost the session it was found on:
+# the box shipped HEXA_DATAPLANE_IF=eth0, which does not exist under
+# predictable names, the tuner generated a DPDK stanza with no allowlist, and
+# VPP claimed whatever NIC it found - the management one, on a single-NIC box.
+#
+# Four branches, and three of them look alike from outside: the safe first-boot
+# profile, the deliberate no-NIC one, and the dangerous one. The first version
+# of this check conflated two of them and failed every live medium, so each is
+# asserted separately rather than as "it said something".
+nicconf() {  # <extra lines for the startup.conf of an otherwise tuned box>
+  mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+  printf '%s\n' "$1" >> "$FAKE/root/etc/vpp/startup.conf"
+}
+: > "$FAKE/vppctl_ok"
+nicconf 'dpdk {
+  dev 0000:03:00.0
+}'
+run
+if said '\[ ok \] dataplane NIC: 0000:03:00.0'; then
+  ok "a named device is reported, with the address it names"
+else
+  bad "a startup.conf naming a device said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+nicconf 'plugin dpdk_plugin.so { disable }'
+run
+if said '\[info\] DPDK is off until hugepages exist'; then
+  ok "the first-boot profile is told apart from a box with no device named"
+else
+  bad "DPDK disabled was not recognised: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+if said '\[FAIL\] the dataplane may claim any NIC'; then
+  bad "the first-boot profile was reported as dangerous, which is what failed every live medium once"
+else
+  ok "and it is not reported as the dangerous case"
+fi
+nicconf 'dpdk {
+  no-pci
+}'
+run
+if said '\[warn\] no dataplane interface: VPP was given no NIC'; then
+  ok "a box deliberately given no NIC is a warning, and says how to give it one"
+else
+  bad "no-pci said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+if said '\[FAIL\] the dataplane may claim any NIC'; then
+  bad "no-pci was reported as the dangerous case; it is the opposite of it"
+else
+  ok "and it is not the dangerous case either"
+fi
+# DPDK on, nothing named, no no-pci. This is the one that takes the management
+# interface on the next boot.
+nicconf 'dpdk {
+  socket-mem 1024
+}'
+run
+if said '\[FAIL\] the dataplane may claim any NIC it finds, including this box'; then
+  ok "a DPDK stanza that names no device at all is a FAILED check"
+else
+  bad "the dangerous profile passed: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+if said 'management interface'; then
+  ok "and says which NIC it is about to lose"
+else
+  bad "the failure does not say what is at stake"
+fi
+rm -rf "$FAKE/root"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

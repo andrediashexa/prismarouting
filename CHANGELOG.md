@@ -428,7 +428,17 @@ are to be interpreted as described in
   set rather than warned, and the live medium is told records are not persisted
   rather than warned about a disk it does not have.
 
-  57 checks before, **82** after.
+  And the one that is a lost box rather than a lost measurement: **which NIC
+  the dataplane may claim**. The box once shipped `HEXA_DATAPLANE_IF=eth0`,
+  which does not exist under predictable interface names, so the tuner wrote a
+  DPDK stanza with no allowlist and VPP claimed whatever NIC it found - the
+  management one, on a single-NIC box
+  ([#123](https://github.com/andrediashexa/hexarouting/issues/123)). Four
+  branches, three of which look alike from outside, and each asserted on its
+  own: the first version of that check conflated two of them and failed every
+  live medium.
+
+  57 checks before, **89** after.
 
 ### Internal
 
