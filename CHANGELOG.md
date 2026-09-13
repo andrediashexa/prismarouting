@@ -64,7 +64,8 @@ are to be interpreted as described in
 [#233](https://github.com/andrediashexa/hexarouting/issues/233),
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
-[#236](https://github.com/andrediashexa/hexarouting/issues/236).
+[#236](https://github.com/andrediashexa/hexarouting/issues/236),
+[#237](https://github.com/andrediashexa/hexarouting/issues/237).
 
 ### Added
 
@@ -241,6 +242,26 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
+
+* **`commit` said it had rolled a failed commit back, and nothing asserted that
+  it had.** `docs/routing.md:1528` states one requirement in two halves -
+  `commit` MUST validate before applying, and MUST restore the previous state
+  if application fails halfway - and only the first half had a check behind it.
+  Deleting the restore left all 33 suites green. That matters because `apply()`
+  removes pools before it adds them, so the window is the ordinary shape of
+  every commit that changes a pool: a dataplane that accepts the check and
+  refuses the write leaves the box holding neither configuration, with every
+  subscriber on the removed pool disconnected and the VTY printing *"rolling
+  back to the previous state"* over the top of it - a report of success with no
+  effect behind it, which is the defect class this repository is organised
+  against. `test/test_hexash_apply.py` now models the dataplane with STATE,
+  because an API that only records calls cannot answer what the box is HOLDING
+  when the commit has finished failing, and asserts the end state with a
+  control: the apply must first be shown to have taken the running pool off the
+  box, since "restored" and "never touched" are indistinguishable from the end
+  state alone. Shown red three ways - the restore deleted, and the removal
+  suppressed
+  ([#237](https://github.com/andrediashexa/hexarouting/issues/237)).
 
 * **A translated UDP datagram could leave with a checksum of wire zero, which
   means "not computed".** The per-packet form folded a 64-bit accumulator, and
