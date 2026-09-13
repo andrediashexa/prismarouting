@@ -201,17 +201,19 @@ is a message it leaves alone, and a CPE that already knows its public address
 is untouched by construction rather than by luck — which is exactly the case
 those providers are protecting against. H.323, MGCP, SCCP, MSRPC, NetBIOS,
 IRC/DCC, TFTP and DNS are **not** being built; the reasoning is on #14.
-Each ALG **MUST** be individually switchable per pool, and **SHOULD** default
-to off unless its parse is cheap to make safe: an ALG that rewrites a payload
-it misparsed is worse than no ALG, because it corrupts traffic that would
-otherwise merely fail to connect.
 
-FTP, SIP and PPTP default **on**. For PPTP the departure is deliberate and
-narrow: its rewrite changes no length, so no sequence number moves, and every
-message is guarded by a 32-bit magic cookie and its own length field before a
-single byte is touched. Without it PPTP does not work for anyone rather than
-failing only on a collision, so "off by default" would ship a CGNAT that breaks
-every PPTP subscriber until an operator discovers the switch.
+Each of the five has its own argument for being on, written beside
+`BPA_ALG_DEFAULT` in `src/plugins/bpa/bpa_pool.h` and checked against this
+section by `test/test_alg_defaults.py`. **PPTP** is the one that looks like an
+exception and is not: its rewrite changes no length, so no sequence number
+moves, and every message is guarded by a 32-bit magic cookie and its own length
+field before a single byte is touched. Without it PPTP does not work for anyone
+rather than failing only on a collision, so off by default would ship a CGNAT
+that breaks every PPTP subscriber until an operator discovers the switch.
+**ESP** parses nothing at all and rewrites only the addresses, so there is no
+payload it can corrupt, and without it an ESP packet is an unsupported protocol
+and the tunnel does not come up. **RTSP** is the black frame nobody blames on
+the CGNAT.
 
 ### 2.4 EIM/EIF — delivered in v0.4.0 and v0.5.0 — [#15](https://github.com/andrediashexa/hexarouting/issues/15), [#50](https://github.com/andrediashexa/hexarouting/issues/50)
 

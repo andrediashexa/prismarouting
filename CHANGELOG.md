@@ -1246,6 +1246,38 @@ are to be interpreted as described in
   anywhere in the lab's configuration, so it passed whatever the box did. It
   now names a statement the lab really commits and the VTY really models.
 
+### Fixed
+
+* **The roadmap told an operator that RTSP and ESP ship off, and they ship on**
+  ([#230](https://github.com/andrediashexa/hexarouting/issues/230)).
+  `docs/roadmap.md` section 2.3 stated the rule for ALG defaults twice. The
+  first statement is the decision from
+  [#14](https://github.com/andrediashexa/hexarouting/issues/14) - every ALG
+  built here is on - and eleven lines below it sat the paragraph that decision
+  had reversed: *SHOULD default to off unless its parse is cheap to make safe*,
+  followed by *FTP, SIP and PPTP default on*. Three of the five named, and the
+  box ships all five.
+
+  The two it leaves out are the two an operator goes looking for after a
+  support call: a black frame from an IP camera, an IPsec tunnel that will not
+  come up. Being told to go and switch on something that is already on sends
+  that diagnosis somewhere else, which is worse than saying nothing.
+
+  The stale paragraph is gone and the argument for each of the five now sits
+  with the decision rather than as an exception to a rule that no longer
+  exists. `test/test_alg_defaults.py` compares `BPA_ALG_DEFAULT` in
+  `src/plugins/bpa/bpa_pool.h` against the registry beside it and against what
+  the section claims, so a sixth ALG cannot arrive in the header with the
+  document left behind.
+
+  **And the shape, rather than only this instance of it.** The stale paragraph
+  restated a whole sentence word for word from eleven lines above, which is how
+  the duplication was visible without knowing anything about ALGs. The same
+  file now checks that no document an operator reads says the same thing twice:
+  measured over `roadmap`, `architecture`, `logging`, `appliance` and the
+  README, 1723 sentences and not one repeated, so the rule costs nothing to
+  hold. It was shown failing on the paragraph that started this.
+
 ### Internal
 
 * **`LAB_WORKERS=2` started a box with no workers at all**
