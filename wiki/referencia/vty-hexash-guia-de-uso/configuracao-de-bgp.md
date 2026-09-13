@@ -81,6 +81,8 @@ nothing to run over
 
 :::warning
 O enlace precisa carregar os anúncios de roteador do vizinho (router advertisement) para que o roteamento descubra o endereço de enlace local do outro lado. É assim que uma sessão sem endereço encontra com quem falar; sem isso a sessão fica em Idle com AS 0, mesmo com a configuração inteira certa. Confira com `show bgp summary`.
+
+Deste lado não há nada a habilitar: o que chega pela interface é entregue ao roteamento. Se a sessão ficar em Idle com AS 0, o que falta está do outro lado ou no caminho - um vizinho que não anuncia, ou um enlace que não entrega o multicast de enlace local. `show bgp neighbors <interface>` mostra o endereço aprendido quando ele chega, e `(unspec)` enquanto não chegou.
 :::
 
 # Peer groups

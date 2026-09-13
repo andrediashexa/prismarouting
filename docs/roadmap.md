@@ -733,14 +733,27 @@ with `% Unknown command`, so tolerating them would be tolerance for a statement
 FRR rejects. Both are now asserted in `lab/bgp-policy.sh`, so the measurement is
 recorded rather than rediscovered by whoever reads the issue next.
 
-It left one thing behind, and it is a dataplane defect rather than a VTY one:
-[#213](https://github.com/andrediashexa/hexarouting/issues/213). An unnumbered
-session still does not reach Established, because IPv6 link-local multicast is
-not punted over a `linux_cp` pair — `ff02::1/128` is a receive-only MFIB entry
-and linux_cp puts nothing on the `ip6-multicast` arc. FRR learns an unnumbered
-peer's address from that Router Advertisement and from nothing else. The same
-hole affects IPv6 ND from a neighbour, OSPFv3 and IS-IS over IPv6, which makes
-it a dependency of [#187](https://github.com/andrediashexa/hexarouting/issues/187).
+It left one thing behind, and it was a dataplane defect rather than a VTY one:
+[#213](https://github.com/andrediashexa/hexarouting/issues/213), now fixed. An
+unnumbered session did not reach Established because the peer's Router
+Advertisement never reached the Linux side of the pair, and FRR learns an
+unnumbered peer's address from that advertisement and from nothing else.
+
+The issue named the cause as an IPv6 multicast punt gap and the measurement
+disagreed: IPv6 multicast reaches the TAP, an OSPFv3 packet to `ff02::5` on a
+pair with no address on either end included. The gap is one node. ICMPv6 is a
+protocol VPP handles itself, and the node registered for type 134,
+`icmp6-router-advertisement`, is declared with exactly one next node -
+`ip6-drop` - while its sibling `icmp6-neighbor-advertisement` is declared with
+`ip6-punt`, which is where linux_cp's per-pair redirect is waiting. There is no
+configuration for it, so the product's plugin now registers type 134 to a node
+of its own that punts. OSPFv3 and IS-IS over IPv6 were never affected, so #213
+was not the dependency of
+[#187](https://github.com/andrediashexa/hexarouting/issues/187) it was filed
+as. Nor was ordinary IPv6 ND: a neighbour advertisement already punted to the
+kernel, and a neighbour solicitation is answered by VPP itself, which holds the
+same addresses as the TAP through `lcp-sync`. The router advertisement was the
+one ND message with nowhere to go.
 
 #### The box an operator is handed, in the first five minutes
 
@@ -807,7 +820,7 @@ nobody reviewed, and the issue is the only place the measurement survives.
 
 | | | |
 |---|---|---|
-| [#213](https://github.com/andrediashexa/hexarouting/issues/213) | IPv6 link-local multicast is not punted over a `linux_cp` pair, so an unnumbered BGP session reaches Active and never Established — and IPv6 ND, OSPFv3 and IS-IS over IPv6 have the same hole | **open** |
+| [#213](https://github.com/andrediashexa/hexarouting/issues/213) | a received Router Advertisement is dropped by VPP instead of punted, so an unnumbered BGP session reaches Active and never Established | *fixed* - and the cause in the title was wrong: IPv6 multicast punt works, ICMPv6 type 134 was the hole |
 | [#214](https://github.com/andrediashexa/hexarouting/issues/214) | a public port can be forwarded once per **pool** rather than once per public address, so on an interleaved pool with N addresses only one subscriber in N can hold a forward at a given offset | *fixed* |
 | [#215](https://github.com/andrediashexa/hexarouting/issues/215) | deleting a pool emits no `natEvent 17`, so every block it held stays **open** in the retention log — the answer to a court order then names a subscriber who had already been disconnected | *fixed* |
 | [#217](https://github.com/andrediashexa/hexarouting/issues/217) | and a box that is **stopped** does the same, on every planned reboot — with a second allocation and no release between them when it comes back | **open** |
@@ -822,11 +835,12 @@ graceful stop alone would *look* like a fix and leave the ambiguity that makes
 the log unreadable after a crash. It needs a restart marker beside it, and what
 shape that takes is a decision.
 
-#213 is the one that matters most, for the reason that puts anything at the top
-of this file: **the product accepts the configuration and cannot deliver it.**
-The VTY takes an unnumbered neighbour, FRR holds the statement, the peer appears
-in `show bgp summary` — at `Idle`, `remote AS 0`, forever. It is also a
-dependency of [#187](https://github.com/andrediashexa/hexarouting/issues/187).
+#213 was the one that mattered most, for the reason that puts anything at the
+top of this file: **the product accepted the configuration and could not
+deliver it.** The VTY took an unnumbered neighbour, FRR held the statement, and
+the peer stood in `show bgp summary` at `Idle`, `remote AS 0`, forever.
+`lab/routing.sh` now asserts the session reaches Established on both sides over
+a link-local address neither box was told.
 
 #### Installation — blocked by nothing, paid on every box
 

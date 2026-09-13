@@ -2141,17 +2141,50 @@ one from anything this VTY prints. `frr_acts_on()` is shared with
 `ospf_findings()` rather than copied, which is how two answers to one question
 start to drift.
 
-**The session does not come up yet, and the reason is not here.** Measured on
-`lab/routing.sh`'s pair with tcpdump on both ends: our Router Advertisements
-cross VPP and reach the wire, so the far end learns this box and goes to
-Active — and the far end's advertisements reach the wire and never reach the
-TAP. `show ip6 mfib` says why: `ff02::1/128` is a receive-only entry with no
-path to the pair's TAP, and linux_cp puts nothing on the `ip6-multicast` arc
-to punt it with. FRR learns an unnumbered peer's address from that
-advertisement and from nothing else, so bgpd sits at Idle with "remote AS 0".
-That is an IPv6 multicast punt gap over linux_cp — the same shape as #168 —
-and it is a separate defect from the parser one, filed rather than papered
-over with a `vppctl` line in the lab.
+**The session did not come up until #213, and the reason was not here.**
+Measured on `lab/routing.sh`'s pair with tcpdump on both ends: our Router
+Advertisements crossed VPP and reached the wire, so the far end learned this
+box and went to Active - and the far end's advertisements reached the wire and
+never reached the TAP. FRR learns an unnumbered peer's address from that
+advertisement and from nothing else, so bgpd sat at Idle with "remote AS 0".
+
+It was **not** a multicast punt gap, which is what the issue was filed as.
+IPv6 multicast reaches the TAP perfectly well: an OSPFv3 packet to `ff02::5`
+arrives on a pair with no address on either end, measured. What VPP does with
+an ICMPv6 packet is the difference. ICMPv6 is a protocol VPP handles itself,
+so the advertisement went to `ip6-icmp-input` and from there to the node
+registered for type 134 - `icmp6-router-advertisement`, which is declared with
+exactly **one** next node, `ip6-drop`, and no configuration adds another. Its
+three siblings do not do that: `icmp6-neighbor-advertisement` is declared with
+`ip6-punt`, and `icmp6-router-solicitation` punts when this box is not
+configured to answer, with an upstream comment saying "but maybe Linux is via
+LCP". `ip6-punt` is where linux_cp is waiting - creating a pair installs an
+IPv6 punt redirect for the phy that DVRs the packet out of the TAP - so
+neighbour advertisements have always reached Linux and router advertisements
+never did.
+
+There is no knob for it, so the fix is a node: `src/plugins/bpa/bpa_ra.c`
+registers ICMPv6 type 134 to a node of its own whose only next is `ip6-punt`,
+after `ip6_ra_init` so the registration is not overwritten. `show errors`
+counts what it punted. What is given up is VPP's own processing of a received
+advertisement - the RS retransmit timer and the `ip6_ra_report` subscribers,
+which belong to the DHCPv6-PD client and not to this product. On a box where
+every dataplane port is paired into the kernel, the kernel is the IPv6 control
+plane, exactly as it already is for ARP, which linux_cp punts with nodes of
+its own.
+
+Punting them hands a neighbour a lever it did not have while VPP was dropping
+them. With the kernel's own default, the peer's advertisement put `default via
+fe80::... proto ra` in the kernel's table, `linux_nl` synced it and the VPP FIB
+forwarded `::/0` through the neighbour - measured. `appliance/etc/sysctl.conf`
+carries `net.ipv6.conf.{all,default}.accept_ra = 0` for it, and the unnumbered
+session is unaffected: zebra reads advertisements on a socket of its own rather
+than through the kernel's autoconfiguration.
+
+`lab/routing.sh` asserts the session reaches **Established** over a link-local
+address neither box was told, that the kernel took no route from the
+advertisements, and that none of it reached the VPP FIB - with nothing typed
+that an operator would not type.
 
 ### The password
 
