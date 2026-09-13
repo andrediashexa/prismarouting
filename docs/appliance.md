@@ -797,6 +797,77 @@ is refused with the arithmetic rather than accepted and discovered later.
   the fit is checked in `HEXA_INSTALL_CHECK` mode too. A check that skipped it
   for want of privileges would be more permissive than the real run.
 
+### The records on two disks, and the system on one
+
+With one disk, a single failure on a box under a one-year retention obligation
+loses **the records themselves**. That is a different class of loss from
+downtime: downtime ends with a reinstall, and this does not end at all - the
+box is still answerable for records no procedure puts back
+([#83](https://github.com/andrediashexa/hexarouting/issues/83)).
+
+So the installer offers a second disk and mirrors **the records onto it, and
+not the system**. The argument for the asymmetry is the one above, and both
+halves of what it costs are measured in `lab/install-iso.sh mirror` rather than
+argued:
+
+| Which disk dies | What was measured, on a box that was installed and then booted with that disk detached |
+|---|---|
+| the mirror disk | the box boots, `/proc/mdstat` reads `md0 : active raid1 vda3[0] ... [2/1] [U_]`, `/var/log/hexarouting` is still mounted from `/dev/md0`, a record written before the disk died reads back, and the boot self-test says `[FAIL] the records mirror is DEGRADED: 1 of 2 disks (vda3)` with nobody logged in |
+| the system disk | no bootloader, no kernel and no prompt: the machine sat at the firmware until the lab stopped it. **And the records on the survivor were read back on another machine**, out of the leg alone, with that box switched off |
+
+The second row is the whole of the trade: what mirroring the system would have
+bought is a box that boots, and what it would have cost is the ESP that
+firmware writes to on one leg only, root on `md` in the initramfs, and a
+bootloader on both disks. What is not lost either way is the records.
+
+| | |
+|---|---|
+| Question | asked only when the machine HAS a second disk |
+| Default | `none`, taken by a bare Enter |
+| Answer, unattended | `hexarouting.mirror=<disk>`, or `mirror = <disk>` in the answers file |
+| Refused when | it is the target disk, the boot medium, not a whole disk, or smaller than the records answer |
+| Layout on the second disk | one partition, whole disk, type Linux RAID |
+| The array | `raid1`, metadata 1.2, named `<hostname>:records` |
+
+* **A box with one disk is not asked and is not changed.** No question, no
+  array, and a self-test that says nothing about mirrors. An alarm about
+  hardware a box does not have is an alarm whoever reads that console learns to
+  skip, and `lab/install-iso.sh` asserts the absence on an installed box.
+* **The confirmation names both disks.** They are destroyed by the same `yes`,
+  and a confirmation that repeats one disk back while a second goes with it is
+  not the confirmation this installer claims to have.
+* **`mdadm --create` exits zero having built a DEGRADED array**, so its status
+  answers "did mdadm run" and not "are the records on two disks". The install
+  reads `/proc/mdstat` back before it reports success: a mirror born with one
+  leg is the exact failure the second disk was bought to prevent, arriving at
+  the moment the operator is told the install worked.
+* **No `--assume-clean`.** It would mark two legs holding different bytes as in
+  sync, which is a lie told to the one subsystem whose whole job is to know
+  which copy is good. The resync runs in the background and the box is usable
+  while it does.
+* The `fstab` line does not change: it mounts by the filesystem's UUID, and
+  what changed underneath is which device carries the filesystem. `nofail`
+  matters more with a mirror, not less - a degraded array the kernel starts
+  late must not be why a box with working records refuses to boot.
+
+And the boot self-test **MUST** state the mirror on every boot. A mirror nobody
+is told about is a mirror that silently becomes one disk, and then zero: the
+volume stays mounted, the records keep being written, the box keeps forwarding,
+and the second failure is the one that loses the year.
+
+| What `/proc/mdstat` says | What the self-test says |
+|---|---|
+| both legs, in sync | `[ ok ] records mirrored on 2 disks (vda3 vdb1)` |
+| both legs, still copying | the same, with `synchronising 20.0%` |
+| one leg, a rebuild running | `[warn] the records mirror is REBUILDING` |
+| one leg, no rebuild | `[FAIL] the records mirror is DEGRADED` |
+| an array in `mdadm.conf` and none carrying the records | `[FAIL] installed with a records mirror and is not using it` |
+
+Degraded is a **failed** check and a rebuild is a **warning**: the first is a
+box one failure from losing what it is required to keep, and the second is the
+repair already running. Reporting a repair as a failure teaches whoever reads
+that console to skip the line that matters.
+
 ### Everything is asked before anything is written
 
 | Question | Refused when |
@@ -804,6 +875,7 @@ is refused with the arithmetic rather than accepted and discovered later.
 | Target disk | not a block device, or the medium this system booted from |
 | Hostname | it contains characters a hostname may not have |
 | Timezone | there is no such zone in `/usr/share/zoneinfo` |
+| Records mirror | it is the target, the medium, a partition, or too small for the records |
 | Root password | it is empty, or the two entries do not match |
 
 Then a summary, then the disk path typed back — a yes/no is answered

@@ -1036,6 +1036,176 @@ if said '\[info\] live medium: records are not persisted anyway'; then
 else
   bad "the live medium was warned about the root filesystem: $(printf '%s\n' "$OUTPUT" | grep -i 'records\|live medium' || echo '<nothing>')"
 fi
+
+echo "=== the records mirror, the one copy a reinstall cannot rebuild (#83) ==="
+# With one disk, a single failure on a box under a one-year retention
+# obligation loses the RECORDS. That is a different class of loss from
+# downtime: downtime ends with a reinstall and this does not end at all.
+#
+# So the box can be installed with the records on two disks - and a mirror
+# nobody is told about is a mirror that silently becomes one disk, and then
+# zero. Every state below is one /proc/mdstat can be in on a box that is
+# forwarding perfectly, which is why none of them can be arranged on the
+# machine running these tests: the disk has to have died.
+rm -f "$FAKE/mnt_root" "$FAKE/mnt_records"
+rm -rf "$FAKE/root"
+mkdir -p "$FAKE/root/var/log/hexarouting" "$FAKE/root/proc"
+echo /dev/vda2 > "$FAKE/mnt_root"
+mdstat() { mkdir -p "$FAKE/root/proc"; cat > "$FAKE/root/proc/mdstat"; }
+
+echo /dev/md0 > "$FAKE/mnt_records"
+mdstat <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vdb1[1] vda3[0]
+      2094080 blocks super 1.2 [2/2] [UU]
+
+unused devices: <none>
+MD
+run
+if said '\[ ok \] records mirrored on 2 disks \(vdb1 vda3\)'; then
+  ok "a healthy mirror is reported, and names the disks it is on"
+else
+  bad "a two-disk mirror said nothing: $(printf '%s\n' "$OUTPUT" | grep -i mirror || echo '<nothing>')"
+fi
+
+# The state this whole check exists for. Everything about this box is fine:
+# the volume is mounted, the records are being written, the box forwards.
+mdstat <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vda3[0]
+      2094080 blocks super 1.2 [2/1] [U_]
+
+unused devices: <none>
+MD
+run
+if said '\[FAIL\] the records mirror is DEGRADED: 1 of 2 disks'; then
+  ok "a disk that has died under the mirror is a FAILED check, with the count"
+else
+  bad "a degraded mirror was not reported: $(printf '%s\n' "$OUTPUT" | grep -i mirror || echo '<nothing>')"
+fi
+# Why it is worth a site visit, on the console of a box that is working.
+if said 'a reinstall does not put'; then
+  ok "and says that this loss is not the kind a reinstall undoes"
+else
+  bad "the degraded report does not say what is at stake"
+fi
+if said "mdadm --add"; then
+  ok "and says what to do about it"
+else
+  bad "the degraded report does not say how to repair it"
+fi
+
+# A rebuild is the GOOD case in progress - a disk was replaced and is being
+# copied onto. Reported as a failure it would train whoever reads this console
+# to ignore the line that matters.
+mdstat <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vdc1[2] vda3[0]
+      2094080 blocks super 1.2 [2/1] [U_]
+      [==>..................]  recovery = 12.5% (262144/2094080) finish=0.1min speed=52428K/sec
+
+unused devices: <none>
+MD
+run
+if said '\[warn\] the records mirror is REBUILDING: 1 of 2 disks, 12.5%'; then
+  ok "a replaced disk being copied onto is a warning with its progress"
+else
+  bad "a rebuilding mirror: $(printf '%s\n' "$OUTPUT" | grep -i mirror || echo '<nothing>')"
+fi
+if said '\[FAIL\].*mirror'; then
+  bad "a mirror that is repairing itself was reported as a failure"
+else
+  ok "and not a failure: nothing is lost and nobody has to be called"
+fi
+
+# Both legs present and still copying, which is every box for the first
+# minutes after it is installed. It is protected already - the write goes to
+# both - so this is an [ ok ] that says what is still happening.
+mdstat <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vdb1[1] vda3[0]
+      2094080 blocks super 1.2 [2/2] [UU]
+      [====>................]  resync = 20.0% (418816/2094080) finish=0.2min speed=41881K/sec
+
+unused devices: <none>
+MD
+run
+if said '\[ ok \] records mirrored on 2 disks \(vdb1 vda3\), synchronising 20.0%'; then
+  ok "a fresh mirror still copying reads as protected, and says it is copying"
+else
+  bad "an initial resync: $(printf '%s\n' "$OUTPUT" | grep -i mirror || echo '<nothing>')"
+fi
+
+# Two arrays, and the degraded one is NOT the records. A check that grepped
+# /proc/mdstat for "[2/1]" would answer this box with somebody else's disk.
+mdstat <<'MD'
+Personalities : [raid1]
+md1 : active raid1 vdd1[0]
+      1046528 blocks super 1.2 [2/1] [U_]
+
+md0 : active raid1 vdb1[1] vda3[0]
+      2094080 blocks super 1.2 [2/2] [UU]
+
+unused devices: <none>
+MD
+run
+if said '\[ ok \] records mirrored on 2 disks \(vdb1 vda3\)'; then
+  ok "another array being degraded is not this one"
+else
+  bad "a second array confused the records check: $(printf '%s\n' "$OUTPUT" | grep -i mirror || echo '<nothing>')"
+fi
+
+# The array that never assembled. fstab mounts the records nofail, so the box
+# comes up with the volume missing and writes them to the root filesystem -
+# and the check above cannot see it, because there is no md device to look at.
+# What knows is the box's own record of the disks it was installed with.
+echo /dev/vda2 > "$FAKE/mnt_records"
+mkdir -p "$FAKE/root/etc/mdadm"
+printf 'DEVICE partitions\nHOMEHOST <system>\nARRAY /dev/md0 metadata=1.2 name=cgnat01:records UUID=1234\n' \
+  > "$FAKE/root/etc/mdadm/mdadm.conf"
+mdstat <<'MD'
+Personalities : [raid1]
+unused devices: <none>
+MD
+run
+if said '\[FAIL\] this box was installed with a records mirror and is not using it'; then
+  ok "a mirror that is configured and not running is a FAILED check"
+else
+  bad "the mirror never assembled and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'mirror\|mdadm' || echo '<nothing>')"
+fi
+
+# --- and the box with ONE disk, which is most of them ---
+#
+# THE assertion of this section. Whatever the mirror costs, it must cost a
+# one-disk box nothing at all: no line, no warning, and above all no failed
+# check for hardware nobody bought.
+rm -rf "$FAKE/root/etc/mdadm"
+rm -f "$FAKE/root/proc/mdstat"
+echo /dev/vda3 > "$FAKE/mnt_records"
+run
+if said 'mirror'; then
+  bad "a box with one disk was told about mirrors: $(printf '%s\n' "$OUTPUT" | grep -i mirror)"
+else
+  ok "a box with one disk is told nothing about a mirror it does not have"
+fi
+if said '\[ ok \] records on their own filesystem: /dev/vda3'; then
+  ok "and still reports its records volume exactly as before"
+else
+  bad "the one-disk records line changed: $(printf '%s\n' "$OUTPUT" | grep -i 'records on' || echo '<nothing>')"
+fi
+# The stock mdadm.conf every Debian box carries once mdadm is installed names
+# no array. A check keyed on the file existing would fail every one-disk box
+# in the field the day the medium started carrying mdadm.
+mkdir -p "$FAKE/root/etc/mdadm"
+printf 'DEVICE partitions\nHOMEHOST <system>\nMAILADDR root\n' \
+  > "$FAKE/root/etc/mdadm/mdadm.conf"
+run
+if said 'mirror'; then
+  bad "the stock mdadm.conf made a one-disk box report a mirror"
+else
+  ok "and an mdadm.conf that names no array leaves it silent"
+fi
+
 rm -f "$FAKE/mnt_root" "$FAKE/mnt_records"
 rm -rf "$FAKE/root"
 

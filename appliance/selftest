@@ -673,6 +673,86 @@ if [ -d "$ROOT/var/log/hexarouting" ]; then
     say "         a log that fills will stop this box writing its own"
     say "         configuration. Check that /var/log/hexarouting is mounted."
   fi
+
+  # --- and are they still on TWO disks? (#83) ---
+  #
+  # A mirror nobody is told about is a mirror that silently becomes one disk,
+  # and then zero. Nothing else on this box notices a disk dying under a
+  # mirror: the volume stays mounted, the records keep being written, the box
+  # forwards - and the SECOND failure is the one that loses the year the Marco
+  # Civil requires. Downtime is recoverable by rebooting; this is not
+  # recoverable at all, which is why it is a failed check and not a warning.
+  #
+  # A box with one disk is told NOTHING here. It has no array, so there is no
+  # question to answer, and inventing one would put a line about hardware
+  # nobody bought on every console in the field.
+  case "${rec_src:-}" in
+    /dev/md*)
+      _md=${rec_src#/dev/}
+      # The array's OWN block line - the one carrying [n/m]. /proc/mdstat
+      # lists every array on the box, so a grep for "[2/2]" anywhere in it can
+      # be answered by a different array entirely.
+      _mdline=$(awk -v d="$_md" '$1 == d { f = 1 }
+                                 f && /\[[0-9]+\/[0-9]+\]/ { print; exit }' \
+                "$ROOT/proc/mdstat" 2>/dev/null)
+      _legs=$(printf '%s' "$_mdline" | grep -o '\[[0-9]*/[0-9]*\]' | head -1 | tr -d '[]')
+      # The members, taken as the fields that carry a slot number, because the
+      # header is not fixed-width: an array that came up read-only reads
+      # "active (auto-read-only) raid1", and counting from field 5 then names
+      # the personality as a disk.
+      _members=$(awk -v d="$_md" '$1 == d {
+                     for (i = 3; i <= NF; i++) if ($i ~ /\[[0-9]+\]/) printf "%s ", $i
+                     exit }' "$ROOT/proc/mdstat" 2>/dev/null \
+                 | sed 's/\[[0-9]*\]//g; s/  *$//')
+      # A rebuild in progress, from the array's own block: the lines under it
+      # up to the blank line that separates arrays. It is the difference
+      # between a disk that has been replaced and one that has not, and
+      # reporting a rebuild as a failure trains whoever reads this console to
+      # ignore the line that matters.
+      _rebuild=$(awk -v d="$_md" '$1 == d { f = 1; next }
+                                  f && (/^$/ || /^md/) { exit }
+                                  f && /(recovery|resync|reshape) *=/ {
+                                      sub(/.*(recovery|resync|reshape) *= */, "", $0)
+                                      print $1; exit }' \
+                 "$ROOT/proc/mdstat" 2>/dev/null)
+      if [ -z "$_legs" ]; then
+        bad "the records are mounted from $rec_src and the kernel has no such array"
+        say "        /proc/mdstat does not describe it, so nothing here can say"
+        say "        how many disks the records are on."
+      else
+        _want=${_legs%/*}
+        _have=${_legs#*/}
+        if [ "$_have" = "$_want" ] && [ -n "$_rebuild" ]; then
+          ok "records mirrored on $_have disks ($_members), synchronising $_rebuild"
+        elif [ "$_have" = "$_want" ]; then
+          ok "records mirrored on $_have disks ($_members)"
+        elif [ -n "$_rebuild" ]; then
+          say "  [warn] the records mirror is REBUILDING: $_have of $_want disks, $_rebuild"
+          say "         a replaced disk is being copied onto. Until it finishes"
+          say "         the records are on one disk. Members: $_members"
+        else
+          bad "the records mirror is DEGRADED: $_have of $_want disks ($_members)"
+          say "        a disk has died and the records are on one. In dynamic mode"
+          say "        those records are what this box answers a court order with,"
+          say "        and the next failure loses them - a reinstall does not put"
+          say "        them back. Replace the disk and add it with 'mdadm --add'."
+        fi
+      fi ;;
+    *)
+      # Installed WITH a mirror and running without one. The check above cannot
+      # see this: the array never assembled, so the records are not on an md
+      # device and, with fstab mounting them nofail, the box came up with the
+      # volume missing altogether. The box's own record of its disks is the
+      # only thing that knows a mirror was ever meant to be here.
+      if grep -q 'name=[^ ]*:records' "$ROOT/etc/mdadm/mdadm.conf" 2>/dev/null; then
+        bad "this box was installed with a records mirror and is not using it"
+        say "        /etc/mdadm/mdadm.conf names a records array and"
+        say "        /var/log/hexarouting is not on it, so everything written"
+        say "        since this boot is on one disk. Read /proc/mdstat: an array"
+        say "        that is not there is started with 'mdadm --assemble --scan',"
+        say "        and one that is there was not mounted."
+      fi ;;
+  esac
 fi
 
 # --- is the allocation log actually LEAVING the box? ---

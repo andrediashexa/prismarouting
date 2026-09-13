@@ -38,6 +38,7 @@ are to be interpreted as described in
 
 [#55](https://github.com/andrediashexa/hexarouting/issues/55),
 [#63](https://github.com/andrediashexa/hexarouting/issues/63),
+[#83](https://github.com/andrediashexa/hexarouting/issues/83),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
 [#145](https://github.com/andrediashexa/hexarouting/issues/145),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
@@ -596,6 +597,78 @@ are to be interpreted as described in
   four-line transcript that entered an interface and then typed `mtu 1500` at
   the `[edit]` prompt, which is the top of configuration mode, where `mtu` is
   not a statement at all. Both are fixed.
+
+* **The connection records can be kept on two disks, so one disk failing does
+  not lose the year the Marco Civil requires**
+  ([#83](https://github.com/andrediashexa/hexarouting/issues/83)). In dynamic
+  mode the allocation log **is** that record. It has had a filesystem of its
+  own since 0.30.0, so a full log cannot stop the box working; what it did not
+  have was a second copy, and losing it is not the same class of loss as
+  downtime - downtime ends with a reinstall and this does not end at all.
+
+  The installer now offers a second disk, mirrors **the records onto it and
+  not the system**, and says why: a dead system disk is a reinstall, and the
+  records on the survivor are read back on another machine - which
+  `lab/install-iso.sh mirror` does, off the leg alone, with no array
+  assembled, and with that box switched off. The measured cost of the choice
+  is in the same lab: the survivor booted on its own reaches no bootloader at
+  all and sits at the firmware.
+
+  **A box with one disk is untouched.** It is never asked, it gets no array,
+  and its self-test says nothing about mirrors - asserted on an installed box
+  rather than assumed. The default is `none` and a bare Enter takes it: a
+  second disk in a machine is not consent to destroy what is on it, and the
+  confirmation names both disks, because a confirmation that repeats one disk
+  back while a second is destroyed behind it is not a confirmation.
+
+  `mdadm --create` exits **zero** having built a degraded array, so the
+  install reads `/proc/mdstat` back before it reports success. And the boot
+  self-test states the mirror on every boot: **degraded is a failed check**,
+  because the volume stays mounted and the records keep being written while
+  the box is one failure from losing them; a rebuild in progress is a warning
+  with its percentage, since reporting a repair as a failure teaches whoever
+  reads that console to skip the line.
+
+  Unattended installs answer it with `hexarouting.mirror=<disk>` or a `mirror`
+  line in the answers file. The medium now carries `mdadm`, and the build
+  refuses an image without it.
+
+  **Three defects this turned up, all of them in the box around the mirror
+  rather than in the mirror.** Each was found by booting a machine, and each
+  one named the next:
+
+  * **A degraded array does not start on its own, so the records volume never
+    mounted.** With the mirror disk detached the box came up perfectly and
+    `/proc/mdstat` read `md0 : inactive vda3[0](S)` - udev claims the surviving
+    leg and stops, because one leg of two is not a complete array, and an
+    inactive array has no device to mount. `nofail` did its job and
+    `/var/log/hexarouting` was back on the root filesystem: the arrangement the
+    separate volume replaced, on a box that had already spent a disk. The
+    installed system now carries a unit that runs the array with whatever disks
+    are left, before `local-fs.target`.
+  * **A box that already had a mirror could not be reinstalled.** The medium's
+    udev assembles the array it finds, and `sfdisk` will not rewrite a
+    partition a running array is holding. The arrays on the disks about to be
+    erased are stopped first.
+  * **And stopping them was not enough**, because an md superblock lives 4 KB
+    *into* the partition: rewriting the table made udev re-probe and assemble
+    the array again, between the partitioning and the `mkfs`. The superblocks
+    are erased with the stop - and per disk, immediately before each write,
+    because doing it once for both left the second disk exposed for as long as
+    the first `sfdisk` took.
+  * **And the erase brought back what it had removed.** Closing a writable file
+    descriptor on a whole disk makes the kernel re-read its partition table,
+    which is what `mdadm` does while looking for a superblock to erase - so
+    udev saw the partition appear and assembled the stale leg on it, `inactive`,
+    holding the disk the erase had just freed. The release now repeats until a
+    pass finds nothing left, and prints `/proc/mdstat` if it never does. That
+    last one was only readable because the step before it had been made to say
+    what was in the way instead of leaving it to be deduced from `sfdisk`.
+
+  The first of those is the one worth reading twice: everything about the
+  mirror was correct, and the box would have spent a year writing records to
+  the disk that was left, under a self-test saying so on every boot and nobody
+  necessarily reading it.
 
 ### Fixed
 
