@@ -1,7 +1,7 @@
 #!/bin/sh
 # A non-first fragment carries no port. Without shallow virtual reassembly it
 # matches no session and disappears - large DNS, VPN and gaming break
-# intermitente.
+# intermittent.
 #
 # Two interfaces, attached two different ways, carrying the same two
 # fragments: pg0 by "set interface bpa" at the VPP CLI, pg2 by the
@@ -133,19 +133,19 @@ while off + 16 <= len(d):
     else:
         print(f"fragment 2: src={src} offset={offs} MF={mf} (no UDP header)")
         if src != want: ok = False; print("  FALHA")
-print(f"\n{'OS DOIS FRAGMENTOS TRADUZIDOS' if ok and n==2 else f'PROBLEMA: {n} fragmentos'}")
+print(f"\n{'BOTH FRAGMENTS TRANSLATED' if ok and n==2 else f'PROBLEM: {n} fragments'}")
 EOF
 }
 
 echo
-echo "=========== enviando os dois fragmentos por pg0 (CLI) ==========="
+echo "=========== sending both fragments over pg0 (CLI) ==========="
 echo "  expected: both leave as 200.150.0.17; only the first carries a port"
 send_pair pg0 100.64.0.5 /tmp/frag-cli.pcap
 report "pg0 (CLI)" 200.150.0.17 /tmp/frag-cli.pcap
 CLI_TRACE=$(vppctl show trace)
 
 echo
-echo "=========== enviando os dois fragmentos por pg2 (binary API) ==========="
+echo "=========== sending both fragments over pg2 (binary API) ==========="
 echo "  expected: both leave as 200.150.0.33; only the first carries a port"
 send_pair pg2 100.65.0.5 /tmp/frag-api.pcap
 report "pg2 (API)" 200.150.0.33 /tmp/frag-api.pcap

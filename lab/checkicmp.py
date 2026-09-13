@@ -83,5 +83,5 @@ for raw in pkts:
 
 if not seen:
     bad("no ICMP error found in the pcap")
-print(f"\n  {'ICMP TRADUZIDO CORRETAMENTE' if not fail else str(fail)+' FALHAS'}")
+print(f"\n  {'ICMP TRANSLATED CORRECTLY' if not fail else str(fail)+' FAILURES'}")
 sys.exit(1 if fail else 0)

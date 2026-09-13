@@ -39,7 +39,7 @@ divisors.update([2**k + 1 for k in range(1, 28)])
 rnd = random.Random(7)
 divisors.update(rnd.randrange(1, 1 << 28) for _ in range(400))
 divisors = sorted(d for d in divisors if 1 <= d < (1 << 28))
-print(f"testando {len(divisors)} divisores, de {min(divisors)} a {max(divisors):,}\n")
+print(f"checking {len(divisors)} divisors, from {min(divisors)} to {max(divisors):,}\n")
 
 overflow_worst = 0
 for d in divisors:
