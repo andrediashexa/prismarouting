@@ -112,6 +112,14 @@ version has a chance of seeing it.
   The code moved and not the help. Making the help true by deleting half of it
   would leave the operator no way to learn this before applying.
 
+  Measured on a box, not only in a fixture. `lab/commit.sh` already drives a
+  real re-mapping against `ref/bpa_model.py` as an oracle, so `commit check`
+  runs there on the same candidate and its count is compared with the one
+  `commit`'s refusal gives: two answers to "how many move" would be worse than
+  one. With the report removed the lab goes red on four checks, naming the real
+  number - `240 of 256 subscribers`. The lab also asserts what a fixture
+  cannot, that `check` left the block size where it was.
+
 * **Six wiki sentences promised that `commit check` reports re-mappings, and
   it reports nothing.** Staged an `outside` change over a running pool and fed
   it to `commit check`: the output is `configuration check succeeds` and

@@ -172,6 +172,15 @@ expect_not_in "and the pool is not in the dataplane" "pool doomed" "$(vppctl sho
 # unusual happened - it did what it was told. See docs/pool-resize.md.
 vppctl bpa pool resize inside 100.64.64.0/24 outside 203.0.113.0/28 block 512 \
   >/dev/null
+# `commit check` FIRST, on the same candidate, because that is the order an
+# operator works in and it is the whole of #278: the help promises check will
+# report the re-mapping, and it printed only that validation passed. Whatever
+# check says here has to be what commit says below - two answers to "how many
+# move" is worse than one, and the numbers come from the same dataplane call.
+CHECK=$($HX -c "configure" -c "cgnat pool resize" -c "block-size 1024" \
+             -c "exit" -c "commit check" 2>&1)
+echo "$CHECK" | tail -6 | sed 's/^/  /'
+BLOCK_CHECK=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0-9]*" | head -1)
 REMAP=$($HX -c "configure" -c "cgnat pool resize" -c "block-size 1024" \
             -c "exit" -c "commit" 2>&1)
 echo "$REMAP" | tail -6 | sed 's/^/  /'
@@ -240,6 +249,23 @@ expect "and the count is the one the model computes" \
 expect "and the subscriber it names moves exactly where the model says" \
   test "$EX_OK" = yes
 expect_in "and says what to type" "commit remap" "$REMAP"
+
+# #278. The operator asks before applying, and until this the answer was
+# "configuration check succeeds" and nothing else - over a change that moves
+# every subscriber on the pool.
+expect_in "'commit check' says the change re-maps subscribers" \
+  "RE-MAPS" "$CHECK"
+expect_in "and gives the same count 'commit' gives" "$MOVED" "$CHECK"
+expect_in "and names a subscriber moving, as the refusal does" \
+  "moves from" "$CHECK"
+expect_in "and says what to type" "commit remap" "$CHECK"
+# It must not read as a refusal: check applied nothing, so there is nothing to
+# have refused, and an operator who reads it as a failure runs it again.
+expect "and does not report it as an error" \
+  test "$(printf '%s' "$CHECK" | grep -c '^error:')" = 0
+# The half a lab can prove and a unit test cannot: that check really did not
+# touch the box. The block size has to be what it was before any of this.
+expect "and the box was not touched" test "$BLOCK_CHECK" = "block        512"
 expect "and nothing was applied" test "$BLOCK_MID" = "block        512"
 expect_in "asked for by name, it applies" "commit complete" "$NAMED"
 expect "and the dataplane took it" test "$BLOCK_AFTER" = "block        1024"
