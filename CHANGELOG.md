@@ -65,7 +65,8 @@ are to be interpreted as described in
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
-[#237](https://github.com/andrediashexa/hexarouting/issues/237).
+[#237](https://github.com/andrediashexa/hexarouting/issues/237),
+[#247](https://github.com/andrediashexa/hexarouting/issues/247).
 
 ### Added
 
@@ -1467,6 +1468,30 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **`docs/routing.md` sent readers to the wrong lab for four claims**
+  ([#247](https://github.com/andrediashexa/hexarouting/issues/247)). The
+  as-path regex cases, the two-origin policy test, the local-preference test
+  and the RPKI assertion were all attributed to `lab/routing.sh` and all live
+  in `lab/bgp-policy.sh`, which
+  [#167](https://github.com/andrediashexa/hexarouting/issues/167) split out of
+  it. A reader following the document ran the wrong lab, found nothing, and was
+  left with two readings that are both wrong: that the claim is unheld, or that
+  the lab has lost it. `lab/routing.sh` even states outright that it builds no
+  RPKI module, so one of the four contradicted the file it pointed at.
+
+  **The check is narrow on purpose, and the wider ones were measured before
+  being rejected.** Requiring every backticked token beside a lab reference to
+  appear in that lab gives 26 findings, of which almost all are correct prose:
+  a document legitimately names a command it explains, or another test file. A
+  check that goes red on work that is right is the worst kind there is, so that
+  one is not shipped. Requiring a fixture to be in ONLY the named lab says
+  nothing at all here, because these prefixes appear in several labs.
+
+  What holds with no false positives: a paragraph that names exactly one lab
+  and quotes a **fixture** - an IPv4 prefix, an AS number, an
+  UPPERCASE-HYPHEN policy name - is claiming that lab uses it. Measured over
+  every document: one finding, and it was one of the four defects.
 
 * **A test file in the tree that nothing ran, and nothing would have said so**
   ([#235](https://github.com/andrediashexa/hexarouting/issues/235)). Two lists
