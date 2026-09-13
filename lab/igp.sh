@@ -852,6 +852,50 @@ expect_not_in "and it is silent once the two halves agree again" \
   "carries OSPF and its MTU is" "$($HX -c 'show ospf interface' 2>&1)"
 
 echo
+echo "=========== the read-back check must not fire on a working box (#197) ==="
+# `commit` now reads FRR's OWN running configuration back and refuses when a
+# statement this commit introduced is not in it. The danger of that check is
+# not that it misses a drop: it is that it refuses a commit that WORKED. These
+# are the two shapes that would, and both are measured rather than assumed -
+# lab/frr-readback.sh is where the measurement lives.
+#
+#   OMITTED    FRR accepts `ip ospf hello-interval 10`, its own default, and
+#              does not store it. A check with no list calls that a dropped
+#              statement on a box where OSPF is running perfectly.
+#   REWRITTEN  FRR accepts `passive-interface vppwan0` and reads it back as
+#              `ip ospf passive`, inside the interface stanza rather than the
+#              router one. Same consequence, different cause.
+#
+# Last in the file on purpose: it changes OSPF timers on the live interface,
+# and every adjacency assertion above has already been made.
+#
+# vppwan0 and not host-veth-vpp, because these are FRR statements and #205
+# established that an FRR statement has to carry the name FRR can act on.
+DEFAULTS=$($HX -c "configure" -c "interface vppwan0" \
+           -c "ip ospf hello-interval 10" \
+           -c "ip ospf retransmit-interval 5" \
+           -c "exit" -c "router ospf" -c "passive-interface vppwan0" \
+           -c "exit" -c "commit" 2>&1)
+echo "$DEFAULTS" | tail -3 | sed 's/^/  /'
+expect_in "a commit of statements FRR does not store still says complete" \
+  "commit complete" "$DEFAULTS"
+# The two assertions that make the one above mean something. Without them
+# "commit complete" is equally consistent with FRR having stored everything,
+# which is a box this check was never in danger on.
+expect "and FRR really did leave the hello-interval out, so this was the case" \
+  sh -c "! vtysh -c 'show running-config' | grep -q 'ip ospf hello-interval 10'"
+expect "and really did rewrite passive-interface, so was that" \
+  sh -c "vtysh -c 'show running-config' | grep -q 'ip ospf passive'"
+
+# The control: a value FRR DOES store, committed the same way, so "commit
+# complete" above is not simply what this box says to everything.
+NONDEF=$($HX -c "configure" -c "interface vppwan0" \
+         -c "ip ospf hello-interval 7" -c "exit" -c "commit" 2>&1)
+expect_in "a value FRR does store commits too" "commit complete" "$NONDEF"
+expect "and FRR is holding that one, read back from the box" \
+  sh -c "vtysh -c 'show running-config' | grep -q 'ip ospf hello-interval 7'"
+
+echo
 echo "=========== adjacencias ==========="
 printf 'OSPF  : '; vtysh -c "show ip ospf neighbor" 2>/dev/null | grep -E "^10\.0\.0\.2" | awk '{print "neighbour "$1" state "$3}'
 printf 'IS-IS : '; vtysh -c "show isis neighbor" 2>/dev/null | awk '$2 == "vppwan0" {print "neighbour "$1" state "$4" interface "$2}'

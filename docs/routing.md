@@ -2759,6 +2759,73 @@ This is the same shape as
 that were not running committed cleanly. That fix reported the daemons on an
 installed box; this is the half that was left.
 
+## What FRR keeps, and what `commit` can conclude from its absence
+
+`commit` reads FRR's own running configuration back afterwards and refuses when
+a statement this commit introduced is not in it. That is
+[#197](https://github.com/andrediashexa/hexarouting/issues/197): `frr-reload`
+exits 0 having dropped a statement, and without this the box says **commit
+complete** over it. Every diagnosis an operator makes afterwards starts from
+that sentence.
+
+The check could not be written for a long time, and the reason was a measured
+false positive rather than a missing idea: FRR leaves some statements out of
+its own read-back, so refusing on "typed but not read back" would refuse
+correct configurations. **The rule everybody assumed was behind that is
+wrong**, and finding out is what made the check possible.
+
+Measured on FRR 10.7.1, one statement at a time, each undone before the next:
+
+| typed | read back |
+|---|---|
+| `timers throttle spf 0 50 5000` | **omitted** |
+| `ip ospf hello-interval 10` | **omitted** |
+| `ip ospf retransmit-interval 5` | **omitted** |
+| `ip ospf dead-interval 40` | comes back |
+| `ip ospf cost 10` | comes back |
+
+Every one of those is the FRR default. So omission is per **statement**, not
+per value: there is no table of FRR defaults to chase across versions and no
+comparison to get right. There is a short list of statements FRR drops, and
+`lab/frr-readback.sh` is what produces it and keeps it honest — an FRR upgrade
+that changes one of these answers fails there rather than silently changing
+what this VTY refuses.
+
+Two further shapes came out of the same measurement, and neither had been
+named:
+
+* **Rewritten.** `passive-interface vppwan0` comes back as `ip ospf passive`,
+  in the *interface* stanza rather than the router one, and `continue 20` comes
+  back as `on-match goto 20`. Both were already known here from somewhere else
+  — the first to `ospf_findings`
+  ([#205](https://github.com/andrediashexa/hexarouting/issues/205)), the second
+  to `route_map_findings`
+  ([#208](https://github.com/andrediashexa/hexarouting/issues/208)) — which is
+  the evidence that this list is discoverable rather than open-ended. When a
+  rewritten statement's rewrite is missing too, the refusal names what FRR
+  would have written: an operator told "`passive-interface` is missing" will
+  grep for it and find nothing.
+* **Negated.** `bgp default ipv4-unicast` is the default, so turning it **on**
+  writes nothing and turning it **off** writes the `no` line. A read-back
+  looking only for positives calls the first a dropped statement.
+
+The comparison is against FRR's **running configuration**, not against
+`frr-reload --test`'s idea of what is outstanding. That distinction is the
+whole reason this is possible now: `--test` reports a default-valued statement
+under *Lines To Add* for ever, so a check built on it calls every commit
+carrying one a failure. FRR's running configuration does not lie that way — it
+simply does not contain the statement, which is a question that can be asked.
+
+The list is short on purpose, and anything added to it **MUST** come with a
+probe in `lab/frr-readback.sh`. A list that grows by guesswork turns this check
+back off one entry at a time.
+
+`lab/igp.sh` carries the other half, which is the one that would hurt an
+operator: a commit of statements FRR does not store still says **commit
+complete**, on a box where OSPF is running perfectly — with two assertions
+beside it proving FRR really did omit and really did rewrite, so that
+"complete" is not simply what this box says to everything.
+
 ## FRR version
 
 Debian 12 ships FRR 8.4.4, already old. Production **SHOULD** pin a version

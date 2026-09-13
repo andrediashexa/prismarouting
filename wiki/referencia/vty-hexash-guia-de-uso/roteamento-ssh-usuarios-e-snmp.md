@@ -272,6 +272,24 @@ commit complete
 
 Antes essa linha era descartada, e a pessoa saía com uma política apontando para nada.
 
+## O que `commit complete` passou a significar
+
+Depois de aplicar, a caixa **lê de volta a configuração que o FRR está rodando** e compara com o que você escreveu. Se uma declaração que este commit introduziu não estiver lá, ele recusa e diz quais.
+
+Isso existe porque a ferramenta que aplica a configuração pode terminar com sucesso tendo descartado uma linha. O sintoma é o pior que existe: você sai da janela de manutenção achando que aplicou, e o problema aparece dias depois, sem ninguém ligar uma coisa à outra.
+
+:::info
+**Nem tudo que o FRR aceita ele guarda, e isso não é erro.** Três formas, todas medidas nesta caixa e não deduzidas:
+
+* **Ele omite.** `ip ospf hello-interval 10` é o padrão dele, então ele aceita e não grava. Mas `ip ospf dead-interval 40` também é o padrão e esse ele grava — ou seja, **não dá para prever pelo valor**, é declaração por declaração.
+* **Ele reescreve.** `passive-interface vppwan0` volta como `ip ospf passive`, dentro da estrofe da interface e não da do roteador. `continue 20` volta como `on-match goto 20`. O próprio FRR avisa quando você digita a primeira.
+* **Ele já tinha ligado.** `neighbor 10.0.0.2 activate` numa família ipv4-unicast é implícito, então ele aceita e não grava nada.
+
+A caixa conhece essas formas e não reclama delas. Você não precisa mudar como escreve.
+:::
+
+Se aparecer uma recusa aqui, a leitura é: **o que esta caixa guarda e o que o FRR está rodando não são a mesma coisa.** `show configuration` mostra a desta caixa; `start shell` e depois `vtysh -c "show running-config"` mostra a do FRR.
+
 # Listas de AS-path e de comunidade
 
 São elas que uma route-map consulta em `match as-path`, `match community` e `match large-community`.
