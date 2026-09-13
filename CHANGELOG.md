@@ -128,23 +128,6 @@ version has a chance of seeing it.
   exist, and refusing a configuration this VTY merely cannot see is the same
   harm again.
 
-[#245](https://github.com/andrediashexa/hexarouting/issues/245) (continued),
-[#250](https://github.com/andrediashexa/hexarouting/issues/250),
-[#256](https://github.com/andrediashexa/hexarouting/issues/256),
-[#257](https://github.com/andrediashexa/hexarouting/issues/257),
-[#260](https://github.com/andrediashexa/hexarouting/issues/260),
-[#267](https://github.com/andrediashexa/hexarouting/issues/267),
-[#258](https://github.com/andrediashexa/hexarouting/issues/258),
-[#261](https://github.com/andrediashexa/hexarouting/issues/261),
-[#265](https://github.com/andrediashexa/hexarouting/issues/265),
-[#266](https://github.com/andrediashexa/hexarouting/issues/266),
-[#269](https://github.com/andrediashexa/hexarouting/issues/269),
-[#259](https://github.com/andrediashexa/hexarouting/issues/259),
-[#262](https://github.com/andrediashexa/hexarouting/issues/262),
-[#263](https://github.com/andrediashexa/hexarouting/issues/263).
-
-### Fixed
-
 * **Three rules of the TCP exporter could be broken with every check green**
   ([#259](https://github.com/andrediashexa/hexarouting/issues/259),
   [#262](https://github.com/andrediashexa/hexarouting/issues/262),
