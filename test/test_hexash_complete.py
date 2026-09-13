@@ -145,7 +145,10 @@ print("  written, parsed, and both directions of the delta")
 
 print("\n=== commit sub-commands, Juniper style ===")
 o, _, _ = opts("config", "commit ")
-check({"check", "confirmed", "comment"} <= o, f"got {o}")
+# `cutoff` and `remap` are gate words an operator meets in a refusal and has
+# to type back. One they cannot complete is one they will mistype in the
+# moment the box is asking for it.
+check({"check", "confirmed", "comment", "remap", "cutoff"} <= o, f"got {o}")
 print(f"  commit -> {sorted(o)}")
 
 o, hint, _ = opts("config", "rollback ")
@@ -1467,7 +1470,17 @@ FUZZ_CONTEXT = [[], ["router bgp 65000"], ["route-map R permit 10"],
                 ["router ospf"], ["router isis 1"], ["interface vppwan0"]]
 MANY = [lambda r: hexash.bgp_errors(r, HAVE, LCP, DPNAMES),
         hexash.bgp_errors, undefined_policy_lists, route_map_findings,
-        rpki_findings, isis_findings, ospf_state]
+        rpki_findings, isis_findings, ospf_state,
+        # The #145 refusals read the same half-typed lines as everything
+        # above, and one of them REFUSES a commit - so a traceback from a
+        # truncated statement would put Python in front of the operator
+        # instead of the refusal.
+        hexash.route_map_reference_findings,
+        hexash.advertisement_fingerprint,
+        lambda r: hexash.advertised_out(r, "203.0.113.0/24"),
+        lambda r: hexash.route_map_verdict(r, "OUT", "203.0.113.0/24"),
+        lambda r: hexash.prefix_list_verdict(r, "PL", "203.0.113.0/24"),
+        lambda r: hexash.session_cut_findings(r, r, "203.0.113.5")]
 ONE = [as_path_parts, as_path_regex_error, prefix_range_error]
 
 tried, crashed = 0, []

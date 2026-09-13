@@ -3004,6 +3004,190 @@ On the tables, never on the text of the configuration. `lab/routing.sh` has a
   this half, a `set` that applied to everything would pass every test that only
   checked the routes it was supposed to affect.
 
+## A route-map referenced and not defined
+
+```
+error: neighbor 10.0.0.2 route-map RM-IN in: no route-map called 'RM-IN' is
+defined, and FRR denies everything this statement governs until one is;
+define it, or write 'route-map RM-IN permit 10' to let everything through
+```
+
+**REFUSED.** The commit does not happen and the statement never reaches FRR
+([#145](https://github.com/andrediashexa/hexarouting/issues/145)).
+
+FRR takes the statement. It prints `The route-map 'RM-IN' does not exist.`,
+stores it, exits 0 - and then denies everything the statement governs. The
+session comes up, carries no routes, and nothing on the box says why.
+
+### What FRR actually does, measured
+
+Two speakers over a veth pair on FRR 10.7.1, the peer offering
+`203.0.113.0/24` and `198.51.100.0/24`, asserted on the receiving side's
+table:
+
+| configured | what the receiving side holds |
+|---|---|
+| no route-map at all | both prefixes |
+| `neighbor 10.9.0.2 route-map RM-MISSING in` | **zero**, session Established |
+| `route-map RM-MISSING permit 10` added | both, with nothing retyped |
+| `neighbor 10.9.0.1 route-map OUT-MISSING out` | the other end holds zero |
+| `redistribute kernel route-map RM-NOPE` | originates nothing |
+| the same with the map defined | `*u 203.0.113.0/24` |
+| `network 203.0.113.0/24 route-map RM-NONE` | originates nothing |
+| the same with the map defined | `*u 203.0.113.0/24` |
+
+Those three shapes - `neighbor ... route-map ... in|out`, `redistribute ...
+route-map`, `network ... route-map` - are what `ROUTE_MAP_FATAL` names, and
+they are the only ones refused.
+
+### Why this is refused when an undefined community list is not
+
+`undefined_policy_lists()` reports a `match community CM-X` against a list
+nothing defines and does **not** refuse it, because FRR binds the list when it
+arrives and building a policy in two commits therefore works
+([#208](https://github.com/andrediashexa/hexarouting/issues/208)). An
+undefined route-map is not that case: for the whole window between the two
+commits the session carries nothing, and there is no order of typing in which
+that is what the operator meant.
+
+The second reason is local to this box. FRR's warning goes to the vtysh
+session; this VTY hands whole configurations to `frr-reload.py`, and
+`Frr._summarise()` keeps only lines carrying `Exiting:`, `ERROR`, `% `,
+`Failed` or `Exception:`. `The route-map 'X' does not exist.` matches none of
+them, so on this box the warning is not merely easy to miss - it is thrown
+away.
+
+### Refused only when this change is what causes it
+
+The same guard the SSH lockout checks use, and here it is what keeps a box
+bootable: `--load` runs this check at boot and refuses the file **whole** if
+it fails, so a box whose saved configuration already carries the reference
+would come up with nothing on it at all. That is a worse outcome than the
+fault being refused, and it is the same trap the stale `tap<n>` stanza in
+`Shell.load()` exists for. A box already in that state is warned and can be
+worked on; a commit that introduces the reference is refused.
+
+### What is reported and not refused
+
+* **`call RM-MISSING`.** Measured, same pair: a `permit` clause carrying a
+  call to a map nothing defines still advertises the prefix. FRR skips a call
+  it cannot resolve and the clause continues, so the statement is dead rather
+  than deadly.
+* **Every other place a map can be named** - `table-map`,
+  `default-originate route-map`, `advertise-map` and the rest of the
+  conditional-advertisement family, `ip protocol X route-map Y`. What each
+  costs there was not measured, and a refusal built on what somebody believes
+  FRR does is how #208 was filed.
+* **A route-map defined that nothing uses.** Dead configuration is untidy, not
+  dangerous - and it is also exactly what an operator building a policy
+  map-first has on the box between two commits.
+
+`bgp route-map delay-timer 10` names no route-map, and neither does a
+`description` an operator writes a sentence in. Read as references, the first
+would refuse a commit over a timer and the second over a comment.
+
+## A policy that withdraws the prefix carrying this session
+
+```
+error: 203.0.115.0/24: no neighbour would be sent it after this change, and it
+covers 203.0.115.9 - the address this session arrived on
+    the outbound policy denies it to every neighbour that has one, so nothing
+    would advertise a route back to this box's end of your own session
+    if that is what you mean, type: commit cutoff
+```
+
+The SSH lockout check refuses a configuration nobody could log in with
+([#35](https://github.com/andrediashexa/hexarouting/issues/35)). This is the
+same failure one layer down: an operator on the other side of the country
+applies an outbound policy that stops advertising the prefix their own session
+runs over, the session drops mid-commit, and if the commit was not confirmed
+the rollback timer is the only way back.
+
+**Gated, not refused**, which is the shape
+[#23](https://github.com/andrediashexa/hexarouting/issues/23) established for
+a change that re-maps subscribers. Withdrawing a prefix on purpose is an
+ordinary thing to do - a maintenance drain, a customer leaving - and the box
+cannot tell that apart from the mistake. So it asks for the commit by name:
+
+```
+commit cutoff
+```
+
+and applies it **as `commit confirmed 10` whether or not that was asked for**,
+the way a change to SSH or to accounts already is. The word acknowledges the
+consequence; it does not provide a way back, and the rollback timer has to be
+armed before the session it protects goes away.
+
+### Where the address comes from
+
+`SSH_CONNECTION`, which sshd sets for the session's own process as
+`<client> <client port> <server> <server port>`. The **server** half is the
+one that matters: reachability of the client's address is the client network's
+business, and reachability of the address the session terminates on is what
+this box advertises and what an outbound policy can take away.
+
+On a serial console there is no such variable, and the check cannot be made.
+That is said rather than skipped - a check that quietly does not run is one the
+operator believes ran and passed:
+
+```
+note: this change alters what this box advertises, and this session did not
+arrive over SSH
+    so there is no address to check it against. A serial console cannot be cut
+    off by a withdrawal; a session reaching this box through another one can
+```
+
+The note is printed only when the change moves something in
+`advertisement_fingerprint()` - what this box originates, and the outbound
+policy of every neighbour. On every commit it would be an alarm nobody reads.
+
+### What it can follow, and what silences it
+
+Measured on FRR 10.7.1 with two speakers, this box originating
+`203.0.113.0/24` and `198.18.0.0/24`, asserted on the **peer's** table:
+
+| configured | what the peer holds |
+|---|---|
+| no policy | both |
+| `route-map OUT permit 10` matching a list holding only `198.18.0.0/24` | `198.18.0.0/24` only |
+| `route-map OUT deny 5` matching a list holding `203.0.113.0/24` | the same |
+| `neighbor prefix-list PL-OUT out`, `deny 203.0.113.0/24` then a permit | the same |
+| the policy removed | both again |
+
+So the **implicit deny at the end of a route-map** withdraws a prefix as
+surely as a deny clause naming it, and that is the case an operator does not
+see by reading their own policy back. `route_map_verdict()` and
+`prefix_list_verdict()` follow both, and refuse to answer for anything else:
+
+* a `match` on a community, an AS-path, a metric - decided by the route's
+  attributes and not by its prefix;
+* a clause carrying `call`, `on-match` or `continue` - flow this does not
+  follow;
+* a `distribute-list` or a `filter-list` on the neighbour;
+* an origination `bgp_originations()` is blind to - an `aggregate-address`, a
+  `network` through a route-map, a `redistribute connected`.
+
+Any one of those on any neighbour that could carry the prefix and **the whole
+finding is withdrawn**. The gate fires only when every neighbour that has a
+policy denies it and no neighbour is unreadable, because a gate that fires on
+a working configuration is one the operator learns to type past - and then
+types past on the day it was right.
+
+It is silent, too, on a box that does not originate a covering prefix today:
+that is the ordinary CGNAT behind an edge router, whose announcement is not in
+this box's configuration at all.
+
+**A neighbour that is configured and has never come up counts as a carrier.**
+This reads the configuration, not the session table. The limit is real and it
+was found by the lab rather than reasoned about: a third neighbour sitting
+Idle in a peer group was enough to silence the finding on a box whose two live
+sessions had both been denied the prefix. The alternative is worse - a gate
+that depends on whether a session happens to be established at that instant is
+a gate that fires or does not fire for the same change, and nobody trusts it.
+An operator draining a prefix everywhere applies the policy everywhere,
+peer groups included, which is what the lab now does.
+
+
 ## Prefix-lists
 
 ```

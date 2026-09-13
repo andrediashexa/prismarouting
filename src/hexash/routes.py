@@ -318,6 +318,18 @@ def covers_prefix(outer: str, inner: str) -> bool:
     return _covers(outer, i_net)
 
 
+def covers_address(prefix: str, addr: str) -> bool:
+    """
+    True when `addr` is inside `prefix`.
+
+    The same question _covers() has answered privately since this module was
+    written, named and exported because a caller outside it now has to ask it:
+    the check that reads whether this box still advertises the prefix carrying
+    the operator's own session starts from an ADDRESS, not from a prefix.
+    """
+    return _covers(prefix, addr)
+
+
 def _covers(prefix: str, addr: str) -> bool:
     net, _, length = prefix.partition("/")
     n, a = _addr_int(net), _addr_int(addr)
