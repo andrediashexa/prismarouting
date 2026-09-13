@@ -112,8 +112,10 @@ expect_in "with the standard NAT-MIB subtree" "1.3.6.1.2.1.123" "$CONF"
 expect_in "and the operator's own enterprise subtree" "1.3.6.1.4.1.99999" "$CONF"
 # The daemon half of read-only. There must never be an rwcommunity line.
 expect_not_in "and NO writable community" "rwcommunity" "$CONF"
-# Against the DATAPLANE's own answer, not against 600. The agent serving a
-# constant and the agent reading the box are the same thing to a literal.
+# Two halves, because either alone passes for the wrong reason. The first
+# pins the value this lab asked for; the second pins it to what the DATAPLANE
+# answers, and an agent serving a constant is indistinguishable from an agent
+# reading the box until somebody asks the box.
 expect "the UDP timeout came back over SNMP" test "$UDPT" = "600"
 expect "and it is the value the dataplane actually holds, not a constant" \
   test "$UDPT" = "${DP_UDPT:-unread}"

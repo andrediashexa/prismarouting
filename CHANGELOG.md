@@ -76,7 +76,8 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247),
+[#249](https://github.com/andrediashexa/hexarouting/issues/249).
 
 ### Added
 
@@ -710,6 +711,65 @@ are to be interpreted as described in
   checks go red, and so do the six fragment assertions, with **two** sessions
   opened by the two fragments instead of one. That is the defect itself, on
   the wire.
+
+* **The labs' `vppctl` carriage returns, swept and pinned**
+  ([#249](https://github.com/andrediashexa/hexarouting/issues/249)). `vppctl`
+  ends every line with CR+LF, and neither `awk`'s field splitting nor `sh`'s
+  IFS counts `\r` as whitespace, so the carriage return stays attached to the
+  **last field of every line**. A value read off the end of a line is
+  `600<CR>` while the terminal shows `600`.
+
+  **Which half of a lab survives that was measured, not assumed**, under
+  `dash`, which is the shell `tools/lab.sh` runs the labs with: `[ "600<CR>"
+  -eq 600 ]` is **true**, because the number parser calls `isspace()` and
+  `isspace('\r')` is true, while `[ "600<CR>" = "600" ]` is **false**, a
+  `case` glob does not match and `grep -x` does not match. Every arithmetic
+  comparison survives it; every string comparison does not.
+
+  It fails in the direction that hides. A needle that can never match makes
+  "this must appear" red on a correct box, which somebody notices, and "this
+  must NOT appear" green on a broken one, which nobody does.
+
+  **All 54 labs were swept**: 1107 assertion sites, of which 280 read a value
+  derived from `vppctl`. **None of the 280 was bitten**, and that is the
+  measurement, not an absence of one: their needles are literal strings, which
+  have no carriage return to lose, and their numeric comparisons are the ones
+  `dash` tolerates. The single bite the sweep found sits just outside the
+  assertion set - a printed cross-check in `lab/snmp.sh` comparing the SNMP
+  answer against the dataplane with `tr ' ' '\n' | grep -x 600`, which
+  compares whole lines, so it never matched and the `|| echo 600` behind it
+  printed the literal. The report said "vppctl says 600" whatever the box
+  held. It is now an assertion against the value read off the dataplane, and
+  it goes red with the strip removed **while the printed line still reads
+  `600`**, which is the whole difficulty in one screen.
+
+  **Where the strip belongs was decided by counting.** A wrapper every lab
+  pipes `vppctl` through is the obvious answer and was rejected: the needle of
+  an `expect_in`/`expect_not_in` is a literal string in all but a handful of
+  those 280 sites, and a literal needle has no carriage return to lose - it
+  matches inside `...bpa-in2out<CR>` like any other substring. Wrapping
+  roughly a thousand call sites would move the input of every lab in order to
+  change no lab's verdict, and each one would then have to be shown not to
+  have moved. So the strip goes where the value is **extracted**, in one named
+  helper - `vc()` in `lab/lib.sh` - and `test/test_lab_crlf.py` refuses the
+  extraction shapes that carry a carriage return at all: the last `awk` field,
+  a whole line, `grep -x`, a `sed` that prints the rest of a line, an
+  end-anchored regex. Sixteen sites were converted, including the fifteen that
+  were verdict-neutral, so the rule has no allowlist for anybody to grow.
+
+* **A dead `expect_not_in` in `lab/vty.sh`**, found on the way and the same
+  defect class with no carriage return in it
+  ([#249](https://github.com/andrediashexa/hexarouting/issues/249)). The lab
+  asserted `expect_not_in "BGP_BLOCK: cgnat"`. Its generator prints that label
+  followed by the offered words **sorted**, so the label is only ever followed
+  by the alphabetically first one, and the assertion nine lines above pins
+  that word to `address-family`. `BGP_BLOCK: cgnat` could not match on a
+  leaking box either, so the check had been green since the day it was
+  written. It now reads the word list. Shown failing by leaking `cgnat` into
+  the BGP block's grammar, which the old spelling stays green on. The two
+  neighbouring negatives are **not** dead: `cgnat` sorts before `description`
+  in `IN_BLOCK` and `address-family` before `bfd` in `BGP_STMT`, so a leak
+  there does reach the first position.
 
 ### Added
 
