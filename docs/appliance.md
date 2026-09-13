@@ -468,7 +468,9 @@ Two decisions worth explaining:
   damage.
 * **No `ExecStop` on `hexarouting.service`.** The configuration lives in VPP.
   Stopping the service **MUST NOT** delete production pools; removing a pool is
-  the operator's action, through the VTY.
+  the operator's action, through the VTY. A stop-time command also runs on every
+  **restart**, so it would fire during an ordinary upgrade rather than only when
+  somebody meant to take CGNAT down.
 * **There is one on `vpp.service`**, shipped as the drop-in
   `/etc/systemd/system/vpp.service.d/hexarouting-stop-drain.conf`. It runs
   `vppctl bpa stop-drain` before the signal, so every block the dataplane is
@@ -477,6 +479,14 @@ Two decisions worth explaining:
   are in the VPP process, and VPP's UDP IPFIX export is a packet the dataplane
   sends rather than a kernel socket, so it stops working the moment the graph
   does. See [logging.md](logging.md#stopping-the-box-closes-them-too-and-a-crash-cannot).
+
+Both of those are enforced, and by the same rule rather than by a list of which
+file may carry which line. `test/test_stop_is_not_a_teardown.py` reads every
+stop-time directive shipped under `appliance/` and requires that it only asks a
+running process to **flush state it is already holding**; anything that reaches
+the configuration surface is refused, including on the drop-in that is allowed
+to have one. It also fails when the drain goes missing, because a box that stops
+without it reopens the open-allocation defect above.
 
 `hexarouting.service` waits for VPP to accept commands before applying
 configuration: systemd considers `vpp.service` started once the process is up,

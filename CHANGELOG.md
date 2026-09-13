@@ -65,7 +65,8 @@ are to be interpreted as described in
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
-[#237](https://github.com/andrediashexa/hexarouting/issues/237).
+[#237](https://github.com/andrediashexa/hexarouting/issues/237),
+[#238](https://github.com/andrediashexa/hexarouting/issues/238).
 
 ### Added
 
@@ -242,6 +243,43 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
+
+* **Nothing stopped `hexarouting.service` from growing an `ExecStop` that
+  deletes every pool.** `docs/appliance.md:470` says stopping the service
+  **MUST NOT** delete production pools and the unit repeats it in a comment;
+  adding `ExecStop=/usr/bin/hexash -c "delete nat cgnat ; commit"` left all 34
+  suites green, because `test/test_install_manifest.py` asserts the unit is
+  installed and never reads a byte of it. The cost is not a stopped box:
+  `hexarouting.service` carries `PartOf=vpp.service`, so a stop-time command
+  there fires on every RESTART, and the failure would arrive during an ordinary
+  upgrade on a box that had been working.
+
+  **The rule is not "no `ExecStop`", because this product needs one.**
+  `vpp-stop-drain.conf` runs `vppctl bpa stop-drain` before the signal so the
+  blocks the dataplane holds are closed in the retention log while the graph is
+  still running to carry the records
+  ([#217](https://github.com/andrediashexa/hexarouting/issues/217)). Nor is it
+  "not on that file", which is a rule about where a line is typed and is silent
+  on the mutation that matters most - the drain file itself edited into a
+  deletion. So `test/test_stop_is_not_a_teardown.py` draws the line on **what
+  the command does**: a stop-time command MAY ask a running process to flush
+  state it is already holding, and MUST NOT reach the configuration surface. A
+  drain is idempotent and takes nothing away that an operator put there; a
+  deletion is the opposite in every direction, and at the moment it runs the
+  box cannot tell them apart.
+
+  Every stop-time directive anywhere under `appliance/` - not only in
+  `appliance/systemd/`, so a unit written by `install.sh` is covered too - must
+  be in the suite's table byte for byte with its reason, **and** must still pass
+  the classifier, so blessing a line is not enough to ship it. Shown red six
+  ways: the sweep's own mutation, the same as an `ExecStopPost`, a unit the
+  installer writes, the drain edited into a deletion with the table edited to
+  match, the drain removed (which is #217 reopening), and the rule deleted from
+  `docs/appliance.md`. A seventh mutation gave zero red and the check was the
+  thing that was broken: `\bExecStop` cannot match inside
+  `printf '[Service]\nExecStop=...'`, because the character in front is the
+  "n" of a literal `\n`
+  ([#238](https://github.com/andrediashexa/hexarouting/issues/238)).
 
 * **`commit` said it had rolled a failed commit back, and nothing asserted that
   it had.** `docs/routing.md:1528` states one requirement in two halves -
