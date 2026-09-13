@@ -44,7 +44,8 @@ are to be interpreted as described in
 [#218](https://github.com/andrediashexa/hexarouting/issues/218),
 [#219](https://github.com/andrediashexa/hexarouting/issues/219),
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
-[#221](https://github.com/andrediashexa/hexarouting/issues/221).
+[#221](https://github.com/andrediashexa/hexarouting/issues/221),
+[#222](https://github.com/andrediashexa/hexarouting/issues/222).
 
 ### Added
 
@@ -393,6 +394,27 @@ are to be interpreted as described in
   half-sent one, and drops the connection when a spill splits a message,
   because that stream can no longer be completed. The 1 MB spill and the 60
   second template refresh could both hit this on a live box today.
+
+* **Half the boot self-test's statements had nothing holding them.** The
+  self-test makes 52 statements about a box and `test/test_selftest.sh` held
+  about half; the rest could stop firing, or start firing on the wrong
+  condition, with nothing to say so. That is how `[ ok ] rx queues:` with no
+  value after it shipped in the first place. Four of the unheld ones are now
+  asserted branch by branch, chosen because each is a diagnosis an operator
+  cannot make from the console on their own: the **CGNAT plugin** (a dataplane
+  without it answers `show version` perfectly well and forwards nothing), the
+  **`vpp.service` restart counter** (a service in a loop is `active` about half
+  the times you look), the **OSI punt for IS-IS**
+  ([#168](https://github.com/andrediashexa/hexarouting/issues/168): without it
+  the adjacency never forms and the only evidence is a dataplane counter
+  nothing surfaces), and **RPKI** (a cache configured and not connected marks
+  every route notfound, quietly)
+  ([#222](https://github.com/andrediashexa/hexarouting/issues/222)).
+
+  One of those was not merely unasserted, it was unreachable: the fake box
+  answered `systemctl show -p NRestarts` with the constant `0`, so neither the
+  warning branch nor the looping branch had ever been executed by anything. It
+  reads from the fake box now, like every other answer there.
 
 ### Internal
 

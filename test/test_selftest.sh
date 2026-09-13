@@ -52,6 +52,24 @@ cat > "$BIN/setpriv" <<'EOF'
 echo "$*" >> "$FAKE/setpriv.log"
 exit 0
 EOF
+# Where a path is mounted from. The records check compares the source of
+# /var/log/hexarouting with the source of /, and on the machine running
+# these tests both are the same disk - which is the WARNING case, so
+# without this stub the passing branch could never be reached.
+cat > "$BIN/findmnt" <<'EOF'
+#!/bin/sh
+for a in "$@"; do t=$a; done
+case "$t" in
+  /) cat "$FAKE/mnt_root" 2>/dev/null || echo /dev/vda2 ;;
+  *) cat "$FAKE/mnt_records" 2>/dev/null ;;
+esac
+EOF
+# Only the free-space line matters to the check, and only that it is there.
+cat > "$BIN/df" <<'EOF'
+#!/bin/sh
+echo "Filesystem Size Used Avail Use% Mounted"
+echo "/dev/vdb1 40G 1G 37G 3% /var/log/hexarouting"
+EOF
 cat > "$BIN/vat2" <<'EOF'
 #!/bin/sh
 echo bpa_pool_add_del
@@ -64,7 +82,13 @@ cat > "$BIN/systemctl" <<'EOF'
 #!/bin/sh
 case "$*" in
   *"-p MainPID"*) cat "$FAKE/mainpid" 2>/dev/null || echo 0 ;;
-  *"-p NRestarts"*) echo 0 ;;
+  # From the fake box, not a constant. It was `echo 0` here, which made the
+  # two branches that matter - "restarted N time(s)" and "has restarted N
+  # times: it is looping" - unreachable by anything, while the check they
+  # belong to is the one that tells a service in a loop from a healthy one
+  # (#222). A service that is restarting is "active" about half the time
+  # somebody looks at it.
+  *"-p NRestarts"*) cat "$FAKE/nrestarts" 2>/dev/null || echo 0 ;;
   "is-failed "*) echo inactive ;;
   *) : ;;
 esac
@@ -97,6 +121,10 @@ case "$*" in
   # which is what a dataplane holding nothing but local0 looks like.
   "show interface")   cat "$FAKE/show_interface" 2>/dev/null ;;
   "show lcp")         cat "$FAKE/show_lcp" 2>/dev/null ;;
+  # The plugin listing. Empty in $FAKE is a dataplane that came up without
+  # the CGNAT plugin, which is a box that forwards nothing and fails every
+  # CGNAT command while answering "show version" perfectly well.
+  "show plugins")     cat "$FAKE/show_plugins" 2>/dev/null ;;
 esac
 exit 0
 EOF
@@ -115,6 +143,14 @@ case "$*" in
   *"show daemons"*)
     if [ -f "$FAKE/frr_daemons" ]; then cat "$FAKE/frr_daemons"
     else echo "bgpd ospfd ospf6d isisd zebra staticd mgmtd"; fi ;;
+  # RPKI answers in two ways and the difference is the whole check: a
+  # module that is NOT loaded makes vtysh exit non-zero on this command,
+  # and one that is loaded answers, with or without a connected cache. So
+  # the absence of the file is the unloaded case rather than a missing
+  # fixture.
+  *"show rpki cache-connection"*)
+    [ -f "$FAKE/rpki" ] || exit 1
+    cat "$FAKE/rpki" ;;
   *) : ;;
 esac
 exit 0
@@ -756,6 +792,145 @@ elif said '\[ ok \] rx queues: default'; then
 else
   bad "nothing reported rx queues: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
 fi
+rm -rf "$FAKE/root"
+
+echo "=== the CGNAT plugin, which is the whole of what this box is for (#222) ==="
+# A dataplane that came up without the plugin answers `show version` perfectly
+# well, forwards nothing through the CGNAT and fails every pool command. The
+# check for it is one grep, and nothing held it: a grep whose needle stops
+# matching passes for the same reason a correct box does.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+: > "$FAKE/vppctl_ok"
+printf 'Plugin path is: /usr/lib/vpp_plugins\n bpa_plugin.so\n dpdk_plugin.so\n' \
+  > "$FAKE/show_plugins"
+run
+if said '\[ ok \] CGNAT plugin loaded'; then
+  ok "a dataplane carrying the plugin is reported so"
+else
+  bad "a dataplane with bpa_plugin.so loaded was not reported: $(printf '%s\n' "$OUTPUT" | grep -i plugin || echo '<nothing>')"
+fi
+printf 'Plugin path is: /usr/lib/vpp_plugins\n dpdk_plugin.so\n' > "$FAKE/show_plugins"
+run
+if said '\[FAIL\] CGNAT plugin missing'; then
+  ok "and a dataplane without it is a FAILED check, not a warning"
+else
+  bad "a box that can do no CGNAT at all passed: $(printf '%s\n' "$OUTPUT" | grep -i plugin || echo '<nothing>')"
+fi
+rm -f "$FAKE/show_plugins"
+
+echo "=== a vpp.service in a restart loop (#222) ==="
+# "A service in a loop can be active at the instant you look, and only
+# NRestarts tells the story" is what the CHANGELOG says about this check. The
+# stub answered 0 for every run, so the two branches that carry that sentence
+# had never been executed by anything.
+printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
+echo 0 > "$FAKE/nrestarts"
+run
+if said '\[ ok \] vpp.service stable \(0 restarts\)'; then
+  ok "a dataplane that has not restarted is reported as stable"
+else
+  bad "a stable vpp.service was not reported: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+echo 2 > "$FAKE/nrestarts"
+run
+if said '\[warn\] vpp.service restarted 2 time\(s\)'; then
+  ok "two restarts is a warning, and says how many"
+else
+  bad "two restarts said nothing: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+if said '\[FAIL\].*restart'; then
+  bad "two restarts was counted as a failure; a box that restarted twice and settled is not looping"
+else
+  ok "and two restarts is not a failed check"
+fi
+echo 7 > "$FAKE/nrestarts"
+run
+if said '\[FAIL\] vpp.service has restarted 7 times: it is looping'; then
+  ok "a loop is a FAILED check, and names the count"
+else
+  bad "a looping vpp.service passed: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+rm -f "$FAKE/nrestarts"
+
+echo "=== IS-IS frames punted to the kernel (#222, #168) ==="
+# The reason this line exists: a box with an IS-IS instance and no OSI punt
+# commits cleanly, brings isisd up, reads back correctly and forms no adjacency
+# ever, with the only evidence in a dataplane counter nothing surfaces. It is
+# silent in exactly the way the boot self-test exists for, and nothing held it.
+printf 'router isis CORE\n net 49.0001.0000.0000.0001.00\n' > "$FAKE/frr_running"
+printf 'itf-pair: [0] host-veth-vpp tap0 host-veth-vpp 2 type tap osi 0x83\n' \
+  > "$FAKE/show_lcp"
+run
+if said '\[ ok \] IS-IS frames are punted to the kernel'; then
+  ok "a box running IS-IS with the OSI punt in place is reported so"
+else
+  bad "the punt was in place and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'IS-IS\|osi' || echo '<nothing>')"
+fi
+printf 'itf-pair: [0] host-veth-vpp tap0 host-veth-vpp 2 type tap\n' > "$FAKE/show_lcp"
+run
+if said '\[warn\] IS-IS is configured and its frames are NOT punted'; then
+  ok "and without the punt it is reported, on a box that otherwise looks healthy"
+else
+  bad "IS-IS configured and not punted said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'IS-IS\|osi' || echo '<nothing>')"
+fi
+if said 'adjacency will never form'; then
+  ok "and says what the operator will see instead, which is nothing"
+else
+  bad "the warning does not say what goes wrong"
+fi
+# And it must stay quiet on a box that is not running IS-IS at all. A line
+# about a protocol nobody configured is the alarm #205 and #208 are about.
+printf 'router bgp 65000\n' > "$FAKE/frr_running"
+run
+if said 'IS-IS'; then
+  bad "a box with no IS-IS was told about IS-IS: $(printf '%s\n' "$OUTPUT" | grep -i 'IS-IS' | head -1)"
+else
+  ok "a box not running IS-IS is not told about the OSI punt"
+fi
+rm -f "$FAKE/show_lcp"
+
+echo "=== RPKI, whose absence presents as something else entirely (#222) ==="
+# bgpd refuses to start when told to load a module it cannot find, so a missing
+# RPKI module presents as "bgpd is not running" and sends the reader after the
+# wrong thing. Three states, and the middle one is the one that matters: a
+# cache configured and not connected marks every route notfound, quietly.
+printf 'router bgp 65000\n' > "$FAKE/frr_running"
+rm -f "$FAKE/rpki"
+run
+if said '\[warn\] RPKI module not loaded'; then
+  ok "a module that is not loaded is reported, with what to install"
+else
+  bad "RPKI absent said nothing: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+printf 'RPKI Cache Servers\n' > "$FAKE/rpki"
+run
+if said '\[ ok \] RPKI module loaded \(no cache configured'; then
+  ok "loaded with no cache is reported as loaded, and says nothing is validated"
+else
+  bad "RPKI loaded with no cache: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+printf 'router bgp 65000\n rpki cache 192.0.2.1 8282 preference 1\n' \
+  > "$FAKE/frr_running"
+printf 'host: 192.0.2.1 port: 8282 (connected)\n' > "$FAKE/rpki"
+run
+if said '\[ ok \] RPKI: 1 cache\(s\) configured and connected'; then
+  ok "a connected cache is reported, and counted"
+else
+  bad "a connected cache: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+printf 'host: 192.0.2.1 port: 8282\n' > "$FAKE/rpki"
+run
+if said '\[warn\] RPKI: 1 cache\(s\) configured, NONE connected'; then
+  ok "a configured cache that is not connected is reported"
+else
+  bad "a disconnected cache passed silently: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+if said 'every route is notfound'; then
+  ok "and says what that does to a policy keyed on notfound"
+else
+  bad "the warning does not say what a disconnected cache costs"
+fi
+rm -f "$FAKE/rpki" "$FAKE/frr_running" "$FAKE/show_plugins"
 rm -rf "$FAKE/root"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
