@@ -505,6 +505,18 @@ This is silent loss right after enabling logging or restarting the box.
   does this, and that is how the ordering became visible instead of looking
   like vanished records.
 
+Verified in `lab/ipfix.sh`, and the two bullets are why the check had to be
+written the way it is: the collector that forgives the defect is the same one
+the lab reads its verdict from, so every record arrives, decodes and pairs
+whether or not the box held anything back. It therefore **counts** the data
+sets it had to hold and prints the total, and the lab requires that total to be
+zero. The collector is started **before** the exporter is configured, because
+one started afterwards cannot tell a box that sent a record too early from a
+collector that joined the stream too late. Measured with the guard removed:
+five data sets arrived ahead of the template, every check in the lab stayed
+green and so did all 38 suites
+([#258](https://github.com/andrediashexa/hexarouting/issues/258)).
+
 ### The wrong clock reads exactly like a time of day
 
 `vlib_time_now()` counts seconds since VPP started. It is the value at hand

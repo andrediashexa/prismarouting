@@ -84,6 +84,21 @@ vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 vppctl bpa block-holddown 4
 
+# collector on the far side of the wire
+#
+# BEFORE THE EXPORTER IS CONFIGURED, and that is an assertion rather than
+# tidiness. The first template of a VPP process is the one events may race, so
+# a collector that started after the exporter cannot tell a box that sent its
+# records too early from a collector that joined the stream too late - both
+# look like a data set with no template. Listening first makes every packet
+# this incarnation sends visible, in order.
+ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 75 > /tmp/collector.out 2>&1 &
+COL=$!
+# captures the wire in parallel: separates "VPP did not send" from "the
+# collector lost it"
+ip netns exec peer timeout 73 tcpdump -nni veth-out -c 80 "udp port 4739" > /tmp/tcpdump.out 2>&1 &
+sleep 2
+
 echo
 echo "=== the box as it ships: 'logging enable' with no exporter ==="
 # Asserted on a box nothing has configured yet, which is the state the
@@ -118,14 +133,6 @@ vppctl show bpa logging | sed 's/^/  /'
 BPA_CONFIG=$(vppctl show bpa config | tr -d '\r')
 echo "  -- the running configuration it reads back:"
 printf '%s\n' "$BPA_CONFIG" | grep '^cgnat logging' | sed 's/^/    /'
-
-# collector on the far side of the wire
-ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 60 > /tmp/collector.out 2>&1 &
-COL=$!
-# captures the wire in parallel: separates "VPP did not send" from "the
-# collector lost it"
-ip netns exec peer timeout 58 tcpdump -nni veth-out -c 80 "udp port 4739" > /tmp/tcpdump.out 2>&1 &
-sleep 2
 
 echo
 echo "=== 3 subscribers: 3 block allocations ==="
@@ -288,6 +295,32 @@ expect "no vppctl configures the exporter in this lab" \
          | grep -qE 'vppctl[[:space:]]+set[[:space:]]+ipfix'"
 
 expect_in "the collector decoded the template" "TEMPLATE 256" "$C"
+
+# --- and no record went out in front of it ---
+#
+# `docs/logging.md` states it: events MUST be held while `last_template_sent`
+# is zero, because a record that arrives before its template has no layout and
+# is undecodable. That is silent loss right after enabling logging or
+# restarting the box, which is when nobody is watching.
+#
+# Counting records cannot see it. `tools/ipfix_collector.py` holds a data set
+# that arrives without its template and reprocesses it when the template comes,
+# which is what a serious collector SHOULD do and what makes this defect
+# invisible from every other check here: the records all arrive, decode, and
+# pair. So the collector counts the holding as well as doing it, and this is
+# the line that reads the count. Measured with the guard removed from
+# `bpa_log_drain()`: five data sets arrived early, every check in this file
+# stayed green and so did all 38 suites.
+#
+# THE COLLECTOR HAS TO BE LISTENING FIRST for this to mean anything, which is
+# why it is started above the VTY block rather than below it.
+#
+# IT IS TRUE OF A BOX THAT EXPORTED NOTHING - zero early data sets is also what
+# an empty capture gives. What stops it carrying a pass on its own is the three
+# checks above it, which require the template and the records to have arrived.
+EARLY=$(printf '%s\n' "$C" | sed -n 's/^EARLY DATA SETS: \([0-9][0-9]*\) .*/\1/p' | head -1)
+expect "no record reached the collector before its template (got ${EARLY:-none})" \
+  test "${EARLY:-1}" -eq 0
 expect_in "allocations arrived" "ALLOCATION" "$C"
 expect_in "de-allocations arrived" "DEALLOCATION" "$C"
 expect_in "every allocation had its release" "Every allocation had its matching" "$C"
