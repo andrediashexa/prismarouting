@@ -55,7 +55,8 @@ are to be interpreted as described in
 [#224](https://github.com/andrediashexa/hexarouting/issues/224),
 [#225](https://github.com/andrediashexa/hexarouting/issues/225),
 [#226](https://github.com/andrediashexa/hexarouting/issues/226),
-[#228](https://github.com/andrediashexa/hexarouting/issues/228).
+[#228](https://github.com/andrediashexa/hexarouting/issues/228),
+[#229](https://github.com/andrediashexa/hexarouting/issues/229).
 
 ### Added
 
