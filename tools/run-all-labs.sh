@@ -249,7 +249,22 @@ done
 lab_no_vpp() {
   printf '%s' "$1" | grep -q "VPP did not start" && return 0
   printf '%s' "$1" | grep -q "connect: Connection refused" || return 1
-  printf '%s' "$1" | grep -q "\[ ok \]" && return 1
+  # A green check BEFORE the first refusal means something really was
+  # measured, and the box then went: that is the half-dead case, and it stays
+  # FAIL until somebody looks at it.
+  #
+  # Green checks AFTER it are a different thing. A lab whose dataplane never
+  # came up reaches its verdict with every value empty, and an assertion
+  # written as `test "${X:-0}" = "0"` passes on an empty X - correctly guarded
+  # by a precondition that fails beside it, which is why the lab still reports
+  # FAILED. But those greens made this function answer "something was
+  # measured" when the first line of the run was already a refusal.
+  #
+  # Measured: lab/icmp-tcp.sh in the release suite of 2026-09-13 refused on
+  # line 2 of its output, printed three guarded greens at the verdict, and was
+  # reported as a product failure. What it was is a lab that could not be run.
+  _before=$(printf '%s' "$1" | sed -n '1,/connect: Connection refused/p')
+  printf '%s' "$_before" | grep -q "\[ ok \]" && return 1
   return 0
 }
 

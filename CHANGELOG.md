@@ -340,6 +340,23 @@ are to be interpreted as described in
   somebody fixes what it measures, and that is a record rather than a
   regression test.
 
+* **A lab whose dataplane never came up was reported as a product failure.**
+  `lab_no_vpp()` asked whether the capture contains any `[ ok ]` at all, and
+  answered "something was measured" for a run whose **second line** was
+  `connect: Connection refused`. Measured in a release suite:
+  `lab/icmp-tcp.sh+workers` reached its verdict with every value empty and
+  printed three greens, because an assertion written as `test "${X:-0}" = "0"`
+  passes on an empty `X` - each correctly guarded by a precondition that failed
+  beside it, which is why the lab still said FAILED. Those greens are not
+  evidence that the box answered.
+
+  It reads the **order** now: a green before the first refusal means something
+  really was measured and the box then went, which is the half-dead case and
+  stays a failure until somebody looks at it. A green after it is a guarded
+  assertion meeting an empty value. The boundary is asserted in both
+  directions, because moving it the other way would excuse the half-dead run,
+  and that is the case this must never take.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
