@@ -177,6 +177,18 @@ said() {  # <extended regexp> - does a line of the last run match it?
   printf '%s\n' "$OUTPUT" | grep -qE "$1"
 }
 
+# Every run's exit status, accumulated here and judged once at the end.
+#
+# docs/appliance.md says of the self-test that it "always exits zero: the
+# diagnostic MUST NOT bring down the boot", and nothing read the status. The
+# script could be made to report its own verdict as one - exit "$fail" instead
+# of exit 0 - and all 34 suites stayed green, while the boot path of a racked
+# appliance quietly gained a way to fail. Read back the moment this file has
+# arranged a box that fails checks, which is most of the cases below.
+runs=0
+runs_with_fail=0
+bad_exits=0
+first_bad_exit=""
 run() {  # -> $OUTPUT
   rm -f "$FAKE/runuser.log" "$FAKE/setpriv.log"
   # The groups a finished installation has, rewritten every run so no case has
@@ -194,6 +206,15 @@ run() {  # -> $OUTPUT
   # Same reason systemctl is stubbed whole rather than passed through.
   OUTPUT=$(PATH="$BIN:$PATH" HEXA_SELFTEST_OUT=/dev/stdout \
            HEXA_SELFTEST_ROOT="$FAKE/root" sh "$ST" 2>/dev/null)
+  rc=$?
+  runs=$((runs + 1))
+  printf '%s\n' "$OUTPUT" | grep -q '\[FAIL\]' && runs_with_fail=$((runs_with_fail + 1))
+  if [ "$rc" -ne 0 ]; then
+    bad_exits=$((bad_exits + 1))
+    # The verdict line identifies which box it was refusing to come up for,
+    # which is more use than the ordinal of the run.
+    [ -n "$first_bad_exit" ] || first_bad_exit="run $runs exited $rc after: $(printf '%s\n' "$OUTPUT" | grep -E 'check\(s\) failed|HexaRouting ready' | tail -1)"
+  fi
 }
 
 # A fake box's cores: what the kernel is isolating, what VPP was TOLD, and
@@ -1708,6 +1729,72 @@ rm -f "$FAKE/show_plugins" "$FAKE/bpa_pools"
 printf '\n' > "$FAKE/hexarouting.conf"
 unset HEXA_CONFIG
 rm -rf "$FAKE/root"
+
+echo "=== the exit status, over every box the cases above arranged ==="
+# The rule this holds: docs/appliance.md, "always exits zero: the diagnostic
+# MUST NOT bring down the boot". It is a diagnostic, and a diagnostic reports
+# rather than decides. Several of its ~141 checks go red on a healthy box in an
+# unusual but supported configuration, so a status that carried the verdict
+# would stop a customer's box in a rack because a check disagreed with it - at
+# the one moment its console is what somebody needs.
+#
+# A control first: an exit status of zero out of boxes that all passed would
+# assert nothing at all, so the cases have to have produced [FAIL] lines.
+if [ "$runs_with_fail" -gt 0 ]; then
+  ok "$runs_with_fail of $runs runs arranged a box with failed checks"
+else
+  bad "no run produced a [FAIL] line, so the exit status below proves nothing"
+fi
+if [ "$bad_exits" -eq 0 ]; then
+  ok "the self-test exited 0 on all $runs of them"
+else
+  bad "the self-test answered for the box: $bad_exits of $runs runs exited non-zero ($first_bad_exit)"
+fi
+
+echo "=== and what systemd is told to do with that status ==="
+# The other half, and without it the assertions above are half the rule. The
+# status only matters because a unit carries it: measured on systemd 252 with
+# transient units of this exact shape, ExecStart without a "-" turns exit 3
+# into Result=exit-code/ActiveState=failed and SIGSEGV into
+# Result=signal/ActiveState=failed, while a consumer carrying Requires= on a
+# failed unit never starts at all ("A dependency job for ... failed"). The
+# console getty is such a consumer (#93). So a wrong Type=, a missing "-" or a
+# Requires= somewhere can make a non-zero status matter even while this script
+# exits 0, and can make exiting 0 not help.
+UNIT="$REPO/appliance/systemd/hexarouting-selftest.service"
+EXECSTART=$(grep -E '^ExecStart=' "$UNIT")
+# Anchored on ExecStart= so that the comment block explaining the "-" cannot
+# satisfy this on its own.
+if [ "$EXECSTART" = "ExecStart=-/usr/lib/hexarouting/selftest" ]; then
+  ok "ExecStart= ignores the status: $EXECSTART"
+else
+  bad "ExecStart= makes the diagnostic's status the unit's verdict: $EXECSTART"
+fi
+# oneshot with RemainAfterExit is what makes "the self-test has run" an
+# orderable fact. Type=notify or Type=forking would fail the unit on a script
+# that exits 0 without doing what that type promises, so exiting 0 would stop
+# helping.
+if grep -qx 'Type=oneshot' "$UNIT" && grep -qx 'RemainAfterExit=yes' "$UNIT"; then
+  ok "Type=oneshot with RemainAfterExit=yes, so exiting 0 is enough and is remembered"
+else
+  bad "the unit is not oneshot/RemainAfterExit: $(grep -E '^(Type|RemainAfterExit)=' "$UNIT" | tr '\n' ' ')"
+fi
+# Restart= on a diagnostic would put the report back on the console in a loop,
+# on top of whatever the operator is reading.
+if grep -qE '^Restart=' "$UNIT"; then
+  bad "the unit restarts the diagnostic: $(grep -E '^Restart=' "$UNIT")"
+else
+  ok "no Restart=, so the report is printed once"
+fi
+# And nothing may make its state fatal to anything else. The getty drop-in is
+# written by build-iso.sh rather than shipped as a file, so both are read.
+HARD=$(grep -rnE '^(Requires|Requisite|BindsTo|PartOf)=.*hexarouting-selftest' \
+         "$REPO/appliance/" || true)
+if [ -z "$HARD" ]; then
+  ok "nothing Requires=/BindsTo= the self-test, so its state cannot fail another unit"
+else
+  bad "a hard dependency on the self-test can carry its failure onward: $HARD"
+fi
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

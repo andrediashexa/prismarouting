@@ -23,7 +23,23 @@ DefaultDependencies=no
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/lib/hexarouting/selftest
+# The leading "-" is the systemd half of "the diagnostic MUST NOT bring down
+# the boot" (docs/appliance.md). Without it the promise rests entirely on the
+# last line of a 1000-line shell script: measured on systemd 252 with a
+# transient unit of this exact shape, a command exiting 3 gives
+# Result=exit-code and ActiveState=failed, and a command killed by SIGSEGV
+# gives Result=signal and ActiveState=failed. With the "-" both give
+# Result=success and ActiveState=active.
+#
+# Nothing is lost by ignoring it. systemd still records what happened:
+# ExecMainStatus stayed 3 and 11 in those same readings, and the script's own
+# report goes to the console and the journal either way. The status is the one
+# thing about this unit that must reach nobody, because a unit that fails here
+# is a unit anything ordered around it can be made to fail with - the console
+# getty is ordered after this one (#93), and it is Wants= rather than Requires=
+# only because somebody chose right once. With ExecStart=- that choice stops
+# being load-bearing.
+ExecStart=-/usr/lib/hexarouting/selftest
 StandardOutput=journal
 StandardError=journal
 

@@ -71,6 +71,7 @@ are to be interpreted as described in
 [#241](https://github.com/andrediashexa/hexarouting/issues/241),
 [#242](https://github.com/andrediashexa/hexarouting/issues/242),
 [#243](https://github.com/andrediashexa/hexarouting/issues/243),
+[#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
 [#247](https://github.com/andrediashexa/hexarouting/issues/247).
 
@@ -249,6 +250,33 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
+
+* **The boot self-test's `exit 0` was unasserted, and so was the unit that
+  decides whether it matters.** `docs/appliance.md:552` says the diagnostic
+  **MUST NOT** bring down the boot, and the whole of that promise was the last
+  line of a 1000-line shell script: changing it to `exit "$fail"` left all 34
+  suites green. The self-test makes around 141 checks, several of which go red
+  on a healthy box in an unusual but supported configuration, so a status that
+  carried the verdict would stop a box in a customer's rack because a
+  diagnostic disagreed with it, at the one moment its console is what somebody
+  needs. `test/test_selftest.sh` now reads the status of all 86 runs it already
+  makes, with a control asserting those runs produced `[FAIL]` lines, since
+  exiting zero out of boxes that all passed would prove nothing.
+
+  **The systemd half was the unheld one.** `hexarouting-selftest.service`
+  carried `ExecStart=` with no leading `-`, so systemd was told to treat the
+  diagnostic's verdict as the unit's. Measured on systemd 252 with transient
+  units of that exact shape: exit 3 gives `Result=exit-code` and
+  `ActiveState=failed`, `SIGSEGV` gives `Result=signal` and
+  `ActiveState=failed`, and a consumer carrying `Requires=` on either never
+  starts. The console getty is ordered after this unit (#93) and survives only
+  because it says `Wants=`. The unit now carries `ExecStart=-`, which absorbs
+  both a non-zero status and a signal while still recording `ExecMainStatus`,
+  and the suite asserts that, `Type=oneshot`/`RemainAfterExit=yes`, the absence
+  of `Restart=`, and that nothing under `appliance/` declares `Requires=`,
+  `Requisite=`, `BindsTo=` or `PartOf=` on the unit. The comment on the `exit`
+  line was also in Portuguese, against `CONTRIBUTING.md` section 1 rule 1
+  ([#244](https://github.com/andrediashexa/hexarouting/issues/244)).
 
 * **`commit` said it had rolled a failed commit back, and nothing asserted that
   it had.** `docs/routing.md:1528` states one requirement in two halves -
