@@ -200,6 +200,29 @@ def vpp_host_interfaces(lcp_text: str) -> set:
     return set(lcp_pairs(lcp_text))
 
 
+def vpp_owned_interfaces(lcp_text: str, iface_text: str) -> set:
+    """
+    Every interface VPP owns: its own, and both names of every linux_cp pair.
+
+    Both halves, and the second one was missing. `show lcp` names only the
+    PAIRS, and a box can have none - so on such a box the set was empty, and
+    compare() judged every route FRR held against nothing. Measured on
+    lab/bng.sh, whose box has no pair: three of the four routes the report
+    then raised were the container's own network through eth0, which is the
+    management interface and precisely what the suppression exists for.
+
+    An interface the dataplane knows by NAME is one VPP owns whether or not
+    anything paired it. `host-wan0` is VPP's and `eth0` is not, and that is the
+    whole distinction the report needs. `show lcp` alone cannot make it.
+
+    It is one function rather than a union at the call site so that an
+    assertion can be made about the ANSWER. Written inline, a test can only
+    restate the union, which is an assertion that describes the fix instead of
+    depending on it.
+    """
+    return vpp_host_interfaces(lcp_text) | set(parse_interfaces(iface_text))
+
+
 def compare(fib: dict, rib: dict, vpp_hosts: set = None) -> list:
     """
     Every prefix either table knows, and which of them holds it.

@@ -2945,5 +2945,180 @@ check(not _reach_dead,
       "turned on")
 
 
+print("\n=== what FRR keeps, and what it does not (#197) ===")
+# The table these read is MEASURED, by lab/frr-readback.sh, and the lab is what
+# keeps it honest against an FRR upgrade. What is asserted here is the
+# arithmetic on top of it: that the value decides, not the statement alone, and
+# that a rewrite is not a drop.
+from hexash import (frr_keeps, frr_writes_instead, frr_without_seq,  # noqa: E402
+                    statements_frr_dropped)                       # noqa: E402
+
+# The finding that unblocked #197. A prefix match alone would excuse the second
+# of these, which is a real drop of a statement an operator really typed.
+check(not frr_keeps("ip ospf hello-interval 10"),
+      "FRR omits hello-interval at its default")
+check(frr_keeps("ip ospf hello-interval 7"),
+      "and keeps it at any other value, so the VALUE decides")
+check(not frr_keeps("ip ospf retransmit-interval 5"),
+      "same for retransmit-interval")
+check(frr_keeps("ip ospf retransmit-interval 9"), "and the same the other way")
+check(not frr_keeps("timers throttle spf 0 50 5000"),
+      "a multi-word default is matched on all of its words")
+check(frr_keeps("timers throttle spf 0 50 4999"),
+      "and one word different is a statement FRR keeps")
+# The pair that refutes "omission follows the default". Both of these ARE the
+# FRR default and both come back, which is why there is no arithmetic here.
+check(frr_keeps("ip ospf dead-interval 40"),
+      "dead-interval comes back AT its default, so this is not a default rule")
+check(frr_keeps("ip ospf cost 10"), "and so does cost")
+
+check(frr_writes_instead("passive-interface dum9") == "ip ospf passive",
+      "passive-interface is rewritten, not dropped (#205)")
+check(frr_writes_instead("continue 30") == "on-match goto 30",
+      "and continue becomes on-match goto (#208)")
+check(frr_writes_instead("ip route 10.0.0.0/8 10.0.0.1") is None,
+      "an ordinary statement is not rewritten")
+
+# The entry that is not about a value. What decides is the LAST word, so the
+# address between them is anything - a table keyed on leading words and fixed
+# values cannot express that, which is why it is a separate list.
+# The entry whose answer depends on the REST of the configuration, and the one
+# that was written wrong first: unconditional, off half a measurement. That
+# would have excused a GENUINELY dropped activate on every box that turns the
+# default off - which is the ISP configuration, so the check would have been
+# switched off exactly where it was needed.
+_AF_ON = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001"]
+_AF_OFF = _AF_ON + [" no bgp default ipv4-unicast"]
+check(not frr_keeps("neighbor 10.0.0.2 activate", _AF_ON),
+      "'neighbor activate' is implied by bgp default ipv4-unicast, so omitted")
+check(frr_keeps("neighbor 10.0.0.2 activate", _AF_OFF),
+      "and STORED when that default is turned off, which is the ISP case")
+check(not frr_keeps("neighbor vppwan0 activate", _AF_ON),
+      "whatever the neighbour is named")
+check(not frr_keeps("neighbor 10.0.0.2 activate"),
+      "with no context at all it reads as omitted, which is the quiet side")
+
+# IS-IS, probed because lab/igp.sh configures it and nothing had asked. Each
+# has a control at a non-default value, which is what tells an omission from a
+# REFUSAL: a statement FRR rejected outright also fails to come back, and
+# excusing that would hide the very thing this check exists for.
+check(not frr_keeps("metric-style wide"), "metric-style wide is omitted")
+check(frr_keeps("metric-style narrow"), "and narrow is not")
+check(not frr_keeps("isis hello-interval 3"), "isis hello 3 is omitted")
+check(frr_keeps("isis hello-interval 5"), "and 5 is not")
+check(not frr_keeps("isis metric 10"), "isis metric 10 is omitted")
+check(frr_keeps("isis metric 77"), "and 77 is not")
+
+# The entry that was written and then refuted. A probe appeared to show
+# `ip ospf area 0` coming back dotted - but it TYPED the dotted form before
+# looking for it, so what it found was its own keystrokes. Measured properly,
+# one interface per value, FRR keeps the form it was given. The assertion is
+# kept in the NEGATIVE so the wrong entry cannot come back quietly.
+check(frr_writes_instead("ip ospf area 0") is None,
+      "FRR keeps an area number as typed, so this is not a rewrite")
+check(frr_writes_instead("ip ospf area 0.0.0.7") is None,
+      "in either form")
+check(statements_frr_dropped(["ip ospf area 0"],
+                             ["interface dum9", " ip ospf area 0"]) == [],
+      "and it is satisfied by the same form coming back")
+check(frr_keeps("neighbor 10.0.0.2 remote-as 65001"),
+      "while another neighbor statement is kept")
+check(frr_keeps("neighbor 10.0.0.2 route-map RM in"),
+      "including one in the same address family")
+
+# A rewritten statement whose rewrite IS there is not a drop. Without this the
+# check would refuse every commit containing a passive-interface.
+check(statements_frr_dropped(["passive-interface dum9"],
+                             ["interface dum9", " ip ospf passive"]) == [],
+      "a rewrite that is present is not a drop")
+# And when even the rewrite is absent, the message has to name what FRR would
+# have written - an operator told "passive-interface is missing" will grep for
+# it and find nothing.
+check(statements_frr_dropped(["passive-interface dum9"], ["interface dum9"])
+      == [("passive-interface dum9", "ip ospf passive")],
+      "and when the rewrite is absent too, the report names it")
+
+check(statements_frr_dropped(["ip ospf hello-interval 10"], []) == [],
+      "a statement FRR omits is not reported as dropped")
+check(statements_frr_dropped(["ip ospf hello-interval 7"], [])
+      == [("ip ospf hello-interval 7", None)],
+      "but the same statement at another value is")
+check(statements_frr_dropped(["ip route 10.0.0.0/8 10.0.0.1"],
+                             [" ip route 10.0.0.0/8 10.0.0.1"]) == [],
+      "an ordinary statement that is there is not reported")
+check(statements_frr_dropped([], ["anything"]) == [],
+      "and a commit that introduced no routing statement asks nothing")
+
+# The seq FRR inserts into every policy list statement. A rewrite whose target
+# is NOT computable from the typed statement - the number depends on what is
+# already in the list (5, then 10, then 15) - so it is matched by normalising
+# both sides instead of by construction. This is the one that refused a working
+# commit in lab/bgp-policy.sh: the policy took, the route it names was
+# filtered, and the box still said the statement had been thrown away.
+_POL = ["bgp as-path access-list AS-ORIGIN2 seq 5 permit _65002$",
+        "ip prefix-list PL seq 5 permit 10.9.0.0/16"]
+check(statements_frr_dropped(
+          ["bgp as-path access-list AS-ORIGIN2 permit _65002$"], _POL) == [],
+      "a policy list found under the seq FRR gave it is not a drop")
+check(statements_frr_dropped(["ip prefix-list PL permit 10.9.0.0/16"],
+                             _POL) == [],
+      "and the same for a prefix-list")
+# The half that keeps it a check rather than an excuse: a DIFFERENT statement
+# of the same shape is still reported. Without this, normalising the seq would
+# have switched the check off for every policy list on the box.
+check(statements_frr_dropped(["ip prefix-list PL permit 10.0.0.0/8"], _POL)
+      == [("ip prefix-list PL permit 10.0.0.0/8", None)],
+      "while a prefix the list does not carry still is")
+check(frr_without_seq("ip route 10.0.0.0/8 10.0.0.1") is None,
+      "and a statement FRR does not do this to is left out of it entirely")
+
+# nothing_took() ITSELF, through a stand-in frr that reports everything as
+# outstanding - which is what frr-reload really does for these statements.
+#
+# Written this way after the first version could not fail: it repeated the
+# filter expression inline instead of calling the method, so removing the
+# filter from nothing_took() left it green. An assertion that reimplements the
+# thing it is checking is checking itself.
+#
+# The false positive this removes was a REAL refusal of a working commit:
+# lab/igp.sh typed `ip ospf hello-interval 10`, `ip ospf retransmit-interval 5`
+# and `passive-interface vppwan0` in one commit, FRR stored the effect of all
+# three, and the box refused it. frr-reload reports every one of them under
+# "Lines To Add" for ever, so "all of them are still outstanding" was true of a
+# commit that had worked.
+
+
+class _AllOutstanding:
+    """An frr that says every line the candidate holds is still to be added."""
+
+    def __init__(self, lines):
+        self._lines = lines
+
+    def reload(self, _lines, check_only=False):
+        return 0, "outstanding"
+
+    def outstanding(self, _out):
+        return self._lines
+
+
+def _nothing_took(added, candidate=None):
+    sh = hexash.Shell()
+    sh.candidate = type("C", (), {"routing": candidate or added})()
+    sh.frr = _AllOutstanding(added)
+    return sh.nothing_took(added)
+
+
+_OMITTED_ONLY = ["ip ospf hello-interval 10", "ip ospf retransmit-interval 5",
+                 "passive-interface vppwan0"]
+check(_nothing_took(_OMITTED_ONLY) == [],
+      f"a commit of only statements FRR does not read back is not 'nothing "
+      f"took': {_nothing_took(_OMITTED_ONLY)}")
+check(_nothing_took(["ip ospf hello-interval 7"])
+      == ["ip ospf hello-interval 7"],
+      "while a statement FRR does keep, still outstanding, is")
+check(_nothing_took(_OMITTED_ONLY + ["ip route 10.0.0.0/8 10.0.0.1"])
+      == ["ip route 10.0.0.0/8 10.0.0.1"],
+      "and a mixed commit is judged on the statements that mean something")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

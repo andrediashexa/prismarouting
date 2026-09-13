@@ -31,7 +31,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     strip_nat, as_hierarchy, group_static,
                     block_paths, frr_block_lines, opens_frr_block,
-                    _address_family_error, _is_loopback,
+                    _address_family_error, _is_loopback, _is_lcp_tap,
                     global_key, ordered_globals)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -882,6 +882,216 @@ def udp_export_without_collector(globals_) -> bool:
         return False
     return not any(w[:3] == ["cgnat", "logging", "udp"] and len(w) > 3
                    and w[3] != "disable" for w in words)
+
+
+# What FRR does NOT read back the way it was typed.
+#
+# Measured on FRR 10.7.1 by lab/frr-readback.sh, one statement at a time, each
+# undone before the next - and the lab is what keeps this table honest, because
+# an FRR upgrade that changes one of these answers fails there rather than
+# silently changing what this VTY refuses.
+#
+# The assumption everybody had, including this file until #197 was measured,
+# was "FRR omits a statement whose value equals a default". It does not.
+# Omission is per STATEMENT, not per value:
+#
+#   OMITTED     ip ospf hello-interval 10     ROUNDTRIPS  ip ospf dead-interval 40
+#   OMITTED     ip ospf retransmit-interval 5 ROUNDTRIPS  ip ospf cost 10
+#
+# All four of those are the FRR default. So there is no table of FRR defaults
+# to chase across versions, and no arithmetic to get right. There is a short
+# list, and it is here.
+
+# Read back as DIFFERENT WORDS meaning the same thing. Keyed on what an
+# operator types, valued by what to look for instead.
+#
+# Both of these were already known to this codebase from somewhere else - the
+# first to ospf_findings (#205), the second to route_map_findings (#208) -
+# which is the evidence that this list is discoverable rather than open-ended.
+# A statement that arrives here having been rewritten is NOT a dropped
+# statement, and refusing it would refuse a correct configuration.
+# An `ip ospf area <n>` entry was written here and then REMOVED, and the
+# refutation is worth more than the entry would have been. A probe appeared to
+# show `ip ospf area 0` coming back as `ip ospf area 0.0.0.0` - but that probe
+# TYPED the dotted form before it looked for it, so what it found was its own
+# keystrokes. Measured properly, one interface per value so nothing typed
+# earlier can be what is read later:
+#
+#   typed `ip ospf area 0`        read back `ip ospf area 0`
+#   typed `ip ospf area 5`        read back `ip ospf area 5`
+#   typed `ip ospf area 0.0.0.7`  read back `ip ospf area 0.0.0.7`
+#
+# FRR keeps the form it was given. lab/frr-readback.sh is what caught the wrong
+# entry, one run after it was added.
+FRR_REWRITES = (
+    # (prefix an operator types, how to build what FRR writes instead)
+    ("passive-interface ", lambda w: "ip ospf passive"),
+    ("continue ", lambda w: "on-match goto " + w[-1]),
+)
+
+# Accepted, and left out of the read-back entirely. Matched on the whole
+# statement's leading words, because the VALUE is what decides: `ip ospf
+# hello-interval 10` is omitted and `ip ospf hello-interval 7` is not, so a
+# prefix match alone would excuse a real drop of the second one.
+#
+# The list is short on purpose. A statement that is not here and not in FRR's
+# read-back afterwards is a statement FRR took and did not keep, which is
+# exactly what #197 is about - so this list growing by guesswork would turn the
+# check back off one entry at a time. Anything added here MUST come with a
+# probe in lab/frr-readback.sh.
+FRR_OMITS_AT = {
+    "timers throttle spf": ("0", "50", "5000"),
+    "ip ospf hello-interval": ("10",),
+    "ip ospf retransmit-interval": ("5",),
+    "bgp default ipv4-unicast": (),
+    # IS-IS, probed because lab/igp.sh configures it and nothing had asked.
+    # Each of these has a control in lab/frr-readback.sh at a NON-default
+    # value, which is what tells an omission from a refusal: a statement FRR
+    # rejected outright also fails to come back, and excusing that would hide
+    # the very thing this check exists for.
+    "metric-style": ("wide",),
+    "isis hello-interval": ("3",),
+    "isis metric": ("10",),
+}
+
+# The one entry whose answer depends on the REST of the configuration, and the
+# reason this is a list of predicates rather than of words.
+#
+# `neighbor <x> activate` in an ipv4-unicast address family is implied by `bgp
+# default ipv4-unicast`, so with that on FRR accepts the statement and writes
+# nothing. Turn it OFF - which is what an ISP configuration does, so that a
+# peer carries only the families it was given - and FRR stores the activate
+# line like any other. Measured both ways:
+#
+#   bgp default ipv4-unicast on   OMITTED     neighbor 10.9.9.9 activate
+#   no bgp default ipv4-unicast   ROUNDTRIPS  neighbor 10.9.9.9 activate
+#
+# An unconditional entry was written here first, off the first half of that
+# measurement alone. It would have excused a GENUINELY dropped activate on
+# every box that turns the default off - which is the box where an activate
+# line is load-bearing rather than decorative, so the check would have been
+# switched off exactly where it was needed. Guessing that an omission is
+# unconditional because it was seen once is the same mistake as guessing it
+# follows the default value.
+#
+# Each entry is (does this statement match, is it omitted in THIS
+# configuration).
+FRR_OMITS_IN_CONTEXT = (
+    (lambda w: len(w) >= 3 and w[0] == "neighbor" and w[-1] == "activate",
+     lambda ctx: not any(l.strip() == "no bgp default ipv4-unicast"
+                         for l in ctx)),
+)
+
+
+# Statements FRR writes back with a `seq <n>` it inserted itself.
+#
+# Measured, typed with no seq at all:
+#
+#   ip prefix-list PLNOSEQ permit 10.9.0.0/16
+#     -> ip prefix-list PLNOSEQ seq 5 permit 10.9.0.0/16
+#   bgp as-path access-list A1 permit ^65001$   -> ... seq 5 permit ^65001$
+#   bgp as-path access-list A1 permit ^65002$   -> ... seq 10 permit ^65002$
+#   bgp as-path access-list A1 permit ^65003$   -> ... seq 15 permit ^65003$
+#
+# It is a REWRITE, and one FRR_REWRITES cannot express: the number depends on
+# what is already in the list, so the target is not computable from the typed
+# statement. It has to be matched by normalising both sides instead.
+#
+# This is the one that refused a working commit in lab/bgp-policy.sh - the
+# policy took, the route it names was filtered, and the box still said the
+# statement had been thrown away.
+FRR_INSERTS_SEQ = (
+    "ip prefix-list ", "ipv6 prefix-list ",
+    "bgp as-path access-list ", "bgp community-list ",
+    "bgp large-community-list ",
+)
+
+
+def frr_without_seq(stmt):
+    """The statement with an inserted `seq <n>` taken back out, or None."""
+    if not any(stmt.startswith(k) for k in FRR_INSERTS_SEQ):
+        return None
+    w = stmt.split()
+    for i in range(len(w) - 1):
+        if w[i] == "seq" and w[i + 1].isdigit():
+            return " ".join(w[:i] + w[i + 2:])
+    return stmt
+
+
+def frr_keeps(stmt, context=()):
+    """
+    Would FRR store this statement as typed, so that its absence means a drop?
+
+    False for the statements measured NOT to come back - and for those the
+    caller must not conclude anything from absence. Everything else is
+    expected back verbatim, and absence is a failed commit.
+
+    `context` is the whole routing configuration this statement is part of,
+    because one of these answers depends on it: an activate line is omitted
+    when `bgp default ipv4-unicast` is on and stored when it is off. Defaulting
+    it to empty is deliberate and is the CONSERVATIVE direction - with no
+    context the activate case reads as omitted, so the check says nothing about
+    a statement it cannot judge rather than refusing a commit on a guess.
+    """
+    w = stmt.split()
+    for matches, omitted_here in FRR_OMITS_IN_CONTEXT:
+        if matches(w):
+            return not omitted_here(context)
+    for k, vals in FRR_OMITS_AT.items():
+        kw = k.split()
+        if w[:len(kw)] != kw:
+            continue
+        # No values listed means the statement itself is the default, so it is
+        # omitted whenever it appears at all.
+        if not vals or tuple(w[len(kw):]) == vals:
+            return False
+    return True
+
+
+def frr_writes_instead(stmt):
+    """What FRR writes for a statement it rewrites, or None."""
+    for prefix, build in FRR_REWRITES:
+        if stmt.startswith(prefix):
+            return build(stmt.split())
+    return None
+
+
+def statements_frr_dropped(added, running):
+    """
+    Of the statements this commit introduced, which are not in FRR afterwards.
+
+    This is #197's general check, and it is decidable for the reason
+    lab/frr-readback.sh measures: absence means dropped, EXCEPT for a short,
+    measured list where FRR writes something else or nothing at all.
+
+    `running` is FRR's own read-back, not frr-reload's idea of what is
+    outstanding. That distinction is the whole reason this is possible now and
+    was not before: `frr-reload --test` reports a default-valued statement
+    under "Lines To Add" for ever, so a check built on it calls every commit
+    carrying one a failure. FRR's running configuration does not lie that way -
+    it simply does not contain the statement, which is a question this can ask.
+    """
+    have = {l.strip() for l in running}
+    # The same set with any inserted seq removed, so a policy list statement
+    # typed without one is found under the number FRR gave it.
+    loose = {frr_without_seq(l) for l in have}
+    loose.discard(None)
+    out = []
+    for stmt in added:
+        if frr_without_seq(stmt) is not None:
+            if frr_without_seq(stmt) not in loose:
+                out.append((stmt, None))
+            continue
+        instead = frr_writes_instead(stmt)
+        if instead is not None:
+            if instead not in have:
+                out.append((stmt, instead))
+            continue
+        if not frr_keeps(stmt, running):
+            continue
+        if stmt not in have:
+            out.append((stmt, None))
+    return out
 
 
 def cap_needed(delta):
@@ -2860,7 +3070,37 @@ class Shell:
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
+        # The Linux end of every linux_cp pair, out. The dataplane reads above
+        # report EVERY interface VPP has, and one of them is the pair's own
+        # TAP - so `save` wrote `interface tap4097` into the file that
+        # hexarouting.service replays at boot, against a VPP with no pairs
+        # yet, and the box refused its own configuration and came up with
+        # nothing on it. config.Config.drop_lcp_taps carries the measurement.
+        #
+        # Which TAPs those are is READ OFF THE BOX rather than guessed from
+        # the name, because `tap0` is equally what an operator's own
+        # `create tap` produces and dropping that would be #47.
+        cfg.drop_lcp_taps(self.device_lcp_taps())
         return cfg
+
+    def device_lcp_taps(self) -> set:
+        """
+        The TAPs that are the Linux end of a pair, from `show lcp`.
+
+        A pair prints every name it answers to on one line:
+
+            itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+
+        and the one that is VPP's own spelling of a TAP is the pair's. Both
+        signals together: on the line AND shaped like an lcp TAP. Either alone
+        is wrong - the line also carries the dataplane name and the Linux one,
+        and the shape alone matches a TAP nobody paired.
+        """
+        rc, out = self.dp.run("show lcp")
+        if rc != 0:
+            return set()
+        return {n for names in routes.lcp_pairs(out).values()
+                for n in names if _is_lcp_tap(n)}
 
     def device_descriptions(self) -> dict:
         """
@@ -4176,7 +4416,32 @@ class Shell:
         # milliseconds it takes to apply the rest. Neither ordering is
         # observable in a lab that changes one thing at a time, which is
         # exactly why it is decided here rather than left to the dictionary.
+        #
+        # With ONE exception, and it is a box that does not come up. An
+        # interface this same delta is about to CREATE cannot be shut down
+        # before it exists, and a loopback is created administratively down -
+        # so its saved configuration carries `shutdown`, and replaying that
+        # file is the thing hexarouting.service does at every boot:
+        #
+        #   interface loop7
+        #    linux-name loop7
+        #    shutdown
+        #
+        #   error: interface loop7: the dataplane does not have it
+        #
+        # The commit fails, the unit fails, and the box comes up with none of
+        # its configuration - so every loopback this product can create (#179)
+        # survived exactly until the next reboot. Measured in lab/lcp.sh by
+        # saving a paired loopback, taking it down and handing the box back
+        # the file it wrote.
+        #
+        # The ordering argument above does not apply to these: an interface
+        # that does not exist yet is carrying no traffic, so there is nothing
+        # to stop before configuring it.
+        being_created = set(d["loopback_add"]) | set(d["subif_add"])
         for ifname in d["admin_down"]:
+            if ifname in being_created:
+                continue
             if not self.set_admin(ifname, False):
                 return False
 
@@ -4188,6 +4453,13 @@ class Shell:
                 return False
         for ifname, tag in d["subif_add"].items():
             if not self.create_subif(ifname, tag):
+                return False
+        # The half of the shutdown pass that had to wait for the interface to
+        # exist. Still before the addresses and the pair below, so the
+        # ordering the comment above argues for is kept for everything that
+        # can observe it.
+        for ifname in d["admin_down"]:
+            if ifname in being_created and not self.set_admin(ifname, False):
                 return False
 
         # IS-IS needs its frames punted before the adjacency can form, and
@@ -4419,7 +4691,7 @@ class Shell:
             # its shape, which is VPP's naming convention for an lcp TAP; if
             # that convention ever changes the warning names the tap again,
             # which is cosmetic rather than a false alarm.
-            if ifname.startswith("tap") and ifname[3:].isdigit():
+            if _is_lcp_tap(ifname):
                 continue
             names = pairs.get(ifname)
             if not names:
@@ -4730,14 +5002,27 @@ class Shell:
         applied nothing, and the box printing "commit complete" over it - and a
         partial failure, nine statements of ten, does not trigger it.
 
-        The residual false positive is a commit whose new statements are ALL
-        equal to FRR's own defaults. It is rare, and the message names the
-        statements so an operator sees at once that it is what happened.
+        The residual false positive this used to carry is gone. It was a
+        commit whose new statements are ALL ones FRR does not read back, and
+        it was written off as rare - `lab/igp.sh` then committed three of them
+        together and the box refused a commit that had worked perfectly. So
+        the statements FRR is MEASURED not to keep are dropped from the
+        question before it is asked: frr-reload reports them under "Lines To
+        Add" for ever, and counting a statement as outstanding because FRR
+        stores it under another name, or does not store its own default, is
+        the box blaming the operator for FRR's bookkeeping.
 
         Returns the outstanding statements when nothing took, and nothing
         otherwise - including when frr-reload cannot be asked, because a check
         that cannot run must not become a failure of the commit it was checking.
         """
+        # Only the statements whose absence would MEAN something. A rewritten
+        # or omitted statement is outstanding in frr-reload's ledger whatever
+        # the box does, so leaving it in makes "all of them are outstanding"
+        # true for a commit that worked.
+        added = [a for a in added
+                 if frr_keeps(a, self.candidate.routing)
+                 and frr_writes_instead(a) is None]
         if not added:
             return []
         rc, out = self.frr.reload(self.candidate.routing, check_only=True)
@@ -4907,9 +5192,66 @@ class Shell:
             self.err("the change is applied, but no rollback revision could "
                      f"be recorded: {e}")
             print("    'rollback' will not be able to undo this commit")
-        stalled = self.nothing_took(self.routing_added(running.routing,
-                                                       self.candidate.routing))
-        if stalled:
+        added = self.routing_added(running.routing, self.candidate.routing)
+        # The GENERAL check (#197), which is now possible: read FRR's own
+        # running configuration back and see which of the statements this
+        # commit introduced are not in it.
+        #
+        # `nothing_took` below stays, and the two are not redundant. This one
+        # names the statements FRR dropped; that one catches the case where
+        # frr-reload could not be asked at all, and it fires on a partial
+        # answer this check might explain away. Neither subsumes the other, and
+        # a commit that fails both says so once, because this one returns first.
+        dropped, stalled = [], []
+        if added:
+            dropped = statements_frr_dropped(added, self.frr.running())
+            # Asked once. It shells out to frr-reload, which is the slowest
+            # thing on the commit path, and calling it in the condition and
+            # again in the body doubles that for every commit that hits it.
+            if not dropped:
+                stalled = self.nothing_took(added)
+        if dropped:
+            # WARNED, NOT REFUSED, and this is the whole posture of the check.
+            #
+            # A refusal here would be right in principle: a statement FRR threw
+            # away is a commit that did not happen, and `commit complete` over
+            # it is the one sentence an operator builds every later diagnosis
+            # on. It is not right YET, because the list of statements FRR does
+            # not read back verbatim is demonstrably incomplete. Five encounters
+            # with real configuration produced four false positives:
+            #
+            #   lab/igp.sh      three OSPF defaults and a passive-interface
+            #                   rewrite - and nothing_took fired on them too
+            #   lab/routing.sh  `neighbor <x> activate`, omitted only while
+            #                   `bgp default ipv4-unicast` is on
+            #   lab/igp.sh      three IS-IS defaults nobody had probed
+            #   lab/bgp-policy  a `seq` FRR inserts, on a policy that WORKED:
+            #                   the route it names was filtered and the box
+            #                   still said the statement had been thrown away
+            #
+            # Refusing a correct commit is the exact harm #208 was filed for,
+            # and shipping a refusal built on a list that four labs in a row
+            # have extended would repeat it on a box nobody can run a lab on.
+            #
+            # THE PROMOTION CONDITION IS MEASURABLE, not a feeling: this
+            # becomes `self.err` and `ok = False` when the full lab suite has
+            # run clean with it refusing. Until then the operator gets the
+            # sentence and keeps their commit, which is the side that costs
+            # them nothing if the list is wrong.
+            print(f"warning: FRR accepted {len(dropped)} statement(s) of this "
+                  "commit and did not keep them")
+            for stmt, instead in dropped[:5]:
+                print("    " + as_hierarchy(stmt))
+                if instead:
+                    print(f"      FRR writes '{instead}' for this, and that "
+                          "is not there either")
+            if len(dropped) > 5:
+                print(f"    ... and {len(dropped) - 5} more")
+            print("    the configuration this box holds and the one FRR is "
+                  "running are not the same; 'show configuration' is this "
+                  "box's, 'start shell' then 'vtysh -c \"show "
+                  "running-config\"' is FRR's")
+        elif stalled:
             # NOT "commit complete". The CGNAT half and the box's own
             # configuration are applied - this is not a rollback - but the
             # routing half reached nothing, and saying "complete" over that is
@@ -7209,8 +7551,23 @@ class Shell:
             rib = routes.parse_rib(rout) if rrc == 0 else {}
             # Which interfaces VPP owns, so routes through the management
             # interface are not reported as faults for ever.
+            #
+            # BOTH the linux_cp pairs AND the dataplane's own interface names,
+            # and the second half was missing. Measured on lab/bng.sh, whose
+            # box has no pair at all: `show lcp` answered nothing, so every
+            # route FRR held was judged against an empty set. Three of the four
+            # it then reported were the container's own network through eth0 -
+            # the management interface, which is precisely the case the
+            # suppression exists for.
+            #
+            # An interface the dataplane knows by name is one VPP owns whether
+            # or not anything paired it: `host-wan0` is VPP's and `eth0` is
+            # not, and that is the whole distinction the report needs. Asking
+            # `show lcp` alone could not make it on a box with no pairs.
             _, lcp = self.dp.run("show lcp")
-            self._vpp_hosts = routes.vpp_host_interfaces(lcp)
+            irc, iface_out = self.dp.run("show interface")
+            self._vpp_hosts = routes.vpp_owned_interfaces(
+                lcp, iface_out if irc == 0 else "")
             if not rib:
                 print("  (FRR did not answer; showing the forwarding table "
                       "alone)")
@@ -7814,6 +8171,22 @@ class Shell:
             return
         with open(path) as f:
             target = Config.parse(f.read())
+
+        # A `tap<n>` stanza naming an interface this box does NOT have is the
+        # Linux end of a pair that existed when the file was saved and does
+        # not exist now - which at boot is every pair, because VPP has just
+        # started. Left in, the interface-existence check refuses the whole
+        # file and the box comes up with nothing on it; this is what makes the
+        # boxes that already saved such a file boot again.
+        #
+        # Conditioned on the dataplane not having it, not on the name alone.
+        # `vppctl create tap id 0` also produces a `tap0`, and one that IS
+        # there is an interface somebody configured on purpose - lab/hw-vpp.sh
+        # runs its whole WAN over exactly that.
+        stale = {n for n in target.interface_names()
+                 if _is_lcp_tap(n) and self.api.interface_index(n) is None}
+        if stale:
+            target.drop_lcp_taps(stale)
         if target.unknown:
             self.err(f"{path}: refusing to load, these lines are not "
                      "understood:")

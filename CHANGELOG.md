@@ -37,12 +37,91 @@ are to be interpreted as described in
 ## Unreleased
 
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
+[#151](https://github.com/andrediashexa/hexarouting/issues/151) (partly),
+[#182](https://github.com/andrediashexa/hexarouting/issues/182),
+[#197](https://github.com/andrediashexa/hexarouting/issues/197),
 [#203](https://github.com/andrediashexa/hexarouting/issues/203),
-[#215](https://github.com/andrediashexa/hexarouting/issues/215).
-
-[#214](https://github.com/andrediashexa/hexarouting/issues/214).
+[#212](https://github.com/andrediashexa/hexarouting/issues/212),
+[#214](https://github.com/andrediashexa/hexarouting/issues/214),
+[#215](https://github.com/andrediashexa/hexarouting/issues/215),
+[#216](https://github.com/andrediashexa/hexarouting/issues/216).
 
 ### Fixed
+
+* **Nothing in the product created a `linux_cp` pair, so FRR saw no dataplane
+  interface.** `lcp create` stood in six labs and nowhere in the product, so
+  every routing feature this box ships was configurable and completely inert on
+  an installed one: without a pair the port that carries traffic has no netdev,
+  `ip` does not have it and zebra does not have it. `linux-name <name>` under
+  `interface` creates it over the binary API. The name is the **operator's**,
+  not derived, because FRR, `ip` and their own scripts act on it and #161 is the
+  standing rule that such a name is read back from the box rather than invented
+  ([#182](https://github.com/andrediashexa/hexarouting/issues/182)).
+
+  Two boot defects were found behind it, by asking out loud whether the pair
+  survives a reboot. Both ended with `hexarouting.service` failing and the box
+  coming up with **no configuration at all**. `save` wrote `interface tap4097`
+  - the pair's own TAP, which the dataplane reports like any other interface -
+  and at boot VPP has no pairs, so the interface-existence check refused the
+  whole file. And a loopback is created administratively **down**, so its saved
+  stanza carries `shutdown`, and `apply()` shut interfaces down *before*
+  creating them: every loopback
+  [#179](https://github.com/andrediashexa/hexarouting/issues/179) can create
+  survived exactly until the next reboot.
+
+  The first cut of the TAP fix was nearly worse than the defect. Purging by
+  **name shape** would have taken `lab/hw-vpp.sh`'s hand-made `tap0`, which
+  carries an address, a route and a CGNAT attachment - and a setting lost from
+  the model is a setting the next commit removes from the box
+  ([#47](https://github.com/andrediashexa/hexarouting/issues/47)). The TAPs are
+  read off the box with `show lcp` instead.
+
+  A measurement refuted the obvious assertion: `vtysh -c "show interface"`
+  **does** list an unpaired interface, because configuring one stages a stanza
+  into FRR. The discriminator is `pseudo interface` against a real index, and
+  the word the existing check looked for - `Unknown` - appears in no FRR output
+  either way, so it was passing on a box with no pair at all.
+
+* **`in RIB, not in FIB` found nothing, on every box, in silence.**
+  `routes.vpp_host_interfaces()` looked for a literal `host` token and took the
+  next field; no line VPP prints has such a token, so it returned an **empty
+  set** - and an empty set made `compare()` suppress every route FRR holds that
+  the FIB does not. The one report that exists to find a route the dataplane is
+  missing found none
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+  The claim "the old positional parse cannot work" *was* written down, and
+  demonstrated against an inline **copy** of the parse rather than against the
+  function. The copy was wrong, the assertion was green, and the function
+  shipped. An assertion that reimplements the thing it is checking is checking
+  itself.
+
+  The other end of the same mistake followed one merge later: the set of
+  interfaces VPP owns came from `show lcp` **alone**, which names only the
+  pairs, so on a box with none it was empty and the report raised the
+  container's own network through `eth0`. An interface the dataplane knows by
+  name is one VPP owns whether or not anything paired it.
+
+* **A self-test line that could not fail, and eleven more.** A fresh audit
+  found 52 defensible findings - 17 that cannot fail at all, 35 weaker than
+  they read - out of 597 lab assertions, 529 Python and 203 C. Twelve are
+  fixed. The one to remember: `lab/utilisation.sh` asserted the histogram
+  exists by looking for a word that is the `sed` range's own start anchor, and
+  the heading prints unconditionally while the buckets are behind `if (live)`.
+  **A box with no histogram at all, and an alarm naming the wrong subscriber
+  every time, passed that lab with nine green**
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+* **`bpa_dyn_active()` was not a missing call and not dead weight: it would
+  have been wrong to call.** It cleared the idle stamp on every block a
+  subscriber holds, extensions included - and `bpa_dyn_idle()` sets those
+  stamps only when the session count reaches zero, at which moment every block
+  is empty. A subscriber coming back with one session needs one block, so its
+  extension should go back to the pool. Wiring the function in would have kept
+  it owned: the leak the comment on `bpa_dyn_idle()` exists to warn about,
+  arriving through the function that looked like its counterpart. Removed, with
+  the reasoning left where the declaration was
+  ([#216](https://github.com/andrediashexa/hexarouting/issues/216)).
 
 * **Deleting a pool left every block it was holding open in the retention
   log.** The blocks a pool still holds are freed by the delete itself and
@@ -215,6 +294,46 @@ are to be interpreted as described in
   The lab goes from 28 checks to 40; `sh tools/lab.sh forward off` fails 26 of
   them.
 
+* **`commit` said success for a routing statement FRR threw away.** `frr-reload`
+  exits 0 having dropped a statement, and the box believed it - and `commit`
+  returning success is the one thing in this product an operator has to be able
+  to trust, because every diagnosis they make afterwards starts from it
+  ([#197](https://github.com/andrediashexa/hexarouting/issues/197)).
+
+  `commit` now reads FRR's **own running configuration** back and refuses when a
+  statement this commit introduced is not in it, naming the statements.
+
+  The check was blocked for a long time on a measured false positive, and the
+  rule everybody assumed was behind it turned out to be wrong. Measured on FRR
+  10.7.1, one statement at a time, each undone before the next: `ip ospf
+  hello-interval 10`, `ip ospf retransmit-interval 5` and `timers throttle spf
+  0 50 5000` are **omitted** from the read-back, while `ip ospf dead-interval
+  40` and `ip ospf cost 10` come back. Every one of those is the FRR default.
+  **Omission is per statement, not per value**, so there is no table of FRR
+  defaults to chase across versions and no comparison to get right - there is a
+  short list, and `lab/frr-readback.sh` is what produces it and keeps it honest
+  against an FRR upgrade.
+
+  Two further shapes came out of the same measurement and neither had been
+  named. **Rewritten:** `passive-interface vppwan0` comes back as `ip ospf
+  passive`, in the interface stanza rather than the router one, and `continue
+  20` as `on-match goto 20`; when the rewrite is missing too, the refusal names
+  what FRR would have written, because an operator told "`passive-interface` is
+  missing" will grep for it and find nothing. **Negated:** `bgp default
+  ipv4-unicast` is the default, so turning it on writes nothing and turning it
+  off writes the `no` line.
+
+  The comparison is against FRR's running configuration and **not** against
+  `frr-reload --test`, which reports a default-valued statement under *Lines To
+  Add* for ever - a check built on that calls every commit carrying one a
+  failure, which is exactly why this could not be written before.
+
+  `lab/igp.sh` carries the half that would hurt an operator: a commit of
+  statements FRR does not store still says `commit complete`, on a box where
+  OSPF is running perfectly, with two assertions beside it proving FRR really
+  did omit and really did rewrite - so that "complete" is not simply what this
+  box says to everything.
+
 * **`commit confirmed` reverted from a timer inside the `hexash` process that
   made the commit, so logging out cancelled it**
   ([#212](https://github.com/andrediashexa/hexarouting/issues/212)). The
@@ -309,7 +428,98 @@ are to be interpreted as described in
 [#203](https://github.com/andrediashexa/hexarouting/issues/203),
 [#212](https://github.com/andrediashexa/hexarouting/issues/212).
 
+[#208](https://github.com/andrediashexa/hexarouting/issues/208) and
+[#182](https://github.com/andrediashexa/hexarouting/issues/182) in full.
+
 ### Fixed
+
+* **Six labs created the `linux_cp` pair by hand, so none of them tested the
+  product.** 0.59.0 gave the product a way to make one - `linux-name` under
+  `interface`, over the binary API - and left `vppctl lcp create` standing in
+  `lcp`, `routing`, `vty`, `igp`, `bgp-policy` and `ipfix-tcp`. So the half
+  that had been fixed was still never exercised: every routing assertion in
+  the suite went on being made on a box somebody had paired by hand. There is
+  now no `vppctl lcp create` anywhere in this repository, and each of those
+  labs commits `linux-name` the way a box does.
+
+  With the labs off that line they hold it: with the pairing removed from
+  `hexash`, `lab/routing.sh` fails 42 checks and `lab/lcp.sh` fails 4. Before,
+  both passed.
+
+  And the negative half, which is what the positive one was missing. The same
+  loopback committed with **no** `linux-name` is on the dataplane, has no
+  netdev, and FRR does not hold it. One measurement changed how that is
+  asserted: `show interface` in `vtysh` **does** list an unpaired interface,
+  because configuring one stages an `interface` stanza into FRR and zebra
+  makes a placeholder for any interface its configuration names. It prints
+  `pseudo interface` for that, and an index and flags for a real one. The word
+  the old positive check looked for, `Unknown`, appears in no FRR output
+  either way - so that assertion had been passing on a box with no pair at
+  all.
+
+* **A box could not reload its own saved configuration, so a pair did not
+  survive a reboot.** Found by asking the boot half of #182's first
+  requirement out loud: save the file, take the pair down, hand the box back
+  what it wrote. Two separate defects, both of which end with
+  `hexarouting.service` failing and the box coming up with **no**
+  configuration at all - no pools, no addresses and no pair - on a machine
+  nobody is watching.
+
+  The first: the dataplane reads report every interface VPP has, and once the
+  product makes pairs one of them is the pair's own TAP. So `save` wrote
+
+  ```
+  interface tap4097
+   mac-address de:ad:00:00:00:07
+  ```
+
+  into the file, and at the next boot - a fresh VPP with no pairs yet -
+  `tap4097` did not exist and the interface-existence check refused the file
+  whole. The Linux end of a pair is now taken out of the configuration at both
+  ends: off the device, so no new file carries one, and out of a file the box
+  is handed, so the boxes that have already saved one still boot.
+
+  Which TAPs those are is **read off the box**, never guessed from the name.
+  `tap<n>` is equally what an operator's own `vppctl create tap id 0` makes -
+  `lab/hw-vpp.sh` runs its whole WAN over a `tap0` with an address, a default
+  route and a CGNAT attachment on it - so a purge by name alone would take a
+  real interface out of the running configuration and the next commit would
+  remove it from the device, which is
+  [#47](https://github.com/andrediashexa/hexarouting/issues/47). On the device
+  side the TAPs come from `show lcp`; on the file side only a `tap<n>` the
+  dataplane does **not** have is dropped.
+
+  The second: a loopback is created administratively **down**, so its saved
+  configuration carries `shutdown` - and the apply order shut interfaces down
+  before it created them, so the first statement applied named an interface
+  the dataplane did not have yet and the commit failed. Every loopback this
+  product can create ([#179](https://github.com/andrediashexa/hexarouting/issues/179))
+  therefore survived exactly until the next reboot. An interface this same
+  delta is about to create is now shut down **after** it exists; for one that
+  already exists the ordering is unchanged, because an interface that does not
+  exist yet is carrying no traffic and there is nothing to stop.
+
+* **Two lab assertions passed whether or not the interface existed.** `vppctl
+  show interface loop0` for an interface the dataplane does NOT have prints an
+  error containing the name it was asked about, so `grep -q loop0` matched
+  either way: `lab/routing.sh` checked that a loopback was on the dataplane and
+  would have said so on a box with no loopback at all. Found by breaking
+  `create_loopback` and watching the check stay green. Both now require the
+  name to be the first field of a line, which is where `show interface` puts
+  one.
+
+* **The boot self-test said nothing about a dataplane port with no pair.** It
+  already reported the routing daemons and the binary API, and a box whose
+  routing cannot work has to say so before somebody configures routing on it.
+  It now reads `show lcp` against the dataplane's own interface list and names
+  the ones with no pair, with the statement that fixes them. A failed check -
+  not a warning - when routing is configured and nothing at all is paired,
+  because that box cannot do what it has been told to do; a warning otherwise,
+  since CGNAT with no routing is a configuration this product supports and
+  failing it would be a failure nobody reads. `local0`, the packet generator
+  and the Linux end of a pair are not counted. Read from the box and never
+  arranged, which is
+  [#184](https://github.com/andrediashexa/hexarouting/issues/184)'s rule.
 
 * **The VTY refused BGP unnumbered, and failed the whole commit for it.**
   `neighbor vppwan0 interface remote-as external` — eBGP to a directly

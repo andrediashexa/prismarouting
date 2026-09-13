@@ -27,7 +27,14 @@ vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up
-vppctl lcp create host-veth-vpp host-if vppwan0
+# The pair comes from the product, not from this lab (#182). `vppctl lcp create`
+# stood here, and every interface assertion below it was made on a box somebody
+# had set up by hand: on an installed appliance nothing created a pair, so the
+# VTY's own interface-existence check - which reads `show lcp` and accepts
+# either name of a pair - had only VPP's names to work with, and an operator
+# writing FRR's name for an interface was refused.
+$HX -c "configure" -c "interface host-veth-vpp" -c "linux-name vppwan0" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 vppctl set interface mtu 1500 host-veth-vpp
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
 vppctl create packet-generator interface pg0 >/dev/null

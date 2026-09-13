@@ -65,9 +65,23 @@ vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
+# The BPA plugin, installed where vat2 looks for it on a real box. Nothing below
+# sends a bpa_ message, but hexash asks vat2 which messages are registered
+# before it touches the dataplane and calls it unusable when bpa_pool_add_del is
+# not among them - so without this every commit here fails for a reason that has
+# nothing to do with routing.
+use_binary_api
+HX="python3 /src/src/hexash/hexash.py"
+
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
-vppctl lcp create host-veth-vpp host-if vppwan0
+# The pair is the PRODUCT's, not this lab's (#182). `vppctl lcp create` used to
+# be here, and while it was, this lab proved an IGP on a box nobody receives:
+# on an installed appliance nothing created a pair, so FRR had no interface and
+# OSPF and IS-IS were configurable and inert. Moved up from further down with
+# use_binary_api, which has to come first for any commit at all.
+$HX -c "configure" -c "interface host-veth-vpp" -c "linux-name vppwan0" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 
 # NO `set interface mtu` here. See the header: the mismatch is the subject of
 # the first section, not an accident.
@@ -149,13 +163,6 @@ for d in zebra ospfd isisd; do
 done
 
 . /src/lab/verdict.sh
-# The BPA plugin, installed where vat2 looks for it on a real box. Nothing below
-# sends a bpa_ message, but hexash asks vat2 which messages are registered
-# before it touches the dataplane and calls it unusable when bpa_pool_add_del is
-# not among them - so without this every commit here fails for a reason that has
-# nothing to do with routing.
-use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
 
 # --- what the assertions read -------------------------------------------------
 #
@@ -843,6 +850,50 @@ vppctl set interface mtu packet "$THERE" host-veth-vpp
 vppctl lcp lcp-sync on
 expect_not_in "and it is silent once the two halves agree again" \
   "carries OSPF and its MTU is" "$($HX -c 'show ospf interface' 2>&1)"
+
+echo
+echo "=========== the read-back check must not fire on a working box (#197) ==="
+# `commit` now reads FRR's OWN running configuration back and refuses when a
+# statement this commit introduced is not in it. The danger of that check is
+# not that it misses a drop: it is that it refuses a commit that WORKED. These
+# are the two shapes that would, and both are measured rather than assumed -
+# lab/frr-readback.sh is where the measurement lives.
+#
+#   OMITTED    FRR accepts `ip ospf hello-interval 10`, its own default, and
+#              does not store it. A check with no list calls that a dropped
+#              statement on a box where OSPF is running perfectly.
+#   REWRITTEN  FRR accepts `passive-interface vppwan0` and reads it back as
+#              `ip ospf passive`, inside the interface stanza rather than the
+#              router one. Same consequence, different cause.
+#
+# Last in the file on purpose: it changes OSPF timers on the live interface,
+# and every adjacency assertion above has already been made.
+#
+# vppwan0 and not host-veth-vpp, because these are FRR statements and #205
+# established that an FRR statement has to carry the name FRR can act on.
+DEFAULTS=$($HX -c "configure" -c "interface vppwan0" \
+           -c "ip ospf hello-interval 10" \
+           -c "ip ospf retransmit-interval 5" \
+           -c "exit" -c "router ospf" -c "passive-interface vppwan0" \
+           -c "exit" -c "commit" 2>&1)
+echo "$DEFAULTS" | tail -3 | sed 's/^/  /'
+expect_in "a commit of statements FRR does not store still says complete" \
+  "commit complete" "$DEFAULTS"
+# The two assertions that make the one above mean something. Without them
+# "commit complete" is equally consistent with FRR having stored everything,
+# which is a box this check was never in danger on.
+expect "and FRR really did leave the hello-interval out, so this was the case" \
+  sh -c "! vtysh -c 'show running-config' | grep -q 'ip ospf hello-interval 10'"
+expect "and really did rewrite passive-interface, so was that" \
+  sh -c "vtysh -c 'show running-config' | grep -q 'ip ospf passive'"
+
+# The control: a value FRR DOES store, committed the same way, so "commit
+# complete" above is not simply what this box says to everything.
+NONDEF=$($HX -c "configure" -c "interface vppwan0" \
+         -c "ip ospf hello-interval 7" -c "exit" -c "commit" 2>&1)
+expect_in "a value FRR does store commits too" "commit complete" "$NONDEF"
+expect "and FRR is holding that one, read back from the box" \
+  sh -c "vtysh -c 'show running-config' | grep -q 'ip ospf hello-interval 7'"
 
 echo
 echo "=========== adjacencias ==========="
