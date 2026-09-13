@@ -36,7 +36,7 @@ say "================ HexaRouting: boot self-test ================"
 # The first thing on the screen is the version. Whoever is at the console of a
 # faulty box has to say what is running before anything else, and "unknown" is
 # an answer too - worse is the line not being there at all.
-ver=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
+ver=$(cat "$ROOT/usr/share/hexarouting/VERSION" 2>/dev/null || echo "")
 if [ -n "$ver" ]; then
   ok "HexaRouting $ver"
 else
@@ -47,7 +47,7 @@ fi
 # A live system keeps the whole overlay in RAM. Together with VPP, 2 GB is
 # not enough: the OOM killer takes VPP and brings the rest down with it. Found
 # by booting the ISO with 2 GB - "Out of memory: Killed process (vpp)".
-memkb=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+memkb=$(awk '/MemTotal/{print $2}' "$ROOT/proc/meminfo")
 memmb=$((memkb / 1024))
 if [ "$memmb" -lt 2600 ]; then
   bad "only ${memmb} MB of RAM: VPP will be killed by the OOM killer"
@@ -66,12 +66,12 @@ fi
 # showed up in the journal's "code=killed, signal=ILL".
 missing=""
 for f in sse4_2; do
-  grep -qw "$f" /proc/cpuinfo || missing="$missing $f"
+  grep -qw "$f" "$ROOT/proc/cpuinfo" || missing="$missing $f"
 done
 if [ -n "$missing" ]; then
   bad "CPU lacks:$missing - VPP requires it and will die with SIGILL"
-  say "        model: $(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2-)"
-elif grep -qw avx2 /proc/cpuinfo; then
+  say "        model: $(grep -m1 "model name" "$ROOT/proc/cpuinfo" | cut -d: -f2-)"
+elif grep -qw avx2 "$ROOT/proc/cpuinfo"; then
   ok "CPU has sse4_2 and avx2"
 else
   say "  [warn] CPU lacks avx2: VPP works but delivers less"

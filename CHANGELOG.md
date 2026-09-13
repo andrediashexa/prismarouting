@@ -438,7 +438,18 @@ are to be interpreted as described in
   own: the first version of that check conflated two of them and failed every
   live medium.
 
-  57 checks before, **89** after.
+  And the four the whole report rests on, none of which anything held: the
+  **version stamp** an operator quotes when they report a fault, the **RAM**
+  floor (`docs/appliance.md` records the ISO booting with 2 GB and the console
+  saying "Out of memory: Killed process (vpp)" with VPP at 19 MB), the
+  **instruction set** (without `sse4_2` the dataplane does not fail to forward,
+  it dies with SIGILL, which reads like a crash and sends whoever is looking at
+  the packet path), and **whether VPP is answering at all**, which every line
+  below it depends on. Each carries the line the product actually draws rather
+  than a tidier one: 3 GB is a warning and not a refusal, and a missing `avx2`
+  is a throughput statement, because VPP runs on that box.
+
+  57 checks before, **103** after.
 
 ### Internal
 

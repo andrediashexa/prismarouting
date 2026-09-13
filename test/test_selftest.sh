@@ -1092,5 +1092,129 @@ else
 fi
 rm -rf "$FAKE/root"
 
+echo "=== the three statements the whole report rests on (#222) ==="
+# The version, the RAM and the instruction set. Nothing held any of them, and
+# the first line of the report is the one a reader trusts most: an operator who
+# says "I am running 0.66.0" is reading it off this line, and a box whose stamp
+# is missing said so to nobody.
+#
+# The RAM thresholds are not decoration either. docs/appliance.md records the
+# event: the ISO booted with 2 GB and the console said "Out of memory: Killed
+# process (vpp)" with VPP holding 19 MB. The floor exists because of that.
+hw() {  # <version> <memkb> <cpu flags>
+  mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+  mkdir -p "$FAKE/root/proc" "$FAKE/root/usr/share/hexarouting"
+  [ -n "$1" ] && printf '%s\n' "$1" > "$FAKE/root/usr/share/hexarouting/VERSION"
+  printf 'MemTotal:       %s kB\n' "$2" > "$FAKE/root/proc/meminfo"
+  printf 'model name\t: Synthetic CPU\nflags\t\t: %s\n' "$3" \
+    > "$FAKE/root/proc/cpuinfo"
+}
+hw "9.9.9 (abc1234)" 8388608 "fpu sse4_2 avx2"
+run
+if said '\[ ok \] HexaRouting 9.9.9 \(abc1234\)'; then
+  ok "the version stamp on the box is what the report names"
+else
+  bad "the version stamp was not reported: $(printf '%s\n' "$OUTPUT" | head -3)"
+fi
+if said '\[ ok \] 8192 MB of RAM'; then
+  ok "and the RAM it has, in MB, on a box that has enough"
+else
+  bad "8 GB was not reported: $(printf '%s\n' "$OUTPUT" | grep -i 'RAM' || echo '<nothing>')"
+fi
+if said '\[ ok \] CPU has sse4_2 and avx2'; then
+  ok "and the instruction set VPP needs, when it is there"
+else
+  bad "sse4_2 and avx2 present and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'CPU' || echo '<nothing>')"
+fi
+hw "" 8388608 "fpu sse4_2 avx2"
+run
+if said '\[FAIL\] no version stamp in /usr/share/hexarouting/VERSION'; then
+  ok "a box with no version stamp is a FAILED check, not a blank line"
+else
+  bad "a box with no version stamp: $(printf '%s\n' "$OUTPUT" | head -3)"
+fi
+# 2 GB is the machine the OOM kill was observed on.
+hw "9.9.9" 2097152 "fpu sse4_2 avx2"
+run
+if said '\[FAIL\] only 2048 MB of RAM: VPP will be killed by the OOM killer'; then
+  ok "the RAM the dataplane was killed on is a FAILED check, and says why"
+else
+  bad "2 GB passed: $(printf '%s\n' "$OUTPUT" | grep -i 'RAM' || echo '<nothing>')"
+fi
+if said 'minimum recommended: 4 GB'; then
+  ok "and names the floor rather than only refusing"
+else
+  bad "the RAM failure does not say what is enough"
+fi
+# Between the floor and comfortable. A box that boots and is tight is not a
+# box to refuse, and calling it a failure would be an alarm on ordinary
+# hardware.
+hw "9.9.9" 3145728 "fpu sse4_2 avx2"
+run
+if said '\[warn\] 3072 MB of RAM: enough to boot, tight under load'; then
+  ok "3 GB is a warning: enough to boot, and said so"
+else
+  bad "3 GB: $(printf '%s\n' "$OUTPUT" | grep -i 'RAM' || echo '<nothing>')"
+fi
+if said '\[FAIL\].*MB of RAM'; then
+  bad "3 GB was refused; a box that boots and runs tight is not one to refuse"
+else
+  ok "and it is not a failed check"
+fi
+# The instruction set VPP is compiled for. Without it the dataplane does not
+# fail to forward, it dies with SIGILL - which reads like a crash and sends
+# whoever is looking at the packet path.
+hw "9.9.9" 8388608 "fpu sse2"
+run
+# Only sse4_2 is required: VPP dies with SIGILL without it and merely runs
+# slower without avx2, so the two are a refusal and a warning rather than one
+# list. Asserted as the product draws that line, not as it might have been
+# drawn.
+if said '\[FAIL\] CPU lacks: sse4_2 - VPP requires it'; then
+  ok "a CPU without sse4_2 is a FAILED check, naming what is missing"
+else
+  bad "a CPU without sse4_2 passed: $(printf '%s\n' "$OUTPUT" | grep -i 'CPU' || echo '<nothing>')"
+fi
+if said 'SIGILL'; then
+  ok "and says how it will present, because it presents as a crash"
+else
+  bad "the CPU failure does not say what the operator will see"
+fi
+# avx2 alone is a performance statement, not a refusal: VPP runs without it.
+hw "9.9.9" 8388608 "fpu sse4_2"
+run
+if said '\[warn\] CPU lacks avx2'; then
+  ok "a CPU with sse4_2 and no avx2 is a warning about throughput"
+else
+  bad "missing avx2 alone: $(printf '%s\n' "$OUTPUT" | grep -i 'CPU' || echo '<nothing>')"
+fi
+if said '\[FAIL\] CPU lacks'; then
+  bad "a CPU that VPP runs on was refused over avx2"
+else
+  ok "and not a refusal, because VPP runs on it"
+fi
+rm -rf "$FAKE/root"
+
+echo "=== the dataplane answering, and not (#222) ==="
+# The most basic statement in the report, and nothing held it. A box whose VPP
+# is not answering has to say so at the top, because every line below it is
+# then about a box that is not forwarding.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+: > "$FAKE/vppctl_ok"
+run
+if said '\[ ok \] VPP responding'; then
+  ok "a dataplane that answers is reported at the top of the report"
+else
+  bad "a responding VPP was not reported: $(printf '%s\n' "$OUTPUT" | grep -i 'VPP' | head -2 || echo '<nothing>')"
+fi
+rm -f "$FAKE/vppctl_ok"
+run
+if said '\[FAIL\] VPP not responding'; then
+  ok "and one that does not answer is a FAILED check"
+else
+  bad "a dead VPP passed: $(printf '%s\n' "$OUTPUT" | grep -i 'VPP' | head -2 || echo '<nothing>')"
+fi
+rm -rf "$FAKE/root"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
