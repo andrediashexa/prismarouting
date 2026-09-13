@@ -96,7 +96,7 @@ def shell(mode):
 
     sh.dp = type("D", (), {"TRACE": False, "run": run,
                            "reachable": lambda _s: True})()
-    sh.frr = type("F", (), {"available": lambda s: False,
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()
     if mode == "configuration":

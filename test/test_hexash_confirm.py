@@ -78,8 +78,9 @@ class Box:
         sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
         sh.api = FakeApi()
         sh.dp = FakeVpp()
-        sh.frr = type("F", (), {
+        sh.frr = type("F", (hexash.Frr,), {
             "available": lambda s: False,
+            "show": lambda s, c: (1, ""),
             "reload": lambda s, lines, check_only=False: (0, "")})()
         sh.rb = type("R", (), {"push": lambda s, text, comment="": None})()
         sh.running_config = lambda: config.Config.parse(self.running)

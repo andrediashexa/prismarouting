@@ -135,6 +135,27 @@ ROUTER_DAEMON = {"bgp": "bgpd", "ospf": "ospfd", "ospf6": "ospf6d",
                  "isis": "isisd", "rip": "ripd", "eigrp": "eigrpd",
                  "babel": "babeld", "pim": "pimd"}
 
+
+def configurable_daemons():
+    """
+    Every daemon this VTY can commit configuration for, read off the grammar.
+
+    Derived rather than listed, because a list kept by hand is exactly what
+    #187 was: the VTY offered `router ospf6`, no list on the box had ospf6d in
+    it, and OSPFv3 became the one protocol a box could be configured for and
+    could never run. A protocol added to TREE is accounted for here the same
+    day it is offered.
+
+    ROUTER_DAEMON is wider than the grammar on purpose - it validates whatever
+    reaches FRR, `router rip` included - so it is read THROUGH the tree rather
+    than whole. `show version` reporting ripd stopped on every box would be
+    true and useless.
+    """
+    offered = {ROUTER_DAEMON[word] for word in TREE["config"]["router"][1]
+               if word in ROUTER_DAEMON}
+    return sorted(offered | set(ALWAYS_STARTED) | set(POLICY_DAEMONS)
+                  | set(STATIC_DAEMONS))
+
 # One source of truth, written by the build. A version compiled into the code
 # drifts from the tag the moment someone forgets to edit it, and a box that
 # misreports its version sends every later investigation the wrong way.
@@ -3811,6 +3832,27 @@ class Frr:
     def show(self, cmd):
         return self._exec(["-c", cmd])
 
+    def daemons(self):
+        """
+        The set of daemons FRR reports running, or None when FRR did not say.
+
+        None is not the empty set and the two MUST NOT be collapsed. An FRR
+        that is not answering is a control plane that is down, and the fix is
+        to get FRR itself back; an FRR that answers with nothing running is a
+        box whose daemons were never enabled, and the fix is
+        /etc/frr/daemons. Reporting the first as the second sends the operator
+        to edit a file on a box that would not have read it.
+
+        One place asks, because two would be two truths: `commit` refuses a
+        `router <protocol>` statement whose daemon is absent, and
+        `show version` reports the same set to the operator its own hints send
+        here (#272).
+        """
+        rc, out = self.show("show daemons")
+        if rc != 0 or not out.strip():
+            return None
+        return set(out.split())
+
     def running(self):
         rc, out = self.show("show running-config")
         if rc:
@@ -5430,9 +5472,8 @@ class Shell:
             # still returns 0 - so the commit reports success for configuration
             # that went nowhere.
             if d["routing_changed"]:
-                rc_d, daemons = self.frr.show("show daemons")
-                if rc_d == 0 and daemons.strip():
-                    running_daemons = set(daemons.split())
+                running_daemons = self.frr.daemons()
+                if running_daemons is not None:
                     for line in target.routing:
                         w = line.split()
                         if len(w) < 2 or w[0] != "router":
@@ -9362,6 +9403,14 @@ class Shell:
         operator on the phone should not have to run three commands to read
         them - least of all the two that require knowing vppctl and vtysh
         exist at all.
+
+        The daemons are here because seven of this VTY's own messages already
+        sent the operator to this command to find out which are running, and
+        it answered with three version strings (#272). The hint is printed by
+        a failed commit and by every `show bgp`, `show ospf` and `show isis`
+        that got no answer - the moments a daemon is the likeliest cause - so
+        a dead end here costs more than no hint at all: the reader concludes
+        the daemon is fine.
         """
         print(f"HexaRouting {hexarouting_version()}")
         rc, out = self.dp.run("show version")
@@ -9369,6 +9418,74 @@ class Shell:
         rc, out = self.frr.show("show version")
         line = out.strip().splitlines()[0] if out.strip() else ""
         print(f"  routing:   {line or 'not responding'}")
+        self.show_daemons()
+
+    def show_daemons(self):
+        """
+        Which routing daemons are up, named one by one, both ways.
+
+        Stopped daemons are printed as well as running ones because of who is
+        reading: they arrived from a message that named ONE daemon - "bgpd may
+        not be running" - so the answer they need is about bgpd by name. A
+        list of what is up answers that only by an absence the reader has to
+        notice, and a reader scanning for a word that is not there is how the
+        wrong conclusion gets drawn.
+
+        Everything FRR reports is shown as running, not only what this VTY can
+        configure, because that half is a measurement and narrowing a
+        measurement to a list loses whatever the list forgot. The stopped half
+        is the other way round: it can only be the daemons this box knows to
+        expect.
+        """
+        running = self.frr.daemons()
+        if running is None:
+            # NOT "no daemons running". Those are different faults with
+            # different fixes, and this one has to be said in a sentence the
+            # operator cannot read as the other.
+            print("  daemons:   FRR is not answering, so which daemons are "
+                  "running is not known")
+            print_prose("this box's routing control plane is down rather "
+                        "than idle: 'systemctl status frr' and its journal "
+                        "say why", indent="             ")
+            return
+        expected = configurable_daemons()
+        stopped = [d for d in expected if d not in running]
+        self.print_daemon_list("  daemons:   running  ", sorted(running))
+        self.print_daemon_list("             stopped  ", stopped)
+        if not stopped:
+            return
+        # Which sentence depends on WHICH daemon is missing, and getting that
+        # wrong sends the operator to a file that will not mention it:
+        # frrinit.sh starts zebra, mgmtd and staticd itself, so one of those
+        # being absent means frr did not finish starting.
+        stalled = [d for d in stopped if d in ALWAYS_STARTED]
+        if stalled:
+            print_prose(enable_daemon_advice(stalled[0]),
+                        indent="             ")
+        else:
+            print_prose("a stopped daemon takes the configuration that needs "
+                        "it and reaches nothing; enable it in "
+                        "/etc/frr/daemons and restart frr",
+                        indent="             ")
+
+    @staticmethod
+    def print_daemon_list(head, names):
+        """
+        One labelled row of daemon names, wrapped underneath its own label.
+
+        Wrapped rather than printed whole because the length is not this VTY's
+        to predict: the running half is whatever FRR reports, and a box with
+        ldpd, bfdd, pathd and the rest enabled runs well past the 80 columns
+        of the serial console these messages are read on (#252). No name is
+        ever split, because console_prose does not break words - so a daemon
+        name stays greppable, which is the half of that rule that matters
+        here.
+        """
+        rows = console_prose(" ".join(names) or "(none)",
+                             indent=" " * len(head))
+        print(head + rows[0].lstrip())
+        for row in rows[1:]:
+            print(row)
 
     def show_compare(self):
         if self.candidate is None:

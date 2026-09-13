@@ -74,6 +74,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The selftest kept its own list of routing daemons, and nothing compared it
+  with the grammar** ([#275](https://github.com/andrediashexa/hexarouting/issues/275)).
+  `appliance/selftest` decides which daemons a box should be running from
+  `for d in bgpd ospfd ospf6d isisd`; the VTY decides the same thing from
+  `TREE["config"]["router"]`. Two copies of one truth, in two languages.
+
+  That list has already been wrong this way. #187: the VTY accepted `router
+  ospf6`, the installer enabled every daemon but `ospf6d`, and OSPFv3 became
+  the one protocol a box could be configured for and could never run. The
+  comment above the loop says so. A comment is the repair for the time it
+  happened, not a check against the next one - and the next one is a fresh box
+  passing its own self-test while unable to run what somebody is about to
+  configure on it.
+
+  `test/test_selftest_daemons.py` compares the two, both ways. The other
+  direction is a warning about a daemon nobody on that box has a use for,
+  which is how a self-test becomes something operators scroll past.
+
+  The comparison is in `make test` rather than in the shell: the selftest runs
+  on a box, early, and must not depend on the VTY being importable - the same
+  reason `test/test_install_manifest.py` reads `appliance/install.sh` from
+  here.
+
+  Four reds: `ospf6d` dropped from the loop, which is #187 exactly; a protocol
+  added to the grammar and not to the loop; a daemon in the loop the grammar
+  cannot commit to; and the loop renamed, so the check reads nothing at all.
+
 * **The release gate refused every future release, for duplicates in sections
   it also forbids editing**
   ([#274](https://github.com/andrediashexa/hexarouting/issues/274)). The
@@ -239,6 +266,37 @@ version has a chance of seeing it.
   exit path **MUST NOT** wait for the socket; a ten second `poll(POLLOUT)`
   added to `bpa_log_tcp_flush_exit()` took the stop from 1s to 11s, sent not one
   byte, and put the same 82935 bytes in the file.
+
+* **Seven messages sent the operator to `show version` to find out which
+  daemons run, and `show version` did not say**
+  ([#272](https://github.com/andrediashexa/hexarouting/issues/272)). The
+  `commit` branch where nothing took, `show bgp` with no answer, `show ospf`
+  twice, `show isis` twice and `configure` on a box still starting all named
+  that command; it printed three version strings and nothing about daemons. The
+  first of those is printed by a failed commit, on a box an operator may be
+  reaching over a serial console, and the one diagnostic step it named did not
+  exist - which is worse than naming none, because a reader who finds no
+  mention of `bgpd` concludes `bgpd` is fine.
+
+  The destination moved rather than the seven hints, which are now true as
+  written. `show version` reports a **running** row of whatever FRR names and a
+  **stopped** row of the daemons this VTY's grammar can configure and FRR did
+  not name. The stopped row is the half that answers the question actually
+  asked: the operator arrived from a message naming one daemon, and a list of
+  what is up answers that only by an absence they have to notice.
+
+  An FRR that is **not answering** is reported as that, never as no daemons
+  running: those are different faults and the next move differs, and reporting
+  the first as the second sends the operator to edit `/etc/frr/daemons` on a box
+  that would not have read it. One method asks FRR - `commit`'s existing refusal
+  of a `router <protocol>` statement whose daemon is absent now reads the same
+  call, so the two answers cannot come to disagree.
+
+  The expected set is read off the command tree instead of listed by hand,
+  which is what
+  [#187](https://github.com/andrediashexa/hexarouting/issues/187) was: every
+  list on the box was missing `ospf6d` while the grammar offered `router
+  ospf6`.
 
 ### Internal
 

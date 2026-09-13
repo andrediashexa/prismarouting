@@ -354,7 +354,7 @@ class Box:
         sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
         sh.api = FakeApi()
         sh.dp = FakeVpp()
-        sh.frr = type("F", (), {
+        sh.frr = type("F", (hexash.Frr,), {
             "available": lambda s: True,
             "show": lambda s, cmd: (0, "zebra bgpd staticd mgmtd"),
             "running": lambda s: [],
