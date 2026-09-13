@@ -528,6 +528,46 @@ setting ships **empty**, and the boot self-test says the box has no dataplane
 interface and names the file to edit. A box that forwards nothing looks like a
 box that is working, so it has to be said out loud.
 
+### Naming it was never enough
+
+For the life of the product nothing bound the NIC. DPDK cannot take a device
+through `ixgbe`, `i40e`, `bnxt_en` or any other kernel driver: the device has
+to be on `vfio-pci`, or on `uio_pci_generic` where there is no IOMMU. Nothing
+in `appliance/` loaded either, and nothing bound anything to them.
+
+So an operator who did exactly what the self-test told them - name the
+interface - got a `startup.conf` with the right PCI address and a dataplane
+with no interfaces, and no screen said why
+([#283](https://github.com/andrediashexa/hexarouting/issues/283)). Mellanox
+was the exception: `mlx5` is a bifurcated driver and works while kernel-bound,
+which is what made this look like a hardware-dependent quirk rather than a
+missing step.
+
+`appliance/bind-dataplane-nic` runs from `apply-tuning`, after the tuner has
+chosen the device and before VPP starts. That window already exists and is
+already ordered correctly, and a unit of its own would be a second thing to
+order.
+
+**It binds what `startup.conf` names**, and that is the design rather than a
+convenience. The tuner has already applied every rule about which NIC the
+dataplane may have, including the default-route refusal above, so reading its
+output inherits those rules instead of restating them. A second copy of "which
+NIC may the dataplane have" is a second copy that can disagree, and the way
+this one would disagree is by taking the box off the network.
+
+It reads the default route again anyway, immediately before unbinding. Not as
+a second opinion but as a last one: `startup.conf` is a file and a person can
+edit it, and this is the one mistake here that cannot be undone from another
+city.
+
+| | why |
+|---|---|
+| `driver_override`, not `new_id` | `new_id` matches by vendor and device, so it claims every card of that model - including the management port of a two-port card, which is the ordinary case |
+| `vfio-pci` with an IOMMU | the device is taken through the IOMMU, so a dataplane bug cannot write to memory the device was never given |
+| `uio_pci_generic` without one | `vfio-pci` on a box with no IOMMU loads and then refuses every device, which reads on the console as the bind failing for no reason. The fallback and what it gives up are both printed |
+| the bind is verified | a bind that did not take names the driver the device is on now. A device left on none at all is the worst outcome to be quiet about: the kernel no longer has the NIC and neither does the dataplane |
+| a failure here does not fail the tuning | a box that could not bind its NIC still wants its hugepages, its `isolcpus` and its governor, and above all wants to come up far enough for somebody to log in and read why |
+
 **The default route is refused even when named.** An interface can carry
 subscriber traffic *and* the default route only on a box with one NIC, and
 such a box cannot run this product anyway — so this overrides the setting
