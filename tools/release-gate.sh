@@ -190,6 +190,50 @@ fi
 # reworded second copy of the same fix is a different defect and this will not
 # catch it - the two that were found by hand were reworded - but an exact
 # repeat is what the merge produces, and that is what this is for.
+# A section for a version that has already been tagged must be what that tag
+# had, byte for byte.
+#
+# The comment above the duplicate-bullet check below describes half of this: a
+# branch cut before a release rename still says "Unreleased", master has
+# renamed that section, and git files the branch's bullets INSIDE the released
+# one. That check catches the copies. It does not catch a branch carrying a NEW
+# entry, which lands under the released version and credits it with work that
+# is not in it - measured on two real branches after 0.67.0 was cut, and there
+# are eighteen of them waiting (#269).
+#
+# An honest correction to a shipped section is the case worth naming: this rule
+# forbids it, deliberately. CHANGELOG.md's own TL;DR says a reconstruction that
+# hides being one is a second, quieter defect, so a correction belongs in the
+# CURRENT section saying what it corrects, where a reader of the old version
+# has a chance of seeing it.
+prev=$(git -C "$WORK" tag -l "v*" --sort=-v:refname | grep -v "^$TAG\$" | head -1)
+if [ -n "$prev" ]; then
+  prev_ver=${prev#v}
+  cur_sect=$(awk -v v="## $prev_ver" '
+    index($0, v) == 1 { p = 1; print; next }
+    /^## / { p = 0 }
+    p { print }
+  ' "$WORK/CHANGELOG.md")
+  was_sect=$(git -C "$WORK" show "$prev:CHANGELOG.md" 2>/dev/null | awk -v v="## $prev_ver" '
+    index($0, v) == 1 { p = 1; print; next }
+    /^## / { p = 0 }
+    p { print }
+  ')
+  if [ -n "$was_sect" ] && [ "$cur_sect" != "$was_sect" ]; then
+    echo "error: the '## $prev_ver' section of CHANGELOG.md is not what $prev" >&2
+    echo "       shipped. A section for a version that has already been tagged" >&2
+    echo "       describes a medium somebody is running; editing it changes" >&2
+    echo "       what that box is said to do." >&2
+    echo "       Most likely a branch cut before the rename filed its entry" >&2
+    echo "       there. Move it under '## Unreleased'. If it is a correction," >&2
+    echo "       put it in the current section and say what it corrects." >&2
+    printf '%s\n' "$cur_sect" > /tmp/hexa-sect-now
+    printf '%s\n' "$was_sect" > /tmp/hexa-sect-was
+    diff -u /tmp/hexa-sect-was /tmp/hexa-sect-now 2>/dev/null | head -20 >&2
+    exit 1
+  fi
+fi
+
 # And no heading may appear twice inside one release section.
 #
 # The duplicate-bullet check below compares BULLETS, and a duplicated heading
