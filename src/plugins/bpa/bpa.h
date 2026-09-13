@@ -125,6 +125,27 @@ typedef struct
   u32 actor_uid;   /* the uid it was running as, or ~0 */
   u8 actor_is_api; /* the change arrived over the binary API */
 
+  /*
+   * When THIS incarnation of the dataplane started, on the wall clock.
+   *
+   * Latched once, in bpa_init(), and never recomputed: its job is to CHANGE
+   * when the process is replaced, and a value recomputed from the current
+   * clock would jump every time NTP steps and look to a collector like a
+   * restart that did not happen. The cost of latching is that a box whose
+   * clock was wrong before NTP settled carries a wrong absolute value for the
+   * life of the process - it still differs from the previous incarnation's,
+   * which is what a collector reads it for.
+   */
+  f64 boot_wall;
+
+  /*
+   * When the box was last asked to release everything it holds because it is
+   * about to stop, or 0. See bpa_stop_drain() and the re-announcement in
+   * bpa-expire-process: a box that is still here a few seconds later did not
+   * stop, and the log must not go on claiming those blocks are free.
+   */
+  f64 drained_at;
+
   u16 msg_id_base;
   vlib_main_t *vlib_main;
   vnet_main_t *vnet_main;
@@ -148,6 +169,41 @@ void bpa_log_queue_event (bpa_per_thread_t *pt, u8 event, u32 ip_priv,
  * them. Takes the barrier itself.
  */
 void bpa_log_pins_replay (void);
+
+/*
+ * Queues one event per block currently held, over every pool and every
+ * thread. MUST be called under the worker barrier: it reads every thread's
+ * allocator and writes to every thread's log queue.
+ *
+ * The event is a parameter because the two callers are opposites and must
+ * walk exactly the same set of blocks: the stop drain gives them all back
+ * (natEvent 17), and the re-announcement after a drain that was not followed
+ * by a stop takes them all back (natEvent 16). Two walks that could drift
+ * apart would leave the log with a release the box never re-opened.
+ */
+u32 bpa_blocks_log_all (u8 event);
+
+/*
+ * Releases every block held, as natEvent 17, and puts the records on the wire
+ * in the same call. Returns how many. Takes the worker barrier itself.
+ *
+ * Two callers, and the difference between them is whether the graph is still
+ * running: the VLIB_MAIN_LOOP_EXIT hook in bpa.c, and the "bpa stop-drain"
+ * command an ExecStop runs while it still is. bpa.c carries the measurement
+ * that made it two.
+ */
+u32 bpa_drain_blocks (vlib_main_t *vm);
+
+/*
+ * How long after a drain the box waits before deciding it was not stopped
+ * after all, and takes the blocks back with a fresh natEvent 16.
+ *
+ * Longer than the gap between an ExecStop returning and systemd's SIGTERM,
+ * which is immediate, so a real stop never reaches this. Short enough that a
+ * drain typed by hand on a live box leaves the log claiming those blocks are
+ * free for seconds rather than for the year it is kept.
+ */
+#define BPA_DRAIN_REANNOUNCE 5.0
 
 /* Adds a pinned block to a subscriber's live record on one worker, if it has
  * one and does not already carry the block. Under the barrier. */

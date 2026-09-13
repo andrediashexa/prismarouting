@@ -163,15 +163,127 @@ somebody who had already been disconnected
   no events at all, so a release from there would be the second half of a pair
   whose first half was never written.
 
-What a **restart** does is not covered by any of this. Nothing is emitted when
-the box goes down, so a dynamic block held at that moment stays open in the
-log, and a pinned block is announced again on the way back up with no release
-between the two allocations. A box that lost power could not have said
-otherwise; a graceful stop could, and does not.
-
 `lab/ipfix.sh` allocates three blocks, pins one of them, deletes the pool and
 asserts at a real collector that every allocation in the capture has its
 release for the same subscriber and the same port range.
+
+## Stopping the box closes them too, and a crash cannot
+
+A box that is stopped is the commonest of the three cases, not the rarest:
+every planned reboot and every upgrade goes through it, while a pool is
+deleted rarely
+([#217](https://github.com/andrediashexa/hexarouting/issues/217)).
+
+* A graceful stop **MUST** emit `natEvent` 17 for every block still held,
+  before the process leaves. The record is stamped at the **stop**, for the
+  same reason as the other two: the box cannot claim an earlier instant it did
+  not observe.
+* A box that loses power, is killed by the kernel or panics **cannot** emit
+  anything, and no amount of work on the stop path changes that. Its
+  allocations stay open, and a reader who assumed after the drain that every
+  allocation is closed would be wrong about exactly the boxes that crashed.
+
+### Where the drain runs, and why it is in two places
+
+The answer was measured rather than chosen. **VPP's UDP IPFIX export is not a
+kernel socket**: `vnet_ipfix_exp_send_buffer()` writes a buffer and hands a
+frame to `ip4-lookup`, and the graph is what puts it on the wire. The graph
+stops before any in-process exit hook is reached, so a record written there is
+written and swallowed. The TCP exporter owns a kernel socket and needs no
+graph.
+
+Measured on one block held at the stop, with a real collector on the far side:
+
+| entry point | covers | UDP | TCP |
+|---|---|---|---|
+| `VLIB_MAIN_LOOP_EXIT` hook in the plugin | every graceful exit: SIGTERM from anywhere, `vppctl quit` | record written, never leaves | `natEvent` 17 decoded at the stop |
+| `ExecStop` in a `vpp.service` drop-in, running `vppctl bpa stop-drain` before the signal | `systemctl stop`/`restart`, reboot, upgrade | `natEvent` 17 decoded at the stop | same |
+
+Both exist, and they do not double up: the drain latches, and the hook sees the
+latch. A second `natEvent` 17 against one 16 is not tidier than a missing one,
+it is a second wrong answer.
+
+`bpa stop-drain` is safe to type by hand even though it is meant for the
+ExecStop: a box that is drained and then does **not** stop re-announces every
+block it is still holding a few seconds later, with a real `natEvent` 16. The
+log then reads "released at T1, held again from T2", which is true; leaving it
+alone would mean the log claimed those blocks were free for as long as it is
+kept.
+
+## The boot marker: telling a crash from a box that is still running
+
+**A proposal.** RFC 8158 has no event for this and the shape below is a
+decision the maintainer may change; the argument for it is what matters.
+
+After the drain, an allocation with no release still has two readings, and they
+are opposite answers about a subscriber:
+
+| what the collector sees | reading |
+|---|---|
+| allocation, then release | the subscriber held those ports between the two. Exact. |
+| allocation, no release, and the exporter has not restarted since | **still in force** |
+| allocation, no release, and the exporter announced a **new** init time afterwards | **ended at that restart**. The box did not observe the end, so the honest answer is the window `[last record of the old incarnation, new init time]`, not an instant. |
+
+### What the records already carry, and why it is not enough
+
+The IPFIX message header has an Export Time and a Sequence Number, and RFC 7011
+does say a Collector **may** notice a restart when the sequence number goes
+backwards. It is a heuristic and explicitly ambiguous: over UDP, reordering,
+loss and the counter wrapping produce the same thing. A retention log answers a
+court order, so a signal that is also the signature of two ordinary network
+events is not a basis for saying a subscriber stopped holding an address.
+Nothing in the Table 21 record is per-incarnation either:
+`observationTimeMilliseconds` is the event's own time and `natPoolId` names a
+pool, which survives the restart.
+
+### The shape
+
+A **second template** on the same stream, carrying:
+
+| field | IE | bytes |
+|-------|----|-------|
+| observationTimeMilliseconds | 323 | 8 |
+| systemInitTimeMilliseconds | **160** | 8 |
+
+IE 160 is IANA-registered as *"the absolute timestamp of the last
+(re-)initialization of the IPFIX Device"* - this exact statement, decodable by
+any collector that knows the IPFIX registry, with no vendor documentation and
+no private codepoint. It is in VPP's own element table already.
+
+* Sent when a transport comes up, **before** the pin replay, so a collector
+  knows which incarnation the records that follow belong to before it reads
+  them.
+* Repeated every 30 s. Over UDP a marker that went out once and was lost would
+  leave the collector reading this incarnation's records as the previous one's,
+  which is the ambiguity it exists to remove. Sixteen bytes every half minute.
+* Latched once, at plugin init, and never recomputed. Its job is to **change**
+  when the process is replaced; a value recomputed from the current clock would
+  jump every time NTP steps and read as a restart that did not happen. The cost
+  is that a box whose clock was wrong before NTP settled carries a wrong
+  absolute value for the life of the process - it still differs from the
+  previous incarnation's, which is what it is read for.
+
+### What was not chosen
+
+| shape | why not |
+|---|---|
+| A new `natEvent` value | IANA's registry ends at 17; taking 18 is squatting on a public registry that may assign it elsewhere, and the record needs our documentation to read at all. |
+| `natEvent` 17 with a wildcard subscriber and range | A collector that does not know the convention reads it as the release of a block nobody allocated - a new unmatched record, which is the shape being removed. |
+| An IPFIX **Options Template** scoped by `observationDomainId` | Formally the right home for exporter metadata. VPP's `ipfix-export` builds Template Sets (id 2) only, so it means a private copy of `vnet_flow_rewrite_generic_callback()` to emit set id 3, for a record every collector would special-case anyway. Worth revisiting if VPP grows options-template support. |
+| An eighth field on the block record | Cannot be lost independently of the record it qualifies, which is a real advantage over UDP - but 8 bytes on a 25-byte record is a third more of an 80 MB/day log, to carry a value that changes once per boot. |
+
+### What a collector does with it
+
+Keep the last `systemInitTimeMilliseconds` per (exporter address, observation
+domain). While it does not change, an open allocation is still in force. When
+it changes, every allocation still open from before it ended at or before the
+new value.
+
+`tools/ipfix_collector.py` implements exactly that rule and prints one line per
+open allocation: `STILL IN FORCE`, `ENDED AT RESTART`, or `UNDECIDABLE` when no
+marker was seen at all. `lab/ipfix-stop.sh` produces all three states in one
+capture - a box stopped holding a block, a box killed holding one, and a box
+still holding one - and asserts that the collector separates them.
 
 ## Volume
 
@@ -617,13 +729,20 @@ to the subscriber it was issued to
 - [x] `natEvent` 16 when a forward pins a block, 17 when the last one is
       removed
 - [x] `natEvent` 17 for every block a deleted pool was still holding
-- [ ] Nothing is emitted when the box is stopped, so a block held at that
-      moment leaves an allocation with no release ever written
+- [x] `natEvent` 17 for every block held when the box is stopped, on both
+      transports, with the ExecStop that reaches UDP and the exit hook that
+      reaches TCP
+- [x] A boot marker (IE 160) so a collector can tell an allocation still in
+      force from one a crashed box was holding
+- [ ] The marker's shape is a proposal, not a settled interface: an Options
+      Template scoped by `observationDomainId` is formally better and VPP
+      cannot build one
 - [x] Per-thread queue in the dataplane, drained by a process
 - [x] TCP transport with disk spill
 - [x] Dated configuration trail, carrying the operator who made the change
 - [x] Hash-chained and verifiable, with the limits of that stated above
 - [x] End-to-end test with a decoding collector (`lab/ipfix.sh`,
-      `lab/ipfix-tcp.sh`), confirming every allocation has its matching release
+      `lab/ipfix-tcp.sh`, `lab/ipfix-stop.sh`), confirming every allocation has
+      its matching release, and that the ones that do not are readable
 - [ ] Collector selection via a dedicated CLI; today the UDP path inherits
       VPP's exporter configuration

@@ -1412,10 +1412,15 @@ bpa_barrier_yield (vlib_main_t *vm)
 }
 
 /*
- * Every block the pool is still holding, as an RFC 8158 natEvent 17, before
- * the allocator that knows whose they are is freed.
+ * Every block the pool is still holding, as one RFC 8158 event each.
  *
- * A block held at this instant is freed by bpa_dyn_free() below and never
+ * The event is a parameter and every caller walks the same set. Deleting a
+ * pool and stopping the box both give the blocks back (natEvent 17); a drain
+ * that was not followed by a stop takes them back (natEvent 16). Two walks
+ * that could drift apart would leave the log with a release the box never
+ * re-opened, which is the same kind of hole as a release that never happened.
+ *
+ * A block held at a pool delete is freed by bpa_dyn_free() and never
  * reaches the reap, so nothing on the ordinary release path runs for it. In
  * dynamic mode the allocation log IS the connection record the Marco Civil
  * requires to be kept for a year, and the question it answers is "who held
@@ -1443,14 +1448,14 @@ bpa_barrier_yield (vlib_main_t *vm)
  * emitted here would be the second half of a pair whose first half was never
  * written, and a collector reading it would have to invent the allocation.
  */
-static void
-bpa_pool_del_log_blocks (const bpa_pool_t *p, u32 pool_index)
+static u32
+bpa_pool_log_blocks (const bpa_pool_t *p, u32 pool_index, u8 event)
 {
   bpa_main_t *bm = &bpa_main;
-  u32 i;
+  u32 i, n = 0;
 
   if (p->mode != BPA_MODE_DYNAMIC)
-    return;
+    return 0;
 
   for (i = 0; i < vec_len (bm->per_thread); i++)
     {
@@ -1483,11 +1488,12 @@ bpa_pool_del_log_blocks (const bpa_pool_t *p, u32 pool_index)
 	    continue;
 
 	  bpa_dyn_block_addr (p, local * nw + w, &blk);
-	  bpa_log_queue_event (pt, BPA_NAT_EVENT_BLOCK_DEALLOC, ip_priv,
-			       blk.ip_pub, blk.port_lo, blk.port_hi,
-			       pool_index);
+	  bpa_log_queue_event (pt, event, ip_priv, blk.ip_pub, blk.port_lo,
+			       blk.port_hi, pool_index);
+	  n++;
 	}
     }
+  return n;
 }
 
 /*
@@ -1578,7 +1584,7 @@ bpa_pool_del (u8 *name)
   p = pool_elt_at_index (bm->pools, pool_index);
   /* Before the free, because the allocator is the only thing that knows which
    * subscriber each block belongs to. */
-  bpa_pool_del_log_blocks (p, pool_index);
+  bpa_pool_log_blocks (p, pool_index, BPA_NAT_EVENT_BLOCK_DEALLOC);
   for (i = 0; i < vec_len (bm->per_thread); i++)
     {
       bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
@@ -1593,6 +1599,156 @@ bpa_pool_del (u8 *name)
   vlib_worker_thread_barrier_release (vm);
   return 0;
 }
+
+/*
+ * Every block this box is still holding, as one RFC 8158 event each.
+ *
+ * Not static and not local to a caller, because the two callers must walk
+ * exactly the same set: bpa_stop_drain() gives the blocks back and the
+ * re-announcement in bpa-expire-process takes them back.
+ */
+u32
+bpa_blocks_log_all (u8 event)
+{
+  bpa_main_t *bm = &bpa_main;
+  bpa_pool_t *p;
+  u32 n = 0;
+
+  pool_foreach (p, bm->pools)
+    n += bpa_pool_log_blocks (p, p - bm->pools, event);
+  return n;
+}
+
+/*
+ * Every block this box is still holding, released before the box stops.
+ *
+ * WHY THIS IS THE SAME BUG AS #215 AND NOT A TIDINESS ONE. In dynamic mode the
+ * allocation log IS the connection record the Marco Civil requires to be kept
+ * for a year, and it is read as "the last allocation before the instant asked
+ * about". An allocation with no release says the subscriber held those ports
+ * from then on, for as long as the log is kept - so a planned reboot used to
+ * name a subscriber who had already been disconnected, and the box came back
+ * up and emitted a SECOND natEvent 16 for every pinned block with no 17
+ * between them (bpa_log_pins_replay()). A pool being deleted was the rarer
+ * case; this is every upgrade and every reboot (#217).
+ *
+ * WHERE IT HANGS, AND WHY IT IS IN TWO PLACES. The answer was measured, not
+ * chosen: the UDP export does not leave from a kernel socket, it is a packet
+ * the DATAPLANE sends - vnet_ipfix_exp_send_buffer() writes a buffer and hands
+ * a frame to ip4-lookup, and the graph is what puts it on the wire. So the
+ * moment the graph stops running, UDP export stops working, and the graph
+ * stops running before any in-process exit hook is reached.
+ *
+ * Measured on this build, with a real collector on the far side of the wire
+ * and one block held at the stop:
+ *
+ *   VLIB_MAIN_LOOP_EXIT function, on SIGTERM
+ *     the hook runs   - yes, after VPP's own "received SIGTERM ... exiting"
+ *     blocks found    - 1
+ *     UDP             - record written (n_records advanced, flush called) and
+ *                       never seen by the collector: the frame is enqueued to
+ *                       a graph that will not be dispatched again
+ *     TCP             - natEvent 17 decoded by the collector at the stop
+ *                       instant; that exporter writes to a kernel socket and
+ *                       needs no graph
+ *
+ * That is why there are two entry points and one body:
+ *
+ *   - THE EXIT HOOK, here. It covers every graceful exit there is - systemd's
+ *     SIGTERM, a kill from anywhere else, `vppctl quit` - and it is the only
+ *     thing that covers them for the TCP transport, which is the one
+ *     docs/logging.md calls the log that cannot lose a record. Over UDP it
+ *     writes records the graph then swallows, which costs nothing and is not
+ *     pretended otherwise.
+ *
+ *   - "bpa stop-drain", run from an ExecStop in a vpp.service drop-in, BEFORE
+ *     systemd sends the signal. It runs in a CLI process inside the still
+ *     running graph, so the UDP records actually leave, on the very path every
+ *     other record takes and the operator configured. This is the case the
+ *     issue calls the commonest of the three: every planned reboot and every
+ *     upgrade goes through `systemctl stop`.
+ *
+ * WHAT THE OTHER TWO WOULD HAVE COST:
+ *
+ *   - A SIGTERM handler of our own would have to be installed over VPP's,
+ *     which is how a dataplane stops being stopped properly, and it would run
+ *     in signal context: the drain takes the worker barrier and appends to
+ *     vectors the main thread may be in the middle of, neither of which is
+ *     async-signal-safe. And it would buy nothing the exit hook does not
+ *     already have, because it still could not run the graph.
+ *
+ *   - An ExecStop in hexarouting.service rather than in a vpp.service drop-in
+ *     would be in the wrong unit twice over: that unit is a oneshot that
+ *     applies a configuration and holds no blocks, and it says in as many
+ *     words why it has no ExecStop - stopping the control plane must not touch
+ *     a production pool. The blocks are in the VPP process, so the drop-in
+ *     goes where the appliance already ships two others.
+ *
+ * THE TIMESTAMP IS THE STOP INSTANT, not some earlier moment when the block
+ * stopped being used: the box did not observe that moment and a record that
+ * guessed at it would be a fabricated one. The same argument
+ * bpa_pool_log_blocks() and bpa_log_pins_replay() both make.
+ *
+ * THIS DOES NOT CLOSE THE HOLE ON ITS OWN, and must not be read as if it did.
+ * A power loss, an OOM kill and a panic emit nothing, and cannot: there is no
+ * instant at which the box could have written the record. A collector that
+ * assumed after this that every allocation is closed would be wrong about
+ * exactly the boxes that crashed. What tells those apart is the boot marker -
+ * bpa_log_marker_emit(), and the argument for its shape in bpa_log.h.
+ */
+u32
+bpa_drain_blocks (vlib_main_t *vm)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 n;
+
+  /*
+   * The barrier for the same reason bpa_pool_del() takes it: the walk reaches
+   * into every thread's allocator and writes to every thread's log queue.
+   */
+  vlib_worker_thread_barrier_sync (vm);
+  n = bpa_blocks_log_all (BPA_NAT_EVENT_BLOCK_DEALLOC);
+  /*
+   * Queued and drained in the same call, because there may be no later: the
+   * one-second bpa-expire-process tick that normally puts records on the wire
+   * does not run again after the exit hook.
+   */
+  bpa_log_drain (vm);
+  bm->drained_at = vlib_time_now (vm);
+  vlib_worker_thread_barrier_release (vm);
+
+  /*
+   * Said out loud on the box, because this is the one record whose absence
+   * nobody can see from the collector: a box that stopped without draining
+   * looks exactly like a box that is still running.
+   */
+  vlib_log_notice (bm->log_class, "stopping: released %u block(s) still held",
+		   n);
+  return n;
+}
+
+static clib_error_t *
+bpa_stop_drain (vlib_main_t *vm)
+{
+  bpa_main_t *bm = &bpa_main;
+
+  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
+    return 0;
+
+  /*
+   * Already done by the ExecStop, moments ago. Emitting the same releases
+   * again would leave the collector with two natEvent 17 against one 16, and
+   * a release that closes an allocation twice is not tidier than one that
+   * never arrives - it is a second wrong answer.
+   */
+  if (bm->drained_at)
+    return 0;
+
+  bpa_drain_blocks (vm);
+  return 0;
+}
+
+VLIB_MAIN_LOOP_EXIT_FUNCTION (bpa_stop_drain);
 
 /*
  * The mirror of bpa_check_local_overlap(): an address configured after the
@@ -1649,6 +1805,12 @@ bpa_init (vlib_main_t *vm)
    * person is worse than one that names nobody.
    */
   bm->actor_uid = ~0u;
+
+  /*
+   * When this incarnation started. Latched here, once: see bpa_main_t, and
+   * bpa_log.h for what a collector reads it for.
+   */
+  bm->boot_wall = unix_time_now ();
 
   /*
    * Where the chain had got to. Without this a restart starts a second chain

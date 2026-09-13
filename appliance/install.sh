@@ -86,6 +86,11 @@ install -D -m 0644 "$REPO/appliance/systemd/vpp-api-access.conf" \
 # exactly the moment the box must not be choosable again.
 install -D -m 0644 "$REPO/appliance/systemd/vpp-oom-protect.conf" \
   "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-oom-protect.conf"
+# And the third, for the same reason again: the retention log has to be closed
+# by the dataplane that is stopping, on every stop, including the restart after
+# an upgrade that no unit of ours is ordered around.
+install -D -m 0644 "$REPO/appliance/systemd/vpp-stop-drain.conf" \
+  "$DESTDIR/etc/systemd/system/vpp.service.d/hexarouting-stop-drain.conf"
 
 say "login shell"
 install -D -m 0755 "$REPO/appliance/hexash-login" "$DESTDIR/usr/bin/hexash-login"

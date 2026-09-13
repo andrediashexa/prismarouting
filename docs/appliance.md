@@ -279,9 +279,17 @@ Two decisions worth explaining:
 * **FRR is `Wants`, not `Requires`.** Without routing the box still forwards
   whatever static routes exist; taking CGNAT down with it would only widen the
   damage.
-* **No `ExecStop`.** The configuration lives in VPP. Stopping the service
-  **MUST NOT** delete production pools; removing a pool is the operator's
-  action, through the VTY.
+* **No `ExecStop` on `hexarouting.service`.** The configuration lives in VPP.
+  Stopping the service **MUST NOT** delete production pools; removing a pool is
+  the operator's action, through the VTY.
+* **There is one on `vpp.service`**, shipped as the drop-in
+  `/etc/systemd/system/vpp.service.d/hexarouting-stop-drain.conf`. It runs
+  `vppctl bpa stop-drain` before the signal, so every block the dataplane is
+  holding is released in the retention log while the graph is still running to
+  carry the records. That is a different unit for a measured reason: the blocks
+  are in the VPP process, and VPP's UDP IPFIX export is a packet the dataplane
+  sends rather than a kernel socket, so it stops working the moment the graph
+  does. See [logging.md](logging.md#stopping-the-box-closes-them-too-and-a-crash-cannot).
 
 `hexarouting.service` waits for VPP to accept commands before applying
 configuration: systemd considers `vpp.service` started once the process is up,

@@ -161,6 +161,7 @@ sh tools/lab.sh esp            # IPsec ESP passthrough (also: esp off)
 sh tools/lab.sh routing        # BGP, OSPF and IS-IS into the VPP FIB
 sh tools/lab.sh ipfix          # RFC 8158 export over UDP (also: ipfix no-exporter)
 sh tools/lab.sh ipfix-tcp      # TCP transport, collector killed mid-run
+sh tools/lab.sh ipfix-stop     # the box stopped and the box killed, holding blocks
 sh tools/lab.sh vty            # the VTY configuring routing and CGNAT
 sh tools/lab.sh vty-pool       # per-pool settings from the VTY to the dataplane
 sh tools/lab.sh two-pools      # two pools, a subscriber at the same index in each
@@ -187,6 +188,7 @@ The most instructive to run:
 | `frag` | The byte-order bug that created phantom sessions |
 | `ipfix` | Configures the UDP exporter **through the VTY** and decodes a record off the wire — the exporter used to be set here with `vppctl`, so the lab performed the product's missing step and UDP export had never once run on a box the product configured. `sh tools/lab.sh ipfix no-exporter` leaves the statement out and drops 9 of its 13 assertions |
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
+| `ipfix-stop` | Stops the box, kills the box and leaves the box running, each holding a block, with one collector listening across all three. The killed box and the running box are byte for byte the same shape in the log - allocation, no release - and the lab asserts the collector separates them by the boot marker. The drain itself is never typed here: the command is read out of the shipped `vpp.service` drop-in, so a drop-in that loses its `ExecStop` takes the lab red. `sh tools/lab.sh ipfix-stop no-marker` blinds the collector to IE 160 and drops the assertions that tell the two apart |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
 | `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch twelve assertions drop |
 | `rtsp` | Reads the rewritten `Transport:` header out of the wire, and `BPA_RTSP_OFF=1 sh tools/lab.sh rtsp` drops 11 of its 18 assertions |

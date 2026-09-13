@@ -33,11 +33,11 @@
 #
 # What makes it safe: tools/lab.sh runs each lab in its own container WITHOUT
 # --network=host, so each has its own network namespace. The fixed veth and
-# netns names in routing, bgp-policy, lcp, ipfix, ipfix-tcp and vty do not
-# collide with each other - and routing and bgp-policy use the SAME ones,
-# veth-out and the `peer` namespace among them, which is only safe because of
-# that separate namespace. Only hw-vpp uses host networking, and it is already
-# excluded.
+# netns names in routing, bgp-policy, lcp, ipfix, ipfix-tcp, ipfix-stop and
+# vty do not collide with each other - and routing and bgp-policy use the SAME
+# ones, veth-out and the `peer` namespace among them, which is only safe
+# because of that separate namespace. Only hw-vpp uses host networking, and it
+# is already excluded.
 #
 # What is NOT safe, and is why the build happens first: every lab runs "ninja"
 # in the shared /src/.build-vpp, which is bind-mounted from the repository.
@@ -93,8 +93,14 @@ echo
 # forward joined the list when a forward became possible on a dynamic pool: the
 # block a pin holds has to be in the slice of the same worker the subscriber's
 # own traffic lands on, and that is a sentence only a worker run can check.
-BOTH_WAYS="bypass esp extblocks forward frag ftp-alg hairpin icmp-tcp mss
-           nat-behaviour pptp rtsp sip two-pools"
+#
+# ipfix-stop is here for a reason that is not the packet path: the stop drain
+# walks EVERY thread's allocator to find the blocks still held, and
+# single-threaded that loop has one iteration. Measured both ways - with two
+# workers the subscriber lands on a different shard and the released block is a
+# different range, which is the part a one-thread run cannot see.
+BOTH_WAYS="bypass esp extblocks forward frag ftp-alg hairpin icmp-tcp
+           ipfix-stop mss nat-behaviour pptp rtsp sip two-pools"
 # The list, in the order the summary will print.
 LABS=""
 for f in "$REPO"/lab/*.sh; do

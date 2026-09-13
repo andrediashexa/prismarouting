@@ -26,6 +26,8 @@
 #include "bpa_log.h"
 
 #define BPA_TCP_TEMPLATE_ID  256
+/* The boot marker's template. See bpa_log.h for what it carries and why. */
+#define BPA_TCP_MARKER_TEMPLATE_ID 257
 #define BPA_TCP_DOMAIN	     1
 #define BPA_TCP_RETRY_SECS   5.0
 #define BPA_TCP_TEMPLATE_IVL 60.0
@@ -38,6 +40,11 @@ bpa_log_tcp_t bpa_log_tcp;
 static const u16 bpa_tcp_ies[][2] = {
   { 323, 8 }, { 230, 1 }, { 8, 4 }, { 225, 4 }, { 361, 2 }, { 362, 2 },
   { 283, 4 },
+};
+
+/* observationTimeMilliseconds, systemInitTimeMilliseconds. */
+static const u16 bpa_tcp_marker_ies[][2] = {
+  { 323, 8 }, { 160, 8 },
 };
 
 static void
@@ -105,6 +112,9 @@ bpa_tcp_prepend_template (f64 now)
   u32 set_at = vec_len (*b);
   u32 i;
 
+  /* Both templates in one set, so a reconnection cannot deliver the block
+   * template and leave the marker's behind - a marker the collector cannot
+   * decode is a restart it cannot see. */
   bpa_tcp_put_u16 (b, 2); /* set de template */
   bpa_tcp_put_u16 (b, 0);
   bpa_tcp_put_u16 (b, BPA_TCP_TEMPLATE_ID);
@@ -113,6 +123,13 @@ bpa_tcp_prepend_template (f64 now)
     {
       bpa_tcp_put_u16 (b, bpa_tcp_ies[i][0]);
       bpa_tcp_put_u16 (b, bpa_tcp_ies[i][1]);
+    }
+  bpa_tcp_put_u16 (b, BPA_TCP_MARKER_TEMPLATE_ID);
+  bpa_tcp_put_u16 (b, ARRAY_LEN (bpa_tcp_marker_ies));
+  for (i = 0; i < ARRAY_LEN (bpa_tcp_marker_ies); i++)
+    {
+      bpa_tcp_put_u16 (b, bpa_tcp_marker_ies[i][0]);
+      bpa_tcp_put_u16 (b, bpa_tcp_marker_ies[i][1]);
     }
 
   {
@@ -158,6 +175,39 @@ bpa_log_tcp_record (f64 wall, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
   bpa_tcp_put_u16 (b, port_lo);
   bpa_tcp_put_u16 (b, port_hi);
   bpa_tcp_put_u32 (b, pool_id);
+
+  {
+    u16 slen = clib_host_to_net_u16 (vec_len (*b) - set_at);
+    clib_memcpy_fast (*b + set_at + 2, &slen, 2);
+  }
+  bpa_tcp_msg_end (b, at);
+  bpa_log_tcp.seq++;
+  bpa_log_tcp.n_records++;
+}
+
+/*
+ * The boot marker, over TCP. Written straight into the out buffer like any
+ * other record, so it spills and replays with them and cannot overtake them.
+ */
+void
+bpa_log_tcp_marker (f64 wall, f64 init)
+{
+  u8 **b = &bpa_log_tcp.outbuf;
+  u32 at, set_at;
+  u64 ms;
+
+  if (!bpa_log_tcp.enabled)
+    return;
+
+  at = bpa_tcp_msg_start (b);
+  set_at = vec_len (*b);
+  bpa_tcp_put_u16 (b, BPA_TCP_MARKER_TEMPLATE_ID);
+  bpa_tcp_put_u16 (b, 0);
+
+  ms = clib_host_to_net_u64 ((u64) (wall * 1e3));
+  bpa_tcp_put (b, &ms, 8);
+  ms = clib_host_to_net_u64 ((u64) (init * 1e3));
+  bpa_tcp_put (b, &ms, 8);
 
   {
     u16 slen = clib_host_to_net_u16 (vec_len (*b) - set_at);
@@ -377,7 +427,13 @@ bpa_log_tcp_enable (ip4_address_t *collector, u16 port, int enable)
       bpa_log_tcp.spill_path =
 	format (0, "/var/log/hexarouting/ipfix-spill.bin%c", 0);
     if (!was)
-      bpa_log_pins_replay ();
+      {
+	/* The marker before anything else, for the reason bpa_log_enable()
+	 * gives: the collector has to know which incarnation these records
+	 * belong to before it reads them. */
+	bpa_log_main.next_marker = 0;
+	bpa_log_pins_replay ();
+      }
   }
   return 0;
 }
