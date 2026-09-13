@@ -11,6 +11,20 @@ The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** in this document
 are to be interpreted as described in
 [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
+**The list of issues at the head of a section is written when the section is
+renamed to a version, not maintained by each merge.** It drifted three times in
+one release cycle - seventeen branches each edited that one line, git resolved
+some of those edits by keeping one side, and the list ended up naming a single
+issue above seventeen entries. A list that every branch touches is a list that
+every merge can lose. Written once, from the entries below it, it has nothing
+to drift from.
+
+A section that has already been tagged **MUST NOT** be edited at all: it
+describes a medium somebody is running, and `tools/release-gate.sh` refuses a
+release whose earlier sections are not what their tags shipped. A correction
+goes in the CURRENT section, saying what it corrects, where a reader of the old
+version has a chance of seeing it.
+
 > The entries for **0.61.0, 0.61.1 and 0.61.2 were written after the fact**,
 > reconstructed from the commits, because all three were tagged, built and
 > installed with no entry here at all — leaving work an operator's box was
