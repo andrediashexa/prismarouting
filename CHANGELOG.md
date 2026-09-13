@@ -42,7 +42,8 @@ are to be interpreted as described in
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
 [#213](https://github.com/andrediashexa/hexarouting/issues/213),
-[#217](https://github.com/andrediashexa/hexarouting/issues/217).
+[#217](https://github.com/andrediashexa/hexarouting/issues/217),
+[#145](https://github.com/andrediashexa/hexarouting/issues/145).
 
 ### Added
 
@@ -124,6 +125,57 @@ are to be interpreted as described in
   waiting for a busy machine.
 
 ### Fixed
+
+* **The pool-announce warning went silent on the ordinary edge box, and had no
+  unit assertion at all.** The check that says a pool's public prefix is
+  advertised by nothing
+  ([#145](https://github.com/andrediashexa/hexarouting/issues/145)) treated any
+  line beginning `redistribute`, anywhere in the configuration, as something it
+  could not see through. Measured on FRR 10.7.1, with a covering static route
+  present and BGP configured throughout:
+
+  ```
+  router bgp 65000 / address-family ipv4 unicast / redistribute static
+    *>  200.150.9.16/28  0.0.0.0  0  32768 ?
+  router ospf / redistribute static        (BGP carrying no redistribute)
+    No BGP prefixes displayed, 0 exist
+  ```
+
+  The two statements are the same six characters and only one of them
+  announces anything. So an edge box that leaks BGP into its IGP - which is
+  what `ospf_findings` already warns about - exempted itself from this check
+  entirely and got no warning on a pool nothing announced.
+
+  The block context now comes from `config.block_paths()`, the one thing here
+  that reads both shapes `routing` arrives in: indented when FRR read it back,
+  flat when it was typed at this VTY. A `redistribute static` under `router
+  bgp` is also **resolved** against the candidate's own static routes rather
+  than treated as unfollowable, because FRR's static routes are all in the
+  configuration - so originating an aggregate from a blackhole route, which is
+  the ordinary way an ISP does it, silences the warning, and a static route
+  that covers something else does not. `aggregate-address` and `network …
+  route-map` blind it, both measured.
+
+  **It stays a warning**, and the reason is now measured rather than argued
+  from the issue's wording. `network 200.150.9.16/28` with no matching route in
+  the RIB is stored by FRR and appears in `show bgp ipv4 unicast` **without
+  `*>`** - not valid, not best, advertised to nobody - and becomes `*>` the
+  moment `ip route 200.150.9.16/28 blackhole` exists. What this check can test
+  is therefore a proxy for the announcement and not the announcement, and a
+  commit MUST NOT be refused on a proxy: it would block configurations that
+  work while still passing the box whose `network` statement originates
+  nothing. That is the shape of
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208), where
+  refusing a whole commit over a BGP statement was itself the defect. The
+  advice now names the blackhole route beside the `network`, because advice
+  that does not work when followed is worse than no advice.
+
+  The check was inline in `commit` and so could only be reached by running the
+  lab. It is `pool_announce_findings()` over `bgp_originations()` now, in the
+  family of `ospf_findings` and `bgp_errors`, with unit assertions in
+  `test/test_hexash_complete.py`; thirteen mutations of the product were each
+  run to red before the work was called done, and one of them found an
+  assertion that was green against the defect it claimed to guard.
 
 * **A received Router Advertisement never reached the Linux side of a
   `linux_cp` pair, so BGP unnumbered never came up.** The VTY takes
