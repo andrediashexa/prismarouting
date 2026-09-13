@@ -93,5 +93,47 @@ readme = open(os.path.join(ROOT, "README.md")).read()
 check("docs/context.md" in readme,
       "README.md must link to docs/context.md, or the map is unreachable")
 
+# How many invariants the page says it has, against how many it has.
+#
+# Section 5 of that page says this test "does not check that the prose is still
+# true - nothing can. What it catches is the half that rots silently." A count
+# of the file's own subsections is not prose: it is arithmetic over the
+# headings, so it is that half, and it was not being caught. Measured on the
+# day this was written, the page said "Eleven invariants" in its TL;DR, "The
+# nine things" in the heading eleven lines below, and the README said "the nine
+# facts" - with 1.10 and 1.11 sitting under a heading that excluded them (#232).
+#
+# Written in words rather than digits throughout the prose, so the words are
+# what is read.
+WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
+         7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven",
+         12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen"}
+
+n = len(re.findall(r"^### 1\.\d+ ", text, re.M))
+word = WORDS.get(n)
+check(n >= 5,
+      f"only {n} invariant heading(s) matched '### 1.N', so the count below "
+      f"is comparing nothing")
+if word:
+    tldr = re.search(r"^(\w+) invariants,", text, re.M)
+    check(tldr is not None and tldr.group(1).lower() == word,
+          f"docs/context.md has {n} invariants and its TL;DR says "
+          f"{tldr.group(1) if tldr else '<no count at all>'}")
+    head = re.search(r"^## 1\. The (\w+) things", text, re.M)
+    check(head is not None and head.group(1).lower() == word,
+          f"docs/context.md has {n} invariants and the heading over them says "
+          f"{head.group(1) if head else '<no count at all>'}. The ones past "
+          f"that number sit under a heading that excludes them")
+    rd = re.search(r"the (\w+) facts that make", readme)
+    check(rd is not None and rd.group(1).lower() == word,
+          f"docs/context.md has {n} invariants and README.md sends the reader "
+          f"to {rd.group(1) if rd else '<no count at all>'} of them")
+    if not fail:
+        print(f"  {n} invariants, and the page, its heading and the README all "
+              f"say {word}")
+else:
+    check(False, f"there are {n} invariants and this check has no word for "
+                 f"that number, so it cannot read the prose")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

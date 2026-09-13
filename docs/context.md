@@ -27,7 +27,7 @@ per task. Roughly fifteen minutes.
 | **How** | Invariants, then a map, then a reading order. |
 | **How much** | One page. Anything longer is a second architecture document. |
 
-## 1. The nine things that are not obvious from any one file
+## 1. The eleven things that are not obvious from any one file
 
 ### 1.1 The mapping is arithmetic, not a table
 
