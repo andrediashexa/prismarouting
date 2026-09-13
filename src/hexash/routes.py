@@ -284,6 +284,51 @@ def _sort_key(prefix: str):
 
 _IP_ROUTE = re.compile(r"^\s*ip route (\S+)\s+(\S+)")
 
+#: FRR's `show vrf`: "vrf red id 3 table 10 (configured)", and for one whose
+#: Linux device does not exist, "vrf green inactive (configured)".
+_VRF_TABLE = re.compile(r"^vrf (\S+) id \d+ table (\d+)")
+
+
+def parse_vrf_tables(text: str) -> dict:
+    """
+    FRR's VRFs as {name: routing table id}.
+
+    A static route inside `vrf red` is installed in the table that VRF names,
+    and nothing in this VTY's own grammar says which table that is: an
+    interface's `vrf` is a NUMBER here and an FRR block is a NAME, so only the
+    box can say the two are the same table. FRR can, and does, here.
+
+    Measured on a live FRR 10.7.1 and a live VPP 26.06, because the number
+    only helps if it is the number the FIB is keyed by: a kernel route in
+    table 10 arrives in VPP as `ipv4-VRF:10`, the table linux_nl creates from
+    the kernel's own table id. That is the key `parse_fib` returns.
+
+    A VRF FRR calls `inactive` has no device and so no table, and is left out
+    rather than given one: there is nothing to resolve a next hop against, and
+    a made-up table is how a check comes to pass on evidence from another one.
+    """
+    out = {}
+    for line in (text or "").splitlines():
+        m = _VRF_TABLE.match(line.strip())
+        if m:
+            out[m.group(1)] = int(m.group(2))
+    return out
+
+
+def _vrf_of(path) -> str:
+    """
+    The VRF a statement sits in, from the block path, or "" for none.
+
+    "" is the GLOBAL table and not "unknown": a static route at the top level
+    is in table 0, and so is one inside `router static`, which is this VTY's
+    own word for the global table rather than a table of its own.
+    """
+    for block in path or []:
+        w = block.strip().split()
+        if len(w) >= 2 and w[0] == "vrf":
+            return w[1]
+    return ""
+
 
 def _addr_int(addr: str):
     try:
@@ -347,9 +392,10 @@ def _covers(prefix: str, addr: str) -> bool:
     return (n & mask) == (a & mask)
 
 
-def unreachable_next_hops(routing: list, table: dict) -> list:
+def unreachable_next_hops(routing: list, fibs: dict, paths: list,
+                          vrf_tables) -> tuple:
     """
-    Static routes whose next hop is on no connected network.
+    Static routes whose next hop is on no connected network OF THEIR TABLE.
 
     A next hop the box cannot reach is a route that is accepted, installed, and
     silently inert: FRR holds it, the FIB never gets it, and `show ip route`
@@ -357,24 +403,61 @@ def unreachable_next_hops(routing: list, table: dict) -> list:
     to make visible afterwards - and it is cheaper to refuse it at the prompt
     than to have somebody find it during an outage.
 
+    The table is the whole question and used to be assumed to be table 0, which
+    gave both wrong answers at once (#255). Measured at a live VPP: with
+    172.31.99.0/24 connected only in table 10 and 200.150.0.0/24 connected only
+    in table 0, a `vrf red` route via 172.31.99.1 was REFUSED and one via
+    200.150.0.2 was ACCEPTED - the first is a correct configuration turned away
+    at the prompt, which is the harm #208 was filed for, and the second is the
+    inert route this check exists to catch, committed in silence.
+
+    `paths` is where each line sits, as `config.block_paths` reports it, and
+    `vrf_tables` is `parse_vrf_tables`'s answer - or None when FRR could not be
+    asked at all, which is a different thing from a VRF having no table.
+
     Only the "<prefix> <next-hop>" form is checked. `ip route <prefix>
     <interface>`, blackhole and Null0 name no address to verify, and guessing
     at them would refuse configurations that are correct.
 
-    Returns [(statement, next_hop)] - empty when everything resolves.
+    Returns (bad, unplaced):
+
+      bad       [(statement, next_hop)] - the refusals, empty when all resolve
+      unplaced  [(vrf, why, [statements])] - what could NOT be checked, so the
+                caller can say so. A check that quietly does not run is one the
+                operator believes ran and passed, which is the silence this
+                whole function exists to break.
     """
-    connected = [p for p, e in table.items() if e["kind"] == CONNECTED]
-    bad = []
-    for line in routing:
+    connected = {tid: [p for p, e in entries.items() if e["kind"] == CONNECTED]
+                 for tid, entries in fibs.items()}
+    bad, unplaced = [], {}
+    for path, line in zip(paths, routing):
         m = _IP_ROUTE.match(line)
         if not m:
             continue
         nexthop = m.group(2)
         if _addr_int(nexthop) is None:
             continue  # an interface name, blackhole, Null0: nothing to check
-        if not any(_covers(p, nexthop) for p in connected):
+        vrf = _vrf_of(path)
+        if not vrf:
+            table = 0
+        elif vrf_tables is None:
+            table = None
+            why = "FRR could not be asked which routing table it is"
+        elif vrf not in vrf_tables:
+            table = None
+            why = ("FRR reports no routing table for it, so nothing on this "
+                   "box holds its routes yet")
+        else:
+            table = vrf_tables[vrf]
+            if table not in connected:
+                why = f"the dataplane has no table {table}"
+                table = None
+        if table is None:
+            unplaced.setdefault((vrf, why), []).append(line.strip())
+            continue
+        if not any(_covers(p, nexthop) for p in connected.get(table, [])):
             bad.append((line.strip(), nexthop))
-    return bad
+    return bad, [(vrf, why, stmts) for (vrf, why), stmts in unplaced.items()]
 
 
 # ------------------------------------------------------------- interfaces

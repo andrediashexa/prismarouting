@@ -5510,14 +5510,36 @@ class Shell:
                 rc_fib, fib_text = self.dp.run("show ip fib")
                 if rc_fib == 0 and fib_text.strip():
                     fibs = routes.parse_fib(fib_text)
-                    table = fibs.get(0, {})
-                    for stmt, nexthop in routes.unreachable_next_hops(
-                            target.routing, table):
+                    # Which table a VRF's static routes go into is FRR's
+                    # question to answer, not this VTY's: an interface's `vrf`
+                    # is a NUMBER here and an FRR block is a NAME, and only the
+                    # box knows the two mean the same table. None, and not an
+                    # empty map, when FRR cannot be asked - "no table for this
+                    # VRF" and "nobody could be asked" are different news.
+                    rc_vrf, vrf_text = self.frr.show("show vrf")
+                    vrf_tables = (routes.parse_vrf_tables(vrf_text)
+                                  if rc_vrf == 0 else None)
+                    bad, unplaced = routes.unreachable_next_hops(
+                        target.routing, fibs,
+                        block_paths(target.routing), vrf_tables)
+                    for stmt, nexthop in bad:
                         self.err(f"{as_hierarchy(stmt)}: {nexthop} is on "
                                  "no connected network")
                         print("    the route would be accepted and never "
                               "reach the forwarding table")
                         ok = False
+                    # Said out loud, never passed over. A VRF whose table this
+                    # box cannot find is one whose routes went unchecked, and
+                    # an operator who read "check succeeds" would believe
+                    # otherwise. Not a refusal: the VRF may be about to exist,
+                    # and refusing a configuration this VTY merely cannot see
+                    # is the harm in #208.
+                    for vrf, why, stmts in unplaced:
+                        print(f"note: {len(stmts)} static route(s) in 'vrf "
+                              f"{vrf}' were not checked for a reachable next "
+                              "hop")
+                        print(f"    {why}")
+                        print(f"    first one: {stmts[0]}")
 
             for pool in d["pool_add"] + d["pool_replace"]:
                 if not pool.inside or not pool.outside:

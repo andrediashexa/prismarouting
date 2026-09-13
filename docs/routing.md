@@ -1208,6 +1208,51 @@ runs over the routing text the commit would hand to `frr-reload`. That is worth
 saying on the page an operator reads, because searching the screen for the first
 word they typed finds nothing.
 
+### The question is asked of the table the route is in
+
+A route inside a `vrf red` block forwards out of **that VRF's** table, so the
+check resolves its next hop there and **MUST NOT** answer from the global one.
+It used to answer from FIB table 0 for every static route in the candidate, and
+that gave both wrong answers at once
+([#255](https://github.com/andrediashexa/hexarouting/issues/255)). Measured at a
+live VPP 26.06 with `172.31.99.0/24` connected only in table 10 and
+`200.150.0.0/24` connected only in table 0:
+
+| Typed inside `vrf red` | Before | After |
+|---|---|---|
+| `ip route 10.55.0.0/16 172.31.99.1` | refused | accepted |
+| `ip route 10.55.0.0/16 200.150.0.2` | accepted | refused |
+
+The second line is what the issue was filed for - a route that cannot forward,
+committed in silence on evidence from a table it does not forward in. The first
+costs more: a configuration that works, turned away at the prompt, which is the
+harm [#208](https://github.com/andrediashexa/hexarouting/issues/208) was filed
+for and the worst thing this VTY can do.
+
+**Which table a VRF is, is FRR's answer and not this VTY's.** An interface's
+`vrf` here is a number and an FRR block is a name, and only the box knows they
+mean the same table - so the mapping is read from `show vrf`, where FRR reports
+`vrf red id 3 table 10`. Measured that the number is the one the FIB is keyed
+by: a kernel route in table 10 arrives in VPP as `ipv4-VRF:10`, because
+`linux_nl` creates the FIB from the kernel's own table id.
+
+**A VRF the box cannot place is SAID, not passed over.** FRR reports a VRF with
+no Linux device as `inactive`, and there is no table to resolve anything
+against:
+
+```
+note: 1 static route(s) in 'vrf green' were not checked for a reachable next hop
+    FRR reports no routing table for it, so nothing on this box holds its routes yet
+    first one: ip route 10.55.0.0/16 172.31.99.1
+```
+
+A note and **not** a refusal: the VRF may be about to exist, and refusing a
+configuration this VTY merely cannot see is the same harm as above. But it is
+printed, because a check that quietly does not run is one the operator believes
+ran and passed. An FRR that could not be asked at all says so in those words
+instead - *"no table for this VRF"* would send somebody to create one that is
+already there.
+
 **On FRR 10 a static route is configured through `mgmtd` and served by
 `staticd`.** Without them `vtysh` answers `mgmtd is not running` to every
 `ip route`, which is how one can be typed, accepted and never exist.

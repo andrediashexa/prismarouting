@@ -4014,6 +4014,137 @@ check(_failed == 0 and "commit complete" in _out,
 
 
 # =====================================================================
+# The next-hop check asks the table the route is IN (#255)
+#
+# `commit check` refuses a static route whose next hop is on no connected
+# network (#95), and it used to ask that of FIB table 0 for every route in the
+# candidate, `vrf red` ones included. Both answers were wrong, and both were
+# MEASURED at a live VPP 26.06 and a live FRR 10.7.1 before anything was
+# changed - with 172.31.99.0/24 connected only in table 10 and 200.150.0.0/24
+# connected only in table 0:
+#
+#   vrf red / ip route 10.55.0.0/16 172.31.99.1   REFUSED, and it is correct
+#   vrf red / ip route 10.55.0.0/16 200.150.0.2   ACCEPTED, and it is inert
+#
+# The first is the one that costs more: refusing a configuration that works is
+# the harm #208 was filed for. The second is the failure the check exists for,
+# committed in silence on evidence from a table the route does not forward in.
+#
+# Both directions are asserted here, because a fix that simply stopped checking
+# VRF routes would pass a test that only looked at the false refusal.
+
+# Trimmed from what VPP actually printed for the box above, not written by
+# hand: two tables, one connected prefix in each.
+_FIB_TWO_TABLES = """ipv4-VRF:0, fib_index:0, flow hash:[src dst sport dport proto flowlabel ] epoch:0 flags:none locks:[default-route:1, ]
+200.150.0.0/24
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:10 buckets:1 uRPF:9 to:[0:0]]
+    [0] [@4]: ipv4-glean: [src:200.150.0.0/24] pg1: mtu:9000 next:1 flags:[] ffffffffffff02fefecd294a0806
+ipv4-VRF:10, fib_index:1, flow hash:[src dst sport dport proto flowlabel ] epoch:0 flags:none locks:[interface:1, CLI:1, ]
+172.31.99.0/24
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:19 buckets:1 uRPF:20 to:[0:0]]
+    [0] [@4]: ipv4-glean: [src:172.31.99.0/24] pg0: mtu:9000 next:2 flags:[] ffffffffffff02fe885e34870806
+"""
+
+# What FRR answers for a VRF that has a device, and for one that does not.
+# `vrf red id 3 table 10 (configured)` is the only thing on this box that
+# joins the NAME in an FRR block to the NUMBER the FIB is keyed by.
+_SHOW_VRF = """vrf green inactive (configured)
+vrf red id 3 table 10 (configured)
+"""
+
+
+def _commit_nh(candidate, show_vrf=_SHOW_VRF, fib=_FIB_TWO_TABLES):
+    """`commit check` on `candidate` against the two-table box above.
+
+    The real `Shell.apply`, because the check under test lives in it. The
+    `_commit` helper above stubs `apply` out, which is right for the FRR
+    read-back it drives and would make every assertion here pass on a check
+    that never ran.
+    """
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh.candidate = _cfg_with(candidate)
+    sh.running_config = lambda: _cfg_with([])
+    sh.rb = type("_RB", (), {"push": lambda self, *a: None})()
+
+    def _dp_run(_self, cmd):
+        if cmd.startswith("show ip fib"):
+            return 0, fib
+        return 0, ""
+
+    sh.dp = type("D", (), {"TRACE": False, "run": _dp_run,
+                           "reachable": lambda _s: True})()
+    # `show_vrf=None` is an FRR that could not be asked at all, which is a
+    # different fixture from one that answers with no VRFs in it.
+    _vrf_answer = (1, "") if show_vrf is None else (0, show_vrf)
+    sh.frr = type("F", (), {
+        "available": lambda _s: True,
+        "running": lambda _s: [],
+        "reload": lambda _s, l, check_only=False: (0, ""),
+        "show": lambda _s, c: (_vrf_answer if c == "show vrf" else (1, "")),
+    })()
+    buf = _io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        sh.do_commit(["check"])
+    return buf.getvalue()
+
+
+print("\n=== the next-hop check asks the table the route is in (#255) ===")
+
+# The half that costs the most: a VRF route whose next hop is connected in its
+# OWN table. Refusing this is refusing a configuration that works.
+_out = _commit_nh(["vrf red", " ip route 10.55.0.0/16 172.31.99.1", "exit"])
+check("no connected network" not in _out,
+      f"a VRF route resolved IN ITS OWN table is not refused: {_out!r}")
+check("not checked for a reachable next hop" not in _out,
+      f"and it was really checked, not skipped: {_out!r}")
+
+# The other half, and the one the issue was filed for: connected in the GLOBAL
+# table only. It cannot forward from `vrf red`, and passing it in silence is
+# the inert route this check exists to catch.
+_out = _commit_nh(["vrf red", " ip route 10.55.0.0/16 200.150.0.2", "exit"])
+check("200.150.0.2 is on no connected network" in _out,
+      f"a VRF route resolved only in the GLOBAL table is refused: {_out!r}")
+
+# Neither direction may be bought by breaking the global table's own check,
+# which is what #95 put here in the first place.
+_out = _commit_nh([" ip route 10.55.0.0/16 200.150.0.2"])
+check("no connected network" not in _out,
+      f"a global route resolved in table 0 is accepted: {_out!r}")
+_out = _commit_nh([" ip route 10.55.0.0/16 172.31.99.1"])
+check("172.31.99.1 is on no connected network" in _out,
+      f"and one resolved only in a VRF is refused: {_out!r}")
+
+# A VRF the box has no table for is SAID, not passed over. A check that
+# quietly does not run is one the operator believes ran and passed - and it is
+# a note rather than a refusal, because the VRF may be about to exist and
+# refusing a configuration this VTY merely cannot see is the harm in #208.
+_out = _commit_nh(["vrf green", " ip route 10.55.0.0/16 172.31.99.1", "exit"])
+check("1 static route(s) in 'vrf green' were not checked" in _out,
+      f"a VRF with no table is reported as unchecked: {_out!r}")
+check("FRR reports no routing table for it" in _out,
+      f"with the reason it could not be checked: {_out!r}")
+check("configuration check succeeds" in _out,
+      f"and it is a note, not a refusal: {_out!r}")
+
+# FRR being unreachable is different news from a VRF having no table, and the
+# note has to say which - an operator told the VRF has no table would go and
+# create one that is already there.
+_out = _commit_nh(["vrf red", " ip route 10.55.0.0/16 172.31.99.1", "exit"],
+                  show_vrf=None)
+check("FRR could not be asked which routing table it is" in _out,
+      f"an FRR that cannot answer is named as the reason: {_out!r}")
+
+# And a box with no VRF routes at all hears nothing about VRFs. A line printed
+# under every commit is one nobody reads, which is the rule #205 and #208 put
+# on every alarm in this VTY.
+_out = _commit_nh([" ip route 10.55.0.0/16 200.150.0.2"])
+check("not checked for a reachable next hop" not in _out,
+      f"nothing is said about VRFs on a box that has no VRF route: {_out!r}")
+
+# =====================================================================
 # `no <statement>` inside a block: accepted in silence, doing nothing (#224)
 #
 # Three defects, and the first two are of the class this project puts above
