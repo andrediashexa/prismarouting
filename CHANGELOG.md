@@ -1657,6 +1657,29 @@ are to be interpreted as described in
 
 ### Internal
 
+* **The rule that a secret must not enter this repository was held only for the
+  four directories the ISO carries.** `CONTRIBUTING.md` section 2 says secrets
+  "MUST NOT go into this repository either", and
+  [#245](https://github.com/andrediashexa/hexarouting/issues/245)'s check read
+  `src`, `appliance`, `tools` and `docs` - what `build-iso.sh` copies. A private
+  key in `lab/` never reaches an ISO and is published just as thoroughly: this
+  repository is public, and so is the wiki mirror inside it.
+
+  The scope is now every directory in the tree, **enumerated rather than
+  listed**. A list is something somebody has to remember to extend, and the two
+  defects this check sits between - a lab excluded from every run
+  ([#233](https://github.com/andrediashexa/hexarouting/issues/233)) and a test
+  file nothing compiled
+  ([#235](https://github.com/andrediashexa/hexarouting/issues/235)) - were both
+  exactly that. Nine directories today, and one added next year is covered
+  without anybody deciding to cover it. Nothing in the tree is caught, which is
+  the answer wanted.
+
+  The refusal also stopped saying **"credential in the image"** while somebody
+  is looking at `lab/`. One script answers two questions now and names which
+  one it was asked, because a message that points at the wrong object is the
+  defect this session has spent the most time on.
+
 * **The control that keeps the console driver honest was invoked by nothing**
   ([#256](https://github.com/andrediashexa/hexarouting/issues/256)).
   `lab/install-iso.sh` has a `wrong-password` mode, `TESTING.md` calls it *how
