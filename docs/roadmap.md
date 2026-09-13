@@ -20,10 +20,11 @@ missing is the rest of the second tier: bounds on the customer who takes too
 much, seeing a pool fill before it fills, and **performance**. Throughput in
 bits per second still needs a real NIC
 ([#28](https://github.com/andrediashexa/hexarouting/issues/28)), but the
-per-packet CPU cost is measured: `bpa-in2out` spends **395 clocks per packet**
-where the nodes around it spend 20–35, and the bisection on
-[#63](https://github.com/andrediashexa/hexarouting/issues/63) says half of what
-remains is checksum arithmetic that only NIC offload removes. The rest is
+per-packet CPU cost is measured: `bpa-in2out` spends **346 clocks per packet**
+where the nodes around it spend 20–35, down from 470 on the same machine once
+[#63](https://github.com/andrediashexa/hexarouting/issues/63) moved the
+checksum arithmetic off the packet path and onto the session. What is left of
+it needs NIC offload, which needs a NIC. The rest is
 ordered by the cost of not having it.
 
 Every "delivered" below points at the release it shipped in, and every one of
@@ -273,7 +274,7 @@ of the logging obligation. If the scope ever changes, that is where to start.
 
 | Item | Why | Effort |
 |---|---|---|
-| **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: 395 clocks in `bpa-in2out` after the hairpin pre-filter, about 25 cores for 100 Gbps of 64-byte frames. Bits per second still needs an E810 or CX6 — [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it, and [#63](https://github.com/andrediashexa/hexarouting/issues/63) is the cost itself. | M |
+| **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: **346 clocks** in `bpa-in2out`, about 22 cores for 100 Gbps of 64-byte frames, down from 470 when [#63](https://github.com/andrediashexa/hexarouting/issues/63) was taken. Bits per second still needs an E810 or CX6 - [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it. | M |
 | **Symmetric RSS** | The handoff works, but symmetric hashing would put both directions on the right worker before the handoff, saving the extra enqueue. | M |
 | **RFC 4787 / 5382 conformance suite** | Turns section 1's claims into assertions. | M |
 | **Sustained-load soak test** | Session table behaviour under churn over hours is not covered. Exhaustion bugs show up at hour six, not minute six. | M |
@@ -975,6 +976,41 @@ de-duplication, in `~/.gitconfig` - a file this product does not own. Measured:
 2325 copies of one entry, and 552 of the distinct paths were `/tmp` clones that
 no longer exist.
 
+#### Half the cost of translating a packet was arithmetic done per packet
+
+[#63](https://github.com/andrediashexa/hexarouting/issues/63) - *delivered*,
+**470 to 346 clocks, 26%**. The checksum correction for a session is constant
+for the life of that session: the subscriber always sends from the same address
+and port and the session always rewrites them to the same pair. It is worked
+out once at creation now, and added per packet.
+
+That idea had been tried and reverted once, measuring a 28% reduction and
+producing wrong checksums, and the report said the one's-complement semantics
+could not be reconciled. They could: **`ip_csum_add_even()` subtracts.** VPP
+names both primitives for what happens to the DATA, while the value they
+operate on is the checksum, which is the one's complement of the sum over that
+data, so a field that ENTERS the data LEAVES the checksum. Applying a delta
+with the function whose name says "add" subtracts it, and misses by exactly
+twice the delta - which is why the failing packet's checksum was neither right
+nor random.
+
+**The mechanism was in the test harness**, which is why nothing caught it.
+`test/bpa_tcp_shim.h` defined both primitives the intuitive way round and
+composed `ip_csum_update` the other way round to compensate. The composite
+agreed with VPP, so every suite passed, and anything that reached for a
+primitive directly got the opposite of what the box does with no test able to
+see it. The shim mirrors VPP now instead of correcting it.
+
+Three things came out of the measuring rather than the fix. A standalone
+program comparing forms over 200000 random packets said the reverted attempt
+was wrong on **199988** of them, and named two more would-be bugs beside it
+(host-order operands, and one delta used for both checksums). The per-packet
+form being replaced could fold to exactly zero and write `0x0000` into a UDP
+checksum, which on the wire means "not computed"; the new form cannot reach
+zero at all. And the first "after" run read 440 with `ip4-input` at 51 - a busy
+box, discarded, and visible only because the lab measures its own baseline
+beside the number it is there to take.
+
 #### A command the box had and its own help hid
 
 [#221](https://github.com/andrediashexa/hexarouting/issues/221) - *delivered*,
@@ -1099,7 +1135,7 @@ actually start.
 | | |
 |---|---|
 | [#202](https://github.com/andrediashexa/hexarouting/issues/202) the rename to PrismaRouting | the maintainer's, and one question is open: `hexash` is the recorded login shell of existing accounts, so whether it renames with the product changes the migration |
-| [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 396, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
+| [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
 | [#197](https://github.com/andrediashexa/hexarouting/issues/197) promotion to a refusal | not a decision - a **measurable condition** written in the code: it becomes a refusal when the full lab suite has run clean with it refusing. Four false positives in five encounters with real configuration is why it warns today |
 | Publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. Pages for #67, #182, #210, #213 and #217 are written and mirrored under `wiki/` and have not been pushed |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), [#30](https://github.com/andrediashexa/hexarouting/issues/30), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
@@ -1169,7 +1205,10 @@ subscribers to the wrong blocks and both boxes log nothing.
 #### Phase 7 — performance, which needs hardware
 
 [#28](https://github.com/andrediashexa/hexarouting/issues/28) on a real NIC unblocks [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS and what
-remains of [#63](https://github.com/andrediashexa/hexarouting/issues/63), whose only real remedy is checksum offload.
+remains of [#63](https://github.com/andrediashexa/hexarouting/issues/63), which is now the L4 checksum alone: the
+session carries its correction, so what is left is the one part a NIC does
+instead of the CPU. The line above used to say offload was the only real remedy
+for the whole of it, and that was true when it was written and is not now.
 [#30](https://github.com/andrediashexa/hexarouting/issues/30) the soak test can run earlier but pays most on a stable base — it
 catches the leak that appears at hour six.
 
