@@ -14,6 +14,7 @@ add_vpp_plugin(bpa
   bpa_ftp.c
   bpa_pptp.c
   bpa_cli.c
+  bpa_ra.c
 
   API_FILES
   bpa.api

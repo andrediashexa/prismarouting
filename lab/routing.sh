@@ -59,6 +59,15 @@ for d in bgp:203.0.113.1/24 ospf:198.18.0.1/24 isis:198.19.0.1/24; do
   ip netns exec peer ip link set dum-$n up
 done
 
+# The kernel knobs an installed box applies at boot, applied here for the same
+# reason the pairs are made by the product: what is not in the product does not
+# get to be true in the lab. This one has to be set BEFORE the TAPs exist,
+# because net.ipv6.conf.default is what an interface created later inherits.
+# The file also carries knobs a container cannot set, so the value is read back
+# rather than the exit status trusted.
+sysctl -p /src/appliance/etc/sysctl.conf >/dev/null 2>&1 || true
+echo "  accept_ra a new interface will inherit: $(cat /proc/sys/net/ipv6/conf/default/accept_ra)"
+
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
@@ -272,47 +281,96 @@ expect_in "an unrelated change commits cleanly afterwards" \
 expect_not_in "the statement read back from FRR is not refused on the way in" \
   "has no 'remote-as'" "$NEXT"
 
-# --- and whether the session comes up, which is a different question ---
+# --- and the session comes up, which is a different question ---
 #
-# It does not, and the reason is in the DATAPLANE and not in anything above.
-# Measured on this topology with tcpdump on both ends of the pair:
+# It did not until #213, and the reason was in the DATAPLANE and not in
+# anything above. Measured on this topology with tcpdump on both ends of the
+# pair:
 #
 #   * our Router Advertisements leave the TAP, cross VPP and arrive on the
 #     wire - the peer learns our link-local and goes to Active, trying to
 #     open the session;
-#   * the peer's Router Advertisements arrive on the wire and NEVER reach the
-#     TAP. `show ip6 mfib` says why: ff02::1/128 is (*, Accept) with a chain
-#     of one `dpo-receive` and no path to the pair's TAP, so VPP receives the
-#     advertisement itself - `show errors` counts it - and linux_cp has
-#     nothing on the ip6-multicast arc to punt it with.
+#   * the peer's Router Advertisements arrived on the wire and NEVER reached
+#     the TAP. VPP's own `icmp6-router-advertisement` node is registered with
+#     exactly one next node, "ip6-drop", and no configuration adds another -
+#     while its siblings punt: `icmp6-neighbor-advertisement` goes to
+#     "ip6-punt", which is where linux_cp is waiting with the per-pair
+#     redirect that DVRs a packet out of the TAP.
 #
 # FRR learns an unnumbered peer's address from that advertisement and from
-# nothing else, so zebra never has one and bgpd sits at Idle with "remote AS
-# 0". It is a punt gap for IPv6 multicast over linux_cp, it is the same shape
-# as #168 (IS-IS frames that no lab and no product punted), and it belongs in
-# an issue of its own rather than in a vppctl line here that would make this
-# lab prove a box nobody receives.
+# nothing else, so zebra never had one and bgpd sat at Idle with "remote AS
+# 0", with the configuration entirely correct.
 #
-# So this prints the state and asserts the half that IS this box's: the
-# session is configured, known to bgpd, and attempted. Nothing here asserts
-# Established, because on today's dataplane that would be asserting a wish.
+# The product's plugin now registers ICMPv6 type 134 to a node of its own that
+# punts (src/plugins/bpa/bpa_ra.c), so what follows asserts the session and
+# not the attempt. Nothing here types an mroute, a punt line or an `ip -6`
+# anything: the lab performing the product's missing step is the trap of #168,
+# #182, #184, #209 and #215, and it proves a box nobody receives.
 echo "=== o estado da sessao unnumbered ==="
+# Up to 150 s. Both ends have to send an advertisement, the peer's has to be
+# punted, zebra has to hand bgpd the address and the two have to agree - and
+# FRR's own connect retry is 120 s when the first attempt was made before the
+# address existed.
+UNN_NB=""
 n=0
-while [ "$n" -lt 60 ]; do
-  vtysh -c "show bgp summary" 2>/dev/null | grep -qE "^vppwan9" && break
-  sleep 2; n=$((n + 2))
+while [ "$n" -lt 150 ]; do
+  UNN_NB=$(vtysh -c "show bgp neighbors vppwan9" 2>&1)
+  case "$UNN_NB" in *"BGP state = Established"*) break ;; esac
+  sleep 5; n=$((n + 5))
 done
 vtysh -c "show bgp summary" 2>&1 | grep -E "^Neighbor|^vppwan9" | sed 's/^/  /'
 ip netns exec peer vtysh -N peer -c "show bgp summary" 2>&1 \
   | grep -E "^veth9-out" | sed 's/^/  peer: /'
-echo "  ff02::1 no MFIB do VPP:"
-vppctl show ip6 mfib | grep -A4 "ff02::1/128" | head -5 | sed 's/^/    /'
-# The peer reached Active, which is the half of the exchange that DOES cross
-# the pair: it only knows where to send a SYN because our advertisement got
-# there. That is the assertion the punt gap leaves standing.
-expect "the far end learned this box over the pair and is opening the session" \
-  sh -c "ip netns exec peer vtysh -N peer -c 'show bgp summary' 2>/dev/null \
-         | grep -E '^veth9-out' | grep -qvE ' Idle '"
+printf '%s\n' "$UNN_NB" | grep -E "^BGP neighbor on vppwan9|BGP state =" \
+  | sed 's/^/  /'
+echo "  advertisements the plugin punted to the host:"
+vppctl show errors | grep "bpa-icmp6-ra-punt" | sed 's/^/    /'
+
+expect_in "the unnumbered session reaches Established" \
+  "BGP state = Established" "$UNN_NB"
+# The neighbour bgpd is talking to is a link-local address, which is the whole
+# point of the form and the one thing only a received advertisement can give
+# it: nothing in this file, and nothing on either box, was told the peer's
+# address.
+UNN_LL=$(printf '%s\n' "$UNN_NB" \
+         | sed -n 's/^BGP neighbor on vppwan9: \(fe80:[^,]*\).*/\1/p')
+expect "and the peer it is talking to is a link-local address" test -n "$UNN_LL"
+expect "the far end agrees the session is up" \
+  sh -c "ip netns exec peer vtysh -N peer -c 'show bgp neighbors veth9-out' \
+         2>/dev/null | grep -q 'BGP state = Established'"
+# Which mechanism carried it, asked of the dataplane rather than inferred from
+# the session being up. A box where this counter is zero and the session is up
+# is a box where something else punted, and that is worth failing over.
+expect "and the product's own node is what punted them" \
+  sh -c "vppctl show errors | grep -q 'bpa-icmp6-ra-punt'"
+
+# --- and the kernel does not believe a word of them ---
+#
+# Punting advertisements to Linux hands a neighbour a lever it did not have
+# while VPP was dropping them. Measured in a container with the kernel's
+# defaults: the peer's advertisement put "default via fe80::... proto ra" in
+# the kernel's table, linux_nl synced it, and `show ip6 fib ::/0` came back
+# with an active lcp-rt-dynamic path through the neighbour. The box's IPv6
+# default route, from anyone who cares to advertise.
+#
+# appliance/etc/sysctl.conf turns the kernel's autoconfiguration off, and the
+# two assertions below are only worth anything TOGETHER WITH the ones above:
+# on a box where no advertisement arrives at all they would both pass while
+# nothing worked.
+echo "  what the kernel did with them:"
+ip -6 route show dev vppwan9 | sed 's/^/    /'
+echo "  and what the dataplane forwards ::/0 to:"
+# The FORWARDING section and not the whole entry: every source the entry has is
+# printed above it, drop included, so a grep over all of it says "drop" on a
+# box that is forwarding ::/0 through the neighbour. The first version of this
+# assertion grepped the whole thing for "lcp-rt" and matched the table's own
+# lock line, which made it fail on a clean box - the assertion being wrong
+# rather than the product.
+vppctl show ip6 fib ::/0 | sed -n '/forwarding:/,$p' | sed 's/^/    /'
+expect "the kernel took no default route from the peer's advertisements" \
+  sh -c "! ip -6 route show default dev vppwan9 | grep -q 'proto ra'"
+expect "and none of it reached the VPP FIB" \
+  sh -c 'vppctl show ip6 fib ::/0 | sed -n "/forwarding:/,\$p" | grep -q dpo-drop'
 
 # --- IS-IS frames are punted because the PRODUCT punts them (#168) ---
 #

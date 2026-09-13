@@ -34,6 +34,59 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+[#213](https://github.com/andrediashexa/hexarouting/issues/213).
+
+### Fixed
+
+* **A received Router Advertisement never reached the Linux side of a
+  `linux_cp` pair, so BGP unnumbered never came up.** The VTY takes
+  `neighbor vppwan9 interface remote-as external`, FRR holds it, and the peer
+  stood in `show bgp summary` at Idle with "remote AS 0" for ever, with the
+  configuration entirely correct. FRR learns an unnumbered peer's address from
+  that advertisement and from nothing else
+  ([#213](https://github.com/andrediashexa/hexarouting/issues/213)).
+
+  It was filed as an IPv6 multicast punt gap and it is not one. IPv6 multicast
+  reaches the TAP: an OSPFv3 packet to `ff02::5` arrives on a pair with no
+  address on either end, measured, because VPP has no local handler for
+  protocol 89 and the packet falls through `ip6-punt`, where linux_cp's
+  per-pair redirect DVRs it out of the TAP. That is also why OSPFv2's
+  `224.0.0.5` has always worked. ICMPv6 is different: VPP handles it itself,
+  so the advertisement reached `ip6-icmp-input` and from there the node
+  registered for type 134, `icmp6-router-advertisement`, which is declared
+  with exactly one next node - `ip6-drop` - and no configuration adds another.
+  Its siblings punt: `icmp6-neighbor-advertisement` is declared with
+  `ip6-punt`, which is why neighbour advertisements have always reached Linux.
+
+  With no knob for it, the fix is a node. `src/plugins/bpa/bpa_ra.c` registers
+  ICMPv6 type 134 to a node of its own whose only next is `ip6-punt`, after
+  `ip6_ra_init` so the registration is not overwritten, and counts what it
+  punts. What is given up is VPP's own processing of a received advertisement,
+  which is the RS retransmit timer and the `ip6_ra_report` subscribers - the
+  DHCPv6-PD client's, not this product's. On a box where every dataplane port
+  is paired into the kernel, the kernel is the IPv6 control plane, as it
+  already is for ARP.
+
+  Punting them hands a neighbour a lever it did not have while VPP was
+  dropping them, and the kernel's own default takes it: measured in a
+  container, the peer's advertisement put `default via fe80::... proto ra` in
+  the kernel's table, `linux_nl` synced it, and `show ip6 fib ::/0` came back
+  forwarding through the neighbour. `appliance/etc/sysctl.conf` now carries
+  `net.ipv6.conf.{all,default}.accept_ra = 0`, which costs the unnumbered
+  session nothing: zebra reads advertisements on a socket of its own rather
+  than through the kernel's autoconfiguration.
+
+  `lab/routing.sh` asserted only that the far end reached Active, which was
+  the half of the exchange that did cross the pair. It now asserts the session
+  reaches **Established** on both sides, over a link-local address neither box
+  was told, with nothing typed that an operator would not type: no `ip mroute`
+  and no punt line in the lab, which is the trap
+  [#168](https://github.com/andrediashexa/hexarouting/issues/168),
+  [#182](https://github.com/andrediashexa/hexarouting/issues/182) and
+  [#215](https://github.com/andrediashexa/hexarouting/issues/215) each cost.
+
 ## 0.66.0 — six times a lab did the product's job, and the product now does it
 
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
@@ -45,6 +98,8 @@ are to be interpreted as described in
 [#214](https://github.com/andrediashexa/hexarouting/issues/214),
 [#215](https://github.com/andrediashexa/hexarouting/issues/215),
 [#216](https://github.com/andrediashexa/hexarouting/issues/216).
+
+[#213](https://github.com/andrediashexa/hexarouting/issues/213).
 
 ### Fixed
 
