@@ -291,6 +291,141 @@ to have hung.
   run without, rather than by looking for a particular character, which would be
   an assertion about the terminal.
 
+## `show hardware` — the NICs the box has, before the dataplane has any
+
+`show interface` answers from the dataplane, and that is the right source for
+every question except one. On a fresh appliance VPP has been given no NIC, so
+the table is empty — and that is exactly the moment an operator needs to see
+what NICs the box has, in order to choose one. The only screen that could tell
+them was the one that had nothing to say, and the way to the list was to leave
+the VTY and read `/sys` or run `ip link`. For an appliance whose whole argument
+is that it is driven from `hexash`, a first setup step that is a shell is a VTY
+that is decoration
+([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
+
+```
+hexarouting> show hardware
+  the dataplane has no interface to forward on: no interface was named, so VPP
+  was given no NIC.
+  Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the interface carrying
+  subscriber traffic,
+  then restart hexarouting-tune and vpp.
+
+  Interface     PCI            Driver           Link   Speed
+  eno1          0000:03:00.0   ixgbe            up     1000Mb/s
+    3c:ec:ef:1a:2b:3c  kernel driver: DPDK cannot take a NIC through it
+    *** carries the DEFAULT ROUTE ***
+  ens1f0        0000:5e:00.0   ixgbe            down   -
+    b4:96:91:0d:1e:2f  kernel driver: DPDK cannot take a NIC through it
+
+  2 NIC(s) on this box, as Linux has them
+  'eno1' carries the default route: it is how this box is reached, and giving
+  it to the dataplane would take the box off the network. It is refused as a
+  dataplane interface for that reason.
+```
+
+Every value is read from a file, through a seam that a test can point somewhere
+else: `Shell.SYS_CLASS_NET` and `Shell.PROC_NET_ROUTE`, the way
+`Shell.STARTUP_CONF`, `Shell.TUNE_ENV`, `Shell.PCI_DEVICES` and
+`Shell.PCI_DRIVERS` already are. Nothing shells out to `ip link`, which is one
+of the two tools this VTY exists to keep the operator out of, and the
+assertions run against a `/sys` tree built in a tempdir rather than against a
+stubbed method.
+
+* **PCI address** is `device` resolved and its basename taken, and a basename
+  that is not shaped `0000:3b:00.0` is **skipped**. `lo`, a bridge, a tap and a
+  virtio guest's NICs all fail that test, and none of them is a device DPDK
+  could be given. It is the same test `appliance/hexarouting-tune` applies, so
+  a NIC this screen offers is a NIC the tuner can resolve — the two cannot
+  disagree about what is a candidate.
+* **Driver** is `device/driver` resolved, and it is the driver holding the NIC
+  *now*, not a guess. `vfio-pci`, `uio_pci_generic` and `igb_uio` are the three
+  DPDK can take a device through; everything else is a kernel driver and is
+  said to be one. `mlx5` is the exception in practice — it is bifurcated and
+  works kernel-bound — which is what makes this look intermittent across
+  hardware rather than broken.
+* **Speed** is `speed`, which the kernel writes as `-1` for a link that is down
+  and refuses to answer for at all on some drivers. Both come out as `-`: a
+  negative megabit printed as a number is a number somebody reads past.
+* **The MAC** is on its own line, whole. It is what gets matched against a label
+  on the port or a lease in the DHCP server, so it stays one greppable token
+  rather than being wrapped into a sixth column.
+
+### The default-route mark is the point of the screen
+
+Handing the NIC that carries the default route to the dataplane does not
+degrade the box, it **removes** it: no SSH, no ping, nothing but a console
+somebody has to walk to.
+[#123](https://github.com/andrediashexa/hexarouting/issues/123) made the tuner
+refuse that NIC by name for exactly that reason — and the refusal happens after
+the operator has chosen, which is too late to teach anything. Marked here, they
+do not make the choice.
+
+It is read from `/proc/net/route`, destination `00000000`, the same file and the
+same field the tuner reads. The route file is ordered in the test so that a
+reading which took the first row naming an interface names the **wrong** NIC
+rather than passing by luck.
+
+A box with no default route at all is told so, rather than being left with an
+absent mark to interpret:
+
+```
+  no interface carries a default route on this box, so none of them is the
+  management path by that test.
+```
+
+And a default route on something this list cannot hold - a bridge, a bond, a
+VLAN, a NIC with no PCI address - is **named**:
+
+```
+  1 NIC(s) on this box, as Linux has them
+  none of these carries the default route. It is on 'br0', which is not a PCI
+  NIC, and that is still the path this box is reached over.
+```
+
+An unmarked list would otherwise read as "none of these is the management
+path", and that reading is the one that costs the box.
+
+### What the dataplane holds is said once, and first
+
+A NIC VPP has claimed is **not under `/sys/class/net` at all** — the device has
+been taken off the kernel. A list that quietly omitted it would read as a
+missing NIC, which is a hardware fault and a different afternoon. So the state
+of the dataplane is stated before the list:
+
+```
+hexarouting> show hardware
+  the dataplane holds TenGigabitEthernet0/8/0. A NIC VPP owns is no longer
+  listed by Linux, so it is not in the list below.
+```
+
+When the dataplane holds nothing, the sentence is
+`Shell.why_no_dataplane_interface()` — the same reading, in the same order, in
+the same words as `show interface` and the boot self-test. Two diagnoses of one
+fact that disagree are worse than one, so this screen reuses that one rather
+than writing a second.
+
+A dataplane that cannot be asked says that, and is not reported as empty.
+
+### A tree with no NIC in it must not read as a healthy box
+
+```
+  no PCI NIC is visible to Linux on this box: either the dataplane already owns
+  every one of them, or none of them resolves to a PCI address, which is what a
+  virtio guest looks like. DPDK cannot be given a device that has no PCI
+  address, so there is nothing here to choose from.
+```
+
+"Nothing to show" and "nothing is wrong" look identical on a screen, and this
+screen is read on a box that forwards nothing. The check that the empty case
+says something is one of the assertions, and it was shown failing by making the
+command print its table header for a box with no NICs.
+
+The path the values were read from is deliberately **not** in any of these
+sentences. It is a seam, so on a box under test it would name a directory that
+exists nowhere, and a transcript an operator is comparing against their own box
+would be comparing against scaffolding.
+
 ## Um nome de interface que não existe é recusado
 
 ```

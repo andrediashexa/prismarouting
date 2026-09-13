@@ -178,6 +178,108 @@ O que vale saber para ler o gráfico:
 * `Ctrl-C` encerra antes do fim e o gráfico sai com o que já foi amostrado. Interrompido antes da segunda leitura, não há taxa nenhuma a mostrar, e a caixa diz isso em vez de imprimir zeros.
 * Pacotes descartados durante a amostragem, e um contador que andou para trás porque alguém limpou as interfaces no meio, são reportados no fim.
 
+## `show hardware` — as placas de rede que a caixa tem
+
+`show interface` responde pelo **dataplane**. Numa caixa recém-instalada o dataplane não recebeu placa nenhuma, então essa tela vem vazia — justamente no momento em que é preciso ver quais placas existem para escolher uma. `show hardware` responde a outra pergunta: **quais placas físicas o Linux enxerga nesta caixa**, com o que basta para decidir.
+
+```
+hexarouting> show hardware
+  the dataplane has no interface to forward on: no interface was named, so VPP
+  was given no NIC.
+  Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the interface carrying
+  subscriber traffic,
+  then restart hexarouting-tune and vpp.
+
+  Interface     PCI            Driver           Link   Speed
+  eno1          0000:03:00.0   ixgbe            up     1000Mb/s
+    3c:ec:ef:1a:2b:3c  kernel driver: DPDK cannot take a NIC through it
+    *** carries the DEFAULT ROUTE ***
+  ens1f0        0000:5e:00.0   ixgbe            down   -
+    b4:96:91:0d:1e:2f  kernel driver: DPDK cannot take a NIC through it
+
+  2 NIC(s) on this box, as Linux has them
+  'eno1' carries the default route: it is how this box is reached, and giving
+  it to the dataplane would take the box off the network. It is refused as a
+  dataplane interface for that reason.
+```
+
+| Coluna | O que é |
+|--------|---------|
+| `Interface` | o nome que o Linux dá à placa |
+| `PCI` | o endereço PCI, que é por onde o dataplane reclama o dispositivo |
+| `Driver` | o driver que está com a placa **agora** |
+| `Link` | o enlace: `up`, `down`, `unknown` |
+| `Speed` | a velocidade, quando o kernel informa; `-` quando o enlace está caído e não há velocidade a informar |
+
+Embaixo de cada placa vêm o **MAC**, inteiro numa linha só — é o que se compara com a etiqueta da porta ou com a reserva no DHCP —, e o veredito sobre o driver.
+
+### A marca `*** carries the DEFAULT ROUTE ***`
+
+É a metade mais importante da tela. A placa que carrega a rota padrão é por onde esta caixa é alcançada: entregá-la ao dataplane não degrada a caixa, **tira a caixa da rede** — sem SSH, sem ping, nada além de um console até onde alguém precisa caminhar.
+
+A caixa **recusa** essa placa como interface de dataplane por esse motivo. A recusa acontece depois da escolha, o que é tarde demais para ensinar alguma coisa; a marca aparece antes, para que a escolha não seja essa.
+
+Numa caixa sem rota padrão nenhuma, a tela diz isso em vez de simplesmente não marcar nada:
+
+```
+  no interface carries a default route on this box, so none of them is the
+  management path by that test.
+```
+
+E quando a rota padrão está numa coisa que esta lista não comporta — uma ponte, um *bond*, uma VLAN, uma placa sem endereço PCI —, a caixa **nomeia** essa coisa, em vez de deixar a ausência da marca falar:
+
+```
+  1 NIC(s) on this box, as Linux has them
+  none of these carries the default route. It is on 'br0', which is not a PCI
+  NIC, and that is still the path this box is reached over.
+```
+
+Uma lista sem marca nenhuma seria lida como *"nenhuma destas é o caminho de gerência"*, e é exatamente essa leitura que custa a caixa.
+
+### `kernel driver` e `DPDK can use`
+
+O dataplane não consegue tomar uma placa que está presa a um driver do kernel. As duas frases que aparecem embaixo de cada placa são:
+
+| Frase | O que significa |
+|-------|-----------------|
+| `kernel driver: DPDK cannot take a NIC through it` | a placa está com o driver do kernel (`ixgbe`, `i40e`, `bnxt_en`, …) |
+| `<driver> is a driver DPDK can use` | a placa já está preparada para o dataplane — `vfio-pci`, `uio_pci_generic` ou `igb_uio` |
+| `no driver is bound to it at all` | nenhum driver está com o dispositivo |
+
+```
+  Interface     PCI            Driver           Link   Speed
+  eno1          0000:03:00.0   ixgbe            up     1000Mb/s
+    3c:ec:ef:1a:2b:3c  kernel driver: DPDK cannot take a NIC through it
+    *** carries the DEFAULT ROUTE ***
+  ens1f0        0000:5e:00.0   vfio-pci         up     10000Mb/s
+    b4:96:91:0d:1e:2f  vfio-pci is a driver DPDK can use
+```
+
+O `mlx5` da Mellanox é a exceção: é um driver bifurcado e o dataplane trabalha com ele sem trocar de driver.
+
+### A primeira linha diz o que o dataplane já tem
+
+Sempre, e antes da lista. Uma placa que o **dataplane já tomou** desaparece da listagem do Linux — ela não está mais lá para ser listada. Sem essa linha, uma placa entregue ao dataplane e uma placa que nunca existiu na caixa ficariam com a mesma cara, e uma dessas duas é defeito de hardware.
+
+```
+hexarouting> show hardware
+  the dataplane holds TenGigabitEthernet0/8/0. A NIC VPP owns is no longer
+  listed by Linux, so it is not in the list below.
+```
+
+Quando o dataplane não tem interface nenhuma, a linha é o **mesmo diagnóstico** que o `show interface` e o autoteste de boot dão, lido das mesmas fontes: dois diagnósticos do mesmo fato que discordam entre si são piores que um.
+
+E uma caixa onde o Linux não enxerga placa PCI nenhuma recebe uma frase, não uma tabela vazia:
+
+```
+  no PCI NIC is visible to Linux on this box: either the dataplane already owns
+  every one of them, or none of them resolves to a PCI address, which is what a
+  virtio guest looks like. DPDK cannot be given a device that has no PCI
+  address, so there is nothing here to choose from.
+```
+
+*"Não há nada a mostrar"* e *"não há nada errado"* têm a mesma aparência numa tela, e esta tela é lida numa caixa que não encaminha nada.
+
 ## `show this` — o que há na hierarquia em que estou
 
 Dentro de um bloco de configuração, mostra o que aquele bloco tem e nada acima dele:
@@ -326,6 +428,7 @@ arquivo numa caixa que não o teria lido.
 | `show configuration compare` | diferenças da candidata contra a configuração em vigor |
 | `show running-config` | a configuração em efeito, CGNAT e roteamento |
 | `show rollback` | revisões commitadas disponíveis |
+| `show hardware` | as placas de rede físicas da caixa, com endereço PCI, driver, enlace e **qual delas carrega a rota padrão** |
 | `show version` | versões do HexaRouting, do VPP e do FRR, e **quais daemons de roteamento estão rodando** |
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show bgp summary` | uma linha por sessão BGP, com o que chegou à tabela que encaminha |
@@ -384,6 +487,7 @@ A barra vertical só é filtro depois de um `show`. Numa declaração de configu
 | "o que eu estou prestes a aplicar?" | `show configuration compare` |
 | "essa porta caiu ou alguém deu shutdown?" | `show interface terse` |
 | "para que serve essa porta?" | `show interface description` |
+| "o dataplane não tem interface nenhuma" | `show hardware` |
 | "o enlace está cheio?" | `show interface utilization <nome>` |
 
 ## Como ler a resposta de `show cgnat translation`
