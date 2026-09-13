@@ -93,7 +93,7 @@ chroot "$ROOT" /bin/sh -c "
   export DEBIAN_FRONTEND=noninteractive VPP_INSTALL_SKIP_SYSCTL=1
   apt-get update -qq
   apt-get install -y --no-install-recommends \
-    squashfs-tools dosfstools parted fdisk \
+    squashfs-tools dosfstools parted fdisk mdadm \
     vpp=$VPP_VERSION vpp-plugin-core=$VPP_VERSION vpp-plugin-dpdk=$VPP_VERSION \
     libvppinfra=$VPP_VERSION \
     frr=$FRR_VERSION frr-pythontools=$FRR_VERSION \
@@ -131,6 +131,19 @@ VAT2_INSTALLED="$ROOT/usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_
   exit 1
 }
 say "binary API: vat2 plugin in place"
+
+# The medium has to be able to BUILD the records mirror, not merely to offer
+# the question. An installer that asks for a second disk and then finds no
+# mdadm refuses at the one moment the operator is standing in front of the
+# rack with the disks already in it - and the refusal would come from the
+# medium, not from anything they did. Asserted here for the same reason the
+# vat2 plugin is: a warning in a build log this long is not a signal.
+[ -x "$ROOT/sbin/mdadm" ] || [ -x "$ROOT/usr/sbin/mdadm" ] || {
+  echo "mdadm did not reach the image, so the installer could not mirror the" >&2
+  echo "connection records onto a second disk (#83)." >&2
+  exit 1
+}
+say "records mirror: mdadm in place"
 
 # Autologin on the console, for the LIVE image only. A racked appliance is
 # reached by serial console or IPMI, and a live lab image that stops at a login

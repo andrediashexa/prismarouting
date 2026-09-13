@@ -7,6 +7,7 @@
 #   hexarouting.timezone=<zone>     answer the timezone question
 #   hexarouting.password=<pw>       answer the root password question
 #   hexarouting.log-gb=<n>          gigabytes for the connection records
+#   hexarouting.mirror=<disk>       mirror the records onto a second disk
 #   hexarouting.answers[=<file>]    read the answers from a file on the medium
 #   hexarouting.yes                 skip the confirmations
 #
@@ -42,6 +43,7 @@ for tok in $cmdline; do
     hexarouting.timezone=*) HEXA_TIMEZONE=${tok#hexarouting.timezone=};      export HEXA_TIMEZONE ;;
     hexarouting.password=*) HEXA_ROOT_PASSWORD=${tok#hexarouting.password=}; export HEXA_ROOT_PASSWORD ;;
     hexarouting.log-gb=*)   HEXA_LOG_GB=${tok#hexarouting.log-gb=};          export HEXA_LOG_GB ;;
+    hexarouting.mirror=*)   HEXA_MIRROR=${tok#hexarouting.mirror=};            export HEXA_MIRROR ;;
     hexarouting.answers=*)  HEXA_ANSWERS=${tok#hexarouting.answers=};          export HEXA_ANSWERS ;;
     # Bare, it means the file the medium is expected to carry. A default path
     # so that the operator writing the medium and the operator booting it do

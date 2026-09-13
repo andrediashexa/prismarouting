@@ -24,6 +24,7 @@
 # Non-interactive answers, for automated installs and for the lab:
 #
 #   HEXA_DISK, HEXA_HOSTNAME, HEXA_TIMEZONE, HEXA_ROOT_PASSWORD, HEXA_LOG_GB
+#   HEXA_MIRROR=<disk>        mirror the records onto a second disk
 #   HEXA_ANSWERS=<file>       read those same answers from a file
 #   HEXA_INSTALL_YES=1        skip the confirmations
 #   HEXA_INSTALL_CHECK=1      collect and validate, write nothing, exit
@@ -87,6 +88,7 @@ read_answers() {   # <file>; exports HEXA_* for the questions still unanswered
       password) ANSWERS_PASSWORD=1
                 [ -n "${HEXA_ROOT_PASSWORD:-}" ] || { HEXA_ROOT_PASSWORD=$_v; export HEXA_ROOT_PASSWORD ; } ;;
       log-gb)   [ -n "${HEXA_LOG_GB:-}" ]        || { HEXA_LOG_GB=$_v;        export HEXA_LOG_GB ; } ;;
+      mirror)   [ -n "${HEXA_MIRROR:-}" ]        || { HEXA_MIRROR=$_v;        export HEXA_MIRROR ; } ;;
       yes)
         case "$_v" in
           1|yes|true) _y=1 ;;
@@ -96,7 +98,7 @@ read_answers() {   # <file>; exports HEXA_* for the questions still unanswered
         esac
         [ -n "${HEXA_INSTALL_YES:-}" ] || { HEXA_INSTALL_YES=$_y; export HEXA_INSTALL_YES ; } ;;
       *) echo "error: $_f line $_n: '$_k' is not an answer this installer knows" >&2
-         echo "  known: disk, hostname, timezone, password, log-gb, yes" >&2
+         echo "  known: disk, hostname, timezone, password, log-gb, mirror, yes" >&2
          _rc=1 ;;
     esac
   done < "$_f"
@@ -129,6 +131,7 @@ if [ -n "${HEXA_ANSWERS:-}" ]; then
 fi
 
 DISK=${HEXA_DISK:-${1:-}}
+MIRROR=${HEXA_MIRROR:-}
 HOSTNAME_NEW=${HEXA_HOSTNAME:-}
 TIMEZONE=${HEXA_TIMEZONE:-}
 ROOTPW=${HEXA_ROOT_PASSWORD:-}
@@ -257,6 +260,72 @@ choose_disk() {
   done
 }
 
+# The second disk the records are mirrored onto, or nothing. (#83)
+#
+# Why the records and not the system: with one disk, a single failure on a box
+# under a one-year retention obligation loses the RECORDS. Losing the system is
+# downtime and downtime is recoverable - reinstall, restore the configuration,
+# the box forwards again. The records are not recoverable by any means at all,
+# and the box is still answerable for them. So this mirrors the one thing that
+# cannot be rebuilt, and lab/records-mirror measures what that leaves uncovered:
+# the survivor does NOT boot on its own, and the records on it are readable on
+# another machine.
+#
+# Asked, never assumed. A second disk in a machine is not consent to destroy
+# what is on it, and "the largest disk" reasoning that picks an install target
+# is exactly wrong here: the operator may have put that disk there for
+# something else.
+#
+# The DEFAULT IS NONE, and a bare Enter takes it. A box with one disk is never
+# asked at all - there is nothing to ask about, and a question with no possible
+# answer is noise on the one console where noise costs attention.
+choose_mirror() {   # <target disk>; the chosen disk on stdout, or nothing
+  _target=$1
+  _table=$(disk_table | awk -v t="$_target" '$1 != t')
+  [ -n "$_table" ] || return 0
+
+  echo >&2
+  echo "  This machine has another disk. The connection records can be kept on" >&2
+  echo "  BOTH, so that one disk failing does not take the year of records with" >&2
+  echo "  it - which is a loss no reinstall undoes." >&2
+  echo "  The system is NOT mirrored: a dead system disk is a reinstall, and" >&2
+  echo "  the records on the survivor can still be read on another machine." >&2
+  echo "  EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED." >&2
+  _i=1
+  printf '%s\n' "$_table" | while read -r p b h m; do
+    printf '  %s) %-14s %6s  %s\n' "$(letter_at "$_i")" "$p" "$h" "$m" >&2
+    _i=$((_i + 1))
+  done
+  echo "  none) one disk, no mirror   <- default" >&2
+  echo >&2
+
+  while : ; do
+    # "none" is the DEFAULT ask() substitutes for a bare Enter, and that is
+    # where this question's answer to a held-down return key lives - the empty
+    # string never reaches the case below. A default of the first disk here
+    # would destroy a disk nobody chose.
+    _a=$(ask "Mirror the connection records onto which disk" "none")
+    case "$_a" in
+      none|no|n)
+        return 0 ;;
+      /dev/*)
+        printf '%s\n' "$_a"
+        return 0 ;;
+      [a-z])
+        _n=$(printf '%s' "abcdefghijklmnopqrstuvwxyz" | tr -d "\n" | \
+             awk -v c="$_a" '{print index($0, c)}')
+        _pick=$(printf '%s\n' "$_table" | sed -n "${_n}p" | cut -d' ' -f1)
+        if [ -n "$_pick" ]; then
+          printf '%s\n' "$_pick"
+          return 0
+        fi
+        echo "  there is no disk '$_a' in that list." >&2 ;;
+      *)
+        echo "  answer with a letter from the list, a device path, or 'none'." >&2 ;;
+    esac
+  done
+}
+
 # Check mode validates the ANSWERS and writes nothing, so it neither needs root
 # nor a medium to run from - which is what lets the questions be tested without
 # a virtual machine. Everything it cannot check it reports rather than passing
@@ -345,6 +414,52 @@ verify_installed() {   # <mounted root>; non-zero if the disk is not usable
   esac
 
   [ "$_bad" = 0 ]
+}
+
+# Did the array this installer just created come up with BOTH legs? (#83)
+#
+# "mdadm --create" exits zero having started a DEGRADED array - one leg
+# rejected, one accepted - so its exit status answers "did mdadm run", not
+# "are the records on two disks". The kernel's own account of the array is
+# /proc/mdstat and that is what is read here.
+#
+# A mirror created degraded is the exact failure the mirror exists to prevent,
+# arriving at the moment the operator is told the install worked. It has to be
+# a refusal and not a warning, because the box would then spend a year
+# reporting a mirror it never had.
+#
+# It reads only, like verify_installed: a verification that repairs what it
+# finds is a verification whose result is about itself.
+verify_mirror() {   # <mdstat> <md device>; non-zero unless both legs are there
+  _f=$1
+  _dev=$2
+  _md=${2#/dev/}
+  if [ ! -r "$_f" ]; then
+    echo "  [FAIL] mirror: $_f cannot be read, so nothing here knows whether"
+    echo "         the records reached two disks"
+    return 1
+  fi
+  # The array's block line, which is the one carrying [n/m]. Anchored on the
+  # array's own name at the start of a line: mdstat lists every array, and a
+  # grep for "[2/2]" anywhere in it would be answered by a different one.
+  _line=$(awk -v d="$_md" '$1 == d { f = 1 }
+                           f && /\[[0-9]+\/[0-9]+\]/ { print; exit }' "$_f")
+  if [ -z "$_line" ]; then
+    echo "  [FAIL] mirror: the kernel has no array $_dev, so the records are on"
+    echo "         ONE disk - which is what the second disk was given for"
+    return 1
+  fi
+  _legs=$(printf '%s' "$_line" | grep -o '\[[0-9]*/[0-9]*\]' | head -1 | tr -d '[]')
+  _want=${_legs%/*}
+  _have=${_legs#*/}
+  if [ "$_have" = "$_want" ]; then
+    echo "  [ ok ] records mirrored on $_dev, $_have of $_want disks present"
+    return 0
+  fi
+  echo "  [FAIL] mirror: $_dev has $_have of $_want disks. It was created"
+  echo "         DEGRADED, so the records are on one disk and the box would"
+  echo "         report a mirror it never had"
+  return 1
 }
 
 # A seam, so the disk menu and the verification can be tested without
@@ -480,6 +595,60 @@ if [ -n "$MAX_LOG" ] && [ "$(( LOG_GB * 1024 ))" -gt "$MAX_LOG" ]; then
   die "$LOG_GB GB of records leaves the system less than $(( SYSTEM_MB / 1024 )) GB on a $(( DISK_MB / 1024 )) GB disk"
 fi
 
+# ------------------------------------------------- 3c. the records mirror
+#
+# Asked here because the answer needs LOG_GB - the second disk has to hold the
+# records - and because it is still a QUESTION, before the first write. The
+# ordering is the rule this whole script is built on and a disk that is going
+# to be destroyed cannot be chosen after the partitioning has started.
+if [ -z "$MIRROR" ]; then
+  if [ "$ASSUME_YES" = 1 ]; then
+    # Unattended and nothing said: one disk, exactly as before. It is said out
+    # loud only when there WAS a second disk, because that is the install where
+    # somebody may have expected a mirror and got none.
+    if [ -n "$(disk_table | awk -v t="$DISK" '$1 != t')" ]; then
+      say "records: not mirrored (pass hexarouting.mirror=<disk> for the second disk)"
+    fi
+  else
+    MIRROR=$(choose_mirror "$DISK")
+  fi
+fi
+
+if [ -n "$MIRROR" ]; then
+  [ "$MIRROR" != "$DISK" ] || \
+    die "the mirror has to be a SECOND disk; $MIRROR is the one being installed"
+  # The medium is refused here for the same reason it is refused as a target:
+  # overwriting what is being read fails halfway through.
+  case "${ROOTDEV:-}" in
+    "$MIRROR"*) die "$MIRROR is the medium this system booted from" ;;
+  esac
+  [ -b "$MIRROR" ] || { echo "Available:" >&2; list_disks >&2; \
+                        die "$MIRROR is not a block device"; }
+  # A whole disk, not a partition. /sys/block/<name> exists only for whole
+  # disks, so this is the same question as "can its size be read" - and the
+  # size is the other half of the answer: a leg smaller than the records
+  # partition makes an array smaller than the operator asked for, silently,
+  # because md sizes a mirror by its smallest member.
+  _msys="/sys/block/$(basename "$MIRROR")/size"
+  [ -r "$_msys" ] || \
+    die "$MIRROR is not a whole disk (no /sys/block entry); the mirror takes a
+  whole disk, because everything on it is destroyed"
+  MIRROR_MB=$(( $(cat "$_msys") / 2048 ))
+  # 8 MB over, for the partition's own offset and md's superblock. Without the
+  # margin an exactly-sized disk produces an array one megabyte short of the
+  # answer, which nobody would notice until the volume filled early.
+  if [ "$MIRROR_MB" -lt "$(( LOG_GB * 1024 + 8 ))" ]; then
+    die "$MIRROR holds $(( MIRROR_MB / 1024 )) GB and the records need $LOG_GB GB:
+  a mirror is as big as its smallest disk"
+  fi
+  # Checked here rather than in the tool list at the top, because a medium
+  # without mdadm must still install a one-disk box. fatal, not die: this is
+  # something about the MACHINE, and check mode reports those instead of
+  # refusing answers that are perfectly good.
+  command -v mdadm >/dev/null 2>&1 || \
+    fatal "this medium has no mdadm, so it cannot build the records mirror"
+fi
+
 # --------------------------------------------------------- 4. root password
 #
 # Refused, not defaulted. A first boot that never asks for a password is a
@@ -510,6 +679,12 @@ SIZE=$(lsblk -dno SIZE "$DISK" 2>/dev/null)
 echo
 echo "  disk           $DISK  ($SIZE ${MODEL:-unknown})   EVERYTHING ON IT IS DESTROYED"
 lsblk -no NAME,SIZE,FSTYPE,MOUNTPOINT "$DISK" 2>/dev/null | sed 's/^/                   /'
+if [ -n "$MIRROR" ]; then
+  echo "  records mirror $MIRROR   EVERYTHING ON IT IS DESTROYED TOO"
+  echo "                   the records go on both disks; the system does not"
+else
+  echo "  records mirror none (one disk: a disk failure loses the records)"
+fi
 echo "  hostname       $HOSTNAME_NEW"
 echo "  timezone       $TIMEZONE"
 echo "  root password  set"
@@ -544,6 +719,13 @@ if [ "$ASSUME_YES" != 1 ]; then
   _what=$(lsblk -dno SIZE,MODEL "$DISK" 2>/dev/null | sed 's/  */ /g;s/^ *//')
   echo
   echo "  About to ERASE $DISK  ${_what:-}"
+  # The mirror disk is erased by this same "yes" and it is named in it. A
+  # confirmation that repeats one disk back while a second is destroyed behind
+  # it is not the confirmation this script claims to have.
+  if [ -n "$MIRROR" ]; then
+    _what2=$(lsblk -dno SIZE,MODEL "$MIRROR" 2>/dev/null | sed 's/  */ /g;s/^ *//')
+    echo "  and to ERASE $MIRROR  ${_what2:-}  (the records mirror)"
+  fi
   echo "  Everything on it is lost. This cannot be undone."
   printf "  Type 'yes' to install: "
   read -r answer
@@ -563,16 +745,23 @@ say "partitioning $DISK (UEFI=$EFI)"
 # one that fails: the operator has no idea whether the disk was touched.
 command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
 # Records LAST, so growing the disk later grows the partition that fills.
+#
+# Type "R" - Linux RAID - when the records are mirrored, so that anyone who
+# opens this table with fdisk on a box whose other disk has died is told what
+# the partition is before they try to mount it directly. The type does not
+# drive the assembly; the metadata and mdadm.conf do.
+REC_TYPE=L
+[ -n "$MIRROR" ] && REC_TYPE=R
 if [ "$EFI" = 1 ]; then
   LAYOUT="label: gpt
 ,512M,U
 ,$(( DISK_MB - 512 - LOG_GB * 1024 ))M,L
-,,L"
+,,$REC_TYPE"
 else
   LAYOUT="label: dos
 ,512M,c,*
 ,$(( DISK_MB - 512 - LOG_GB * 1024 ))M,L
-,,L"
+,,$REC_TYPE"
 fi
 printf '%s\n' "$LAYOUT" | timeout 90 sfdisk --lock=no --wipe=always \
     "$DISK" >/tmp/sfdisk.log 2>&1
@@ -594,10 +783,66 @@ esac
 [ -b "$P2" ] || die "partitioning did not produce $P2"
 [ -b "$P3" ] || die "partitioning did not produce $P3 for the records"
 
+# The records go on BOTH disks, or on the one. Everything downstream - the
+# mkfs, the UUID in fstab, the verification - uses this one name, so the
+# one-disk path is the same path it has always been with $P3 in it.
+RECORDS_DEV=$P3
+if [ -n "$MIRROR" ]; then
+  say "the records mirror on $MIRROR"
+  # One partition over the whole disk rather than a sized one. The array is as
+  # big as its smallest member either way, and a whole-disk leg is what makes a
+  # replacement disk of a different size usable without re-doing arithmetic
+  # somebody has to remember a year later.
+  printf 'label: gpt\n,,R\n' | timeout 90 sfdisk --lock=no --wipe=always \
+      "$MIRROR" >/tmp/sfdisk-mirror.log 2>&1
+  rc=$?
+  if [ "$rc" = 124 ]; then
+    die "sfdisk timed out on $MIRROR after 90s (device busy?) - see
+  /tmp/sfdisk-mirror.log"
+  fi
+  [ "$rc" = 0 ] || { sed 's/^/  /' /tmp/sfdisk-mirror.log >&2
+                     die "sfdisk failed on $MIRROR"; }
+  sync
+  partprobe "$MIRROR" 2>/dev/null || true
+  command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
+  sleep 2
+  case "$MIRROR" in
+    *nvme*|*mmcblk*) MP1="${MIRROR}p1" ;;
+    *)               MP1="${MIRROR}1"  ;;
+  esac
+  [ -b "$MP1" ] || die "partitioning did not produce $MP1 on the mirror disk"
+
+  # A disk that carried a mirror before still carries its superblock, and
+  # mdadm would refuse to build a new array over it - or worse, a stale
+  # superblock gets picked up at the next boot and assembled as an array this
+  # box knows nothing about. Reinstalling a box that already had a mirror is
+  # the ordinary case, not the exotic one.
+  mdadm --zero-superblock --force "$P3" >/dev/null 2>&1 || true
+  mdadm --zero-superblock --force "$MP1" >/dev/null 2>&1 || true
+
+  # stdin from /dev/null deliberately. mdadm asks "Continue creating array?"
+  # when it finds something it recognises on a member, and an unattended
+  # install has no console to answer from: with a closed stdin that question
+  # is a loud refusal instead of a machine that hangs for ever with the disk
+  # half written.
+  #
+  # No --assume-clean. It would skip the initial resync and mark two legs
+  # holding different bytes as in sync - which is a lie told to the one
+  # subsystem whose whole job is to know which copy is good. The resync runs
+  # in the background and the box is usable while it does.
+  say "  building the mirror (it synchronises in the background)"
+  mdadm --create /dev/md0 --run --level=1 --raid-devices=2 --metadata=1.2 \
+        --homehost="$HOSTNAME_NEW" --name=records "$P3" "$MP1" \
+        </dev/null >/tmp/mdadm.log 2>&1 \
+    || { sed 's/^/  /' /tmp/mdadm.log >&2
+         die "mdadm could not create the records mirror - see /tmp/mdadm.log"; }
+  RECORDS_DEV=/dev/md0
+fi
+
 say "formatting"
 mkfs.vfat -F32 "$P1" >/dev/null
 mkfs.ext4 -q -F -L hexarouting "$P2" >/dev/null
-mkfs.ext4 -q -F -L hexa-records "$P3" >/dev/null
+mkfs.ext4 -q -F -L hexa-records "$RECORDS_DEV" >/dev/null
 
 say "copying the system"
 rm -rf "$MNT"; mkdir -p "$MNT"
@@ -618,7 +863,7 @@ mkdir -p "$MNT/boot/efi"
 say "fstab"
 ROOT_UUID=$(blkid -s UUID -o value "$P2")
 EFI_UUID=$(blkid -s UUID -o value "$P1" 2>/dev/null || true)
-LOG_UUID=$(blkid -s UUID -o value "$P3")
+LOG_UUID=$(blkid -s UUID -o value "$RECORDS_DEV")
 {
   echo "UUID=$ROOT_UUID / ext4 errors=remount-ro 0 1"
   [ "$EFI" = 1 ] && [ -n "$EFI_UUID" ] && \
@@ -626,6 +871,12 @@ LOG_UUID=$(blkid -s UUID -o value "$P3")
   # nofail: a box that will not boot because the RECORDS volume is missing is
   # a box that cannot be logged into to find out why. It must come up and
   # complain, which the self-test does.
+  #
+  # The UUID is the filesystem's, so this line is identical on a mirrored box
+  # and on a one-disk box: what changed underneath is which device carries the
+  # filesystem, and fstab was never told the device. nofail matters more with a
+  # mirror, not less - a degraded array that the kernel starts late must not be
+  # the reason a box with working records does not boot.
   echo "UUID=$LOG_UUID /var/log/hexarouting ext4 defaults,nofail 0 2"
 } > "$MNT/etc/fstab"
 mkdir -p "$MNT/var/log/hexarouting"
@@ -687,6 +938,34 @@ say "boot tuning"
 chroot "$MNT" /usr/lib/hexarouting/apply-tuning >/dev/null 2>&1 || true
 chroot "$MNT" update-grub >/dev/null 2>&1 || true
 
+# ------------------------------------------------------- the records mirror
+#
+# The installed system has to know the array exists. mdadm assembles arrays
+# whose homehost matches even with no configuration at all, and relying on
+# that leaves the box's own account of its disks empty: somebody looking at a
+# machine whose records volume did not mount would find nothing on it saying
+# there was ever supposed to be a mirror.
+#
+# Written from "mdadm --detail --scan", which reports the array the kernel
+# actually has rather than the one this script meant to create.
+if [ -n "$MIRROR" ]; then
+  say "recording the mirror in the installed system"
+  mkdir -p "$MNT/etc/mdadm"
+  {
+    echo "# Generated by hexarouting-install. Do not edit by hand."
+    echo "DEVICE partitions"
+    echo "HOMEHOST <system>"
+    mdadm --detail --scan "$RECORDS_DEV"
+  } > "$MNT/etc/mdadm/mdadm.conf"
+  # The initramfs keeps its own copy of mdadm.conf. Nothing at boot depends on
+  # it here - the records are not the root filesystem, so the array is
+  # assembled later, by udev, in the real root - but an initramfs whose copy
+  # names no array at all is a second answer to "what disks does this box
+  # have", and whoever debugs a boot will find that one first.
+  chroot "$MNT" update-initramfs -u >/dev/null 2>&1 || \
+    say "  (update-initramfs did not run; the boot does not depend on it)"
+fi
+
 # --------------------------------------------------------------- credentials
 #
 # Last, because it is the step that turns a disk into a box somebody can log
@@ -715,6 +994,10 @@ echo "PermitRootLogin yes" > "$MNT/etc/ssh/sshd_config.d/hexarouting.conf"
 say "verifying the disk that was just written"
 VERIFY_BAD=0
 verify_installed "$MNT" || VERIFY_BAD=1
+# And the second disk, when there is one: an array that came up with one leg
+# is the failure the mirror exists to prevent, and it must not be reported as
+# a finished install.
+[ -n "$MIRROR" ] && { verify_mirror /proc/mdstat "$RECORDS_DEV" || VERIFY_BAD=1; }
 
 for d in run sys proc dev/pts dev; do umount -l "$MNT/$d" 2>/dev/null || true; done
 [ "$EFI" = 1 ] && umount "$MNT/boot/efi" 2>/dev/null || true
@@ -733,6 +1016,11 @@ fi
 echo
 say "installed on $DISK"
 echo "    hostname $HOSTNAME_NEW, timezone $TIMEZONE, root password set."
+if [ -n "$MIRROR" ]; then
+  echo "    The connection records are on $DISK and $MIRROR. The mirror may"
+  echo "    still be synchronising; it survives the reboot and finishes on its"
+  echo "    own, and the boot self-test says so on every boot from now on."
+fi
 echo "    The first boot applies isolcpus and hugepages, so the box is fully"
 echo "    tuned from the second boot on."
 

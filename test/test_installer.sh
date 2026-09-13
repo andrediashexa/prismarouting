@@ -444,6 +444,326 @@ vcase "there is no root account" \
       "no root line" 'printf "daemon:*:19000:0:99999:7:::\n" > etc/shadow'
 
 rm -rf "$vgood" "$vbin"
+
+echo
+echo "=== the records mirror: the answer, and what it refuses (#83) ==="
+#
+# With one disk a single failure loses the RECORDS, which no reinstall puts
+# back. The second disk is destroyed by the same "yes" that destroys the
+# first, so every refusal here is a disk that must stay untouched - and the
+# acceptance matters as much, because a mirror question that refuses
+# everything is a box that silently never gets a mirror.
+#
+# Check mode, so this costs milliseconds instead of a boot cycle per case.
+
+# A partition, not a whole disk. The mirror takes the whole disk because
+# everything on it is destroyed, and /sys/block has an entry only for whole
+# disks - which is the same question as "can its size be read".
+PART=$(lsblk -rno NAME,TYPE 2>/dev/null | awk '$2 == "part" { print $1; exit }')
+run 1 "the mirror named as the disk being installed: refused" $OK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR="$DISK"
+case "$LAST_OUT" in
+  *"has to be a SECOND disk"*) ok "and says a mirror needs a second disk" ;;
+  *) bad "refused without saying why: $LAST_OUT" ;;
+esac
+run 1 "a mirror that is not a block device: refused" $OK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR=/tmp/not-a-disk
+if [ -n "$PART" ]; then
+  run 1 "a mirror that is a partition rather than a whole disk: refused" $OK \
+      HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR="/dev/$PART"
+  case "$LAST_OUT" in
+    *"not a whole disk"*) ok "and says the mirror takes a whole disk" ;;
+    *) bad "refused, but not for being a partition: $LAST_OUT" ;;
+  esac
+else
+  echo "  SKIP: no partition on this machine to offer as a mirror"
+fi
+
+# Too small for the records it is supposed to hold. md sizes a mirror by its
+# SMALLEST member, so a short leg is an array smaller than the answer - and
+# nobody would find that out until the volume filled early, a year in.
+#
+# An unbound loop device is zero bytes and every Linux box has one, which is
+# what makes this case runnable anywhere. The refusal is the same one a 500 GB
+# leg gets under a 1 TB answer.
+if [ -b /dev/loop0 ] && [ "$(cat /sys/block/loop0/size 2>/dev/null || echo 1)" = 0 ]; then
+  run 1 "a mirror disk too small for the records: refused" $OK \
+      HEXA_ROOT_PASSWORD=s3cr3t HEXA_LOG_GB=2 HEXA_MIRROR=/dev/loop0
+  case "$LAST_OUT" in
+    *"a mirror is as big as its smallest disk"*)
+      ok "and says why a short disk is not a mirror" ;;
+    *) bad "refused without the reason: $LAST_OUT" ;;
+  esac
+else
+  echo "  SKIP: no zero-sized loop device to offer as a short mirror"
+fi
+
+# The acceptance. Two whole disks where the machine has them; where it has
+# one, the unbound loop device stands in as the TARGET - the installer already
+# tolerates a target whose size it cannot read, and says so - so that the disk
+# this machine does have can be the mirror. Without this case every refusal
+# above is satisfied by an installer that refuses every mirror there is.
+DISK2=$(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2 == "disk" { print "/dev/"$1 }' | sed -n 2p)
+if [ -n "$DISK2" ]; then
+  M_TARGET=$DISK; M_MIRROR=$DISK2
+elif [ -b /dev/loop0 ]; then
+  M_TARGET=/dev/loop0; M_MIRROR=$DISK
+else
+  M_TARGET=""; M_MIRROR=""
+fi
+if [ -n "$M_MIRROR" ]; then
+  run 0 "a second whole disk is accepted as the records mirror" \
+      HEXA_DISK="$M_TARGET" HEXA_HOSTNAME=cgnat01 \
+      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+      HEXA_LOG_GB=1 HEXA_MIRROR="$M_MIRROR"
+  case "$LAST_OUT" in
+    *"records mirror $M_MIRROR"*)
+      ok "and the summary repeats back the disk that will be destroyed too" ;;
+    *) bad "the summary does not name the mirror disk: $LAST_OUT" ;;
+  esac
+else
+  echo "  SKIP: this machine has no second device to mirror onto"
+fi
+
+# And the box with ONE disk, which is most of them: no mirror, no question,
+# no difference. The summary says so rather than saying nothing, because the
+# operator is confirming an install that will keep a year of records on a
+# single disk and that is worth one line.
+# shellcheck disable=SC2086
+run 0 "an install with no mirror answer is accepted exactly as before" $OK \
+    HEXA_ROOT_PASSWORD=s3cr3t
+case "$LAST_OUT" in
+  *"records mirror none (one disk"*)
+    ok "and the summary says the records will be on one disk" ;;
+  *) bad "a one-disk install does not say it has no mirror: $LAST_OUT" ;;
+esac
+
+# The mirror as an ANSWER IN THE FILE, which is the unattended path. A key the
+# installer does not know is refused rather than ignored, so a medium written
+# with "mirror" would have hung every unattended install if the parser had not
+# learned it.
+mdir=$(mktemp -d)
+printf 'hostname = cgnat-file\nmirror   = %s\n' "$DISK" > "$mdir/answers"
+run 1 "the mirror can be answered from the file, and is still validated" \
+    HEXA_DISK="$DISK" HEXA_TIMEZONE=America/Sao_Paulo \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_ANSWERS="$mdir/answers"
+case "$LAST_OUT" in
+  *"not an answer this installer knows"*)
+    bad "the answer file does not know the mirror key at all" ;;
+  *"has to be a SECOND disk"*)
+    ok "the file's mirror answer arrived and was checked like any other" ;;
+  *) bad "the mirror from the file was not used: $LAST_OUT" ;;
+esac
+rm -rf "$mdir"
+
+echo
+echo "=== the mirror menu: a letter, a path, or none ==="
+#
+# The same fake lsblk the disk menu is driven with. "none" is the DEFAULT and
+# a bare Enter takes it: a second disk in a machine is not consent to destroy
+# what is on it.
+fake=$(mktemp -d)
+cat > "$fake/lsblk" <<'LSBLK'
+#!/bin/sh
+for a in "$@"; do case "$a" in
+  -dnbo) MODE=table ;;
+  -ndo)  MODE=pkname ;;
+esac; done
+case "${MODE:-human}" in
+  table)
+    printf 'sda 34359738368 disk KINGSTON SA400\n'
+    printf 'sdb 1000204886016 disk WD Black 1TB\n'
+    printf 'sdc 8589934592 disk SanDisk Cruzer\n'
+    ;;
+  pkname) printf '\n' ;;
+  human)
+    case "$*" in *SIZE,MODEL*) _two=1 ;; *) _two=0 ;; esac
+    case "$*" in
+      *sda*) _s=' 32G'; _m='KINGSTON SA400' ;;
+      *sdb*) _s='932G'; _m='WD Black 1TB' ;;
+      *sdc*) _s='  8G'; _m='SanDisk Cruzer' ;;
+      *)     _s='?';    _m='?' ;;
+    esac
+    if [ "$_two" = 1 ]; then echo "$_s $_m"; else echo "$_s"; fi
+    ;;
+esac
+LSBLK
+cat > "$fake/findmnt" <<'FINDMNT'
+#!/bin/sh
+printf '/dev/sdc\n'
+FINDMNT
+chmod +x "$fake/lsblk" "$fake/findmnt"
+
+mpick() {  # <answer on stdin> <target disk> -> the chosen mirror, or nothing
+  printf '%s\n' "$1" | (
+    PATH="$fake:$PATH"
+    HEXA_INSTALL_LIB=1
+    export HEXA_INSTALL_LIB
+    . "$INSTALLER"
+    choose_mirror "$2" 2>/dev/null
+  )
+}
+
+out=$(mpick "" /dev/sdb)
+case "$out" in
+  "") ok "Enter alone takes no mirror: a second disk is not consent" ;;
+  *) bad "Enter alone chose a disk to destroy: '$out'" ;;
+esac
+out=$(mpick none /dev/sdb)
+case "$out" in
+  "") ok "'none' is an answer" ;;
+  *) bad "'none' chose '$out'" ;;
+esac
+out=$(mpick a /dev/sdb)
+case "$out" in
+  /dev/sda) ok "a letter picks from the list, with the target left out: $out" ;;
+  *) bad "'a' must be the first disk that is not the target, got '$out'" ;;
+esac
+out=$(mpick /dev/sda /dev/sdb)
+case "$out" in
+  /dev/sda) ok "a device path is accepted here too: $out" ;;
+  *) bad "a device path must work, got '$out'" ;;
+esac
+# An answer that is neither must RE-ASK. Taken as a device path it becomes a
+# refusal several steps later, blamed on a disk the operator never named -
+# and the one word somebody is most likely to type at a question about
+# destroying a second disk is "yes".
+out=$(mpick "yes
+a" /dev/sdb)
+case "$out" in
+  /dev/sda) ok "a word that is not an answer re-asks rather than guessing: $out" ;;
+  *) bad "'yes' then 'a' must end at the first offered disk, got '$out'" ;;
+esac
+# The target must not be offerable as its own mirror, and neither must the
+# medium: both are already destroyed or already being read.
+menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+                      . "$INSTALLER"; choose_mirror /dev/sdb 2>&1 >/dev/null))
+case "$menu" in
+  *sdb*) bad "the disk being installed was offered as its own mirror:
+$menu" ;;
+  *) ok "the disk being installed is not in the mirror list" ;;
+esac
+case "$menu" in
+  *sdc*) bad "the boot medium was offered as a mirror:
+$menu" ;;
+  *) ok "and neither is the medium this system booted from" ;;
+esac
+case "$menu" in
+  *"EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED"*)
+    ok "and the list says what choosing one costs" ;;
+  *) bad "the mirror list does not say the disk is destroyed:
+$menu" ;;
+esac
+# A machine with nothing else in it is not asked at all.
+cat > "$fake/lsblk" <<'ONE'
+#!/bin/sh
+for a in "$@"; do case "$a" in -dnbo) MODE=table ;; -ndo) MODE=pkname ;; esac; done
+case "${MODE:-human}" in
+  table) printf 'sdb 1000204886016 disk WD Black 1TB\n' ;;
+  pkname) printf '\n' ;;
+  human) echo '932G' ;;
+esac
+ONE
+chmod +x "$fake/lsblk"
+menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+                      . "$INSTALLER"; choose_mirror /dev/sdb 2>&1))
+if [ -z "$menu" ]; then
+  ok "a machine with one disk is asked nothing about mirrors"
+else
+  bad "a one-disk machine was asked a question it cannot answer:
+$menu"
+fi
+rm -rf "$fake"
+
+echo
+echo "=== the mirror is verified before the install reports success ==="
+#
+# "mdadm --create" exits ZERO having built a degraded array, so its status
+# answers "did mdadm run" and not "are the records on two disks". A mirror
+# that was born with one leg is the exact failure it exists to prevent,
+# arriving at the moment the operator is told the install worked.
+#
+# Driven against a written-out /proc/mdstat, because the only other way to
+# produce these is a machine with a disk that has just died.
+mstat=$(mktemp -d)
+vmirror() {  # <mdstat file> <device> -> output on stdout, status in $?
+  ( HEXA_INSTALL_LIB=1
+    export HEXA_INSTALL_LIB
+    . "$INSTALLER"
+    verify_mirror "$1" "$2" 2>&1 )
+}
+cat > "$mstat/good" <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vdb1[1] vda3[0]
+      2094080 blocks super 1.2 [2/2] [UU]
+
+unused devices: <none>
+MD
+out=$(vmirror "$mstat/good" /dev/md0); rc=$?
+if [ "$rc" = 0 ]; then
+  case "$out" in
+    *"2 of 2 disks present"*) ok "a mirror with both legs verifies, and says so" ;;
+    *) bad "it passed without saying what it found: $out" ;;
+  esac
+else
+  bad "a healthy mirror was reported broken: $out"
+fi
+
+cat > "$mstat/degraded" <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vda3[0]
+      2094080 blocks super 1.2 [2/1] [U_]
+
+unused devices: <none>
+MD
+out=$(vmirror "$mstat/degraded" /dev/md0); rc=$?
+if [ "$rc" = 0 ]; then
+  bad "an array created with ONE leg was reported as a mirror: $out"
+else
+  case "$out" in
+    *"created"*"DEGRADED"*) ok "a mirror born degraded is refused, and named" ;;
+    *) bad "refused without saying which check failed: $out" ;;
+  esac
+fi
+
+# Another array, degraded, and not this one. A check that grepped the file for
+# "[2/1]" would refuse an install over somebody else's disk.
+cat > "$mstat/other" <<'MD'
+Personalities : [raid1]
+md1 : active raid1 vdd1[0]
+      1046528 blocks super 1.2 [2/1] [U_]
+
+md0 : active raid1 vdb1[1] vda3[0]
+      2094080 blocks super 1.2 [2/2] [UU]
+
+unused devices: <none>
+MD
+out=$(vmirror "$mstat/other" /dev/md0); rc=$?
+if [ "$rc" = 0 ]; then
+  ok "a different array being degraded is not this install's answer"
+else
+  bad "an unrelated degraded array failed the install: $out"
+fi
+
+printf 'Personalities : [raid1]\nunused devices: <none>\n' > "$mstat/none"
+out=$(vmirror "$mstat/none" /dev/md0); rc=$?
+if [ "$rc" = 0 ]; then
+  bad "an array the kernel does not have was reported as a mirror: $out"
+else
+  case "$out" in
+    *"no array"*) ok "an array that was never created is refused" ;;
+    *) bad "refused without saying the array is missing: $out" ;;
+  esac
+fi
+
+out=$(vmirror "$mstat/absent" /dev/md0); rc=$?
+if [ "$rc" = 0 ]; then
+  bad "an unreadable /proc/mdstat passed as a verified mirror: $out"
+else
+  ok "and a /proc/mdstat that cannot be read is not a pass either"
+fi
+rm -rf "$mstat"
+
 echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
