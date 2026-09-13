@@ -919,6 +919,62 @@ It matters most in the `off` path, which is why the two landed together: an
 off run whose VPP never started fails every check, which is exactly what the
 inverted verdict would otherwise call a pass.
 
+**A third finding, and it is the same shape one level down: `make test` could
+not say which check had failed.** The report was "about one run in three under
+a lab suite", and the only evidence anybody could keep was a count of summary
+lines - because the `make test` recipe read each suite's **exit status**, and a
+suite that was killed, crashed or never started reported exactly like one that
+had been read and failed. Naming the check took a runner that reads the verdict
+line instead and reports four states: `pass`, `FAIL`, `NOT MEASURED` and
+`NO VERDICT`, the last of which did not exist.
+
+With that in place the defect was named in one run and then measured without
+any race at all: `wait-for-vpp` counted **polls** and printed them as
+**seconds**, so a quiet period of three ended at 2007 ms and a thirty second
+timeout gave up at 29069 ms while printing "within 30s". The check that lost
+stimulates a two second wait; the banner fell 9 ms after the stimulus, and
+which won was decided by how long a `fork` took. Pure CPU saturation never
+reproduced it, because that slows the poll loop too.
+
+It also produced the third state for a timing check, the same shape `NO VPP`
+took: `test_boot_wait.sh` measures the **stimulus** rather than the run, so a
+dataplane that answered on time and was announced anyway is a failure, while
+one that answered late says nothing about the product. `NOT MEASURED` is not a
+pass - the run still exits non-zero - so a quiet period that shrank cannot
+reach green by waiting for a busy machine.
+
+#### What the box says about its own cores, and a file this product does not own
+
+[#172](https://github.com/andrediashexa/hexarouting/issues/172) part 3 -
+*delivered*. The console had reported `corelist-workers 1-7` since the tuner
+existed, and that is the **file**. Nothing on an installed box had ever read
+what the dataplane **got**. The two come apart with no symptom: a VPP running
+since before the profile was rewritten keeps the cores it started with, and a
+kernel command line that did not get updated leaves a poll-mode worker sharing
+its core with the scheduler. The box forwards either way, and a thread that
+never sleeps reads 100% busy either way.
+
+The self-test now compares `/etc/vpp/startup.conf`, `/proc/<vpp pid>/task/*/status`
+and `/sys/devices/system/cpu/isolated` - three places, none of them the one
+that made the decision, and deliberately not `vppctl show threads`, which is
+VPP reporting on itself.
+
+The CPU **bound** the issue asked for turned out to be already applied, by the
+kernel, and the lab records it rather than the documentation asserting it: on a
+two-cpu box with `isolcpus=1`, pid 1 itself has `Cpus_allowed_list: 0` and
+`bgpd` has `ppid 1` and the same mask. Inherited, not enforced: `taskset` onto
+the isolated core is accepted. So no cpuset is shipped, and the refusal rests
+on the size of that residue rather than on a claim that there is none. One
+earlier run read `0-1` and has **not** been explained; it predates the two
+lines that would settle it, and both are now read on every run of the lab.
+
+[#220](https://github.com/andrediashexa/hexarouting/issues/220) came out of the
+same week and is worth its own line because of what it touched: the version
+stamp marked the repository as a git safe directory on **every** run, with no
+de-duplication, in `~/.gitconfig` - a file this product does not own. Measured:
+2325 copies of one entry, and 552 of the distinct paths were `/tmp` clones that
+no longer exist.
+
 #### A protocol the box offered and could not run
 
 [#187](https://github.com/andrediashexa/hexarouting/issues/187) - *delivered*.
