@@ -749,8 +749,10 @@ session still does not reach Established, because IPv6 link-local multicast is
 not punted over a `linux_cp` pair — `ff02::1/128` is a receive-only MFIB entry
 and linux_cp puts nothing on the `ip6-multicast` arc. FRR learns an unnumbered
 peer's address from that Router Advertisement and from nothing else. The same
-hole affects IPv6 ND from a neighbour, OSPFv3 and IS-IS over IPv6, which makes
-it a dependency of [#187](https://github.com/andrediashexa/hexarouting/issues/187).
+hole affects IPv6 ND from a neighbour, and it was recorded as a dependency of
+[#187](https://github.com/andrediashexa/hexarouting/issues/187) on the strength
+of "IPv6 multicast does not reach FRR" as a general statement. It is not one:
+see the OSPFv3 section below, where the dependency is measured and refuted.
 
 #### The box an operator is handed, in the first five minutes
 
@@ -835,8 +837,10 @@ shape that takes is a decision.
 #213 is the one that matters most, for the reason that puts anything at the top
 of this file: **the product accepts the configuration and cannot deliver it.**
 The VTY takes an unnumbered neighbour, FRR holds the statement, the peer appears
-in `show bgp summary` — at `Idle`, `remote AS 0`, forever. It is also a
-dependency of [#187](https://github.com/andrediashexa/hexarouting/issues/187).
+in `show bgp summary` - at `Idle`, `remote AS 0`, forever. It was also recorded
+as a dependency of
+[#187](https://github.com/andrediashexa/hexarouting/issues/187), and it is not:
+the section below has the measurement.
 
 #### The machinery that checks the product, checked
 
@@ -871,6 +875,66 @@ opposite work.
 It matters most in the `off` path, which is why the two landed together: an
 off run whose VPP never started fails every check, which is exactly what the
 inverted verdict would otherwise call a pass.
+
+#### A protocol the box offered and could not run
+
+[#187](https://github.com/andrediashexa/hexarouting/issues/187) - *delivered*.
+The class that goes above everything else here, and the same one as #99 one
+protocol later: **the product offered something it could not do.** `router
+ospf6` was a word the VTY did not model, so it went to FRR untouched, committed,
+and `ospf6d` was enabled in no file the product shipped. The statement was
+reachable only by typing it blind - `?` never listed it and TAB never completed
+it - and `lab/igp.sh` asserted the resulting refusal as though a protocol the
+box refuses were a finished feature.
+
+**The dependency on #213 did not exist, and refuting it is what unblocked
+this.** It was recorded from "IPv6 multicast is not punted over a `linux_cp`
+pair", which is true of ICMPv6 and false of OSPFv3. Measured on the lab's own
+pair, with tcpdump on the TAP:
+
+| sent at the pair | arrives on the TAP |
+|---|---|
+| IPv4 proto 89 (OSPFv2) to `224.0.0.5` | yes |
+| IPv6 proto 89 (OSPFv3) to `ff02::5` | **yes** |
+| ICMPv6 type 134 (RA) to `ff02::1` | no |
+
+VPP has no local handler for protocol 89, so an OSPFv3 packet falls through
+`ip6-local` to `ip6-punt`, where `linux_cp`'s per-pair punt redirect hands it
+out of the TAP - the same reason OSPFv2 has always worked. ICMPv6 is the
+exception because VPP handles ICMPv6 itself, and that is #213's own scope.
+
+So the answer to the question the issue asked - take it out of the command
+tree, or make it work - was decided by the measurement. The adjacency reaches
+`Full` and the prefix reaches the VPP FIB, with no punt beyond the one OSPFv2
+uses:
+
+```
+2001:db8:66::/64 fib:0 index:19 locks:2
+  lcp-rt-dynamic refs:1 src-flags:added,contributing,active,
+```
+
+The installer and the boot self-test now carry `ospf6d` beside the other three;
+the VTY models `router ospf6` and `ipv6 ospf6 …` so both are discoverable; and
+the one OSPFv2 finding that is also true of OSPFv3 - the inherited-MTU stall,
+which stops an OSPFv3 adjacency short of `Full` in exactly the same way - fires
+on an OSPFv3 stanza, while the findings that have no OSPFv3 spelling stay
+silent rather than becoming an alarm that cannot be right.
+
+`lab/igp.sh` asserts the prefix in the VPP FIB, and it no longer holds a daemon
+list of its own: it runs `appliance/install.sh` into a fakeroot and starts what
+the installer enabled. That is the #99 shape one layer up - the lab's copy of
+the product's list was what let `ospf6d` go missing for six releases - and it
+is now impossible for the two to disagree without this lab failing.
+
+Two things were found on the way and fixed where they were:
+`test/test_selftest.sh` carried a **duplicated verdict block**, `exit 0` and
+all, so its last third had never run - twelve assertions, including the #182
+pair checks, reporting ALL TESTS PASSED without executing; and a claim that
+ospf6d *rewrites* `interface <name> area <a>` into the interface stanza was
+written into `lab/frr-readback.sh` and then refuted by that lab on its first
+run: FRR 10.7.1 answers `% Unknown command`. The probe that produced the wrong
+claim had typed the target spelling before looking for it, which is the trap
+section 4d of that file already existed to warn about.
 
 #### Installation — blocked by nothing, paid on every box
 

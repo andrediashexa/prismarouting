@@ -19,7 +19,7 @@ flowchart LR
     subgraph BOX["Appliance HexaRouting"]
         direction TB
         VPP["VPP / DPDK<br/>plugin bpa"]
-        FRR["FRR<br/>bgpd · ospfd · isisd"]
+        FRR["FRR<br/>bgpd · ospfd · ospf6d · isisd"]
         VTY["hexash<br/>VTY única"]
         VPP <-->|"linux_cp (TAP)"| FRR
         VTY -.->|configura| VPP

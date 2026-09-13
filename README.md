@@ -39,7 +39,7 @@ flowchart LR
 
     subgraph BOX["HexaRouting appliance"]
         VPP["VPP dataplane<br/>bpa plugin"]
-        FRR["FRR<br/>bgpd / ospfd / isisd"]
+        FRR["FRR<br/>bgpd / ospfd / ospf6d / isisd"]
         VTY["hexash<br/>single VTY"]
         VPP <-->|linux_cp TAP| FRR
         VTY -.->|config| VPP

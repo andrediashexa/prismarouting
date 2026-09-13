@@ -14,10 +14,26 @@ Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças ex
 router static
 router bgp <AS>
 router ospf
+router ospf6
 router isis <nome>
 ```
 
 Tudo que roteia fica debaixo de `router`: os protocolos, e também as rotas que ninguém aprende — as estáticas. Os protocolos são do FRR, alcançado pelo TAP do `linux_cp`; depois de entrar no protocolo, a sintaxe é a do FRR.
+
+`router ospf` e `router ospf6` são **instâncias separadas**, não duas metades da mesma coisa: a primeira carrega IPv4, a segunda carrega IPv6, e uma caixa pode rodar as duas ao mesmo tempo. Elas também não ligam a interface do mesmo jeito. O OSPFv2 aceita `network <prefixo> area <área>` dentro do bloco; o OSPFv3 não tem `network` nenhum - quem coloca a interface na área é `ipv6 ospf6 area <área>` dentro do bloco `interface`:
+
+```
+configure
+ router ospf6
+  ospf6 router-id 10.0.0.1
+  exit
+ interface TenGig0/8/0
+  ipv6 ospf6 area 0
+  exit
+ commit
+```
+
+Se você digitar só o `router ospf6` e esperar que ele encontre as interfaces sozinho, a configuração é aceita e nenhuma adjacência sobe: falta a linha na interface.
 
 ## Rotas estáticas: o bloco `router static`
 
@@ -100,7 +116,7 @@ Endereços locais e rotas por interfaces que o VPP não possui — a de gerênci
 
 ## Quais daemons rodam
 
-`zebra`, `mgmtd` e `staticd` sobem sempre. `bgpd`, `ospfd` e `isisd` são habilitados pelo instalador — o pacote do Debian os traz desligados, e uma caixa instalada sem isso oferecia os três no VTY sem rodar nenhum.
+`zebra`, `mgmtd` e `staticd` sobem sempre. `bgpd`, `ospfd`, `ospf6d` e `isisd` são habilitados pelo instalador - o pacote do Debian os traz desligados, e uma caixa instalada sem isso oferecia os protocolos no VTY sem rodar nenhum.
 
 `commit check` recusa um `router <protocolo>` cujo daemon não está de pé:
 
@@ -117,6 +133,8 @@ O autoteste de boot informa quais estão respondendo.
 ## 1. MTU herdada trava o OSPF
 
 O TAP do `linux_cp` vem com 9000. Uma interface que herda esse valor sem o outro lado concordar deixa a adjacência OSPF parada em Exchange. Ajuste com `mtu` dentro do bloco `interface` — ele muda a interface do dataplane **e** o TAP dela, juntos.
+
+Vale igual para o OSPFv3: ele também compara MTU antes de fechar a adjacência, e trava do mesmo jeito, sem log nenhum dizendo por quê. O `commit check` avisa quando as duas metades da interface discordam; `ipv6 ospf6 mtu-ignore` é a saída quando os dois lados não podem ser igualados.
 
 ## 2. IS-IS não vai sobre IP
 

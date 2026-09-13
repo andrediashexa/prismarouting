@@ -108,7 +108,13 @@ cat > "$BIN/vtysh" <<'EOF'
 [ -f "$FAKE/frr_running" ] || exit 1
 case "$*" in
   *"show running-config"*) cat "$FAKE/frr_running" ;;
-  *"show daemons"*) echo "bgpd ospfd isisd zebra staticd mgmtd" ;;
+  # The daemon list a case can override, because "which daemons are up" is
+  # itself something the self-test has to get right. The default is a box the
+  # installer has finished with: every routing daemon the product claims,
+  # ospf6d included (#187).
+  *"show daemons"*)
+    if [ -f "$FAKE/frr_daemons" ]; then cat "$FAKE/frr_daemons"
+    else echo "bgpd ospfd ospf6d isisd zebra staticd mgmtd"; fi ;;
   *) : ;;
 esac
 exit 0
@@ -379,8 +385,12 @@ fi
 rm -f "$FAKE/vppctl_ok" "$FAKE/hexarouting.conf"
 unset HEXA_CONFIG
 
-if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
-echo; echo "$fail FAILURES"; exit 1
+# There was a SECOND copy of the verdict block here, `exit 0` and all, left
+# behind when the IPFIX section above was inserted. Everything below it - the
+# pair checks of #182, the local0 case, and now the daemon list - had never
+# run once: the file reported ALL TESTS PASSED after two thirds of itself.
+# A test that exits before its assertions is the same defect class as a lab
+# that crashes before reaching one, and it is invisible for the same reason.
 
 echo "=== a dataplane interface with no linux_cp pair (#182) ==="
 # The defect this file's newest check exists for. FRR only ever sees a pair:
@@ -500,6 +510,35 @@ else
   ok "and neither warned nor failed over it"
 fi
 rm -f "$FAKE/vppctl_ok" "$FAKE/show_interface" "$FAKE/show_lcp"
+
+echo "=== the routing daemons, which is the list the VTY's offers rest on ==="
+# #187: the VTY accepts `router ospf6`, and ospf6d was in no list the product
+# shipped - not the installer's, not this check's. A box that cannot run a
+# protocol it can be configured for has to say so at the console, before
+# somebody configures it.
+: > "$FAKE/frr_running"
+printf 'bgpd ospfd isisd zebra staticd mgmtd\n' > "$FAKE/frr_daemons"
+run
+if said '\[warn\] routing daemons not running:.*ospf6d'; then
+  ok "a box without ospf6d is told it is missing ospf6d"
+else
+  bad "ospf6d missing went unreported: $(printf '%s\n' "$OUTPUT" | grep -i 'routing daemons' || echo '<nothing>')"
+fi
+# The other half. Without it the check above is also satisfied by a self-test
+# that warns whatever the box is running, which is an alarm nobody reads.
+# Asserted on the WARNING being gone rather than on ospf6d appearing in the
+# "up" line: that line prints vtysh's own answer, so the name is in it whether
+# or not this check looked for it.
+printf 'bgpd ospfd ospf6d isisd zebra staticd mgmtd\n' > "$FAKE/frr_daemons"
+run
+if said '\[warn\] routing daemons not running'; then
+  bad "a complete box was still warned: $(printf '%s\n' "$OUTPUT" | grep -i 'routing daemons' || echo '<nothing>')"
+elif said '\[ ok \] routing daemons up:'; then
+  ok "and a box that has every one of them is reported up, not warned"
+else
+  bad "a complete box said nothing about its routing daemons"
+fi
+rm -f "$FAKE/frr_daemons" "$FAKE/frr_running"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

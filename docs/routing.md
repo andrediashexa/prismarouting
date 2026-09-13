@@ -838,11 +838,11 @@ knowing apart when reading a screenshot on a ticket.
 ## Which daemons run
 
 `frrinit.sh` starts `zebra`, `mgmtd` and `staticd` unconditionally. Everything
-else is a line in `/etc/frr/daemons`, and Debian ships `bgpd=no`, `ospfd=no`
-and `isisd=no`.
+else is a line in `/etc/frr/daemons`, and Debian ships `bgpd=no`, `ospfd=no`,
+`ospf6d=no` and `isisd=no`.
 
 So a box installed without changing that runs the dataplane, the VTY and static
-routes, and **not one routing protocol** — while the VTY offers all three, `?`
+routes, and **not one routing protocol** - while the VTY offers all four, `?`
 lists them and `commit` accepts them
 ([#99](https://github.com/andrediashexa/hexarouting/issues/99)).
 
@@ -852,6 +852,19 @@ went unnoticed for as long as it did — and what hid it is that `lab/routing.sh
 starts those daemons **by hand**, so the lab proved a control plane the shipped
 box did not have. `lab/install-iso.sh` now asserts them on the installed disk,
 which is the only place the question means anything.
+
+`ospf6d` was the fourth, and it was missing from that list for longer than the
+other three
+([#187](https://github.com/andrediashexa/hexarouting/issues/187)). `router
+ospf6` was a word the VTY did not model and handed straight to FRR, so it
+committed on a box where the daemon serving it was enabled nowhere. The
+decision the issue asked for - take the statement out of the command tree, or
+make it work - was settled by measuring rather than arguing: an OSPFv3
+adjacency over a `linux_cp` pair reaches Full and its prefix reaches the VPP
+FIB, over the same punt path OSPFv2 has always used. `lab/igp.sh` asserts it
+there, and it no longer holds a daemon list of its own: it runs
+`appliance/install.sh` into a fakeroot and starts what the installer enabled,
+so the lab cannot go on proving a control plane the shipped box does not have.
 
 `commit check` refuses a `router <protocol>` statement whose daemon is not
 running:
@@ -987,7 +1000,7 @@ was found by.
 | Piece | Role |
 |-------|------|
 | VPP | Dataplane: forwarding and CGNAT (`bpa` plugin) |
-| FRR | Control plane: `bgpd`, `ospfd`, `isisd`, `zebra` |
+| FRR | Control plane: `bgpd`, `ospfd`, `ospf6d`, `isisd`, `zebra` |
 | `linux_cp` + `linux_nl` | The glue between them |
 | `hexash` | HexaRouting's configuration shell |
 
@@ -1022,6 +1035,22 @@ says "MTU mismatch"; the operator sees an adjacency that never completes.
 With the MTU aligned, the adjacency reached **`Full` in 8 seconds**.
 
 * MTU **MUST** be explicit configuration, never inherited.
+
+**OSPFv3 has the same stall, for the same reason.** RFC 5340 keeps the
+Interface MTU field in the database description packet, so a `linux_cp` pair
+at 9000 against a 1500 wire stops an OSPFv3 adjacency short of `Full` exactly
+as it does an OSPFv2 one - measured on `lab/igp.sh`'s topology, and measured
+again reaching `Full` within seconds of the two being made to agree. The
+warning `commit check` prints therefore fires on an OSPFv3 interface as well,
+and `ipv6 ospf6 mtu-ignore` and `ipv6 ospf6 passive` silence it the way the
+`ip ospf` spellings do
+([#187](https://github.com/andrediashexa/hexarouting/issues/187)).
+
+It is the ONLY OSPFv2 finding that carries over. Everything else
+`ospf_findings` reports is about a statement OSPFv3 does not have - `network
+… area`, `passive-interface`, an interface inside an IPv4 CGNAT pool - so an
+OSPFv3 stanza is met with silence rather than with a warning that cannot be
+right. An alarm that is always on is one nobody reads.
 
 ### Configuring it
 
