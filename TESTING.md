@@ -73,7 +73,7 @@ lab is going to notice it:
 | `test_bpa_rewrite.c` | The outbound rewrite's checksum corrections, which are carried on the session and added per packet. That the correction is ADDED, because VPP's `ip_csum_add_even()` subtracts and applying a delta with it is the bug [#63](https://github.com/andrediashexa/hexarouting/issues/63) shipped and reverted; that the IPv4 header, TCP/UDP and ICMP each take a DIFFERENT correction; that a UDP datagram which arrived with no checksum leaves with none, and that a computed zero leaves as `0xffff`. Every checksum is compared against a full recomputation and verified the way a receiver does, on 20000 random packets as well as the named cases. |
 | `test_bpa_ftp.c` | The FTP sequence shift: `bpa_seq_after` across the 2^32 boundary, a retransmission of data sent **before** a rewrite, and a control connection rewritten twice. No lab is going to send four gigabytes to reach the wrap. |
 | `test_context_map.py` | That every repository path named in `docs/context.md` exists, and that `README.md` still reaches it. A map naming files that are no longer there is worse than no map — it is confidently wrong, and this is the half of it that rots without anyone noticing. |
-| `test_run_all_labs.sh` | That the lab suite tells a defect apart from a machine that could not run it. A VPP that never started, or a capture in which every `vppctl` call was refused and not one check went green, is reported `NO VPP` and counted apart - reporting it as `FAIL` sends whoever reads it to the product when the answer is the machine's load. Driven with stub labs, because arranging a real VPP that fails to start is not something `make test` can do. |
+| `test_run_all_labs.sh` | That the lab suite tells a defect apart from a machine that could not run it, **and that the verdict says why**. A VPP that never started, or a capture in which every `vppctl` call was refused and not one check went green, is reported `NO VPP` and counted apart - reporting it as `FAIL` sends whoever reads it to the product when the answer is the machine's load. Since [#253](https://github.com/andrediashexa/hexarouting/issues/253) it also pins what that verdict carries: which of "the wait expired" and "the dataplane went" it was, and VPP's own log under it. Driven with stub labs, because arranging a real VPP that fails to start is not something `make test` can do. |
 | `test_run_tests.sh` | That `make test` tells a failed assertion apart from a suite that never reached one. A killed suite, and one that could not start at all, are reported `NO VERDICT` with how far they got; a suite that prints a pass and then exits non-zero is not a pass. Driven with stub suites written to end in each of those ways. |
 | `test_boot_wait.sh` | The three outcomes of the boot wait, and - since #218 - the difference between the quiet period being too short and the machine being unable to time it. The check stimulates a two-second wait against a three-second quiet period and measures when the fake dataplane actually answered: on time and announced anyway is a defect, a margin late is `NOT MEASURED`. |
 | `test_stop_is_not_a_teardown.py` | What this appliance is allowed to do to itself on the way down. A stop-time command MAY ask a running process to flush state it is already holding and MUST NOT reach the configuration surface - so `vppctl bpa stop-drain` on `vpp.service` is allowed and an `ExecStop` that deletes a pool is not, wherever it is typed, including in the drop-in that already has one. The line is drawn on the command and not on the file name, because the file-name rule is silent on the mutation that matters most. Silent in the worst way: an `ExecStop` fires on every RESTART, so it would arrive during an ordinary upgrade on a box that had been working [#238](https://github.com/andrediashexa/hexarouting/issues/238). |
@@ -249,6 +249,27 @@ A lab under which the dataplane never came up is reported as `NO VPP` and
 counted apart from both, because "the box never answered" and "the box
 answered and refused" need opposite work. `test/test_run_all_labs.sh` pins
 that classifier with stub labs.
+
+**The verdict carries VPP's own log**, because the container it ran in is
+gone. `tools/lab.sh` throws each lab's container away, so `/tmp/vpp.log` dies
+with it and stdout is the only channel out - `lab/verdict.sh` prints the tail
+of that log whenever a lab ends without passing and `vppctl` can no longer
+reach a dataplane, and the suite prints it under the verdict:
+
+```
+  extblocks+workers  NO VPP - the dataplane never came up
+     the dataplane was gone by the verdict. VPP's log:
+       NO DATAPLANE at the verdict: vppctl cannot reach VPP. Last of /tmp/vpp.log:
+         | vpp[20]: received signal SIGSEGV, PC 0x7f2a1c0b4e21
+```
+
+The first line is the answer a `NO VPP` used to leave open, and the two halves
+need opposite work: *the wait for the dataplane expired* is a box that could
+not start one, *the dataplane was gone by the verdict* is one that died. A
+capture carrying neither says so, which points at the 900 s cap instead. The
+log tail is evidence and not a verdict: a lab that measured something and then
+lost VPP is still a `FAIL`, because calling that a machine problem would hide a
+real crash ([#253](https://github.com/andrediashexa/hexarouting/issues/253)).
 
 ## 3. Real hardware — two VMs, real Internet
 

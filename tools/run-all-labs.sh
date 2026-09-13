@@ -335,6 +335,55 @@ lab_no_vpp() {
   return 0
 }
 
+# Why the dataplane was not there, in the lab's own words.
+#
+# A NO VPP verdict used to be one line with nothing under it, while FAIL prints
+# the red checks and NOT MEASURED prints the reading it missed. So the one
+# state whose whole point is "look at the machine, not at the product" was the
+# one that gave the reader nothing to look at. #253 is that bill: a release run
+# lost extblocks+workers to NO VPP and could not say whether the 30 s wait had
+# expired or VPP had gone, which are opposite jobs - a box too slow to start a
+# dataplane, against a dataplane that died.
+#
+# The capture holds the answer, and which marker is in it IS the answer:
+#
+#   "VPP did not start"   the wait at the top of the lab expired. The lab tails
+#                         /tmp/vpp.log underneath it.
+#   "NO DATAPLANE"        lab/verdict.sh, at the end of a lab that did not
+#                         pass and whose vppctl can no longer reach VPP. Ten
+#                         labs have no wait guard at all, so for those this is
+#                         the only marker there can be.
+#
+# Neither is a third answer and not a gap: nothing printed a log, so the lab
+# was killed - the 900 s cap, the cgroup - before it could. Saying that is the
+# honest report of it, and it points at a different place again.
+#
+# Twenty-one lines because that is what the labs write: "VPP did not start"
+# plus tail -20, and vpp_gone_report's marker plus tail -20. Cutting it shorter
+# would drop the end of a backtrace, which is the half that names the plugin.
+no_vpp_reason() {
+  _mark=""
+  printf '%s' "$1" | grep -q "VPP did not start" && _mark="VPP did not start"
+  if [ -z "$_mark" ] && printf '%s' "$1" | grep -q "NO DATAPLANE"; then
+    _mark="NO DATAPLANE"
+  fi
+  if [ -z "$_mark" ]; then
+    echo "     and the capture carries no VPP log: the lab was killed, or it"
+    echo "     died, before it could print one. Run it alone to get one."
+    return
+  fi
+  if [ "$_mark" = "VPP did not start" ]; then
+    echo "     the wait for the dataplane expired. VPP never answered:"
+  else
+    echo "     the dataplane was gone by the verdict. VPP's log:"
+  fi
+  # '%s\n' and not '%s': the capture comes out of a command substitution, so
+  # its last line has no newline, and a range that reaches the end of it ran
+  # the last log line into the NEXT lab's verdict line. Found by a mutation,
+  # which then could not find the lab whose block it had just broken.
+  printf '%s\n' "$1" | sed -n "/$_mark/,\$p" | head -21 | sed 's/^/       /'
+}
+
 # One lab's verdict. Called as each batch finishes, so the suite shows progress
 # instead of going quiet for twelve minutes.
 report() {
@@ -344,6 +393,7 @@ report() {
   # product that nothing measured.
   if lab_no_vpp "$_out"; then
     printf '  %-18s NO VPP - the dataplane never came up\n' "$_n"
+    no_vpp_reason "$_out"
     novpp=$((novpp+1))
     return
   fi
@@ -391,6 +441,7 @@ report_off() {
   # report the off modes green precisely when they proved nothing.
   if lab_no_vpp "$_out"; then
     printf '  %-18s NO VPP - the dataplane never came up\n' "$_n"
+    no_vpp_reason "$_out"
     novpp=$((novpp+1))
     return
   fi

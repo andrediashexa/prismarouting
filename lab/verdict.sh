@@ -70,10 +70,60 @@ expect_timed() {
   fi
 }
 
+# What the dataplane said on its way out, when it is not there at the verdict.
+#
+# #253: a "+workers" lab in a release suite created its host interface and then
+# every vppctl call in it was refused. The suite reported NO VPP, which was the
+# right verdict, and had nothing to say WHY - because tools/lab.sh gives each
+# lab a container it throws away, so /tmp/vpp.log dies with it. The question
+# the run could not answer is whether the 30 s wait at the top of the lab
+# expired or VPP answered and then went, and those two need opposite work.
+#
+# Printed here rather than copied out of the container. stdout is the only
+# channel that outlives a "docker run --rm", and tools/run-all-labs.sh already
+# captures it per lab and prints it whole. Copying the file to /src would put
+# every lab's copy of one name into the shared bind mount, where concurrent
+# labs overwrite each other and a leftover from the last run reads as this
+# one's.
+#
+# Only on a verdict that is not a pass, and only when vppctl cannot reach a
+# dataplane. Labs stop VPP on purpose - ipfix-stop, ipfix-outbuf, oom and snmp
+# each kill it and assert what happens next - so an unconditional dump puts a
+# page of log underneath a pass.
+#
+# It says what it saw and nothing more. Ten labs - among them icmp-tcp, which
+# is the one tools/run-all-labs.sh names for refusing on line 2 of its own
+# output - start VPP with no wait guard at all, so for those this is the ONLY
+# place the log can reach a reader, and "it answered and then went" would be a
+# claim nothing here checked. Which of the two it was is read off the capture
+# instead: "VPP did not start" is the wait expiring, this marker alone is not.
+#
+# THE MARKER IS EVIDENCE AND NOT A VERDICT. tools/run-all-labs.sh deliberately
+# does NOT read it as "the dataplane never came up": a lab that measured
+# something and then lost VPP stays a FAIL, because calling that a machine
+# problem hides a real crash. All this does is put the log where the reader is.
+vpp_gone_report() {
+  vppctl show version >/dev/null 2>&1 && return 0
+  # Both names the labs use. Most write /tmp/vpp.log; ipfix-stop and
+  # ipfix-outbuf start several boxes in one run and number them. Newest first,
+  # because the one that just went is the one being explained.
+  #
+  # LAB_TMP for the same reason lib.sh takes LAB_SRC: it is /tmp everywhere a
+  # lab actually runs, and a rule about which file gets read should not need a
+  # container to check. test/test_run_all_labs.sh drives this function with it.
+  _log=$(ls -t "${LAB_TMP:-/tmp}"/vpp.log "${LAB_TMP:-/tmp}"/vpp-*.log \
+         2>/dev/null | head -1)
+  [ -n "${_log:-}" ] && [ -r "$_log" ] || return 0
+  echo
+  echo "NO DATAPLANE at the verdict: vppctl cannot reach VPP. Last of $_log:"
+  tail -20 "$_log" | sed 's/^/  | /'
+}
+
 verdict() {
   echo
   if [ "$VERDICT_FAILURES" -gt 0 ]; then
     echo "LAB FAILED: $VERDICT_FAILURES check(s)"
+    vpp_gone_report
     exit 1
   fi
   # Reported before PASSED and exiting non-zero, because a run that could not
@@ -84,6 +134,7 @@ verdict() {
     echo "  The machine could not keep the timing those checks need, so they"
     echo "  said nothing about the product either way. Run this lab on a box"
     echo "  that is not doing something else at the same time."
+    vpp_gone_report
     exit 2
   fi
   echo "LAB PASSED"
