@@ -42,9 +42,67 @@ are to be interpreted as described in
 [#257](https://github.com/andrediashexa/hexarouting/issues/257),
 [#260](https://github.com/andrediashexa/hexarouting/issues/260),
 [#267](https://github.com/andrediashexa/hexarouting/issues/267),
+[#258](https://github.com/andrediashexa/hexarouting/issues/258),
+[#261](https://github.com/andrediashexa/hexarouting/issues/261),
+[#265](https://github.com/andrediashexa/hexarouting/issues/265),
+[#266](https://github.com/andrediashexa/hexarouting/issues/266),
 [#269](https://github.com/andrediashexa/hexarouting/issues/269).
 
 ### Internal
+
+* **A record could go out ahead of its template and every check stayed green**
+  ([#258](https://github.com/andrediashexa/hexarouting/issues/258)).
+  `docs/logging.md` says events **MUST** be held while `last_template_sent` is
+  zero, because a data set that reaches a collector before its template has no
+  layout and cannot be read. Removing that guard from `bpa_log_drain()` put
+  four block events and the boot marker on the wire ahead of the template, and
+  all 38 suites and every one of `lab/ipfix.sh`'s checks stayed green.
+
+  **The oracle was the thing forgiving the defect.** `tools/ipfix_collector.py`
+  holds a data set that arrives without its template and reprocesses it when
+  the template comes - which the same document says a serious collector SHOULD
+  do, and which is how the ordering was found in the first place. So the
+  records all arrived, decoded and paired, and no count anywhere moved. The
+  collector now **counts** what it had to hold and prints the total, and
+  `lab/ipfix.sh` requires it to be zero.
+
+  **The collector is started before the exporter is configured**, which is half
+  the fix: one started afterwards cannot tell a box that sent a record too
+  early from a collector that joined the stream too late, because both read as
+  a data set with no template.
+
+  The window is the first template of a VPP process, so it opens on every boot
+  and on the first `cgnat logging enable` after one - and what falls in it is
+  the allocations of every subscriber reconnecting at once, plus the boot
+  marker a collector needs to tell an allocation still in force from one the
+  box died holding.
+
+* **Nothing measured the zero in "zero records in deterministic mode"**
+  ([#266](https://github.com/andrediashexa/hexarouting/issues/266)). It is the
+  answer `README.md` gives to *Why*: per-flow NAT logging produces terabytes,
+  and BPA reduces that to one record per block, or to zero in deterministic
+  mode. `docs/context.md` invariant 1.2 says the same from the other side. An
+  ISP chooses the mode for exactly this, and **every IPFIX lab in the
+  repository runs a dynamic pool** - `ipfix`, `ipfix-tcp` and `ipfix-stop` all
+  say `mode dynamic`, and nothing had ever armed an exporter over a
+  deterministic one.
+
+  `lab/det-zero.sh` does. Four subscribers translated on a deterministic pool,
+  **zero records emitted**; then the same box, the same exporter, the same
+  collector and the same traffic pointed at a dynamic pool, which produces
+  three records decoded on the wire with their port ranges.
+
+  **That second half is the lab.** A box whose exporter was never armed also
+  emits zero and would satisfy the claim while proving nothing, which is the
+  control `lab/trail-fsync.sh` and `lab/localaddr.sh` both carry.
+
+  Shown failing by making the deterministic branch of `bpa_in2out.c` log the
+  way the dynamic one does: four records, and the collector printed the
+  deterministic subscribers' own allocations back - the year of records the
+  mode exists to avoid. And shown failing the other way, with the exporter
+  never armed: the claim stayed green and the control went red, which is what
+  the control is for.
+
 
 * **The rule that a secret must not enter this repository was held only for the
   four directories the ISO carries.** `CONTRIBUTING.md` section 2 says secrets
@@ -242,8 +300,7 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247),
-[#258](https://github.com/andrediashexa/hexarouting/issues/258).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247).
 
 ### Added
 
@@ -420,33 +477,6 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
-
-* **A record could go out ahead of its template and every check stayed green**
-  ([#258](https://github.com/andrediashexa/hexarouting/issues/258)).
-  `docs/logging.md` says events **MUST** be held while `last_template_sent` is
-  zero, because a data set that reaches a collector before its template has no
-  layout and cannot be read. Removing that guard from `bpa_log_drain()` put
-  four block events and the boot marker on the wire ahead of the template, and
-  all 38 suites and every one of `lab/ipfix.sh`'s checks stayed green.
-
-  **The oracle was the thing forgiving the defect.** `tools/ipfix_collector.py`
-  holds a data set that arrives without its template and reprocesses it when
-  the template comes - which the same document says a serious collector SHOULD
-  do, and which is how the ordering was found in the first place. So the
-  records all arrived, decoded and paired, and no count anywhere moved. The
-  collector now **counts** what it had to hold and prints the total, and
-  `lab/ipfix.sh` requires it to be zero.
-
-  **The collector is started before the exporter is configured**, which is half
-  the fix: one started afterwards cannot tell a box that sent a record too
-  early from a collector that joined the stream too late, because both read as
-  a data set with no template.
-
-  The window is the first template of a VPP process, so it opens on every boot
-  and on the first `cgnat logging enable` after one - and what falls in it is
-  the allocations of every subscriber reconnecting at once, plus the boot
-  marker a collector needs to tell an allocation still in force from one the
-  box died holding.
 
 * **Nothing stopped the ISO build from shipping an answer file, and the ISO it
   did ship carried three SSH host private keys.** `docs/appliance.md` says the
@@ -1778,23 +1808,6 @@ are to be interpreted as described in
   exactly the day both copies must move. `test/test_doc_copies.py` reads it out
   of `tools/build.sh` and out of the README and compares them.
 
-  **And the number an ISP buys a prefix on.** The 5W2H table answers *How
-  much* with `200k subscribers in deterministic mode with 512-port blocks
-  require a /21 of public IPv4` - arithmetic the reference model does, that
-  nothing compared it against. It is correct, and it is **tight**: a /21 holds
-  258,048 and a /22 holds 129,024, so it is not a safe over-estimate either. A
-  default block size that grew or a usable port range that narrowed would move
-  the answer to /20 and leave somebody having bought half the addresses they
-  need, with the box right and the README wrong. Held in both directions now,
-  because a line that asked for twice what is needed is a defect too.
-
-  **And the same line was in `TESTING.md`, which survived the fix.** `21 s`
-  against 36 measured on this machine, and the README's `25 suites` against 38
-  - one file was noticed and the other was not, which is the shape this entry
-  is about happening to the fix for it. `test/test_doc_copies.py` now refuses a
-  time or a suite count for `make test` in any of the three documents that
-  quote the command, so the next one cannot be added quietly either.
-
   The duplicated listing line hid from the repeated-sentence check added beside
   it, because that check strips fenced blocks on purpose: an example command
   repeated in two places is an example. A directory listed twice is a claim
@@ -1831,33 +1844,6 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
-
-* **Nothing measured the zero in "zero records in deterministic mode"**
-  ([#266](https://github.com/andrediashexa/hexarouting/issues/266)). It is the
-  answer `README.md` gives to *Why*: per-flow NAT logging produces terabytes,
-  and BPA reduces that to one record per block, or to zero in deterministic
-  mode. `docs/context.md` invariant 1.2 says the same from the other side. An
-  ISP chooses the mode for exactly this, and **every IPFIX lab in the
-  repository runs a dynamic pool** - `ipfix`, `ipfix-tcp` and `ipfix-stop` all
-  say `mode dynamic`, and nothing had ever armed an exporter over a
-  deterministic one.
-
-  `lab/det-zero.sh` does. Four subscribers translated on a deterministic pool,
-  **zero records emitted**; then the same box, the same exporter, the same
-  collector and the same traffic pointed at a dynamic pool, which produces
-  three records decoded on the wire with their port ranges.
-
-  **That second half is the lab.** A box whose exporter was never armed also
-  emits zero and would satisfy the claim while proving nothing, which is the
-  control `lab/trail-fsync.sh` and `lab/localaddr.sh` both carry.
-
-  Shown failing by making the deterministic branch of `bpa_in2out.c` log the
-  way the dynamic one does: four records, and the collector printed the
-  deterministic subscribers' own allocations back - the year of records the
-  mode exists to avoid. And shown failing the other way, with the exporter
-  never armed: the claim stayed green and the control went red, which is what
-  the control is for.
-
 
 * **`docs/routing.md` sent readers to the wrong lab for four claims**
   ([#247](https://github.com/andrediashexa/hexarouting/issues/247)). The
@@ -1907,24 +1893,7 @@ are to be interpreted as described in
   the defect. `com` is deliberately left out for the same reason: it is
   Portuguese and it is also the end of every `github.com` link in the tree.
 
-  **And the list was not enough, which its own docstring had to be corrected
-  about** ([#265](https://github.com/andrediashexa/hexarouting/issues/265)). A
-  fixed list finds only the Portuguese somebody thought of, and this check was
-  green while `lab/icmp-tcp.sh` and `lab/routing.sh` ECHOED Portuguese on every
-  run - so it was in every capture the suite collected while this file reported
-  the tree clean. `aguardando`, `varredura`, `expiracao`, `tres`, `chegarem`
-  and `intermitente` were none of them in the list.
-
-  Portuguese ENDINGS are the half a list cannot have. Measured over this tree:
-  16 distinct words match one of seventeen suffixes and **15 are Portuguese**.
-  The single false positive was `param`, at five letters, so the minimum is six
-  and it costs nothing else. That found **fifteen more**, in `lab/`, `tools/`,
-  `appliance/`, `ref/` and `src/`, including `ICMP TRADUZIDO CORRETAMENTE` and
-  `OS DOIS FRAGMENTOS TRADUZIDOS` printed as lab verdicts. A rule that
-  generalises beats a list that has to be remembered, which is the argument
-  `NOT_LABS` and the credential scope were both rewritten on.
-
-  Six identifiers are allowed with the reason written beside each: the
+  Five identifiers are allowed with the reason written beside each: the
   `TRANSITO` peer-group, `America/Sao_Paulo`, sfdisk's `label: dos`, the
   `AS-NAO-EXISTE` AS-path list, and `uplink para o transito`, which is a
   deliberate fixture - the product must store and read back what a Brazilian
@@ -2084,22 +2053,6 @@ are to be interpreted as described in
   exclusion now costs whoever adds it a sentence, which is the whole mechanism.
 
   The set of labs that run is byte for byte the same seven exclusions as before.
-
-  **And the first version of this printed one word per reason.** `for _e in
-  $NOT_LABS` splits on every space, so each WORD of a reason became its own
-  iteration and the first matched. A release run announced:
-
-  ```
-  not running, each for its own reason:
-    boot-iso: the
-    crossaddr: pins
-  ```
-
-  The check beside it was green throughout, because it read `NOT_LABS` and
-  stopped there. A check that reads the data a message is built from cannot see
-  the message, and that is the same defect this entry is about, one layer in:
-  the table was right and the line an operator reads was not. The lookup reads
-  a line at a time now, and the check runs it and asks what comes back.
 
 * **`LAB_WORKERS=2` started a box with no workers at all**
   ([#229](https://github.com/andrediashexa/hexarouting/issues/229)). The
