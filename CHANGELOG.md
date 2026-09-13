@@ -416,6 +416,20 @@ are to be interpreted as described in
   warning branch nor the looping branch had ever been executed by anything. It
   reads from the fake box now, like every other answer there.
 
+  Three more followed, and they needed `HEXA_SELFTEST_ROOT` to cover the kernel
+  command line, the cpufreq governor and the records volume, for the reason
+  already written beside that variable: a machine cannot be made to disagree
+  with itself about its own C-states, or about where `/var/log` is mounted,
+  without rebooting it. The **latency pair** costs throughput with no counter
+  behind it, and the **records volume** is a legal requirement here - `fstab`
+  mounts it `nofail`, so a volume that never mounted leaves the box working
+  perfectly and writing a year of records onto the root filesystem. Each also
+  asserts its quiet case: a machine with no cpufreq is told there is nothing to
+  set rather than warned, and the live medium is told records are not persisted
+  rather than warned about a disk it does not have.
+
+  57 checks before, **82** after.
+
 ### Internal
 
 * **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a

@@ -17,6 +17,12 @@ fail=0
 # hexarouting-tune takes a sysfs root for its synthetic topologies for the same
 # reason. The reading with nothing set, on a box that really booted, is
 # lab/install-iso.sh.
+#
+# It covers the kernel command line, the cpufreq governor and the records
+# volume for the same reason (#222): a machine cannot be made to disagree with
+# itself about isolcpus, about its own C-states or about where /var/log is
+# mounted without rebooting it, and those three statements were the ones with
+# nothing holding them.
 ROOT=${HEXA_SELFTEST_ROOT:-}
 STARTUP="$ROOT/etc/vpp/startup.conf"
 
@@ -331,14 +337,14 @@ if [ -n "$cp_isolated" ] && [ -n "$cp_left" ]; then
 fi
 
 # --- latency: without this the box forwards and still loses under burst ---
-if grep -q "processor.max_cstate=1" /proc/cmdline 2>/dev/null; then
+if grep -q "processor.max_cstate=1" "$ROOT/proc/cmdline" 2>/dev/null; then
   ok "deep C-states disabled on the kernel command line"
 else
   say "  [warn] deep C-states still enabled: expect jitter on bursts."
   say "         reboot after tuning applies, or set HEXA_LOW_LATENCY=0."
 fi
 
-gov=$(cat /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || echo "")
+gov=$(cat "$ROOT/sys/devices/system/cpu/cpufreq/policy0/scaling_governor" 2>/dev/null || echo "")
 if [ -z "$gov" ]; then
   say "  [info] no cpufreq exposed (virtual machine): nothing to set"
 elif [ "$gov" = performance ]; then
@@ -655,12 +661,12 @@ fi
 #
 # Which means something has to say so, or the box comes up quietly writing
 # records onto the root filesystem, which is the arrangement this replaced.
-if [ -d /var/log/hexarouting ]; then
-  rec_src=$(findmnt -no SOURCE --target /var/log/hexarouting 2>/dev/null)
+if [ -d "$ROOT/var/log/hexarouting" ]; then
+  rec_src=$(findmnt -no SOURCE --target "$ROOT/var/log/hexarouting" 2>/dev/null)
   root_src=$(findmnt -no SOURCE --target / 2>/dev/null)
   if [ -n "$rec_src" ] && [ "$rec_src" != "$root_src" ]; then
-    ok "records on their own filesystem: $rec_src, $(df -h /var/log/hexarouting 2>/dev/null | awk 'NR==2{print $4" free of "$2}')"
-  elif [ -f /run/live/medium/live/filesystem.squashfs ]; then
+    ok "records on their own filesystem: $rec_src, $(df -h "$ROOT/var/log/hexarouting" 2>/dev/null | awk 'NR==2{print $4" free of "$2}')"
+  elif [ -f "$ROOT/run/live/medium/live/filesystem.squashfs" ]; then
     say "  [info] live medium: records are not persisted anyway"
   else
     say "  [warn] connection records are on the ROOT filesystem"

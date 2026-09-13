@@ -933,5 +933,96 @@ fi
 rm -f "$FAKE/rpki" "$FAKE/frr_running" "$FAKE/show_plugins"
 rm -rf "$FAKE/root"
 
+echo "=== the two latency settings, which cost throughput and no counter (#222) ==="
+# Neither of these stops the box working, and neither shows up as a drop
+# counter. A deep C-state costs the first packets of a burst while the core
+# wakes up, and a governor that is not `performance` runs the poll loop at a
+# clock the kernel chose for an idle machine - on a thread that never sleeps
+# and therefore never looks idle to the governor's own heuristics.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+mkdir -p "$FAKE/root/proc" "$FAKE/root/sys/devices/system/cpu/cpufreq/policy0"
+echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3 processor.max_cstate=1 intel_idle.max_cstate=0" \
+  > "$FAKE/root/proc/cmdline"
+echo performance > "$FAKE/root/sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+run
+if said '\[ ok \] deep C-states disabled on the kernel command line'; then
+  ok "a tuned command line is reported"
+else
+  bad "processor.max_cstate=1 was on the command line and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
+fi
+if said '\[ ok \] cpufreq governor: performance'; then
+  ok "and so is the governor it was set to"
+else
+  bad "the governor was performance and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i governor || echo '<nothing>')"
+fi
+echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3" > "$FAKE/root/proc/cmdline"
+echo powersave > "$FAKE/root/sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+run
+if said '\[warn\] deep C-states still enabled'; then
+  ok "a command line without it is reported, and says what it costs"
+else
+  bad "deep C-states were enabled and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
+fi
+if said "\\[warn\\] cpufreq governor is 'powersave', not performance"; then
+  ok "and a governor that is not performance is named, with what it is"
+else
+  bad "a powersave governor passed silently: $(printf '%s\n' "$OUTPUT" | grep -i governor || echo '<nothing>')"
+fi
+# A machine with no cpufreq at all is a virtual one, and telling it to set a
+# governor it does not have is an instruction nobody can follow.
+rm -rf "$FAKE/root/sys/devices/system/cpu/cpufreq"
+run
+if said '\[info\] no cpufreq exposed'; then
+  ok "a box with no cpufreq is told there is nothing to set, not warned"
+else
+  bad "a box with no cpufreq: $(printf '%s\n' "$OUTPUT" | grep -i 'cpufreq\|governor' || echo '<nothing>')"
+fi
+
+echo "=== the records volume, which is a legal requirement here (#222) ==="
+# In dynamic mode the allocation log IS the record the Marco Civil requires to
+# be kept for a year. It has its own filesystem so a full log cannot stop the
+# box working, and fstab mounts it nofail - which means a volume that never
+# mounted leaves the box writing records onto the root filesystem, working
+# perfectly, until the root filesystem fills.
+mkdir -p "$FAKE/root/var/log/hexarouting"
+echo /dev/vda2 > "$FAKE/mnt_root"
+echo /dev/vdb1 > "$FAKE/mnt_records"
+run
+if said '\[ ok \] records on their own filesystem: /dev/vdb1'; then
+  ok "a records volume of its own is reported, and named"
+else
+  bad "the records volume was separate and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'records on' || echo '<nothing>')"
+fi
+if said 'free of'; then
+  ok "and says how much room is left on it"
+else
+  bad "the line does not say how full the records volume is"
+fi
+# The volume that did not mount: same directory, same box, one source.
+echo /dev/vda2 > "$FAKE/mnt_records"
+run
+if said '\[warn\] connection records are on the ROOT filesystem'; then
+  ok "records on the root filesystem is reported"
+else
+  bad "records were on the root filesystem and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'records' || echo '<nothing>')"
+fi
+if said 'stop this box writing its own'; then
+  ok "and says what a full log does to the rest of the box"
+else
+  bad "the warning does not say what it costs"
+fi
+# On the live medium nothing is persisted anyway, and warning about it there
+# would be an alarm that is always on for a reason the reader cannot act on.
+mkdir -p "$FAKE/root/run/live/medium/live"
+: > "$FAKE/root/run/live/medium/live/filesystem.squashfs"
+run
+if said '\[info\] live medium: records are not persisted anyway'; then
+  ok "the live medium says so instead of warning about a disk it does not have"
+else
+  bad "the live medium was warned about the root filesystem: $(printf '%s\n' "$OUTPUT" | grep -i 'records\|live medium' || echo '<nothing>')"
+fi
+rm -f "$FAKE/mnt_root" "$FAKE/mnt_records"
+rm -rf "$FAKE/root"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
