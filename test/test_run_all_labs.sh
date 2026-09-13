@@ -293,5 +293,47 @@ esac
 [ "$rc3" -ne 0 ] && ok "and a suite with one unmeasured check does not exit 0" \
                  || bad "a suite that could not measure a check exited 0"
 
+echo "=== how many labs at once is bounded by memory, not only by cores ==="
+# Each lab is a container with --memory=5g and a VPP that reserves hugepages up
+# front. Sixteen of those is 80 GB of limits, and on the 62.8 GB box this
+# project runs on the way that failed was not a clean refusal: one container's
+# VPP did not start, its lab ran every check against a dataplane that was not
+# there, and the suite reported eight product failures - one of them a checksum
+# failure, on the run right after a checksum change landed.
+#
+# The arithmetic is read out of the script itself rather than copied here,
+# because a second copy of it is the thing this repository keeps finding.
+sed -n '/^_jobs_by_mem()/,/^}/p' "$REPO/tools/run-all-labs.sh" > "$d/jobs.sh"
+jobs_at() {  # <MemTotal in kB> -> the default job count
+  printf 'MemTotal: %s kB\n' "$1" > "$d/meminfo"
+  HEXA_MEMINFO="$d/meminfo" sh -c ". $d/jobs.sh; _jobs_by_mem"
+}
+got=$(jobs_at 8388608)
+[ "$got" = "1" ] && ok "an 8 GB box runs one lab at a time" \
+  || bad "an 8 GB box was given $got jobs, which is 5 GB each on 8 GB"
+got=$(jobs_at 65970176)
+[ "$got" = "8" ] && ok "and this box's 62 GB gives 8, which is what its clean runs used" \
+  || bad "62 GB gave $got jobs; 16 of them is 80 GB of limits on 62"
+got=$(jobs_at 536870912)
+[ "$got" = "16" ] && ok "and a 512 GB box is still capped at 16, because cores run out too" \
+  || bad "a 512 GB box was given $got jobs, with no core-based cap"
+# And the arithmetic has to be what the suite actually uses. The three checks
+# above read _jobs_by_mem straight out of the file, so they stay green on a
+# script that computes the right number and then ignores it - which is exactly
+# what putting the constant back does, and the first mutation of this section
+# proved by giving zero red. This is the line that connects the two.
+if grep -q 'JOBS=${LAB_JOBS:-$(_jobs_by_mem)}' "$REPO/tools/run-all-labs.sh"; then
+  ok "and the suite's own default is that function rather than a constant"
+else
+  bad "run-all-labs.sh computes a job count from memory and does not use it: "\
+"$(grep -n '^JOBS=' "$REPO/tools/run-all-labs.sh")"
+fi
+
+# And the override has to keep working: a box with more memory per core should
+# be able to say so.
+got=$(LAB_JOBS=3 sh -c 'JOBS=${LAB_JOBS:-99}; echo $JOBS')
+[ "$got" = "3" ] && ok "and LAB_JOBS still overrides the default" \
+  || bad "LAB_JOBS no longer overrides"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

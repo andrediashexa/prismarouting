@@ -48,7 +48,36 @@
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ONLY=${1:-}
-JOBS=${LAB_JOBS:-16}
+# How many labs at once, and it is bounded by MEMORY as well as by cores.
+#
+# Each lab is a container with --memory=5g (tools/lab.sh), and each runs a VPP
+# that reserves hugepages up front. Sixteen of those is 80 GB of limits on a
+# box with 62.8 GB, and the way that fails is not a clean refusal: one
+# container's VPP does not start, its lab runs every check against a dataplane
+# that is not there, and the suite reported eight product failures - one of
+# them a checksum failure, on the run right after a checksum change landed
+# (#151). The same lab alone, on an idle box, passes eleven checks.
+#
+# So the default is the smaller of the core-based number and what the memory
+# will hold. LAB_JOBS still overrides it: a box with more memory per core
+# should use it, and the point here is that the DEFAULT stops over-subscribing
+# a machine it was never measured on.
+#
+# HEXA_MEMINFO is empty on every real run and is set only by
+# test/test_run_all_labs.sh, for the same reason HEXA_SELFTEST_ROOT exists:
+# a machine cannot be made to have 8 GB, or 512 GB, without being a different
+# machine, and the arithmetic is the whole of what is being checked.
+_jobs_by_mem() {
+  _kb=$(awk '/^MemTotal:/ {print $2}' "${HEXA_MEMINFO:-/proc/meminfo}" 2>/dev/null)
+  [ -n "${_kb:-}" ] || { echo 16; return; }
+  # LAB_MEM is a limit rather than a reservation, so a lab does not hold all
+  # of it all the time; two thirds is what this box was measured surviving.
+  _n=$(( _kb * 2 / 3 / 1048576 / 5 ))
+  [ "$_n" -lt 1 ] && _n=1
+  [ "$_n" -gt 16 ] && _n=16
+  echo "$_n"
+}
+JOBS=${LAB_JOBS:-$(_jobs_by_mem)}
 pass=0; fail=0; ran=0; novpp=0; nomeasure=0
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
