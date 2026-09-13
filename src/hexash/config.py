@@ -111,6 +111,7 @@ def block_paths(routing: list) -> list:
     stack = []                  # [indent, statement, children were indented]
     for raw in routing:
         stmt = raw.strip()
+        indent = len(raw) - len(raw.lstrip())
         if not stmt:
             out.append(None)
             continue
@@ -137,11 +138,10 @@ def block_paths(routing: list) -> list:
             # the shape of EVERY commit after the first, because cfg.routing is
             # read back from FRR - so a check asking "is this statement under
             # router bgp" answered no for a box that had typed it there.
-            if len(raw) - len(raw.lstrip()) == 0:
+            if not indent:
                 stack = []
             out.append(None)
             continue
-        indent = len(raw) - len(raw.lstrip())
         if indent:
             while stack and stack[-1][0] >= indent:
                 stack.pop()
