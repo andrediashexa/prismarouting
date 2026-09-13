@@ -45,6 +45,7 @@ are to be interpreted as described in
 [#219](https://github.com/andrediashexa/hexarouting/issues/219),
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#221](https://github.com/andrediashexa/hexarouting/issues/221),
+[#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223).
 
 ### Added
@@ -421,6 +422,61 @@ are to be interpreted as described in
   is how this reached a release. `test/test_collector_marker.py` is new and
   drives the captured timeline to the second, so it fails on the rule rather
   than on the machine's mood.
+* **Half the boot self-test's statements had nothing holding them.** The
+  self-test makes 52 statements about a box and `test/test_selftest.sh` held
+  about half; the rest could stop firing, or start firing on the wrong
+  condition, with nothing to say so. That is how `[ ok ] rx queues:` with no
+  value after it shipped in the first place. Four of the unheld ones are now
+  asserted branch by branch, chosen because each is a diagnosis an operator
+  cannot make from the console on their own: the **CGNAT plugin** (a dataplane
+  without it answers `show version` perfectly well and forwards nothing), the
+  **`vpp.service` restart counter** (a service in a loop is `active` about half
+  the times you look), the **OSI punt for IS-IS**
+  ([#168](https://github.com/andrediashexa/hexarouting/issues/168): without it
+  the adjacency never forms and the only evidence is a dataplane counter
+  nothing surfaces), and **RPKI** (a cache configured and not connected marks
+  every route notfound, quietly)
+  ([#222](https://github.com/andrediashexa/hexarouting/issues/222)).
+
+  One of those was not merely unasserted, it was unreachable: the fake box
+  answered `systemctl show -p NRestarts` with the constant `0`, so neither the
+  warning branch nor the looping branch had ever been executed by anything. It
+  reads from the fake box now, like every other answer there.
+
+  Three more followed, and they needed `HEXA_SELFTEST_ROOT` to cover the kernel
+  command line, the cpufreq governor and the records volume, for the reason
+  already written beside that variable: a machine cannot be made to disagree
+  with itself about its own C-states, or about where `/var/log` is mounted,
+  without rebooting it. The **latency pair** costs throughput with no counter
+  behind it, and the **records volume** is a legal requirement here - `fstab`
+  mounts it `nofail`, so a volume that never mounted leaves the box working
+  perfectly and writing a year of records onto the root filesystem. Each also
+  asserts its quiet case: a machine with no cpufreq is told there is nothing to
+  set rather than warned, and the live medium is told records are not persisted
+  rather than warned about a disk it does not have.
+
+  And the one that is a lost box rather than a lost measurement: **which NIC
+  the dataplane may claim**. The box once shipped `HEXA_DATAPLANE_IF=eth0`,
+  which does not exist under predictable interface names, so the tuner wrote a
+  DPDK stanza with no allowlist and VPP claimed whatever NIC it found - the
+  management one, on a single-NIC box
+  ([#123](https://github.com/andrediashexa/hexarouting/issues/123)). Four
+  branches, three of which look alike from outside, and each asserted on its
+  own: the first version of that check conflated two of them and failed every
+  live medium.
+
+  And the four the whole report rests on, none of which anything held: the
+  **version stamp** an operator quotes when they report a fault, the **RAM**
+  floor (`docs/appliance.md` records the ISO booting with 2 GB and the console
+  saying "Out of memory: Killed process (vpp)" with VPP at 19 MB), the
+  **instruction set** (without `sse4_2` the dataplane does not fail to forward,
+  it dies with SIGILL, which reads like a crash and sends whoever is looking at
+  the packet path), and **whether VPP is answering at all**, which every line
+  below it depends on. Each carries the line the product actually draws rather
+  than a tidier one: 3 GB is a warning and not a refusal, and a missing `avx2`
+  is a throughput statement, because VPP runs on that box.
+
+  57 checks before, **103** after.
 
 ### Internal
 
