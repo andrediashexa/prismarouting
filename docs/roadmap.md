@@ -975,6 +975,62 @@ de-duplication, in `~/.gitconfig` - a file this product does not own. Measured:
 2325 copies of one entry, and 552 of the distinct paths were `/tmp` clones that
 no longer exist.
 
+#### A command the box had and its own help hid
+
+[#221](https://github.com/andrediashexa/hexarouting/issues/221) - *delivered*,
+and it belongs beside #187 rather than in a tidiness section. `show this` is
+the only way to read back what has been typed into a block before committing,
+it works inside every block this VTY has, and `?` and TAB listed it in three of
+six. The three where it was hidden are the blocks this product models itself: a
+pool, a user and an SNMP user are **modes** rather than FRR context entries, so
+the line that injects `show` never reached them - while the comment beside that
+line said "every block". The pool is this product's whole subject and the block
+the wiki uses as its example, so the box was hiding a command its own
+documentation tells an operator to type.
+
+The word alone was not the whole of it. `show ?` inside a block offered
+nothing, in **every** block, so `this` could still only be reached blind.
+
+What found it is worth more than the fix: `test/test_doc_commands.py` types
+every command the wiki, `docs/` and `README.md` tell a reader to type at the
+command tree, in the mode and the block the prompt says the reader is in. It
+walks each one as far as the tree enumerates and stops at arguments, which is
+the same boundary `?` and TAB have, and it says so rather than implying it. It
+also found four transcripts no box produces, two of them in `docs/`. The
+`install` exception is a pair: the page has to explain why an installed box
+does not have the command, or the exception fails with it.
+
+#### Records the box wrote and did not send
+
+[#219](https://github.com/andrediashexa/hexarouting/issues/219) - *delivered*.
+The stop drain closed the retention log
+([#217](https://github.com/andrediashexa/hexarouting/issues/217)) by writing
+one `natEvent 17` per block still held, and over TCP those records went no
+further than a buffer inside the VPP process. The socket is non-blocking and
+the spill to disk only triggers above 1 MB, so between "the collector stopped
+reading" and "1 MB has piled up" there is a window where the records exist in
+one place only, and the process leaves with them. Measured with 1501 blocks
+held: 15372 bytes in the buffer, the drain reporting every block released, and
+**none** of the 3012 records arriving, while the UDP control delivered all of
+them.
+
+It is not only a stalled collector: with the collector reading as fast as the
+box writes and nothing wrong anywhere, the same measurement found 70020 bytes
+still in the buffer at the exit, because the drain writes every record in one
+go and services the socket once. A box with enough subscribers reaches that on
+an ordinary reboot.
+
+The fix is a flush at exit and the bound is **one `write()`**, with no timed
+wait, because the collector that leaves bytes there is the one that has stopped
+reading: its window is shut, so a wait sends nothing and costs a reboot the
+time.
+
+Behind it was an older defect the fix would have made routine. A non-blocking
+`send()` stops mid-message and the buffer was advanced by the byte count, so
+the spill file could begin at the tail of a message: 82917 bytes written,
+82917 replayed, **one record decoded out of them**. The 1 MB spill and the 60
+second template refresh could both reach that on a live box today.
+
 #### A protocol the box offered and could not run
 
 [#187](https://github.com/andrediashexa/hexarouting/issues/187) - *delivered*.
