@@ -456,6 +456,36 @@ bending the UDP exporter around.
   of them** - the file began with the tail of a message, and everything behind
   it misframed.
 
+Three of those statements held only in prose. Each was mutated in
+`src/plugins/bpa/bpa_log_tcp.c`, and all 38 suites, `lab/ipfix-tcp.sh` and
+`lab/ipfix-outbuf.sh` stayed green
+([#259](https://github.com/andrediashexa/hexarouting/issues/259),
+[#262](https://github.com/andrediashexa/hexarouting/issues/262),
+[#263](https://github.com/andrediashexa/hexarouting/issues/263)).
+`lab/ipfix-outbuf.sh` now asserts all three, and each needed a different thing
+from the lab:
+
+* **The order** needed the collector to be READ as a sequence. Every check in
+  this repository was true of a stream in any order — allocations and releases
+  paired by subscriber, nothing left open — so the spill could be appended
+  instead of prepended and 82935 bytes of the previous boot's log arrive behind
+  a record written twenty seconds later. The lab finds the new incarnation's
+  own boot marker in the collector's log, by the init time the box reports
+  rather than by position, and requires that no block event arrives behind it.
+* **The discard** needed the condition to exist at all. The spill only triggers
+  above 1 MB and `bpa stop-drain` does not flush the exporter, so the only live
+  way in is to write a megabyte of records — 23302 of them at 45 bytes — with
+  the collector gone. The lab does that three times: with the spill path
+  writable, with a directory where the file goes, and on a filesystem with no
+  room left, which are the success, the `open()` failure and the `write()`
+  failure.
+* **The stop** needed the number that was already printed to be read by
+  something. `lab/ipfix-outbuf.sh` had measured the stop in seconds since
+  before any of this and left it on the screen.
+
+The three MUSTs above are what those checks are for; a reader deciding whether
+one of them may be relaxed should expect that lab to go red.
+
 ### The honest limit of TCP
 
 Verified in `lab/ipfix-tcp.sh`: with the collector killed mid-run, records are

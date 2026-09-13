@@ -187,8 +187,10 @@ BOTH_WAYS="bypass dynamic esp extblocks forward frag ftp-alg hairpin
 # ipfix-outbuf's off mode is a collector that does NOT stall, which is the
 # lab's own precondition rather than a feature switch: with the collector
 # reading as fast as the box writes there are no bytes pending BEFORE the stop,
-# so the one check that asserts the condition was made must go red. It is one
-# check and the header says so.
+# so the checks that assert the condition was made must go red. It was one
+# check until #259, #262 and #263 were asserted there; it is eight now, because
+# the spill-failure phase cannot be produced without stalling the collector
+# either, and the header says so.
 OFF_MODES="audit:off ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off in-place:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off
