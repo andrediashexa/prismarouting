@@ -533,15 +533,20 @@ SHOWN=$($HX -c "show running-config" 2>&1)
 expect_in "and is marked as unchecked where it is displayed" \
   "set tag 100  <- not checked" "$SHOWN"
 # The other half, and it has to name a statement that is REALLY in that output
-# and REALLY modelled, or it passes because the needle was never there. It used
-# to look for "set local-preference 200    <-", and neither the value nor the
-# marker appears anywhere in this lab's configuration: vacuous both ways.
-# RM-DEAD's "set local-preference 120" is above, it committed, and
-# `set local-preference` is in ROUTE_MAP_BLOCK.
+# and REALLY modelled, or it passes because the needle was never there. The
+# line it used to look for, "set local-preference 200    <-", had neither the
+# value nor the marker anywhere in this lab: vacuous both ways. The first
+# replacement was wrong too and the suite said so - RM-DEAD is typed at
+# `commit check` and never committed, so nothing of it is in a running
+# configuration.
+#
+# `match ip address prefix-list PL-MINE` is in the same route-map as the
+# `set tag 100` above, it was committed by the same $HX run, and `match` is in
+# the route-map grammar. So it is in that output and it is modelled.
 expect_in "and the modelled statement really is in that output" \
-  "set local-preference 120" "$SHOWN"
+  "match ip address prefix-list PL-MINE" "$SHOWN"
 expect_not_in "while the ones it does model carry no marker" \
-  "set local-preference 120  <-" "$SHOWN"
+  "match ip address prefix-list PL-MINE  <-" "$SHOWN"
 
 # --- a refusal that belongs to FRR, and what it used to cost ---
 #

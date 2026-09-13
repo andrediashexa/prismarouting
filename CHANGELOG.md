@@ -166,6 +166,26 @@ are to be interpreted as described in
   written the way a reader meets them, so demanding the leaf string would go
   red on a page that is right.
 
+* **Two labs matched a `show` line exactly and
+  [#141](https://github.com/andrediashexa/hexarouting/issues/141) put a marker
+  after it.** `lab/vty.sh` asserts where a statement appears - its block and its
+  indentation - by requiring the whole line, and `maximum-paths` is a statement
+  this VTY has no grammar for, so it now shows with `  <- not checked` after
+  it. A nesting assertion failed over a marker, which is a check measuring the
+  wrong thing. The needles stop at the statement now, and the marker is
+  asserted once on its own, where it is the point rather than an accident.
+
+  `lab/bgp-policy.sh` had the same shape and its repair was wrong the first
+  time: the replacement needle named `set local-preference 120`, which belongs
+  to a route-map this lab types at `commit check` and never commits, so it is
+  in no running configuration. The suite said so. It names a statement from the
+  route-map that IS committed now.
+
+  And the guard added with that repair had a false positive of its own: it read
+  the marker out of a COMMENT explaining an assertion and compared prose
+  against the product's string. It only reads quoted needles now. A check that
+  goes red on work that is right is the worst kind there is.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside

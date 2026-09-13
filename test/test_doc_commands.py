@@ -287,9 +287,16 @@ for _path in _quoters:
     for _n, _line in enumerate(open(_path, encoding="utf-8"), 1):
         if "<- not checked" not in _line:
             continue
+        _at = _line.index("<- not checked")
+        # Only a QUOTED needle. A comment may mention the marker while
+        # explaining why an assertion is written the way it is, and reading
+        # prose as a needle made this check fail on a lab that was right -
+        # which is the worst kind of check there is.
+        if '"' not in _line[:_at] or '"' not in _line[_at:]:
+            continue
         # The quoted needle has to be a prefix of what the box prints. A
         # longer one cannot match, which is the failure that happened.
-        _quoted = _line[_line.index("<- not checked"):].split('"')[0].rstrip()
+        _quoted = _line[_at:].split('"')[0].rstrip()
         if not _mark.startswith(_quoted):
             _bad.append(f"{os.path.relpath(_path, REPO)}:{_n} quotes "
                         f"{_quoted!r}, and the box prints {_mark!r}")
