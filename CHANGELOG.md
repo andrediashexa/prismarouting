@@ -221,6 +221,22 @@ are to be interpreted as described in
   trade once. Gaining assertions needs no edit; losing them has to be
   deliberate.
 
+* **The RFC 8158 record this box exports was written down in three places and
+  nothing compared them.** The UDP template names its elements by IANA name,
+  the TCP template lists them by number, and `docs/logging.md` carries the
+  table an operator hands their collector. A field added to one and not the
+  others is neither a build error nor a test failure: it is two transports
+  exporting **different records**, decoded happily by any collector, giving two
+  different answers about the same box - and a document that describes neither.
+
+  `test/test_ipfix_record.py` reads all three and requires them to be the same
+  list, in the same order, with the same widths, for the block record and for
+  the boot marker; and it checks the size comment in `bpa_log.h`, which is a
+  fourth statement of the same fact and is arithmetic. The documentation is
+  where the name and the number meet, so it is what the two code lists are read
+  against - that keeps the comparison at three copies rather than adding a
+  fourth. They agree today; the guard is for the day one of them moves.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
