@@ -127,8 +127,22 @@ def make_box(tmp, route=PROC_NET_ROUTE, tune=TUNE_ENV_SHIPPED, cards=CARDS):
     A fake box on disk: the cards Linux has, its routing table, the tuner's
     file. Written once per test so one test cannot see another's edits.
     """
-    for name in cards:
+    # A CARD, not just a name under /sys/class/net. The candidates are the
+    # ones with a PCI address, because that is what DPDK is handed - so `lo`,
+    # a bridge and a virtio guest's interfaces are not offers this box could
+    # honour. host_nics() applies that test, and the fake tree has to be
+    # shaped the way the real one is or the suite measures a different
+    # question.
+    for i, name in enumerate(cards):
         os.makedirs(f"{tmp}/sys/class/net/{name}", exist_ok=True)
+        if name == "lo":
+            continue
+        addr = f"0000:0{i + 1}:00.0"
+        dev = f"{tmp}/sys/bus/pci/devices/{addr}"
+        os.makedirs(dev, exist_ok=True)
+        link = f"{tmp}/sys/class/net/{name}/device"
+        if not os.path.lexists(link):
+            os.symlink(dev, link)
     os.makedirs(f"{tmp}/etc/hexarouting", exist_ok=True)
     with open(f"{tmp}/net_route", "w") as f:
         f.write(route)
@@ -287,7 +301,14 @@ with tempfile.TemporaryDirectory() as tmp:
     said = drive(sh, ["configure", "dataplane interface eth9"])
     check("error:" in said and "no such interface" in said,
           f"a name the box does not have was accepted: {said!r}")
-    for card in CARDS:
+    # The CARDS, not every name under /sys/class/net. `lo` is in the fake box
+    # because a real one has it, and it is deliberately not among the offers:
+    # the dataplane is handed a PCI address, and offering a name that cannot
+    # have one is an offer the box could not honour.
+    check("lo" not in said.split("the cards it has:")[1].split("\n")[0],
+          f"the refusal offers 'lo' as a card the dataplane could be given, "
+          f"and it has no PCI address: {said!r}")
+    for card in [c for c in CARDS if c != "lo"]:
         check(card in said,
               f"the refusal does not name {card!r} among what this box has, "
               f"so it says no without saying what yes would be: {said!r}")
@@ -308,13 +329,19 @@ with tempfile.TemporaryDirectory() as tmp:
     print("  cannot look is not 'the box has none'")
 
 print("\n=== and the default route is read through its own seam ===")
+# ONE reader, and it is `show hardware`'s. This suite was written against a
+# default_route_interface() of its own; two answers to "which card carries the
+# default route" is the pair that comes to disagree, and the way it would
+# disagree here is by refusing one card at the prompt while the listing marks
+# a different one as the dangerous one. "Cannot say" is None rather than "",
+# which is the same thing to every caller: a card's name is never either.
 with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
-    check(sh.default_route_interface() == "enp1s0",
-          f"the default route was read as {sh.default_route_interface()!r}, "
+    check(sh.default_route_nic() == "enp1s0",
+          f"the default route was read as {sh.default_route_nic()!r}, "
           f"not from the row whose destination is all zeroes")
     sh.PROC_NET_ROUTE = f"{tmp}/no-such-file"
-    check(sh.default_route_interface() == "",
+    check(sh.default_route_nic() is None,
           "a routing table that cannot be read must answer 'cannot say', not "
           "raise")
     said = drive(sh, ["configure", "dataplane interface enp1s0"])
@@ -569,8 +596,11 @@ with tempfile.TemporaryDirectory() as tmp:
     sh = shell_on(tmp)
     drive(sh, ["configure"])
     offered = sh.dynamic_options(hexash.ARG_HOST_NIC, "")
-    check(set(offered) == set(CARDS),
-          f"completion offers {sorted(offered)}, not the cards Linux has")
+    # The PCI cards, and not `lo`: completion is an offer, and offering a name
+    # the dataplane cannot be given is one the box would then refuse.
+    check(set(offered) == {c for c in CARDS if c != "lo"},
+          f"completion offers {sorted(offered)}, not the cards this box could "
+          f"actually hand to the dataplane")
     check("default route" in offered.get("enp1s0", ""),
           f"the one card that must not be chosen is offered like any other: "
           f"{offered!r}")

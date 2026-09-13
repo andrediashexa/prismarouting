@@ -9003,6 +9003,15 @@ class Shell:
     # decoration - and it holds identically for one who has to drop to an
     # editor (#283).
 
+    #: The tuner's input for the dataplane card, and the unit that reads it.
+    #:
+    #: Named here rather than written into the sentences below, because the
+    #: same two strings are used by the write, by the read-back and by what
+    #: the operator is told - and a fourth spelling of either is a fourth
+    #: thing to keep true.
+    TUNE_KEY = "HEXA_DATAPLANE_IF"
+    TUNE_UNIT = "hexarouting-tune"
+
     # The card list and the default route are read by host_nics() and
     # default_route_nic(), which `show hardware` already owns. This used to
     # carry its own pair of readers with the same two seams, and two answers
@@ -10291,10 +10300,10 @@ class Shell:
         between a refusal they read after typing and a choice they never make.
         It is still refused if they type it anyway.
         """
-        default = self.default_route_interface()
-        return {n: ("carries the default route: refused" if n == default
-                    else "card")
-                for n in self.host_interfaces()}
+        default = self.default_route_nic()
+        return {n["name"]: ("carries the default route: refused"
+                            if n["name"] == default else "card")
+                for n in self.host_nics()}
 
     def dyn_neighbours(self):
         """
