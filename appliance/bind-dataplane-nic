@@ -1,0 +1,139 @@
+#!/bin/sh
+# Bind the dataplane NIC to a driver DPDK can take it through.
+#
+# WITHOUT THIS THE APPLIANCE DOES NOT FORWARD. Nothing in this product ever
+# bound a NIC or loaded vfio-pci, so an operator who did exactly what the
+# self-test told them - name the interface in tune.env - got a startup.conf
+# with the right PCI address, a NIC still held by its kernel driver, and a
+# dataplane with no interfaces. On Intel and Broadcom parts DPDK cannot take a
+# device through ixgbe, i40e, bnxt_en and the rest. Mellanox is the exception,
+# because mlx5 is bifurcated and works while kernel-bound, which is why this
+# looked like it worked on some hardware and not others (issue #283).
+#
+# WHAT IT BINDS IS WHAT startup.conf NAMES, and that is deliberate. The tuner
+# has already decided which interface the dataplane gets, and it REFUSES the
+# one carrying the default route so a remote box is not cut off (#123).
+# Reading its output rather than tune.env means that refusal is inherited
+# rather than reimplemented: a second copy of "which NIC may the dataplane
+# have" is a second copy that can disagree with the first, and this one would
+# disagree by taking the box off the network.
+#
+# It still checks the default route itself before unbinding. Not as a second
+# opinion but as a last one: startup.conf is a file, a person can edit it, and
+# the cost of being wrong here is a box somebody has to walk to.
+set -u
+
+ROOT=${HEXA_ROOT:-}
+VPPCONF=${HEXA_STARTUP_CONF:-$ROOT/etc/vpp/startup.conf}
+SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
+SYSNET=${HEXA_SYS_NET:-$ROOT/sys/class/net}
+PROCROUTE=${HEXA_PROC_ROUTE:-$ROOT/proc/net/route}
+IOMMU=${HEXA_IOMMU_GROUPS:-$ROOT/sys/kernel/iommu_groups}
+
+say() { echo "$@" >&2; }
+
+# The drivers DPDK can use, best first. vfio-pci is the one to want: it takes
+# the device through the IOMMU, so a bug in the dataplane cannot write to
+# memory the device was never given. uio_pci_generic has no such protection
+# and is the fallback for a box whose firmware has no IOMMU at all.
+DPDK_DRIVERS="vfio-pci uio_pci_generic"
+
+ADDR=$(sed -n 's/.*dev \(0000:[0-9a-fA-F:.]*\).*/\1/p' "$VPPCONF" 2>/dev/null \
+       | head -1)
+if [ -z "$ADDR" ]; then
+  # No device named. That is the no-pci case, which the tuner and the
+  # self-test both already explain, so this says nothing rather than adding a
+  # third voice to one fact.
+  exit 0
+fi
+
+DEV="$SYSBUS/devices/$ADDR"
+[ -d "$DEV" ] || { say "bind: $ADDR is named in $VPPCONF and this box has no" \
+                       "such PCI device"; exit 1; }
+
+current=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
+[ "$current" = "." ] && current=""
+for d in $DPDK_DRIVERS igb_uio; do
+  if [ "$current" = "$d" ]; then
+    say "bind: $ADDR is already bound to $d"
+    exit 0
+  fi
+done
+
+# The last check before the irreversible part. `ip route` is not used because
+# this runs before the network is necessarily up and because /proc/net/route
+# is what the tuner reads - one source, one answer.
+defif=$(awk 'NR>1 && $2 == "00000000" { print $1; exit }' "$PROCROUTE" \
+        2>/dev/null)
+if [ -n "$defif" ] && [ -e "$SYSNET/$defif/device" ]; then
+  defaddr=$(basename "$(readlink -f "$SYSNET/$defif/device")")
+  if [ "$defaddr" = "$ADDR" ]; then
+    say "bind: REFUSING $ADDR: it is $defif, which carries this box's default"
+    say "      route. Binding it would take the box off the network and leave"
+    say "      a console somebody has to walk to. Name a different interface"
+    say "      in /etc/hexarouting/tune.env."
+    exit 1
+  fi
+fi
+
+# The interface name, for the messages, while it still has one: once the
+# device is bound to vfio-pci the kernel netdev is gone.
+ifname=""
+for n in "$SYSNET"/*; do
+  [ -e "$n/device" ] || continue
+  if [ "$(basename "$(readlink -f "$n/device")")" = "$ADDR" ]; then
+    ifname=$(basename "$n")
+    break
+  fi
+done
+
+# vfio-pci needs an IOMMU. Without one it loads and then refuses every device,
+# which reads on the console as the bind failing for no reason - so the choice
+# is made here, where it can be explained, rather than discovered there.
+want=""
+if [ -d "$IOMMU" ] && [ -n "$(ls -A "$IOMMU" 2>/dev/null)" ]; then
+  want=vfio-pci
+else
+  want=uio_pci_generic
+  say "bind: no IOMMU groups on this box, so vfio-pci cannot take a device;" \
+      "using $want, which has no IOMMU protection"
+fi
+
+if [ ! -d "$SYSBUS/drivers/$want" ]; then
+  modprobe "$want" 2>/dev/null || true
+fi
+if [ ! -d "$SYSBUS/drivers/$want" ]; then
+  say "bind: $want is not available on this box, so $ADDR cannot be given to"
+  say "      the dataplane. The kernel has no such driver to load."
+  exit 1
+fi
+
+say "bind: $ADDR${ifname:+ ($ifname)} from ${current:-no driver} to $want"
+
+# driver_override rather than new_id: new_id matches by vendor and device, so
+# it claims EVERY card of that model in the box - including the management
+# one when both ports are the same part, which is the ordinary case on a
+# two-port card. driver_override names this one device and nothing else.
+echo "$want" > "$DEV/driver_override" 2>/dev/null || {
+  say "bind: cannot write driver_override for $ADDR"; exit 1; }
+if [ -n "$current" ]; then
+  echo "$ADDR" > "$DEV/driver/unbind" 2>/dev/null || {
+    say "bind: cannot unbind $ADDR from $current"; exit 1; }
+fi
+echo "$ADDR" > "$SYSBUS/drivers_probe" 2>/dev/null || true
+
+now=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
+[ "$now" = "." ] && now=""
+if [ "$now" = "$want" ]; then
+  say "bind: $ADDR is now on $want"
+  exit 0
+fi
+
+# Said as a failure, because it is one, and with the state it ended in. A
+# device left with no driver at all is the worst outcome to be quiet about:
+# the kernel no longer has the NIC and neither does the dataplane.
+say "bind: $ADDR did NOT bind to $want; it is on ${now:-no driver at all} now."
+say "      The dataplane will start without it. 'dmesg' says why $want"
+say "      refused the device; on a box with an IOMMU the usual cause is"
+say "      intel_iommu=on or amd_iommu=on missing from the kernel command line."
+exit 1

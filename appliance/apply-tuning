@@ -77,6 +77,26 @@ report=$(hexarouting-tune "$@" 2>&1) || { printf '%s\n' "$report" >&2; exit 1; }
 printf '%s\n' "$report" | grep -E "^# |WARNING" >&2
 printf 'kernel cmdline hugepages: %s\n' \
   "$(tr ' ' '\n' < /proc/cmdline | grep '^hugepages=' || echo '(none)')" >&2
+# THE NIC ITSELF, once the tuner has said which one. Naming a device in
+# startup.conf is not the same as the dataplane having it: DPDK cannot take a
+# device through ixgbe, i40e or bnxt_en, and nothing in this product ever bound
+# one. An operator who did what the self-test asked still forwarded nothing
+# (#283).
+#
+# HERE and not in a unit of its own, because it must happen after the tuner has
+# chosen the device and before VPP starts, and this script is already exactly
+# that window. A second unit would be a second thing to order correctly.
+#
+# Its failure does not fail the tuning. A box that could not bind its NIC still
+# wants its hugepages, its isolcpus and its governor - and it wants to come up
+# far enough for somebody to log in and read why. The reason goes to the
+# journal, and the self-test says it again on the console.
+if command -v hexarouting-bind-nic >/dev/null 2>&1; then
+  hexarouting-bind-nic || true
+elif [ -x /usr/lib/hexarouting/bind-dataplane-nic ]; then
+  /usr/lib/hexarouting/bind-dataplane-nic || true
+fi
+
 printf 'reserved 1G pages now: %s\n' \
   "$(cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages 2>/dev/null \
      || echo '(no 1G support)')" >&2

@@ -199,6 +199,46 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The appliance binds its own dataplane NIC**
+  ([#283](https://github.com/andrediashexa/hexarouting/issues/283)). Nothing in
+  this product ever bound a NIC or loaded `vfio-pci`. DPDK cannot take a device
+  through `ixgbe`, `i40e`, `bnxt_en` and the rest, so an operator who did
+  exactly what the self-test told them - name the interface in `tune.env` - got
+  a `startup.conf` with the right PCI address, a NIC still held by its kernel
+  driver, and a dataplane with no interfaces. Mellanox worked, because `mlx5`
+  is bifurcated and runs while kernel-bound, which is why this looked like it
+  worked on some hardware and not others.
+
+  `appliance/bind-dataplane-nic` runs from `apply-tuning`, after the tuner has
+  chosen the device and before VPP starts. **It binds what `startup.conf`
+  names**, which is the point: the tuner has already refused the interface
+  carrying the default route ([#123](https://github.com/andrediashexa/hexarouting/issues/123)),
+  so reading its output inherits that refusal instead of reimplementing it. A
+  second copy of "which NIC may the dataplane have" is a second copy that can
+  disagree, and this one would disagree by taking the box off the network. It
+  checks the default route again itself before unbinding - not as a second
+  opinion but as a last one, because `startup.conf` is a file a person can
+  edit and the cost of being wrong is a box somebody has to walk to.
+
+  `driver_override` and not `new_id`: `new_id` matches by vendor and device, so
+  it claims every card of that model in the box, including the management port
+  of a two-port card, which is the ordinary case.
+
+  `vfio-pci` where there is an IOMMU and `uio_pci_generic` where there is not,
+  with the fallback and what it gives up said out loud - `vfio-pci` on a box
+  with no IOMMU loads and then refuses every device, which reads on the console
+  as the bind failing for no reason.
+
+  It verifies rather than assumes, and a bind that did not take says which
+  driver the device is on now. A device left on none at all is the worst
+  outcome to be quiet about: the kernel no longer has the NIC and neither does
+  the dataplane. Its failure does not fail the tuning, because a box that
+  cannot bind its NIC still wants its hugepages and still wants to come up far
+  enough for somebody to log in and read why.
+
+  Four reds, and the first is the one that matters: with the default-route
+  refusal removed the box binds its own management interface.
+
 * **A box whose dataplane had no interface passed its own self-test, and the
   VTY guessed at why** ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
   Reported from a real box: VPP still has no interfaces, and the only way to
