@@ -21,10 +21,19 @@
 #   sh tools/lab.sh install-iso                  the lab
 #   sh tools/lab.sh install-iso wrong-password   the driver typing a password
 #                                                the box will refuse
+#   sh tools/lab.sh install-iso mirror           two disks, and one of them
+#                                                pulled out afterwards
 #
 # The second is not a mode anybody wants; it is how this lab is shown to FAIL
 # rather than hang when the box does not answer, which is the one failure a
 # console driver has to get right.
+#
+# The third is the records mirror (#83). It installs onto TWO disks, boots the
+# box, has the box write a record, then boots it again with the mirror disk
+# GONE - which is the only way to find out what a machine does when a disk
+# dies under it. The installer builds the array; this lab never does. A lab
+# that creates the array itself and then checks an array exists has proved
+# nothing about the installer, which is the shape of #99, #119 and #184.
 set -u
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 DISK=${DISK:-/tmp/hexa-disk.qcow2}
@@ -84,15 +93,27 @@ TMP_HASH=$(crypt_hash "tmp-secret-42")
 # differ is the only way to see what this lab does when the box answers and
 # refuses - and a console driver whose failure mode is a hang is not finished.
 LOGIN_PW=$NEW_PW
+MODE=one-disk
 case "${1:-}" in
   "") ;;
   wrong-password)
     LOGIN_PW="not-$NEW_PW"
     echo "running with a root password the box will REFUSE: this lab MUST"
     echo "fail, and it must say which wait timed out and why" ;;
+  mirror)
+    MODE=mirror
+    echo "installing onto TWO disks and then pulling one out" ;;
   *)
-    echo "usage: install-iso.sh [wrong-password]" >&2; exit 1 ;;
+    echo "usage: install-iso.sh [wrong-password|mirror]" >&2; exit 1 ;;
 esac
+
+# The second disk, in mirror mode. 4 GB against 2 GB of records: the installer
+# refuses a mirror disk that cannot hold the records it was told to keep, and a
+# leg the same size as the answer to the megabyte is an array one megabyte
+# short of it.
+DISK2=${DISK2:-/tmp/hexa-disk2.qcow2}
+DISK2_SIZE=${DISK2_SIZE:-4G}
+MIRROR_DEV=/dev/vdb
 
 [ -f "$ISO" ] || { echo "no ISO at $ISO"; exit 1; }
 fail=0
@@ -126,16 +147,28 @@ echo "live image root entry: '${LIVE_ROOT:-<unreadable>}'"
 rm -f "$DISK"
 qemu-img create -f qcow2 "$DISK" "$SIZE" >/dev/null
 
+# The second disk exists only in mirror mode, and it is BLANK. Everything on
+# it after this point was put there by the installer.
+MIRROR_DRIVE=""
+MIRROR_ANSWER=""
+if [ "$MODE" = mirror ]; then
+  rm -f "$DISK2"
+  qemu-img create -f qcow2 "$DISK2" "$DISK2_SIZE" >/dev/null
+  MIRROR_DRIVE="-drive file=$DISK2,format=qcow2,if=virtio"
+  MIRROR_ANSWER="hexarouting.mirror=$MIRROR_DEV"
+fi
+
 echo "=========== PHASE 1: install onto a blank disk ==========="
 # hexarouting.yes runs it unattended. An interactive installer driven by
 # keystrokes timed against a boot would be testing the timing.
+# shellcheck disable=SC2086
 timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   $ACCEL -m "${BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
-  -drive file="$DISK",format=qcow2,if=virtio \
+  -drive file="$DISK",format=qcow2,if=virtio $MIRROR_DRIVE \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
            hexarouting.install=/dev/vda hexarouting.yes \
-           hexarouting.log-gb=2 \
+           hexarouting.log-gb=2 $MIRROR_ANSWER \
            hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
            hexarouting.password=$NEW_PW" \
   > /tmp/install.log 2>&1
@@ -207,6 +240,30 @@ else
   fail=1
 fi
 
+# And the mirror, verified by the INSTALLER on the machine that built it (#83).
+#
+# "mdadm --create" exits zero having built a degraded array, so an install that
+# merely ran mdadm is not an install that produced a mirror. The line asserted
+# here is the installer reading /proc/mdstat back - on the two disks it had
+# just partitioned, which is the only moment and the only machine where that
+# question can be answered.
+if [ "$MODE" = mirror ]; then
+  if grep -q "records mirrored on /dev/md0, 2 of 2 disks present" \
+       /tmp/install-clean.log; then
+    echo "  [ ok ] the installer built the records mirror and checked both legs"
+    grep -o "records mirrored on.*" /tmp/install-clean.log | head -1 \
+      | sed 's/^/         /'
+  else
+    echo "  [FAIL] the install finished without a two-legged records mirror."
+    echo "         Either the array was never created, or it was created"
+    echo "         DEGRADED - which is the failure the second disk was bought"
+    echo "         to prevent, arriving at the moment the operator is told the"
+    echo "         install worked"
+    grep -iE "mirror|mdadm|md0" /tmp/install-clean.log | tail -6 | sed 's/^/         /'
+    fail=1
+  fi
+fi
+
 echo
 echo "=========== WHAT LANDED ON THE DISK ==========="
 # Read the installed filesystem directly. Booting it and logging in would be
@@ -255,6 +312,12 @@ if [ -n "$START" ] \
   INST_ROOT=$(grep "^root:" /tmp/target/etc/shadow 2>/dev/null | cut -d: -f2)
   INST_HOST=$(cat /tmp/target/etc/hostname 2>/dev/null || true)
   INST_TZ=$(cat /tmp/target/etc/timezone 2>/dev/null || true)
+  # What the installed box will mount the records from, and what it believes
+  # about its own disks. Read off the disk rather than off the console: the
+  # installer's output says what it meant to write.
+  INST_REC_UUID=$(awk '$2 == "/var/log/hexarouting" { print $1 }' \
+      /tmp/target/etc/fstab 2>/dev/null | sed 's/^UUID=//')
+  INST_MDCONF=$(grep "^ARRAY" /tmp/target/etc/mdadm/mdadm.conf 2>/dev/null || true)
   echo "  hostname  ${INST_HOST:-<none>}"
   echo "  timezone  ${INST_TZ:-<none>}"
   echo "  root      $(printf '%s' "${INST_ROOT:-<none>}" | cut -c1-12)..."
@@ -324,8 +387,126 @@ else
   fail=1
 fi
 
+# --------------------------------------------------- the SECOND disk (#83)
+#
+# Everything below is read off the mirror disk alone, with the machine that
+# wrote it switched off. It answers the one question the decision to mirror
+# the records and not the system rests on: when the system disk dies, are the
+# records still there and can anybody read them?
+#
+# Nothing here assembles an array to find out. The ext4 is mounted straight
+# off the leg at its data offset, which is what a person with one surviving
+# disk and a different machine actually has.
+if [ "$MODE" = mirror ]; then
+  echo
+  echo "=========== WHAT LANDED ON THE MIRROR DISK ==========="
+  for _t in mdadm losetup; do
+    command -v "$_t" >/dev/null 2>&1 || {
+      echo "  [FAIL] $_t is not installed in this container, and this step"
+      echo "         reads the mirror disk back. Its absence says nothing"
+      echo "         about the install."
+      exit 1
+    }
+  done
+  qemu-img convert -O raw "$DISK2" /tmp/hexa-mirror.raw 2>&1 | sed 's/^/  qemu-img: /'
+  sfdisk -J /tmp/hexa-mirror.raw > /tmp/parts2.json 2>/tmp/sfdisk-j2.log \
+    || sed 's/^/  sfdisk: /' /tmp/sfdisk-j2.log
+  MSTART=$(python3 -c '
+import json
+t = json.load(open("/tmp/parts2.json"))["partitiontable"]
+p = t["partitions"]
+print("%d %d" % (len(p), p[0]["start"]))
+' 2>/tmp/parse2.log) || sed 's/^/  parse: /' /tmp/parse2.log
+  MPARTS=$(printf '%s' "${MSTART:-0 0}" | cut -d' ' -f1)
+  MOFF=$(printf '%s' "${MSTART:-0 0}" | cut -d' ' -f2)
+  echo "  the installer left $MPARTS partition(s) on the mirror disk, the first"
+  echo "  at sector $MOFF"
+  if [ "${MPARTS:-0}" = 1 ]; then
+    echo "  [ ok ] the mirror disk was partitioned by the installer"
+  else
+    echo "  [FAIL] the mirror disk carries $MPARTS partitions, not the one the"
+    echo "         installer says it writes. Nothing below is about a mirror"
+    echo "         this product built"
+    fail=1
+  fi
+  MLOOP=$(losetup --find --show --read-only --offset "$(( MOFF * 512 ))" \
+          /tmp/hexa-mirror.raw 2>/tmp/losetup.log) || true
+  if [ -n "${MLOOP:-}" ]; then
+    mdadm --examine "$MLOOP" > /tmp/examine.log 2>&1 || true
+    MLEVEL=$(awk -F': *' '/Raid Level/ { print $2; exit }' /tmp/examine.log)
+    MDEVS=$(awk -F': *' '/Raid Devices/ { print $2; exit }' /tmp/examine.log)
+    MNAME=$(awk -F': *' '/^ *Name/ { print $2; exit }' /tmp/examine.log)
+    MDATAOFF=$(awk '/Data Offset/ { print $4; exit }' /tmp/examine.log)
+    losetup -d "$MLOOP" 2>/dev/null || true
+    echo "  the superblock on that partition: level '${MLEVEL:-<none>}',"
+    echo "  ${MDEVS:-?} devices, name '${MNAME:-<none>}'"
+    if [ "${MLEVEL:-}" = "raid1" ] && [ "${MDEVS:-}" = "2" ]; then
+      echo "  [ ok ] the mirror disk carries a two-device raid1 superblock"
+    else
+      echo "  [FAIL] the mirror disk is not a leg of a two-device mirror:"
+      sed 's/^/         /' /tmp/examine.log | head -8
+      fail=1
+    fi
+  else
+    echo "  [FAIL] could not open the mirror disk's partition:"
+    sed 's/^/         /' /tmp/losetup.log 2>/dev/null | head -3
+    fail=1
+  fi
+
+  # The filesystem itself, on the leg, with no md anywhere in the picture. Its
+  # UUID is the one the installed box mounts /var/log/hexarouting by - which is
+  # what makes this the same records volume and not merely an ext4.
+  mkdir -p /mnt/rec
+  MIRROR_UUID=""
+  if [ -n "${MDATAOFF:-}" ] \
+     && mount -o loop,ro,offset="$(( (MOFF + MDATAOFF) * 512 ))" \
+          /tmp/hexa-mirror.raw /mnt/rec 2>/tmp/mount2.log; then
+    MIRROR_UUID=$(blkid -s UUID -o value \
+                  "$(findmnt -no SOURCE /mnt/rec 2>/dev/null)" 2>/dev/null || true)
+    echo "  the records filesystem reads off the mirror leg alone, label"
+    echo "  '$(blkid -s LABEL -o value "$(findmnt -no SOURCE /mnt/rec)" 2>/dev/null)'"
+    umount /mnt/rec
+    echo "  [ ok ] the records filesystem is on the second disk and mounts"
+    echo "         without the first one and without assembling an array"
+  else
+    echo "  [FAIL] the records filesystem could not be read off the mirror"
+    echo "         disk. A mirror nobody can read from the survivor is not a"
+    echo "         copy of anything:"
+    sed 's/^/         /' /tmp/mount2.log 2>/dev/null | head -3
+    fail=1
+  fi
+  if [ -n "$MIRROR_UUID" ] && [ "$MIRROR_UUID" = "${INST_REC_UUID:-x}" ]; then
+    echo "  [ ok ] and it is the volume the installed box mounts: fstab names"
+    echo "         UUID=$INST_REC_UUID"
+  else
+    echo "  [FAIL] the filesystem on the mirror disk is '${MIRROR_UUID:-<none>}'"
+    echo "         and the installed fstab mounts '${INST_REC_UUID:-<none>}'."
+    echo "         Two different volumes: the records the box writes are not"
+    echo "         the ones on the second disk"
+    fail=1
+  fi
+  # The installed system's own account of its disks. Without it, a box whose
+  # array did not assemble has nothing on it saying there was ever supposed to
+  # be a mirror - which is the state the self-test reports as a failed check.
+  case "${INST_MDCONF:-}" in
+    *":records"*)
+      echo "  [ ok ] and the installed system records the array it belongs to:"
+      echo "         $INST_MDCONF" ;;
+    *)
+      echo "  [FAIL] /etc/mdadm/mdadm.conf on the installed system names no"
+      echo "         records array ('${INST_MDCONF:-<nothing>}'), so a box"
+      echo "         whose mirror never assembled would come up writing to one"
+      echo "         disk with nothing on it saying otherwise"
+      fail=1 ;;
+  esac
+fi
+
 echo
-echo "=========== PHASE 2: boot the disk, ISO detached ==========="
+if [ "$MODE" = mirror ]; then
+  echo "=========== PHASE 2: boot both disks, ISO detached ==========="
+else
+  echo "=========== PHASE 2: boot the disk, ISO detached ==========="
+fi
 # The SAME memory as phase 1, deliberately.
 #
 # Booting the installed disk with less was an optimisation that fabricated a
@@ -640,6 +821,16 @@ drive_console() {
   send 'echo "HX""LAB modes=$(stat -c %a:%G /etc/hexarouting) $(stat -c %a:%G /etc/hexarouting/rollback)"'
   wait_for "HXLAB modes=" 30 \
     "the box to state the configuration directory's mode" || return 1
+  # What this ONE-DISK box has in the way of arrays, asked of the kernel (#83).
+  #
+  # The records can be mirrored across two disks, and most boxes have one. The
+  # cost of that feature to a box that did not ask for it has to be zero, and
+  # zero is a thing to read off the machine rather than to assume: an installer
+  # that built an array nobody asked for, or a self-test that warns about a
+  # mirror that was never bought, would both show up here.
+  send 'echo "HX""LAB arrays=$(grep -cE "^md[0-9]" /proc/mdstat 2>/dev/null || echo no-mdstat)"'
+  wait_for "HXLAB arrays=" 30 \
+    "the box to say how many arrays it has" || return 1
   # What systemd will do when this box is stopped, asked of SYSTEMD and not of
   # the drop-in file. In dynamic mode the block log is the connection record
   # the Marco Civil requires, and a block held when the dataplane stops leaves
@@ -949,6 +1140,276 @@ drive_console() {
   return 0
 }
 
+# =========================================================================
+# The records mirror, and the disk that dies under it (#83)
+# =========================================================================
+#
+# From here to the exit below is "install-iso.sh mirror". It uses the console
+# driver above and nothing else: the array was built by the INSTALLER in phase
+# 1, and the only thing this section does to the disks is stop passing one of
+# them to qemu - which is what a disk failing looks like from inside the box.
+#
+# Three boots, because there are three questions and each one needs the
+# machine in a different state:
+#
+#   both disks     the box comes up on a healthy mirror and writes a record,
+#   mirror pulled  the box still boots, still mounts the records, and SAYS the
+#                  mirror is degraded - the state that is otherwise invisible,
+#   system pulled  the measured cost of mirroring the records and not the
+#                  system: what the survivor does on its own.
+if [ "$MODE" = mirror ]; then
+
+# One machine at a time, each with its own console. The driver's waits, its
+# report and its rewinding all read $CONSOLE_LOG and $CONSOLE_POS, so a boot
+# is "a fresh log and a fresh pipe" and nothing else.
+# shellcheck disable=SC2086
+boot_vm() {  # <seconds> <qemu arguments...>
+  _secs=$1; shift
+  CONSOLE_POS=1
+  : > "$CONSOLE_LOG"
+  rm -f "$CONSOLE_IN"
+  mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
+  timeout "$_secs" qemu-system-x86_64 \
+    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot "$@" \
+    < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
+  QEMU_PID=$!
+  # Held open for the whole session: a writer that opens and closes the pipe
+  # for each line hands qemu an end-of-file on the serial console in between.
+  exec 3> "$CONSOLE_IN"
+}
+
+# Asked to power off, not killed, wherever the box has something to flush.
+# The record written on the mirrored volume is the whole point of the boot
+# before this one, and a machine killed mid-write proves the mirror lost
+# something it never held.
+stop_vm() {  # <seconds to wait for a machine that was asked to power off>
+  exec 3>&-
+  _n=0
+  while kill -0 "$QEMU_PID" 2>/dev/null && [ "$_n" -lt "${1:-0}" ]; do
+    sleep 1
+    _n=$((_n + 1))
+  done
+  kill "$QEMU_PID" 2>/dev/null || true
+  sleep 2
+  pkill -9 -f qemu-system-x86_64 2>/dev/null || true
+  wait "$QEMU_PID" 2>/dev/null || true
+  sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$CONSOLE_LOG" | tr -d '\r' > "$CONSOLE_CLEAN"
+  cat "$CONSOLE_CLEAN" >> "$LOG" 2>/dev/null || true
+}
+
+mfield() {  # <clean console> <name>
+  sed -n "s/^HXLAB $2=//p" "$1" | head -1 | tr -d '\r'
+}
+
+login_root() {  # the first prompt the box offers, and root in the VTY
+  wait_for "$NEW_HOST login:" 420 "$1" || return 1
+  send "root"
+  wait_for "Password:" 60 "login to ask for root's password" || return 1
+  send "$LOGIN_PW"
+  wait_for "HexaRouting VTY" 180 "root's login to land in the VTY" || return 1
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open" || return 1
+}
+
+# What the box says about its own disks, asked of the KERNEL and of the
+# mount table - not of the installer's console output, which says what the
+# installer meant to do, and not of mdadm.conf, which says what it was told.
+read_disks() {  # <prefix for the markers>
+  send 'echo "HX""LAB '"$1"'rec=$(findmnt -no SOURCE --target /var/log/hexarouting)"'
+  wait_for "HXLAB $1rec=" 60 "the box to say where the records are" || return 1
+  send 'echo "HX""LAB '"$1"'md=$(grep -E "^md[0-9]|blocks " /proc/mdstat | tr "\n" "/")"'
+  wait_for "HXLAB $1md=" 30 "the kernel to describe its arrays" || return 1
+}
+
+# The first boot: a healthy mirror, and a record written onto it by the box.
+#
+# The record matters more than the array does. An ext4 that reached the second
+# disk during mkfs proves the array existed at install time; a line written a
+# reboot later, through the running box, is the only thing that proves the
+# mirror is still copying what this appliance writes.
+healthy_session() {
+  login_root "the installed box to boot with both disks attached" || return 1
+  read_disks "" || return 1
+  send 'echo "HX""LAB wrote=$(echo hexa-record-42 > /var/log/hexarouting/lab-record.txt; sync; cat /var/log/hexarouting/lab-record.txt)"'
+  wait_for "HXLAB wrote=hexa-record-42" 60 \
+    "the box to write a connection record onto the mirrored volume" || return 1
+  send "sync"
+  send "systemctl poweroff"
+  return 0
+}
+
+# The second boot: the same disk image, with the mirror disk simply not
+# passed to qemu. Nothing was edited, nothing was zeroed - from inside the
+# box this is a disk that is no longer there.
+degraded_session() {
+  login_root "the box to boot with the mirror disk GONE" || return 1
+  read_disks "dg" || return 1
+  # The record written by the previous boot, read back off the survivor. This
+  # is the question the whole feature exists to answer.
+  send 'echo "HX""LAB dgrecord=$(cat /var/log/hexarouting/lab-record.txt 2>&1)"'
+  wait_for "HXLAB dgrecord=" 60 \
+    "the box to read back the record it wrote before the disk died" || return 1
+  # The self-test again, on a settled box. At boot it may run while the kernel
+  # is still waiting out its timeout on the missing leg, and what is being
+  # asserted is what the product SAYS about a degraded mirror, not how fast
+  # the kernel gives up on a disk.
+  send 'echo "HX""LAB selftest-degraded"'
+  wait_for "HXLAB selftest-degraded" 30 "the marker before the re-run" || return 1
+  send "/usr/lib/hexarouting/selftest"
+  wait_for "====================" 240 "the self-test to finish" || return 1
+  send "sync"
+  send "systemctl poweroff"
+  return 0
+}
+
+echo
+echo "=========== PHASE 2: both disks, and a record written ==========="
+CONSOLE_LOG=/tmp/mirror-healthy.log
+CONSOLE_CLEAN=/tmp/mirror-healthy-clean.log
+boot_vm "${MIRROR_BOOT_SECS:-900}" \
+  -drive file="$DISK",format=qcow2,if=virtio \
+  -drive file="$DISK2",format=qcow2,if=virtio
+HEALTHY_DRIVEN=1
+healthy_session || { HEALTHY_DRIVEN=0; fail=1; }
+stop_vm 120
+sed -n '/boot self-test/,/=====$/p' "$CONSOLE_CLEAN" | head -40
+
+HEALTHY_ST=$CONSOLE_CLEAN
+if grep -q "\[ ok \] records mirrored on 2 disks" "$HEALTHY_ST"; then
+  echo "  [ ok ] the box reports its records on two disks, unprompted, at boot"
+  grep -o "records mirrored on.*" "$HEALTHY_ST" | head -1 | sed 's/^/         /'
+else
+  echo "  [FAIL] the box came up on a mirror and said nothing about it. A"
+  echo "         mirror nobody is told about is a mirror that silently becomes"
+  echo "         one disk, and then zero"
+  grep -iE "records|mirror|md0" "$HEALTHY_ST" | tail -6 | sed 's/^/         /'
+  fail=1
+fi
+H_REC=$(mfield "$HEALTHY_ST" rec)
+H_MD=$(mfield "$HEALTHY_ST" md)
+H_WROTE=$(mfield "$HEALTHY_ST" wrote)
+echo "  [meas] records mounted from: ${H_REC:-<no answer>}"
+echo "  [meas] /proc/mdstat:         ${H_MD:-<no answer>}"
+case "${H_REC:-}" in
+  /dev/md*)
+    echo "  [ ok ] and the volume it writes them to is the array, not a disk" ;;
+  *)
+    echo "  [FAIL] /var/log/hexarouting is on '${H_REC:-nothing}', which is not"
+    echo "         the array. The records are being written to one disk on a"
+    echo "         box that was installed with two"
+    fail=1 ;;
+esac
+if [ "$H_WROTE" = hexa-record-42 ]; then
+  echo "  [ ok ] and a record written through the running box lands on it"
+else
+  echo "  [FAIL] the box could not write a record onto the records volume:"
+  echo "         '${H_WROTE:-<no answer>}'"
+  fail=1
+fi
+
+echo
+echo "=========== PHASE 3: the mirror disk is GONE ==========="
+# Not corrupted, not zeroed: not passed to qemu. That is what a disk failing
+# looks like from inside the box, and it is the state no unit test can reach.
+CONSOLE_LOG=/tmp/mirror-degraded.log
+CONSOLE_CLEAN=/tmp/mirror-degraded-clean.log
+boot_vm "${MIRROR_BOOT_SECS:-900}" \
+  -drive file="$DISK",format=qcow2,if=virtio
+DEGRADED_DRIVEN=1
+degraded_session || { DEGRADED_DRIVEN=0; fail=1; }
+stop_vm 120
+
+DEG_ST=$CONSOLE_CLEAN
+D_REC=$(mfield "$DEG_ST" dgrec)
+D_MD=$(mfield "$DEG_ST" dgmd)
+D_RECORD=$(mfield "$DEG_ST" dgrecord)
+echo "  [meas] records mounted from: ${D_REC:-<no answer>}"
+echo "  [meas] /proc/mdstat:         ${D_MD:-<no answer>}"
+# What the box said at BOOT, before anybody logged in, and what it said once
+# settled. The first is what an operator sees on the console of a box that
+# came up with a dead disk; they are reported separately because a report that
+# merges them cannot say which one was silent.
+sed -n '1,/^HXLAB selftest-degraded/p' "$DEG_ST" > /tmp/deg-boot.log
+sed -n '/^HXLAB selftest-degraded/,$p' "$DEG_ST" > /tmp/deg-settled.log
+echo "  [meas] at boot, before anyone logged in, the self-test said:"
+grep -iE "records|mirror" /tmp/deg-boot.log | tail -4 | sed 's/^/         /'
+
+if [ "$DEGRADED_DRIVEN" = 1 ]; then
+  if grep -q "\[FAIL\] the records mirror is DEGRADED" /tmp/deg-settled.log; then
+    echo "  [ ok ] the box says its mirror is degraded, and says it as a"
+    echo "         FAILED check rather than in passing:"
+    grep -o "the records mirror is DEGRADED.*" /tmp/deg-settled.log | head -1 \
+      | sed 's/^/         /'
+  else
+    echo "  [FAIL] a disk died under this box and its self-test does not say"
+    echo "         so. The volume is still mounted, the records are still"
+    echo "         being written and the box still forwards - and the next"
+    echo "         failure loses the year it is required to keep"
+    grep -iE "records|mirror|md0" /tmp/deg-settled.log | tail -6 | sed 's/^/         /'
+    fail=1
+  fi
+  case "${D_REC:-}" in
+    /dev/md*)
+      echo "  [ ok ] and the records are still mounted, from the array running"
+      echo "         on one leg: a dead mirror disk is not an outage" ;;
+    *)
+      echo "  [FAIL] with one disk gone the records are on '${D_REC:-nothing}'."
+      echo "         The box boots - fstab says nofail - and writes its records"
+      echo "         somewhere else, which is the arrangement the volume"
+      echo "         replaced"
+      fail=1 ;;
+  esac
+  if [ "$D_RECORD" = hexa-record-42 ]; then
+    echo "  [ ok ] and the record written before the disk died is still there:"
+    echo "         the copy survived the disk"
+  else
+    echo "  [FAIL] the record this box wrote before the disk died reads back as"
+    echo "         '${D_RECORD:-<no answer>}'. The mirror held nothing"
+    fail=1
+  fi
+fi
+
+echo
+echo "=========== PHASE 4: the survivor, on its own ==========="
+# The measured COST of mirroring the records and not the system. It is not an
+# assertion - the box is not expected to boot from a disk no bootloader was
+# ever written to - it is the number this decision was made on, taken rather
+# than assumed.
+CONSOLE_LOG=/tmp/mirror-survivor.log
+CONSOLE_CLEAN=/tmp/mirror-survivor-clean.log
+boot_vm "${SURVIVOR_SECS:-90}" -drive file="$DISK2",format=qcow2,if=virtio
+_n=0
+while kill -0 "$QEMU_PID" 2>/dev/null && [ "$_n" -lt "${SURVIVOR_SECS:-90}" ]; do
+  grep -qiE "no bootable|not a bootable|boot failed" "$CONSOLE_LOG" 2>/dev/null && break
+  sleep 3
+  _n=$((_n + 3))
+done
+stop_vm 0
+echo "  [meas] with only the records disk attached, the machine said:"
+grep -viE "^$|^SeaBIOS|^iPXE|^Booting from|^$" "$CONSOLE_CLEAN" | tail -6 \
+  | sed 's/^/         /'
+if grep -qi "bootable" "$CONSOLE_CLEAN"; then
+  echo "  [meas] so the survivor does NOT boot: losing the system disk is a"
+  echo "         reinstall, and the records on this disk are read back on"
+  echo "         another machine, which the section above did without"
+  echo "         assembling anything"
+else
+  echo "  [meas] the firmware said nothing recognisable; the console above is"
+  echo "         the whole of what it did say"
+fi
+
+echo
+if [ "$fail" = 0 ]; then
+  echo "LAB PASSED"
+  exit 0
+fi
+echo "LAB FAILED"
+echo "--- full console in $LOG ---"
+exit 1
+
+fi
+# ------------------------------------------------- end of the mirror lab
+
 # BOOT_SECS is the ceiling on the whole driven session now - the boot, five
 # logins, a re-run of the self-test and one minute in which nobody is logged
 # in at all - and not a schedule. Every wait above has its own timeout and the
@@ -1049,6 +1510,36 @@ if [ "$up" = 1 ]; then
     grep -A2 "records are on the ROOT" /tmp/disk-clean.log | head -3 \
       | sed 's/^/         /'
     fail=1
+  fi
+fi
+
+# And the box with ONE disk has no mirror, and is not told about one (#83).
+#
+# THE assertion about what the mirror costs a box that does not have one.
+# Whatever "install-iso.sh mirror" proves about two disks, this is the run
+# that says the other case is untouched: no array, and a self-test that does
+# not mention a mirror at all - not even to say there is none, which on the
+# console of a box with one disk is an alarm nobody can act on.
+if [ "$up" = 1 ]; then
+  ARRAYS=$(sed -n 's/^HXLAB arrays=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  case "${ARRAYS:-}" in
+    0) echo "  [ ok ] the one-disk box has no array: the mirror costs it nothing" ;;
+    "") echo "  [FAIL] the box was never asked how many arrays it has, so"
+        echo "         nothing here says a one-disk install is unchanged"
+        fail=1 ;;
+    *) echo "  [FAIL] a one-disk install produced $ARRAYS array(s). Nobody asked"
+       echo "         for a mirror on this box and the installer built one"
+       fail=1 ;;
+  esac
+  if sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log | grep -qi mirror; then
+    echo "  [FAIL] the self-test on a one-disk box talks about a mirror:"
+    sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log | grep -i mirror \
+      | sed 's/^/         /'
+    echo "         an alarm about hardware this box does not have is an alarm"
+    echo "         whoever reads this console learns to skip"
+    fail=1
+  else
+    echo "  [ ok ] and its self-test says nothing about mirrors at all"
   fi
 fi
 

@@ -73,5 +73,5 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e LAB_WORKER_COUNT="${LAB_WORKER_COUNT:-}" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "apt-get update -qq >/dev/null 2>&1
-         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
+         apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools mdadm openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
          sh /src/lab/$LAB.sh $LAB_ARGV"

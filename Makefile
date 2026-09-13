@@ -2,7 +2,7 @@
 CFLAGS ?= -O2 -Wall -Wextra -Werror -DBPA_STANDALONE
 BUILD  := .build
 
-.PHONY: test test-appliance test-iso test-install iso release-gate \
+.PHONY: test test-appliance test-iso test-install test-mirror iso release-gate \
         hw-up hw-lab hw-vpp hw-down \
         model vectors clean
 
@@ -133,8 +133,18 @@ iso:
 test-install: iso
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 qemu-utils squashfs-tools \
-	      fdisk >/dev/null 2>&1; \
+	      fdisk mdadm >/dev/null 2>&1; \
 	    sh /src/lab/install-iso.sh)
+
+# The same install onto TWO disks, then the same box booted with one of them
+# pulled out. It is a separate target and not a flag on the one above because
+# they answer different questions and the one above is the one that says a
+# box with a single disk is unchanged (#83).
+test-mirror: iso
+	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
+	    apt-get install -y -qq qemu-system-x86 qemu-utils squashfs-tools \
+	      fdisk mdadm >/dev/null 2>&1; \
+	    sh /src/lab/install-iso.sh mirror)
 
 # Boots the freshly built ISO and demands the self-test say "ready".
 test-iso: iso
