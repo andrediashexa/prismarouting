@@ -432,6 +432,59 @@ if _unnamed:
 else:
     ok(f"all {len(_named)} show commands are named in the wiki")
 
+print("\n=== every commit refusal an operator can meet is on the commit page ===")
+#
+# Refusing is the strongest thing this box does: it knows the state of the box
+# and the change at the same time, and there are cases where applying means
+# losing the box. An operator who meets one of those messages needs somewhere
+# to look it up, and the page they would look at said nothing about any of
+# them.
+#
+# Read out of the source rather than listed here, so a refusal added to the
+# code and to no page fails. Only the runs of at least 25 characters that carry
+# no interpolation are demanded: shorter ones like "is not on this box" are too
+# generic to be a useful needle, and demanding them would make this check go
+# red on a page that is right.
+_hexash = open(os.path.join(REPO, "src", "hexash", "hexash.py"),
+               encoding="utf-8").read().split("\n")
+_page = open(os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso",
+                          "commit-rollback-e-save.md"), encoding="utf-8").read()
+_wanted = []
+for _i, _l in enumerate(_hexash):
+    if "ok = False" not in _l:
+        continue
+    # Walk back to the message this refusal prints. A commit refusal is an
+    # err() followed by ok = False; the two are never far apart.
+    for _j in range(_i - 1, max(0, _i - 16), -1):
+        if not (re.search(r"self\.err\(\s*f?\"", _hexash[_j])
+                or re.search(r"said = \(\s*\"", _hexash[_j])):
+            continue
+        _text, _k = "", _j
+        while _k < _i:
+            for _q in re.findall(r'"([^"]*)"', _hexash[_k]):
+                _text += _q
+            if _hexash[_k].rstrip().endswith(")") and _text:
+                break
+            _k += 1
+        _runs = [r.strip() for r in re.split(r"\{[^}]*\}", _text)
+                 if len(r.strip()) >= 25]
+        if _runs:
+            _wanted.append(max(_runs, key=len))
+        break
+_wanted = list(dict.fromkeys(_wanted))
+if len(_wanted) < 4:
+    bad(f"only {len(_wanted)} commit refusal(s) were found in the source, so "
+        f"this check is not reading what it thinks it is")
+_undocumented = [w for w in _wanted if w not in _page]
+if _undocumented:
+    for _u in _undocumented:
+        bad(f"commit can refuse with {_u!r} and commit-rollback-e-save.md does "
+            f"not carry that sentence: an operator meeting it has nowhere to "
+            f"look")
+else:
+    ok(f"all {len(_wanted)} of them are quoted on the page, in the words the "
+       f"box prints")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
