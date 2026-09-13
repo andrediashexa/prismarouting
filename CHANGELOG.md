@@ -74,6 +74,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The selftest kept its own list of routing daemons, and nothing compared it
+  with the grammar** ([#275](https://github.com/andrediashexa/hexarouting/issues/275)).
+  `appliance/selftest` decides which daemons a box should be running from
+  `for d in bgpd ospfd ospf6d isisd`; the VTY decides the same thing from
+  `TREE["config"]["router"]`. Two copies of one truth, in two languages.
+
+  That list has already been wrong this way. #187: the VTY accepted `router
+  ospf6`, the installer enabled every daemon but `ospf6d`, and OSPFv3 became
+  the one protocol a box could be configured for and could never run. The
+  comment above the loop says so. A comment is the repair for the time it
+  happened, not a check against the next one - and the next one is a fresh box
+  passing its own self-test while unable to run what somebody is about to
+  configure on it.
+
+  `test/test_selftest_daemons.py` compares the two, both ways. The other
+  direction is a warning about a daemon nobody on that box has a use for,
+  which is how a self-test becomes something operators scroll past.
+
+  The comparison is in `make test` rather than in the shell: the selftest runs
+  on a box, early, and must not depend on the VTY being importable - the same
+  reason `test/test_install_manifest.py` reads `appliance/install.sh` from
+  here.
+
+  Four reds: `ospf6d` dropped from the loop, which is #187 exactly; a protocol
+  added to the grammar and not to the loop; a daemon in the loop the grammar
+  cannot commit to; and the loop renamed, so the check reads nothing at all.
+
 * **The release gate refused every future release, for duplicates in sections
   it also forbids editing**
   ([#274](https://github.com/andrediashexa/hexarouting/issues/274)). The
