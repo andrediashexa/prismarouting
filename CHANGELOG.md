@@ -50,6 +50,47 @@ are to be interpreted as described in
 
 ### Internal
 
+* **A `NO VPP` verdict now carries VPP's own account of why**, instead of one
+  line with nothing under it
+  ([#253](https://github.com/andrediashexa/hexarouting/issues/253)). `FAIL`
+  prints its red checks and `NOT MEASURED` prints the reading it missed, so
+  the one state whose whole meaning is "look at the machine, not at the
+  product" was the one that gave the reader nothing to look at. It cost a
+  release run: `extblocks+workers` came back `NO VPP`, the same lab passed
+  alone minutes later, and nothing in the run could say whether the 30 second
+  wait had expired or the dataplane had died - which are opposite jobs.
+
+  The report now names which of the two it was and prints the log underneath:
+
+  ```
+    extblocks+workers  NO VPP - the dataplane never came up
+       the dataplane was gone by the verdict. VPP's log:
+         NO DATAPLANE at the verdict: vppctl cannot reach VPP. Last of /tmp/vpp.log:
+           | vpp[20]: received signal SIGSEGV, PC 0x7f2a1c0b4e21
+  ```
+
+  `tools/lab.sh` gives each lab a container it throws away, so `/tmp/vpp.log`
+  died with it and stdout is the only channel out. `lab/verdict.sh` therefore
+  prints the tail of that log whenever a lab ends **without passing** and
+  `vppctl` can no longer reach a dataplane - not on a pass, because
+  `ipfix-stop`, `ipfix-outbuf`, `oom` and `snmp` each stop VPP on purpose. Ten
+  labs start VPP with no wait guard at all, `icmp-tcp` among them, so this is
+  the only place their log can reach a reader.
+
+  **The marker is evidence and not a verdict.** A lab that measured something
+  and then lost VPP is still reported `FAIL`: calling that a machine problem
+  would hide a real crash, which is the failure the classifier exists to
+  avoid.
+
+  **The job count and the 30 second wait are unchanged, deliberately.** The
+  capture on the issue shows VPP answering `create host-interface` and every
+  call after it refused, so the wait did not expire and raising it would have
+  changed nothing. `extblocks` with two workers then passed under a Docker CPU
+  quota of 1.0 **and** of 0.25 cores, so CPU shortage alone does not reproduce
+  the failure either. Nothing measured supports turning either knob, and the
+  next `NO VPP` will carry the line that says which one to turn.
+
+
 * **A record could go out ahead of its template and every check stayed green**
   ([#258](https://github.com/andrediashexa/hexarouting/issues/258)).
   `docs/logging.md` says events **MUST** be held while `last_template_sent` is
@@ -300,8 +341,7 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247),
-[#253](https://github.com/andrediashexa/hexarouting/issues/253).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247).
 
 ### Added
 
@@ -435,46 +475,6 @@ are to be interpreted as described in
   and the box come apart quietly, and only reading the box says so.
 
 ### Changed
-
-* **A `NO VPP` verdict now carries VPP's own account of why**, instead of one
-  line with nothing under it
-  ([#253](https://github.com/andrediashexa/hexarouting/issues/253)). `FAIL`
-  prints its red checks and `NOT MEASURED` prints the reading it missed, so
-  the one state whose whole meaning is "look at the machine, not at the
-  product" was the one that gave the reader nothing to look at. It cost a
-  release run: `extblocks+workers` came back `NO VPP`, the same lab passed
-  alone minutes later, and nothing in the run could say whether the 30 second
-  wait had expired or the dataplane had died - which are opposite jobs.
-
-  The report now names which of the two it was and prints the log underneath:
-
-  ```
-    extblocks+workers  NO VPP - the dataplane never came up
-       the dataplane was gone by the verdict. VPP's log:
-         NO DATAPLANE at the verdict: vppctl cannot reach VPP. Last of /tmp/vpp.log:
-           | vpp[20]: received signal SIGSEGV, PC 0x7f2a1c0b4e21
-  ```
-
-  `tools/lab.sh` gives each lab a container it throws away, so `/tmp/vpp.log`
-  died with it and stdout is the only channel out. `lab/verdict.sh` therefore
-  prints the tail of that log whenever a lab ends **without passing** and
-  `vppctl` can no longer reach a dataplane - not on a pass, because
-  `ipfix-stop`, `ipfix-outbuf`, `oom` and `snmp` each stop VPP on purpose. Ten
-  labs start VPP with no wait guard at all, `icmp-tcp` among them, so this is
-  the only place their log can reach a reader.
-
-  **The marker is evidence and not a verdict.** A lab that measured something
-  and then lost VPP is still reported `FAIL`: calling that a machine problem
-  would hide a real crash, which is the failure the classifier exists to
-  avoid.
-
-  **The job count and the 30 second wait are unchanged, deliberately.** The
-  capture on the issue shows VPP answering `create host-interface` and every
-  call after it refused, so the wait did not expire and raising it would have
-  changed nothing. `extblocks` with two workers then passed under a Docker CPU
-  quota of 1.0 **and** of 0.25 cores, so CPU shortage alone does not reproduce
-  the failure either. Nothing measured supports turning either knob, and the
-  next `NO VPP` will carry the line that says which one to turn.
 
 * **The outbound rewrite carries its checksum corrections on the session
   instead of recomputing them per packet.** `bpa_rewrite_src` was the largest
