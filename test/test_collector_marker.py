@@ -164,6 +164,82 @@ check("100.64.0.7" in text4,
       "the other subscriber's open allocation went missing with it")
 ok("an allocation with a matching release is not an open allocation")
 
+print("\n=== a data set that arrives before its template is reprocessed ===")
+# `docs/logging.md` says a serious collector SHOULD buffer a data set that
+# arrives without its template and reprocess it when the template appears, and
+# then says this program does - and that **that is how the ordering became
+# visible instead of looking like vanished records**. So it is not a nicety: it
+# is the instrument by which a real defect in the exporter was found.
+#
+# Nothing held it. Disabling the reprocessing left all 38 suites green, and the
+# labs that drive this collector would have gone red saying "expected 2
+# records, got 0" - which names the box, and the box would have been right.
+#
+# Built as bytes rather than by calling an internal, because the ordering is a
+# property of what arrives on the wire.
+import struct                                                    # noqa: E402
+
+
+def _ipfix(*sets):
+    body = b"".join(sets)
+    return struct.pack("!HHIII", 10, 16 + len(body), 0, 0, 0) + body
+
+
+def _template(tid, ies):
+    fields = b"".join(struct.pack("!HH", ie, ln) for ie, ln in ies)
+    return struct.pack("!HH", 2, 8 + len(fields)) + \
+        struct.pack("!HH", tid, len(ies)) + fields
+
+
+def _data(tid, body):
+    return struct.pack("!HH", tid, 4 + len(body)) + body
+
+
+# natEvent(230, 1) and sourceIPv4Address(8, 4): the smallest record this
+# collector can say anything about.
+_IES = [(230, 1), (8, 4)]
+_BODY = struct.pack("!B", 16) + bytes([100, 64, 0, 11])
+
+col.templates.clear()
+col.pending.clear()
+col.records[:] = []
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    col.handle(_ipfix(_data(256, _BODY)))          # the record, with no template
+    held = len(col.records)
+    col.handle(_ipfix(_template(256, _IES)))       # and now the template
+text = out.getvalue()
+
+check(held == 0,
+      f"a data set with no template was decoded anyway, against a layout "
+      f"nobody sent: {col.records}")
+check("holding" in text,
+      f"the collector said nothing about holding a record it could not decode, "
+      f"so silent loss and a deferred template look the same: {text!r}")
+check(len(col.records) == 1,
+      f"the template arrived and the held record was never reprocessed, so it "
+      f"is lost: {col.records}. docs/logging.md says this program does "
+      f"reprocess, and that is how the exporter's ordering defect became "
+      f"visible instead of looking like vanished records")
+if col.records:
+    check(col.records[0].get("sourceIPv4Address") == "100.64.0.11",
+          f"the reprocessed record decoded to something else: {col.records[0]}")
+    check("(reprocessed)" in text,
+          f"the record was reprocessed and the report does not say it arrived "
+          f"out of order, which is the whole signal: {text!r}")
+    ok("a record held for its template is decoded when the template lands, and "
+       "the report says it arrived out of order")
+
+# And the ordinary way round still works, or the section above would pass on a
+# collector that decoded nothing until a template turned up twice.
+col.templates.clear(); col.pending.clear(); col.records[:] = []
+with contextlib.redirect_stdout(io.StringIO()):
+    col.handle(_ipfix(_template(256, _IES)))
+    col.handle(_ipfix(_data(256, _BODY)))
+check(len(col.records) == 1,
+      f"a record that arrived AFTER its template was not decoded: {col.records}")
+ok("and a record that arrives after its template is decoded as it always was")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
