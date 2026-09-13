@@ -551,6 +551,27 @@ tuning state, FRR and configured pools. On failure it dumps the tail of
 failure — running in first-boot mode is expected and reported as a warning —
 and always exits zero: **the diagnostic MUST NOT bring down the boot**.
 
+That rule has two halves, and both are asserted by `test/test_selftest.sh`.
+The script's last line is one; what systemd is told to do with the status is
+the other. `hexarouting-selftest.service` **MUST** carry
+`ExecStart=-/usr/lib/hexarouting/selftest`, and nothing **MAY** declare
+`Requires=`, `Requisite=`, `BindsTo=` or `PartOf=` on it. Measured on systemd
+252 with transient units of that exact shape: without the leading `-`, a
+command exiting 3 gives `Result=exit-code` and `ActiveState=failed`, a command
+killed by `SIGSEGV` gives `Result=signal` and `ActiveState=failed`, and a
+consumer carrying `Requires=` on either never starts ("A dependency job for
+... failed"). With the `-` both give `Result=success` and `ActiveState=active`,
+while `ExecMainStatus` still records 3 and 11, so nothing about the diagnosis
+is lost by ignoring the status. The console getty is such a consumer: it is
+ordered after this unit (#93) and asks for it with `Wants=`, which is the
+difference between a box that reports a failed check and a box nobody can log
+in to.
+
+`Type=oneshot` with `RemainAfterExit=yes` is the third part of the same
+statement: it is what makes "the self-test has run" an orderable fact, and a
+type that expects more of the process than exiting would fail the unit on a
+script that exited zero.
+
 The restart counter matters more than it looks. A service flapping in a loop
 can be "active" at the instant one looks, and `systemctl status` will say so.
 Only `NRestarts` tells the story.

@@ -1000,4 +1000,13 @@ else
 fi
 say "============================================================="
 say ""
-exit 0   # nunca derruba o boot por causa do proprio diagnostico
+# The diagnostic MUST NOT bring down the boot (docs/appliance.md). It reports a
+# verdict about the box; it does not answer for it. The one moment this script
+# must not add a failure of its own is the moment it has just found one, since
+# the box that fails a check is the box whose console somebody needs.
+#
+# This is half of the rule. The other half is that systemd is told not to care:
+# hexarouting-selftest.service carries "ExecStart=-", so a status this line
+# stopped producing, or a signal that kills the script before it gets here,
+# still cannot fail the unit.
+exit 0
