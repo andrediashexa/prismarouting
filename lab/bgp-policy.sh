@@ -525,10 +525,23 @@ UNCH=$($HX -c "configure" \
 expect_in "a statement the VTY does not model still commits" \
   "commit complete" "$UNCH"
 SHOWN=$($HX -c "show running-config" 2>&1)
+# The marker text is two spaces and four words, and it was five words and four
+# spaces until #141 shortened it: the long form put a real statement at 89
+# columns on an 80-column serial console, which is the console a racked box is
+# seen through. This assertion carried the old text for three days after the
+# change and went red the first time anything ran it (#141).
 expect_in "and is marked as unchecked where it is displayed" \
-  "set tag 100    <- not checked by this VTY" "$SHOWN"
+  "set tag 100  <- not checked" "$SHOWN"
+# The other half, and it has to name a statement that is REALLY in that output
+# and REALLY modelled, or it passes because the needle was never there. It used
+# to look for "set local-preference 200    <-", and neither the value nor the
+# marker appears anywhere in this lab's configuration: vacuous both ways.
+# RM-DEAD's "set local-preference 120" is above, it committed, and
+# `set local-preference` is in ROUTE_MAP_BLOCK.
+expect_in "and the modelled statement really is in that output" \
+  "set local-preference 120" "$SHOWN"
 expect_not_in "while the ones it does model carry no marker" \
-  "set local-preference 200    <-" "$SHOWN"
+  "set local-preference 120  <-" "$SHOWN"
 
 # --- a refusal that belongs to FRR, and what it used to cost ---
 #

@@ -535,6 +535,27 @@ are to be interpreted as described in
 
   57 checks before, **103** after.
 
+* **The `<- not checked` marker is shorter, and three places were still
+  quoting the old text.** It shipped in 0.66.0 as
+  `    <- not checked by this VTY`, which put a real statement at **89
+  columns** on the 80-column serial console a racked box is seen through, so
+  [#141](https://github.com/andrediashexa/hexarouting/issues/141) shortened it
+  to `  <- not checked` while making it mark far more. The change did not reach
+  `lab/bgp-policy.sh`, a wiki page or `docs/wiki-audit.md`, and the lab
+  assertion went red the first time anything ran it after the merge - three
+  days after the text changed.
+
+  `test/test_doc_commands.py` now reads every `lab/*.sh` that quotes the marker
+  and requires the quotation to be a prefix of what `config.UNCHECKED_MARK`
+  actually holds. A literal the product emits and other files quote is the same
+  shape `test_context_map.py` guards for paths: confidently wrong and silent
+  until somebody meets it.
+
+  The neighbouring assertion was vacuous and is fixed with it: it looked for
+  `set local-preference 200    <-`, and neither that value nor that marker was
+  anywhere in the lab's configuration, so it passed whatever the box did. It
+  now names a statement the lab really commits and the VTY really models.
+
 ### Internal
 
 * **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a
