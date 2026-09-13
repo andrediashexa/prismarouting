@@ -145,23 +145,7 @@ test-install: iso
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 qemu-utils squashfs-tools \
 	      fdisk mdadm >/dev/null 2>&1; \
-	    sh /src/lab/install-iso.sh; \
-	    echo; echo "=========== THE CONTROL: a password the box refuses ==========="; \
-	    if sh /src/lab/install-iso.sh wrong-password > /tmp/wrong-password.log 2>&1; then \
-	      echo "  FAIL: the control PASSED. The driver no longer notices a"; \
-	      echo "        refused login, so this lab could run its whole session"; \
-	      echo "        against a login prompt and report a pass."; \
-	      tail -30 /tmp/wrong-password.log | sed "s/^/        | /"; \
-	      exit 1; \
-	    fi; \
-	    if grep -q "ANSWERED and REFUSED the credentials" /tmp/wrong-password.log; then \
-	      echo "  [ ok ] the control failed at the login, and the driver said so"; \
-	    else \
-	      echo "  FAIL: the control failed, but NOT at the login. A driver whose"; \
-	      echo "        failure mode is a hang proves nothing."; \
-	      tail -30 /tmp/wrong-password.log | sed "s/^/        | /"; \
-	      exit 1; \
-	    fi)
+	    sh /src/tools/test-install.sh)
 
 # The same install onto TWO disks, then the same box booted with one of them
 # pulled out. It is a separate target and not a flag on the one above because

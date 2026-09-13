@@ -1144,6 +1144,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`make test-install` could not run at all, and the release gate blamed the
+  box** ([#281](https://github.com/andrediashexa/hexarouting/issues/281)).
+  The gate for `v0.68.0` said "the medium installed and the installed box
+  failed its checks". The medium was never installed: the recipe ended in
+  `/bin/sh: 1: Syntax error: Unterminated quoted string`.
+
+  `$(call ISO_RUN,<body>)` ends its argument at the first unescaped **comma**,
+  and the body had one in an ordinary English sentence - `echo "        refused
+  login, so this lab could run its whole session"` - so the argument stopped at
+  `refused login`, inside a quoted string. The gate's message named the box.
+  The fault was a comma in a Makefile.
+
+  Nothing could have caught it earlier: the target only runs after an ISO has
+  been built, so nothing anybody runs day to day reached it, and a syntax error
+  in a shell command is found when the shell READS it rather than when the work
+  fails.
+
+  The body is `tools/test-install.sh` now, rather than the comma escaped: a
+  file has no `$(call)` around it and the Makefile line that invokes it has
+  nothing in it to get wrong. `test/test_installer.sh`'s control check got
+  simpler with it and now drives the real file instead of a reconstruction with
+  tabs, backslashes and a closing paren stripped off.
+
+  `test/test_makefile_recipes.py` expands every target with `make -n` and
+  parses it with `sh -n` - no container, no ISO, no dataplane. Shown red by
+  putting the comma back.
+
 * **Nothing stopped the ISO build from shipping an answer file, and the ISO it
   did ship carried three SSH host private keys.** `docs/appliance.md` says the
   build **MUST NOT** put an answer file in the image, because an answer file
