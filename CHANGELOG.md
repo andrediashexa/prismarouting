@@ -66,6 +66,7 @@ are to be interpreted as described in
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
 [#237](https://github.com/andrediashexa/hexarouting/issues/237),
+[#240](https://github.com/andrediashexa/hexarouting/issues/240),
 [#242](https://github.com/andrediashexa/hexarouting/issues/242).
 
 ### Added
@@ -1468,6 +1469,27 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **The 2^28 capacity bound could be removed with every suite green**
+  ([#240](https://github.com/andrediashexa/hexarouting/issues/240)).
+  `docs/architecture.md` calls it a MUST NOT and gives the reason: it is what
+  keeps the reciprocal multiplication inside `u64`. The line above it, that
+  `block_size` MUST be a power of two, is asserted at
+  `test/test_bpa_pool.c:304`. This one was asserted by nothing, in a file
+  `make test` compiles.
+
+  A pool past the bound does not fail loudly. The mapping divides by capacity
+  with a precomputed reciprocal, and `ref/check_magic.py` proves that
+  reciprocal exact only for divisors below this number. Past it the
+  multiplication leaves `u64` and subscribers are mapped to the wrong public
+  address, silently.
+
+  **Both sides of the boundary are asserted, and the second one found
+  something.** A pool of exactly 2^28 subscribers must be accepted, because a
+  guard written `>=` by mistake would refuse the documented limit and a check
+  that only tried one-past would call that correct. Shown failing both ways:
+  removing the guard accepts 268,439,552 subscribers, and `>=` refuses exactly
+  268,435,456.
 
 * **Both REQUIRED defences against a pool holding the box's own address were
   unasserted** ([#242](https://github.com/andrediashexa/hexarouting/issues/242)).
