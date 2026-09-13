@@ -177,16 +177,48 @@ echo "=========== the stride: where a subscriber's extra blocks land ===========
 # lab does not decide where a block belongs - it asks the box, twice, and
 # reads the difference between the two answers.
 #
+# EVERY NUMBER BELOW IS DERIVED FROM THE WORKER COUNT, and that is not
+# tidiness. A dynamic pool's blocks are sharded by block_idx % n_workers and a
+# subscriber draws only from its own worker's slice, so the block the allocator
+# hands out NEXT is n_workers indices along, not one. The first version of this
+# section hard-coded one, and at two workers the no-stride gap was 8 ports
+# while a stride of 2 also gives 8: the stride assertion passed without
+# measuring anything, and only the control beneath it went red and said so.
+#
+# So the stride under test is chosen to be reachable AND different from what
+# the allocator would have done anyway, and the two expected gaps are asserted
+# to differ before either is used.
+NW=$(vppctl show bpa blocks | sed -n '/^pool ext /,/^  total:/p' \
+     | grep -c '^  thread ')
+[ "${NW:-0}" -ge 1 ] || NW=1
+# A stride is honourable only when its step is a multiple of the worker count
+# (bpa_stride_reachable), and the smallest multiple, NW itself, is exactly what
+# the free list already does. Twice that is the smallest one that can be told
+# apart from it.
+STRIDE=$((2 * NW))
+# Room for the whole construction in ONE worker's slice: locals 0 to 4, since
+# the fall-back below puts a subscriber's stride target on a block another
+# subscriber is holding. Eight blocks per worker leaves margin.
+NBLK=$((8 * NW))
+BSZ=4
+PMAX=$((1024 + NBLK * BSZ - 1))
+echo "  the box has $NW worker slice(s), so:"
+echo "    the next block the allocator hands out is $NW block(s) along"
+echo "      -> with no stride the gap must be $((NW * BSZ)) ports"
+echo "    the smallest stride that is both reachable and not that: $STRIDE"
+echo "      -> with the stride the gap must be $((STRIDE * BSZ)) ports"
+echo "    so each pool is $NBLK blocks of $BSZ ports: 1024-$PMAX"
+
 # The first pool is deleted first: pools may not claim overlapping inside
 # prefixes, and everything the sections above measured is already captured in
 # the shell variables above.
 vppctl bpa pool ext del >/dev/null
 vppctl bpa pool nostride inside 100.64.0.0/24 outside 200.150.0.32/32 \
-    ports 1024-1055 block 4 mode dynamic max-blocks 3
-vppctl bpa pool stride2 inside 100.64.1.0/24 outside 200.150.0.33/32 \
-    ports 1024-1055 block 4 mode dynamic max-blocks 3 block-stride 2
-echo "  two pools of eight four-port blocks, one with a stride of two:"
-vppctl show bpa pool | grep -E "^pool (nostride|stride2)|per sub|stride " \
+    ports 1024-$PMAX block $BSZ mode dynamic max-blocks 3
+vppctl bpa pool strided inside 100.64.1.0/24 outside 200.150.0.33/32 \
+    ports 1024-$PMAX block $BSZ mode dynamic max-blocks 3 block-stride $STRIDE
+echo "  the two pools, one with a stride of $STRIDE:"
+vppctl show bpa pool | grep -E "^pool (nostride|strided)|per sub|stride " \
   | sed 's/^/    /'
 
 # THE EXPORTER IS CONFIGURED THROUGH THE VTY, and never from here. A lab that
@@ -215,25 +247,32 @@ sendip() {  # inside address, source port
   vppctl packet-generator delete t >/dev/null 2>&1
 }
 
+# The three subscribers on the strided pool must land on the SAME worker, or
+# they are drawing from different slices and none of them can take a block from
+# another. The worker is sub_idx % n_workers and sub_idx is the offset of the
+# address inside the pool's inside prefix, so offsets eight apart agree for any
+# worker count up to eight.
+S1=100.64.1.8; S2=100.64.1.16; S3=100.64.1.24
+
 echo
 echo "  -- no stride: the extra block is whatever the allocator had free --"
-for sp in 6001 6002 6003 6004 6005; do sendip 100.64.0.10 $sp; done
-SUB_PLAIN=$(vppctl show bpa subscriber 100.64.0.10)
+for sp in 6001 6002 6003 6004 6005; do sendip 100.64.0.8 $sp; done
+SUB_PLAIN=$(vppctl show bpa subscriber 100.64.0.8)
 printf '%s\n' "$SUB_PLAIN" | sed 's/^/    /'
 
 echo
-echo "  -- stride 2: the same five flows, on the pool that names a distance --"
-for sp in 6001 6002 6003 6004 6005; do sendip 100.64.1.10 $sp; done
-SUB_STRIDE=$(vppctl show bpa subscriber 100.64.1.10)
+echo "  -- stride $STRIDE: the same five flows, on the pool that names a distance --"
+for sp in 6001 6002 6003 6004 6005; do sendip $S1 $sp; done
+SUB_STRIDE=$(vppctl show bpa subscriber $S1)
 printf '%s\n' "$SUB_STRIDE" | sed 's/^/    /'
 
 # Both gaps read off the box. The block size is read off it too - the first
-# block's own range - so the only number this file supplies is the stride the
-# operator typed.
+# block's own range - so the only thing this file supplies is the arithmetic
+# the box itself documents: n_workers for the free list, the stride for the
+# setting.
 blocks_of () { printf '%s\n' "$1" | sed -n 's/^  block [0-9]*  \([0-9.]*\)  ports \([0-9]*\)-\([0-9]*\).*/\1 \2 \3/p'; }
 PLAIN_LO1=$(blocks_of "$SUB_PLAIN"  | sed -n 1p | cut -d' ' -f2)
 PLAIN_LO2=$(blocks_of "$SUB_PLAIN"  | sed -n 2p | cut -d' ' -f2)
-PLAIN_HI1=$(blocks_of "$SUB_PLAIN"  | sed -n 1p | cut -d' ' -f3)
 STR_IP1=$(blocks_of "$SUB_STRIDE"   | sed -n 1p | cut -d' ' -f1)
 STR_IP2=$(blocks_of "$SUB_STRIDE"   | sed -n 2p | cut -d' ' -f1)
 STR_LO1=$(blocks_of "$SUB_STRIDE"   | sed -n 1p | cut -d' ' -f2)
@@ -242,27 +281,43 @@ STR_HI1=$(blocks_of "$SUB_STRIDE"   | sed -n 1p | cut -d' ' -f3)
 BLOCKSZ=$((STR_HI1 - STR_LO1 + 1))
 GAP_PLAIN=$((PLAIN_LO2 - PLAIN_LO1))
 GAP_STRIDE=$((STR_LO2 - STR_LO1))
+EXP_PLAIN=$((NW * BLOCKSZ))
+EXP_STRIDE=$((STRIDE * BLOCKSZ))
 echo
 echo "    block size the box reports: ${BLOCKSZ} ports"
-echo "    gap between the two blocks, no stride: ${GAP_PLAIN} ports"
-echo "    gap between the two blocks, stride 2:  ${GAP_STRIDE} ports"
+echo "    gap with no stride: ${GAP_PLAIN} ports   (must be $NW x $BLOCKSZ = $EXP_PLAIN)"
+echo "    gap with stride $STRIDE:  ${GAP_STRIDE} ports   (must be $STRIDE x $BLOCKSZ = $EXP_STRIDE)"
 
 echo
 echo "  -- a stride that cannot be honoured falls back, and is counted --"
-# Two more subscribers take the blocks either side of the free list, so that
-# the second one's stride lands on a block somebody else is already holding.
+# Two more subscribers on the same worker take the blocks either side of the
+# free list, so that the SECOND one's stride lands on a block the third is
+# already holding. In that worker's own slice: S1 holds local 0 and, by the
+# stride, local 2; S2 then takes local 1 and S3 local 3; so S2's stride target
+# is local 3, which is S3's, and it has to fall back.
+#
 # The block it gets instead keeps the customer working, which is the whole
 # reason a stride is a preference and not a rule.
-sendip 100.64.1.20 7001
-sendip 100.64.1.30 7001
-for sp in 7002 7003 7004 7005; do sendip 100.64.1.20 $sp; done
-SUB_FELL=$(vppctl show bpa subscriber 100.64.1.20)
+sendip $S2 7001
+sendip $S3 7001
+for sp in 7002 7003 7004 7005; do sendip $S2 $sp; done
+SUB_FELL=$(vppctl show bpa subscriber $S2)
 printf '%s\n' "$SUB_FELL" | sed 's/^/    /'
 BLOCKS_OUT=$(vppctl show bpa blocks)
 printf '%s\n' "$BLOCKS_OUT" | sed 's/^/    /'
-STRIDE_LINE=$(printf '%s\n' "$BLOCKS_OUT" | grep "stride 2:")
-PLACED=$(printf '%s\n' "$STRIDE_LINE" | sed -n 's/.*stride 2: \([0-9]*\) extensions placed.*/\1/p')
+STRIDE_LINE=$(printf '%s\n' "$BLOCKS_OUT" | grep "stride $STRIDE:")
+PLACED=$(printf '%s\n' "$STRIDE_LINE" \
+         | sed -n 's/.*stride [0-9]*: \([0-9]*\) extensions placed.*/\1/p')
 FELL=$(printf '%s\n' "$STRIDE_LINE" | sed -n 's/.*placed where it says, \([0-9]*\) fell back.*/\1/p')
+# The slice really did have room for the whole construction. Without this, a
+# fall-back count of zero could mean "the stride was honoured" or "the worker
+# had no block left at all", and those are not the same reading - the first
+# version of this section could not tell them apart and reported the second as
+# the first.
+SLICE=$(printf '%s\n' "$BLOCKS_OUT" | sed -n '/^pool strided /,/^  total:/p' \
+        | sed -n 's/^  thread [0-9]*: [0-9]*\/\([0-9]*\) blocks.*/\1/p' | sort -rn | head -1)
+echo "    the largest slice of this pool holds ${SLICE:-?} blocks; the"
+echo "    construction needs 5"
 
 echo
 echo "  -- and every block the subscriber holds is in the log --"
@@ -271,12 +326,12 @@ echo "  -- and every block the subscriber holds is in the log --"
 wait $COL_PID 2>/dev/null
 vppctl show bpa logging | sed -n '1,6p' | sed 's/^/    /'
 COL=$(cat /tmp/collector.out)
-printf '%s\n' "$COL" | grep -E "ALLOCATION +100\.64\.1\.10" | sed 's/^/    /'
+printf '%s\n' "$COL" | grep -E "ALLOCATION +$S1 " | sed 's/^/    /'
 ALLOC_1=$(printf '%s\n' "$COL" \
-  | grep -cE "ALLOCATION +100\.64\.1\.10 -> ${STR_IP1} portas ${STR_LO1}-${STR_HI1}")
+  | grep -cE "ALLOCATION +$S1 -> ${STR_IP1} portas ${STR_LO1}-${STR_HI1}")
 ALLOC_2=$(printf '%s\n' "$COL" \
-  | grep -cE "ALLOCATION +100\.64\.1\.10 -> ${STR_IP2} portas ${STR_LO2}-")
-ALLOC_ANY=$(printf '%s\n' "$COL" | grep -cE "ALLOCATION +100\.64\.1\.10")
+  | grep -cE "ALLOCATION +$S1 -> ${STR_IP2} portas ${STR_LO2}-")
+ALLOC_ANY=$(printf '%s\n' "$COL" | grep -cE "ALLOCATION +$S1 ")
 
 echo "=========== VERDICT ==========="
 expect "the subscriber filled its first block and got a second" \
@@ -312,28 +367,47 @@ expect_not_in "and it never went quiet again while we were watching" \
   "no live state" "$SUB_AFTER"
 
 # --- the stride ---
+# THE ANTI-VACUITY CHECK, and it comes first because everything after it is
+# worthless without it. A stride whose gap equals the gap the allocator
+# produces anyway is a stride nothing can measure: at two workers the free list
+# already moves 2 blocks along, so `block-stride 2` and no stride are the same
+# picture, and the assertion below would pass on a build that ignores the
+# setting entirely. That is exactly what happened, and only the control caught
+# it.
+expect "the stride under test is one the allocator would not have done anyway" \
+  test "${EXP_STRIDE:-0}" -ne "${EXP_PLAIN:-0}"
+# And one it can honour at all: a stride whose step is not a multiple of the
+# worker count names a block in nobody's own slice.
+expect "and one this worker count can honour" \
+  test "$((STRIDE % NW))" -eq 0
 # The precondition for everything below: two blocks on each pool. Without it
 # the gaps are empty strings and every comparison below is comparing nothing.
 expect "the subscriber on the plain pool holds two blocks" \
   test "$(printf '%s\n' "$SUB_PLAIN" | grep -c '^  block ')" -eq 2
 expect "the subscriber on the strided pool holds two blocks" \
   test "$(printf '%s\n' "$SUB_STRIDE" | grep -c '^  block ')" -eq 2
-# The control. A build that ignored block-stride puts the second block in the
-# same place on both pools, and this is the assertion that would still be
-# green while the one below went red - which is how we know the one below is
-# measuring the setting and not the allocator's habits.
-expect "with no stride the box put the second block next to the first" \
-  test "${GAP_PLAIN:-0}" -eq "${BLOCKSZ:-0}"
-# The promise, in the operator's own words: n blocks along. The stride is the
-# only number this file supplies; the block size and both port ranges come
-# off the box.
-expect "with stride 2 it put the second block two blocks along instead" \
-  test "${GAP_STRIDE:-0}" -eq "$((2 * ${BLOCKSZ:-0}))"
+# The control. A build that ignored block-stride puts the second block where
+# the free list would have put it, which is n_workers blocks along - and this
+# is the assertion that would still be green while the one below went red,
+# which is how we know the one below is measuring the setting and not the
+# allocator's habits.
+expect "with no stride the box put the second block where the free list had one" \
+  test "${GAP_PLAIN:-0}" -eq "${EXP_PLAIN:-0}"
+# The promise, in the operator's own words: n blocks along. The block size and
+# both port ranges come off the box; the stride is what was typed.
+expect "with the stride it put the second block where the stride says instead" \
+  test "${GAP_STRIDE:-0}" -eq "${EXP_STRIDE:-0}"
 expect "and on the same public address, so the subscriber is one range" \
   test "${STR_IP1:-a}" = "${STR_IP2:-b}"
 # A stride is a preference, not a rule: the block it names was taken, and the
 # customer got a working block anyway. Both halves are asserted, because a box
 # that refused the extension instead would also report a fall-back of zero.
+#
+# The slice is asserted first for the same reason: a worker with no block left
+# also reports zero fall-backs, and "the stride was honoured every time" and
+# "there was nothing left to hand out" are not the same reading.
+expect "the worker's slice had room for the whole construction" \
+  test "${SLICE:-0}" -ge 5
 expect "the stride placed a block, and the box says so" \
   test "${PLACED:-0}" -ge 1
 expect "and counted the one it could not place" test "${FELL:-0}" -ge 1
