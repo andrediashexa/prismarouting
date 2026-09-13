@@ -1804,6 +1804,33 @@ are to be interpreted as described in
 
 ### Internal
 
+* **Nothing measured the zero in "zero records in deterministic mode"**
+  ([#266](https://github.com/andrediashexa/hexarouting/issues/266)). It is the
+  answer `README.md` gives to *Why*: per-flow NAT logging produces terabytes,
+  and BPA reduces that to one record per block, or to zero in deterministic
+  mode. `docs/context.md` invariant 1.2 says the same from the other side. An
+  ISP chooses the mode for exactly this, and **every IPFIX lab in the
+  repository runs a dynamic pool** - `ipfix`, `ipfix-tcp` and `ipfix-stop` all
+  say `mode dynamic`, and nothing had ever armed an exporter over a
+  deterministic one.
+
+  `lab/det-zero.sh` does. Four subscribers translated on a deterministic pool,
+  **zero records emitted**; then the same box, the same exporter, the same
+  collector and the same traffic pointed at a dynamic pool, which produces
+  three records decoded on the wire with their port ranges.
+
+  **That second half is the lab.** A box whose exporter was never armed also
+  emits zero and would satisfy the claim while proving nothing, which is the
+  control `lab/trail-fsync.sh` and `lab/localaddr.sh` both carry.
+
+  Shown failing by making the deterministic branch of `bpa_in2out.c` log the
+  way the dynamic one does: four records, and the collector printed the
+  deterministic subscribers' own allocations back - the year of records the
+  mode exists to avoid. And shown failing the other way, with the exporter
+  never armed: the claim stayed green and the control went red, which is what
+  the control is for.
+
+
 * **`docs/routing.md` sent readers to the wrong lab for four claims**
   ([#247](https://github.com/andrediashexa/hexarouting/issues/247)). The
   as-path regex cases, the two-origin policy test, the local-preference test
