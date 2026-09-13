@@ -423,6 +423,26 @@ are to be interpreted as described in
   red**. There is now an assertion connecting the function to the `JOBS=` line
   that uses it.
 
+* **The boot self-test compared the IPFIX configuration with the dataplane and
+  not the pools.** The pattern was already there and well argued - *what the
+  box was TOLD at boot, from the file `hexarouting.service` hands to `hexash`,
+  against what the dataplane HAS* - and it covered logging only. A pool in the
+  saved file that the dataplane refused is applied by nobody and reported by
+  nothing: the service succeeds because the rest of the file applied, and the
+  line beside it counts the pools that are there rather than the one that is
+  missing. Every subscriber behind that pool is untranslated, on a box that
+  boots, forwards other people's traffic and answers every command
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)).
+
+  Names only, deliberately: comparing settings would mean re-deriving the
+  dataplane's own normalisation in the self-test, which is the mistake #184
+  names - a check that recomputes what it is checking agrees with its own
+  arithmetic rather than with the box. A box that has configured no pool is
+  told nothing, because an operator who has not made one yet is not a box with
+  a defect.
+
+  57 checks on master before this run of work, **117** after.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
