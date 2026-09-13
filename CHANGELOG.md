@@ -34,6 +34,42 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+[#260](https://github.com/andrediashexa/hexarouting/issues/260),
+[#267](https://github.com/andrediashexa/hexarouting/issues/267).
+
+### Internal
+
+* **The release gate refuses a note that does not record the boot and the
+  install** ([#260](https://github.com/andrediashexa/hexarouting/issues/260)).
+  `CONTRIBUTING.md` section 5 says the note MUST record that the medium was
+  built, booted, installed and booted again. The gate PERFORMS both and never
+  read the note, and the rule decayed across two releases without a word:
+  `v0.64.0` carries the sentence, `v0.65.0` has one of the words, and
+  `v0.66.0` says nothing about either.
+
+  It is the note and not the steps, because the steps are already refused if
+  they fail. The note is what an operator who does not clone this repository
+  reads. **The red needed no fixture: `v0.66.0` is in this repository and the
+  check refuses it** - and it then refused the `v0.67.0` tag I had written
+  without mentioning the boots, which is the only reason that tag says it.
+
+* **A release section could carry the same heading three times, and 0.67.0
+  does** ([#267](https://github.com/andrediashexa/hexarouting/issues/267)).
+  `CONTRIBUTING.md` says the entry goes *in the order a reader cares about*,
+  and 0.67.0 ships with `### Fixed` three times and `### Added` twice. Nobody
+  wrote it that way: it comes from merging fourteen branches that had each
+  added under the same heading, where git sees two additions at one anchor and
+  the resolution keeps both sides with their headings.
+
+  The gate already refuses a CHANGELOG that says the same thing twice, and the
+  comment above that check describes this exact mechanism - it compares
+  **bullets**, and a duplicated heading is the same accident one level up. It
+  compares headings now, within a section, naming which release and which line.
+  The red needed no fixture either, and it found two older releases carrying
+  it too.
+
 ## 0.67.0 — nine MUSTs nothing was holding, and an ISO that shipped its own keys
 
 [#55](https://github.com/andrediashexa/hexarouting/issues/55),
@@ -1620,6 +1656,29 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **The release gate refuses a note that does not record the boot and the
+  install** ([#260](https://github.com/andrediashexa/hexarouting/issues/260)).
+  `CONTRIBUTING.md` section 5 says the release note MUST record that the medium
+  was built, booted, installed and booted again. The gate PERFORMS both and
+  never read the note, and the rule decayed across two releases without a word:
+  `v0.64.0` carries the sentence, `v0.65.0` has one of the words, and
+  `v0.66.0`, the most recent release, says nothing about either.
+
+  It is the note and not the steps, because the steps are already refused if
+  they fail. The note is what an operator who does not clone this repository
+  reads, and section 5 says so one line above: a tag is a pointer, a release is
+  where they read what changed. A note that does not say the medium was
+  installed and booted leaves that operator to assume it, and
+  [#119](https://github.com/andrediashexa/hexarouting/issues/119) and
+  [#121](https://github.com/andrediashexa/hexarouting/issues/121) are what the
+  assumption would have been wrong about.
+
+  **The red needed no fixture: `v0.66.0` is in this repository and the check
+  refuses it.** All four words on one line, the way `v0.64.0` names them,
+  because loose matching passes on any note that mentions an installed box -
+  which every note about this product eventually does.
+
 
 * **`docs/routing.md` sent readers to the wrong lab for four claims**
   ([#247](https://github.com/andrediashexa/hexarouting/issues/247)). The

@@ -115,6 +115,36 @@ if awk '/^## Unreleased/{u=1;next} /^## /{u=0} u && /^[*-] /{n++} END{exit !(n>0
   exit 1
 fi
 
+# The release note has to say the medium was built, booted, installed and
+# booted again.
+#
+# CONTRIBUTING.md section 5 requires it, and nothing held it: this script
+# PERFORMS both boots and never read the note. The rule decayed across two
+# releases without a word - v0.64.0 carries the sentence, v0.65.0 has one of
+# the words, and v0.66.0 says nothing about either (#260).
+#
+# It is the NOTE and not the steps, because the steps are already refused
+# below if they fail. The note is what an operator who does not clone this
+# repository reads, and section 5 says so in the line above: a tag is a
+# pointer, a release is where they read what changed. A note that does not say
+# the medium was installed and booted leaves them to assume it, and #119 and
+# #121 are what that assumption would have been wrong about.
+#
+# All four words on one line, the way v0.64.0 names them. Loose matching would
+# pass on a note that mentions an installed box for some other reason, which
+# every note about this product eventually does.
+note=$(git -C "$WORK" tag -l --format="%(contents)" "$TAG")
+if ! printf '%s\n' "$note" | grep -qiE "built.*booted.*installed.*(again|second)"; then
+  echo "error: the release note for $TAG does not record that the medium was" >&2
+  echo "       built, booted, installed and booted again." >&2
+  echo "       CONTRIBUTING.md section 5 requires the note to say it, because" >&2
+  echo "       the note is what an operator who does not clone this repository" >&2
+  echo "       reads. This gate is about to do all four; say so in the tag." >&2
+  echo "       v0.64.0 put it in one line:" >&2
+  echo "         Built, booted, installed to a disk and booted again." >&2
+  exit 1
+fi
+
 # No conflict marker may survive a merge, anywhere in the tree.
 #
 # This is here because it HAPPENED, and because the checks that were being run
@@ -160,6 +190,81 @@ fi
 # reworded second copy of the same fix is a different defect and this will not
 # catch it - the two that were found by hand were reworded - but an exact
 # repeat is what the merge produces, and that is what this is for.
+# A section for a version that has already been tagged must be what that tag
+# had, byte for byte.
+#
+# The comment above the duplicate-bullet check below describes half of this: a
+# branch cut before a release rename still says "Unreleased", master has
+# renamed that section, and git files the branch's bullets INSIDE the released
+# one. That check catches the copies. It does not catch a branch carrying a NEW
+# entry, which lands under the released version and credits it with work that
+# is not in it - measured on two real branches after 0.67.0 was cut, and there
+# are eighteen of them waiting (#269).
+#
+# An honest correction to a shipped section is the case worth naming: this rule
+# forbids it, deliberately. CHANGELOG.md's own TL;DR says a reconstruction that
+# hides being one is a second, quieter defect, so a correction belongs in the
+# CURRENT section saying what it corrects, where a reader of the old version
+# has a chance of seeing it.
+prev=$(git -C "$WORK" tag -l "v*" --sort=-v:refname | grep -v "^$TAG\$" | head -1)
+if [ -n "$prev" ]; then
+  prev_ver=${prev#v}
+  cur_sect=$(awk -v v="## $prev_ver" '
+    index($0, v) == 1 { p = 1; print; next }
+    /^## / { p = 0 }
+    p { print }
+  ' "$WORK/CHANGELOG.md")
+  was_sect=$(git -C "$WORK" show "$prev:CHANGELOG.md" 2>/dev/null | awk -v v="## $prev_ver" '
+    index($0, v) == 1 { p = 1; print; next }
+    /^## / { p = 0 }
+    p { print }
+  ')
+  if [ -n "$was_sect" ] && [ "$cur_sect" != "$was_sect" ]; then
+    echo "error: the '## $prev_ver' section of CHANGELOG.md is not what $prev" >&2
+    echo "       shipped. A section for a version that has already been tagged" >&2
+    echo "       describes a medium somebody is running; editing it changes" >&2
+    echo "       what that box is said to do." >&2
+    echo "       Most likely a branch cut before the rename filed its entry" >&2
+    echo "       there. Move it under '## Unreleased'. If it is a correction," >&2
+    echo "       put it in the current section and say what it corrects." >&2
+    printf '%s\n' "$cur_sect" > /tmp/hexa-sect-now
+    printf '%s\n' "$was_sect" > /tmp/hexa-sect-was
+    diff -u /tmp/hexa-sect-was /tmp/hexa-sect-now 2>/dev/null | head -20 >&2
+    exit 1
+  fi
+fi
+
+# And no heading may appear twice inside one release section.
+#
+# The duplicate-bullet check below compares BULLETS, and a duplicated heading
+# is the same accident one level up: merging fourteen branches that each added
+# an entry under "### Fixed" gives git two additions at the same anchor, the
+# resolution keeps both sides, and each side brings its own heading. 0.67.0
+# shipped with "### Fixed" three times and "### Added" twice, and nobody
+# writing it did that (#267).
+#
+# Only within a section, because every release legitimately has its own
+# "### Fixed". Sections are "## " and headings are "### ".
+# The section is named in the message, because "### Fixed appears twice" with
+# no version is a sentence somebody has to go and grep for. Measured: 0.67.0
+# is not the only release this happened to.
+dup_head=$(awk '
+  /^## / { sect = $0; split("", seen); next }
+  /^### / {
+    if ($0 in seen) printf "  %s   under %s (line %d)\n", $0, sect, NR
+    seen[$0] = 1
+  }
+' "$WORK/CHANGELOG.md")
+if [ -n "$dup_head" ]; then
+  echo "error: CHANGELOG.md in $TAG repeats a heading inside one release:" >&2
+  printf '%s\n' "$dup_head" >&2
+  echo "       CONTRIBUTING.md section 5 says the entry goes in the order a" >&2
+  echo "       reader cares about, and a section that says Fixed three times" >&2
+  echo "       has no order. It comes from merging branches that each added" >&2
+  echo "       under the same heading: keep one and move the bullets under it." >&2
+  exit 1
+fi
+
 dups=$(grep -E "^\* \*\*" "$WORK/CHANGELOG.md" | sort | uniq -d)
 if [ -n "$dups" ]; then
   echo "error: CHANGELOG.md in $TAG says the same thing twice." >&2
