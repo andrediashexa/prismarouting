@@ -402,9 +402,10 @@ different error and says so.
 the VTY says so every time it creates one:
 
 ```
-warning: pg0.700 matches outer 700 inner 900 AND anything carrying more tags
-than that; VPP's ethernet input reads three or more tags as two, so a QinQ
-sub-interface on this box cannot be made to refuse them (#136)
+warning: pg0.700 also matches anything carrying more tags
+    it is outer 700 inner 900, and VPP's ethernet input reads three or more
+    tags as two, so a QinQ sub-interface on this box cannot be made to refuse
+    them (#136)
 ```
 
 Two separate reasons, and only one of them was known when
@@ -1220,7 +1221,8 @@ removes it from the **FIB**, which is the only place that matters.
 `commit check` refuses a next hop that is on no connected network:
 
 ```
-error: router static / route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
+error: this next hop is on no connected network: 172.31.99.1
+    router static / route 10.55.0.0/16 172.31.99.1
     the route would be accepted and never reach the forwarding table
 ```
 
@@ -1268,7 +1270,8 @@ against:
 
 ```
 note: 1 static route(s) in 'vrf green' were not checked for a reachable next hop
-    FRR reports no routing table for it, so nothing on this box holds its routes yet
+    FRR reports no routing table for it, so nothing on this box holds its
+    routes yet
     first one: ip route 10.55.0.0/16 172.31.99.1
 ```
 
@@ -1690,8 +1693,10 @@ applies and the in-session timer is still set, and the box says that is all it
 is worth:
 
 ```
-warning: the revert could NOT be armed on the box: /etc/hexarouting: Permission denied
-    it will run in 10 minute(s) IF THIS SESSION LASTS THAT LONG, and not otherwise
+warning: the revert could NOT be armed on the box
+    /etc/hexarouting: Permission denied
+    it will run in 10 minute(s) IF THIS SESSION LASTS THAT LONG, and not
+    otherwise
     which is not the case it exists for: keep a second session open, and use
     'rollback 1' there if this one stops answering
 ```
@@ -3206,10 +3211,11 @@ That is said rather than skipped - a check that quietly does not run is one the
 operator believes ran and passed:
 
 ```
-note: this change alters what this box advertises, and this session did not
-arrive over SSH
-    so there is no address to check it against. A serial console cannot be cut
-    off by a withdrawal; a session reaching this box through another one can
+note: this change alters what this box advertises
+    the prefix carrying this session was not checked
+    this session did not arrive over SSH, so there is no address to check it
+    against. A serial console cannot be cut off by a withdrawal; a session
+    reaching this box through another one can
 ```
 
 The note is printed only when the change moves something in
@@ -3564,6 +3570,62 @@ sides of it together.
 `UNCHECKED_MARK` is: the display's width assertion and the refusal's now spend
 the same budget, and two literals is how a 178-column line came to be printed
 while the display's assertion stayed green for two releases.
+
+#### The rest of what `commit` and `commit check` print
+
+[#252](https://github.com/andrediashexa/hexarouting/issues/252) fixed the two
+read-back branches and stopped there, listing four more lines it had measured
+on the way. Driving the two commands instead of reading the source found
+**twenty-eight**, from 80 to 231 columns, and the widest of them was on nobody's
+list — a warning printed every time a QinQ sub-interface is created. That gap is
+the point: the four were what happened to be driven while fixing something else,
+and a line nobody drives is a line nobody measures.
+
+| Where | Columns |
+|---|---|
+| the QinQ sub-interface warning | 231 |
+| the session that did not arrive over SSH | 189 |
+| the advice for a daemon FRR starts itself | 186 |
+| "nobody able to configure the box" | 135 |
+| "this commit can cut off the session you are using" | 133 |
+| a configuration line and its reason on one row | 133 |
+| the UDP-export advice | 127 |
+| "no rollback revision could be recorded" | 118 |
+| what `commit check` says it verified | 107 |
+| eighteen more, between 80 and 104 | |
+
+Three shapes account for all of them, and each has one answer:
+
+| Shape | What was done |
+|---|---|
+| prose printed with `print()` | wrapped by `console_prose`, which is the rule above |
+| an `err()` headline over budget | the verdict stays on the headline and the rest moves below it, because `err` prints one line and wraps nothing |
+| a quoted statement, path or configuration line sharing a row with prose | the quoted half gets a row of its own, whole |
+
+The third is the one that changes what an operator reads, and it is the rule
+above applied where it had not been. `error: <route>: <next hop> is on no
+connected network` put a statement and a sentence under one budget, so neither
+could be guaranteed; split, the next hop names the fault on the headline and the
+route sits on its own row, greppable in `show configuration`:
+
+```
+error: this next hop is on no connected network: 172.31.99.1
+    router static / route 10.55.0.0/16 172.31.99.1
+    the route would be accepted and never reach the forwarding table
+```
+
+**A quoted line still runs past the margin when it has to**, and that is the
+rule and not a gap in it. A real SHA-512 crypt hash makes
+`line 3: password <hash>` 119 columns; it is printed whole, because it is the
+row the operator goes and edits. What the box no longer does is put prose on
+that row as well — which is what made it 133.
+
+One shape is deliberately **not** changed: `err(f"{stmt}: {why}")`, which the
+BGP, IS-IS, OSPF, route-map and AS-path checks all use. None of them measured
+over the budget on any fixture driven here, and restructuring eight messages on
+no measurement is the wording change #252 refused to mix into a width fix. It
+is recorded as a limit rather than left implicit: a long enough statement makes
+any of them exceed the console, and the answer when one does is the split above.
 
 
 ## FRR version

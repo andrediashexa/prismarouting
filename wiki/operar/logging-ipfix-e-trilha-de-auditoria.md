@@ -70,8 +70,10 @@ e ao boot — e é reaplicado na ordem certa, o destino antes do estado.
 `commit check` recusa antes de aplicar qualquer coisa:
 
 ```
-error: cgnat logging enable: UDP export has no collector, so nothing would leave this box
-    add 'nat cgnat logging udp <collector> src <source>' beside it, or export over TCP with 'nat cgnat logging tcp <collector>'
+error: cgnat logging enable: UDP export has no collector
+    nothing would leave this box; add 'nat cgnat logging udp <collector> src
+    <source>' beside it, or export over TCP with 'nat cgnat logging tcp
+    <collector>'
 ```
 
 `nat cgnat logging tcp` **não** satisfaz esse requisito: os dois transportes

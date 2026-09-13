@@ -379,10 +379,10 @@ There is no `show ipfix exporter` command in VPP 26.06 — `show: unknown input`
 ```
 nat cgnat logging enable
 commit check
-error: cgnat logging enable: UDP export has no collector, so nothing would
-leave this box
-    add 'nat cgnat logging udp <collector> src <source>' beside it, or export
-    over TCP with 'nat cgnat logging tcp <collector>'
+error: cgnat logging enable: UDP export has no collector
+    nothing would leave this box; add 'nat cgnat logging udp <collector> src
+    <source>' beside it, or export over TCP with 'nat cgnat logging tcp
+    <collector>'
 ```
 
 Refused **before** anything is applied, rather than by the dataplane half way

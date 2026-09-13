@@ -4145,7 +4145,7 @@ check("not checked for a reachable next hop" not in _out,
 # table only. It cannot forward from `vrf red`, and passing it in silence is
 # the inert route this check exists to catch.
 _out = _commit_nh(["vrf red", " ip route 10.55.0.0/16 200.150.0.2", "exit"])
-check("200.150.0.2 is on no connected network" in _out,
+check("on no connected network: 200.150.0.2" in _out,
       f"a VRF route resolved only in the GLOBAL table is refused: {_out!r}")
 
 # Neither direction may be bought by breaking the global table's own check,
@@ -4154,7 +4154,7 @@ _out = _commit_nh([" ip route 10.55.0.0/16 200.150.0.2"])
 check("no connected network" not in _out,
       f"a global route resolved in table 0 is accepted: {_out!r}")
 _out = _commit_nh([" ip route 10.55.0.0/16 172.31.99.1"])
-check("172.31.99.1 is on no connected network" in _out,
+check("on no connected network: 172.31.99.1" in _out,
       f"and one resolved only in a VRF is refused: {_out!r}")
 
 # A VRF the box has no table for is SAID, not passed over. A check that
@@ -4405,7 +4405,8 @@ check(_sh.candidate.routing == _BGP_UNREAD,
 # So the box owes the operator one guarantee instead: it adds nothing of its
 # own beyond the four-space indent and #141's sixteen-character mark, and a
 # statement that CAN fit does fit. That is the third assertion below.
-print("\n=== every line of a refusal fits an 80-column console (#252) ===")
+print("\n=== every line commit and commit check print fits an 80-column "
+      "console (#252, #271) ===")
 
 
 class _FrrStalled:
@@ -4471,13 +4472,365 @@ check(_failed == 1,
       f"and so must the branch beside it: {_out!r}")
 _refusal_out.append(_out)
 
+# --- and the rest of what `commit` and `commit check` print (#271) ---
+#
+# #252 stopped at the two read-back branches and said so. Everything else the
+# two commands print was measured on the way out and left for this issue,
+# which named four lines between 84 and 107 columns. Driven here rather than
+# read off the source, the set is TWENTY-EIGHT, from 80 to 231 columns, and
+# the widest of them is not on either list:
+#
+#   231  warning: <subif> matches outer N inner M AND anything carrying more...
+#   189      this session did not arrive over SSH, so there is no address...
+#   186      they would commit and forward nothing. staticd is started by frr...
+#   135  error: this change leaves nobody able to configure the box: after...
+#   133  this commit can cut off the session you are using: it changes SSH...
+#   133      line 3: password <hash>    (password: expected a crypt hash...)
+#   127      add 'nat cgnat logging udp <collector> src <source>' beside it...
+#   118  error: the change is applied, but no rollback revision could be...
+#   107    routing statements are checked for structure only; FRR validates...
+#   104  note: mtu removed from <if>; the driver default applies after the...
+#   104      the box still rolls back at <when>; 'rollback 0' and commit again...
+#   103  note: this change alters what this box advertises, and the prefix...
+#    99      give an account an authorized key, or allow password authenti...
+#    97      the statement would commit and reach nothing. Enable bgpd in...
+#    95  error: the dataplane reports configuration this VTY does not model...
+#    94  warning: the revert could NOT be armed on the box: <path>: <why>
+#    93  error: <route>: <next hop> is on no connected network
+#    92      the dataplane refuses the statement, and it would refuse it half...
+#    90      this session arrived on <addr>, and what this box originates is...
+#    89  error: cgnat logging enable: UDP export has no collector, so nothing...
+#    86  rollback at <when>, in N minute(s), unless you type 'commit' to...
+#    85  error: refusing to commit: there are configuration lines this VTY...
+#    85  error: <statement>: this box has no interface <name>
+#    85      membership of hexa-cgnat allows CGNAT configuration, hexa-admin...
+#    85      give another account 'role administrator' first, or allow root...
+#    84  note: no BGP paths received yet, so AS-path lists cannot be checked...
+#    84      FRR reports no routing table for it, so nothing on this box holds...
+#    83  error: this change locks everybody out: no account could log in over...
+#    82      it will run in N minute(s) IF THIS SESSION LASTS THAT LONG, and...
+#    81      the revert is armed on the box, not in this session: logging out...
+#
+# The fixtures go into the SAME `_refusal_out` the sweep below already reads,
+# because a second sweep over a second list is the two-literal mistake that
+# put a 178-column line on the screen while the display's own assertion
+# stayed green for two releases (#252). One list, one budget, one check.
+#
+# Each fixture carries a needle, for the reason the refusal fixtures above
+# carry `_failed == 1`: a fixture whose branch stopped being reached measures
+# nothing at all and says nothing about it.
+
+
+class _Api271:
+    """A dataplane API that answers OK and dumps nothing."""
+
+    def __init__(self, state=_vppapi.OK):
+        self.state = state
+
+    def available(self):
+        return (self.state, "the dataplane is not running")
+
+    def call(self, message, args):
+        return _vppapi.Reply(_vppapi.OK)
+
+    def dump(self, message, args):
+        return _vppapi.Reply(_vppapi.OK, fields={"rows": []})
+
+    def interface_index(self, name):
+        return 1
+
+
+class _Dp271:
+    """A dataplane answering canned text, keyed on the command's prefix."""
+
+    TRACE = False
+
+    def __init__(self, answers=None):
+        self.answers = answers or {}
+
+    def run(self, cmd):
+        for prefix, text in self.answers.items():
+            if cmd.startswith(prefix):
+                return 0, text
+        return 0, ""
+
+    def running(self):
+        return 0, ""
+
+
+class _Frr271:
+    def __init__(self, running=(), daemons="", vrf="", avail=True):
+        self._running, self._daemons = list(running), daemons
+        self._vrf, self._avail = vrf, avail
+
+    def available(self):
+        return self._avail
+
+    def running(self):
+        return self._running
+
+    def show(self, what):
+        if "daemons" in what:
+            return 0, self._daemons
+        if "vrf" in what:
+            return 0, self._vrf
+        return 0, ""
+
+    def reload(self, lines, check_only=False):
+        return 0, ""
+
+    def outstanding(self, out):
+        return []
+
+    @staticmethod
+    def diagnostics(out):
+        return []
+
+
+# Trimmed from a live `show interface`, so the existence check has a box to
+# answer from rather than being skipped.
+_IF271 = ("Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter\n"
+          "GigabitEthernet0/8/0 1     up          9000/0/0/0\n"
+          "local0                0    down          0/0/0/0\n")
+# One connected prefix, in table 0 and nowhere else.
+_FIB271 = ("ipv4-VRF:0, fib_index:0, flow hash:[src dst sport dport proto "
+           "flowlabel ] epoch:0 flags:none locks:[default-route:1, ]\n"
+           "200.150.0.0/24\n"
+           "  unicast-ip4-chain\n"
+           "  [@0]: dpo-load-balance: [proto:ip4 index:10 buckets:1 uRPF:9 "
+           "to:[0:0]]\n"
+           "    [0] [@4]: ipv4-glean: [src:200.150.0.0/24] "
+           "GigabitEthernet0/8/0: mtu:9000\n")
+_HEALTHY271 = "zebra mgmtd staticd bgpd ospfd isisd"
+_HASH271 = "$6$salt$" + "0" * 60
+
+
+def _shell271(candidate_text, running_text="", caps=None, api=None, dp=None,
+              frr=None):
+    """A Shell whose every outside edge is stubbed, and nothing else.
+
+    `apply` is NOT stubbed - the checks that print most of the lines measured
+    above live inside it, and a fixture that stubbed it would sweep an empty
+    message and report it green.
+    """
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT} if caps is None else caps
+    sh.api = api or _Api271()
+    sh.dp = dp or _Dp271()
+    sh.frr = frr or _Frr271()
+    sh.rb = type("_RB", (), {"push": lambda self, *a: None})()
+    sh.confirm = type("_C", (), {
+        "read": lambda self: None, "clear": lambda self: None,
+        "arm": lambda self, *a: None,
+        "path": "/etc/hexarouting/confirm"})()
+    sh.sys = type("_S", (), {
+        "write_ssh": lambda self, *a, **k: (True, ""),
+        "apply_users": lambda self, *a, **k: (True, ""),
+        "read_ssh": lambda self: {},
+        "read_users": lambda self: {}})()
+    sh.candidate = _cfg.Config.parse(candidate_text)
+    sh.running_config = lambda: _cfg.Config.parse(running_text)
+    return sh
+
+
+def _drive271(sh, args, needle):
+    """Run one command, prove it reached the branch, and keep what it printed."""
+    buf = _io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        sh.do_commit(list(args))
+    out = buf.getvalue()
+    check(needle in " ".join(out.split()),
+          f"the fixture must reach the message, or it measures nothing - "
+          f"{needle!r} not in: {out!r}")
+    _refusal_out.append(out)
+    return out
+
+
+_ROUTE271 = "! routing\nrouter static\n ip route 10.55.0.0/16 172.31.99.1\n"
+_STATIC271 = "! routing\nrouter static\n ip route 203.0.113.0/24 blackhole\n"
+_USER271 = f"user alice\n password {_HASH271}\n role administrator\n"
+
+# `commit check`: the sentence the command exists to say, and the count beside
+# it. This is the 107-column line the issue is named for.
+_drive271(_shell271("! routing\nrouter bgp 65000\n no bgp ebgp-requires-policy\n"
+                    "exit\n", frr=_Frr271(daemons=_HEALTHY271)),
+          ["check"], "routing statements are checked for structure only")
+
+# An account that may not commit at all, which is answered before anything is
+# checked - and names the groups, at 85 columns.
+_drive271(_shell271(_STATIC271, caps=set()), [],
+          "membership of hexa-cgnat allows CGNAT configuration")
+
+# A candidate carrying a line nobody can read: the headline, and the reason
+# beside the line, which together measured 133 columns on a password.
+_WHY271 = ("password: expected a crypt hash such as $y$... or $6$... "
+           "(openssl passwd -6), not a plaintext password")
+_sh = _shell271("")
+_sh.candidate.unknown = [(3, "password secret", _WHY271)]
+_drive271(_sh, [], "refusing to commit")
+
+# Both SSH refusals, which fire from the same change.
+_drive271(_shell271("ssh password-authentication no\n" + _USER271,
+                    "ssh password-authentication yes\n" + _USER271), [],
+          "this change locks everybody out")
+_drive271(_shell271("ssh permit-root-login no\nssh password-authentication yes\n"
+                    f"user alice\n password {_HASH271}\n role cgnat-operator\n",
+                    "ssh permit-root-login no\nssh password-authentication yes\n"
+                    + _USER271), [],
+          "this change leaves nobody able to configure the box")
+
+# Export turned on with nowhere to send it.
+_drive271(_shell271("! cgnat\nnat cgnat logging enable\n"), [],
+          "UDP export has no collector")
+
+# An interface name this box does not have, in both shapes: a stanza and an
+# `update-source`.
+_drive271(_shell271("! routing\ninterface Ten0\n ip ospf area 0\n",
+                    dp=_Dp271({"show interface": _IF271})), [],
+          "this box has no such interface")
+_drive271(_shell271("! routing\nrouter bgp 65000\n"
+                    " neighbor 10.0.0.1 remote-as 65001\n"
+                    " neighbor 10.0.0.1 update-source Loopback0\nexit\n",
+                    dp=_Dp271({"show interface": _IF271}),
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "this box has no interface Loopback0")
+
+# A daemon that is not running, in both spellings of the advice: the one for a
+# daemon somebody enables, and the one for a daemon frr starts itself - which
+# is the 186-column line.
+_drive271(_shell271("! routing\nrouter bgp 65000\n bgp router-id 10.0.0.1\n"
+                    "exit\n", frr=_Frr271(daemons="zebra mgmtd staticd")), [],
+          "Enable bgpd in /etc/frr/daemons")
+_drive271(_shell271(_STATIC271, frr=_Frr271(daemons="zebra mgmtd bgpd")), [],
+          "staticd is started by frr itself")
+
+# The next hop on no connected network, and the VRF whose table FRR has not
+# got - the 93 and the 84 the issue names.
+_drive271(_shell271(_ROUTE271,
+                    dp=_Dp271({"show interface": _IF271,
+                               "show ip fib": _FIB271}),
+                    frr=_Frr271(running=["ip route 10.55.0.0/16 172.31.99.1"],
+                                daemons=_HEALTHY271,
+                                vrf="vrf default id 0 table 254\n")), [],
+          "this next hop is on no connected network")
+_drive271(_shell271("! routing\nvrf red\n ip route 10.55.0.0/16 172.31.99.1\n"
+                    "exit-vrf\n",
+                    dp=_Dp271({"show interface": _IF271,
+                               "show ip fib": _FIB271}),
+                    frr=_Frr271(daemons=_HEALTHY271,
+                                vrf="vrf default id 0 table 254\n")), [],
+          "FRR reports no routing table for it")
+
+# The check that could NOT be made, in both of its reasons.
+_ADVERT271 = ("! routing\nrouter bgp 65000\n network 203.0.113.0/24\nexit\n",
+              "! routing\nrouter bgp 65000\nexit\n")
+_saved_session = hexash.session_local_address
+try:
+    hexash.session_local_address = lambda environ=None: None
+    _drive271(_shell271(_ADVERT271[1], _ADVERT271[0],
+                        frr=_Frr271(running=[], daemons=_HEALTHY271)),
+              ["check"], "this session did not arrive over SSH")
+    hexash.session_local_address = lambda environ=None: "2001:db8::1"
+    _drive271(_shell271(_ADVERT271[1], _ADVERT271[0],
+                        frr=_Frr271(running=[], daemons=_HEALTHY271)),
+              ["check"], "is read in IPv4 only")
+finally:
+    hexash.session_local_address = _saved_session
+
+# An AS-path list with no paths to measure it against.
+_drive271(_shell271("! routing\nbgp as-path access-list FOO seq 5 permit "
+                    "^65001_\n", frr=_Frr271(daemons=_HEALTHY271)),
+          ["check"], "no BGP paths received yet")
+
+# An mtu going away, which is reported rather than guessed at.
+_drive271(_shell271("! interfaces\ninterface GigabitEthernet0/8/0\n",
+                    "! interfaces\ninterface GigabitEthernet0/8/0\n mtu 9000\n",
+                    dp=_Dp271({"show interface": _IF271})), [],
+          "note: mtu removed from GigabitEthernet0/8/0")
+
+# The QinQ sub-interface, whose warning was the widest line `commit` printed
+# anywhere: 231 columns.
+_drive271(_shell271("! interfaces\ninterface GigabitEthernet0/8/0.100\n"
+                    " vlan 100 inner 900\n",
+                    dp=_Dp271({"show interface": _IF271})), [],
+          "also matches anything carrying more tags")
+
+# A change that can cost the operator the session they are typing in, and the
+# window it arms - both branches of arm_confirm, because the one that cannot
+# write the file is the one whose promise is weaker and has to say so.
+_drive271(_shell271("ssh port 2222\n" + _USER271, "ssh port 22\n" + _USER271),
+          [], "this commit can cut off the session you are using")
+_sh = _shell271(_STATIC271, frr=_Frr271(daemons=_HEALTHY271))
+
+
+def _refuse_arm(*_a):
+    raise OSError(13, "Permission denied", "/etc/hexarouting/confirm")
+
+
+_sh.confirm.arm = _refuse_arm
+_drive271(_sh, ["confirmed", "10"], "the revert could NOT be armed on the box")
+
+# Confirming a window whose file cannot be removed: the commit is confirmed
+# and the box will still revert, which is said in as many words.
+_sh = _shell271(_STATIC271, frr=_Frr271(daemons=_HEALTHY271))
+_sh.confirm.read = lambda: {"deadline": 1789000000.0, "config": ""}
+_sh.confirm.clear = _refuse_arm
+_drive271(_sh, [], "the box still rolls back at")
+
+# A commit that applied and could record no way back from it.
+_sh = _shell271(_STATIC271,
+                frr=_Frr271(running=["ip route 203.0.113.0/24 blackhole"],
+                            daemons=_HEALTHY271))
+_sh.rb = type("_RB", (), {"push": lambda self, *a: (_ for _ in ()).throw(
+    hexash.RollbackUnavailable(
+        "/etc/hexarouting/rollback: Permission denied"))})()
+_drive271(_sh, [], "no rollback revision could be recorded")
+
+# And the dataplane holding configuration this VTY cannot model, which
+# `commit` reads back before it decides anything. The real `running_config`
+# runs here - stubbing it, as every fixture above does, is what would make
+# this branch unreachable and the fixture silent.
+_sh = _shell271(_STATIC271, frr=_Frr271(daemons=_HEALTHY271),
+                dp=_Dp271({"show bpa config": "cgnat pool p\n"
+                                              " inside 100.64.0.0/22\n"
+                                              " widget 3\n"}))
+del _sh.running_config
+_drive271(_sh, [], "committing would REMOVE it")
+
+# A line the VTY cannot read is QUOTED, so it is printed whole - the same
+# exemption the refusal's statements have, and for the same reason: it is the
+# row the operator goes and edits, and a real SHA-512 crypt hash is 98 columns
+# on its own. What used to share that row was the REASON, which is prose and
+# is now wrapped under it: together they measured 133 columns (#271).
+_LONG271 = "$6$" + "s" * 8 + "$" + "0" * 86
+_sh = _shell271("")
+_sh.candidate.unknown = [(3, f"password {_LONG271}", _WHY271)]
+_buf = _io.StringIO()
+with _ctx.redirect_stdout(_buf):
+    _sh.do_commit([])
+_out = _buf.getvalue()
+check(f"    line 3: password {_LONG271}" in _out.splitlines(),
+      f"a line too wide for the console is quoted whole, on one row: {_out!r}")
+check(_LONG271 + "\n" not in _out.replace(f"password {_LONG271}\n", ""),
+      f"and nowhere else, in pieces: {_out!r}")
+print(f"  the widest line quoted whole: "
+      f"{len('    line 3: password ' + _LONG271)} columns")
+
+print(f"  {len(_refusal_out)} fixture(s) driven through commit and "
+      f"commit check")
+
 # The same shape as the display's assertion above, on purpose and against the
 # same constant: these two are the only places that print a `<- not checked`
 # line, and they must not come to disagree about how wide a console is.
+#
+# ONE sweep, over one list, and #271's fixtures were added to that list rather
+# than given a sweep of their own - for the reason the constant is one number:
+# two checks against two lists is how one of them comes to be right while the
+# other is not looked at (#252).
 _wide = [l for out in _refusal_out for l in out.splitlines()
          if len(l) > CONSOLE_COLUMNS]
 check(not _wide, f"these wrap on a serial console: {[(len(l), l) for l in _wide]}")
-print(f"  widest refusal line: "
+print(f"  widest line commit or commit check printed: "
       f"{max(len(l) for out in _refusal_out for l in out.splitlines())} "
       f"columns")
 

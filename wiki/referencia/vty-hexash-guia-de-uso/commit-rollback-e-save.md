@@ -33,8 +33,8 @@ Ele também diz **o que não verificou**:
 configuration check succeeds for CGNAT and the box's own configuration
   2 routing statement(s) have no grammar in this VTY and were not read at all
     'show configuration' marks them; they go to FRR exactly as typed
-  routing statements are checked for structure only; FRR validates them
-  at commit, and can still refuse one
+  routing statements are checked for structure only; FRR validates them at
+  commit, and can still refuse one
 ```
 
 A contagem é das sentenças que a caixa repassou ao roteamento sem ler. `show configuration` e `show this` mostram **quais** são, marcadas com `<- not checked`. O `commit` comum não diz nada sobre isso, de propósito: repassar sentença é o caso normal aqui, e um aviso em todo commit vira um aviso que ninguém lê - inclusive o aviso que importa, o de que o roteamento não guardou o que foi aplicado.
@@ -66,9 +66,10 @@ Aplica agora, e desfaz automaticamente em 5 minutos a menos que você confirme. 
 A caixa responde dizendo onde o desfazer está armado:
 
 ```
-rollback at 2026-02-11T14:32:07Z, in 5 minute(s), unless you type 'commit' to confirm
-    the revert is armed on the box, not in this session: logging out, losing this
-    session or rebooting does not cancel it, and confirming does
+rollback at 2026-02-11T14:32:07Z, in 5 minute(s)
+    unless you type 'commit' to confirm
+    the revert is armed on the box, not in this session: logging out, losing
+    this session or rebooting does not cancel it, and confirming does
 ```
 
 **Quem desfaz é a máquina, não a sua sessão.** O prazo fica gravado no equipamento. Sair da VTY, perder o SSH, fechar o console serial ou reiniciar a máquina **não** cancela nada — só `commit` cancela. Isso é o que torna o comando útil: a falha contra a qual ele protege é exatamente a que derruba a sessão em que você está digitando.
@@ -103,8 +104,10 @@ A máquina não distingue "reiniciei porque a mudança deu errado" de "reiniciei
 Qualquer mudança em `ssh` ou em `user` vira `commit confirmed 10` **mesmo que você não peça**, e a caixa diz por quê:
 
 ```
-this commit changes SSH or accounts, which can cut off the session you are using
-applying it as 'commit confirmed 10' rather than as a plain commit
+this commit can cut off the session you are using
+    it changes SSH or accounts, or stops advertising the prefix this session
+    runs over
+    applying it as 'commit confirmed 10' rather than as a plain commit
 ```
 
 #### Quando a promessa não pode ser feita
@@ -112,8 +115,10 @@ applying it as 'commit confirmed 10' rather than as a plain commit
 Se o equipamento não conseguir gravar o prazo — disco cheio, permissão negada em `/etc/hexarouting` —, ele **não** finge:
 
 ```
-warning: the revert could NOT be armed on the box: /etc/hexarouting: Permission denied
-    it will run in 10 minute(s) IF THIS SESSION LASTS THAT LONG, and not otherwise
+warning: the revert could NOT be armed on the box
+    /etc/hexarouting: Permission denied
+    it will run in 10 minute(s) IF THIS SESSION LASTS THAT LONG, and not
+    otherwise
     which is not the case it exists for: keep a second session open, and use
     'rollback 1' there if this one stops answering
 ```
@@ -126,15 +131,15 @@ Recusar é a coisa mais forte que este equipamento faz: ele conhece o estado da 
 
 As mensagens aparecem em inglês, porque é o que a caixa imprime. Elas estão aqui para você achar a sua.
 
-### `this change locks everybody out: no account could log in over SSH afterwards`
+### `this change locks everybody out`
 
 Depois dessa mudança nenhuma conta entraria por SSH: ou nenhuma tem chave autorizada, ou a autenticação por senha ficaria desligada para todas as que têm senha. Dê uma chave a alguma conta, ou volte a permitir senha para uma que tenha.
 
-### `this change leaves nobody able to configure the box: afterwards no account that can log in over SSH holds the administrator role`
+### `this change leaves nobody able to configure the box`
 
 Alguém ainda entra, mas ninguém que entre tem o papel de administrador. Um operador de CGNAT não concede papel, então a volta seria por um shell de root que talvez ninguém tenha. Dê `role administrator` a outra conta antes, ou permita o root por SSH.
 
-### `cgnat logging enable: UDP export has no collector, so nothing would leave this box`
+### `cgnat logging enable: UDP export has no collector`
 
 O log está ligado e não há para onde mandar. Uma caixa nesse estado parece registrar tudo e não entrega nada - e o registro é justamente o que precisa existir um ano depois. Acrescente `nat cgnat logging udp <coletor> src <origem>`, ou exporte por TCP com `nat cgnat logging tcp <coletor>`.
 
@@ -152,11 +157,11 @@ Um pool sem um dos dois lados não traduz nada. Não é um ajuste que se complet
 
 O dataplane olhou a definição inteira - tamanho de bloco, sobreposição de prefixo, capacidade, e se a faixa pública colide com um endereço local - e disse que não. A linha seguinte traz o motivo dele, nas palavras dele.
 
-### `<statement>: this box has no interface <nome>` e `interface <nome>: this box has no such interface`
+### `this box has no interface <nome>` e `interface <nome>: this box has no such interface`
 
 Um statement nomeia uma interface que não existe aqui. A primeira forma vem de uma linha de roteamento ou de CGNAT que aponta para ela; a segunda, de entrar num bloco `interface` que a caixa não tem. `show interface` lista os nomes que ela tem, e é dali que o nome deve sair - inventar um é como o problema começa.
 
-### `<rota>: <próximo salto> is on no connected network`
+### `this next hop is on no connected network: <próximo salto>`
 
 Uma rota estática cujo próximo salto não está em nenhuma rede conectada desta caixa. Ela seria aceita e nunca encaminharia nada, porque não há interface por onde alcançar aquele endereço. Confira o endereço, ou configure a interface que deveria carregá-lo.
 

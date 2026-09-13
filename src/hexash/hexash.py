@@ -4374,10 +4374,10 @@ class Shell:
         self.err(f"{what}: permission denied for a {role_name(self.caps)} "
                  "account")
         if not self.caps:
-            print(f"    membership of {GROUP_CGNAT} allows CGNAT "
-                  f"configuration, {GROUP_ADMIN} allows everything")
+            print_prose(f"membership of {GROUP_CGNAT} allows CGNAT "
+                        f"configuration, {GROUP_ADMIN} allows everything")
         else:
-            print(f"    this change needs {GROUP_ADMIN}")
+            print_prose(f"this change needs {GROUP_ADMIN}")
         return False
 
     def err(self, msg):
@@ -4403,9 +4403,13 @@ class Shell:
             cfg = Config.parse(out)
         if cfg.unknown:
             self.err("the dataplane reports configuration this VTY does not "
-                     "model; committing would REMOVE it:")
+                     "model")
+            print_prose("committing would REMOVE it:")
             for lineno, text, why in cfg.unknown:
-                print(f"    line {lineno}: {text}    ({why})")
+                # The line whole, the reason wrapped under it. See the same
+                # split in do_commit (#271).
+                print(f"    line {lineno}: {text}")
+                print_prose(f"({why})", indent="        ")
         cfg.mtus = self.device_mtus()
         cfg.urpf = self.device_urpf()
         cfg.descriptions = self.device_descriptions()
@@ -4930,10 +4934,11 @@ class Shell:
             return True
         r = self.api_call("lcp_osi_proto_enable", {"osi_proto": self.OSI_ISIS})
         if r.state != vppapi.OK:
-            self.err("IS-IS is configured but its frames cannot be punted to "
-                     f"the kernel: {r.reason}")
-            print("    the adjacency would never form, and the only evidence "
-                  "would be a dataplane error counter")
+            self.err("IS-IS is configured but its frames cannot be punted "
+                     "to the kernel")
+            print_prose(r.reason)
+            print_prose("the adjacency would never form, and the only "
+                        "evidence would be a dataplane error counter")
             return False
         return True
 
@@ -5068,11 +5073,16 @@ class Shell:
                                "outer_vlan_id": tag["outer"],
                                "inner_vlan_id": tag["inner"]})
             if r.state == vppapi.OK:
-                print(f"warning: {ifname} matches outer {tag['outer']} inner "
-                      f"{tag['inner']} AND anything carrying more tags than "
-                      "that; VPP's ethernet input reads three or more tags as "
-                      "two, so a QinQ sub-interface on this box cannot be "
-                      "made to refuse them (#136)")
+                # The widest line `commit` printed anywhere: 231 columns on
+                # one row (#271). What it matches is the headline; why the
+                # box cannot help it is the prose under it.
+                print(f"warning: {ifname} also matches anything carrying "
+                      "more tags")
+                print_prose(f"it is outer {tag['outer']} inner "
+                            f"{tag['inner']}, and VPP's ethernet input reads "
+                            "three or more tags as two, so a QinQ "
+                            "sub-interface on this box cannot be made to "
+                            "refuse them (#136)")
         else:
             r = self.api_call("create_vlan_subif",
                               {"sw_if_index": idx, "vlan_id": tag["outer"]})
@@ -5241,10 +5251,14 @@ class Shell:
             # box it was just installed on.
             if (not can_anyone_log_in(target.ssh, target.users)
                     and can_anyone_log_in(running.ssh, running.users)):
-                self.err("this change locks everybody out: no account could "
-                         "log in over SSH afterwards")
-                print("    give an account an authorized key, or allow "
-                      "password authentication for one that has a password")
+                # The verdict in the headline and the rest below it, because
+                # `err` prints one line and wraps nothing (#252): with the
+                # consequence appended this measured 83 columns (#271).
+                self.err("this change locks everybody out")
+                print_prose("no account could log in over SSH afterwards")
+                print_prose("give an account an authorized key, or allow "
+                            "password authentication for one that has a "
+                            "password")
                 ok = False
             # The same mistake through the other door. Removing the last
             # administrator's role leaves a box that answers and forwards and
@@ -5255,11 +5269,13 @@ class Shell:
             # can still be worked on.
             if (not can_anyone_configure(target.ssh, target.users)
                     and can_anyone_configure(running.ssh, running.users)):
-                self.err("this change leaves nobody able to configure the "
-                         "box: afterwards no account that can log in over "
-                         f"SSH holds the {ROLE_ADMIN} role")
-                print(f"    give another account 'role {ROLE_ADMIN}' first, "
-                      "or allow root to log in over SSH")
+                # Split for the same reason as the headline above: this one
+                # measured 135 columns on one `err` line (#271).
+                self.err("this change leaves nobody able to configure the box")
+                print_prose("afterwards no account that can log in over SSH "
+                            f"holds the {ROLE_ADMIN} role")
+                print_prose(f"give another account 'role {ROLE_ADMIN}' "
+                            "first, or allow root to log in over SSH")
                 ok = False
             # UDP export turned on with nowhere to send it. Refused HERE
             # and not by the dataplane, which is where it used to be refused:
@@ -5272,19 +5288,23 @@ class Shell:
             # export enabled and the exporter cleared underneath it - must
             # still be able to commit the statement that fixes it.
             if udp_export_without_collector(target.globals):
-                said = ("cgnat logging enable: UDP export has no collector, "
-                        "so nothing would leave this box")
-                advice = ("    add 'nat cgnat logging udp <collector> src "
-                          "<source>' beside it, or export over TCP with "
-                          "'nat cgnat logging tcp <collector>'")
+                # The consequence moved off the headline and into the prose:
+                # as one line this measured 89 columns as an error and 91 as
+                # a warning, and `err` wraps nothing (#271).
+                said = "cgnat logging enable: UDP export has no collector"
+                advice = ("nothing would leave this box; add 'nat cgnat "
+                          "logging udp <collector> src <source>' beside it, "
+                          "or export over TCP with 'nat cgnat logging tcp "
+                          "<collector>'")
                 if udp_export_without_collector(running.globals):
                     print(f"warning: {said}")
-                    print(advice)
+                    print_prose(advice)
                 else:
                     self.err(said)
-                    print(advice)
-                    print("    the dataplane refuses the statement, and it "
-                          "would refuse it half way through this commit")
+                    print_prose(advice)
+                    print_prose("the dataplane refuses the statement, and it "
+                                "would refuse it half way through this "
+                                "commit")
                     ok = False
 
             # An interface this box does not have.
@@ -5379,18 +5399,25 @@ class Shell:
                         except ValueError:
                             pass
                         if src not in have:
-                            self.err(f"{line.strip()}: this box has no "
-                                     f"interface {src}")
-                            print("    the session would be sourced from "
-                                  "nothing and never come up")
+                            # The statement goes on its own row, whole. On
+                            # the headline beside the prose it measured 85
+                            # columns, and it is the row the operator greps
+                            # `show configuration` for (#252, #271).
+                            self.err(f"this box has no interface {src}")
+                            print("    " + line.strip())
+                            print_prose("the session would be sourced from "
+                                        "nothing and never come up")
                             ok = False
                 for name in sorted(named - have):
                     self.err(f"interface {name}: this box has no such "
                              "interface")
-                    print("    it has: " + ", ".join(sorted(have)))
-                    print("    (a linux_cp pair answers to both its dataplane "
-                          "name and its Linux one)")
-                    print("    the statement would commit and do nothing")
+                    # Wrapped, not one row: the list grows with the box, and
+                    # a name is never split because `console_prose` does not
+                    # break a word - so each one stays greppable (#271).
+                    print_prose("it has: " + ", ".join(sorted(have)))
+                    print_prose("(a linux_cp pair answers to both its "
+                                "dataplane name and its Linux one)")
+                    print_prose("the statement would commit and do nothing")
                     ok = False
             # With the dataplane unreachable the check is SKIPPED, not failed.
             # A VTY that cannot commit while the dataplane is down cannot be
@@ -5413,8 +5440,9 @@ class Shell:
                         need = ROUTER_DAEMON.get(w[1])
                         if need and need not in running_daemons:
                             self.err(f"{line.strip()}: {need} is not running")
-                            print("    the statement would commit and reach "
-                                  "nothing. " + enable_daemon_advice(need))
+                            print_prose("the statement would commit and "
+                                        "reach nothing. "
+                                        + enable_daemon_advice(need))
                             ok = False
 
                     # The statements that have no `router` line at all, and so
@@ -5429,8 +5457,8 @@ class Shell:
                         self.err(f"{len(policy)} policy statement(s) need "
                                  f"{need}, which is not running")
                         print(f"    first one: {policy[0]}")
-                        print("    they would commit and store nothing. "
-                              + enable_daemon_advice(need))
+                        print_prose("they would commit and store nothing. "
+                                    + enable_daemon_advice(need))
                         ok = False
 
                     # Static routes, which are neither a `router` line nor a
@@ -5449,8 +5477,9 @@ class Shell:
                               + as_hierarchy(statics[0],
                                              block_of(target.routing,
                                                       statics[0])))
-                        print("    they would commit and forward nothing. "
-                              + enable_daemon_advice(need))
+                        print_prose("they would commit and forward "
+                                    "nothing. "
+                                    + enable_daemon_advice(need))
                         ok = False
 
             # A static route whose next hop is on no connected network is
@@ -5608,9 +5637,12 @@ class Shell:
                 # the operator believes ran and passed. Printed only when the
                 # change touches what this box advertises, because a note on
                 # every commit from the console is an alarm nobody reads.
-                print("note: this change alters what this box advertises, "
-                      "and the prefix carrying this session was not checked")
-                print("    " + why_not)
+                # Headline and body, because as one sentence it measured
+                # 103 columns and the reason under it 189 (#271).
+                print("note: this change alters what this box advertises")
+                print_prose("the prefix carrying this session was not "
+                            "checked")
+                print_prose(why_not)
 
             if d["routing_changed"] and target.routing:
                 rc_fib, fib_text = self.dp.run("show ip fib")
@@ -5635,10 +5667,17 @@ class Shell:
                         # look for.
                         named = as_hierarchy(stmt,
                                              block_of(target.routing, stmt))
-                        self.err(f"{named}: {nexthop} is on "
-                                 "no connected network")
-                        print("    the route would be accepted and never "
-                              "reach the forwarding table")
+                        # The next hop in the headline and the STATEMENT on
+                        # its own row, whole. Together they measured 93
+                        # columns and `err` wraps nothing (#271); apart, the
+                        # statement gets the row it needs to stay greppable
+                        # in `show configuration`, which is the rule from
+                        # #252 applied to a refusal that had not had it.
+                        self.err("this next hop is on no connected network: "
+                                 f"{nexthop}")
+                        print("    " + named)
+                        print_prose("the route would be accepted and never "
+                                    "reach the forwarding table")
                         ok = False
                     # Said out loud, never passed over. A VRF whose table this
                     # box cannot find is one whose routes went unchecked, and
@@ -5650,7 +5689,7 @@ class Shell:
                         print(f"note: {len(stmts)} static route(s) in 'vrf "
                               f"{vrf}' were not checked for a reachable next "
                               "hop")
-                        print(f"    {why}")
+                        print_prose(why)
                         print(f"    first one: {stmts[0]}")
 
             for pool in d["pool_add"] + d["pool_replace"]:
@@ -6050,8 +6089,9 @@ class Shell:
             # No stored default to restore: the driver's own value is whatever
             # the interface reports before we touch it, so removal is reported
             # rather than guessed at.
-            print(f"note: mtu removed from {ifname}; the driver default "
-                  "applies after the interface is recreated")
+            print(f"note: mtu removed from {ifname}")
+            print_prose("the driver default applies after the interface is "
+                        "recreated")
 
         # Ordered, not as they were typed: `cgnat logging enable` is refused
         # by the dataplane until the exporter statement has been applied, and
@@ -6492,11 +6532,17 @@ class Shell:
         # apply would be committed as though it had been, and the operator
         # would find out from the consequence.
         if self.candidate.unknown or running.unknown:
-            self.err("refusing to commit: there are configuration lines this "
-                     "VTY does not understand")
+            self.err("refusing to commit: there are lines this VTY does not "
+                     "understand")
             for lineno, text, why in (self.candidate.unknown
                                       + running.unknown):
-                print(f"    line {lineno}: {text}    ({why})")
+                # The line WHOLE, and the reason wrapped under it. They used
+                # to share one row, which put prose and a quoted line under
+                # the same budget: `password <hash>` plus its reason measured
+                # 133 columns (#271). The line is what the operator goes and
+                # edits, so it keeps the whole row and the reason is prose.
+                print(f"    line {lineno}: {text}")
+                print_prose(f"({why})", indent="        ")
             return
 
         if args and args[0] == "check":
@@ -6539,13 +6585,14 @@ class Shell:
                     # names no number. This one names the number.
                     _, unread = mark_routing(self.candidate.routing)
                     if unread:
-                        print(f"  {unread} routing statement(s) have no "
-                              "grammar in this VTY and were not read at all")
-                        print("    'show configuration' marks them; they go "
-                              "to FRR exactly as typed")
-                    print("  routing statements are checked for structure "
-                          "only; FRR validates them at commit, and can still "
-                          "refuse one")
+                        print_prose(f"{unread} routing statement(s) have no "
+                                    "grammar in this VTY and were not read "
+                                    "at all", indent="  ")
+                        print_prose("'show configuration' marks them; they "
+                                    "go to FRR exactly as typed")
+                    print_prose("routing statements are checked for structure "
+                                "only; FRR validates them at commit, and can "
+                                "still refuse one", indent="  ")
                 else:
                     print("configuration check succeeds")
             return
@@ -6606,8 +6653,9 @@ class Shell:
                 # operator told "confirmed" over that loses the change hours
                 # later with nothing on the screen that predicted it.
                 self.err(f"cannot confirm: {self.confirm.path}: {e.strerror}")
-                print(f"    the box still rolls back at {when}; "
-                      "'rollback 0' and commit again, or remove that file")
+                print_prose(f"the box still rolls back at {when}; "
+                            "'rollback 0' and commit again, or remove that "
+                            "file")
 
         if running.is_same(self.candidate):
             if not confirmed:
@@ -6664,11 +6712,13 @@ class Shell:
 
         if touches_access and not confirm_min:
             confirm_min = 10
-            print("this commit can cut off the session you are using: it "
-                  "changes SSH or accounts, or stops advertising the prefix "
-                  "this session runs over")
-            print("applying it as 'commit confirmed 10' rather than as a "
-                  "plain commit")
+            # Verdict, then why. As one sentence it measured 133 columns
+            # and nothing was wrapping it (#271).
+            print("this commit can cut off the session you are using")
+            print_prose("it changes SSH or accounts, or stops advertising "
+                        "the prefix this session runs over")
+            print_prose("applying it as 'commit confirmed 10' rather than as "
+                        "a plain commit")
             # What the revert IS gets said once, below, after the box has
             # found out whether it could arm one. Promising it here and
             # discovering afterwards that the store could not be written is
@@ -6684,9 +6734,13 @@ class Shell:
         try:
             self.rb.push(self.candidate.text(), comment)
         except RollbackUnavailable as e:
+            # The reason carries a path, so it goes on a row of its own
+            # rather than on the headline: together they measured 118
+            # columns and `err` wraps nothing (#271).
             self.err("the change is applied, but no rollback revision could "
-                     f"be recorded: {e}")
-            print("    'rollback' will not be able to undo this commit")
+                     "be recorded")
+            print(f"    {e}")
+            print_prose("'rollback' will not be able to undo this commit")
         added = self.routing_added(running.routing, self.candidate.routing)
         # The GENERAL check (#197), which is now possible: read FRR's own
         # running configuration back and see which of the statements this
@@ -6892,12 +6946,13 @@ class Shell:
         except OSError as e:
             why = f"{e.filename or self.confirm.path}: {e.strerror}"
         if self.confirm_on_box:
-            print(f"rollback at {when}, in {minutes} minute(s), unless you "
-                  "type 'commit' to confirm")
-            print("    the revert is armed on the box, not in this session: "
-                  "logging out, losing this")
-            print("    session or rebooting does not cancel it, and "
-                  "confirming does")
+            # The deadline is the headline; the rest is prose, and it used to
+            # be wrapped by hand at 86 and 81 columns (#271).
+            print(f"rollback at {when}, in {minutes} minute(s)")
+            print_prose("unless you type 'commit' to confirm")
+            print_prose("the revert is armed on the box, not in this "
+                        "session: logging out, losing this session or "
+                        "rebooting does not cancel it, and confirming does")
         else:
             # A weaker promise, stated. The revert still happens for an
             # operator who stays and waits, and that is all it does - so this
@@ -6907,12 +6962,15 @@ class Shell:
             # as `save` above: the commit is applied. What failed is the
             # promise about undoing it, which is what the three lines below
             # are for.
-            print(f"warning: the revert could NOT be armed on the box: {why}")
-            print(f"    it will run in {minutes} minute(s) IF THIS SESSION "
-                  "LASTS THAT LONG, and not otherwise")
-            print("    which is not the case it exists for: keep a second "
-                  "session open, and use")
-            print("    'rollback 1' there if this one stops answering")
+            print("warning: the revert could NOT be armed on the box")
+            # The path and the reason, whole on their own row: a path is
+            # something the operator goes and looks at (#252).
+            print(f"    {why}")
+            print_prose(f"it will run in {minutes} minute(s) IF THIS SESSION "
+                        "LASTS THAT LONG, and not otherwise")
+            print_prose("which is not the case it exists for: keep a second "
+                        "session open, and use 'rollback 1' there if this "
+                        "one stops answering")
 
     def revert_confirm(self, pending, why):
         """
@@ -9511,8 +9569,8 @@ class Shell:
             # Said out loud rather than skipped in silence: "matches 0" and
             # "there was nothing to match against" are different answers, and
             # only one of them is about the regex.
-            print("note: no BGP paths received yet, so AS-path lists cannot "
-                  "be checked against anything")
+            print("note: no BGP paths received yet")
+            print_prose("AS-path lists cannot be checked against anything")
             return
         for stmt in lists:
             name, regex = as_path_parts(stmt)
