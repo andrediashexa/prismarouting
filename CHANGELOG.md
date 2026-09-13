@@ -58,7 +58,8 @@ are to be interpreted as described in
 [#228](https://github.com/andrediashexa/hexarouting/issues/228),
 [#229](https://github.com/andrediashexa/hexarouting/issues/229),
 [#230](https://github.com/andrediashexa/hexarouting/issues/230),
-[#231](https://github.com/andrediashexa/hexarouting/issues/231).
+[#231](https://github.com/andrediashexa/hexarouting/issues/231),
+[#232](https://github.com/andrediashexa/hexarouting/issues/232).
 
 ### Added
 
@@ -1249,6 +1250,24 @@ are to be interpreted as described in
   now names a statement the lab really commits and the VTY really models.
 
 ### Fixed
+
+* **The page every new reader is sent to first counted its own invariants
+  three times and got two of them wrong**
+  ([#232](https://github.com/andrediashexa/hexarouting/issues/232)).
+  `docs/context.md` said *Eleven invariants* in its TL;DR, *The nine things
+  that are not obvious from any one file* in the heading eleven lines below,
+  and the README sent the reader to *the nine facts*. There are eleven: 1.10
+  and 1.11 sat under a heading that excluded them, so a reader who counted nine
+  and stopped had missed *The issue is the record of the work*, which is a
+  working rule of this project.
+
+  Section 5 of that page is called *How this page is kept honest* and says of
+  its own test: *it does not check that the prose is still true - nothing can.
+  What it catches is the half that rots silently.* A count of the file's own
+  subsections is not prose. It is arithmetic over the headings in the same
+  file, it is exactly that half, and it was not being caught.
+  `test/test_context_map.py` now counts the `### 1.N` headings and holds all
+  three statements to the number, in the words they are written in.
 
 * **The README repeated four numbers about itself, and three had already become
   two numbers** ([#231](https://github.com/andrediashexa/hexarouting/issues/231)).

@@ -90,7 +90,7 @@ so its pages can be read and diffed without leaving the repository;
 
 ## Getting started
 
-**Start with [docs/context.md](docs/context.md)** — the nine facts that make
+**Start with [docs/context.md](docs/context.md)** — the eleven facts that make
 the rest of the repository legible, a map of what question each part answers,
 and a reading order per task. It does not repeat the design; it says which file
 is authoritative for each decision.
