@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """
-Every command the wiki tells an operator to type, typed at the command tree.
+Every command the documentation tells a reader to type, typed at the command
+tree.
 
 The wiki is where this product makes promises to somebody who does not have
-the source: a page that shows a command the box does not have, or shows it at
-a prompt the box would never show it at, is the product claiming something it
-does not do. Nothing checked that, and `test_context_map.py` already makes the
+the source, and `docs/` is where it makes them to somebody who does: a page
+that shows a command the box does not have, or shows it at a prompt the box
+would never show it at, is the product claiming something it does not do.
+
+Both trees are read, and `docs/` is not the softer half: its transcripts are
+what somebody reaches for when the wiki does not answer, and two of them
+carried a prompt this VTY never prints. Nothing checked that, and `test_context_map.py` already makes the
 same argument one level down for the paths `docs/context.md` names - a map
 naming files that are no longer there is worse than no map, because it is
 confidently wrong.
@@ -56,7 +61,11 @@ def ok(msg):
 
 
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-WIKI = os.path.join(REPO, "wiki")
+#: Everything that shows a transcript of this VTY. README.md is in here
+#: because it is the first page anybody reads and it quotes the VTY too.
+DOC_ROOTS = (os.path.join(REPO, "wiki"),
+             os.path.join(REPO, "docs"),
+             os.path.join(REPO, "README.md"))
 
 # Interfaces for the fake dataplane, so a command naming one is walked against
 # a box that has it rather than against a box with no interfaces at all.
@@ -138,14 +147,23 @@ LIVE_MEDIUM_ONLY = {
 }
 
 
+def markdown_files():
+    """Every page that might quote this VTY, wiki and docs alike."""
+    for entry in DOC_ROOTS:
+        if os.path.isfile(entry):
+            yield entry
+            continue
+        for root, _, files in os.walk(entry):
+            for name in sorted(files):
+                if name.endswith(".md"):
+                    yield os.path.join(root, name)
+
+
 def prompt_lines():
-    """(path, mode, context, command) for every prompt line in the wiki."""
+    """(path, mode, context, command) for every prompt line in the docs."""
     out = []
-    for root, _, files in os.walk(WIKI):
-        for name in sorted(files):
-            if not name.endswith(".md"):
-                continue
-            path = os.path.join(root, name)
+    if True:
+        for path in markdown_files():
             text = open(path, encoding="utf-8").read()
             for block in re.findall(r"```[a-z]*\n(.*?)```", text, re.S):
                 for line in block.split("\n"):
@@ -177,8 +195,8 @@ print("=== the wiki's prompt lines were found at all ===")
 # Without this the whole file passes by reading nothing, which is the shape
 # #151 spent an issue on: a check whose needle never matches is green for the
 # same reason a correct box is.
-if len(lines) >= 20:
-    print(f"  [ ok ] {len(lines)} prompt line(s) across the wiki")
+if len(lines) >= 40:
+    print(f"  [ ok ] {len(lines)} prompt line(s) across the wiki and docs")
 else:
     bad(f"only {len(lines)} prompt line(s) found: the pattern has stopped "
         f"matching the pages, so this file is asserting nothing")
@@ -242,6 +260,44 @@ for cmd, must_say in LIVE_MEDIUM_ONLY.items():
         bad(f"'{cmd}' is shown at {os.path.relpath(shown[0], REPO)} and no "
             f"page explains that it exists only on the installation medium: "
             f"a reader on a running box will look for it and not find it")
+
+print("\n=== every quotation of the unchecked marker is the one the box emits ===")
+#
+# The marker text changed from "    <- not checked by this VTY" to
+# "  <- not checked" when the long form was measured putting a real statement
+# at 89 columns on an 80-column console. Three places kept quoting the old one:
+# a wiki page, a docs line, and an assertion in lab/bgp-policy.sh that had been
+# green for three days and went red the first time anything ran it.
+#
+# A literal the product emits and other files quote is exactly the shape
+# test_context_map.py guards for paths: confidently wrong, and silent until
+# somebody meets it. Labs are the ones that matter, because a lab quoting a
+# marker the box no longer prints is a check that cannot pass.
+sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
+from config import UNCHECKED_MARK                                # noqa: E402
+
+_mark = UNCHECKED_MARK.strip()
+_quoters = []
+for _root, _dirs, _files in os.walk(os.path.join(REPO, "lab")):
+    for _f in sorted(_files):
+        if _f.endswith(".sh"):
+            _quoters.append(os.path.join(_root, _f))
+_bad = []
+for _path in _quoters:
+    for _n, _line in enumerate(open(_path, encoding="utf-8"), 1):
+        if "<- not checked" not in _line:
+            continue
+        # The quoted needle has to be a prefix of what the box prints. A
+        # longer one cannot match, which is the failure that happened.
+        _quoted = _line[_line.index("<- not checked"):].split('"')[0].rstrip()
+        if not _mark.startswith(_quoted):
+            _bad.append(f"{os.path.relpath(_path, REPO)}:{_n} quotes "
+                        f"{_quoted!r}, and the box prints {_mark!r}")
+if _bad:
+    for _b in _bad:
+        bad(_b)
+else:
+    ok(f"{len(_quoters)} lab(s) checked; every quotation matches {_mark!r}")
 
 if fail == 0:
     print()

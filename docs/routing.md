@@ -835,6 +835,226 @@ prefix and the `router static` block. Both spellings are accepted as input, so
 either screen can be copied into a file and loaded back; the two are worth
 knowing apart when reading a screenshot on a ticket.
 
+## The boundary between what was checked and what was carried
+
+This VTY models part of FRR and forwards the rest. Both halves used to print
+the same way, so a configuration display said nothing about which was which:
+
+```
+hexarouting# [edit] show configuration
+...
+! routing
+router bgp 65000
+neighbor 10.0.0.2 remote-as 65001
+coalesce-time 1000
+neighbor 10.0.0.2 soft-reconfiguration inbound
+exit
+```
+
+The first of those three statements is in the command tree. The other two are
+offered by `?` nowhere, and reach FRR unread. An operator reading that screen
+had no way to separate what the box had checked from what it had merely
+carried, and so read a guarantee into all of it.
+
+The boundary **MUST** be visible
+([#141](https://github.com/andrediashexa/hexarouting/issues/141)). The same
+screen now reads:
+
+```
+! routing
+router bgp 65000
+neighbor 10.0.0.2 remote-as 65001
+coalesce-time 1000  <- not checked
+neighbor 10.0.0.2 soft-reconfiguration inbound  <- not checked
+exit
+! hexash: 2 statement(s) above are marked '<- not checked': this VTY has no
+! hexash: grammar for them and handed them to FRR word for word
+```
+
+### What decides it: the command tree, and nothing beside it
+
+`hexash.statement_checked()` walks the grammar in force for the block the
+statement sits in - the **same** walk that decides what `?` offers there. There
+is no list of modelled statements kept alongside the tree, and there
+deliberately never will be: a second list has to be kept in step with the
+grammar by hand, it goes stale, and a stale list marks a statement as checked
+when nothing checked it. That is the defect class this repository calls
+*confidently wrong*, and a marker that is confidently wrong is worse than no
+marker at all.
+
+Two consequences worth knowing:
+
+* **The same statement is marked in one block and not in another.**
+  `neighbor 10.0.0.2 soft-reconfiguration inbound` is in the address-family
+  neighbour grammar and not in the plain one, so it is marked inside
+  `router bgp` and not inside `address-family ipv4 unicast`. That is the tree
+  answering, not a word list.
+* **Teaching the tree a statement is the whole change.** Adding it to
+  `BGP_BLOCK` stops it being marked, with nothing else edited. There is an
+  assertion for exactly that, because it is the property the design rests on.
+
+`config.block_paths()` says which block each line is in, the same function
+`show this` uses, so the display and the marking cannot disagree about where a
+statement sits.
+
+### Where it is shown
+
+| | |
+|---|---|
+| `show this` | **Yes**, and this is the one that matters most: it is what an operator runs *while they are still typing*. Being told at commit time that half of what they typed went through unread is being told after the fact. |
+| `show configuration` | Yes. |
+| `show running-config` | Yes - it shares `print_config()` with `show configuration`. |
+| `show configuration compare` | No. It prints a **diff**, whose lines already carry a marker of their own and cannot be copied back as configuration; the question it answers is *what changed*, and the statements it names are marked in the two commands above. |
+
+Only the routing half is marked. Everything above `! routing` is modelled by
+construction: `Config.parse()` records a line it cannot hold in `unknown`, and
+`commit` refuses to run while either the candidate or the running configuration
+holds one. There is no passthrough there to mark, and a marker is a claim -
+"this was checked" has to stay worth something.
+
+Standing in a block this VTY has no grammar for at all, the header carries the
+mark, because *nothing in here was read* is different news from *this one
+statement was not*:
+
+```
+hexarouting# [edit vrf red] show this
+vrf red  <- not checked
+ ip route 10.9.0.0/16 10.0.0.9  <- not checked
+```
+
+### How it is shown, and why it is sixteen characters
+
+Two parts, because they answer two questions.
+
+**Per line**, `  <- not checked`. Short on purpose: the console an operator
+reaches this box on when the network is down is 80 columns, and the statements
+most likely to be marked are the long ones -
+`neighbor 2001:db8:aaaa:bbbb::1 soft-reconfiguration inbound` is 59 of those
+columns before anything is appended. The marker this replaced was
+`    <- not checked by this VTY`, which put that line at 89 columns and wrapped
+it; a marker that wraps stops being read. An assertion holds every marked line
+of a realistic configuration under 80 columns.
+
+**Once at the end**, a two-line note saying what the mark means and **how
+many** there were. The count is the number an operator reviewing a change
+before a maintenance window actually wants: *two of these went through unread*
+is a different decision from *thirty did*.
+
+The note is printed **only when something is marked**. Passing statements
+through is the normal case for FRR configuration, and by the rule this
+repository already applies to alarms
+([#205](https://github.com/andrediashexa/hexarouting/issues/205),
+[#208](https://github.com/andrediashexa/hexarouting/issues/208)) a line printed
+under every configuration would be read once and skipped forever.
+
+### `commit` says nothing; `commit check` names the number
+
+`commit` prints nothing about the boundary, and that is argued from the same
+rule. Passthrough is the **normal** case here - a working FRR edge has
+`no bgp ebgp-requires-policy` in it, and this VTY models no `no` statement
+inside a block at all - so a warning on every commit would be an alarm that is
+always on. Worse than being ignored on its own: the habit of skipping the last
+lines of a commit takes the *"FRR accepted these statements and did not keep
+them"* warning with it, and that one is about a commit that did not happen.
+
+`commit check` is the opposite kind of moment. It is a question the operator
+chose to ask, and its whole subject is how much was verified. It already said
+*"routing statements are checked for structure only"*, a sentence that names no
+number. Now it names one:
+
+```
+hexarouting# [edit] commit check
+configuration check succeeds for CGNAT and the box's own configuration
+  2 routing statement(s) have no grammar in this VTY and were not read at all
+    'show configuration' marks them; they go to FRR exactly as typed
+  routing statements are checked for structure only; FRR validates them at
+  commit, and can still refuse one
+```
+
+### Presentation only, and why that is the dangerous half
+
+`save` writes a file the box **reads back at boot**, and `commit` hands the
+same statements to `frr-reload`. A marker that leaked into either becomes a
+statement FRR does not understand; the load is refused whole, and the box comes
+up with **no configuration at all**. That is how both boot defects behind
+[#182](https://github.com/andrediashexa/hexarouting/issues/182) ended, and it
+is worse than the problem the marker solves.
+
+**Measured at a live FRR 10.7.1**, because this is the half that must not be
+supposed:
+
+```
+probe# configure terminal
+probe(config)# router bgp 65000
+probe(config-router)# coalesce-time 2000  <- not checked
+% Unknown command: coalesce-time 2000  <- not checked
+```
+
+and the same statement in a **file**, which is the shape the boot takes, is
+refused by `vtysh` before any daemon sees it - `frr-reload.py --test` stops at:
+
+```
+ERROR: vtysh failed to process new configuration: vtysh (mark file) exited
+with status 2: line 5: % Unknown command:  coalesce-time 1000  <- not checked
+```
+
+The same file with the marker removed gets past that stage. A file carrying
+only the `! hexash:` note lines gets past it as well - `!` opens a comment in
+FRR's parser too - but that is defence in depth and not the reason the parser
+strips them: this file is read back by `hexash --load`, whose routing section
+takes every line it is given as a statement.
+
+The same session measured the two statements from the issue, and both answers
+are worth having. `coalesce-time 1000` is accepted by FRR and kept verbatim,
+so the example is real passthrough and not a typo. And
+`neighbor 10.0.0.2 soft-reconfiguration inbound` typed directly inside
+`router bgp` is accepted and **relocated** by FRR into
+`address-family ipv4 unicast` on read-back - which is exactly why this VTY
+marks it in the outer block: it has no grammar for the statement there, and
+what FRR did with it is not something the box was in a position to say.
+
+So the marking exists only in the display path, and that is asserted
+separately: after a `show configuration`, a `show running-config`, a
+`show this` and a `commit check`, `Config.text()` is byte for byte what it was,
+the list handed to `frr-reload` is the statements as typed, and the file
+`save_running()` writes carries neither the mark nor the note and parses back
+to the same statements.
+
+The other half of the same hazard is that an operator copies what is **on the
+screen** into a file. `Config.parse()` therefore strips the marker from the end
+of a line and skips any line starting with `! hexash:`, and both constants live
+in `config.py` so the half that writes them and the half that removes them
+cannot come to be spelled differently.
+
+### How much of a working box is outside the boundary
+
+Measured, not estimated. A provider edge was configured at a live FRR 10.7.1 -
+prefix-list, route-map with `match` and `set`, an eBGP transit session with
+policy, OSPF, a default route - and its `show running-config` read back and put
+through the display. **Four statements of twenty-five** are marked:
+
+```
+hostname hexarouting  <- not checked
+hostname c89defb68a9c  <- not checked
+service integrated-vtysh-config  <- not checked
+...
+ no bgp ebgp-requires-policy  <- not checked
+```
+
+That proportion is the point of the design being proportionate: a display where
+everything is marked says as little as one where nothing is. The read-back is
+kept as a fixture in `test/test_hexash_complete.py`, with each of the
+twenty-one unmarked statements named one by one - a count passes just as well
+when the wrong lines are the clean ones.
+
+### What it immediately revealed
+
+The first thing a visible boundary shows is how much is outside it. `no`
+statements inside a block - `no bgp ebgp-requires-policy`, which nearly every
+FRR BGP configuration carries - are modelled nowhere, so they mark. That is not
+the marker being noisy; it is the marker being right, and it names the next
+piece of grammar worth having.
+
 ## Which daemons run
 
 `frrinit.sh` starts `zebra`, `mgmtd` and `staticd` unconditionally. Everything
@@ -848,7 +1068,7 @@ lists them and `commit` accepts them
 
 `appliance/install.sh` therefore enables them explicitly. Inheriting a
 distribution default for something this product claims to support is how it
-went unnoticed for as long as it did — and what hid it is that `lab/routing.sh`
+went unnoticed for as long as it did - and what hid it is that `lab/routing.sh`
 starts those daemons **by hand**, so the lab proved a control plane the shipped
 box did not have. `lab/install-iso.sh` now asserts them on the installed disk,
 which is the only place the question means anything.
@@ -880,7 +1100,7 @@ prints `bgpd is not running` while `frr-reload.py` still returns 0, which is
 how a commit reports success for configuration that reached nothing.
 
 The boot self-test reports which routing daemons are answering, as a warning
-rather than a failure — a box deliberately running fewer daemons is a
+rather than a failure - a box deliberately running fewer daemons is a
 legitimate deployment, and a box that cannot run BGP should say so before
 somebody configures BGP on it.
 
@@ -900,7 +1120,7 @@ router static
 ```
 
 Neither hierarchy exists in the tool that ends up holding the configuration.
-VPP's plugin knows `cgnat`; FRR has no `router static` at all — its static
+VPP's plugin knows `cgnat`; FRR has no `router static` at all - its static
 routes are top-level `ip route` statements, and a `router static` line handed to
 `frr-reload` is refused mid-commit. So both are **this VTY's own grammar**,
 translated at the one place typed configuration enters (`hierarchy_rewrite`) and
@@ -924,8 +1144,8 @@ thing gets both into the same configuration file.
 What the box **writes** is the new hierarchy: `Config.text()` prefixes the CGNAT
 statements with `nat ` and emits the static routes as a `router static` block,
 so `show running-config`, `show configuration` and the file `save` writes all
-carry it. The round trip — a box reading back the file it just wrote, and a box
-reading a file written before the move — is asserted in
+carry it. The round trip - a box reading back the file it just wrote, and a box
+reading a file written before the move - is asserted in
 `test/test_hexash_config.py` and end to end in `lab/vty.sh`, which loads an
 old-format file, checks the pool reached the dataplane and the route reached
 FRR, saves, and loads what the box itself wrote.
@@ -938,7 +1158,7 @@ Two consequences worth knowing, because both are visible on a screen:
   error: nat: a hierarchy, not a block - 'nat cgnat pool <name>' or 'nat cgnat interface ...'
   ```
 
-  `cgnat` was never a block either — what is entered is `cgnat pool NAME` — and
+  `cgnat` was never a block either - what is entered is `cgnat pool NAME` - and
   inventing one level of block here would make `exit` mean two different things
   depending on which word opened it.
 * **Inside a block nothing is rewritten.** A route-map clause or a description
@@ -949,7 +1169,7 @@ Two consequences worth knowing, because both are visible on a screen:
 
 The static routes of a VRF are **not** hoisted into the block: FRR writes them
 inside the `vrf red` stanza, indented, and moving one out of it would move the
-route to another table — a display transform that changes where packets go. So
+route to another table - a display transform that changes where packets go. So
 `config.is_static_route()` reads the column as well as the statement.
 
 ## Static routes
@@ -968,7 +1188,7 @@ nothing else, and asking for the family as well is asking the operator for the
 chance to contradict themselves.
 
 Staged in the candidate and applied by `frr-reload` like every other routing
-statement, so it is committed and rolled back the same way — and a rollback
+statement, so it is committed and rolled back the same way - and a rollback
 removes it from the **FIB**, which is the only place that matters.
 
 `commit check` refuses a next hop that is on no connected network:
@@ -978,7 +1198,7 @@ error: ip route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
     the route would be accepted and never reach the forwarding table
 ```
 
-Accepted, such a route sits in FRR and never reaches the FIB — the exact
+Accepted, such a route sits in FRR and never reaches the FIB - the exact
 failure `show route verbose` exists to find afterwards, and cheaper to say at
 the prompt than to have somebody find during an outage.
 
@@ -992,7 +1212,7 @@ word they typed finds nothing.
 `staticd`.** Without them `vtysh` answers `mgmtd is not running` to every
 `ip route`, which is how one can be typed, accepted and never exist.
 `frrinit.sh` starts both on an installed box; anything that starts FRR daemons
-by hand has to start them too — `lab/routing.sh` did not, and that is what this
+by hand has to start them too - `lab/routing.sh` did not, and that is what this
 was found by.
 
 ## Components
@@ -1025,7 +1245,7 @@ flowchart TB
 
 FRR does not need to know VPP exists.
 
-## Pitfall 1 — inherited MTU stalls OSPF
+## Pitfall 1 - inherited MTU stalls OSPF
 
 The TAP created by `linux_cp` comes up with MTU 9000. If the physical link is
 1500, OSPF forms a neighbour, reaches **`Exchange/DR` and stops there**: it
@@ -1056,8 +1276,8 @@ right. An alarm that is always on is one nobody reads.
 
 ```
 hexarouting# [edit] interface host-veth-vpp
-hexarouting# [edit]  mtu 1500
-hexarouting# [edit]  exit
+hexarouting# [edit interface host-veth-vpp] mtu 1500
+hexarouting# [edit interface host-veth-vpp] exit
 hexarouting# [edit] commit
 ```
 
@@ -1066,15 +1286,15 @@ the operator is told at the point of typing instead of at commit time. `no mtu`
 removes the statement.
 
 **It is applied to both sides.** `linux_cp` pairs a VPP interface with a Linux
-TAP, and only the VPP interface is on the packet path. Setting the TAP alone —
-which is what FRR's own `mtu` would do — leaves the half that matters unchanged
+TAP, and only the VPP interface is on the packet path. Setting the TAP alone -
+which is what FRR's own `mtu` would do - leaves the half that matters unchanged
 and reproduces the mismatch this exists to prevent.
 
 Two details that cost time to find:
 
 * The command is `set interface mtu **packet** <n>`, not `set interface mtu
   <n>`. The second changes the hardware maximum frame size, which most drivers
-  refuse — and refuse while `vppctl` still exits **0**, so the failure is
+  refuse - and refuse while `vppctl` still exits **0**, so the failure is
   invisible. The first sets the L3 MTU, which is what OSPF compares.
 * The result is therefore **read back** rather than inferred from the exit
   status. Until MTU moves to the binary API alongside the pool operations
@@ -1089,7 +1309,7 @@ looked for a `host` field in `show lcp`. VPP prints
 itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
 ```
 
-There is no such field. The parse found nothing and returned — which is also
+There is no such field. The parse found nothing and returned - which is also
 what it correctly does on a box that has no TAP for that interface, so the
 failure was invisible. Meanwhile `lcp-sync` is on by default and VPP mirrors
 the MTU onto the TAP by itself, so the lab's assertion that the TAP had the
@@ -1108,11 +1328,11 @@ move. Two rules come out of it, and they cost a release each to learn:
 The running configuration reports the MTU of **every** interface the dataplane
 has, not only the ones somebody typed. "Explicitly configured" is not a
 property the dataplane can answer, and inventing that distinction would mean
-the VTY remembering things between invocations — which it deliberately does
+the VTY remembering things between invocations - which it deliberately does
 not. The consequence is the one that matters: a rollback can restore the
 previous MTU, because the previous value was recorded rather than guessed.
 
-## Pitfall 2 — IS-IS is not carried over IP
+## Pitfall 2 - IS-IS is not carried over IP
 
 IS-IS runs OSI CLNS directly over the link layer, using L2 multicast
 `01:80:C2:00:00:14/15`. Captures at three points located the loss precisely:
@@ -1139,11 +1359,11 @@ lcp osi-proto enable 0x83
   gives false confidence and IS-IS stays mute until someone needs it. IS-IS is
   therefore implemented last, deliberately: it is what validates the L2 punt.
 
-## Pitfall 3 — CGNAT eating its own control plane
+## Pitfall 3 - CGNAT eating its own control plane
 
 BGP sessions and OSPF/IS-IS adjacencies terminate on the box's **own**
 addresses. `bpa-out2in` runs on the `ip4-unicast` arc, before `ip4-lookup` and
-therefore before `ip4-local` decides a packet is local — so it sees the BGP
+therefore before `ip4-local` decides a packet is local - so it sees the BGP
 packet first. If a public pool contains a peering address, the session drops
 intermittently with nothing obvious anywhere.
 
@@ -1153,7 +1373,7 @@ Two defences, both **REQUIRED**:
    configured on a local interface. The error names the address and the
    interface.
 2. An address configured **after** the pool cannot be refused, so it **MUST**
-   be reported at error level in `show logging` — operators read that, not the
+   be reported at error level in `show logging` - operators read that, not the
    VPP process's stderr.
 
 Pool addresses themselves are normally **not** interface addresses: they reach
@@ -1173,20 +1393,20 @@ the VTY rather than logging out. It **is** in the command tree, so completion
 and `?` offer it.
 
 * The escape is **restricted** rather than hidden: administrators only. Hiding
-  was never the boundary — the role check is
+  was never the boundary - the role check is
   ([#35](https://github.com/andrediashexa/hexarouting/issues/35)), and it is
   what makes that sentence true rather than a hope. A shell on this box is
   every capability at once. It was hidden until the argument turned around: a
   command an administrator cannot find is a command they ask for, which is how
   it came back into the tree
   ([#194](https://github.com/andrediashexa/hexarouting/issues/194)). A
-  read-only or CGNAT account that types it is refused by name —
+  read-only or CGNAT account that types it is refused by name -
   `error: start shell: permission denied for a read-only account`.
 * A shell **MUST** remain reachable. Recovery, `tcpdump`, and reading a log the
   VTY does not expose all need one, and an appliance that makes them impossible
   gets a permanent hole opened by the first operator who needs one.
 * Booting with `hexash=off` skips the VTY entirely, and **MUST** keep working
-  even when `hexash` is broken — it is read from `/proc/cmdline` by the
+  even when `hexash` is broken - it is read from `/proc/cmdline` by the
   wrapper, so it does not depend on the VTY starting.
 
 See [appliance.md](appliance.md) for the login table and the recovery paths.
@@ -1210,7 +1430,7 @@ rejected:
 
 `vat2` ships inside the `vpp` package itself, so it is on every installed box
 and every ISO, and it is versioned with VPP by construction. The cost is a
-process per call rather than a persistent connection — irrelevant for
+process per call rather than a persistent connection - irrelevant for
 configuration, which happens at human speed and is all `hexash` does.
 
 Five outcomes are distinguished, because they need different actions:
@@ -1226,7 +1446,7 @@ Five outcomes are distinguished, because they need different actions:
 Collapsing these into "it failed" is how an unplugged dataplane and a rejected
 configuration become indistinguishable. A refusal **MUST** carry the return
 value, the name from `vnet/error.h`, and the sentence the plugin sent to VPP's
-log — the number alone is not actionable:
+log - the number alone is not actionable:
 
 ```
 refused -7: the dataplane refused it: invalid value
@@ -1241,17 +1461,17 @@ refused -7: the dataplane refused it: invalid value
 | `commit check` | CLI | Validation has no API message of its own, and inventing one that creates-then-deletes would rebuild the outage risk that a name check once caused. It writes nothing either way. |
 | Reachability, before any change | binary API | Asked **once**, before anything is touched. Discovering the dataplane is unreachable halfway through leaves the box in neither the old configuration nor the new one, and the operator with no way to know which pools made it. |
 
-A refused write **MUST** fail the commit, **MUST** name the pool — a commit
-carrying several pools has to say which one — and **MUST** leave the candidate
+A refused write **MUST** fail the commit, **MUST** name the pool - a commit
+carrying several pools has to say which one - and **MUST** leave the candidate
 intact, or the operator loses the edit they were trying to correct.
 
 An upgrade hazard worth stating: a box updated without the current
 `install.sh` has no vat2 plugin, and every commit touching a pool will fail.
-That is the correct behaviour — the alternative is falling back to text
-parsing, which is the defect — and the message says exactly what is missing.
+That is the correct behaviour - the alternative is falling back to text
+parsing, which is the defect - and the message says exactly what is missing.
 
 The client takes no plugin path. On an appliance there is none to give, because
-`install.sh` puts the vat2 plugin where `vat2` already looks — and `lab/api.sh`
+`install.sh` puts the vat2 plugin where `vat2` already looks - and `lab/api.sh`
 mirrors that layout rather than passing `-p`, so it proves the client in the
 configuration a box actually runs.
 
@@ -1298,7 +1518,7 @@ stateDiagram-v2
 | `commit check` | Validate without applying |
 | `commit` | Apply, and store a new revision |
 | `commit comment "<text>"` | Same, with a note recorded against the revision |
-| `commit confirmed <min>` | Apply, and roll back automatically unless confirmed — from the box, not from this session |
+| `commit confirmed <min>` | Apply, and roll back automatically unless confirmed - from the box, not from this session |
 | `rollback <0-19>` | Load a committed revision into the candidate |
 | `show rollback` | List revisions with timestamp and comment |
 
@@ -1315,8 +1535,8 @@ Requirements:
   name is a replacement, not a collision.
 * `commit check` **MUST** validate against the device, not merely against
   syntax. The plugin exposes `bpa pool … check`, which runs every check the
-  creation path runs — block size, prefix overlap, capacity, and collision
-  with a local address — and creates nothing. Checking syntax alone would
+  creation path runs - block size, prefix overlap, capacity, and collision
+  with a local address - and creates nothing. Checking syntax alone would
   approve pools the device refuses, which is false confidence exactly where an
   operator is relying on the check.
 * CGNAT **MUST** be applied before routing. A routing change can cost
@@ -1325,7 +1545,7 @@ Requirements:
   definition in a single command, and a partial edit would leave an invalid
   pool between the two halves of the change.
 * `rollback 0` returns the candidate to the running configuration, discarding
-  uncommitted edits — the same meaning JunOS gives it.
+  uncommitted edits - the same meaning JunOS gives it.
 
 ### `commit confirmed`, and where its deadline lives
 
@@ -1333,7 +1553,7 @@ Requirements:
 operator cannot type `commit` again, the box returns on its own.
 
 For two years it could not. The deadline was instance state on the `Shell`
-object that made the commit, checked from that shell's own REPL loop — so
+object that made the commit, checked from that shell's own REPL loop - so
 logging out, losing the SSH connection, closing the serial console or killing
 the process took the deadline with it and left the configuration. The failure
 the feature guards against is *"this change cut off the session I am typing
@@ -1341,7 +1561,7 @@ in"*, and in that scenario the session is exactly what does not survive: it
 reverted in every case where it was not needed and in none of the cases where
 it was. Worse, a change to SSH or to accounts becomes a `commit confirmed`
 whether or not the operator asked, and the box said so in words describing a
-guarantee it did not provide — so an operator who read them was *less* likely
+guarantee it did not provide - so an operator who read them was *less* likely
 to keep a second session open ([#212](https://github.com/andrediashexa/hexarouting/issues/212)).
 
 The deadline now lives on the box:
@@ -1353,7 +1573,7 @@ The deadline now lives on the box:
 | `hexarouting-confirm.service` | `ConditionPathExists` on that file, so nothing is started while nothing is pending. `hexash --confirm-expired` is what it runs, as root |
 
 **The file is the record of the confirmation, and it is removed the moment the
-operator confirms** — not when the window ends. That is what lets the box tell
+operator confirms** - not when the window ends. That is what lets the box tell
 a confirmed change from an unconfirmed one across a reboot:
 
 * Rebooted **after** confirming: there is no file, and nothing reverts. The
@@ -1369,7 +1589,7 @@ revert. That is the safe direction: the operator can type one word to keep the
 change, and cannot type anything at all to recover a box they cannot reach.
 
 Polled rather than armed at the instant of the commit, because the account that
-commits is not root — it holds a role, which is membership of `hexa-admin` or
+commits is not root - it holds a role, which is membership of `hexa-admin` or
 `hexa-cgnat`. Arming a transient unit from an operator's session would mean
 granting every such account the ability to make the box run units, which is a
 far larger grant than the feature is worth; writing a file into a directory
@@ -1386,8 +1606,8 @@ present, once. On the installed box the console carries no unit chatter at all
 - the only thing this feature ever prints there is the revert itself.
 
 The session that made the commit keeps a copy of the deadline, and it is
-neither the promise nor a duplicate of it. It makes the revert punctual — it
-fires at the deadline itself rather than at the next tick of the timer — and
+neither the promise nor a duplicate of it. It makes the revert punctual - it
+fires at the deadline itself rather than at the next tick of the timer - and
 it is the whole mechanism where there is no systemd to run that timer, which
 is every lab container. Whichever fires first removes the file, so the other
 finds nothing to do, and a session that armed a window checks the file before
@@ -1446,7 +1666,7 @@ Two rules now, and the first is the general one:
   device's running configuration **warns**, because a VTY that cannot start
   against a slightly newer dataplane is worse than one that says what it does
   not understand.
-* **Every per-pool setting the dataplane accepts, the model carries** — through
+* **Every per-pool setting the dataplane accepts, the model carries** - through
   `lines()` in the same order the device emits them, through
   `device_command()`, and through `api_args()`. The binary API gained the
   fields to carry them (`bpa.api` 0.2.0); before that they had no way to reach
@@ -1459,7 +1679,7 @@ every commit for no reason.
 `lab/vty-pool.sh` sets each of them through the VTY and asks **the dataplane**
 whether they arrived, then makes a setting with `vppctl`, commits an unrelated
 change through the VTY, and asserts the setting survived. Asking `hexash`
-whether `hexash` stored something proves nothing — that is exactly what the old
+whether `hexash` stored something proves nothing - that is exactly what the old
 code did successfully.
 
 ### Rolling back routing, not just CGNAT
@@ -1470,13 +1690,13 @@ configuration document, and rollback converges FRR onto the revision using
 `frr-reload.py`, which computes the delta.
 
 * Without `frr-reload.py`, a rollback could only add statements, never remove
-  them — and a rollback that cannot remove is not a rollback. Its absence
+  them - and a rollback that cannot remove is not a rollback. Its absence
   **MUST** be reported rather than silently degrading to a partial restore.
 
 ### The dataplane is the source of truth
 
 Each `hexash -c …` is a new process, so in-memory state does not survive
-between invocations — the first version wrote an empty configuration. The
+between invocations - the first version wrote an empty configuration. The
 plugin therefore emits its own configuration in VTY syntax
 (`show bpa config`), which `hexash` reads.
 
@@ -1501,10 +1721,10 @@ user noc
 ```
 
 `role` is what the account may change, and is what puts it in the groups that
-decide it — see [Roles](#roles-what-each-account-may-change). An account
+decide it - see [Roles](#roles-what-each-account-may-change). An account
 without one is read-only.
 
-Accounts are **real POSIX accounts**, not a private database — an appliance that
+Accounts are **real POSIX accounts**, not a private database - an appliance that
 invents its own accounts is one whose accounts nobody deprovisions when somebody
 leaves. A user created here gets the VTY as its login shell, which is also how
 the VTY knows which accounts are its own: the shell is the marker, so there is
@@ -1521,14 +1741,14 @@ the country, so it has three guards rather than one.
 
 1. **`commit check` refuses a change that leaves nobody able to log in.**
    Refused only when *this change* causes it: a box that already has nobody able
-   to reach it over SSH — freshly installed, reached by console — must still be
+   to reach it over SSH - freshly installed, reached by console - must still be
    able to commit a CGNAT change. Console access is deliberately not counted as
    an escape; "you still have the console" is not an answer at 2am for a box in
    somebody else's datacentre.
 2. **Any change under `ssh` or `user` is applied as `commit confirmed`,** whether
    or not the operator asked, and the VTY says so. The revert is armed on the
    box and not in the session that made the commit, so logging out, losing the
-   session or rebooting does not cancel it — typing `commit` does. See
+   session or rebooting does not cancel it - typing `commit` does. See
    "`commit confirmed`, and where its deadline lives" above.
 3. **`sshd -t` validates the generated file before the daemon is reloaded,** and
    the previous file is put back if it refuses. A syntax error that stops sshd
@@ -1540,7 +1760,7 @@ the country, so it has three guards rather than one.
 
 #### Secrets
 
-Password hashes are in `hexarouting.conf` and in every rollback revision —
+Password hashes are in `hexarouting.conf` and in every rollback revision -
 they have to be, or a rollback could not restore a password. So:
 
 * `/etc/hexarouting` and everything under it is **root-only**, set by the
@@ -1578,28 +1798,28 @@ one typo away.
 *nothing* rather than the values it last saw. A monitoring system that keeps
 reporting yesterday's numbers through an outage hides it; one that reports a gap
 shows it. The liveness check therefore runs on **every** poll, before the cache
-is consulted — caching it too is the obvious saving and it is exactly the bug
+is consulted - caching it too is the obvious saving and it is exactly the bug
 the lab caught, with SNMP still reporting a subscriber after the dataplane had
 been killed.
 
 #### What is served, and the one thing that is not
 
-From **RFC 4008**, `natDefTimeouts` (`.1.3.6.1.2.1.123.1.1`) — six objects that
+From **RFC 4008**, `natDefTimeouts` (`.1.3.6.1.2.1.123.1.1`) - six objects that
 map exactly onto this box's timeouts, so an existing NMS reads them with no
 custom template. The rest of RFC 4008 is per-interface or per-binding: this box
 tracks neither shape, and per-binding would mean walking the session table,
 which no `show` here is allowed to do.
 
-The numbers an operator actually watches — subscribers holding blocks, ports
+The numbers an operator actually watches - subscribers holding blocks, ports
 used against ports held, subscribers at 90% of their block, port refusals,
-packets dropped — have **no standard OID**. They live under the operator's own
+packets dropped - have **no standard OID**. They live under the operator's own
 **IANA Private Enterprise Number**, and there is no default and cannot be one:
 an OID under somebody else's PEN is a lie about who the object belongs to, and
 it collides the day that organisation uses the same subtree.
 
 > **Until `snmp enterprise-number` is set, that half is dark.** Registration is
 > free, takes days to weeks, and the request names the company rather than the
-> software — so it is the maintainer's to make, not something this code can do.
+> software - so it is the maintainer's to make, not something this code can do.
 
 | OID under `.1.3.6.1.4.1.<PEN>.1` | Meaning |
 |---|---|
@@ -1615,30 +1835,30 @@ handled like the SSH credentials above: never printed by `show running-config`,
 and in files readable only by root.
 
 **Not covered:** the SNMPv3 handshake is exercised only as far as
-configuration — that the user is granted read-only access and created in
+configuration - that the user is granted read-only access and created in
 net-snmp's store. A poll authenticated with v3 is not asserted end to end.
 `IF-MIB` counters for the VPP interfaces are not served at all; the kernel does
 not see those NICs, so `snmpd` has nothing to report about them.
 
 ### Commands for the question an operator arrives with
 
-The first five `show cgnat` commands report aggregates — *"thread 0: 3 sessions,
+The first five `show cgnat` commands report aggregates - *"thread 0: 3 sessions,
 2 active subscribers"*. That is enough to know the box is working and useless
 for the question people actually arrive with, which is always about one
 customer.
 
 | Command | The question |
 |---|---|
-| `show cgnat subscriber <ip>` | "100.64.0.5 says nothing works" — public address, blocks, ports used and free, sessions, and whether it has been refused a port |
-| `show cgnat translation <ip> <port>` | "who was behind this address and port" — the question a court order or an abuse report asks |
-| `show cgnat top [n]` | which subscribers are closest to running out — the question that prevents the call instead of answering it |
+| `show cgnat subscriber <ip>` | "100.64.0.5 says nothing works" - public address, blocks, ports used and free, sessions, and whether it has been refused a port |
+| `show cgnat translation <ip> <port>` | "who was behind this address and port" - the question a court order or an abuse report asks |
+| `show cgnat top [n]` | which subscribers are closest to running out - the question that prevents the call instead of answering it |
 | `show cgnat drops` | why packets did not get through |
 
 Two properties are load-bearing.
 
 **`translation` says where its answer comes from.** In deterministic mode the
 answer is arithmetic and holds for any instant, past or present, as long as the
-pool has not been resized. In dynamic mode it holds for **now only** — the block
+pool has not been resized. In dynamic mode it holds for **now only** - the block
 belonged to somebody else yesterday, and only the RFC 8158 log says whom. The
 command prints which of the two it is giving, because handing a court the second
 as though it were the first is a wrong answer delivered with confidence.
@@ -1651,8 +1871,8 @@ its description so the two cannot drift, and this command prints the drops under
 their own heading first.
 
 None of them walks the session table. `subscriber` and `top` read the
-per-subscriber record — one entry per active subscriber rather than one per
-session, which on a real box differ by three orders of magnitude — and
+per-subscriber record - one entry per active subscriber rather than one per
+session, which on a real box differ by three orders of magnitude - and
 `translation` answers by arithmetic. A `show` that stalls forwarding is worse
 than no `show`.
 
@@ -1683,7 +1903,7 @@ identifies the build, and an operator on the phone needs the second.
 Tab completes; `?` lists the valid options at the cursor with a description:
 
 ```
-hexarouting# show cgnat ?
+hexarouting> show cgnat ?
   blocks   blocks allocated in dynamic mode
   logging  IPFIX export state
   pool     configured CGNAT pools
@@ -1717,7 +1937,7 @@ would have printed, so no filter can reveal a value the command hides. The unit
 test asserts this against the real `redact()` rather than a hand-written string.
 
 **A pipe is a filter only after `show`.** Anywhere else a `|` is a character in
-a regular expression or in a description — an AS-path list is full of them — and
+a regular expression or in a description - an AS-path list is full of them - and
 treating it as a filter would cut a policy in half silently.
 
 **An unknown filter is refused, not ignored**, and the refusal lists what this
@@ -1728,8 +1948,8 @@ The list is short on purpose. Every entry answers a question an operator asks on
 this box, and the one thing it **MUST NOT** become is a shell: a pipe implemented
 by handing the text to `grep` is a shell escape wearing a filter's clothes,
 reachable by a read-only account, on a product that restricts the shell to
-administrators on purpose. The argument is therefore a plain substring — quotes
-would be part of it — and `section` knows one structure only: a line at column 0
+administrators on purpose. The argument is therefore a plain substring - quotes
+would be part of it - and `section` knows one structure only: a line at column 0
 and everything indented under it, which is the shape of this configuration.
 
 ### Limits of this version
@@ -1752,21 +1972,21 @@ appliance whose accounts nobody deprovisions when somebody leaves.
 |---|---|
 | `hexa-admin` | everything: routing, the box's own configuration, CGNAT |
 | `hexa-cgnat` | CGNAT configuration only |
-| neither | nothing — read-only |
+| neither | nothing - read-only |
 
 `root` has both, because root can talk to the dataplane socket directly and
 pretending otherwise would be theatre.
 
 **`hexa-admin` is additive.** It grants the capability; it does not grant file
 access. `/etc/hexarouting` is group-owned by `hexa-cgnat`, so **an
-administrator MUST also be a member of `hexa-cgnat`** — otherwise they can
+administrator MUST also be a member of `hexa-cgnat`** - otherwise they can
 apply a change and then fail to record its rollback revision.
 
 **The modes have one owner, and it is `appliance/install.sh`**: `2770` on
 `/etc/hexarouting` and on its rollback store, `0660` on the files inside, group
 `hexa-cgnat`. The VTY does not restate them. It used to `chmod 0700` on every
-`save` and every `commit`, so the **first** one on the box — root, applying the
-configuration at boot — closed the directory the operator's group had just been
+`save` and every `commit`, so the **first** one on the box - root, applying the
+configuration at boot - closed the directory the operator's group had just been
 given, and from then on every non-root `save` failed and every non-root
 `commit` reported that no rollback revision could be recorded
 ([#188](https://github.com/andrediashexa/hexarouting/issues/188)). It cannot be
@@ -1775,7 +1995,7 @@ cannot `chgrp` a directory it does not own.
 
 **setgid**, because the group alone is not enough. Without it a revision root
 writes at boot is group `root`, and one operator's revision is unreadable to
-the next — a rollback store only the account that wrote it can read is not one.
+the next - a rollback store only the account that wrote it can read is not one.
 What the VTY still states is the half that must never slip: what it has to
 create, it creates no wider than the group. These files carry the password hash
 of every account on the box, so world-readable is an offline cracking target
@@ -1794,7 +2014,7 @@ configure
  commit
 ```
 
-`no role` takes it away again, and takes the memberships with it — a demotion
+`no role` takes it away again, and takes the memberships with it - a demotion
 that leaves the group behind is not a demotion.
 
 `commit` writes the memberships the role is **made of**:
@@ -1807,7 +2027,7 @@ that leaves the group behind is not a demotion.
 
 The last row is not a role and is not the operator's to choose. VPP creates its
 sockets `srwxrwxr-x root:vpp`, `/etc/frr` is `drwxr-x--- frr:frr`, and the
-daemons' `.vty` sockets are group `frrvty` — so an account outside those three
+daemons' `.vty` sockets are group `frrvty` - so an account outside those three
 is refused by the **socket** on every command, the read-only ones included. A
 read-only account that cannot open them has no reading to do either.
 
@@ -1816,7 +2036,7 @@ monitoring group, keeps it: a demotion that silently took those away would be
 the VTY deciding something nobody asked it to decide.
 
 The role in `show running-config` is **read back from the group database**,
-never remembered from the file — so removing a membership by hand shows up in
+never remembered from the file - so removing a membership by hand shows up in
 the running configuration, rather than the VTY going on reporting a rank the
 box no longer grants.
 
@@ -1844,7 +2064,7 @@ tree is not an authorization check, and `lab/vty.sh` issues the commands
 directly rather than through the tree for exactly that reason.
 
 Authorization answers **before** validation. A CGNAT operator committing a
-routing change is told they may not, not that FRR is unhealthy — which would
+routing change is told they may not, not that FRR is unhealthy - which would
 be both the wrong answer and one they were not entitled to.
 
 #### What granting a role also grants
@@ -1883,7 +2103,7 @@ Two things had to be true before any of this mattered on a real box, and
 neither was:
 
 * **`api-segment { gid vpp }` group-owns `/dev/shm/vpe-api` and not
-  `/dev/shm/global_vm`**, and a client maps both — so a non-root account got
+  `/dev/shm/global_vm`**, and a client maps both - so a non-root account got
   `svm_region_map: Permission denied` and the VTY reported a timeout it could
   not explain. A drop-in on `vpp.service` fixes the second segment after the
   dataplane starts. `lab/vty.sh` had been doing exactly that by hand since
@@ -1896,7 +2116,7 @@ neither was:
 The boot self-test proves the property rather than the mode bits, and it does
 it with **the accounts the box actually has**. It used to synthesise the
 membership with `setpriv --groups vpp`, which answers "would an account in
-group `vpp` work" — always yes — and never "is any account in group `vpp`",
+group `vpp` work" - always yes - and never "is any account in group `vpp`",
 which for the life of the product was no. So it now reports an account that
 holds a role and not the memberships, names them, and says so as a failed
 check. A box with no operator account yet says that instead, and does not fail
@@ -1907,7 +2127,7 @@ fixed:
 
 * **A root API client puts `/dev/shm/global_vm` back to `root:root`.**
   Measured in `lab/vty.sh`: the drop-in above fixes the segment after the
-  dataplane starts, and the next `hexash` run as root undoes it — after which
+  dataplane starts, and the next `hexash` run as root undoes it - after which
   every non-root client crashes in `svm_region_map`. On an installed box
   `hexarouting.service` applies the configuration as root at every boot.
 
@@ -1924,7 +2144,7 @@ A role says an account **may** change routing. Three paths decide whether it
 | `/etc/frr/frr.conf` | `0640 frr:frr`, by the frr package | `frr-reload` ends by asking `vtysh` to persist the result, and the open fails |
 
 The first two are **scratch**, so the VTY hands `frr-reload` a private
-directory of its own for both — nothing package-owned is touched, and nothing
+directory of its own for both - nothing package-owned is touched, and nothing
 has to survive an frr upgrade. `--stdout` replaces the log handler anyway, so
 that log file was opened and never written to.
 
@@ -1936,15 +2156,15 @@ account too; with the *directory* group-writable instead, `vtysh` renames it
 aside and creates a new one owned by whoever committed, after which the next
 administrator cannot write it at all. The cost is stated where it is set: an
 frr upgrade that reinstalls the conffile puts `0640` back, and non-root commits
-fail — loudly — until the installer is re-run.
+fail - loudly - until the installer is re-run.
 
 `commit check` never needed any of this: `--test` logs to stdout and stages
-nothing. That is why the split was **check succeeds, commit fails** — the worst
+nothing. That is why the split was **check succeeds, commit fails** - the worst
 one available, because it is found in the maintenance window, after the check
 has already said yes.
 
 `bpa_global_set` takes the whole set of global settings, and a **zero timeout
-means "leave it alone"** — zero is not a valid timeout, so it needs no separate
+means "leave it alone"** - zero is not a valid timeout, so it needs no separate
 flag. The two settings that *can* legitimately be zero carry an explicit flag
 instead. The caller sends what the configuration says; what the configuration
 does not mention is not the caller's to reset.
@@ -1961,14 +2181,14 @@ configuring pools)
 
 The first version returned the code and logged nothing. The client attaches the
 last line of VPP's log to a refusal so the operator gets a sentence instead of
-a number — and with nothing written, it attached an unrelated error about the
+a number - and with nothing written, it attached an unrelated error about the
 configuration trail. That is worse than no explanation: it sends the operator
 to debug a file permission when the tables are simply already allocated.
 
 Attaching CGNAT to an interface is **not yet attributable** in the audit
 trail: the message carries no `audit_user`
 ([#124](https://github.com/andrediashexa/hexarouting/issues/124)). It was a
-`vppctl` call before, so it was never attributable — moving it to the API made
+`vppctl` call before, so it was never attributable - moving it to the API made
 the gap visible rather than creating it.
 
 `bpa_logging_set` carries the IPFIX export state and its TCP collector, which
@@ -1979,14 +2199,14 @@ on it and this message would be naming an operator on a line nobody writes.
 
 Moving it fixed something that was not the socket. `self.dp.run()` returned a
 status the caller discarded, and the dataplane **refuses** `bpa logging enable`
-when no IPFIX exporter is configured — so an operator who turned the export on
+when no IPFIX exporter is configured - so an operator who turned the export on
 read `commit complete` off a box that exports nothing. `vppctl` exits 0 either
 way, which is the reason `vppapi.py` exists.
 
 That refusal was permanent on a shipped box, because nothing in this product
 ever configured VPP's exporter and no statement reached it
 ([#209](https://github.com/andrediashexa/hexarouting/issues/209)). The
-statement now exists — `nat cgnat logging udp <collector> src <source>` — and
+statement now exists - `nat cgnat logging udp <collector> src <source>` - and
 it goes to VPP's **own** `set_ipfix_exporter`, not onto `bpa_logging_set`: the
 exporter is core state shared with anything else that exports, and `libvnet`
 exports no setter a plugin could call, so carrying it on the plugin's message
@@ -1999,17 +2219,17 @@ without it before anything is applied. `docs/logging.md` has the measurements.
 
 `lab/vty.sh` drives one commit that changes a pool, a pool setting, a bypass
 list, an interface attachment, two global settings, the IPFIX collector, an MTU
-and a uRPF mode — with `HEXA_TRACE=1`, and asserts that every `[device]` line
+and a uRPF mode - with `HEXA_TRACE=1`, and asserts that every `[device]` line
 in the trace is a `show` or a `check`. It asserts beside it that the commit was
-not vacuous — a commit that changes nothing sends nothing and would satisfy the
-rule without testing it — and that the export state and the exporter beside it
+not vacuous - a commit that changes nothing sends nothing and would satisfy the
+rule without testing it - and that the export state and the exporter beside it
 are both in force afterwards, read off the dataplane. The refusal itself is
 asserted by `lab/ipfix.sh`, on a box with no exporter, which is where it
 belongs now that a box can have one.
 
 The other clause of the criterion is that what stays is **read-only**, and
 `show cgnat subscriber|translation|top <argument>` is the one place an
-operator's own text reaches the socket — with the read-only role holding it.
+operator's own text reaches the socket - with the read-only role holding it.
 `Vpp.run()` passes `shlex.split(cmd)` as **argv**, so the argument stays an
 argument. Measured rather than reasoned: with a pool named `trace-only` on the
 box, `show cgnat subscriber 1.2.3.4; vppctl bpa pool trace-only del` and the
@@ -2020,9 +2240,9 @@ shell instead deletes the pool.
 An assertion of this shape already existed in `lab/commit.sh`, and it did not
 catch `bpa logging tcp`. It was about `commit check` alone: a check applies
 nothing, so the writes a **commit** makes were never in a trace anybody looked
-at. `lab/commit.sh` had also already learned the other half of this — list what
+at. `lab/commit.sh` had also already learned the other half of this - list what
 is *allowed* rather than what is forbidden, because an assertion that names the
-forbidden commands stops testing the moment one of them changes shape — and
+forbidden commands stops testing the moment one of them changes shape - and
 that lesson is why the gap was a missing scope rather than a missing rule.
 
 This is an **authority** boundary and not an availability one
@@ -2047,7 +2267,7 @@ Configure a pool with `outside 200.150.0.16/28`. Configure BGP. Both correct.
 Unless something advertises a prefix **covering** that /28, every subscriber
 behind the pool is translated to an address the internet cannot route back to:
 traffic leaves and nothing returns. The CGNAT is right, the routing is right,
-and the service is dead — and until now nothing in the box connected the two
+and the service is dead - and until now nothing in the box connected the two
 halves, because they are configured in different places by different people on
 different days.
 
@@ -2065,7 +2285,7 @@ Three properties, and the last two are what keep it useful:
 * **It stays quiet when it cannot see.** `redistribute` can advertise a prefix
   in ways this check cannot follow, so a candidate carrying one produces no
   warning at all. **A warning that fires on a working box is worse than no
-  warning**, because the next one — the real one — is ignored too.
+  warning**, because the next one - the real one - is ignored too.
 
 The lab asserts all three, and the order matters: "the warning stays quiet" is
 trivially true on a box where the warning never fires, so it is only meaningful
@@ -2075,8 +2295,8 @@ beside the case that proves it does.
 
 The VTY passed the whole `router bgp` stanza through and understood none of
 it. No completion, no `?`, and a typo found when FRR refused it in the middle
-of a commit. Modelling it is not about refusing more — most of BGP is still
-passed through — it is about the operator being able to **discover what the
+of a commit. Modelling it is not about refusing more - most of BGP is still
+passed through - it is about the operator being able to **discover what the
 box takes, from the box, at the point they are typing**.
 
 ```
@@ -2105,7 +2325,7 @@ the session. So `router bgp` and `address-family` offer different sets, and
 is structural rather than an omission: the tree walk stops at an argument, so
 everything after the address fell through to the configuration tree, which has
 no `remote-as` in it. The walk now starts from the block's own grammar, which
-fixed the same gap inside `interface` — `ipv4 address` completed nothing
+fixed the same gap inside `interface` - `ipv4 address` completed nothing
 either.
 
 ### What completes from the box
@@ -2127,14 +2347,14 @@ Structural only. Whether the neighbour *answers* is not in the configuration
 and is not claimed.
 
 * **A neighbour with no `remote-as`.** FRR refuses every other statement for a
-  neighbour whose AS it has not been told — except in the unnumbered form,
+  neighbour whose AS it has not been told - except in the unnumbered form,
   which it accepts and leaves Idle at AS 0 forever. Measured on 10.7.1; both
   are refused here, and the message says which of the two it is.
 * **A peer group nobody declared.** `neighbor X peer-group PG` where `PG` was
   never created by `neighbor PG peer-group`.
 * **A member whose group has no AS either.** A member inherits `remote-as` from
   its group, so a neighbour with no AS of its own is perfectly correct when the
-  group has one — which is why this is not a two-line check.
+  group has one - which is why this is not a two-line check.
 * **`update-source` naming an interface this box does not have.** FRR accepts
   it, the session sources from nothing and never comes up, and the
   configuration reads correctly.
@@ -2157,7 +2377,7 @@ the same line rather than a statement of its own, and `external` and
 `internal` are values as legitimate as a number.
 
 Read positionally, all of that was "a neighbour with no AS", so the statement
-could not be typed — and because a refusal fails the candidate **whole**, a
+could not be typed - and because a refusal fails the candidate **whole**, a
 CGNAT or interface change in the same commit was refused with it. That is the
 worst shape a false positive can take, and it is what #208 was filed for.
 
@@ -2220,7 +2440,7 @@ that an operator would not type.
 `neighbor X password <secret>` is worse than an account's entry, which is a
 hash: this is the secret itself, and it opens the session on the **other**
 router too. It is redacted in `show running-config` **and** in `show this`
-inside the block — the second path reads the routing lines straight out of the
+inside the block - the second path reads the routing lines straight out of the
 candidate, so a password printed nowhere else was printed there.
 
 Redaction is a display transform. The stored configuration and every rollback
@@ -2231,8 +2451,8 @@ which is why those files are not world-readable.
 
 `lab/routing.sh` no longer writes this side's `bgpd.conf`. The session is
 configured **through the VTY**, so everything downstream that depends on
-`203.0.113.0/24` — the FIB wait, the route comparison, the pool announcement
-checks — is evidence that the VTY configured a BGP session that works, on a box
+`203.0.113.0/24` - the FIB wait, the route comparison, the pool announcement
+checks - is evidence that the VTY configured a BGP session that works, on a box
 where nothing else did. The prefix is asserted in the **VPP FIB**, not in FRR's
 table: FRR holding a route is a different claim from the box forwarding on it.
 
@@ -2256,7 +2476,7 @@ exit
 
 `bgpd --version` reports `--enable-rpki` whether or not the module is present.
 It ships in a **separate package**, `frr-rpki-rtrlib`, from the same repository
-and at the same version as `frr` itself — so it adds no new source and no
+and at the same version as `frr` itself - so it adds no new source and no
 version skew. The appliance installs it, and `/etc/frr/daemons` carries
 `-M rpki` in `bgpd_options`.
 
@@ -2268,7 +2488,7 @@ the module by name.
 ### The transport keyword is not optional
 
 `rpki cache tcp <host> <port> [source <A.B.C.D>] preference <1-255>`, or
-`rpki cache ssh ...`. Leaving out `tcp` is a plain unknown command — on the live
+`rpki cache ssh ...`. Leaving out `tcp` is a plain unknown command - on the live
 box as well as in the file `frr-reload` validates. It was left out once here,
 and the resulting failure read like an upstream limitation rather than a missing
 word.
@@ -2288,7 +2508,7 @@ warning: match rpki notfound: no RPKI cache is configured, so every route is
 notfound and this clause matches all of them
 ```
 
-Reported, not refused — an operator may be building the policy before the
+Reported, not refused - an operator may be building the policy before the
 cache, in that order, on purpose.
 
 ### What the box says when the cache goes away
@@ -2296,14 +2516,14 @@ cache, in that order, on purpose.
 Measured, and both halves matter.
 
 `show rpki cache-connection` prints a header line, **`Connected to group 1`**,
-which stays for as long as the cache is configured — seventy seconds after the
+which stays for as long as the cache is configured - seventy seconds after the
 server was killed it still said Connected. The real state is the per-cache
 **`(connected)`** marker, which disappears within a second. Everything in this
 product reads the marker, never the header.
 
 And the prefix table is **not** emptied when the cache goes. Validation keeps
-running on what was already learned until `expire_interval` passes — 7200
-seconds by default — and only then does everything become `notfound`. So
+running on what was already learned until `expire_interval` passes - 7200
+seconds by default - and only then does everything become `notfound`. So
 `show bgp summary` says:
 
 ```
@@ -2317,12 +2537,12 @@ outage that has not started yet. The boot self-test says the same.
 
 ### How it is tested
 
-A cache is a service, so the lab runs one — `stayrtr` with a two-entry VRP set.
+A cache is a service, so the lab runs one - `stayrtr` with a two-entry VRP set.
 `203.0.113.0/24` really is originated by AS 65001 and the ROA says 65001:
 **valid**. `198.51.100.0/24` really is originated by AS 65002 and the ROA says
 64999, so a ROA covers it and the origin does not match: **invalid**.
 
-The assertion is on the VPP FIB, and it is two-sided — the invalid route MUST
+The assertion is on the VPP FIB, and it is two-sided - the invalid route MUST
 NOT be there **and** the valid one MUST still be. Dropping everything would
 satisfy the first on its own.
 
@@ -2368,7 +2588,7 @@ re-implement `show bgp <prefix>`.
 ### Routes the box is not keeping
 
 `show bgp neighbor X received-routes` answers from what the neighbour sent
-**before** inbound policy — which the box only has if it was told to keep it.
+**before** inbound policy - which the box only has if it was told to keep it.
 Without `soft-reconfiguration inbound`, FRR prints an empty table, and "no
 routes received" and "I am not keeping them" are different answers to be
 looking at during an incident:
@@ -2383,7 +2603,7 @@ an empty table either way
 ```
 
 `clear bgp X soft in` is refused for the same reason and says the same thing,
-with the alternative that always works — resetting the session and taking the
+with the alternative that always works - resetting the session and taking the
 routes again.
 
 ### `clear`
@@ -2397,7 +2617,7 @@ Operational, and it changes nothing on disk. `clear bgp <neighbour> [soft
 dropping it. It is tested by its **effect**, never by the configuration
 containing the words:
 
-* the neighbour receives the well-known community — asserted by the name FRR
+* the neighbour receives the well-known community - asserted by the name FRR
   renders, `gracefulShutdown`, because the raw `65535:0` never appears in its
   output and asserting the number would be asserting a rendering nothing
   produces;
@@ -2417,7 +2637,7 @@ have to be made separately.
 
 `show ip ospf neighbor` and `show isis neighbor` were handed to `vtysh`
 untouched, and **FRR's table is not the table that forwards**. OSPF was not in
-the `show` tree at all — `show ?` offered `bgp` and `isis`, and both IGP entries
+the `show` tree at all - `show ?` offered `bgp` and `isis`, and both IGP entries
 ended the command
 ([#176](https://github.com/andrediashexa/hexarouting/issues/176)).
 
@@ -2454,7 +2674,7 @@ That is Pitfall 1 above, on the screen an operator is already looking at. OSPF
 carries the interface MTU in its Database Description packets and the receiver
 drops any claiming one larger than its own; `linux_cp` starts the TAP at 9000,
 so what ospfd advertises is more often wrong than right. **FRR's own answer to
-the same question contains no mention of MTU at all** — `lab/igp.sh` asserts
+the same question contains no mention of MTU at all** - `lab/igp.sh` asserts
 that, so the claim is measured rather than made.
 
 `show ospf interface` carries both of this box's MTUs, in two columns:
@@ -2467,10 +2687,10 @@ that, so the claim is measured rather than made.
 The left one is what ospfd sees, which is the TAP's; the right one is the
 dataplane's, with the name an operator can type at this VTY. When they disagree
 the screen prints **the sentence `commit check` already prints, from the same
-function** — two diagnoses of one fact that disagree are worse than one.
+function** - two diagnoses of one fact that disagree are worse than one.
 
 A `passive-interface` or `ip ospf mtu-ignore` silences it, and until now did
-not: both name the interface the way FRR does — the Linux name — while the MTU
+not: both name the interface the way FRR does - the Linux name - while the MTU
 is the dataplane's and keyed by the dataplane's name, so neither ever matched.
 
 ### A circuit that is Up and Active with nobody on it
@@ -2515,7 +2735,7 @@ would put a permanent fault on a box where nothing is wrong.
 ### The overload bit
 
 `set-overload-bit` is IS-IS's maintenance drain, and the failure mode is leaving
-it on. `show isis adjacency` reports it — **read from the LSP this box is
+it on. `show isis adjacency` reports it - **read from the LSP this box is
 flooding**, not from the configuration that asked for it, because a drain
 reported by the words that requested it is reported by a line that may not have
 taken effect. `lab/igp.sh` asserts it in the **neighbour's** copy of this box's
@@ -2528,8 +2748,8 @@ LSP, and asserts that taking it off reaches the neighbour too.
 per-session reset: tearing the process down takes every adjacency with it, which
 is why the word is `process`.
 
-They are asserted in the lab **by what they do** — the IS-IS adjacency's flap
-count going up, the OSPF adjacency's uptime going backwards — and never by what
+They are asserted in the lab **by what they do** - the IS-IS adjacency's flap
+count going up, the OSPF adjacency's uptime going backwards - and never by what
 they print. A `clear` that printed "cleared" and did nothing would satisfy any
 assertion about its output, and it is the one command an operator runs
 *because* they want something to happen.
@@ -2544,7 +2764,7 @@ assertion about its output, and it is the one command an operator runs
   end is, and that is what the screen says.
 * The RIB/FIB divergence is asserted in `test/test_hexash_igp.py` and not in
   the lab: producing one live means breaking `linux_nl`, and taking a route out
-  of the FIB by hand does not hold — `linux_nl` puts it straight back. The lab
+  of the FIB by hand does not hold - `linux_nl` puts it straight back. The lab
   asserts the other half, that a healthy box says so and does not cry wolf.
 
 ## AS-path and community lists
@@ -2557,7 +2777,7 @@ the box actually has.
 ### A regex that does not compile
 
 FRR compiles an AS-path regex when the statement is **applied**, which is
-mid-commit — the worst moment to find out. The VTY compiles it at the prompt:
+mid-commit - the worst moment to find out. The VTY compiles it at the prompt:
 
 ```
 error: bgp as-path access-list AS-BAD permit ^65001(: the regular expression
@@ -2567,7 +2787,7 @@ does not compile: missing ), unterminated subpattern at position 6
 FRR uses POSIX extended regular expressions and Python's `re` is close but not
 identical, so the VTY now holds an opinion about what FRR accepts. An opinion
 that drifts refuses configurations that are fine, so ten cases go to **both**
-in `lab/routing.sh` and they MUST agree — the same arrangement as the
+in `lab/routing.sh` and they MUST agree - the same arrangement as the
 prefix-range rule, for the same reason.
 
 ### A regex that compiles and matches the wrong thing
@@ -2575,7 +2795,7 @@ prefix-range rule, for the same reason.
 This is the common failure and it cannot be refused. `permit 65001` is legal,
 compiles, and also matches `165001` and `650012`, because a missing `^` or `$`
 turns an exact match into a substring one. FRR's `_` makes it worse in the
-other direction: it means *any boundary* — start, end, or separator — not an
+other direction: it means *any boundary* - start, end, or separator - not an
 underscore character.
 
 An operator reading their own regex back does not see this. A count against the
@@ -2589,7 +2809,7 @@ Read from `show bgp ipv4 unicast json`, not from the human table: a long AS
 path wraps onto the next line there, and a parser reading it by column loses
 exactly the long paths a regex is most likely to get wrong.
 
-When there are no paths yet, the VTY says so rather than reporting zero —
+When there are no paths yet, the VTY says so rather than reporting zero -
 "matches 0" and "there was nothing to match against" are different answers, and
 only one of them is about the regex.
 
@@ -2600,7 +2820,7 @@ warning: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
 defined; until one is, the clause matches nothing
 ```
 
-**Reported, not refused** — a change from what this did, and the argument is
+**Reported, not refused** - a change from what this did, and the argument is
 the one `rpki_findings` already makes in its own docstring. Measured on FRR
 10.7.1: the clause is accepted, stored, and **bound when the list arrives**,
 with nothing retyped. So building a policy map-first and lists-second is a
@@ -2609,8 +2829,8 @@ commit down with it.
 
 What is left is the true positive: a list name with a typo in it matches
 nothing forever, and nothing else on the box ever mentions it. Both spellings
-of a community list — `bgp community-list standard NAME` and `bgp
-community-list NAME` — count as defining it. The legacy `ip community-list` and
+of a community list - `bgp community-list standard NAME` and `bgp
+community-list NAME` - count as defining it. The legacy `ip community-list` and
 `ip as-path access-list` spellings do **not**, and do not need to: FRR 10.7.1
 answers both with "Unknown command", measured in `lab/bgp-policy.sh`.
 
@@ -2621,7 +2841,7 @@ the box receives paths with two different origins: `203.0.113.0/24` via
 `65001`, and `198.51.100.0/24` via `65001 65002`.
 
 A policy accepts only what `65002` originated. `198.51.100.0/24` MUST stay in
-the VPP FIB and `203.0.113.0/24` MUST leave it — and the second half is the one
+the VPP FIB and `203.0.113.0/24` MUST leave it - and the second half is the one
 that matters, because a regex matching everything would keep both, and a test
 that only looked at the route the policy was meant to select would pass on it.
 
@@ -2649,14 +2869,14 @@ The clause set modelled is the one an ISP edge uses:
 
 The split is the point.
 
-**A `deny` clause carrying `set` is refused.** The set never runs — the route is
-denied — so the operator wrote something that reads like policy and is not.
+**A `deny` clause carrying `set` is refused.** The set never runs - the route is
+denied - so the operator wrote something that reads like policy and is not.
 That one is a mistake every time.
 
 **A `permit` clause with no `match` is reported, not refused.** It permits every
 route. That is a common, deliberate way to end a policy, and it is also exactly
 what "I had not finished typing" looks like. The VTY cannot tell them apart, and
-neither can anyone afterwards — which is why it must be said at `commit`:
+neither can anyone afterwards - which is why it must be said at `commit`:
 
 ```
 warning: route-map RM-TRANSITO-IN permit 20: no 'match': this permits every
@@ -2668,7 +2888,7 @@ unfinished
 numbers are the operator's and this MUST NOT renumber them, but a policy that
 looks right and does nothing is worth a sentence.
 
-"Earlier" means **earlier by `seq`**, which is the only order FRR has —
+"Earlier" means **earlier by `seq`**, which is the only order FRR has -
 measured: `route-map ORD permit 20` typed first and `permit 10` second, and
 FRR's own `show route-map` lists 10 before 20. Reading the written order
 called the inserted clause unreachable, and inserting a low-seq clause in
@@ -2679,26 +2899,23 @@ second were parsed and then ignored, so one of them poisoned the verdict on
 every later clause. A route-map containing one gets **no** reachability claim
 at all: where the reading goes next depends on whether the clause matched,
 which is not in the configuration. `continue` was also not a word the parser
-knew, so it ended the clause — and a `deny` clause carrying a `set` after one
+knew, so it ended the clause - and a `deny` clause carrying a `set` after one
 was not refused.
 
 ### What was not checked is marked
 
-Most of a route-map still passes straight through to FRR. Without a marker an
-operator reading the running configuration cannot tell a statement the box
-verified from one it merely forwarded, and reads a guarantee into both:
+Most of a route-map still passes straight through to FRR, and so it is marked:
 
 ```
 route-map RM-PASS permit 10
  match ip address prefix-list PL-MEUS-BLOCOS
- set tag 100    <- not checked by this VTY
+ set tag 100  <- not checked
 ```
 
-**Display only**, and that is the design rather than a caveat: the marker must
-never reach `Config.text()`, the saved configuration, a rollback revision or
-the file handed to FRR. A comment appended mid-statement is not something FRR
-is obliged to accept, and a configuration that cannot be fed back is not a
-configuration.
+This started here, in a route-map, and now covers **every** block of the
+routing half - the marking, where it is shown, why the mark is short, and why
+it must never reach the saved file are all in
+[The boundary between what was checked and what was carried](#the-boundary-between-what-was-checked-and-what-was-carried).
 
 ### How it is tested
 
@@ -2707,7 +2924,7 @@ On the tables, never on the text of the configuration. `lab/routing.sh` has a
 `set local-preference` has something to choose between:
 
 * **local-preference changes which path the dataplane forwards on.** The
-  assertion is on the VPP FIB's next hop, and on the fact that it *changed* —
+  assertion is on the VPP FIB's next hop, and on the fact that it *changed* -
   which path the tie-break picked first is read at runtime, and the policy
   prefers the other one, so the test is about the policy and not about FRR's
   tie-break.
@@ -2734,7 +2951,7 @@ hexarouting# [edit] ip prefix-list <TAB>
 
 **The statements themselves are still passed through to FRR**, and that is a
 decision rather than an omission. FRR stores them, the running configuration is
-read back from FRR, and `rollback` already restores them — so a model here
+read back from FRR, and `rollback` already restores them - so a model here
 would be a second copy of something that already works, and a second thing to
 keep in step.
 
@@ -2756,7 +2973,7 @@ does.** On FRR 10.7.1:
 | `permit 10.0.0.0/8 ge 8` | **accepted and stored** |
 
 So half the checks planned here would have duplicated a refusal the dataplane
-already makes, with this VTY's wording instead of FRR's — which is worse for
+already makes, with this VTY's wording instead of FRR's - which is worse for
 anybody searching the error text.
 
 What FRR does not catch is `ge` equal to the prefix length: `10.0.0.0/8 ge 8`
@@ -2779,7 +2996,7 @@ This VTY hands FRR a whole routing section through `frr-reload.py` rather than
 through `vtysh -c`. **Measured since:** the same all-or-nothing applies, and it
 costs more than the transaction. The refusal arrives through `mgmtd`, which
 keeps the rejected entry in its candidate datastore and fails the *next*
-configuration commit with the same message — naming a prefix-list that is in no
+configuration commit with the same message - naming a prefix-list that is in no
 running configuration, on no disk, and in nothing the VTY sent. That is why the
 VTY refuses a bad `ge`/`le` itself, before FRR sees it.
 
@@ -2801,18 +3018,18 @@ vtysh -c "show running-config" | grep prefix-list
 Accepted and discarded, silently, depending on a daemon nobody was asked
 about. With `mgmtd` and `zebra` up, the same statement is stored.
 
-**A `router bgp` stanza that goes nowhere is noticed** — no session comes up.
+**A `router bgp` stanza that goes nowhere is noticed** - no session comes up.
 **A prefix-list that goes nowhere is invisible** until traffic that should have
 been filtered is not, or traffic that should have passed is dropped, and by
 then nobody connects it to a commit that reported success days earlier.
 
-`commit` now refuses, names the daemon and names the file to edit — because
+`commit` now refuses, names the daemon and names the file to edit - because
 the fix is `/etc/frr/daemons`, and a message that does not say so sends
 somebody to read their own configuration for an error that is not in it.
 
 The lab has both halves: the refusal with the daemon stopped, and an ordinary
 policy commit that still works with it running. A check that refuses in both
-cases is not a check, and one that refuses too much is worked around — and is
+cases is not a check, and one that refuses too much is worked around - and is
 then wrong on the day it was right.
 
 This is the same shape as
@@ -2849,7 +3066,7 @@ Measured on FRR 10.7.1, one statement at a time, each undone before the next:
 Every one of those is the FRR default. So omission is per **statement**, not
 per value: there is no table of FRR defaults to chase across versions and no
 comparison to get right. There is a short list of statements FRR drops, and
-`lab/frr-readback.sh` is what produces it and keeps it honest — an FRR upgrade
+`lab/frr-readback.sh` is what produces it and keeps it honest - an FRR upgrade
 that changes one of these answers fails there rather than silently changing
 what this VTY refuses.
 
@@ -2859,10 +3076,10 @@ named:
 * **Rewritten.** `passive-interface vppwan0` comes back as `ip ospf passive`,
   in the *interface* stanza rather than the router one, and `continue 20` comes
   back as `on-match goto 20`. Both were already known here from somewhere else
-  — the first to `ospf_findings`
+  - the first to `ospf_findings`
   ([#205](https://github.com/andrediashexa/hexarouting/issues/205)), the second
   to `route_map_findings`
-  ([#208](https://github.com/andrediashexa/hexarouting/issues/208)) — which is
+  ([#208](https://github.com/andrediashexa/hexarouting/issues/208)) - which is
   the evidence that this list is discoverable rather than open-ended. When a
   rewritten statement's rewrite is missing too, the refusal names what FRR
   would have written: an operator told "`passive-interface` is missing" will
@@ -2875,7 +3092,7 @@ The comparison is against FRR's **running configuration**, not against
 `frr-reload --test`'s idea of what is outstanding. That distinction is the
 whole reason this is possible now: `--test` reports a default-valued statement
 under *Lines To Add* for ever, so a check built on it calls every commit
-carrying one a failure. FRR's running configuration does not lie that way — it
+carrying one a failure. FRR's running configuration does not lie that way - it
 simply does not contain the statement, which is a question that can be asked.
 
 The list is short on purpose, and anything added to it **MUST** come with a
@@ -2884,7 +3101,7 @@ back off one entry at a time.
 
 `lab/igp.sh` carries the other half, which is the one that would hurt an
 operator: a commit of statements FRR does not store still says **commit
-complete**, on a box where OSPF is running perfectly — with two assertions
+complete**, on a box where OSPF is running perfectly - with two assertions
 beside it proving FRR really did omit and really did rewrite, so that
 "complete" is not simply what this box says to everything.
 
