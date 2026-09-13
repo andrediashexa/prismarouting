@@ -814,30 +814,34 @@ echo "=== the control that keeps the console driver honest is invoked ==="
 # install-iso, not the Makefile, and not the release gate (#256). A control
 # that is optional is a control nobody runs.
 #
-# The recipe is EXTRACTED AND RUN, not grepped for.
+# The control is EXTRACTED AND RUN, not grepped for.
 #
-# The first version of this section grepped the Makefile for the phrases the
-# recipe prints, and it passed on a recipe whose inversion had been replaced by
-# `if false` - the strings were all still there, inside a branch that could not
-# be reached. A check that reads the text of a decision cannot see the
-# decision, which is the same defect this whole release keeps finding one layer
-# in. So the control's three branches are driven against a stub that behaves
-# each of the three ways, and what is asserted is the verdict.
-MK=$REPO/Makefile
-if ! grep -q "install-iso.sh wrong-password" "$MK"; then
+# The first version of this section grepped for the phrases the control prints,
+# and it passed on one whose inversion had been replaced by `if false` - the
+# strings were all still there, inside a branch that could not be reached. A
+# check that reads the text of a decision cannot see the decision. So the three
+# branches are driven against a stub that behaves each of the three ways, and
+# what is asserted is the verdict.
+#
+# It reads tools/test-install.sh, which is where the body lives since #281 -
+# it was inline in the Makefile, and `$(call)` ended it at the first comma in
+# an English sentence, so `make test-install` could not run at all. The check
+# got simpler with it: a file needs no un-tabbing, no backslash stripping and
+# no closing paren removed, so what is driven is the real thing rather than a
+# reconstruction of it.
+CTL=$REPO/tools/test-install.sh
+if ! grep -q "install-iso.sh wrong-password" "$CTL"; then
   bad "lab/install-iso.sh has a wrong-password mode that nothing invokes: "\
 "TESTING.md calls it how the driver is kept honest, and a driver that stopped "\
 "noticing a refused login would let the install lab run its whole session "\
 "against a login prompt and report a pass"
 else
   work=$(mktemp -d)
-  # The recipe, from the control's banner to the end of the target: leading
-  # tabs and trailing backslashes off, and the lab replaced by a stub.
-  sed -n '/=========== THE CONTROL/,/^$/p' "$MK" \
-    | sed 's/^\t*//; s/ *\\$//' \
+  # From the control's banner to the end of the file, with the lab replaced by
+  # a stub and the log by one this can read.
+  sed -n '/=========== THE CONTROL/,$p' "$CTL" \
     | sed 's|sh /src/lab/install-iso.sh wrong-password|sh "$STUB"|' \
-    | sed 's|/tmp/wrong-password.log|"$LOG"|g' \
-    | sed 's/^\( *fi\))$/\1/' > "$work/control.sh"   # the ISO_RUN call's paren
+    | sed 's|/tmp/wrong-password.log|"$LOG"|g' > "$work/control.sh"
 
   drive() {  # <exit code> <what the stub prints> -> the recipe's exit status
     printf '#!/bin/sh\nprintf %%s "$2"\nexit %s\n' "$1" > "$work/stub"
