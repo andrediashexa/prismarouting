@@ -173,9 +173,32 @@ are to be interpreted as described in
   The check was inline in `commit` and so could only be reached by running the
   lab. It is `pool_announce_findings()` over `bgp_originations()` now, in the
   family of `ospf_findings` and `bgp_errors`, with unit assertions in
-  `test/test_hexash_complete.py`; thirteen mutations of the product were each
+  `test/test_hexash_complete.py`; fourteen mutations of the product were each
   run to red before the work was called done, and one of them found an
   assertion that was green against the defect it claimed to guard.
+
+* **An indented `!` put every statement after it in the wrong block.**
+  `config.block_paths()` read any `!` as FRR's top-level stanza separator and
+  cleared the block stack. FRR 10.7.1 also writes an **indented** one inside a
+  stanza, captured from a live daemon:
+
+  ```
+  router bgp 65000
+   !
+   address-family ipv4 unicast
+    network 200.150.9.16/28
+   exit-address-family
+  exit
+  ```
+
+  So the `network` statement belonged to no block, and anything asking "is
+  this line under `router bgp`" answered no for a box that had typed it
+  exactly there. `cfg.routing` is read back from FRR, so that is the shape of
+  **every commit after the first one** - it was the pool-announce check above
+  that found it, warning about a pool the box was announcing correctly. Only a
+  `!` at column 0 returns to the top now. Found because the assertion was
+  written against text a live FRR had actually printed rather than against
+  indented text that looked right.
 
 * **A received Router Advertisement never reached the Linux side of a
   `linux_cp` pair, so BGP unnumbered never came up.** The VTY takes

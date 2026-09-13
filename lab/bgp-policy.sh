@@ -23,9 +23,13 @@
 # against nothing (#146), and RPKI has no pair of prefixes where one ROA is
 # right and the other is not.
 #
-# No OSPF and no IS-IS. Nothing here reads 198.18.0.0/24 or 198.19.0.0/24; an
-# adjacency nothing asserts on costs a minute of convergence and proves
-# nothing. The punt path for all three protocols is lab/routing.sh, which this
+# No OSPF ADJACENCY and no IS-IS. Nothing here reads 198.18.0.0/24 or
+# 198.19.0.0/24; an adjacency nothing asserts on costs a minute of convergence
+# and proves nothing. ospfd is nevertheless started, with no interface in any
+# area: the pool-announce check has to tell a `redistribute` under `router bgp`
+# from the same word under `router ospf`, and a `router ospf` statement is
+# refused outright when the daemon is not running, which would make that case
+# assert the wrong thing. The punt path for all three protocols is lab/routing.sh, which this
 # file was split out of: the two halves in one file ran over 400 s and made it
 # the floor of the whole suite (#167).
 set -u
@@ -126,7 +130,14 @@ apt-get install -y -qq frr-rpki-rtrlib stayrtr >/dev/null 2>&1
 # This lab worked out the mgmtd/staticd requirement; it now lives in
 # lab/lib.sh so the other six labs cannot go on not knowing it. Sourced here
 # rather than where it was, because FRR starts before that point.
-start_frr bgpd
+# ospfd is here for ONE assertion and forms no adjacency: the pool-announce
+# check has to tell `redistribute static` under `router bgp` from the same six
+# characters under `router ospf`, and `commit check` refuses a `router ospf`
+# statement outright when ospfd is not running (#99) - so without the daemon
+# that case would be asserting a daemon refusal rather than the scope. No
+# interface is put in an area, so this costs no convergence, which is what the
+# header means by "no OSPF": no adjacency, not no daemon.
+start_frr bgpd ospfd
 
 # ---------------- upstream ----------------
 mkdir -p /var/run/frr/peer /etc/frr/peer

@@ -3279,6 +3279,36 @@ check(not _ann(["interface vppwan0", " ip address 10.0.0.1/24"]),
 check(not pool_announce_findings(BGP, {}),
       "and neither is a box with no pools")
 
+# --- the shape EVERY commit after the first one sees ---
+#
+# cfg.routing is read back from FRR, so this is not a hand-made indented
+# example: it is what FRR 10.7.1 printed during the measurement, ` !` and all.
+# That indented separator is the whole reason this is asserted on the captured
+# text rather than on something written to look like it - config.block_paths()
+# read it as "back to the top", which put the `network` statement in no block
+# at all, and the check then warned about a pool the box was announcing
+# correctly. A false positive on the ordinary case, invisible in a flat test.
+FRR_READBACK = ["router bgp 65000",
+                " !",
+                " address-family ipv4 unicast",
+                "  network 200.150.9.16/28",
+                " exit-address-family",
+                "exit"]
+check(not pool_announce_findings(
+        FRR_READBACK, {"c": _pool("c", ["200.150.9.16/28"])}),
+      "a prefix FRR reads back under router bgp is an announcement")
+_a, _b, _h = bgp_originations(FRR_READBACK)
+check(_a == ["200.150.9.16/28"] and _h,
+      f"and it is found in the stanza it was typed in: {_a} {_h}")
+# The same read-back shape carrying the scope mistake.
+check(pool_announce_findings(
+        ["ip route 200.150.9.16/28 blackhole",
+         "router ospf", " redistribute static", "exit",
+         "router bgp 65000", " !", " address-family ipv4 unicast",
+         " exit-address-family", "exit"],
+        {"c": _pool("c", ["200.150.9.16/28"])}),
+      "and the IGP redistribution is still not an announcement, indented")
+
 # Both shapes `routing` arrives in. Read back from FRR it is INDENTED; typed
 # at this VTY it is flat. A scanner that read either one alone was wrong for
 # the other, which is why the block context comes from config.block_paths().
