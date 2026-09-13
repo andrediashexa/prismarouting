@@ -303,8 +303,37 @@ report_off() {
     return
   fi
   if printf '%s' "$_out" | grep -q "LAB FAILED"; then
-    printf '  %-18s pass (%s)\n' "$_n" \
-      "$(printf '%s' "$_out" | grep -c '\[FAIL\]') check(s) red, as the header says"
+    _red=$(printf '%s' "$_out" | grep -c '\[FAIL\]')
+    # "as the header says" used to be printed without anybody having read the
+    # header, which is a claim the suite was making and not checking. The
+    # comment above already names the hazard - a lab that used to fail eleven
+    # checks and now fails one has lost ten assertions without losing its
+    # verdict - and the count was printed beside it without being compared to
+    # anything (#151).
+    #
+    # A FLOOR rather than an exact number, deliberately. An exact one has to be
+    # edited every time a lab legitimately grows, which is a check that reports
+    # "you added a test" and not "you broke something", and this repository has
+    # already decided that trade once (the interface block's options are
+    # asserted as a property for the same reason).
+    _floor=$(sed -n 's/^# OFF-RED-AT-LEAST:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+             "$REPO/lab/${_n%%+*}.sh" 2>/dev/null | head -1)
+    if [ -n "$_floor" ] && [ "$_red" -lt "$_floor" ]; then
+      printf '  %-18s FAIL - %s check(s) red, and its header floor is %s\n' \
+        "$_n" "$_red" "$_floor"
+      printf '     an off run that goes red on fewer checks than it used to has\n'
+      printf '     lost assertions without losing its verdict. Raise the floor\n'
+      printf '     only when the loss is deliberate.\n'
+      fail=$((fail+1))
+      return
+    fi
+    if [ -n "$_floor" ]; then
+      printf '  %-18s pass (%s check(s) red, floor %s)\n' "$_n" "$_red" "$_floor"
+    else
+      # No floor declared, so nothing was compared and the line says only what
+      # was seen.
+      printf '  %-18s pass (%s check(s) red)\n' "$_n" "$_red"
+    fi
     pass=$((pass+1))
   elif [ "$_rc" -eq 0 ] && printf '%s' "$_out" | grep -q "LAB PASSED"; then
     printf '  %-18s FAIL - PASSED with the feature off\n' "$_n"

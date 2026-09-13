@@ -96,6 +96,13 @@ case "$1 ${2:-}" in
   "vrf off") echo "  [FAIL] the two tenants got different public addresses"
              echo "LAB FAILED: 1 check(s)"; exit 1 ;;
 
+  # An off mode that still fails, and on FEWER checks than it used to. Its
+  # verdict is unchanged, which is exactly what makes this invisible without
+  # the floor: the lab lost assertions and went on reporting a pass (#151).
+  "mss ")    echo "LAB PASSED"; exit 0 ;;
+  "mss off") echo "  [FAIL] one of the four that used to go red"
+             echo "LAB FAILED: 1 check(s)"; exit 1 ;;
+
   # An off mode that passes, which is the suite's own defect to catch.
   "audit ")    echo "LAB PASSED"; exit 0 ;;
   "audit off") echo "  [ ok ] the identity travelled"; echo "LAB PASSED"; exit 0 ;;
@@ -114,6 +121,10 @@ for n in aa-good bb-broken cc-panic dd-refused ee-silent ff-halfdead \
          gg-late vrf audit urpf; do
   echo '#!/bin/sh' > "$d/lab/$n.sh"
 done
+# The lab with a floor in its header, and a lab file is where the floor lives
+# because that is where the number is true: the header of the lab whose off run
+# it describes.
+printf '#!/bin/sh\n# OFF-RED-AT-LEAST: 4\n' > "$d/lab/mss.sh"
 
 out=$(sh "$d/tools/run-all-labs.sh" 2>&1); rc=$?
 
@@ -151,6 +162,32 @@ case "$out" in
   *) bad "an off mode that passed was not caught" ;;
 esac
 
+echo "=== an off run that lost assertions is caught by its own floor ==="
+# The verdict is unchanged - still LAB FAILED, still red - so nothing about the
+# pass or fail of the lab can see this. What sees it is the COUNT against the
+# number its header declares.
+case "$out" in
+  *"mss+off            FAIL - 1 check(s) red, and its header floor is 4"*)
+    ok "an off run red on fewer checks than its floor is a failure" ;;
+  *) bad "a lab that lost three assertions still reported a pass; got:
+$(printf '%s' "$out" | grep mss)" ;;
+esac
+case "$out" in
+  *"lost assertions without losing its verdict"*)
+    ok "and the report says what that means" ;;
+  *) bad "nothing explained what a thinned off run is" ;;
+esac
+# And the line for a lab that meets its floor says what was compared, rather
+# than claiming a header was read when it was not.
+case "$out" in
+  *"urpf+off           pass (6 check(s) red, floor 6)"*)
+    ok "a lab that meets its floor says both numbers" ;;
+  *"urpf+off           NO VPP"*)
+    ok "urpf+off is NO VPP here, which its own case above already asserts" ;;
+  *) bad "the floor was not reported beside the count; got:
+$(printf '%s' "$out" | grep 'urpf+off')" ;;
+esac
+
 echo "=== a check whose timing the machine could not keep is its own state ==="
 # Not a failure: the lab ran and measured everything else. Not a pass either:
 # the thing it came to measure was not measured. This is the state that cost an
@@ -174,7 +211,7 @@ esac
 
 echo "=== the summary counts them apart, and the suite still exits non-zero ==="
 case "$out" in
-  *"pass=5  fail=3  notmeasured=1  novpp=3  ran=1"*) ok "the five states are counted apart" ;;
+  *"pass=7  fail=4  notmeasured=1  novpp=3  ran=1"*) ok "the five states are counted apart" ;;
   *) bad "the summary line is not what was counted; got:
 $(printf '%s' "$out" | tail -12)" ;;
 esac

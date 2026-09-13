@@ -9,6 +9,16 @@
 # refused while a second subscriber sharing the same public address carries on.
 # A cap that bounds the pool instead of the customer would pass every other
 # check here and fail that one.
+#
+# OFF-RED-AT-LEAST: 14
+#
+# A FLOOR, not a target, and the number is measured rather than chosen: it is
+# what this lab's off run went red on in the release suite of 2026-09-13.
+# tools/run-all-labs.sh refuses an off run that goes red on fewer, because a
+# lab that used to fail eleven checks and now fails one has lost ten assertions
+# without losing its verdict - which is the defect this whole sweep exists to
+# find. Gaining assertions is fine and needs no edit here; losing them is what
+# has to be deliberate.
 set -u
 MODE=${1:-on}
 

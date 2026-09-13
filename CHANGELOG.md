@@ -203,6 +203,23 @@ are to be interpreted as described in
   has to be readable as that sentence rather than as a failure. It is the shape
   `test_boot_wait.sh` and `lab_no_vpp()` already took.
 
+* **The suite printed "as the header says" without having read the header.**
+  An off run's line was `pass (12 check(s) red, as the header says)`, and the
+  count was never compared with anything - while the comment directly above
+  that code names the hazard it was leaving open: *a lab that used to fail
+  eleven of them and now fails one has lost ten assertions without losing its
+  verdict*. Its verdict does not change, so nothing else can see it either
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+  Each of the nineteen off-capable labs now declares `# OFF-RED-AT-LEAST: <n>`
+  in its own header, and the number is the one that lab's off run measured in
+  the release suite of 2026-09-13 rather than one somebody chose. A **floor**
+  and not an exact count, deliberately: an exact one has to be edited every
+  time a lab legitimately grows, which is a check reporting "you added a test"
+  instead of "you broke something", and this repository has already made that
+  trade once. Gaining assertions needs no edit; losing them has to be
+  deliberate.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
