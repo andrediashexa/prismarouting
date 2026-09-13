@@ -71,6 +71,42 @@ endereços públicos = assinantes × block-size ÷ 64512
 
 O **modo dinâmico** aloca só para quem está usando, então cabe sobreassinatura e a necessidade cai bastante — em troca de voltar a gerar log.
 
+## Em modo dinâmico, dimensione pelo número que o equipamento garante
+
+Numa caixa com mais de um worker, os blocos de um pool dinâmico são **repartidos entre os workers**: cada bloco pertence a um worker só, e cada assinante sai por um worker só. Os dois repartes são calculados de formas diferentes, então nem sempre casam - um assinante pode receber "sem bloco livre" enquanto sobra bloco na fatia de outro worker.
+
+Por isso `show cgnat pool` mostra **dois** números num pool dinâmico:
+
+```
+capacity     768 subscribers (usable 768)
+             384 whatever the addresses are: blocks are sharded 2 ways and a subscriber draws only from its own worker's slice
+```
+
+* o primeiro é o **teto**: o que o pool atende se os assinantes se distribuírem perfeitamente entre os workers;
+* o segundo é o **piso garantido**: o que o pool atende independentemente de quais endereços internos estejam online.
+
+**Dimensione pelo segundo.** O primeiro depende de sorte no plano de endereçamento, e sorte não é um número de compra.
+
+A segunda linha só aparece quando há algo a perder. Um pool com bloco sobrando para todo endereço interno não perde nada para o reparte, e nesse caso o equipamento imprime só o teto.
+
+A distância entre os dois encolhe rápido conforme o pool cresce em relação ao número de workers. Medido, com os assinantes espalhados aleatoriamente pela faixa interna:
+
+| Blocos no pool | Workers | Garantido | Atendidos na prática | Perda |
+|---------------:|--------:|----------:|---------------------:|------:|
+| 12    | 2  | 6     | \~10,6   | 11%  |
+| 48    | 4  | 12    | \~43,3   | 10%  |
+| 192   | 4  | 48    | \~183    | 4,5% |
+| 768   | 8  | 96    | \~742    | 3,4% |
+| 7.936 | 8  | 992   | \~7.848  | 1,1% |
+
+E a perda **desaparece** quando os endereços internos são entregues em sequência a partir do início da faixa, que é o caso de um pool DHCP preenchendo de baixo para cima. Um plano de endereçamento contíguo não perde nada; um plano esburacado perde o da coluna da direita.
+
+
+:::warning
+A conclusão prática: em modo dinâmico, **pool pequeno com muitos workers é o pior caso**. Um pool de 12 blocos com 8 workers garante um único assinante. Se o pool é pequeno por escolha - e no modo dinâmico costuma ser, já que ele existe justamente para economizar IPv4 - prefira menos workers ou um pool maior a descobrir isso com o cliente na linha.
+
+:::
+
 
 :::info
 Bloco menor economiza endereço e aperta o assinante. 512 portas atendem uso residencial comum com folga; abaixo de 256, aplicações que abrem muitas conexões simultâneas (um navegador com muitas abas, um cliente de torrent) começam a esbarrar no limite. Acompanhe com `show cgnat top` antes de reduzir.

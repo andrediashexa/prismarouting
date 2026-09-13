@@ -91,6 +91,50 @@ format_bpa_addr_set (u8 *s, va_list *args)
   return s;
 }
 
+/*
+ * How many subscribers a dynamic pool serves whatever addresses they have.
+ *
+ * A worst case and deliberately not a mean. The operator sizing a pool has no
+ * say over which of their inside addresses are switched on at any moment, so
+ * a figure that only holds on the average leaves a box refusing subscribers
+ * below the number it printed - the same false promise this whole line exists
+ * to remove, arriving one step quieter. What is returned is therefore the
+ * largest n for which EVERY set of n subscribers is served.
+ *
+ * A worker refuses only when more inside addresses map to it than it has
+ * blocks, and the adversary then puts one subscriber more than that worker's
+ * slice on it. So the answer is the smallest slice among the workers that can
+ * be crowded, and the whole inside set when none of them can be.
+ *
+ * That second case is why this is not simply capacity/n_workers. A pool of 12
+ * blocks in front of 8 inside addresses serves all 8 on any worker count,
+ * because no worker can be handed more subscribers than it has blocks for;
+ * calling it 4 would send an operator to buy addresses they already own.
+ *
+ * The number does not depend on which addresses are in use, only on how many
+ * the inside set holds - that is what makes it safe to print. What it costs
+ * is the gap to `usable` above it, which is what an even spread would buy and
+ * is the subject of #210.
+ */
+static u32
+bpa_pool_guaranteed (const bpa_pool_t *p, u32 nw)
+{
+  u32 w, worst = ~0u;
+
+  for (w = 0; w < nw; w++)
+    {
+      /* Worker w owns the block indices congruent to w, and the subscriber
+       * indices congruent to w may only draw from them. */
+      u32 blocks = p->capacity / nw + (w < p->capacity % nw ? 1 : 0);
+      u32 subs = p->inside.count / nw + (w < p->inside.count % nw ? 1 : 0);
+
+      if (subs > blocks && blocks < worst)
+	worst = blocks;
+    }
+
+  return worst == ~0u ? p->inside.count : worst;
+}
+
 u8 *
 format_bpa_pool (u8 *s, va_list *args)
 {
@@ -137,20 +181,27 @@ format_bpa_pool (u8 *s, va_list *args)
    * one, and the third subscriber is refused with a block standing free on
    * the other worker - while this line said "usable 3".
    *
-   * So the smallest slice is printed beside it. It is what the pool can serve
-   * whatever the addresses happen to be, which is the number to size against;
-   * the difference between the two is what an even spread would buy. Fixing
-   * the mechanism is a design decision with a cost either way and is #210 -
-   * this is the half that stops the box claiming what it cannot do.
+   * So what the pool can serve whatever the addresses happen to be is printed
+   * beside it, and that is the number to size against; the difference between
+   * the two is what an even spread would buy. Fixing the mechanism is a design
+   * decision with a cost either way and is #210 - this is the half that stops
+   * the box claiming what it cannot do.
+   *
+   * Printed only when it is BELOW the ceiling. A pool with more blocks than
+   * inside addresses on every worker loses nothing to the sharding, and a
+   * caveat that repeats the number above it is a caveat people learn to skip
+   * - which is how the one that matters gets skipped too.
    */
   if (p->mode == BPA_MODE_DYNAMIC && bpa_main.n_workers > 1)
     {
       u32 nw = bpa_main.n_workers;
+      u32 guaranteed = bpa_pool_guaranteed (p, nw);
 
-      s = format (s, "\n%U             %u whatever the addresses are: blocks "
-		     "are sharded %u ways and a subscriber draws only from "
-		     "its own worker's slice",
-		  format_white_space, indent + 2, usable / nw, nw);
+      if (guaranteed < usable)
+	s = format (s, "\n%U             %u whatever the addresses are: blocks "
+		       "are sharded %u ways and a subscriber draws only from "
+		       "its own worker's slice",
+		    format_white_space, indent + 2, guaranteed, nw);
     }
   s = format (s, "\n%Udivisor      %u (%s)", format_white_space, indent + 2,
 	      p->div.d, p->div.is_pow2 ? "shift" : "reciprocal");
