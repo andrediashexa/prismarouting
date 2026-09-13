@@ -789,17 +789,45 @@ release_disk() {   # <disk>; stop and erase what would hold it open
     mdadm --zero-superblock --force "$_p" >/dev/null 2>&1 || true
   done
   command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=30 2>/dev/null
-  # Anything left is the thing that will refuse the write, named here rather
-  # than left to be deduced from what sfdisk says next.
-  if grep -qE "^md[0-9]+ : .*[^a-z]$_rb" /proc/mdstat 2>/dev/null; then
-    say "  $_rd is still held by an array:"
-    sed 's/^/    /' /proc/mdstat >&2
-  fi
+  grep -qE "^md[0-9]+ : .*[^a-z]$_rb" /proc/mdstat 2>/dev/null
 }
 
-release_disk "$DISK"
+# Released until it STAYS released, because the release has a side effect of
+# its own.
+#
+# Measured, fourth run of the same reinstall: with the arrays stopped and the
+# superblocks erased, the second disk was still refused, and the line this
+# prints said what by -
+#
+#   ==> the records mirror on /dev/vdb
+#   [   39.270871]  vdb: vdb1
+#   ==>   /dev/vdb is still held by an array:
+#       md127 : inactive vdb1[1](S)
+#
+# Closing a writable file descriptor on a whole disk makes the kernel re-read
+# its partition table, which is what mdadm does when it looks for a superblock
+# to erase. udev then sees the partition appear and assembles the stale leg it
+# finds on it, INACTIVE, holding the very disk the erase was meant to free.
+#
+# So each attempt takes away what the last one brought back, and the loop ends
+# when a pass finds nothing left rather than after a fixed number of tries. If
+# it never does, the console gets /proc/mdstat and the operator is looking at
+# the thing that is in the way instead of at the partitioner.
+release_disk_until_free() {   # <disk>
+  _rdu=$1
+  _n=1
+  while [ "$_n" -le 4 ]; do
+    release_disk "$_rdu" || return 0
+    _n=$((_n + 1))
+  done
+  say "  $_rdu is still held by an array after 4 attempts:"
+  sed 's/^/    /' /proc/mdstat >&2
+  return 1
+}
 
-say "partitioning $DISK (UEFI=$EFI)"say "partitioning $DISK (UEFI=$EFI)"
+release_disk_until_free "$DISK"
+
+say "partitioning $DISK (UEFI=$EFI)"
 # udev opens a freshly attached disk to probe it, and sfdisk wants an exclusive
 # lock on the same device. Losing that race makes sfdisk WAIT - printing
 # nothing, so the install looks hung rather than blocked.
@@ -857,7 +885,7 @@ if [ -n "$MIRROR" ]; then
   # that only did this once got the system disk partitioned and was then
   # refused on this one: the gap between the two sfdisks is long enough for
   # udev to assemble something out of what is still on the second disk.
-  release_disk "$MIRROR"
+  release_disk_until_free "$MIRROR"
   # One partition over the whole disk rather than a sized one. The array is as
   # big as its smallest member either way, and a whole-disk leg is what makes a
   # replacement disk of a different size usable without re-doing arithmetic
