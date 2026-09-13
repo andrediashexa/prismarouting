@@ -769,6 +769,36 @@ now starts at the first prompt the box offers, which is where the operator
 starts, and both assertions were shown red on a full ISO build, install and
 second boot before the fix.
 
+#### The assertions that could not fail, and the report one was hiding
+
+[#151](https://github.com/andrediashexa/hexarouting/issues/151) is this
+project's own core rule turned into an audit. Its finding is not the count:
+
+> `routes.vpp_host_interfaces()` looked for a literal `host` token and took the
+> next field. No line VPP prints has such a token, so it returned an **empty
+> set on every box** — and `compare()` reads an empty set as "VPP owns no
+> interface", which suppresses every route FRR holds that the FIB does not. So
+> **`in RIB, not in FIB` found nothing, on every box, in silence.**
+
+The claim "the old positional parse cannot work" *was* written down, and
+demonstrated against an inline **copy** of the parse rather than against the
+function. The copy was wrong, the assertion was green, and the function
+shipped. That is the shape: an assertion that reimplements the thing it is
+checking is checking itself.
+
+The issue's own list is stale — every Tier 1 and Tier 2 item already carries a
+fix. A fresh audit found **52** findings in almost entirely different places,
+17 that cannot fail at all and 35 weaker than they read, out of 597 lab
+assertions, 529 Python and 203 C. Twelve are fixed. `lab/utilisation.sh` is
+the one to remember: **a box with no histogram at all, and an alarm naming the
+wrong subscriber every time, passed the shipped lab with 9 green**, because
+the needle was the `sed` range's own start anchor.
+
+What remains on it is the largest single gap in the machinery:
+**`tools/run-all-labs.sh` never runs any lab's `off` mode.** Sixteen labs
+document one in their header as the thing that proves they can fail, and
+nothing automatic ever checks it.
+
 #### Filed while doing something else, and not folded in
 
 Each of these was measured during another change and written up rather than
@@ -778,10 +808,10 @@ nobody reviewed, and the issue is the only place the measurement survives.
 | | | |
 |---|---|---|
 | [#213](https://github.com/andrediashexa/hexarouting/issues/213) | IPv6 link-local multicast is not punted over a `linux_cp` pair, so an unnumbered BGP session reaches Active and never Established — and IPv6 ND, OSPFv3 and IS-IS over IPv6 have the same hole | **open** |
-| [#214](https://github.com/andrediashexa/hexarouting/issues/214) | a public port can be forwarded once per **pool** rather than once per public address, so on an interleaved pool with N addresses only one subscriber in N can hold a forward at a given offset | **open** |
+| [#214](https://github.com/andrediashexa/hexarouting/issues/214) | a public port can be forwarded once per **pool** rather than once per public address, so on an interleaved pool with N addresses only one subscriber in N can hold a forward at a given offset | *fixed* |
 | [#215](https://github.com/andrediashexa/hexarouting/issues/215) | deleting a pool emits no `natEvent 17`, so every block it held stays **open** in the retention log — the answer to a court order then names a subscriber who had already been disconnected | *fixed* |
 | [#217](https://github.com/andrediashexa/hexarouting/issues/217) | and a box that is **stopped** does the same, on every planned reboot — with a second allocation and no release between them when it comes back | **open** |
-| [#216](https://github.com/andrediashexa/hexarouting/issues/216) | `bpa_dyn_active()` has no callers; either it is unnecessary or a call is missing, and nothing in the code says which | **open** |
+| [#216](https://github.com/andrediashexa/hexarouting/issues/216) | `bpa_dyn_active()` has no callers; either it is unnecessary or a call is missing, and nothing in the code says which | *fixed* — and it was neither: calling it would have leaked a block |
 
 #215's fix also covers a pool being **replaced**, which was not obvious: a
 `commit remap` is applied as a delete and an add, so it went through the same

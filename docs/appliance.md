@@ -360,6 +360,33 @@ The restart counter matters more than it looks. A service flapping in a loop
 can be "active" at the instant one looks, and `systemctl status` will say so.
 Only `NRestarts` tells the story.
 
+### It also checks that the dataplane port reaches FRR
+
+FRR only ever sees a `linux_cp` pair. VPP owns the NIC outright, so a port
+with no pair has no netdev at all: `ip` does not have it, zebra does not have
+it, and BGP, OSPF and IS-IS are configurable and completely **inert**
+([#182](https://github.com/andrediashexa/hexarouting/issues/182)).
+
+The pair is the operator's to ask for, by name — `linux-name <name>` under
+`interface` — which is a decision and not an omission. The Linux-side name is
+what FRR, `ip` and the operator's own scripts act on, so a name this product
+invented would be one nobody could predict. The cost of that decision is that
+a box can be installed, tuned, given a NIC and left with no pair at all, and
+from outside that looks exactly like a box that is working. The self-test is
+what pays it:
+
+* every interface the dataplane has, minus `local0`, the packet generator and
+  the Linux end of a pair, is checked against `show lcp`;
+* unpaired interfaces are **named**, with the statement that fixes them;
+* and it is a **failed** check, not a warning, when routing is configured and
+  **no** interface is paired — that box cannot do what it has been told to do.
+
+A box running CGNAT and no routing needs no pair, and is not failed for not
+having one. Read from the box and never arranged: a check that creates the
+pair it is checking for cannot report its absence, which is
+[#184](https://github.com/andrediashexa/hexarouting/issues/184) in one
+sentence.
+
 ### It also checks that a pool could be created
 
 Not by creating one — this runs at every boot on a production box — but by

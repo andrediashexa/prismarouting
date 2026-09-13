@@ -65,9 +65,23 @@ vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
+# The BPA plugin, installed where vat2 looks for it on a real box. Nothing below
+# sends a bpa_ message, but hexash asks vat2 which messages are registered
+# before it touches the dataplane and calls it unusable when bpa_pool_add_del is
+# not among them - so without this every commit here fails for a reason that has
+# nothing to do with routing.
+use_binary_api
+HX="python3 /src/src/hexash/hexash.py"
+
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
-vppctl lcp create host-veth-vpp host-if vppwan0
+# The pair is the PRODUCT's, not this lab's (#182). `vppctl lcp create` used to
+# be here, and while it was, this lab proved an IGP on a box nobody receives:
+# on an installed appliance nothing created a pair, so FRR had no interface and
+# OSPF and IS-IS were configurable and inert. Moved up from further down with
+# use_binary_api, which has to come first for any commit at all.
+$HX -c "configure" -c "interface host-veth-vpp" -c "linux-name vppwan0" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 
 # NO `set interface mtu` here. See the header: the mismatch is the subject of
 # the first section, not an accident.
@@ -149,13 +163,6 @@ for d in zebra ospfd isisd; do
 done
 
 . /src/lab/verdict.sh
-# The BPA plugin, installed where vat2 looks for it on a real box. Nothing below
-# sends a bpa_ message, but hexash asks vat2 which messages are registered
-# before it touches the dataplane and calls it unusable when bpa_pool_add_del is
-# not among them - so without this every commit here fails for a reason that has
-# nothing to do with routing.
-use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
 
 # --- what the assertions read -------------------------------------------------
 #

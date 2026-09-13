@@ -63,9 +63,28 @@ vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
+# The BPA plugin, installed where vat2 looks for it on a real box. Nothing
+# below sends a bpa_ message, but hexash asks vat2 which messages are
+# registered before it touches the dataplane and calls it unusable when
+# bpa_pool_add_del is not among them - so without this every interface commit
+# here fails for a reason that has nothing to do with the interface.
+use_binary_api
+HX="python3 /src/src/hexash/hexash.py"
+
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
-vppctl lcp create host-veth-vpp host-if vppwan0
+# Both pairs in this file are the PRODUCT's (#182). `vppctl lcp create` stood
+# here and on veth9 below, and while it did, every routing assertion in this
+# lab was made on a box somebody had paired by hand: on an installed appliance
+# nothing created a pair, FRR saw no interface for the port that carries
+# traffic, and BGP, OSPF and IS-IS were configurable and inert. That is the
+# same shape as the routing daemons (#99) and OSI passthrough (#168), and the
+# fix is the same - the product does it, and the lab leaves it alone.
+#
+# use_binary_api and $HX moved up from below the FRR setup for this: a commit
+# needs both, and the pair has to exist before isisd.conf names vppwan0.
+$HX -c "configure" -c "interface host-veth-vpp" -c "linux-name vppwan0" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 
 # The TAP inherits MTU 9000 while the wire is at 1500. OSPF compares MTU in DD
 # packets, so the adjacency stalls in Exchange without saying why. MTU has to
@@ -87,7 +106,8 @@ vppctl set interface ip address host-veth-vpp 10.0.0.1/24
 # which is the point: the statement has to name the spelling FRR acts on.
 vppctl create host-interface name veth9-vpp
 vppctl set interface state host-veth9-vpp up
-vppctl lcp create host-veth9-vpp host-if vppwan9
+$HX -c "configure" -c "interface host-veth9-vpp" -c "linux-name vppwan9" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 vppctl set interface mtu 1500 host-veth9-vpp
 ip link set vppwan9 up
 
@@ -182,18 +202,9 @@ for d in zebra bgpd ospfd isisd; do
   ip netns exec peer /usr/lib/frr/$d -d -N peer -A 127.0.0.1 -f /etc/frr/peer/$d.conf
 done
 
-# The assertion helpers and the VTY, needed from here on: the BGP session below
-# is configured through the VTY, and everything that waits for its routes is an
-# assertion about that.
+# The assertion helpers. The VTY itself is already in $HX, set further up
+# because the linux_cp pairs are made with it before FRR is told about them.
 . /src/lab/verdict.sh
-# The BPA plugin, installed where vat2 looks for it on a real box. Nothing
-# below sends a bpa_ message, but hexash asks vat2 which messages are
-# registered before it touches the dataplane and calls it unusable when
-# bpa_pool_add_del is not among them - so without this every interface commit
-# here fails for a reason that has nothing to do with the interface.
-use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
-
 # ---------------- the session, configured through the VTY ----------------
 #
 # The point of doing it here rather than in bgpd.conf: everything below that
@@ -912,8 +923,13 @@ expect_in "creating a loopback commits" "commit complete" "$LOOP"
 
 echo "  the dataplane:"; vppctl show interface loop0 2>&1 | head -2 | sed 's/^/    /'
 echo "  the kernel:"; ip -br addr show loop0 2>&1 | sed 's/^/    /'
+# MEASURED: `vppctl show interface loop0` for an interface that does NOT exist
+# prints an error containing the name it was asked about, so `grep -q loop0`
+# matched either way and this check passed on a box with no loopback at all.
+# Found by breaking create_loopback and watching it stay green. The name has to
+# be the FIRST FIELD of a line, which is where `show interface` puts one.
 expect "the loopback is on the dataplane" \
-  sh -c "vppctl show interface loop0 | grep -q loop0"
+  sh -c "vppctl show interface loop0 2>&1 | awk '\$1 == \"loop0\"{f=1} END{exit !f}'"
 # The half that matters, and the reason a loopback is worth having: FRR has to
 # see it, or a router-id and an update-source cannot live on it. Nothing in
 # this section ran `lcp create` - the product built the pair.
@@ -923,10 +939,16 @@ expect "with the address on it" \
   sh -c "ip -br addr show loop0 | grep -q 10.99.0.1"
 expect_in "the pair is in the running configuration, read back from the box" \
   "linux-name loop0" "$($HX -c 'show running-config')"
-# And it is usable for what it exists for. FRR refusing this would mean the
-# pair is present in VPP and absent from the kernel, which is the failure.
+# And it is usable for what it exists for: FRR has to hold a REAL interface,
+# not the placeholder object zebra makes for any interface its configuration
+# names. The marker is measured rather than guessed - see the negative half at
+# the end of this section, where the very same loopback with no `linux-name`
+# prints "pseudo interface" here and nothing else differs. The word this used
+# to look for, "Unknown", appears in no FRR output either way, so the check
+# passed on a box with no pair at all.
 FRRSEES=$(vtysh -c "show interface loop0" 2>&1)
-expect_not_in "FRR knows the interface" "Unknown" "$FRRSEES"
+expect_not_in "FRR holds a real interface, not a configuration placeholder" \
+  "pseudo interface" "$FRRSEES"
 
 # Removing it takes the whole path back down: address, pair, interface.
 BACK=$($HX -c "configure" -c "no interface loop0" -c "commit" 2>&1)
@@ -936,6 +958,52 @@ expect "the loopback is gone from the dataplane" \
   sh -c "! vppctl show interface loop0 2>/dev/null | grep -q '^loop0'"
 expect "and its pair is gone from the kernel" \
   sh -c "! ip link show loop0 >/dev/null 2>&1"
+
+# --- the negative half: with no pair, FRR sees no interface (#182) ---
+#
+# The half without which the section above proves nothing. Everything up to
+# here shows that a paired interface reaches FRR; it does not show that the
+# PAIR is what put it there, and for the whole life of this product the answer
+# to that was hidden because every lab created a pair by hand before FRR ever
+# looked.
+#
+# A loopback is the honest way to ask it. It is created by the product out of
+# nothing - there is no NIC, no veth and no `vppctl` line behind it - so the
+# only difference between the two states below is the `linux-name` statement.
+# The dataplane has loop1 in both.
+echo "=========== and with no pair, FRR has nothing ==========="
+NOPAIR=$($HX -c "configure" -c "interface loop1" \
+         -c "ipv4 address 10.98.0.1/32" -c "exit" -c "commit" 2>&1)
+echo "$NOPAIR" | tail -2 | sed 's/^/  /'
+echo "  the dataplane:"; vppctl show interface loop1 2>&1 | head -2 | sed 's/^/    /'
+echo "  the kernel:"; ip -br link show loop1 2>&1 | sed 's/^/    /'
+# MEASURED, and it refuted the obvious assertion. `vtysh -c "show interface"`
+# DOES list loop1 with no pair anywhere: configuring an interface stages an
+# `interface loop1` stanza into FRR, and zebra makes a placeholder object for
+# any interface its configuration names, whether or not the kernel has one. So
+# "FRR does not list it" is false, and asserting it would have been asserting
+# something this box does not do. What FRR does not have is a REAL interface -
+# no index, no flags, nothing to send a packet out of - and it says so in that
+# one word, which is the same word the paired case is asserted not to contain.
+FRR_BEFORE=$(vtysh -c "show interface loop1" 2>&1)
+echo "  what FRR has:"; printf '%s\n' "$FRR_BEFORE" | head -14 | sed 's/^/    /'
+expect_in "an unpaired loopback still commits" "commit complete" "$NOPAIR"
+expect "and the dataplane really has it" \
+  sh -c "vppctl show interface loop1 2>&1 | awk '\$1 == \"loop1\"{f=1} END{exit !f}'"
+expect "but Linux has no netdev for it" \
+  sh -c "! ip link show loop1 >/dev/null 2>&1"
+expect_in "and FRR has no real interface, so nothing can run on it" \
+  "pseudo interface" "$FRR_BEFORE"
+
+# The same interface, one statement later. Nothing else changes.
+PAIRNOW=$($HX -c "configure" -c "interface loop1" -c "linux-name loop1" \
+          -c "exit" -c "commit" 2>&1)
+echo "$PAIRNOW" | tail -2 | sed 's/^/  /'
+FRR_AFTER=$(vtysh -c "show interface loop1" 2>&1)
+echo "  what FRR has now:"; printf '%s\n' "$FRR_AFTER" | head -14 | sed 's/^/    /'
+expect_not_in "naming it is what makes FRR see a real interface" \
+  "pseudo interface" "$FRR_AFTER"
+$HX -c "configure" -c "no interface loop1" -c "commit" >/dev/null 2>&1
 
 echo "=========== router advertisements ==========="
 # The capture is started BEFORE the change and stopped after, not started

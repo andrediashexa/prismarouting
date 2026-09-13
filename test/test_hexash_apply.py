@@ -468,6 +468,144 @@ sh.feed("no forward tcp 1650")
 check(pool.forwards == [],
       f"and the port alone is enough once it names one: {pool.forwards}")
 
+print("\n=== a loopback is created before it is shut down (#179, #182) ===")
+# What this prevents is a box that does not come up. A loopback is created
+# administratively DOWN, so the configuration a box saves carries `shutdown`
+# under it - and hexarouting.service replays that file at every boot, on a
+# machine nobody is watching. With the shutdown pass ahead of the creation
+# pass, the very first statement applied named an interface the dataplane did
+# not have yet:
+#
+#   error: interface loop7: the dataplane does not have it
+#
+# The commit failed, the unit failed, and the box came up with NONE of its
+# configuration - so every loopback this product can create survived exactly
+# until the next reboot. Measured in lab/lcp.sh by saving a paired loopback,
+# taking it down, and handing the box back the file it had written.
+
+
+class FakeDataplane(FakeApi):
+    """
+    A dataplane that only has the interfaces it has been told to create.
+
+    The stub above answers OK for everything and has no notion of an interface
+    existing, which is exactly the assumption that hid this: the calls all
+    succeeded in the test and the real box refused the first one.
+    """
+
+    def __init__(self, existing=()):
+        super().__init__()
+        self.have = {n: i for i, n in enumerate(existing, start=1)}
+
+    def interface_index(self, name):
+        return self.have.get(name)
+
+    def call(self, message, args):
+        self.calls.append((message, args))
+        if message == "create_loopback_instance":
+            n = args["user_instance"]
+            self.have[f"loop{n}"] = 100 + n
+        return vppapi.Reply(vppapi.OK)
+
+
+SAVED_LOOPBACK = """interface loop7
+ linux-name loop7
+ shutdown
+ exit
+"""
+api = FakeDataplane()
+sh = shell_with(api)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    ok = sh.apply(config.Config.parse(SAVED_LOOPBACK))
+check(ok is True,
+      f"a box must be able to reload its own saved loopback: {buf.getvalue()!r}")
+order = [m for m, _ in api.calls]
+# The whole sequence, not "these three appear somewhere". The order IS the
+# fix: with the shutdown ahead of the creation the first call names an
+# interface that does not exist, set_admin refuses, and nothing after it runs
+# at all. The pair is in the list because it is the statement #182 put in the
+# file in the first place, and it comes after the creation for the same
+# reason.
+check(order == ["create_loopback_instance", "sw_interface_set_flags",
+                "lcp_itf_pair_add_del"],
+      f"created, then shut down, then paired: {order}")
+print(f"  order: {order}")
+
+# The ordering the exception is carved out of must be intact for an interface
+# that already exists: taken down BEFORE anything else is changed on it, so it
+# stops carrying traffic before its configuration moves underneath it.
+api = FakeDataplane(existing=("host-veth-vpp",))
+sh = shell_with(api, running_text="")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.apply(config.Config.parse("""interface host-veth-vpp
+ shutdown
+ mtu 1500
+ exit
+"""))
+order = [m for m, _ in api.calls]
+if "sw_interface_set_flags" in order and "sw_interface_set_mtu" in order:
+    check(order.index("sw_interface_set_flags") < order.index("sw_interface_set_mtu"),
+          f"an existing interface is still shut down first: {order}")
+else:
+    check(False, f"the existing-interface case sent neither call: {order}")
+print(f"  order: {order}")
+
+print("\n=== a saved file naming a pair's TAP still loads (#182) ===")
+# The other half of the same boot failure. `save` wrote the pair's own TAP
+# into the file, and at the next boot - a fresh VPP with no pairs yet - that
+# interface does not exist, the interface-existence check refuses the file
+# whole, and the box comes up with no configuration at all. Shell.load drops a
+# tap<n> stanza the DATAPLANE DOES NOT HAVE, which is the boxes that already
+# saved one, and leaves a tap the box really has alone.
+api = FakeDataplane(existing=("host-veth-vpp",))
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("""interface tap4096
+ mac-address de:ad:00:00:00:01
+ mtu 9000
+ exit
+interface host-veth-vpp
+ mtu 1500
+ exit
+""")
+    saved = fh.name
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.load(saved)
+out = buf.getvalue()
+check("refusing to load" not in out,
+      f"a box must load its own saved file: {out!r}")
+check("tap4096" not in out,
+      f"and must not refuse it over the pair's TAP: {out!r}")
+# And the real interface in the same file is still applied, so the drop took
+# the stanza out rather than the file.
+check(any(m == "sw_interface_set_mtu" for m, _ in api.calls),
+      f"the real interface still gets its MTU: {[m for m, _ in api.calls]}")
+print(f"  loaded; calls: {[m for m, _ in api.calls]}")
+
+# And a `tap<n>` the box REALLY has is an interface somebody configured on
+# purpose - `vppctl create tap id 0 host-if-name vppwan` produces tap0, and
+# lab/hw-vpp.sh runs its whole WAN over it. Dropping that by name would take a
+# real interface's configuration out of the file, so this asserts the MTU in
+# the file reaches the dataplane.
+api = FakeDataplane(existing=("tap0",))
+sh = shell_with(api)
+sh.running_config = lambda: config.Config()
+with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+    fh.write("interface tap0\n mtu 1400\n exit\n")
+    own = fh.name
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    sh.load(own)
+mtus = [(a.get("sw_if_index"), a.get("mtu")) for m, a in api.calls
+        if m == "sw_interface_set_mtu"]
+check(mtus, f"a TAP nobody paired keeps its configuration: {buf.getvalue()!r}")
+print(f"  tap0 mtu calls: {mtus}")
+os.unlink(saved)
+os.unlink(own)
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

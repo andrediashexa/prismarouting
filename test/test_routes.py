@@ -274,6 +274,43 @@ check("host-veth-mgmt" in HOSTS, "both pairs, not only the first")
 check(routes.vpp_host_interfaces("") == set(),
       "no linux_cp output is no interfaces, not a crash")
 
+# The other half of "which interfaces VPP owns", and it was missing.
+#
+# `show lcp` names only the PAIRS. A box can have none - lab/bng.sh's has none
+# at all - and on that box the set was empty, so every route FRR held was
+# judged against nothing. Three of the four the report then raised were the
+# container's own network through eth0: the management interface, which is
+# precisely what the suppression exists for.
+#
+# An interface the dataplane knows by NAME is one VPP owns whether or not
+# anything paired it. `host-wan0` is VPP's and `eth0` is not, and that is the
+# whole distinction the report needs on a box with no pairs.
+IFACES = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+host-wan0                         1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+"""
+OWN = routes.vpp_owned_interfaces(LCP, IFACES)
+check("host-wan0" in OWN,
+      f"an interface the dataplane names is VPP-owned without a pair: {sorted(OWN)}")
+check("eth0" not in OWN, "and the management interface still is not")
+NOPAIR_RIB = json.dumps({
+    "172.17.0.0/16": [{"protocol": "kernel", "selected": True,
+                       "nexthops": [{"ip": "172.17.0.1",
+                                     "interfaceName": "eth0"}]}],
+    "198.19.0.0/24": [{"protocol": "isis", "selected": True,
+                       "nexthops": [{"ip": "198.19.0.2",
+                                     "interfaceName": "host-wan0"}]}],
+})
+# Through the function the product calls, with NO pair output at all -
+# which is the box this was measured on.
+nrows = {r[0]: r for r in
+         routes.compare({}, routes.parse_rib(NOPAIR_RIB),
+                        routes.vpp_owned_interfaces("", IFACES))}
+check(not nrows["172.17.0.0/16"][1],
+      "on a box with NO pair, a route through eth0 is still not a fault")
+check(nrows["198.19.0.0/24"][1],
+      "while one through an interface the dataplane names still is")
+
 # The branch that USES it, which had no test at all: compare()'s third
 # argument decides whether a missing route is a fault or is none of VPP's
 # business, and nothing above this line ever passed it one.
