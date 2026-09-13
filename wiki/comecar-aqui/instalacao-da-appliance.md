@@ -106,6 +106,56 @@ O volume é montado com `nofail`. Uma caixa que não sobe porque o volume de reg
 
 :::
 
+## Espelho dos registros em dois discos
+
+Com um disco só, uma única falha de hardware numa caixa sob obrigação de guarda de um ano perde **os registros**. Isso não é a mesma coisa que ficar fora do ar: indisponibilidade acaba com uma reinstalação, e a perda dos registros não acaba - a caixa continua respondendo por um ano de dados que nenhum procedimento traz de volta.
+
+Por isso, quando a máquina tem um segundo disco, o instalador pergunta:
+
+```
+  This machine has another disk. The connection records can be kept on
+  BOTH, so that one disk failing does not take the year of records with
+  it - which is a loss no reinstall undoes.
+  The system is NOT mirrored: a dead system disk is a reinstall, and
+  the records on the survivor can still be read on another machine.
+  EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED.
+  a) /dev/sdc         932G  WD Black 1TB
+  none) one disk, no mirror   <- default
+
+Mirror the connection records onto which disk [none]:
+```
+
+
+:::info
+**O padrão é** `**none**`**, e Enter vazio aceita o padrão.** Um segundo disco dentro da máquina não é autorização para destruir o que há nele. A confirmação final repete **os dois** discos, porque os dois são apagados pelo mesmo `yes`.
+
+:::
+
+**São espelhados os registros, e não o sistema.** A assimetria é a razão de existir do espelho:
+
+| Morre o disco | O que acontece |
+|---------------|----------------|
+| do sistema | a caixa não sobe sozinha: é reinstalação. Os registros continuam legíveis no disco sobrevivente, em outra máquina |
+| do espelho | a caixa sobe normalmente, continua gravando, e o autoteste avisa que o espelho está degradado |
+
+Uma caixa com **um disco só** não é perguntada, não ganha arranjo nenhum e o autoteste dela não fala em espelho. Nada muda para quem tem um disco.
+
+O segundo disco é recusado quando é o disco alvo, quando é a mídia de boot, quando é uma partição em vez de um disco inteiro, ou quando é menor que o tamanho pedido para os registros - um espelho tem o tamanho do menor disco dele.
+
+### O que a caixa diz depois
+
+O autoteste de boot informa o estado do espelho em **todo** boot. Um espelho que ninguém acompanha vira, em silêncio, um disco só - e depois nenhum.
+
+| Linha no autoteste | Significado |
+|--------------------|-------------|
+| `[ ok ] records mirrored on 2 disks (...)` | os dois discos, em dia |
+| `[ ok ] ... synchronising 20.0%` | os dois discos, ainda copiando. Já está protegido |
+| `[warn] the records mirror is REBUILDING` | disco trocado, cópia em andamento |
+| `[FAIL] the records mirror is DEGRADED` | **um disco morreu.** A próxima falha perde o ano |
+| `[FAIL] ... installed with a records mirror and is not using it` | a caixa foi instalada com espelho e não está usando nenhum |
+
+Logo depois da instalação o espelho ainda está sincronizando, em segundo plano. A caixa já pode ser usada: a gravação vai para os dois discos desde o primeiro instante.
+
 ## Instalação não assistida
 
 Para laboratório, teste de boot e PXE, as respostas vêm da linha de comando do kernel:
@@ -118,6 +168,7 @@ Para laboratório, teste de boot e PXE, as respostas vêm da linha de comando do
 | `hexarouting.timezone=<zona>` | responde a pergunta do fuso |
 | `hexarouting.password=<senha>` | responde a pergunta da senha de root |
 | `hexarouting.log-gb=<n>` | gigabytes para os registros de conexão |
+| `hexarouting.mirror=<disco>` | espelha os registros nesse segundo disco |
 | `hexarouting.yes` | pula as confirmações e depois **desliga a máquina** |
 
 

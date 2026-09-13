@@ -49,6 +49,37 @@ Reiniciar não é zelo: o DPDK amarrou a placa a um driver de espaço de usuári
 
 Uma caixa sem interface de dataplane parece uma caixa funcionando — ela responde, loga e aceita configuração, só não encaminha. Por isso o self-test diz que ela não tem interface de dataplane e nomeia o arquivo a editar.
 
+## Um disco morreu debaixo do espelho dos registros
+
+Numa caixa instalada com os registros em dois discos, a morte de um deles **não derruba nada**: o volume continua montado, a gravação continua, a caixa continua encaminhando. Só o autoteste avisa, e ele avisa em todo boot:
+
+```
+  [FAIL] the records mirror is DEGRADED: 1 of 2 disks (vda3)
+```
+
+Isso é visita ao site, mesmo com a caixa funcionando: o que sobrou é uma cópia só, e a próxima falha perde o ano inteiro. Quem quiser conferir sem esperar o próximo boot:
+
+```
+cat /proc/mdstat
+```
+
+`[2/2] [UU]` são os dois discos; `[2/1] [U_]` é um só.
+
+Depois de trocar o disco, particione-o e devolva a partição ao arranjo:
+
+```
+printf 'label: gpt\n,,R\n' | sfdisk --wipe=always /dev/<disco novo>
+mdadm --add /dev/md0 /dev/<disco novo>1
+```
+
+A cópia recomeça sozinha e o autoteste passa a dizer `REBUILDING` com o percentual - isso é o conserto acontecendo, não um defeito. Quando termina, volta a `[ ok ] records mirrored on 2 disks`.
+
+
+:::info
+**Morreu o disco do sistema, e não o do espelho?** A caixa não sobe sozinha - é reinstalação. Os registros do disco sobrevivente continuam legíveis em outra máquina: monte a partição dele em qualquer Linux com `mdadm --assemble --run /dev/md0 /dev/<partição>` e depois `mount /dev/md0 /mnt`. Não se perde nada por não ter o outro disco.
+
+:::
+
 # Serviços e ordem de boot
 
 ```mermaid
@@ -135,6 +166,7 @@ flowchart TD
 | Conexões travam sem erro, em certos caminhos | MSS não rebaixado — configure `tcp-mss auto` |
 | Assinante sem tradução e o pool não enche | prefixo dele coberto por um `bypass source` |
 | Serviço não sobe no primeiro boot | ver `hexarouting.service`; o self-test imprime a última mensagem dela |
+| Autoteste diz `the records mirror is DEGRADED` | um dos dois discos de registros morreu; a caixa funciona, a guarda está por um fio |
 | Tudo caiu ao mesmo tempo, sem alarme | mudança de mapeamento aplicada com `commit remap` |
 
 ## Duas armadilhas de diagnóstico

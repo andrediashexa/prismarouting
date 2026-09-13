@@ -1162,12 +1162,27 @@ before the success line — GRUB has a kernel, the fstab UUIDs resolve, root can
 log in — and the unattended path can take its answers from a **file** rather
 than publishing the root password in `/proc/cmdline`.
 
-What remains is the **mirror**: with one disk, a single failure on a box under
-a retention obligation loses the records themselves, which is a different class
-of loss from downtime.
+The **mirror** was what remained, and it is built: the installer offers a
+second disk and keeps the records on both. The records and **not** the system,
+and the asymmetry is the argument - losing the system disk is downtime and
+downtime ends with a reinstall; losing the records ends nothing, because the
+box is still answerable for a year of them and no procedure puts them back.
 
-Nothing blocks this and nothing depends on it, which is exactly why it keeps
-being deferred. The management address alone is paid on every single install.
+Both halves of that trade are measured in `lab/install-iso.sh mirror` rather
+than argued: the box boots with the mirror disk pulled out, still mounts the
+records from the array running on one leg, reads back a record it wrote before
+the disk died, and **says the mirror is degraded** - while the survivor booted
+on its own goes no further than the firmware, which is the cost of not
+mirroring the system. The records on that survivor are read back off the leg
+alone, with no array assembled, which is what somebody holding one disk and a
+different machine has.
+
+A box with **one** disk is untouched, and the default run of the same lab
+asserts it: no question, no array, and a self-test that does not mention a
+mirror.
+
+This section is now empty of work. The management address was the other half
+and the maintainer dropped it.
 
 #### Phase 4 — capacity, which depends on #23
 

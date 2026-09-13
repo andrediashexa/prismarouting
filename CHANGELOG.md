@@ -37,6 +37,7 @@ are to be interpreted as described in
 ## Unreleased
 
 [#63](https://github.com/andrediashexa/hexarouting/issues/63),
+[#83](https://github.com/andrediashexa/hexarouting/issues/83),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
@@ -365,6 +366,40 @@ are to be interpreted as described in
   four-line transcript that entered an interface and then typed `mtu 1500` at
   the `[edit]` prompt, which is the top of configuration mode, where `mtu` is
   not a statement at all. Both are fixed.
+
+* **The connection records can be kept on two disks, so one disk failing does
+  not lose the year the Marco Civil requires**
+  ([#83](https://github.com/andrediashexa/hexarouting/issues/83)). In dynamic
+  mode the allocation log **is** that record. It has had a filesystem of its
+  own since 0.30.0, so a full log cannot stop the box working; what it did not
+  have was a second copy, and losing it is not the same class of loss as
+  downtime - downtime ends with a reinstall and this does not end at all.
+
+  The installer now offers a second disk, mirrors **the records onto it and
+  not the system**, and says why: a dead system disk is a reinstall, and the
+  records on the survivor are read back on another machine - which
+  `lab/install-iso.sh mirror` does, off the leg alone, with no array
+  assembled. The measured cost of that choice is in the same lab: it boots
+  the survivor on its own and records what the firmware says.
+
+  **A box with one disk is untouched.** It is never asked, it gets no array,
+  and its self-test says nothing about mirrors - asserted on an installed box
+  rather than assumed. The default is `none` and a bare Enter takes it: a
+  second disk in a machine is not consent to destroy what is on it, and the
+  confirmation names both disks, because a confirmation that repeats one disk
+  back while a second is destroyed behind it is not a confirmation.
+
+  `mdadm --create` exits **zero** having built a degraded array, so the
+  install reads `/proc/mdstat` back before it reports success. And the boot
+  self-test states the mirror on every boot: **degraded is a failed check**,
+  because the volume stays mounted and the records keep being written while
+  the box is one failure from losing them; a rebuild in progress is a warning
+  with its percentage, since reporting a repair as a failure teaches whoever
+  reads that console to skip the line.
+
+  Unattended installs answer it with `hexarouting.mirror=<disk>` or a `mirror`
+  line in the answers file. The medium now carries `mdadm`, and the build
+  refuses an image without it.
 
 ### Fixed
 

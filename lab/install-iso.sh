@@ -435,7 +435,9 @@ print("%d %d" % (len(p), p[0]["start"]))
     mdadm --examine "$MLOOP" > /tmp/examine.log 2>&1 || true
     MLEVEL=$(awk -F': *' '/Raid Level/ { print $2; exit }' /tmp/examine.log)
     MDEVS=$(awk -F': *' '/Raid Devices/ { print $2; exit }' /tmp/examine.log)
-    MNAME=$(awk -F': *' '/^ *Name/ { print $2; exit }' /tmp/examine.log)
+    # The name carries a colon of its own ("<host>:records"), so it is cut at
+    # the label rather than split on colons.
+    MNAME=$(sed -n 's/^ *Name : *//p' /tmp/examine.log | head -1)
     MDATAOFF=$(awk '/Data Offset/ { print $4; exit }' /tmp/examine.log)
     losetup -d "$MLOOP" 2>/dev/null || true
     echo "  the superblock on that partition: level '${MLEVEL:-<none>}',"
@@ -461,10 +463,15 @@ print("%d %d" % (len(p), p[0]["start"]))
   if [ -n "${MDATAOFF:-}" ] \
      && mount -o loop,ro,offset="$(( (MOFF + MDATAOFF) * 512 ))" \
           /tmp/hexa-mirror.raw /mnt/rec 2>/tmp/mount2.log; then
-    MIRROR_UUID=$(blkid -s UUID -o value \
-                  "$(findmnt -no SOURCE /mnt/rec 2>/dev/null)" 2>/dev/null || true)
-    echo "  the records filesystem reads off the mirror leg alone, label"
-    echo "  '$(blkid -s LABEL -o value "$(findmnt -no SOURCE /mnt/rec)" 2>/dev/null)'"
+    # The loop device the mount is on, named before anything is asked of it:
+    # blkid with an empty argument lists every device on the machine running
+    # this container, and one of those answers would read like this one.
+    RECLOOP=$(findmnt -no SOURCE /mnt/rec 2>/dev/null)
+    if [ -n "$RECLOOP" ]; then
+      MIRROR_UUID=$(blkid -s UUID -o value "$RECLOOP" 2>/dev/null || true)
+      echo "  the records filesystem reads off the mirror leg alone, label" \
+           "'$(blkid -s LABEL -o value "$RECLOOP" 2>/dev/null)'"
+    fi
     umount /mnt/rec
     echo "  [ ok ] the records filesystem is on the second disk and mounts"
     echo "         without the first one and without assembling an array"
@@ -1370,6 +1377,56 @@ if [ "$DEGRADED_DRIVEN" = 1 ]; then
 fi
 
 echo
+echo "=========== THE SURVIVOR, READ ON ANOTHER MACHINE ==========="
+# The box is off. This is the mirror disk alone, in a container that is not it,
+# read the way an operator with a dead system disk is told to read it: assemble
+# the array from the one leg and mount it.
+#
+# The record it is asked for was written by the RUNNING BOX two boots ago, not
+# by mkfs - which is the difference between "an array existed at install time"
+# and "the mirror is still copying what this appliance writes".
+rm -f /tmp/hexa-mirror.raw
+qemu-img convert -O raw "$DISK2" /tmp/hexa-mirror.raw 2>&1 | sed 's/^/  qemu-img: /'
+SURV_LOOP=$(losetup --find --show --read-only --offset "$(( MOFF * 512 ))" \
+            /tmp/hexa-mirror.raw 2>/tmp/losetup2.log) || true
+SURV_RECORD=""
+SURV_HOW=""
+if [ -n "${SURV_LOOP:-}" ]; then
+  mkdir -p /mnt/surv
+  if mdadm --assemble --run /dev/md127 "$SURV_LOOP" >/tmp/assemble.log 2>&1 \
+     && mount -o ro /dev/md127 /mnt/surv 2>>/tmp/assemble.log; then
+    SURV_RECORD=$(cat /mnt/surv/lab-record.txt 2>/dev/null)
+    SURV_HOW="mdadm --assemble, which is what the operator is told to run"
+    umount /mnt/surv 2>/dev/null || true
+    mdadm --stop /dev/md127 >/dev/null 2>&1 || true
+  else
+    echo "  [meas] mdadm --assemble did not start the array in this container:"
+    sed 's/^/         /' /tmp/assemble.log | head -4
+    # The fallback is not a second-best proof, it is the same filesystem
+    # reached without any md at all - and it says whether the assemble failing
+    # was about the data or about the container.
+    if [ -n "${MDATAOFF:-}" ] \
+       && mount -o loop,ro,offset="$(( (MOFF + MDATAOFF) * 512 ))" \
+            /tmp/hexa-mirror.raw /mnt/surv 2>>/tmp/assemble.log; then
+      SURV_RECORD=$(cat /mnt/surv/lab-record.txt 2>/dev/null)
+      SURV_HOW="mounted straight off the leg at its data offset, with no array"
+      umount /mnt/surv 2>/dev/null || true
+    fi
+  fi
+  losetup -d "$SURV_LOOP" 2>/dev/null || true
+fi
+if [ "$SURV_RECORD" = hexa-record-42 ]; then
+  echo "  [ ok ] the record the running box wrote is on the mirror disk, read"
+  echo "         with the box switched off: $SURV_HOW"
+else
+  echo "  [FAIL] the record the box wrote is not readable on the mirror disk"
+  echo "         ('${SURV_RECORD:-<nothing>}'). Losing the system disk would"
+  echo "         then lose the records as well, which is the whole of what the"
+  echo "         second disk was bought for"
+  fail=1
+fi
+
+echo
 echo "=========== PHASE 4: the survivor, on its own ==========="
 # The measured COST of mirroring the records and not the system. It is not an
 # assertion - the box is not expected to boot from a disk no bootloader was
@@ -1377,10 +1434,16 @@ echo "=========== PHASE 4: the survivor, on its own ==========="
 # than assumed.
 CONSOLE_LOG=/tmp/mirror-survivor.log
 CONSOLE_CLEAN=/tmp/mirror-survivor-clean.log
-boot_vm "${SURVIVOR_SECS:-90}" -drive file="$DISK2",format=qcow2,if=virtio
+# -net none, so the firmware says what it did with the DISK. Without it qemu
+# adds a NIC, iPXE takes the console asking to be configured, and the console
+# this measurement is read off is a network boot attempt instead of an answer
+# about the disk.
+boot_vm "${SURVIVOR_SECS:-90}" -net none \
+  -drive file="$DISK2",format=qcow2,if=virtio
 _n=0
 while kill -0 "$QEMU_PID" 2>/dev/null && [ "$_n" -lt "${SURVIVOR_SECS:-90}" ]; do
-  grep -qiE "no bootable|not a bootable|boot failed" "$CONSOLE_LOG" 2>/dev/null && break
+  grep -qiE "no bootable|not a bootable|boot failed|disk read error" \
+    "$CONSOLE_LOG" 2>/dev/null && break
   sleep 3
   _n=$((_n + 3))
 done
@@ -1388,7 +1451,7 @@ stop_vm 0
 echo "  [meas] with only the records disk attached, the machine said:"
 grep -viE "^$|^SeaBIOS|^iPXE|^Booting from|^$" "$CONSOLE_CLEAN" | tail -6 \
   | sed 's/^/         /'
-if grep -qi "bootable" "$CONSOLE_CLEAN"; then
+if grep -qiE "bootable|boot failed" "$CONSOLE_CLEAN"; then
   echo "  [meas] so the survivor does NOT boot: losing the system disk is a"
   echo "         reinstall, and the records on this disk are read back on"
   echo "         another machine, which the section above did without"
@@ -1396,6 +1459,45 @@ if grep -qi "bootable" "$CONSOLE_CLEAN"; then
 else
   echo "  [meas] the firmware said nothing recognisable; the console above is"
   echo "         the whole of what it did say"
+fi
+
+echo
+echo "=========== PHASE 5: the SECOND install, over a mirror that exists ==========="
+# The install every mirrored box eventually gets. Both disks already carry md
+# superblocks, so the medium's udev finds them and assembles the array before
+# the installer has been typed - and a partition held by a running array is
+# one sfdisk cannot rewrite.
+#
+# This is not a fresh install being repeated. It is the state the first four
+# phases left behind, which is the only way to have it.
+# shellcheck disable=SC2086
+timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
+  $ACCEL -m "${BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
+  -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
+  -drive file="$DISK",format=qcow2,if=virtio \
+  -drive file="$DISK2",format=qcow2,if=virtio \
+  -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
+           hexarouting.install=/dev/vda hexarouting.yes \
+           hexarouting.log-gb=2 hexarouting.mirror=$MIRROR_DEV \
+           hexarouting.hostname=$NEW_HOST hexarouting.timezone=$NEW_TZ \
+           hexarouting.password=$NEW_PW" \
+  > /tmp/reinstall.log 2>&1
+sed 's/\x1b\[[0-9;]*m//g' /tmp/reinstall.log > /tmp/reinstall-clean.log
+cat /tmp/reinstall-clean.log >> "$LOG" 2>/dev/null || true
+if grep -q "HexaRouting installed to /dev/vda" /tmp/reinstall-clean.log \
+   && grep -q "records mirrored on /dev/md0, 2 of 2 disks present" \
+        /tmp/reinstall-clean.log; then
+  echo "  [ ok ] a box that already has a records mirror can be reinstalled,"
+  echo "         and comes out with a two-legged mirror again"
+else
+  echo "  [FAIL] the second install onto the same two disks did not finish."
+  echo "         Every mirrored box gets reinstalled eventually, and this is"
+  echo "         what happens when it does - the medium assembles the array"
+  echo "         it finds and the installer then cannot rewrite the partitions"
+  echo "         it is holding:"
+  grep -iE "error|busy|sfdisk|mdadm|FAILED|partitioning did not" \
+    /tmp/reinstall-clean.log | tail -8 | sed 's/^/         /'
+  fail=1
 fi
 
 echo

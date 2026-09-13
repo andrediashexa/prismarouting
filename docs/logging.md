@@ -715,6 +715,13 @@ truncation, only the remote copy can tell.
 * Entries are also sent to VPP's log. A local file survives a reboot, not a disk
   loss; deployments that take this seriously **SHOULD** forward VPP's log to a
   remote syslog so the trail leaves the box.
+* A local file does not survive a disk loss **unless there are two disks**. The
+  installer will keep `/var/log/hexarouting` on a mirror across two of them
+  ([appliance.md](appliance.md#the-records-on-two-disks-and-the-system-on-one)),
+  which is the other half of the same sentence: forwarding takes the trail off
+  the box, and the mirror keeps the copy that is on it. Neither replaces the
+  other - a box whose only copy left on a dead disk answers a court order with
+  nothing, and so does one whose remote collector was never configured.
 
 `show bpa pool history` reads the trail; `bpa audit-path` changes its location.
 The plugin opens the file with `O_CREAT` and cannot create the directory above
