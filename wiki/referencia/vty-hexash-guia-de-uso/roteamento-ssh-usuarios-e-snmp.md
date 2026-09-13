@@ -356,8 +356,9 @@ bgp large-community-list standard LC-REGIAO permit 65000:1:1
 O FRR compila a expressão **na hora de aplicar**, ou seja, no meio do commit. Aqui ela é compilada quando você digita:
 
 ```
-error: bgp as-path access-list AS-BAD permit ^65001(: the regular expression
-does not compile: missing ), unterminated subpattern at position 6
+error: the regular expression does not compile: missing ), unterminated
+    subpattern at position 6
+    bgp as-path access-list AS-BAD permit ^65001(
 ```
 
 ## Uma expressão que compila e casa a coisa errada
@@ -381,8 +382,9 @@ Quando a caixa ainda não recebeu nenhum caminho, o equipamento diz isso em vez 
 ## Um nome que ninguém definiu é avisado
 
 ```
-warning: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
-defined; until one is, the clause matches nothing
+warning: no AS-path list called 'AS-CLIENTES' is defined; until one is, the
+    clause matches nothing
+    match as-path AS-CLIENTES
 ```
 
 A cláusula commita e não casa nada enquanto a lista não existir. **Não é recusa**: o roteamento aceita a cláusula e passa a usá-la sozinho no momento em que a lista aparecer, então escrever a política primeiro e as listas depois é uma ordem de trabalho legítima — e recusar o commit por causa disso derrubaria junto qualquer outra mudança que estivesse nele.
@@ -427,9 +429,9 @@ router bgp 65000
 **Cláusula** `**permit**` **sem** `**match**` **é avisada, não recusada.** Ela libera tudo. Isso é um jeito comum e proposital de terminar uma política — e é também exatamente o que uma política pela metade parece. O equipamento não consegue distinguir, e ninguém consegue depois, então ele fala:
 
 ```
-warning: route-map RM-TRANSITO-OUT permit 20: no 'match': this permits every
-route. If that is meant, it is the end of the policy; if not, the policy is
-unfinished
+warning: no 'match': this permits every route. If that is meant, it is the end
+    of the policy; if not, the policy is unfinished
+    route-map RM-TRANSITO-OUT permit 20
 ```
 
 Se era a intenção, o aviso é ruído de uma linha. Se não era, é a diferença entre uma política que filtra e uma que deixa passar tudo.

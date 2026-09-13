@@ -295,9 +295,9 @@ A separação é proposital: *"passe a valer agora"* e *"continue valendo depois
 
 ```
 warning: what you just saved has NOT been confirmed
-    this box rolls the running configuration back at 2026-02-11T14:32:07Z, and does not
-    touch the file you just wrote - so a reboot after that would bring the
-    unconfirmed change back. Type 'commit' to confirm, then 'save' again
+    this box rolls the running configuration back at 2026-02-11T14:32:07Z, and
+    does not touch the file you just wrote - so a reboot after that would bring
+    the unconfirmed change back. Type 'commit' to confirm, then 'save' again
 ```
 
 Confirme primeiro, salve depois.
@@ -318,6 +318,18 @@ Quem seria re-mapeado sai do `commit` comum, na recusa que pede `commit remap`.
 A `hexarouting.service` roda `hexash --load /etc/hexarouting/hexarouting.conf` depois que o VPP aceita comandos.
 
 O `--load` **recusa o arquivo inteiro** se houver uma linha que a VTY não consiga interpretar, em vez de aplicar o resto. Isso é deliberado: rodando sem ninguém olhando, aplicar um arquivo *menos uma linha* deixaria a configuração em disco e a em execução diferentes, e alguém descobriria isso lendo as duas muito depois.
+
+A recusa é lida no boot, num console de 80 colunas, então ela é quebrada em partes que cabem: o caminho do arquivo e a linha recusada saem **inteiros**, cada um na sua própria linha, para você conseguir copiar e procurar; o motivo vem em texto corrido embaixo.
+
+```
+error: refusing to load this file, these lines are not understood:
+    /etc/hexarouting/hexarouting.conf
+    line 2: password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRfLb8XkY6nAeUoZgC5iMt...
+        (password: expected a crypt hash such as $y$... or $6$... (openssl
+        passwd -6), not a plaintext password)
+```
+
+O mesmo vale quando o desfazer automático de um `commit confirmed` encontra uma linha assim no que ia voltar, e quando `rollback` não consegue ler uma revisão: o caminho e a linha ficam inteiros, o motivo é quebrado.
 
 # Ver também
 

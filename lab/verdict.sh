@@ -45,9 +45,14 @@ expect_in() {
 # happened to fold. This is the shell half of unwrapped() in
 # test/test_hexash_bgp.py, which exists for the same reason.
 #
+# BOTH sides are collapsed, not only the haystack. A caller writing a long
+# sentence across two source lines is how these needles are written, and
+# collapsing one side alone fails on exactly that.
+#
 # Use expect_in for anything printed WHOLE - a statement, a path, a
 # configuration line, a counter. Those must not wrap, and collapsing the text
-# before comparing would hide it if they did.
+# before comparing would hide it if they did. That is a different question
+# and it has its own answer.
 expect_said() {
   _said=$(printf '%s' "$3" | tr '\n' ' ' | tr -s ' ')
   _want=$(printf '%s' "$2" | tr '\n' ' ' | tr -s ' ')
@@ -55,6 +60,24 @@ expect_said() {
     *"$_want"*) echo "  [ ok ] $1" ;;
     *) echo "  [FAIL] $1 (not said: $2)"
        VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
+  esac
+}
+
+# expect_not_said <description> <sentence> <haystack>
+#
+# The negative of expect_said, and it is the one that had to exist. A check
+# that a sentence is ABSENT is the dangerous direction here: once the VTY
+# wraps that sentence, `expect_not_in` stops finding it whether the box says
+# it or not, so the assertion passes for the wrong reason and nothing goes
+# red. Its two positive twins in lab/igp.sh failed loudly when #276 reflowed
+# the message; this one passed, silently, and would have gone on passing.
+expect_not_said() {
+  _said=$(printf '%s' "$3" | tr '\n' ' ' | tr -s ' ')
+  _want=$(printf '%s' "$2" | tr '\n' ' ' | tr -s ' ')
+  case "$_said" in
+    *"$_want"*) echo "  [FAIL] $1 (said: $2)"
+       VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
+    *) echo "  [ ok ] $1" ;;
   esac
 }
 

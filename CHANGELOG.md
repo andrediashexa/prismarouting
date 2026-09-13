@@ -50,7 +50,98 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Breaking
+
+* **A refusal naming a statement printed it and its reason on one row, up to
+  264 columns wide, and `rollback`, `save` and `--load` had never been
+  measured at all**
+  ([#276](https://github.com/andrediashexa/hexarouting/issues/276)).
+  [#252](https://github.com/andrediashexa/hexarouting/issues/252) and
+  [#271](https://github.com/andrediashexa/hexarouting/issues/271) put
+  everything `commit` and `commit check` print inside the 80 columns of an
+  appliance console. Both scoped themselves to those two commands, and both
+  left the same shape standing elsewhere: a row carrying a **quoted line and
+  prose at once**, where neither half can be guaranteed - a statement MUST be
+  printed whole because the operator greps for it and types it back, a
+  sentence MUST be wrapped because it is read, and under one budget
+  guaranteeing either breaks the other.
+
+  #271 measured the eight BGP, IS-IS, OSPF, route-map, AS-path and
+  prefix-range checks inside the budget on every fixture it drove and
+  therefore did not touch them, recording that as a limit rather than a clean
+  bill. Driven on the input an ISP actually types - an IPv6 neighbour, a
+  route-map named for the policy it carries, an IPv6 prefix-list, a crypt hash
+  pasted without its leading `$`, the box's own `/etc/hexarouting/` paths -
+  **every one of them is over**, from 104 to 264 columns, and so is every row
+  `rollback`, `save` and `--load` print that carries a path or a configuration
+  line beside its reason. Twenty-three rows in all, from 80 to 264 columns.
+
+  Two of them are 80 columns, one over, and both look like they fit: that is
+  the whole argument for driving the commands instead of reading the source.
+
+  ```
+  error: no route-map called 'RM-IN' is defined, and FRR denies everything this
+      statement governs until one is; define it, or write 'route-map RM-IN
+      permit 10' to let everything through
+      neighbor 10.0.0.2 route-map RM-IN in
+  ```
+
+  ```
+  error: refusing to load this file, these lines are not understood:
+      /etc/hexarouting/hexarouting.conf
+      line 2: password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRfLb8XkY...
+          (password: expected a crypt hash such as $y$... or $6$... (openssl
+          passwd -6), not a plaintext password)
+  ```
+
+  The second is read at **boot**, on a box refusing its own saved
+  configuration, which is the worst moment to be handed a broken row. A quoted
+  line still runs past the margin when it has to - the hash above is 114
+  columns on its own row - and that is the rule, not a gap in it.
+
+  Six rows measured **inside** the budget on the same run and were left
+  exactly as they were, which is the discipline #271 applied to the checks: a
+  message that does not measure over is a message this change has no business
+  rewording.
+
+  **Breaking, for anything scripted against the text.** Fourteen refusal and
+  warning rows changed shape, and nine headlines changed wording:
+  `<statement>: <reason>` is now the reason, wrapped, with the statement on
+  the row below; `<path>: refusing to load, ...` is now `refusing to load this
+  file, ...` with the path on the row below; and the same for `rolled back,
+  but <path> could not be removed`, `giving up after N attempts`, `loaded, but
+  no rollback revision could be recorded`, `revision N cannot be read`,
+  `cannot write <path>` and `the configuration to roll back to has lines this
+  VTY does not understand`, which is now `... cannot read`. Nothing the box
+  *does* changed.
+
+  A wrapped sentence also breaks a needle that straddles the break, and one
+  lab assertion did. `lab/verdict.sh` gained `expect_said`, which is
+  `expect_in` over the haystack with whitespace collapsed - the shell half of
+  `unwrapped()` that #271 added to `test/test_hexash_bgp.py` for exactly this.
+  A needle that must stay on one row keeps `expect_in`.
+
+  The twenty-two new fixtures append to the same `_refusal_out` list #252's
+  sweep already reads, each carrying a needle proving it reached its branch,
+  with `apply()` not stubbed - one list, one budget, one check.
+
 ### Fixed
+
+* **A check that a message is ABSENT stopped being able to fail**
+  ([#279](https://github.com/andrediashexa/hexarouting/issues/279)).
+  Reflowing the OSPF findings above split the sentence `it is facing
+  subscribers, and it is not passive` across a line, and `lab/igp.sh` asserts
+  it three ways: twice that the box says it, once that it does not. The two
+  positive ones went red in the release suite and were fixed with
+  `expect_said`. The negative one **passed**, because `expect_not_in` could no
+  longer find the sentence whether the box said it or not.
+
+  That is the worse half by a distance: a red check names itself, and this one
+  would have gone on passing over a box that had started warning about the
+  wrong interface. `expect_not_said` is the negative form, and the difference
+  is measurable on the same input - given output where the box DID say it,
+  wrapped, `expect_not_in` reports it absent and `expect_not_said` reports it
+  said. On a box that is genuinely silent the two agree.
 
 * **`docs/` claimed behaviour the box does not have, in sixty-odd places.**
   `README.md` makes `docs/` the reference every other document is corrected

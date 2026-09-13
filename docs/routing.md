@@ -2762,8 +2762,9 @@ outages are ordinary.
 So `commit` reports a route-map matching `rpki` with no cache configured:
 
 ```
-warning: match rpki notfound: no RPKI cache is configured, so every route is
-notfound and this clause matches all of them
+warning: no RPKI cache is configured, so every route is notfound and this
+    clause matches all of them
+    match rpki notfound
 ```
 
 Reported, not refused - an operator may be building the policy before the
@@ -3040,8 +3041,9 @@ FRR compiles an AS-path regex when the statement is **applied**, which is
 mid-commit - the worst moment to find out. The VTY compiles it at the prompt:
 
 ```
-error: bgp as-path access-list AS-BAD permit ^65001(: the regular expression
-does not compile: missing ), unterminated subpattern at position 6
+error: the regular expression does not compile: missing ), unterminated
+    subpattern at position 6
+    bgp as-path access-list AS-BAD permit ^65001(
 ```
 
 FRR uses POSIX extended regular expressions and Python's `re` is close but not
@@ -3076,8 +3078,9 @@ only one of them is about the regex.
 ### A name nothing defines
 
 ```
-warning: match as-path AS-CLIENTES: no AS-path list called 'AS-CLIENTES' is
-defined; until one is, the clause matches nothing
+warning: no AS-path list called 'AS-CLIENTES' is defined; until one is, the
+    clause matches nothing
+    match as-path AS-CLIENTES
 ```
 
 **Reported, not refused** - a change from what this did, and the argument is
@@ -3140,9 +3143,9 @@ what "I had not finished typing" looks like. The VTY cannot tell them apart, and
 neither can anyone afterwards - which is why it must be said at `commit`:
 
 ```
-warning: route-map RM-TRANSITO-IN permit 20: no 'match': this permits every
-route. If that is meant, it is the end of the policy; if not, the policy is
-unfinished
+warning: no 'match': this permits every route. If that is meant, it is the end
+    of the policy; if not, the policy is unfinished
+    route-map RM-TRANSITO-IN permit 20
 ```
 
 **A clause an earlier catch-all makes unreachable is reported.** Sequence
@@ -3203,9 +3206,10 @@ a
 ## A route-map referenced and not defined
 
 ```
-error: neighbor 10.0.0.2 route-map RM-IN in: no route-map called 'RM-IN' is
-defined, and FRR denies everything this statement governs until one is;
-define it, or write 'route-map RM-IN permit 10' to let everything through
+error: no route-map called 'RM-IN' is defined, and FRR denies everything this
+    statement governs until one is; define it, or write 'route-map RM-IN
+    permit 10' to let everything through
+    neighbor 10.0.0.2 route-map RM-IN in
 ```
 
 Reflowed here. `err()` wraps nothing, so the box prints that as one line of 221
@@ -3742,17 +3746,90 @@ rule and not a gap in it. A real SHA-512 crypt hash makes
 row the operator goes and edits. What the box no longer does is put prose on
 that row as well — which is what made it 133.
 
-One shape is deliberately **not** changed: `err(f"{stmt}: {why}")`, which the
-BGP, IS-IS, OSPF, route-map and AS-path checks all use. The sweep above covered
-what `commit` and `commit check` print on their own account; these are printed
-by the policy checks and were left where they were, because restructuring eight
-messages was the wording change #252 refused to mix into a width fix.
+One shape was deliberately **not** changed there: `err(f"{stmt}: {why}")`,
+which the BGP, IS-IS, OSPF, route-map and AS-path checks all use. None of them
+measured over the budget on any fixture #271 drove, and restructuring eight
+messages on no measurement is the wording change #252 refused to mix into a
+width fix. It was recorded as a limit rather than left implicit: a long enough
+statement makes any of them exceed the console. That limit is closed below.
 
-**They are over the budget, and the widest is the page's own example.** The
-undefined-route-map refusal quoted earlier measures **221 columns** as the box
-prints it, on one line. The blocks that quote messages of this shape are
-reflowed on the page so they can be read here; the console does not reflow
-them. The answer when one is restructured is the split above.
+#### `rollback`, `save`, `--load`, and the row that carries both halves at once
+
+[#276](https://github.com/andrediashexa/hexarouting/issues/276) drove the paths
+#271 left: the two checks named above, and the `line <n>: <text>    (<why>)`
+row that `Shell.revert_confirm` and `Shell.load` print - the one #271 split in
+`do_commit` and left in its two copies, because they belong to `rollback` and
+to `--load` rather than to `commit`.
+
+`save` is driven with them, because the issue names it and because one of its
+rows was wrapped **by hand** at what somebody took for 80 columns and is 87 -
+the defect #252 is named for, standing in a command #252 did not drive.
+
+The input is what an ISP types, which is what #271's fixtures did not have:
+an IPv6 neighbour, a route-map named for the policy it carries, an IPv6
+prefix-list, a crypt hash pasted without its leading `$`, and the box's own
+`/etc/hexarouting/` paths. Measured that way, **every one of the checks is
+over**, and so is every copy of the row:
+
+| Where | Columns |
+|---|---|
+| `neighbor <v6> route-map RM-TRANSIT-V6-IN in`, route-map not defined | 264 |
+| the configuration line and its reason on one row, on a pasted hash | 222 |
+| an IPv6 neighbour with no `remote-as` | 217 |
+| an IPv6 prefix-list whose range does not hold | 201 |
+| an AS-path regex that does not compile | 174 |
+| a peer group nobody declared | 153 |
+| a `deny` clause carrying `set` | 141 |
+| the reason for an undefined community list, as a warning | 135 |
+| `passive-interface` naming an interface the box has not got | 131 |
+| "commit confirmed 10: nobody confirmed it within ..." | 113 |
+| an IS-IS circuit whose instance nothing declares | 104 |
+| `save` reporting a file it could not write | 120 |
+| thirteen more, between 80 and 103 | |
+
+The two at the bottom of that range are the argument for measuring rather than
+reading: `error: the configuration to roll back to has lines this VTY does not
+understand:` and `the configuration it was to go back to is in <path>.failed`
+are **80 columns**, one over, and both look like they fit.
+
+Six rows measured **inside** the budget on the same run and were left alone,
+which is the same discipline #271 applied to the eight checks: a message that
+does not measure over is a message this issue has no business rewording.
+
+The answers are the three from the table above, and the third one - a row that
+carries a quoted line **and** prose - is now the common case rather than the
+exception. `err(f"{stmt}: {why}")` becomes `Shell.say_finding()`, which puts
+the reason first, because it is the verdict and it is what `err` can only give
+one row to, and the statement last, on a row of its own:
+
+```
+error: no route-map called 'RM-IN' is defined, and FRR denies everything this
+    statement governs until one is; define it, or write 'route-map RM-IN
+    permit 10' to let everything through
+    neighbor 10.0.0.2 route-map RM-IN in
+```
+
+A **path** is quoted for the same reason a statement is, and `--load` is given
+its path by whoever ran it, so no wording can bound that row:
+
+```
+error: refusing to load this file, these lines are not understood:
+    /etc/hexarouting/hexarouting.conf
+    line 2: password 6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRfLb8XkY...
+        (password: expected a crypt hash such as $y$... or $6$... (openssl
+        passwd -6), not a plaintext password)
+```
+
+That is read at **boot**, on a box refusing its own saved configuration, which
+is the worst moment to be handed a broken row.
+
+**A wrapped sentence breaks a needle that straddles the break**, and one lab
+assertion did: `lab/bgp-policy.sh` searched for `until one is, the clause
+matches nothing`, which the wrap now splits. `lab/verdict.sh` gained
+`expect_said`, which is `expect_in` over the haystack with whitespace
+collapsed - the shell half of `unwrapped()` in `test/test_hexash_bgp.py`, added
+by #271 for exactly this. A needle that must stay on **one** row still uses
+`expect_in`: that is a different question and it keeps its own answer.
 
 
 ## FRR version

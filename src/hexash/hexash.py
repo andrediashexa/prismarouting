@@ -4426,6 +4426,40 @@ class Shell:
         print(f"error: {msg}")
         self.failed += 1
 
+    def say_finding(self, mark, stmt, why):
+        """
+        One check's finding: the reason, wrapped, and the statement below it.
+
+        WHY this is not `print(f"{mark}: {stmt}: {why}")`, which is what the
+        BGP, IS-IS, OSPF, route-map, AS-path and prefix-range checks all did.
+        That row carried a QUOTED STATEMENT and PROSE under one budget, and
+        neither half can be guaranteed there: a statement MUST be printed
+        whole because the operator greps `show configuration` for it and types
+        it back, and a sentence MUST be wrapped because it is read. #271 split
+        the two rows of this shape that it measured over and left these,
+        because none of them measured over on the fixtures it drove - a limit
+        it recorded rather than a clean bill. Driven on real input they are
+        104 to 264 columns: a real route-map name, an IPv6 neighbour, an
+        IPv6 prefix-list (#276).
+
+        The reason goes first because it is the verdict, and `err` prints one
+        row and wraps nothing (#252), so only its first row shares the marked
+        line and the rest goes under it. The statement is last, on a row of
+        its own, which is the shape the unreachable-next-hop refusal and the
+        unchecked-VRF note beside it already use.
+        """
+        # The marked row has the mark's width less to spend, so the reason is
+        # wrapped against an indent that wide and the mark is written over it.
+        rows = console_prose(why, indent=" " * len(f"{mark}: ")) or [""]
+        head = rows[0].lstrip()
+        if mark == "error":
+            self.err(head)
+        else:
+            print(f"{mark}: {head}")
+        for row in rows[1:]:
+            print("    " + row.lstrip())
+        print(f"    {stmt}")
+
     # ---------------------------------------------------------- device
 
     def running_config(self) -> Config:
@@ -5533,7 +5567,7 @@ class Shell:
             for stmt in target.routing:
                 why = prefix_range_error(stmt.strip())
                 if why:
-                    self.err(f"{stmt.strip()}: {why}")
+                    self.say_finding("error", stmt.strip(), why)
                     ok = False
 
             # BGP the VTY can read: a neighbour FRR will not accept, a peer
@@ -5547,17 +5581,17 @@ class Shell:
             for sev, stmt, why in bgp_errors(
                     target.routing, known_interfaces, pairs, dp_interfaces):
                 if sev == "error":
-                    self.err(f"{stmt}: {why}")
+                    self.say_finding("error", stmt, why)
                     ok = False
                 else:
-                    print(f"warning: {stmt}: {why}")
+                    self.say_finding("warning", stmt, why)
 
             # An AS-path regex FRR would refuse, refused at the prompt
             # instead of mid-commit (#146).
             for stmt in target.routing:
                 why = as_path_regex_error(stmt.strip())
                 if why:
-                    self.err(f"{stmt.strip()}: {why}")
+                    self.say_finding("error", stmt.strip(), why)
                     ok = False
 
             # A name a route-map matches on that nothing defines. Said and not
@@ -5565,7 +5599,7 @@ class Shell:
             # arrives, so refusing it blocked building a policy map-first
             # (#208).
             for stmt, why in undefined_policy_lists(target.routing):
-                print(f"warning: {stmt}: {why}")
+                self.say_finding("warning", stmt, why)
 
             # What each AS-path regex actually matches, against the paths this
             # box has received. A regex that compiles and matches nothing - or
@@ -5584,10 +5618,10 @@ class Shell:
                     target.routing, target.addresses,
                     known_interfaces, target.pools, pairs, dp_interfaces):
                 if sev == "error":
-                    self.err(f"{stmt}: {why}")
+                    self.say_finding("error", stmt, why)
                     ok = False
                 else:
-                    print(f"warning: {stmt}: {why}")
+                    self.say_finding("warning", stmt, why)
 
             # The MTU stall, which FRR cannot see because FRR sees only the
             # TAP. The same sentence `show ospf neighbor` prints once the
@@ -5601,14 +5635,14 @@ class Shell:
             # IS-IS: shapes that commit cleanly and carry nothing (#175).
             for sev, stmt, why in isis_findings(target.routing):
                 if sev == "error":
-                    self.err(f"{stmt}: {why}")
+                    self.say_finding("error", stmt, why)
                     ok = False
                 else:
-                    print(f"warning: {stmt}: {why}")
+                    self.say_finding("warning", stmt, why)
 
             # Origin validation that is not validating anything (#147).
             for stmt, why in rpki_findings(target.routing):
-                print(f"warning: {stmt}: {why}")
+                self.say_finding("warning", stmt, why)
 
             # Route-maps: one refusal and two things worth saying (#144). The
             # warnings do NOT fail the check - a permit with no match is a
@@ -5616,10 +5650,10 @@ class Shell:
             # tell a finished policy from an unfinished one.
             for sev, stmt, why in route_map_findings(target.routing):
                 if sev == "error":
-                    self.err(f"{stmt}: {why}")
+                    self.say_finding("error", stmt, why)
                     ok = False
                 else:
-                    print(f"warning: {stmt}: {why}")
+                    self.say_finding("warning", stmt, why)
 
             # A route-map named and never defined (#145). REFUSED, and the
             # difference from the policy lists above is measured rather than
@@ -5641,10 +5675,10 @@ class Shell:
                        if sev == "error"}
             for sev, stmt, why in route_map_reference_findings(target.routing):
                 if sev == "error" and stmt not in already:
-                    self.err(f"{stmt}: {why}")
+                    self.say_finding("error", stmt, why)
                     ok = False
                 else:
-                    print(f"warning: {stmt}: {why}")
+                    self.say_finding("warning", stmt, why)
 
             # A policy that withdraws the prefix carrying THIS session (#145).
             # The SSH lockout check above refuses a configuration nobody could
@@ -7061,10 +7095,16 @@ class Shell:
         """
         target = Config.parse(pending["config"])
         if target.unknown:
+            # The headline was 80 columns, one over the console, so the
+            # spelling is the short one (#276). The line whole and the reason
+            # wrapped under it, which is the split do_commit got in #271 and
+            # this copy did not: on a crypt hash pasted without its leading
+            # '$' the two on one row measured 222 columns.
             self.err("the configuration to roll back to has lines this VTY "
-                     "does not understand:")
+                     "cannot read:")
             for lineno, text, unknown_why in target.unknown:
-                print(f"    line {lineno}: {text}    ({unknown_why})")
+                print(f"    line {lineno}: {text}")
+                print_prose(f"({unknown_why})", indent="        ")
             return False
         # Checked before it is applied, and refused whole if the check
         # refuses - the same argument load() makes, and for the same reason.
@@ -7077,7 +7117,11 @@ class Shell:
                      "this box")
             return False
         self.failed = before
-        print(why)
+        # Prose, so it is wrapped: the sentence the unit prints when a window
+        # expired unconfirmed measured 113 columns (#276). The caller's first
+        # words stay on the first row, which is what `commit confirmed 10` is
+        # grepped for.
+        print_prose(why, indent="")
         if not self.apply(target):
             return False
         try:
@@ -7086,8 +7130,12 @@ class Shell:
             # The box IS back on the old configuration - that half succeeded.
             # What is left is a record saying a revert is still due, which the
             # unit will act on again, so it is said rather than swallowed.
-            self.err(f"rolled back, but {self.confirm.path} could not be "
-                     f"removed: {e.strerror}")
+            # The path on a row of its own: on the box's own path the one row
+            # measured 88 columns, and a path is what the operator goes and
+            # looks at, so it is quoted whole (#276).
+            self.err("rolled back, but this file could not be removed")
+            print(f"    {self.confirm.path}")
+            print_prose(f"({e.strerror})", indent="        ")
         self.confirm_deadline = None
         self.confirm_backup = None
         self.confirm_on_box = False
@@ -7116,8 +7164,14 @@ class Shell:
             return
         if pending is None:
             pending = {"config": self.confirm_backup}
+        # The blank row that separates this from whatever the operator was
+        # typing is printed here and no longer passed in as a leading newline:
+        # `revert_confirm` wraps what it is given as prose, and textwrap eats
+        # a leading newline (#276). It now precedes the refusal too, which is
+        # the same separation for the same reason.
+        print()
         if not self.revert_confirm(pending,
-                                   "\ncommit was not confirmed: rolling back"):
+                                   "commit was not confirmed: rolling back"):
             # Said once, and then this session stops trying. Every command the
             # operator types would otherwise reprint the same failure, and the
             # durable copy on the box is still armed - the unit that watches
@@ -7140,7 +7194,10 @@ class Shell:
         try:
             text = self.rb.load(n)
         except RollbackUnavailable as e:
-            self.err(f"revision {n} cannot be read: {e}")
+            # The reason carries a path, so it goes on a row of its own: on
+            # the box's own store the one row measured 85 columns (#276).
+            self.err(f"revision {n} cannot be read")
+            print(f"    {e}")
             return
         if text is None:
             self.err(f"revision {n} does not exist")
@@ -9583,7 +9640,12 @@ class Shell:
             with open(CONFIG_PATH, "w") as f:
                 f.write(self.running_config().text())
         except OSError as e:
-            self.err(f"cannot write {CONFIG_PATH}: {e}")
+            # The path on a row of its own: with the errno text beside it the
+            # one row measured 120 columns, and the path is what the operator
+            # goes and looks at (#276).
+            self.err("cannot write the configuration file")
+            print(f"    {CONFIG_PATH}")
+            print_prose(f"({e.strerror})", indent="        ")
             return
         finally:
             os.umask(old_umask)
@@ -9605,12 +9667,14 @@ class Shell:
             # A warning and not an error: the save DID happen, and a script
             # that reads the exit status must not be told it did not.
             print("warning: what you just saved has NOT been confirmed")
-            print(f"    this box rolls the running configuration back at "
-                  f"{when}, and does not")
-            print("    touch the file you just wrote - so a reboot after "
-                  "that would bring the")
-            print("    unconfirmed change back. Type 'commit' to confirm, "
-                  "then 'save' again")
+            # Wrapped by measurement and not by eye: hand-wrapped, the first
+            # of these rows was 87 columns, which is the defect #252 is named
+            # for showing up in a command nobody had driven (#276).
+            print_prose(f"this box rolls the running configuration back at "
+                        f"{when}, and does not touch the file you just wrote "
+                        "- so a reboot after that would bring the unconfirmed "
+                        "change back. Type 'commit' to confirm, then 'save' "
+                        "again")
 
     # ---------------------------------------------------------- completion
 
@@ -10084,10 +10148,21 @@ class Shell:
         if stale:
             target.drop_lcp_taps(stale)
         if target.unknown:
-            self.err(f"{path}: refusing to load, these lines are not "
+            # Read at BOOT, on a box that is refusing its own saved
+            # configuration, which is the worst moment to be handed a broken
+            # row. Three things shared one budget here: a path, whose length
+            # is the operator's; a configuration line, which is what they go
+            # and edit; and a sentence. On the box's own path and a crypt
+            # hash pasted without its leading '$' that measured 91 and 222
+            # columns (#276). Each gets its own row, the two quoted ones
+            # whole and the sentence wrapped - the split do_commit got in
+            # #271.
+            self.err("refusing to load this file, these lines are not "
                      "understood:")
+            print(f"    {path}")
             for lineno, text, why in target.unknown:
-                print(f"    line {lineno}: {text}    ({why})")
+                print(f"    line {lineno}: {text}")
+                print_prose(f"({why})", indent="        ")
             return
 
         # A file with no statements is nothing to apply, and MUST NOT be read
@@ -10111,7 +10186,10 @@ class Shell:
         # refusal above makes about lines this VTY cannot read (#105).
         before = self.failed
         if not self.apply(target, check_only=True):
-            self.err(f"{path}: refusing to load, the check above says why")
+            # The path on its own row, for the reason above: on the box's own
+            # path this measured 84 columns (#276).
+            self.err("refusing to load this file, the check above says why")
+            print(f"    {path}")
             return
         self.failed = before
 
@@ -10119,8 +10197,11 @@ class Shell:
             try:
                 self.rb.push(target.text(), "loaded from file")
             except RollbackUnavailable as e:
-                self.err("loaded, but no rollback revision could be "
-                         f"recorded: {e}")
+                # The reason carries a path, so it goes on a row of its own:
+                # together they measured 103 columns (#276). Same split as
+                # the identical message in do_commit (#271).
+                self.err("loaded, but no rollback revision could be recorded")
+                print(f"    {e}")
 
     def confirm_expired(self):
         """
@@ -10156,11 +10237,19 @@ class Shell:
         # is the state the operator has to be told about in the words they
         # will search for.
         dead = self.confirm.give_up()
-        self.err(f"giving up after {n} attempts: this box is still on the "
-                 "configuration that was never confirmed")
-        print(f"    the configuration it was to go back to is in {dead}")
-        print("    put it back by hand: 'rollback 1' loads the revision "
-              "before that commit")
+        # The verdict on the headline and the rest below it, because `err`
+        # wraps nothing and the one row measured 98 columns (#252's shape,
+        # measured in #276).
+        self.err(f"giving up after {n} attempts")
+        print_prose("this box is still on the configuration that was never "
+                    "confirmed")
+        # The path on a row of its own: on the box's own store this row
+        # measured 80 columns, one over the console, and a path an operator
+        # has to go and read cannot be allowed to wrap (#276).
+        print_prose("the configuration it was to go back to is in this file:")
+        print(f"    {dead}")
+        print_prose("put it back by hand: 'rollback 1' loads the revision "
+                    "before that commit")
         return 1
 
     def repl(self):
