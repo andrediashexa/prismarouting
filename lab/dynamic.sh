@@ -130,8 +130,131 @@ echo "=========== what the pool can serve whatever the addresses are ===========
 #
 # The mechanism is not fixed here. What is fixed is the box claiming a number
 # it cannot deliver, so the assertion is on what `show bpa pool` SAYS.
-POOLCAP=$(vppctl show bpa pool | sed -n '/^pool /,/^$/p' | grep -A1 "capacity")
+#
+# Scoped to `din` by name because the section below adds two more pools and
+# "show bpa pool" prints all of them: an unscoped needle would be satisfied by
+# whichever pool happened to carry the words, which is an assertion about the
+# output rather than about this pool.
+stanza() { printf '%s\n' "$2" | awk -v n="$1" '/^pool /{ok=($2==n)} ok'; }
+POOLCAP=$(stanza din "$(vppctl show bpa pool)" | grep -A1 "capacity")
 printf '%s\n' "$POOLCAP" | sed 's/^/  /'
+
+echo
+echo "=========== every subscriber the claim covers gets a block ==========="
+#
+# The acceptance of #210. Whatever number the box prints, that many subscribers
+# have to actually receive a block - asserted on traffic, because the claim is
+# about what the dataplane does and nothing above it can stand in for that.
+#
+# Two pools, created here so that neither inherits the blocks the sections
+# above are still holding:
+#
+#   tight  3 blocks in front of 1024 inside addresses. Every worker has more
+#          addresses mapping to it than it has blocks, so the claim falls to
+#          the smallest slice and the gap to `capacity` is the loss #210 is
+#          about. This is `din`'s shape, with a clean pool behind it.
+#   roomy  12 blocks in front of 8 inside addresses. No worker can be handed
+#          more subscribers than it has blocks for, so the sharding costs
+#          nothing and the claim is the whole inside set. Not a hypothetical: a
+#          pool bought for growth looks exactly like this on the day it goes in,
+#          and a claim of capacity/workers would understate it by half.
+#
+# The subscribers are chosen adversarially, because "whatever the addresses
+# are" is a worst case and a lucky address set would prove nothing about it.
+# Which thread holds the thinnest slice, and which thread an address lands on,
+# are both ASKED OF THE BOX: a lab that recomputes the sharding rule ends up
+# agreeing with itself rather than with the product.
+vppctl bpa pool tight inside 100.65.0.0/22 outside 200.150.0.20/32 block 16384 mode dynamic
+vppctl bpa pool roomy inside 100.66.0.8/29  outside 200.150.0.24/30 block 16384 mode dynamic
+
+# The number the box promises for a pool: the guaranteed figure when it prints
+# one, and the ceiling when it does not, because a pool that prints no caveat
+# is promising the ceiling.
+claim_of() {
+  _c=$(printf '%s\n' "$1" \
+       | sed -n 's/^ *\([0-9][0-9]*\) whatever the addresses are.*/\1/p')
+  [ -n "$_c" ] || _c=$(printf '%s\n' "$1" \
+       | sed -n 's/^ *capacity .*(usable \([0-9][0-9]*\)).*/\1/p')
+  printf '%s' "$_c"
+}
+usable_of() {
+  printf '%s\n' "$1" | sed -n 's/^ *capacity .*(usable \([0-9][0-9]*\)).*/\1/p'
+}
+thinnest() {
+  printf '%s\n' "$1" \
+    | sed -n 's|^ *thread \([0-9][0-9]*\): [0-9][0-9]*/\([0-9][0-9]*\) blocks.*|\2 \1|p' \
+    | sort -n | head -1 | sed 's/.* //'
+}
+thread_of() {
+  vppctl show bpa subscriber "$1" | sed -n 's/.*worker thread \([0-9][0-9]*\).*/\1/p'
+}
+
+# Sets CLAIM, USABLE, MISSING and REFUSED for one pool.
+claim_check() {
+  _pool=$1; shift
+  _cap=$(stanza "$_pool" "$(vppctl show bpa pool)")
+  CLAIM=$(claim_of "$_cap")
+  USABLE=$(usable_of "$_cap")
+  _t=$(thinnest "$(stanza "$_pool" "$(vppctl show bpa blocks)")")
+  echo "  pool $_pool:"
+  printf '%s\n' "$_cap" | grep -E "capacity|whatever" | sed 's/^ */    /'
+  echo "    claims $CLAIM of $USABLE; thinnest slice is on thread $_t"
+
+  # On that thread first, the rest after, and the claim's worth of them.
+  _on=""; _off=""
+  for _a in "$@"; do
+    if [ "$(thread_of $_a)" = "$_t" ]; then _on="$_on $_a"; else _off="$_off $_a"; fi
+  done
+  SET=""; _i=0
+  for _a in $_on $_off; do
+    _i=$((_i+1)); [ "$_i" -le "$CLAIM" ] || break
+    SET="$SET $_a"
+  done
+  echo "    sending:$SET"
+
+  _i=0
+  for _a in $SET; do
+    _i=$((_i+1))
+    vppctl packet-generator new "name k$_i limit 1 node ip4-input interface pg0 \
+        size 60-60 \
+        data { UDP: $_a -> 8.8.8.8 \
+               UDP: 12345 -> 53 \
+               incrementing 8 }" >/dev/null
+  done
+  vppctl clear trace >/dev/null; vppctl trace add pg-input 60 >/dev/null
+  vppctl packet-generator enable >/dev/null; sleep 2
+  TR=$(vppctl show trace | grep "BPA in2out")
+  _j=0
+  while [ "$_j" -lt "$_i" ]; do
+    _j=$((_j+1)); vppctl packet-generator delete "k$_j" >/dev/null 2>&1
+  done
+  printf '%s\n' "$TR" | sed 's/^ */    /'
+
+  # "no trace line at all" and "translated to 0.0.0.0:0" are separated on
+  # purpose: the first is a lab that did not deliver its own packet and proves
+  # nothing about the box, the second is the box refusing a subscriber it
+  # claimed it could serve.
+  MISSING=""; REFUSED=""
+  for _a in $SET; do
+    _l=$(printf '%s\n' "$TR" | grep "BPA in2out $_a:" | head -1)
+    if [ -z "$_l" ]; then
+      MISSING="$MISSING $_a"
+    else
+      case "$_l" in *"-> 0.0.0.0:0"*) REFUSED="$REFUSED $_a" ;; esac
+    fi
+  done
+}
+
+claim_check tight 100.65.0.1 100.65.0.2 100.65.0.3 100.65.0.4 100.65.0.5 \
+                  100.65.0.6 100.65.0.7 100.65.0.8 100.65.0.9 100.65.0.10 \
+                  100.65.0.11 100.65.0.12
+TIGHT_CLAIM=$CLAIM; TIGHT_USABLE=$USABLE
+TIGHT_MISSING=$MISSING; TIGHT_REFUSED=$REFUSED
+echo
+claim_check roomy 100.66.0.8 100.66.0.9 100.66.0.10 100.66.0.11 \
+                  100.66.0.12 100.66.0.13 100.66.0.14 100.66.0.15
+ROOMY_CLAIM=$CLAIM; ROOMY_USABLE=$USABLE
+ROOMY_MISSING=$MISSING; ROOMY_REFUSED=$REFUSED
 
 echo
 echo "=========== VERDICT ==========="
@@ -154,7 +277,9 @@ expect_in "the subscriber's sessions are gone" "total: 0 sessions" "$SESS6"
 expect_not_in "and it is not reported as holding no block while it holds one" \
   "holds no block" "$SUB6"
 expect_in "the block it still holds is named" "200.150.0.16" "$SUB6"
-B=$(vppctl show bpa blocks)
+# `din`'s rows only: the section above left two more dynamic pools in the box,
+# and every needle below is a statement about this pool's counters.
+B=$(stanza din "$(vppctl show bpa blocks)")
 # "allocations" is a column label "show bpa blocks" prints on every dynamic
 # pool, so this passed on a pool that had allocated nothing. The count, off
 # the total line - the per-thread line above it carries the same words.
@@ -190,4 +315,34 @@ expect_in "exhaustion was counted, not silent" "1 refusals" "$B"
 # reading: the lab reallocates a block right after, so "0 in use" is true only
 # for a moment. Asserting a transient snapshot is how this check first failed.
 expect_in "hold-down released every block it took" "3 releases" "$B"
+
+# The acceptance of #210: the claim is a promise, and these are the subscribers
+# it was made about.
+#
+# Separated from the refusal check because they answer different questions. A
+# packet that never reached the translator says the LAB failed to deliver it,
+# and reading that as "the box refused" is how a broken lab reports a green
+# box as red - or, once somebody "fixes" it, the other way round.
+expect "every subscriber 'tight' claims capacity for reached the translator" \
+  test -z "$TIGHT_MISSING"
+expect "every subscriber 'tight' claims capacity for got a block" \
+  test -z "$TIGHT_REFUSED"
+expect "every subscriber 'roomy' claims capacity for reached the translator" \
+  test -z "$ROOMY_MISSING"
+expect "every subscriber 'roomy' claims capacity for got a block" \
+  test -z "$ROOMY_REFUSED"
+# And the claim is not honest merely by being small. `roomy` has more blocks
+# than inside addresses on every worker, so no subscriber of it can ever be
+# refused for want of a block in its own slice, and the number to size against
+# is the whole inside set. A pool that understates is still a pool an operator
+# sizes wrongly; it just sends them to buy addresses instead of losing them.
+echo "  roomy claims $ROOMY_CLAIM of $ROOMY_USABLE"
+# DIFFERENT DEFAULTS on the two sides, and that is the assertion rather than
+# housekeeping. Written as test "$A" = "$B", a box that printed NOTHING at all
+# compares "" with "" and satisfies this - which is what happened the first
+# time it met a build whose capacity line was missing: it read
+# "roomy claims  of " and went green while seven other checks went red.
+# lab/ipfix.sh's own pair carries the same rule for the same reason.
+expect "a pool with a block for every inside address claims all of them (claims ${ROOMY_CLAIM:-none}, usable ${ROOMY_USABLE:-none})" \
+  test "${ROOMY_CLAIM:-claimed nothing}" = "${ROOMY_USABLE:-usable nothing}"
 verdict

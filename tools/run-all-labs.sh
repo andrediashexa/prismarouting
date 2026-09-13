@@ -99,8 +99,16 @@ echo
 # single-threaded that loop has one iteration. Measured both ways - with two
 # workers the subscriber lands on a different shard and the released block is a
 # different range, which is the part a one-thread run cannot see.
-BOTH_WAYS="bypass esp extblocks forward frag ftp-alg hairpin icmp-tcp
-           ipfix-stop mss nat-behaviour pptp rtsp sip two-pools"
+#
+# dynamic joined it for #210. The single-threaded run of that lab cannot see
+# the defect at all: with one slice the partition and the subscriber hash agree
+# by accident, and the pool's whole capacity is reachable from any address. The
+# worker run is the one where a subscriber is refused with blocks standing free
+# somewhere else, and it is the only run in which the pool's capacity claim is
+# a claim about anything.
+BOTH_WAYS="bypass dynamic esp extblocks forward frag ftp-alg hairpin
+           icmp-tcp ipfix-stop mss nat-behaviour pptp rtsp sip
+           two-pools"
 
 # Labs that are run a THIRD time with the feature they test switched OFF.
 #
