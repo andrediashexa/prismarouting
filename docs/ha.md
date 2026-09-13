@@ -14,6 +14,12 @@ drops in-flight connections — as any NAT does — but they re-establish on the
 The trap for whoever implements this: in deterministic mode, two boxes with
 **different** configuration fail **silently**.
 
+The acceptance test is written and **is red on `master`**: `lab/ha-failover.sh`
+stands up two boxes, runs a subscriber's translated flow through a service
+address, breaks the active box three different ways, and fails every check that
+is the product's. That is the intended result, and the section at the end of
+this page says what it measured.
+
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT** and **MAY**
 > in this document are to be interpreted as described in
 > [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
@@ -99,9 +105,56 @@ To be built:
 2. Verification that both boxes carry the **same** pool configuration.
 3. A `show bpa ha` comparing a configuration hash between peers.
 4. A lab test with two instances and a forced failure, confirming the
-   subscriber keeps address and block.
+   subscriber keeps address and block. **Done, and red**: `lab/ha-failover.sh`
+   ([#9](https://github.com/andrediashexa/hexarouting/issues/9)), written before
+   items 1 to 3 so that they are judged against the requirement rather than the
+   requirement being written to fit them.
 
 Item 2 **MUST NOT** be skipped. In deterministic mode, two boxes with different
 configuration fail silently: the failover starts mapping subscribers to the
 wrong blocks with no visible error, and the logs of both boxes will look
 perfectly healthy. Configuration equality is a requirement, not a convenience.
+
+## What the acceptance test measured on `master`
+
+`lab/ha-failover.sh` is the acceptance test for this whole page and it exists
+before the implementation, which is what
+[roadmap.md](roadmap.md) phase 6 asks for. It is **excluded from
+`tools/run-all-labs.sh`**, with the reason recorded in that file's `NOT_LABS`:
+it is red because the feature is missing, not because anything is broken.
+
+It arranges two dataplanes on a shared inside LAN and a shared outside LAN,
+each with its own addresses, and points a subscriber at a **service address**
+that neither box owns. The lab MAY build the topology, start both boxes, and
+cause the failure. It **MUST NOT** put the service address on a box, move it,
+answer ARP for it, flush the subscriber's ARP cache, or decide which box is
+active: that is the product's work, and a lab that does it tests itself.
+`lab/lcp.sh` carries the same lesson in its header.
+
+Three findings, each measured against a running pair at 0.67.0.
+
+| What was measured | Result |
+|---|---|
+| Two boxes, same pool, no state exchanged | Both compute `200.150.16.5 ports 1024-3071` for the same subscriber. The claim at the top of this page holds, on packets. |
+| The subscriber's translated round trip through the service address | Never completes. The subscriber's ARP for the gateway stays `INCOMPLETE`, because nothing answers for it. |
+| Each of three failures: a pulled uplink, a stopped dataplane, a killed dataplane | The service does not come back within 20 seconds in any of the three. |
+
+Two things the run turned up that whoever implements this has to deal with.
+
+**The VTY has no `vrrp` of its own, so it hands the statement to FRR word for
+word.** FRR's VRRP would then run on the `linux_cp` TAP, and the TAP is not
+where the packets are: the dataplane interface is. An implementation built that
+way moves an address in Linux and leaves the VPP FIB and the BPA feature arcs
+on the box that died. This is the incoherence
+[#7](https://github.com/andrediashexa/hexarouting/issues/7) names, and the
+dataplane already ships the other half of the answer - `vrrp_plugin.so`, RFC
+5798, loaded on every box, with no virtual router on it because nothing asks
+for one.
+
+**Anything at all under `nat cgnat` is accepted and discarded in silence.**
+`nat cgnat ha peer 200.150.0.12 priority 200` passes `commit check`
+("configuration check succeeds"), passes `commit` ("commit complete"), and then
+appears in no `show running-config` and changes nothing on the box. That is why
+the lab asserts nothing about the configuration being *accepted* and everything
+about the packet: a check on acceptance would be green on a box that does
+nothing. The silent acceptance is a defect of its own, filed separately.
