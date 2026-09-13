@@ -225,6 +225,9 @@ bpa_tcp_disconnect (void)
     close (bpa_log_tcp.fd);
   bpa_log_tcp.fd = -1;
   bpa_log_tcp.connected = 0;
+  /* A new connection is a new stream: whatever the old one took half of goes
+   * out again from its start, behind the template the next one begins with. */
+  bpa_log_tcp.head_sent = 0;
 }
 
 static void
@@ -252,6 +255,7 @@ bpa_tcp_try_connect (f64 now)
       || errno == EINPROGRESS)
     {
       bpa_log_tcp.fd = fd;
+      bpa_log_tcp.head_sent = 0;
       bpa_log_tcp.connected = (errno == EINPROGRESS) ? 0 : 1;
       bpa_log_tcp.pending_connect = (errno == EINPROGRESS) ? 1 : 0;
       bpa_log_tcp.n_connects++;
@@ -265,13 +269,17 @@ bpa_tcp_try_connect (f64 now)
   close (fd);
 }
 
-/* Writes the excess to disk, to neither grow without bound nor lose an event. */
+/*
+ * Writes whatever is in the buffer to disk, whether or not it is over the
+ * threshold. Split out from bpa_tcp_spill() for the exit path, which has no
+ * threshold to wait for: see bpa_log_tcp_flush_exit().
+ */
 static void
-bpa_tcp_spill (void)
+bpa_tcp_spill_now (void)
 {
   int fd;
 
-  if (vec_len (bpa_log_tcp.outbuf) < BPA_TCP_SPILL_BYTES)
+  if (!vec_len (bpa_log_tcp.outbuf) || !bpa_log_tcp.spill_path)
     return;
 
   fd = open ((char *) bpa_log_tcp.spill_path,
@@ -290,6 +298,29 @@ bpa_tcp_spill (void)
     bpa_log_tcp.n_dropped += vec_len (bpa_log_tcp.outbuf);
   close (fd);
   vec_reset_length (bpa_log_tcp.outbuf);
+
+  if (bpa_log_tcp.head_sent)
+    {
+      /*
+       * The collector holds the first head_sent bytes of a message whose rest
+       * has just gone to the file, so this connection's stream can never be
+       * completed - the next record written to it would be read as the tail of
+       * that message, and everything after it misframed. The spill replays
+       * whole messages on a new connection, behind a new template, so dropping
+       * the connection is what makes the file readable instead of a second
+       * kind of corruption.
+       */
+      bpa_tcp_disconnect ();
+    }
+}
+
+/* Writes the excess to disk, to neither grow without bound nor lose an event. */
+static void
+bpa_tcp_spill (void)
+{
+  if (vec_len (bpa_log_tcp.outbuf) < BPA_TCP_SPILL_BYTES)
+    return;
+  bpa_tcp_spill_now ();
 }
 
 /* Resends the spill before anything new, to preserve ordering. */
@@ -323,6 +354,36 @@ bpa_tcp_replay_spill (void)
       bpa_log_tcp.n_replayed += n;
     }
   vec_free (buf);
+}
+
+/*
+ * Drops from the front every message the socket has taken WHOLE.
+ *
+ * The buffer must always begin at a message boundary. Two things insert at the
+ * front - the template and the spill replay - and the spill file is a stream
+ * the collector frames by the length in each header, so a file that began with
+ * the tail of a message desynchronises everything behind it. Measured that way
+ * before this existed: 82917 bytes spilled at a stop, 82917 replayed on the
+ * next boot, and the collector decoded one record out of them (#219).
+ */
+static void
+bpa_tcp_drop_sent (void)
+{
+  while (bpa_log_tcp.head_sent >= 4)
+    {
+      u16 mlen;
+
+      clib_memcpy_fast (&mlen, bpa_log_tcp.outbuf + 2, 2);
+      mlen = clib_net_to_host_u16 (mlen);
+      /* Defensive: every message in here was written by this file, so a
+       * length below the header size is not reachable. If it ever were,
+       * guessing at where the next message starts would corrupt the stream
+       * for good, where stopping leaves it as it is. */
+      if (mlen < 16 || bpa_log_tcp.head_sent < mlen)
+	break;
+      vec_delete (bpa_log_tcp.outbuf, mlen, 0);
+      bpa_log_tcp.head_sent -= mlen;
+    }
 }
 
 void
@@ -378,21 +439,28 @@ bpa_log_tcp_service (f64 now)
       bpa_tcp_replay_spill ();
     }
 
-  if (bpa_log_tcp.need_template
-      || now - bpa_log_tcp.last_template > BPA_TCP_TEMPLATE_IVL)
+  /* Never in front of a message the socket has already started: the template
+   * would land in the middle of it on the wire. head_sent is zero on every
+   * new connection, which is the case need_template is for, so this only ever
+   * defers the periodic refresh by a tick. */
+  if ((bpa_log_tcp.need_template
+       || now - bpa_log_tcp.last_template > BPA_TCP_TEMPLATE_IVL)
+      && bpa_log_tcp.head_sent == 0)
     bpa_tcp_prepend_template (now);
 
-  while (vec_len (bpa_log_tcp.outbuf))
+  while (vec_len (bpa_log_tcp.outbuf) > bpa_log_tcp.head_sent)
     {
       bpa_log_tcp.n_send_calls++;
-      n = send (bpa_log_tcp.fd, bpa_log_tcp.outbuf,
-		vec_len (bpa_log_tcp.outbuf), MSG_NOSIGNAL);
+      n = send (bpa_log_tcp.fd, bpa_log_tcp.outbuf + bpa_log_tcp.head_sent,
+		vec_len (bpa_log_tcp.outbuf) - bpa_log_tcp.head_sent,
+		MSG_NOSIGNAL);
       if (n < 0)
 	bpa_log_tcp.last_errno = errno;
       if (n > 0)
 	{
-	  vec_delete (bpa_log_tcp.outbuf, n, 0);
+	  bpa_log_tcp.head_sent += n;
 	  bpa_log_tcp.n_sent += n;
+	  bpa_tcp_drop_sent ();
 	  continue;
 	}
       if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
@@ -402,6 +470,67 @@ bpa_log_tcp_service (f64 now)
     }
 
   bpa_tcp_spill ();
+}
+
+/*
+ * The last thing this exporter does before the process leaves: whatever the
+ * socket would not take goes to the spill file.
+ *
+ * WHAT IS AT RISK AND WHAT IS NOT. send() is non-blocking, so a collector that
+ * is connected and not reading closes the window and send() returns EAGAIN -
+ * and the records stay in outbuf, because the spill only triggers above 1 MB.
+ * Bytes the socket DID take are the kernel's problem and it delivers them
+ * behind the FIN; bytes it refused are in this process and die with it. The
+ * stop drain (bpa_drain_blocks()) writes one natEvent 17 per block still held
+ * into that same buffer, so on a box with blocks held and a collector that is
+ * behind, the releases are exactly what is lost - and in dynamic mode a
+ * release that never arrives leaves the allocation open in the retention log
+ * for ever, which is the whole of #217 reopened by the transport (#219).
+ *
+ * WHY IT SPILLS INSTEAD OF WAITING FOR THE SOCKET. Waiting was the obvious
+ * shape and it is the worse one:
+ *
+ *   - it buys nothing in the case that produces the loss. The collector that
+ *     leaves bytes here is the one that has stopped reading; its window is
+ *     shut, so POLLOUT does not come and the wait expires having sent nothing.
+ *     A collector that IS reading has already taken everything, and this
+ *     function finds an empty buffer and returns.
+ *   - it is a wait in a stop path. A box that will not stop is worse than a
+ *     record that is late, and every second here is a second of a reboot.
+ *   - bytes pushed into the socket at the last moment are no longer
+ *     recoverable: they cannot also be spilled without the collector getting
+ *     them twice. Spilling is certain, and the spill file is replayed in
+ *     order on the next connection, which is machinery that already exists
+ *     for exactly this - a collector that could not take the bytes when they
+ *     were written.
+ *
+ * SO THE BOUND IS ONE write(). There is no timed wait to fit inside anything:
+ * the appliance's ExecStop (appliance/systemd/vpp-stop-drain.conf) sets no
+ * timeout of its own and vpp.service ships none, so the budget is systemd's
+ * DefaultTimeoutStopSec of 90 s, and this costs a syscall on a buffer the
+ * threshold above caps at 1 MB.
+ *
+ * NO RECORD ARRIVES TWICE. Every whole message the socket took has already
+ * been dropped from the buffer (bpa_tcp_drop_sent()). What can be written
+ * twice is the ONE message the socket took only the front of: the collector
+ * holds a fragment it can never complete and discards with the connection,
+ * and gets the whole message from the spill. A fragment nobody could decode
+ * is not a record.
+ */
+u32
+bpa_log_tcp_flush_exit (void)
+{
+  u64 before = bpa_log_tcp.n_spilled;
+
+  if (!bpa_log_tcp.enabled || !vec_len (bpa_log_tcp.outbuf))
+    return 0;
+
+  bpa_tcp_spill_now ();
+  /* What reached the FILE, not what was offered to it. A spill path that
+   * cannot be written counts the bytes as dropped and empties the buffer just
+   * the same, and measuring by how much the buffer shrank would report that
+   * as a save. */
+  return (u32) (bpa_log_tcp.n_spilled - before);
 }
 
 clib_error_t *

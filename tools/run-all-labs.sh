@@ -106,6 +106,13 @@ echo
 # worker run is the one where a subscriber is refused with blocks standing free
 # somewhere else, and it is the only run in which the pool's capacity claim is
 # a claim about anything.
+# ipfix-outbuf is deliberately NOT here, and that is the honest answer rather
+# than the cheap one. It shares the drain with ipfix-stop, and the drain's
+# per-thread walk is already measured both ways there. What #219 added - the
+# flush at VLIB_MAIN_LOOP_EXIT and the tracking of a half-sent message - is
+# main-thread state in one exporter, so a worker run exercises the same code
+# with the same inputs. That is an argument and not a measurement; if somebody
+# takes the measurement and it says otherwise, this is the line to change.
 BOTH_WAYS="bypass dynamic esp extblocks forward frag ftp-alg hairpin
            icmp-tcp ipfix-stop mss nat-behaviour pptp rtsp sip
            two-pools"
@@ -148,7 +155,12 @@ BOTH_WAYS="bypass dynamic esp extblocks forward frag ftp-alg hairpin
 # builds accel-ppp-ng from GitHub, so a second run of it costs the network and
 # a compile rather than a VPP start, and #170 calls the whole file a spike
 # rather than a feature.
-OFF_MODES="audit:off ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off in-place:off
+# ipfix-outbuf's off mode is a collector that does NOT stall, which is the
+# lab's own precondition rather than a feature switch: with the collector
+# reading as fast as the box writes there are no bytes pending BEFORE the stop,
+# so the one check that asserts the condition was made must go red. It is one
+# check and the header says so.
+OFF_MODES="audit:off ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:off forward:off ftp-alg:off in-place:off
            ipfix:no-exporter limits:off mss:off
            nat-behaviour:address-dependent oom:off pptp:off
            rtsp:BPA_RTSP_OFF=1 sip:off urpf:off utilisation:off vrf:off"

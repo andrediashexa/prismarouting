@@ -167,6 +167,14 @@ typedef struct
   u8 connected;
   u8 pending_connect;
   u8 *outbuf;
+  /*
+   * How much of the message at the FRONT of outbuf the socket has already
+   * taken. A non-blocking send() stops in the middle of a message whenever the
+   * window is nearly shut, and outbuf has to keep starting at a message
+   * boundary: the template and the spill replay are both inserted at the
+   * front, and the spill file is a stream a collector frames the same way.
+   */
+  u32 head_sent;
   u8 *spill_path;
   f64 next_attempt;
   f64 last_template;
@@ -190,6 +198,14 @@ void bpa_log_tcp_service (f64 now);
 
 /* Drains every thread's queue. Called under the barrier. */
 void bpa_log_drain (vlib_main_t *vm);
+
+/*
+ * The exporter's last act before the process leaves: whatever the socket
+ * refused goes to the spill file, to be replayed on the next connection.
+ * Returns the number of bytes saved. See the comment on the definition for
+ * why it does not wait for the socket instead.
+ */
+u32 bpa_log_tcp_flush_exit (void);
 
 /*
  * The boot marker, on every enabled transport. See the long comment above
