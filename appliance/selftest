@@ -782,6 +782,39 @@ else
   say "  [info] no CGNAT pool configured yet (use 'hexash')"
 fi
 
+# And the pools the box was TOLD about, against the pools it HAS.
+#
+# The same comparison the IPFIX block above makes, for the object this product
+# exists for. hexarouting.service hands the saved file to hexash at boot; a
+# pool the dataplane refuses is applied by nobody and reported by nothing -
+# the service succeeds because the rest of the file applied, and the line
+# above counts what is there rather than what is missing. Every subscriber
+# behind that pool is untranslated, on a box that boots, forwards other
+# people's traffic and answers every command.
+#
+# Names only. The line above already counts, and comparing settings would mean
+# re-deriving the dataplane's own normalisation here, which is the mistake
+# #184 names: a check that recomputes what it is checking agrees with its own
+# arithmetic rather than with the box.
+if vppctl show version >/dev/null 2>&1 && [ -f "$LOGCONF" ]; then
+  want_pools=$(sed -n 's/^nat cgnat pool  *\([^ ]*\).*/\1/p' "$LOGCONF" \
+               | sort -u)
+  have_pools=$(vppctl show bpa pool 2>/dev/null \
+               | sed -n 's/^pool  *\([^ []*[^ []\).*/\1/p' | sort -u)
+  missing_pools=""
+  for _p in $want_pools; do
+    case " $(echo $have_pools) " in *" $_p "*) ;; *) missing_pools="$missing_pools $_p" ;; esac
+  done
+  if [ -n "$missing_pools" ]; then
+    bad "the saved configuration has pool(s)$missing_pools and the dataplane"
+    say "        does not: they were refused when they were applied, so every"
+    say "        subscriber behind them is untranslated. 'journalctl -u"
+    say "        hexarouting' has the reason the dataplane gave."
+  elif [ -n "$want_pools" ]; then
+    ok "and every pool the saved configuration names is on the dataplane"
+  fi
+fi
+
 # A live system says so, and says how to stop being one. Without this the
 # operator boots a working appliance, finds no install option, and concludes
 # the product is broken rather than running from a live image.
