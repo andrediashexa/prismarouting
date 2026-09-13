@@ -89,7 +89,9 @@ case "$*" in
   # (#222). A service that is restarting is "active" about half the time
   # somebody looks at it.
   *"-p NRestarts"*) cat "$FAKE/nrestarts" 2>/dev/null || echo 0 ;;
-  "is-failed "*) echo inactive ;;
+  # From the fake box. It was the constant `inactive`, so the branch that
+  # reports the CGNAT configuration as not applied had never run (#222).
+  "is-failed "*) cat "$FAKE/is_failed" 2>/dev/null || echo inactive ;;
   *) : ;;
 esac
 exit 0
@@ -125,6 +127,10 @@ case "$*" in
   # the CGNAT plugin, which is a box that forwards nothing and fails every
   # CGNAT command while answering "show version" perfectly well.
   "show plugins")     cat "$FAKE/show_plugins" 2>/dev/null ;;
+  # What the box ended up carrying. The last line of the report is the one
+  # an operator looks at to see whether the thing they configured is
+  # there at all.
+  "show bpa pool")    cat "$FAKE/bpa_pools" 2>/dev/null ;;
 esac
 exit 0
 EOF
@@ -166,6 +172,11 @@ said() {  # <extended regexp> - does a line of the last run match it?
 
 run() {  # -> $OUTPUT
   rm -f "$FAKE/runuser.log" "$FAKE/setpriv.log"
+  # The groups a finished installation has, rewritten every run so no case has
+  # to care about them - except the one case that IS about them. That case
+  # leaves group.keep behind, because a fixture the harness overwrites is a
+  # fixture that measures the harness (#222).
+  [ -f "$FAKE/group.keep" ] || \
   printf 'vpp:x:900:\nfrr:x:901:\nfrrvty:x:902:\nhexa-admin:x:903:\nhexa-cgnat:x:904:\n' \
     > "$FAKE/group"
   [ -f "$FAKE/api_rc" ] || echo 0 > "$FAKE/api_rc"
@@ -1214,6 +1225,101 @@ if said '\[FAIL\] VPP not responding'; then
 else
   bad "a dead VPP passed: $(printf '%s\n' "$OUTPUT" | grep -i 'VPP' | head -2 || echo '<nothing>')"
 fi
+rm -rf "$FAKE/root"
+
+echo "=== a box with no vpp group at all (#222) ==="
+# The group is what makes the API shareable. Without it the only account that
+# can configure a pool is root, and this box exists to be operated by people
+# who are not root - which is the whole of #35 and #184. The branch had
+# nothing holding it.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+: > "$FAKE/vppctl_ok"
+printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
+printf 'frr:x:901:\nfrrvty:x:902:\nhexa-admin:x:903:\nhexa-cgnat:x:904:\n' \
+  > "$FAKE/group"
+: > "$FAKE/group.keep"
+run
+if said "\\[FAIL\\] there is no 'vpp' group, so the API cannot be shared"; then
+  ok "a box with no vpp group is a FAILED check"
+else
+  bad "the vpp group was missing and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'vpp.*group' || echo '<nothing>')"
+fi
+rm -f "$FAKE/group.keep"
+
+echo "=== the API reach, proven and disproven (#222) ==="
+# The account really has the group and the call really is made as that account.
+# Both outcomes matter: a reach that cannot be proven and a reach that was
+# proven to fail are different states, and one of them was unheld.
+printf 'root:x:0:0::/root:/usr/bin/hexash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/hexash-login\n' \
+  > "$FAKE/passwd"
+printf 'noc hexa-admin hexa-cgnat vpp frr frrvty\n' > "$FAKE/groups"
+echo 1 > "$FAKE/api_rc"
+run
+if said '\[FAIL\] the binary API does not work for noc'; then
+  ok "an account that has the group and cannot reach the API is a FAILED check"
+else
+  bad "a failing API call passed: $(printf '%s\n' "$OUTPUT" | grep -i 'binary API' || echo '<nothing>')"
+fi
+if said 'must be group vpp, mode 660'; then
+  ok "and it names the permission that has to be right"
+else
+  bad "the failure does not say what to look at"
+fi
+echo 0 > "$FAKE/api_rc"
+run
+if said '\[ ok \] the binary API works for noc'; then
+  ok "and a working one is reported, naming the account it was proven with"
+else
+  bad "a working API was not reported: $(printf '%s\n' "$OUTPUT" | grep -i 'binary API' || echo '<nothing>')"
+fi
+
+echo "=== the service that applies the configuration (#222) ==="
+# hexarouting.service is what puts the saved configuration into the dataplane
+# at boot. When it fails the box comes up forwarding nothing it was configured
+# to forward, while VPP, FRR and the VTY all answer perfectly. The stub
+# answered `inactive` for every run, so this branch had never executed.
+echo failed > "$FAKE/is_failed"
+run
+if said '\[FAIL\] hexarouting.service FAILED: the CGNAT configuration was not applied'; then
+  ok "a failed configuration service is a FAILED check"
+else
+  bad "hexarouting.service failed and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i hexarouting.service || echo '<nothing>')"
+fi
+rm -f "$FAKE/is_failed"
+run
+if said '\[FAIL\] hexarouting.service FAILED'; then
+  bad "a box whose configuration service is fine was reported as failed"
+else
+  ok "and a box where it is fine is not told about it"
+fi
+
+echo "=== how many pools the box ended up carrying (#222) ==="
+# The last line of the report, and the one an operator reads to see whether
+# what they configured is on the box at all.
+printf 'pool residential\n  mode deterministic\npool business\n  mode dynamic\n' \
+  > "$FAKE/bpa_pools"
+run
+if said '\[ ok \] 2 CGNAT pool\(s\) configured'; then
+  ok "the pools on the box are counted and reported"
+else
+  bad "two pools were configured and the report did not say so: $(printf '%s\n' "$OUTPUT" | grep -i 'pool' | tail -2 || echo '<nothing>')"
+fi
+rm -f "$FAKE/bpa_pools"
+run
+# Zero pools is a real state on a box somebody has just installed, and it has
+# to read as zero rather than as silence - but it is an [info] and not a
+# failure, because a box nobody has configured yet is not a broken box.
+if said '\[info\] no CGNAT pool configured yet'; then
+  ok "and a box with none says so, as information rather than as a fault"
+else
+  bad "a box with no pools said nothing about pools: $(printf '%s\n' "$OUTPUT" | grep -i 'pool' | tail -1 || echo '<nothing>')"
+fi
+if said '\[FAIL\].*CGNAT pool'; then
+  bad "a box nobody has configured yet was reported as broken"
+else
+  ok "and it is not a failed check"
+fi
+rm -f "$FAKE/show_plugins"
 rm -rf "$FAKE/root"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
