@@ -17,6 +17,16 @@ parsed and REFUSED reads identically to one that is working - and #182 is the
 same again for a `linux_cp` pair the product never created. A drop-in nobody
 installs has no symptom at all.
 
+FILES THE INSTALLER READS AND THE MEDIUM DOES NOT CARRY. The third direction,
+and the one with the ugliest symptom. `appliance/build-iso.sh` copies four top
+level directories into the chroot the installer then runs inside. A path the
+installer names outside those four exists in the repository, so both directions
+above stay green, and the ISO build fails from inside a debootstrap with that
+path buried in the log - which is the exact case the first paragraph says is a
+second's work to catch here (#234). Worse when the installer guards the read
+with `[ -f ... ]`: the medium builds, the box installs, and whatever that file
+configured is simply absent.
+
 Only `appliance/systemd/` is checked in that direction. The rest of
 `appliance/` legitimately holds things the installer does not copy - the
 installer itself is run from the medium, `etc/` files are templates - and a
@@ -112,6 +122,41 @@ if uninstalled:
             f"symptom at all")
 else:
     ok(f"all {len(units)} unit(s) and drop-in(s) are named by the installer")
+
+print("\n=== every directory the installer reads is on the medium ===")
+# Compared, rather than left as a coincidence that has held. The two lists
+# agreed on the day this was written and nothing had ever checked that they
+# did.
+ISO = open(os.path.join(REPO, "appliance", "build-iso.sh"),
+           encoding="utf-8").read()
+m = re.search(r"cp -a ((?:\"\$REPO/[^\"]+\"\s*)+)\"\$ROOT/src/\"", ISO)
+carried = set(re.findall(r'\"\$REPO/([^\"/]+)\"', m.group(1))) if m else set()
+
+# The top level directory of every path the installer names. .build-vpp is the
+# compiled plugin, which build-iso.sh copies by itself as $PLUGIN_SO and
+# $VAT2_SO rather than as part of the tree, so it is not expected in the list
+# above and its absence is not a defect.
+reads = {p.split("/")[0] for p in named} - {".build-vpp"}
+
+if not carried or not reads:
+    bad(f"this check could not read one of its two lists: build-iso.sh copies "
+        f"{sorted(carried)} and install.sh reads from {sorted(reads)}. It is "
+        f"asserting nothing")
+else:
+    absent = sorted(reads - carried)
+    if absent:
+        for d in absent:
+            # No trailing slash added: a path with no directory part, such
+            # as VERSION, is a file at the top of the tree and calling it a
+            # directory sends the reader looking for one.
+            bad(f"appliance/install.sh reads {d} and "
+                f"appliance/build-iso.sh does not put it on the medium: the "
+                f"ISO build fails inside a debootstrap with the path buried in "
+                f"the log, and an installer that guards the read instead "
+                f"produces a box missing whatever that file configured")
+    else:
+        ok(f"all {len(reads)} of them: {sorted(reads)}, out of the "
+           f"{len(carried)} the medium carries")
 
 print("\n=== and the check is reading something ===")
 # Without this the whole file passes on an install.sh that has been emptied,
