@@ -1457,8 +1457,16 @@ if grep -qiE "bootable|boot failed" "$CONSOLE_CLEAN"; then
   echo "         another machine, which the section above did without"
   echo "         assembling anything"
 else
-  echo "  [meas] the firmware said nothing recognisable; the console above is"
-  echo "         the whole of what it did say"
+  # What was actually seen on 2026-09-13: SeaBIOS printed its banner and
+  # nothing else for the whole window, and the lab killed it. No bootloader,
+  # no kernel, no login prompt - the machine sat at the firmware. That is the
+  # same answer as a refusal and it takes longer to say, which is worth
+  # recording as it stands rather than tidying into a message the firmware
+  # never printed.
+  echo "  [meas] no bootloader, no kernel and no prompt: the machine sat at"
+  echo "         the firmware until this lab stopped it. Losing the system"
+  echo "         disk is a reinstall - and the records on this disk were read"
+  echo "         back above, on another machine, with that box switched off"
 fi
 
 echo

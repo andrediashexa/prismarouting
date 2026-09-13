@@ -773,6 +773,31 @@ if command -v mdadm >/dev/null 2>&1 && [ -r /proc/mdstat ]; then
     mdadm --stop "/dev/$_a" >/dev/null 2>&1 \
       || say "  (/dev/$_a would not stop; sfdisk will say so in a moment)"
   done
+
+  # And the superblocks that array was built from, BEFORE the partitioning
+  # rather than after it.
+  #
+  # MEASURED, same lab, the run after the stop above was added: stopping the
+  # array let sfdisk through, and then
+  #
+  #   ==> partitioning /dev/vda (UEFI=0)
+  #   [   34.986202]  vda: vda1 vda2 vda3
+  #   [   35.026739] md/raid1:md127: active with 1 out of 2 mirrors
+  #
+  # - rewriting the table made udev re-probe the partitions, the md superblock
+  # inside vda3 was still there because it lives 4 KB INTO the partition and
+  # nothing had touched it, and udev assembled the array again. mdadm then
+  # refused to build the new one: "super1.x cannot open /dev/vda3: Device or
+  # resource busy".
+  #
+  # Erasing it is inside what the operator confirmed - they were shown both
+  # disks and the word was "yes" - and it is the last moment at which erasing
+  # anything is still a choice.
+  for _d in $DISK $MIRROR; do
+    for _p in $(lsblk -lnpo NAME "$_d" 2>/dev/null); do
+      mdadm --zero-superblock --force "$_p" >/dev/null 2>&1 || true
+    done
+  done
 fi
 
 say "partitioning $DISK (UEFI=$EFI)"
