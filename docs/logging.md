@@ -463,7 +463,7 @@ buffered and arrive decoded on reconnect. `lab/ipfix-outbuf.sh` covers the
 other half of it - the collector connected and not reading while the box is
 stopped - and takes its verdict after the box has come back, because a release
 that was spilled and replayed closes the allocation just as well, only later.
-But TCP does not give end-to-end delivery guarantees — bytes accepted by the socket buffer count as sent and can
+But TCP does not give end-to-end delivery guarantees - bytes accepted by the socket buffer count as sent and can
 be lost if the connection dies immediately after. In the test, two records
 emitted at the moment of the outage fell in that window.
 
