@@ -37,15 +37,91 @@ are to be interpreted as described in
 ## Unreleased
 
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
+[#151](https://github.com/andrediashexa/hexarouting/issues/151) (partly),
+[#182](https://github.com/andrediashexa/hexarouting/issues/182),
 [#197](https://github.com/andrediashexa/hexarouting/issues/197),
-[#203](https://github.com/andrediashexa/hexarouting/issues/203).
-
 [#203](https://github.com/andrediashexa/hexarouting/issues/203),
-[#215](https://github.com/andrediashexa/hexarouting/issues/215).
-
-[#214](https://github.com/andrediashexa/hexarouting/issues/214).
+[#212](https://github.com/andrediashexa/hexarouting/issues/212),
+[#214](https://github.com/andrediashexa/hexarouting/issues/214),
+[#215](https://github.com/andrediashexa/hexarouting/issues/215),
+[#216](https://github.com/andrediashexa/hexarouting/issues/216).
 
 ### Fixed
+
+* **Nothing in the product created a `linux_cp` pair, so FRR saw no dataplane
+  interface.** `lcp create` stood in six labs and nowhere in the product, so
+  every routing feature this box ships was configurable and completely inert on
+  an installed one: without a pair the port that carries traffic has no netdev,
+  `ip` does not have it and zebra does not have it. `linux-name <name>` under
+  `interface` creates it over the binary API. The name is the **operator's**,
+  not derived, because FRR, `ip` and their own scripts act on it and #161 is the
+  standing rule that such a name is read back from the box rather than invented
+  ([#182](https://github.com/andrediashexa/hexarouting/issues/182)).
+
+  Two boot defects were found behind it, by asking out loud whether the pair
+  survives a reboot. Both ended with `hexarouting.service` failing and the box
+  coming up with **no configuration at all**. `save` wrote `interface tap4097`
+  - the pair's own TAP, which the dataplane reports like any other interface -
+  and at boot VPP has no pairs, so the interface-existence check refused the
+  whole file. And a loopback is created administratively **down**, so its saved
+  stanza carries `shutdown`, and `apply()` shut interfaces down *before*
+  creating them: every loopback
+  [#179](https://github.com/andrediashexa/hexarouting/issues/179) can create
+  survived exactly until the next reboot.
+
+  The first cut of the TAP fix was nearly worse than the defect. Purging by
+  **name shape** would have taken `lab/hw-vpp.sh`'s hand-made `tap0`, which
+  carries an address, a route and a CGNAT attachment - and a setting lost from
+  the model is a setting the next commit removes from the box
+  ([#47](https://github.com/andrediashexa/hexarouting/issues/47)). The TAPs are
+  read off the box with `show lcp` instead.
+
+  A measurement refuted the obvious assertion: `vtysh -c "show interface"`
+  **does** list an unpaired interface, because configuring one stages a stanza
+  into FRR. The discriminator is `pseudo interface` against a real index, and
+  the word the existing check looked for - `Unknown` - appears in no FRR output
+  either way, so it was passing on a box with no pair at all.
+
+* **`in RIB, not in FIB` found nothing, on every box, in silence.**
+  `routes.vpp_host_interfaces()` looked for a literal `host` token and took the
+  next field; no line VPP prints has such a token, so it returned an **empty
+  set** - and an empty set made `compare()` suppress every route FRR holds that
+  the FIB does not. The one report that exists to find a route the dataplane is
+  missing found none
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+  The claim "the old positional parse cannot work" *was* written down, and
+  demonstrated against an inline **copy** of the parse rather than against the
+  function. The copy was wrong, the assertion was green, and the function
+  shipped. An assertion that reimplements the thing it is checking is checking
+  itself.
+
+  The other end of the same mistake followed one merge later: the set of
+  interfaces VPP owns came from `show lcp` **alone**, which names only the
+  pairs, so on a box with none it was empty and the report raised the
+  container's own network through `eth0`. An interface the dataplane knows by
+  name is one VPP owns whether or not anything paired it.
+
+* **A self-test line that could not fail, and eleven more.** A fresh audit
+  found 52 defensible findings - 17 that cannot fail at all, 35 weaker than
+  they read - out of 597 lab assertions, 529 Python and 203 C. Twelve are
+  fixed. The one to remember: `lab/utilisation.sh` asserted the histogram
+  exists by looking for a word that is the `sed` range's own start anchor, and
+  the heading prints unconditionally while the buckets are behind `if (live)`.
+  **A box with no histogram at all, and an alarm naming the wrong subscriber
+  every time, passed that lab with nine green**
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+* **`bpa_dyn_active()` was not a missing call and not dead weight: it would
+  have been wrong to call.** It cleared the idle stamp on every block a
+  subscriber holds, extensions included - and `bpa_dyn_idle()` sets those
+  stamps only when the session count reaches zero, at which moment every block
+  is empty. A subscriber coming back with one session needs one block, so its
+  extension should go back to the pool. Wiring the function in would have kept
+  it owned: the leak the comment on `bpa_dyn_idle()` exists to warn about,
+  arriving through the function that looked like its counterpart. Removed, with
+  the reasoning left where the declaration was
+  ([#216](https://github.com/andrediashexa/hexarouting/issues/216)).
 
 * **Deleting a pool left every block it was holding open in the retention
   log.** The blocks a pool still holds are freed by the delete itself and
