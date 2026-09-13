@@ -21,7 +21,7 @@ install -D -m 0755 /src/appliance/hexash-login /usr/bin/hexash-login
 ssh-keygen -A >/dev/null 2>&1
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
-n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+wait_vpp
 
 # A password for root, so the box starts in a state where somebody CAN log in.
 # Without that the lockout check has nothing to protect and the test would be

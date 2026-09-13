@@ -24,7 +24,7 @@ export HEXA_CONFIG=/etc/hexarouting/hexarouting.conf
 install -D -m 0755 /src/appliance/hexarouting-snmp-agent /usr/lib/hexarouting/snmp-agent
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
-n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+wait_vpp
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl set interface state pg0 up
 vppctl set interface ip address pg0 100.64.3.254/22

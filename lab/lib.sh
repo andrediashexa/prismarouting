@@ -78,6 +78,68 @@ start_frr() {
   done
 }
 
+# wait_vpp [log] - wait for the dataplane, and say so when it never arrives.
+#
+#   vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
+#   wait_vpp
+#
+# Every lab that starts VPP has to wait for it. What a lab does when that wait
+# runs out is what the whole suite reads: tools/run-all-labs.sh classifies a
+# capture by grepping it for "VPP did not start", and a lab that prints it is
+# counted NO VPP, which tells the reader to look at the machine. A lab that
+# does not print it walks on with no box under it, every vppctl is refused, and
+# it reaches its verdict with every value empty - which the suite reports as
+# FAIL, sending the reader to the product for a machine that never started a
+# dataplane.
+#
+# Measured rather than reasoned about (#261). lab/frag.sh was given a
+# startup.conf VPP refuses. It waited its thirty seconds, printed
+# "Could not find VPP CLI socket" forty times and ended "LAB FAILED: 14
+# check(s)", and lab_no_vpp() run verbatim over that capture answered FAIL.
+#
+# The classifier's fallback cannot cover this and is not meant to. It looks for
+# "connect: Connection refused", which is what a socket with NOTHING BEHIND IT
+# says: a VPP that started, created its socket and then died. A VPP that never
+# started leaves no socket to refuse, so this line is the only thing that
+# classifies a dataplane that never came.
+#
+# A lab that starts VPP MUST therefore guard the start, and the guard MUST
+# print this exact line. test/test_lab_workers.sh holds both halves, including
+# that the line printed here is the line the classifier looks for.
+#
+# THE THIRTY SECONDS ARE UNCHANGED. #253 measured the release-run failure the
+# wait was blamed for and found VPP answering well before it expired, so
+# nothing measured supports moving it. LAB_VPP_WAIT exists so the check can
+# exercise the expiry without sleeping through it, the same arrangement LAB_SRC
+# already has in startup_conf below: a rule about what happens when a wait runs
+# out should not need a container and thirty seconds to check.
+#
+# The ten labs #261 found are converted to this; the forty start sites that
+# already print the line keep their own copy, deliberately. They already
+# produce the verdict the suite reads, so converting them would move the input
+# of every lab in the suite in order to change no lab's verdict, and each would
+# then have to be shown not to have moved - the trade vc() makes for the same
+# reason. What the check guards is the guarantee and not the spelling: a start
+# site is guarded if it reaches this helper or prints the line itself. The copy
+# is not free and the drift is already visible, in tail -20 against tail -25
+# and /tmp/vpp.log against /tmp/vpp-$1.log, which is the argument for anything
+# written next using this instead.
+wait_vpp() {
+  _log=${1:-/tmp/vpp.log}
+  _n=0
+  until vppctl show version >/dev/null 2>&1 || [ "$_n" -ge "${LAB_VPP_WAIT:-30}" ]; do
+    sleep 1; _n=$((_n + 1))
+  done
+  vppctl show version >/dev/null 2>&1 && return 0
+  # Exits rather than returning, because there is nothing for the caller to do
+  # with the answer. A lab that carries on without a dataplane produces a page
+  # of red checks about empty strings, and the one fact worth having is the log
+  # underneath this line.
+  echo "VPP did not start"
+  [ -r "$_log" ] && tail -20 "$_log"
+  exit 1
+}
+
 # The startup configuration a lab boots VPP with, with or without workers.
 #
 #   startup_conf                 lab/startup-test.conf

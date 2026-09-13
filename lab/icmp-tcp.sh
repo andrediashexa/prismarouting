@@ -8,7 +8,7 @@ mkdir -p /run/vpp /vpp_plugins
 }
 cd /src
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
-n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+wait_vpp
 
 vppctl create packet-generator interface pg0 >/dev/null
 vppctl create packet-generator interface pg1 >/dev/null
