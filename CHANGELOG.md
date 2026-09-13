@@ -74,6 +74,35 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A re-wrapped message silently broke two lab needles**
+  ([#279](https://github.com/andrediashexa/hexarouting/issues/279)).
+  `lab/routing.sh` went red in the release suite on `systemctl restart frr` and
+  `FRR validates them at commit`. Neither message changed a word: #271 folded
+  them to fit an 80-column console and the fold landed inside both needles -
+  `'systemctl` ends one row and `restart frr'` starts the next.
+
+  `expect_in` searches the raw text, so a needle only matches while the message
+  it is in happens to fold somewhere else. All 40 unit suites were green,
+  because none of them reads a lab; the only thing that could say so was a lab
+  run, an hour into a release suite.
+
+  `expect_said` in `lab/verdict.sh` collapses whitespace on both sides, so a
+  sentence matches wherever it folds. It is the shell half of `unwrapped()` in
+  `test/test_hexash_bgp.py`. `expect_in` stays for anything printed WHOLE - a
+  statement, a path, a configuration line, a counter - because those must not
+  wrap and collapsing first would hide it if they did.
+
+* **A lab held a runner for 29 minutes without printing a line or failing.**
+  `lab/oom.sh off` sat in `apt-get update` while the release suite waited on
+  it. Measured inside the container: `getent hosts deb.debian.org` returns only
+  IPv6 addresses, `curl -4` gets 200 and `curl -6` gets nothing, so apt chose a
+  family this box cannot route and blocked. `tools/lab.sh` now forces IPv4 and
+  sets a timeout, and the same lab finishes in 107 seconds.
+
+  The timeout matters as much as the address family. A lab that fails says so
+  in its verdict and the suite classifies it; a lab that hangs takes a slot out
+  of the suite for as long as nobody is looking.
+
 * **`commit check` promised to report which subscribers a change re-maps, and
   reported nothing** ([#278](https://github.com/andrediashexa/hexarouting/issues/278)).
   The VTY's own `?` help says so and six pages of the operator wiki repeated
