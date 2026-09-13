@@ -193,6 +193,60 @@ BLOCK_AFTER=$(vppctl show bpa pool | grep -A9 "pool resize" | grep -o "block *[0
 QUIET=$($HX -c "configure" -c "cgnat pool resize" -c "alg rtsp off" \
             -c "exit" -c "commit" 2>&1)
 
+# --- and a reserve is one of those changes, reached the same way ------------
+#
+# A reserve is taken OUT of capacity, and capacity is the mapping, so enabling
+# one has to go through this same refusal. Nothing here is special-cased for
+# it: the VTY classifies `reserve` as a mapping field, which puts the pool in
+# pool_replace, which is what makes the dataplane compute the remap. This
+# section is the measurement that the classification actually lands there
+# (issue #39).
+#
+# The BLOCKED policy on purpose. Under interleaved the divisor is the public
+# address count, which a reserve does not touch, so a pool whose inside set is
+# smaller than its reduced capacity moves nobody at all - a true and useless
+# demonstration. Under blocked the divisor IS the mapped block count, so it
+# re-divides and the number is large.
+vppctl bpa pool reserved inside 100.64.65.0/24 outside 203.0.113.16/28 \
+  block 1024 policy blocked >/dev/null
+RES_REMAP=$($HX -c "configure" -c "cgnat pool reserved" -c "reserve 1" \
+                -c "exit" -c "commit" 2>&1)
+echo "$RES_REMAP" | tail -5 | sed 's/^/  /'
+RES_CAP_MID=$(vppctl show bpa pool | grep -A14 "pool reserved" \
+              | sed -n 's/^ *capacity *\([0-9]*\) subscribers.*/\1/p' | head -1)
+RES_NAMED=$($HX -c "configure" -c "cgnat pool reserved" -c "reserve 1" \
+                -c "exit" -c "commit remap" 2>&1)
+RES_CAP_AFTER=$(vppctl show bpa pool | grep -A14 "pool reserved" \
+                | sed -n 's/^ *capacity *\([0-9]*\) subscribers.*/\1/p' | head -1)
+RES_MOVED=$(printf '%s\n' "$RES_REMAP" | grep -o "[0-9]* of [0-9]* subscribers" | head -1)
+# The oracle, again from the specification rather than from the box.
+RES_MODEL=$(python3 - <<'PY'
+import ipaddress, sys
+sys.path.insert(0, "/src/ref")
+from bpa_model import PoolConfig, MapPolicy
+args = dict(block_size=1024, policy=MapPolicy.BLOCKED)
+a = PoolConfig("reserved", ["100.64.65.0/24"], ["203.0.113.16/28"], **args)
+b = PoolConfig("reserved", ["100.64.65.0/24"], ["203.0.113.16/28"],
+               block_reserve=1, **args)
+base = int(ipaddress.IPv4Address("100.64.65.0"))
+def key(p, v):
+    try:
+        f = p.forward(v)
+    except Exception:
+        return None
+    return f["ip_pub"], f["port_lo"]
+n = min(a.capacity, a.inside_count)
+moved = sum(1 for i in range(n) if key(a, base + i) != key(b, base + i))
+print(f"{moved} of {n} subscribers|{b.capacity}|{a.capacity}")
+PY
+)
+RES_MODEL_MOVED=${RES_MODEL%%|*}
+RES_MODEL_REST=${RES_MODEL#*|}
+RES_MODEL_CAP=${RES_MODEL_REST%%|*}
+RES_MODEL_CAP0=${RES_MODEL_REST##*|}
+echo "  the box says: ${RES_MOVED:-<nothing>}"
+echo "  the model says: ${RES_MODEL_MOVED}, capacity ${RES_MODEL_CAP0} -> ${RES_MODEL_CAP}"
+
 # --- the arithmetic, against the specification rather than against itself ---
 MOVED=$(printf '%s\n' "$REMAP" | grep -o "[0-9]* of [0-9]* subscribers" | head -1)
 MODEL_MOVED=$(python3 - <<'PY'
@@ -273,6 +327,26 @@ expect "and the dataplane took it" test "$BLOCK_AFTER" = "block        1024"
 expect_not_in "a change that moves nobody is not questioned" \
   "re-maps subscribers" "$QUIET"
 expect_in "and commits normally" "commit complete" "$QUIET"
+# --- the reserve, through the same gate ---
+expect_in "enabling a reserve is refused as a re-mapping change" \
+  "re-maps subscribers" "$RES_REMAP"
+expect_in "and says what to type" "commit remap" "$RES_REMAP"
+# The count from the specification, not from the box agreeing with itself.
+# Without this, "says how many move" passes on any number at all - and the
+# whole point of a reserve under the blocked policy is that the number is
+# large, because the divisor changed.
+expect "and the count is the one the model computes" \
+  test "${RES_MOVED:-x}" = "${RES_MODEL_MOVED:-y}"
+# Still the capacity of a pool with NO reserve, which is the number a refused
+# commit has to leave behind. Against the model's, not against a literal.
+expect "and nothing was applied" \
+  test "${RES_CAP_MID:-x}" = "${RES_MODEL_CAP0:-y}"
+expect_in "asked for by name, it applies" "commit complete" "$RES_NAMED"
+# The capacity the box reports afterwards IS the capacity the model predicts.
+# A box that carved out a reserve and went on reporting the old capacity would
+# promise an operator subscribers it is about to drop.
+expect "and the capacity the box reports is the one the model predicts" \
+  test "${RES_CAP_AFTER:-x}" = "${RES_MODEL_CAP:-y}"
 # --- the global settings, over the binary API (#76) ---
 #
 # Timeouts, the block hold-down and the session table sizing used to reach the
