@@ -49,7 +49,63 @@ are to be interpreted as described in
 [#221](https://github.com/andrediashexa/hexarouting/issues/221),
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223),
-[#224](https://github.com/andrediashexa/hexarouting/issues/224).
+[#224](https://github.com/andrediashexa/hexarouting/issues/224),
+[#55](https://github.com/andrediashexa/hexarouting/issues/55).
+
+### Added
+
+* **`block-stride`: the distance between the blocks one subscriber holds**
+  ([#55](https://github.com/andrediashexa/hexarouting/issues/55)). An
+  extension used to be whatever came off the free list next. With a stride,
+  the nth block a subscriber holds starts `n × stride × block-size` ports
+  above its first, **on the same public address**: a stride of one puts them
+  side by side, which is one range for an investigator instead of several, and
+  a larger one spreads the subscriber across its own address's port range,
+  which is what makes it harder to profile a customer by watching a single
+  range. Neither is obviously right, so it is a setting.
+
+  **The default is zero and zero is what the box has always done**, so an
+  upgrade changes nothing - asserted in `ref/validate.py` and in
+  `test/test_bpa_pool.c` rather than promised: with no stride the model
+  predicts no block at all, because today's answer is a function of the
+  pool's history and not of its definition.
+
+  **It is not part of the mapping.** `bpa_forward()` does not read it and must
+  not: 40 pool-and-stride combinations in C and 32 in the model move zero
+  subscribers, which is what keeps a stride out of the capacity-change
+  procedure ([#23](https://github.com/andrediashexa/hexarouting/issues/23)) -
+  a change that moved even one would belong there. `commit` is unchanged and
+  reports no remap for it, and that is the measurement rather than a claim.
+
+  **Every block is still its own RFC 8158 `natEvent 16`, wherever the stride
+  puts it.** `lab/extblocks.sh` now runs a real IPFIX collector and asserts
+  two records for a subscriber holding two blocks, each naming its own port
+  range - the strided one included, which is the range a wrong implementation
+  would log as the one the allocator would have given.
+
+  **A stride is a preference and never costs a customer traffic.** When the
+  block it names is held by somebody else, or the subscriber sits at the end
+  of its public address, the allocator falls back to the free list and counts
+  it. `show bpa blocks` prints both numbers, because a stride that is
+  configured and never honoured looks from outside exactly like no stride at
+  all.
+
+  **A stride the worker sharding cannot honour is warned about, not refused.**
+  Blocks are partitioned by `block_idx % n_workers` and a subscriber draws
+  only from its own worker's slice, so a stride whose step is not a multiple
+  of the worker count names a block this worker may not hand out - for every
+  subscriber rather than for some. The box says so at pool creation and names
+  the nearest stride that works. It is a warning because the worker count is a
+  startup setting: a refusal would leave a pool that came up yesterday failing
+  to come up after a restart, and a pool that does not exist is every
+  subscriber on it losing traffic, which is not an acceptable price for a
+  preference about layout.
+
+* **`show bpa pool` prints the range of ports a subscriber can reach**, in
+  ports, which is the unit an operator sells in. `block-size 64` with
+  `max-blocks 8` already **is** a per-pool range - a subscriber starts at 64
+  ports and grows one block at a time, only when it fills one, as far as 512 -
+  and nothing said so.
 
 ### Changed
 

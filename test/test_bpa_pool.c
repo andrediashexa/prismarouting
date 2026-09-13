@@ -327,5 +327,172 @@ main (void)
 	    s.n_ranges, s.count);
   }
 
+  printf ("\n=== block stride: where the blocks after the first go ===\n");
+  {
+    unsigned k, placed = 0, refused = 0;
+
+    for (i = 0; i < BPA_VEC_N_POOLS; i++)
+      CHECK (bpa_stride_unit (&pools[i]) == bpa_vec_pools[i].exp_stride_unit,
+	     "'%s': stride unit C=%u ref=%u", bpa_vec_pools[i].name,
+	     bpa_stride_unit (&pools[i]), bpa_vec_pools[i].exp_stride_unit);
+
+    for (k = 0; k < BPA_VEC_N_STRIDE; k++)
+      {
+	const bpa_vec_stride_t *v = &bpa_vec_stride[k];
+	bpa_pool_t *p = &pools[v->pool];
+	u32 got = 0, pub_idx = 0, blk_idx = 0, ip_pub = 0, port_lo;
+	int rc;
+
+	p->block_stride = v->stride;
+	rc = bpa_stride_block (p, v->primary_block, v->nth, &got);
+	p->block_stride = 0;
+
+	if (!v->has)
+	  {
+	    /* The stride ran off the end of the subscriber's own public
+	     * address. Wrapping instead of refusing would hand the subscriber
+	     * a block on a DIFFERENT address, whose index need not be in its
+	     * own worker's slice - and then its replies arrive on a thread
+	     * that knows nothing about the session. */
+	    CHECK (rc != 0,
+		   "'%s': stride %u placed block %u for primary %u nth %u, "
+		   "which the model says runs off the public address",
+		   (char *) p->name, v->stride, got, v->primary_block, v->nth);
+	    refused++;
+	    continue;
+	  }
+
+	CHECK (rc == 0, "'%s': stride %u placed nothing for primary %u nth %u",
+	       (char *) p->name, v->stride, v->primary_block, v->nth);
+	if (rc)
+	  continue;
+	CHECK (got == v->block, "'%s': stride %u primary %u nth %u: block "
+			       "C=%u ref=%u",
+	       (char *) p->name, v->stride, v->primary_block, v->nth, got,
+	       v->block);
+
+	/* And in the units the log records and an operator reads, because a
+	 * block index agreeing is not the same claim as a port range
+	 * agreeing. */
+	bpa_split (p, got, &pub_idx, &blk_idx);
+	CHECK (bpa_set_addr_of (&p->outside, pub_idx, &ip_pub) == 0,
+	       "'%s': stride block %u has no public address", (char *) p->name,
+	       got);
+	port_lo = p->port_min + blk_idx * p->block_size;
+	CHECK (ip_pub == v->ip_pub, "'%s': stride %u primary %u nth %u: "
+				   "public C=%u ref=%u",
+	       (char *) p->name, v->stride, v->primary_block, v->nth, ip_pub,
+	       v->ip_pub);
+	CHECK (port_lo == v->port_lo, "'%s': stride %u primary %u nth %u: "
+				     "port_lo C=%u ref=%u",
+	       (char *) p->name, v->stride, v->primary_block, v->nth, port_lo,
+	       v->port_lo);
+	placed++;
+      }
+
+    printf ("  %u vectors: %u blocks placed, %u refused at the end of an "
+	    "address\n",
+	    (unsigned) BPA_VEC_N_STRIDE, placed, refused);
+
+    /* Without a refusal among the vectors the branch above asserts nothing
+     * and would read green after a plugin started wrapping. */
+    CHECK (refused > 0,
+	   "no vector reaches the end of a public address, so the stride "
+	   "bound was never exercised");
+    CHECK (placed > 0, "no vector placed a block at all");
+  }
+
+  printf ("\n=== the stride is not part of the mapping ===\n");
+  {
+    unsigned moved = 0, tried = 0;
+
+    /* The #23 requirement as arithmetic. A stride decides where a
+     * subscriber's SECOND block goes; if it ever moved the first, changing it
+     * would disconnect every subscriber on a deterministic pool and would
+     * belong to the capacity-change procedure instead of being a setting. */
+    for (i = 0; i < BPA_VEC_N_POOLS; i++)
+      {
+	bpa_pool_t *p = &pools[i];
+	u32 sub, stride;
+
+	for (stride = 0; stride < 8 && stride < p->blocks_per_ip; stride++)
+	  {
+	    tried++;
+	    for (sub = 0; sub < p->inside.count && sub < p->capacity;
+		 sub += 17)
+	      {
+		bpa_block_t a, b;
+		u32 ip_priv;
+
+		if (bpa_set_addr_of (&p->inside, sub, &ip_priv))
+		  continue;
+		p->block_stride = 0;
+		if (bpa_forward (p, ip_priv, &a))
+		  continue;
+		p->block_stride = (u16) stride;
+		if (bpa_forward (p, ip_priv, &b))
+		  continue;
+		p->block_stride = 0;
+		if (a.ip_pub != b.ip_pub || a.port_lo != b.port_lo)
+		  moved++;
+	      }
+	  }
+      }
+    CHECK (moved == 0,
+	   "%u subscribers changed public address or port block when only the "
+	   "stride changed",
+	   moved);
+    printf ("  %u pool/stride combinations move 0 subscribers\n", tried);
+  }
+
+  printf ("\n=== a stride the sharding cannot honour ===\n");
+  {
+    bpa_pool_t *p = &pools[0]; /* interleaved, 2 public addresses */
+
+    /* Blocks are partitioned by block_idx %% n_workers and a subscriber draws
+     * only from its own worker's slice, so a stride whose step is not a
+     * multiple of the worker count names a block this worker may not hand
+     * out - for every subscriber, which is why it is refused rather than
+     * counted. */
+    p->block_stride = 1;
+    CHECK (bpa_stride_reachable (p, 1), "stride 1 unreachable on one worker");
+    CHECK (bpa_stride_reachable (p, 2),
+	   "stride 1 over 2 public addresses unreachable at 2 workers");
+    CHECK (!bpa_stride_reachable (p, 4),
+	   "stride 1 over 2 public addresses was called reachable at 4 "
+	   "workers, where it steps 2 and the slice repeats every 4");
+    CHECK (bpa_stride_next_ok (p, 1, 4) == 2,
+	   "the advice for stride 1 at 4 workers was %u, not 2",
+	   bpa_stride_next_ok (p, 1, 4));
+    p->block_stride = 0;
+
+    p = &pools[2]; /* blocked: one stride step is one block index */
+    p->block_stride = 3;
+    CHECK (!bpa_stride_reachable (p, 2), "stride 3 blocked at 2 workers");
+    CHECK (bpa_stride_next_ok (p, 3, 2) == 4,
+	   "the advice for stride 3 at 2 workers was %u, not 4",
+	   bpa_stride_next_ok (p, 3, 2));
+    p->block_stride = 0;
+    printf ("  a stride outside the slice is refused, with the nearest one "
+	    "that is not\n");
+  }
+
+  printf ("\n=== a stride that can never place a block is refused ===\n");
+  {
+    bpa_pool_t p;
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_stride = (u16) p.blocks_per_ip;
+    CHECK (bpa_pool_init (&p) != 0,
+	   "a stride of blocks_per_ip was accepted, and would place nothing");
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.block_stride = (u16) (p.blocks_per_ip - 1);
+    CHECK (bpa_pool_init (&p) == 0,
+	   "the largest stride that fits was refused");
+    printf ("  the first stride that cannot fit is refused; the one below it "
+	    "is not\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

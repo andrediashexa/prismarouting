@@ -16,6 +16,7 @@ Alguns campos **reconstroem o pool**, e todas as sessões nele morrem no instant
 |------------------------------------------------|----------------------------------------------|
 | `inside`                                       | `timeout ...`                                |
 | `outside`                                      | `max-blocks`                                 |
+|                                                | `block-stride`                               |
 | `block-size`                                   | `bypass ...`                                 |
 | `ports`                                        | `utilisation-alarm`                          |
 | `policy`                                       | `max-sessions`                               |
@@ -81,11 +82,98 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 | Comando | Argumento | O que limita |
 |---------|-----------|--------------|
 | `max-blocks <n>` | `<1-65535>` | quantos blocos um assinante pode segurar |
+| `block-stride <n>` | `<0-65535>` | distância entre os blocos de um mesmo assinante; `0` deixa o pool escolher |
 | `max-sessions <n>` | `<1-65535>` | máximo de sessões simultâneas por assinante; `0` = ilimitado |
 | `max-session-rate <n>` | `<1-65535>` | máximo de sessões novas por segundo, por assinante; `0` = ilimitado |
 | `utilisation-alarm <pct>` | `<1-100>` | loga uma vez quando o bloco de um assinante atinge essa porcentagem |
 
 `max-sessions` e `max-session-rate` são a defesa contra uma máquina infectada consumindo o pool inteiro. `utilisation-alarm` avisa **antes** do esgotamento, não depois.
+
+# A faixa de portas que um assinante pode chegar a ter
+
+`block-size` e `max-blocks` juntos **já são uma faixa**, e é assim que um pool
+atende um medidor inteligente e uma casa pesada ao mesmo tempo:
+
+```
+block-size 64
+max-blocks 8
+```
+
+Um assinante **começa com 64 portas**. Só recebe um segundo bloco quando enche
+o primeiro, e só então um terceiro - até 8 blocos, 512 portas. O medidor nunca
+pede o segundo e custa 64 portas ao pool; a casa pesada chega às 512 sozinha,
+sem ninguém configurar nada para ela.
+
+`show cgnat pool` mostra a faixa em portas, que é a unidade em que se vende:
+
+```
+  per sub      64-512 ports (1-8 blocks, grown one at a time as each fills)
+```
+
+O preço de um bloco pequeno é o **volume de registro**: cada bloco entregue a
+um assinante vira um registro próprio no log de blocos. Uma casa que chega a 8
+blocos gera 8 registros; com `block-size 512` e um bloco só, gera 1. Escolha o
+menor bloco que ainda deixe a maioria dos assinantes dentro de **um** bloco, e
+use `max-blocks` para a minoria que precisa de mais.
+
+# Onde ficam os blocos extras de um assinante
+
+`block-stride <n>` decide a distância entre os blocos que um mesmo assinante
+segura. Vale só em `mode dynamic` - um pool determinístico nunca dá um segundo
+bloco a ninguém.
+
+| Valor | O que acontece |
+|-------|----------------|
+| `0` (padrão) | o bloco extra vai para onde o pool tiver um livre - comportamento de sempre |
+| `1` | os blocos ficam **colados**: o segundo começa onde o primeiro termina |
+| `n` | os blocos ficam `n × block-size` portas afastados, no mesmo endereço público |
+
+**Colado (`1`)** deixa o assinante com uma faixa contínua de portas. É a opção
+para quem atende ofício e investigação: uma faixa em vez de várias, e o técnico
+que olha um horário não precisa cruzar três intervalos separados.
+
+**Afastado (`n` maior)** espalha o assinante pela faixa de portas do próprio
+endereço público. É a opção para quem quer que observar um intervalo de portas
+de fora diga o mínimo possível sobre um cliente.
+
+Nenhuma das duas é obviamente certa - por isso é um ajuste, e por isso o padrão
+é o comportamento antigo: quem atualiza a caixa não muda de comportamento.
+
+:::info
+**O `stride` nunca custa tráfego a um cliente.** Se o bloco que a distância
+aponta já estiver com outro assinante, ou se o assinante estiver no fim da
+faixa de portas do seu endereço público, a caixa entrega **outro bloco
+qualquer** em vez de recusar. O cliente continua funcionando; o que muda é só
+onde o bloco caiu.
+
+:::
+
+`show cgnat blocks` conta os dois casos, e é onde se confere se o ajuste está
+valendo de fato:
+
+```
+  stride 1: 412 extensions placed where it says, 7 fell back to the free list
+```
+
+Só zeros na primeira coluna com números na segunda quer dizer que a distância
+escolhida **não cabe** nesta caixa. Isso acontece quando a máquina roda com
+vários workers: os blocos são divididos entre eles, e um assinante só pode
+receber blocos da fatia do seu próprio worker. A caixa avisa no momento em que
+o pool é criado e diz qual distância serve:
+
+```
+warning: block-stride 1 on pool residencial cannot be honoured: blocks are
+         sharded 4 ways and a stride step moves by 2, so every block the
+         stride names belongs to another worker
+         the nearest stride that can be: 2
+         the setting is applied and extensions fall back to the free list;
+         this is a warning, not a refusal
+```
+
+É um aviso e não uma recusa de propósito: o número de workers é ajuste de
+inicialização, e uma configuração recusada por causa dele deixaria o pool
+**sem subir** depois de um reinício - o que derruba todo mundo, para atender a
+uma preferência de arrumação.
 
 # Bypass — o que não é traduzido
 
@@ -148,6 +236,7 @@ Dentro do bloco, `no <ajuste>` tira o ajuste. `no ?` lista o que pode ser tirado
 ```
 hexarouting# [edit cgnat pool residencial] no ?
   alg                stop choosing for one ALG; the pool takes the device default again
+  block-stride       let the pool place a subscriber's extra blocks wherever it has one free
   bypass             stop excluding a prefix from translation
   filter             go back to endpoint-independent filtering
   forward            remove one inbound port forward

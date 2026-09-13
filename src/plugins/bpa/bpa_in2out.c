@@ -372,14 +372,28 @@ VLIB_NODE_FN (bpa_in2out_node)
 			 && bpa_sub_n_blocks (pt, pool_index, sub_idx)
 			      < p->max_blocks))
 	{
-	  u32 w, nw;
+	  u32 w, nw, primary = BPA_NO_BLOCK, held;
 	  int is_new = 0;
 	  bpa_block_t ext;
 
 	  bpa_worker_id (bm, thread_index, &w, &nw);
+	  /*
+	   * Where the pool's stride is measured from: the block the subscriber
+	   * started with, and how many it already holds. Read from the
+	   * allocator rather than from blk, because blk is the block THIS
+	   * packet was translated out of and a subscriber with extensions has
+	   * more than one - a stride measured from the newest would walk away
+	   * from the primary one block at a time and mean something different
+	   * on every extension.
+	   */
+	  held = bpa_sub_n_blocks (pt, pool_index, sub_idx);
+	  if (pool_index < vec_len (pt->dyn))
+	    bpa_dyn_block_of (vec_elt_at_index (pt->dyn, pool_index), sub_idx,
+			      w, nw, &primary);
 	  if (pool_index < vec_len (pt->dyn)
 	      && bpa_dyn_acquire_extra (vec_elt_at_index (pt->dyn, pool_index),
-					p, sub_idx, w, nw, &ext, &is_new) == 0)
+					p, sub_idx, w, nw, primary, held, &ext,
+					&is_new) == 0)
 	    {
 	      bpa_sub_extend (pt, p, pool_index, sub_idx, &ext);
 	      /* An extension is not derivable from anything, in either mode.

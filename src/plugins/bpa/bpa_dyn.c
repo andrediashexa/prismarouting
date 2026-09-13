@@ -6,6 +6,8 @@
  * dynamic pool still spreads consecutive allocations across public
  * addresses when the policy is interleaved. Ver bpa_dyn_block_addr(). */
 
+static void bpa_dyn_unfree (bpa_dyn_t *d, u32 local);
+
 clib_error_t *
 bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers)
 {
@@ -97,10 +99,11 @@ found:
 
 int
 bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
-		       u32 worker, u32 n_workers, bpa_block_t *b, int *is_new)
+		       u32 worker, u32 n_workers, u32 primary, u32 nth,
+		       bpa_block_t *b, int *is_new)
 {
   bpa_dyn_extra_t *e;
-  u32 local, block_idx;
+  u32 local, block_idx, want;
 
   *is_new = 0;
   if (PREDICT_FALSE (vec_len (d->free_list) == 0))
@@ -109,7 +112,45 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
       return -1;
     }
 
-  local = vec_pop (d->free_list);
+  local = BPA_NO_BLOCK;
+  if (PREDICT_FALSE (p->block_stride != 0))
+    {
+      u32 cand = BPA_NO_BLOCK;
+
+      /*
+       * Three ways this comes to nothing, and all three end in the same
+       * fall-back below.
+       *
+       * A subscriber whose primary was reaped while an extension outlived it
+       * has nothing to measure a stride from, and the caller says so with
+       * BPA_NO_BLOCK rather than with a block index that means zero.
+       *
+       * The stride can step off the end of the subscriber's own public
+       * address, which bpa_stride_block() refuses rather than wrapping.
+       *
+       * And the block it names may belong to another worker's slice. Handing
+       * that one out would put the subscriber's replies on a thread that
+       * holds no session for them, because out2in resolves the thread from
+       * the block index.
+       */
+      if (primary != BPA_NO_BLOCK
+	  && bpa_stride_block (p, primary, nth, &want) == 0
+	  && want % n_workers == worker)
+	cand = want / n_workers;
+
+      if (cand != BPA_NO_BLOCK && cand < d->n_local
+	  && d->owner[cand] == BPA_NO_BLOCK)
+	{
+	  bpa_dyn_unfree (d, cand);
+	  local = cand;
+	  d->n_stride_placed++;
+	}
+      else
+	d->n_stride_missed++;
+    }
+
+  if (local == BPA_NO_BLOCK)
+    local = vec_pop (d->free_list);
   d->owner[local] = sub_idx;
   d->idle_since[local] = 0;
   /* by_sub is deliberately NOT touched: it names the subscriber's first

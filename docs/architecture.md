@@ -206,6 +206,70 @@ flowchart TD
     E -->|no| H["drop, natEvent 12"]
 ```
 
+### Where the extra blocks land: `block-stride`
+
+An extension used to be whatever came off the free list next, which is a
+function of what the pool had already handed out rather than of the pool's
+definition. `block-stride` names the distance instead: the nth block a
+subscriber holds starts
+
+```
+port_lo(first) + n × stride × block-size
+```
+
+**on the same public address**. A stride of one puts a subscriber's blocks side
+by side, which is one range for an investigation to read rather than several; a
+larger one spreads it across the address's port range, which is what makes a
+subscriber harder to profile by watching a single range. Neither is obviously
+right, so it is a setting, and **zero - the historical behaviour - is the
+default**.
+
+It is deliberately **not part of the mapping**. `bpa_forward()` does not read
+it, so changing it moves nobody and it is an in-place setting rather than a
+capacity change ([pool-resize.md](pool-resize.md)). `ref/validate.py` and
+`test/test_bpa_pool.c` assert exactly that, across every pool and stride in the
+vectors, because the day somebody threads the stride into the mapping is the day
+a layout preference starts disconnecting a subscriber base.
+
+Every block still produces its **own** `natEvent 16` wherever the stride puts
+it. Contiguity therefore does not make the log smaller - it makes the ranges in
+it adjacent, which is a different and smaller claim than the one the feature was
+first asked for under.
+
+**A stride is a preference, never a refusal.** The block it names may be held by
+another subscriber, or the stride may step off the end of the subscriber's own
+public address; the allocator then falls back to the free list and counts it.
+`show bpa blocks` prints both numbers, because a stride that is configured and
+never honoured looks from outside exactly like no stride at all.
+
+**Worker sharding bounds which strides exist.** Blocks are partitioned by
+`block_idx % n_workers` and a subscriber may only draw from its own worker's
+slice, so the nth block under a stride is reachable only when
+`n × stride × unit` is a multiple of the worker count - `unit` being the
+distance in block indices between two blocks of one public address, which the
+policy decides: `outside.count` under interleaved, one under blocked. Since
+that is a multiple relation, `n = 1` settles it for every n, and the failure is
+total rather than partial. The box **warns** at pool creation and names the
+nearest stride that works. It does not refuse: the worker count is a startup
+setting, and a refusal would leave a pool that came up yesterday failing to come
+up after a restart - every subscriber on it losing traffic, for a preference
+about layout.
+
+### The range of ports one subscriber can reach
+
+`block-size` and `max-blocks` together already **are** a per-pool range, and
+this is how one pool serves a smart meter and a heavy household at once:
+`block-size 64` with `max-blocks 8` starts every subscriber at 64 ports and
+grows only the ones that fill them, one block at a time, as far as 512. The
+meter never asks for its second block. `show bpa pool` prints that range in
+ports, because ports are the unit an operator sells in and nothing said so.
+
+The price of a small block is **log volume**, not datapath cost: a household
+that reaches eight blocks produces eight `natEvent 16` records where one large
+block produces one. The datapath cost of holding many blocks was measured and is
+not the reason to avoid them - see `ref/bpa_model.py`'s planning section, which
+keeps the arithmetic so the next person measures rather than argues.
+
 ### Releasing them
 
 An extension is owned by the subscriber like any other block, but it does not

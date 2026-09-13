@@ -174,6 +174,17 @@ bpa_pool_init (bpa_pool_t *p)
     p->max_blocks = 1;
 
   /*
+   * A stride of blocks_per_ip or more steps past the end of the subscriber's
+   * own public address on its very first extension, so it can never place
+   * anything. Refused rather than accepted and left silently inert.
+   */
+  if (p->block_stride >= p->blocks_per_ip)
+    return clib_error_return (
+      0, "pool '%v': block-stride %u does not fit: a public address holds %u "
+	 "blocks, so a subscriber's second block would land past the end of it",
+      p->name, p->block_stride, p->blocks_per_ip);
+
+  /*
    * The documented defaults, except where the operator said otherwise. A pool
    * that states no opinion gets what the documentation promises rather than
    * the behaviour of an uninitialised field.

@@ -78,7 +78,20 @@
  * was written and this was not bumped with it, so the file described a
  * version of itself that the option had never reached.
  */
-option version = "0.11.0";
+/*
+ * 0.12.0 adds block_stride to bpa_pool_add_del, bpa_pool_settings_set and
+ * bpa_pool_details: the distance between the blocks one subscriber holds
+ * (issue #55). On the settings message as well as the add one, because it
+ * changes where the NEXT extension goes and moves nothing already handed out
+ * - so recreating the pool to change it would drop every session for a
+ * preference about layout.
+ *
+ * It CHANGES THE LAYOUT of those three messages, so a client built against
+ * 0.11.0 must be rebuilt - the CRC will not match. Called out here rather
+ * than discovered by a client that silently stops working; lab/api.sh pins
+ * the JSON shape and is what fails when this happens.
+ */
+option version = "0.12.0";
 
 import "vnet/interface_types.api";
 import "vnet/ip/ip_types.api";
@@ -121,6 +134,10 @@ typedef bpa_timeouts
     @param block_size - ports per block, a power of two
     @param filter - which inbound packets a mapping accepts (RFC 4787 REQ-8)
     @param max_blocks - how many blocks one subscriber may hold; 0 means one
+    @param block_stride - blocks of the subscriber's own public address
+                          between the blocks it holds; 0 is whatever the
+                          allocator has free, which is the historical
+                          behaviour
     @param alg - bitmask of the ALGs enabled for this pool
     @param alg_set - which bits of alg the operator actually chose; the rest
                      take the shipped default, so a caller that does not care
@@ -174,6 +191,7 @@ autoreply define bpa_pool_add_del
   vl_api_bpa_mode_t mode;
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
+  u16 block_stride;
   u32 alg;
   u32 alg_set;
   vl_api_bpa_timeouts_t timeouts;
@@ -199,6 +217,8 @@ autoreply define bpa_pool_add_del
     @param name - the pool
     @param filter - which inbound packets a mapping accepts
     @param max_blocks - blocks one subscriber may hold; 0 means one
+    @param block_stride - blocks between the ones a subscriber holds; 0 is
+                          whatever the allocator has free
     @param alg - which ALGs are enabled
     @param alg_set - which of them the operator stated an opinion about
     @param tcp_mss - MSS clamp; 0 is off
@@ -213,6 +233,7 @@ autoreply define bpa_pool_settings_set
   string name[64];
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
+  u16 block_stride;
   u32 alg;
   u32 alg_set;
   u16 tcp_mss;
@@ -415,6 +436,7 @@ define bpa_pool_details
   vl_api_bpa_mode_t mode;
   vl_api_bpa_filter_t filter;
   u8 max_blocks;
+  u16 block_stride;
   u32 alg;
   vl_api_bpa_timeouts_t timeouts;
   u16 tcp_mss;

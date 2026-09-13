@@ -51,6 +51,7 @@ changes the **divisor** changes the answer for nearly everybody.
 | change `policy` | interleaved and blocked split the index differently: **every** subscriber |
 | change `mode` | deterministic and dynamic are not the same mapping at all |
 | add or remove an **inside** prefix | changes the subscriber index of every address after it |
+| change `block-stride` | **nothing**: it decides where a subscriber's *next* block goes and `bpa_forward()` never reads it, so no existing subscriber moves - measured across every pool and stride in the model's vectors rather than assumed |
 | everything else — timeouts, ALGs, `max-blocks`, the MSS clamp, the bounds, forwards, bypass lists | **nothing**: these are in-place settings ([#69](https://github.com/andrediashexa/hexarouting/issues/69)) |
 
 ## What does not change

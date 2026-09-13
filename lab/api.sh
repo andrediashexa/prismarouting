@@ -36,6 +36,7 @@ vat2 bpa_pool_add_del '{
   "mode": "BPA_API_MODE_DETERMINISTIC",
   "filter": "BPA_API_FILTER_ENDPOINT_INDEPENDENT",
   "max_blocks": 0,
+  "block_stride": 0,
   "alg": 0,
   "alg_set": 0,
   "tcp_mss": 0,
@@ -69,6 +70,7 @@ vat2 bpa_pool_add_del '{
   "policy": "BPA_API_POLICY_INTERLEAVED", "mode": "BPA_API_MODE_DETERMINISTIC",
   "filter": "BPA_API_FILTER_ENDPOINT_INDEPENDENT",
   "max_blocks": 0,
+  "block_stride": 0,
   "alg": 0,
   "alg_set": 0,
   "tcp_mss": 0,
@@ -93,7 +95,7 @@ echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 OK=$(vat2 bpa_pool_dump '{}' 2>&1)
 expect_in "the pool created through the API is listed" "via-api" "$OK"
-BAD=$(vat2 bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","filter":"BPA_API_FILTER_ENDPOINT_INDEPENDENT","max_blocks":0,"alg":0,"alg_set":0,"tcp_mss":0,"tcp_mss_auto":false,"vrf_id":4294967295,"out_vrf_id":4294967295,"audit_user":"api-lab","audit_uid":4242,"timeouts":{"udp":0,"icmp":0,"tcp_syn":0,"tcp_transitory":0,"tcp_established":0,"gre":0,"port_holddown":0,"alg_expect":0},"n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
+BAD=$(vat2 bpa_pool_add_del '{"is_add":true,"name":"z","block_size":500,"port_min":1024,"port_max":65535,"policy":"BPA_API_POLICY_INTERLEAVED","mode":"BPA_API_MODE_DETERMINISTIC","filter":"BPA_API_FILTER_ENDPOINT_INDEPENDENT","max_blocks":0,"block_stride":0,"alg":0,"alg_set":0,"tcp_mss":0,"tcp_mss_auto":false,"vrf_id":4294967295,"out_vrf_id":4294967295,"audit_user":"api-lab","audit_uid":4242,"timeouts":{"udp":0,"icmp":0,"tcp_syn":0,"tcp_transitory":0,"tcp_established":0,"gre":0,"port_holddown":0,"alg_expect":0},"n_inside":1,"n_prefixes":2,"prefixes":["10.0.0.0/24","203.0.113.0/24"]}' 2>&1)
 # vat2 prints a real TAB between the key and the value. Written as '\t' in a
 # quoted shell pattern it is a backslash followed by a t, which matches
 # nothing vat2 has ever printed - so this, the ONLY check that the binary API

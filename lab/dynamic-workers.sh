@@ -78,10 +78,54 @@ echo "  packets with no session (must be 0):"
 vppctl show errors | grep -iE "no session for destination|no free block" | sed 's/^/    /' || echo "    none"
 
 echo
+echo "=========== a stride the sharding cannot honour ==========="
+# The partition this whole lab is about is also what bounds which strides
+# exist. A subscriber draws only from its own worker's slice, so the block a
+# stride names is reachable only when the distance to it is a multiple of the
+# worker count - and when it is not, NO subscriber can be honoured rather than
+# some.
+#
+# Measured on `check`, which creates nothing: the point is what the box says
+# before an operator commits, and the pool it would refuse to place blocks for
+# does not have to exist to be told about.
+#
+# Under `policy blocked` one stride step is one block index, so a stride of one
+# is exactly the unreachable case at two workers.
+STRIDE_WARN=$(vppctl bpa pool stridden inside 10.20.0.0/24 \
+    outside 45.170.16.0/30 ports 1024-65535 block 512 policy blocked \
+    mode dynamic max-blocks 2 block-stride 1 check 2>&1)
+printf '%s\n' "$STRIDE_WARN" | sed 's/^/  /'
+echo
+echo "  and the stride it named instead, on the same pool:"
+STRIDE_OK=$(vppctl bpa pool stridden inside 10.20.0.0/24 \
+    outside 45.170.16.0/30 ports 1024-65535 block 512 policy blocked \
+    mode dynamic max-blocks 2 block-stride 2 check 2>&1)
+printf '%s\n' "$STRIDE_OK" | sed 's/^/  /'
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 ERR=$(vppctl show errors)
 expect_not_in "every reply found its owning worker" "no session for destination" "$ERR"
 expect_not_in "no block was left unallocated on return" "block not allocated" "$ERR"
 expect_in "blocks came from both worker slices" "thread 2" "$(vppctl show bpa blocks)"
+# The stride warning, on a box that really has the workers that make it true.
+# Said at the moment the operator can act on it, with the number of ways the
+# blocks are actually sharded rather than a general caution.
+expect_in "a stride outside the slice is called out" \
+  "cannot be honoured" "$STRIDE_WARN"
+expect_in "and says how the blocks are actually sharded" \
+  "sharded 2 ways" "$STRIDE_WARN"
+expect_in "and names one that works, so the operator has something to type" \
+  "the nearest stride that can be: 2" "$STRIDE_WARN"
+# A warning and not a refusal, deliberately: the worker count is a startup
+# setting, so refusing would leave a pool that came up yesterday unable to come
+# up after a restart - every subscriber on it down, for a preference about
+# layout.
+expect_in "it is a warning, and says so" "not a refusal" "$STRIDE_WARN"
+expect_in "and the pool is still valid" "is valid" "$STRIDE_WARN"
+# The control. Without it the assertions above pass on a box that warns about
+# every stride, which is a caution nobody reads rather than a measurement.
+expect_not_in "the stride it recommended draws no warning at all" \
+  "cannot be honoured" "$STRIDE_OK"
 verdict

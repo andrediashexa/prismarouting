@@ -120,6 +120,7 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
 
   cfg.tcp_mss = clib_net_to_host_u16 (mp->tcp_mss);
   cfg.tcp_mss_auto = mp->tcp_mss_auto;
+  cfg.block_stride = clib_net_to_host_u16 (mp->block_stride);
 
   cfg.vrf_id = clib_net_to_host_u32 (mp->vrf_id);
   cfg.out_vrf_id = clib_net_to_host_u32 (mp->out_vrf_id);
@@ -189,7 +190,8 @@ vl_api_bpa_pool_settings_set_t_handler (vl_api_bpa_pool_settings_set_t *mp)
 			     clib_net_to_host_u32 (mp->alg),
 			     clib_net_to_host_u32 (mp->alg_set),
 			     clib_net_to_host_u16 (mp->tcp_mss),
-			     mp->tcp_mss_auto, mp->util_alarm, &t);
+			     mp->tcp_mss_auto, mp->util_alarm,
+			     clib_net_to_host_u16 (mp->block_stride), &t);
   if (e)
     {
       vlib_log_err (bpa_main.log_class, "%U", format_clib_error, e);
@@ -466,6 +468,7 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   mp->mode = (vl_api_bpa_mode_t) p->mode;
   mp->filter = (vl_api_bpa_filter_t) p->filter;
   mp->max_blocks = p->max_blocks;
+  mp->block_stride = clib_host_to_net_u16 (p->block_stride);
   mp->alg = clib_host_to_net_u32 (p->alg);
   mp->tcp_mss = clib_host_to_net_u16 (p->tcp_mss);
   mp->tcp_mss_auto = p->tcp_mss_auto;
