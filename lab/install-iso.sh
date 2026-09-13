@@ -694,11 +694,23 @@ wait_said() {  # <sentence> <seconds> <what the driver was doing>
   # moment that sentence was reflowed, over a box doing exactly the right
   # thing (#279, found again here in #283).
   #
+  # THE JOURNAL PREFIX HAS TO COME OFF FIRST, and collapsing whitespace alone
+  # is not enough. Every line on this console arrives as
+  #
+  #   [  189.895690] hexash[1772]: commit confirmed 1: nobody confirmed it ...
+  #   [  189.899320] hexash[1772]: the previous configuration back
+  #
+  # so the fold does not merely break the sentence, it inserts a timestamp and
+  # a pid into the middle of it. Joining the lines without stripping that
+  # leaves the needle further from matching than it was.
+  #
   # The offset bookkeeping stays on the RAW file. Only the comparison is
-  # collapsed, because CONSOLE_POS is a byte count into the capture.
+  # rewritten, because CONSOLE_POS is a byte count into the capture.
   _s=$(printf '%s' "$1" | tr -s '[:space:]' ' '); _t=$2; _why=$3; _n=0
   while :; do
-    if console_since | tr -s '[:space:]' ' ' | grep -qF "$_s"; then
+    if console_since \
+         | sed 's/^\[[0-9. ]*\] [A-Za-z0-9_.-]*\[[0-9]*\]: //' \
+         | tr -s '[:space:]' ' ' | grep -qF "$_s"; then
       CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
       return 0
     fi
