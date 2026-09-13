@@ -1597,6 +1597,53 @@ else
 fi
 rm -f "$FAKE/bpa_urpf"
 
+echo "=== the MTU in the file, against the MTU the dataplane has (#172) ==="
+# The mismatch this project has already paid for twice. An interface whose
+# saved mtu the dataplane did not take still forwards; what then happens is
+# that an OSPF adjacency will not leave Exchange, because the two ends
+# advertise different MTUs and NEITHER END LOGS ANYTHING. Until now the only
+# thing that noticed was a finding at commit time, which says nothing on a box
+# that was rebooted.
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet0/0/0           2      up          1500/0/0/0     rx packets                  12
+host-veth-vpp                     1      up          9000/0/0/0
+IFACE
+printf 'interface TenGigabitEthernet0/0/0\n mtu 1500\n exit\ninterface host-veth-vpp\n mtu 9000\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+run
+if said 'the saved MTU is not the MTU the dataplane has'; then
+  bad "two interfaces at the MTU they were told and the box complained: $(printf '%s\n' "$OUTPUT" | grep -i 'saved MTU')"
+else
+  ok "a box whose MTUs all took is not told about them"
+fi
+# The one that matters: the file says 9000 and the dataplane kept 1500. This is
+# the box that forwards and whose OSPF never comes up.
+printf 'interface TenGigabitEthernet0/0/0\n mtu 9000\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+run
+if said '\[FAIL\] the saved MTU is not the MTU the dataplane has: TenGigabitEthernet0/0/0\(9000/1500\)'; then
+  ok "an MTU the dataplane did not take is a FAILED check, naming both numbers"
+else
+  bad "a refused MTU passed: $(printf '%s\n' "$OUTPUT" | grep -i mtu || echo '<nothing>')"
+fi
+if said 'stops at Exchange'; then
+  ok "and the failure names the symptom an operator will actually meet"
+else
+  bad "the failure does not say what a wrong MTU costs"
+fi
+# An interface in the file that the box does not have at all is the pair
+# check's business, not this one: saying it twice, in two different ways, is
+# how a reader learns to skip both.
+printf 'interface TenGigabitEthernet9/9/9\n mtu 9000\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+run
+if said 'the saved MTU is not the MTU'; then
+  bad "an interface the box does not have was reported as an MTU mismatch"
+else
+  ok "an interface the box does not have is left to the check that is about that"
+fi
+
 rm -f "$FAKE/show_plugins" "$FAKE/bpa_pools"
 printf '\n' > "$FAKE/hexarouting.conf"
 unset HEXA_CONFIG
