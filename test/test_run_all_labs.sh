@@ -80,6 +80,17 @@ case "$1 ${2:-}" in
   "ee-silent ")
     exit 0 ;;
 
+  # igp's capture: the box cleared an adjacency, the reading was taken after
+  # the hello interval, and the check says so rather than reporting a product
+  # defect. It measured everything else first, which is what separates it from
+  # a lab that could not run at all (#218).
+  "gg-late ")
+    echo "  [ ok ] the adjacency is up before it is cleared"
+    echo "  [NOT MEASURED] clearing it took the adjacency down there and then"
+    echo "         the reading was taken 5s after the change and the"
+    echo "         window is 3s, so this says nothing either way"
+    echo "LAB NOT MEASURED: 1 check(s)"; exit 2 ;;
+
   # An off mode that does what its header says: red with the feature gone.
   "vrf ")    echo "LAB PASSED"; exit 0 ;;
   "vrf off") echo "  [FAIL] the two tenants got different public addresses"
@@ -100,7 +111,7 @@ EOF
 chmod +x "$d/tools/build.sh" "$d/tools/lab.sh"
 
 for n in aa-good bb-broken cc-panic dd-refused ee-silent ff-halfdead \
-         vrf audit urpf; do
+         gg-late vrf audit urpf; do
   echo '#!/bin/sh' > "$d/lab/$n.sh"
 done
 
@@ -140,9 +151,30 @@ case "$out" in
   *) bad "an off mode that passed was not caught" ;;
 esac
 
+echo "=== a check whose timing the machine could not keep is its own state ==="
+# Not a failure: the lab ran and measured everything else. Not a pass either:
+# the thing it came to measure was not measured. This is the state that cost an
+# investigation when lab/igp.sh reported it as a product defect in a release
+# suite and passed in isolation (#218).
+case "$out" in
+  *"gg-late            NOT MEASURED"*)
+    ok "a lab that could not take a timed reading is NOT MEASURED" ;;
+  *) bad "a timed reading the machine missed was counted as something else" ;;
+esac
+case "$out" in
+  *"the reading was taken 5s after the change"*)
+    ok "and the report says which reading and by how much" ;;
+  *) bad "nothing said which check could not be measured" ;;
+esac
+case "$out" in
+  *"gg-late            FAIL"*)
+    bad "a reading the machine missed was reported as a product defect" ;;
+  *) ok "and it is not reported as a failure" ;;
+esac
+
 echo "=== the summary counts them apart, and the suite still exits non-zero ==="
 case "$out" in
-  *"pass=5  fail=3  novpp=3  ran=1"*) ok "the four states are counted apart" ;;
+  *"pass=5  fail=3  notmeasured=1  novpp=3  ran=1"*) ok "the five states are counted apart" ;;
   *) bad "the summary line is not what was counted; got:
 $(printf '%s' "$out" | tail -12)" ;;
 esac
@@ -159,12 +191,33 @@ rm -f "$d"/lab/*.sh
 echo '#!/bin/sh' > "$d/lab/cc-panic.sh"
 out2=$(sh "$d/tools/run-all-labs.sh" 2>&1); rc2=$?
 case "$out2" in
-  *"pass=0  fail=0  novpp=1  ran=0"*) ok "NO VPP alone is counted alone" ;;
+  *"pass=0  fail=0  notmeasured=0  novpp=1  ran=0"*) ok "NO VPP alone is counted alone" ;;
   *) bad "NO VPP alone was miscounted; got:
 $(printf '%s' "$out2" | tail -6)" ;;
 esac
 [ "$rc2" -ne 0 ] && ok "and is enough on its own to fail the suite" \
                  || bad "a suite that ran nothing at all exited 0"
+
+# And NOT MEASURED on its own, with everything else green, must also be
+# non-zero. A suite that reads "one check could not be taken" as success is the
+# shape this file exists to find.
+rm -f "$d"/lab/*.sh
+echo '#!/bin/sh' > "$d/lab/gg-late.sh"
+echo '#!/bin/sh' > "$d/lab/aa-good.sh"
+out3=$(sh "$d/tools/run-all-labs.sh" 2>&1); rc3=$?
+case "$out3" in
+  *"pass=1  fail=0  notmeasured=1  novpp=0  ran=0"*)
+    ok "NOT MEASURED beside a pass is counted apart from it" ;;
+  *) bad "NOT MEASURED beside a pass was miscounted; got:
+$(printf '%s' "$out3" | tail -8)" ;;
+esac
+case "$out3" in
+  *"could not measure a check they came to measure"*)
+    ok "and the summary says what it means and what to do" ;;
+  *) bad "the summary said nothing about the check that was not taken" ;;
+esac
+[ "$rc3" -ne 0 ] && ok "and a suite with one unmeasured check does not exit 0" \
+                 || bad "a suite that could not measure a check exited 0"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

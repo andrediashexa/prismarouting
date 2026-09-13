@@ -186,6 +186,23 @@ are to be interpreted as described in
   against the product's string. It only reads quoted needles now. A check that
   goes red on work that is right is the worst kind there is.
 
+* **A lab check whose timing the machine could not keep now says so instead of
+  reporting a product defect.** `lab/igp.sh` clears an IS-IS adjacency and then
+  asserts it is gone. The hello interval is three seconds, so an adjacency that
+  is back by then re-formed rather than survived the clear - and on a box
+  running eight labs at once a `vtysh` call can take longer than that. It
+  reported `clearing it took the adjacency down there and then` as a failure in
+  a release suite and passed in isolation, which cost an investigation
+  ([#218](https://github.com/andrediashexa/hexarouting/issues/218)).
+
+  `expect_timed` in `lab/verdict.sh` measures the **reading**: on time and
+  wrong is a failure, which is that check's whole subject, and late is nothing
+  learnt. `LAB NOT MEASURED` is a verdict of its own, the lab exits non-zero,
+  and `tools/run-all-labs.sh` counts it in its own column - beside `NO VPP`,
+  for the same reason: "nothing found a defect, one check could not be taken"
+  has to be readable as that sentence rather than as a failure. It is the shape
+  `test_boot_wait.sh` and `lab_no_vpp()` already took.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
