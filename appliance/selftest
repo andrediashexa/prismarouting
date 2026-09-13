@@ -919,6 +919,38 @@ if vppctl show version >/dev/null 2>&1 && [ -f "$LOGCONF" ]; then
         ok "uRPF is on in the dataplane, as the saved configuration asks: $(printf '%s' "$have_urpf" | tr '\n' ';' | cut -c1-60)" ;;
     esac
   fi
+
+  # And the MTU, which is the one whose mismatch this project has already paid
+  # for twice.
+  #
+  # An interface whose saved mtu the dataplane did not take is not a box that
+  # stops working: it forwards, and then an OSPF adjacency will not leave
+  # Exchange because the two ends advertise different MTUs and neither logs
+  # anything (docs/routing.md, Pitfall 1). That is the fault that costs an
+  # afternoon rather than a minute, and until now the only thing that noticed
+  # was a finding at commit time - which says nothing on a box that was
+  # rebooted, or whose interface was renumbered underneath it.
+  #
+  # The dataplane's own column, not the TAP's: `show interface` prints
+  # "<name> <idx> <state> <l3>/<ip4>/<ip6>/<mpls>", and the L3 MTU is the one
+  # the saved `mtu` statement sets.
+  ifaces=$(vppctl show interface 2>/dev/null)
+  mtu_wrong=""
+  while read -r _if _want; do
+    [ -n "$_if" ] || continue
+    _got=$(printf '%s' "$ifaces" \
+           | awk -v n="$_if" '$1 == n { split($4, m, "/"); print m[1]; exit }')
+    [ -n "$_got" ] || continue          # not on this box: the pair check says so
+    [ "$_got" = "$_want" ] || mtu_wrong="$mtu_wrong $_if($_want/$_got)"
+  done <<MTUS
+$(awk '/^interface /{ifn=$2} /^ *mtu /{if (ifn != "") print ifn, $2}' "$LOGCONF")
+MTUS
+  if [ -n "$mtu_wrong" ]; then
+    bad "the saved MTU is not the MTU the dataplane has:$mtu_wrong"
+    say "        (interface(saved/actual)). An OSPF adjacency stops at Exchange"
+    say "        when the two ends disagree, and neither end logs anything."
+    say "        'journalctl -u hexarouting' has why it was refused."
+  fi
 fi
 
 # A live system says so, and says how to stop being one. Without this the

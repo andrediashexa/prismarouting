@@ -450,7 +450,17 @@ are to be interpreted as described in
   everything: there is no counter for a protection that is simply absent. A box
   that never asked for uRPF is told nothing, because most do not run it.
 
-  57 checks on master before this run of work, **121** after.
+  **And the MTU, which is the mismatch this project has already paid for
+  twice.** An interface whose saved `mtu` the dataplane did not take still
+  forwards; what happens next is that an OSPF adjacency will not leave
+  `Exchange`, because the two ends advertise different MTUs and **neither end
+  logs anything** - the fault `docs/routing.md` calls Pitfall 1, and the one
+  that costs an afternoon rather than a minute. Until now the only thing that
+  noticed was a finding at commit time, which says nothing on a box that was
+  rebooted. The failure names both numbers, and an interface the box does not
+  have is left to the pair check that is about exactly that.
+
+  57 checks on master before this run of work, **137** after.
 
 ### Added
 
