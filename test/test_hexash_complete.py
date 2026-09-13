@@ -4558,7 +4558,18 @@ class _Dp271:
         return 0, ""
 
 
-class _Frr271:
+class _Frr271(hexash.Frr):
+    """
+    A stand-in that answers `show`, and takes everything else from the real Frr.
+
+    Derived and not free-standing. As a free-standing class it stopped having
+    whatever the product added next: `daemons()` arrived with #272 and
+    `show_version` called it, and this stub answered AttributeError - a merge
+    that both sides passed on their own. Deriving means a method built on
+    `show` keeps working here without this file being edited, and one that is
+    genuinely new fails loudly rather than being quietly stubbed out.
+    """
+
     def __init__(self, running=(), daemons="", vrf="", avail=True):
         self._running, self._daemons = list(running), daemons
         self._vrf, self._avail = vrf, avail
