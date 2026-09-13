@@ -36,10 +36,140 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#245](https://github.com/andrediashexa/hexarouting/issues/245) (continued),
+[#250](https://github.com/andrediashexa/hexarouting/issues/250),
+[#256](https://github.com/andrediashexa/hexarouting/issues/256),
+[#257](https://github.com/andrediashexa/hexarouting/issues/257),
 [#260](https://github.com/andrediashexa/hexarouting/issues/260),
-[#267](https://github.com/andrediashexa/hexarouting/issues/267).
+[#267](https://github.com/andrediashexa/hexarouting/issues/267),
+[#269](https://github.com/andrediashexa/hexarouting/issues/269).
 
 ### Internal
+
+* **The rule that a secret must not enter this repository was held only for the
+  four directories the ISO carries.** `CONTRIBUTING.md` section 2 says secrets
+  "MUST NOT go into this repository either", and
+  [#245](https://github.com/andrediashexa/hexarouting/issues/245)'s check read
+  `src`, `appliance`, `tools` and `docs` - what `build-iso.sh` copies. A private
+  key in `lab/` never reaches an ISO and is published just as thoroughly: this
+  repository is public, and so is the wiki mirror inside it.
+
+  The scope is now every directory in the tree, **enumerated rather than
+  listed**. A list is something somebody has to remember to extend, and the two
+  defects this check sits between - a lab excluded from every run
+  ([#233](https://github.com/andrediashexa/hexarouting/issues/233)) and a test
+  file nothing compiled
+  ([#235](https://github.com/andrediashexa/hexarouting/issues/235)) - were both
+  exactly that. Nine directories today, and one added next year is covered
+  without anybody deciding to cover it. Nothing in the tree is caught, which is
+  the answer wanted.
+
+  The refusal also stopped saying **"credential in the image"** while somebody
+  is looking at `lab/`. One script answers two questions now and names which
+  one it was asked, because a message that points at the wrong object is the
+  defect this session has spent the most time on.
+
+* **The control that keeps the console driver honest was invoked by nothing**
+  ([#256](https://github.com/andrediashexa/hexarouting/issues/256)).
+  `lab/install-iso.sh` has a `wrong-password` mode, `TESTING.md` calls it *how
+  the driver is kept honest*, and nothing ran it: not the suite, which excludes
+  `install-iso`, not the `Makefile`, and not the release gate. `make
+  test-install` runs it now, in the same container, and requires it to fail
+  **at the login**.
+
+  What it controls is why it matters. `TESTING.md` states the failure in the
+  same paragraph: a login that fails silently would run the whole session
+  against a login prompt and report a pass. `lab/install-iso.sh` is the only
+  place a box somebody receives is installed and booted.
+
+  **The check that holds the wiring was wrong first, and the second version is
+  the entry.** It grepped the `Makefile` for the phrases the recipe prints, and
+  passed on a recipe whose inversion had been replaced by `if false`: every
+  string was still there, inside a branch that could not be reached. A check
+  that reads the text of a decision cannot see the decision. The recipe is now
+  extracted and RUN against a stub that behaves each of the three ways, and
+  what is asserted is its verdict.
+
+  **And the mutation that exposed that was not enough either.** Deleting the
+  inversion still failed a run printing `LAB PASSED`, because the second check
+  rejects output with no refusal diagnosis in it - so the mutation read as
+  harmless. The case where only the inversion can catch it is a control that
+  **exits 0 with the refusal still on the screen**: the words are not what says
+  the box refused, the exit status is. That case is now driven.
+
+  The `make test-install` target itself has not been executed here: it builds
+  an ISO and boots two VMs, and a release suite had the machine. Its three
+  branches were driven against the stub instead, which is what the section
+  above describes.
+
+* **Not one mapping vector had ever used a port range other than the default.**
+  `docs/context.md` invariant 1.3 says there are two specifications of the
+  mapping and they MUST agree, and `test/test_bpa_pool.c` compares them over
+  thousands of vectors. Every one of those vectors was generated from a pool
+  with `port_min` 1024 and `port_max` 65535, so `port_min` was a constant in
+  the comparison rather than a variable, and the two specifications had never
+  been asked whether they agree about it.
+
+  A sixth vector pool, `narrow-ports`, uses 2048-20479 with a 256 port block.
+  Measured against the plugin: **they agree**, over 3,296 forward, 9,888
+  reverse and 486 stride comparisons. There was no defect hiding here; there
+  was no evidence either.
+
+  **The red is the point.** Hardcoding `port_min` to 1024 where the block's
+  ports are computed - which is what the code effectively read for every pool
+  that existed before - fails 10 vectors, and **the lowest failing index is
+  3040, the first vector of the new pool.** Every one of the 3,039 before it
+  agreed with the broken implementation.
+
+  Building the pool cost me the same defect one layer up: the stride vectors
+  were generated from a pool built WITHOUT the port range, so they disagreed
+  with a plugin that was right, and the generator was at fault rather than the
+  product. The comment at that line says so.
+
+* **The collector behaviour that made a defect visible was held by nothing**
+  ([#257](https://github.com/andrediashexa/hexarouting/issues/257)).
+  `docs/logging.md` says a serious collector buffers a data set that arrives
+  without its template and reprocesses it when the template appears, says
+  `tools/ipfix_collector.py` does, and then says why it matters: *that is how
+  the ordering became visible instead of looking like vanished records.* The
+  reprocessing loop could be disabled with all 38 suites green.
+
+  The collector ships: `appliance/install.sh` puts it on the box as
+  `/usr/lib/hexarouting/ipfix-collector`. And the labs that drive it assert
+  record counts, so without the reprocessing they would have gone red saying
+  **"expected 2 records, got 0"** - which names the box, and the box would have
+  been right. A message that names the wrong component is the same defect this
+  release keeps finding, one level out.
+
+  Four assertions in `test/test_collector_marker.py`, driving real IPFIX bytes
+  rather than calling an internal, because the ordering is a property of what
+  arrives on the wire. Two of them are controls: the report has to SAY it is
+  holding a record, so silent loss and a deferred template do not look alike,
+  and a record arriving after its template still has to decode, or the section
+  would pass on a collector that decodes nothing at all.
+
+* **The release gate refuses a note that does not record the boot and the
+  install** ([#260](https://github.com/andrediashexa/hexarouting/issues/260)).
+  `CONTRIBUTING.md` section 5 says the release note MUST record that the medium
+  was built, booted, installed and booted again. The gate PERFORMS both and
+  never read the note, and the rule decayed across two releases without a word:
+  `v0.64.0` carries the sentence, `v0.65.0` has one of the words, and
+  `v0.66.0`, the most recent release, says nothing about either.
+
+  It is the note and not the steps, because the steps are already refused if
+  they fail. The note is what an operator who does not clone this repository
+  reads, and section 5 says so one line above: a tag is a pointer, a release is
+  where they read what changed. A note that does not say the medium was
+  installed and booted leaves that operator to assume it, and
+  [#119](https://github.com/andrediashexa/hexarouting/issues/119) and
+  [#121](https://github.com/andrediashexa/hexarouting/issues/121) are what the
+  assumption would have been wrong about.
+
+  **The red needed no fixture: `v0.66.0` is in this repository and the check
+  refuses it.** All four words on one line, the way `v0.64.0` names them,
+  because loose matching passes on any note that mentions an installed box -
+  which every note about this product eventually does.
+
 
 * **The release gate refuses a note that does not record the boot and the
   install** ([#260](https://github.com/andrediashexa/hexarouting/issues/260)).
@@ -1656,131 +1786,6 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
-
-* **The rule that a secret must not enter this repository was held only for the
-  four directories the ISO carries.** `CONTRIBUTING.md` section 2 says secrets
-  "MUST NOT go into this repository either", and
-  [#245](https://github.com/andrediashexa/hexarouting/issues/245)'s check read
-  `src`, `appliance`, `tools` and `docs` - what `build-iso.sh` copies. A private
-  key in `lab/` never reaches an ISO and is published just as thoroughly: this
-  repository is public, and so is the wiki mirror inside it.
-
-  The scope is now every directory in the tree, **enumerated rather than
-  listed**. A list is something somebody has to remember to extend, and the two
-  defects this check sits between - a lab excluded from every run
-  ([#233](https://github.com/andrediashexa/hexarouting/issues/233)) and a test
-  file nothing compiled
-  ([#235](https://github.com/andrediashexa/hexarouting/issues/235)) - were both
-  exactly that. Nine directories today, and one added next year is covered
-  without anybody deciding to cover it. Nothing in the tree is caught, which is
-  the answer wanted.
-
-  The refusal also stopped saying **"credential in the image"** while somebody
-  is looking at `lab/`. One script answers two questions now and names which
-  one it was asked, because a message that points at the wrong object is the
-  defect this session has spent the most time on.
-
-* **The control that keeps the console driver honest was invoked by nothing**
-  ([#256](https://github.com/andrediashexa/hexarouting/issues/256)).
-  `lab/install-iso.sh` has a `wrong-password` mode, `TESTING.md` calls it *how
-  the driver is kept honest*, and nothing ran it: not the suite, which excludes
-  `install-iso`, not the `Makefile`, and not the release gate. `make
-  test-install` runs it now, in the same container, and requires it to fail
-  **at the login**.
-
-  What it controls is why it matters. `TESTING.md` states the failure in the
-  same paragraph: a login that fails silently would run the whole session
-  against a login prompt and report a pass. `lab/install-iso.sh` is the only
-  place a box somebody receives is installed and booted.
-
-  **The check that holds the wiring was wrong first, and the second version is
-  the entry.** It grepped the `Makefile` for the phrases the recipe prints, and
-  passed on a recipe whose inversion had been replaced by `if false`: every
-  string was still there, inside a branch that could not be reached. A check
-  that reads the text of a decision cannot see the decision. The recipe is now
-  extracted and RUN against a stub that behaves each of the three ways, and
-  what is asserted is its verdict.
-
-  **And the mutation that exposed that was not enough either.** Deleting the
-  inversion still failed a run printing `LAB PASSED`, because the second check
-  rejects output with no refusal diagnosis in it - so the mutation read as
-  harmless. The case where only the inversion can catch it is a control that
-  **exits 0 with the refusal still on the screen**: the words are not what says
-  the box refused, the exit status is. That case is now driven.
-
-  The `make test-install` target itself has not been executed here: it builds
-  an ISO and boots two VMs, and a release suite had the machine. Its three
-  branches were driven against the stub instead, which is what the section
-  above describes.
-
-* **Not one mapping vector had ever used a port range other than the default.**
-  `docs/context.md` invariant 1.3 says there are two specifications of the
-  mapping and they MUST agree, and `test/test_bpa_pool.c` compares them over
-  thousands of vectors. Every one of those vectors was generated from a pool
-  with `port_min` 1024 and `port_max` 65535, so `port_min` was a constant in
-  the comparison rather than a variable, and the two specifications had never
-  been asked whether they agree about it.
-
-  A sixth vector pool, `narrow-ports`, uses 2048-20479 with a 256 port block.
-  Measured against the plugin: **they agree**, over 3,296 forward, 9,888
-  reverse and 486 stride comparisons. There was no defect hiding here; there
-  was no evidence either.
-
-  **The red is the point.** Hardcoding `port_min` to 1024 where the block's
-  ports are computed - which is what the code effectively read for every pool
-  that existed before - fails 10 vectors, and **the lowest failing index is
-  3040, the first vector of the new pool.** Every one of the 3,039 before it
-  agreed with the broken implementation.
-
-  Building the pool cost me the same defect one layer up: the stride vectors
-  were generated from a pool built WITHOUT the port range, so they disagreed
-  with a plugin that was right, and the generator was at fault rather than the
-  product. The comment at that line says so.
-
-* **The collector behaviour that made a defect visible was held by nothing**
-  ([#257](https://github.com/andrediashexa/hexarouting/issues/257)).
-  `docs/logging.md` says a serious collector buffers a data set that arrives
-  without its template and reprocesses it when the template appears, says
-  `tools/ipfix_collector.py` does, and then says why it matters: *that is how
-  the ordering became visible instead of looking like vanished records.* The
-  reprocessing loop could be disabled with all 38 suites green.
-
-  The collector ships: `appliance/install.sh` puts it on the box as
-  `/usr/lib/hexarouting/ipfix-collector`. And the labs that drive it assert
-  record counts, so without the reprocessing they would have gone red saying
-  **"expected 2 records, got 0"** - which names the box, and the box would have
-  been right. A message that names the wrong component is the same defect this
-  release keeps finding, one level out.
-
-  Four assertions in `test/test_collector_marker.py`, driving real IPFIX bytes
-  rather than calling an internal, because the ordering is a property of what
-  arrives on the wire. Two of them are controls: the report has to SAY it is
-  holding a record, so silent loss and a deferred template do not look alike,
-  and a record arriving after its template still has to decode, or the section
-  would pass on a collector that decodes nothing at all.
-
-* **The release gate refuses a note that does not record the boot and the
-  install** ([#260](https://github.com/andrediashexa/hexarouting/issues/260)).
-  `CONTRIBUTING.md` section 5 says the release note MUST record that the medium
-  was built, booted, installed and booted again. The gate PERFORMS both and
-  never read the note, and the rule decayed across two releases without a word:
-  `v0.64.0` carries the sentence, `v0.65.0` has one of the words, and
-  `v0.66.0`, the most recent release, says nothing about either.
-
-  It is the note and not the steps, because the steps are already refused if
-  they fail. The note is what an operator who does not clone this repository
-  reads, and section 5 says so one line above: a tag is a pointer, a release is
-  where they read what changed. A note that does not say the medium was
-  installed and booted leaves that operator to assume it, and
-  [#119](https://github.com/andrediashexa/hexarouting/issues/119) and
-  [#121](https://github.com/andrediashexa/hexarouting/issues/121) are what the
-  assumption would have been wrong about.
-
-  **The red needed no fixture: `v0.66.0` is in this repository and the check
-  refuses it.** All four words on one line, the way `v0.64.0` names them,
-  because loose matching passes on any note that mentions an installed box -
-  which every note about this product eventually does.
-
 
 * **`docs/routing.md` sent readers to the wrong lab for four claims**
   ([#247](https://github.com/andrediashexa/hexarouting/issues/247)). The
