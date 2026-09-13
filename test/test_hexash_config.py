@@ -416,6 +416,35 @@ check("router static" not in bang,
 check(" ip route 10.0.0.0/8 192.0.2.1" in bang,
       f"and the route is left exactly where FRR put it: {bang}")
 
+# The third thing that `!` broke, and the one no lab holds: `show this` inside
+# `router bgp`, on a configuration READ BACK from FRR rather than typed.
+#
+# frr_block_lines() promises the address-families are part of the answer - an
+# operator standing in `router bgp 65001` is asking what that router holds. FRR
+# 10.7.1 writes ` !` between the router's own statements and its first
+# address-family, and with the stack cleared there the family and everything
+# inside it sat at no path at all, so this function filtered the whole lot out
+# and `show this` answered with the router's bare statements. Not a wrong
+# answer an operator could see was wrong: a SHORTER one, with no marker saying
+# anything was missing.
+#
+# lab/vty.sh asserts the address-family is there, but mid-edit, where the
+# candidate is flat and carries no `!` - so it was green throughout. Its
+# after-commit case reads `router static`, which is top-level and cannot show
+# this. Hence an assertion here, on the read-back shape.
+READBACK = ["router bgp 65000",
+            " bgp router-id 10.0.0.1",
+            " !",
+            " address-family ipv4 unicast",
+            "  maximum-paths 4",
+            " exit-address-family",
+            "exit"]
+held = config.frr_block_lines(READBACK, ["router bgp 65000"])
+check(" address-family ipv4 unicast" in held,
+      f"show this in router bgp keeps the address-family FRR read back: {held}")
+check("  maximum-paths 4" in held,
+      f"and what the family holds, indented under it: {held}")
+
 # The family comes from the prefix, not from a keyword: a prefix with a colon
 # in it is IPv6 and nothing else, and asking for it twice is asking the
 # operator to contradict themselves.

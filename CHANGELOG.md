@@ -433,6 +433,19 @@ are to be interpreted as described in
   #180 had no `!` in it and was green against this the whole time; the new one
   is written against what a live daemon printed.
 
+  And it **shortened `show this`**. Asked what `router bgp 65000` holds, on a
+  configuration read back from FRR rather than typed, the box left out the
+  address-families and everything in them - because FRR writes ` !` between a
+  router's own statements and its first family, and past that separator the
+  family sat at no path at all. `frr_block_lines()` promises the opposite in
+  its docstring: an operator standing in a router is asking what that router
+  holds, and its address-families are part of the answer. Not a wrong answer
+  they could see was wrong, a **shorter** one, with nothing saying anything was
+  missing. `lab/vty.sh` asserts the family is there but does it mid-edit, where
+  the candidate is flat and carries no `!`, so it was green throughout; its
+  after-commit case reads `router static`, which is top-level and cannot show
+  this. The assertion for it is a unit one, on the read-back shape.
+
 * **`no <statement>` inside a pool block was accepted in silence and did
   nothing.** `no block-size 512`, `no policy interleaved`,
   `no mode deterministic`, `no ports 4096`, `no vrf 7`: each printed nothing,
