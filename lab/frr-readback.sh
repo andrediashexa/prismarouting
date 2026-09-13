@@ -47,7 +47,7 @@
 set -u
 LAB_T0=$(date +%s)
 
-start_frr zebra staticd bgpd ospfd isisd
+start_frr zebra staticd bgpd ospfd ospf6d isisd
 sleep 2
 
 # Three, because section 4d needs one interface per value: a probe that types
@@ -269,6 +269,93 @@ expect "and a dotted one stays dotted" \
 for _i in 9 8 7; do run "interface dum$_i" " no ip ospf area"; done
 
 echo
+echo "=========== 4e. OSPFv3, whose statements had never been probed ==========="
+# Probed because #187 put `router ospf6` and `ipv6 ospf6 ...` into the VTY's
+# grammar, and a statement this VTY OFFERS that FRR does not read back is a
+# commit the box refuses as dropped - on a configuration that worked. The
+# grammar was written from this section rather than the other way round: the
+# three statements that come back ABSENT at their default are the three the
+# grammar does not offer.
+#
+# The controls are the point, exactly as in 4c. `ipv6 ospf6 hello-interval 10`
+# failing to come back is equally consistent with ospf6d having refused it,
+# and an entry written off that alone would switch the read-back check off for
+# a statement FRR was throwing away for real.
+run "router ospf6" " ospf6 router-id 10.0.0.1"
+run "interface dum9" " ipv6 ospf6 area 0"
+probe ABSENT     "ipv6 ospf6 hello-interval 10" \
+      "interface dum9" " no ipv6 ospf6 hello-interval" -- \
+      "interface dum9" " ipv6 ospf6 hello-interval 10"
+probe ROUNDTRIPS "ipv6 ospf6 hello-interval 7" \
+      "interface dum9" " no ipv6 ospf6 hello-interval" -- \
+      "interface dum9" " ipv6 ospf6 hello-interval 7"
+probe ABSENT     "ipv6 ospf6 dead-interval 40" \
+      "interface dum9" " no ipv6 ospf6 dead-interval" -- \
+      "interface dum9" " ipv6 ospf6 dead-interval 40"
+probe ROUNDTRIPS "ipv6 ospf6 dead-interval 33" \
+      "interface dum9" " no ipv6 ospf6 dead-interval" -- \
+      "interface dum9" " ipv6 ospf6 dead-interval 33"
+probe ABSENT     "ipv6 ospf6 priority 1" \
+      "interface dum9" " no ipv6 ospf6 priority" -- \
+      "interface dum9" " ipv6 ospf6 priority 1"
+probe ROUNDTRIPS "ipv6 ospf6 priority 42" \
+      "interface dum9" " no ipv6 ospf6 priority" -- \
+      "interface dum9" " ipv6 ospf6 priority 42"
+# And the ones the grammar DOES offer, every one of which has to roundtrip or
+# it has no business being offered. `cost 10` and `network broadcast` are FRR's
+# defaults and come back anyway, which is the same refutation section 1 makes
+# for OSPFv2: omission is per statement, not per value.
+probe ROUNDTRIPS "ipv6 ospf6 cost 10" \
+      "interface dum9" " no ipv6 ospf6 cost" -- \
+      "interface dum9" " ipv6 ospf6 cost 10"
+probe ROUNDTRIPS "ipv6 ospf6 network point-to-point" \
+      "interface dum9" " no ipv6 ospf6 network" -- \
+      "interface dum9" " ipv6 ospf6 network point-to-point"
+probe ROUNDTRIPS "ipv6 ospf6 passive" \
+      "interface dum9" " no ipv6 ospf6 passive" -- \
+      "interface dum9" " ipv6 ospf6 passive"
+probe ROUNDTRIPS "ipv6 ospf6 mtu-ignore" \
+      "interface dum9" " no ipv6 ospf6 mtu-ignore" -- \
+      "interface dum9" " ipv6 ospf6 mtu-ignore"
+probe ROUNDTRIPS "ipv6 ospf6 bfd" \
+      "interface dum9" " no ipv6 ospf6 bfd" -- \
+      "interface dum9" " ipv6 ospf6 bfd"
+# The statement the grammar deliberately does NOT offer, and the measurement
+# that says why. A comment claiming ospf6d REWRITES `interface <name> area
+# <a>` into the interface stanza was written first, off a probe that had typed
+# `ipv6 ospf6 area 0` into that same interface before looking for it - the
+# section 4d trap, made again by the same hand within the hour. Measured
+# properly, on an interface nothing else has touched:
+#
+#   vtysh: % Unknown command: interface dum8 area 0.0.0.0
+#
+# ospf6d has no such command in FRR 10.7.1. It is REFUSED, not rewritten, so
+# offering it would offer a statement that fails mid-commit - and the read-back
+# check is right to report its absence as a drop, which is why it must not be
+# excused in FRR_OMITS_AT either.
+run "interface dum8" " no ipv6 ospf6 area"
+OLDSPELL=$(vtysh -c "configure terminal" -c "router ospf6" \
+           -c "interface dum8 area 0.0.0.0" 2>&1 | tr -d '\r')
+echo "  vtysh answered: $OLDSPELL" | head -2
+expect "'interface <name> area' under router ospf6 is refused outright" \
+       sh -c 'case "$0" in *"Unknown command"*) exit 0 ;; *) exit 1 ;; esac' "$OLDSPELL"
+# Scoped to dum8's own stanza. The first version grepped the whole
+# configuration, and dum9 has carried `ipv6 ospf6 area 0` since the top of
+# this section - so the assertion was reading a line another probe had typed,
+# which is the one mistake this file is most careful about.
+expect "and it left nothing behind on that interface" \
+       sh -c '! vtysh -c "show running-config" 2>/dev/null \
+               | sed -n "/^interface dum8$/,/^exit$/p" | grep -q "ipv6 ospf6 area"'
+# The control, in the same place: the spelling the grammar DOES offer is
+# taken, so the refusal above is about that statement and not about ospf6d
+# refusing everything.
+probe ROUNDTRIPS "ipv6 ospf6 area 0.0.0.0" \
+      "interface dum8" " no ipv6 ospf6 area" -- \
+      "interface dum8" " ipv6 ospf6 area 0.0.0.0"
+run "interface dum9" " no ipv6 ospf6 area"
+run "no router ospf6"
+
+echo
 echo "=========== 5. the ordinary case, for contrast ==========="
 # Most statements do come back. If these went ABSENT the whole read-back idea
 # would be dead, and the lab would be saying so instead of asserting a list.
@@ -287,7 +374,7 @@ echo "=========== 6. the undo worked ==========="
 # The assertion that makes every one above mean something. If a probe's undo
 # silently failed, the next probe read a configuration the previous one had
 # written, and this file would be measuring its own order.
-LEFT=$(cfg | grep -cE "^ +(ip ospf|timers throttle|neighbor (10\.9\.9\.9|dum9))|^ip route 192\.0\.2\.0" || true)
+LEFT=$(cfg | grep -cE "^ +(ip ospf|ipv6 ospf6|timers throttle|neighbor (10\.9\.9\.9|dum9))|^ip route 192\.0\.2\.0|^router ospf6" || true)
 cfg | sed 's/^/  /'
 expect "nothing a probe typed is left behind (found $LEFT)" test "${LEFT:-1}" -eq 0
 

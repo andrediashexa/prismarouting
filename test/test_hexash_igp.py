@@ -780,5 +780,93 @@ check(sh.frr.commands == [] and "usage" in text,
       f"and a word it does not know reaches FRR as nothing: {text.strip()!r}")
 
 
+
+# ------------------------------------------------------------------- OSPFv3
+#
+# #187: the VTY accepted `router ospf6`, committed it, and ospf6d was enabled
+# in no file the product shipped. The installer and the self-test are where
+# that is fixed; these are the two halves of it that live in this file - that
+# the statement is DISCOVERABLE now, and that the one OSPFv2 check which is
+# also true of OSPFv3 fires on an OSPFv3 stanza while the rest stay silent.
+print("\n=== router ospf6 is something the box offers, not something it takes ===")
+check("ospf6" in hexash.TREE["config"]["router"][1],
+      "'?' under `router` lists ospf6 beside ospf, bgp and isis")
+check("ospf6" in hexash.INTERFACE_BLOCK["ipv6"][1],
+      "and `ipv6 ospf6` is offered inside an interface, where FRR puts it")
+check("area" in hexash.INTERFACE_BLOCK["ipv6"][1]["ospf6"][1],
+      "with the statement that actually enables it, `ipv6 ospf6 area`")
+# The block's own grammar. Before this it fell through to the answer for a
+# block this VTY does not model, which offers `exit` and nothing else - on a
+# statement the box accepted.
+sh = shell({}, DP_STALLED)
+sh.frr_ctx = ["router ospf6"]
+check(sh.block_grammar([]) is hexash.OSPF6_BLOCK,
+      "and inside it the statements are the OSPFv3 ones, not an empty block")
+sh.frr_ctx = ["router ospf"]
+check(sh.block_grammar([]) is hexash.OSPF_BLOCK,
+      "while `router ospf` still gets OSPFv2's, which the prefix could break")
+# The three statements the grammar deliberately does not offer, because FRR
+# leaves them out of its own read-back at their default (lab/frr-readback.sh
+# 4e) and the read-back check would report a working commit as a dropped
+# statement.
+for word in ("hello-interval", "dead-interval", "priority"):
+    check(word not in hexash.INTERFACE_BLOCK["ipv6"][1]["ospf6"][1],
+          f"`ipv6 ospf6 {word}` is not offered: FRR omits it at its default")
+    check(("ipv6 ospf6 " + word) in hexash.FRR_OMITS_AT,
+          f"and the read-back check knows to excuse it")
+
+print("\n=== an OSPFv3 stanza does not fire the OSPFv2 findings ===")
+# An alarm that cannot be right is one nobody reads (#205, #208). Every
+# finding in ospf_findings is about a v2 statement - `network ... area`,
+# `passive-interface`, an IPv4 CGNAT pool - and none of them has an OSPFv3
+# spelling, so the answer here has to be nothing at all.
+OSPF6_ROUTING = ["router ospf6", " ospf6 router-id 10.0.0.1",
+                 "interface vppwan0", " ipv6 ospf6 area 0"]
+found = hexash.ospf_findings(OSPF6_ROUTING, {"host-veth-vpp": ["10.0.0.1/24"]},
+                             {"vppwan0", "host-veth-vpp"},
+                             {"p": type("P", (), {"inside": ["10.0.0.0/24"]})()})
+check(found == [], f"nothing is said about it: {found}")
+# And the control: the same box configured for OSPFv2 on the same interface
+# IS reported, so the silence above is about the protocol and not about a
+# check that has stopped working.
+found2 = hexash.ospf_findings(
+    ["router ospf", " network 10.0.0.0/24 area 0"],
+    {"host-veth-vpp": ["10.0.0.1/24"]}, {"vppwan0", "host-veth-vpp"},
+    {"p": type("P", (), {"inside": ["10.0.0.0/24"]})()},
+    lcp_pairs={"host-veth-vpp": ["host-veth-vpp", "tap4096", "vppwan0"],
+               "vppwan0": ["host-veth-vpp", "tap4096", "vppwan0"]},
+    device_interfaces={"host-veth-vpp"})
+check(any("facing subscribers" in why for _, _, why in found2),
+      f"while the same interface under OSPFv2 still is: {found2}")
+
+print("\n=== the MTU stall, which OSPFv3 has for the same reason ===")
+# The one OSPFv2 finding that IS true of OSPFv3. Measured on lab/igp.sh's own
+# topology: with the TAP at 9000 against a 1500 wire the OSPFv3 adjacency
+# stopped short of Full, and reached it seconds after the two were made to
+# agree. RFC 5340 keeps the Interface MTU field in the database description
+# packet, so this is the same fault wearing a different protocol number - and
+# before #187 the box said nothing, because every check keyed on ospf_state()
+# and ospf_state() reads nothing out of an OSPFv3 configuration.
+MTUS = {"host-veth-vpp": 9000}
+sh = shell({}, DP_STALLED)
+found = sh.ospf_mtu_mismatch(OSPF6_ROUTING, MTUS)
+check(found == [("host-veth-vpp", "vppwan0", 9000, 1500)],
+      f"an OSPFv3 interface whose two halves disagree is reported: {found}")
+# The escape hatches, in OSPFv3's own spelling. Without these the warning
+# cannot be switched off by anything an operator can type in a v3 stanza,
+# which is how an always-on alarm starts.
+sh = shell({}, DP_STALLED)
+check(sh.ospf_mtu_mismatch(OSPF6_ROUTING + [" ipv6 ospf6 mtu-ignore"], MTUS) == [],
+      "`ipv6 ospf6 mtu-ignore` silences it, the way `ip ospf mtu-ignore` does")
+sh = shell({}, DP_STALLED)
+check(sh.ospf_mtu_mismatch(OSPF6_ROUTING + [" ipv6 ospf6 passive"], MTUS) == [],
+      "and so does `ipv6 ospf6 passive`: a port sending no hellos compares no MTU")
+# The negative half. A box running neither OSPF must stay silent, or the
+# check above is satisfied by a warning that is always on.
+sh = shell({}, DP_STALLED)
+check(sh.ospf_mtu_mismatch(["router bgp 65000"], MTUS) == [],
+      "a box running neither OSPF is not warned about an MTU it does not compare")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

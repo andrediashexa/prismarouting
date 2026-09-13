@@ -416,6 +416,79 @@ OSPF_INTERFACE = {
                    "made to agree", None),
 }
 
+# Offered inside `router ospf6`, and the reason it exists at all is #187: the
+# VTY took `router ospf6` as an unknown word and passed it to FRR, so it was
+# accepted, committed, and discoverable from nowhere - `?` did not list it and
+# TAB did not complete it - on a box whose installer enabled every OTHER
+# routing daemon. Offering a protocol only to those who already know it is
+# offered is the half-measure #99 was about.
+#
+# Every statement here was typed into a live FRR 10.7.1 and read back
+# (lab/frr-readback.sh 4e). The ones left OUT are as deliberate as the ones in:
+# ospf6d has no `interface <name> area <a>` inside the router block at all -
+# measured, "% Unknown command" - so an interface joins an area through `ipv6
+# ospf6 area` under `interface` and through nothing else.
+OSPF6_BLOCK = {
+    "ospf6": ("OSPFv3-wide settings", {
+        "router-id": ("the identifier this box uses in OSPFv3; it is a "
+                      "32-bit id written like an IPv4 address and is not an "
+                      "address", "<A.B.C.D>"),
+    }),
+    "area": ("area settings", ARG_AREA),
+    "redistribute": ("inject routes from another source", {
+        "connected": ("directly attached networks", "[route-map <name>]"),
+        "static": ("configured static routes", "[route-map <name>]"),
+        "bgp": ("routes BGP learned - on an edge box that is a full table "
+                "into the IGP, so give it a route-map", "[route-map <name>]"),
+        "isis": ("routes IS-IS learned", "[route-map <name>]"),
+    }),
+    "default-information": ("originate a default route", {
+        "originate": ("advertise ::/0",
+                      "[always] [metric <n>] [metric-type 1|2] "
+                      "[route-map <name>]"),
+    }),
+    "auto-cost": ("what a link's cost is measured against", {
+        "reference-bandwidth": ("in Mbit/s; without this every link at or "
+                                "above 100 Mbit/s costs 1, which disables "
+                                "path selection on a 10G box", "<1-4294967>"),
+    }),
+    "maximum-paths": ("how many equal-cost paths to install", "<1-64>"),
+    "log-adjacency-changes": ("log every adjacency transition", "[detail]"),
+    "timers": ("SPF timers", {
+        "throttle": ("throttle the SPF calculation", {
+            "spf": ("delay, initial hold, maximum hold, in milliseconds",
+                    "<delay> <init> <max>"),
+        }),
+    }),
+    "distance": ("administrative distance", "<1-255>"),
+    "exit": ("leave the OSPFv3 configuration", None),
+}
+
+# OSPFv3's interface statements, offered under `ipv6` because that is where
+# FRR puts them: an OSPFv3 interface is enabled with `ipv6 ospf6 area <a>` and
+# never with the `ip ospf` spelling OSPFv2 uses. The two protocols are
+# separate instances on separate address families, and a box can run both.
+#
+# hello-interval, dead-interval and priority are NOT here, and that is
+# measured rather than an oversight: FRR leaves all three out of its own
+# read-back when they are typed at their default, which is the #197 shape, and
+# the read-back check would report a commit that worked as a statement thrown
+# away. lab/frr-readback.sh probes them with a non-default control, which is
+# what tells an omission from a refusal, and FRR_OMITS_AT carries the answer.
+OSPF6_INTERFACE = {
+    "area": ("run OSPFv3 on this interface, in this area", ARG_AREA),
+    "cost": ("this interface's cost", "<1-65535>"),
+    "network": ("how OSPFv3 treats the link", {
+        "point-to-point": ("no DR election - what a transit link wants", None),
+        "broadcast": ("elect a DR (the default on Ethernet)", None),
+    }),
+    "passive": ("run OSPFv3 here and send no hellos", None),
+    "bfd": ("track the adjacency with BFD", None),
+    "mtu-ignore": ("do not compare MTU in database description packets - the "
+                   "escape hatch when the two sides disagree and cannot be "
+                   "made to agree", None),
+}
+
 # Offered inside an `interface <name>` block. It is not part of the mode tree
 # because the block is entered by an argument, not by a keyword the tree can
 # walk into - and an operator who cannot discover `mtu` with `?` will inherit
@@ -442,6 +515,7 @@ INTERFACE_BLOCK = {
         "nd": ("neighbour discovery", {
             "suppress-ra": ("stop advertising this box as a router", None),
         }),
+        "ospf6": ("OSPFv3 on this interface", OSPF6_INTERFACE),
         "router": ("join a routing instance", {
             "isis": ("run IS-IS for IPv6 on this interface, in whatever "
                      "topology the instance has", ARG_ISIS_TAG),
@@ -944,6 +1018,15 @@ FRR_OMITS_AT = {
     "ip ospf hello-interval": ("10",),
     "ip ospf retransmit-interval": ("5",),
     "bgp default ipv4-unicast": (),
+    # OSPFv3, probed when #187 made `router ospf6` something this VTY offers
+    # rather than a word it passed through. The three of them are not in the
+    # grammar for exactly this reason - an offered statement that comes back
+    # missing is a working commit the box refuses - and the entries are here
+    # so that an operator who types FRR's own spelling is not refused either.
+    # Each has a control at a non-default value in lab/frr-readback.sh 4e.
+    "ipv6 ospf6 hello-interval": ("10",),
+    "ipv6 ospf6 dead-interval": ("40",),
+    "ipv6 ospf6 priority": ("1",),
     # IS-IS, probed because lab/igp.sh configures it and nothing had asked.
     # Each of these has a control in lab/frr-readback.sh at a NON-default
     # value, which is what tells an omission from a refusal: a statement FRR
@@ -1189,6 +1272,12 @@ TREE = {
             "static": ("routes this box is told, rather than taught", None),
             "bgp": ("BGP", "<AS>"),
             "ospf": ("OSPF", "[vrf <name>]"),
+            # OSPFv3, a separate instance from OSPFv2 and not a mode of it -
+            # which is why it is a sibling here and not something under
+            # `router ospf`. It was reachable before #187 only by typing it
+            # blind, on a box where ospf6d was enabled nowhere.
+            "ospf6": ("OSPFv3, the IPv6 one - a separate instance from "
+                      "'router ospf'", None),
             "isis": ("IS-IS", ARG_ISIS_TAG),
         }),
         "interface": ("interface configuration", ARG_INTERFACE),
@@ -1906,6 +1995,54 @@ def ospf_state(routing):
             # ospf_findings fire on a box that runs no OSPF at all.
             passive.append((iface, line.strip()))
     return networks, iface_area, passive, unpassive, redist, has_ospf
+
+
+def ospf6_state(routing):
+    """
+    What the configuration says about OSPFv3, gathered once.
+
+    Returns (in_area, quiet, ignoring, has_ospf6). Separate from ospf_state()
+    and not folded into it, because the two protocols share no statement: an
+    OSPFv3 interface is enabled with `ipv6 ospf6 area <a>` and never with the
+    `ip ospf` spelling, and `router ospf6` is a different instance from
+    `router ospf` rather than an address family of it. ospf_state() therefore
+    reads NOTHING out of an OSPFv3 configuration, which is why every check
+    that keys on it was silent on one (#187).
+
+    Silent is the right answer for most of them - an OSPFv2 finding fired on a
+    v3 stanza would be an alarm that cannot be right, which is the #205/#208
+    lesson - but not for the MTU stall, because that fault is measured to be
+    the same fault: with the TAP at 9000 and the wire at 1500 an OSPFv3
+    adjacency stops short of Full and reaches it the moment the two agree.
+    """
+    in_area = {}       # interface -> area, from `ipv6 ospf6 area`
+    quiet = set()      # `ipv6 ospf6 passive`
+    ignoring = set()   # `ipv6 ospf6 mtu-ignore`
+    has_ospf6 = False
+    iface = None
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "ospf6"]:
+            iface, has_ospf6 = None, True
+            continue
+        if w[0] == "interface" and len(w) > 1:
+            iface = w[1]
+            continue
+        if w[0] in ("router", "route-map", "rpki", "vrf"):
+            iface = None
+            continue
+        if not iface or w[:2] != ["ipv6", "ospf6"]:
+            continue
+        if w[2:3] == ["area"] and len(w) >= 4:
+            in_area[iface] = w[3]
+            has_ospf6 = True
+        elif w[2:3] == ["passive"]:
+            quiet.add(iface)
+        elif w[2:3] == ["mtu-ignore"]:
+            ignoring.add(iface)
+    return in_area, quiet, ignoring, has_ospf6
 
 
 def ospf_findings(routing, addresses, have_interfaces, pools,
@@ -4660,9 +4797,17 @@ class Shell:
         legitimate is nobody saying so.
         """
         _, iface_area, passive, _, _, has_ospf = ospf_state(routing)
-        if not has_ospf:
+        # OSPFv3 stalls on this in exactly the same way, and until #187 the
+        # box said nothing about it: RFC 5340 keeps the Interface MTU field in
+        # the database description packet, and a pair whose TAP is at 9000
+        # against a wire at 1500 was measured stopping short of Full and
+        # reaching it the moment the two were made to agree. A protocol that
+        # cannot finish an adjacency for a reason only this box can see is the
+        # whole argument for this check existing.
+        _, quiet6, ignoring6, has_ospf6 = ospf6_state(routing)
+        if not has_ospf and not has_ospf6:
             return []
-        ignoring = set()
+        ignoring = set(ignoring6)
         iface = None
         for line in routing:
             w = line.split()
@@ -4675,7 +4820,7 @@ class Shell:
         rc, out = self.dp.run("show lcp")
         if rc != 0:
             return []
-        quiet = {i for i, _ in passive}
+        quiet = {i for i, _ in passive} | quiet6
         # Keyed on the interfaces whose MTU is KNOWN, not on every key
         # lcp_pairs returns. That map holds an entry for every name a pair
         # answers to - the dataplane name, the TAP's own name and the Linux
@@ -8005,6 +8150,11 @@ class Shell:
             return ISIS_BLOCK
         if block.split()[:2] == ["router", "ospf"]:
             return OSPF_BLOCK
+        # Before #187 this fell through to the "block this VTY does not model"
+        # answer, so `router ospf6` offered `exit` and nothing else - on a
+        # statement the box accepted and committed.
+        if block.split()[:2] == ["router", "ospf6"]:
+            return OSPF6_BLOCK
         if block.startswith("route-map "):
             return ROUTE_MAP_BLOCK
         if block.startswith("address-family "):

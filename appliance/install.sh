@@ -207,23 +207,33 @@ fi
 # installed without this runs the dataplane, the VTY, and static routes - and
 # none of the routing protocols.
 #
-# The VTY offers all three. "?" lists them, TAB completes them, "commit"
+# The VTY offers all four. "?" lists them, TAB completes them, "commit"
 # accepts them, and the daemon is not there. This project's own documentation
 # claims BGP, OSPF and IS-IS (#99).
+#
+# ospf6d is the fourth, and it was missing from this list for one release
+# longer than the rest (#187). The VTY took `router ospf6` as a word it did not
+# model and handed it to FRR, so it committed; nothing here enabled the daemon
+# that serves it, and nothing on the box said so until the commit check learned
+# to name the daemon. Measured before enabling it rather than after: an OSPFv3
+# adjacency over a linux_cp pair reaches Full and its prefix reaches the VPP
+# FIB, with no punt beyond the one OSPFv2 has always used - so this is a
+# protocol the box can run, and leaving it offered and disabled was the only
+# thing wrong with it.
 #
 # Enabled here rather than left to the distribution default, because inheriting
 # a default for something the product claims to support is exactly how it went
 # unnoticed: lab/routing.sh starts these daemons by hand, so the lab proved a
 # control plane the shipped box did not have.
 say "routing daemons"
-for d in bgpd ospfd isisd; do
+for d in bgpd ospfd ospf6d isisd; do
   if grep -qE "^$d=" "$DESTDIR/etc/frr/daemons" 2>/dev/null; then
     sed -i "s/^$d=no$/$d=yes/" "$DESTDIR/etc/frr/daemons"
   else
     echo "$d=yes" >> "$DESTDIR/etc/frr/daemons"
   fi
 done
-grep -E "^(bgpd|ospfd|isisd)=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
+grep -E "^(bgpd|ospfd|ospf6d|isisd)=" "$DESTDIR/etc/frr/daemons" | sed 's/^/  /'
 
 # The one file in /etc/frr an administrator has to be able to write.
 #

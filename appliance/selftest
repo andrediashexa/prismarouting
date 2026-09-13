@@ -203,7 +203,11 @@ if vtysh -c "show version" >/dev/null 2>&1; then
   # before somebody configures BGP on it.
   daemons=$(vtysh -c "show daemons" 2>/dev/null | tr -s ' ')
   missing=""
-  for d in bgpd ospfd isisd; do
+  # ospf6d is here for the same reason the other three are, and it was left
+  # out for one release longer (#187): the VTY accepted `router ospf6` and the
+  # installer enabled every daemon but that one, so OSPFv3 was the one
+  # protocol a box could be configured for and never run.
+  for d in bgpd ospfd ospf6d isisd; do
     case " $daemons " in *" $d "*) ;; *) missing="$missing $d" ;; esac
   done
   if [ -n "$missing" ]; then

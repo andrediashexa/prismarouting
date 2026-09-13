@@ -1,24 +1,32 @@
 #!/bin/sh
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
-# OSPF and IS-IS configured through the VTY, asserted on the tables that forward.
+# OSPF, OSPFv3 and IS-IS configured through the VTY, asserted on the tables that forward.
 #
-# Both IGPs are configured with `configure` ... `commit` at this box's own VTY,
+# All three IGPs are configured with `configure` ... `commit` at this box's own VTY,
 # and every assertion below reads the VPP FIB, an adjacency state, or the punt
 # the dataplane is actually doing - never the text of a configuration file.
 #
-#   [netns peer] OSPF / IS-IS                  [default] HexaRouting
+#   [netns peer] OSPF / OSPFv3 / IS-IS         [default] HexaRouting
 #     dum-ospf  198.18.0.0/24    -- OSPF -->   FRR -> kernel -> linux_nl
 #     dum-isis  198.19.0.0/24    -- ISIS -->                 -> FIB do VPP
 #               2001:db8:19::/64 -- ISIS -->
+#     dum-ospf6 2001:db8:66::/64 -- OSPFv3 ->
 #     veth-out 10.0.0.2 ------(veth)------ veth-vpp -> VPP -> vppwan0 10.0.0.1
 #              2001:db8:0::2                                          2001:db8:0::1
 #
-# THREE things this file does NOT do, and each one is the point of an assertion:
+# FOUR things this file does NOT do, and each one is the point of an assertion:
 #
-#  * `/etc/frr/ospfd.conf` and `/etc/frr/isisd.conf` are emptied to a `hostname`
-#    line, the way `bgpd.conf` was for #142. A prefix in the FIB is then
-#    evidence that the VTY configured a working protocol instance, not that FRR
-#    read a file this lab wrote.
+#  * it does NOT decide which routing daemons this box runs. It runs the
+#    installer into a fakeroot and starts what the installer enabled, so an
+#    IGP assertion below cannot pass on a box the product would not produce.
+#    That is #187: ospf6d was enabled in no file the product shipped while the
+#    VTY accepted `router ospf6`, and this lab could not see it because this
+#    lab held a daemon list of its own.
+#
+#  * `/etc/frr/ospfd.conf`, `/etc/frr/ospf6d.conf` and `/etc/frr/isisd.conf` are
+#    emptied to a `hostname` line, the way `bgpd.conf` was for #142. A prefix
+#    in the FIB is then evidence that the VTY configured a working protocol
+#    instance, not that FRR read a file this lab wrote.
 #  * `vppctl lcp osi-proto enable 0x83` is NOT run. The product enables the OSI
 #    punt when the configuration it is applying contains an IS-IS instance
 #    (#168); a lab that enables it by hand makes that assertion unfailable in
@@ -60,6 +68,12 @@ ip netns exec peer ip link add dum-isis type dummy
 ip netns exec peer ip addr add 198.19.0.1/24 dev dum-isis
 ip netns exec peer ip addr add 2001:db8:19::1/64 dev dum-isis
 ip netns exec peer ip link set dum-isis up
+# The third one, for OSPFv3 (#187). IPv6 only, because OSPFv3 carries nothing
+# else, and a prefix of its own so that "which protocol brought this" is never
+# a question the FIB cannot answer.
+ip netns exec peer ip link add dum-ospf6 type dummy
+ip netns exec peer ip addr add 2001:db8:66::1/64 dev dum-ospf6
+ip netns exec peer ip link set dum-ospf6 up
 
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
@@ -111,25 +125,46 @@ EOF
 cat > /etc/frr/bgpd.conf <<'EOF'
 hostname hexarouting
 EOF
+cat > /etc/frr/ospf6d.conf <<'EOF'
+hostname hexarouting
+EOF
 chown -R frr:frr /var/run/frr /etc/frr
-# These are the daemons THIS LAB arranges, not what the product ships: an
-# installed box inherits Debian's /etc/frr/daemons, where bgpd, ospfd and isisd
-# are all "no" (#99). Starting them by hand here is what let that go unnoticed,
-# so it is said out loud rather than left as a list somebody skims.
+
+. /src/lab/verdict.sh
+
+# WHICH daemons run on this box is the PRODUCT's answer, and this lab now asks
+# it instead of holding a list of its own.
 #
-# ospf6d is deliberately NOT started, and is not an oversight: the installer
-# does not enable it either, while the VTY offers `router ospf6`. That gap is
-# asserted on further down.
-for d in zebra ospfd isisd bgpd; do
-  /usr/lib/frr/$d -d -A 127.0.0.1 -f /etc/frr/$d.conf
-done
-# mgmtd and staticd: on FRR 10 they serve the statements that have no `router`
-# line, and without them vtysh answers "mgmtd is not running" to every one of
-# them. frrinit.sh starts both on a real box; a lab that starts daemons by hand
-# has to know that.
-/usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
-/usr/lib/frr/staticd -d -A 127.0.0.1 2>/dev/null
-sleep 1
+# The list used to be written out here - `for d in zebra ospfd isisd bgpd` -
+# with a comment explaining that an installed box would not have them. That is
+# the #99 shape one layer up: the lab could not fail when the installer's list
+# was wrong, because the lab's list was a copy that somebody would have to
+# remember to keep in step. Nobody did, and ospf6d was missing from the
+# installer for six releases while `router ospf6` committed (#187).
+#
+# So: seed a fakeroot with the distribution's own /etc/frr/daemons, run the
+# installer into it, and start exactly what the installer turned on. Every
+# protocol assertion below now rests on appliance/install.sh, and taking a
+# daemon back out of it fails this lab rather than passing it.
+install -D -m 0644 /etc/frr/daemons /tmp/fakeroot/etc/frr/daemons
+# The negative half, recorded BEFORE the installer runs. Without it "ospf6d is
+# enabled" is equally consistent with Debian having enabled it, and the
+# assertion would be about the distribution rather than about this product.
+expect "the distribution ships ospf6d disabled, as it does every daemon" \
+  sh -c "grep -q '^ospf6d=no$' /tmp/fakeroot/etc/frr/daemons"
+DESTDIR=/tmp/fakeroot sh /src/appliance/install.sh > /tmp/install-sh.log 2>&1 \
+  || { echo "  install.sh stopped early:"; tail -5 /tmp/install-sh.log | sed 's/^/    /'; }
+# Only the daemons. `vtysh_enable=yes` lives in the same file and is not a
+# process, and starting it would be a lab failing for a reason of its own
+# making.
+ENABLED=$(awk -F= '/^[a-z0-9]+d=yes$/ {print $1}' /tmp/fakeroot/etc/frr/daemons | tr '\n' ' ')
+echo "  the installer enabled: $ENABLED"
+expect "the installer enables the daemon that serves 'router ospf6'" \
+  sh -c "grep -q '^ospf6d=yes$' /tmp/fakeroot/etc/frr/daemons"
+# start_frr adds zebra, mgmtd and staticd, which frrinit.sh starts
+# unconditionally on a real box and which are not lines in this file at all.
+# shellcheck disable=SC2086
+start_frr $ENABLED
 
 # ---------------- upstream ----------------
 mkdir -p /var/run/frr/peer /etc/frr/peer
@@ -142,6 +177,17 @@ router ospf
  ospf router-id 10.0.0.2
  network 10.0.0.0/24 area 0
  network 198.18.0.0/24 area 0
+EOF
+cat > /etc/frr/peer/ospf6d.conf <<'EOF'
+hostname upstream
+interface veth-out
+ ipv6 ospf6 area 0
+exit
+interface dum-ospf6
+ ipv6 ospf6 area 0
+exit
+router ospf6
+ ospf6 router-id 10.0.0.2
 EOF
 cat > /etc/frr/peer/isisd.conf <<'EOF'
 hostname upstream
@@ -158,11 +204,9 @@ router isis HEXA
  is-type level-2-only
 EOF
 chown -R frr:frr /var/run/frr/peer /etc/frr/peer
-for d in zebra ospfd isisd; do
+for d in zebra ospfd ospf6d isisd; do
   ip netns exec peer /usr/lib/frr/$d -d -N peer -A 127.0.0.1 -f /etc/frr/peer/$d.conf
 done
-
-. /src/lab/verdict.sh
 
 # --- what the assertions read -------------------------------------------------
 #
@@ -180,6 +224,15 @@ isis_state() {
     | awk '$2 == "vppwan0" {print $4}'
 }
 isis_up() { case "$(isis_state)" in Up) return 0 ;; *) return 1 ;; esac; }
+# OSPFv3's state column. FRR prints it as "State/IfState" - `Full/DR`,
+# `ExStart/BDR` - so the adjacency's own half is what is read, and it is read
+# from the row whose interface is vppwan0 rather than from anywhere the word
+# "Full" might also appear.
+ospf6_state() {
+  vtysh -c 'show ipv6 ospf6 neighbor' 2>/dev/null | tr -d '\r' \
+    | awk '$NF ~ /^vppwan0\[/ {split($4, a, "/"); print a[1]}'
+}
+ospf6_full() { case "$(ospf6_state)" in Full) return 0 ;; *) return 1 ;; esac; }
 
 in_fib()  { vppctl show ip fib "$1" 2>/dev/null | grep -q "^$1"; }
 in_fib6() { vppctl show ip6 fib "$1" 2>/dev/null | grep -q "^$1"; }
@@ -341,6 +394,85 @@ expect_not_in "with nothing missing from it" "NOT in the forwarding table" \
 # linux_cp's OSI handling, so this says the section above proved the MTU and
 # not something else - and it is the precondition the IS-IS section below needs.
 expect "and nothing has enabled the OSI punt yet" test "$(osi_count)" -eq 0
+
+# =============================================================================
+# 1b. OSPFv3, which this box offered and could not run (#187)
+# =============================================================================
+#
+# The VTY accepted `router ospf6`, the commit reported success, and ospf6d was
+# enabled in no file the product shipped - so an operator could configure
+# OSPFv3 on a shipped box and nothing ran. The decision #187 asked for was
+# whether to take the statement out of the command tree or make it work, and
+# it was made by measuring rather than by arguing:
+#
+#   OSPFv3 hellos (IPv6 protocol 89 to ff02::5) reach the TAP over a linux_cp
+#   pair, captured with tcpdump on vppwan0 in both directions. VPP has no
+#   local handler for protocol 89, so the packet falls through ip6-local to
+#   ip6-punt and linux_cp's per-pair redirect DVRs it out of the TAP, ethernet
+#   header and all - which is the same reason OSPFv2 has always worked. The
+#   OSI punt IS-IS needs is not involved and stays off, asserted below.
+#
+# So the transport was never the problem, the daemon list was. It is asserted
+# here the way every other protocol in this file is: configured at this box's
+# own VTY, and read out of the table that forwards.
+#
+# AFTER the MTU is aligned, and that ordering is not cosmetic. OSPFv3 keeps
+# the Interface MTU field in its database description packets (RFC 5340), so
+# with the TAP at 9000 against a 1500 wire the adjacency stops short of Full
+# exactly as OSPFv2 did above - measured, and then measured again reaching
+# Full within seconds of the two being made to agree.
+echo
+echo "=========== OSPFv3 configured through the VTY ==========="
+OSPF6_T0=$(date +%s)
+OSPF6=$($HX -c "configure" -c "router ospf6" \
+        -c "ospf6 router-id 10.0.0.1" -c "exit" \
+        -c "interface vppwan0" -c "ipv6 ospf6 area 0" \
+        -c "exit" -c "commit" 2>&1)
+echo "$OSPF6" | tail -3 | sed 's/^/  /'
+expect_in "the VTY commits an OSPFv3 instance" "commit complete" "$OSPF6"
+# It must not be refused for a daemon that is not running. That refusal is the
+# box being right about a box that is wrong, and on an installed appliance
+# there is no longer such a box - so seeing it here would mean the installer
+# stopped enabling ospf6d.
+expect_not_in "and is not refused for a daemon nobody enabled" \
+  "ospf6d is not running" "$OSPF6"
+expect "and FRR is holding it, read back from the box" \
+  sh -c "vtysh -c 'show running-config' | grep -q '^router ospf6'"
+
+n=0
+until [ -n "$(ospf6_state)" ] || [ "$n" -ge 60 ]; do sleep 1; n=$((n + 1)); done
+echo "  the neighbour appeared after ${n}s, in state: $(ospf6_state)"
+expect "OSPFv3 hellos cross the punt path and a neighbour appears" \
+  sh -c "[ -n \"\$(vtysh -c 'show ipv6 ospf6 neighbor' 2>/dev/null | tr -d '\r' | awk '\$NF ~ /^vppwan0\[/ {split(\$4, a, \"/\"); print a[1]}')\" ]"
+
+n=0
+until ospf6_full || [ "$n" -ge 120 ]; do sleep 2; n=$((n + 2)); done
+T_OSPF6=$(( $(date +%s) - OSPF6_T0 ))
+echo "  --- show ipv6 ospf6 neighbor ---"
+vtysh -c "show ipv6 ospf6 neighbor" 2>&1 | sed 's/^/    /'
+expect "the OSPFv3 adjacency reached Full (${T_OSPF6}s)" ospf6_full
+
+# Full is not the route, for OSPFv3 exactly as for OSPFv2: after Full there is
+# an LSA exchange, an install into the kernel and a linux_nl walk into the VPP
+# FIB, and it is the FIB that forwards. Nothing in this suite had ever put an
+# IPv6 prefix in the VPP FIB by OSPFv3 - #187 says so in as many words.
+n=0
+until in_fib6 2001:db8:66::/64 || [ "$n" -ge 120 ]; do sleep 2; n=$((n + 2)); done
+echo "  --- what FRR installed in the kernel ---"
+ip -6 route show | grep -E "2001:db8:66" | sed 's/^/    /'
+echo "  --- 2001:db8:66::/64 in the VPP IPv6 FIB, raw ---"
+vppctl show ip6 fib 2001:db8:66::/64 | head -4 | sed 's/^/    /'
+expect "a prefix learned over OSPFv3 reached the VPP IPv6 FIB (${n}s)" \
+  in_fib6 2001:db8:66::/64
+# The negative that keeps the positive honest: the prefix came from OSPFv3 and
+# not from the IS-IS instance this file also builds, which is not configured
+# yet and whose own IPv6 prefix is a different one.
+expect "and the IS-IS prefix is not there yet, so it was OSPFv3 that brought it" \
+  sh -c "! vppctl show ip6 fib 2001:db8:19::/64 | grep -q '^2001:db8:19::/64'"
+# OSPFv3 is carried over IPv6 and needs nothing from linux_cp's OSI handling.
+# Without this line the section above would be equally consistent with OSPFv3
+# having needed the punt that IS-IS needs, which is the thing #168 is about.
+expect "and OSPFv3 needed no OSI punt: it is still off" test "$(osi_count)" -eq 0
 
 # =============================================================================
 # 2. IS-IS: the punt the PRODUCT does, with the negative half
@@ -529,42 +661,54 @@ echo
 echo "=========== withdrawal ==========="
 ip netns exec peer ip link set dum-ospf down
 ip netns exec peer ip link set dum-isis down
+ip netns exec peer ip link set dum-ospf6 down
 n=0
 until { ! in_fib 198.18.0.0/24 && ! in_fib 198.19.0.0/24 \
-        && ! in_fib6 2001:db8:19::/64; } || [ "$n" -ge 90 ]; do
+        && ! in_fib6 2001:db8:19::/64 && ! in_fib6 2001:db8:66::/64; } \
+      || [ "$n" -ge 90 ]; do
   sleep 1; n=$((n + 1))
 done
 echo "  after dropping the peer's stub interfaces (${n}s):"
 printf '    198.18.0.0/24    '; vppctl show ip fib 198.18.0.0/24 | head -1
 printf '    198.19.0.0/24    '; vppctl show ip fib 198.19.0.0/24 | head -1
 printf '    2001:db8:19::/64 '; vppctl show ip6 fib 2001:db8:19::/64 | head -1
+printf '    2001:db8:66::/64 '; vppctl show ip6 fib 2001:db8:66::/64 | head -1
 expect "the OSPF prefix left the VPP FIB"  sh -c "! vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24'"
 expect "the IS-IS prefix left the VPP FIB" sh -c "! vppctl show ip fib 198.19.0.0/24 | grep -q '^198.19.0.0/24'"
 expect "and so did the IPv6 one"           sh -c "! vppctl show ip6 fib 2001:db8:19::/64 | grep -q '^2001:db8:19::/64'"
+# A prefix that arrives and never leaves is a black hole with a route to it,
+# and that is as true of the protocol this box has just learned to run as of
+# the two it already did.
+expect "and the OSPFv3 prefix left it too" sh -c "! vppctl show ip6 fib 2001:db8:66::/64 | grep -q '^2001:db8:66::/64'"
 
 # The other half. Without it, "the prefixes left" is also what a lab that broke
 # the box looks like - and a withdrawal test that cannot tell those apart is
 # not testing withdrawal.
 ip netns exec peer ip link set dum-ospf up
 ip netns exec peer ip link set dum-isis up
-# The IPv6 address has to be put back by hand. Linux FLUSHES a link's IPv6
+ip netns exec peer ip link set dum-ospf6 up
+# The IPv6 addresses have to be put back by hand. Linux FLUSHES a link's IPv6
 # addresses when it goes down and does not restore them when it comes up (the
 # IPv4 one survives), so without this the prefix cannot return and the
 # assertion below would be failing for something that is not withdrawal.
 ip netns exec peer ip addr add 2001:db8:19::1/64 dev dum-isis 2>/dev/null
+ip netns exec peer ip addr add 2001:db8:66::1/64 dev dum-ospf6 2>/dev/null
 n=0
 until { in_fib 198.18.0.0/24 && in_fib 198.19.0.0/24 \
-        && in_fib6 2001:db8:19::/64; } || [ "$n" -ge 90 ]; do
+        && in_fib6 2001:db8:19::/64 && in_fib6 2001:db8:66::/64; } \
+      || [ "$n" -ge 90 ]; do
   sleep 1; n=$((n + 1))
 done
 echo "  after bringing them back up (${n}s):"
 printf '    198.18.0.0/24    '; vppctl show ip fib 198.18.0.0/24 | sed -n 2p
 printf '    198.19.0.0/24    '; vppctl show ip fib 198.19.0.0/24 | sed -n 2p
 printf '    2001:db8:19::/64 '; vppctl show ip6 fib 2001:db8:19::/64 | sed -n 2p
-expect "and all three came back when the peer brought them up (${n}s)" \
+printf '    2001:db8:66::/64 '; vppctl show ip6 fib 2001:db8:66::/64 | sed -n 2p
+expect "and all four came back when the peer brought them up (${n}s)" \
   sh -c "vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24' \
          && vppctl show ip fib 198.19.0.0/24 | grep -q '^198.19.0.0/24' \
-         && vppctl show ip6 fib 2001:db8:19::/64 | grep -q '^2001:db8:19::/64'"
+         && vppctl show ip6 fib 2001:db8:19::/64 | grep -q '^2001:db8:19::/64' \
+         && vppctl show ip6 fib 2001:db8:66::/64 | grep -q '^2001:db8:66::/64'"
 
 # =============================================================================
 # 4. What the VTY refuses, and what it must not
@@ -611,22 +755,31 @@ expect_not_in "and nothing was applied" "commit complete" "$NOAS"
 
 echo
 echo "=========== a protocol whose daemon is not running ==========="
-# The VTY offers `router ospf6`; the installer enables bgpd, ospfd and isisd and
-# NOT ospf6d (appliance/install.sh), and the boot self-test checks the same
-# three. So an operator can configure OSPFv3 on a shipped box and it reaches
-# nothing. The box has to say so at commit rather than report success.
-OSPF6=$($HX -c "configure" -c "router ospf6" -c "exit" -c "commit" 2>&1)
-echo "$OSPF6" | tail -3 | sed 's/^/  /'
-expect_in "router ospf6 is refused while ospf6d is not running" \
-  "ospf6d is not running" "$OSPF6"
-expect_in "and the refusal says where to enable it" "/etc/frr/daemons" "$OSPF6"
-expect_not_in "and nothing was applied" "commit complete" "$OSPF6"
-# The half that keeps the check from being "refuse everything": the two
-# protocols whose daemons ARE running committed above, and the adjacencies they
-# built are in the FIB.
-expect "while ospfd and isisd, which are running, committed and forward" \
+# This used to be `router ospf6`, and it was the assertion #187 was about: the
+# VTY accepted the statement, the installer enabled every daemon but that one,
+# and the lab asserted the refusal as though a protocol the box refuses were a
+# finished feature. It is not an assertion worth keeping against a protocol the
+# product claims - the box now runs OSPFv3, asserted above, in the FIB.
+#
+# The check itself still has to work, or removing it would pass the section
+# above just as well. RIP is the honest subject: FRR takes `router rip`, this
+# product claims nothing about it, the installer enables no ripd, and an
+# operator who types it has to be told at commit rather than after an
+# afternoon of wondering why nothing is learned.
+RIP=$($HX -c "configure" -c "router rip" -c "exit" -c "commit" 2>&1)
+echo "$RIP" | tail -3 | sed 's/^/  /'
+expect_in "router rip is refused while ripd is not running" \
+  "ripd is not running" "$RIP"
+expect_in "and the refusal says where to enable it" "/etc/frr/daemons" "$RIP"
+expect_not_in "and nothing was applied" "commit complete" "$RIP"
+# The half that keeps the check from being "refuse everything": the three
+# protocols whose daemons ARE running committed above, and what their
+# adjacencies brought is in the FIB - including OSPFv3, which is the one this
+# section used to assert was impossible.
+expect "while ospfd, ospf6d and isisd, which are running, committed and forward" \
   sh -c "vppctl show ip fib 198.18.0.0/24 | grep -q '^198.18.0.0/24' \
-         && vppctl show ip fib 198.19.0.0/24 | grep -q '^198.19.0.0/24'"
+         && vppctl show ip fib 198.19.0.0/24 | grep -q '^198.19.0.0/24' \
+         && vppctl show ip6 fib 2001:db8:66::/64 | grep -q '^2001:db8:66::/64'"
 
 # =============================================================================
 # 5. The commands an operator runs while an IGP is wrong (#176)
