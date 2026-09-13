@@ -214,6 +214,25 @@ Os contadores são o motivo de o relatório existir. *No ar* e *no ar e descarta
 
 O nome exato tem precedência: pedir `GigabitEthernet0/12/0` numa caixa que também tem `GigabitEthernet0/12/0.100` traz o relatório da interface, não a lista das duas.
 
+## A placa entregue ao dataplane não é uma destas
+
+`interface <nome>` configura uma interface que o dataplane **já tem**. Qual placa física ele recebe é outra decisão, um nível abaixo, e mora no topo do modo de configuração:
+
+```
+hexarouting> configure
+hexarouting# [edit] dataplane interface enp2s0
+hexarouting# [edit] commit
+```
+
+A diferença é prática. Numa caixa que ainda não recebeu placa nenhuma o dataplane não tem interface alguma, então não há `interface <nome>` para entrar — e `show interface` está vazio justamente na hora em que você precisa escolher. Por isso o nome aqui é o que o **Linux** dá à placa, e quem lista os candidatos é o próprio `?`.
+
+| Comando | Argumento | O que faz |
+|---------|-----------|-----------|
+| `dataplane interface` | `<placa>` | entrega esta placa ao dataplane no próximo início dele |
+| `no dataplane interface` |           | a caixa deixa de pegar placa: estado seguro, alcançável por rede |
+
+O `commit` guarda a escolha, recalcula o ajuste de boot e **não reinicia o dataplane** — a entrega derruba todas as sessões da caixa, inclusive a sua, então a janela é sua. A placa que carrega a rota default é recusada na hora em que você digita, e um nome que a caixa não tem também, com a lista dos que ela tem. Os dois casos, com o que a caixa imprime, estão em [Primeiros passos](/doc/primeiros-passos-TAWDdSrYG7).
+
 # Como conferir
 
 * `show interface <nome>` traz o relatório, com estado, endereços, VRF, MAC e contadores;

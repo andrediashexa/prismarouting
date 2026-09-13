@@ -525,8 +525,71 @@ traffic, so this was the ordinary case rather than the exception.
 
 So the tuner now emits `dpdk { no-pci }` when it cannot resolve a device, the
 setting ships **empty**, and the boot self-test says the box has no dataplane
-interface and names the file to edit. A box that forwards nothing looks like a
-box that is working, so it has to be said out loud.
+interface and names the statement that gives it one. A box that forwards
+nothing looks like a box that is working, so it has to be said out loud.
+
+### Naming the card from the VTY
+
+The empty default is the right answer to #123 and it left the other half
+missing: **there was no way to name the card that was not an editor in Linux.**
+Every fresh install came up forwarding nothing, and the remedy the box printed
+was `vi /etc/hexarouting/tune.env`. `docs/context.md` argues that an operator
+who has to drop to `vppctl` is one for whom this VTY is decoration; the same
+holds for one who has to drop to an editor
+([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
+
+It is now a statement like any other — in the candidate, committed, saved by
+`save`, rendered by `show running-config`:
+
+```
+hexarouting> configure
+hexarouting# [edit] dataplane interface enp2s0
+hexarouting# [edit] commit
+dataplane interface: enp2s0
+    stored, and the boot tuning was recomputed for it
+    NOT IN EFFECT YET: the dataplane claims its card when it starts, and this
+    commit does not restart it
+    restarting it hands the card over and ends every session on this box,
+    including this one, so it is not done for you
+    reboot the box in a window you have chosen, and it comes up forwarding on
+    that card
+commit complete
+```
+
+`commit` writes `HEXA_DATAPLANE_IF` into `tune.env` and restarts
+`hexarouting-tune`, which regenerates `startup.conf` and binds the NIC. **It
+does not restart VPP.** Handing a card to the dataplane takes it away from
+Linux and ends every session on the box, the operator's included — the same
+class of consequence as `commit remap`, which this VTY refuses until it is
+asked for by name. No verb has been invented for it here, because nothing in
+this repository has measured what that restart costs on a box carrying
+traffic, and a dangerous verb offered on no measurement is one somebody uses
+because they were told it was safe. The commit stops at the boundary and says
+where the boundary is.
+
+Every other line of `tune.env` survives byte for byte. The file is
+hand-editable by design and most of it is prose — the paragraph on why the
+field ships empty, the worker cap and the argument for leaving it uncapped —
+and a commit that regenerated it from the four settings the VTY models would
+delete all of that on the first use.
+
+The running configuration is **read back** from `tune.env`, not remembered, so
+a box set up the old way shows its own card in `show running-config` and a
+second commit of the same value is `no changes to commit`.
+
+Two refusals fire at the prompt, before anything is stored:
+
+| typed | refused because |
+|---|---|
+| the card carrying the default route | it is how the box is reached; the refusal says what it would cost |
+| a name this box has not got | with the list of names it does have |
+
+The first already existed in `hexarouting-tune` and in `bind-dataplane-nic`.
+It is said here as well because *where* it is said is the difference: a
+refusal in a journal at the next boot is one the operator reads hours later,
+and this mistake costs a site visit. The default route is read from
+`/proc/net/route` — the same source the tuner and the bind script read, so the
+three cannot come to disagree about which card the box is reached over.
 
 ### Naming it was never enough
 
@@ -730,9 +793,10 @@ sh appliance/build-iso.sh            # hybrid BIOS/UEFI ISO
 sh tools/lab.sh boot-iso             # boot it and check the self-test
 ```
 
-After installing, adjust `/etc/hexarouting/tune.env` (dataplane NIC and
-subscriber target) and reboot: `isolcpus` and hugepages only apply on the next
-boot.
+After installing, name the dataplane NIC from the VTY (`configure`, then
+`dataplane interface <name>`, then `commit`), adjust the subscriber target in
+`/etc/hexarouting/tune.env`, and reboot: `isolcpus` and hugepages only apply
+on the next boot, and so does the handover of the card.
 
 ## What the console shows on a first boot
 

@@ -96,6 +96,14 @@ def shell(mode):
 
     sh.dp = type("D", (), {"TRACE": False, "run": run,
                            "reachable": lambda _s: True})()
+    # The cards LINUX has are a property of the MACHINE RUNNING THIS SUITE,
+    # not of the product, so they are put out of reach here. Left alone, the
+    # walk would resolve `dataplane interface <nic>` against the developer's
+    # own /sys/class/net and refuse every name a page could possibly print -
+    # a suite that passes or fails on whose laptop it ran. Out of reach, the
+    # marker enumerates nothing and the walk stops at it, which is exactly
+    # how `<pool>`, `<user>` and every other per-box argument are treated.
+    sh.SYS_CLASS_NET = "/nonexistent/sys/class/net"
     sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
                             "running": lambda s: [],
                             "show": lambda s, c: (1, "")})()

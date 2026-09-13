@@ -1315,6 +1315,24 @@ if said '\[warn\] no dataplane interface: VPP was given no NIC'; then
 else
   bad "no-pci said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
 fi
+# THE COMMAND, not a path and an editor. This is the message an operator reads
+# on the console of a box that has just come up forwarding nothing, and until
+# #283 it sent them out of the VTY to vi - which is the defect, not the
+# remedy. The same words the VTY's own diagnosis prints: two accounts of one
+# fact that disagree are worse than one.
+if said "dataplane interface <name>" && said "commit"; then
+  ok "and the way to give it one is a command in the VTY"
+else
+  bad "the advice does not name the statement that fixes it: $(printf '%s\n' "$OUTPUT" | grep -A4 -i 'no dataplane interface' || echo '<nothing>')"
+fi
+# Named exactly, and not by the file: the worker cap really does live in that
+# file and really is advised there, a few checks up, so a bare match on the
+# filename would be red for a message that is right.
+if said 'HEXA_DATAPLANE_IF'; then
+  bad "the advice still sends the operator to a variable in a Linux file"
+else
+  ok "and it does not send them to an editor in Linux"
+fi
 if said '\[FAIL\] the dataplane may claim any NIC'; then
   bad "no-pci was reported as the dangerous case; it is the opposite of it"
 else

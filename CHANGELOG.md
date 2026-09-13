@@ -195,7 +195,80 @@ version has a chance of seeing it.
 
   Registered in the grammar, so `?` and TAB offer it. It is **not** `show
   hardware-interfaces`, which is the dataplane's own command for its ports; this
-  one answers about the box.
+  one answers about the box.* **The dataplane interface can be named from the VTY, so a fresh appliance
+  can be put to work without leaving it**
+  ([#283](https://github.com/andrediashexa/hexarouting/issues/283)). The empty
+  `HEXA_DATAPLANE_IF` is the right answer to
+  [#123](https://github.com/andrediashexa/hexarouting/issues/123) - with
+  nothing named VPP probes and takes whatever NIC it finds, which on a
+  single-NIC box is the management port - and it left the other half missing.
+  **There was no way to name the card that was not an editor in Linux.** Every
+  fresh install came up forwarding nothing, and the remedy the box printed was
+  a path and a variable. `docs/context.md` argues that an operator who has to
+  drop to `vppctl` is one for whom this VTY is decoration; the same holds for
+  one who has to drop to `vi`.
+
+  `dataplane interface <name>` is now a configuration statement like any
+  other: it goes into the candidate, is committed, is written by `save`, and
+  is rendered by `show running-config` and `show configuration`. The name is
+  the one **Linux** gives the card, because before the handover the card
+  exists only to Linux - and because `show interface`, which answers from the
+  dataplane, is empty precisely when this question is being asked. `?` and TAB
+  list the cards the box has and mark the one carrying the default route.
+
+  **`commit` does not restart VPP, and that is the design rather than an
+  omission.** It writes `HEXA_DATAPLANE_IF` into the tuner's file and restarts
+  `hexarouting-tune`, which regenerates `startup.conf` and binds the NIC; then
+  it says, inside the console budget, that the card has not moved yet, that
+  moving it ends every session on the box including the operator's own, and
+  that a reboot in a chosen window is what puts it in effect. That is the same
+  class of consequence as `commit remap`, which this VTY refuses until it is
+  asked for by name - and no verb has been invented for this one, because
+  nothing in this repository has measured what a VPP restart costs on a box
+  carrying traffic. A dangerous verb offered on no measurement is one somebody
+  uses because they were told it was safe.
+
+  **Every other line of `tune.env` survives byte for byte.** The file is
+  hand-editable by design and most of it is prose - the paragraph on why the
+  field ships empty, the worker cap and the argument for leaving it uncapped -
+  so the assignment is replaced in place, through a temporary file and a
+  rename, rather than the file being regenerated from the settings this VTY
+  models. The suite asserts the other lines are unchanged in order and that
+  the comment count is the same, because what a regenerated file loses first
+  is the prose, and a check that only looked at the settings would pass over a
+  file stripped of every comment.
+
+  **Two refusals fire at the prompt, before anything is stored.** The card
+  carrying the default route is refused, with what it would cost; a name the
+  box has not got is refused with the list of the names it does have, which is
+  the shape `interface <name>` refusals already use
+  ([#105](https://github.com/andrediashexa/hexarouting/issues/105)). Both are
+  checked again in `apply(check_only=True)`, because `rollback` and `--load`
+  reach the same setting without passing the prompt. The first refusal already
+  existed in `hexarouting-tune` and in the NIC binding, and is said here as
+  well because *where* it is said is the difference: a refusal in a journal at
+  the next boot is one the operator reads hours later, and this mistake is the
+  one that costs a site visit. The default route is read from
+  `/proc/net/route` - the same source the tuner and the bind script read, so
+  the three cannot come to disagree about which card the box is reached over.
+
+  The running configuration is **read back** from the tuner's file rather than
+  remembered, like every other field: a box set up the old way shows its own
+  card in `show running-config` without anybody retyping it, and a second
+  commit of the same value is `no changes to commit`.
+
+  The advice the box gives when it has no card was the other half of the
+  defect and is changed with it. `Shell.why_no_dataplane_interface` and
+  `appliance/selftest` both said to set `HEXA_DATAPLANE_IF` in a file; both
+  now name the statement, in the same words, and the suites assert that
+  neither sends the operator back to an editor.
+
+  `test/test_dataplane_if.py` drives all of it against a fake `/sys/class/net`,
+  `/proc/net/route` and `tune.env` in a tempdir, through the seams the product
+  already has, with nothing about the path under test stubbed. Twenty-five
+  mutations of the product were each shown turning it red, including one that
+  restarts VPP from the commit and one that lets the default-route refusal
+  through.
 
 ### Fixed
 

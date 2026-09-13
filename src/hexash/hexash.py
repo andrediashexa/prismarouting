@@ -209,6 +209,11 @@ ARG_WORD = "<word>"
 # nothing and says so, rather than hanging or raising: a VTY that cannot be
 # used while the dataplane is down is a VTY that cannot be used to fix it.
 ARG_INTERFACE = "<interface>"
+#: The card as LINUX names it, which is a different question from
+#: ARG_INTERFACE and has to be: before the dataplane has been given a card it
+#: has no interfaces at all, so the one screen that could list the candidates
+#: is empty exactly when the operator needs it (#283).
+ARG_HOST_NIC = "<nic>"
 ARG_POOL = "<pool>"
 ARG_USER = "<user>"
 ARG_SNMP_USER = "<snmp-user>"
@@ -1174,7 +1179,8 @@ DELTA_CGNAT = ("pool_add", "pool_remove", "pool_replace", "settings_set",
                "limits_set", "bypass_set", "fwd_add", "fwd_del", "if_add",
                "if_remove", "globals")
 DELTA_ADMIN = ("routing_changed", "ssh_changed", "users_changed",
-               "snmp_changed", "mtu_set", "mtu_del", "urpf_set", "urpf_del",
+               "snmp_changed", "dataplane_if_changed",
+               "mtu_set", "mtu_del", "urpf_set", "urpf_del",
                "desc_set", "desc_del", "admin_down", "admin_up",
                "addr_add", "addr_del", "subif_add", "subif_del", "vrf_set",
                "loopback_add", "loopback_del", "lcp_set", "lcp_del",
@@ -1519,7 +1525,10 @@ TREE = {
                 "cgnat": ("remove CGNAT configuration", {
                     "pool": ("remove a pool", ARG_POOL),
                     "interface": ("disable CGNAT on an interface",
-                                  ARG_INTERFACE)})})}),
+                                  ARG_INTERFACE)})}),
+            "dataplane": ("stop handing a card to the dataplane", {
+                "interface": ("the box claims no card at the next start of "
+                              "the dataplane", None)})}),
         "ip": ("IP configuration", {
             "prefix-list": ("a named list of prefixes, for matching in policy",
                             ARG_PREFIX_LIST)}),
@@ -1550,6 +1559,12 @@ TREE = {
             "isis": ("IS-IS", ARG_ISIS_TAG),
         }),
         "interface": ("interface configuration", ARG_INTERFACE),
+        # The card the dataplane is GIVEN, which is not one of the interfaces
+        # the dataplane has - a fresh appliance has none of those, and the
+        # only way to name one used to be editing a file in Linux (#283).
+        "dataplane": ("the card handed to the dataplane", {
+            "interface": ("the card carrying subscriber traffic, by the name "
+                          "Linux gives it", ARG_HOST_NIC)}),
         "ssh": ("the SSH daemon", {
             "port": ("TCP port", ARG_NUM),
             "listen-address": ("address to listen on", ARG_WORD),
@@ -4511,6 +4526,12 @@ class Shell:
         # Read from the box, not from what this VTY last wrote: the same
         # reason the CGNAT half is read back from the dataplane.
         cfg.ssh = self.sys.read_ssh()
+        # From the tuner's own input, which is the only place that knows. Read
+        # back rather than remembered for the same reason as everything above,
+        # and with one extra consequence: editing that file by hand was the
+        # ONLY way to set this until now, so a box configured the old way shows
+        # its card in `show running-config` without anybody re-typing it.
+        cfg.dataplane_if = self.read_dataplane_if()
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
@@ -5331,6 +5352,18 @@ class Shell:
             if why:
                 self.err(why)
                 ok = False
+            # The same refusals `do_config` gives at the prompt, on the paths
+            # that never see the prompt: `rollback` to a revision written when
+            # the box had a different card in it, and `--load` of a file
+            # hexarouting.service replays at every boot. Only when THIS change
+            # asks for it - a box already set to a card the tuner will refuse
+            # must still be able to commit the change that repairs something
+            # else, which is the same posture as the lockout check below.
+            if d["dataplane_if_changed"] and target.dataplane_if:
+                why = self.dataplane_if_refusal(target.dataplane_if)
+                if why:
+                    self.say_dataplane_if_refusal(target.dataplane_if, why)
+                    ok = False
             # Refused only when THIS CHANGE is what causes it. A box that
             # already has nobody able to log in over SSH - freshly installed,
             # reached by console - must still be able to commit a CGNAT
@@ -5945,6 +5978,18 @@ class Shell:
                 if "BELOW" in line:
                     print(f"warning:{line.rstrip()}")
 
+        # The card the dataplane is to be given, before SSH and for a reason
+        # that is not ordering: nothing here takes effect until the dataplane
+        # starts again, so it cannot leave the box half-changed. It goes with
+        # the box's own configuration because that is what it is, and it goes
+        # FIRST of that group so its "not in effect yet" paragraph is not
+        # buried under whatever SSH and the accounts printed.
+        if d["dataplane_if_changed"]:
+            ok, msg = self.apply_dataplane_if(target.dataplane_if)
+            if not ok:
+                self.err(f"dataplane interface: {msg}")
+                return False
+            self.say_dataplane_if_pending(target.dataplane_if, msg)
         if d["ssh_changed"]:
             ok, msg = self.sys.write_ssh(target.ssh)
             if not ok:
@@ -7495,6 +7540,31 @@ class Shell:
             else:
                 self.candidate.snmp[w[1]] = " ".join(w[2:])
             return True
+        if w[:2] == ["no", "dataplane"]:
+            # `no dataplane` and `no dataplane interface` alike: there is one
+            # setting under that word, so refusing the shorter spelling would
+            # be a refusal with nothing behind it.
+            self.candidate.dataplane_if = ""
+            return True
+        if w[0] == "dataplane":
+            if w[1:2] != ["interface"] or len(w) != 3:
+                self.err("usage: dataplane interface <name>")
+                return True
+            # REFUSED HERE, at the prompt, and checked again at commit.
+            #
+            # Both, and neither is redundant. This one is the message that
+            # reaches a person who is still typing and can fix it in the next
+            # keystroke; the one in apply() covers `rollback` and `--load`,
+            # which reach the same setting without passing through here. A
+            # refusal an operator only discovers after committing is one they
+            # act on hours later, and the mistake this catches costs a site
+            # visit (#123).
+            why = self.dataplane_if_refusal(w[2])
+            if why:
+                self.say_dataplane_if_refusal(w[2], why)
+                return True
+            self.candidate.dataplane_if = w[2]
+            return True
         if w[0] == "ssh":
             if len(w) < 3:
                 self.err("usage: ssh <setting> <value>")
@@ -8632,10 +8702,17 @@ class Shell:
             except OSError:
                 pass
             if not named:
+                # The remedy is a command in THIS VTY now. It used to be a
+                # path and an editor, which is the defect #283 was filed for:
+                # the product's argument is that the operator never leaves
+                # here, and advice that sends them to Linux contradicts it in
+                # the one message they read when the box forwards nothing.
                 return ["no interface was named, so VPP was given no NIC.",
-                        f"Set HEXA_DATAPLANE_IF in {self.TUNE_ENV} to the "
-                        "interface carrying subscriber traffic,",
-                        "then restart hexarouting-tune and vpp."]
+                        "Name it here: 'configure', then 'dataplane "
+                        "interface <name>',",
+                        "then 'commit'. A name this box has not got is "
+                        "refused, and the",
+                        "refusal says which ones it has."]
             return [f"'{named}' was named and VPP was given no NIC.",
                     "Either it does not exist on this box, or it could not be "
                     "resolved to a PCI address,",
@@ -8914,6 +8991,219 @@ class Shell:
                         f"'{mgmt}', which is not a PCI NIC, and that is "
                         f"still the path this box is reached over.",
                         indent="  ")
+
+    # --------------------------------------------- naming the dataplane card
+    #
+    # WHY THIS IS IN THE VTY AT ALL. Until this existed the only way to give
+    # an appliance a card was to edit HEXA_DATAPLANE_IF in the tuner's file
+    # from a Linux shell, which is the state every fresh install comes up in:
+    # nothing is claimed, VPP has no interface, and the box forwards nothing.
+    # docs/context.md makes the argument for the other half of this - an
+    # operator who has to drop to vppctl is one for whom this VTY is
+    # decoration - and it holds identically for one who has to drop to an
+    # editor (#283).
+
+    # The card list and the default route are read by host_nics() and
+    # default_route_nic(), which `show hardware` already owns. This used to
+    # carry its own pair of readers with the same two seams, and two answers
+    # to "which card carries the default route" is exactly the pair that comes
+    # to disagree - here by refusing one card at the prompt while the listing
+    # marks a different one.
+
+    def dataplane_if_refusal(self, name):
+        """
+        Why this box will not hand `name` to the dataplane, or None.
+
+        Returns (headline, [prose]). Both refusals exist somewhere already and
+        are said HERE anyway, at the prompt, because where they are said is the
+        whole difference:
+
+          * the tuner refuses the card carrying the default route (#123), and
+            it does so at the next boot, in a journal, on a box the operator
+            has by then stopped watching. A refusal discovered after committing
+            is one the operator acts on hours later.
+          * `bind-dataplane-nic` refuses it again before unbinding. That one is
+            the last line of defence and it stays; this one is the first.
+
+        A name the box has not got is refused the way every other interface
+        name is in this VTY (#105): by saying what the box DOES have, because
+        a refusal that only says no leaves the operator to guess the spelling
+        of a card they cannot see.
+        """
+        have = [n["name"] for n in self.host_nics()]
+        # Cannot look is not "the box has none". On anything that is not Linux
+        # - which is where this VTY's own suites run - the directory is absent,
+        # and refusing every name there would make the setting untestable and
+        # unusable rather than safe.
+        if have and name not in have:
+            return ("this box has no such interface",
+                    ["the cards it has: " + ", ".join(have),
+                     "this is the name LINUX gives the card, which is what "
+                     "the dataplane is handed; 'show interface' lists what "
+                     "the dataplane already has, and on a box with no card "
+                     "that is nothing"])
+        if name and name == self.default_route_nic():
+            return ("it carries the default route",
+                    ["handing it to the dataplane takes the card away from "
+                     "Linux, and this box off the network with it",
+                     "the two mistakes do not cost the same: a box with no "
+                     "dataplane card is fixed over the network, and a box "
+                     "that ate its own management is fixed by walking to it",
+                     "name the card carrying subscriber traffic instead"])
+        return None
+
+    def say_dataplane_if_refusal(self, name, why):
+        """One refusal, printed: the statement's own words, then the reason."""
+        headline, prose = why
+        # The name is on the headline rather than on a row of its own, which
+        # is the shape #105 uses for `interface <name>`. It fits: Linux will
+        # not carry a name over fifteen characters, so the widest this can
+        # measure is well inside the console.
+        self.err(f"dataplane interface {name}: {headline}")
+        for line in prose:
+            print_prose(line)
+
+    def read_dataplane_if(self):
+        """
+        The card the box is currently set to hand over, read from the tuner's
+        own input.
+
+        Read back from the box rather than remembered, for the reason every
+        other field of the running configuration is: an operator who set this
+        by editing the file - which was the only way until now - must see their
+        own box in `show running-config`, and a VTY that reports what it last
+        wrote is a VTY that cannot notice being wrong.
+
+        LAST assignment wins, because that is what systemd does with an
+        EnvironmentFile and what the boot self-test already reports.
+        """
+        found = ""
+        try:
+            with open(self.TUNE_ENV) as f:
+                for line in f:
+                    s = line.strip()
+                    if s.startswith(self.TUNE_KEY + "="):
+                        v = s.split("=", 1)[1].strip()
+                        found = v.strip('"').strip("'")
+        except OSError:
+            pass
+        return found
+
+    def write_dataplane_if(self, name):
+        """
+        Set the tuner's input to `name`, and change nothing else in the file.
+
+        Returns (ok, message).
+
+        EVERY OTHER LINE SURVIVES, and that is not politeness. The file is
+        hand-editable by design and most of it is prose: the paragraph saying
+        why the field ships empty, the subscriber count, the worker cap and the
+        argument for leaving it uncapped. Rewriting it from the four settings
+        this VTY models would delete all of that, on the first commit, from a
+        file the operator is told they may edit.
+
+        Written through a temporary file and renamed, so a box that loses power
+        mid-write comes up with the old file rather than half of one. The
+        tuner's file is read at every boot, and a truncated one takes the
+        tuning with it.
+        """
+        assign = f"{self.TUNE_KEY}={name}"
+        try:
+            with open(self.TUNE_ENV) as f:
+                lines = f.read().splitlines()
+        except FileNotFoundError:
+            # No file at all is not an appliance, or is one whose file was
+            # removed. One is written rather than refusing: the unit reads it
+            # with a leading '-', so an absent file is not an error there
+            # either, and refusing here would leave the operator with no way
+            # to proceed from the VTY - which is the defect being repaired.
+            lines = ["# Written by hexash. Set through the VTY: "
+                     "'dataplane interface <name>'."]
+        except OSError as e:
+            return False, f"{self.TUNE_ENV}: {e.strerror}"
+
+        out, replaced = [], False
+        for line in lines:
+            if line.strip().startswith(self.TUNE_KEY + "="):
+                out.append(assign)
+                replaced = True
+            else:
+                out.append(line)
+        if not replaced:
+            out.append(assign)
+
+        tmp = self.TUNE_ENV + ".new"
+        try:
+            d = os.path.dirname(self.TUNE_ENV)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(tmp, "w") as f:
+                f.write("\n".join(out) + "\n")
+            os.replace(tmp, self.TUNE_ENV)
+        except OSError as e:
+            return False, f"{self.TUNE_ENV}: {e.strerror}"
+        return True, ""
+
+    def apply_dataplane_if(self, name):
+        """
+        Store the card, run the tuner, and say what is still outstanding.
+
+        WHAT THIS DELIBERATELY DOES NOT DO IS RESTART VPP. Handing a card to
+        the dataplane takes it away from Linux, and every session on this box
+        ends the instant that happens - including the one the operator is
+        typing in. That is the same class of consequence as `commit remap`,
+        which this VTY refuses until it is asked for by name.
+
+        It is not given a word of its own here, and that is a limit rather
+        than an oversight: nothing in this repository has measured what a VPP
+        restart costs on a box carrying traffic, and inventing a dangerous
+        verb on no measurement is how a box comes to be restarted by somebody
+        who was told it was safe. So the commit stops at the boundary and says
+        where the boundary is.
+        """
+        ok, why = self.write_dataplane_if(name)
+        if not ok:
+            return False, why
+        # The unit, not the script: it is what carries the EnvironmentFile.
+        # rc 127 is systemctl not being on this machine at all, which is every
+        # developer box and every suite - written and not run is the honest
+        # answer there, not a failure.
+        rc, out = self.sys._run(["systemctl", "restart", self.TUNE_UNIT])
+        if rc == 127:
+            return True, "stored; the tuner is not on this machine, so " \
+                         "nothing was recomputed"
+        if rc != 0:
+            return True, ("stored, but the tuner did not run: "
+                          + out.strip()[:120])
+        return True, ""
+
+    def say_dataplane_if_pending(self, name, note=""):
+        """
+        What the commit has done, and what it has not.
+
+        Said in this order on purpose. The operator has just been told
+        `dataplane interface <name>` was accepted, and the sentence they need
+        next is not that it worked - it is that the card has not moved yet and
+        what moving it will cost.
+
+        `note` replaces the line claiming the tuning was recomputed, rather
+        than being printed beside it: on a machine with no tuner both would be
+        on the screen at once and one of them would be false.
+        """
+        print(f"dataplane interface: {name or 'none'}")
+        print_prose(note or "stored, and the boot tuning was recomputed for "
+                            "it")
+        if name:
+            print_prose("NOT IN EFFECT YET: the dataplane claims its card "
+                        "when it starts, and this commit does not restart it")
+            print_prose("restarting it hands the card over and ends every "
+                        "session on this box, including this one, so it is "
+                        "not done for you")
+            print_prose("reboot the box in a window you have chosen, and it "
+                        "comes up forwarding on that card")
+        else:
+            print_prose("the card this box has now is given up at the next "
+                        "start of the dataplane, not at this commit")
 
     def show_interfaces(self, args):
         """
@@ -9991,6 +10281,21 @@ class Shell:
             names[w[0]] = f"interface ({state})" if state else "interface"
         return names
 
+    def dyn_host_nics(self):
+        """
+        The cards LINUX has, with the one carrying the default route marked.
+
+        Marked rather than withheld. The operator is choosing between cards
+        that all look alike at the prompt, and the one that must not be chosen
+        is the one they are reached over - so naming it here is the difference
+        between a refusal they read after typing and a choice they never make.
+        It is still refused if they type it anyway.
+        """
+        default = self.default_route_interface()
+        return {n: ("carries the default route: refused" if n == default
+                    else "card")
+                for n in self.host_interfaces()}
+
     def dyn_neighbours(self):
         """
         The BGP neighbours this box has, with their AS where it is known.
@@ -10199,6 +10504,7 @@ class Shell:
     #: silently going back to being a bare "<word>".
     DYNAMIC = {
         ARG_INTERFACE: "dyn_interfaces",
+        ARG_HOST_NIC: "dyn_host_nics",
         ARG_POOL: "dyn_pools",
         ARG_USER: "dyn_users",
         ARG_SNMP_USER: "dyn_snmp_users",

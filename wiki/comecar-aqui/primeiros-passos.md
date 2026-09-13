@@ -5,7 +5,7 @@ Do disco vazio até assinantes navegando. Cada passo diz **o que digitar** e **c
 ```mermaid
 flowchart TD
     A["1. Instalar pela ISO"] --> B["2. Entrar na VTY"]
-    B --> C["3. HEXA_DATAPLANE_IF<br/>a caixa sai de fábrica sem placa"]
+    B --> C["3. dataplane interface<br/>a caixa sai de fábrica sem placa"]
     C --> D["4. Identificar as interfaces<br/>NUNCA a de gerência"]
     D --> E["5. Criar o pool"]
     E --> F["6. Habilitar CGNAT nas interfaces"]
@@ -61,21 +61,73 @@ leitura vazia.
 
 ## 3. Dizer à caixa qual placa carrega os assinantes
 
-**Uma caixa recém-instalada não entrega placa nenhuma ao dataplane.** A configuração sai de fábrica vazia, de propósito, e o self-test de boot avisa que a caixa não tem interface de dataplane e nomeia o arquivo a editar.
+**Uma caixa recém-instalada não entrega placa nenhuma ao dataplane.** Ela sai de fábrica sem nenhuma nomeada, de propósito: sem nome, o dataplane não pega nada, e numa máquina de uma placa só o que ele pegaria seria justamente a de gerência. O self-test de boot avisa que a caixa não tem interface de dataplane e diz o que digitar.
 
-Edite `/etc/hexarouting/tune.env`:
+Isso é configuração como qualquer outra — candidata, `commit`, `save`:
 
 ```
-HEXA_DATAPLANE_IF=<nome da placa dos assinantes>
+hexarouting> configure
+hexarouting# [edit] dataplane interface enp2s0
+hexarouting# [edit] commit
 ```
 
-e reinicie. Só depois disso o VPP recebe a placa.
+O nome é o que o **Linux** dá à placa, não o que o dataplane daria: antes da entrega a placa só existe para o Linux, e é por esse nome que ela aparece em todo o resto. `show interface` mostra o que o dataplane **já tem**, que numa caixa sem placa nenhuma é nada — por isso não é essa a lista de onde escolher.
 
+Não precisa decorar o nome. **TAB** e `?` listam as placas que a caixa tem e marcam qual delas carrega a rota default:
 
-:::warning
-**A placa que carrega a rota default é recusada, mesmo que você a nomeie**, e a recusa é impressa. As duas falhas não são simétricas: uma caixa sem interface de dataplane se resolve entrando por rede; uma caixa que engoliu a própria gerência se resolve indo até ela a pé.
+```
+hexarouting# [edit] dataplane interface ?
+  enp1s0    carries the default route: refused
+  enp2s0    card
+  lo        card
+```
 
-:::
+### O commit guarda e recalcula, mas não entrega a placa
+
+A entrega tira a placa do Linux e derruba **todas** as sessões da caixa, inclusive a sua. Por isso o `commit` para exatamente antes disso e diz onde está o limite:
+
+```
+hexarouting# [edit] commit
+dataplane interface: enp2s0
+    stored, and the boot tuning was recomputed for it
+    NOT IN EFFECT YET: the dataplane claims its card when it starts, and this
+    commit does not restart it
+    restarting it hands the card over and ends every session on this box,
+    including this one, so it is not done for you
+    reboot the box in a window you have chosen, and it comes up forwarding on
+    that card
+commit complete
+```
+
+Ou seja: **reinicie a caixa numa janela escolhida por você**, e ela sobe encaminhando pela placa nomeada. Enquanto não reiniciar, `show interface` continua sem mostrar nada — e a própria caixa explica por quê, se você perguntar.
+
+### Duas recusas, na hora em que você digita
+
+**A placa que carrega a rota default é recusada**, mesmo que você a nomeie. As duas falhas não são simétricas: uma caixa sem interface de dataplane se resolve entrando por rede; uma caixa que engoliu a própria gerência se resolve indo até ela a pé.
+
+```
+hexarouting# [edit] dataplane interface enp1s0
+error: dataplane interface enp1s0: it carries the default route
+    handing it to the dataplane takes the card away from Linux, and this box
+    off the network with it
+    the two mistakes do not cost the same: a box with no dataplane card is
+    fixed over the network, and a box that ate its own management is fixed by
+    walking to it
+    name the card carrying subscriber traffic instead
+```
+
+**Um nome que a caixa não tem também é recusado, e ela diz quais tem:**
+
+```
+hexarouting# [edit] dataplane interface eth9
+error: dataplane interface eth9: this box has no such interface
+    it has: enp1s0, enp2s0, lo
+    this is the name LINUX gives the card, which is what the dataplane is
+    handed; 'show interface' lists what the dataplane already has, and on a box
+    with no card that is nothing
+```
+
+Nos dois casos nada entra na candidata: a recusa é no prompt, não depois do `commit`.
 
 ## 4. Identificar as interfaces
 
@@ -196,7 +248,7 @@ configure
 
 Antes de considerar a máquina pronta:
 
-- [ ] `HEXA_DATAPLANE_IF` está definido e a caixa foi reiniciada depois disso
+- [ ] `dataplane interface` está definido, com `commit`, e a caixa foi reiniciada depois disso
 - [ ] A interface de gerência **não** está no CGNAT
 - [ ] `show cgnat pool` lista o pool
 - [ ] `show cgnat subscriber <ip-de-teste>` devolve endereço público e faixa de portas
