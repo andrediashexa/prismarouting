@@ -215,6 +215,15 @@ SHOW_CGNAT = {
                None),
     "logging": ("IPFIX export state", None),
     "history": ("dated configuration trail", None),
+    # The two the dataplane had and this VTY did not reach (#228). Both answer
+    # "what does the box ACTUALLY have", which is a different question from
+    # what the file says - the distinction #172 was about for worker cores,
+    # and the one an operator needs when an FTP transfer hangs or a port
+    # forward does not work. Without them the way to that answer was vppctl,
+    # which is the tool this VTY exists to keep them out of, and which is
+    # every capability at once (#76).
+    "alg": ("which ALGs the dataplane has on, per pool", None),
+    "forward": ("the port forwards the dataplane holds", "[<pool>]"),
 }
 
 SHOW = {
@@ -6979,6 +6988,7 @@ class Shell:
             "show cgnat logging": "show bpa logging",
             "show cgnat history": "show bpa pool history",
             "show cgnat drops": "show bpa drops",
+            "show cgnat alg": "show bpa alg",
         }
         if line in m:
             self.vpp(m[line])
@@ -6986,8 +6996,11 @@ class Shell:
         # The ones that carry an argument. Matched by prefix so the argument
         # travels through untouched; hexash is not the place to re-validate an
         # address the dataplane is about to parse anyway.
+        # `show cgnat forward` is here rather than in the map above because it
+        # takes an optional pool name, and the argument travels through
+        # untouched for the same reason the other three do.
         for pfx in ("show cgnat subscriber", "show cgnat translation",
-                    "show cgnat top"):
+                    "show cgnat top", "show cgnat forward"):
             if line == pfx or line.startswith(pfx + " "):
                 self.vpp("show bpa" + line[len("show cgnat"):])
                 return

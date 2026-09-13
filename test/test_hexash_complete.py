@@ -43,7 +43,9 @@ o, _, _ = opts("operational", "show cgnat ")
 # Written out rather than derived from the tree: a test that reads the same
 # structure the code reads would agree with any mistake in it.
 check(o == {"pool", "session", "blocks", "logging", "history",
-            "subscriber", "translation", "top", "drops"}, f"got {o}")
+            "subscriber", "translation", "top", "drops",
+            # The two the dataplane had and this VTY did not reach (#228).
+            "alg", "forward"}, f"got {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== a partial prefix completes ===")
@@ -4272,6 +4274,38 @@ check({"strict", "loose", "off"} <= set(_urpf),
 print(f"  no ip ospf ? -> {sorted(_ospf)}")
 print(f"  no urpf ?    -> {sorted(_urpf)}")
 
+
+print("\n=== the two dataplane show commands the VTY could not reach (#228) ===")
+#
+# Both answer "what does the box ACTUALLY have", which is a different question
+# from what the file says: whether an ALG is on in the dataplane, and which
+# port forwards the dataplane holds. Without them the way to that answer was
+# vppctl, which this VTY exists to keep an operator out of.
+#
+# Asserted at both ends: that `?` offers them, and that what reaches the
+# dataplane is the command the plugin actually registers. Offering a word that
+# sends nothing is the same defect one layer up.
+_probe = hexash.Shell()
+_probe.mode = "operational"
+_o, _, _ = _probe._options("show cgnat ", False)
+check("alg" in _o, f"`show cgnat ?` does not offer alg: {sorted(_o)}")
+check("forward" in _o, f"`show cgnat ?` does not offer forward: {sorted(_o)}")
+
+_sent = []
+_sh = shell_with_box()
+_sh.dp = type("D", (), {
+    "TRACE": False,
+    "run": lambda _s, c: (_sent.append(c) or (0, "")),
+    "reachable": lambda _s: True})()
+for _line, _want in (("show cgnat alg", "show bpa alg"),
+                     ("show cgnat forward", "show bpa forward"),
+                     ("show cgnat forward provider-a",
+                      "show bpa forward provider-a")):
+    _sent.clear()
+    with contextlib.redirect_stdout(io.StringIO()):
+        _sh.feed(_line)
+    check(_sent == [_want],
+          f"{_line!r} sent {_sent!r} to the dataplane, not {[_want]!r}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

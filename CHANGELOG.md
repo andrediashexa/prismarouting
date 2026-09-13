@@ -53,7 +53,8 @@ are to be interpreted as described in
 [#223](https://github.com/andrediashexa/hexarouting/issues/223),
 [#224](https://github.com/andrediashexa/hexarouting/issues/224),
 [#225](https://github.com/andrediashexa/hexarouting/issues/225),
-[#226](https://github.com/andrediashexa/hexarouting/issues/226).
+[#226](https://github.com/andrediashexa/hexarouting/issues/226),
+[#228](https://github.com/andrediashexa/hexarouting/issues/228).
 
 ### Added
 
@@ -110,6 +111,24 @@ are to be interpreted as described in
   ports and grows one block at a time, only when it fills one, as far as 512 -
   and nothing said so.
 [#225](https://github.com/andrediashexa/hexarouting/issues/225).
+
+* **`show cgnat alg` and `show cgnat forward`**, which the dataplane had and
+  this VTY could not reach. Of fourteen `show bpa` commands the plugin
+  registers, twelve were reachable; the two that were not are the two that
+  answer *what does the box actually have* rather than what the file says -
+  whether an ALG is on **in the dataplane**, and which port forwards the
+  dataplane holds. The way to that answer was `vppctl`, which this VTY exists
+  to keep an operator out of and which is every capability at once
+  ([#228](https://github.com/andrediashexa/hexarouting/issues/228),
+  [#76](https://github.com/andrediashexa/hexarouting/issues/76)).
+
+  It is the shape of [#221](https://github.com/andrediashexa/hexarouting/issues/221)
+  and [#224](https://github.com/andrediashexa/hexarouting/issues/224) one step
+  over: those were things the box does that an operator cannot find; this is a
+  thing the box **says** that they cannot hear from here. And the distinction
+  the two commands draw is
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172)'s: the file
+  and the box come apart quietly, and only reading the box says so.
 
 ### Changed
 
