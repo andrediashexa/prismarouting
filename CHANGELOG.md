@@ -60,7 +60,8 @@ are to be interpreted as described in
 [#229](https://github.com/andrediashexa/hexarouting/issues/229),
 [#230](https://github.com/andrediashexa/hexarouting/issues/230),
 [#231](https://github.com/andrediashexa/hexarouting/issues/231),
-[#232](https://github.com/andrediashexa/hexarouting/issues/232).
+[#232](https://github.com/andrediashexa/hexarouting/issues/232),
+[#233](https://github.com/andrediashexa/hexarouting/issues/233).
 
 ### Added
 
@@ -1328,6 +1329,30 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **The lab suite excluded five labs and never said so**
+  ([#233](https://github.com/andrediashexa/hexarouting/issues/233)).
+  `tools/run-all-labs.sh` skipped seven names with a shell pattern. Two of them,
+  `lib` and `verdict`, are the libraries the labs source and are correctly not
+  labs. The other five are lab files that did not run, and no run ever mentioned
+  them: between *building the plugin once* and the first result there was
+  nothing to say that `crossaddr`, `hw-lab`, `hw-vpp`, `boot-iso` and
+  `install-iso` had not been attempted.
+
+  Eleven sections further down, the same file already states the rule it was
+  breaking: *the lab did not run, so it has shown nothing.* It applied that to
+  the accidents and not to its own exclusions, so a name added to the pattern
+  would have taken a lab out of every future run with `fail=0` still printed.
+
+  The list is data now, one `<name>:<reason>` per line, read twice: once to skip
+  the file and once to print what was skipped before the first result, so the
+  exclusions are in the artefact a release decision is read from.
+  `test/test_run_all_labs.sh` holds it - every entry carries a reason in a
+  sentence, every entry names a lab file that exists, the loop skips by that
+  table and not by a pattern of its own, and the run announces it. Adding an
+  exclusion now costs whoever adds it a sentence, which is the whole mechanism.
+
+  The set of labs that run is byte for byte the same seven exclusions as before.
 
 * **`LAB_WORKERS=2` started a box with no workers at all**
   ([#229](https://github.com/andrediashexa/hexarouting/issues/229)). The

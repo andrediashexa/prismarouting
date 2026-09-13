@@ -201,28 +201,55 @@ off_arg() {
   done
   return 1
 }
+# What is NOT a lab in this suite, and why, as data rather than as a comment.
+#
+# Each entry is "<name>:<reason>". It is read twice: once to skip the file, and
+# once to PRINT what was skipped before the first result. A lab that does not
+# run has shown nothing, which is the rule this file already states about a lab
+# whose dataplane failed to come up - and it applied that rule to the accidents
+# and not to the exclusions. Five lab files were silently absent from every
+# run, and the summary said fail=0 (#233).
+#
+# Holding it as data is also what stops the list growing quietly:
+# test/test_run_all_labs.sh reads these names and reasons, so adding one costs
+# whoever adds it a sentence.
+NOT_LABS="
+lib:sourced by the labs, not run as one
+verdict:sourced by the labs, not run as one
+hw-lab:needs a real NIC bound to vfio-pci
+hw-vpp:needs a real NIC, and uses host networking
+boot-iso:the release gate runs this, against a tag
+install-iso:the release gate runs this, against a tag
+crossaddr:pins what #226 does TODAY, so it would go red on the fix
+"
+
+not_lab_reason() {  # <name> -> its reason, or nothing if it is a lab
+  for _e in $NOT_LABS; do
+    case "$_e" in "$1:"*) printf '%s' "${_e#*:}"; return 0 ;; esac
+  done
+  return 1
+}
+
+# Said before the first result, so the exclusions are in the artefact a release
+# decision is read from and not only in this source file. A library is not
+# news; a lab file that exists and is not being run is.
+_skipped=""
+for f in "$REPO"/lab/*.sh; do
+  n=$(basename "$f" .sh)
+  case "$n" in lib|verdict) continue ;; esac
+  _r=$(not_lab_reason "$n") && _skipped="$_skipped
+  $n: $_r"
+done
+if [ -n "$_skipped" ] && [ -z "$ONLY" ]; then
+  echo "not running, each for its own reason:$_skipped"
+  echo
+fi
+
 # The list, in the order the summary will print.
 LABS=""
 for f in "$REPO"/lab/*.sh; do
   n=$(basename "$f" .sh)
-  # verdict.sh is not a lab, it is the assertion library the labs source.
-  # Counted as "ran", it leaves the summary with a number that never reaches
-  # zero - and the day a real lab loses its verdict, nobody notices.
-  # lib.sh and verdict.sh are sourced by the labs, not run as labs. Counting a
-  # library as "ran (no verdict yet)" leaves a number in the summary that never
-  # reaches zero, and the day a real lab loses its verdict the line reads the
-  # same as it always did.
-  #
-  # crossaddr is out for a different reason, and it is worth writing down.
-  # Its checks assert what a dynamic pool's extension DOES today, which is a
-  # defect (#226): it lands on another public address and the box claims
-  # paired address pooling. A lab that pins a defect's current behaviour is a
-  # record, not a regression test - it would go red the day somebody FIXES the
-  # thing it measures, which is the opposite of what a release gate is for.
-  # It is run by hand from the issue.
-  case "$n" in hw-lab|hw-vpp|boot-iso|install-iso|verdict|lib|crossaddr)
-    continue ;;
-  esac
+  not_lab_reason "$n" >/dev/null && continue
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
   LABS="$LABS $n"
   case " $BOTH_WAYS " in *" $n "*) LABS="$LABS $n+workers" ;; esac
