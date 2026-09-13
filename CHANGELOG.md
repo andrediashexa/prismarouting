@@ -36,9 +36,52 @@ are to be interpreted as described in
 
 ## Unreleased
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-[#213](https://github.com/andrediashexa/hexarouting/issues/213).
+[#187](https://github.com/andrediashexa/hexarouting/issues/187),
+[#210](https://github.com/andrediashexa/hexarouting/issues/210),
+[#213](https://github.com/andrediashexa/hexarouting/issues/213),
+[#217](https://github.com/andrediashexa/hexarouting/issues/217).
+
+### Added
+
+* **OSPFv3 is a protocol this box runs, rather than one it offered and could
+  not do.** `router ospf6` was a word the VTY did not model: it went to FRR
+  untouched, committed, and `ospf6d` was enabled in no file the product shipped
+  - not `appliance/install.sh`, not the boot self-test. The statement was
+  reachable only by typing it blind, since `?` never listed it and TAB never
+  completed it, and `lab/igp.sh` asserted the refusal that followed as though a
+  protocol the box refuses were a finished feature.
+
+  The issue asked for a decision - take the statement out of the command tree,
+  or make it work - and it was settled by measuring. With an OSPFv3 packet
+  injected at a `linux_cp` pair and tcpdump on the TAP, IPv6 protocol 89 to
+  `ff02::5` **arrives**: VPP has no local handler for protocol 89, so it falls
+  through `ip6-local` to `ip6-punt` and linux_cp's per-pair punt redirect hands
+  it out of the TAP, which is the same reason OSPFv2 has always worked. The
+  adjacency then reaches `Full` and the prefix reaches the VPP FIB, with no
+  punt beyond the one OSPFv2 uses. So the transport was never the problem and
+  the daemon list was.
+
+  `ospf6d` is enabled by the installer and checked by the boot self-test beside
+  the other three; `router ospf6` and `ipv6 ospf6 …` are in the command tree
+  with grammars measured against a live FRR 10.7.1 rather than written from
+  memory; and `lab/igp.sh` configures OSPFv3 at this box's own VTY and asserts
+  the prefix in the VPP FIB, the adjacency at `Full`, and the withdrawal when
+  the far end drops it.
+
+* **The inherited-MTU stall is reported on an OSPFv3 interface too.** RFC 5340
+  keeps the Interface MTU field in the database description packet, so a pair
+  whose TAP is at 9000 against a 1500 wire stops an OSPFv3 adjacency short of
+  `Full` exactly as it does an OSPFv2 one - measured, and measured again
+  reaching `Full` within seconds of the two being made to agree. Every check in
+  `ospf_findings` keyed on `ospf_state()`, which reads nothing out of an OSPFv3
+  configuration, so the box had said nothing. `ipv6 ospf6 mtu-ignore` and
+  `ipv6 ospf6 passive` silence it, the way the `ip ospf` spellings do.
+
+  It is the only OSPFv2 finding that carries over, and the rest stay **silent**
+  on an OSPFv3 stanza rather than firing something that cannot be right: they
+  are about `network … area`, `passive-interface` and an interface inside an
+  IPv4 CGNAT pool, none of which OSPFv3 has. #205 and #208 are the standing
+  precedent that an alarm which is always on is one nobody reads.
 
 ### Fixed
 
@@ -128,53 +171,6 @@ are to be interpreted as described in
   be formally better and VPP's ipfix-export cannot build one, and
   `docs/logging.md` carries the argument and the three shapes that were not
   used.
->>>>>>> issue/217-stop-drain
-=======
-[#187](https://github.com/andrediashexa/hexarouting/issues/187).
-
-### Added
-
-* **OSPFv3 is a protocol this box runs, rather than one it offered and could
-  not do.** `router ospf6` was a word the VTY did not model: it went to FRR
-  untouched, committed, and `ospf6d` was enabled in no file the product shipped
-  - not `appliance/install.sh`, not the boot self-test. The statement was
-  reachable only by typing it blind, since `?` never listed it and TAB never
-  completed it, and `lab/igp.sh` asserted the refusal that followed as though a
-  protocol the box refuses were a finished feature.
-
-  The issue asked for a decision - take the statement out of the command tree,
-  or make it work - and it was settled by measuring. With an OSPFv3 packet
-  injected at a `linux_cp` pair and tcpdump on the TAP, IPv6 protocol 89 to
-  `ff02::5` **arrives**: VPP has no local handler for protocol 89, so it falls
-  through `ip6-local` to `ip6-punt` and linux_cp's per-pair punt redirect hands
-  it out of the TAP, which is the same reason OSPFv2 has always worked. The
-  adjacency then reaches `Full` and the prefix reaches the VPP FIB, with no
-  punt beyond the one OSPFv2 uses. So the transport was never the problem and
-  the daemon list was.
-
-  `ospf6d` is enabled by the installer and checked by the boot self-test beside
-  the other three; `router ospf6` and `ipv6 ospf6 …` are in the command tree
-  with grammars measured against a live FRR 10.7.1 rather than written from
-  memory; and `lab/igp.sh` configures OSPFv3 at this box's own VTY and asserts
-  the prefix in the VPP FIB, the adjacency at `Full`, and the withdrawal when
-  the far end drops it.
-
-* **The inherited-MTU stall is reported on an OSPFv3 interface too.** RFC 5340
-  keeps the Interface MTU field in the database description packet, so a pair
-  whose TAP is at 9000 against a 1500 wire stops an OSPFv3 adjacency short of
-  `Full` exactly as it does an OSPFv2 one - measured, and measured again
-  reaching `Full` within seconds of the two being made to agree. Every check in
-  `ospf_findings` keyed on `ospf_state()`, which reads nothing out of an OSPFv3
-  configuration, so the box had said nothing. `ipv6 ospf6 mtu-ignore` and
-  `ipv6 ospf6 passive` silence it, the way the `ip ospf` spellings do.
-
-  It is the only OSPFv2 finding that carries over, and the rest stay **silent**
-  on an OSPFv3 stanza rather than firing something that cannot be right: they
-  are about `network … area`, `passive-interface` and an interface inside an
-  IPv4 CGNAT pool, none of which OSPFv3 has. #205 and #208 are the standing
-  precedent that an alarm which is always on is one nobody reads.
-
-### Fixed
 
 * **`test/test_selftest.sh` had a duplicated verdict block, so its last third
   had never run.** A second `exit 0` copy of the pass/fail block sat two thirds
@@ -184,37 +180,6 @@ are to be interpreted as described in
   assertion added at the end of that file produced no output at all. A test
   that exits before its assertions is the same defect class as a lab that
   crashes before reaching one, and it is invisible for the same reason.
-
-### Internal
-
-* **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a
-  fakeroot with the distribution's `/etc/frr/daemons`, runs
-  `appliance/install.sh` into it, and starts exactly what the installer
-  enabled. The list written out in the lab was a copy somebody had to remember
-  to keep in step with the product's, which is the #99 shape one layer up and
-  is precisely how `ospf6d` went missing: the lab could not fail when the
-  installer's list was wrong. Shown failing - nine checks red, including every
-  OSPFv3 assertion - on a scratch copy with `ospf6d` taken back out of
-  `install.sh`.
-
-* **The section of `lab/igp.sh` that asserted a refusal now asks about RIP.**
-  The check itself has to keep working or removing it would pass the OSPFv3
-  section just as well, and RIP is the honest subject: FRR takes `router rip`,
-  this product claims nothing about it, and an operator who types it is told at
-  commit rather than after an afternoon of wondering why nothing is learned.
-
-* **`lab/frr-readback.sh` gained an OSPFv3 section, and refuted a claim written
-  into this branch on its first run.** A comment saying `ospf6d` *rewrites*
-  `interface <name> area <a>` into the interface stanza came from a probe that
-  had typed the target spelling into that interface before looking for it -
-  the trap section 4d of that file already existed to warn about, made again
-  within the hour. Measured on an interface nothing else had touched, FRR
-  10.7.1 answers `% Unknown command`: it is refused, not rewritten. The three
-  statements FRR leaves out of its own read-back at their default -
-  `ipv6 ospf6 hello-interval`, `dead-interval` and `priority` - each have a
-  control at a non-default value, which is what tells an omission from a
-  refusal, and they are not offered in the grammar for that reason.
->>>>>>> issue/187-ospf6d
 
 * **A dynamic pool's capacity line understated what the box can serve.** The
   caveat added for [#210](https://github.com/andrediashexa/hexarouting/issues/210)
@@ -251,6 +216,36 @@ are to be interpreted as described in
   expensive part - the mutability is; and letting a worker borrow a block from
   its neighbour, implemented and measured, **loses every reply**, because the
   return path resolves the worker from the block index by arithmetic.
+
+### Internal
+
+* **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a
+  fakeroot with the distribution's `/etc/frr/daemons`, runs
+  `appliance/install.sh` into it, and starts exactly what the installer
+  enabled. The list written out in the lab was a copy somebody had to remember
+  to keep in step with the product's, which is the #99 shape one layer up and
+  is precisely how `ospf6d` went missing: the lab could not fail when the
+  installer's list was wrong. Shown failing - nine checks red, including every
+  OSPFv3 assertion - on a scratch copy with `ospf6d` taken back out of
+  `install.sh`.
+
+* **The section of `lab/igp.sh` that asserted a refusal now asks about RIP.**
+  The check itself has to keep working or removing it would pass the OSPFv3
+  section just as well, and RIP is the honest subject: FRR takes `router rip`,
+  this product claims nothing about it, and an operator who types it is told at
+  commit rather than after an afternoon of wondering why nothing is learned.
+
+* **`lab/frr-readback.sh` gained an OSPFv3 section, and refuted a claim written
+  into this branch on its first run.** A comment saying `ospf6d` *rewrites*
+  `interface <name> area <a>` into the interface stanza came from a probe that
+  had typed the target spelling into that interface before looking for it -
+  the trap section 4d of that file already existed to warn about, made again
+  within the hour. Measured on an interface nothing else had touched, FRR
+  10.7.1 answers `% Unknown command`: it is refused, not rewritten. The three
+  statements FRR leaves out of its own read-back at their default -
+  `ipv6 ospf6 hello-interval`, `dead-interval` and `priority` - each have a
+  control at a non-default value, which is what tells an omission from a
+  refusal, and they are not offered in the grammar for that reason.
 
 ## 0.66.0 — six times a lab did the product's job, and the product now does it
 
@@ -342,7 +337,6 @@ are to be interpreted as described in
   arriving through the function that looked like its counterpart. Removed, with
   the reasoning left where the declaration was
   ([#216](https://github.com/andrediashexa/hexarouting/issues/216)).
-=======
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
 [#203](https://github.com/andrediashexa/hexarouting/issues/203),
 [#215](https://github.com/andrediashexa/hexarouting/issues/215).

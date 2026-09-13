@@ -115,6 +115,37 @@ if awk '/^## Unreleased/{u=1;next} /^## /{u=0} u && /^[*-] /{n++} END{exit !(n>0
   exit 1
 fi
 
+# No conflict marker may survive a merge, anywhere in the tree.
+#
+# This is here because it HAPPENED, and because the checks that were being run
+# could not see it. After each merge the checks were "no duplicate bullets" and
+# "make test passes", and six markers sat in CHANGELOG.md across two merges
+# while both stayed green: a marker is not a duplicate, and no test reads that
+# file. The released tag was clean, which is luck rather than process - the
+# markers went in after it.
+#
+# The whole tree and not only the changelog: a marker in a shell script is a
+# syntax error somebody notices, but a marker in Markdown, in a comment, or in
+# a data file is invisible until a reader meets it.
+#
+# Only the angle brackets are searched for. A bare '=======' is also a
+# Markdown heading underline, and this tree already carries one such row of
+# '=' (test/test_hexash_complete.py, a copy of frr-reload's own report), so a
+# pattern that counted it would refuse a release over a quoted report. Nothing
+# is lost by leaving it out: git writes all three markers together, so a file
+# that really carries a conflict is named by the brackets alone.
+marks=$(grep -rlE "^(<<<<<<< |>>>>>>> )" "$WORK" \
+        --exclude-dir=.git 2>/dev/null || true)
+if [ -n "$marks" ]; then
+  echo "error: $TAG carries unresolved conflict markers:" >&2
+  # Named relative to the tree: "$WORK" is a throwaway clone whose path means
+  # nothing to the reader, who has to find the file in the repository.
+  echo "$marks" | sed "s|^$WORK/|       |" >&2
+  echo "       A merge was committed with its conflicts in it. The fix is to" >&2
+  echo "       resolve them, not to tag over them." >&2
+  exit 1
+fi
+
 # And no bullet may be written twice.
 #
 # This is a mechanical hazard, not carelessness, and it cost two merges to
