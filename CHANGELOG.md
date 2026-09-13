@@ -184,6 +184,38 @@ version has a chance of seeing it.
 
 ### Internal
 
+* **The acceptance test for high availability, written before high
+  availability, and red**
+  ([#9](https://github.com/andrediashexa/hexarouting/issues/9)).
+  `lab/ha-failover.sh` stands up two dataplanes on a shared inside LAN and a
+  shared outside LAN, points a subscriber's translated flow at a **service
+  address neither box owns**, and then breaks the active box three different
+  ways: the uplink pulled with the box still alive, the dataplane stopped the
+  way `vpp.service` stops it, and the dataplane killed. Fifteen checks are red
+  on `master` and that is the intended result - nothing in this repository
+  carries a service address from one box to another. Six further checks, named
+  `FIXTURE` in the verdict, are green, and exist so that a broken topology can
+  be told apart from a missing feature.
+
+  It is **not** in `tools/run-all-labs.sh`: the reason is recorded in that
+  file's `NOT_LABS`, and it says the lab is excluded because the feature does
+  not exist yet, not because anything is broken. `lab/crossaddr.sh` is the
+  precedent.
+
+  The line the file is built on is `lab/lcp.sh`'s: the lab MAY arrange the
+  topology, start both boxes and cause the failure, and it **MUST NOT** put the
+  service address anywhere, move it, answer ARP for it, flush the subscriber's
+  ARP cache or decide which box is active. A failover lab that moves the
+  address itself is testing the lab.
+
+  Two things it turned up, both written into
+  [docs/ha.md](docs/ha.md): the VTY has no `vrrp` of its own and hands the
+  statement to FRR word for word, where VRRP would run on the `linux_cp` TAP
+  and not on the interface the packets are on; and anything at all under
+  `nat cgnat` is accepted by `commit check` and `commit` and then silently
+  discarded, which is why the lab asserts on the packet and never on the
+  configuration being accepted.
+
 * **The exit path counted what it could not write into a process that was
   leaving** ([#270](https://github.com/andrediashexa/hexarouting/issues/270)).
   `docs/logging.md` says a discard MUST be counted and never silent. On every

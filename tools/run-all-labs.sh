@@ -228,6 +228,7 @@ hw-vpp:needs a real NIC, and uses host networking
 boot-iso:the release gate runs this, against a tag
 install-iso:the release gate runs this, against a tag
 crossaddr:pins what #226 does TODAY, so it would go red on the fix
+ha-failover:the acceptance test for HA, written before HA exists (#9), so it is red because the feature is MISSING and not because anything is broken
 "
 
 not_lab_reason() {  # <name> -> its reason, or nothing if it is a lab

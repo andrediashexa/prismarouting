@@ -247,6 +247,18 @@ take 56 s to 125 s each, and at `LAB_JOBS=16` they add one batch to the four
 the suite already had - 1524 s to 1907 s on the same tree, about 25%, not the
 doubling that counting runs rather than batches suggests.
 
+**Some lab files are deliberately not in the suite**, and `NOT_LABS` in
+`tools/run-all-labs.sh` holds each one's reason as data rather than as a
+comment, so the run prints what it skipped before its first result. Two of them
+are red on purpose and for opposite reasons: `crossaddr` pins what
+[#226](https://github.com/andrediashexa/hexarouting/issues/226) does **today**,
+so it would go red on the fix; `ha-failover` is the acceptance test for high
+availability ([#9](https://github.com/andrediashexa/hexarouting/issues/9)),
+written before the feature exists, so it is red because the feature is
+**missing**. Run it with `sh tools/lab.sh ha-failover` - it stands up two
+dataplanes, breaks the active one three ways, and its six `FIXTURE` checks are
+green so that a broken topology can be told apart from a missing feature.
+
 A lab under which the dataplane never came up is reported as `NO VPP` and
 counted apart from both, because "the box never answered" and "the box
 answered and refused" need opposite work. `test/test_run_all_labs.sh` pins

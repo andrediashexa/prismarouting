@@ -209,7 +209,10 @@ Not what it contains — what question it is the answer to.
 
 * **High availability.** Analysed, not implemented; [ha.md](ha.md) says why the
   lab comes before the implementation
-  ([#9](https://github.com/andrediashexa/hexarouting/issues/9)).
+  ([#9](https://github.com/andrediashexa/hexarouting/issues/9)). The lab now
+  exists - `lab/ha-failover.sh` - and is **red on purpose**: it is excluded from
+  `tools/run-all-labs.sh` because the feature is missing, not because anything
+  is broken.
 * **Throughput figures.** Nothing is claimed. The bench resolves differences
   above roughly 3%, which is enough to catch a regression and not enough to
   publish a number
