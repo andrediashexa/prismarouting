@@ -48,6 +48,33 @@ version has a chance of seeing it.
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+### Fixed
+
+* **`show interface <name>` silently dropped `rx packets`, the first counter
+  the dataplane prints** ([#280](https://github.com/andrediashexa/hexarouting/issues/280)).
+  The code removed the column header with `[1:]` and then removed another row
+  with a second `[1:]` - and that row is the interface's own line, which is
+  where VPP puts the first counter.
+
+  It did not look like a gap. The list began at `rx bytes` and ran to `drops`
+  with nothing on the screen saying a row had gone, so a reader concluded the
+  box has no `rx packets` or that it is zero. "Is anything arriving on this
+  port" is the question this screen gets opened for, and it also broke the
+  promise made two lines above the code: an operator comparing this against
+  the dataplane during a fault got a different set of rows, which is what
+  "straight from the dataplane, uninterpreted" exists to prevent.
+
+  The identity in front of that first counter - name, index, state, MTU - is
+  stripped rather than printed, because all four are already on the lines
+  above and the row would not line up with the others. An interface with
+  nothing after its MTU has no counters and says `all zero`, rather than
+  presenting its own identity as though it were a reading. Both are asserted,
+  and both go red on their own mutation.
+
+  Found while checking `docs/` against the product.
+
 ## 0.68.0 — what the box said it did, and a release gate that could not be passed
 
 [#9](https://github.com/andrediashexa/hexarouting/issues/9),

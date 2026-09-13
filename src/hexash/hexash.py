@@ -8488,11 +8488,31 @@ class Shell:
         # what `vppctl` says, and during a fault they will look at both.
         rc, one = self.dp.run(f"show interface {name}")
         if rc == 0:
-            rows = [l.rstrip() for l in one.splitlines()[1:] if l.strip()]
-            if len(rows) > 1:
+            # [1:] removes the COLUMN HEADER and nothing else. There used
+            # to be a second [1:] below, which threw away the interface's own
+            # row - and that row is where VPP puts the first counter, so
+            # `rx packets` was silently missing from every reading (#280). The
+            # list still looked complete: it began at `rx bytes` and ran to
+            # `drops`, with nothing on the screen saying a row had gone.
+            rows = []
+            for line in one.splitlines()[1:]:
+                if not line.strip():
+                    continue
+                # The interface's own row carries its name, index, state and
+                # MTU in front of the first counter. Those four are printed
+                # above already, so only the counter is kept - found by the
+                # MTU field, which is the last of them and the only one with a
+                # shape of its own. An interface with no counters has nothing
+                # after the MTU, and contributes no row rather than printing
+                # its own identity as though it were a reading.
+                m = re.match(r"\S+\s+\d+\s+\S+\s+\d+/\d+/\d+/\d+\s*(.*)$",
+                             line)
+                rows.append((m.group(1) if m else line).strip())
+            rows = [r for r in rows if r]
+            if rows:
                 print("    counters")
-                for line in rows[1:]:
-                    print(f"      {line.strip()}")
+                for row in rows:
+                    print(f"      {row}")
             else:
                 print("    counters    all zero")
 
