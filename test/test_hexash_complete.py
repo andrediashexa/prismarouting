@@ -4032,10 +4032,24 @@ _BGP_UNREAD = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
                " coalesce-time 2000", "exit"]
 _BGP_HELD = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001", "exit"]
 
+
+
+def _refusal_lines(out):
+    """The statement lines of a refusal, as printed, indent stripped."""
+    return [l[4:] for l in out.splitlines()
+            if l.startswith("    ") and not l.startswith("     ")]
+
+
 _out, _failed = _commit(_BGP_UNREAD, _BGP_HELD)
 check(_failed == 1 and "coalesce-time 2000" in _out,
       f"the refusal still names the statement FRR dropped: {_out!r}")
-check(f"coalesce-time 2000{UNCHECKED_MARK}" in _out,
+# Line-exact, not a substring. A substring needle cannot tell the marker from
+# a LONGER one that starts with it, and that is not a hypothetical: the marker
+# this project ships replaced `    <- not checked by this VTY`, and a check
+# written `f"...{UNCHECKED_MARK}" in out` stays green over the old spelling
+# coming back. Measured - the mutation that reinstated the long form gave zero
+# red until this line was written this way.
+check(f"coalesce-time 2000{UNCHECKED_MARK}" in _refusal_lines(_out),
       f"and marks it, because no grammar here ever read it: {_out!r}")
 check("no grammar in this VTY" in _out,
       f"with one line saying what the mark means: {_out!r}")
@@ -4088,7 +4102,8 @@ check(UNCHECKED_MARK.strip() not in _out,
 # was checked, whatever the statement looks like.
 _VRF_ROUTE = ["vrf red", " ip route 10.9.0.0/16 10.0.0.9", "exit-vrf"]
 _out, _failed = _commit(_VRF_ROUTE, ["vrf red", "exit-vrf"])
-check(_failed == 1 and UNCHECKED_MARK in _out,
+check(_failed == 1 and
+      any(l.endswith(UNCHECKED_MARK) for l in _refusal_lines(_out)),
       f"a route in a block this VTY has no grammar for is marked: {_out!r}")
 
 # The same words in two blocks, with two answers. `soft-reconfiguration
@@ -4144,7 +4159,8 @@ check(_failed == 0 and _out == "commit complete\n",
 _held = [l for l in FRR_READBACK
          if l.strip() != "no bgp ebgp-requires-policy"]
 _out, _failed = _commit(FRR_READBACK, _held)
-check(_failed == 1 and f"no bgp ebgp-requires-policy{UNCHECKED_MARK}" in _out,
+check(_failed == 1 and
+      f"no bgp ebgp-requires-policy{UNCHECKED_MARK}" in _refusal_lines(_out),
       f"but a dropped one is marked: {_out!r}")
 
 # The mark must not reach FRR from here either. do_commit hands the candidate
