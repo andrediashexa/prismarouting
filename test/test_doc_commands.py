@@ -385,6 +385,46 @@ for _page, _grammar, _what in (
     else:
         ok(f"all {len(_keys)} statements {_what} takes are named on {_page}")
 
+print("\n=== every show command is named somewhere in the wiki ===")
+#
+# The same argument as the block statements above, for the commands an
+# operator runs while something is wrong. Four were in the grammar and on no
+# page at all: `show ospf neighbor`, `show ospf interface`, `show isis
+# adjacency` and `show isis interface` - and those four carry the box's
+# strongest claim, which is the comparison between what the routing daemon
+# holds and what the table that forwards actually has.
+#
+# Read at two levels and no deeper. A command's ARGUMENTS are written the way
+# a reader meets them - the utilisation page writes
+# `show interface utilization [<nome>] [interval <segundos>] [count <n>]`,
+# which names `interval` and `count` perfectly well without ever writing them
+# as a command. Demanding the leaf string would go red on a page that is
+# right, which is how a check gets switched off.
+from hexash import SHOW                                           # noqa: E402
+
+_wiki_text = ""
+for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
+    for _f in sorted(_files):
+        if _f.endswith(".md"):
+            _wiki_text += open(os.path.join(_root, _f), encoding="utf-8").read()
+_named = []
+for _k, _v in SHOW.items():
+    _d, _sub = _v if isinstance(_v, tuple) else (None, None)
+    if isinstance(_sub, dict):
+        for _k2 in _sub:
+            if _k2.startswith("<"):
+                continue            # an argument, not a sub-command
+            _named.append(f"show {_k} {_k2}")
+    else:
+        _named.append(f"show {_k}")
+_unnamed = sorted(n for n in _named if n not in _wiki_text)
+if _unnamed:
+    bad(f"the wiki never names {_unnamed}: a command an operator runs while "
+        f"something is wrong, that they can only find by pressing '?' at the "
+        f"right moment")
+else:
+    ok(f"all {len(_named)} show commands are named in the wiki")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

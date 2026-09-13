@@ -207,6 +207,48 @@ A marca é **só de tela**. Ela não entra no arquivo que o `save` grava, não v
 
 A linha final só aparece quando há alguma coisa marcada. Um aviso que aparece sempre é um aviso que ninguém lê.
 
+## `show ospf` e `show isis` — a adjacência, e o que dela chegou a encaminhar
+
+São quatro comandos, e o que eles acrescentam ao que o roteamento já responde é a **última linha**: quantos prefixos daquele protocolo estão na tabela que de fato encaminha. Uma rota que o roteamento tem e o dataplane nunca recebeu é invisível em qualquer comando que responda pelo roteamento, e as duas metades ficam com cara de saudáveis olhadas separadamente.
+
+```
+hexarouting> show ospf neighbor
+  Neighbour         Interface      State            Dead       Up
+  10.0.0.2          vppwan0        Full/DR          38         00:12:41
+
+  1 adjacency(ies), 1 full
+  all 3 OSPF prefix(es) are in the forwarding table
+```
+
+Quando alguma não chegou, a linha diz **quantas** e nomeia até cinco:
+
+```
+  2 of 7 OSPF prefix(es) are NOT in the forwarding table
+    10.20.0.0/24
+    10.20.1.0/24
+    'show route verbose' compares the two tables in full
+```
+
+### A adjacência que para em Exchange
+
+`show ospf neighbor` é onde a caixa diz uma coisa que o roteamento não diz: uma adjacência que não sai de `Exchange` quase sempre é MTU. O OSPF leva o MTU da interface dentro dos pacotes de descrição da base, e quem recebe descarta os que anunciam um MTU maior que o seu **sem registrar nada, nos dois lados**. É a falha que custa uma tarde em vez de um minuto.
+
+A caixa não tem como saber o MTU do outro lado, mas sabe o que **ela** está anunciando - e é esse o número a comparar. Nesta caixa quem anuncia é a interface do lado do sistema, que começa em 9000, então ela está errada mais vezes do que certa.
+
+### `show ospf interface` e `show isis interface`
+
+O que cada protocolo acredita sobre cada interface, ao lado do que o dataplane tem. No IS-IS essa tela responde uma pergunta específica: um circuito `Up` com **zero** vizinhos, e por quê.
+
+```
+hexarouting> show isis interface
+  Interface      Area       Circuit   State      Level   Metric   Neighbours
+  vppwan0        CORE       0x1       Up         L2      10       0
+```
+
+Zero vizinhos num circuito que está `Up` é o sintoma do IS-IS não estar sendo entregue ao sistema: os quadros de IS-IS não andam sobre IP, andam direto sobre o enlace, e precisam ser entregues explicitamente. Sem isso a caixa dá boot, commita limpo, o processo de IS-IS sobe, a configuração lê de volta certa **e a adjacência nunca forma**. A tela diz isso em vez de deixar o operador com um contador.
+
+`show isis adjacency` é a mesma leitura por vizinho, com a mesma última linha sobre a tabela que encaminha.
+
 ## `show` — restante
 
 | Comando | Mostra |

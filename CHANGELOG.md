@@ -149,6 +149,23 @@ are to be interpreted as described in
   The pages are not published - that needs a token the maintainer holds - so
   this is a repair before anybody read it.
 
+* **Four commands the box has for the moment routing does not come up were in
+  the grammar and on no page.** `show ospf neighbor`, `show ospf interface`,
+  `show isis adjacency` and `show isis interface` could be found only by
+  pressing `?` at the right moment - and those four carry this box's strongest
+  claim, the comparison between what the routing daemon holds and what the
+  table that actually forwards has. A route that stops half way leaves both
+  halves looking healthy on their own, and these are the screens that say so.
+
+  The wiki now has them, including the two diagnoses that are the reason they
+  exist: an OSPF adjacency that will not leave `Exchange` is almost always the
+  interface MTU, which neither side logs, and an IS-IS circuit that is `Up`
+  with zero neighbours is IS-IS frames not being delivered to the system.
+  `test/test_doc_commands.py` requires every `show` command to be named
+  somewhere in the wiki, read two levels deep and no further: arguments are
+  written the way a reader meets them, so demanding the leaf string would go
+  red on a page that is right.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
