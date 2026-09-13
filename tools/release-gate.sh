@@ -206,6 +206,18 @@ fi
 # hides being one is a second, quieter defect, so a correction belongs in the
 # CURRENT section saying what it corrects, where a reader of the old version
 # has a chance of seeing it.
+# ONLY the previous section is compared, and that is a known gap (#274).
+# Drift happens on the section a branch was cut against, which is the previous
+# one, so this catches the case that occurs. It does not catch older drift:
+# `release-gate.sh v0.67.0` refuses today because entries were filed into the
+# tagged 0.66.0 section after v0.66.0 shipped, and releasing 0.68.0 never looks
+# at 0.66.0.
+#
+# Widening it to every tagged section was written and NOT kept, because it
+# refuses on that 0.66.0 drift and the only repair is editing a shipped
+# section, which the rule below forbids. That would be a gate nobody can pass,
+# and a gate nobody can pass is one somebody switches off. What to do about
+# 0.66.0 is the maintainer's call, recorded in #274.
 prev=$(git -C "$WORK" tag -l "v*" --sort=-v:refname | grep -v "^$TAG\$" | head -1)
 if [ -n "$prev" ]; then
   prev_ver=${prev#v}
@@ -234,7 +246,7 @@ if [ -n "$prev" ]; then
   fi
 fi
 
-# And no heading may appear twice inside one release section.
+# And no heading may appear twice inside THE SECTION BEING RELEASED.
 #
 # The duplicate-bullet check below compares BULLETS, and a duplicated heading
 # is the same accident one level up: merging fourteen branches that each added
@@ -243,20 +255,43 @@ fi
 # shipped with "### Fixed" three times and "### Added" twice, and nobody
 # writing it did that (#267).
 #
-# Only within a section, because every release legitimately has its own
-# "### Fixed". Sections are "## " and headings are "### ".
-# The section is named in the message, because "### Fixed appears twice" with
-# no version is a sentence somebody has to go and grep for. Measured: 0.67.0
-# is not the only release this happened to.
-dup_head=$(awk '
-  /^## / { sect = $0; split("", seen); next }
+# ONLY the section being released, and that is the whole of #274. The first
+# version of this read the entire file, and the entire file is where the six
+# duplicates already are - three in 0.67.0, two in 0.66.0, one in 0.14.0, all
+# of them in sections that have shipped. Clearing them means editing a tagged
+# section, which the check above refuses and which CHANGELOG.md's TL;DR
+# forbids in words. So the gate could not be passed at all, and a gate that
+# cannot be passed is one somebody switches off. Measured on a dry run of
+# 0.68.0: refused, on nothing anyone was allowed to touch.
+#
+# The tagged sections are not going unchecked. They are held by the rule
+# above, which is the stronger one: not "has no duplicate headings" but "is
+# byte-for-byte what its tag shipped", duplicates and all. A duplicate that
+# shipped is part of the medium somebody is running.
+rel_sect=$(awk -v v="## $VER" '
+  index($0, v) == 1 { p = 1; next }
+  /^## / { p = 0 }
+  p { print }
+' "$WORK/CHANGELOG.md")
+# If that found nothing the check has quietly stopped checking, which is worse
+# than the defect it looks for. A release whose version has no heading is
+# already refused further up, so reaching here with an empty section means the
+# extraction broke rather than the file being wrong.
+if [ -z "$rel_sect" ]; then
+  echo "error: the '## $VER' section of CHANGELOG.md came out empty, so the" >&2
+  echo "       duplicate-heading check read nothing at all. The heading is" >&2
+  echo "       there - it is checked above - so this is the extraction, not" >&2
+  echo "       the file." >&2
+  exit 1
+fi
+dup_head=$(printf '%s\n' "$rel_sect" | awk '
   /^### / {
-    if ($0 in seen) printf "  %s   under %s (line %d)\n", $0, sect, NR
+    if ($0 in seen) printf "  %s (line %d of the section)\n", $0, NR
     seen[$0] = 1
   }
-' "$WORK/CHANGELOG.md")
+')
 if [ -n "$dup_head" ]; then
-  echo "error: CHANGELOG.md in $TAG repeats a heading inside one release:" >&2
+  echo "error: CHANGELOG.md repeats a heading inside the $VER section:" >&2
   printf '%s\n' "$dup_head" >&2
   echo "       CONTRIBUTING.md section 5 says the entry goes in the order a" >&2
   echo "       reader cares about, and a section that says Fixed three times" >&2
