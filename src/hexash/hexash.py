@@ -27,10 +27,12 @@ import sys
 import tempfile
 import time
 
-from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
+from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK, UNCHECKED_NOTE,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
-                    strip_nat, as_hierarchy, group_static, is_static_route,
+                    ROUTING_HEADER,
+                    strip_nat, as_hierarchy, group_static,
                     block_paths, frr_block_lines, opens_frr_block,
+                    is_static_route,
                     _address_family_error, _is_loopback, _is_lcp_tap,
                     global_key, ordered_globals)
 from system import (System, SnmpDaemon, SnmpUser, User,
@@ -1384,6 +1386,134 @@ def walk_from(node, words):
     return node, hint
 
 
+def block_grammar(block, words):
+    """
+    The grammar this VTY has for the statements of `block`, or None.
+
+    None means the VTY has no grammar for the block at all - `vrf red`, `key
+    chain KC-CORE`, anything FRR takes that this tree was never taught. It is
+    not the same as an empty grammar, and the difference is the whole point:
+    the completer turns None into "`exit` and nothing else" so an operator is
+    never stranded, while the boundary marker turns it into "every statement
+    in here went to FRR unread" (#141).
+
+    `words` is needed because one block has two grammars: the words after a
+    neighbour's ADDRESS are a different set from the words that start a line.
+
+    This is the ONE walk that decides what `?` offers inside a block. The
+    marker asks it rather than carrying a list of what is modelled, because a
+    second list would have to be kept in step with the grammar by hand and
+    would eventually disagree with it - and a marker that disagrees with the
+    tree says a statement was checked when nothing checked it.
+    """
+    if block.strip() == STATIC_BLOCK:
+        return STATIC_BLOCK_GRAMMAR
+    if block.startswith("interface "):
+        return INTERFACE_BLOCK
+    if block.strip() == "rpki":
+        return RPKI_BLOCK
+    if block.split()[:2] == ["router", "isis"]:
+        return ISIS_BLOCK
+    if block.split()[:2] == ["router", "ospf"]:
+        return OSPF_BLOCK
+    # Before #187 this fell through to the "block this VTY does not model"
+    # answer, so `router ospf6` offered `exit` and nothing else - on a
+    # statement the box accepted and committed.
+    if block.split()[:2] == ["router", "ospf6"]:
+        return OSPF6_BLOCK
+    if block.startswith("route-map "):
+        return ROUTE_MAP_BLOCK
+    if block.startswith("address-family "):
+        base, neigh = BGP_AF_BLOCK, BGP_AF_NEIGHBOUR
+    elif block.startswith("router bgp"):
+        base, neigh = BGP_BLOCK, BGP_NEIGHBOUR
+    else:
+        return None
+    # `neighbor <address> <word>`: the address is an argument, so the tree
+    # cannot walk through it. After it, the statements are the neighbour's.
+    if len(words) >= 2 and words[0] == "neighbor":
+        return {"neighbor": ("a BGP session", {words[1]: (
+            f"statements for {words[1]}", neigh)})}
+    return base
+
+
+def statement_checked(stmt, ctx):
+    """
+    Did the command tree read this routing statement, or did it just carry it?
+
+    `ctx` is the block path the statement sits in, outermost first, as
+    `block_paths` reports it. Answered BY WALKING THE TREE - the same walk
+    `?` does - and never by a list of known statements kept alongside it.
+
+    True means the tree recognised every word it is responsible for. It stops
+    at an argument, which is the honest place to stop: the tree says a prefix
+    goes after `network`, and what the operator typed there is checked (or
+    not) by whatever validates prefixes, not by this walk. False means a word
+    the tree has no entry for, which is the moment the statement stopped being
+    understood and became something to hand over verbatim.
+
+    Statements at the TOP of the routing section are a deliberate hole and it
+    is not laziness. The tree's `config` mode is the grammar for what may be
+    TYPED at `[edit]`, which is not the same set as the statements the routing
+    section may HOLD: `route-map RM permit 10` is absent from it and yet every
+    statement inside that block is checked, and `ip route ...` is accepted and
+    deliberately not offered (#193). Marking from that tree would put "not
+    checked" on the header of a block this VTY checks line by line, which is
+    the "confidently wrong" failure pointing the other way. So a top-level
+    statement is checked when the tree walks it OR when this VTY has a
+    grammar for the block it opens, and a top-level statement that is neither
+    is marked.
+    """
+    words = stmt.split()
+    if not words:
+        return True
+    if ctx:
+        grammar = block_grammar(ctx[-1], words)
+        if grammar is None:
+            return False        # no grammar for the block: nothing was read
+        return _tree_reads(grammar, words)
+    if opens_frr_block(stmt) and block_grammar(stmt, []) is not None:
+        return True
+    # A static route in FRR's words. It is the `router static` block this VTY
+    # provides and translates, and it is checked by that block's grammar - but
+    # only the DISPLAY puts it back in the block, so the same route answers
+    # "checked" on the screen and "not checked" in the candidate list `commit
+    # check` counts. Measured: `route 0.0.0.0/0 10.0.0.2` typed inside `router
+    # static` is stored as `ip route 0.0.0.0/0 10.0.0.2` at column 0, so every
+    # static route on the box would have been counted as passed through
+    # unread.
+    if is_static_route(stmt.strip()):
+        return True
+    return _tree_reads(TREE["config"], words)
+
+
+def _tree_reads(node, words):
+    """
+    Did this node of the tree recognise every word of `words`?
+
+    A walk of its own rather than `walk_from`, which cannot answer this
+    question: `walk_from` returns (None, None) BOTH for a word the tree has no
+    entry for and for a statement it walked to the end of, because a leaf's
+    subtree is None. Completion does not care - it has nothing more to offer
+    either way - but the difference is exactly what the boundary marker is
+    asking about, and reusing that return marked `bgp log-neighbor-changes`,
+    a statement the tree defines, as one the VTY never read.
+    """
+    for word in words:
+        if isinstance(node, str):
+            return True         # an argument: the rest is its business
+        if node is None:
+            return False        # the statement ended here and went on anyway
+        entry = node.get(word)
+        if entry is None:
+            return False
+        node = entry[1]
+    # `node` may still be a dict here, on a statement that stops halfway down
+    # the grammar. Every word it HAS was read, which is what this answers; a
+    # statement that is only a prefix of one is a different complaint.
+    return True
+
+
 class Vpp:
     """Talks to the bpa plugin through VPP's CLI."""
 
@@ -1427,49 +1557,99 @@ class Vpp:
         return self.run("show version")[0] == 0
 
 
-def mark_unchecked(lines):
+def mark_routing(lines, ctx=()):
     """
-    The same configuration with route-map statements this VTY did not verify
-    marked as such.
+    Routing statements with the ones this VTY did not read marked as such.
+
+    `ctx` is the block path the lines sit in, empty at the top of the routing
+    section and the open blocks when `show this` prints the inside of one.
+    Index for index, so a caller can print them in place.
 
     DISPLAY ONLY, and that is not a caveat - it is the design. The marker must
     never reach `Config.text()`, the saved configuration, a rollback revision
-    or the file handed to FRR: a comment appended mid-statement is not
-    something FRR is obliged to accept, and a configuration that cannot be
-    fed back is not a configuration.
+    or the lines handed to frr-reload. MEASURED at a live FRR 10.7.1, rather
+    than assumed:
 
-    The reason it exists: most of a route-map still passes straight through.
-    Without a marker, an operator reading the running configuration cannot
-    tell a statement the box checked from one it merely forwarded, and so
-    reads a guarantee into both.
+        probe(config-router)# coalesce-time 2000  <- not checked
+        % Unknown command: coalesce-time 2000  <- not checked
+
+    and in a FILE, which is the shape the boot takes, vtysh refuses it before
+    any daemon sees it:
+
+        ERROR: vtysh failed to process new configuration: vtysh (mark file)
+        exited with status 2: line 5: % Unknown command:  coalesce-time 1000
+        <- not checked
+
+    The same file without the marker gets past that stage. A configuration
+    file the box reads back at boot that FRR refuses is a box that comes up
+    with no configuration at all, which is how both boot defects behind #182
+    ended - worse than the problem this solves.
     """
-    out, inside = [], False
-    for l in lines:
-        t = l.strip()
-        w = t.split()
-        if w and w[0] == "route-map":
-            inside = True
-            out.append(l)
+    out, n = [], 0
+    paths = block_paths(list(lines))
+    for line, path in zip(lines, paths):
+        # `None` is not a statement of the configuration: a blank, one of
+        # FRR's `!` separators, or a block's own `exit`. Marking an `exit`
+        # would say the VTY failed to understand the word it printed itself.
+        if path is None or statement_checked(line.strip(), list(ctx) + path):
+            out.append(line)
             continue
-        if not l[:1].isspace():
-            inside = False
-            out.append(l)
-            continue
-        if not inside or not w:
-            out.append(l)
-            continue
-        node = ROUTE_MAP_BLOCK
-        known = True
-        for word in w:
-            if not isinstance(node, dict):
-                break                    # an argument: everything past it is
-            entry = node.get(word)       # the argument's business
-            if entry is None:
-                known = False
-                break
-            node = entry[1]
-        out.append(l if known else f"{l}{UNCHECKED_MARK}")
-    return out
+        n += 1
+        out.append(f"{line}{UNCHECKED_MARK}")
+    return out, n
+
+
+def unchecked_note(n):
+    """
+    The sentence under a marked configuration, or nothing when none is marked.
+
+    Two jobs the per-line marker cannot do. It says what the marker MEANS -
+    the mark itself is sixteen characters because an FRR statement plus a
+    sentence does not fit the 80 columns of a serial console, and a marker
+    that wraps is a marker that stops being read. And it gives the COUNT,
+    which is the number an operator reviewing a change before a maintenance
+    window actually wants: "two of these went through unread" is a different
+    decision from "thirty did".
+
+    Nothing at all when the count is zero, and that is the rule from #205 and
+    #208 applied here: passing statements through is the normal case for FRR
+    configuration, so a line printed under every configuration would be read
+    once and skipped forever - including on the configuration where it says
+    something.
+    """
+    if not n:
+        return []
+    return [f"{UNCHECKED_NOTE} {n} statement(s) above are marked "
+            f"'{UNCHECKED_MARK.strip()}': this VTY has no",
+            f"{UNCHECKED_NOTE} grammar for them and handed them to FRR word "
+            "for word"]
+
+
+def mark_unchecked(lines):
+    """
+    A whole configuration with the routing statements this VTY did not read
+    marked, and a sentence at the end saying how many there were.
+
+    WHY IT IS ONLY THE ROUTING HALF: everything above `! routing` is modelled
+    by construction. `Config.parse` records a line it cannot hold in
+    `unknown`, `commit` refuses to run while there is one, and the dataplane
+    reads its half back statement by statement. There is no passthrough there
+    to mark, and marking is a claim - "this part was checked" has to stay
+    worth something or the marker degrades into decoration.
+
+    The routing half is the opposite: it is a list of verbatim FRR statements,
+    most of which this VTY has never read. Before this, a statement the
+    command tree validated and a statement it forwarded blind printed
+    identically, so an operator could not tell what the box had checked from
+    what it had merely carried - and read a guarantee into both (#141).
+    """
+    try:
+        cut = lines.index(ROUTING_HEADER)
+    except ValueError:
+        return list(lines)
+    head, routing = lines[:cut + 1], lines[cut + 1:]
+    marked, n = mark_routing(routing)
+    return head + marked + unchecked_note(n)
 
 
 def as_path_parts(line):
@@ -3250,6 +3430,13 @@ class ConfirmPending:
         except OSError:
             self.clear()
         return dead
+
+
+#: The blocks this product models itself, as opposed to the FRR blocks tracked
+#: in `frr_ctx`. They are modes rather than context entries, which is why they
+#: needed naming: two places have to know the same list, and before #221 only
+#: one of them did.
+BLOCK_MODES = ("pool", "user", "snmp-user")
 
 
 class Shell:
@@ -5365,6 +5552,27 @@ class Shell:
                 if self.real_routing(self.candidate.routing):
                     print("configuration check succeeds for CGNAT and the "
                           "box's own configuration")
+                    # HERE and not on `commit`, and the difference is the
+                    # rule from #205 and #208: an alarm that is always on is
+                    # one nobody reads. Passing statements through is the
+                    # NORMAL case for FRR configuration - a working BGP edge
+                    # has `no bgp ebgp-requires-policy` in it and this VTY
+                    # models no `no` inside a block at all - so a line on
+                    # every commit would be skipped within a week, and the
+                    # habit of skipping the end of a commit takes the
+                    # "FRR kept none of these statements" warning with it.
+                    #
+                    # `commit check` is the opposite kind of moment. It is a
+                    # question the operator chose to ask, and the whole
+                    # question is HOW MUCH was verified - it already answered
+                    # it with "structure only", which is a sentence that
+                    # names no number. This one names the number.
+                    _, unread = mark_routing(self.candidate.routing)
+                    if unread:
+                        print(f"  {unread} routing statement(s) have no "
+                              "grammar in this VTY and were not read at all")
+                        print("    'show configuration' marks them; they go "
+                              "to FRR exactly as typed")
                     print("  routing statements are checked for structure "
                           "only; FRR validates them at commit, and can still "
                           "refuse one")
@@ -6629,7 +6837,19 @@ class Shell:
         # walk into.
         if self.frr_ctx:
             block = self.frr_ctx[-1]
-            print(block)
+            # Marked HERE as well as in `show configuration`, and this is the
+            # one that matters most: `show this` is what an operator runs
+            # while they are still typing, before the commit, and it is the
+            # only way to read a block back at all (#98, #221). Telling them
+            # at `show configuration` time that half of what they typed went
+            # through unread is telling them after the fact.
+            #
+            # The header goes through the same walk as its contents. Standing
+            # in a block this VTY has no grammar for - `vrf red`, a key chain
+            # - the answer an operator needs is on the first line: nothing in
+            # here was read, not just the statement they are looking at.
+            header, n = mark_routing([block], self.frr_ctx[:-1])
+            print(header[0])
 
             # An interface's own settings are staged in cfg.mtus, cfg.urpf,
             # cfg.descriptions and eight more fields, NOT in cfg.routing. This
@@ -6646,7 +6866,18 @@ class Shell:
             # Redacted here too. `show this` inside a block reads the routing
             # lines straight out of the candidate, so a neighbour password
             # printed nowhere else was printed here.
-            for line in redact(frr_block_lines(cfg.routing, self.frr_ctx)):
+            #
+            # Marked AFTER redaction, on the same text the operator sees, the
+            # way print_config does it. A password redacted to `****` still
+            # walks the tree to the same answer, because the walk stops at
+            # `password` - which is an argument keyword - and what follows is
+            # the argument's business.
+            body, more = mark_routing(
+                redact(frr_block_lines(cfg.routing, self.frr_ctx)),
+                self.frr_ctx)
+            for line in body:
+                print(line)
+            for line in unchecked_note(n + more):
                 print(line)
             return
 
@@ -8278,44 +8509,18 @@ class Shell:
 
     def block_grammar(self, words):
         """
-        The grammar for the block being typed in, or None when there is none.
+        What `?` offers inside the block being typed in.
 
-        None is not the same as an empty grammar: a block this VTY does not
-        model offers `exit` and nothing else, because offering a guess as a
-        grammar is worse than offering nothing. `words` is needed because one
-        block has two grammars - the words after a neighbour's ADDRESS are a
-        different set from the words that start a line.
+        Never None: a block this VTY does not model offers `exit` and nothing
+        else, because offering a guess as a grammar is worse than offering
+        nothing. That is deliberately NOT the same answer the module-level
+        `block_grammar` gives, which returns None there - "this VTY has no
+        grammar for this block" is what the boundary marker has to know, and
+        "there is still an `exit`" is what the operator has to be offered
+        (#141). One walk, two readings of it, so they cannot drift apart.
         """
-        block = self.frr_ctx[-1]
-        if block.strip() == STATIC_BLOCK:
-            return STATIC_BLOCK_GRAMMAR
-        if block.startswith("interface "):
-            return INTERFACE_BLOCK
-        if block.strip() == "rpki":
-            return RPKI_BLOCK
-        if block.split()[:2] == ["router", "isis"]:
-            return ISIS_BLOCK
-        if block.split()[:2] == ["router", "ospf"]:
-            return OSPF_BLOCK
-        # Before #187 this fell through to the "block this VTY does not model"
-        # answer, so `router ospf6` offered `exit` and nothing else - on a
-        # statement the box accepted and committed.
-        if block.split()[:2] == ["router", "ospf6"]:
-            return OSPF6_BLOCK
-        if block.startswith("route-map "):
-            return ROUTE_MAP_BLOCK
-        if block.startswith("address-family "):
-            base, neigh = BGP_AF_BLOCK, BGP_AF_NEIGHBOUR
-        elif block.startswith("router bgp"):
-            base, neigh = BGP_BLOCK, BGP_NEIGHBOUR
-        else:
-            return {"exit": ("leave the block", None)}
-        # `neighbor <address> <word>`: the address is an argument, so the tree
-        # cannot walk through it. After it, the statements are the neighbour's.
-        if len(words) >= 2 and words[0] == "neighbor":
-            return {"neighbor": ("a BGP session", {words[1]: (
-                f"statements for {words[1]}", neigh)})}
-        return base
+        return block_grammar(self.frr_ctx[-1], words) or {
+            "exit": ("leave the block", None)}
 
     def _options(self, line, ending_word):
         # After a pipe, the only words that mean anything are the filters. The
@@ -8346,7 +8551,16 @@ class Shell:
         #
         # The blocks the tree knows about were always right: a pool offers its
         # own, a user its own. Only these needed narrowing.
-        if self.frr_ctx:
+        # Inside a block, `show` is the whole show tree and not just the word.
+        # Every one of its sub-commands works there - measured, not assumed:
+        # `show this`, `show version`, `show configuration` and the rest all
+        # answer from inside a pool and from inside an interface. What `?`
+        # offered after the word was nothing, in every block, so `show this`
+        # could be reached only by typing it blind - and it is the only way to
+        # read a block back before committing (#221).
+        if words[:1] == ["show"] and (self.frr_ctx or self.mode in BLOCK_MODES):
+            node, hint = walk_from(SHOW, words[1:])
+        elif self.frr_ctx:
             grammar = self.block_grammar(words)
             if grammar is not None:
                 node, bhint = walk_from(grammar, words)
@@ -8372,6 +8586,20 @@ class Shell:
                 return dyn, hint, prefix
             return {}, hint, prefix
         opts = {k: v[0] for k, v in node.items() if _starts(k, prefix)}
+        # The same `show` the FRR branch above adds, for the blocks this
+        # product models itself. They are not in frr_ctx - a pool, a user and
+        # an SNMP user are MODES, walked by tree_walk - so they never reached
+        # that branch, and the comment there says "every block" while the code
+        # covered half of them.
+        #
+        # It is the shape of #187 and #99: `show this` is the only way to read
+        # back what has been typed into a block before committing, it works in
+        # all six blocks, and in three of them it could only be reached by
+        # typing it blind. The pool is the one an operator needs most and the
+        # one the wiki uses as its example (#221).
+        if not words and self.mode in BLOCK_MODES:
+            if _starts("show", prefix):
+                opts["show"] = "display information"
         # A node can offer keywords AND take a name - `show interface` offers
         # `terse` and every interface on the box. Before this, a node with a
         # subtree discarded the hint, so adding `terse` to `show interface`

@@ -7,7 +7,7 @@ Tudo o que se configura dentro de uma interface: endereços, VLAN, VRF, MTU, est
 Entra-se numa interface a partir do modo de configuração, e sai-se com `exit`:
 
 ```
-hexarouting# configure
+hexarouting> configure
 hexarouting# [edit] interface GigabitEthernet0/12/0
 hexarouting# [edit interface GigabitEthernet0/12/0]
 ```

@@ -52,6 +52,24 @@ cat > "$BIN/setpriv" <<'EOF'
 echo "$*" >> "$FAKE/setpriv.log"
 exit 0
 EOF
+# Where a path is mounted from. The records check compares the source of
+# /var/log/hexarouting with the source of /, and on the machine running
+# these tests both are the same disk - which is the WARNING case, so
+# without this stub the passing branch could never be reached.
+cat > "$BIN/findmnt" <<'EOF'
+#!/bin/sh
+for a in "$@"; do t=$a; done
+case "$t" in
+  /) cat "$FAKE/mnt_root" 2>/dev/null || echo /dev/vda2 ;;
+  *) cat "$FAKE/mnt_records" 2>/dev/null ;;
+esac
+EOF
+# Only the free-space line matters to the check, and only that it is there.
+cat > "$BIN/df" <<'EOF'
+#!/bin/sh
+echo "Filesystem Size Used Avail Use% Mounted"
+echo "/dev/vdb1 40G 1G 37G 3% /var/log/hexarouting"
+EOF
 cat > "$BIN/vat2" <<'EOF'
 #!/bin/sh
 echo bpa_pool_add_del
@@ -64,7 +82,13 @@ cat > "$BIN/systemctl" <<'EOF'
 #!/bin/sh
 case "$*" in
   *"-p MainPID"*) cat "$FAKE/mainpid" 2>/dev/null || echo 0 ;;
-  *"-p NRestarts"*) echo 0 ;;
+  # From the fake box, not a constant. It was `echo 0` here, which made the
+  # two branches that matter - "restarted N time(s)" and "has restarted N
+  # times: it is looping" - unreachable by anything, while the check they
+  # belong to is the one that tells a service in a loop from a healthy one
+  # (#222). A service that is restarting is "active" about half the time
+  # somebody looks at it.
+  *"-p NRestarts"*) cat "$FAKE/nrestarts" 2>/dev/null || echo 0 ;;
   "is-failed "*) echo inactive ;;
   *) : ;;
 esac
@@ -97,6 +121,10 @@ case "$*" in
   # which is what a dataplane holding nothing but local0 looks like.
   "show interface")   cat "$FAKE/show_interface" 2>/dev/null ;;
   "show lcp")         cat "$FAKE/show_lcp" 2>/dev/null ;;
+  # The plugin listing. Empty in $FAKE is a dataplane that came up without
+  # the CGNAT plugin, which is a box that forwards nothing and fails every
+  # CGNAT command while answering "show version" perfectly well.
+  "show plugins")     cat "$FAKE/show_plugins" 2>/dev/null ;;
 esac
 exit 0
 EOF
@@ -115,6 +143,14 @@ case "$*" in
   *"show daemons"*)
     if [ -f "$FAKE/frr_daemons" ]; then cat "$FAKE/frr_daemons"
     else echo "bgpd ospfd ospf6d isisd zebra staticd mgmtd"; fi ;;
+  # RPKI answers in two ways and the difference is the whole check: a
+  # module that is NOT loaded makes vtysh exit non-zero on this command,
+  # and one that is loaded answers, with or without a connected cache. So
+  # the absence of the file is the unloaded case rather than a missing
+  # fixture.
+  *"show rpki cache-connection"*)
+    [ -f "$FAKE/rpki" ] || exit 1
+    cat "$FAKE/rpki" ;;
   *) : ;;
 esac
 exit 0
@@ -755,6 +791,428 @@ elif said '\[ ok \] rx queues: default'; then
   ok "a box whose profile names no rx queues says so, and says what it means"
 else
   bad "nothing reported rx queues: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+rm -rf "$FAKE/root"
+
+echo "=== the CGNAT plugin, which is the whole of what this box is for (#222) ==="
+# A dataplane that came up without the plugin answers `show version` perfectly
+# well, forwards nothing through the CGNAT and fails every pool command. The
+# check for it is one grep, and nothing held it: a grep whose needle stops
+# matching passes for the same reason a correct box does.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+: > "$FAKE/vppctl_ok"
+printf 'Plugin path is: /usr/lib/vpp_plugins\n bpa_plugin.so\n dpdk_plugin.so\n' \
+  > "$FAKE/show_plugins"
+run
+if said '\[ ok \] CGNAT plugin loaded'; then
+  ok "a dataplane carrying the plugin is reported so"
+else
+  bad "a dataplane with bpa_plugin.so loaded was not reported: $(printf '%s\n' "$OUTPUT" | grep -i plugin || echo '<nothing>')"
+fi
+printf 'Plugin path is: /usr/lib/vpp_plugins\n dpdk_plugin.so\n' > "$FAKE/show_plugins"
+run
+if said '\[FAIL\] CGNAT plugin missing'; then
+  ok "and a dataplane without it is a FAILED check, not a warning"
+else
+  bad "a box that can do no CGNAT at all passed: $(printf '%s\n' "$OUTPUT" | grep -i plugin || echo '<nothing>')"
+fi
+rm -f "$FAKE/show_plugins"
+
+echo "=== a vpp.service in a restart loop (#222) ==="
+# "A service in a loop can be active at the instant you look, and only
+# NRestarts tells the story" is what the CHANGELOG says about this check. The
+# stub answered 0 for every run, so the two branches that carry that sentence
+# had never been executed by anything.
+printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
+echo 0 > "$FAKE/nrestarts"
+run
+if said '\[ ok \] vpp.service stable \(0 restarts\)'; then
+  ok "a dataplane that has not restarted is reported as stable"
+else
+  bad "a stable vpp.service was not reported: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+echo 2 > "$FAKE/nrestarts"
+run
+if said '\[warn\] vpp.service restarted 2 time\(s\)'; then
+  ok "two restarts is a warning, and says how many"
+else
+  bad "two restarts said nothing: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+if said '\[FAIL\].*restart'; then
+  bad "two restarts was counted as a failure; a box that restarted twice and settled is not looping"
+else
+  ok "and two restarts is not a failed check"
+fi
+echo 7 > "$FAKE/nrestarts"
+run
+if said '\[FAIL\] vpp.service has restarted 7 times: it is looping'; then
+  ok "a loop is a FAILED check, and names the count"
+else
+  bad "a looping vpp.service passed: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
+fi
+rm -f "$FAKE/nrestarts"
+
+echo "=== IS-IS frames punted to the kernel (#222, #168) ==="
+# The reason this line exists: a box with an IS-IS instance and no OSI punt
+# commits cleanly, brings isisd up, reads back correctly and forms no adjacency
+# ever, with the only evidence in a dataplane counter nothing surfaces. It is
+# silent in exactly the way the boot self-test exists for, and nothing held it.
+printf 'router isis CORE\n net 49.0001.0000.0000.0001.00\n' > "$FAKE/frr_running"
+printf 'itf-pair: [0] host-veth-vpp tap0 host-veth-vpp 2 type tap osi 0x83\n' \
+  > "$FAKE/show_lcp"
+run
+if said '\[ ok \] IS-IS frames are punted to the kernel'; then
+  ok "a box running IS-IS with the OSI punt in place is reported so"
+else
+  bad "the punt was in place and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'IS-IS\|osi' || echo '<nothing>')"
+fi
+printf 'itf-pair: [0] host-veth-vpp tap0 host-veth-vpp 2 type tap\n' > "$FAKE/show_lcp"
+run
+if said '\[warn\] IS-IS is configured and its frames are NOT punted'; then
+  ok "and without the punt it is reported, on a box that otherwise looks healthy"
+else
+  bad "IS-IS configured and not punted said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'IS-IS\|osi' || echo '<nothing>')"
+fi
+if said 'adjacency will never form'; then
+  ok "and says what the operator will see instead, which is nothing"
+else
+  bad "the warning does not say what goes wrong"
+fi
+# And it must stay quiet on a box that is not running IS-IS at all. A line
+# about a protocol nobody configured is the alarm #205 and #208 are about.
+printf 'router bgp 65000\n' > "$FAKE/frr_running"
+run
+if said 'IS-IS'; then
+  bad "a box with no IS-IS was told about IS-IS: $(printf '%s\n' "$OUTPUT" | grep -i 'IS-IS' | head -1)"
+else
+  ok "a box not running IS-IS is not told about the OSI punt"
+fi
+rm -f "$FAKE/show_lcp"
+
+echo "=== RPKI, whose absence presents as something else entirely (#222) ==="
+# bgpd refuses to start when told to load a module it cannot find, so a missing
+# RPKI module presents as "bgpd is not running" and sends the reader after the
+# wrong thing. Three states, and the middle one is the one that matters: a
+# cache configured and not connected marks every route notfound, quietly.
+printf 'router bgp 65000\n' > "$FAKE/frr_running"
+rm -f "$FAKE/rpki"
+run
+if said '\[warn\] RPKI module not loaded'; then
+  ok "a module that is not loaded is reported, with what to install"
+else
+  bad "RPKI absent said nothing: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+printf 'RPKI Cache Servers\n' > "$FAKE/rpki"
+run
+if said '\[ ok \] RPKI module loaded \(no cache configured'; then
+  ok "loaded with no cache is reported as loaded, and says nothing is validated"
+else
+  bad "RPKI loaded with no cache: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+printf 'router bgp 65000\n rpki cache 192.0.2.1 8282 preference 1\n' \
+  > "$FAKE/frr_running"
+printf 'host: 192.0.2.1 port: 8282 (connected)\n' > "$FAKE/rpki"
+run
+if said '\[ ok \] RPKI: 1 cache\(s\) configured and connected'; then
+  ok "a connected cache is reported, and counted"
+else
+  bad "a connected cache: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+printf 'host: 192.0.2.1 port: 8282\n' > "$FAKE/rpki"
+run
+if said '\[warn\] RPKI: 1 cache\(s\) configured, NONE connected'; then
+  ok "a configured cache that is not connected is reported"
+else
+  bad "a disconnected cache passed silently: $(printf '%s\n' "$OUTPUT" | grep -i rpki || echo '<nothing>')"
+fi
+if said 'every route is notfound'; then
+  ok "and says what that does to a policy keyed on notfound"
+else
+  bad "the warning does not say what a disconnected cache costs"
+fi
+rm -f "$FAKE/rpki" "$FAKE/frr_running" "$FAKE/show_plugins"
+rm -rf "$FAKE/root"
+
+echo "=== the two latency settings, which cost throughput and no counter (#222) ==="
+# Neither of these stops the box working, and neither shows up as a drop
+# counter. A deep C-state costs the first packets of a burst while the core
+# wakes up, and a governor that is not `performance` runs the poll loop at a
+# clock the kernel chose for an idle machine - on a thread that never sleeps
+# and therefore never looks idle to the governor's own heuristics.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+mkdir -p "$FAKE/root/proc" "$FAKE/root/sys/devices/system/cpu/cpufreq/policy0"
+echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3 processor.max_cstate=1 intel_idle.max_cstate=0" \
+  > "$FAKE/root/proc/cmdline"
+echo performance > "$FAKE/root/sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+run
+if said '\[ ok \] deep C-states disabled on the kernel command line'; then
+  ok "a tuned command line is reported"
+else
+  bad "processor.max_cstate=1 was on the command line and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
+fi
+if said '\[ ok \] cpufreq governor: performance'; then
+  ok "and so is the governor it was set to"
+else
+  bad "the governor was performance and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i governor || echo '<nothing>')"
+fi
+echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3" > "$FAKE/root/proc/cmdline"
+echo powersave > "$FAKE/root/sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+run
+if said '\[warn\] deep C-states still enabled'; then
+  ok "a command line without it is reported, and says what it costs"
+else
+  bad "deep C-states were enabled and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
+fi
+if said "\\[warn\\] cpufreq governor is 'powersave', not performance"; then
+  ok "and a governor that is not performance is named, with what it is"
+else
+  bad "a powersave governor passed silently: $(printf '%s\n' "$OUTPUT" | grep -i governor || echo '<nothing>')"
+fi
+# A machine with no cpufreq at all is a virtual one, and telling it to set a
+# governor it does not have is an instruction nobody can follow.
+rm -rf "$FAKE/root/sys/devices/system/cpu/cpufreq"
+run
+if said '\[info\] no cpufreq exposed'; then
+  ok "a box with no cpufreq is told there is nothing to set, not warned"
+else
+  bad "a box with no cpufreq: $(printf '%s\n' "$OUTPUT" | grep -i 'cpufreq\|governor' || echo '<nothing>')"
+fi
+
+echo "=== the records volume, which is a legal requirement here (#222) ==="
+# In dynamic mode the allocation log IS the record the Marco Civil requires to
+# be kept for a year. It has its own filesystem so a full log cannot stop the
+# box working, and fstab mounts it nofail - which means a volume that never
+# mounted leaves the box writing records onto the root filesystem, working
+# perfectly, until the root filesystem fills.
+mkdir -p "$FAKE/root/var/log/hexarouting"
+echo /dev/vda2 > "$FAKE/mnt_root"
+echo /dev/vdb1 > "$FAKE/mnt_records"
+run
+if said '\[ ok \] records on their own filesystem: /dev/vdb1'; then
+  ok "a records volume of its own is reported, and named"
+else
+  bad "the records volume was separate and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'records on' || echo '<nothing>')"
+fi
+if said 'free of'; then
+  ok "and says how much room is left on it"
+else
+  bad "the line does not say how full the records volume is"
+fi
+# The volume that did not mount: same directory, same box, one source.
+echo /dev/vda2 > "$FAKE/mnt_records"
+run
+if said '\[warn\] connection records are on the ROOT filesystem'; then
+  ok "records on the root filesystem is reported"
+else
+  bad "records were on the root filesystem and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'records' || echo '<nothing>')"
+fi
+if said 'stop this box writing its own'; then
+  ok "and says what a full log does to the rest of the box"
+else
+  bad "the warning does not say what it costs"
+fi
+# On the live medium nothing is persisted anyway, and warning about it there
+# would be an alarm that is always on for a reason the reader cannot act on.
+mkdir -p "$FAKE/root/run/live/medium/live"
+: > "$FAKE/root/run/live/medium/live/filesystem.squashfs"
+run
+if said '\[info\] live medium: records are not persisted anyway'; then
+  ok "the live medium says so instead of warning about a disk it does not have"
+else
+  bad "the live medium was warned about the root filesystem: $(printf '%s\n' "$OUTPUT" | grep -i 'records\|live medium' || echo '<nothing>')"
+fi
+rm -f "$FAKE/mnt_root" "$FAKE/mnt_records"
+rm -rf "$FAKE/root"
+
+echo "=== which NIC the dataplane may claim (#222, #123) ==="
+# The failure this replaces was silent and cost the session it was found on:
+# the box shipped HEXA_DATAPLANE_IF=eth0, which does not exist under
+# predictable names, the tuner generated a DPDK stanza with no allowlist, and
+# VPP claimed whatever NIC it found - the management one, on a single-NIC box.
+#
+# Four branches, and three of them look alike from outside: the safe first-boot
+# profile, the deliberate no-NIC one, and the dangerous one. The first version
+# of this check conflated two of them and failed every live medium, so each is
+# asserted separately rather than as "it said something".
+nicconf() {  # <extra lines for the startup.conf of an otherwise tuned box>
+  mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+  printf '%s\n' "$1" >> "$FAKE/root/etc/vpp/startup.conf"
+}
+: > "$FAKE/vppctl_ok"
+nicconf 'dpdk {
+  dev 0000:03:00.0
+}'
+run
+if said '\[ ok \] dataplane NIC: 0000:03:00.0'; then
+  ok "a named device is reported, with the address it names"
+else
+  bad "a startup.conf naming a device said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+nicconf 'plugin dpdk_plugin.so { disable }'
+run
+if said '\[info\] DPDK is off until hugepages exist'; then
+  ok "the first-boot profile is told apart from a box with no device named"
+else
+  bad "DPDK disabled was not recognised: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+if said '\[FAIL\] the dataplane may claim any NIC'; then
+  bad "the first-boot profile was reported as dangerous, which is what failed every live medium once"
+else
+  ok "and it is not reported as the dangerous case"
+fi
+nicconf 'dpdk {
+  no-pci
+}'
+run
+if said '\[warn\] no dataplane interface: VPP was given no NIC'; then
+  ok "a box deliberately given no NIC is a warning, and says how to give it one"
+else
+  bad "no-pci said nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+if said '\[FAIL\] the dataplane may claim any NIC'; then
+  bad "no-pci was reported as the dangerous case; it is the opposite of it"
+else
+  ok "and it is not the dangerous case either"
+fi
+# DPDK on, nothing named, no no-pci. This is the one that takes the management
+# interface on the next boot.
+nicconf 'dpdk {
+  socket-mem 1024
+}'
+run
+if said '\[FAIL\] the dataplane may claim any NIC it finds, including this box'; then
+  ok "a DPDK stanza that names no device at all is a FAILED check"
+else
+  bad "the dangerous profile passed: $(printf '%s\n' "$OUTPUT" | grep -i 'NIC\|dpdk' || echo '<nothing>')"
+fi
+if said 'management interface'; then
+  ok "and says which NIC it is about to lose"
+else
+  bad "the failure does not say what is at stake"
+fi
+rm -rf "$FAKE/root"
+
+echo "=== the three statements the whole report rests on (#222) ==="
+# The version, the RAM and the instruction set. Nothing held any of them, and
+# the first line of the report is the one a reader trusts most: an operator who
+# says "I am running 0.66.0" is reading it off this line, and a box whose stamp
+# is missing said so to nobody.
+#
+# The RAM thresholds are not decoration either. docs/appliance.md records the
+# event: the ISO booted with 2 GB and the console said "Out of memory: Killed
+# process (vpp)" with VPP holding 19 MB. The floor exists because of that.
+hw() {  # <version> <memkb> <cpu flags>
+  mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+  mkdir -p "$FAKE/root/proc" "$FAKE/root/usr/share/hexarouting"
+  [ -n "$1" ] && printf '%s\n' "$1" > "$FAKE/root/usr/share/hexarouting/VERSION"
+  printf 'MemTotal:       %s kB\n' "$2" > "$FAKE/root/proc/meminfo"
+  printf 'model name\t: Synthetic CPU\nflags\t\t: %s\n' "$3" \
+    > "$FAKE/root/proc/cpuinfo"
+}
+hw "9.9.9 (abc1234)" 8388608 "fpu sse4_2 avx2"
+run
+if said '\[ ok \] HexaRouting 9.9.9 \(abc1234\)'; then
+  ok "the version stamp on the box is what the report names"
+else
+  bad "the version stamp was not reported: $(printf '%s\n' "$OUTPUT" | head -3)"
+fi
+if said '\[ ok \] 8192 MB of RAM'; then
+  ok "and the RAM it has, in MB, on a box that has enough"
+else
+  bad "8 GB was not reported: $(printf '%s\n' "$OUTPUT" | grep -i 'RAM' || echo '<nothing>')"
+fi
+if said '\[ ok \] CPU has sse4_2 and avx2'; then
+  ok "and the instruction set VPP needs, when it is there"
+else
+  bad "sse4_2 and avx2 present and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'CPU' || echo '<nothing>')"
+fi
+hw "" 8388608 "fpu sse4_2 avx2"
+run
+if said '\[FAIL\] no version stamp in /usr/share/hexarouting/VERSION'; then
+  ok "a box with no version stamp is a FAILED check, not a blank line"
+else
+  bad "a box with no version stamp: $(printf '%s\n' "$OUTPUT" | head -3)"
+fi
+# 2 GB is the machine the OOM kill was observed on.
+hw "9.9.9" 2097152 "fpu sse4_2 avx2"
+run
+if said '\[FAIL\] only 2048 MB of RAM: VPP will be killed by the OOM killer'; then
+  ok "the RAM the dataplane was killed on is a FAILED check, and says why"
+else
+  bad "2 GB passed: $(printf '%s\n' "$OUTPUT" | grep -i 'RAM' || echo '<nothing>')"
+fi
+if said 'minimum recommended: 4 GB'; then
+  ok "and names the floor rather than only refusing"
+else
+  bad "the RAM failure does not say what is enough"
+fi
+# Between the floor and comfortable. A box that boots and is tight is not a
+# box to refuse, and calling it a failure would be an alarm on ordinary
+# hardware.
+hw "9.9.9" 3145728 "fpu sse4_2 avx2"
+run
+if said '\[warn\] 3072 MB of RAM: enough to boot, tight under load'; then
+  ok "3 GB is a warning: enough to boot, and said so"
+else
+  bad "3 GB: $(printf '%s\n' "$OUTPUT" | grep -i 'RAM' || echo '<nothing>')"
+fi
+if said '\[FAIL\].*MB of RAM'; then
+  bad "3 GB was refused; a box that boots and runs tight is not one to refuse"
+else
+  ok "and it is not a failed check"
+fi
+# The instruction set VPP is compiled for. Without it the dataplane does not
+# fail to forward, it dies with SIGILL - which reads like a crash and sends
+# whoever is looking at the packet path.
+hw "9.9.9" 8388608 "fpu sse2"
+run
+# Only sse4_2 is required: VPP dies with SIGILL without it and merely runs
+# slower without avx2, so the two are a refusal and a warning rather than one
+# list. Asserted as the product draws that line, not as it might have been
+# drawn.
+if said '\[FAIL\] CPU lacks: sse4_2 - VPP requires it'; then
+  ok "a CPU without sse4_2 is a FAILED check, naming what is missing"
+else
+  bad "a CPU without sse4_2 passed: $(printf '%s\n' "$OUTPUT" | grep -i 'CPU' || echo '<nothing>')"
+fi
+if said 'SIGILL'; then
+  ok "and says how it will present, because it presents as a crash"
+else
+  bad "the CPU failure does not say what the operator will see"
+fi
+# avx2 alone is a performance statement, not a refusal: VPP runs without it.
+hw "9.9.9" 8388608 "fpu sse4_2"
+run
+if said '\[warn\] CPU lacks avx2'; then
+  ok "a CPU with sse4_2 and no avx2 is a warning about throughput"
+else
+  bad "missing avx2 alone: $(printf '%s\n' "$OUTPUT" | grep -i 'CPU' || echo '<nothing>')"
+fi
+if said '\[FAIL\] CPU lacks'; then
+  bad "a CPU that VPP runs on was refused over avx2"
+else
+  ok "and not a refusal, because VPP runs on it"
+fi
+rm -rf "$FAKE/root"
+
+echo "=== the dataplane answering, and not (#222) ==="
+# The most basic statement in the report, and nothing held it. A box whose VPP
+# is not answering has to say so at the top, because every line below it is
+# then about a box that is not forwarding.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+: > "$FAKE/vppctl_ok"
+run
+if said '\[ ok \] VPP responding'; then
+  ok "a dataplane that answers is reported at the top of the report"
+else
+  bad "a responding VPP was not reported: $(printf '%s\n' "$OUTPUT" | grep -i 'VPP' | head -2 || echo '<nothing>')"
+fi
+rm -f "$FAKE/vppctl_ok"
+run
+if said '\[FAIL\] VPP not responding'; then
+  ok "and one that does not answer is a FAILED check"
+else
+  bad "a dead VPP passed: $(printf '%s\n' "$OUTPUT" | grep -i 'VPP' | head -2 || echo '<nothing>')"
 fi
 rm -rf "$FAKE/root"
 

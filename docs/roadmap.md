@@ -919,6 +919,118 @@ It matters most in the `off` path, which is why the two landed together: an
 off run whose VPP never started fails every check, which is exactly what the
 inverted verdict would otherwise call a pass.
 
+**A third finding, and it is the same shape one level down: `make test` could
+not say which check had failed.** The report was "about one run in three under
+a lab suite", and the only evidence anybody could keep was a count of summary
+lines - because the `make test` recipe read each suite's **exit status**, and a
+suite that was killed, crashed or never started reported exactly like one that
+had been read and failed. Naming the check took a runner that reads the verdict
+line instead and reports four states: `pass`, `FAIL`, `NOT MEASURED` and
+`NO VERDICT`, the last of which did not exist.
+
+With that in place the defect was named in one run and then measured without
+any race at all: `wait-for-vpp` counted **polls** and printed them as
+**seconds**, so a quiet period of three ended at 2007 ms and a thirty second
+timeout gave up at 29069 ms while printing "within 30s". The check that lost
+stimulates a two second wait; the banner fell 9 ms after the stimulus, and
+which won was decided by how long a `fork` took. Pure CPU saturation never
+reproduced it, because that slows the poll loop too.
+
+It also produced the third state for a timing check, the same shape `NO VPP`
+took: `test_boot_wait.sh` measures the **stimulus** rather than the run, so a
+dataplane that answered on time and was announced anyway is a failure, while
+one that answered late says nothing about the product. `NOT MEASURED` is not a
+pass - the run still exits non-zero - so a quiet period that shrank cannot
+reach green by waiting for a busy machine.
+
+#### What the box says about its own cores, and a file this product does not own
+
+[#172](https://github.com/andrediashexa/hexarouting/issues/172) part 3 -
+*delivered*. The console had reported `corelist-workers 1-7` since the tuner
+existed, and that is the **file**. Nothing on an installed box had ever read
+what the dataplane **got**. The two come apart with no symptom: a VPP running
+since before the profile was rewritten keeps the cores it started with, and a
+kernel command line that did not get updated leaves a poll-mode worker sharing
+its core with the scheduler. The box forwards either way, and a thread that
+never sleeps reads 100% busy either way.
+
+The self-test now compares `/etc/vpp/startup.conf`, `/proc/<vpp pid>/task/*/status`
+and `/sys/devices/system/cpu/isolated` - three places, none of them the one
+that made the decision, and deliberately not `vppctl show threads`, which is
+VPP reporting on itself.
+
+The CPU **bound** the issue asked for turned out to be already applied, by the
+kernel, and the lab records it rather than the documentation asserting it: on a
+two-cpu box with `isolcpus=1`, pid 1 itself has `Cpus_allowed_list: 0` and
+`bgpd` has `ppid 1` and the same mask. Inherited, not enforced: `taskset` onto
+the isolated core is accepted. So no cpuset is shipped, and the refusal rests
+on the size of that residue rather than on a claim that there is none. One
+earlier run read `0-1` and has **not** been explained; it predates the two
+lines that would settle it, and both are now read on every run of the lab.
+
+[#220](https://github.com/andrediashexa/hexarouting/issues/220) came out of the
+same week and is worth its own line because of what it touched: the version
+stamp marked the repository as a git safe directory on **every** run, with no
+de-duplication, in `~/.gitconfig` - a file this product does not own. Measured:
+2325 copies of one entry, and 552 of the distinct paths were `/tmp` clones that
+no longer exist.
+
+#### A command the box had and its own help hid
+
+[#221](https://github.com/andrediashexa/hexarouting/issues/221) - *delivered*,
+and it belongs beside #187 rather than in a tidiness section. `show this` is
+the only way to read back what has been typed into a block before committing,
+it works inside every block this VTY has, and `?` and TAB listed it in three of
+six. The three where it was hidden are the blocks this product models itself: a
+pool, a user and an SNMP user are **modes** rather than FRR context entries, so
+the line that injects `show` never reached them - while the comment beside that
+line said "every block". The pool is this product's whole subject and the block
+the wiki uses as its example, so the box was hiding a command its own
+documentation tells an operator to type.
+
+The word alone was not the whole of it. `show ?` inside a block offered
+nothing, in **every** block, so `this` could still only be reached blind.
+
+What found it is worth more than the fix: `test/test_doc_commands.py` types
+every command the wiki, `docs/` and `README.md` tell a reader to type at the
+command tree, in the mode and the block the prompt says the reader is in. It
+walks each one as far as the tree enumerates and stops at arguments, which is
+the same boundary `?` and TAB have, and it says so rather than implying it. It
+also found four transcripts no box produces, two of them in `docs/`. The
+`install` exception is a pair: the page has to explain why an installed box
+does not have the command, or the exception fails with it.
+
+#### Records the box wrote and did not send
+
+[#219](https://github.com/andrediashexa/hexarouting/issues/219) - *delivered*.
+The stop drain closed the retention log
+([#217](https://github.com/andrediashexa/hexarouting/issues/217)) by writing
+one `natEvent 17` per block still held, and over TCP those records went no
+further than a buffer inside the VPP process. The socket is non-blocking and
+the spill to disk only triggers above 1 MB, so between "the collector stopped
+reading" and "1 MB has piled up" there is a window where the records exist in
+one place only, and the process leaves with them. Measured with 1501 blocks
+held: 15372 bytes in the buffer, the drain reporting every block released, and
+**none** of the 3012 records arriving, while the UDP control delivered all of
+them.
+
+It is not only a stalled collector: with the collector reading as fast as the
+box writes and nothing wrong anywhere, the same measurement found 70020 bytes
+still in the buffer at the exit, because the drain writes every record in one
+go and services the socket once. A box with enough subscribers reaches that on
+an ordinary reboot.
+
+The fix is a flush at exit and the bound is **one `write()`**, with no timed
+wait, because the collector that leaves bytes there is the one that has stopped
+reading: its window is shut, so a wait sends nothing and costs a reboot the
+time.
+
+Behind it was an older defect the fix would have made routine. A non-blocking
+`send()` stops mid-message and the buffer was advanced by the byte count, so
+the spill file could begin at the tail of a message: 82917 bytes written,
+82917 replayed, **one record decoded out of them**. The 1 MB spill and the 60
+second template refresh could both reach that on a live box today.
+
 #### A protocol the box offered and could not run
 
 [#187](https://github.com/andrediashexa/hexarouting/issues/187) - *delivered*.

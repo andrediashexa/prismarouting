@@ -6,7 +6,7 @@ Decodes the template and the data records and prints the RFC 8158 block events
 as text. It is not a product: it exists so the tests can prove that what leaves
 VPP conforms to the standard, not merely that "some packet went out".
 """
-import socket, struct, sys, time
+import os, select, socket, struct, sys, time
 
 IE = {
     8:   ("sourceIPv4Address", "ip"),
@@ -123,10 +123,10 @@ def report_open():
 
       STILL IN FORCE   the exporter has not restarted since; the subscriber
                        holds those ports now
-      ENDED AT RESTART the exporter announced a new systemInitTime afterwards,
-                       so the box was replaced while holding the block. It did
-                       not observe the end, so the honest answer is a window
-                       and not an instant.
+      ENDED AT RESTART the exporter's current incarnation began AFTER the
+                       allocation, so the box was replaced while holding the
+                       block. It did not observe the end, so the honest answer
+                       is a window and not an instant.
 
     Without the marker every open allocation is the first kind by default,
     which is the reading that names a subscriber who had already gone. This
@@ -158,16 +158,34 @@ def report_open():
     for k, times in sorted(open_allocs.items(), key=lambda kv: str(kv[0])):
         for t in times:
             any_open = True
-            # The init time in force when the allocation was made, against the
-            # latest one announced. Different means the box was replaced while
-            # it held the block.
-            before = [m for m in markers if m <= t]
-            after = [m for m in markers if m > t]
-            init_then = inits[before[-1]] if before else None
-            init_now = inits[after[-1]] if after else init_then
+            # Did an incarnation start AFTER this allocation was made? That is
+            # the whole question, and it is one comparison against the
+            # allocation's own timestamp.
+            #
+            # It used to compare the init announced by the last marker at or
+            # before the allocation with the one announced by the last marker
+            # after it, and markers are periodic. An allocation made in the gap
+            # between a restart and the first marker of the NEW incarnation
+            # therefore read its "init then" off the OLD incarnation's marker,
+            # and every such allocation came out ENDED AT RESTART - at a
+            # restart that had happened before it. Captured (#223):
+            #
+            #   05:17:59 RESTART-MARKER exporter init 05:17:24
+            #   05:18:52 RESTART-MARKER exporter init 05:18:17
+            #   05:18:28 100.64.0.9 ... ENDED AT RESTART (exporter
+            #            reinitialised at 05:18:17)
+            #
+            # eleven seconds AFTER the restart it was said to have ended at. A
+            # subscriber given a block in the first seconds after a reboot was
+            # read as having stopped holding it, in the report a court order
+            # asks for.
+            #
+            # An incarnation whose init time is earlier than the allocation
+            # cannot have started after it, so "init then" is not needed and
+            # the marker cadence stops mattering.
+            init_now = inits[markers[-1]] if markers else None
             when = time.strftime('%H:%M:%S', time.gmtime(t))
-            if init_then is not None and init_now is not None \
-               and init_now > init_then:
+            if init_now is not None and init_now > t:
                 print(f"  {when} {k[0]} -> {k[1]} portas {k[2]}-{k[3]}: "
                       f"ENDED AT RESTART (exporter reinitialised at "
                       f"{time.strftime('%H:%M:%S', time.gmtime(init_now))}; "
@@ -183,40 +201,88 @@ def report_open():
         print("  none")
 
 
-def serve_tcp(port, secs):
+# How small the receive buffer is made when a stall file is in use.
+#
+# A collector that stops reading only backs the exporter up once the receive
+# window AND the exporter's own send buffer are full; until then the kernel
+# absorbs everything and the exporter's outbuf stays empty. On a loopback-ish
+# veth with the defaults that is well over a hundred kilobytes, which would
+# make the stall need thousands of block events to be visible at all. Capping
+# the window here shrinks what has to be produced, it does not invent the
+# condition: a WAN collector that stops reading closes the window the same way.
+STALL_RCVBUF = 4096
+
+
+def serve_tcp(port, secs, stall_file=None):
     """
     IPFIX over TCP is a continuous stream of messages, not one datagram per
     packet: it has to be reassembled using the length in the header.
+
+    With stall_file set, the collector stays CONNECTED but does not read for as
+    long as that file exists. That is the state a slow or wedged collector puts
+    the exporter in, and it is the only way to leave bytes sitting in the
+    exporter's own out buffer rather than in a kernel socket buffer, which is
+    what the exporter loses when the box stops (#219).
     """
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if stall_file:
+        # Before listen(): the accepted socket inherits the listener's buffer
+        # sizes, and setting it afterwards no longer affects the window that
+        # was advertised in the handshake.
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, STALL_RCVBUF)
     srv.bind(("0.0.0.0", port))
     srv.listen(1)
     srv.settimeout(1.0)
     print(f"IPFIX/TCP collector listening on {port} for {secs:.0f}s")
+    if stall_file:
+        print(f"  stalling while {stall_file} exists "
+              f"(SO_RCVBUF {srv.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)})")
     end, buf, conn = time.time() + secs, b"", None
+    stalled = False
     while time.time() < end:
-        if conn is None:
-            try:
-                conn, _ = srv.accept()
-                conn.settimeout(1.0)
-                print("  connection accepted")
-            except socket.timeout:
-                continue
+        stalling = bool(stall_file and os.path.exists(stall_file))
+        if stalling and not stalled:
+            print("  STALLED: connected and not reading")
+            stalled = True
+        elif stalled and not stalling:
+            print("  reading again")
+            stalled = False
+        # The listening socket is watched even while a connection is open, and
+        # that is not tidiness. When the box stops holding bytes it could not
+        # send, the FIN is queued BEHIND them and the path they would take dies
+        # with the dataplane - so the old connection never ends, and a
+        # collector that waited for it would never see the box come back.
+        watch = [srv] if (conn is None or stalling) else [srv, conn]
         try:
-            chunk = conn.recv(65535)
-        except socket.timeout:
-            continue
-        if not chunk:
-            print("  connection closed by the exporter")
-            conn.close(); conn = None; continue
-        buf += chunk
-        while len(buf) >= 16:
-            mlen = struct.unpack("!H", buf[2:4])[0]
-            if mlen < 16 or len(buf) < mlen:
-                break
-            handle(buf[:mlen])
-            buf = buf[mlen:]
+            ready, _, _ = select.select(watch, [], [], 1.0)
+        except (ValueError, OSError):
+            break
+        if conn is not None and conn in ready:
+            try:
+                chunk = conn.recv(65535)
+            except (socket.timeout, ConnectionResetError):
+                chunk = None
+            if chunk is not None:
+                if not chunk:
+                    print("  connection closed by the exporter")
+                    conn.close(); conn = None; buf = b""
+                else:
+                    buf += chunk
+                    while len(buf) >= 16:
+                        mlen = struct.unpack("!H", buf[2:4])[0]
+                        if mlen < 16 or len(buf) < mlen:
+                            break
+                        handle(buf[:mlen])
+                        buf = buf[mlen:]
+        if srv in ready:
+            fresh, _ = srv.accept()
+            fresh.settimeout(1.0)
+            if conn is not None:
+                print("  a second connection: the first is abandoned")
+                conn.close()
+            conn, buf = fresh, b""
+            print("  connection accepted")
     if conn:
         conn.close()
 
@@ -225,7 +291,8 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "tcp":
         port = int(sys.argv[2]) if len(sys.argv) > 2 else 4739
         secs = float(sys.argv[3]) if len(sys.argv) > 3 else 25
-        serve_tcp(port, secs)
+        # A fourth argument is a stall file: see serve_tcp().
+        serve_tcp(port, secs, sys.argv[4] if len(sys.argv) > 4 else None)
         allocs = sum(1 for r in records if r.get("natEvent") == 16)
         deallocs = sum(1 for r in records if r.get("natEvent") == 17)
         exh = sum(1 for r in records if r.get("natEvent") == 12)

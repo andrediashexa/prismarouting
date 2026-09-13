@@ -209,6 +209,45 @@ O instante é o da parada e não um anterior de propósito: a caixa não observo
 momento em que o bloco deixou de ser usado, e um registro que chutasse esse
 momento seria um registro inventado.
 
+## Quando o coletor está atrasado na hora da parada
+
+As liberações são escritas no instante da parada, mas o coletor pode não estar
+pronto para recebê-las todas de uma vez. Dois casos, e o segundo é o comum:
+
+* um coletor lento, ou que parou de ler sem fechar a conexão;
+* uma caixa com **muitos blocos segurados**. A parada escreve uma liberação por
+  bloco, de uma só vez, e isso é mais do que cabe no socket em uma passada.
+
+Nos dois casos os bytes que sobraram **não são perdidos**: vão para um arquivo
+no disco da própria caixa,
+`/var/log/hexarouting/ipfix-spill.bin`, e voltam na próxima conexão com o
+coletor, na ordem em que foram escritos. É o mesmo arquivo que cobre um coletor
+fora do ar.
+
+O que isso muda para quem opera:
+
+* depois de um reboot, parte das liberações pode chegar ao coletor **alguns
+  segundos depois de a caixa voltar**, e não no instante da parada. O carimbo
+  de cada registro continua sendo o instante da parada, que é o que responde a
+  uma ordem judicial;
+* enquanto a exportação por TCP não voltar a conectar, o arquivo fica no disco.
+  Uma caixa desligada em definitivo deixa esses registros lá - copie o arquivo
+  antes de descomissionar;
+* o estado da exportação mostra quantos bytes foram para o arquivo, quantos já
+  voltaram e quantos foram descartados. Descarte só acontece quando não há onde
+  escrever, e é contado - nunca silencioso.
+
+```
+show cgnat logging
+```
+
+:::info
+Medido com o coletor lendo normalmente e 4001 blocos segurados: 70 kB de
+liberações ainda estavam no buffer de saída no instante em que o processo
+terminou, cerca de 1500 registros. Todos chegaram ao coletor no reinício
+seguinte.
+:::
+
 ## Queda de energia
 
 Uma caixa que perde energia, que é morta pelo kernel por falta de memória ou

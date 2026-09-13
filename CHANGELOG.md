@@ -36,16 +36,71 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#141](https://github.com/andrediashexa/hexarouting/issues/141),
+[#145](https://github.com/andrediashexa/hexarouting/issues/145),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
-[#218](https://github.com/andrediashexa/hexarouting/issues/218),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
-[#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
 [#213](https://github.com/andrediashexa/hexarouting/issues/213),
 [#217](https://github.com/andrediashexa/hexarouting/issues/217),
-[#145](https://github.com/andrediashexa/hexarouting/issues/145).
+[#218](https://github.com/andrediashexa/hexarouting/issues/218),
+[#219](https://github.com/andrediashexa/hexarouting/issues/219),
+[#220](https://github.com/andrediashexa/hexarouting/issues/220),
+[#221](https://github.com/andrediashexa/hexarouting/issues/221),
+[#222](https://github.com/andrediashexa/hexarouting/issues/222),
+[#223](https://github.com/andrediashexa/hexarouting/issues/223).
 
 ### Added
+
+* **A statement this VTY carried no longer looks like one it checked.** Inside
+  `router bgp 65000`, `neighbor 10.0.0.2 remote-as 65001` is walked by the
+  command tree while `coalesce-time 1000` is offered by `?` nowhere and reaches
+  FRR unread - and the two printed identically, so an operator reading a
+  configuration could not tell what the box had verified from what it had
+  merely forwarded, and read a guarantee into both. Every routing statement the
+  command tree cannot read is now marked `  <- not checked` in
+  `show configuration`, `show running-config` and `show this`, and a two-line
+  note at the end says what the mark means and how many there were.
+
+  What decides it is **the command tree itself** - the same walk that decides
+  what `?` offers in that block - and never a list of modelled statements kept
+  beside it: a second list has to be kept in step by hand, it goes stale, and a
+  stale list says a statement was checked when nothing checked it. So the same
+  statement is marked inside `router bgp` and not inside
+  `address-family ipv4 unicast`, because the two blocks have different
+  grammars, and teaching the tree a statement is the whole change needed to
+  stop it being marked. There is an assertion for that property specifically.
+
+  `show this` gets it too, and that is the one that matters most: it is what an
+  operator runs while they are still typing. A block this VTY has no grammar
+  for at all carries the mark **on its header**, because "nothing in here was
+  read" is different news from "this one statement was not".
+
+  The mark is sixteen characters because the console this box is reached on
+  when the network is down is 80 columns and the statements most likely to be
+  marked are the long ones; the marker it replaces put a realistic IPv6
+  neighbour statement at 89 columns and wrapped it. The closing note is
+  printed **only when something is marked** - passthrough is the normal case
+  for FRR configuration, and #205 and #208 are the standing precedent that an
+  alarm which is always on is one nobody reads.
+
+  `commit` says nothing about it, by that same rule, and `commit check` now
+  names the count: it is a question the operator chose to ask whose whole
+  subject is how much was verified, and it already answered with "structure
+  only", a sentence that names no number
+  ([#141](https://github.com/andrediashexa/hexarouting/issues/141)).
+
+* **The marking is presentation only, asserted separately.** `save` writes a
+  file the box reads back at boot and `commit` hands the same statements to
+  `frr-reload`; a mark that leaked into either becomes a statement FRR does not
+  understand, the load is refused whole, and the box comes up with **no
+  configuration at all** - which is how both boot defects behind #182 ended.
+  After a `show configuration`, a `show running-config`, a `show this` and a
+  `commit check`, `Config.text()` is byte for byte what it was, the list handed
+  to `frr-reload` is the statements as typed, and the saved file carries
+  neither the mark nor the note and parses back to the same statements.
+  `Config.parse` strips both, because an operator copies what is on their
+  screen into a file.
 
 * **OSPFv3 is a protocol this box runs, rather than one it offered and could
   not do.** `router ospf6` was a word the VTY did not model: it went to FRR
@@ -123,6 +178,23 @@ are to be interpreted as described in
   in the lab suite, and it is not a pass: the run still exits non-zero and says
   it proved nothing, so a quiet period that shrank cannot reach green by
   waiting for a busy machine.
+
+* **`test/test_doc_commands.py`: every command the documentation tells a reader
+  to type, typed at the command tree.** The wiki is where this product promises
+  things to somebody who does not have the source, and nothing checked that
+  what it shows exists. It reads the prompt lines inside fenced blocks, puts a
+  shell in the mode and the block the prompt says the reader is in, and walks
+  each command as far as the tree enumerates - a command that is not there and
+  a sub-command that is not there both fail; arguments are not checked, which
+  is the same boundary `?` and TAB have at the real VTY. It found both of the
+  defects above. `install` is the one deliberate exception, and the exception
+  requires the page to explain itself, so it cannot rot into a hole.
+
+  It reads `docs/` and `README.md` beside the wiki, and `docs/` was not the
+  softer half: `docs/routing.md` showed `hexarouting# show cgnat ?`, and a
+  four-line transcript that entered an interface and then typed `mtu 1500` at
+  the `[edit]` prompt, which is the top of configuration mode, where `mtu` is
+  not a statement at all. Both are fixed.
 
 ### Fixed
 
@@ -403,6 +475,147 @@ are to be interpreted as described in
   size the first one made it. With the `--add` put back it fails with
   `the configuration grew from 2 line(s) to 7 over five more runs`
   ([#220](https://github.com/andrediashexa/hexarouting/issues/220)).
+
+* **`show this` worked inside a pool, a user and an SNMP user block and `?`
+  listed it in none of them.** Inside an `interface`, `router bgp` or `rpki`
+  block it did, because the line that adds it sits in the branch for FRR
+  blocks and this product's own blocks are modes rather than context entries.
+  The comment beside that line said "every block" while the code covered half
+  of them. `show this` is the only way to read a block back before committing,
+  and the block where an operator needs it most is the pool, which is this
+  product's whole subject and the example the wiki uses
+  ([#221](https://github.com/andrediashexa/hexarouting/issues/221)).
+
+  The word alone was not the whole of it: `show ?` inside a block offered
+  nothing, in **every** block including the FRR ones, so `this` could still
+  only be reached by typing it blind. Every sub-command of `show` answers from
+  inside a block - measured, not assumed - so the whole tree is offered there
+  now.
+
+* **Two wiki pages showed `hexarouting# configure`.** `configure` is an
+  operational command and `#` is the configuration-mode prompt, so that is a
+  transcript no box produces: at `#` the reader is already in configuration
+  mode, where `configure` is not in the tree at all.
+* **Every IPFIX record the TCP exporter still held was lost when the box
+  stopped, and the ones lost were the releases.** The socket is non-blocking
+  and the spill to disk only triggers above 1 MB, so between "the collector
+  stopped reading" and "1 MB has piled up" the records live in one place: a
+  buffer inside the VPP process. The stop drain writes one `natEvent 17` per
+  block still held into that same buffer, and then the process leaves. In
+  dynamic mode a release that never arrives leaves the allocation open in the
+  retention log for ever, which is
+  [#217](https://github.com/andrediashexa/hexarouting/issues/217) reopened by
+  the transport ([#219](https://github.com/andrediashexa/hexarouting/issues/219)).
+
+  Measured on the build before the fix, with 1501 blocks held: 15372 bytes in
+  the buffer, the drain reporting `released 1501 block(s) still held`, 0 bytes
+  on disk after the stop, and the UDP control delivering all 3012 records while
+  TCP delivered **none** of them.
+
+  **It is not only a stalled collector.** With the collector reading as fast as
+  the box writes and nothing wrong anywhere, the same measurement found 0 bytes
+  pending before the stop and **70020 bytes still in the buffer at the exit**,
+  because the drain writes every record in one go and services the socket once.
+  A box with enough subscribers reaches this on an ordinary reboot.
+
+  The fix is a flush at `VLIB_MAIN_LOOP_EXIT`: whatever the socket refuses goes
+  to the spill file and is replayed in order on the next connection. The bound
+  is **one `write()`** and there is deliberately no timed wait, because the
+  collector that leaves bytes there is the one that has stopped reading - its
+  window is shut, so waiting sends nothing and costs a reboot the wait.
+
+* **The spill file could corrupt the stream it was meant to save, and that is
+  older than the defect above.** A non-blocking `send()` stops mid-message, and
+  the buffer was advanced by the byte count, so it could begin at the tail of a
+  message - and so could the spill file written from it. Measured: 82917 bytes
+  spilled, 82917 replayed on the next connection, and **one record decoded out
+  of them**. The exporter now tracks how much of the front message the socket
+  took, drops only whole messages, never inserts the template in front of a
+  half-sent one, and drops the connection when a spill splits a message,
+  because that stream can no longer be completed. The 1 MB spill and the 60
+  second template refresh could both hit this on a live box today.
+
+* **The shipped collector read an allocation as ENDED AT RESTART at a restart
+  that had happened before it.** A wrong answer about a subscriber, in the one
+  report this product exists to produce. Captured in a release suite run: the
+  still-running box was given its block at **05:18:28** and the report said the
+  allocation ended when the exporter reinitialised at **05:18:17**, eleven
+  seconds earlier - the message carried its own refutation
+  ([#223](https://github.com/andrediashexa/hexarouting/issues/223)).
+
+  The rule compared the boot marker in force *at* the allocation with the
+  latest one, and markers are periodic. An allocation made in the gap between a
+  restart and the first marker of the new incarnation read its "init then" off
+  the **previous** incarnation, so every block handed out in the first seconds
+  after a reboot was read as one the subscriber had stopped holding. The window
+  is the marker interval, every time a box restarts.
+
+  What "ended at restart" means is that an incarnation started **after** the
+  allocation, which is one comparison against the allocation's own timestamp
+  and does not depend on when a periodic message lands. `tools/ipfix_collector.py`
+  ships as `/usr/lib/hexarouting/ipfix-collector`, so this is the box's own
+  reading and not a lab's.
+
+  `lab/ipfix-stop.sh` exercises the same rule against three real boxes and had
+  been passing: whether it sees the gap depends on when a marker lands, which
+  is how this reached a release. `test/test_collector_marker.py` is new and
+  drives the captured timeline to the second, so it fails on the rule rather
+  than on the machine's mood.
+* **Half the boot self-test's statements had nothing holding them.** The
+  self-test makes 52 statements about a box and `test/test_selftest.sh` held
+  about half; the rest could stop firing, or start firing on the wrong
+  condition, with nothing to say so. That is how `[ ok ] rx queues:` with no
+  value after it shipped in the first place. Four of the unheld ones are now
+  asserted branch by branch, chosen because each is a diagnosis an operator
+  cannot make from the console on their own: the **CGNAT plugin** (a dataplane
+  without it answers `show version` perfectly well and forwards nothing), the
+  **`vpp.service` restart counter** (a service in a loop is `active` about half
+  the times you look), the **OSI punt for IS-IS**
+  ([#168](https://github.com/andrediashexa/hexarouting/issues/168): without it
+  the adjacency never forms and the only evidence is a dataplane counter
+  nothing surfaces), and **RPKI** (a cache configured and not connected marks
+  every route notfound, quietly)
+  ([#222](https://github.com/andrediashexa/hexarouting/issues/222)).
+
+  One of those was not merely unasserted, it was unreachable: the fake box
+  answered `systemctl show -p NRestarts` with the constant `0`, so neither the
+  warning branch nor the looping branch had ever been executed by anything. It
+  reads from the fake box now, like every other answer there.
+
+  Three more followed, and they needed `HEXA_SELFTEST_ROOT` to cover the kernel
+  command line, the cpufreq governor and the records volume, for the reason
+  already written beside that variable: a machine cannot be made to disagree
+  with itself about its own C-states, or about where `/var/log` is mounted,
+  without rebooting it. The **latency pair** costs throughput with no counter
+  behind it, and the **records volume** is a legal requirement here - `fstab`
+  mounts it `nofail`, so a volume that never mounted leaves the box working
+  perfectly and writing a year of records onto the root filesystem. Each also
+  asserts its quiet case: a machine with no cpufreq is told there is nothing to
+  set rather than warned, and the live medium is told records are not persisted
+  rather than warned about a disk it does not have.
+
+  And the one that is a lost box rather than a lost measurement: **which NIC
+  the dataplane may claim**. The box once shipped `HEXA_DATAPLANE_IF=eth0`,
+  which does not exist under predictable interface names, so the tuner wrote a
+  DPDK stanza with no allowlist and VPP claimed whatever NIC it found - the
+  management one, on a single-NIC box
+  ([#123](https://github.com/andrediashexa/hexarouting/issues/123)). Four
+  branches, three of which look alike from outside, and each asserted on its
+  own: the first version of that check conflated two of them and failed every
+  live medium.
+
+  And the four the whole report rests on, none of which anything held: the
+  **version stamp** an operator quotes when they report a fault, the **RAM**
+  floor (`docs/appliance.md` records the ISO booting with 2 GB and the console
+  saying "Out of memory: Killed process (vpp)" with VPP at 19 MB), the
+  **instruction set** (without `sse4_2` the dataplane does not fail to forward,
+  it dies with SIGILL, which reads like a crash and sends whoever is looking at
+  the packet path), and **whether VPP is answering at all**, which every line
+  below it depends on. Each carries the line the product actually draws rather
+  than a tidier one: 3 GB is a warning and not a refusal, and a missing `avx2`
+  is a throughput statement, because VPP runs on that box.
+
+  57 checks before, **103** after.
 
 ### Internal
 

@@ -1731,6 +1731,7 @@ static clib_error_t *
 bpa_stop_drain (vlib_main_t *vm)
 {
   bpa_main_t *bm = &bpa_main;
+  u32 saved;
 
   if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
     return 0;
@@ -1741,10 +1742,27 @@ bpa_stop_drain (vlib_main_t *vm)
    * a release that closes an allocation twice is not tidier than one that
    * never arrives - it is a second wrong answer.
    */
-  if (bm->drained_at)
-    return 0;
+  if (!bm->drained_at)
+    bpa_drain_blocks (vm);
 
-  bpa_drain_blocks (vm);
+  /*
+   * WHETHER OR NOT THE DRAIN RAN HERE. The latch above says the records were
+   * WRITTEN, not that they left: the TCP exporter's socket is non-blocking,
+   * so a collector that is connected and not reading leaves them in that
+   * exporter's own buffer, and its spill to disk does not trigger below 1 MB.
+   * Measured on this build with a collector stalled and 1501 blocks held:
+   * 15372 bytes still in the buffer at the stop, and the natEvent 17 for every
+   * one of those blocks lost with the process (#219).
+   *
+   * So this runs on both paths and after both of them. It is the last point at
+   * which anything can be done about those bytes.
+   */
+  saved = bpa_log_tcp_flush_exit ();
+  if (saved)
+    vlib_log_notice (bm->log_class,
+		     "stopping: %u byte(s) the collector had not taken went to "
+		     "the spill file, to be replayed on the next connection",
+		     saved);
   return 0;
 }
 

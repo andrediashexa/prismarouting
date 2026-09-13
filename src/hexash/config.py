@@ -641,11 +641,28 @@ def _address_family_error(keyword: str, prefix: str):
     return None
 
 
-#: What `show running-config` appends to a route-map statement this VTY does
-#: not model. Defined here because BOTH halves need it: the display adds it and
-#: the parser takes it off, and two spellings of the same string would be a
-#: marker that survives a copy-paste into a configuration file.
-UNCHECKED_MARK = "    <- not checked by this VTY"
+#: What a configuration display appends to a routing statement this VTY passed
+#: to FRR without a grammar to read it by. Defined here because BOTH halves
+#: need it: the display adds it and the parser takes it off, and two spellings
+#: of the same string would be a marker that survives a copy-paste into a
+#: configuration file.
+#:
+#: SIXTEEN CHARACTERS, and that is measured, not chosen for looks. The console
+#: an operator reaches this box on when the network is down is 80 columns, and
+#: the statements most likely to be marked are the long ones - `neighbor
+#: 2001:db8:1::1 soft-reconfiguration inbound` is 51 of those columns on its
+#: own. The sentence explaining what the mark means goes once at the end of
+#: the configuration, in UNCHECKED_NOTE, instead of on every marked line,
+#: because a marker that wraps onto a second line stops being read.
+UNCHECKED_MARK = "  <- not checked"
+
+#: What the closing sentence under a marked configuration starts with. Skipped
+#: by the parser for the same reason the marker is stripped: an operator
+#: copies what is on their screen into a file, and this file is read back at
+#: boot. `!` opens a comment in this format and in FRR's, and the tag after it
+#: keeps the skip from swallowing FRR's own `!` separators, which are part of
+#: the routing statements and are handed back to FRR as they were.
+UNCHECKED_NOTE = "! hexash:"
 
 
 def global_key(line: str) -> str:
@@ -996,13 +1013,17 @@ class Config:
         snmp_user = None
         for lineno, raw in enumerate(text.splitlines(), 1):
             line = raw.rstrip()
-            # `show running-config` marks route-map statements this VTY did
-            # not verify. That marker is a display transform - but an operator
-            # copies what is on their screen into a file, and a marker read
-            # back as configuration would be appended to a statement handed to
-            # FRR. Stripped here so the screen and the file agree.
+            # A configuration display marks routing statements this VTY did
+            # not verify, and closes with a sentence saying how many. Both are
+            # display transforms - but an operator copies what is on their
+            # screen into a file, and this file is what the box reads back at
+            # boot: a marker read back as configuration would be appended to a
+            # statement handed to FRR, and the sentence would BE one. Taken
+            # off here so the screen and the file agree.
             if line.endswith(UNCHECKED_MARK):
                 line = line[:-len(UNCHECKED_MARK)].rstrip()
+            if line.strip().startswith(UNCHECKED_NOTE):
+                continue
             if not line.strip():
                 continue
             # The hierarchy the file is written in, back to the words the model
