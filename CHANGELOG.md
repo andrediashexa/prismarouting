@@ -36,6 +36,7 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
 [#213](https://github.com/andrediashexa/hexarouting/issues/213),
@@ -82,6 +83,34 @@ are to be interpreted as described in
   are about `network … area`, `passive-interface` and an interface inside an
   IPv4 CGNAT pool, none of which OSPFv3 has. #205 and #208 are the standing
   precedent that an alarm which is always on is one nobody reads.
+
+* **The control plane's share of the CPUs, reported on the console.** The
+  tuner gives the OS the dataplane node's first physical core and isolates the
+  rest, so on a 32-core socket FRR, `frr-reload`, `vtysh`, `hexash`, `sshd`
+  **and** VPP's main thread share one core - and the main thread takes the
+  worker barrier once a second. The self-test now says how many cpus are left
+  and warns when that is one **while more than one core is isolated**, which is
+  the arithmetic statement that cores could have been handed back and were not;
+  a box with one isolated core has nothing to give back and is not warned. The
+  remedy named is `HEXA_MAX_WORKERS`, which the product already ships
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)).
+* **Measured and written down: raising `HEXA_MAX_WORKERS` costs a boot with no
+  dataplane, and lowering it does not.** `tuned_now` requires the cores a
+  profile pins to be cores the kernel is **already** isolating, so lifting a
+  cap asks for cores that are not isolated until the command line changes on
+  the next boot, and the box spends one boot in FIRST BOOT MODE: no workers,
+  no hugepages, DPDK disabled. Lowering a cap takes effect on the very next
+  boot and the freed cores leave `isolcpus` on the one after. That is the
+  tuner refusing to pin a worker to a core the kernel has not isolated, which
+  is right - but it is a maintenance window, and it was written down nowhere.
+
+* **`lab/install-iso.sh` reads the memory bounds back off systemd**, both
+  halves: `MemoryMax=512M` on `hexarouting.service` **and** no bound on
+  `frr.service`. A unit systemd parsed and refused reads exactly like one that
+  took, and this is the only place in the repository with a real systemd. The
+  absence is as deliberate as the presence - a `MemoryMax` that appeared on
+  `frr.service` by accident is a five-second restart loop on the box with the
+  most to lose.
 
 ### Fixed
 
@@ -217,6 +246,28 @@ are to be interpreted as described in
   its neighbour, implemented and measured, **loses every reply**, because the
   return path resolves the worker from the block index by arithmetic.
 
+* **The boot self-test reported the cores the dataplane was ASKED for and
+  never the cores it GOT.** `full tuning active: corelist-workers 1-7` has been
+  on the console since the tuner existed, and it prints
+  `/etc/vpp/startup.conf`. Nothing on an installed box ever read whether the
+  running dataplane held those cores, or whether the kernel was isolating them.
+  Both come apart without a symptom: a VPP that has been running since before
+  the profile was rewritten keeps the cores it started with, and a kernel
+  command line that did not get updated leaves a poll-mode worker sharing its
+  core with the scheduler. In each case the box boots, forwards, answers every
+  command and delivers a fraction of its capacity, with the only outward sign
+  being a thread that reads 100% busy either way. The self-test now compares
+  three places and none of them is the one that made the decision:
+  `/etc/vpp/startup.conf`, `/proc/<vpp pid>/task/*/status` and
+  `/sys/devices/system/cpu/isolated`. A worker on a core the kernel is not
+  isolating, and a dataplane holding cores its own profile does not name, are
+  both failed checks that name the core and the command to fix it
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)).
+* **`[ ok ] rx queues:` with nothing after it.** The `||` sat after `head -1`,
+  which succeeds on empty input, so a box whose profile names no
+  `num-rx-queues` printed the label and no value - an assertion that cannot
+  fail, in the reporting half. Seen on an installed box.
+
 ### Internal
 
 * **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a
@@ -246,6 +297,30 @@ are to be interpreted as described in
   `ipv6 ospf6 hello-interval`, `dead-interval` and `priority` - each have a
   control at a non-default value, which is what tells an omission from a
   refusal, and they are not offered in the grammar for that reason.
+
+### Not shipped, with the reason
+
+* **No `CPUQuota=` on the control plane.** On this box the control plane does
+  not compete with the workers: they are on isolated cores. Throttling it frees
+  nothing for forwarding and costs BGP convergence. The one place the two
+  genuinely contend is VPP's main thread, and the measurement that would size a
+  quota there cannot be taken on a virtio VM, where the host scheduler preempts
+  vCPUs whatever the guest isolates.
+* **No `AllowedCPUs=` cpuset for the control plane: the bound is already
+  applied by the kernel, and it is inherited rather than enforced.** Measured
+  on the installed box, twice: with `isolcpus=1` on a two-cpu machine, **pid 1
+  itself** has `Cpus_allowed_list: 0`, and `bgpd` has `ppid 1` and the same
+  mask. A bare `isolcpus=` list restricts init's affinity at boot and every
+  service inherits it, so the control plane is already confined to the cores
+  the tuner left it, from the same list the tuner computed, with no cpuset
+  anywhere. What a cpuset would add is the residue the same lab records:
+  `taskset` onto the isolated core was **accepted**, so anything that calls
+  `sched_setaffinity` leaves the set. Nothing this product ships does, and an
+  operator in `start shell` who types `taskset` has said what they meant.
+  One earlier run of the same lab read `0-1` and has not been explained; it
+  was taken before the lab recorded pid 1's mask and bgpd's parent, which is
+  the pair of numbers that would settle it, and both are now read on every
+  run. `docs/appliance.md` carries the readings.
 
 ## 0.66.0 — six times a lab did the product's job, and the product now does it
 

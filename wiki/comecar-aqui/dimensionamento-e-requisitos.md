@@ -35,6 +35,59 @@ O dataplane reserva a maior parte da RAM em hugepages e deixa `máx(2, RAM/4)` G
 
 :::
 
+# Quantos núcleos, e o que sobra para o plano de controle
+
+O equipamento entrega ao dataplane **todos os núcleos físicos do processador que atende a placa de rede, menos o primeiro**. Esses núcleos ficam isolados: o escalonador do Linux não coloca mais nada neles, e cada um roda uma thread de encaminhamento que nunca dorme. O primeiro núcleo fica com o sistema operacional, com o roteamento, com a VTY, com o SSH - e com a thread principal do dataplane.
+
+Numa caixa de 4 ou 8 núcleos isso é equilibrado. Num processador de 32 núcleos, não: são 31 núcleos encaminhando e **um** carregando tudo o que não encaminha. E a thread principal do dataplane, que está nesse mesmo núcleo, precisa parar o encaminhamento por um instante uma vez por segundo para fazer a manutenção das sessões. Quanto mais trabalho de controle disputa esse núcleo, mais tempo ela espera para ser escalonada - e o encaminhamento espera junto.
+
+| Núcleos do processador | Encaminhando | Para todo o resto |
+|-----------------------:|-------------:|------------------:|
+| 4   | 3  | 1 |
+| 8   | 7  | 1 |
+| 32  | 31 | 1 |
+
+## Devolvendo núcleos
+
+`HEXA_MAX_WORKERS`, em `/etc/hexarouting/tune.env`, limita quantos núcleos físicos viram threads de encaminhamento. Ele **vem vazio**, e vazio significa sem limite - exatamente o comportamento acima. Preenchendo, os núcleos liberados deixam de ser isolados e voltam para o escalonador, onde o roteamento e a VTY podem usá-los de fato.
+
+Cada núcleo devolvido é aquela fatia da capacidade de encaminhamento. Não existe um valor padrão porque a troca depende de quanto trabalho de controle a caixa carrega: uma caixa que só recebe rota padrão quase não tem plano de controle; uma que recebe duas tabelas cheias, refaz política BGP e ainda serve consultas tem bastante.
+
+**Diminuir o número de workers custa um boot; aumentar custa dois, e o segundo é diferente.** Medido:
+
+| O que você faz | Próximo boot | O boot seguinte |
+|---|---|---|
+| Baixa o limite (menos workers) | já sobe com menos workers | os núcleos liberados saem do isolamento e voltam para o escalonador |
+| Sobe o limite, ou apaga o valor | sobe **em modo conservador**: sem workers, sem hugepages, sem placa de dados | sobe com o plano completo |
+
+O modo conservador do segundo caso não é um defeito: o equipamento não pode fixar um worker num núcleo que o kernel ainda não isolou, e isolar é coisa de linha de comando do kernel, que só vale no boot seguinte. Mas é uma caixa sem encaminhamento por um boot. **Programe essa mudança para uma janela**, e confira o self-test do primeiro boot antes de dar por encerrado.
+
+
+:::info
+**O self-test de boot diz de que lado a sua caixa está.** Ele imprime quantos núcleos sobraram para o plano de controle e avisa quando sobrou **um** havendo mais de um isolado - ou seja, quando havia núcleo para devolver e não foi devolvido. Uma caixa de dois núcleos não recebe esse aviso: ela não tem o que devolver.
+
+:::
+
+
+:::warning
+**Não existe limite de CPU configurado para o plano de controle, e isso também é deliberado: o limite já existe, e é o próprio isolamento.** Medido numa caixa instalada de dois núcleos com o núcleo 1 isolado: o processo `init` roda só no núcleo 0, e o processo de roteamento, que é filho dele, herda essa mesma permissão. O kernel confina tudo o que não é o dataplane aos núcleos que sobraram, sem que ninguém precise configurar nada. Limitar o roteamento por cima disso não libera nada para o encaminhamento, porque o roteamento já não chega nos núcleos de encaminhamento; o que um limite desses faria é atrasar a convergência BGP e a recarga de configuração sem devolver nada em troca.
+
+**Herdado não é o mesmo que imposto.** Na mesma caixa, um processo que pede explicitamente para rodar no núcleo isolado **consegue**. Quem escreve numa sessão de shell que quer um núcleo de encaminhamento pediu aquilo de propósito, e nada que o produto instala faz isso sozinho, mas vale saber que a proteção é por herança e não por cerca.
+
+Quem decide quanto de CPU o plano de controle tem é `HEXA_MAX_WORKERS`, e isso é uma decisão de dimensionamento, não um limite de processo.
+
+:::
+## O self-test confere os núcleos que o dataplane recebeu
+
+O equipamento calcula o plano de núcleos a cada boot e o grava em um arquivo que o dataplane lê ao iniciar. Duas coisas podem sair do lugar sem nenhum sintoma:
+
+* o dataplane pode estar rodando desde **antes** da última mudança de plano, e nesse caso ele continua nos núcleos com que subiu enquanto a tela reporta o plano novo;
+* a linha de comando do kernel pode não ter acompanhado, e nesse caso uma thread de encaminhamento divide o núcleo com todo o resto.
+
+Nos dois casos a caixa dá boot, encaminha, responde a tudo e entrega uma fração da capacidade. **Não há contador que denuncie isso**: uma thread que nunca dorme marca 100% de uso tendo ou não o núcleo só para ela.
+
+Por isso o self-test não confere o arquivo: ele confere onde o kernel realmente colocou as threads do dataplane e quais núcleos o kernel realmente está isolando, e reclama quando os três não concordam. Reiniciar o dataplane resolve o primeiro caso; o segundo pede um `update-grub` e um reboot.
+
 # Memória por estrutura
 
 | Estrutura | Dimensionamento | Ordem de grandeza |
@@ -146,6 +199,7 @@ Essa tabela é o argumento comercial do BPA em uma linha: guardar um ano de regi
 Depois de instalar, no console:
 
 * o self-test reporta RAM, conjunto de instruções, VPP, contadores de reinício, estado do tuning, FRR e pools configurados;
+* ele também confere **os núcleos**: se o dataplane está nos núcleos que o plano dele nomeia e se o kernel está isolando esses núcleos, e diz quantos sobraram para o plano de controle;
 * ele **distingue aviso de falha** e sempre sai com código zero, porque um diagnóstico não pode derrubar o boot;
 * o contador de reinícios importa mais do que parece: um serviço em laço pode estar "ativo" no instante em que você olha, e só `NRestarts` conta a história.
 

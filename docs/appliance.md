@@ -72,7 +72,10 @@ barrier once a second for `bpa-expire-process`. Setting it hands cores back to
 the control plane, and the cores it frees leave `isolcpus` so the scheduler can
 use them. A cap larger than the machine has invents nothing. Each worker
 removed is that share of forwarding capacity, so no default is shipped: the
-trade depends on how much control-plane work the box actually carries.
+trade depends on how much control-plane work the box actually carries. The box
+says which side of it it is on: the boot self-test reports how many cpus are
+left for the control plane and warns when that is one while more than one core
+is isolated. See *The CPU half* below.
 
 Tested against synthetic topologies in `appliance/test_tune.py`, because the
 development machine has neither SMT nor multiple NUMA nodes — and that is
@@ -250,6 +253,144 @@ what the kernel will choose without being told to.
 not carry a full table. A box that does needs the 1.37 GB above to sit inside
 `max(2, RAM/4)` GB with the kernel and the page cache beside it, so **16 GB**
 is the sensible floor for a full-table deployment and 8 GB is already tight.
+
+### The CPU half: what the box reads back, and what it will not cap
+
+The same question was asked of the CPUs, and the answer came out the same
+shape: this product **reports** what the control plane is left with and does
+not add a cap of its own. Not because a number could not be derived, but
+because the derivable one is **already in force** - the kernel confines every
+process to the cores outside `isolcpus`, measured below - and the caps that
+would be left cannot be measured on anything this repository can boot.
+
+**What the box now reads back.** Since the tuner existed the console has said
+`full tuning active: corelist-workers 1-7`, which is what
+`/etc/vpp/startup.conf` **asks for**. Nothing ever read what the dataplane
+**got**. The boot self-test now compares three places, none of which is the
+component that made the decision:
+
+| | Read from | Says |
+|---|---|---|
+| TOLD | `/etc/vpp/startup.conf` | which cores the tuner asked for |
+| HAS | `/proc/<vpp pid>/task/*/status` | where the kernel actually pinned VPP's threads |
+| HAS | `/sys/devices/system/cpu/isolated` | which cores the kernel is isolating |
+
+and prints three lines:
+
+```
+[ ok ] dataplane workers hold the cores the profile names: 1
+[ ok ] and the kernel is isolating every one of them
+[ ok ] control plane has 1 cpu(s): 0, with VPP's main thread
+```
+
+Deliberately **not** `vppctl show threads`, which also carries the lcore: that
+is VPP reporting on itself, and the question is whether the kernel agrees with
+VPP. Nothing in the check writes anything.
+
+Two of those are failures when they do not hold, because both are silent:
+
+* **A worker on a core the kernel is not isolating.** The worker runs, every
+  counter is clean, and the core is shared with everything the scheduler has to
+  place - while a poll-mode thread never yields. The loss appears as burst
+  drops with no counter behind them. Reachable whenever the kernel command line
+  and `startup.conf` come apart: `hexarouting-tune.service` failing, a
+  hand-edited `/etc/default/grub.d/hexarouting.cfg`, an `update-grub` that was
+  never run.
+* **A dataplane older than the profile it is judged against.** VPP is pinned to
+  whatever it read when it started, so a restart-less configuration change
+  leaves the box running the previous tuning while the console reports the new
+  file. In the worst case `startup.conf` names workers and the running VPP has
+  **no** worker thread at all, which is the whole of the box's capacity
+  missing.
+
+The third is a **report**, not a failure, and it is where the CPU story meets
+the memory one.
+
+**One cpu for everything that is not a worker.** The tuner gives the OS the
+dataplane node's first physical core and isolates the rest, so on a 32-core
+socket FRR, `frr-reload`, `vtysh`, `hexash`, `sshd` **and** VPP's main thread
+share one core - and the main thread is the one that takes the worker barrier
+once a second for `bpa-expire-process`. The self-test warns when the control
+plane has exactly one cpu **and more than one core is isolated**, which is the
+arithmetic statement that cores could have been handed back and were not. A box
+with one isolated core has nothing to give back and is not warned. The remedy
+is `HEXA_MAX_WORKERS`, and each core handed back is that share of forwarding
+capacity - so the box states the number and the trade stays the operator's.
+
+**Changing the cap is not symmetric, and the expensive direction is the one an
+operator would not expect.** Measured against a synthetic 8-core-x-2-thread
+topology already booted with `isolcpus=1-3,9-11`:
+
+| Change | Next boot | The boot after |
+|---|---|---|
+| Cap lowered (3 to 2 workers) | tuned profile, `corelist-workers 1-2` | `isolcpus=1-2,9-10`: the freed cores return to the scheduler |
+| Cap raised or removed | **FIRST BOOT MODE**: no workers, no hugepages, DPDK disabled | tuned profile, `isolcpus=1-7,9-15` |
+
+`tuned_now` requires the cores the profile pins to be cores the kernel is
+**already** isolating, and raising the cap asks for cores that are not isolated
+until the command line changes on the next boot. So lifting a cap costs one
+boot with no dataplane NIC. That is the tuner refusing to pin a worker to a
+core the kernel has not isolated - correct, and worth a maintenance window.
+
+**Why no `CPUQuota=`.** On this box the control plane does not compete with the
+workers: they are on isolated cores the scheduler will not place other work on.
+Throttling the control plane therefore frees nothing for forwarding and costs
+BGP convergence and `frr-reload`. The one place the two genuinely contend is
+VPP's **main** thread, which shares the OS core by design - and the measurement
+that would size a quota there is the held-barrier interval under control-plane
+load, which **cannot** be taken on a virtio VM, because the host scheduler
+preempts vCPUs whatever the guest isolates. A quota shipped without it would be
+a number nobody could defend, which is the mistake `frr.service` already
+avoided once.
+
+**Why no `AllowedCPUs=` or `CPUAffinity=` for the control plane: the bound is
+already applied, by the kernel, and it is inherited rather than enforced.**
+This was the one worth measuring, because the number would not have been
+invented - it is the complement of the `isolcpus` list the tuner itself wrote
+on the same run. `lab/install-iso.sh` takes the reading on the installed box
+(`isolcpus=1`, two cpus) and records it:
+
+```
+[meas] cpu-iso:     1 online=0-1
+[meas] cpu-init:    Cpus_allowed_list:0
+[meas] cpu-bgpd:    Cpus_allowed_list:0
+[meas] bgpd-from:   pid:381 ppid:1 starttime:898
+[meas] cpu-escape:  Cpus_allowed_list:1
+[meas] isolspell:   isolcpus=1
+```
+
+`bgpd`'s own mask is **`0`**, not `0-1`, and the line above it says where that
+came from: **pid 1** is itself confined to `0`. `isolcpus` spelled as a bare
+list is not only a hint to the load balancer - the kernel sets `init`'s
+affinity to the non-isolated set at boot, and `bgpd` has `ppid 1`, so it is
+wearing systemd's mask rather than one anybody configured. That is the CPU
+bound this issue asked for, applied from the same list the tuner computed, and
+until now nothing read it back.
+
+**Inherited is not the same as enforced, and both halves are measured.**
+`cpu-escape` is `taskset` onto the isolated core, and it was **accepted**: a
+process that calls `sched_setaffinity` leaves the set, and so does anything it
+starts. An `AllowedCPUs=` cpuset would close exactly that, and nothing else.
+
+**One reading disagreed and has not been explained.** An earlier run of this
+same lab, on the same image, read `cpu-bgpd: Cpus_allowed_list:0-1` on a box
+that reported `isolcpus=1` - a `bgpd` outside the mask its parent should have
+given it. That run was taken with a lab that did not record `cpu-init` or
+`bgpd-from`, so which `bgpd` it was cannot be recovered. Two runs since, with
+those lines in place, both read `0` with `ppid 1`. The reading is kept in the
+lab rather than argued about: the next run that comes back `0-1` will also say
+who started that `bgpd` and what pid 1's mask was at the time, which is the
+pair of numbers that would settle it.
+
+So: **not shipped**, and the reason is the size of the residue rather than a
+claim that there is none. A cpuset would add a second per-box generated
+artefact whose failure mode is a control plane stranded on cores that do not
+exist, on the box class where the control plane already has one core. What it
+would buy is confinement against a process that re-affinitises itself - which
+nothing this product ships does, and which an operator in `start shell` typing
+`taskset` has asked for on purpose. If the `0-1` reading reproduces with a
+parent that explains it, that trade changes, and the measurement that would
+change it is already being taken on every run of this lab.
 
 ## CPU requirement
 
