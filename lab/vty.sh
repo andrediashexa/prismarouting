@@ -65,7 +65,7 @@ ip netns exec peer /usr/lib/frr/zebra -d -N peer -A 127.0.0.1 -f /etc/frr/peer/z
 ip netns exec peer /usr/lib/frr/bgpd  -d -N peer -A 127.0.0.1 -f /etc/frr/peer/bgpd.conf
 sleep 2
 
-echo "=========== CGNAT pela VTY ==========="
+echo "=========== CGNAT THROUGH THE VTY ==========="
 # Under the candidate model nothing reaches the device until "commit".
 # This lab used to end at "exit", which now discards the candidate - the
 # check that caught it is the reason each lab states its own verdict.
@@ -81,18 +81,18 @@ $HX -c "configure" \
     -c "cgnat interface pg0 inside" \
     -c "cgnat timeout udp 300" \
     -c "commit"
-echo "  -- o dataplane recebeu?"
+echo "  -- did the dataplane receive it?"
 vppctl show bpa pool | sed 's/^/    /'
 
 echo
-echo "=========== ROTEAMENTO pela MESMA VTY ==========="
+echo "=========== ROUTING THROUGH THE SAME VTY ==========="
 $HX -c "configure" \
     -c "router bgp 65000" \
     -c "bgp router-id 10.0.0.1" \
     -c "no bgp ebgp-requires-policy" \
     -c "neighbor 10.0.0.2 remote-as 65001" \
     -c "commit"
-echo "  -- o FRR recebeu?"
+echo "  -- did FRR receive it?"
 vtysh -c "show run" 2>/dev/null | grep -A4 "router bgp" | sed 's/^/    /'
 
 echo

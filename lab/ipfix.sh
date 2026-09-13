@@ -151,7 +151,7 @@ echo "=== forcing expiry to produce the 3 releases ==="
 vppctl bpa timeouts udp 2
 n=0
 until vppctl show bpa blocks | grep -q "total: 0/3" || [ "$n" -ge 25 ]; do sleep 1; n=$((n+1)); done
-echo "  blocos devolvidos em ${n}s"
+echo "  blocks handed back in ${n}s"
 vppctl show bpa blocks | tail -1 | sed 's/^/  /'
 
 echo
@@ -233,15 +233,15 @@ vppctl show bpa logging | sed 's/^/  /'
 
 wait $COL 2>/dev/null
 echo
-echo "=========== O QUE PASSOU NO FIO (tcpdump) ==========="
+echo "=========== WHAT WENT OVER THE WIRE (tcpdump) ==========="
 grep -c "IP " /tmp/tcpdump.out 2>/dev/null | sed 's/^/  udp\/4739 packets: /'
 grep "IP " /tmp/tcpdump.out 2>/dev/null | awk '{print $NF}' | sort | uniq -c | sed 's/^/  tamanhos: /'
 echo
-echo "=========== O QUE O COLETOR RECEBEU E DECODIFICOU ==========="
+echo "=========== WHAT THE COLLECTOR RECEIVED AND DECODED ==========="
 cat /tmp/collector.out
 
 echo
-echo "=========== A CONFIGURACAO SALVA, RECARREGADA ==========="
+echo "=========== THE SAVED CONFIGURATION, RELOADED ==========="
 # The round trip, which is what makes the statement a configuration setting
 # rather than a command. The exporter used to be set by hand with vppctl on a
 # box that could not read it back, so saving the configuration and reloading

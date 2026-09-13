@@ -4,7 +4,7 @@ Tests for hexarouting-tune against synthetic topologies.
 
 The development machine has neither SMT nor multiple NUMA nodes, which is
 exactly where the tuning decisions matter. So the topologies are built on
-montadas em disco e conferidas.
+disk and checked.
 """
 import os, shutil, subprocess, sys, tempfile
 

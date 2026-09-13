@@ -33,7 +33,7 @@ echo "=== initial state ==="
 vppctl show bpa pool history | sed 's/^/  /'
 
 echo
-echo "=== operacoes de configuracao ==="
+echo "=== configuration operations ==="
 vppctl bpa pool provider-a inside 100.64.0.0/22 outside 200.150.0.0/24 outside 45.170.16.0/26 block 512 >/dev/null
 echo "  created provider-a"
 sleep 1
@@ -41,7 +41,7 @@ vppctl bpa pool provider-b inside 10.50.0.0/16 outside 177.85.32.0/24 block 2048
 echo "  created provider-b"
 sleep 1
 vppctl bpa pool provider-a del
-echo "  removido provider-a"
+echo "  removed provider-a"
 sleep 1
 vppctl bpa pool provider-a inside 100.64.0.0/22 outside 200.150.0.0/24 block 1024 >/dev/null
 echo "  recreated provider-a with a different block"

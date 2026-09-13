@@ -69,7 +69,8 @@ are to be interpreted as described in
 [#240](https://github.com/andrediashexa/hexarouting/issues/240),
 [#241](https://github.com/andrediashexa/hexarouting/issues/241),
 [#242](https://github.com/andrediashexa/hexarouting/issues/242),
-[#243](https://github.com/andrediashexa/hexarouting/issues/243).
+[#243](https://github.com/andrediashexa/hexarouting/issues/243),
+[#246](https://github.com/andrediashexa/hexarouting/issues/246).
 
 ### Added
 
@@ -1471,6 +1472,39 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **The English-only rule had decayed to twenty-one Portuguese strings, and
+  nothing held it**
+  ([#246](https://github.com/andrediashexa/hexarouting/issues/246)).
+  `CONTRIBUTING.md` section 1 rule 1 says documentation, source comments and
+  VTY output are written in English.
+  [#1](https://github.com/andrediashexa/hexarouting/issues/1) closed on it.
+  Nothing checked it afterwards, so it decayed the way an unheld rule does.
+
+  The issue reported seven strings. Measuring found **twenty-one**, in fourteen
+  files, and the extra fourteen are the argument for the check rather than for
+  the translation: a list assembled by grepping for the words somebody happened
+  to think of is a sample, not a set. Two are worse than comments -
+  `bpa audit-path [<caminho>]` is VTY help text, which is the third thing the
+  rule names, and several are section headers in lab transcripts, which
+  `CONTRIBUTING.md` names as the safe place to quote the product's strings from
+  when writing the wiki.
+
+  `test/test_english_only.py` holds it: a fixed list of 113 words that cannot be
+  English and cannot be a protocol identifier, one of them on a line being
+  enough. **Not a spell checker and not a language detector** - the false
+  positive cost of either on a tree full of protocol identifiers is higher than
+  the defect. `com` is deliberately left out for the same reason: it is
+  Portuguese and it is also the end of every `github.com` link in the tree.
+
+  Five identifiers are allowed with the reason written beside each: the
+  `TRANSITO` peer-group, `America/Sao_Paulo`, sfdisk's `label: dos`, the
+  `AS-NAO-EXISTE` AS-path list, and `uplink para o transito`, which is a
+  deliberate fixture - the product must store and read back what a Brazilian
+  operator actually types. The check also fails when an allowance no longer
+  matches anything, because an allowance nobody needs is one nobody re-reads,
+  and it caught one of mine left behind after I translated the string it was
+  written for.
 
 * **The trail's `fsync` could be deleted with 36 assertions on that file still
   green** ([#243](https://github.com/andrediashexa/hexarouting/issues/243)).

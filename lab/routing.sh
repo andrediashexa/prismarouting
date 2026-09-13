@@ -2,19 +2,19 @@
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 # O plano de controle sobre o TAP do linux_cp, e a interface por baixo dele.
 #
-# BGP, OSPF e IS-IS chegando na FIB do VPP, e o que a VTY dirige na interface
-# que os carrega: MTU, enderecos, descricao, estado administrativo, rotas
-# estaticas com rollback, e router advertisements.
+# BGP, OSPF and IS-IS reaching the VPP FIB, and what the VTY steers on the
+# interface that carries them: MTU, addresses, description, admin state,
+# static routes with rollback, and router advertisements.
 #
 #   [netns peer] AS 65001 / OSPF / IS-IS       [default] HexaRouting
 #     dum-bgp   203.0.113.0/24  -- BGP  -->
 #     dum-ospf  198.18.0.0/24   -- OSPF -->    FRR -> kernel -> linux_nl
-#     dum-isis  198.19.0.0/24   -- ISIS -->                  -> FIB do VPP
+#     dum-isis  198.19.0.0/24   -- ISIS -->                  -> the VPP FIB
 #     veth-out 10.0.0.2 ------(veth)------ veth-vpp -> VPP -> vppwan0 10.0.0.1
 #
 # IS-IS is the test that matters for punt: it does not run over IP, it uses CLNS
-# direto sobre o enlace. Se o caminho de punt so entendesse IPv4/IPv6, BGP e
-# OSPF subiriam e o IS-IS ficaria mudo.
+# straight over the link. If the punt path understood only IPv4 and IPv6, BGP
+# and OSPF would come up and IS-IS would sit there mute.
 #
 # BGP policy - route-maps, AS-path lists, communities, graceful shutdown and
 # RPKI - is lab/bgp-policy.sh and is no longer here. The two halves in one file
@@ -274,7 +274,7 @@ expect_in "and the peer is in FRR's own summary" "vppwan9" \
 # An unnumbered box would otherwise have had its first commit accepted and
 # every one after it refused, for a statement nobody typed twice.
 NEXT=$($HX -c "configure" -c "interface host-veth-vpp" \
-       -c "description enlace de transito" -c "exit" -c "commit check" 2>&1)
+       -c "description transit link" -c "exit" -c "commit check" 2>&1)
 printf '%s\n' "$NEXT" | grep -vE "^note" | tail -3 | sed 's/^/  /'
 expect_in "an unrelated change commits cleanly afterwards" \
   "configuration check succeeds" "$NEXT"

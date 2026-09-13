@@ -43,7 +43,7 @@ else
   bad "no version stamp in /usr/share/hexarouting/VERSION"
 fi
 
-# --- memoria ---
+# --- memory ---
 # A live system keeps the whole overlay in RAM. Together with VPP, 2 GB is
 # not enough: the OOM killer takes VPP and brings the rest down with it. Found
 # by booting the ISO with 2 GB - "Out of memory: Killed process (vpp)".
@@ -59,7 +59,7 @@ else
 fi
 
 # --- instrucoes de CPU ---
-# O binario do VPP e compilado assumindo SSE4.2 e usa AVX quando disponivel.
+# The VPP binary is compiled assuming SSE4.2 and uses AVX where available.
 # On a CPU without them it dies with SIGILL in milliseconds, and since
 # vpp.service has Restart=always the symptom becomes a restart loop that says
 # nothing about the cause. That is how several hours went: the diagnosis only
@@ -353,11 +353,11 @@ else
   say "  [warn] cpufreq governor is '$gov', not performance"
 fi
 
-# --- a VTY abre? ---
-# 0.2.0 embarcou um hexash que morria no start por falta de config.py, e este
-# autoteste passou verde: ele media o dataplane, o roteamento e o tuning, e
-# nunca a porta de entrada. Um boot que nao exercita a VTY nao sabe se ela
-# existe.
+# --- does the VTY open? ---
+# 0.2.0 shipped a hexash that died at start for want of config.py, and this
+# self-test went green: it measured the dataplane, the routing and the tuning,
+# and never the front door. A boot that does not exercise the VTY does not know
+# whether it is there.
 if ! command -v hexash >/dev/null 2>&1; then
   bad "hexash is not installed"
 else
@@ -853,7 +853,7 @@ if [ "$state" = failed ]; then
     | sed 's/^/          /' > "$OUT" 2>/dev/null
 fi
 
-# --- configuracao aplicada ---
+# --- the configuration that is applied ---
 pools=$(vppctl show bpa pool 2>/dev/null | grep -c "^pool ")
 [ -n "$pools" ] || pools=0
 if [ "$pools" -gt 0 ]; then
@@ -1000,4 +1000,4 @@ else
 fi
 say "============================================================="
 say ""
-exit 0   # nunca derruba o boot por causa do proprio diagnostico
+exit 0   # never fail the boot because of the diagnostic itself

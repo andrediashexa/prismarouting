@@ -37,7 +37,7 @@ echo "=== block slices per worker (12 blocks, 2 workers) ==="
 vppctl show bpa blocks | sed 's/^/  /'
 
 echo
-echo "=== 4 assinantes saindo ==="
+echo "=== 4 subscribers going out ==="
 for sub in 5 6 9 12; do
   vppctl packet-generator new "name s$sub limit 1 node ip4-input interface pg0 size 60-60 \
       data { UDP: 100.64.0.$sub -> 8.8.8.8 \

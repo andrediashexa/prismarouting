@@ -41,7 +41,7 @@ vppctl show interface features pg1 | grep -A2 "ip4-unicast" | grep bpa
 pg() { vppctl packet-generator new "$1"; }
 
 echo
-echo "=== IN2OUT: 3 assinantes ==="
+echo "=== IN2OUT: 3 subscribers ==="
 for sub in 5 6 9; do
   pg "name s$sub limit 1 node ip4-input interface pg0 size 60-60 \
       data { UDP: 100.64.0.$sub -> 8.8.8.8 \

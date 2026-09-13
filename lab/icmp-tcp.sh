@@ -108,7 +108,7 @@ done
 # enough to fail it. A reading taken three sections away from what it is
 # about is not evidence about it.
 RSTSESS=$(vppctl show bpa session)
-echo "  apos ${n}s: $(printf '%s\n' "$RSTSESS" | tail -1)"
+echo "  after ${n}s: $(printf '%s\n' "$RSTSESS" | tail -1)"
 echo "  (the UDP session from test 1 remains; the TCP one left via the RST)"
 
 echo

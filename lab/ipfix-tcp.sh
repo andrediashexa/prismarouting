@@ -88,14 +88,14 @@ sleep 8
 # never showed anything, so the diagnosis came out empty in exactly the phase
 # that kills the collector.
 vppctl show bpa logging | grep -E "collector|spill|pending" | sed 's/^/  /'
-ls -l /var/log/hexarouting/ipfix-spill.bin 2>/dev/null | sed 's/^/  /' || echo "  (nada em disco ainda: buffer em memoria ainda cabe)"
+ls -l /var/log/hexarouting/ipfix-spill.bin 2>/dev/null | sed 's/^/  /' || echo "  (nothing on disk yet: the in-memory buffer still fits it)"
 
 echo
 echo "=========== PHASE 3: collector comes back ==========="
 ip netns exec peer python3 /src/tools/ipfix_collector.py tcp 4740 15 > /tmp/c2.out 2>&1 &
 C2=$!
 wait $C2
-echo "  --- recebido apos a reconexao (saida crua) ---"
+echo "  --- received after the reconnection (raw output) ---"
 cat /tmp/c2.out | sed 's/^/    /'
 echo
 vppctl show bpa logging | grep -A5 "transporte TCP" | sed 's/^/  /'

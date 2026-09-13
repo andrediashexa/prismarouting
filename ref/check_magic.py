@@ -12,7 +12,7 @@ U64 = (1 << 64) - 1
 fail = 0
 
 def magic_for(d):
-    """Mesmo calculo de bpa_pool_init()."""
+    """The same calculation bpa_pool_init() does."""
     l = 0
     while (1 << l) <= d and l < 32:
         l += 1
