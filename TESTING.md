@@ -6,7 +6,7 @@ Four levels, cheapest first. Each catches a different class of defect and none
 replaces the next.
 
 ```sh
-make test                 # 21 s  - core, no root, no VPP
+make test                 # core suites, no root, no VPP
 sh tools/lab.sh <name>    # min   — dataplane labs with injected packets
 sh tools/lab.sh hw-lab    # min   — two VMs, real Internet traffic
 sh tools/lab.sh boot-iso  # s/min — the appliance actually booting
