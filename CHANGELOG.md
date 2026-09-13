@@ -379,8 +379,9 @@ are to be interpreted as described in
   not the system**, and says why: a dead system disk is a reinstall, and the
   records on the survivor are read back on another machine - which
   `lab/install-iso.sh mirror` does, off the leg alone, with no array
-  assembled. The measured cost of that choice is in the same lab: it boots
-  the survivor on its own and records what the firmware says.
+  assembled, and with that box switched off. The measured cost of the choice
+  is in the same lab: the survivor booted on its own reaches no bootloader at
+  all and sits at the firmware.
 
   **A box with one disk is untouched.** It is never asked, it gets no array,
   and its self-test says nothing about mirrors - asserted on an installed box
@@ -400,6 +401,35 @@ are to be interpreted as described in
   Unattended installs answer it with `hexarouting.mirror=<disk>` or a `mirror`
   line in the answers file. The medium now carries `mdadm`, and the build
   refuses an image without it.
+
+  **Three defects this turned up, all of them in the box around the mirror
+  rather than in the mirror.** Each was found by booting a machine, and each
+  one named the next:
+
+  * **A degraded array does not start on its own, so the records volume never
+    mounted.** With the mirror disk detached the box came up perfectly and
+    `/proc/mdstat` read `md0 : inactive vda3[0](S)` - udev claims the surviving
+    leg and stops, because one leg of two is not a complete array, and an
+    inactive array has no device to mount. `nofail` did its job and
+    `/var/log/hexarouting` was back on the root filesystem: the arrangement the
+    separate volume replaced, on a box that had already spent a disk. The
+    installed system now carries a unit that runs the array with whatever disks
+    are left, before `local-fs.target`.
+  * **A box that already had a mirror could not be reinstalled.** The medium's
+    udev assembles the array it finds, and `sfdisk` will not rewrite a
+    partition a running array is holding. The arrays on the disks about to be
+    erased are stopped first.
+  * **And stopping them was not enough**, because an md superblock lives 4 KB
+    *into* the partition: rewriting the table made udev re-probe and assemble
+    the array again, between the partitioning and the `mkfs`. The superblocks
+    are erased with the stop - and per disk, immediately before each write,
+    because doing it once for both left the second disk exposed for as long as
+    the first `sfdisk` took.
+
+  The first of those is the one worth reading twice: everything about the
+  mirror was correct, and the box would have spent a year writing records to
+  the disk that was left, under a self-test saying so on every boot and nobody
+  necessarily reading it.
 
 ### Fixed
 

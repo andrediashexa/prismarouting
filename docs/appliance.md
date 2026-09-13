@@ -806,13 +806,19 @@ box is still answerable for records no procedure puts back
 ([#83](https://github.com/andrediashexa/hexarouting/issues/83)).
 
 So the installer offers a second disk and mirrors **the records onto it, and
-not the system**. The argument for the asymmetry is the one above, and the cost
-of it is measured rather than assumed: `lab/install-iso.sh mirror` boots the
-survivor on its own and prints what the firmware does with a disk no bootloader
-was ever written to. What the same lab also shows is the other half - the
-records filesystem mounts **off the surviving leg alone**, at its data offset,
-with no array assembled and the other disk switched off, which is what somebody
-holding one disk and a different machine actually has.
+not the system**. The argument for the asymmetry is the one above, and both
+halves of what it costs are measured in `lab/install-iso.sh mirror` rather than
+argued:
+
+| Which disk dies | What was measured, on a box that was installed and then booted with that disk detached |
+|---|---|
+| the mirror disk | the box boots, `/proc/mdstat` reads `md0 : active raid1 vda3[0] ... [2/1] [U_]`, `/var/log/hexarouting` is still mounted from `/dev/md0`, a record written before the disk died reads back, and the boot self-test says `[FAIL] the records mirror is DEGRADED: 1 of 2 disks (vda3)` with nobody logged in |
+| the system disk | no bootloader, no kernel and no prompt: the machine sat at the firmware until the lab stopped it. **And the records on the survivor were read back on another machine**, out of the leg alone, with that box switched off |
+
+The second row is the whole of the trade: what mirroring the system would have
+bought is a box that boots, and what it would have cost is the ESP that
+firmware writes to on one leg only, root on `md` in the initramfs, and a
+bootloader on both disks. What is not lost either way is the records.
 
 | | |
 |---|---|

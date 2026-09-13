@@ -131,12 +131,12 @@ Mirror the connection records onto which disk [none]:
 
 :::
 
-**São espelhados os registros, e não o sistema.** A assimetria é a razão de existir do espelho:
+**São espelhados os registros, e não o sistema.** A assimetria é a razão de existir do espelho, e os dois lados dela foram medidos numa caixa instalada e depois ligada com aquele disco fora:
 
-| Morre o disco | O que acontece |
-|---------------|----------------|
-| do sistema | a caixa não sobe sozinha: é reinstalação. Os registros continuam legíveis no disco sobrevivente, em outra máquina |
-| do espelho | a caixa sobe normalmente, continua gravando, e o autoteste avisa que o espelho está degradado |
+| Morre o disco | O que foi observado |
+|---------------|---------------------|
+| do espelho | a caixa sobe normalmente, os registros continuam montados no arranjo rodando com uma perna só, o que foi gravado antes da falha continua lá, e o autoteste diz `[FAIL] the records mirror is DEGRADED: 1 of 2 disks` sem ninguém logado |
+| do sistema | a máquina não chega a carregar nada: fica no firmware. É reinstalação. **Os registros do disco sobrevivente foram lidos em outra máquina**, com aquela caixa desligada |
 
 Uma caixa com **um disco só** não é perguntada, não ganha arranjo nenhum e o autoteste dela não fala em espelho. Nada muda para quem tem um disco.
 

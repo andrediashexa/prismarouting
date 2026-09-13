@@ -1169,13 +1169,19 @@ downtime ends with a reinstall; losing the records ends nothing, because the
 box is still answerable for a year of them and no procedure puts them back.
 
 Both halves of that trade are measured in `lab/install-iso.sh mirror` rather
-than argued: the box boots with the mirror disk pulled out, still mounts the
-records from the array running on one leg, reads back a record it wrote before
-the disk died, and **says the mirror is degraded** - while the survivor booted
-on its own goes no further than the firmware, which is the cost of not
-mirroring the system. The records on that survivor are read back off the leg
-alone, with no array assembled, which is what somebody holding one disk and a
-different machine has.
+than argued. With the mirror disk detached the box boots, `/proc/mdstat` reads
+`[2/1] [U_]`, the records are still mounted from the array on its one leg, a
+record written before the disk died reads back, and the console says
+`[FAIL] the records mirror is DEGRADED` with nobody logged in. With the system
+disk detached the survivor reaches no bootloader at all - and the records on it
+were read back on another machine, out of the leg alone, with that box switched
+off.
+
+The lab found three defects doing it, all of them in the box around the mirror
+rather than in the mirror: a degraded array that never started, so the records
+volume did not mount at all; a reinstall that could not rewrite a partition the
+medium had assembled an array from; and the same refusal again on the second
+disk, because releasing both disks once left a window between the two writes.
 
 A box with **one** disk is untouched, and the default run of the same lab
 asserts it: no question, no array, and a self-test that does not mention a
