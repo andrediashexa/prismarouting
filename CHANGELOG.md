@@ -127,6 +127,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A check that a message is ABSENT stopped being able to fail**
+  ([#279](https://github.com/andrediashexa/hexarouting/issues/279)).
+  Reflowing the OSPF findings above split the sentence `it is facing
+  subscribers, and it is not passive` across a line, and `lab/igp.sh` asserts
+  it three ways: twice that the box says it, once that it does not. The two
+  positive ones went red in the release suite and were fixed with
+  `expect_said`. The negative one **passed**, because `expect_not_in` could no
+  longer find the sentence whether the box said it or not.
+
+  That is the worse half by a distance: a red check names itself, and this one
+  would have gone on passing over a box that had started warning about the
+  wrong interface. `expect_not_said` is the negative form, and the difference
+  is measurable on the same input - given output where the box DID say it,
+  wrapped, `expect_not_in` reports it absent and `expect_not_said` reports it
+  said. On a box that is genuinely silent the two agree.
+
 * **`docs/` claimed behaviour the box does not have, in sixty-odd places.**
   `README.md` makes `docs/` the reference every other document is corrected
   against, so a wrong sentence here becomes a wrong wiki page and then a wrong

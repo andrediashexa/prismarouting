@@ -63,6 +63,24 @@ expect_said() {
   esac
 }
 
+# expect_not_said <description> <sentence> <haystack>
+#
+# The negative of expect_said, and it is the one that had to exist. A check
+# that a sentence is ABSENT is the dangerous direction here: once the VTY
+# wraps that sentence, `expect_not_in` stops finding it whether the box says
+# it or not, so the assertion passes for the wrong reason and nothing goes
+# red. Its two positive twins in lab/igp.sh failed loudly when #276 reflowed
+# the message; this one passed, silently, and would have gone on passing.
+expect_not_said() {
+  _said=$(printf '%s' "$3" | tr '\n' ' ' | tr -s ' ')
+  _want=$(printf '%s' "$2" | tr '\n' ' ' | tr -s ' ')
+  case "$_said" in
+    *"$_want"*) echo "  [FAIL] $1 (said: $2)"
+       VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
+    *) echo "  [ ok ] $1" ;;
+  esac
+}
+
 # expect_not_in <description> <needle> <haystack>
 expect_not_in() {
   case "$3" in

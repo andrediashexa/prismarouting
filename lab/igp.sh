@@ -959,12 +959,16 @@ printf '%s\n' "$FACING_BARE" | grep -i "facing subscribers" | sed 's/^/  bare:  
 printf '%s\n' "$FACING_TAP" | grep -i "facing subscribers\|made passive" | sed 's/^/  vppwan0: /'
 printf '%s\n' "$FACING_DP" | grep -i "facing subscribers\|made passive" | sed 's/^/  host-:   /'
 SAYS="it is facing subscribers, and it is not passive"
-expect_in "a port inside a CGNAT pool speaking OSPF is reported at all" \
+# expect_said and not expect_in: the reason is prose and say_finding wraps it
+# to the console, so this sentence folds after "facing" and a needle that
+# straddles the fold stops matching (#279). The sentence is the assertion;
+# where it breaks is not.
+expect_said "a port inside a CGNAT pool speaking OSPF is reported at all" \
   "$SAYS" "$FACING_BARE"
 expect_in "and it is the dataplane's name the warning names" \
   "interface host-veth-vpp" "$FACING_BARE"
-expect_not_in "the spelling FRR acts on silences it" "$SAYS" "$FACING_TAP"
-expect_in "while the one FRR ignores silences nothing" "$SAYS" "$FACING_DP"
+expect_not_said "the spelling FRR acts on silences it" "$SAYS" "$FACING_TAP"
+expect_said "while the one FRR ignores silences nothing" "$SAYS" "$FACING_DP"
 expect_in "and the statement that does nothing is named, with the name FRR wants" \
   "FRR knows this interface as vppwan0, not host-veth-vpp" "$FACING_DP"
 
