@@ -380,6 +380,30 @@ are to be interpreted as described in
   name took the first list for the second and reported four files missing that
   nothing installs.
 
+* **The lab suite's default job count over-subscribed the machine's memory,
+  and the way it failed looked like a product defect.** Each lab is a container
+  with `--memory=5g` running a VPP that reserves hugepages up front, and the
+  default was a flat 16: **80 GB of limits on a 62.8 GB box**. What that
+  produced was not a clean refusal - one container's VPP did not start, its lab
+  ran every check against a dataplane that was not there, and the suite
+  reported eight product failures, one of them a **checksum failure on a
+  translated packet**, on the run right after a checksum change landed. The
+  same lab alone on an idle box passes eleven checks
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+  The default is now the smaller of the core-based cap and what the memory
+  holds, which is 8 on this box - the number its clean runs had been using by
+  hand all along. `LAB_JOBS` still overrides it. The arithmetic is asserted at
+  8 GB, 62 GB and 512 GB through `HEXA_MEMINFO`, for the same reason
+  `HEXA_SELFTEST_ROOT` exists: a machine cannot be made to have 8 GB without
+  being a different machine.
+
+  Writing that found a gap in the check itself. Reading `_jobs_by_mem` out of
+  the script proves the arithmetic and stays green on a script that computes
+  the right number and then ignores it - putting the constant back gave **zero
+  red**. There is now an assertion connecting the function to the `JOBS=` line
+  that uses it.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
