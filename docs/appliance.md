@@ -652,7 +652,8 @@ Fixing that let the box get far enough to fail differently
 
 ```
 [FAIL] hexarouting.service FAILED: the CGNAT configuration was not applied
-        error: this change locks everybody out: no account could log in over SSH afterwards
+        error: this change locks everybody out
+            no account could log in over SSH afterwards
         error: /etc/hexarouting/hexarouting.conf: refusing to load
 ```
 

@@ -29,7 +29,8 @@ Está na árvore de comandos: TAB e `?` oferecem. E é **restrito a administrado
 
 ```
 error: start shell: permission denied for a read-only account
-    membership of hexa-cgnat allows CGNAT configuration, hexa-admin allows everything
+    membership of hexa-cgnat allows CGNAT configuration, hexa-admin allows
+    everything
 ```
 
 ```

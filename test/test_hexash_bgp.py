@@ -30,6 +30,20 @@ import vppapi      # noqa: E402
 fail = 0
 
 
+def unwrapped(text):
+    """`text` with every run of whitespace collapsed to one space.
+
+    The messages below are wrapped to the console by measurement (#252,
+    #271), so where a line breaks moves when anybody edits the sentence - and
+    a needle that straddles the break stops matching. For a POSITIVE check
+    that is a noisy failure; for a `not in` check it is a silent pass, which
+    is the defect class this project is organised against. Searching the
+    unwrapped text asks the question the assertion means: did the box say
+    this, not where did it wrap.
+    """
+    return " ".join(text.split())
+
+
 def check(cond, msg):
     global fail
     if not cond:
@@ -447,13 +461,13 @@ check("cutoff" not in out, f"and is told nothing about cutoff:\n{out}")
 del os.environ["SSH_CONNECTION"]
 box = Box(cfg_text(RUN))
 out, sh = box.commit(WITHDRAW)
-check("did not arrive over SSH" in out,
+check("did not arrive over SSH" in unwrapped(out),
       f"a session with no address is told the check did not run:\n{out}")
 check(len(box.applied) == 1,
       f"and the commit is not gated on a check nobody could make: {box.applied}")
 box = Box(cfg_text(RUN))
 out, sh = box.commit(cfg_text(RUN + ["ip route 10.0.0.0/8 blackhole"]))
-check("did not arrive over SSH" not in out,
+check("did not arrive over SSH" not in unwrapped(out),
       f"while a change that advertises nothing new earns no note:\n{out}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

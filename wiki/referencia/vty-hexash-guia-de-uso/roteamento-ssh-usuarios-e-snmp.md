@@ -61,7 +61,8 @@ Dentro do bloco:
 `commit check` recusa um próximo salto que não está em nenhuma rede conectada:
 
 ```
-error: ip route 10.55.0.0/16 172.31.99.1: 172.31.99.1 is on no connected network
+error: this next hop is on no connected network: 172.31.99.1
+    ip route 10.55.0.0/16 172.31.99.1
     the route would be accepted and never reach the forwarding table
 ```
 
@@ -267,8 +268,8 @@ O `commit` recusa nesse caso e diz qual daemon falta e qual arquivo editar:
 ```
 error: 2 policy statement(s) need mgmtd, which is not running
     first one: ip prefix-list PL-CLIENTES seq 10 permit 200.150.0.0/24
-    they would commit and store nothing. Enable mgmtd in /etc/frr/daemons
-    and restart frr
+    they would commit and store nothing. Enable mgmtd in /etc/frr/daemons and
+    restart frr
 ```
 
 Uma estrofe `router bgp` que não vai a lugar nenhum se percebe: nenhuma sessão sobe. Uma prefix-list que não vai a lugar nenhum é invisível até o tráfego que devia ser filtrado não ser.

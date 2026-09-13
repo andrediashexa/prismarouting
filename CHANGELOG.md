@@ -124,6 +124,31 @@ version has a chance of seeing it.
   prints that list rather than only saying no. `apply_global` gets the missing
   else as well: `--load` and the binary API reach it without passing the VTY.
 
+* **`commit` and `commit check` printed 28 lines wider than the console they
+  are read on** ([#271](https://github.com/andrediashexa/hexarouting/issues/271)).
+  [#252](https://github.com/andrediashexa/hexarouting/issues/252) put the
+  read-back refusal inside 80 columns and deliberately stopped there; the
+  issue that names the rest listed four lines between 84 and 107 columns.
+  Driven through the two commands rather than read off the source, the set is
+  **28**, from 80 to 231 columns - and the widest of them, a warning printed
+  every time a QinQ sub-interface is created, was on nobody's list.
+
+  Every one of them now goes through `console_prose`, or - where it was an
+  `err` headline, which wraps nothing - has the verdict on the headline and
+  the rest under it. Three refusals gained a row: a statement, a path or a
+  configuration line the message used to carry mid-sentence is now quoted
+  **whole on a row of its own**, which is the half of #252's rule that says an
+  operator greps for that line or types it back in.
+
+  Messages an operator may have scripted against changed shape, which is a
+  breaking change to the text and not to any behaviour: `<route>: <next hop>
+  is on no connected network` now reads `this next hop is on no connected
+  network: <next hop>` with the route on the line below, and the same for
+  `<statement>: this box has no interface <name>`. The headline of the SSH
+  lockout refusal, of the "nobody can configure this box" refusal and of the
+  UDP-export refusal each lost the clause that followed the colon, which is
+  now the first line of the prose under it.
+
 * **`commit`'s refusal printed a 178-column line on an 80-column console**
   ([#252](https://github.com/andrediashexa/hexarouting/issues/252)). The
   message that says a commit did not take effect is read on the serial console
