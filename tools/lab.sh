@@ -67,11 +67,28 @@ case "$LAB" in
   boot-iso|install-iso) LAB_MEM=${LAB_MEM:-10g} ;;
 esac
 
+# APT OVER IPv4, AND WITH A DEADLINE. Measured on 2026-09-13, mid release
+# suite: `getent hosts deb.debian.org` inside the container returns only
+# 2a04:4e42:... addresses, `curl -4` gets 200 and `curl -6` gets nothing, so
+# apt picked IPv6 and sat there. lab/oom.sh off held one runner for 29 minutes
+# without printing a line and without failing.
+#
+# The stall is worse than the failure, and that is the reason for the timeout
+# as much as for the address family. A lab that fails says so in its verdict
+# and the suite classifies it; a lab that hangs takes a slot out of the suite
+# for as long as nobody is looking, and the release it was run for waits on it.
+# This box's own IPv6 reachability is not something a lab is testing.
 exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BPA_RTSP_OFF="${BPA_RTSP_OFF:-}" \
   -e LAB_WORKERS="${LAB_WORKERS:-}" \
   -e LAB_WORKER_COUNT="${LAB_WORKER_COUNT:-}" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
-  sh -c "apt-get update -qq >/dev/null 2>&1
+  sh -c "cat > /etc/apt/apt.conf.d/99lab <<'APTCONF'
+Acquire::ForceIPv4 \"true\";
+Acquire::http::Timeout \"20\";
+Acquire::https::Timeout \"20\";
+Acquire::Retries \"2\";
+APTCONF
+         apt-get update -qq >/dev/null 2>&1
          apt-get install -y -qq qemu-system-x86 qemu-utils fdisk squashfs-tools mdadm openssh-client openssh-server snmpd snmp iptables tcpdump >/dev/null 2>&1
          sh /src/lab/$LAB.sh $LAB_ARGV"
