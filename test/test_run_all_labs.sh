@@ -335,5 +335,59 @@ got=$(LAB_JOBS=3 sh -c 'JOBS=${LAB_JOBS:-99}; echo $JOBS')
 [ "$got" = "3" ] && ok "and LAB_JOBS still overrides the default" \
   || bad "LAB_JOBS no longer overrides"
 
+echo
+echo "=== what the suite does NOT run is data, with a reason, and is announced ==="
+# Five lab files were excluded by a `case` pattern and no run ever mentioned
+# them. The suite's own rule, eleven sections below that line, is that a lab
+# which did not run has shown nothing - applied to the accidents and not to the
+# exclusions, so a name added to that pattern removed a lab from every future
+# run with fail=0 still printed (#233).
+RA=$REPO/tools/run-all-labs.sh
+NL=$(sed -n '/^NOT_LABS="/,/^"$/p' "$RA" | grep ':' || true)
+n_nl=$(printf '%s\n' "$NL" | grep -c ':' || true)
+if [ "${n_nl:-0}" -ge 5 ]; then
+  ok "$n_nl name(s) are excluded as data rather than as a shell pattern"
+else
+  bad "only ${n_nl:-0} exclusion(s) were found in NOT_LABS, so nothing below "\
+"is comparing anything"
+fi
+
+# Every one carries a reason. This is the whole mechanism: the cost of hiding a
+# lab is having to write down why, where a reviewer reads it.
+noreason=$(printf '%s\n' "$NL" | awk -F: 'NF<2 || length($2)<10 {print $1}')
+[ -z "$noreason" ] && ok "and each one says why, in a sentence" \
+  || bad "these are excluded with no reason given: $noreason"
+
+# And every excluded name is a lab file that exists. A stale entry is an
+# exclusion nobody can evaluate, and it hides the next lab that takes the name.
+ghosts=""
+for _n in $(printf '%s\n' "$NL" | cut -d: -f1); do
+  [ -f "$REPO/lab/$_n.sh" ] || ghosts="$ghosts $_n"
+done
+[ -z "$ghosts" ] && ok "and every one names a file in lab/" \
+  || bad "NOT_LABS excludes names with no lab file:$ghosts"
+
+# The loop must use that data and not a pattern of its own. Without this the
+# three checks above stay green on a script that carries the table and then
+# skips by `case` anyway, which is the shape the job-count section above was
+# caught by.
+if grep -q 'not_lab_reason "$n" >/dev/null && continue' "$RA"; then
+  ok "and the loop skips by that table rather than by a pattern of its own"
+else
+  # Named rather than grepped for. The obvious message here would print every
+  # `case "$n" in` in the file, and the announcement loop legitimately has one,
+  # so a reader would be sent to the wrong line.
+  bad "run-all-labs.sh carries NOT_LABS and does not build its lab list from "\
+"it. The lab loop must skip with: not_lab_reason \"\$n\" >/dev/null && continue"
+fi
+
+# Announced before the first result, so it is in the artefact a release
+# decision is read from rather than only in the source.
+if grep -q 'echo "not running, each for its own reason' "$RA"; then
+  ok "and the run says so before the first result"
+else
+  bad "the suite excludes labs and never prints that it did"
+fi
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
