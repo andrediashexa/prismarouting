@@ -1907,6 +1907,24 @@ are to be interpreted as described in
   did omit and really did rewrite - so that "complete" is not simply what this
   box says to everything.
 
+  **It shipped as a warning first, and what promoted it is a measurement, not
+  a judgement.** Five encounters with real configuration had produced four
+  false positives, each one extending the table of statements FRR does not
+  read back verbatim, and refusing a correct commit is the exact harm
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208) was filed
+  for. So the check went in printing `warning:` and leaving the operator their
+  commit, with the promotion condition written into the code: it becomes a
+  refusal when the full lab suite has run clean with it refusing. That suite
+  has now run, with the refusal in force: `pass=79  fail=0  notmeasured=0  novpp=0  ran=0`, 79 runs over 57 lab files. Every lab that commits a routing statement is in that number - `routing`, `igp`, `vty`, `bgp-policy`, `commit`, `frr-readback`, `lcp`, `in-place` - and not one of them lost a `commit complete` it used to have. `commit` reports failure, names the
+  statement FRR did not keep and what FRR writes for it instead, and does not
+  roll back - the rest of the commit is applied and `rollback 1` is the way
+  out. What is refused is the sentence `commit complete`.
+
+  For the record, this file and `docs/routing.md` have described a refusal
+  since the check was written, because the demotion to a warning changed the
+  code and left both of them saying what the product had stopped doing. They
+  are true again rather than newly true.
+
 * **`commit confirmed` reverted from a timer inside the `hexash` process that
   made the commit, so logging out cancelled it**
   ([#212](https://github.com/andrediashexa/hexarouting/issues/212)). The
