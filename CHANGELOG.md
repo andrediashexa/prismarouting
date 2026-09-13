@@ -100,6 +100,32 @@ version has a chance of seeing it.
   Four reds: `ospf6d` dropped from the loop, which is #187 exactly; a protocol
   added to the grammar and not to the loop; a daemon in the loop the grammar
   cannot commit to; and the loop renamed, so the check reads nothing at all.
+* **The public wiki told operators that a refused commit applies nothing, and
+  one refusal leaves the rest applied**
+  ([#254](https://github.com/andrediashexa/hexarouting/issues/254),
+  [#227](https://github.com/andrediashexa/hexarouting/issues/227)).
+  `commit-rollback-e-save.md` said it twice - once in a `:::warning` box and
+  once at the head of the refusal list - and it was true of every refusal this
+  VTY had until the read-back check was promoted from a warning to a refusal.
+  That refusal cannot be decided before applying: it IS the discovery that FRR
+  took the configuration and did not keep it. Its own message says so, in as
+  many words: "nothing was rolled back: the rest of it is applied".
+
+  An operator who has just been refused reads that page to find out what state
+  their box is in, and it told them the box was untouched. It is not: the CGNAT
+  half and the box's own configuration are in effect, and `rollback 1` is the
+  way back. Somebody acting on it walks away from a half-configured box
+  believing it is unchanged.
+
+  Both places now separate the refusals decided before anything is applied from
+  the one decided after, and the read-back refusal has a section of its own -
+  it had none, which is why the page could describe every refusal as the same
+  kind. The message in it is what the box prints, produced through
+  `print_prose` rather than wrapped by hand, because a page that quotes output
+  the box does not produce is the same defect again.
+
+  `wiki/` is a mirror; publishing needs `WIKI_TOKEN`, which is not available
+  here. The repository is correct now and the push is somebody else's.
 
 * **The release gate refused every future release, for duplicates in sections
   it also forbids editing**

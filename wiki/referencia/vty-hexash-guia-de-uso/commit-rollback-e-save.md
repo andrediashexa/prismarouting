@@ -43,7 +43,11 @@ A contagem é das sentenças que a caixa repassou ao roteamento sem ler. `show c
 :::warning
 Statements de roteamento — prefix-list, route-map, vizinhos BGP — são conferidos apenas na forma. Quem valida o conteúdo é o roteamento, e só no `commit`.
 
-Isso significa que um `commit check` aprovado **não garante** que o `commit` seguinte vai passar. Se ele recusar, nada é aplicado: a caixa volta ao estado anterior inteira, inclusive os statements válidos que estavam na mesma mudança.
+Isso significa que um `commit check` aprovado **não garante** que o `commit` seguinte vai passar.
+
+E as recusas não são todas iguais. A maioria é decidida **antes** de qualquer coisa ser aplicada — o travamento de SSH, um route-map que não existe, um pool que o dataplane recusaria — e nessas nada é aplicado: a caixa fica inteira como estava e a candidata também.
+
+A recusa de leitura de volta é a exceção, e é a que importa aqui. Ela só pode ser decidida **depois** que o roteamento já recebeu a configuração, porque é exatamente a descoberta de que ele recebeu e não guardou. Nessa **o resto do commit está em efeito** — o CGNAT e a configuração da própria caixa — e a volta é `rollback 1`. A própria mensagem diz isso.
 
 :::
 
@@ -127,7 +131,11 @@ Nesse estado o desfazer vale só enquanto a sessão durar. Abra uma segunda sess
 
 ## O que o `commit` recusa, e o que fazer
 
-Recusar é a coisa mais forte que este equipamento faz: ele conhece o estado da caixa e a mudança ao mesmo tempo, e há casos em que aplicar significa perder a caixa. Quando isso acontece **nada é aplicado** - a candidata fica como está e você continua na sessão.
+Recusar é a coisa mais forte que este equipamento faz: ele conhece o estado da caixa e a mudança ao mesmo tempo, e há casos em que aplicar significa perder a caixa.
+
+Nas recusas desta seção **nada é aplicado** - a candidata fica como está e você continua na sessão. Todas elas são decididas antes de a caixa tocar em qualquer coisa.
+
+Há **uma** recusa que não funciona assim, e ela está mais abaixo: a de leitura de volta do roteamento. Essa é descoberta depois que o roteamento já recebeu a configuração, e nela o resto do commit está aplicado. Antes de sair de uma recusa acreditando que a caixa está intocada, leia a mensagem: ela diz qual das duas você tem na tela.
 
 As mensagens aparecem em inglês, porque é o que a caixa imprime. Elas estão aqui para você achar a sua.
 
@@ -168,6 +176,38 @@ Uma rota estática cujo próximo salto não está em nenhuma rede conectada dest
 ### `cannot reach the dataplane: <motivo>`
 
 A VTY não conseguiu falar com o dataplane, então ela não pode nem aplicar nem conferir. Não é uma recusa sobre a sua mudança: é a caixa dizendo que metade dela não está respondendo. `show version` diz quais serviços estão de pé.
+
+### `FRR accepted <n> statement(s) of this commit and did not keep them`
+
+**Esta é a recusa diferente.** Ela não é decidida antes de aplicar: a caixa
+entregou a configuração ao roteamento, leu de volta o que ele guardou, e
+descobriu que parte não está lá. A descoberta só existe depois de aplicar.
+
+```
+error: FRR accepted 1 statement(s) of this commit and did not keep them
+    router static / route 203.0.113.0/24 blackhole
+    this commit is NOT in effect as written, and nothing was rolled back: the
+    rest of it is applied. 'rollback 1' puts the box back
+    the configuration this box holds and the one FRR is running are not the
+    same; 'show configuration' is this box's, 'start shell' then 'vtysh -c
+    "show running-config"' is FRR's
+```
+
+Leia a segunda frase com cuidado, porque ela contradiz o que vale para todas as
+outras recusas: **nada foi desfeito, e o resto do commit está em efeito**. O
+CGNAT e a configuração da própria caixa estão aplicados. Quem sair daqui
+achando que a caixa está como estava vai diagnosticar a caixa errada.
+
+`rollback 1` é a volta: ele carrega a revisão anterior na candidata, e você a
+aplica com `commit` como qualquer outra.
+
+As sentenças recusadas aparecem uma por linha, com o bloco a que pertencem. As
+marcadas com `<- not checked` são as que esta caixa repassou sem ler: não têm
+gramática aqui, foram para o roteamento palavra por palavra, e são as que o
+roteamento tem mais chance de ter descartado.
+
+A última frase é o que fazer em seguida. As duas configurações divergiram, e há
+um comando para ler cada uma: `show configuration` mostra a desta caixa.
 
 ### E a que não é uma recusa, e sim um pedido explícito
 
