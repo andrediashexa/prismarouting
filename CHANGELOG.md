@@ -48,29 +48,39 @@ version has a chance of seeing it.
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
-## Unreleased
+## 0.68.0 — what the box said it did, and a release gate that could not be passed
 
+[#9](https://github.com/andrediashexa/hexarouting/issues/9),
+[#226](https://github.com/andrediashexa/hexarouting/issues/226),
 [#227](https://github.com/andrediashexa/hexarouting/issues/227),
-[#231](https://github.com/andrediashexa/hexarouting/issues/231),
-[#233](https://github.com/andrediashexa/hexarouting/issues/233),
-[#235](https://github.com/andrediashexa/hexarouting/issues/235),
-[#245](https://github.com/andrediashexa/hexarouting/issues/245),
-[#246](https://github.com/andrediashexa/hexarouting/issues/246),
 [#249](https://github.com/andrediashexa/hexarouting/issues/249),
 [#250](https://github.com/andrediashexa/hexarouting/issues/250),
 [#251](https://github.com/andrediashexa/hexarouting/issues/251),
+[#252](https://github.com/andrediashexa/hexarouting/issues/252),
 [#253](https://github.com/andrediashexa/hexarouting/issues/253),
+[#254](https://github.com/andrediashexa/hexarouting/issues/254),
 [#255](https://github.com/andrediashexa/hexarouting/issues/255),
 [#256](https://github.com/andrediashexa/hexarouting/issues/256),
 [#257](https://github.com/andrediashexa/hexarouting/issues/257),
 [#258](https://github.com/andrediashexa/hexarouting/issues/258),
+[#259](https://github.com/andrediashexa/hexarouting/issues/259),
 [#260](https://github.com/andrediashexa/hexarouting/issues/260),
 [#261](https://github.com/andrediashexa/hexarouting/issues/261),
+[#262](https://github.com/andrediashexa/hexarouting/issues/262),
+[#263](https://github.com/andrediashexa/hexarouting/issues/263),
 [#265](https://github.com/andrediashexa/hexarouting/issues/265),
 [#266](https://github.com/andrediashexa/hexarouting/issues/266),
 [#267](https://github.com/andrediashexa/hexarouting/issues/267),
 [#268](https://github.com/andrediashexa/hexarouting/issues/268),
-[#269](https://github.com/andrediashexa/hexarouting/issues/269).
+[#269](https://github.com/andrediashexa/hexarouting/issues/269),
+[#270](https://github.com/andrediashexa/hexarouting/issues/270),
+[#271](https://github.com/andrediashexa/hexarouting/issues/271),
+[#272](https://github.com/andrediashexa/hexarouting/issues/272),
+[#273](https://github.com/andrediashexa/hexarouting/issues/273),
+[#274](https://github.com/andrediashexa/hexarouting/issues/274),
+[#275](https://github.com/andrediashexa/hexarouting/issues/275),
+[#278](https://github.com/andrediashexa/hexarouting/issues/278),
+[#279](https://github.com/andrediashexa/hexarouting/issues/279).
 
 ### Fixed
 
