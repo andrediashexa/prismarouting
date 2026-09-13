@@ -47,7 +47,12 @@ ExecStart=/usr/bin/hexash --load /etc/hexarouting/hexarouting.conf
 MemoryMax=512M
 # No ExecStop: the configuration lives in VPP, and stopping this service must
 # not erase a production pool. Removing a pool is the operator's action,
-# through the VTY.
+# through the VTY. A stop-time command runs on every RESTART too, so one here
+# would fire on an ordinary upgrade and not only when somebody meant it.
+#
+# That was a comment and nothing else until #238: adding the ExecStop it
+# forbids left all 34 suites green. test/test_stop_is_not_a_teardown.py now
+# reads this file, so the sentence above has a red light behind it.
 #
 # Closing the retention log when the box stops is a different job and is NOT
 # here, for the same reason: it belongs to the process that holds the blocks.
