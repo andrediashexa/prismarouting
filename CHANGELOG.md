@@ -538,6 +538,15 @@ are to be interpreted as described in
   is how this reached a release. `test/test_collector_marker.py` is new and
   drives the captured timeline to the second, so it fails on the rule rather
   than on the machine's mood.
+
+  Adding that suite exposed a second thing: `tools/ipfix_collector.py` ended
+  with a bare `main()`, so **importing** it started a collector - it bound
+  udp/4739 and listened for 25 seconds inside `make test`, on a box where a lab
+  may already hold that port. It runs under `__name__ == "__main__"` now, which
+  changes nothing for the four labs and the appliance that run it as a program,
+  and means the file can be read without being run. A module that cannot be
+  read without being run is a module nothing can assert about, which is part of
+  why the rule above went unguarded.
 * **Half the boot self-test's statements had nothing holding them.** The
   self-test makes 52 statements about a box and `test/test_selftest.sh` held
   about half; the rest could stop firing, or start firing on the wrong
