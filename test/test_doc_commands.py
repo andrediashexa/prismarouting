@@ -299,6 +299,56 @@ if _bad:
 else:
     ok(f"{len(_quoters)} lab(s) checked; every quotation matches {_mark!r}")
 
+print("\n=== the BGP page's table is what the VTY actually checks ===")
+#
+# The page says of that table, in as many words, "essa tabela e o que o hexash
+# confere" - and then explains that what is NOT in it is passed through unread
+# and comes back marked `<- not checked`. So the table is a claim about the
+# grammar, and a reader uses it to predict what their own `show this` will
+# look like.
+#
+# It had drifted: `capability` was in the grammar and not on the page, and so
+# were `maximum-prefix` and `next-hop-self` inside an address family. Nothing
+# on the page claimed a statement the box lacks, which is the safer direction,
+# but the sentence "this table is what it checks" was false either way and an
+# operator would have expected a marker that does not appear.
+from hexash import BGP_NEIGHBOUR, BGP_AF_NEIGHBOUR                # noqa: E402
+
+_bgp_page = os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso",
+                         "configuracao-de-bgp.md")
+_text = open(_bgp_page, encoding="utf-8").read()
+# The first word of the first cell of each row: the page writes
+# `capability extended-nexthop` as one command, and the grammar keys on the
+# first word.
+_rows = set()
+for _line in _text.split("\n"):
+    if not _line.startswith("| `"):
+        continue
+    _cell = _line.split("|")[1].strip()
+    if _cell.startswith("`"):
+        _rows.add(_cell.strip("`").split()[0])
+_missing = sorted(set(BGP_NEIGHBOUR) - _rows)
+_extra = sorted(_rows - set(BGP_NEIGHBOUR) - {"remote-as"})
+if _missing:
+    bad(f"the neighbour table does not list {_missing}, which the VTY checks: "
+        f"a reader expects those to come back marked and they do not")
+else:
+    ok(f"every one of the {len(BGP_NEIGHBOUR)} neighbour statements is on the page")
+
+# The address-family list is prose rather than a table, so it is read as prose.
+_af_line = [l for l in _text.split("\n")
+            if l.startswith("Dentro de `address-family`")]
+if not _af_line:
+    bad("the address-family sentence is gone from the page, so nothing here "
+        "is being compared")
+else:
+    _af_missing = sorted(k for k in BGP_AF_NEIGHBOUR if f"`{k}" not in _af_line[0])
+    if _af_missing:
+        bad(f"the address-family sentence does not name {_af_missing}, which "
+            f"the VTY checks inside an address family")
+    else:
+        ok(f"and all {len(BGP_AF_NEIGHBOUR)} of the address-family ones are named")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

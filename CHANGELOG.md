@@ -109,6 +109,19 @@ are to be interpreted as described in
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223).
 
+* **The BGP page's table of what the VTY checks had drifted from the grammar.**
+  The page says of it, in as many words, that this table is what `hexash`
+  verifies, and then explains that anything not in it is passed through unread
+  and comes back marked `<- not checked`. So the table is a claim about the
+  grammar, and a reader uses it to predict their own `show this`. It omitted
+  `capability` from the neighbour list and `maximum-prefix` and `next-hop-self`
+  from the address-family one - three statements the VTY does check, and whose
+  absence from the page would have had an operator expecting a marker that
+  never appears. `test/test_doc_commands.py` now reads the table and the
+  address-family sentence off the page and compares them with `BGP_NEIGHBOUR`
+  and `BGP_AF_NEIGHBOUR`, so a statement added to the grammar and nowhere else
+  fails.
+
 ### Added
 
 * **A statement this VTY carried no longer looks like one it checked.** Inside
