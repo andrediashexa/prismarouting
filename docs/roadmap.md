@@ -1177,11 +1177,15 @@ disk detached the survivor reaches no bootloader at all - and the records on it
 were read back on another machine, out of the leg alone, with that box switched
 off.
 
-The lab found three defects doing it, all of them in the box around the mirror
+The lab found four defects doing it, all of them in the box around the mirror
 rather than in the mirror: a degraded array that never started, so the records
 volume did not mount at all; a reinstall that could not rewrite a partition the
-medium had assembled an array from; and the same refusal again on the second
-disk, because releasing both disks once left a window between the two writes.
+medium had assembled an array from; the same refusal again on the second disk,
+because releasing both disks once left a window between the two writes; and
+then the release bringing back what it had itself removed, because erasing a
+superblock re-reads the partition table and udev assembles what it finds. Each
+reading named the next, and the last one was only readable because the step
+before it had been made to print what was in the way.
 
 A box with **one** disk is untouched, and the default run of the same lab
 asserts it: no question, no array, and a self-test that does not mention a

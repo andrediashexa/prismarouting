@@ -425,6 +425,14 @@ are to be interpreted as described in
     are erased with the stop - and per disk, immediately before each write,
     because doing it once for both left the second disk exposed for as long as
     the first `sfdisk` took.
+  * **And the erase brought back what it had removed.** Closing a writable file
+    descriptor on a whole disk makes the kernel re-read its partition table,
+    which is what `mdadm` does while looking for a superblock to erase - so
+    udev saw the partition appear and assembled the stale leg on it, `inactive`,
+    holding the disk the erase had just freed. The release now repeats until a
+    pass finds nothing left, and prints `/proc/mdstat` if it never does. That
+    last one was only readable because the step before it had been made to say
+    what was in the way instead of leaving it to be deduced from `sfdisk`.
 
   The first of those is the one worth reading twice: everything about the
   mirror was correct, and the box would have spent a year writing records to
