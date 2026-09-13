@@ -7209,8 +7209,23 @@ class Shell:
             rib = routes.parse_rib(rout) if rrc == 0 else {}
             # Which interfaces VPP owns, so routes through the management
             # interface are not reported as faults for ever.
+            #
+            # BOTH the linux_cp pairs AND the dataplane's own interface names,
+            # and the second half was missing. Measured on lab/bng.sh, whose
+            # box has no pair at all: `show lcp` answered nothing, so every
+            # route FRR held was judged against an empty set. Three of the four
+            # it then reported were the container's own network through eth0 -
+            # the management interface, which is precisely the case the
+            # suppression exists for.
+            #
+            # An interface the dataplane knows by name is one VPP owns whether
+            # or not anything paired it: `host-wan0` is VPP's and `eth0` is
+            # not, and that is the whole distinction the report needs. Asking
+            # `show lcp` alone could not make it on a box with no pairs.
             _, lcp = self.dp.run("show lcp")
-            self._vpp_hosts = routes.vpp_host_interfaces(lcp)
+            irc, iface_out = self.dp.run("show interface")
+            self._vpp_hosts = routes.vpp_owned_interfaces(
+                lcp, iface_out if irc == 0 else "")
             if not rib:
                 print("  (FRR did not answer; showing the forwarding table "
                       "alone)")
