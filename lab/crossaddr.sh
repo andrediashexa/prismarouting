@@ -17,7 +17,13 @@
 # slice. Run with LAB_WORKERS it would still print numbers, and they would be
 # numbers about a different arrangement than the one it claims to measure -
 # which is the defect lab/extblocks.sh had and this file is not going to
-# repeat. It is not in tools/run-all-labs.sh's BOTH_WAYS list for that reason.
+# repeat.
+#
+# The line below is the machine-readable half of that, because the paragraph
+# above is a sentence and the list it talks about is in another file. Nothing
+# compared the two, so adding this lab to BOTH_WAYS would have left a comment
+# saying it was not there. test/test_run_all_labs.sh reads the marker.
+# NOT-BOTH-WAYS: the free list is sharded per worker, so every gap this lab counts would be about a different arrangement
 set -u
 . /src/lab/lib.sh
 . /src/lab/verdict.sh
