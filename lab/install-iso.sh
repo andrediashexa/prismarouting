@@ -640,6 +640,17 @@ drive_console() {
   send 'echo "HX""LAB modes=$(stat -c %a:%G /etc/hexarouting) $(stat -c %a:%G /etc/hexarouting/rollback)"'
   wait_for "HXLAB modes=" 30 \
     "the box to state the configuration directory's mode" || return 1
+  # What systemd will do when this box is stopped, asked of SYSTEMD and not of
+  # the drop-in file. In dynamic mode the block log is the connection record
+  # the Marco Civil requires, and a block held when the dataplane stops leaves
+  # an allocation open in it for ever (#217). The dataplane closes them when
+  # asked, and what asks is an ExecStop in a vpp.service drop-in - so a drop-in
+  # that was installed and that systemd parsed and refused reads exactly like
+  # one that works. There is no systemd in a lab container; this is the only
+  # place in the repository that has one.
+  send 'echo "HX""LAB stopdrain=$(systemctl show vpp.service -p ExecStop 2>&1 | grep -c "bpa stop-drain")"'
+  wait_for "HXLAB stopdrain=" 30 \
+    "systemd to say what it runs before stopping the dataplane" || return 1
 
   # The self-test again, now that the box has an account. At boot it said it
   # had none; this is the same program, on the same console, with the only
@@ -1359,6 +1370,24 @@ else
   else
     echo "  [FAIL] /etc/hexarouting/confirm-pending is still on the box after"
     echo "         the revert ran, so the box would do it again at every boot"
+    fail=1
+  fi
+
+  # --- the retention log is closed when the box stops (#217) ---
+  echo
+  echo "  --- what systemd runs before it stops the dataplane ---"
+  STOP_DRAIN=$(field stopdrain)
+  if [ "${STOP_DRAIN:-0}" -ge 1 ] 2>/dev/null; then
+    echo "  [ ok ] vpp.service carries the drain in ExecStop, so a planned"
+    echo "         reboot or an upgrade closes every block this box holds"
+    echo "         instead of leaving the allocations open in the retention"
+    echo "         log for as long as it is kept"
+  else
+    echo "  [FAIL] systemd has no 'bpa stop-drain' in vpp.service's ExecStop"
+    echo "         (grep counted '${STOP_DRAIN:-<no answer>}'). Every planned"
+    echo "         reboot and every upgrade then leaves one open allocation"
+    echo "         per block held, and the box answers a court order with a"
+    echo "         subscriber who had already been disconnected (#217)"
     fail=1
   fi
 fi

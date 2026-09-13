@@ -20,6 +20,76 @@
 #define BPA_LOG_RECORD_SIZE 25
 
 /*
+ * THE BOOT MARKER. A PROPOSAL - the maintainer may change its shape, and the
+ * argument for this one is below so that changing it is an argument and not a
+ * preference.
+ *
+ * WHAT IT IS FOR. A drain on graceful stop (bpa_stop_drain()) closes the
+ * allocations a box saw coming. A power loss, an OOM kill and a panic emit
+ * nothing at all, and cannot: there is no instant at which the box could have
+ * written the record. So after the drain a collector reading an allocation
+ * with no release still has two readings of it, and they are opposite answers
+ * to a court order:
+ *
+ *   "the subscriber still holds those ports"   - the box is up, nothing changed
+ *   "the box died and nobody knows when"       - the ports were freed at the
+ *                                                crash and may already belong
+ *                                                to someone else
+ *
+ * WHAT THE EXISTING RECORDS ALREADY CARRY, and why it is not enough. The
+ * message header has an Export Time and a Sequence Number, and RFC 7011 does
+ * say a Collector may notice a restart when the sequence number goes
+ * backwards. It is a heuristic and it is explicitly ambiguous: over UDP the
+ * same thing is produced by reordering, by loss, and by the counter wrapping.
+ * A retention log answers a court order, so a heuristic that is also the
+ * signature of two ordinary network events is not a basis to say a subscriber
+ * stopped holding an address. Nothing else in the record is per-incarnation:
+ * observationTimeMilliseconds is the event's own time, and natPoolId names a
+ * pool, which survives the restart.
+ *
+ * THE SHAPE. A second template carrying IE 160,
+ * systemInitTimeMilliseconds - "the absolute timestamp of the last
+ * (re-)initialization of the IPFIX Device". That is this exact statement,
+ * already registered with IANA and already in VPP's own element table, so a
+ * collector that knows the IPFIX registry decodes it with no vendor
+ * documentation and no private codepoint.
+ *
+ * WHAT A COLLECTOR DOES WITH IT. Keep the last value seen per exporter and
+ * observation domain. While it does not change, an allocation with no release
+ * is still in force. When it changes, every allocation still open from before
+ * it ended at or before the new value - the box did not observe the end, so
+ * the honest answer is a window, not an instant, and the window is
+ * [last record of the old incarnation, new systemInitTime]. With the drain
+ * that window is empty on a planned stop, because the natEvent 17 is there.
+ *
+ * WHAT WAS NOT CHOSEN, and why:
+ *
+ *   - A new natEvent value. IANA's natEvent registry ends at 17; 18 and above
+ *     are unassigned, and taking one is squatting on a public registry that
+ *     may assign it to something else. The record would also be undecodable
+ *     by anyone without our documentation.
+ *
+ *   - natEvent 17 with a wildcard subscriber and range. A collector that does
+ *     not know the convention reads it as the release of a block nobody ever
+ *     allocated, which is a new unmatched record - the very shape this is
+ *     trying to remove.
+ *
+ *   - An IPFIX Options Template scoped by observationDomainId, which is the
+ *     formally correct home for metadata about an exporter. VPP's
+ *     ipfix-export builds Template Sets (set id 2) only, so it would mean a
+ *     private copy of vnet_flow_rewrite_generic_callback() to emit set id 3,
+ *     for a record every collector would have to special-case anyway. Worth
+ *     revisiting if VPP grows options-template support.
+ *
+ *   - An eighth field on the block record itself, so every record names its
+ *     own incarnation. It cannot be lost independently of the record it
+ *     qualifies, which is a real advantage over UDP - but it is 8 bytes on a
+ *     25-byte record, a third more of a log docs/logging.md sizes at 80 MB a
+ *     day, to carry a value that changes once per boot.
+ */
+#define BPA_LOG_MARKER_RECORD_SIZE 16 /* 8 + 8 */
+
+/*
  * An event queued by the dataplane.
  *
  * The node does NOT call the export path directly: emitting IPFIX from inside
@@ -46,6 +116,13 @@ typedef struct
   u32 template_id;
   u32 stream_index;
   u32 flow_report_index;
+  /* The boot marker's own template, on the same stream: one stream may carry
+   * several templates, and sharing it keeps one sequence number over both so
+   * a collector sees one ordered flow of records rather than two. */
+  u32 marker_template_id;
+  u32 marker_report_index;
+  u64 n_markers;
+  f64 next_marker;
   u64 n_records;
   u64 n_flush_called;
   u64 n_flush_sent;
@@ -113,6 +190,25 @@ void bpa_log_tcp_service (f64 now);
 
 /* Drains every thread's queue. Called under the barrier. */
 void bpa_log_drain (vlib_main_t *vm);
+
+/*
+ * The boot marker, on every enabled transport. See the long comment above
+ * BPA_LOG_MARKER_RECORD_SIZE for what it is and what a collector does with it.
+ *
+ * Emitted when a transport comes up, BEFORE bpa_log_pins_replay() announces
+ * anything - a collector has to know which incarnation the records that follow
+ * belong to before it reads them - and again on a timer, because over UDP a
+ * marker that went out once and was lost leaves the collector reading the new
+ * incarnation's records as the old one's.
+ */
+void bpa_log_marker_emit (vlib_main_t *vm);
+
+/* How often the marker is repeated, in seconds. */
+#define BPA_LOG_MARKER_INTERVAL 30.0
+
+/* wall is seconds since the UNIX epoch, for the record's own timestamp;
+ * init is the same clock, read once when this incarnation started. */
+void bpa_log_tcp_marker (f64 wall, f64 init);
 
 /* bpa_log_queue_event() is declared in bpa.h, which already sees
  * bpa_per_thread_t; declaring it here would need a circular dependency. */

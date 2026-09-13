@@ -1392,6 +1392,33 @@ bpa_expire_process (vlib_main_t *vm, vlib_node_runtime_t *rt, vlib_frame_t *f)
 		}
 	    }
 	}
+      /*
+       * A drain that was not followed by a stop.
+       *
+       * "bpa stop-drain" says every block has been given back, and it is only
+       * true because the box is about to stop. If the box is still here, the
+       * log is now claiming that blocks this box is holding are free, which is
+       * the same lie as an allocation that is never closed, inverted - and it
+       * would stand for as long as the log is kept. So the blocks are taken
+       * back, with a real natEvent 16, and the log reads "released at T1, held
+       * again from T2". The window between the two is a few seconds in which
+       * the log is wrong, and bounded; leaving it alone is unbounded.
+       *
+       * Under the same barrier as everything else here, because
+       * bpa_blocks_log_all() reaches into every thread's allocator.
+       */
+      if (bm->drained_at && now - bm->drained_at > BPA_DRAIN_REANNOUNCE)
+	{
+	  u32 back = bpa_blocks_log_all (BPA_NAT_EVENT_BLOCK_ALLOC);
+
+	  bm->drained_at = 0;
+	  if (back)
+	    vlib_log_notice (bm->log_class,
+			     "drained but not stopped: %u block(s) are still "
+			     "held and have been announced again",
+			     back);
+	}
+
       /* the dataplane only queues; this is where the records go out */
       bpa_log_drain (vm);
 

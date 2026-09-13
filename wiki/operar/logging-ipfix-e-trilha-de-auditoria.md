@@ -139,6 +139,13 @@ Cada registro exportado tem estes campos:
 | 362 | `portRangeEnd` | 16   | não         | fim do bloco |
 | 283 | `natPoolId` | 32   | não         | índice do pool |
 
+E um **segundo template**, com dois campos, que carrega o marcador de reinício:
+
+| IE  | Nome | Bits | Conteúdo |
+|----:|------|-----:|----------|
+| 323 | `observationTimeMilliseconds` | 64 | instante em que o marcador foi escrito |
+| 160 | `systemInitTimeMilliseconds` | 64 | instante em que esta encarnação do dataplane começou |
+
 
 :::warning
 **Registros coletados por TCP em versões até a 0.34.0 têm esse campo errado.** Eles carregavam segundos desde o boot do VPP em vez da hora do dia — o coletor decodificava uma alocação como `00:00:05`. O exportador UDP, carregando os mesmos eventos, decodificava a hora certa.
@@ -184,6 +191,83 @@ Em t0.5 e t2.5 a mesma consulta acerta. O erro aparece **só na lacuna**, que é
 :::
 
 Por isso o `natEvent 17` na liberação é correção, não capricho.
+
+# Quando a caixa para, e quando ela cai
+
+A mesma lacuna aparece no reinício, e por um motivo mais comum do que a
+ociosidade: **todo reboot planejado e toda atualização** deixavam para trás um
+bloco segurado no instante da parada, sem liberação nenhuma.
+
+## Parada planejada
+
+Uma parada ordenada - `systemctl stop`, `systemctl restart`, um reboot, uma
+atualização - **libera todos os blocos antes de sair**. Sai um `natEvent 17`
+por bloco ainda segurado, nos dois transportes, carimbado com o **instante da
+parada**.
+
+O instante é o da parada e não um anterior de propósito: a caixa não observou o
+momento em que o bloco deixou de ser usado, e um registro que chutasse esse
+momento seria um registro inventado.
+
+## Queda de energia
+
+Uma caixa que perde energia, que é morta pelo kernel por falta de memória ou
+que entra em pânico **não emite nada** - e não há o que fazer a respeito: não
+existe instante em que ela poderia ter escrito o registro. As alocações dela
+ficam abertas.
+
+É por isso que a parada ordenada sozinha **não** resolve o problema. Ela fecha
+os casos que a caixa viu chegando, e deixaria quem lê o log convencido de que
+toda alocação aberta é uma alocação em vigor - errando justamente nas caixas
+que caíram.
+
+## O marcador de reinício
+
+Para separar os dois casos, a caixa anuncia periodicamente **quando esta
+encarnação do dataplane começou**, em um segundo template, no campo
+`systemInitTimeMilliseconds` (IE 160) - que o IANA registra exatamente como *"o
+instante absoluto da última (re)inicialização do dispositivo IPFIX"*.
+
+Com isso, uma alocação sem liberação passa a ter três leituras, e não duas:
+
+| O que o coletor tem | Leitura |
+|---|---|
+| alocação e liberação | o assinante segurou aquelas portas entre os dois instantes - resposta exata |
+| alocação sem liberação, e o valor do marcador **não** mudou depois | **ainda em vigor**: o assinante segura aquelas portas agora |
+| alocação sem liberação, e o marcador anunciou um valor **novo** depois | **terminou naquele reinício**: a caixa caiu segurando o bloco e não observou o fim. A resposta honesta é a janela entre o último registro da encarnação anterior e o novo instante de início - não um instante |
+
+:::info
+O valor do marcador é **latched** no início do processo e não é recalculado. O
+que importa é que ele **mude** quando o processo é substituído; um valor
+recalculado a cada envio pularia a cada ajuste de relógio e seria lido como um
+reinício que não houve.
+
+Em compensação, uma caixa cujo relógio ainda estava errado quando o dataplane
+subiu carrega um valor absoluto errado até ser reiniciada. Ele continua
+diferente do da encarnação anterior, que é para o que o coletor o lê.
+:::
+
+:::warning
+**Um coletor que não conhece o IE 160 continua vendo alocações abertas e não
+consegue distingui-las.** Isso não é defeito da caixa: os registros saem, o
+segundo template é anunciado junto com o primeiro, e quem decodifica é o
+coletor. Ao escolher ou configurar um coletor para guarda legal, confirme que
+ele guarda o `systemInitTimeMilliseconds` por exportador e reprocessa as
+alocações abertas quando esse valor muda.
+:::
+
+## Conferindo
+
+A linha do marcador aparece no estado da exportação, com o template que o
+carrega, quantos já saíram e o instante de início desta encarnação:
+
+```
+show cgnat logging
+```
+
+Se o número de marcadores enviados não sai do zero com a exportação ligada, o
+coletor não tem como separar os dois casos acima - trate como a exportação
+estar quebrada, não como cosmética.
 
 # Verificando que a trilha não foi adulterada
 

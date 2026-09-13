@@ -37,6 +37,18 @@ static ipfix_report_element_t bpa_block_elements[] = {
   { natPoolId, 4 },
 };
 
+/*
+ * The boot marker's template: when this event was written, and when the
+ * dataplane process that wrote it started. IE 160 is IANA's
+ * systemInitTimeMilliseconds, "the absolute timestamp of the last
+ * (re-)initialization of the IPFIX Device" - the argument for using it, and
+ * for the three shapes that were not used, is in bpa_log.h.
+ */
+static ipfix_report_element_t bpa_marker_elements[] = {
+  { observationTimeMilliseconds, 8 },
+  { systemInitTimeMilliseconds, 8 },
+};
+
 static vlib_frame_t *
 bpa_log_data_callback (flow_report_main_t *frm, ipfix_exporter_t *exp,
 		       flow_report_t *fr, vlib_frame_t *f, u32 *to_next,
@@ -92,6 +104,25 @@ bpa_log_enable (int enable)
 
   lm->template_id = template_id;
   lm->flow_report_index = a.flow_report_index;
+
+  /*
+   * The marker's own template, on the SAME stream: one stream may carry
+   * several templates, and sharing it keeps one sequence number across both,
+   * so a collector reads one ordered flow of records instead of two it has to
+   * interleave by timestamp.
+   */
+  a.report_elements = bpa_marker_elements;
+  a.n_report_elements = ARRAY_LEN (bpa_marker_elements);
+  /* Distinct from the block report, which is registered with the same
+   * callback: the remove path matches on the pair and would otherwise have
+   * two identical reports to choose between. */
+  a.opaque.as_uword = 1;
+  rv = vnet_flow_report_add_del (exp, &a, &template_id);
+  if (rv)
+    return flow_report_add_del_error_to_clib_error (rv);
+
+  lm->marker_template_id = template_id;
+  lm->marker_report_index = a.flow_report_index;
   lm->enabled = enable ? 1 : 0;
 
   /* A transport coming up where there was none: every block that is pinned
@@ -100,7 +131,12 @@ bpa_log_enable (int enable)
    * Guarded on the transition so that turning the second transport on does not
    * announce them all again. */
   if (lm->enabled && !bpa_log_tcp.enabled)
-    bpa_log_pins_replay ();
+    {
+      /* The marker first: a collector has to know which incarnation the
+       * records that follow belong to before it reads them. */
+      lm->next_marker = 0;
+      bpa_log_pins_replay ();
+    }
   return 0;
 }
 
@@ -203,6 +239,69 @@ bpa_log_emit (vlib_main_t *vm, u8 event, u32 ip_priv, u32 ip_pub, u16 port_lo,
   bpa_log_tcp_record (wall, event, ip_priv, ip_pub, port_lo, port_hi, pool_id);
 }
 
+/*
+ * The boot marker record: when it was written, and when this incarnation of
+ * the dataplane started.
+ *
+ * Both transports, through one call, for the reason bpa_log_emit() gives: a
+ * caller that reaches one exporter directly will sooner or later reach only
+ * that one. The wall clock is read once here and handed to both, so the same
+ * marker carries the same time on both.
+ */
+void
+bpa_log_marker_emit (vlib_main_t *vm)
+{
+  bpa_log_main_t *lm = &bpa_log_main;
+  bpa_main_t *bm = &bpa_main;
+  flow_report_main_t *frm = &flow_report_main;
+  flow_report_per_thread_t *ptd;
+  ipfix_exporter_t *exp;
+  flow_report_t *fr;
+  vlib_buffer_t *b0;
+  f64 wall = unix_time_now ();
+  u16 offset;
+  u8 *d;
+
+  bpa_log_tcp_marker (wall, bm->boot_wall);
+
+  if (!lm->enabled)
+    return;
+
+  exp = pool_elt_at_index (frm->exporters, 0);
+  fr = pool_elt_at_index (exp->reports, lm->marker_report_index);
+
+  b0 = vnet_ipfix_exp_get_buffer (vm, exp, fr, vm->thread_index);
+  if (b0 == 0)
+    {
+      lm->n_getbuf_fail++;
+      return;
+    }
+
+  ptd = vec_elt_at_index (fr->per_thread_data, vm->thread_index);
+  offset = ptd->next_data_offset;
+  d = (u8 *) vlib_buffer_get_current (b0) + offset;
+
+  clib_memcpy_fast (d, &(u64){ clib_host_to_net_u64 ((u64) (wall * 1e3)) }, 8);
+  d += 8;
+  clib_memcpy_fast (
+    d, &(u64){ clib_host_to_net_u64 ((u64) (bm->boot_wall * 1e3)) }, 8);
+
+  offset += BPA_LOG_MARKER_RECORD_SIZE;
+  ptd->next_data_offset = offset;
+  b0->current_length = offset;
+  lm->n_markers++;
+
+  /*
+   * Dispatched here and not left to the next flush. The marker's own buffer
+   * belongs to its own report, and bpa_log_flush() only ever dispatches the
+   * block report's - so a marker left in it would sit there until another
+   * marker filled the buffer, which at one record every half minute is never.
+   */
+  vnet_ipfix_exp_send_buffer (
+    vm, exp, fr, pool_elt_at_index (exp->streams, fr->stream_index),
+    vm->thread_index, b0);
+}
+
 void
 bpa_log_drain (vlib_main_t *vm)
 {
@@ -249,6 +348,23 @@ bpa_log_drain (vlib_main_t *vm)
     }
 
   bpa_log_flush (vm);
+
+  /*
+   * The marker, on its own timer. Repeated rather than sent once: over UDP a
+   * marker that was lost leaves the collector reading this incarnation's
+   * records as the previous one's, which is the ambiguity it exists to
+   * remove. One 16-byte record every half minute.
+   */
+  {
+    f64 now = vlib_time_now (vm);
+
+    if (now >= bpa_log_main.next_marker)
+      {
+	bpa_log_main.next_marker = now + BPA_LOG_MARKER_INTERVAL;
+	bpa_log_marker_emit (vm);
+      }
+  }
+
   bpa_log_tcp_service (vlib_time_now (vm));
 }
 

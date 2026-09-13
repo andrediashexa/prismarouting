@@ -1,5 +1,7 @@
 /* bpa_cli.c - debug CLI for BPA pools. */
 
+#include <time.h>
+
 #include <vlib/vlib.h>
 #include <vnet/ip/ip.h>
 
@@ -2383,6 +2385,66 @@ VLIB_CLI_COMMAND (bpa_logging_command, static) = {
   .function = bpa_logging_command_fn,
 };
 
+/*
+ * "bpa stop-drain": release every block, because the box is about to stop.
+ *
+ * Run from an ExecStop, not by hand. It is deliberately absent from the VTY:
+ * an operator configures through hexash, and this is not a configuration
+ * statement, it is the first half of a shutdown.
+ *
+ * IT IS STILL SAFE TO TYPE, and that matters more than the naming. A box that
+ * is drained and then does NOT stop is holding blocks the log has just said
+ * were given back, which is the same lie as the one this whole change exists
+ * to remove, only inverted. So bpa-expire-process re-announces every held
+ * block a few seconds later if the box is still here. The cost is a bounded
+ * window in which the log says a block is free while it is held; the
+ * alternative is an unbounded one in which it says so for ever.
+ */
+static clib_error_t *
+bpa_stop_drain_command_fn (vlib_main_t *vm, unformat_input_t *input,
+			   vlib_cli_command_t *cmd)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 n;
+
+  if (!bpa_log_main.enabled && !bpa_log_tcp.enabled)
+    {
+      vlib_cli_output (vm, "logging is not enabled; nothing to drain");
+      return 0;
+    }
+
+  n = bpa_drain_blocks (vm);
+
+  /*
+   * Suspending, not returning: the UDP records are on a frame that ip4-lookup
+   * has not run yet, and this command exists precisely because the graph is
+   * the thing that puts them on the wire. Returning here would hand systemd
+   * back control, systemd would send SIGTERM, and the frame would die with
+   * the same records on it that the exit hook loses. A CLI process that
+   * suspends lets the main loop go round.
+   */
+  vlib_process_suspend (vm, 0.5);
+
+  vlib_cli_output (vm, "released %u block(s) still held", n);
+  return 0;
+}
+
+VLIB_CLI_COMMAND (bpa_stop_drain_command, static) = {
+  .path = "bpa stop-drain",
+  .short_help = "bpa stop-drain (release every held block; the box is stopping)",
+  .function = bpa_stop_drain_command_fn,
+  /*
+   * Runs without the CLI dispatcher's barrier, for the reason "bpa pool" gives
+   * above and one of its own. bpa_drain_blocks() takes its own barrier and
+   * RELEASES it before this command suspends - and a release at recursion
+   * depth is a no-op, so under the dispatcher's barrier the suspend below
+   * would hold every worker still for its whole length. The suspend is there
+   * to let the graph run; holding the workers through it is the opposite of
+   * what it is for.
+   */
+  .is_mp_safe = 1,
+};
+
 static clib_error_t *
 bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			     vlib_cli_command_t *cmd)
@@ -2416,6 +2478,24 @@ bpa_show_logging_command_fn (vlib_main_t *vm, unformat_input_t *input,
   vlib_cli_output (vm, "  records     %Lu emitted, %Lu dropped",
 		   lm->n_records, lm->n_dropped);
   vlib_cli_output (vm, "  natEvent    16 allocation, 17 de-allocation, 12 exhaustion");
+  /*
+   * The marker's own line. Without it an operator cannot tell an exporter that
+   * is announcing this incarnation from one that never registered the second
+   * template - and the collector's whole restart rule hangs off it.
+   */
+  {
+    time_t init = (time_t) bpa_main.boot_wall;
+    struct tm tm;
+
+    gmtime_r (&init, &tm);
+    vlib_cli_output (vm,
+		     "  boot marker template %u, %Lu sent, init "
+		     "%04d-%02d-%02dT%02d:%02d:%02dZ "
+		     "(IE 160 systemInitTimeMilliseconds)",
+		     lm->marker_template_id, lm->n_markers, tm.tm_year + 1900,
+		     tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min,
+		     tm.tm_sec);
+  }
   vlib_cli_output (vm, "  flushes     %Lu with data, %Lu empty, %Lu without buffer",
 		   lm->n_flush_sent, lm->n_flush_empty, lm->n_getbuf_fail);
 

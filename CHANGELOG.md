@@ -36,6 +36,7 @@ are to be interpreted as described in
 
 ## Unreleased
 
+<<<<<<< HEAD
 [#213](https://github.com/andrediashexa/hexarouting/issues/213).
 
 ### Fixed
@@ -177,6 +178,56 @@ are to be interpreted as described in
   arriving through the function that looked like its counterpart. Removed, with
   the reasoning left where the declaration was
   ([#216](https://github.com/andrediashexa/hexarouting/issues/216)).
+=======
+[#67](https://github.com/andrediashexa/hexarouting/issues/67),
+[#203](https://github.com/andrediashexa/hexarouting/issues/203),
+[#215](https://github.com/andrediashexa/hexarouting/issues/215).
+
+[#214](https://github.com/andrediashexa/hexarouting/issues/214),
+[#217](https://github.com/andrediashexa/hexarouting/issues/217).
+
+### Fixed
+
+* **A box that was stopped left every block it held open in the retention
+  log, and a box that crashed could not be told from one still running.**
+  Nothing in the plugin ran on the way out and `vpp.service` had no
+  `ExecStop`, so a planned reboot or an upgrade - which is every box, not the
+  rare pool delete of
+  [#215](https://github.com/andrediashexa/hexarouting/issues/215) - left one
+  open allocation per block held, for as long as the log is kept. On the way
+  back up it got worse: the pin replay emitted a second `natEvent 16` for each
+  pinned block with no 17 between them
+  ([#217](https://github.com/andrediashexa/hexarouting/issues/217)).
+
+  The drain is in two places, and which one was measured rather than chosen.
+  VPP's UDP IPFIX export is not a kernel socket: it is a packet the dataplane
+  sends, handed to `ip4-lookup` as a frame, and the graph stops before any
+  in-process exit hook is reached. Measured with one block held at the stop
+  and a real collector on the wire, a `VLIB_MAIN_LOOP_EXIT` function runs on
+  SIGTERM and finds the block, but over UDP the record is written and
+  swallowed; over TCP it arrives, because that exporter owns a kernel socket.
+  So the plugin keeps the exit hook - it covers every graceful exit and it is
+  the only thing that covers them for TCP - and a `vpp.service` drop-in runs
+  `vppctl bpa stop-drain` from `ExecStop`, before the signal, while the graph
+  is still there to carry the UDP records. The two do not double up: the drain
+  latches and the hook sees the latch. `bpa stop-drain` is safe to type by
+  hand as well: a box that drains and then does not stop re-announces every
+  block it still holds a few seconds later.
+
+* **A boot marker, so a collector can read an allocation that has no release.**
+  A power loss emits nothing and never can, so the drain alone would have
+  looked like a fix and left the log ambiguous on exactly the boxes that
+  crashed. The box now announces, on a second template on the same stream,
+  when this incarnation of the dataplane started - IE 160,
+  `systemInitTimeMilliseconds`, which IANA registers as the timestamp of the
+  last (re-)initialization of the IPFIX device. An open allocation followed by
+  a **new** init value ended at that restart; one with no new value is still
+  in force. **The shape is a proposal**, not a settled interface: RFC 8158 has
+  no event for this, an Options Template scoped by `observationDomainId` would
+  be formally better and VPP's ipfix-export cannot build one, and
+  `docs/logging.md` carries the argument and the three shapes that were not
+  used.
+>>>>>>> issue/217-stop-drain
 
 * **Deleting a pool left every block it was holding open in the retention
   log.** The blocks a pool still holds are freed by the delete itself and
