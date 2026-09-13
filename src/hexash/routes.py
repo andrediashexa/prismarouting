@@ -415,6 +415,10 @@ def unreachable_next_hops(routing: list, fibs: dict, paths: list,
     `vrf_tables` is `parse_vrf_tables`'s answer - or None when FRR could not be
     asked at all, which is a different thing from a VRF having no table.
 
+    A table `parse_fib` did not return lands in `unplaced` rather than being
+    answered from another one, which is what keeps #268 - a NAMED FIB table
+    filed under its neighbour - a missing check here and not a wrong one.
+
     Only the "<prefix> <next-hop>" form is checked. `ip route <prefix>
     <interface>`, blackhole and Null0 name no address to verify, and guessing
     at them would refuse configurations that are correct.
