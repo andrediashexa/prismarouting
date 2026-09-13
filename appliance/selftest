@@ -945,6 +945,35 @@ if vppctl show version >/dev/null 2>&1 && [ -f "$LOGCONF" ]; then
   done <<MTUS
 $(awk '/^interface /{ifn=$2} /^ *mtu /{if (ifn != "") print ifn, $2}' "$LOGCONF")
 MTUS
+  # The addresses, which is the one that can leave the box unreachable.
+  #
+  # An address in the saved file that the dataplane did not take is not a
+  # degraded box: it is a box that answers on one fewer address than the
+  # operator believes, and if that was the management address nobody can reach
+  # it to find out. Same read as everything above - what the file says against
+  # what `show interface addr` reports - and the same silence otherwise.
+  addrs=$(vppctl show interface addr 2>/dev/null)
+  addr_missing=""
+  while read -r _if _addr; do
+    [ -n "$_if" ] || continue
+    # The block for this interface, from its header to the next one. An L3
+    # line outside it belongs to a different port, and matching the address
+    # anywhere in the output would pass on a box that put it on the wrong one.
+    _block=$(printf '%s' "$addrs" | awk -v n="$_if" '
+      $0 ~ "^"n" \\(" {inb=1; next} /^[^ ]/ {inb=0} inb')
+    printf '%s' "$_block" | grep -q "L3 $_addr" \
+      || addr_missing="$addr_missing $_if:$_addr"
+  done <<ADDRS
+$(awk '/^interface /{ifn=$2} /^ *ipv[46] address /{if (ifn != "") print ifn, $3}' "$LOGCONF")
+ADDRS
+  if [ -n "$addr_missing" ]; then
+    bad "the saved configuration has address(es) the dataplane does not:$addr_missing"
+    say "        the box answers on one fewer address than whoever configured"
+    say "        it believes, and if that was the management address nobody"
+    say "        can reach it to find out. 'journalctl -u hexarouting' has the"
+    say "        reason it was refused."
+  fi
+
   if [ -n "$mtu_wrong" ]; then
     bad "the saved MTU is not the MTU the dataplane has:$mtu_wrong"
     say "        (interface(saved/actual)). An OSPF adjacency stops at Exchange"
