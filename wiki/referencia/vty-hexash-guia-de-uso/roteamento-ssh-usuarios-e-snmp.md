@@ -1,11 +1,5 @@
 # Roteamento, SSH, usuários e SNMP
 
-# Roteamento, SSH, usuários e SNMP
-
-# Roteamento, SSH, usuários e SNMP
-
-# Roteamento, SSH, usuários e SNMP
-
 Tudo que não é CGNAT: roteamento, SSH, contas e SNMP. Todas essas mudanças exigem a capacidade de **administrador** (`hexa-admin` ou root).
 
 # Roteamento (FRR)

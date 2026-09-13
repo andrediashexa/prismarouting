@@ -23,9 +23,13 @@
 # against nothing (#146), and RPKI has no pair of prefixes where one ROA is
 # right and the other is not.
 #
-# No OSPF and no IS-IS. Nothing here reads 198.18.0.0/24 or 198.19.0.0/24; an
-# adjacency nothing asserts on costs a minute of convergence and proves
-# nothing. The punt path for all three protocols is lab/routing.sh, which this
+# No OSPF ADJACENCY and no IS-IS. Nothing here reads 198.18.0.0/24 or
+# 198.19.0.0/24; an adjacency nothing asserts on costs a minute of convergence
+# and proves nothing. ospfd is nevertheless started, with no interface in any
+# area: the pool-announce check has to tell a `redistribute` under `router bgp`
+# from the same word under `router ospf`, and a `router ospf` statement is
+# refused outright when the daemon is not running, which would make that case
+# assert the wrong thing. The punt path for all three protocols is lab/routing.sh, which this
 # file was split out of: the two halves in one file ran over 400 s and made it
 # the floor of the whole suite (#167).
 set -u
@@ -126,7 +130,14 @@ apt-get install -y -qq frr-rpki-rtrlib stayrtr >/dev/null 2>&1
 # This lab worked out the mgmtd/staticd requirement; it now lives in
 # lab/lib.sh so the other six labs cannot go on not knowing it. Sourced here
 # rather than where it was, because FRR starts before that point.
-start_frr bgpd
+# ospfd is here for ONE assertion and forms no adjacency: the pool-announce
+# check has to tell `redistribute static` under `router bgp` from the same six
+# characters under `router ospf`, and `commit check` refuses a `router ospf`
+# statement outright when ospfd is not running (#99) - so without the daemon
+# that case would be asserting a daemon refusal rather than the scope. No
+# interface is put in an area, so this costs no convergence, which is what the
+# header means by "no OSPF": no adjacency, not no daemon.
+start_frr bgpd ospfd
 
 # ---------------- upstream ----------------
 mkdir -p /var/run/frr/peer /etc/frr/peer
@@ -268,6 +279,73 @@ RED=$($HX -c "configure" \
       -c "commit check" 2>&1)
 expect_not_in "and redistribution silences it, because it cannot be seen" \
   "nothing here announces" "$RED"
+
+# A redistributed STATIC route is the one form of redistribution this box can
+# follow, and it is the ordinary way an ISP originates its own aggregate: a
+# blackhole route for the prefix, redistributed into BGP. Measured on FRR
+# 10.7.1 - `redistribute static` under `router bgp` with `ip route
+# 200.150.9.16/28 blackhole` present puts `*> 200.150.9.16/28 ... ?` in the BGP
+# table, and removing the route empties it - so this configuration ANNOUNCES
+# the pool and must be met with silence.
+RSTAT=$($HX -c "configure" \
+        -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
+        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "router static" -c "route 200.150.9.0/24 blackhole" -c "exit" \
+        -c "router bgp 65000" -c "address-family ipv4 unicast" \
+        -c "redistribute static" -c "exit-address-family" -c "exit" \
+        -c "commit check" 2>&1)
+expect_not_in "a blackhole route redistributed into BGP announces the pool" \
+  "nothing here announces" "$RSTAT"
+
+# And the half that makes the assertion above worth having: the same
+# `redistribute static`, with a static route that covers something else. If the
+# statement alone silenced the check, this would be silent too - and every box
+# that redistributes statics would be exempt whether it announced the pool or
+# not.
+RELSE=$($HX -c "configure" \
+        -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
+        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "router static" -c "route 10.0.0.0/8 blackhole" -c "exit" \
+        -c "router bgp 65000" -c "address-family ipv4 unicast" \
+        -c "redistribute static" -c "exit-address-family" -c "exit" \
+        -c "commit check" 2>&1)
+printf '%s\n' "$RELSE" | tail -8 | sed 's/^/  check: /'
+expect_in "a static route covering something else announces nothing" \
+  "nothing here announces 200.150.9.16/28" "$RELSE"
+
+# The scope, which is where this check was wrong. `redistribute static` under
+# `router ospf` puts NOTHING into BGP - measured on FRR 10.7.1, with the
+# covering static route present and BGP configured the whole time, `show bgp
+# ipv4 unicast` answered "No BGP prefixes displayed, 0 exist". Reading the word
+# wherever it appeared treated this box as one it could not see through, so the
+# ordinary edge box that redistributes into its IGP got no warning at all.
+ROSPF=$($HX -c "configure" \
+        -c "cgnat pool lab-ann" -c "inside 100.64.8.0/22" \
+        -c "outside 200.150.9.16/28" -c "block-size 1024" -c "exit" \
+        -c "router static" -c "route 200.150.9.0/24 blackhole" -c "exit" \
+        -c "router ospf" -c "redistribute static" -c "exit" \
+        -c "router bgp 65000" -c "address-family ipv4 unicast" \
+        -c "exit-address-family" -c "exit" \
+        -c "commit check" 2>&1)
+printf '%s\n' "$ROSPF" | tail -8 | sed 's/^/  check: /'
+expect_in "redistribution into the IGP does not announce the pool, or hide it" \
+  "nothing here announces 200.150.9.16/28" "$ROSPF"
+
+# It stays a WARNING, and the configuration it warns about still passes.
+# Announcing the prefix from a router upstream of this box is a legitimate
+# design and the common one, and the measured reason is stronger than that:
+# `network 200.150.9.16/28` with no matching route in the RIB is STORED by FRR
+# 10.7.1 and advertised by nothing, so what this check can test is a proxy for
+# what matters rather than the thing itself. A commit MUST NOT be refused on a
+# proxy - that is the shape of #208, where refusing a whole commit over a BGP
+# statement was itself the defect.
+#
+# Asserted on the SAME output that carries the warning, so the two cannot drift
+# apart: the box says the prefix is announced by nothing, and in the same
+# breath says the configuration is good.
+expect_in "the box that warns about the pool still passes its check" \
+  "configuration check succeeds" "$ROSPF"
+expect_not_in "and the warning is not an error" "error:" "$ROSPF"
 
 # --- what FRR says on a SUCCESSFUL apply (#145) ---
 #
@@ -533,15 +611,20 @@ SHOWN=$($HX -c "show running-config" 2>&1)
 expect_in "and is marked as unchecked where it is displayed" \
   "set tag 100  <- not checked" "$SHOWN"
 # The other half, and it has to name a statement that is REALLY in that output
-# and REALLY modelled, or it passes because the needle was never there. It used
-# to look for "set local-preference 200    <-", and neither the value nor the
-# marker appears anywhere in this lab's configuration: vacuous both ways.
-# RM-DEAD's "set local-preference 120" is above, it committed, and
-# `set local-preference` is in ROUTE_MAP_BLOCK.
+# and REALLY modelled, or it passes because the needle was never there. The
+# line it used to look for, "set local-preference 200    <-", had neither the
+# value nor the marker anywhere in this lab: vacuous both ways. The first
+# replacement was wrong too and the suite said so - RM-DEAD is typed at
+# `commit check` and never committed, so nothing of it is in a running
+# configuration.
+#
+# `match ip address prefix-list PL-MINE` is in the same route-map as the
+# `set tag 100` above, it was committed by the same $HX run, and `match` is in
+# the route-map grammar. So it is in that output and it is modelled.
 expect_in "and the modelled statement really is in that output" \
-  "set local-preference 120" "$SHOWN"
+  "match ip address prefix-list PL-MINE" "$SHOWN"
 expect_not_in "while the ones it does model carry no marker" \
-  "set local-preference 120  <-" "$SHOWN"
+  "match ip address prefix-list PL-MINE  <-" "$SHOWN"
 
 # --- a refusal that belongs to FRR, and what it used to cost ---
 #

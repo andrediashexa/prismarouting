@@ -36,8 +36,10 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#55](https://github.com/andrediashexa/hexarouting/issues/55),
 [#63](https://github.com/andrediashexa/hexarouting/issues/63),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
+[#145](https://github.com/andrediashexa/hexarouting/issues/145),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
@@ -49,8 +51,7 @@ are to be interpreted as described in
 [#221](https://github.com/andrediashexa/hexarouting/issues/221),
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223),
-[#224](https://github.com/andrediashexa/hexarouting/issues/224),
-[#55](https://github.com/andrediashexa/hexarouting/issues/55).
+[#224](https://github.com/andrediashexa/hexarouting/issues/224).
 
 ### Added
 
@@ -106,6 +107,7 @@ are to be interpreted as described in
   `max-blocks 8` already **is** a per-pool range - a subscriber starts at 64
   ports and grows one block at a time, only when it fills one, as far as 512 -
   and nothing said so.
+[#225](https://github.com/andrediashexa/hexarouting/issues/225).
 
 ### Changed
 
@@ -184,6 +186,112 @@ are to be interpreted as described in
   whether the page names the statement, not whether it explains it well,
   because the pages are laid out differently and a guard that demanded one
   shape would fail on prose that is perfectly clear.
+
+* **Five wiki pages opened with their own title two, three and four times.**
+  The mirror's contract is that each file starts with one `# <title>` line,
+  which is the document's title field and not part of its body:
+  `tools/wiki-pull.sh` writes it and `tools/wiki-push.sh` strips **that line**
+  back off. Push strips one, so a file carrying four publishes a page whose
+  body opens with its own title three times over. It is the accumulation
+  [#165](https://github.com/andrediashexa/hexarouting/issues/165) describes,
+  surviving in the data after the code that caused it was fixed
+  ([#225](https://github.com/andrediashexa/hexarouting/issues/225)).
+
+  `test/test_wiki_roundtrip.sh` drove the two scripts against a stub and
+  asserted they agree with each other, which is where the defect was; nothing
+  looked at the mirror, so the mirror drifted silently. It now reads all 32
+  pages and requires each to open with exactly one title. A level-1 heading
+  further down stays allowed, because several pages legitimately have them.
+
+  The pages are not published - that needs a token the maintainer holds - so
+  this is a repair before anybody read it.
+
+* **Four commands the box has for the moment routing does not come up were in
+  the grammar and on no page.** `show ospf neighbor`, `show ospf interface`,
+  `show isis adjacency` and `show isis interface` could be found only by
+  pressing `?` at the right moment - and those four carry this box's strongest
+  claim, the comparison between what the routing daemon holds and what the
+  table that actually forwards has. A route that stops half way leaves both
+  halves looking healthy on their own, and these are the screens that say so.
+
+  The wiki now has them, including the two diagnoses that are the reason they
+  exist: an OSPF adjacency that will not leave `Exchange` is almost always the
+  interface MTU, which neither side logs, and an IS-IS circuit that is `Up`
+  with zero neighbours is IS-IS frames not being delivered to the system.
+  `test/test_doc_commands.py` requires every `show` command to be named
+  somewhere in the wiki, read two levels deep and no further: arguments are
+  written the way a reader meets them, so demanding the leaf string would go
+  red on a page that is right.
+
+* **Two labs matched a `show` line exactly and
+  [#141](https://github.com/andrediashexa/hexarouting/issues/141) put a marker
+  after it.** `lab/vty.sh` asserts where a statement appears - its block and its
+  indentation - by requiring the whole line, and `maximum-paths` is a statement
+  this VTY has no grammar for, so it now shows with `  <- not checked` after
+  it. A nesting assertion failed over a marker, which is a check measuring the
+  wrong thing. The needles stop at the statement now, and the marker is
+  asserted once on its own, where it is the point rather than an accident.
+
+  `lab/bgp-policy.sh` had the same shape and its repair was wrong the first
+  time: the replacement needle named `set local-preference 120`, which belongs
+  to a route-map this lab types at `commit check` and never commits, so it is
+  in no running configuration. The suite said so. It names a statement from the
+  route-map that IS committed now.
+
+  And the guard added with that repair had a false positive of its own: it read
+  the marker out of a COMMENT explaining an assertion and compared prose
+  against the product's string. It only reads quoted needles now. A check that
+  goes red on work that is right is the worst kind there is.
+
+* **A lab check whose timing the machine could not keep now says so instead of
+  reporting a product defect.** `lab/igp.sh` clears an IS-IS adjacency and then
+  asserts it is gone. The hello interval is three seconds, so an adjacency that
+  is back by then re-formed rather than survived the clear - and on a box
+  running eight labs at once a `vtysh` call can take longer than that. It
+  reported `clearing it took the adjacency down there and then` as a failure in
+  a release suite and passed in isolation, which cost an investigation
+  ([#218](https://github.com/andrediashexa/hexarouting/issues/218)).
+
+  `expect_timed` in `lab/verdict.sh` measures the **reading**: on time and
+  wrong is a failure, which is that check's whole subject, and late is nothing
+  learnt. `LAB NOT MEASURED` is a verdict of its own, the lab exits non-zero,
+  and `tools/run-all-labs.sh` counts it in its own column - beside `NO VPP`,
+  for the same reason: "nothing found a defect, one check could not be taken"
+  has to be readable as that sentence rather than as a failure. It is the shape
+  `test_boot_wait.sh` and `lab_no_vpp()` already took.
+
+* **The suite printed "as the header says" without having read the header.**
+  An off run's line was `pass (12 check(s) red, as the header says)`, and the
+  count was never compared with anything - while the comment directly above
+  that code names the hazard it was leaving open: *a lab that used to fail
+  eleven of them and now fails one has lost ten assertions without losing its
+  verdict*. Its verdict does not change, so nothing else can see it either
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+  Each of the nineteen off-capable labs now declares `# OFF-RED-AT-LEAST: <n>`
+  in its own header, and the number is the one that lab's off run measured in
+  the release suite of 2026-09-13 rather than one somebody chose. A **floor**
+  and not an exact count, deliberately: an exact one has to be edited every
+  time a lab legitimately grows, which is a check reporting "you added a test"
+  instead of "you broke something", and this repository has already made that
+  trade once. Gaining assertions needs no edit; losing them has to be
+  deliberate.
+
+* **The RFC 8158 record this box exports was written down in three places and
+  nothing compared them.** The UDP template names its elements by IANA name,
+  the TCP template lists them by number, and `docs/logging.md` carries the
+  table an operator hands their collector. A field added to one and not the
+  others is neither a build error nor a test failure: it is two transports
+  exporting **different records**, decoded happily by any collector, giving two
+  different answers about the same box - and a document that describes neither.
+
+  `test/test_ipfix_record.py` reads all three and requires them to be the same
+  list, in the same order, with the same widths, for the block record and for
+  the boot marker; and it checks the size comment in `bpa_log.h`, which is a
+  fourth statement of the same fact and is arithmetic. The documentation is
+  where the name and the number meet, so it is what the two code lists are read
+  against - that keeps the comparison at three copies rather than adding a
+  fourth. They agree today; the guard is for the day one of them moves.
 
 ### Added
 
@@ -332,6 +440,100 @@ are to be interpreted as described in
   not a statement at all. Both are fixed.
 
 ### Fixed
+
+* **The pool-announce warning went silent on the ordinary edge box, and had no
+  unit assertion at all.** The check that says a pool's public prefix is
+  advertised by nothing
+  ([#145](https://github.com/andrediashexa/hexarouting/issues/145)) treated any
+  line beginning `redistribute`, anywhere in the configuration, as something it
+  could not see through. Measured on FRR 10.7.1, with a covering static route
+  present and BGP configured throughout:
+
+  ```
+  router bgp 65000 / address-family ipv4 unicast / redistribute static
+    *>  200.150.9.16/28  0.0.0.0  0  32768 ?
+  router ospf / redistribute static        (BGP carrying no redistribute)
+    No BGP prefixes displayed, 0 exist
+  ```
+
+  The two statements are the same six characters and only one of them
+  announces anything. So an edge box that leaks BGP into its IGP - which is
+  what `ospf_findings` already warns about - exempted itself from this check
+  entirely and got no warning on a pool nothing announced.
+
+  The block context now comes from `config.block_paths()`, the one thing here
+  that reads both shapes `routing` arrives in: indented when FRR read it back,
+  flat when it was typed at this VTY. A `redistribute static` under `router
+  bgp` is also **resolved** against the candidate's own static routes rather
+  than treated as unfollowable, because FRR's static routes are all in the
+  configuration - so originating an aggregate from a blackhole route, which is
+  the ordinary way an ISP does it, silences the warning, and a static route
+  that covers something else does not. `aggregate-address` and `network …
+  route-map` blind it, both measured.
+
+  **It stays a warning**, and the reason is now measured rather than argued
+  from the issue's wording. `network 200.150.9.16/28` with no matching route in
+  the RIB is stored by FRR and appears in `show bgp ipv4 unicast` **without
+  `*>`** - not valid, not best, advertised to nobody - and becomes `*>` the
+  moment `ip route 200.150.9.16/28 blackhole` exists. What this check can test
+  is therefore a proxy for the announcement and not the announcement, and a
+  commit MUST NOT be refused on a proxy: it would block configurations that
+  work while still passing the box whose `network` statement originates
+  nothing. That is the shape of
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208), where
+  refusing a whole commit over a BGP statement was itself the defect. The
+  advice now names the blackhole route beside the `network`, because advice
+  that does not work when followed is worse than no advice.
+
+  The check was inline in `commit` and so could only be reached by running the
+  lab. It is `pool_announce_findings()` over `bgp_originations()` now, in the
+  family of `ospf_findings` and `bgp_errors`, with unit assertions in
+  `test/test_hexash_complete.py`; fourteen mutations of the product were each
+  run to red before the work was called done, and one of them found an
+  assertion that was green against the defect it claimed to guard.
+
+* **An indented `!` put every statement after it in the wrong block.**
+  `config.block_paths()` read any `!` as FRR's top-level stanza separator and
+  cleared the block stack. FRR 10.7.1 also writes an **indented** one inside a
+  stanza, captured from a live daemon:
+
+  ```
+  router bgp 65000
+   !
+   address-family ipv4 unicast
+    network 200.150.9.16/28
+   exit-address-family
+  exit
+  ```
+
+  So the `network` statement belonged to no block, and anything asking "is
+  this line under `router bgp`" answered no for a box that had typed it
+  exactly there. `cfg.routing` is read back from FRR, so that is the shape of
+  **every commit after the first one** - it was the pool-announce check above
+  that found it, warning about a pool the box was announcing correctly. Only a
+  `!` at column 0 returns to the top now.
+
+  It also **moved a route between tables**. A `vrf red` stanza whose static
+  route follows an indented `!` had that route hoisted into the global `router
+  static` block, so the file said the route was global and the operator had
+  put it in a VRF - which is exactly the defect
+  [#180](https://github.com/andrediashexa/hexarouting/issues/180) fixed,
+  reintroduced through a line nobody types. The assertion that existed for
+  #180 had no `!` in it and was green against this the whole time; the new one
+  is written against what a live daemon printed.
+
+  And it **shortened `show this`**. Asked what `router bgp 65000` holds, on a
+  configuration read back from FRR rather than typed, the box left out the
+  address-families and everything in them - because FRR writes ` !` between a
+  router's own statements and its first family, and past that separator the
+  family sat at no path at all. `frr_block_lines()` promises the opposite in
+  its docstring: an operator standing in a router is asking what that router
+  holds, and its address-families are part of the answer. Not a wrong answer
+  they could see was wrong, a **shorter** one, with nothing saying anything was
+  missing. `lab/vty.sh` asserts the family is there but does it mid-edit, where
+  the candidate is flat and carries no `!`, so it was green throughout; its
+  after-commit case reads `router static`, which is top-level and cannot show
+  this. The assertion for it is a unit one, on the read-back shape.
 
 * **`no <statement>` inside a pool block was accepted in silence and did
   nothing.** `no block-size 512`, `no policy interleaved`,
@@ -539,8 +741,11 @@ are to be interpreted as described in
 
   The mechanism itself is unchanged and remains a decision for the maintainer,
   with the evidence now on the issue: a shared subscriber-to-worker table costs
-  **16 to 21 clocks** against `bpa-in2out`'s own 396, so the read is not the
-  expensive part - the mutability is; and letting a worker borrow a block from
+  **16 to 21 clocks** against `bpa-in2out`'s own cost, which was 396 when that
+  reading was taken and is 346 since
+  [#63](https://github.com/andrediashexa/hexarouting/issues/63) in this same
+  release - so the read is a larger share than it was and still not the
+  expensive part; the mutability is; and letting a worker borrow a block from
   its neighbour, implemented and measured, **loses every reply**, because the
   return path resolves the worker from the block index by arithmetic.
 

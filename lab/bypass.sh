@@ -8,6 +8,16 @@
 # its own source address, AND no session was created for it. A bypass
 # implemented after the allocation passes the first half and fails the second,
 # which is exactly the mistake this lab exists to catch.
+#
+# OFF-RED-AT-LEAST: 12
+#
+# A FLOOR, not a target, and the number is measured rather than chosen: it is
+# what this lab's off run went red on in the release suite of 2026-09-13.
+# tools/run-all-labs.sh refuses an off run that goes red on fewer, because a
+# lab that used to fail eleven checks and now fails one has lost ten assertions
+# without losing its verdict - which is the defect this whole sweep exists to
+# find. Gaining assertions is fine and needs no edit here; losing them is what
+# has to be deliberate.
 set -u
 MODE=${1:-on}
 

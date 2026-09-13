@@ -49,7 +49,7 @@ set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ONLY=${1:-}
 JOBS=${LAB_JOBS:-16}
-pass=0; fail=0; ran=0; novpp=0
+pass=0; fail=0; ran=0; novpp=0; nomeasure=0
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
@@ -259,6 +259,19 @@ report() {
   # "error" made FRR's startup chatter look like a failing test.
   if [ "$_rc" -eq 0 ] && printf '%s' "$_out" | grep -q "LAB PASSED"; then
     printf '  %-18s pass\n' "$_n"; pass=$((pass+1))
+  elif printf '%s' "$_out" | grep -q "LAB NOT MEASURED"; then
+    # A check whose timing the machine could not keep. Not a failure and not a
+    # pass: the lab ran, and the thing it came to measure was not measured. Its
+    # own bucket for the same reason NO VPP has one - "nothing found a defect,
+    # one check could not be taken" has to be readable as that sentence rather
+    # than as a failure (#218).
+    printf '  %-18s NOT MEASURED\n' "$_n"
+    # The marker line AND what follows it: the lab writes which reading it
+    # was and by how much it missed on the next lines, and the marker alone
+    # tells a reader nothing they can act on.
+    printf '%s' "$_out" | grep -A 2 -E "\[NOT MEASURED\]" | head -4 \
+      | sed 's/^/     /'
+    nomeasure=$((nomeasure+1))
   elif printf '%s' "$_out" | grep -q "LAB FAILED"; then
     printf '  %-18s FAIL\n' "$_n"
     printf '%s' "$_out" | grep -E "\[FAIL\]" | head -3 | sed 's/^/     /'
@@ -290,8 +303,37 @@ report_off() {
     return
   fi
   if printf '%s' "$_out" | grep -q "LAB FAILED"; then
-    printf '  %-18s pass (%s)\n' "$_n" \
-      "$(printf '%s' "$_out" | grep -c '\[FAIL\]') check(s) red, as the header says"
+    _red=$(printf '%s' "$_out" | grep -c '\[FAIL\]')
+    # "as the header says" used to be printed without anybody having read the
+    # header, which is a claim the suite was making and not checking. The
+    # comment above already names the hazard - a lab that used to fail eleven
+    # checks and now fails one has lost ten assertions without losing its
+    # verdict - and the count was printed beside it without being compared to
+    # anything (#151).
+    #
+    # A FLOOR rather than an exact number, deliberately. An exact one has to be
+    # edited every time a lab legitimately grows, which is a check that reports
+    # "you added a test" and not "you broke something", and this repository has
+    # already decided that trade once (the interface block's options are
+    # asserted as a property for the same reason).
+    _floor=$(sed -n 's/^# OFF-RED-AT-LEAST:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+             "$REPO/lab/${_n%%+*}.sh" 2>/dev/null | head -1)
+    if [ -n "$_floor" ] && [ "$_red" -lt "$_floor" ]; then
+      printf '  %-18s FAIL - %s check(s) red, and its header floor is %s\n' \
+        "$_n" "$_red" "$_floor"
+      printf '     an off run that goes red on fewer checks than it used to has\n'
+      printf '     lost assertions without losing its verdict. Raise the floor\n'
+      printf '     only when the loss is deliberate.\n'
+      fail=$((fail+1))
+      return
+    fi
+    if [ -n "$_floor" ]; then
+      printf '  %-18s pass (%s check(s) red, floor %s)\n' "$_n" "$_red" "$_floor"
+    else
+      # No floor declared, so nothing was compared and the line says only what
+      # was seen.
+      printf '  %-18s pass (%s check(s) red)\n' "$_n" "$_red"
+    fi
     pass=$((pass+1))
   elif [ "$_rc" -eq 0 ] && printf '%s' "$_out" | grep -q "LAB PASSED"; then
     printf '  %-18s FAIL - PASSED with the feature off\n' "$_n"
@@ -375,7 +417,7 @@ judge_batch
 
 
 echo
-echo "  pass=$pass  fail=$fail  novpp=$novpp  ran=$ran"
+echo "  pass=$pass  fail=$fail  notmeasured=$nomeasure  novpp=$novpp  ran=$ran"
 if [ "$novpp" -gt 0 ]; then
   echo
   echo "  $novpp lab(s) could not be run: vppctl never reached a dataplane"
@@ -397,4 +439,12 @@ fi
 # on a suite that has never seen them run. It is reported separately so that
 # "nothing found a defect, two labs could not be run" is readable as that
 # sentence rather than as two failures.
-[ "$fail" -eq 0 ] && [ "$ran" -eq 0 ] && [ "$novpp" -eq 0 ]
+if [ "$nomeasure" -gt 0 ]; then
+  echo
+  echo "  $nomeasure lab(s) could not measure a check they came to measure."
+  echo "  That is not a product defect and it is not a suite that cleared"
+  echo "  them: the machine could not keep the timing those checks need. Run"
+  echo "  those labs one at a time before reading anything into it."
+fi
+[ "$fail" -eq 0 ] && [ "$ran" -eq 0 ] && [ "$novpp" -eq 0 ] \
+  && [ "$nomeasure" -eq 0 ]

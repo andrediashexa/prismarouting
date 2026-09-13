@@ -46,6 +46,16 @@
 # signal is read out of the shipped drop-in, appliance/systemd/vpp-stop-drain.conf,
 # and run as it is written there. A lab that performed the product's own step
 # is the shape of #99, #168, #182, #184, #209 and #215.
+#
+# OFF-RED-AT-LEAST: 1
+#
+# A FLOOR, not a target, and the number is measured rather than chosen: it is
+# what this lab's off run went red on in the release suite of 2026-09-13.
+# tools/run-all-labs.sh refuses an off run that goes red on fewer, because a
+# lab that used to fail eleven checks and now fails one has lost ten assertions
+# without losing its verdict - which is the defect this whole sweep exists to
+# find. Gaining assertions is fine and needs no edit here; losing them is what
+# has to be deliberate.
 set -u
 . /src/lab/lib.sh   # startup_conf, use_binary_api
 
