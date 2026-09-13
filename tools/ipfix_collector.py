@@ -297,7 +297,7 @@ def main():
         deallocs = sum(1 for r in records if r.get("natEvent") == 17)
         exh = sum(1 for r in records if r.get("natEvent") == 12)
         print(f"\nRESUMO: {len(records)} registros "
-              f"({allocs} alocacoes, {deallocs} liberacoes, {exh} esgotamentos)")
+              f"({allocs} allocations, {deallocs} releases, {exh} exhaustions)")
         report_open()
         return
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 4739

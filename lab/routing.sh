@@ -403,7 +403,7 @@ expect "and it was not already on before the commit" test "${OSI_BEFORE:-1}" -eq
 expect_in "a 'no' with nothing to remove is kept as configuration" \
   "no bgp ebgp-requires-policy" "$(vtysh -c 'show running-config')"
 
-echo "=== aguardando as tres rotas chegarem na FIB do VPP ==="
+echo "=== waiting for the three routes to reach the VPP FIB ==="
 n=0
 while [ "$n" -lt 90 ]; do
   ok=0
@@ -430,7 +430,7 @@ echo
 echo "=== routes in the VPP FIB (what actually matters) ==="
 for pfx in 203.0.113.0/24 198.18.0.0/24 198.19.0.0/24; do
   printf '  %-16s ' "$pfx"
-  vppctl show ip fib "$pfx" 2>/dev/null | grep -oE "ipv4 via [0-9.]+ [a-z0-9-]+" | head -1 || echo "AUSENTE"
+  vppctl show ip fib "$pfx" 2>/dev/null | grep -oE "ipv4 via [0-9.]+ [a-z0-9-]+" | head -1 || echo "ABSENT"
 done
 
 echo

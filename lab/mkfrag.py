@@ -4,7 +4,7 @@ Monta um datagrama UDP partido em dois fragmentos IP, em hex.
 
 The second fragment carries no UDP header: that is why it matches no session
 at all unless shallow virtual reassembly has kept the ports from the
-primeiro.
+first.
 """
 import ipaddress, struct, sys
 
@@ -33,7 +33,7 @@ data = bytes(range(8)) * 2          # 16 bytes de carga
 udp = struct.pack("!HHHH", sport, dport, 8 + len(data), 0)
 
 if which == "first":
-    # cabecalho UDP + primeira metade da carga
+    # the UDP header plus the first half of the payload
     pkt = ip4(src, dst, 17, udp + data[:8], 0, mf=1)
 else:
     # only the second half: no UDP header at all

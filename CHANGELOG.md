@@ -1493,7 +1493,24 @@ are to be interpreted as described in
   the defect. `com` is deliberately left out for the same reason: it is
   Portuguese and it is also the end of every `github.com` link in the tree.
 
-  Five identifiers are allowed with the reason written beside each: the
+  **And the list was not enough, which its own docstring had to be corrected
+  about** ([#265](https://github.com/andrediashexa/hexarouting/issues/265)). A
+  fixed list finds only the Portuguese somebody thought of, and this check was
+  green while `lab/icmp-tcp.sh` and `lab/routing.sh` ECHOED Portuguese on every
+  run - so it was in every capture the suite collected while this file reported
+  the tree clean. `aguardando`, `varredura`, `expiracao`, `tres`, `chegarem`
+  and `intermitente` were none of them in the list.
+
+  Portuguese ENDINGS are the half a list cannot have. Measured over this tree:
+  16 distinct words match one of seventeen suffixes and **15 are Portuguese**.
+  The single false positive was `param`, at five letters, so the minimum is six
+  and it costs nothing else. That found **fifteen more**, in `lab/`, `tools/`,
+  `appliance/`, `ref/` and `src/`, including `ICMP TRADUZIDO CORRETAMENTE` and
+  `OS DOIS FRAGMENTOS TRADUZIDOS` printed as lab verdicts. A rule that
+  generalises beats a list that has to be remembered, which is the argument
+  `NOT_LABS` and the credential scope were both rewritten on.
+
+  Six identifiers are allowed with the reason written beside each: the
   `TRANSITO` peer-group, `America/Sao_Paulo`, sfdisk's `label: dos`, the
   `AS-NAO-EXISTE` AS-path list, and `uplink para o transito`, which is a
   deliberate fixture - the product must store and read back what a Brazilian

@@ -78,7 +78,28 @@ ALLOWED = {
                               "Brazilian operator actually types",
     "AS-NAO-EXISTE": "an AS-path list named for what it is: one that does "
                      "not exist. The lab asserts the box refuses it",
+    "PADRAO-DOCUMENTACAO.md": "the filename of the wiki writing standard, "
+                              "which is written in Portuguese on purpose for "
+                              "the people who write that wiki",
 }
+
+
+# And the half a word list cannot have: Portuguese ENDINGS.
+#
+# The list above finds only the Portuguese somebody thought of, and #265
+# proved it on this very check - `aguardando`, `varredura`, `expiracao`,
+# `tres`, `chegarem` and `intermitente` were none of them in WORDS, and two of
+# those lines are ECHOED, so they were in every lab capture the suite collected
+# while this file reported the tree clean.
+#
+# Measured over this tree: 16 distinct words match one of these endings and
+# 15 of them are Portuguese. The single false positive was `param`, at five
+# letters, so the minimum length is six and it costs nothing else. A rule that
+# generalises beats a list that has to be remembered, which is the same
+# argument NOT_LABS and the credential scope were rewritten on.
+SUFFIXES = ("cao", "coes", "ando", "endo", "mente", "agem", "dade", "arem",
+            "aram", "ente", "eram", "iram", "ismo", "inho", "inha", "eiro",
+            "eira")
 
 
 def offenders():
@@ -101,6 +122,9 @@ def offenders():
                         probe = probe.replace(allowed, " ")
                     words = set(re.findall(r"[a-zà-ú]+", probe.lower()))
                     hit = sorted(words & WORDS)
+                    hit += sorted(w for w in words
+                                  if len(w) >= 6 and w.endswith(SUFFIXES)
+                                  and w not in WORDS)
                     if hit:
                         rel = os.path.relpath(path, REPO)
                         out.append((rel, n, line.strip()[:90], hit[:3]))

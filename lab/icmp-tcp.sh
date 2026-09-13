@@ -42,7 +42,7 @@ echo "=========== 2. ICMP frag-needed da internet ==========="
 HEX=$(python3 /src/lab/mkicmperr.py 4.4.4.4 200.150.0.17 8.8.8.8 1536 53)
 LEN=$(( ${#HEX} / 2 - 1 ))
 echo "  ${LEN}-byte packet; the embedded one says 200.150.0.17:1536 -> 8.8.8.8:53"
-echo "  esperado: destino externo e origem embutida viram 100.64.0.5:12345"
+echo "  expected: outer destination and embedded source both become 100.64.0.5:12345"
 # Captures what goes out to the subscriber: the trace shows the fields, but
 # only the real packet proves the checksums came out valid.
 rm -f /tmp/cap.pcap
@@ -94,7 +94,7 @@ send_tcp syn
 send_tcp ack
 echo "  (so far the session is established: without handling RST it would last ~2h)"
 send_tcp rst
-echo "  aguardando a varredura de expiracao..."
+echo "  waiting for the expiry sweep..."
 n=0
 # "sessions", not "sessoes". Line 145 of this same file spells it correctly,
 # so the two loops disagreed inside one lab.

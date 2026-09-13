@@ -58,7 +58,7 @@ else
   ok "${memmb} MB of RAM"
 fi
 
-# --- instrucoes de CPU ---
+# --- CPU instructions ---
 # The VPP binary is compiled assuming SSE4.2 and uses AVX where available.
 # On a CPU without them it dies with SIGILL in milliseconds, and since
 # vpp.service has Restart=always the symptom becomes a restart loop that says
