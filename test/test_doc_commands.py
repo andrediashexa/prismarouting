@@ -349,6 +349,42 @@ else:
     else:
         ok(f"and all {len(BGP_AF_NEIGHBOUR)} of the address-family ones are named")
 
+print("\n=== every statement a block takes is named on that block's page ===")
+#
+# One step earlier than #221 and #224, which were both a thing the box does
+# that an operator cannot find. A statement that reaches the grammar and no
+# page is the same defect at the moment it is introduced: the box grows a
+# feature nobody can discover, and the only way to learn it exists is to read
+# the source.
+#
+# Deliberately weak: it asks whether the page NAMES the statement, not whether
+# it explains it well. The pages are laid out differently - the pool page puts
+# `alg` and `timeout` in sub-tables keyed by protocol - and a guard that
+# demanded one shape would fail on prose that is perfectly clear. What it
+# catches is the statement nobody wrote about at all.
+from hexash import CGNAT_POOL, INTERFACE_BLOCK                    # noqa: E402
+
+_ref = os.path.join(REPO, "wiki", "referencia", "vty-hexash-guia-de-uso")
+for _page, _grammar, _what in (
+        ("configuracao-de-pool.md", CGNAT_POOL, "a CGNAT pool"),
+        ("configuracao-de-interface.md", INTERFACE_BLOCK, "an interface")):
+    _path = os.path.join(_ref, _page)
+    if not os.path.exists(_path):
+        bad(f"{_page} is gone, so nothing here is comparing {_what}'s grammar "
+            f"against anything")
+        continue
+    _text = open(_path, encoding="utf-8").read()
+    # `exit`, `show` and `no` are in every block and are documented once, on
+    # the pages about moving around and about removing things.
+    _keys = sorted(set(_grammar) - {"exit", "show", "no"})
+    _unnamed = [k for k in _keys if f"`{k}" not in _text]
+    if _unnamed:
+        bad(f"{_page} never names {_unnamed}, which {_what} takes: a statement "
+            f"in the grammar and on no page can only be found by reading the "
+            f"source")
+    else:
+        ok(f"all {len(_keys)} statements {_what} takes are named on {_page}")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
