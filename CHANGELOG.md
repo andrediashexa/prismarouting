@@ -125,6 +125,78 @@ version has a chance of seeing it.
   sweep already reads, each carrying a needle proving it reached its branch,
   with `apply()` not stubbed - one list, one budget, one check.
 
+### Added
+
+* **`show hardware` - the VTY lists the box's own NICs, so the operator can
+  see what there is to choose from**
+  ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
+  On a fresh appliance VPP has been given no NIC, so `show interface` is empty
+  - and that is exactly when somebody needs to see the box's hardware in order
+  to name one. The only screen that could answer was the one with nothing to
+  say, and the way to the list was to leave the VTY and read `/sys` or run `ip
+  link`. For a product whose argument is that it is driven from `hexash`, a
+  first setup step that is a shell is a VTY that is decoration.
+
+  Per NIC, read from `/sys/class/net`: name, PCI address, the driver holding it
+  **now**, whether that driver is one DPDK can use (`vfio-pci`,
+  `uio_pci_generic`, `igb_uio`) or a kernel driver, link state, MAC and speed.
+
+  ```
+  hexarouting> show hardware
+    the dataplane has no interface to forward on: no interface was named, so VPP
+    was given no NIC.
+    Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the interface carrying
+    subscriber traffic,
+    then restart hexarouting-tune and vpp.
+
+    Interface     PCI            Driver           Link   Speed
+    eno1          0000:03:00.0   ixgbe            up     1000Mb/s
+      3c:ec:ef:1a:2b:3c  kernel driver: DPDK cannot take a NIC through it
+      *** carries the DEFAULT ROUTE ***
+    ens1f0        0000:5e:00.0   ixgbe            down   -
+      b4:96:91:0d:1e:2f  kernel driver: DPDK cannot take a NIC through it
+
+    2 NIC(s) on this box, as Linux has them
+    'eno1' carries the default route: it is how this box is reached, and giving
+    it to the dataplane would take the box off the network. It is refused as a
+    dataplane interface for that reason.
+  ```
+
+  **The default-route mark is the point of the screen as much as the list is.**
+  Handing that NIC to the dataplane does not degrade the box, it removes it, and
+  [#123](https://github.com/andrediashexa/hexarouting/issues/123) made the tuner
+  refuse it for that reason - *after* the operator has chosen, which is too late
+  to teach anything. It is read from `/proc/net/route`, destination `00000000`,
+  the same file and field the tuner reads, so the two cannot disagree. The PCI
+  test is the tuner's too: a basename that is not shaped `0000:3b:00.0` is
+  skipped, so a NIC this screen offers is one the tuner can resolve.
+
+  **What the dataplane holds is said once, and before the list**, because a NIC
+  VPP owns is not under `/sys/class/net` at all and a list that quietly omits it
+  reads as a missing NIC - a hardware fault, and a different afternoon. When the
+  dataplane holds nothing, that sentence is
+  `Shell.why_no_dataplane_interface()`, the same reading in the same words as
+  `show interface` and the boot self-test, rather than a second diagnosis of one
+  fact.
+
+  A box where Linux has no PCI NIC gets a sentence, not an empty table:
+  *"nothing to show"* and *"nothing is wrong"* look identical on a screen, and
+  this one is read on a box that forwards nothing. That check going blind is one
+  of the twenty-six assertions, and was shown failing by making the command
+  print its table header for a box with no NICs.
+
+  Every path is an overridable seam - `Shell.SYS_CLASS_NET` and
+  `Shell.PROC_NET_ROUTE`, beside the four that were already there - and the
+  assertions run against a `/sys` tree built in a tempdir, driven through
+  `sh.feed("show hardware")`, with nothing stubbed. Its `/proc/net/route` is
+  ordered so a reading that took the first row naming an interface names the
+  **wrong** NIC rather than passing by luck. All twenty-six were shown failing,
+  each against a mutation of the product.
+
+  Registered in the grammar, so `?` and TAB offer it. It is **not** `show
+  hardware-interfaces`, which is the dataplane's own command for its ports; this
+  one answers about the box.
+
 ### Fixed
 
 * **A box whose dataplane had no interface passed its own self-test, and the

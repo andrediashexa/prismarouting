@@ -290,6 +290,11 @@ SHOW = {
         }),
         ARG_INTERFACE: ("one interface, in detail, with its counters", None),
     }),
+    # Answers the question `show interface` cannot answer on a fresh box: the
+    # dataplane has been given no NIC, so its list is empty exactly when the
+    # operator needs to see what there is to choose from (#283).
+    "hardware": ("the box's physical NICs as Linux has them, and which one "
+                 "carries the default route", None),
     "version": ("HexaRouting, VPP and FRR versions", None),
     "logging": ("system log (FRR)", None),
 }
@@ -8106,6 +8111,11 @@ class Shell:
         if _w[:1] == ["show"] and _w[1:2] in (["interface"], ["interfaces"]):
             self.show_interfaces(_w[2:])
             return
+        # Deliberately NOT `show hardware-interfaces`, which is VPP's own
+        # command for the dataplane's ports. This one answers about the box.
+        if _w[:2] == ["show", "hardware"]:
+            self.show_hardware(_w[2:])
+            return
         if _w[:2] == ["show", "route"]:
             self.show_route(_w[2:])
             return
@@ -8696,6 +8706,214 @@ class Shell:
             said.append("No driver DPDK can use is loaded: none of "
                         + ", ".join(self.DPDK_DRIVERS) + ".")
         return said
+
+    #: Where Linux lists this box's own interfaces, and where it says which
+    #: one carries the default route. Read as files rather than shelled out to
+    #: `ip link`, which is one of the two tools this VTY exists to keep the
+    #: operator out of, and overridable so the reading can be driven against a
+    #: tree built for the purpose.
+    SYS_CLASS_NET = os.environ.get("HEXA_SYS_CLASS_NET", "/sys/class/net")
+    PROC_NET_ROUTE = os.environ.get("HEXA_PROC_NET_ROUTE", "/proc/net/route")
+
+    @staticmethod
+    def _sysfs(path):
+        """One sysfs attribute, or None when it is not there to be read."""
+        try:
+            with open(path) as f:
+                return f.read().strip()
+        except OSError:
+            # Not an error worth a message. `speed` on a NIC whose link is
+            # down raises EINVAL in the kernel rather than returning a value,
+            # and a driverless device has no attributes at all.
+            return None
+
+    def default_route_nic(self):
+        """
+        The interface carrying the default route, or None.
+
+        Same file, same field and the same reason as
+        `appliance/hexarouting-tune`: that script REFUSES to give this NIC to
+        the dataplane, because handing it over does not degrade the box, it
+        removes it - no SSH, no ping, nothing but a console somebody has to
+        walk to (#123). The refusal happens after the operator has chosen,
+        which is too late to be useful, so this screen reads the same source
+        and says which one it is BEFORE they choose.
+        """
+        try:
+            with open(self.PROC_NET_ROUTE) as f:
+                for line in f.readlines()[1:]:
+                    w = line.split()
+                    # Iface Destination Gateway Flags ... - a destination of
+                    # 00000000 is the default route.
+                    if len(w) > 2 and w[1] == "00000000":
+                        return w[0]
+        except OSError:
+            pass
+        return None
+
+    def host_nics(self):
+        """
+        The box's physical NICs, as Linux has them.
+
+        A NIC the DATAPLANE already owns is not in here, and that is not a
+        defect of this reading: VPP takes the device off the kernel and
+        /sys/class/net stops listing it. It is why `show hardware` says what
+        the dataplane holds before it prints the list - a NIC that has been
+        handed over and a NIC that was never in the box read identically
+        otherwise, and one of those is a hardware fault.
+        """
+        out = []
+        try:
+            names = sorted(os.listdir(self.SYS_CLASS_NET))
+        except OSError:
+            return out
+        for name in names:
+            base = os.path.join(self.SYS_CLASS_NET, name)
+            try:
+                addr = os.path.basename(
+                    os.path.realpath(os.path.join(base, "device")))
+            except OSError:
+                addr = ""
+            # 0000:3b:00.0, and anything that is not shaped like that is not
+            # PCI: `lo`, a bridge, a tap and a virtio-mmio NIC all fail this,
+            # and none of them is a device DPDK could be given. Same test as
+            # the tuner's, so the two cannot disagree about what is a
+            # candidate.
+            parts = addr.split(":")
+            if len(parts) != 3 or not parts[0].isalnum():
+                continue
+            driver = None
+            link = os.path.join(base, "device", "driver")
+            if os.path.islink(link):
+                driver = os.path.basename(os.path.realpath(link))
+            speed = self._sysfs(os.path.join(base, "speed"))
+            out.append({
+                "name": name,
+                "pci": addr,
+                "driver": driver,
+                "dpdk": driver in self.DPDK_DRIVERS,
+                "state": (self._sysfs(os.path.join(base, "operstate"))
+                          or "unknown"),
+                "mac": self._sysfs(os.path.join(base, "address")) or "-",
+                # -1 is what the kernel writes for a link that is down, and it
+                # is not a speed. Printed as unknown rather than as a number,
+                # because a negative megabit is the kind of value somebody
+                # reads past.
+                "speed": None if speed in (None, "", "-1") else speed,
+            })
+        return out
+
+    def show_hardware(self, args):
+        """
+        The physical NICs of this box, from Linux, with the one that must not
+        be given to the dataplane marked.
+
+        This screen exists because the one that should answer cannot. On a
+        fresh appliance VPP has been given no NIC, so `show interface` is
+        empty - and that is exactly the moment an operator needs to see what
+        NICs the box has in order to choose one. The only way to that list was
+        to leave the VTY and read /sys or run `ip link`, and an appliance
+        whose first setup step is a shell is an appliance with no VTY (#283).
+
+        The DEFAULT ROUTE mark is as much the point as the list. Handing that
+        NIC to the dataplane removes the box from the network, and the tuner
+        refuses it for that reason (#123) - after the choice has been made.
+        Marked here, the operator does not make it.
+        """
+        if args:
+            self.err("show hardware: takes no arguments")
+            return
+
+        # What the dataplane holds, said ONCE and before the list, because a
+        # NIC VPP owns is not under /sys/class/net and a list that quietly
+        # omits it reads as a missing NIC.
+        rc, out = self.dp.run("show interface")
+        if rc != 0 or not out.strip():
+            print_prose("the dataplane is not answering, so what it already "
+                        "holds is not known: a NIC it owns would be missing "
+                        "from the list below.", indent="  ")
+        else:
+            held = [n for n in routes.parse_interfaces(out) if n != "local0"]
+            if held:
+                # The path this was read from is deliberately NOT in the
+                # sentence. It is a seam, so on a box under test it would
+                # print a directory that exists nowhere, and an operator
+                # reading a transcript cannot tell which is which.
+                print_prose("the dataplane holds " + ", ".join(sorted(held))
+                            + ". A NIC VPP owns is no longer listed by "
+                            "Linux, so it is not in the list below.",
+                            indent="  ")
+            else:
+                # The same words as `show interface` and the boot self-test,
+                # from the same reading. Two diagnoses of one fact that
+                # disagree are worse than one.
+                why = self.why_no_dataplane_interface()
+                if why:
+                    print_prose("the dataplane has no interface to forward "
+                                "on: " + why[0], indent="  ")
+                    for line in why[1:]:
+                        print_prose(line, indent="  ")
+                else:
+                    print_prose("the dataplane has no interface to forward "
+                                "on.", indent="  ")
+        print()
+
+        nics = self.host_nics()
+        if not nics:
+            # NOT an empty table. "nothing to show" and "nothing is wrong"
+            # look the same on a screen, and this screen is read on a box that
+            # forwards nothing.
+            print_prose("no PCI NIC is visible to Linux on this box: either "
+                        "the dataplane already owns every one of them, or "
+                        "none of them resolves to a PCI address, which is "
+                        "what a virtio guest looks like. DPDK cannot be "
+                        "given a device that has no PCI address, so there is "
+                        "nothing here to choose from.", indent="  ")
+            return
+
+        mgmt = self.default_route_nic()
+        print(f"  {'Interface':<14}{'PCI':<15}{'Driver':<17}"
+              f"{'Link':<7}Speed")
+        for n in nics:
+            speed = f"{n['speed']}Mb/s" if n["speed"] else "-"
+            print(f"  {n['name']:<14}{n['pci']:<15}"
+                  f"{n['driver'] or '(none)':<17}{n['state']:<7}{speed}")
+            # The MAC is printed whole and on its own line with the driver's
+            # verdict: it is what an operator matches against a label on the
+            # port or a lease in the DHCP server, so it has to stay one
+            # greppable token, and there is no room for it beside five other
+            # columns inside the console.
+            if n["dpdk"]:
+                said = f"{n['driver']} is a driver DPDK can use"
+            elif n["driver"]:
+                said = "kernel driver: DPDK cannot take a NIC through it"
+            else:
+                said = "no driver is bound to it at all"
+            print(f"    {n['mac']}  {said}")
+            if mgmt and n["name"] == mgmt:
+                print("    *** carries the DEFAULT ROUTE ***")
+
+        print(f"\n  {len(nics)} NIC(s) on this box, as Linux has them")
+        if not mgmt:
+            print_prose("no interface carries a default route on this box, "
+                        "so none of them is the management path by that "
+                        "test.", indent="  ")
+        elif any(n["name"] == mgmt for n in nics):
+            print_prose(f"'{mgmt}' carries the default route: it is how this "
+                        f"box is reached, and giving it to the dataplane "
+                        f"would take the box off the network. It is refused "
+                        f"as a dataplane interface for that reason.",
+                        indent="  ")
+        else:
+            # The management path can be something this list cannot hold: a
+            # bridge, a bond, a VLAN, or a virtio NIC with no PCI address.
+            # Said rather than left as a missing mark, because an unmarked
+            # list reads as "none of these is the management path" - and that
+            # reading is the one that costs the box.
+            print_prose(f"none of these carries the default route. It is on "
+                        f"'{mgmt}', which is not a PCI NIC, and that is "
+                        f"still the path this box is reached over.",
+                        indent="  ")
 
     def show_interfaces(self, args):
         """

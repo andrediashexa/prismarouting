@@ -2127,6 +2127,241 @@ probe.TUNE_ENV = os.path.join(_d, "nor-this")
 check(probe.why_no_dataplane_interface() == [],
       "and a box with no startup configuration explains nothing")
 
+# --- `show hardware`: the NICs the box HAS, before VPP has any (#283) ---
+#
+# On a fresh appliance VPP has been given no NIC, so `show interface` is empty
+# - and that is exactly when an operator needs to see what there is to choose
+# from. The only way to that list was to leave the VTY and read /sys, which
+# for an appliance is not an answer.
+#
+# Driven against a /sys tree built here, through `sh.feed("show hardware")`,
+# so what is asserted is what the command prints and not what a stub was told
+# to return.
+print("\n=== show hardware: the box's own NICs ===")
+
+_HW_EMPTY_DP = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+local0                            0     down            0/0/0/0
+"""
+_HW_HELD_DP = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+TenGigabitEthernet0/8/0           1      up          9000/0/0/0
+local0                            0     down            0/0/0/0
+"""
+
+
+def hw_tree(root, nics, default=None):
+    """
+    A /sys/class/net and a /proc/net/route the way Linux writes them.
+
+    `device` is a symlink to the PCI device and `device/driver` a symlink to
+    the driver holding it, because that is the shape the product reads: a
+    directory with the names in it would pass a test the box fails.
+    """
+    net = os.path.join(root, "sys", "class", "net")
+    for name, pci, driver, state, mac, speed in nics:
+        d = os.path.join(net, name)
+        os.makedirs(d)
+        if pci:
+            dev = os.path.join(root, "sys", "devices", "pci0000:00", pci)
+            os.makedirs(dev, exist_ok=True)
+            os.symlink(dev, os.path.join(d, "device"))
+            if driver:
+                drv = os.path.join(root, "sys", "bus", "pci", "drivers",
+                                   driver)
+                os.makedirs(drv, exist_ok=True)
+                os.symlink(drv, os.path.join(dev, "driver"))
+        open(os.path.join(d, "operstate"), "w").write(state + "\n")
+        open(os.path.join(d, "address"), "w").write(mac + "\n")
+        if speed is not None:
+            open(os.path.join(d, "speed"), "w").write(str(speed) + "\n")
+    os.makedirs(net, exist_ok=True)
+    proc = os.path.join(root, "proc", "net")
+    os.makedirs(proc)
+    rows = ["Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
+            "\t\tMTU\tWindow\tIRTT"]
+    # A connected route for every interface FIRST, and the default route last.
+    # Destination 00000000 is what makes a row the default route, and a
+    # reading that took the first row naming an interface would be right on a
+    # one-line file and wrong on every real box. This file is ordered so that
+    # such a reading names the WRONG NIC rather than passing by luck.
+    for name, pci, driver, state, mac, speed in reversed(nics):
+        rows.append(f"{name}\t0002000A\t00000000\t0001\t0\t0\t0"
+                    f"\t00FFFFFF\t0\t0\t0")
+    if default:
+        rows.append(f"{default}\t00000000\t0102000A\t0003\t0\t0\t0"
+                    f"\t00000000\t0\t0\t0")
+    open(os.path.join(proc, "route"), "w").write("\n".join(rows) + "\n")
+    return net, os.path.join(proc, "route")
+
+
+def flat(text):
+    """
+    The screen with the console wrapping taken back out.
+
+    A sentence this VTY prints is wrapped to fit the console, so where it
+    breaks is a measurement and not a promise. Matching against the wrapped
+    text asserts the break position by accident, and goes red the day a word
+    changes length - which is how a check that was worth having gets deleted.
+    """
+    return " ".join(text.split())
+
+
+def show_hw(nics, default=None, dp_text=_HW_EMPTY_DP, dp_rc=0,
+            conf="dpdk {\n  no-pci\n}\n", env="HEXA_DATAPLANE_IF=\n"):
+    """What `show hardware` prints for a box with those NICs."""
+    root = tempfile.mkdtemp()
+    net, route = hw_tree(root, nics, default)
+    sh = hexash.Shell()
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+
+    def run(_self, cmd):
+        if cmd.startswith("show interface"):
+            return dp_rc, dp_text
+        return 0, ""
+
+    sh.dp = type("D", (), {"TRACE": False, "run": run,
+                           "reachable": lambda _s: dp_rc == 0})()
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
+                                       "running": lambda s: [],
+                                       "show": lambda s, c: (1, "")})()
+    sh.SYS_CLASS_NET, sh.PROC_NET_ROUTE = net, route
+    c, e = os.path.join(root, "startup.conf"), os.path.join(root, "tune.env")
+    open(c, "w").write(conf)
+    open(e, "w").write(env)
+    sh.STARTUP_CONF, sh.TUNE_ENV = c, e
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sh.feed("show hardware")
+    return buf.getvalue()
+
+
+# A box with two NICs: one carrying the default route, one idle. `lo` is in
+# the tree because it is in every tree, and it is not a candidate.
+_TWO = [("eno1", "0000:03:00.0", "ixgbe", "up", "3c:ec:ef:1a:2b:3c", 1000),
+        ("ens1f0", "0000:5e:00.0", "ixgbe", "down", "b4:96:91:0d:1e:2f", -1),
+        ("lo", None, None, "unknown", "00:00:00:00:00:00", None)]
+_out = show_hw(_TWO, default="eno1")
+
+check("eno1" in _out and "ens1f0" in _out,
+      f"both NICs are listed: {_out}")
+check("0000:03:00.0" in _out and "0000:5e:00.0" in _out,
+      f"each with the PCI address the tuner would have to be given: {_out}")
+check("ixgbe" in _out,
+      f"and the driver holding it now: {_out}")
+check("3c:ec:ef:1a:2b:3c" in _out and "b4:96:91:0d:1e:2f" in _out,
+      f"the MAC is printed whole, so it is greppable against a port "
+      f"label: {_out}")
+check("1000Mb/s" in _out,
+      f"a link that reports a speed shows it: {_out}")
+# -1 is what the kernel writes for a link that is down. A negative megabit
+# printed as a number is a number somebody reads past.
+check("-1Mb/s" not in _out,
+      f"and one that does not is not shown a negative speed: {_out}")
+check("\n  lo " not in _out and "00:00:00:00:00:00" not in _out,
+      f"the loopback has no PCI address and is not a candidate: {_out}")
+check("up" in _out and "down" in _out,
+      f"the link state of each is there: {_out}")
+
+# The mark is the point of this screen as much as the list is. Handing the
+# NIC carrying the default route to the dataplane removes the box from the
+# network, and the tuner refuses it - after the operator has chosen.
+check("DEFAULT ROUTE" in _out,
+      f"the NIC carrying the default route is marked: {_out}")
+_marked = [l for l in _out.splitlines() if "DEFAULT ROUTE" in l]
+_lines = _out.splitlines()
+check(len(_marked) == 1 and
+      "eno1" in _lines[_lines.index(_marked[0]) - 2],
+      f"and it is marked under the right NIC, not the other one: {_out}")
+check("'eno1' carries the default route" in flat(_out) and
+      "off the network" in flat(_out),
+      f"and the screen says what that costs, because the refusal that "
+      f"enforces it comes too late to teach anything: {_out}")
+
+# The driver verdict, which is the other half of "can I give this away".
+check("kernel driver" in _out and "DPDK cannot" in _out,
+      f"a kernel driver is named as one DPDK cannot take a NIC "
+      f"through: {_out}")
+_dpdk = show_hw(
+    [("eno1", "0000:03:00.0", "ixgbe", "up", "3c:ec:ef:1a:2b:3c", 1000),
+     ("ens1f0", "0000:5e:00.0", "vfio-pci", "up", "b4:96:91:0d:1e:2f", 10000)],
+    default="eno1")
+check("vfio-pci is a driver DPDK can use" in flat(_dpdk),
+      f"and a NIC already bound for DPDK is told so: {_dpdk}")
+check("no driver is bound to it at all" in
+      flat(show_hw([("ens1f0", "0000:5e:00.0", None, "down",
+                     "b4:96:91:0d:1e:2f", None)])),
+      "a device with no driver is its own answer, the way the diagnosis "
+      "above says it")
+
+# What the DATAPLANE holds, said once and before the list, because a NIC VPP
+# owns is not under /sys/class/net at all and a list that quietly omits it
+# reads as a missing NIC - which is a hardware fault, not this one.
+check("no interface was named" in flat(_out),
+      f"the dataplane's state is stated, in the words the rest of the box "
+      f"uses for it: {_out}")
+_held = show_hw(_TWO, default="eno1", dp_text=_HW_HELD_DP)
+check("the dataplane holds TenGigabitEthernet0/8/0" in flat(_held),
+      f"a box whose dataplane already has a NIC is told which: {_held}")
+check("no longer listed by Linux" in flat(_held),
+      f"and told that such a NIC is not in the list below: {_held}")
+_deaf = show_hw(_TWO, default="eno1", dp_rc=1)
+check("the dataplane is not answering" in flat(_deaf),
+      f"and a dataplane that cannot be asked is said to be that, not "
+      f"reported as empty: {_deaf}")
+
+# THE CHECK GOING BLIND. A tree with no NIC in it must not read as a healthy
+# box with a short list: "nothing to show" and "nothing is wrong" look
+# identical on a screen, and this screen is read on a box that forwards
+# nothing.
+_none = show_hw([])
+check("no PCI NIC is visible" in flat(_none),
+      f"a box where Linux has no PCI NIC says so: {_none}")
+check("Interface" not in _none and "DEFAULT ROUTE" not in _none,
+      f"and prints no table, which would read as a box that is fine: {_none}")
+
+# A box with NICs and no default route at all. Saying nothing here would leave
+# the operator to conclude the mark was simply missed.
+_nodef = show_hw(_TWO)
+check("no interface carries a default route" in flat(_nodef),
+      f"no default route anywhere is said, not left as an absent mark: "
+      f"{_nodef}")
+check("DEFAULT ROUTE" not in _nodef,
+      f"and nothing is marked: {_nodef}")
+
+# The management path can be something this list cannot hold - a bridge, a
+# bond, a virtio NIC with no PCI address. An unmarked list would read as "none
+# of these is the management path", and that reading is the one that costs the
+# box, so it is said instead.
+_elsewhere = show_hw(
+    [("ens1f0", "0000:5e:00.0", "ixgbe", "up", "b4:96:91:0d:1e:2f", 10000),
+     ("br0", None, None, "up", "3c:ec:ef:1a:2b:3c", None)], default="br0")
+check("none of these carries the default route" in flat(_elsewhere)
+      and "'br0'" in flat(_elsewhere),
+      f"a default route on something that is not a PCI NIC is named, not "
+      f"left as an absent mark: {_elsewhere}")
+
+# Every line inside the console. The widest row is the one with the longest
+# interface and driver names, so it is the one measured.
+_wide_hw = show_hw(
+    [("enp94s0f0np0", "0000:5e:00.0", "uio_pci_generic", "up",
+      "b4:96:91:0d:1e:30", 25000)], default="enp94s0f0np0")
+_over = [l for l in (_out + _wide_hw + _none + _held).splitlines()
+         if len(l) > CONSOLE_COLUMNS]
+check(not _over, f"every line fits {CONSOLE_COLUMNS} columns: {_over}")
+# On the ROW, not merely somewhere on the screen: the sentences under the
+# table name the driver and the interface too, so a row whose columns cut
+# them to fit would leave this green while the table lied.
+_row = [l for l in _wide_hw.splitlines() if l.startswith("  enp94")]
+check(len(_row) == 1 and "uio_pci_generic" in _row[0]
+      and "enp94s0f0np0" in _row[0] and "0000:5e:00.0" in _row[0],
+      f"and a long name and a long driver are whole on the row, not cut to "
+      f"the column: {_row}")
+
+# In the tree, so `?` and TAB offer it. A command an operator can only find by
+# reading the source is a command that does not exist.
+_o, _hint, _ = hexash.Shell()._options("show ", False)
+check("hardware" in _o, f"'show hardware' is offered by '?': {sorted(_o)}")
+
+
 
 # --- filtering a show, without leaving the VTY (#191) ---
 print("\n=== pipe filters ===")
