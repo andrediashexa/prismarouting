@@ -841,7 +841,7 @@ expect_in "with mgmtd stopped, the commit is refused" "mgmtd" "$BADPOL"
 # that appears in both versions of it.
 expect_in "and the refusal says frr did not finish starting, not 'edit the file'" \
   "started by frr itself" "$BADPOL"
-expect_in "and how to get it back" "systemctl restart frr" "$BADPOL"
+expect_said "and how to get it back" "systemctl restart frr" "$BADPOL"
 expect_not_in "and nothing was applied" "commit complete" "$BADPOL"
 
 /usr/lib/frr/mgmtd -d -A 127.0.0.1 2>/dev/null
@@ -941,7 +941,7 @@ expect_not_in "and does not claim the whole configuration checks out" \
 CAVEAT=$($HX -c "configure" -c "router ospf" \
          -c "network 10.44.0.0/24 area 0" -c "exit" -c "commit check" 2>&1)
 echo "$CAVEAT" | tail -3 | sed 's/^/  caveat: /'
-expect_in "and commit check still says routing is not fully validated" \
+expect_said "and commit check still says routing is not fully validated" \
   "FRR validates them at commit" "$CAVEAT"
 
 expect "a commit carrying an invalid policy line does not report success" \

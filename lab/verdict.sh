@@ -28,6 +28,36 @@ expect_in() {
   esac
 }
 
+# expect_said <description> <sentence> <haystack>
+#
+# Like expect_in, but both sides are whitespace-collapsed first, so a sentence
+# the VTY WRAPPED still matches.
+#
+# expect_in searches the raw text, which means a needle only matches while the
+# message it is in happens to break lines somewhere else. #271 re-wrapped 28
+# messages to fit an 80-column console and two needles in lab/routing.sh
+# stopped matching: `'systemctl restart frr'` became `'systemctl` at the end of
+# one row and `restart frr'` at the start of the next, and `FRR validates them
+# at commit` split after `at`. Neither message changed a word. Every unit suite
+# was green, because none of them reads a lab.
+#
+# So the needle has to be about the SENTENCE and not about where the sentence
+# happened to fold. This is the shell half of unwrapped() in
+# test/test_hexash_bgp.py, which exists for the same reason.
+#
+# Use expect_in for anything printed WHOLE - a statement, a path, a
+# configuration line, a counter. Those must not wrap, and collapsing the text
+# before comparing would hide it if they did.
+expect_said() {
+  _said=$(printf '%s' "$3" | tr '\n' ' ' | tr -s ' ')
+  _want=$(printf '%s' "$2" | tr '\n' ' ' | tr -s ' ')
+  case "$_said" in
+    *"$_want"*) echo "  [ ok ] $1" ;;
+    *) echo "  [FAIL] $1 (not said: $2)"
+       VERDICT_FAILURES=$((VERDICT_FAILURES + 1)) ;;
+  esac
+}
+
 # expect_not_in <description> <needle> <haystack>
 expect_not_in() {
   case "$3" in
