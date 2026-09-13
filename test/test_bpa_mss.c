@@ -21,6 +21,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "bpa_tcp_shim.h"
 #include "../src/plugins/bpa/bpa_mss.h"
 
@@ -148,9 +150,69 @@ run (const char *what, const u8 *opts, unsigned n_opts,
     }
 }
 
+/*
+ * The one bound this file cannot see from a return value, run against an
+ * unmapped page instead.
+ *
+ * "opt + 1 >= opt_end" stops the walk from reading an option's LENGTH byte
+ * when only its KIND byte is inside the options. Deleting it changes no
+ * verdict: the byte read is one past opt_end, and whatever it holds the
+ * "opt + len > opt_end" test below stops the walk anyway - there is no len
+ * small enough to fit in the nothing that is left and large enough to pass
+ * "len < 2". The only difference the deletion makes is the read, so the
+ * segment is placed with its last option byte hard against an unmapped page,
+ * the way test_bpa_icmp.c does it, and the read becomes a SIGSEGV.
+ *
+ * Three NOOPs then a kind byte is how the packet is shaped: the walk has to
+ * get to the very last byte of the options for the bound to be the one that
+ * fires.
+ */
+static void
+last_option_byte_against_a_guard_page (void)
+{
+  long pagesz = sysconf (_SC_PAGESIZE);
+  static const u8 opts[] = { TCP_OPTION_NOOP, TCP_OPTION_NOOP,
+			     TCP_OPTION_NOOP, TCP_OPTION_MSS };
+  seg_t g;
+  unsigned bytes = build (&g, opts, sizeof (opts), 6);
+  u8 *region, *seg;
+
+  /* Two pages, the second unreadable: the packet must stop at the seam. */
+  region = mmap (0, 2 * (size_t) pagesz, PROT_READ | PROT_WRITE,
+		 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (region == MAP_FAILED
+      || mprotect (region + pagesz, (size_t) pagesz, PROT_NONE))
+    {
+      printf ("  FAIL: could not place a guard page\n");
+      failures++;
+      return;
+    }
+
+  seg = region + pagesz - bytes;
+  memcpy (seg, &g, bytes);
+
+  /* Named BEFORE the call. Without the bound this process dies inside it, and
+   * a crash with nothing printed leaves whoever reads the log to bisect the
+   * file to find out which case it was. */
+  printf ("  the last option byte, against a guard page\n");
+
+  /* `end` is the seam, which is also where the data offset says the options
+   * stop. A walk that reads the byte after the last option reads the page. */
+  CHECK (bpa_tcp_mss_clamp ((tcp_header_t *) seg, region + pagesz, 1400) == 0,
+	 "an option kind in the last option byte is not given a length byte");
+
+  munmap (region, 2 * (size_t) pagesz);
+}
+
 int
 main (void)
 {
+  /*
+   * Unbuffered, for the guard-page case at the bottom: that one is designed to
+   * die rather than to disagree, and a crash with the output still in stdio's
+   * buffer names nothing.
+   */
+  setvbuf (stdout, NULL, _IONBF, 0);
   printf ("=== TCP MSS clamp ===\n\n");
 
   /* MSS 1460, four bytes: kind, len, value. */
@@ -185,6 +247,18 @@ main (void)
 				  TCP_OPTION_MSS, 4,	     0x05, 0xb4 };
   run ("an option after EOL is not reached", after_eol, 8, 7, 0, 1400, 0,
        1460, 6);
+
+  /*
+   * The EOL break, isolated. The case above pads with zeros, and a zero
+   * length byte is refused by "len < 2" - so it stays green with
+   * "if (kind == TCP_OPTION_EOL) break;" deleted. What follows EOL is
+   * whatever the sender wrote, and a sender who writes a well-formed option
+   * there has it walked unless the break is really there.
+   */
+  static const u8 after_eol_walkable[] = { TCP_OPTION_EOL, 4,	  0x05, 0xb4,
+					   TCP_OPTION_MSS, 4,	  0x05, 0xb4 };
+  run ("an option after EOL is not reached even when it is well formed",
+       after_eol_walkable, 8, 7, 0, 1400, 0, 1460, 6);
 
   /* Malformed lists. Each of these is a packet an attacker can send, and the
    * clamp must stop rather than guess where the next option starts. */
@@ -227,7 +301,17 @@ main (void)
   run ("and so is one past a truncated capture", mss1460, 4, 6, 2, 1400, 0,
        1460, 2);
 
-  /* A data offset smaller than the header itself: opt_end < opt. */
+  /*
+   * A data offset smaller than the header itself: opt_end < opt.
+   *
+   * This one cannot be isolated and is not meant to be: when opt_end is below
+   * opt the walk's own "opt < opt_end" is false on the first pass, so the
+   * clamp declines whether or not the guard is there. Same for "len < 2" and
+   * the zero length byte below - deleting that one does not give a wrong
+   * answer, it stops the walk advancing at all, so the suite hangs instead of
+   * printing a verdict. Both are noted rather than covered, because an
+   * assertion that claimed to be about either would be about something else.
+   */
   run ("a data offset below the minimum header is refused", mss1460, 4, 4, 0,
        1400, 0, 1460, 2);
 
@@ -245,6 +329,8 @@ main (void)
    * configuration guaranteed to be legal would be the one that breaks. */
   run ("clamping to the floor works", mss1460, 4, 6, 0, BPA_MSS_MIN, 1,
        BPA_MSS_MIN, 2);
+
+  last_option_byte_against_a_guard_page ();
 
   printf ("\n%u checks, %d failures\n", checks, failures);
   printf ("%s\n", failures ? "TESTS FAILED" : "ALL TESTS PASSED");

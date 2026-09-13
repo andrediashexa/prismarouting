@@ -72,9 +72,10 @@ lab is going to notice it:
 | `test_bpa_mss.c` | The MSS clamp: that it only ever **lowers**, that it declines a malformed option list, a length byte pointing outside the header and a data offset that lies — and that the incremental checksum equals a full recomputation. Getting that wrong makes the peer drop the segment, so the connection hangs exactly as it did before clamping while a counter reports the fix was applied. |
 | `test_bpa_ftp.c` | The FTP sequence shift: `bpa_seq_after` across the 2^32 boundary, a retransmission of data sent **before** a rewrite, and a control connection rewritten twice. No lab is going to send four gigabytes to reach the wrap. |
 | `test_context_map.py` | That every repository path named in `docs/context.md` exists, and that `README.md` still reaches it. A map naming files that are no longer there is worse than no map — it is confidently wrong, and this is the half of it that rots without anyone noticing. |
+| `test_run_all_labs.sh` | That the lab suite tells a defect apart from a machine that could not run it. A VPP that never started, or a capture in which every `vppctl` call was refused and not one check went green, is reported `NO VPP` and counted apart - reporting it as `FAIL` sends whoever reads it to the product when the answer is the machine's load. Driven with stub labs, because arranging a real VPP that fails to start is not something `make test` can do. |
 | `test_hexash_config.py` | Which changes rebuild a pool and which apply in place. Classified as a table, with an assertion that the table **covers every field a pool has** — so a field added later is a failure rather than a silent default. |
 
-Each assertion in those three was run against deliberately broken code and
+Each assertion in that table was run against deliberately broken code and
 required to fail before being kept. An assertion that has never failed has not
 been shown to test anything, which is the defect class this project keeps
 hitting — see `CONTRIBUTING.md`.
@@ -185,14 +186,14 @@ The most instructive to run:
 |-----|----------------------|
 | `handoff` | Predicts which thread each subscriber lands on, then proves it |
 | `frag` | The byte-order bug that created phantom sessions |
-| `ipfix` | Configures the UDP exporter **through the VTY** and decodes a record off the wire — the exporter used to be set here with `vppctl`, so the lab performed the product's missing step and UDP export had never once run on a box the product configured. `sh tools/lab.sh ipfix no-exporter` leaves the statement out and drops 9 of its 13 assertions |
+| `ipfix` | Configures the UDP exporter **through the VTY** and decodes a record off the wire — the exporter used to be set here with `vppctl`, so the lab performed the product's missing step and UDP export had never once run on a box the product configured. `sh tools/lab.sh ipfix no-exporter` leaves the statement out and turns 19 of its assertions red |
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |
-| `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch twelve assertions drop |
+| `ftp-alg` | Reads the rewritten payload, its checksums and its renumbered sequence off the wire — and can be run with the feature off to watch 13 assertions drop |
 | `rtsp` | Reads the rewritten `Transport:` header out of the wire, and `BPA_RTSP_OFF=1 sh tools/lab.sh rtsp` drops 11 of its 18 assertions |
 | `sip` | Reads every rewritten field off the wire, and every field that must **not** have moved byte for byte against the payload as it was injected. `sh tools/lab.sh sip off` drops exactly 7 of its 18 assertions, and the lab header names which |
 | `pptp` | Two subscribers choose the same Call ID and both tunnels work |
-| `esp` | Two subscribers share one public address and each keeps its own IPsec tunnel — and the SPI is asserted **unchanged**, because rewriting it is the failure. `sh tools/lab.sh esp off` drops 21 of its 27 assertions |
+| `esp` | Two subscribers share one public address and each keeps its own IPsec tunnel — and the SPI is asserted **unchanged**, because rewriting it is the failure. `sh tools/lab.sh esp off` drops 25 of its assertions |
 | `vty-pool` | Sets a pool setting with `vppctl`, commits something unrelated through the VTY, and proves the first one survived |
 | `two-pools` | The only lab that configures more than one pool — which is why nothing caught subscribers of two pools sharing one set of port bitmaps |
 | `troubleshoot` | Uses `ref/bpa_model.py` as the oracle, so the show commands cannot agree with the plugin by sharing its arithmetic |
@@ -203,6 +204,21 @@ The most instructive to run:
 Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An
 assertion that passes with the feature removed was never testing the feature.
+
+**`tools/run-all-labs.sh` runs all seventeen of those, with the verdict
+inverted.** They are listed in `OFF_MODES` and reported as `<lab>+off`: a run
+that goes red is a pass, and one that comes back `LAB PASSED` is a failure of
+the suite rather than of the box. Until that list existed, nothing automatic
+ever performed an off run, so sixteen headers claimed the checks below them
+MUST fail and nobody was checking. Measured on this machine: the seventeen
+take 56 s to 125 s each, and at `LAB_JOBS=16` they add one batch to the four
+the suite already had - 1524 s to 1907 s on the same tree, about 25%, not the
+doubling that counting runs rather than batches suggests.
+
+A lab under which the dataplane never came up is reported as `NO VPP` and
+counted apart from both, because "the box never answered" and "the box
+answered and refused" need opposite work. `test/test_run_all_labs.sh` pins
+that classifier with stub labs.
 
 ## 3. Real hardware — two VMs, real Internet
 

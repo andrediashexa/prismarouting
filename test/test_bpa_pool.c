@@ -224,6 +224,57 @@ main (void)
     printf ("  4 negative cases checked\n");
   }
 
+  /*
+   * A port INSIDE the configured range that belongs to no block.
+   *
+   * blocks_per_ip is a floor: port_count / block_size. When the division is
+   * not exact the last partial block is not handed to anybody, and the ports
+   * in it are still between port_min and port_max. Only bpa_reverse_sub()'s
+   * "blk_idx >= blocks_per_ip" refuses them, and accepting one attributes an
+   * out2in packet to a subscriber index past the pool's own capacity - a
+   * different customer's traffic, silently.
+   *
+   * The two port checks above cannot see that bound. A port below port_min
+   * underflows the u32 subtraction into a huge block index and a port above
+   * port_max lands past the last block, so BOTH are answered by the block
+   * bound rather than by the port-range check they name - which is why that
+   * check could be deleted whole with this file still green.
+   */
+  {
+    u32 with_tail = 0;
+
+    for (i = 0; i < BPA_VEC_N_POOLS; i++)
+      {
+	bpa_pool_t *p = &pools[i];
+	u32 pub = 0, port, first_tail;
+
+	first_tail = (u32) p->port_min + p->blocks_per_ip * p->block_size;
+	if (first_tail > p->port_max)
+	  continue; /* the division was exact: this pool has no tail */
+	with_tail++;
+
+	if (bpa_set_addr_of (&p->outside, 0, &pub))
+	  continue;
+	for (port = first_tail; port <= p->port_max; port++)
+	  {
+	    u32 owner = 0;
+	    CHECK (bpa_reverse (p, pub, (u16) port, &owner) != 0,
+		   "'%s': port %u is past the last block and was accepted "
+		   "(owner %u)",
+		   (char *) p->name, port, owner);
+	  }
+	printf ("  %-18s ports %u-%u belong to no block and are refused\n",
+		(char *) p->name, first_tail, p->port_max);
+      }
+
+    /* Without a pool whose port count is not a multiple of its block size
+     * the loop above asserts nothing, and would go on reading green after
+     * the vectors changed. */
+    CHECK (with_tail > 0,
+	   "no vector pool has a partial last block, so the block bound was "
+	   "never exercised");
+  }
+
   printf ("\n=== misconfigured sets and pools must be refused ===\n");
   {
     bpa_addr_set_t s;
