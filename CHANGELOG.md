@@ -85,6 +85,35 @@ are to be interpreted as described in
 
 ### Internal
 
+* **A named FIB table's prefixes were filed under the table above it**
+  ([#268](https://github.com/andrediashexa/hexarouting/issues/268)).
+  `show ip fib` prints a table with no name as `ipv4-VRF:10` and a table WITH a
+  name as `vrf7, fib_index:2`. `parse_fib()` matched only the first, so every
+  prefix in a named table landed in whichever table came before it - and
+  `Shell.set_vrf()` names every table it creates, so this was every box where
+  an operator had typed `interface <name> / vrf <n>`.
+
+  It reported **more** than the box has, which is the hard direction to notice.
+  `show route` listed a VRF's routes as the global table's, and the next-hop
+  reachability check accepted a static route whose next hop is connected only
+  in some other table - the exact silent, inert route that check exists to
+  refuse, and the sibling of
+  [#255](https://github.com/andrediashexa/hexarouting/issues/255).
+
+  The name-to-id map exists nowhere in `vppctl`: `show ip fib summary` and
+  `show ip fib mem` print the same description, and `show fib tables` does not
+  exist. It comes from `ip_table_dump`, which carries the id and the name
+  together. Reading `vrf<n>` out of the name would work for the tables this
+  product happens to create and for no others, which is a guess dressed as a
+  rule.
+
+  **A table that cannot be placed keeps its NAME as the key.** Not the table
+  above it, which was the defect, and not nothing: dropping the prefixes would
+  make a box with no binary API lose a VRF from `show route` without saying so.
+  A name is not a number, so no numeric lookup finds it and the answer degrades
+  to "not known here" rather than to a wrong one. And `fib_index` is not the
+  table id: measured on VPP 26.06, table 10 is `fib_index:1`.
+
 * **`commit`'s read-back refusal says whether this VTY had ever read the
   statement it names**
   ([#227](https://github.com/andrediashexa/hexarouting/issues/227)). A commit

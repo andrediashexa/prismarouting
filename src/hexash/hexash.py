@@ -4401,6 +4401,24 @@ class Shell:
         return {n for names in routes.lcp_pairs(out).values()
                 for n in names if _is_lcp_tap(n)}
 
+    def fib_table_names(self):
+        """
+        {name: table_id} for the IPv4 FIB tables, or {} if it cannot be asked.
+
+        `show ip fib` prints a NAMED table's name where it prints an unnamed
+        one's id, and no vppctl command maps one to the other. Without this map
+        a named table's prefixes were filed under whichever table came before
+        it, and `set_vrf()` names every table it creates (#268).
+
+        An empty map is not a failure: it means a caller keys those prefixes by
+        the name, which no numeric lookup will match, so the answer is "not
+        known here" rather than "the global table has it".
+        """
+        r = self.api.dump("ip_table_dump", {})
+        if r.state != vppapi.OK:
+            return {}
+        return routes.table_names(r.fields.get("rows", []))
+
     def device_descriptions(self) -> dict:
         """
         The description of every interface, from the dataplane's own tags.
@@ -5543,7 +5561,8 @@ class Shell:
             if d["routing_changed"] and target.routing:
                 rc_fib, fib_text = self.dp.run("show ip fib")
                 if rc_fib == 0 and fib_text.strip():
-                    fibs = routes.parse_fib(fib_text)
+                    fibs = routes.parse_fib(fib_text,
+                                            self.fib_table_names())
                     # Which table a VRF's static routes go into is FRR's
                     # question to answer, not this VTY's: an interface's `vrf`
                     # is a NUMBER here and an FRR block is a NAME, and only the
@@ -9087,7 +9106,7 @@ class Shell:
             self.err("cannot read the forwarding table: the dataplane is not "
                      "answering")
             return
-        tables = routes.parse_fib(out)
+        tables = routes.parse_fib(out, self.fib_table_names())
 
         rib = {}
         if verbose:
