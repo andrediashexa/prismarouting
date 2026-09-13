@@ -808,6 +808,87 @@ fi
 rm -rf "$mstat"
 
 echo
+echo "=== the control that keeps the console driver honest is invoked ==="
+# lab/install-iso.sh has a wrong-password mode, TESTING.md calls it "how the
+# driver is kept honest", and nothing ran it: not the suite, which excludes
+# install-iso, not the Makefile, and not the release gate (#256). A control
+# that is optional is a control nobody runs.
+#
+# The recipe is EXTRACTED AND RUN, not grepped for.
+#
+# The first version of this section grepped the Makefile for the phrases the
+# recipe prints, and it passed on a recipe whose inversion had been replaced by
+# `if false` - the strings were all still there, inside a branch that could not
+# be reached. A check that reads the text of a decision cannot see the
+# decision, which is the same defect this whole release keeps finding one layer
+# in. So the control's three branches are driven against a stub that behaves
+# each of the three ways, and what is asserted is the verdict.
+MK=$REPO/Makefile
+if ! grep -q "install-iso.sh wrong-password" "$MK"; then
+  bad "lab/install-iso.sh has a wrong-password mode that nothing invokes: "\
+"TESTING.md calls it how the driver is kept honest, and a driver that stopped "\
+"noticing a refused login would let the install lab run its whole session "\
+"against a login prompt and report a pass"
+else
+  work=$(mktemp -d)
+  # The recipe, from the control's banner to the end of the target: leading
+  # tabs and trailing backslashes off, and the lab replaced by a stub.
+  sed -n '/=========== THE CONTROL/,/^$/p' "$MK" \
+    | sed 's/^\t*//; s/ *\\$//' \
+    | sed 's|sh /src/lab/install-iso.sh wrong-password|sh "$STUB"|' \
+    | sed 's|/tmp/wrong-password.log|"$LOG"|g' \
+    | sed 's/^\( *fi\))$/\1/' > "$work/control.sh"   # the ISO_RUN call's paren
+
+  drive() {  # <exit code> <what the stub prints> -> the recipe's exit status
+    printf '#!/bin/sh\nprintf %%s "$2"\nexit %s\n' "$1" > "$work/stub"
+    printf '%s\n' "$2" > "$work/stub.out"
+    cat > "$work/stub" <<STUBEOF
+#!/bin/sh
+cat "$work/stub.out"
+exit $1
+STUBEOF
+    chmod +x "$work/stub"
+    ( STUB=$work/stub LOG=$work/log; . "$work/control.sh" ) >/dev/null 2>&1
+    echo $?
+  }
+
+  got=$(drive 1 "  DIAGNOSIS: the box ANSWERED and REFUSED the credentials.")
+  [ "$got" = 0 ] \
+    && ok "a control that fails at the login is what the recipe wants" \
+    || bad "the recipe rejected a control that failed at the login, which is "\
+"the case it exists to accept: exit $got"
+
+  got=$(drive 0 "LAB PASSED")
+  [ "$got" != 0 ] \
+    && ok "and a control that PASSES fails the recipe" \
+    || bad "the recipe accepted a wrong-password run that PASSED. The driver "\
+"would no longer notice a refused login and this lab could run its whole "\
+"session against a login prompt and report a pass"
+
+  # The case where ONLY the inversion can catch it: exit 0 with the refusal
+  # diagnosis on screen. Without this, deleting the inversion still fails the
+  # section above - the diagnosis check rejects a run that printed LAB PASSED -
+  # and the mutation reads as harmless. It is not: a run that exits 0 has not
+  # been refused whatever else is on the screen, and the exit status is the
+  # only thing that says so.
+  got=$(drive 0 "  DIAGNOSIS: the box ANSWERED and REFUSED the credentials.")
+  [ "$got" != 0 ] \
+    && ok "even when it exits 0 with the refusal still on the screen, which is "\
+"the only case the inversion alone can catch" \
+    || bad "the recipe read a run that EXITED 0 as a refusal because the words "\
+"were in its output. The exit status is what says the box refused"
+
+  got=$(drive 1 "  DIAGNOSIS: the box printed NOTHING at all since then.")
+  [ "$got" != 0 ] \
+    && ok "and one that fails by hanging fails it too, because where it "\
+"failed is the point" \
+    || bad "the recipe accepted a control that failed somewhere other than the "\
+"login: a console driver whose failure mode is a hang proves nothing"
+
+  rm -rf "$work"
+fi
+
+echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
 exit 1

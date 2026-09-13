@@ -1657,6 +1657,39 @@ are to be interpreted as described in
 
 ### Internal
 
+* **The control that keeps the console driver honest was invoked by nothing**
+  ([#256](https://github.com/andrediashexa/hexarouting/issues/256)).
+  `lab/install-iso.sh` has a `wrong-password` mode, `TESTING.md` calls it *how
+  the driver is kept honest*, and nothing ran it: not the suite, which excludes
+  `install-iso`, not the `Makefile`, and not the release gate. `make
+  test-install` runs it now, in the same container, and requires it to fail
+  **at the login**.
+
+  What it controls is why it matters. `TESTING.md` states the failure in the
+  same paragraph: a login that fails silently would run the whole session
+  against a login prompt and report a pass. `lab/install-iso.sh` is the only
+  place a box somebody receives is installed and booted.
+
+  **The check that holds the wiring was wrong first, and the second version is
+  the entry.** It grepped the `Makefile` for the phrases the recipe prints, and
+  passed on a recipe whose inversion had been replaced by `if false`: every
+  string was still there, inside a branch that could not be reached. A check
+  that reads the text of a decision cannot see the decision. The recipe is now
+  extracted and RUN against a stub that behaves each of the three ways, and
+  what is asserted is its verdict.
+
+  **And the mutation that exposed that was not enough either.** Deleting the
+  inversion still failed a run printing `LAB PASSED`, because the second check
+  rejects output with no refusal diagnosis in it - so the mutation read as
+  harmless. The case where only the inversion can catch it is a control that
+  **exits 0 with the refusal still on the screen**: the words are not what says
+  the box refused, the exit status is. That case is now driven.
+
+  The `make test-install` target itself has not been executed here: it builds
+  an ISO and boots two VMs, and a release suite had the machine. Its three
+  branches were driven against the stub instead, which is what the section
+  above describes.
+
 * **Not one mapping vector had ever used a port range other than the default.**
   `docs/context.md` invariant 1.3 says there are two specifications of the
   mapping and they MUST agree, and `test/test_bpa_pool.c` compares them over
