@@ -435,12 +435,35 @@ bending the UDP exporter around.
   to reach the collector before its release, or the collector reconstructs an
   impossible history.
 * Every new connection **MUST** start with the template, also prepended.
+* Whatever the socket has not taken when the process leaves **MUST** go to the
+  spill file. The stop drain writes one `natEvent` 17 per block still held into
+  that buffer and services the socket once; a collector that is even slightly
+  behind leaves the tail of that in the process, and the process is about to
+  end. Measured with a collector reading normally and 4001 blocks held: 0 bytes
+  pending before the stop and **70020 bytes still in the buffer at the exit**,
+  which is 1556 releases that used to go with the process
+  ([#219](https://github.com/andrediashexa/hexarouting/issues/219)).
+* The exit path **MUST NOT** wait for the socket instead. The collector that
+  leaves bytes there is the one that has stopped reading, so its window is shut
+  and a wait expires having sent nothing; and a wait in a stop path is how a
+  reboot becomes a power cycle. Writing the file costs one `write()`.
+* The buffer **MUST** always begin at a message boundary. A non-blocking
+  `send()` stops in the middle of a message whenever the window is nearly shut,
+  and three things read the buffer from the front: the template insert, the
+  spill replay, and the spill file itself, which a collector frames by the
+  length in each header. Measured before this held: 82917 bytes spilled at a
+  stop, all 82917 replayed on the next connection, and **one record decoded out
+  of them** - the file began with the tail of a message, and everything behind
+  it misframed.
 
 ### The honest limit of TCP
 
 Verified in `lab/ipfix-tcp.sh`: with the collector killed mid-run, records are
-buffered and arrive decoded on reconnect. But TCP does not give end-to-end
-delivery guarantees — bytes accepted by the socket buffer count as sent and can
+buffered and arrive decoded on reconnect. `lab/ipfix-outbuf.sh` covers the
+other half of it - the collector connected and not reading while the box is
+stopped - and takes its verdict after the box has come back, because a release
+that was spilled and replayed closes the allocation just as well, only later.
+But TCP does not give end-to-end delivery guarantees — bytes accepted by the socket buffer count as sent and can
 be lost if the connection dies immediately after. In the test, two records
 emitted at the moment of the outage fell in that window.
 

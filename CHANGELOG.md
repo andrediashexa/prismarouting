@@ -38,6 +38,7 @@ are to be interpreted as described in
 
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#218](https://github.com/andrediashexa/hexarouting/issues/218),
+[#219](https://github.com/andrediashexa/hexarouting/issues/219),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
@@ -321,6 +322,45 @@ are to be interpreted as described in
   size the first one made it. With the `--add` put back it fails with
   `the configuration grew from 2 line(s) to 7 over five more runs`
   ([#220](https://github.com/andrediashexa/hexarouting/issues/220)).
+
+* **Every IPFIX record the TCP exporter still held was lost when the box
+  stopped, and the ones lost were the releases.** The socket is non-blocking
+  and the spill to disk only triggers above 1 MB, so between "the collector
+  stopped reading" and "1 MB has piled up" the records live in one place: a
+  buffer inside the VPP process. The stop drain writes one `natEvent 17` per
+  block still held into that same buffer, and then the process leaves. In
+  dynamic mode a release that never arrives leaves the allocation open in the
+  retention log for ever, which is
+  [#217](https://github.com/andrediashexa/hexarouting/issues/217) reopened by
+  the transport ([#219](https://github.com/andrediashexa/hexarouting/issues/219)).
+
+  Measured on the build before the fix, with 1501 blocks held: 15372 bytes in
+  the buffer, the drain reporting `released 1501 block(s) still held`, 0 bytes
+  on disk after the stop, and the UDP control delivering all 3012 records while
+  TCP delivered **none** of them.
+
+  **It is not only a stalled collector.** With the collector reading as fast as
+  the box writes and nothing wrong anywhere, the same measurement found 0 bytes
+  pending before the stop and **70020 bytes still in the buffer at the exit**,
+  because the drain writes every record in one go and services the socket once.
+  A box with enough subscribers reaches this on an ordinary reboot.
+
+  The fix is a flush at `VLIB_MAIN_LOOP_EXIT`: whatever the socket refuses goes
+  to the spill file and is replayed in order on the next connection. The bound
+  is **one `write()`** and there is deliberately no timed wait, because the
+  collector that leaves bytes there is the one that has stopped reading - its
+  window is shut, so waiting sends nothing and costs a reboot the wait.
+
+* **The spill file could corrupt the stream it was meant to save, and that is
+  older than the defect above.** A non-blocking `send()` stops mid-message, and
+  the buffer was advanced by the byte count, so it could begin at the tail of a
+  message - and so could the spill file written from it. Measured: 82917 bytes
+  spilled, 82917 replayed on the next connection, and **one record decoded out
+  of them**. The exporter now tracks how much of the front message the socket
+  took, drops only whole messages, never inserts the template in front of a
+  half-sent one, and drops the connection when a spill splits a message,
+  because that stream can no longer be completed. The 1 MB spill and the 60
+  second template refresh could both hit this on a live box today.
 
 ### Internal
 
