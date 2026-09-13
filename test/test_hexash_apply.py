@@ -703,5 +703,85 @@ check(("keep", True) in pool_calls
 print(f"  pool calls: {pool_calls}")
 print(f"  the box holds: {api.holds}")
 
+print("\n=== CGNAT is applied before routing, and something watches (#241) ===")
+# `docs/routing.md` calls this a MUST and `apply()`'s own docstring repeats it:
+# a routing change can cost reachability, so doing it last keeps the window in
+# which the box is half-configured as short as possible. Reloading FRR at the
+# top of apply() left all 33 suites green, because nothing here was in a
+# position to SEE the order: the FRR stub records nothing, and the API stub and
+# the dataplane stub each keep a list of their own, so no two calls could be
+# compared.
+#
+# One clock for all of them. An ordering claim needs a single sequence, and two
+# lists that each start at zero cannot answer which came first - which is why
+# this went unheld rather than anybody deciding it did not matter.
+
+
+class OrderedApi(FakeApi):
+    """A dataplane API that writes into a shared trace."""
+
+    def __init__(self, trace):
+        FakeApi.__init__(self)
+        self.trace = trace
+
+    def call(self, message, args):
+        self.trace.append(("cgnat", message))
+        return FakeApi.call(self, message, args)
+
+
+class OrderedFrr:
+    """An FRR that writes into the same trace, and says it is there."""
+
+    def __init__(self, trace):
+        self.trace = trace
+
+    def available(self):
+        return True
+
+    def running(self):
+        return []
+
+    def outstanding(self, _out):
+        return []
+
+    def diagnostics(self, _out):
+        return []
+
+    def reload(self, lines, check_only=False):
+        self.trace.append(("routing", "check" if check_only else "reload"))
+        return 0, ""
+
+
+_trace = []
+_sh = shell_with(OrderedApi(_trace))
+_sh.frr = OrderedFrr(_trace)
+_sh.rb = type("_RB", (), {"push": lambda self, *a: None})()
+_sh.dp = FakeVpp()
+
+# A target that changes BOTH halves in one commit. Only a commit touching both
+# can be wrong about the order.
+_target = target_with("ordered", "100.64.0.0/22", "200.150.0.16/28")
+_target.routing = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001"]
+_sh.apply(_target)
+
+_kinds = [k for k, _ in _trace]
+print(f"  the order the box was touched in: {_kinds}")
+
+check("cgnat" in _kinds,
+      f"no CGNAT call was made at all, so the order below is about nothing: "
+      f"{_trace}")
+check("routing" in _kinds,
+      f"FRR was never reloaded, so there is no routing half to be second: "
+      f"{_trace}")
+if "cgnat" in _kinds and "routing" in _kinds:
+    _last_cgnat = len(_kinds) - 1 - _kinds[::-1].index("cgnat")
+    _first_routing = _kinds.index("routing")
+    check(_last_cgnat < _first_routing,
+          f"routing was applied before CGNAT had finished: the last CGNAT "
+          f"call is at {_last_cgnat} and the first routing call at "
+          f"{_first_routing}. A routing change can cost reachability, and "
+          f"doing it first widens the window in which the box is "
+          f"half-configured: {_kinds}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

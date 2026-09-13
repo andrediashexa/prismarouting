@@ -65,7 +65,8 @@ are to be interpreted as described in
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
-[#237](https://github.com/andrediashexa/hexarouting/issues/237).
+[#237](https://github.com/andrediashexa/hexarouting/issues/237),
+[#241](https://github.com/andrediashexa/hexarouting/issues/241).
 
 ### Added
 
@@ -1467,6 +1468,25 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **Nothing could see which half of the box a commit touched first**
+  ([#241](https://github.com/andrediashexa/hexarouting/issues/241)).
+  `docs/routing.md` calls it a MUST and `apply()`'s own docstring repeats it:
+  CGNAT is applied first and routing second, because a routing change can cost
+  reachability and doing it last keeps the half-configured window short.
+  Reloading FRR at the top of `apply()` left all 33 suites green.
+
+  The reason is worth more than the fix. It was not that nobody had written the
+  assertion: **nothing was in a position to write it.** The FRR stub recorded
+  nothing at all, and the API stub and the dataplane stub each kept a list of
+  their own, so no two calls could be compared. Two lists that each start at
+  zero cannot answer which came first.
+
+  One clock for all three now, and the check reads the single sequence. Shown
+  failing on the mutation that started this - `['routing', 'cgnat',
+  'routing']` - and on both halves going missing, because an ordering check
+  over a trace with only one kind of entry in it passes while asserting
+  nothing.
 
 * **A test file in the tree that nothing ran, and nothing would have said so**
   ([#235](https://github.com/andrediashexa/hexarouting/issues/235)). Two lists
