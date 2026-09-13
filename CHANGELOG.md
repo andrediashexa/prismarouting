@@ -65,7 +65,8 @@ are to be interpreted as described in
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
-[#237](https://github.com/andrediashexa/hexarouting/issues/237).
+[#237](https://github.com/andrediashexa/hexarouting/issues/237),
+[#243](https://github.com/andrediashexa/hexarouting/issues/243).
 
 ### Added
 
@@ -1467,6 +1468,29 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **The trail's `fsync` could be deleted with 36 assertions on that file still
+  green** ([#243](https://github.com/andrediashexa/hexarouting/issues/243)).
+  `docs/logging.md` states it as a MUST and gives the reason in the same
+  sentence: a compliance log MUST NOT live only in the page cache. Removing the
+  call left all 33 suites green and `lab/audit.sh` green too, because every one
+  of its 36 assertions reads the trail back **through the same kernel that
+  buffered it**. A page-cache-only file reads perfectly right up until the box
+  loses power, which is the one moment a retention obligation is about.
+
+  `lab/trail-fsync.sh` measures it with no debugger and no extra package. The
+  trail goes on an ext4 filesystem loop-mounted from an image file: writes land
+  in the loop device's page cache, and the loop driver copies a block down to
+  the **backing file** only when that block is written back, which `fsync`
+  forces and the writeback timer otherwise leaves for up to thirty seconds. So
+  reading the image directly, immediately, asks the box the question the
+  document asks.
+
+  **Section 3 is the control and the lab is worthless without it**: it writes a
+  file to the same filesystem without an `fsync` and shows it is NOT on the
+  disk. A filesystem that happened to write everything through would pass the
+  claim on its own, and this lab would be reporting an `fsync` that is not
+  happening.
 
 * **A test file in the tree that nothing ran, and nothing would have said so**
   ([#235](https://github.com/andrediashexa/hexarouting/issues/235)). Two lists
