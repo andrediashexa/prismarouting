@@ -737,5 +737,26 @@ fi
 rm -f "$FAKE/mainpid"
 rm -rf "$FAKE/root"
 
+echo "=== the rx-queues line says a number, or says what the default costs ==="
+# The fix this came with had nothing holding it, which is how it got there in
+# the first place: the || sat after "head -1", and head succeeds on empty
+# input, so the fallback could never run and a box with no num-rx-queues
+# printed "[ ok ] rx queues:" and stopped. A label with no value is an
+# assertion that cannot fail, in the half of the self-test that reports.
+#
+# mkcpus writes a startup.conf with no num-rx-queues, which is the box in
+# question: the tuner leaves the line out when it has nothing to say, and that
+# is the common case rather than an odd one.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+run
+if said '\[ ok \] rx queues: *$'; then
+  bad "the rx-queues line printed a label and no value at all"
+elif said '\[ ok \] rx queues: default'; then
+  ok "a box whose profile names no rx queues says so, and says what it means"
+else
+  bad "nothing reported rx queues: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+rm -rf "$FAKE/root"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

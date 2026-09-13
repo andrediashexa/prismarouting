@@ -266,7 +266,7 @@ are to be interpreted as described in
 * **`[ ok ] rx queues:` with nothing after it.** The `||` sat after `head -1`,
   which succeeds on empty input, so a box whose profile names no
   `num-rx-queues` printed the label and no value - an assertion that cannot
-  fail, in the reporting half. Seen on an installed box.
+  fail, in the reporting half. Seen on an installed box. `test/test_selftest.sh` now holds it against a fake box whose profile names no `num-rx-queues`, which is the common case rather than an odd one: the old form fails it with `the rx-queues line printed a label and no value at all`.
 
 ### Internal
 
