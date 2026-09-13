@@ -127,8 +127,8 @@ are to be interpreted as described in
   it proved nothing, so a quiet period that shrank cannot reach green by
   waiting for a busy machine.
 
-* **`test/test_wiki_commands.py`: every command the wiki tells an operator to
-  type, typed at the command tree.** The wiki is where this product promises
+* **`test/test_doc_commands.py`: every command the documentation tells a reader
+  to type, typed at the command tree.** The wiki is where this product promises
   things to somebody who does not have the source, and nothing checked that
   what it shows exists. It reads the prompt lines inside fenced blocks, puts a
   shell in the mode and the block the prompt says the reader is in, and walks
@@ -137,6 +137,12 @@ are to be interpreted as described in
   is the same boundary `?` and TAB have at the real VTY. It found both of the
   defects above. `install` is the one deliberate exception, and the exception
   requires the page to explain itself, so it cannot rot into a hole.
+
+  It reads `docs/` and `README.md` beside the wiki, and `docs/` was not the
+  softer half: `docs/routing.md` showed `hexarouting# show cgnat ?`, and a
+  four-line transcript that entered an interface and then typed `mtu 1500` at
+  the `[edit]` prompt, which is the top of configuration mode, where `mtu` is
+  not a statement at all. Both are fixed.
 
 ### Fixed
 
