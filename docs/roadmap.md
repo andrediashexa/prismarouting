@@ -645,7 +645,7 @@ had.**
 | [#207](https://github.com/andrediashexa/hexarouting/issues/207) | a session pointer held across a second `pool_get`, twice | *fixed* |
 | [#206](https://github.com/andrediashexa/hexarouting/issues/206) | `alg <x> off` on the pool line accepted and ignored, taking a lab's whole `off` mode with it | *fixed* |
 | [#209](https://github.com/andrediashexa/hexarouting/issues/209) | UDP IPFIX export has never worked on an installed box | *fixed* |
-| [#210](https://github.com/andrediashexa/hexarouting/issues/210) | a subscriber refused while blocks stand free, and the pool reporting capacity it cannot deliver | **open**; the claim is fixed, the mechanism is a decision |
+| [#210](https://github.com/andrediashexa/hexarouting/issues/210) | a subscriber refused while blocks stand free, and the pool reporting capacity it cannot deliver | **open**; the claim is honest now, the mechanism is a decision |
 
 **#209 was the one to do next and it is done.** In dynamic mode the allocation
 log *is* the connection record — kept a year, on its own filesystem, and what
@@ -844,17 +844,31 @@ nobody reviewed, and the issue is the only place the measurement survives.
 | [#213](https://github.com/andrediashexa/hexarouting/issues/213) | a received Router Advertisement is dropped by VPP instead of punted, so an unnumbered BGP session reaches Active and never Established | *fixed* - and the cause in the title was wrong: IPv6 multicast punt works, ICMPv6 type 134 was the hole |
 | [#214](https://github.com/andrediashexa/hexarouting/issues/214) | a public port can be forwarded once per **pool** rather than once per public address, so on an interleaved pool with N addresses only one subscriber in N can hold a forward at a given offset | *fixed* |
 | [#215](https://github.com/andrediashexa/hexarouting/issues/215) | deleting a pool emits no `natEvent 17`, so every block it held stays **open** in the retention log — the answer to a court order then names a subscriber who had already been disconnected | *fixed* |
-| [#217](https://github.com/andrediashexa/hexarouting/issues/217) | and a box that is **stopped** does the same, on every planned reboot — with a second allocation and no release between them when it comes back | **open** |
+| [#217](https://github.com/andrediashexa/hexarouting/issues/217) | and a box that is **stopped** does the same, on every planned reboot — with a second allocation and no release between them when it comes back | *fixed*, drain and marker together |
+| [#219](https://github.com/andrediashexa/hexarouting/issues/219) | TCP bytes still in `outbuf` when the box stops may go with the process — written from reading the path, **not yet reproduced** | **open** |
+| [#218](https://github.com/andrediashexa/hexarouting/issues/218) | `make test` failed twice under a release suite and nothing recorded which assertion | **open** |
 | [#216](https://github.com/andrediashexa/hexarouting/issues/216) | `bpa_dyn_active()` has no callers; either it is unnecessary or a call is missing, and nothing in the code says which | *fixed* — and it was neither: calling it would have leaked a block |
 
 #215's fix also covers a pool being **replaced**, which was not obvious: a
 `commit remap` is applied as a delete and an add, so it went through the same
-hole. What is left in #217 is the commonest of the three - the box itself going
-down, on every planned reboot and every upgrade - and it is deliberately not a
-one-line follow-up: a power loss can never emit the record, so a drain on
-graceful stop alone would *look* like a fix and leave the ambiguity that makes
-the log unreadable after a crash. It needs a restart marker beside it, and what
-shape that takes is a decision.
+hole.
+
+#217 closed the third, and it needed two pieces rather than one for a reason
+worth keeping. **A power loss can never emit the drain**, so a graceful-stop
+drain alone would *look* like a fix and leave a collector unable to tell an
+allocation the box **died holding** from one **still in force** — which is the
+ambiguity that makes the log unreadable after exactly the failures where it
+matters. The marker is proposed rather than decided: IE 160
+`systemInitTimeMilliseconds`, IANA-registered and already in VPP's element
+table, with four rejected alternatives argued in `bpa_log.h`.
+
+**Where the drain hangs was measured, not chosen.** With only the in-process
+exit hook, a UDP record is written, the counter advances, and it never reaches
+the collector — VPP's UDP export is not a kernel socket, it is a packet the
+*dataplane* sends, and the graph has already stopped. Over TCP the hook works.
+So the drain that covers UDP has to be asked for while the graph is still
+running, which is what an `ExecStop` is. A drain only in the hook would have
+looked like a fix and lost exactly the transport the product uses by default.
 
 #213 was the one that mattered most, for the reason that puts anything at the
 top of this file: **the product accepted the configuration and could not
@@ -964,6 +978,20 @@ written into `lab/frr-readback.sh` and then refuted by that lab on its first
 run: FRR 10.7.1 answers `% Unknown command`. The probe that produced the wrong
 claim had typed the target spelling before looking for it, which is the trap
 section 4d of that file already existed to warn about.
+
+#### What is blocked on somebody else, and on what
+
+Kept short and kept honest, so the rest of this file is read as work that can
+actually start.
+
+| | |
+|---|---|
+| [#202](https://github.com/andrediashexa/hexarouting/issues/202) the rename to PrismaRouting | the maintainer's, and one question is open: `hexash` is the recorded login shell of existing accounts, so whether it renames with the product changes the migration |
+| [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 396, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
+| [#197](https://github.com/andrediashexa/hexarouting/issues/197) promotion to a refusal | not a decision - a **measurable condition** written in the code: it becomes a refusal when the full lab suite has run clean with it refusing. Four false positives in five encounters with real configuration is why it warns today |
+| Publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. Pages for #67, #182, #210, #213 and #217 are written and mirrored under `wiki/` and have not been pushed |
+| [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), [#30](https://github.com/andrediashexa/hexarouting/issues/30), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
+| [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
 
 #### Installation — blocked by nothing, paid on every box
 
