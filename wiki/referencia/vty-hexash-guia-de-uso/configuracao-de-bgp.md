@@ -48,6 +48,8 @@ router bgp 65000
 
 Dentro de `address-family`, o mesmo vizinho entende `activate`, `route-map`, `prefix-list`, `soft-reconfiguration inbound`, `remove-private-AS` e `default-originate`.
 
+Essa tabela é o que o `hexash` **confere**. O BGP do roteamento entende muito mais do que isso, e o que não está aqui é repassado sem leitura - o que é legítimo, e é por isso que sai marcado com `<- not checked` no `show this` e no `show configuration`. Vale reparar que `soft-reconfiguration inbound` está na lista da família de endereço e não na lista de cima: digitada direto dentro de `router bgp`, ela sai marcada.
+
 # Sessão sem endereço no enlace (BGP unnumbered)
 
 Um trânsito ou um peering com um vizinho diretamente conectado não precisa de um /30 no enlace. A sessão sobe pelo endereço de enlace local que os dois lados já têm, e o vizinho é a **interface**:

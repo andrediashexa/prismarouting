@@ -176,6 +176,41 @@ Dentro de um pool, o bloco sai na forma curta — `cgnat pool residential`, sem 
 
 O prompt nomeia onde você está, inclusive qual pool ou qual interface — `[edit interface TenGigabitEthernet0/8/0]` — para que a próxima declaração não caia no bloco errado.
 
+## O que a caixa conferiu, e o que ela apenas repassou
+
+O `hexash` conhece parte das sentenças de roteamento e repassa o resto ao roteamento sem ler. As duas coisas apareciam iguais na tela. Agora não:
+
+```
+hexarouting# [edit] show configuration
+...
+! routing
+router bgp 65000
+neighbor 10.0.0.2 remote-as 65001
+coalesce-time 1000  <- not checked
+neighbor 10.0.0.2 soft-reconfiguration inbound  <- not checked
+exit
+! hexash: 2 statement(s) above are marked '<- not checked': this VTY has no
+! hexash: grammar for them and handed them to FRR word for word
+```
+
+A marca `<- not checked` quer dizer: **esta caixa não tem gramática para esta linha e a entregou ao roteamento exatamente como foi digitada.** Não quer dizer que a linha esteja errada - muita configuração correta de FRR passa por aqui. Quer dizer que quem conferiu foi o roteamento, no `commit`, e não o `hexash`, no prompt.
+
+O que decide a marca é a mesma lista que o `?` oferece naquele bloco. Por isso a **mesma** sentença pode sair marcada num lugar e não sair em outro: `soft-reconfiguration inbound` é conhecida dentro de `address-family` e não é conhecida direto dentro de `router bgp`.
+
+A marcação aparece em `show configuration`, `show running-config` e `show this`. A mais útil é a do `show this`, porque é a que aparece **enquanto você ainda está digitando**, e não depois.
+
+Num bloco que a caixa não modela de jeito nenhum, a marca vem já no cabeçalho - a notícia ali é que nada daquele bloco foi lido:
+
+```
+hexarouting# [edit vrf red] show this
+vrf red  <- not checked
+ ip route 10.9.0.0/16 10.0.0.9  <- not checked
+```
+
+A marca é **só de tela**. Ela não entra no arquivo que o `save` grava, não vai para o roteamento no `commit` e não aparece nas revisões de rollback: o arquivo que a caixa lê no boot precisa ser um arquivo que o roteamento aceita. Copiar a tela marcada para um arquivo e carregá-la de volta funciona - a caixa tira a marca e a linha final na leitura.
+
+A linha final só aparece quando há alguma coisa marcada. Um aviso que aparece sempre é um aviso que ninguém lê.
+
 ## `show` — restante
 
 | Comando | Mostra |
