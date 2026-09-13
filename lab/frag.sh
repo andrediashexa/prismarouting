@@ -54,6 +54,25 @@ vat2 bpa_interface_add_del_feature \
 
 PG2_FEATURES=$(vppctl show interface features pg2)
 
+# arc_order <interface> - the ip4-unicast features the BOX computed, in the
+# order it will run them. This is the arc after VPP's constraint sort, not the
+# constraints the plugin asked for, so it is the only place the ordering can
+# be read as a fact rather than as an intention.
+#
+# vppctl ends every line with CRLF, and awk's field splitting keeps the CR, so
+# without tr the feature names carry one and nothing anchored to the end of a
+# name ever matches.
+arc_order() {
+  vppctl show interface features "$1" | tr -d '\r' | awk '
+    /^ip4-unicast:/ { inarc = 1; next }
+    inarc && /^[^ ]/ { exit }
+    inarc && NF     { print $1 }'
+}
+
+PG0_ARC=$(arc_order pg0)
+PG1_ARC=$(arc_order pg1)
+PG2_ARC=$(arc_order pg2)
+
 echo
 echo "=== is shallow virtual reassembly on for both interfaces? ==="
 for i in pg0 pg2; do
@@ -176,6 +195,49 @@ check_path() {
   expect_in "and the following fragment was translated with the first one's ports" \
     "$3 proto udp" "$FRAGLINE"
 }
+
+# check_arc <label> <arc order, one feature per line>
+#
+# Every BPA node on ip4-unicast MUST run BEHIND ip4-sv-reassembly-feature. A
+# node ahead of it reads vnet_buffer(b)->ip.reass before reassembly has
+# written it, so a following fragment is matched on a garbage port: a phantom
+# session, and one port of the subscriber's block burnt per fragment.
+#
+# This reads the arc the box computed, which is a different claim from the
+# source declaring a constraint, and it is the half the source cannot make:
+# a declaration that is present and ineffective - a VPP upgrade renaming the
+# reassembly feature, another plugin's constraints reshuffling the arc - is
+# red here and green in test/test_feature_order.py.
+#
+# It is NOT a check on the declarations, and that was measured rather than
+# assumed. With all four .runs_after deleted this arc comes out identical,
+# because VPP's sort falls back to registration order when nothing constrains
+# the pair and registration order agrees today. That is why the missing
+# declaration is caught in make test, over the source, and why both checks
+# exist.
+check_arc() {
+  echo "  -- $1"
+  printf '     ip4-unicast on the box: %s\n' "$(printf '%s' "$2" | tr '\n' ' ')"
+  _reass=$(printf '%s\n' "$2" | grep -n "^ip4-sv-reassembly-feature$" \
+           | cut -d: -f1)
+  _bpa=$(printf '%s\n' "$2" | grep -c "^bpa-" || true)
+  # A CGNAT interface with no BPA node on the arc means the reading is of
+  # something else, and the ordering check below would pass by comparing
+  # nothing.
+  expect "the arc carries a BPA node at all" test "$_bpa" -ge 1
+  expect "and shallow virtual reassembly is on the same arc" \
+    test -n "$_reass"
+  [ -n "$_reass" ] || return
+  _bad=0
+  for _pos in $(printf '%s\n' "$2" | grep -n "^bpa-" | cut -d: -f1); do
+    [ "$_pos" -gt "$_reass" ] || _bad=$((_bad + 1))
+  done
+  expect "and every BPA node runs after it, not before" test "$_bad" = "0"
+}
+
+check_arc "pg0, attached at the VPP CLI" "$PG0_ARC"
+check_arc "pg1, the outside interface" "$PG1_ARC"
+check_arc "pg2, attached over the binary API" "$PG2_ARC"
 
 check_path "pg0, attached at the VPP CLI" "$CLI_TRACE" \
   "100.64.0.5:12345 -> 200.150.0.17:1536"

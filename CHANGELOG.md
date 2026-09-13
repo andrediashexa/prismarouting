@@ -66,6 +66,7 @@ are to be interpreted as described in
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
 [#237](https://github.com/andrediashexa/hexarouting/issues/237),
+[#239](https://github.com/andrediashexa/hexarouting/issues/239),
 [#240](https://github.com/andrediashexa/hexarouting/issues/240),
 [#241](https://github.com/andrediashexa/hexarouting/issues/241),
 [#242](https://github.com/andrediashexa/hexarouting/issues/242),
@@ -563,6 +564,37 @@ are to be interpreted as described in
   on the subscriber-facing interface would otherwise read as correct.
 
   57 checks on master before this run of work, **141** after.
+
+* **The BPA nodes' ordering behind shallow virtual reassembly had nothing
+  behind it.** `docs/architecture.md:1879` states that the BPA feature nodes
+  MUST declare `runs_after` on `ip4-sv-reassembly-feature`, because a node
+  placed ahead of reassembly reads `vnet_buffer(b)->ip.reass` before it has
+  been written: the following fragment is matched on a garbage port, opens a
+  second session and burns one port of the subscriber's block per fragment.
+  All four declarations could be deleted with every suite and every lab green
+  ([#239](https://github.com/andrediashexa/hexarouting/issues/239)).
+
+  **The box cannot see the deletion, and that was measured rather than
+  assumed.** With the four declarations gone, VPP 26.06 still computes
+  `ip4-sv-reassembly-feature` then `bpa-in2out` on the arc, because its sort
+  falls back to registration order when no constraint names the pair and
+  registration order happens to agree today. Every packet assertion in
+  `lab/frag.sh` stays green, which is why the lab never caught this: the
+  deletion removes the guarantee, not the current behaviour. So the missing
+  declaration is caught over the source, by `test/test_feature_order.py` in
+  `make test` - four failures, one per node, and a fifth node added without
+  the declaration is a failure of its own.
+
+  **`lab/frag.sh` now asserts the arc the box actually computed**, which is
+  the half the source cannot make: every BPA node on `ip4-unicast` must appear
+  after `ip4-sv-reassembly-feature` on pg0, pg1 and pg2. A declaration that is
+  present and ineffective - a VPP upgrade renaming the reassembly feature,
+  another plugin's constraints reshuffling the arc - is red there and green in
+  `make test`. Shown failing by inverting the constraint to `runs_before`: the
+  arc comes out `bpa-in2out ip4-sv-reassembly-feature`, the three ordering
+  checks go red, and so do the six fragment assertions, with **two** sessions
+  opened by the two fragments instead of one. That is the defect itself, on
+  the wire.
 
 ### Added
 

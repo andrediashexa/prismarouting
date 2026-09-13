@@ -1878,6 +1878,23 @@ them to the following ones.
 
 * The BPA nodes **MUST** declare `runs_after` on `ip4-sv-reassembly-feature`.
   Otherwise they may run first and read buffer fields that do not yet exist.
+  This is checked in two places, because neither can see what the other sees
+  ([#239](https://github.com/andrediashexa/hexarouting/issues/239)):
+
+  | Check | What it reads | What it catches |
+  |---|---|---|
+  | `test/test_feature_order.py` (`make test`) | the four `VNET_FEATURE_INIT` blocks in the source | a declaration deleted, and a **new** feature node added without one |
+  | `lab/frag.sh` | `show interface features`, the arc VPP actually computed | the order being wrong on the box, whatever the source declares |
+
+  The source check is not the weaker one here, and that was measured. With all
+  four declarations deleted VPP 26.06 still computes
+  `ip4-sv-reassembly-feature` ahead of `bpa-in2out`: its sort falls back to
+  registration order when nothing constrains the pair, and registration order
+  agrees today. Every dataplane assertion in `lab/frag.sh` stays green. So
+  what the declaration buys is not today's order but the guarantee that a VPP
+  upgrade, a link order change or another plugin's constraints cannot take it
+  away, and only the source records whether that guarantee is still being
+  asked for.
 * The reassembly stores ports in **network byte order**. Read as host order,
   12345 (`0x3039`) becomes 14640 (`0x3930`), the node misses the session and
   opens another — **burning one port per fragment**. A subscriber that
