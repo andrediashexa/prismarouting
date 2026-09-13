@@ -601,7 +601,17 @@ are to be interpreted as described in
   than a tidier one: 3 GB is a warning and not a refusal, and a missing `avx2`
   is a throughput statement, because VPP runs on that box.
 
-  57 checks before, **103** after.
+  A second round took the four that were left and were reachable: the **`vpp`
+  group** (without it the only account that can configure a pool is root, which
+  is the whole of #35 and #184 undone), **the API reach proven and disproven**
+  as separate states, **`hexarouting.service` failing** (the box comes up
+  forwarding nothing it was configured to forward while VPP, FRR and the VTY
+  all answer perfectly), and **how many pools the box ended up carrying**. Two
+  of those were unreachable for the same reason `NRestarts` was: the fake box
+  answered `systemctl is-failed` with a constant, and it had no `show bpa pool`
+  at all.
+
+  57 checks on master before any of this, **112** after.
 
 * **The `<- not checked` marker is shorter, and three places were still
   quoting the old text.** It shipped in 0.66.0 as
