@@ -31,7 +31,7 @@ $HX -c "configure" -c "interface pg0.100" -c "vlan 100" \
 vppctl set interface state pg0.100 up 2>/dev/null
 
 echo "  interfaces on the dataplane now:"
-vppctl show interface | awk 'NR>1 {print "    " $1}' | grep -v '^    $'
+vc show interface | awk 'NR>1 {print "    " $1}' | grep -v '^    $'
 
 . /src/lab/verdict.sh
 IFACES=$(vppctl show interface | awk '{print $1}')
@@ -57,7 +57,7 @@ frame() {  # $1 = vlan id in hex, 4 digits
 # carries the interface name or is a continuation. Reading a fixed column
 # gave "up" - the State - and the assertion then compared two strings that
 # were never numbers.
-count_of() { vppctl show interface "$1" | awk '/rx packets/ {print $NF}' | head -1; }
+count_of() { vc show interface "$1" | awk '/rx packets/ {print $NF}' | head -1; }
 
 echo
 echo "=========== a frame tagged 100 ==========="

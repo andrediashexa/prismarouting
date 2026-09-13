@@ -81,11 +81,11 @@ echo "=========== A reaches a public address with nothing behind it ==========="
 # Read off the out2in node's own counters and not the whole blob: "no session
 # for destination" would otherwise be satisfied by the out2in counter that any
 # earlier unsolicited packet raised.
-CAPTURED=$(vppctl show interface pg0 | awk '/tx packets/{print $NF}')
+CAPTURED=$(vc show interface pg0 | awk '/tx packets/{print $NF}')
 send 5 40001 200.150.0.18 9999
 NOPEER2=$(vppctl show errors | grep "bpa-out2in" | grep -i "no session for destination" \
           | awk '{print $1}' | head -1)
-AFTER=$(vppctl show interface pg0 | awk '/tx packets/{print $NF}')
+AFTER=$(vc show interface pg0 | awk '/tx packets/{print $NF}')
 echo "  out2in no-session drops now: ${NOPEER2:-0}"
 echo "  pg0 tx before ${CAPTURED:-0}, after ${AFTER:-0}"
 

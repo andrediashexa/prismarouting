@@ -102,7 +102,7 @@ echo "  tenant B left on $B"
 
 echo
 echo "=========== 3. and they are two sessions, not one ==========="
-vppctl show bpa session | tail -1 | sed 's/^/  /'
+vc show bpa session | tail -1 | sed 's/^/  /'
 SESSIONS=$(vppctl show bpa session | grep -o "total: [0-9]*" | awk '{print $2}')
 
 echo

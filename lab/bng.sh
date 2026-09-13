@@ -243,7 +243,11 @@ start_dataplane() {
 
   vppctl create host-interface name acc0 > /dev/null
   vppctl set interface state host-acc0 up
-  ACCMAC=$(vppctl show hardware host-acc0 | sed -n 's/.*Ethernet address //p' | head -1)
+  # tr -d '\r' rather than vc(): this runs before lab/lib.sh is sourced. The
+  # sed prints the REST OF THE LINE, so without it the address carries vppctl's
+  # carriage return into `ip link set` (#249).
+  ACCMAC=$(vppctl show hardware host-acc0 | tr -d '\r' \
+           | sed -n 's/.*Ethernet address //p' | head -1)
   vppctl create tap id 0 host-if-name vppcp > /dev/null
   vppctl set interface state tap0 up
   # pppoe-cp-dispatch REWRITES the source MAC of every frame it sends from the

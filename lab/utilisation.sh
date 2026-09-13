@@ -76,7 +76,7 @@ fill() {
 # that happens to carry it, so the counts below would move for a reason that
 # has nothing to do with a subscriber filling its block.
 alarms() { vppctl show logging 2>/dev/null | grep -c "past the 75% alarm"; }
-last_alarm() { vppctl show logging 2>/dev/null | grep "past the 75% alarm" | tail -1; }
+last_alarm() { vc show logging 2>/dev/null | grep "past the 75% alarm" | tail -1; }
 
 echo "=========== 1. a subscriber below the threshold ==========="
 echo "100.64.0.5 takes 4 of its 8 ports - 50%, under the 75% alarm."

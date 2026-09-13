@@ -88,7 +88,7 @@ vat2 bpa_pool_add_del '{
 echo "  did the 'bad' pool get in? (it must not)"
 vppctl show bpa pool | grep -c "pool bad" | sed 's/^/    occurrences: /'
 echo "  and the detailed reason went to the log:"
-vppctl show logging 2>/dev/null | grep -i "block size" | tail -1 | sed 's/^/    /'
+vc show logging 2>/dev/null | grep -i "block size" | tail -1 | sed 's/^/    /'
 
 echo
 echo "=========== VERDICT ==========="

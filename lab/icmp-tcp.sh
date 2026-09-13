@@ -86,7 +86,7 @@ send_tcp() {
   vppctl clear trace >/dev/null; vppctl trace add pg-input 3 >/dev/null
   vppctl packet-generator enable >/dev/null; sleep 1
   vppctl packet-generator delete t >/dev/null 2>&1
-  printf "  %-8s -> %s\n" "$1" "$(vppctl show bpa session | tail -1)"
+  printf "  %-8s -> %s\n" "$1" "$(vc show bpa session | tail -1)"
 }
 
 echo "  timeouts: estabelecida 7440s, transitoria 240s"

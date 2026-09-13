@@ -60,7 +60,20 @@ UDPT=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.123.1.1.2.0 2>&1)
 ICMPT=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.2.1.123.1.1.3.0 2>&1)
 SUBS=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.99999.1.1.0 2>&1)
 PORTS=$(snmpget -v2c -c hexro -Ovq 127.0.0.1 1.3.6.1.4.1.99999.1.2.0 2>&1)
-echo "  natUdpDefIdleTimeout  = $UDPT   (vppctl says $(vppctl show bpa timeouts | tr ' ' '\n' | grep -A0 -x -m1 600 || echo 600))"
+# The value the DATAPLANE holds, so the poll below is compared against the box
+# and not against the number typed into this script. The strip is the whole
+# reason this line is worth reading twice: vppctl ends its lines with CR+LF and
+# awk keeps the CR on the last field, so `awk '$1=="udp"{print $2}'` returns
+# "600<CR>". This line used to be
+#
+#   vppctl show bpa timeouts | tr ' ' '\n' | grep -A0 -x -m1 600 || echo 600
+#
+# and `grep -x` compares WHOLE LINES, so it was matching "600" against
+# "600<CR>" and never matching anything. The `|| echo 600` then printed the
+# literal, so the report said "vppctl says 600" whatever the dataplane held -
+# a cross-check that had been inert since it was written (#249).
+DP_UDPT=$(vc show bpa timeouts | awk '$1 == "udp" { print $2; exit }')
+echo "  natUdpDefIdleTimeout  = $UDPT   (the dataplane says ${DP_UDPT:-nothing})"
 echo "  natIcmpDefIdleTimeout = $ICMPT"
 echo "  subscribers           = $SUBS"
 echo "  portsUsed             = $PORTS"
@@ -99,7 +112,11 @@ expect_in "with the standard NAT-MIB subtree" "1.3.6.1.2.1.123" "$CONF"
 expect_in "and the operator's own enterprise subtree" "1.3.6.1.4.1.99999" "$CONF"
 # The daemon half of read-only. There must never be an rwcommunity line.
 expect_not_in "and NO writable community" "rwcommunity" "$CONF"
+# Against the DATAPLANE's own answer, not against 600. The agent serving a
+# constant and the agent reading the box are the same thing to a literal.
 expect "the UDP timeout came back over SNMP" test "$UDPT" = "600"
+expect "and it is the value the dataplane actually holds, not a constant" \
+  test "$UDPT" = "${DP_UDPT:-unread}"
 expect "and the ICMP one" test "$ICMPT" = "90"
 expect "the enterprise subtree reports the subscriber" test "$SUBS" = "1"
 expect "and the ports it holds" test "$PORTS" = "3"
