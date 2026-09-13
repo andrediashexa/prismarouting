@@ -36,9 +36,81 @@ are to be interpreted as described in
 
 ## Unreleased
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-[#213](https://github.com/andrediashexa/hexarouting/issues/213).
+[#172](https://github.com/andrediashexa/hexarouting/issues/172),
+[#187](https://github.com/andrediashexa/hexarouting/issues/187),
+[#210](https://github.com/andrediashexa/hexarouting/issues/210),
+[#213](https://github.com/andrediashexa/hexarouting/issues/213),
+[#217](https://github.com/andrediashexa/hexarouting/issues/217).
+
+### Added
+
+* **OSPFv3 is a protocol this box runs, rather than one it offered and could
+  not do.** `router ospf6` was a word the VTY did not model: it went to FRR
+  untouched, committed, and `ospf6d` was enabled in no file the product shipped
+  - not `appliance/install.sh`, not the boot self-test. The statement was
+  reachable only by typing it blind, since `?` never listed it and TAB never
+  completed it, and `lab/igp.sh` asserted the refusal that followed as though a
+  protocol the box refuses were a finished feature.
+
+  The issue asked for a decision - take the statement out of the command tree,
+  or make it work - and it was settled by measuring. With an OSPFv3 packet
+  injected at a `linux_cp` pair and tcpdump on the TAP, IPv6 protocol 89 to
+  `ff02::5` **arrives**: VPP has no local handler for protocol 89, so it falls
+  through `ip6-local` to `ip6-punt` and linux_cp's per-pair punt redirect hands
+  it out of the TAP, which is the same reason OSPFv2 has always worked. The
+  adjacency then reaches `Full` and the prefix reaches the VPP FIB, with no
+  punt beyond the one OSPFv2 uses. So the transport was never the problem and
+  the daemon list was.
+
+  `ospf6d` is enabled by the installer and checked by the boot self-test beside
+  the other three; `router ospf6` and `ipv6 ospf6 …` are in the command tree
+  with grammars measured against a live FRR 10.7.1 rather than written from
+  memory; and `lab/igp.sh` configures OSPFv3 at this box's own VTY and asserts
+  the prefix in the VPP FIB, the adjacency at `Full`, and the withdrawal when
+  the far end drops it.
+
+* **The inherited-MTU stall is reported on an OSPFv3 interface too.** RFC 5340
+  keeps the Interface MTU field in the database description packet, so a pair
+  whose TAP is at 9000 against a 1500 wire stops an OSPFv3 adjacency short of
+  `Full` exactly as it does an OSPFv2 one - measured, and measured again
+  reaching `Full` within seconds of the two being made to agree. Every check in
+  `ospf_findings` keyed on `ospf_state()`, which reads nothing out of an OSPFv3
+  configuration, so the box had said nothing. `ipv6 ospf6 mtu-ignore` and
+  `ipv6 ospf6 passive` silence it, the way the `ip ospf` spellings do.
+
+  It is the only OSPFv2 finding that carries over, and the rest stay **silent**
+  on an OSPFv3 stanza rather than firing something that cannot be right: they
+  are about `network … area`, `passive-interface` and an interface inside an
+  IPv4 CGNAT pool, none of which OSPFv3 has. #205 and #208 are the standing
+  precedent that an alarm which is always on is one nobody reads.
+
+* **The control plane's share of the CPUs, reported on the console.** The
+  tuner gives the OS the dataplane node's first physical core and isolates the
+  rest, so on a 32-core socket FRR, `frr-reload`, `vtysh`, `hexash`, `sshd`
+  **and** VPP's main thread share one core - and the main thread takes the
+  worker barrier once a second. The self-test now says how many cpus are left
+  and warns when that is one **while more than one core is isolated**, which is
+  the arithmetic statement that cores could have been handed back and were not;
+  a box with one isolated core has nothing to give back and is not warned. The
+  remedy named is `HEXA_MAX_WORKERS`, which the product already ships
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)).
+* **Measured and written down: raising `HEXA_MAX_WORKERS` costs a boot with no
+  dataplane, and lowering it does not.** `tuned_now` requires the cores a
+  profile pins to be cores the kernel is **already** isolating, so lifting a
+  cap asks for cores that are not isolated until the command line changes on
+  the next boot, and the box spends one boot in FIRST BOOT MODE: no workers,
+  no hugepages, DPDK disabled. Lowering a cap takes effect on the very next
+  boot and the freed cores leave `isolcpus` on the one after. That is the
+  tuner refusing to pin a worker to a core the kernel has not isolated, which
+  is right - but it is a maintenance window, and it was written down nowhere.
+
+* **`lab/install-iso.sh` reads the memory bounds back off systemd**, both
+  halves: `MemoryMax=512M` on `hexarouting.service` **and** no bound on
+  `frr.service`. A unit systemd parsed and refused reads exactly like one that
+  took, and this is the only place in the repository with a real systemd. The
+  absence is as deliberate as the presence - a `MemoryMax` that appeared on
+  `frr.service` by accident is a five-second restart loop on the box with the
+  most to lose.
 
 ### Fixed
 
@@ -128,53 +200,6 @@ are to be interpreted as described in
   be formally better and VPP's ipfix-export cannot build one, and
   `docs/logging.md` carries the argument and the three shapes that were not
   used.
->>>>>>> issue/217-stop-drain
-=======
-[#187](https://github.com/andrediashexa/hexarouting/issues/187).
-
-### Added
-
-* **OSPFv3 is a protocol this box runs, rather than one it offered and could
-  not do.** `router ospf6` was a word the VTY did not model: it went to FRR
-  untouched, committed, and `ospf6d` was enabled in no file the product shipped
-  - not `appliance/install.sh`, not the boot self-test. The statement was
-  reachable only by typing it blind, since `?` never listed it and TAB never
-  completed it, and `lab/igp.sh` asserted the refusal that followed as though a
-  protocol the box refuses were a finished feature.
-
-  The issue asked for a decision - take the statement out of the command tree,
-  or make it work - and it was settled by measuring. With an OSPFv3 packet
-  injected at a `linux_cp` pair and tcpdump on the TAP, IPv6 protocol 89 to
-  `ff02::5` **arrives**: VPP has no local handler for protocol 89, so it falls
-  through `ip6-local` to `ip6-punt` and linux_cp's per-pair punt redirect hands
-  it out of the TAP, which is the same reason OSPFv2 has always worked. The
-  adjacency then reaches `Full` and the prefix reaches the VPP FIB, with no
-  punt beyond the one OSPFv2 uses. So the transport was never the problem and
-  the daemon list was.
-
-  `ospf6d` is enabled by the installer and checked by the boot self-test beside
-  the other three; `router ospf6` and `ipv6 ospf6 …` are in the command tree
-  with grammars measured against a live FRR 10.7.1 rather than written from
-  memory; and `lab/igp.sh` configures OSPFv3 at this box's own VTY and asserts
-  the prefix in the VPP FIB, the adjacency at `Full`, and the withdrawal when
-  the far end drops it.
-
-* **The inherited-MTU stall is reported on an OSPFv3 interface too.** RFC 5340
-  keeps the Interface MTU field in the database description packet, so a pair
-  whose TAP is at 9000 against a 1500 wire stops an OSPFv3 adjacency short of
-  `Full` exactly as it does an OSPFv2 one - measured, and measured again
-  reaching `Full` within seconds of the two being made to agree. Every check in
-  `ospf_findings` keyed on `ospf_state()`, which reads nothing out of an OSPFv3
-  configuration, so the box had said nothing. `ipv6 ospf6 mtu-ignore` and
-  `ipv6 ospf6 passive` silence it, the way the `ip ospf` spellings do.
-
-  It is the only OSPFv2 finding that carries over, and the rest stay **silent**
-  on an OSPFv3 stanza rather than firing something that cannot be right: they
-  are about `network … area`, `passive-interface` and an interface inside an
-  IPv4 CGNAT pool, none of which OSPFv3 has. #205 and #208 are the standing
-  precedent that an alarm which is always on is one nobody reads.
-
-### Fixed
 
 * **`test/test_selftest.sh` had a duplicated verdict block, so its last third
   had never run.** A second `exit 0` copy of the pass/fail block sat two thirds
@@ -184,37 +209,6 @@ are to be interpreted as described in
   assertion added at the end of that file produced no output at all. A test
   that exits before its assertions is the same defect class as a lab that
   crashes before reaching one, and it is invisible for the same reason.
-
-### Internal
-
-* **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a
-  fakeroot with the distribution's `/etc/frr/daemons`, runs
-  `appliance/install.sh` into it, and starts exactly what the installer
-  enabled. The list written out in the lab was a copy somebody had to remember
-  to keep in step with the product's, which is the #99 shape one layer up and
-  is precisely how `ospf6d` went missing: the lab could not fail when the
-  installer's list was wrong. Shown failing - nine checks red, including every
-  OSPFv3 assertion - on a scratch copy with `ospf6d` taken back out of
-  `install.sh`.
-
-* **The section of `lab/igp.sh` that asserted a refusal now asks about RIP.**
-  The check itself has to keep working or removing it would pass the OSPFv3
-  section just as well, and RIP is the honest subject: FRR takes `router rip`,
-  this product claims nothing about it, and an operator who types it is told at
-  commit rather than after an afternoon of wondering why nothing is learned.
-
-* **`lab/frr-readback.sh` gained an OSPFv3 section, and refuted a claim written
-  into this branch on its first run.** A comment saying `ospf6d` *rewrites*
-  `interface <name> area <a>` into the interface stanza came from a probe that
-  had typed the target spelling into that interface before looking for it -
-  the trap section 4d of that file already existed to warn about, made again
-  within the hour. Measured on an interface nothing else had touched, FRR
-  10.7.1 answers `% Unknown command`: it is refused, not rewritten. The three
-  statements FRR leaves out of its own read-back at their default -
-  `ipv6 ospf6 hello-interval`, `dead-interval` and `priority` - each have a
-  control at a non-default value, which is what tells an omission from a
-  refusal, and they are not offered in the grammar for that reason.
->>>>>>> issue/187-ospf6d
 
 * **A dynamic pool's capacity line understated what the box can serve.** The
   caveat added for [#210](https://github.com/andrediashexa/hexarouting/issues/210)
@@ -251,6 +245,82 @@ are to be interpreted as described in
   expensive part - the mutability is; and letting a worker borrow a block from
   its neighbour, implemented and measured, **loses every reply**, because the
   return path resolves the worker from the block index by arithmetic.
+
+* **The boot self-test reported the cores the dataplane was ASKED for and
+  never the cores it GOT.** `full tuning active: corelist-workers 1-7` has been
+  on the console since the tuner existed, and it prints
+  `/etc/vpp/startup.conf`. Nothing on an installed box ever read whether the
+  running dataplane held those cores, or whether the kernel was isolating them.
+  Both come apart without a symptom: a VPP that has been running since before
+  the profile was rewritten keeps the cores it started with, and a kernel
+  command line that did not get updated leaves a poll-mode worker sharing its
+  core with the scheduler. In each case the box boots, forwards, answers every
+  command and delivers a fraction of its capacity, with the only outward sign
+  being a thread that reads 100% busy either way. The self-test now compares
+  three places and none of them is the one that made the decision:
+  `/etc/vpp/startup.conf`, `/proc/<vpp pid>/task/*/status` and
+  `/sys/devices/system/cpu/isolated`. A worker on a core the kernel is not
+  isolating, and a dataplane holding cores its own profile does not name, are
+  both failed checks that name the core and the command to fix it
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)).
+* **`[ ok ] rx queues:` with nothing after it.** The `||` sat after `head -1`,
+  which succeeds on empty input, so a box whose profile names no
+  `num-rx-queues` printed the label and no value - an assertion that cannot
+  fail, in the reporting half. Seen on an installed box.
+
+### Internal
+
+* **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a
+  fakeroot with the distribution's `/etc/frr/daemons`, runs
+  `appliance/install.sh` into it, and starts exactly what the installer
+  enabled. The list written out in the lab was a copy somebody had to remember
+  to keep in step with the product's, which is the #99 shape one layer up and
+  is precisely how `ospf6d` went missing: the lab could not fail when the
+  installer's list was wrong. Shown failing - nine checks red, including every
+  OSPFv3 assertion - on a scratch copy with `ospf6d` taken back out of
+  `install.sh`.
+
+* **The section of `lab/igp.sh` that asserted a refusal now asks about RIP.**
+  The check itself has to keep working or removing it would pass the OSPFv3
+  section just as well, and RIP is the honest subject: FRR takes `router rip`,
+  this product claims nothing about it, and an operator who types it is told at
+  commit rather than after an afternoon of wondering why nothing is learned.
+
+* **`lab/frr-readback.sh` gained an OSPFv3 section, and refuted a claim written
+  into this branch on its first run.** A comment saying `ospf6d` *rewrites*
+  `interface <name> area <a>` into the interface stanza came from a probe that
+  had typed the target spelling into that interface before looking for it -
+  the trap section 4d of that file already existed to warn about, made again
+  within the hour. Measured on an interface nothing else had touched, FRR
+  10.7.1 answers `% Unknown command`: it is refused, not rewritten. The three
+  statements FRR leaves out of its own read-back at their default -
+  `ipv6 ospf6 hello-interval`, `dead-interval` and `priority` - each have a
+  control at a non-default value, which is what tells an omission from a
+  refusal, and they are not offered in the grammar for that reason.
+
+### Not shipped, with the reason
+
+* **No `CPUQuota=` on the control plane.** On this box the control plane does
+  not compete with the workers: they are on isolated cores. Throttling it frees
+  nothing for forwarding and costs BGP convergence. The one place the two
+  genuinely contend is VPP's main thread, and the measurement that would size a
+  quota there cannot be taken on a virtio VM, where the host scheduler preempts
+  vCPUs whatever the guest isolates.
+* **No `AllowedCPUs=` cpuset for the control plane: the bound is already
+  applied by the kernel, and it is inherited rather than enforced.** Measured
+  on the installed box, twice: with `isolcpus=1` on a two-cpu machine, **pid 1
+  itself** has `Cpus_allowed_list: 0`, and `bgpd` has `ppid 1` and the same
+  mask. A bare `isolcpus=` list restricts init's affinity at boot and every
+  service inherits it, so the control plane is already confined to the cores
+  the tuner left it, from the same list the tuner computed, with no cpuset
+  anywhere. What a cpuset would add is the residue the same lab records:
+  `taskset` onto the isolated core was **accepted**, so anything that calls
+  `sched_setaffinity` leaves the set. Nothing this product ships does, and an
+  operator in `start shell` who types `taskset` has said what they meant.
+  One earlier run of the same lab read `0-1` and has not been explained; it
+  was taken before the lab recorded pid 1's mask and bgpd's parent, which is
+  the pair of numbers that would settle it, and both are now read on every
+  run. `docs/appliance.md` carries the readings.
 
 ## 0.66.0 — six times a lab did the product's job, and the product now does it
 
@@ -342,7 +412,6 @@ are to be interpreted as described in
   arriving through the function that looked like its counterpart. Removed, with
   the reasoning left where the declaration was
   ([#216](https://github.com/andrediashexa/hexarouting/issues/216)).
-=======
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
 [#203](https://github.com/andrediashexa/hexarouting/issues/203),
 [#215](https://github.com/andrediashexa/hexarouting/issues/215).

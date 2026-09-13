@@ -652,6 +652,55 @@ drive_console() {
   wait_for "HXLAB stopdrain=" 30 \
     "systemd to say what it runs before stopping the dataplane" || return 1
 
+  # The bounds the control plane carries, asked of SYSTEMD rather than of the
+  # unit file (#172). hexarouting.service ships MemoryMax=512M against a
+  # measured 13 MB peak, and frr.service deliberately ships none because one
+  # full IPv4 table costs FRR 1.37 GB and 37 MB on a box taking default routes
+  # only - one number cannot serve both. Neither of those has ever been read
+  # back on a box: a unit systemd parsed and REFUSED reports exactly like one
+  # that took, and this is the only place in the repository with a real
+  # systemd. Both halves are asserted, because the absence is as deliberate as
+  # the presence and a MemoryMax that appeared on frr.service by accident
+  # would be a five-second kill loop on the box with the most to lose.
+  send 'echo "HX""LAB memmax=hx:$(systemctl show hexarouting.service -p MemoryMax --value) frr:$(systemctl show frr.service -p MemoryMax --value)"'
+  wait_for "HXLAB memmax=" 30 \
+    "systemd to say what memory bounds it applied" || return 1
+
+  # And the CPU half, measured rather than assumed. isolcpus keeps the
+  # scheduler from PLACING work on a worker's core; the open question is
+  # whether it also narrows what a control-plane process is ALLOWED to ask
+  # for, because if it does not then a slice with AllowedCPUs= buys something
+  # isolcpus does not, and if it does then it buys nothing. bgpd's own mask is
+  # one half; the other is whether taskset onto an isolated core is accepted.
+  # Recorded, not asserted: what the kernel does with isolcpus is not this
+  # repository's to change, and a check nothing here can make fail is not a
+  # check. The reading is what the refusal in docs/appliance.md rests on.
+  send 'echo "HX""LAB cpu-iso=$(cat /sys/devices/system/cpu/isolated) online=$(cat /sys/devices/system/cpu/online)"'
+  wait_for "HXLAB cpu-iso=" 30 "the box to say which cores it isolates" || return 1
+  send 'echo "HX""LAB cpu-bgpd=$(grep Cpus_allowed_list /proc/$(pidof bgpd)/status | tr -d " \t")"'
+  wait_for "HXLAB cpu-bgpd=" 30 "the box to say where bgpd may run" || return 1
+  send 'echo "HX""LAB cpu-escape=$(taskset -c $(cat /sys/devices/system/cpu/isolated) grep Cpus_allowed_list /proc/self/status | tr -d " \t")"'
+  wait_for "HXLAB cpu-escape=" 30 \
+    "the box to say whether an isolated core can be asked for" || return 1
+
+  # Where the inherited mask comes from, and whether bgpd is still wearing it.
+  #
+  # Two runs of this lab on 2026-09-13 read cpu-bgpd as 0 and as 0-1 on boxes
+  # that both reported isolcpus=1, so "the kernel already confines the control
+  # plane" is a claim one reading supports and another refuses. These three
+  # lines are what tells them apart and none of them was being read: pid 1's
+  # own mask is what every service inherits, bgpd's parent and start time say
+  # whether this bgpd is the one systemd started at boot or one frr-reload
+  # started later from a different parent, and the isolcpus SPELLING decides
+  # the behaviour - a bare list restricts pid 1's affinity and "domain," alone
+  # does not.
+  send 'echo "HX""LAB cpu-init=$(grep Cpus_allowed_list /proc/1/status | tr -d " \t")"'
+  wait_for "HXLAB cpu-init=" 30 "the box to say what pid 1 is allowed" || return 1
+  send 'echo "HX""LAB bgpd-from=pid:$(pidof bgpd) ppid:$(awk "{print \$4}" /proc/$(pidof bgpd)/stat) starttime:$(awk "{print \$22}" /proc/$(pidof bgpd)/stat)"'
+  wait_for "HXLAB bgpd-from=" 30 "the box to say which bgpd this is" || return 1
+  send 'echo "HX""LAB isolspell=$(tr " " "\n" < /proc/cmdline | grep isolcpus)"'
+  wait_for "HXLAB isolspell=" 30 "the box to say how isolcpus is spelled" || return 1
+
   # The self-test again, now that the box has an account. At boot it said it
   # had none; this is the same program, on the same console, with the only
   # difference being the thing the VTY just did.
@@ -1441,6 +1490,81 @@ if [ "$up" = 1 ]; then
     fail=1
   fi
 fi
+
+# Are the dataplane's workers on cores the kernel is actually isolating, and
+# what is left over for the control plane? (#172)
+#
+# "full tuning active: corelist-workers ..." has been on this console since the
+# tuner existed, and it reports the FILE. The lines read back here report what
+# the dataplane GOT: the self-test compares /etc/vpp/startup.conf against
+# /proc/<vpp pid>/task/*/status and /sys/devices/system/cpu/isolated, three
+# places and none of them the one that made the decision. test_selftest.sh
+# shows every one of those states going red against a synthetic root; this is
+# the reading with nothing synthetic, on a box that really booted with
+# isolcpus on its command line - which the live ISO never does.
+if [ "$up" = 1 ]; then
+  if grep -q "dataplane workers hold the cores the profile names" /tmp/disk-clean.log \
+     && grep -q "the kernel is isolating every one of them" /tmp/disk-clean.log; then
+    echo "  [ ok ] the installed dataplane holds the cores its profile names,"
+    echo "         and the kernel is isolating them"
+    grep -oE "(dataplane workers hold|and the kernel is isolating).*" /tmp/disk-clean.log \
+      | head -2 | sed 's/^/         /'
+  else
+    echo "  [FAIL] the installed box did not confirm its worker cores: either a"
+    echo "         worker is on a core the kernel is not isolating, or the"
+    echo "         dataplane is older than the profile it is judged against."
+    echo "         Both forward and both cost throughput silently"
+    grep -iE "worker core|pins workers|owns no process" /tmp/disk-clean.log \
+      | head -3 | sed 's/^/         /'
+    fail=1
+  fi
+  if grep -qE "control plane has [0-9]+ cpu|control plane has ONE cpu" /tmp/disk-clean.log; then
+    echo "  [ ok ] and it says what the control plane is left with"
+    grep -oE "control plane has .*" /tmp/disk-clean.log | head -1 | sed 's/^/         /'
+  else
+    echo "  [FAIL] the installed box never said how many cpus the control plane"
+    echo "         has. That number is the whole of what this product can"
+    echo "         honestly say about CPU bounds, and it said nothing"
+    fail=1
+  fi
+fi
+
+# The memory bound the control plane carries, read back from systemd (#172).
+#
+# hexarouting.service ships MemoryMax=512M against a measured 13 MB peak and
+# frr.service ships none against a measured 1.37 GB full table. Both halves are
+# asserted: a MemoryMax that arrived on frr.service would turn a slow box into
+# a five-second restart loop, and one that systemd parsed and refused on
+# hexarouting.service reads exactly like one that took.
+mm=$(sed -n 's/^HXLAB memmax=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+case "$mm" in
+  "") if [ "$up" = 1 ]; then
+        echo "  [FAIL] systemd was never asked what memory bounds it applied"
+        fail=1
+      fi ;;
+  *"hx:536870912"*"frr:infinity"*)
+    echo "  [ ok ] systemd applied MemoryMax to the control plane and not to FRR"
+    echo "         $mm" ;;
+  *)
+    echo "  [FAIL] the memory bounds systemd applied are not the shipped ones:"
+    echo "         $mm"
+    echo "         expected hx:536870912 (512M, hexarouting.service) and"
+    echo "         frr:infinity (deliberately unbounded - one full table costs"
+    echo "         FRR 1.37 GB and a bound guessed low kills rather than"
+    echo "         degrades; docs/appliance.md carries the measurement)"
+    fail=1 ;;
+esac
+
+# What isolcpus does and does not do to the control plane, recorded.
+#
+# Not a pass or a fail: this is the kernel's behaviour, not this repository's,
+# and a check nothing here can make fail is not a check. It is printed because
+# it is the evidence behind the decision in docs/appliance.md not to ship a
+# cpuset for the control plane.
+for k in cpu-iso cpu-bgpd cpu-escape cpu-init bgpd-from isolspell; do
+  v=$(sed -n "s/^HXLAB $k=//p" /tmp/disk-clean.log | head -1 | tr -d '\r')
+  [ -n "$v" ] && echo "  [meas] $k: $v"
+done
 
 # Did the tuning survive the install?
 #
