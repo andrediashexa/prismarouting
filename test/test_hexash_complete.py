@@ -4507,6 +4507,26 @@ print(f"  longest statement quoted whole: "
 # more must be one column over, with nothing rounding it off. Written as
 # arithmetic over the same constants the code uses, so widening the mark moves
 # both sides together and a THIRD thing appearing on the line fails.
+# And the constant itself, because every assertion above is written against it.
+#
+# Found by mutating it: CONSOLE_COLUMNS raised to 400 leaves every width check
+# in this file green, because each one asks "no wider than CONSOLE_COLUMNS" and
+# the bar moved with the lines. A check somebody can satisfy by widening the
+# rule is a check that will be satisfied that way the first time a message does
+# not fit, and the 178-column line this issue is about is what that looks like
+# after two releases.
+#
+# 80 is what a serial console gives an appliance, and 79 is 80 less the column
+# an auto-wrapping terminal needs left free: a line that fills all 80 wraps on
+# its own and the operator reads a broken line. Anything else has to be argued,
+# which is the point of pinning it.
+check(CONSOLE_COLUMNS == 79,
+      f"CONSOLE_COLUMNS is {CONSOLE_COLUMNS}, not 79. Every width assertion in "
+      f"this file is written against it, so raising it turns all of them green "
+      f"without a line getting any narrower. An appliance console is 80 "
+      f"columns and the last one is left free so an auto-wrapping terminal "
+      f"does not break the line itself")
+
 _BUDGET = CONSOLE_COLUMNS - len("    ") - len(UNCHECKED_MARK)
 _fits = "coalesce-time " + "9" * (_BUDGET - len("coalesce-time "))
 _over = _fits + "9"
