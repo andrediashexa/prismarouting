@@ -36,7 +36,27 @@ are to be interpreted as described in
 
 ## Unreleased
 
-[#255](https://github.com/andrediashexa/hexarouting/issues/255).
+[#227](https://github.com/andrediashexa/hexarouting/issues/227),
+[#231](https://github.com/andrediashexa/hexarouting/issues/231),
+[#233](https://github.com/andrediashexa/hexarouting/issues/233),
+[#235](https://github.com/andrediashexa/hexarouting/issues/235),
+[#245](https://github.com/andrediashexa/hexarouting/issues/245),
+[#246](https://github.com/andrediashexa/hexarouting/issues/246),
+[#249](https://github.com/andrediashexa/hexarouting/issues/249),
+[#250](https://github.com/andrediashexa/hexarouting/issues/250),
+[#251](https://github.com/andrediashexa/hexarouting/issues/251),
+[#253](https://github.com/andrediashexa/hexarouting/issues/253),
+[#255](https://github.com/andrediashexa/hexarouting/issues/255),
+[#256](https://github.com/andrediashexa/hexarouting/issues/256),
+[#257](https://github.com/andrediashexa/hexarouting/issues/257),
+[#258](https://github.com/andrediashexa/hexarouting/issues/258),
+[#260](https://github.com/andrediashexa/hexarouting/issues/260),
+[#261](https://github.com/andrediashexa/hexarouting/issues/261),
+[#265](https://github.com/andrediashexa/hexarouting/issues/265),
+[#266](https://github.com/andrediashexa/hexarouting/issues/266),
+[#267](https://github.com/andrediashexa/hexarouting/issues/267),
+[#268](https://github.com/andrediashexa/hexarouting/issues/268),
+[#269](https://github.com/andrediashexa/hexarouting/issues/269).
 
 ### Fixed
 
