@@ -16,7 +16,7 @@ Alguns campos **reconstroem o pool**, e todas as sessões nele morrem no instant
 |------------------------------------------------|----------------------------------------------|
 | `inside`                                       | `timeout ...`                                |
 | `outside`                                      | `max-blocks`                                 |
-|                                                | `block-stride`                               |
+| `reserve`                                      | `block-stride`                               |
 | `block-size`                                   | `bypass ...`                                 |
 | `ports`                                        | `utilisation-alarm`                          |
 | `policy`                                       | `max-sessions`                               |
@@ -29,7 +29,7 @@ Alguns campos **reconstroem o pool**, e todas as sessões nele morrem no instant
 ```mermaid
 flowchart TD
     C{"Que campo você vai mudar?"}
-    C -->|"inside · outside · block-size<br/>ports · policy · mode · vrf"| R["Muda o MAPEAMENTO<br/>→ pool reconstruído<br/>→ TODAS as sessões caem<br/>→ exige commit remap"]
+    C -->|"inside · outside · block-size<br/>ports · policy · mode · vrf · reserve"| R["Muda o MAPEAMENTO<br/>→ pool reconstruído<br/>→ TODAS as sessões caem<br/>→ exige commit remap"]
     C -->|"timeouts · max-* · bypass<br/>alg · forward · tcp-mss · filter"| I["Aplicado NO LUGAR<br/>→ pool segue carregando tráfego<br/>→ ninguém cai"]
 ```
 
@@ -57,6 +57,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 | `mode dynamic` |           | sob demanda, com log de alocação |
 | `vrf <n>` | `<1-65535>` | a VRF cujos assinantes este pool atende; ausente = todas |
 | `outside-vrf <n>` | `<1-65535>` | a VRF por onde o tráfego traduzido sai; ausente = deixa onde estava |
+| `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
 
 `**policy interleaved**` **vs** `**blocked**` — `interleaved` espalha vizinhos por endereços públicos distintos, o que dilui o impacto de um bloqueio de reputação em um IP. `blocked` mantém vizinhos no mesmo endereço público.
 
@@ -116,11 +117,89 @@ blocos gera 8 registros; com `block-size 512` e um bloco só, gera 1. Escolha o
 menor bloco que ainda deixe a maioria dos assinantes dentro de **um** bloco, e
 use `max-blocks` para a minoria que precisa de mais.
 
+# O bloco de reserva de um pool determinístico
+
+Num pool `mode deterministic` **não existe bloco sobrando**: a fórmula entrega
+todos os blocos a algum assinante. Quem enche o seu bloco é derrubado - a
+internet do cliente para com a caixa saudável - porque qualquer bloco entregue
+como extra seria o bloco de outra pessoa, e o mapeamento dela quebraria em
+silêncio.
+
+`reserve <n>` guarda **n blocos de cada endereço público** fora da fórmula. São
+esses, e só esses, os blocos que um pool determinístico tem para dar.
+
+```
+reserve 1
+```
+
+A conta muda junto, e é o preço:
+
+```
+blocos por endereço      = portas por endereço / block-size
+blocos que a fórmula usa = blocos por endereço - reserve
+capacidade               = endereços públicos x blocos que a fórmula usa
+```
+
+:::warning
+**Ligar ou mudar o** `**reserve**` **remapeia assinantes.** Ele sai da
+capacidade, e capacidade é mapeamento: o pool é reconstruído, todas as sessões
+nele caem, e o `commit` recusa a mudança até ela ser pedida pelo nome com
+`commit remap` - igual a acrescentar um prefixo público.
+
+Quanto ele move depende da **política**, e as duas respostas não se parecem:
+
+| Política | O que acontece com `reserve 1` |
+|----------|--------------------------------|
+| `interleaved` | **nenhum** assinante que continua cabendo muda de endereço ou de bloco. O pool só encolhe pelo fim: os que estavam acima da nova capacidade ficam sem bloco nenhum, e são `endereços públicos x reserve` deles |
+| `blocked` | o divisor **é** o número de blocos que a fórmula usa, então quase todo mundo muda de lugar, além dos que o encolhimento deixou de fora |
+
+`commit check` diz o número exato antes de qualquer coisa acontecer.
+
+:::
+
+`show cgnat pool` mostra as duas contas lado a lado, e a capacidade já vem
+descontada:
+
+```
+  reserve      1 block(s) per public IP -> 3 mapped, 1 held for extensions
+  capacity     3 subscribers (usable 3)
+```
+
+Cada bloco entregue da reserva vira **um registro próprio** no log de blocos, e
+a devolução dele também. É a única coisa que o modo determinístico registra por
+assinante, e tem de ser: é o único bloco que a fórmula não produz, então a
+configuração datada não responde por ele sozinha.
+
+`show cgnat blocks` mostra a reserva e conta as recusas:
+
+```
+  reserve exhausted 3 time(s): a subscriber filled its block, was under
+  max-blocks 2, and the reserve had nothing left
+```
+
+Essa contagem é **separada** de um assinante bater no `max-blocks`, porque a
+ação é outra: contra uma, aumentar a reserva ou acrescentar endereços públicos;
+contra a outra, aumentar o limite por assinante.
+
+Três coisas que vale saber antes de escolher o número:
+
+* **Uma reserva menor que o número de workers deixa workers sem nada.** A caixa
+  avisa na criação do pool e cria o pool assim mesmo - recusar faria um pool
+  aceito hoje não subir depois de a máquina ganhar workers, o que derruba todo
+  mundo.
+* **A caixa prefere um bloco do próprio endereço público do assinante**, para
+  que quem está do outro lado continue vendo um host só. É preferência, não
+  garantia: se não houver um livre na fatia daquele worker, ela entrega outro
+  em vez de recusar.
+* **`reserve` não vale em** `**mode dynamic**` e é recusado lá. Um pool dinâmico
+  já tem blocos sobrando - a lista de livres é exatamente de onde sai o bloco
+  extra - então uma reserva tiraria blocos da própria lista de onde eles vêm.
+
 # Onde ficam os blocos extras de um assinante
 
 `block-stride <n>` decide a distância entre os blocos que um mesmo assinante
-segura. Vale só em `mode dynamic` - um pool determinístico nunca dá um segundo
-bloco a ninguém.
+segura. Vale só em `mode dynamic`: num pool determinístico o bloco extra vem da
+reserva, que é um conjunto à parte, e a distância não se aplica a ele.
 
 | Valor | O que acontece |
 |-------|----------------|
@@ -253,6 +332,7 @@ hexarouting# [edit cgnat pool residencial] no ?
   outside            remove one public prefix
   outside-vrf        leave translated traffic where it was
   ports              go back to the device's own port range
+  reserve            give the reserved blocks back to the formula; this too re-maps subscribers
   tcp-mss            stop clamping the MSS
   timeout            stop overriding one timeout; the pool inherits the global again
   utilisation-alarm  stop alarming on block utilisation

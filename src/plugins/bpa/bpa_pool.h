@@ -404,6 +404,28 @@ typedef struct
    */
   u16 block_stride;
 
+  /*
+   * Blocks held out of the formula on every public address, so a
+   * deterministic subscriber that fills its block has somewhere to be given a
+   * second one.
+   *
+   * Deterministic mode has no spare block by construction: bpa_forward()
+   * assigns every block to some subscriber, so a block handed out as an
+   * extension is one taken from somebody else and their mapping breaks with
+   * no error anywhere. A reserve is the only way to have one to give, and it
+   * is paid for in capacity (issue #39).
+   *
+   * Counted PER PUBLIC ADDRESS rather than as a pool-wide total. The
+   * extension has to land on the subscriber's own public address - RFC 4787
+   * REQ-2, the same reason a static forward may not name another address - so
+   * a total that did not divide evenly would leave some addresses with no
+   * reserve and the subscribers on them with nothing to be given.
+   *
+   * Zero is every configuration written before this existed, and leaves
+   * blocks_mapped equal to blocks_per_ip and the mapping untouched.
+   */
+  u16 block_reserve;
+
   /* Which ALGs run here, and which of those the operator actually chose.
    * Resolved once by bpa_pool_init(); see the registry above. */
   u32 alg;
@@ -512,15 +534,28 @@ typedef struct
 
   /* derived */
   u32 port_count;
-  u32 blocks_per_ip;
-  u32 capacity; /* outside.count * blocks_per_ip */
+  u32 blocks_per_ip; /* blocks a public address HOLDS */
+  /*
+   * Blocks the formula may hand out on one public address:
+   * blocks_per_ip - block_reserve. Kept apart from blocks_per_ip on purpose -
+   * the reverse direction needs both to tell a reserve port from a port that
+   * is outside the pool altogether, and those two go to different places.
+   */
+  u32 blocks_mapped;
+  u32 reserve_count; /* outside.count * block_reserve */
+  u32 capacity;	     /* outside.count * blocks_mapped */
 
   u8 log2_block; /* block_size is a power of two */
 
   /*
    * Divisor for the policy split:
    *   INTERLEAVED -> outside.count   (blk_idx = sub / d, pub_idx = sub % d)
-   *   BLOCKED     -> blocks_per_ip   (pub_idx = sub / d, blk_idx = sub % d)
+   *   BLOCKED     -> blocks_mapped   (pub_idx = sub / d, blk_idx = sub % d)
+   *
+   * blocks_mapped and not blocks_per_ip: under the blocked policy the divisor
+   * IS the mapping, so a reserve re-divides it and moves every subscriber past
+   * the first public address. That is why a reserve is a capacity change and
+   * goes through the #23 procedure.
    */
   bpa_divisor_t div;
 } bpa_pool_t;
@@ -768,6 +803,124 @@ bpa_join (const bpa_pool_t *p, u32 pub_idx, u32 blk_idx)
 }
 
 /* ------------------------------------------------------------------ */
+/* the reserve                                                         */
+
+/*
+ * The blocks above blocks_mapped on every public address, presented as their
+ * own dense index space [0, reserve_count).
+ *
+ * Its own space and not a continuation of the subscriber index, because under
+ * the blocked policy a block index above blocks_mapped is ANOTHER
+ * SUBSCRIBER'S block: bpa_join() multiplies by blocks_mapped, so
+ * (pub 0, block blocks_mapped) and (pub 1, block 0) are the same number.
+ * Giving the reserve its own index is what keeps the two apart under either
+ * policy, and it is the index the return path resolves a reserve port to.
+ */
+
+static_always_inline int
+bpa_is_reserve_block (const bpa_pool_t *p, u32 blk_idx)
+{
+  return blk_idx >= p->blocks_mapped && blk_idx < p->blocks_per_ip;
+}
+
+/* (public address, block within it) -> dense reserve index. */
+static_always_inline u32
+bpa_reserve_index (const bpa_pool_t *p, u32 pub_idx, u32 blk_idx)
+{
+  u32 off = blk_idx - p->blocks_mapped;
+
+  /* Laid out the way the policy lays out subscribers, so consecutive reserve
+   * blocks spread across public addresses under interleaved exactly as
+   * consecutive subscribers do - which is what makes the worker slices of the
+   * reserve line up with the worker slices of the subscribers. */
+  if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
+    return off * p->outside.count + pub_idx;
+  return pub_idx * p->block_reserve + off;
+}
+
+/*
+ * dense reserve index -> (public address index, block within it).
+ *
+ * A plain division and not a reciprocal: this runs when a block is placed or
+ * released, which is once per extension, and never per packet. The per-packet
+ * direction is bpa_reserve_index() above, which is a multiply and an add.
+ */
+static_always_inline void
+bpa_reserve_split (const bpa_pool_t *p, u32 res_idx, u32 *pub_idx,
+		   u32 *blk_idx)
+{
+  if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
+    {
+      *pub_idx = res_idx % p->outside.count;
+      *blk_idx = p->blocks_mapped + res_idx / p->outside.count;
+    }
+  else
+    {
+      *pub_idx = res_idx / p->block_reserve;
+      *blk_idx = p->blocks_mapped + res_idx % p->block_reserve;
+    }
+}
+
+/* Where a reserve block is, in the shape bpa_forward() answers in. */
+static_always_inline int
+bpa_reserve_addr (const bpa_pool_t *p, u32 res_idx, bpa_block_t *b)
+{
+  if (PREDICT_FALSE (res_idx >= p->reserve_count))
+    return -1;
+  bpa_reserve_split (p, res_idx, &b->pub_idx, &b->blk_idx);
+  if (PREDICT_FALSE (bpa_set_addr_of (&p->outside, b->pub_idx, &b->ip_pub)))
+    return -1;
+  b->port_lo = p->port_min + b->blk_idx * p->block_size;
+  b->port_hi = b->port_lo + p->block_size - 1;
+  return 0;
+}
+
+/*
+ * (public address, port) -> reserve index. Returns 0 when the port is in the
+ * reserve, -1 when it is not.
+ *
+ * The question the return path asks about every packet whose port
+ * bpa_reverse_sub() refused: a reserve port is resolved by the allocator, and
+ * anything else is somebody scanning.
+ */
+static_always_inline int
+bpa_reserve_index_of (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *res_idx)
+{
+  u32 pub_idx, blk_idx;
+
+  if (PREDICT_TRUE (p->block_reserve == 0))
+    return -1;
+  if (PREDICT_FALSE (bpa_set_index_of (&p->outside, ip_pub, &pub_idx)))
+    return -1;
+  if (PREDICT_FALSE (port < p->port_min || port > p->port_max))
+    return -1;
+
+  blk_idx = (u32) (port - p->port_min) >> p->log2_block;
+  if (PREDICT_FALSE (!bpa_is_reserve_block (p, blk_idx)))
+    return -1;
+
+  *res_idx = bpa_reserve_index (p, pub_idx, blk_idx);
+  return 0;
+}
+
+/*
+ * Which worker may hand this reserve block out.
+ *
+ * A subscriber is owned by sub_idx % n_workers in both directions, and the
+ * return path can read only the reserve index off a packet addressed to a
+ * reserve port. So the two meet on one thread only when the block a
+ * subscriber is given is congruent to the subscriber, and that is a
+ * constraint the allocator has to obey rather than a fact about it: worker w
+ * owns the reserve indices where res_idx % n_workers == w, exactly as it owns
+ * the dynamic blocks where block_idx % n_workers == w.
+ */
+static_always_inline u32
+bpa_reserve_worker (u32 res_idx, u32 n_workers)
+{
+  return res_idx % n_workers;
+}
+
+/* ------------------------------------------------------------------ */
 /* the blocks beyond the first                                         */
 
 /*
@@ -807,7 +960,7 @@ bpa_stride_block (const bpa_pool_t *p, u32 primary_block, u32 nth, u32 *out)
 
   bpa_split (p, primary_block, &pub_idx, &blk_idx);
   target = blk_idx + nth * p->block_stride;
-  if (PREDICT_FALSE (target >= p->blocks_per_ip))
+  if (PREDICT_FALSE (target >= p->blocks_mapped))
     return -1;
 
   *out = bpa_join (p, pub_idx, target);
@@ -847,7 +1000,7 @@ bpa_stride_next_ok (const bpa_pool_t *p, u32 want, u32 n_workers)
 {
   u32 unit = bpa_stride_unit (p), s;
 
-  for (s = want ? want : 1; s < p->blocks_per_ip; s++)
+  for (s = want ? want : 1; s < p->blocks_mapped; s++)
     if (((u64) s * unit) % n_workers == 0)
       return s;
   return 0;
@@ -894,7 +1047,15 @@ bpa_reverse_sub (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *sub_idx)
     return -1;
 
   blk_idx = (u32) (port - p->port_min) >> p->log2_block;
-  if (PREDICT_FALSE (blk_idx >= p->blocks_per_ip))
+  /*
+   * blocks_mapped, not blocks_per_ip. A port in the reserve belongs to a
+   * subscriber the FORMULA cannot name - only the allocator knows whose it is
+   * - so answering here with bpa_join() would hand the packet to whoever the
+   * arithmetic happens to produce, which under the blocked policy is a real
+   * and different subscriber. Reserve ports are resolved by
+   * bpa_reserve_index_of() and the reserve allocator instead.
+   */
+  if (PREDICT_FALSE (blk_idx >= p->blocks_mapped))
     return -1;
 
   *sub_idx = bpa_join (p, pub_idx, blk_idx);
@@ -904,7 +1065,9 @@ bpa_reverse_sub (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *sub_idx)
 /*
  * outside -> inside. Arithmetic plus two binary searches over small arrays,
  * with no session lookup at all. This is why the deterministic mode needs
- * no allocation logging and why the return path shards cleanly.
+ * no allocation logging for its mapped blocks and why the return path shards
+ * cleanly. A reserve port is the one case this cannot answer, and it says so
+ * rather than guessing: see bpa_reserve_index_of().
  */
 static_always_inline int
 bpa_reverse (const bpa_pool_t *p, u32 ip_pub, u16 port, u32 *ip_priv)

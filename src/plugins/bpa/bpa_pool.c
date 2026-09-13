@@ -158,7 +158,34 @@ bpa_pool_init (bpa_pool_t *p)
 
   p->blocks_per_ip = p->port_count / p->block_size;
 
-  capacity = (u64) p->outside.count * p->blocks_per_ip;
+  /*
+   * A reserve that takes every block leaves a pool that maps nobody. Refused
+   * rather than accepted as a capacity of zero, because a capacity of zero
+   * reads as a pool that works and serves no one.
+   */
+  if (p->block_reserve >= p->blocks_per_ip)
+    return clib_error_return (
+      0, "pool '%v': reserve %u leaves no blocks to map: a public address "
+	 "holds %u blocks of %u ports",
+      p->name, p->block_reserve, p->blocks_per_ip, p->block_size);
+
+  /*
+   * A dynamic pool already has spare blocks: every block nothing is holding
+   * is on the free list, and that list is where an extension comes from. A
+   * reserve there would take blocks OUT of the list the extension is drawn
+   * from. Refused rather than accepted and inert, so that a pool moved from
+   * deterministic to dynamic says what it is losing.
+   */
+  if (p->block_reserve && p->mode != BPA_MODE_DETERMINISTIC)
+    return clib_error_return (
+      0, "pool '%v': reserve applies to deterministic pools only; a dynamic "
+	 "pool's extension already comes off the free list",
+      p->name);
+
+  p->blocks_mapped = p->blocks_per_ip - p->block_reserve;
+  p->reserve_count = p->outside.count * p->block_reserve;
+
+  capacity = (u64) p->outside.count * p->blocks_mapped;
   if (capacity > BPA_MAX_CAPACITY)
     return clib_error_return (
       0, "pool '%v': capacity %llu exceeds the %u limit", p->name,
@@ -178,11 +205,12 @@ bpa_pool_init (bpa_pool_t *p)
    * own public address on its very first extension, so it can never place
    * anything. Refused rather than accepted and left silently inert.
    */
-  if (p->block_stride >= p->blocks_per_ip)
+  if (p->block_stride >= p->blocks_mapped)
     return clib_error_return (
       0, "pool '%v': block-stride %u does not fit: a public address holds %u "
-	 "blocks, so a subscriber's second block would land past the end of it",
-      p->name, p->block_stride, p->blocks_per_ip);
+	 "mappable blocks, so a subscriber's second block would land past the "
+	 "end of them",
+      p->name, p->block_stride, p->blocks_mapped);
 
   /*
    * The documented defaults, except where the operator said otherwise. A pool
@@ -196,7 +224,7 @@ bpa_pool_init (bpa_pool_t *p)
   /* One divisor drives the policy split; see bpa_split(). */
   {
     u32 d = p->policy == BPA_POLICY_INTERLEAVED ? p->outside.count
-						: p->blocks_per_ip;
+						: p->blocks_mapped;
     if (d == 0)
       return clib_error_return (0, "pool '%v': divisor is zero", p->name);
     bpa_divisor_init (&p->div, d);

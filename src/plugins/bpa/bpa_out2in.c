@@ -374,19 +374,34 @@ VLIB_NODE_FN (bpa_out2in_node)
        * block index is the subscriber index - that identity is what makes
        * the mode stateless. In dynamic mode the block belongs to whoever
        * currently holds it, so it takes a lookup.
+       *
+       * A RESERVE port is the one case where a deterministic pool needs a
+       * lookup too. bpa_reverse_sub() refuses it on purpose: the arithmetic
+       * there would name whichever subscriber the formula produces, which
+       * under the blocked policy is a real and different customer, and that
+       * customer would receive somebody else's traffic. Only the allocator
+       * knows whose the block is, so the reserve is resolved the same way a
+       * dynamic block is.
        */
       {
 	bpa_pool_t *p = pool_elt_at_index (bm->pools, pool_index);
-	u32 block_idx, sub_idx;
+	u32 block_idx, sub_idx, res_idx;
+	int is_reserve = 0;
 
 	if (PREDICT_FALSE (
 	      bpa_reverse_sub (p, dst_host, port_pub, &block_idx)))
 	  {
-	    b[0]->error = node->errors[BPA_OUT2IN_ERROR_OUT_OF_BLOCK];
-	    goto trace;
+	    if (PREDICT_FALSE (
+		  bpa_reserve_index_of (p, dst_host, port_pub, &res_idx)))
+	      {
+		b[0]->error = node->errors[BPA_OUT2IN_ERROR_OUT_OF_BLOCK];
+		goto trace;
+	      }
+	    block_idx = res_idx;
+	    is_reserve = 1;
 	  }
 
-	if (PREDICT_TRUE (p->mode == BPA_MODE_DETERMINISTIC))
+	if (PREDICT_TRUE (p->mode == BPA_MODE_DETERMINISTIC && !is_reserve))
 	  {
 	    if (PREDICT_FALSE (
 		  bpa_set_addr_of (&p->inside, block_idx, &ip_priv)))

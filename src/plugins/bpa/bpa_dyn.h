@@ -96,10 +96,29 @@ typedef struct
    * having free blocks.
    */
   bpa_dyn_extra_t *extras;
+  /*
+   * This slice indexes the pool's RESERVE, not the blocks the formula hands
+   * out.
+   *
+   * A deterministic pool has no free list - every block is somebody's by
+   * arithmetic - so the only blocks it can give away are the ones its reserve
+   * holds out of the formula. Those live in an index space of their own
+   * (bpa_reserve_index), and the ONLY difference between allocating from it
+   * and allocating a dynamic block is how an index becomes an address and a
+   * port range. Everything else this allocator does - the free stack, the
+   * hold-down, the extras list, the reap, the counters that become natEvent
+   * 16 and 17 - is the same work for the same reason, so it is the same code
+   * with a flag rather than a second copy that has to be kept in step.
+   */
+  u8 reserve;
 } bpa_dyn_t;
 
+/*
+ * `reserve` chooses which index space this slice covers: the pool's reserve
+ * (deterministic mode) or its whole block range (dynamic mode).
+ */
 clib_error_t *bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker,
-			    u32 n_workers);
+			    u32 n_workers, int reserve);
 void bpa_dyn_free (bpa_dyn_t *d);
 
 /* A block returned to the pool, so the caller can log natEvent 17. */
@@ -231,6 +250,25 @@ bpa_dyn_block_addr (const bpa_pool_t *p, u32 block_idx, bpa_block_t *b)
   bpa_set_addr_of (&p->outside, b->pub_idx, &b->ip_pub);
   b->port_lo = p->port_min + b->blk_idx * p->block_size;
   b->port_hi = b->port_lo + p->block_size - 1;
+}
+
+/*
+ * The same, for whichever index space this slice covers. Returns 0 on
+ * success.
+ *
+ * The one place the two allocators differ. Everything else about a held block
+ * - who has it, when it went idle, when it goes back - is the same question
+ * whether the block came off a free list or out of a reserve, and the record
+ * they produce is the same record.
+ */
+static_always_inline int
+bpa_dyn_addr (const bpa_dyn_t *d, const bpa_pool_t *p, u32 idx,
+	      bpa_block_t *b)
+{
+  if (PREDICT_FALSE (d->reserve != 0))
+    return bpa_reserve_addr (p, idx, b);
+  bpa_dyn_block_addr (p, idx, b);
+  return 0;
 }
 
 /* Which subscriber currently holds this block. -1 when it is free. */

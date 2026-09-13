@@ -280,5 +280,187 @@ print(f"  OK  a growth step alone saves 0 of the "
 print(f"      blocks in fewer events, and a session walks blocks, not events")
 
 print("\n" + "=" * 64)
+print("DETERMINISTIC RESERVE: BLOCKS HELD OUT OF THE FORMULA")
+
+# The default first, and it is the whole safety argument for this feature: a
+# box that upgrades and is not reconfigured must map every subscriber onto the
+# byte-identical address and port block it had yesterday. Asserted against the
+# pool built WITHOUT the parameter, not against a remembered number, so the
+# comparison stays true if the pools above are ever changed.
+for p in pools:
+    q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                   block_size=p.block_size, policy=p.policy, block_reserve=0)
+    check((q.blocks_per_ip, q.blocks_mapped, q.capacity, q.reserve_count)
+          == (p.blocks_per_ip, p.blocks_per_ip, p.capacity, 0),
+          f"'{p.name}': block_reserve=0 changed a derived value")
+    n = min(p.capacity, p.inside.count)
+    same = all(q.forward(q.inside.addr_of(i)) == p.forward(p.inside.addr_of(i))
+               for i in range(n))
+    check(same, f"'{p.name}': block_reserve=0 moved a subscriber")
+print(f"  OK  {len(pools)} pools: a reserve of zero leaves every derived "
+      f"value and every mapping exactly as they were")
+
+# The arithmetic the box has to report the same number for. Nothing is lost to
+# rounding: the blocks a public address holds are either mapped or reserved.
+for p in pools:
+    bad = 0
+    for r in range(0, min(p.blocks_per_ip, 8)):
+        q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                       block_size=p.block_size, policy=p.policy,
+                       block_reserve=r)
+        if q.blocks_mapped != p.blocks_per_ip - r:
+            bad += 1
+        if q.capacity != q.outside.count * (p.blocks_per_ip - r):
+            bad += 1
+        if q.reserve_count != q.outside.count * r:
+            bad += 1
+        if q.capacity + q.reserve_count != q.outside.count * p.blocks_per_ip:
+            bad += 1
+    check(bad == 0, f"'{p.name}': {bad} capacity identities failed")
+print(f"  OK  capacity = public addresses x (blocks per address - reserve), "
+      f"and mapped + reserved = every block there is")
+
+# A reserve block must belong to NOBODY the formula names. This is the
+# property the whole feature stands on: an extension handed out of the reserve
+# is not a block taken from another subscriber.
+for p in pools:
+    bad = 0
+    for r in (1, 2, 5):
+        if r >= p.blocks_per_ip:
+            continue
+        q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                       block_size=p.block_size, policy=p.policy,
+                       block_reserve=r)
+        mapped = set()
+        for sub in range(q.capacity):
+            f = q.forward(q.inside.addr_of(sub)) if sub < q.inside.count else None
+            if f is None:
+                pub_idx, blk_idx = q.split(sub)
+            else:
+                pub_idx, blk_idx = f["pub_idx"], f["blk_idx"]
+            mapped.add((pub_idx, blk_idx))
+        held = set()
+        for res in range(q.reserve_count):
+            held.add(q.reserve_split(res))
+            if q.reserve_index(*q.reserve_split(res)) != res:
+                bad += 1
+        if mapped & held:
+            bad += len(mapped & held)
+        # and together they account for every block of every address
+        if len(mapped) + len(held) != q.outside.count * q.blocks_per_ip:
+            bad += 1
+    check(bad == 0, f"'{p.name}': {bad} reserve/subscriber block conflicts")
+print(f"  OK  no reserve block is any subscriber's, the reserve index is a "
+      f"bijection, and the two sets together are the whole pool")
+
+# What the return path sees. A port in the reserve is not "nobody's port": it
+# is a port the algorithm cannot attribute, which the allocator can and the
+# drop path must not.
+for p in pools:
+    bad = 0
+    for r in (1, 3):
+        if r >= p.blocks_per_ip:
+            continue
+        q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                       block_size=p.block_size, policy=p.policy,
+                       block_reserve=r)
+        for res in range(min(q.reserve_count, 64)):
+            f = q.reserve_forward(res)
+            for port in (f["port_lo"], f["port_hi"]):
+                if q.reserve_index_of(f["ip_pub"], port) != res:
+                    bad += 1
+                try:
+                    q.reverse(f["ip_pub"], port)
+                    bad += 1  # a reserve port must not name a subscriber
+                except BpaError:
+                    pass
+        for sub in range(min(q.capacity, 64)):
+            f = q.forward(q.inside.addr_of(sub))
+            for port in (f["port_lo"], f["port_hi"]):
+                if q.reserve_index_of(f["ip_pub"], port) is not None:
+                    bad += 1
+    check(bad == 0, f"'{p.name}': {bad} reserve ports resolved wrongly")
+print(f"  OK  every reserve port names its reserve block and no subscriber; "
+      f"no subscriber's port is mistaken for one")
+
+# THE #23 MEASUREMENT. A reserve reduces capacity, and reducing capacity is a
+# mapping change - but HOW MUCH of one depends on the policy, and the two
+# answers are not close. Measured here rather than asserted in prose, because
+# this is the number docs/pool-resize.md quotes and the operator reads at
+# commit.
+print()
+print("   what a reserve of 1 block per public address costs, by policy")
+print("   pool                      policy       capacity        moved  dropped")
+for p in pools:
+    q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                   block_size=p.block_size, policy=p.policy, block_reserve=1)
+    moved = dropped = 0
+    for sub in range(min(p.capacity, p.inside.count)):
+        a = p.forward(p.inside.addr_of(sub))
+        if sub >= q.capacity:
+            dropped += 1
+            continue
+        if q.forward(q.inside.addr_of(sub)) != a:
+            moved += 1
+    print(f"   {p.name:<24}  {p.policy.value:<11}  {p.capacity:6d}->"
+          f"{q.capacity:<6d}  {moved:6d}  {dropped:6d}")
+    if p.policy is MapPolicy.INTERLEAVED:
+        # Under interleaved the divisor is the public address count, which a
+        # reserve does not touch: every subscriber the smaller pool still
+        # holds keeps the block it had. The change is a truncation, not a
+        # re-mapping - and that is the difference between an outage for
+        # everybody and an outage for the tail.
+        check(moved == 0,
+              f"'{p.name}': interleaved, yet {moved} retained subscribers "
+              f"moved when only the reserve changed")
+    else:
+        # Under blocked the divisor IS blocks_mapped, so a reserve re-maps
+        # everybody past the first public address. Asserted so that a future
+        # change which quietly made this free would have to say so.
+        check(moved > 0,
+              f"'{p.name}': blocked, yet a reserve moved nobody; the blocked "
+              f"split divides by the mapped blocks and must")
+print("  OK  interleaved truncates the tail and moves nobody; blocked "
+      "re-divides and moves the rest")
+
+# Worker sharding. The return path can read only the reserve index off a
+# packet, so a subscriber may be given a reserve block only from its own
+# worker's slice - which means a worker with no reserve block has subscribers
+# with no reserve at all.
+for p in pools:
+    q = PoolConfig(p.name, p.inside_prefixes, p.outside_prefixes,
+                   block_size=p.block_size, policy=p.policy, block_reserve=2)
+    for nw in (1, 2, 3, 4, 8, 16):
+        have = {q.reserve_worker(r, nw) for r in range(q.reserve_count)}
+        check((len(have) == nw) == q.reserve_serves_every_worker(nw),
+              f"'{p.name}': {nw} workers, reserve of {q.reserve_count} blocks "
+              f"reaches {len(have)} of them, yet the model says "
+              f"{q.reserve_serves_every_worker(nw)}")
+print(f"  OK  a worker holds a reserve block exactly when the reserve is at "
+      f"least as large as the worker count")
+
+# Refusals. A reserve that leaves nothing to map, and a reserve on a pool
+# whose extensions already come off a free list.
+for name, fn in [
+    ("a reserve of every block",
+     lambda: PoolConfig("x", ["10.0.0.0/24"], ["1.2.3.0/24"], block_size=512,
+                        block_reserve=126)),
+    ("a reserve larger than the address holds",
+     lambda: PoolConfig("x", ["10.0.0.0/24"], ["1.2.3.0/24"], block_size=512,
+                        block_reserve=1000)),
+    ("a negative reserve",
+     lambda: PoolConfig("x", ["10.0.0.0/24"], ["1.2.3.0/24"], block_size=512,
+                        block_reserve=-1)),
+    ("a reserve on a dynamic pool",
+     lambda: PoolConfig("x", ["10.0.0.0/24"], ["1.2.3.0/24"], block_size=512,
+                        block_reserve=1, mode=PoolMode.DYNAMIC)),
+]:
+    try:
+        fn()
+        check(False, f"{name}: should have been refused")
+    except BpaError:
+        print(f"  OK  refused: {name}")
+
+print("\n" + "=" * 64)
 print(f"RESULT: {'ALL TESTS PASSED' if FAIL == 0 else str(FAIL) + ' FAILURES'}")
 sys.exit(1 if FAIL else 0)

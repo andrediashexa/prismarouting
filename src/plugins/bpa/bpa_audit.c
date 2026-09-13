@@ -51,6 +51,21 @@ bpa_audit_format_pool (u8 *s, bpa_pool_t *p)
 	      p->port_min, p->port_max, format_bpa_policy, p->policy,
 	      format_bpa_mode, p->mode);
 
+  /*
+   * The reserve is part of the FORMULA, not a preference about it: it decides
+   * how many blocks of each public address the mapping may use, and under the
+   * blocked policy it is the divisor. A reader recomputing who held an
+   * address and port on the date in a court order gets a different answer
+   * without it, and gets it confidently.
+   *
+   * Written only when there is one. An entry with no `reserve` was written by
+   * a pool that had none, which is the value the arithmetic takes when the
+   * field is absent - and is what every entry written before this existed
+   * means.
+   */
+  if (p->block_reserve)
+    s = format (s, " reserve %u", p->block_reserve);
+
   for (i = 0; i < p->bypass_src.n_ranges; i++)
     {
       a.as_u32 = clib_host_to_net_u32 (p->bypass_src.ranges[i].base);

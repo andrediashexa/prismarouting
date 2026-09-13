@@ -69,6 +69,15 @@ MUTATIONS = {
     # of subscribers it maps changes even though the arithmetic does not.
     "vrf":          (lambda p: setattr(p, "vrf", "1"), "pool_replace"),
     "outside_vrf":  (lambda p: setattr(p, "outside_vrf", "2"), "pool_replace"),
+    # A reserve is taken OUT of capacity, and capacity is the mapping: under
+    # the blocked policy blocks_mapped is the divisor, so every subscriber
+    # past the first public address moves, and under every policy the
+    # subscribers above the new capacity lose their block entirely. The
+    # opposite classification from block_stride below, and for the opposite
+    # reason - this one decides how many blocks the FORMULA may use, not where
+    # the next extension goes (issue #39).
+    "block_reserve": (lambda p: setattr(p, "block_reserve", 2),
+                      "pool_replace"),
 
     # --- settings the dataplane changes under a worker barrier, in place.
     "timeouts":     (lambda p: p.timeouts.update({"udp": 900}), "settings_set"),
@@ -680,6 +689,41 @@ check(_p.settings_api_args()["block_stride"] == 3,
 check(" block-stride 0" not in config.Pool("plain").lines(),
       "a pool with no stride emits no stride line")
 print("  parsed, read back, and in both API messages")
+
+# --- and the one that must NOT reach the in-place message ------------------
+#
+# The mirror image of the check above, and the more dangerous direction. A
+# reserve is taken out of capacity, so it re-maps subscribers and needs the
+# pool rebuilt; sent on the in-place settings message it would be accepted by
+# a dataplane that cannot act on it, and the operator would read their own
+# `reserve 4` back off a box still mapping every block (issue #39).
+print("\n=== reserve is a mapping change, in every rendering ===")
+_r = config.Config.parse("""cgnat pool reserved
+ inside 100.64.0.0/22
+ outside 200.150.0.16/28
+ reserve 4
+ exit
+""").pools["reserved"]
+check(_r.block_reserve == 4, f"parsed: {_r.block_reserve}")
+check(" reserve 4" in _r.lines(), f"read back as configuration: {_r.lines()}")
+# The half that decides everything downstream: lines(in_place=False) is what
+# delta_to() compares to decide a pool must be REPLACED, and it is what
+# `commit` renders to produce the re-mapping warning of #23. A reserve left
+# out of it changes the mapping with no warning at all.
+check(" reserve 4" in _r.lines(in_place=False),
+      f"in the mapping half of the pool: {_r.lines(in_place=False)}")
+check("reserve 4" in _r.device_command(),
+      f"as a device command: {_r.device_command()}")
+check(_r.api_args()["block_reserve"] == 4,
+      f"in the pool-creation message: {_r.api_args().get('block_reserve')}")
+check("block_reserve" not in _r.settings_api_args(),
+      "the in-place settings message carries a reserve, which it cannot "
+      "apply: that message exists for changes that are safe on a pool "
+      "carrying traffic")
+check(" reserve 0" not in config.Pool("plain").lines(),
+      "a pool with no reserve emits no reserve line")
+print("  parsed, read back, in the mapping half, and only in the creation "
+      "message")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

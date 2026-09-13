@@ -398,6 +398,16 @@ class Pool:
         # behaviour and every configuration written before this existed:
         # an extra block goes wherever the pool has one free.
         self.block_stride = 0
+        # Blocks per public address held out of the deterministic formula, so
+        # a subscriber that fills its block can be given another. Zero is
+        # every configuration written before this existed.
+        #
+        # NOT an in-place setting, unlike max_blocks and block_stride beside
+        # it: a reserve is taken out of capacity, and capacity is the mapping.
+        # It is rendered by lines() outside the `in_place` guard for that
+        # reason, which is what puts it in pool_replace and sends it through
+        # the re-mapping warning at commit (issue #23).
+        self.block_reserve = 0
         # TCP MSS clamp: "" is off, "auto" derives it from the interface
         # MTUs, anything else is the number of bytes.
         self.tcp_mss = ""
@@ -449,6 +459,15 @@ class Pool:
             out.append(f" ports {self.ports}")
         out.append(f" policy {self.policy}")
         out.append(f" mode {self.mode}")
+        # Deliberately not behind `in_place`. A reserve reduces capacity,
+        # which is the divisor under the blocked policy and the ceiling under
+        # every policy - so changing it re-maps subscribers and the pool has
+        # to be rebuilt, exactly like a prefix or a block size. Classifying it
+        # as in-place would send it through bpa_pool_settings_set, which
+        # cannot change a mapping, and the reserve would silently never
+        # arrive.
+        if self.block_reserve:
+            out.append(f" reserve {self.block_reserve}")
         # Not behind `in_place`: changing which VRF a pool serves changes which
         # subscribers it maps, so every session on it is invalid - exactly like
         # a change of prefix, and it rebuilds the pool for the same reason.
@@ -500,6 +519,8 @@ class Pool:
         if self.ports:
             parts += ["ports", self.ports.replace(" ", "-")]
         parts += ["policy", self.policy, "mode", self.mode]
+        if self.block_reserve:
+            parts += ["reserve", str(self.block_reserve)]
         if self.vrf != "":
             parts += ["vrf", self.vrf]
         if self.outside_vrf != "":
@@ -660,6 +681,10 @@ class Pool:
                       + self.filter.upper().replace("-", "_"),
             "max_blocks": int(self.max_blocks),
             "block_stride": int(self.block_stride),
+            # On the creation message only. bpa_pool_settings_set has no such
+            # field, because everything on that message is safe to change on a
+            # pool that is carrying traffic and this is not.
+            "block_reserve": int(self.block_reserve),
             "tcp_mss": 0 if self.tcp_mss in ("", "auto") else int(self.tcp_mss),
             "tcp_mss_auto": self.tcp_mss == "auto",
             "alg": alg,
@@ -1442,6 +1467,11 @@ class Config:
             if not w[1].isdigit() or int(w[1]) > 65535:
                 return f"block-stride '{w[1]}': expected 0-65535 blocks"
             pool.block_stride = int(w[1])
+        elif w[0] == "reserve" and len(w) > 1:
+            if not w[1].isdigit() or int(w[1]) > 65535:
+                return (f"reserve '{w[1]}': expected 0-65535 blocks per "
+                        "public address")
+            pool.block_reserve = int(w[1])
         elif w[0] == "bypass" and len(w) > 2:
             if w[1] not in ("source", "destination"):
                 return f"bypass '{w[1]}': expected source or destination"

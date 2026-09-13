@@ -848,6 +848,9 @@ CGNAT_POOL = {
     "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
     "block-stride": ("blocks between the ones a subscriber holds; 1 puts them "
                      "side by side, 0 lets the pool place them", ARG_NUM),
+    "reserve": ("blocks per public address kept aside so a deterministic "
+                "subscriber that fills its block can be given another; "
+                "REDUCES CAPACITY and re-maps subscribers", ARG_NUM),
     "bypass": ("prefixes that leave untranslated", {
         "source": ("a source that must keep its own address", ARG_PREFIX),
         "destination": ("a destination that must see the real source",
@@ -1017,6 +1020,9 @@ POOL_NEGATE = {
     "block-stride": ("let the pool place a subscriber's extra blocks wherever "
                      "it has one free", None,
                      _pool_no_clear("block_stride", 0)),
+    "reserve": ("give the reserved blocks back to the formula; this too "
+                "re-maps subscribers", None,
+                _pool_no_clear("block_reserve", 0)),
     "bypass": ("stop excluding a prefix from translation",
                CGNAT_POOL["bypass"][1], _pool_no_bypass),
     "utilisation-alarm": ("stop alarming on block utilisation", None,
@@ -7963,6 +7969,10 @@ class Shell:
                 if not 0 <= int(w[1]) <= 65535:
                     raise ValueError("block-stride must be 0-65535")
                 p.block_stride = int(w[1])
+            elif w[0] == "reserve":
+                if not 0 <= int(w[1]) <= 65535:
+                    raise ValueError("reserve must be 0-65535")
+                p.block_reserve = int(w[1])
             elif w[0] == "bypass":
                 why = Config._pool_line(p, " ".join(w))
                 if why:

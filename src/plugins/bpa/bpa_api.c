@@ -121,6 +121,7 @@ vl_api_bpa_pool_add_del_t_handler (vl_api_bpa_pool_add_del_t *mp)
   cfg.tcp_mss = clib_net_to_host_u16 (mp->tcp_mss);
   cfg.tcp_mss_auto = mp->tcp_mss_auto;
   cfg.block_stride = clib_net_to_host_u16 (mp->block_stride);
+  cfg.block_reserve = clib_net_to_host_u16 (mp->block_reserve);
 
   cfg.vrf_id = clib_net_to_host_u32 (mp->vrf_id);
   cfg.out_vrf_id = clib_net_to_host_u32 (mp->out_vrf_id);
@@ -469,6 +470,7 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   mp->filter = (vl_api_bpa_filter_t) p->filter;
   mp->max_blocks = p->max_blocks;
   mp->block_stride = clib_host_to_net_u16 (p->block_stride);
+  mp->block_reserve = clib_host_to_net_u16 (p->block_reserve);
   mp->alg = clib_host_to_net_u32 (p->alg);
   mp->tcp_mss = clib_host_to_net_u16 (p->tcp_mss);
   mp->tcp_mss_auto = p->tcp_mss_auto;
@@ -484,6 +486,8 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
     clib_host_to_net_u32 (p->timeouts.port_holddown);
   mp->timeouts.alg_expect = clib_host_to_net_u32 (p->timeouts.alg_expect);
   mp->blocks_per_ip = clib_host_to_net_u32 (p->blocks_per_ip);
+  mp->blocks_mapped = clib_host_to_net_u32 (p->blocks_mapped);
+  mp->reserve_count = clib_host_to_net_u32 (p->reserve_count);
   mp->capacity = clib_host_to_net_u32 (p->capacity);
   mp->inside_count = clib_host_to_net_u32 (p->inside.count);
   mp->outside_count = clib_host_to_net_u32 (p->outside.count);

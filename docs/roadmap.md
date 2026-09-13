@@ -139,13 +139,16 @@ bounded by a per-pool `max-blocks`, and each one produces its own RFC 8158
 stopped for one customer" into a logged, bounded event, and the cap is what
 stops one infected host consuming the pool everybody else needs.
 
-Only in **dynamic** mode. A deterministic pool has no spare block by
-construction — the formula assigns every block to some subscriber, so a block
-handed out as an extension is one taken from somebody else, and their mapping
-breaks with no error anywhere. Carving out a reserve re-maps every existing
-subscriber, which is [#39](https://github.com/andrediashexa/hexarouting/issues/39)
-and depends on the capacity-change procedure
-([#23](https://github.com/andrediashexa/hexarouting/issues/23)).
+In **deterministic** mode it needs a reserve, which
+[#39](https://github.com/andrediashexa/hexarouting/issues/39) delivers. That
+pool has no spare block by construction — the formula assigns every block to
+some subscriber, so a block handed out as an extension is one taken from
+somebody else and their mapping breaks with no error anywhere. `reserve <n>`
+holds n blocks of every public address back for exactly this, and it is paid for
+in capacity: enabling or resizing one re-maps subscribers and goes through the
+capacity-change procedure
+([#23](https://github.com/andrediashexa/hexarouting/issues/23)), with zero — no
+reserve at all — as the default.
 
 **Stride** shipped with [#55](https://github.com/andrediashexa/hexarouting/issues/55):
 `block-stride` puts the nth block a subscriber holds `n × stride × block-size`
