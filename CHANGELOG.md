@@ -50,6 +50,105 @@ are to be interpreted as described in
 
 ### Internal
 
+* **Ten labs started VPP and never checked that it arrived, so a machine that
+  never brought a dataplane up was reported as a defect in the product**
+  ([#261](https://github.com/andrediashexa/hexarouting/issues/261)).
+  `tools/run-all-labs.sh` classifies a run by grepping its capture for
+  `VPP did not start`: a lab that prints it is counted `NO VPP`, which tells
+  the reader to look at the machine. Ten labs carried the thirty second wait
+  loop and not the line after it that reads the result, so they waited, carried
+  on with no box under them, and built a verdict out of empty strings.
+
+  Measured rather than argued. `lab/startup-test.conf` was given one line VPP
+  refuses and `sh tools/lab.sh frag` was run whole: VPP exited before creating
+  its CLI socket, the lab printed `Could not find VPP CLI socket` forty times
+  and ended `LAB FAILED: 14 check(s)`, and `lab_no_vpp()` run verbatim over
+  that capture agreed it was a product failure. A release gate reads that
+  count.
+
+  **The classifier's fallback cannot cover this and was never meant to.** It
+  looks for `connect: Connection refused`, which is what a socket with nothing
+  behind it says: a VPP that started, created its socket and then died. A VPP
+  that never started leaves no socket to refuse. The guard line is the only
+  thing that classifies a dataplane that never came.
+
+  The wait itself and the thirty seconds are unchanged. `lab/lib.sh` grows one
+  `wait_vpp` helper carrying both halves, and the ten labs use it; the forty
+  start sites that already print the line keep their own copy, because
+  converting them would move the input of every lab in the suite in order to
+  change no lab's verdict. `test/test_lab_workers.sh` holds the guarantee
+  rather than the spelling: it sweeps every `vpp -c` in `lab/` and goes red on
+  a start site with neither the helper nor the line between it and the next
+  one, and it runs `wait_vpp` against a stub `vppctl` to pin that the line it
+  prints is the line the classifier looks for.
+
+* **The labs' `vppctl` carriage returns, swept and pinned**
+  ([#249](https://github.com/andrediashexa/hexarouting/issues/249)). `vppctl`
+  ends every line with CR+LF, and neither `awk`'s field splitting nor `sh`'s
+  IFS counts `\r` as whitespace, so the carriage return stays attached to the
+  **last field of every line**. A value read off the end of a line is
+  `600<CR>` while the terminal shows `600`.
+
+  **Which half of a lab survives that was measured, not assumed**, under
+  `dash`, which is the shell `tools/lab.sh` runs the labs with: `[ "600<CR>"
+  -eq 600 ]` is **true**, because the number parser calls `isspace()` and
+  `isspace('\r')` is true, while `[ "600<CR>" = "600" ]` is **false**, a
+  `case` glob does not match and `grep -x` does not match. Every arithmetic
+  comparison survives it; every string comparison does not.
+
+  It fails in the direction that hides. A needle that can never match makes
+  "this must appear" red on a correct box, which somebody notices, and "this
+  must NOT appear" green on a broken one, which nobody does.
+
+  **All 54 labs were swept**: 1107 assertion sites, of which 280 read a value
+  derived from `vppctl`. **None of the 280 was bitten**, and that is the
+  measurement, not an absence of one: their needles are literal strings, which
+  have no carriage return to lose, and their numeric comparisons are the ones
+  `dash` tolerates. The single bite the sweep found sits just outside the
+  assertion set - a printed cross-check in `lab/snmp.sh` comparing the SNMP
+  answer against the dataplane with `tr ' ' '\n' | grep -x 600`, which
+  compares whole lines, so it never matched and the `|| echo 600` behind it
+  printed the literal. The report said "vppctl says 600" whatever the box
+  held. It is now an assertion against the value read off the dataplane, and
+  it goes red with the strip removed **while the printed line still reads
+  `600`**, which is the whole difficulty in one screen.
+
+  **Where the strip belongs was decided by counting.** A wrapper every lab
+  pipes `vppctl` through is the obvious answer and was rejected: the needle of
+  an `expect_in`/`expect_not_in` is a literal string in all but a handful of
+  those 280 sites, and a literal needle has no carriage return to lose - it
+  matches inside `...bpa-in2out<CR>` like any other substring. Wrapping
+  roughly a thousand call sites would move the input of every lab in order to
+  change no lab's verdict, and each one would then have to be shown not to
+  have moved. So the strip goes where the value is **extracted**, in one named
+  helper - `vc()` in `lab/lib.sh` - and `test/test_lab_crlf.py` refuses the
+  extraction shapes that carry a carriage return at all: the last `awk` field,
+  a whole line, `grep -x`, a `sed` that prints the rest of a line, an
+  end-anchored regex. Seventeen sites were converted, including the sixteen
+  that were verdict-neutral, so the rule has no allowlist for anybody to grow.
+
+  **The guard reads two steps, not one.** A lab can park a whole output in a
+  variable on one line and extract from it on another, and the second line
+  never says `vppctl` - `lab/icmp-tcp.sh` was doing exactly that. What it does
+  not follow is stated in its own docstring rather than left to be discovered:
+  a value through a file, through a function's return, or built by string
+  arithmetic is out of reach of a source check.
+
+* **A dead `expect_not_in` in `lab/vty.sh`**, found on the way and the same
+  defect class with no carriage return in it
+  ([#249](https://github.com/andrediashexa/hexarouting/issues/249)). The lab
+  asserted `expect_not_in "BGP_BLOCK: cgnat"`. Its generator prints that label
+  followed by the offered words **sorted**, so the label is only ever followed
+  by the alphabetically first one, and the assertion nine lines above pins
+  that word to `address-family`. `BGP_BLOCK: cgnat` could not match on a
+  leaking box either, so the check had been green since the day it was
+  written. It now reads the word list. Shown failing by leaking `cgnat` into
+  the BGP block's grammar, which the old spelling stays green on. The two
+  neighbouring negatives are **not** dead: `cgnat` sorts before `description`
+  in `IN_BLOCK` and `address-family` before `bfd` in `BGP_STMT`, so a leak
+  there does reach the first position.
+
+
 * **A `NO VPP` verdict now carries VPP's own account of why**, instead of one
   line with nothing under it
   ([#253](https://github.com/andrediashexa/hexarouting/issues/253)). `FAIL`
@@ -341,9 +440,7 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247),
-[#249](https://github.com/andrediashexa/hexarouting/issues/249),
-[#261](https://github.com/andrediashexa/hexarouting/issues/261).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247).
 
 ### Added
 
@@ -520,38 +617,6 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
-
-* **Ten labs started VPP and never checked that it arrived, so a machine that
-  never brought a dataplane up was reported as a defect in the product**
-  ([#261](https://github.com/andrediashexa/hexarouting/issues/261)).
-  `tools/run-all-labs.sh` classifies a run by grepping its capture for
-  `VPP did not start`: a lab that prints it is counted `NO VPP`, which tells
-  the reader to look at the machine. Ten labs carried the thirty second wait
-  loop and not the line after it that reads the result, so they waited, carried
-  on with no box under them, and built a verdict out of empty strings.
-
-  Measured rather than argued. `lab/startup-test.conf` was given one line VPP
-  refuses and `sh tools/lab.sh frag` was run whole: VPP exited before creating
-  its CLI socket, the lab printed `Could not find VPP CLI socket` forty times
-  and ended `LAB FAILED: 14 check(s)`, and `lab_no_vpp()` run verbatim over
-  that capture agreed it was a product failure. A release gate reads that
-  count.
-
-  **The classifier's fallback cannot cover this and was never meant to.** It
-  looks for `connect: Connection refused`, which is what a socket with nothing
-  behind it says: a VPP that started, created its socket and then died. A VPP
-  that never started leaves no socket to refuse. The guard line is the only
-  thing that classifies a dataplane that never came.
-
-  The wait itself and the thirty seconds are unchanged. `lab/lib.sh` grows one
-  `wait_vpp` helper carrying both halves, and the ten labs use it; the forty
-  start sites that already print the line keep their own copy, because
-  converting them would move the input of every lab in the suite in order to
-  change no lab's verdict. `test/test_lab_workers.sh` holds the guarantee
-  rather than the spelling: it sweeps every `vpp -c` in `lab/` and goes red on
-  a start site with neither the helper nor the line between it and the next
-  one, and it runs `wait_vpp` against a stub `vppctl` to pin that the line it
-  prints is the line the classifier looks for.
 
 * **Nothing stopped the ISO build from shipping an answer file, and the ISO it
   did ship carried three SSH host private keys.** `docs/appliance.md` says the
@@ -1009,72 +1074,6 @@ are to be interpreted as described in
   checks go red, and so do the six fragment assertions, with **two** sessions
   opened by the two fragments instead of one. That is the defect itself, on
   the wire.
-
-* **The labs' `vppctl` carriage returns, swept and pinned**
-  ([#249](https://github.com/andrediashexa/hexarouting/issues/249)). `vppctl`
-  ends every line with CR+LF, and neither `awk`'s field splitting nor `sh`'s
-  IFS counts `\r` as whitespace, so the carriage return stays attached to the
-  **last field of every line**. A value read off the end of a line is
-  `600<CR>` while the terminal shows `600`.
-
-  **Which half of a lab survives that was measured, not assumed**, under
-  `dash`, which is the shell `tools/lab.sh` runs the labs with: `[ "600<CR>"
-  -eq 600 ]` is **true**, because the number parser calls `isspace()` and
-  `isspace('\r')` is true, while `[ "600<CR>" = "600" ]` is **false**, a
-  `case` glob does not match and `grep -x` does not match. Every arithmetic
-  comparison survives it; every string comparison does not.
-
-  It fails in the direction that hides. A needle that can never match makes
-  "this must appear" red on a correct box, which somebody notices, and "this
-  must NOT appear" green on a broken one, which nobody does.
-
-  **All 54 labs were swept**: 1107 assertion sites, of which 280 read a value
-  derived from `vppctl`. **None of the 280 was bitten**, and that is the
-  measurement, not an absence of one: their needles are literal strings, which
-  have no carriage return to lose, and their numeric comparisons are the ones
-  `dash` tolerates. The single bite the sweep found sits just outside the
-  assertion set - a printed cross-check in `lab/snmp.sh` comparing the SNMP
-  answer against the dataplane with `tr ' ' '\n' | grep -x 600`, which
-  compares whole lines, so it never matched and the `|| echo 600` behind it
-  printed the literal. The report said "vppctl says 600" whatever the box
-  held. It is now an assertion against the value read off the dataplane, and
-  it goes red with the strip removed **while the printed line still reads
-  `600`**, which is the whole difficulty in one screen.
-
-  **Where the strip belongs was decided by counting.** A wrapper every lab
-  pipes `vppctl` through is the obvious answer and was rejected: the needle of
-  an `expect_in`/`expect_not_in` is a literal string in all but a handful of
-  those 280 sites, and a literal needle has no carriage return to lose - it
-  matches inside `...bpa-in2out<CR>` like any other substring. Wrapping
-  roughly a thousand call sites would move the input of every lab in order to
-  change no lab's verdict, and each one would then have to be shown not to
-  have moved. So the strip goes where the value is **extracted**, in one named
-  helper - `vc()` in `lab/lib.sh` - and `test/test_lab_crlf.py` refuses the
-  extraction shapes that carry a carriage return at all: the last `awk` field,
-  a whole line, `grep -x`, a `sed` that prints the rest of a line, an
-  end-anchored regex. Seventeen sites were converted, including the sixteen
-  that were verdict-neutral, so the rule has no allowlist for anybody to grow.
-
-  **The guard reads two steps, not one.** A lab can park a whole output in a
-  variable on one line and extract from it on another, and the second line
-  never says `vppctl` - `lab/icmp-tcp.sh` was doing exactly that. What it does
-  not follow is stated in its own docstring rather than left to be discovered:
-  a value through a file, through a function's return, or built by string
-  arithmetic is out of reach of a source check.
-
-* **A dead `expect_not_in` in `lab/vty.sh`**, found on the way and the same
-  defect class with no carriage return in it
-  ([#249](https://github.com/andrediashexa/hexarouting/issues/249)). The lab
-  asserted `expect_not_in "BGP_BLOCK: cgnat"`. Its generator prints that label
-  followed by the offered words **sorted**, so the label is only ever followed
-  by the alphabetically first one, and the assertion nine lines above pins
-  that word to `address-family`. `BGP_BLOCK: cgnat` could not match on a
-  leaking box either, so the check had been green since the day it was
-  written. It now reads the word list. Shown failing by leaking `cgnat` into
-  the BGP block's grammar, which the old spelling stays green on. The two
-  neighbouring negatives are **not** dead: `cgnat` sorts before `description`
-  in `IN_BLOCK` and `address-family` before `bfd` in `BGP_STMT`, so a leak
-  there does reach the first position.
 
 ### Added
 
