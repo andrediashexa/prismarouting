@@ -123,10 +123,10 @@ def report_open():
 
       STILL IN FORCE   the exporter has not restarted since; the subscriber
                        holds those ports now
-      ENDED AT RESTART the exporter announced a new systemInitTime afterwards,
-                       so the box was replaced while holding the block. It did
-                       not observe the end, so the honest answer is a window
-                       and not an instant.
+      ENDED AT RESTART the exporter's current incarnation began AFTER the
+                       allocation, so the box was replaced while holding the
+                       block. It did not observe the end, so the honest answer
+                       is a window and not an instant.
 
     Without the marker every open allocation is the first kind by default,
     which is the reading that names a subscriber who had already gone. This
@@ -158,16 +158,34 @@ def report_open():
     for k, times in sorted(open_allocs.items(), key=lambda kv: str(kv[0])):
         for t in times:
             any_open = True
-            # The init time in force when the allocation was made, against the
-            # latest one announced. Different means the box was replaced while
-            # it held the block.
-            before = [m for m in markers if m <= t]
-            after = [m for m in markers if m > t]
-            init_then = inits[before[-1]] if before else None
-            init_now = inits[after[-1]] if after else init_then
+            # Did an incarnation start AFTER this allocation was made? That is
+            # the whole question, and it is one comparison against the
+            # allocation's own timestamp.
+            #
+            # It used to compare the init announced by the last marker at or
+            # before the allocation with the one announced by the last marker
+            # after it, and markers are periodic. An allocation made in the gap
+            # between a restart and the first marker of the NEW incarnation
+            # therefore read its "init then" off the OLD incarnation's marker,
+            # and every such allocation came out ENDED AT RESTART - at a
+            # restart that had happened before it. Captured (#223):
+            #
+            #   05:17:59 RESTART-MARKER exporter init 05:17:24
+            #   05:18:52 RESTART-MARKER exporter init 05:18:17
+            #   05:18:28 100.64.0.9 ... ENDED AT RESTART (exporter
+            #            reinitialised at 05:18:17)
+            #
+            # eleven seconds AFTER the restart it was said to have ended at. A
+            # subscriber given a block in the first seconds after a reboot was
+            # read as having stopped holding it, in the report a court order
+            # asks for.
+            #
+            # An incarnation whose init time is earlier than the allocation
+            # cannot have started after it, so "init then" is not needed and
+            # the marker cadence stops mattering.
+            init_now = inits[markers[-1]] if markers else None
             when = time.strftime('%H:%M:%S', time.gmtime(t))
-            if init_then is not None and init_now is not None \
-               and init_now > init_then:
+            if init_now is not None and init_now > t:
                 print(f"  {when} {k[0]} -> {k[1]} portas {k[2]}-{k[3]}: "
                       f"ENDED AT RESTART (exporter reinitialised at "
                       f"{time.strftime('%H:%M:%S', time.gmtime(init_now))}; "
