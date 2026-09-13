@@ -34,7 +34,7 @@ are to be interpreted as described in
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
-## Unreleased
+## 0.67.0 — nine MUSTs nothing was holding, and an ISO that shipped its own keys
 
 [#55](https://github.com/andrediashexa/hexarouting/issues/55),
 [#63](https://github.com/andrediashexa/hexarouting/issues/63),
