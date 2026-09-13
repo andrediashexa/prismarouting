@@ -1026,6 +1026,27 @@ of a line and skips any line starting with `! hexash:`, and both constants live
 in `config.py` so the half that writes them and the half that removes them
 cannot come to be spelled differently.
 
+### How much of a working box is outside the boundary
+
+Measured, not estimated. A provider edge was configured at a live FRR 10.7.1 -
+prefix-list, route-map with `match` and `set`, an eBGP transit session with
+policy, OSPF, a default route - and its `show running-config` read back and put
+through the display. **Four statements of twenty-five** are marked:
+
+```
+hostname hexarouting  <- not checked
+hostname c89defb68a9c  <- not checked
+service integrated-vtysh-config  <- not checked
+...
+ no bgp ebgp-requires-policy  <- not checked
+```
+
+That proportion is the point of the design being proportionate: a display where
+everything is marked says as little as one where nothing is. The read-back is
+kept as a fixture in `test/test_hexash_complete.py`, with each of the
+twenty-one unmarked statements named one by one - a count passes just as well
+when the wrong lines are the clean ones.
+
 ### What it immediately revealed
 
 The first thing a visible boundary shows is how much is outside it. `no`

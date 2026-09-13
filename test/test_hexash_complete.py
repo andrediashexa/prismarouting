@@ -3500,6 +3500,87 @@ check(_from_screen.routing == _routing_before,
 check(not _from_screen.unknown,
       f"with nothing unreadable: {_from_screen.unknown}")
 
+# --- how much of a real box is outside the boundary ---
+#
+# The text below is a REAL read-back, typed at a live FRR 10.7.1 and read with
+# `show running-config`, filtered exactly as `Frr.running()` filters it: a
+# provider edge with a prefix-list, a route-map, an eBGP transit session with
+# policy, OSPF and a default route. It is here because the marking has to be
+# proportionate on a box that is working - a display where everything is
+# marked says as little as one where nothing is.
+#
+# Four statements of twenty-five, and each of the four is genuinely a
+# statement this VTY has no grammar for. `no bgp ebgp-requires-policy` is the
+# interesting one: nearly every FRR BGP configuration carries it, this VTY
+# models no `no` inside a block at all, and the marker naming it is the marker
+# working rather than the marker being noisy.
+print("\n=== a real FRR read-back, and how much of it is outside ===")
+FRR_READBACK = """!
+hostname hexarouting
+service integrated-vtysh-config
+!
+ip prefix-list PL-MEUS-BLOCOS seq 5 permit 200.150.8.0/22
+!
+route-map RM-OUT permit 10
+ match ip address prefix-list PL-MEUS-BLOCOS
+ set as-path prepend 65000
+exit
+!
+ip route 0.0.0.0/0 10.0.0.2
+!
+router bgp 65000
+ bgp router-id 10.0.0.1
+ bgp log-neighbor-changes
+ no bgp ebgp-requires-policy
+ neighbor 10.0.0.2 remote-as 65001
+ neighbor 10.0.0.2 description transito-primario
+ !
+ address-family ipv4 unicast
+  network 200.150.8.0/22
+  neighbor 10.0.0.2 soft-reconfiguration inbound
+  neighbor 10.0.0.2 route-map RM-OUT out
+ exit-address-family
+exit
+!
+router ospf
+ ospf router-id 10.0.0.1
+ network 10.0.0.0/24 area 0
+exit
+!""".splitlines()
+
+_real, _n_real = mark_routing(FRR_READBACK)
+_marked_now = [l.strip()[:-len(UNCHECKED_MARK.strip())].strip()
+               for l in _real if l.endswith(UNCHECKED_MARK)]
+check(sorted(_marked_now) == ["hostname hexarouting",
+                              "no bgp ebgp-requires-policy",
+                              "service integrated-vtysh-config"],
+      f"these three, and no others, are outside the grammar: {_marked_now}")
+# The other twenty-one are NOT marked, which is the half that makes the mark
+# mean something. Named one by one rather than counted, because a count passes
+# just as well when the wrong lines are clean.
+for _want in ["ip prefix-list PL-MEUS-BLOCOS seq 5 permit 200.150.8.0/22",
+              "route-map RM-OUT permit 10",
+              "match ip address prefix-list PL-MEUS-BLOCOS",
+              "set as-path prepend 65000",
+              "ip route 0.0.0.0/0 10.0.0.2",
+              "bgp router-id 10.0.0.1",
+              "bgp log-neighbor-changes",
+              "neighbor 10.0.0.2 remote-as 65001",
+              "neighbor 10.0.0.2 description transito-primario",
+              "address-family ipv4 unicast",
+              "network 200.150.8.0/22",
+              "neighbor 10.0.0.2 soft-reconfiguration inbound",
+              "neighbor 10.0.0.2 route-map RM-OUT out",
+              "router ospf", "ospf router-id 10.0.0.1",
+              "network 10.0.0.0/24 area 0"]:
+    check(_want not in _marked_now,
+          f"'{_want}' is in the tree and must not be marked")
+# FRR's own `!` separators are part of the routing statements and are handed
+# back to FRR as they were, so they are not statements to mark either.
+check(not any(l.strip().startswith("!") and l.endswith(UNCHECKED_MARK)
+              for l in _real),
+      f"FRR's separators are left alone: {_real}")
+
 # --- commit says nothing; `commit check` names the number ---
 #
 # Argued from the standing rule (#205, #208): an alarm that is always on is
