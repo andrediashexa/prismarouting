@@ -28,7 +28,7 @@ ip netns exec peer ip addr add 10.0.0.2/24 dev veth-out
 use_binary_api
 
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
-n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+wait_vpp
 vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up
 # The TCP exporter uses a kernel socket, not VPP's dataplane: the collector has

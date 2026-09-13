@@ -76,7 +76,8 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247),
+[#261](https://github.com/andrediashexa/hexarouting/issues/261).
 
 ### Added
 
@@ -253,6 +254,38 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
+
+* **Ten labs started VPP and never checked that it arrived, so a machine that
+  never brought a dataplane up was reported as a defect in the product**
+  ([#261](https://github.com/andrediashexa/hexarouting/issues/261)).
+  `tools/run-all-labs.sh` classifies a run by grepping its capture for
+  `VPP did not start`: a lab that prints it is counted `NO VPP`, which tells
+  the reader to look at the machine. Ten labs carried the thirty second wait
+  loop and not the line after it that reads the result, so they waited, carried
+  on with no box under them, and built a verdict out of empty strings.
+
+  Measured rather than argued. `lab/startup-test.conf` was given one line VPP
+  refuses and `sh tools/lab.sh frag` was run whole: VPP exited before creating
+  its CLI socket, the lab printed `Could not find VPP CLI socket` forty times
+  and ended `LAB FAILED: 14 check(s)`, and `lab_no_vpp()` run verbatim over
+  that capture agreed it was a product failure. A release gate reads that
+  count.
+
+  **The classifier's fallback cannot cover this and was never meant to.** It
+  looks for `connect: Connection refused`, which is what a socket with nothing
+  behind it says: a VPP that started, created its socket and then died. A VPP
+  that never started leaves no socket to refuse. The guard line is the only
+  thing that classifies a dataplane that never came.
+
+  The wait itself and the thirty seconds are unchanged. `lab/lib.sh` grows one
+  `wait_vpp` helper carrying both halves, and the ten labs use it; the forty
+  start sites that already print the line keep their own copy, because
+  converting them would move the input of every lab in the suite in order to
+  change no lab's verdict. `test/test_lab_workers.sh` holds the guarantee
+  rather than the spelling: it sweeps every `vpp -c` in `lab/` and goes red on
+  a start site with neither the helper nor the line between it and the next
+  one, and it runs `wait_vpp` against a stub `vppctl` to pin that the line it
+  prints is the line the classifier looks for.
 
 * **Nothing stopped the ISO build from shipping an answer file, and the ISO it
   did ship carried three SSH host private keys.** `docs/appliance.md` says the

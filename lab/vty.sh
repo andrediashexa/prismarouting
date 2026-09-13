@@ -24,7 +24,7 @@ ip netns exec peer ip addr add 203.0.113.1/24 dev dum
 ip netns exec peer ip link set dum up
 
 vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
-n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+wait_vpp
 vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up
 # The pair comes from the product, not from this lab (#182). `vppctl lcp create`

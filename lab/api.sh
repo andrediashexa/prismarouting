@@ -16,7 +16,7 @@ cd /src
 use_binary_api
 
 vpp -c "$(startup_conf test)" > /tmp/vpp.log 2>&1 &
-n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
+wait_vpp
 
 echo "=== was the API registered? ==="
 vppctl show api message-table 2>/dev/null | grep -i bpa | head -6 | sed 's/^/  /'
