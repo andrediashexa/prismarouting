@@ -574,8 +574,11 @@ are to be interpreted as described in
 
   The mechanism itself is unchanged and remains a decision for the maintainer,
   with the evidence now on the issue: a shared subscriber-to-worker table costs
-  **16 to 21 clocks** against `bpa-in2out`'s own 396, so the read is not the
-  expensive part - the mutability is; and letting a worker borrow a block from
+  **16 to 21 clocks** against `bpa-in2out`'s own cost, which was 396 when that
+  reading was taken and is 346 since
+  [#63](https://github.com/andrediashexa/hexarouting/issues/63) in this same
+  release - so the read is a larger share than it was and still not the
+  expensive part; the mutability is; and letting a worker borrow a block from
   its neighbour, implemented and measured, **loses every reply**, because the
   return path resolves the worker from the block index by arithmetic.
 
