@@ -682,6 +682,51 @@ console_gave_up() {  # <string> <what the driver was doing> <how long>
   echo "  --- full console in $LOG ---"
 }
 
+wait_said() {  # <sentence> <seconds> <what the driver was doing>
+  # wait_for, over a console whose line breaks are collapsed first.
+  #
+  # The VTY wraps its prose to 79 columns, so where a sentence breaks depends
+  # on the words in it - and on the numbers. `commit confirmed 1` and
+  # `commit confirmed 10` are the same sentence and break in different places:
+  # at one minute it reads "...so this box has put" / "the previous
+  # configuration back", and the needle straddles the fold. The one-minute
+  # spelling is what this lab sends, so this assertion stopped matching the
+  # moment that sentence was reflowed, over a box doing exactly the right
+  # thing (#279, found again here in #283).
+  #
+  # THE JOURNAL PREFIX HAS TO COME OFF FIRST, and collapsing whitespace alone
+  # is not enough. Every line on this console arrives as
+  #
+  #   [  189.895690] hexash[1772]: commit confirmed 1: nobody confirmed it ...
+  #   [  189.899320] hexash[1772]: the previous configuration back
+  #
+  # so the fold does not merely break the sentence, it inserts a timestamp and
+  # a pid into the middle of it. Joining the lines without stripping that
+  # leaves the needle further from matching than it was.
+  #
+  # The offset bookkeeping stays on the RAW file. Only the comparison is
+  # rewritten, because CONSOLE_POS is a byte count into the capture.
+  _s=$(printf '%s' "$1" | tr -s '[:space:]' ' '); _t=$2; _why=$3; _n=0
+  while :; do
+    if console_since \
+         | sed 's/^\[[0-9. ]*\] [A-Za-z0-9_.-]*\[[0-9]*\]: //' \
+         | tr -s '[:space:]' ' ' | grep -qF "$_s"; then
+      CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+      return 0
+    fi
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+      console_gave_up "$1" "$_why" "${_n}s, and then the machine exited"
+      return 1
+    fi
+    if [ "$_n" -ge "$_t" ]; then
+      console_gave_up "$1" "$_why" "${_t}s"
+      return 1
+    fi
+    sleep 1
+    _n=$((_n + 1))
+  done
+}
+
 wait_for() {  # <string> <seconds> <what the driver was doing>
   _s=$1; _t=$2; _why=$3; _n=0
   while :; do
@@ -1171,7 +1216,9 @@ drive_console() {
   # From here nothing is typed. The box is alone with a change nobody
   # confirmed, and it either says this on its own or it does not.
   echo "  -- nobody is logged in; waiting for the box to act on its own"
-  if wait_for "put the previous configuration back" 180 \
+  # wait_said: this is prose the VTY wraps, and at `commit confirmed 1` the
+  # fold lands inside this very needle.
+  if wait_said "put the previous configuration back" 180 \
        "the box to roll back a commit nobody confirmed, with nobody logged in"
   then
     CONFIRM_ANNOUNCED=1
