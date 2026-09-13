@@ -65,7 +65,8 @@ are to be interpreted as described in
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
-[#237](https://github.com/andrediashexa/hexarouting/issues/237).
+[#237](https://github.com/andrediashexa/hexarouting/issues/237),
+[#242](https://github.com/andrediashexa/hexarouting/issues/242).
 
 ### Added
 
@@ -1467,6 +1468,29 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **Both REQUIRED defences against a pool holding the box's own address were
+  unasserted** ([#242](https://github.com/andrediashexa/hexarouting/issues/242)).
+  `docs/routing.md` calls them REQUIRED and states the symptom in the paragraph
+  above them: `bpa-out2in` runs on the `ip4-unicast` arc before `ip4-lookup`,
+  so it sees the box's own BGP and OSPF packets first. A peering address inside
+  a public pool means the box translates its own control plane and the session
+  drops for no apparent reason - a dead BGP session with healthy interfaces and
+  a healthy dataplane, which is the worst kind of outage to diagnose because
+  nothing is broken.
+
+  Both were implemented. Both could be neutralised with four characters each
+  and all 33 suites stayed green: `bpa_check_local_overlap()` needs `vnet` and
+  the unit suite links `bpa_pool.c` alone, and **no lab had ever created a pool
+  over one of its own interface addresses.**
+
+  `lab/localaddr.sh` does, on a real interface really carrying the address,
+  which is what the defence reads. Nine checks, and three of them are controls
+  rather than the claim: a pool that clashes with nothing is created, and an
+  address belonging to no pool is not reported. Without those two, a box that
+  refused every pool and logged an error for every address would pass this lab,
+  and the second is what keeps the message worth reading - an error printed
+  where it does not apply is one operators learn to skip.
 
 * **A test file in the tree that nothing ran, and nothing would have said so**
   ([#235](https://github.com/andrediashexa/hexarouting/issues/235)). Two lists
