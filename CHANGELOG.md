@@ -491,6 +491,7 @@ are to be interpreted as described in
 [#234](https://github.com/andrediashexa/hexarouting/issues/234),
 [#235](https://github.com/andrediashexa/hexarouting/issues/235),
 [#236](https://github.com/andrediashexa/hexarouting/issues/236),
+[#227](https://github.com/andrediashexa/hexarouting/issues/227),
 [#237](https://github.com/andrediashexa/hexarouting/issues/237),
 [#238](https://github.com/andrediashexa/hexarouting/issues/238),
 [#239](https://github.com/andrediashexa/hexarouting/issues/239),
@@ -635,6 +636,24 @@ are to be interpreted as described in
   and the box come apart quietly, and only reading the box says so.
 
 ### Changed
+
+* **`commit`'s read-back refusal says whether this VTY had ever read the
+  statement it names**
+  ([#227](https://github.com/andrediashexa/hexarouting/issues/227)). A commit
+  that FRR did not keep names the statement; it now carries the same
+  `<- not checked` mark `show configuration` uses, and one line saying what
+  the mark means. Without it the refusal over a statement this box walked
+  through its own grammar and the refusal over one it forwarded word for word
+  were the same five lines, and those need different first moves: a marked
+  statement can be a spelling FRR never understood, an unmarked one points at
+  FRR's side.
+
+  The rule that `commit` itself stays quiet about the boundary is unchanged.
+  It was measured, not assumed, that the rule does not extend here: the
+  twenty-five-statement provider read-back that puts four marks on a
+  configuration display produces `commit complete` and no message at all when
+  FRR is holding it, so a mark inside this refusal cannot become an alarm that
+  is always on.
 
 * **The outbound rewrite carries its checksum corrections on the session
   instead of recomputing them per packet.** `bpa_rewrite_src` was the largest

@@ -1869,6 +1869,37 @@ def unchecked_note(n):
             "for word"]
 
 
+def unchecked_in(routing):
+    """
+    The statements of a routing configuration this VTY never read, as a set,
+    for a caller that names one out of place.
+
+    `mark_routing` answers index for index and is right for a display that
+    prints the whole section. A commit refusal prints five statements out of
+    the candidate, with their blocks stripped off by `routing_added`, so it
+    needs the same answer keyed by the statement instead.
+
+    It is produced BY `mark_routing` rather than beside it, and that is the
+    point of the function existing at all: a refusal that named a statement
+    as unread while `show configuration` printed it clean would be two answers
+    to one question, which is the shape #141 refused when it made the marker
+    read the command tree instead of a word list kept next to it.
+
+    A statement whose words appear in two blocks counts as read when ANY
+    occurrence was read. `neighbor <ip> soft-reconfiguration inbound` is
+    modelled inside `address-family ipv4 unicast` and not inside `router bgp`,
+    so the same words get two answers in one configuration - and "this VTY
+    never read it" said over a statement it did read somewhere is the
+    confidently wrong direction of exactly the mistake the marker exists to
+    stop.
+    """
+    marked, _ = mark_routing(list(routing))
+    read, unread = set(), set()
+    for line, shown in zip(routing, marked):
+        (unread if shown.endswith(UNCHECKED_MARK) else read).add(line.strip())
+    return unread - read
+
+
 def mark_unchecked(lines):
     """
     A whole configuration with the routing statements this VTY did not read
@@ -6638,16 +6669,80 @@ class Shell:
             # are applied and really are in effect. What is refused is the
             # SENTENCE `commit complete`, which is the one an operator builds
             # every later diagnosis on.
+            #
+            # THE STATEMENTS CARRY THE `<- not checked` MARKER (#227), and
+            # this is the one message outside the display path that does.
+            #
+            # The objection, and it is a real one: this refusal answers "FRR
+            # did not keep this", whether the VTY had read it is a different
+            # question, and a message that answers two questions at once stops
+            # being read. It is one question. The refusal names no cause at
+            # all - the branch below names one, "a daemon that is not running",
+            # and this branch has never named any - and whether the box read
+            # the statement is the only part of the cause the box holds:
+            #
+            #   marked      the words went to FRR verbatim and nothing here
+            #               read them, so `% Unknown command` is live and the
+            #               statement itself is where to look first
+            #   not marked  the keywords came out of this VTY's own grammar,
+            #               so the cause is on FRR's side
+            #
+            # Those are different first moves, and without the marker the two
+            # refusals are the same five lines.
+            #
+            # The other objection is the standing one from #205 and #208,
+            # which #141 measured against this very marker: four of the
+            # twenty-five statements a working provider edge reads back are
+            # marked, one of them `no bgp ebgp-requires-policy`, and a marker
+            # that fires on a line every box has is a marker operators learn
+            # to skip. MEASURED, and it does not reach here: that whole
+            # twenty-five-statement read-back committed against an FRR holding
+            # it prints `commit complete` and nothing else. Every one of the
+            # sixteen statements it introduces CAN produce this refusal, and
+            # three of them are unmarked - but only when FRR really has
+            # dropped them, which is already a failed commit. A marker inside
+            # a message that does not print on a working box cannot become the
+            # alarm that is always on. That is what separates this from the
+            # decision #141 made for `commit`, which prints on every commit
+            # and therefore says nothing about the boundary.
+            #
+            # NOT the count `unchecked_note()` gives the display. The display
+            # shows every statement, so a count there is a number about
+            # something the reader can see; this list stops at five. "1 of
+            # these has no grammar" over five printed statements and three
+            # withheld is a number the operator cannot resolve, and resolving
+            # it means running `show configuration` to look for the marks -
+            # the round trip the marker is here to save.
+            #
+            # And NOT the branch below. There, nothing at all took, the cause
+            # is measured to be a daemon rather than the statements, and a
+            # marker on the statements would read as the cause when it is not
+            # - which is the failure this objection warns about, in the one
+            # place where it would really happen.
+            unread = unchecked_in(self.candidate.routing)
             self.err(f"FRR accepted {len(dropped)} statement(s) of this "
                      "commit and did not keep them")
-            for stmt, instead in dropped[:5]:
+            shown = dropped[:5]
+            for stmt, instead in shown:
+                # Both halves, and they answer different questions. #251 names
+                # the block the statement is in, because a VRF static route has
+                # no top-level spelling to go and look for. #227 marks the ones
+                # this VTY never read, because those are the ones FRR is most
+                # likely to have declined and the operator has least context
+                # for.
+                mark = UNCHECKED_MARK if stmt in unread else ""
                 print("    " + as_hierarchy(
-                    stmt, block_of(self.candidate.routing, stmt)))
+                    stmt, block_of(self.candidate.routing, stmt)) + mark)
                 if instead:
                     print(f"      FRR writes '{instead}' for this, and that "
                           "is not there either")
             if len(dropped) > 5:
                 print(f"    ... and {len(dropped) - 5} more")
+            if any(stmt in unread for stmt, _ in shown):
+                print(f"    a statement marked '{UNCHECKED_MARK.strip()}' has "
+                      "no grammar in this VTY: it went")
+                print("    to FRR word for word, so this box never read it "
+                      "either")
             print("    this commit is NOT in effect as written, and nothing "
                   "was rolled back: the rest")
             print("    of it is applied. 'rollback 1' puts the box back")

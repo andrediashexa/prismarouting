@@ -949,13 +949,17 @@ under every configuration would be read once and skipped forever.
 
 ### `commit` says nothing; `commit check` names the number
 
-`commit` prints nothing about the boundary, and that is argued from the same
-rule. Passthrough is the **normal** case here - a working FRR edge has
-`no bgp ebgp-requires-policy` in it, and this VTY models no `no` statement
-inside a block at all - so a warning on every commit would be an alarm that is
-always on. Worse than being ignored on its own: the habit of skipping the last
-lines of a commit takes the *"FRR accepted these statements and did not keep
-them"* warning with it, and that one is about a commit that did not happen.
+A successful `commit` prints nothing about the boundary, and that is argued
+from the same rule. Passthrough is the **normal** case here - a working FRR
+edge has `no bgp ebgp-requires-policy` in it, and this VTY models no `no`
+statement inside a block at all - so a warning on every commit would be an
+alarm that is always on. Worse than being ignored on its own: the habit of
+skipping the last lines of a commit takes the *"FRR accepted these statements
+and did not keep them"* refusal with it, and that one is about a commit that
+did not happen.
+
+The **refusal** is the exception, and it is argued below under what `commit`
+concludes from a statement's absence.
 
 `commit check` is the opposite kind of moment. It is a question the operator
 chose to ask, and its whole subject is how much was verified. It already said
@@ -3423,6 +3427,69 @@ operator: a commit of statements FRR does not store still says **commit
 complete**, on a box where OSPF is running perfectly - with two assertions
 beside it proving FRR really did omit and really did rewrite, so that
 "complete" is not simply what this box says to everything.
+
+### The refusal says whether this VTY had ever read the statement
+
+The refusal names statements, so it is a configuration display in miniature,
+and it carries the same `<- not checked` mark
+([#227](https://github.com/andrediashexa/hexarouting/issues/227)):
+
+```
+hexarouting# [edit] commit
+error: FRR accepted 1 statement(s) of this commit and did not keep them
+    coalesce-time 2000  <- not checked
+    a statement marked '<- not checked' has no grammar in this VTY: it went
+    to FRR word for word, so this box never read it either
+    this commit is NOT in effect as written, and nothing was rolled back: ...
+```
+
+Without the mark, that refusal and the refusal over `bgp router-id 10.0.0.1`
+are the same five lines, although the box walked the second through its own
+grammar and forwarded the first word for word.
+
+**It is one question, not two.** The objection to putting the mark here is
+that the refusal answers *FRR did not keep this* and the mark answers *had
+this VTY read it*, and a message that answers two questions stops being read.
+But this refusal names no cause at all - the branch beside it names one, *a
+daemon that is not running* - and whether the box read the statement is the
+only part of the cause the box holds. A marked statement went to FRR verbatim,
+so `% Unknown command` is live and the statement itself is where to look
+first; an unmarked one is built from keywords this VTY offers, so the cause is
+on FRR's side. Different first moves.
+
+**The alarm-always-on rule does not reach here, and that was measured rather
+than weighed.** By the rule of
+[#205](https://github.com/andrediashexa/hexarouting/issues/205) and
+[#208](https://github.com/andrediashexa/hexarouting/issues/208), a marker that
+fires on a line every box has is one operators learn to skip - and four of the
+twenty-five statements of the provider read-back above are marked, one of them
+`no bgp ebgp-requires-policy`. That same read-back, committed against an FRR
+holding it, prints `commit complete` and nothing else. All sixteen statements
+it introduces **can** produce this refusal and three of them are unread, but
+only once FRR has really dropped them, which is already a failed commit. A
+mark inside a message a working box never prints cannot become an alarm that
+is always on. That is what separates the refusal from `commit` itself.
+
+**The mark, not the count.** `unchecked_note()` gives the display a count
+because the display shows every statement; the refusal stops at five, so a
+count there names statements the reader cannot see and sends them to
+`show configuration` to find out which - the round trip the mark saves. The
+one line under the statements says what the mark means and no number, and it
+is printed only when one of the five printed statements carries it.
+
+**Not the branch beside it.** The *"reached FRR and changed nothing"* message
+is deliberately left unmarked. There nothing took at all, the cause is
+measured to be a daemon rather than the statements, and a mark on the
+statements would read as the cause - which is the one place the objection
+above would really happen.
+
+`unchecked_in()` is produced **by** `mark_routing()` rather than beside it, so
+a statement named as unread by a refusal and printed clean by
+`show configuration` is not a state this can reach. A statement whose words
+appear in two blocks counts as read when any occurrence was read, because
+`neighbor <ip> soft-reconfiguration inbound` is modelled inside the address
+family and not in the block above it.
+
 
 ## FRR version
 

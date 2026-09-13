@@ -4179,6 +4179,181 @@ check("not checked for a reachable next hop" not in _out,
       f"nothing is said about VRFs on a box that has no VRF route: {_out!r}")
 
 # =====================================================================
+# The refusal says whether this VTY had ever read the statement (#227)
+#
+# Two features met on the same statement and did not talk to each other.
+# `commit` refuses when FRR does not keep a statement the commit introduced
+# and names it (#197); `show this` marks a statement this VTY has no grammar
+# for with `<- not checked` (#141). Measured on the merged tree, the refusal
+# over `coalesce-time 2000` and the refusal over `bgp router-id 10.0.0.1`
+# were the same five lines, although the box read one of them and forwarded
+# the other word for word.
+#
+# The decision is to MARK, not to count. Argued in do_commit; the two
+# properties it rests on are asserted here rather than left in the argument.
+print("\n=== the refusal says which statements this VTY never read (#227) ===")
+
+_BGP_UNREAD = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+               " coalesce-time 2000", "exit"]
+_BGP_HELD = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001", "exit"]
+
+
+
+def _refusal_lines(out):
+    """The statement lines of a refusal, as printed, indent stripped."""
+    return [l[4:] for l in out.splitlines()
+            if l.startswith("    ") and not l.startswith("     ")]
+
+
+_out, _failed = _commit(_BGP_UNREAD, _BGP_HELD)
+check(_failed == 1 and "coalesce-time 2000" in _out,
+      f"the refusal still names the statement FRR dropped: {_out!r}")
+# Line-exact, not a substring. A substring needle cannot tell the marker from
+# a LONGER one that starts with it, and that is not a hypothetical: the marker
+# this project ships replaced `    <- not checked by this VTY`, and a check
+# written `f"...{UNCHECKED_MARK}" in out` stays green over the old spelling
+# coming back. Measured - the mutation that reinstated the long form gave zero
+# red until this line was written this way.
+check(f"coalesce-time 2000{UNCHECKED_MARK}" in _refusal_lines(_out),
+      f"and marks it, because no grammar here ever read it: {_out!r}")
+check("no grammar in this VTY" in _out,
+      f"with one line saying what the mark means: {_out!r}")
+
+# The other side, and it is the one that makes the mark a claim rather than
+# decoration: a statement the command tree walks is dropped by FRR just as
+# hard and must NOT be marked. Same block, same commit shape, same refusal.
+_BGP_READ = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001",
+             " bgp router-id 10.0.0.1", "exit"]
+_out, _failed = _commit(_BGP_READ, _BGP_HELD)
+check(_failed == 1 and "bgp router-id 10.0.0.1" in _out,
+      f"a statement the tree reads is refused the same way: {_out!r}")
+check(UNCHECKED_MARK.strip() not in _out,
+      f"and carries no mark, nor the line explaining one: {_out!r}")
+
+# It is decided by the same walk as the display, not by a second answer kept
+# beside it. Teaching the tree `coalesce-time` has to unmark the REFUSAL too,
+# with nothing else edited - the property #141's design rests on, asserted
+# here because this is a second caller of it.
+_taught = dict(hexash.BGP_BLOCK)
+_taught["coalesce-time"] = ("how long to wait for peers", "<ms>")
+_was = hexash.BGP_BLOCK
+try:
+    hexash.BGP_BLOCK = _taught
+    _out, _failed = _commit(_BGP_UNREAD, _BGP_HELD)
+finally:
+    hexash.BGP_BLOCK = _was
+check(_failed == 1 and UNCHECKED_MARK.strip() not in _out,
+      f"teaching the tree the statement unmarks the refusal too: {_out!r}")
+_out, _failed = _commit(_BGP_UNREAD, _BGP_HELD)
+check(UNCHECKED_MARK in _out,
+      f"and the tree really was put back: {_out!r}")
+
+# A static route is the case that would go wrong quietly, and it is the case
+# #197's own refusal is about. Typed inside `router static` it is STORED as
+# `ip route ...` at the top of the routing section - measured, not assumed:
+# the shell above produces exactly that list - so only the display returns it
+# to the block. Read by position it would carry the mark in every refusal
+# about a static route on the box. This is the trap #141 hit when it counted
+# them for `commit check`, met again by a second caller.
+_TYPED_ROUTE = ["ip route 203.0.113.0/24 blackhole"]
+_out, _failed = _commit(_TYPED_ROUTE, [])
+check(_failed == 1 and "route 203.0.113.0/24 blackhole" in _out,
+      f"the static route refusal still names the route: {_out!r}")
+check(UNCHECKED_MARK.strip() not in _out,
+      f"and a static route is not marked: this VTY has a block for it and "
+      f"checks it line by line: {_out!r}")
+# The same route inside a VRF stays marked, and that is #141's decision rather
+# than an oversight: nobody here read the block it is in, so nothing about it
+# was checked, whatever the statement looks like.
+_VRF_ROUTE = ["vrf red", " ip route 10.9.0.0/16 10.0.0.9", "exit-vrf"]
+_out, _failed = _commit(_VRF_ROUTE, ["vrf red", "exit-vrf"])
+check(_failed == 1 and
+      any(l.endswith(UNCHECKED_MARK) for l in _refusal_lines(_out)),
+      f"a route in a block this VTY has no grammar for is marked: {_out!r}")
+
+# The same words in two blocks, with two answers. `soft-reconfiguration
+# inbound` is modelled inside the address family and not inside `router bgp`,
+# so a candidate holding both has one statement the VTY did read. Claiming
+# "never read" over it is the confidently wrong direction, so the mark is
+# withheld when ANY occurrence was read.
+_BOTH = ["router bgp 65000",
+         " neighbor 10.0.0.2 soft-reconfiguration inbound",
+         " address-family ipv4 unicast",
+         "  neighbor 10.0.0.2 soft-reconfiguration inbound",
+         " exit-address-family", "exit"]
+check(hexash.unchecked_in(_BOTH) == set(),
+      f"read in one block is read: {hexash.unchecked_in(_BOTH)}")
+_out, _failed = _commit(_BOTH, ["router bgp 65000", "exit"])
+check(_failed == 1 and UNCHECKED_MARK.strip() not in _out,
+      f"so the refusal does not call it unread: {_out!r}")
+check(hexash.unchecked_in(["router bgp 65000",
+                           " neighbor 10.0.0.2 soft-reconfiguration inbound",
+                           "exit"])
+      == {"neighbor 10.0.0.2 soft-reconfiguration inbound"},
+      "and in the outer block alone it is still unread")
+
+# The explanatory line follows what is PRINTED, not what was dropped. The list
+# stops at five; a line about a mark none of the five carries sends the reader
+# looking for one.
+_MANY = ["router bgp 65000"] + [f" neighbor 10.0.0.{i} remote-as 6500{i}"
+                                for i in range(1, 7)] + \
+        [" coalesce-time 2000", "exit"]
+_out, _failed = _commit(_MANY, ["router bgp 65000", "exit"])
+check("... and 2 more" in _out, f"the list still stops at five: {_out!r}")
+check(UNCHECKED_MARK.strip() not in _out,
+      f"and says nothing about a mark when none of the five carries one: "
+      f"{_out!r}")
+
+# --- the #205/#208 objection, measured rather than argued ---
+#
+# A marker that fires on a line every box has is one operators learn to skip,
+# and #141 measured this very marker doing it: four of the twenty-five
+# statements a working provider edge reads back are marked, one of them
+# `no bgp ebgp-requires-policy`. That is why `commit` itself says nothing.
+#
+# It does not reach the refusal, and this is the measurement the decision
+# rests on: the same read-back, committed against an FRR that is holding it,
+# produces `commit complete` and no message for a marker to be in. The
+# refusal is not a display of the configuration - it exists only when a
+# statement is already gone.
+_out, _failed = _commit(FRR_READBACK, FRR_READBACK)
+check(_failed == 0 and _out == "commit complete\n",
+      f"a working provider edge produces no refusal to mark: {_out!r}")
+# And when one of those every-box lines really is dropped, the mark is the
+# marker being right - the same argument #141 made for the display.
+_held = [l for l in FRR_READBACK
+         if l.strip() != "no bgp ebgp-requires-policy"]
+_out, _failed = _commit(FRR_READBACK, _held)
+check(_failed == 1 and
+      f"no bgp ebgp-requires-policy{UNCHECKED_MARK}" in _refusal_lines(_out),
+      f"but a dropped one is marked: {_out!r}")
+
+# The mark must not reach FRR from here either. do_commit hands the candidate
+# to apply() before it prints anything, and the candidate is the same object
+# `unchecked_in` reads.
+_seen = []
+
+
+def _watch(cfg, check_only=False):
+    _seen.append(list(cfg.routing))
+    return True
+
+
+_sh = hexash.Shell()
+_sh.candidate = _cfg_with(_BGP_UNREAD)
+_sh.running_config = lambda: _cfg_with([])
+_sh.apply = _watch
+_sh.rb = type("_RB", (), {"push": lambda self, *a: None})()
+_sh.frr = _FrrHolding(_BGP_HELD)
+with _ctx.redirect_stdout(_io.StringIO()):
+    _sh.do_commit([])
+check(_seen and _seen[0] == _BGP_UNREAD,
+      f"the candidate handed to apply() is unmarked: {_seen}")
+check(_sh.candidate.routing == _BGP_UNREAD,
+      f"and the candidate itself is untouched: {_sh.candidate.routing}")
+
+
+# =====================================================================
 # `no <statement>` inside a block: accepted in silence, doing nothing (#224)
 #
 # Three defects, and the first two are of the class this project puts above
