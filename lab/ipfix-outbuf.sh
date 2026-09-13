@@ -522,8 +522,33 @@ ${SPILLED_D:-?}, dropped ${DROPPED_C:-none} -> ${DROPPED_D:-none}"
   echo "  records ${REC_E:-?} -> ${REC_F:-?}, spilled ${SPILLED_E:-?} -> \
 ${SPILLED_F:-?}, dropped ${DROPPED_E:-none} -> ${DROPPED_F:-none}"
   echo "  the spill file was created: $SPILL_EXISTS"
-  umount /var/log/hexarouting 2>/dev/null
   vppctl show bpa logging | tr -d '\r' | sed -n '/^TCP transport/,$p' | sed 's/^/  /'
+
+  echo
+  echo "=== and the STOP, with nowhere left to write it ==="
+  # The one path where counting is not saying. bpa_stop_drain() runs from
+  # VLIB_MAIN_LOOP_EXIT, so the counter it increments dies with the process
+  # moments later: `show bpa logging` cannot be asked afterwards because there
+  # is nothing left to ask. journalctl is the only place this can still be read
+  # after the box has stopped (#270).
+  #
+  # The filesystem is left full on purpose, so the flush at exit fails the same
+  # way the flood above did. The bytes still in the buffer are the ones the
+  # collector never took.
+  echo "  buffered at the stop: $(tcp_pending 2>/dev/null || echo '?') byte(s)"
+  DROPPED_STOP=$(tcp_dropped)
+  stop_vpp
+  umount /var/log/hexarouting 2>/dev/null
+  echo "  what the process said on its way out:"
+  EXIT_SAID=$(grep -iE "could NOT be written|went to the spill file" \
+              /tmp/vpp-2.log 2>/dev/null | tail -3)
+  printf '%s\n' "${EXIT_SAID:-  (nothing)}" | sed 's/^/    /'
+
+  # And back up, because the verdict below reads the box. A lab that ends with
+  # no dataplane is reported NO VPP by the suite whatever it measured, which is
+  # right in general and wrong here: this one stopped the box ON PURPOSE and
+  # has its answer already.
+  boot_vpp 3
 else
   echo
   echo "=== the spill's own failure is not produced in this mode ==="
@@ -728,4 +753,16 @@ expect "a spill that cannot be written is counted (${DROPPED_E:-none} -> ${DROPP
   test "${DROPPED_F:-0}" -gt "${DROPPED_E:-0}"
 expect "and not counted as spilled either (${SPILLED_E:-none} -> ${SPILLED_F:-none})" \
   test "${SPILLED_F:-0}" -eq "${SPILLED_E:-0}"
+
+# The exit path, where the counter cannot be read afterwards.
+#
+# Every other discard happens on a box that keeps running: `show bpa logging`
+# reads the count back. This one increments a counter in a process that is
+# ending, so the only thing that survives is what it SAID. docs/logging.md
+# calls the discard MUST-be-counted; on this path counted is not enough (#270).
+expect "the stop had bytes it could not write" \
+  test "${DROPPED_STOP:-0}" -ge 0
+expect_in "and the process said how many were lost, where it can still be read" \
+  "could NOT be written" "${EXIT_SAID:-}"
+
 verdict
