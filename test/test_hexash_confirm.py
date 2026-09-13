@@ -402,7 +402,10 @@ for d in (b.root,):
     shutil.rmtree(d, ignore_errors=True)
 
 print()
+# The verdict in the spelling tools/run-tests.sh reads. This suite used to
+# sign off with a sentence of its own, which meant a run killed before the end
+# and a run that finished were the same thing to anything reading the output.
 if fail:
-    print(f"FAILED: {fail} check(s)")
+    print(f"{fail} FAILURES")
     sys.exit(1)
-print("commit confirmed outlives the session that made it")
+print("ALL TESTS PASSED")

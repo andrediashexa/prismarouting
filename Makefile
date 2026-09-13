@@ -9,53 +9,7 @@ BUILD  := .build
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
       $(BUILD)/test_bpa_sip
-	@$(BUILD)/test_bpa
-	@echo
-	@$(BUILD)/test_bpa_ports
-	@echo
-	@$(BUILD)/test_bpa_rtsp
-	@echo
-	@$(BUILD)/test_bpa_mss
-	@echo
-	@$(BUILD)/test_bpa_ftp
-	@echo
-	@$(BUILD)/test_bpa_icmp
-	@echo
-	@$(BUILD)/test_bpa_sip
-	@echo
-	@python3 appliance/test_tune.py
-	@echo
-	@python3 test/test_hexash_complete.py
-	@echo
-	@python3 test/test_hexash_config.py
-	@echo
-	@python3 test/test_context_map.py
-	@echo
-	@python3 test/test_routes.py
-	@echo
-	@sh test/test_boot_wait.sh
-	@echo
-	@sh test/test_version_stamp.sh
-	@echo
-	@sh test/test_wiki_roundtrip.sh
-	@echo
-	@python3 test/test_vppapi.py
-	@echo
-	@python3 test/test_hexash_apply.py
-	@echo
-	@python3 test/test_hexash_perms.py
-	@echo
-	@python3 test/test_hexash_confirm.py
-	@echo
-	@python3 test/test_hexash_igp.py
-	@echo
-	@sh test/test_hexash_login.sh
-	@echo
-	@sh test/test_run_all_labs.sh
-	@echo
-	@sh test/test_selftest.sh
-	@echo
-	@sh test/test_installer.sh
+	@sh tools/run-tests.sh
 
 vectors:
 	@cd ref && python3 gen_vectors.py

@@ -32,4 +32,24 @@ static char __attribute__ ((unused)) bpa_shim_errbuf[] = "bpa: pool configuratio
  * whether a pool was rejected, not the wording. */
 #define clib_error_return(e, ...) (bpa_shim_errbuf)
 
+/* The verdict line every suite in `make test` ends with, in the one spelling
+ * tools/run-tests.sh reads.
+ *
+ * Seven C suites had five spellings of this between them and two printed no
+ * verdict at all, so a suite killed before its last check and a suite whose
+ * last check failed were the same thing from outside. That is #218: two
+ * `make test` failures under load whose assertion was never identified,
+ * because the only evidence kept was a count of summary lines. A runner can
+ * only tell "stopped early" from "failed" if finishing leaves a mark. */
+static inline int
+bpa_test_verdict (u32 checks, int failures)
+{
+  printf ("\n%u checks, %d failures\n", checks, failures);
+  if (failures)
+    printf ("%d FAILURES\n", failures);
+  else
+    printf ("ALL TESTS PASSED\n");
+  return failures ? 1 : 0;
+}
+
 #endif
