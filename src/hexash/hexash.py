@@ -6566,14 +6566,25 @@ class Shell:
             if not dropped:
                 stalled = self.nothing_took(added)
         if dropped:
-            # WARNED, NOT REFUSED, and this is the whole posture of the check.
+            # REFUSED, not warned about. This shipped as a warning first, and
+            # what promoted it was the condition written here rather than
+            # anybody's confidence: the full lab suite run clean with the
+            # refusal in force. That reading, rather than a pointer to it:
             #
-            # A refusal here would be right in principle: a statement FRR threw
-            # away is a commit that did not happen, and `commit complete` over
-            # it is the one sentence an operator builds every later diagnosis
-            # on. It is not right YET, because the list of statements FRR does
-            # not read back verbatim is demonstrably incomplete. Five encounters
-            # with real configuration produced four false positives:
+            #   pass=79  fail=0  notmeasured=0  novpp=0  ran=0
+            #
+            #   79 runs over 57 lab files, 2026-09-13, with this refusal in
+            #   force.
+            #
+            # Every lab that commits a routing statement is in that number -
+            # routing, igp, vty, bgp-policy, commit, frr-readback, lcp,
+            # in-place - and not one of them lost a `commit complete` it used
+            # to have.
+            #
+            # It had to be a warning to begin with, because the list of
+            # statements FRR does not read back verbatim was demonstrably
+            # incomplete: five encounters with real configuration produced four
+            # false positives, and each one extended the table.
             #
             #   lab/igp.sh      three OSPF defaults and a passive-interface
             #                   rewrite - and nothing_took fired on them too
@@ -6585,16 +6596,20 @@ class Shell:
             #                   still said the statement had been thrown away
             #
             # Refusing a correct commit is the exact harm #208 was filed for,
-            # and shipping a refusal built on a list that four labs in a row
-            # have extended would repeat it on a box nobody can run a lab on.
+            # so the evidence that the table is now complete enough had to be a
+            # whole suite of real configuration passing with the refusal armed,
+            # not a reading of the table. A single false refusal here makes
+            # `commit` untrustworthy in the opposite direction, which is worse
+            # than the warning was.
             #
-            # THE PROMOTION CONDITION IS MEASURABLE, not a feeling: this
-            # becomes `self.err` and `ok = False` when the full lab suite has
-            # run clean with it refusing. Until then the operator gets the
-            # sentence and keeps their commit, which is the side that costs
-            # them nothing if the list is wrong.
-            print(f"warning: FRR accepted {len(dropped)} statement(s) of this "
-                  "commit and did not keep them")
+            # It does NOT roll back, and the precedent is two branches down:
+            # "the change is applied, but no rollback revision could be
+            # recorded". The CGNAT half and the box's own configuration really
+            # are applied and really are in effect. What is refused is the
+            # SENTENCE `commit complete`, which is the one an operator builds
+            # every later diagnosis on.
+            self.err(f"FRR accepted {len(dropped)} statement(s) of this "
+                     "commit and did not keep them")
             for stmt, instead in dropped[:5]:
                 print("    " + as_hierarchy(stmt))
                 if instead:
@@ -6602,6 +6617,9 @@ class Shell:
                           "is not there either")
             if len(dropped) > 5:
                 print(f"    ... and {len(dropped) - 5} more")
+            print("    this commit is NOT in effect as written, and nothing "
+                  "was rolled back: the rest")
+            print("    of it is applied. 'rollback 1' puts the box back")
             print("    the configuration this box holds and the one FRR is "
                   "running are not the same; 'show configuration' is this "
                   "box's, 'start shell' then 'vtysh -c \"show "

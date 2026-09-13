@@ -3907,6 +3907,110 @@ check("were not read at all" not in _quiet,
       f"and says nothing when it read everything: {_quiet!r}")
 check("configuration check succeeds" in _quiet,
       f"while still answering the question asked: {_quiet!r}")
+print("\n=== a statement FRR did not keep is a FAILED commit (#197) ===")
+# The promotion. This check shipped as a warning because the table of
+# statements FRR does not read back verbatim had been extended by four labs in
+# a row, and refusing a correct commit is the harm #208 was filed for. What
+# promoted it is the condition the code carried: the full lab suite run clean
+# with the refusal in force.
+#
+# What is asserted here is the VERDICT, not the arithmetic - the arithmetic is
+# above. `commit` has to report failure, and it has to name the statement: an
+# operator told only that "something was dropped" has to diff two
+# configurations by hand to find out which.
+import contextlib as _ctx  # noqa: E402
+import io as _io           # noqa: E402
+import config as _cfg      # noqa: E402
+
+
+def _cfg_with(routing):
+    c = _cfg.Config.parse("")
+    c.routing = list(routing)
+    return c
+
+
+class _FrrHolding:
+    """An FRR whose running configuration is exactly these lines."""
+
+    def __init__(self, running):
+        self._running = running
+
+    def running(self):
+        return self._running
+
+    def reload(self, _lines, check_only=False):
+        # Non-zero, so nothing_took() declines to answer. This is the drop
+        # check under test and not that one, and a fixture that let both fire
+        # would not say which produced the verdict.
+        return 1, ""
+
+    def outstanding(self, _out):
+        return []
+
+
+def _commit(candidate, frr_running):
+    """Commit `candidate` against an FRR that came back holding `frr_running`.
+
+    Returns (what the VTY printed, how many errors it counted).
+    """
+    sh = hexash.Shell()
+    sh.candidate = _cfg_with(candidate)
+    sh.running_config = lambda: _cfg_with([])
+    sh.apply = lambda cfg, check_only=False: True
+    sh.rb = type("_RB", (), {"push": lambda self, *a: None})()
+    sh.frr = _FrrHolding(frr_running)
+    buf = _io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        sh.do_commit([])
+    return buf.getvalue(), sh.failed
+
+
+_STATIC = ["router static", " ip route 203.0.113.0/24 blackhole"]
+
+# The case #197 was filed for, end to end through do_commit: the route was
+# handed to FRR, FRR exited 0, and FRR does not have it.
+_out, _failed = _commit(_STATIC, [])
+check(_failed == 1,
+      f"a statement FRR did not keep makes commit REPORT FAILURE: {_out!r}")
+check(_out.startswith("error:"),
+      f"and say so as an error, not a warning: {_out!r}")
+check("commit complete" not in _out,
+      f"'commit complete' is the sentence being refused: {_out!r}")
+# The statement is rendered the way an operator typed it, not the way FRR
+# holds it: `as_hierarchy` turns `ip route ...` back into `router static /
+# route ...`, which is what they will find in `show configuration`.
+check("route 203.0.113.0/24 blackhole" in _out,
+      f"the operator is told WHICH statement FRR did not keep: {_out!r}")
+check("rollback" in _out,
+      f"and that the rest of the commit is applied, so there is a way "
+      f"back: {_out!r}")
+
+# The other half, and the one that matters more: the same commit when FRR DID
+# keep it. Without this the refusal could be unconditional and still green.
+_out, _failed = _commit(_STATIC, ["ip route 203.0.113.0/24 blackhole"])
+check(_failed == 0 and "commit complete" in _out,
+      f"a statement FRR kept commits normally: {_out!r}")
+
+# The false positive that kept this a warning for as long as it was one. FRR
+# stores nothing for a statement at one of the measured values, the commit
+# worked, and refusing it would be #208 again.
+_out, _failed = _commit(["router ospf", " timers throttle spf 0 50 5000"], [])
+check(_failed == 0 and "commit complete" in _out,
+      f"a statement FRR is MEASURED not to read back is not a refusal: "
+      f"{_out!r}")
+
+# A rewrite whose rewritten form is absent too. The message has to name what
+# FRR writes, because an operator who greps the running configuration for
+# `passive-interface` finds nothing whether it applied or not.
+_out, _failed = _commit(["router ospf", " passive-interface vppwan0"],
+                        ["router ospf"])
+check(_failed == 1 and "ip ospf passive" in _out,
+      f"a refusal over a rewritten statement names what FRR writes "
+      f"instead: {_out!r}")
+_out, _failed = _commit(["router ospf", " passive-interface vppwan0"],
+                        ["interface vppwan0", " ip ospf passive"])
+check(_failed == 0 and "commit complete" in _out,
+      f"and the rewrite being present is not a refusal: {_out!r}")
 
 
 # =====================================================================
