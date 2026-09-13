@@ -62,7 +62,8 @@ are to be interpreted as described in
 [#231](https://github.com/andrediashexa/hexarouting/issues/231),
 [#232](https://github.com/andrediashexa/hexarouting/issues/232),
 [#233](https://github.com/andrediashexa/hexarouting/issues/233),
-[#234](https://github.com/andrediashexa/hexarouting/issues/234).
+[#234](https://github.com/andrediashexa/hexarouting/issues/234),
+[#235](https://github.com/andrediashexa/hexarouting/issues/235).
 
 ### Added
 
@@ -1330,6 +1331,30 @@ are to be interpreted as described in
   hold. It was shown failing on the paragraph that started this.
 
 ### Internal
+
+* **A test file in the tree that nothing ran, and nothing would have said so**
+  ([#235](https://github.com/andrediashexa/hexarouting/issues/235)). Two lists
+  decide what `make test` runs: `test/suites.list` for the shell and Python
+  suites, and the `Makefile`'s `test:` target, which names the eight C binaries
+  one by one. Nothing compared either with the directory, and no test read the
+  `Makefile` at all.
+
+  Write `test/test_bpa_tcp.c`, forget the `Makefile` line, and it is never
+  compiled and never run, while `make test` prints the same *N suites, N
+  passed* as before, because N is what the lists produce and not what the
+  directory holds. The author believes the checks they wrote are guarding the
+  plugin, and nothing is. That is
+  [#233](https://github.com/andrediashexa/hexarouting/issues/233) one directory
+  over and worse: there the thing not running was a lab, here it is a check,
+  and every other guard in this repository rests on a file in `test/` being a
+  file that runs.
+
+  **The first version of this check passed the mutation that matters most.** A
+  C binary dropped from the `test:` target keeps its build rule, so the file is
+  still named in the `Makefile`, still compiles when asked, and never runs -
+  and matching the file name anywhere in the `Makefile` called that fine. The
+  check resolves the file to the binary its build rule produces and requires
+  THAT in the target, which is the thing that actually makes it run.
 
 * **Nothing compared what the installer reads with what the ISO carries**
   ([#234](https://github.com/andrediashexa/hexarouting/issues/234)).

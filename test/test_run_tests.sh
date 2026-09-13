@@ -174,5 +174,69 @@ case "$out4" in
   *) ok "and says nothing about states it did not reach" ;;
 esac
 
+echo
+echo "=== every check in test/ is a check that runs ==="
+# Two lists name what runs, and nothing compared them with the directory.
+# test/suites.list holds the shell and Python suites; the Makefile's `test:`
+# target names the C ones, one by one, on three lines.
+#
+# Write test/test_bpa_tcp.c, forget the Makefile line, and it is never compiled
+# and never run - and `make test` prints the same "N suites, N passed" as
+# before, because N is what the lists produce and not what the directory holds.
+# The author believes the checks they wrote are guarding the plugin and nothing
+# is. That is #233 one directory over, and worse: there the thing not running
+# was a lab, here it is a check, and every other guard in this repository rests
+# on a file in test/ being a file that runs (#235).
+#
+# Only that each file is named somewhere. Not the contents, not the order.
+SL=$REPO/test/suites.list
+MK=$REPO/Makefile
+mk_target=$(sed -n '/^test:/,/[^\\]$/p' "$MK")
+n_sl=$(grep -c "test/test_" "$SL" || true)
+# grep -o with -c counts LINES that match, not matches, and the target is three
+# lines carrying eight names. The first version of this reported 3.
+n_mk=$(printf '%s' "$mk_target" | grep -o '$(BUILD)/test_[a-z_0-9]*' | wc -l)
+if [ "${n_sl:-0}" -ge 10 ] && [ "${n_mk:-0}" -ge 5 ]; then
+  ok "$n_sl suite(s) listed and $n_mk C binary(s) named by the Makefile target"
+else
+  bad "one of the two lists came back almost empty: suites.list has ${n_sl:-0} "\
+"and the Makefile test: target names ${n_mk:-0} binaries. This is asserting "\
+"almost nothing"
+fi
+
+# For a C file, the thing that makes it run is its BINARY appearing in the
+# `test:` target. Matching the file name anywhere in the Makefile is not that:
+# a binary dropped from the target keeps its build rule, so the file is still
+# named, still compiles when asked, and never runs. The first version of this
+# check passed on exactly that mutation and reported only a confusing count.
+binary_for() {  # <test/foo.c> -> the $(BUILD)/... target whose recipe uses it
+  awk -v f="$1" '
+    /^\$\(BUILD\)\/test_[a-z_0-9]*:/ { tgt=$1; sub(":", "", tgt) }
+    tgt != "" && index($0, f) { print tgt; exit }
+  ' "$MK"
+}
+
+unrun=""
+for f in "$REPO"/test/test_*; do
+  b=$(basename "$f")
+  grep -q "test/$b" "$SL" && continue
+  case "$b" in
+    *.c)
+      tgt=$(binary_for "test/$b")
+      if [ -n "$tgt" ]; then
+        case "$mk_target" in *"$tgt"*) continue ;; esac
+      fi ;;
+    *)
+      # A header or fixture under test/ is not a suite. Only files that name
+      # themselves test_* and are not C sources reach here, and all of those
+      # belong in suites.list.
+      : ;;
+  esac
+  unrun="$unrun $b"
+done
+[ -z "$unrun" ] && ok "and every file in test/ is named by one of them" \
+  || bad "these are in test/ and nothing runs them, so the checks in them "\
+"guard nothing while make test still says every suite passed:$unrun"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
