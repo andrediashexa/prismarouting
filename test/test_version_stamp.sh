@@ -102,6 +102,41 @@ done
 ok "the version is in the name in every case"
 
 rm -rf "$d2"
+echo "=== running it twice does not grow the account's git configuration ==="
+# This script is run by every build, every release gate, every lab that stamps
+# an image and every make test. It marks the repository as a safe directory so
+# git inside the build container will answer at all, and it used to do that
+# with "--add" unconditionally: one line per run, for ever, in a file that
+# belongs to whoever runs the build rather than to this product. Measured
+# before the fix on the machine this was found on: 2325 copies of the same
+# entry in a ~/.gitconfig with four other lines in it (#220).
+#
+# HOME is redirected so this reads the copy the test made and never the real
+# one. GIT_CONFIG_GLOBAL is set too, because git honours it ahead of HOME and a
+# test that only moved HOME would quietly measure the developer's own file -
+# and then pass, because that file already carries the entry.
+h=$(mktemp -d)
+d3=$(mktemp -d); echo "0.4.2" > "$d3/VERSION"
+git -C "$d3" init -q 2>/dev/null
+git -C "$d3" config user.email t@t; git -C "$d3" config user.name t
+git -C "$d3" add -A >/dev/null 2>&1; git -C "$d3" commit -qm x >/dev/null 2>&1
+HOME="$h" GIT_CONFIG_GLOBAL="$h/.gitconfig" sh "$STAMP" "$d3" >/dev/null 2>&1
+first=$(grep -c . "$h/.gitconfig" 2>/dev/null || echo 0)
+for _ in 1 2 3 4 5; do
+  HOME="$h" GIT_CONFIG_GLOBAL="$h/.gitconfig" sh "$STAMP" "$d3" >/dev/null 2>&1
+done
+after=$(grep -c . "$h/.gitconfig" 2>/dev/null || echo 0)
+# The first run is allowed to write the entry; that is what it is for. What
+# must not happen is the five after it writing five more.
+if [ "$first" -eq 0 ]; then
+  bad "the first run wrote no safe.directory at all, so this measures nothing"
+elif [ "$after" -eq "$first" ]; then
+  ok "six runs, $after line(s): the entry is written once and then found"
+else
+  bad "the configuration grew from $first line(s) to $after over five more runs: $(( after - first )) duplicate(s) per five runs, in a file this product does not own"
+fi
+rm -rf "$h" "$d3"
+
 rm -rf "$d" "$empty"
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

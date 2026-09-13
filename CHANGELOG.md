@@ -39,6 +39,7 @@ are to be interpreted as described in
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#218](https://github.com/andrediashexa/hexarouting/issues/218),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
+[#220](https://github.com/andrediashexa/hexarouting/issues/220),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
 [#213](https://github.com/andrediashexa/hexarouting/issues/213),
 [#217](https://github.com/andrediashexa/hexarouting/issues/217).
@@ -303,6 +304,23 @@ are to be interpreted as described in
   suites `[13/25]`, and names where a stopped suite stopped. The seven C
   suites and `test_hexash_confirm.py` had five spellings of a verdict between
   them and two printed none at all; they now share `bpa_test_verdict()`.
+
+* **`version-stamp.sh` added a line to the account's `~/.gitconfig` on every
+  run.** It marks the repository as a safe directory so git will answer inside
+  the build container, and it did that with `--add` unconditionally. The script
+  runs on every build, every release gate, every lab that stamps an image and
+  every `make test`, so the entry landed once per run for ever, in a file that
+  belongs to whoever runs the build rather than to this product. Measured on
+  the machine it was found on: **2325 copies of the same entry** in a
+  `~/.gitconfig` with four other lines in it, and 552 of the distinct paths
+  were `/tmp` clones that no longer exist. git parses the whole configuration
+  on every invocation in every repository, and an allowed-directory list nobody
+  can read is one nobody audits. It is now added only when
+  `git config --get-all` does not already have it, and
+  `test/test_version_stamp.sh` holds that: six runs must leave the file the
+  size the first one made it. With the `--add` put back it fails with
+  `the configuration grew from 2 line(s) to 7 over five more runs`
+  ([#220](https://github.com/andrediashexa/hexarouting/issues/220)).
 
 ### Internal
 

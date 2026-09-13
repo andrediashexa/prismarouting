@@ -52,7 +52,22 @@ if ! command -v git >/dev/null 2>&1; then
   exit 0
 fi
 
-git config --global --add safe.directory "$REPO" >/dev/null 2>&1 || true
+# Only when it is not already there. "--add" appends unconditionally, and this
+# script runs on every build, every release gate, every lab that stamps an
+# image and every make test - so the entry landed once per run, for ever, in a
+# file this product does not own. Measured before the fix: 2325 copies of the
+# same line in a ~/.gitconfig with four other lines in it, and an earlier
+# reading found 12710 entries for clones that no longer exist (#220). git
+# parses the whole configuration on every invocation in every repository, and
+# a list of allowed directories nobody can read is one nobody audits.
+#
+# --get-all rather than --get: with duplicates already present, --get fails
+# with "multiple values" on some versions, which would read as "not there" and
+# add another.
+if ! git config --global --get-all safe.directory 2>/dev/null \
+     | grep -qxF "$REPO"; then
+  git config --global --add safe.directory "$REPO" >/dev/null 2>&1 || true
+fi
 
 if ! git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
   if [ "$MODE" = filename ]; then iso_name "$version" "unverified"; exit 0; fi
