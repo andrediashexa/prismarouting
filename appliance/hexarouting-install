@@ -195,6 +195,20 @@ disk_table() {
   _boot=$(boot_disk)
   lsblk -dnbo NAME,SIZE,TYPE,MODEL 2>/dev/null | while read -r n b t rest; do
     [ "$t" = disk ] || continue
+    # Block devices that are TYPE=disk and are not disks. A live kernel with
+    # the brd module has /dev/ram0 to /dev/ram15, every one of them "disk" to
+    # lsblk, and none of them a thing to install onto or to mirror records
+    # onto: they are RAM, and they are empty again at the next boot.
+    #
+    # Measured: the one-disk run of lab/install-iso.sh installed a box whose
+    # only disk was the target and the installer still said "records: not
+    # mirrored (pass hexarouting.mirror=<disk>...)", which is a line about a
+    # second disk on a machine that has none. The same table feeds the install
+    # menu, so whatever it counted was also being OFFERED as somewhere to put
+    # a router.
+    case "$n" in
+      ram*|zram*|loop*|sr*|fd*|dm-*|md*) continue ;;
+    esac
     _p="/dev/$n"
     [ "$_p" = "$_boot" ] && continue
     _h=$(lsblk -dno SIZE "$_p" 2>/dev/null | tr -d ' ')
@@ -606,8 +620,13 @@ if [ -z "$MIRROR" ]; then
     # Unattended and nothing said: one disk, exactly as before. It is said out
     # loud only when there WAS a second disk, because that is the install where
     # somebody may have expected a mirror and got none.
-    if [ -n "$(disk_table | awk -v t="$DISK" '$1 != t')" ]; then
-      say "records: not mirrored (pass hexarouting.mirror=<disk> for the second disk)"
+    # Named, not counted. "There is another disk" on a machine the operator
+    # believes has one is a statement they cannot check, and the disk it means
+    # is the whole of what makes it actionable.
+    _others=$(disk_table | awk -v t="$DISK" '$1 != t { printf "%s ", $1 }')
+    if [ -n "$_others" ]; then
+      say "records: not mirrored, and this machine has ${_others}too"
+      say "  (pass hexarouting.mirror=<disk> to keep the records on two disks)"
     fi
   else
     MIRROR=$(choose_mirror "$DISK")

@@ -1630,6 +1630,23 @@ fi
 # that says the other case is untouched: no array, and a self-test that does
 # not mention a mirror at all - not even to say there is none, which on the
 # console of a box with one disk is an alarm nobody can act on.
+# The INSTALLER's half of the same claim, read off the console it printed
+# while installing this box. It has exactly one disk, so it must not have said
+# anything about a second one - and it did: the first run of this lab against
+# the mirror work printed "records: not mirrored ... for the second disk" on a
+# machine whose only disk was the target, because lsblk calls /dev/ram0 a disk
+# and the table behind that line counted it.
+if grep -q "records: not mirrored" /tmp/install-clean.log; then
+  echo "  [FAIL] the installer told a ONE-DISK box about a second disk:"
+  grep -A1 "records: not mirrored" /tmp/install-clean.log | sed 's/^/         /'
+  echo "         whatever it counted is also offered in the install menu as"
+  echo "         somewhere to put a router"
+  fail=1
+else
+  echo "  [ ok ] the installer said nothing about a second disk on a box that"
+  echo "         has one"
+fi
+
 if [ "$up" = 1 ]; then
   ARRAYS=$(sed -n 's/^HXLAB arrays=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
   case "${ARRAYS:-}" in

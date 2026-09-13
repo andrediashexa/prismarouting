@@ -654,6 +654,49 @@ case "$menu" in
   *) bad "the mirror list does not say the disk is destroyed:
 $menu" ;;
 esac
+# A live kernel with the brd module carries /dev/ram0 to /dev/ram15, and lsblk
+# calls every one of them TYPE=disk. They are RAM: empty again at the next
+# boot, and not somewhere to put a router or a year of records.
+#
+# This is not hypothetical. The one-disk run of lab/install-iso.sh installed a
+# box whose only disk was the target, and the installer said "records: not
+# mirrored ... for the second disk" - a line about a second disk on a machine
+# that has none. The same table feeds the install MENU, so whatever it counted
+# was also being offered as an install target.
+cat > "$fake/lsblk" <<'VIRT'
+#!/bin/sh
+for a in "$@"; do case "$a" in -dnbo) MODE=table ;; -ndo) MODE=pkname ;; esac; done
+case "${MODE:-human}" in
+  table)
+    printf 'ram0 67108864 disk \n'
+    printf 'loop0 1234 loop \n'
+    printf 'sdb 1000204886016 disk WD Black 1TB\n'
+    printf 'zram0 8589934592 disk \n'
+    ;;
+  pkname) printf '\n' ;;
+  human) echo '932G' ;;
+esac
+VIRT
+chmod +x "$fake/lsblk"
+menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
+                      . "$INSTALLER"; choose_mirror /dev/sdb 2>&1))
+if [ -z "$menu" ]; then
+  ok "RAM and zram devices are not a second disk, so nothing is asked"
+else
+  bad "a machine whose only other block devices are RAM was asked to mirror
+onto one:
+$menu"
+fi
+tbl=$(PATH="$fake:$PATH" sh -c 'HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB
+                                . "'"$INSTALLER"'"; disk_table')
+case "$tbl" in
+  *ram0*|*zram0*|*loop0*)
+    bad "the install menu offers a RAM disk as somewhere to put a router:
+$tbl" ;;
+  *sdb*) ok "and the disk menu itself offers only the real disk" ;;
+  *) bad "the disk menu lost the real disk: '$tbl'" ;;
+esac
+
 # A machine with nothing else in it is not asked at all.
 cat > "$fake/lsblk" <<'ONE'
 #!/bin/sh
