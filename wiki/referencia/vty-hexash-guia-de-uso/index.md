@@ -1,9 +1,5 @@
 # VTY hexash — guia de uso
 
-# VTY hexash — guia de uso
-
-# VTY hexash — guia de uso
-
 `hexash` é a VTY única do HexaRouting: configura CGNAT **e** roteamento pela mesma interface, com modelo de configuração candidata no estilo Juniper — você edita, revisa e só então aplica com `commit`.
 
 ```mermaid

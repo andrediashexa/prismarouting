@@ -1,9 +1,5 @@
 # Comandos show
 
-# Comandos show
-
-# Comandos show
-
 Os comandos `show` funcionam nos modos operacional **e** de configuração.
 
 ## `show cgnat`
