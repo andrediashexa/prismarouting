@@ -1148,7 +1148,8 @@ check(sh.failed > before,
 # the check that the marker never leaves the display path.
 print("\n=== the unchecked marker never leaves the display ===")
 from hexash import mark_unchecked                                # noqa: E402
-from config import Config, UNCHECKED_MARK, UNCHECKED_NOTE        # noqa: E402
+from config import (Config, UNCHECKED_MARK, UNCHECKED_NOTE,      # noqa: E402
+                    CONSOLE_COLUMNS)
 
 policy = [
     "route-map RM-X permit 10",
@@ -3670,13 +3671,18 @@ check(not any(l.startswith(UNCHECKED_NOTE)
 # and the statements most likely to be marked are the long ones. The marker is
 # therefore short enough to ride on a long IPv6 neighbour statement, and the
 # sentence that explains it goes once at the end instead of on every line.
+#
+# The budget is CONSOLE_COLUMNS and not a literal, because the commit refusal
+# quotes these same marked lines and is held to the same number (#252). Two
+# literals is how the refusal came to print 178 columns while this assertion
+# stayed green for two releases.
 print("\n=== a marked line still fits an 80-column console ===")
 LONG = ["router bgp 65000",
         "neighbor 2001:db8:aaaa:bbbb::1 soft-reconfiguration inbound",
         "neighbor 2001:db8:aaaa:bbbb::1 coalesce-time 1000",
         "exit"]
 _marked, _ = mark_routing(LONG)
-_wide = [l for l in _marked + unchecked_note(2) if len(l) > 79]
+_wide = [l for l in _marked + unchecked_note(2) if len(l) > CONSOLE_COLUMNS]
 check(not _wide, f"these wrap on a serial console: {[(len(l), l) for l in _wide]}")
 print(f"  longest marked line: {max(len(l) for l in _marked)} columns")
 
@@ -4351,6 +4357,191 @@ check(_seen and _seen[0] == _BGP_UNREAD,
       f"the candidate handed to apply() is unmarked: {_seen}")
 check(_sh.candidate.routing == _BGP_UNREAD,
       f"and the candidate itself is untouched: {_sh.candidate.routing}")
+
+
+# =====================================================================
+# A refusal fits the console it is read on (#252)
+#
+# MEASURED on the merged tree, every line of the read-back refusal, in each
+# shape it has after #197 promoted it, #251 gave it the VRF and #227 gave it
+# the mark:
+#
+#    71  error: FRR accepted 1 statement(s) of this commit and did not keep...
+#    59      vrf red / ip route 10.9.0.0/16 10.0.0.9  <- not checked
+#    75      a statement marked '<- not checked' has no grammar in this VTY...
+#    58      to FRR word for word, so this box never read it either
+#    82      this commit is NOT in effect as written, and nothing was rolled...
+#    52      of it is applied. 'rollback 1' puts the box back
+#   178      the configuration this box holds and the one FRR is running are...
+#
+# and the branch beside it, which was worse:
+#
+#   116  error: the routing half of this commit reached FRR and changed...
+#    82      the usual cause is a daemon that is not running; 'show version'...
+#   105      if these statements are all at FRR's own default values, FRR...
+#
+# The 82-column line is the evidence for the rule: it is a line somebody
+# wrapped BY HAND, at what they took for 80 columns, and it was over. Five of
+# them were.
+#
+# THE RULE, and it is a split one:
+#
+#   * A message's own PROSE is wrapped by `console_prose` at CONSOLE_COLUMNS
+#     and is asserted to fit. There is no reason for it not to.
+#   * A QUOTED STATEMENT is printed whole, past the margin if it has to be.
+#
+# The split is argued from what an operator does with each half, and the
+# argument is in `console_prose`. In short: prose is read, statements are
+# grepped for in `show configuration` or typed back in at the prompt, and the
+# two other candidates both destroy exactly that. Wrapping puts a newline
+# inside a token, and a newline in the scrollback is a real one - the
+# statement stops matching a search for itself. Truncating loses an end, and
+# which end carried the interesting word cannot be known here: #251 put the
+# VRF at the front precisely because a VRF route has no top-level spelling,
+# and what FRR declined is usually the last word. Left alone, the terminal
+# soft-wraps and every byte survives in order, which costs only the shape of
+# the message.
+#
+# So the box owes the operator one guarantee instead: it adds nothing of its
+# own beyond the four-space indent and #141's sixteen-character mark, and a
+# statement that CAN fit does fit. That is the third assertion below.
+print("\n=== every line of a refusal fits an 80-column console (#252) ===")
+
+
+class _FrrStalled:
+    """An FRR that took the reload and is still holding none of it.
+
+    frr-reload exits 0 - so `statements_frr_dropped` is not what answers - and
+    reports every new statement outstanding, which is the `nothing_took`
+    branch. The two refusals print from the same `if/elif`, and the console
+    they are read on does not care which one fired.
+    """
+
+    def __init__(self, running, outstanding_lines):
+        self._running = running
+        self._out = outstanding_lines
+
+    def running(self):
+        return self._running
+
+    def reload(self, _lines, check_only=False):
+        return 0, "stub"
+
+    def outstanding(self, _out):
+        return self._out
+
+
+def _commit_stalled(candidate, outstanding):
+    sh = hexash.Shell()
+    sh.candidate = _cfg_with(candidate)
+    sh.running_config = lambda: _cfg_with([])
+    sh.apply = lambda cfg, check_only=False: True
+    sh.rb = type("_RB", (), {"push": lambda self, *a: None})()
+    sh.frr = _FrrStalled(candidate, outstanding)
+    buf = _io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        sh.do_commit([])
+    return buf.getvalue(), sh.failed
+
+
+# Every shape the refusal has, with statements short enough that nothing here
+# is excused by the rule above. One fixture per line the message can print:
+# the plain refusal, the VRF path #251 added, the mark #227 added, the
+# "... and N more" tail, the "FRR writes X instead" sub-line, and the stalled
+# branch. A fixture set that missed one would leave that line unmeasured, and
+# an unmeasured line is how the 178 got here.
+_FITTING_REFUSALS = [
+    (["router bgp 65000", " bgp router-id 10.0.0.1", "exit"],
+     ["router bgp 65000", "exit"]),
+    (["vrf red", " ip route 10.9.0.0/16 10.0.0.9", "exit-vrf"],
+     ["vrf red", "exit-vrf"]),
+    (_BGP_UNREAD, _BGP_HELD),
+    (_MANY, ["router bgp 65000", "exit"]),
+    (["router ospf", " passive-interface vppwan0"], ["router ospf"]),
+]
+_refusal_out = []
+for _cand, _held in _FITTING_REFUSALS:
+    _out, _failed = _commit(_cand, _held)
+    check(_failed == 1,
+          f"the fixture must really refuse, or it measures nothing: {_out!r}")
+    _refusal_out.append(_out)
+_out, _failed = _commit_stalled(["router ospf", " ip ospf area 0"],
+                                ["ip ospf area 0"])
+check(_failed == 1,
+      f"and so must the branch beside it: {_out!r}")
+_refusal_out.append(_out)
+
+# The same shape as the display's assertion above, on purpose and against the
+# same constant: these two are the only places that print a `<- not checked`
+# line, and they must not come to disagree about how wide a console is.
+_wide = [l for out in _refusal_out for l in out.splitlines()
+         if len(l) > CONSOLE_COLUMNS]
+check(not _wide, f"these wrap on a serial console: {[(len(l), l) for l in _wide]}")
+print(f"  widest refusal line: "
+      f"{max(len(l) for out in _refusal_out for l in out.splitlines())} "
+      f"columns")
+
+# --- a statement too long for the console is QUOTED, not cut ---
+#
+# The case the issue names. 66 columns of statement, which is 86 with the
+# indent and the mark, and it is printed as it stands: the operator can grep
+# `show configuration` for that line and find it, and can type it back.
+_LONG_STMT = ("neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff "
+              "route-server-client")
+_out, _failed = _commit(["router bgp 65000", " " + _LONG_STMT, "exit"],
+                        ["router bgp 65000", "exit"])
+check(_failed == 1, f"the long statement is refused: {_out!r}")
+check(f"    {_LONG_STMT}{UNCHECKED_MARK}" in _out.splitlines(),
+      f"a statement wider than the console is printed WHOLE, on one line, "
+      f"marker and all: {_out!r}")
+check("..." not in _out.replace("... and ", ""),
+      f"and nothing of it is elided: {_out!r}")
+print(f"  longest statement quoted whole: "
+      f"{len(_LONG_STMT) + 4 + len(UNCHECKED_MARK)} columns")
+
+# --- and the guarantee that buys: the box adds nothing but indent and mark ---
+#
+# A statement that CAN fit MUST fit. The only two things the refusal puts on
+# that line are the four-space indent and #141's sixteen characters, so the
+# widest statement that fits is CONSOLE_COLUMNS less those - and one column
+# more must be one column over, with nothing rounding it off. Written as
+# arithmetic over the same constants the code uses, so widening the mark moves
+# both sides together and a THIRD thing appearing on the line fails.
+# And the constant itself, because every assertion above is written against it.
+#
+# Found by mutating it: CONSOLE_COLUMNS raised to 400 leaves every width check
+# in this file green, because each one asks "no wider than CONSOLE_COLUMNS" and
+# the bar moved with the lines. A check somebody can satisfy by widening the
+# rule is a check that will be satisfied that way the first time a message does
+# not fit, and the 178-column line this issue is about is what that looks like
+# after two releases.
+#
+# 80 is what a serial console gives an appliance, and 79 is 80 less the column
+# an auto-wrapping terminal needs left free: a line that fills all 80 wraps on
+# its own and the operator reads a broken line. Anything else has to be argued,
+# which is the point of pinning it.
+check(CONSOLE_COLUMNS == 79,
+      f"CONSOLE_COLUMNS is {CONSOLE_COLUMNS}, not 79. Every width assertion in "
+      f"this file is written against it, so raising it turns all of them green "
+      f"without a line getting any narrower. An appliance console is 80 "
+      f"columns and the last one is left free so an auto-wrapping terminal "
+      f"does not break the line itself")
+
+_BUDGET = CONSOLE_COLUMNS - len("    ") - len(UNCHECKED_MARK)
+_fits = "coalesce-time " + "9" * (_BUDGET - len("coalesce-time "))
+_over = _fits + "9"
+for _stmt, _want in ((_fits, CONSOLE_COLUMNS), (_over, CONSOLE_COLUMNS + 1)):
+    _out, _failed = _commit(["router bgp 65000", " " + _stmt, "exit"],
+                            ["router bgp 65000", "exit"])
+    _quoted = [l for l in _out.splitlines() if _stmt in l]
+    check(_failed == 1 and len(_quoted) == 1,
+          f"the {len(_stmt)}-column statement is quoted once: {_out!r}")
+    check(len(_quoted[0]) == _want,
+          f"a {len(_stmt)}-column statement prints at {len(_quoted[0])} "
+          f"columns and must print at {_want}: the refusal adds the indent "
+          f"and the mark and nothing else: {_quoted[0]!r}")
+print(f"  the statement budget is {_BUDGET} columns: {CONSOLE_COLUMNS} less "
+      f"four of indent and {len(UNCHECKED_MARK)} of mark")
 
 
 # =====================================================================

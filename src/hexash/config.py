@@ -693,6 +693,25 @@ def _address_family_error(keyword: str, prefix: str):
     return None
 
 
+#: The widest line this VTY prints to a console.
+#:
+#: A racked box is reached over a BMC or a serial console at 80 columns, and
+#: that is the screen every message below is cut to. The budget stops one
+#: column short so that a full line leaves the cursor inside the screen: a
+#: terminal sitting exactly on the right margin decides for itself whether the
+#: next character opens a new row, and a message whose shape depends on that
+#: decision has not been measured, it has been guessed.
+#:
+#: It lives here, beside the marker whose sixteen characters were subtracted
+#: from it, because more than one place spends the same budget: the marker,
+#: the configuration display that appends it (#141), and the commit refusal
+#: that quotes statements carrying it (#252). Written out separately in each
+#: of them, the number drifts, and it drifts by one of them growing while
+#: nobody re-measures the others - which is how the refusal came to print a
+#: 178-column line under an 80-column rule the display had been keeping for
+#: two releases.
+CONSOLE_COLUMNS = 79
+
 #: What a configuration display appends to a routing statement this VTY passed
 #: to FRR without a grammar to read it by. Defined here because BOTH halves
 #: need it: the display adds it and the parser takes it off, and two spellings
