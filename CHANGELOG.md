@@ -44,6 +44,7 @@ are to be interpreted as described in
 [#163](https://github.com/andrediashexa/hexarouting/issues/163),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
+[#197](https://github.com/andrediashexa/hexarouting/issues/197),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
 [#213](https://github.com/andrediashexa/hexarouting/issues/213),
 [#217](https://github.com/andrediashexa/hexarouting/issues/217),
