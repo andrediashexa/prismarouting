@@ -1621,6 +1621,29 @@ are to be interpreted as described in
 
 ### Internal
 
+* **The collector behaviour that made a defect visible was held by nothing**
+  ([#257](https://github.com/andrediashexa/hexarouting/issues/257)).
+  `docs/logging.md` says a serious collector buffers a data set that arrives
+  without its template and reprocesses it when the template appears, says
+  `tools/ipfix_collector.py` does, and then says why it matters: *that is how
+  the ordering became visible instead of looking like vanished records.* The
+  reprocessing loop could be disabled with all 38 suites green.
+
+  The collector ships: `appliance/install.sh` puts it on the box as
+  `/usr/lib/hexarouting/ipfix-collector`. And the labs that drive it assert
+  record counts, so without the reprocessing they would have gone red saying
+  **"expected 2 records, got 0"** - which names the box, and the box would have
+  been right. A message that names the wrong component is the same defect this
+  release keeps finding, one level out.
+
+  Four assertions in `test/test_collector_marker.py`, driving real IPFIX bytes
+  rather than calling an internal, because the ordering is a property of what
+  arrives on the wire. Two of them are controls: the report has to SAY it is
+  holding a record, so silent loss and a deferred template do not look alike,
+  and a record arriving after its template still has to decode, or the section
+  would pass on a collector that decodes nothing at all.
+
+
 * **`docs/routing.md` sent readers to the wrong lab for four claims**
   ([#247](https://github.com/andrediashexa/hexarouting/issues/247)). The
   as-path regex cases, the two-origin policy test, the local-preference test
