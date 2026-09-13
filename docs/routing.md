@@ -2257,8 +2257,9 @@ separated" is not a conclusion this supports.
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
     subscribers behind it would be translated to an address the internet
     cannot route back to
-    add 'network 200.150.0.16/28' under the BGP address family, or
-    announce it from another box
+    announce it from another box, or originate it here with
+    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28'
+    under the BGP address family
 ```
 
 The check this product can make and nobody else can.
@@ -2267,29 +2268,94 @@ Configure a pool with `outside 200.150.0.16/28`. Configure BGP. Both correct.
 Unless something advertises a prefix **covering** that /28, every subscriber
 behind the pool is translated to an address the internet cannot route back to:
 traffic leaves and nothing returns. The CGNAT is right, the routing is right,
-and the service is dead - and until now nothing in the box connected the two
-halves, because they are configured in different places by different people on
+and the service is dead - and nothing in the box connected the two halves,
+because they are configured in different places by different people on
 different days.
 
-Three properties, and the last two are what keep it useful:
+`pool_announce_findings()` answers it, over `bgp_originations()`.
+
+### Why it is a warning and not a refusal
+
+The issue that asked for this
+([#145](https://github.com/andrediashexa/hexarouting/issues/145)) said "not a
+refusal" and gave one reason: the prefix may be announced from another box.
+That reason is correct and it is not the strongest one. Measured on FRR 10.7.1:
+
+| configured | `show bgp ipv4 unicast` |
+|---|---|
+| `network 200.150.9.16/28`, no matching route in the RIB | `200.150.9.16/28` present, **no `*>`** |
+| the same, plus `ip route 200.150.9.16/28 blackhole` | `*> 200.150.9.16/28` |
+
+The statement is stored either way. So a `network` statement is **necessary
+and not sufficient**: what this check can test is a proxy for the
+announcement, not the announcement. A commit refused for the absence of that
+proxy would block configurations that work, while still passing the box whose
+`network` statement originates nothing - a refusal that is wrong in both
+directions at once.
+
+Two further ways to originate a covering prefix are not in the text at all,
+both measured:
+
+| configured | result |
+|---|---|
+| `aggregate-address 200.150.0.0/16 summary-only`, a more-specific in the table | `*> 200.150.0.0/16`, and the more-specific goes `s>` |
+| the same aggregate, no more-specific | `No BGP prefixes displayed, 0 exist` |
+| `network 200.150.9.16/28 route-map RM-DENY` | nothing originated |
+| the same with a `permit` map | `*> 200.150.9.16/28` |
+
+A refusal would therefore fire on an arbitrary subset of the mistake and be
+silent on the rest. It is warned about instead, which is the shape
+[#208](https://github.com/andrediashexa/hexarouting/issues/208) established:
+refusing a whole commit over a BGP statement was itself the defect there. An
+alarm that is always on is one nobody reads.
+
+### What it can follow, and what blinds it
 
 * **Containment, not equality.** A `network 200.150.0.0/24` covers a pool's
-  `/28`. `routes.covers_prefix()` answers "does this prefix contain the whole
-  of that one", which is a different question from the address test beside it:
+  `/28`, and a covering aggregate is the ordinary case rather than the odd
+  one. `routes.covers_prefix()` answers "does this prefix contain the whole of
+  that one", which is a different question from the address test beside it:
   `200.150.0.0/24` contains the *address* `200.150.0.16` and also all of
   `200.150.0.16/28`, but a shorter prefix can never be covered by a longer one,
   and an address test cannot tell those apart.
-* **It reports; it never refuses.** Announcing the prefix from another box is a
-  legitimate design, and a check that refuses a working topology gets worked
-  around.
-* **It stays quiet when it cannot see.** `redistribute` can advertise a prefix
-  in ways this check cannot follow, so a candidate carrying one produces no
+* **A redistributed static route counts, and is resolved.** Originating your
+  own aggregate from a blackhole route is the ordinary way an ISP does it.
+  Measured: `redistribute static` under `router bgp` with `ip route
+  200.150.9.16/28 blackhole` present gives `*> 200.150.9.16/28 ... ?`, and
+  removing the route empties the table. FRR's static routes are all in the
+  configuration, so this is resolved against the candidate's own routes rather
+  than treated as unfollowable - and `redistribute static` with a route that
+  covers something else still warns. Only **top-level** static routes count: a
+  route inside `vrf red` is in another table.
+* **The stanza decides, not the word.** `redistribute static` under `router
+  ospf` puts nothing into BGP - measured, with the covering route present and
+  BGP configured throughout: `No BGP prefixes displayed, 0 exist`. The two
+  statements are the same six characters, so the block context comes from
+  `config.block_paths()`, which is the one thing here that reads both shapes
+  `routing` arrives in: indented when FRR read it back, flat when it was typed
+  at this VTY. Reading the word wherever it appeared treated the edge box that
+  leaks BGP into its IGP as one it could not see through, and that box got no
+  warning at all.
+* **It stays quiet when it cannot see.** `redistribute connected`, anything
+  through a route-map, and `aggregate-address` can advertise a prefix whose
+  identity is not in the configuration, so a candidate carrying one produces no
   warning at all. **A warning that fires on a working box is worse than no
   warning**, because the next one - the real one - is ignored too.
+* **A box with no `router bgp` is told nothing.** It announces nothing from
+  here by definition, and is exactly the deployment whose prefix is carried by
+  a router upstream.
 
-The lab asserts all three, and the order matters: "the warning stays quiet" is
-trivially true on a box where the warning never fires, so it is only meaningful
-beside the case that proves it does.
+The advice names the blackhole route as well as the `network` because of the
+first measurement above: advice that does not work when followed is worse than
+no advice.
+
+The lab asserts the warning, the covering aggregate that silences it, the
+redistributed static that silences it, the static that covers something else
+and does not, the IGP redistribution that neither announces nor hides, and -
+on the same output that carries the warning - that the check still succeeds.
+The order matters: "the warning stays quiet" is trivially true on a box where
+the warning never fires, so it is only meaningful beside the case that proves
+it does.
 
 ## BGP neighbours
 

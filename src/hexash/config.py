@@ -111,17 +111,37 @@ def block_paths(routing: list) -> list:
     stack = []                  # [indent, statement, children were indented]
     for raw in routing:
         stmt = raw.strip()
+        indent = len(raw) - len(raw.lstrip())
         if not stmt:
             out.append(None)
             continue
         if stmt.startswith("!"):
             # FRR separates top-level stanzas with it, and releases before 8.1
             # emit no `exit` at all. `feed` cuts `!` off anything typed, so one
-            # reaching here is FRR's own separator and means "back to the top".
-            stack = []
+            # reaching here is FRR's own separator.
+            #
+            # It means "back to the top" only AT COLUMN 0. FRR 10.7.1 also
+            # writes an INDENTED one inside a stanza, and reading that as a
+            # return to the top put every statement after it in the wrong
+            # block. Captured from a live 10.7.1 rather than reasoned about:
+            #
+            #   router bgp 65000
+            #    !
+            #    address-family ipv4 unicast
+            #     network 200.150.9.16/28
+            #    exit-address-family
+            #   exit
+            #   !
+            #
+            # The `network` there belongs to `router bgp 65000`, and with the
+            # stack cleared by the line above it belonged to nothing. That is
+            # the shape of EVERY commit after the first, because cfg.routing is
+            # read back from FRR - so a check asking "is this statement under
+            # router bgp" answered no for a box that had typed it there.
+            if not indent:
+                stack = []
             out.append(None)
             continue
-        indent = len(raw) - len(raw.lstrip())
         if indent:
             while stack and stack[-1][0] >= indent:
                 stack.pop()

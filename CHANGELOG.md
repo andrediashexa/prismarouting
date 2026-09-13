@@ -38,6 +38,7 @@ are to be interpreted as described in
 
 [#63](https://github.com/andrediashexa/hexarouting/issues/63),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
+[#145](https://github.com/andrediashexa/hexarouting/issues/145),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
@@ -367,6 +368,100 @@ are to be interpreted as described in
   not a statement at all. Both are fixed.
 
 ### Fixed
+
+* **The pool-announce warning went silent on the ordinary edge box, and had no
+  unit assertion at all.** The check that says a pool's public prefix is
+  advertised by nothing
+  ([#145](https://github.com/andrediashexa/hexarouting/issues/145)) treated any
+  line beginning `redistribute`, anywhere in the configuration, as something it
+  could not see through. Measured on FRR 10.7.1, with a covering static route
+  present and BGP configured throughout:
+
+  ```
+  router bgp 65000 / address-family ipv4 unicast / redistribute static
+    *>  200.150.9.16/28  0.0.0.0  0  32768 ?
+  router ospf / redistribute static        (BGP carrying no redistribute)
+    No BGP prefixes displayed, 0 exist
+  ```
+
+  The two statements are the same six characters and only one of them
+  announces anything. So an edge box that leaks BGP into its IGP - which is
+  what `ospf_findings` already warns about - exempted itself from this check
+  entirely and got no warning on a pool nothing announced.
+
+  The block context now comes from `config.block_paths()`, the one thing here
+  that reads both shapes `routing` arrives in: indented when FRR read it back,
+  flat when it was typed at this VTY. A `redistribute static` under `router
+  bgp` is also **resolved** against the candidate's own static routes rather
+  than treated as unfollowable, because FRR's static routes are all in the
+  configuration - so originating an aggregate from a blackhole route, which is
+  the ordinary way an ISP does it, silences the warning, and a static route
+  that covers something else does not. `aggregate-address` and `network …
+  route-map` blind it, both measured.
+
+  **It stays a warning**, and the reason is now measured rather than argued
+  from the issue's wording. `network 200.150.9.16/28` with no matching route in
+  the RIB is stored by FRR and appears in `show bgp ipv4 unicast` **without
+  `*>`** - not valid, not best, advertised to nobody - and becomes `*>` the
+  moment `ip route 200.150.9.16/28 blackhole` exists. What this check can test
+  is therefore a proxy for the announcement and not the announcement, and a
+  commit MUST NOT be refused on a proxy: it would block configurations that
+  work while still passing the box whose `network` statement originates
+  nothing. That is the shape of
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208), where
+  refusing a whole commit over a BGP statement was itself the defect. The
+  advice now names the blackhole route beside the `network`, because advice
+  that does not work when followed is worse than no advice.
+
+  The check was inline in `commit` and so could only be reached by running the
+  lab. It is `pool_announce_findings()` over `bgp_originations()` now, in the
+  family of `ospf_findings` and `bgp_errors`, with unit assertions in
+  `test/test_hexash_complete.py`; fourteen mutations of the product were each
+  run to red before the work was called done, and one of them found an
+  assertion that was green against the defect it claimed to guard.
+
+* **An indented `!` put every statement after it in the wrong block.**
+  `config.block_paths()` read any `!` as FRR's top-level stanza separator and
+  cleared the block stack. FRR 10.7.1 also writes an **indented** one inside a
+  stanza, captured from a live daemon:
+
+  ```
+  router bgp 65000
+   !
+   address-family ipv4 unicast
+    network 200.150.9.16/28
+   exit-address-family
+  exit
+  ```
+
+  So the `network` statement belonged to no block, and anything asking "is
+  this line under `router bgp`" answered no for a box that had typed it
+  exactly there. `cfg.routing` is read back from FRR, so that is the shape of
+  **every commit after the first one** - it was the pool-announce check above
+  that found it, warning about a pool the box was announcing correctly. Only a
+  `!` at column 0 returns to the top now.
+
+  It also **moved a route between tables**. A `vrf red` stanza whose static
+  route follows an indented `!` had that route hoisted into the global `router
+  static` block, so the file said the route was global and the operator had
+  put it in a VRF - which is exactly the defect
+  [#180](https://github.com/andrediashexa/hexarouting/issues/180) fixed,
+  reintroduced through a line nobody types. The assertion that existed for
+  #180 had no `!` in it and was green against this the whole time; the new one
+  is written against what a live daemon printed.
+
+  And it **shortened `show this`**. Asked what `router bgp 65000` holds, on a
+  configuration read back from FRR rather than typed, the box left out the
+  address-families and everything in them - because FRR writes ` !` between a
+  router's own statements and its first family, and past that separator the
+  family sat at no path at all. `frr_block_lines()` promises the opposite in
+  its docstring: an operator standing in a router is asking what that router
+  holds, and its address-families are part of the answer. Not a wrong answer
+  they could see was wrong, a **shorter** one, with nothing saying anything was
+  missing. `lab/vty.sh` asserts the family is there but does it mid-edit, where
+  the candidate is flat and carries no `!`, so it was green throughout; its
+  after-commit case reads `router static`, which is top-level and cannot show
+  this. The assertion for it is a unit one, on the read-back shape.
 
 * **`no <statement>` inside a pool block was accepted in silence and did
   nothing.** `no block-size 512`, `no policy interleaved`,
