@@ -4405,8 +4405,8 @@ check(_sh.candidate.routing == _BGP_UNREAD,
 # So the box owes the operator one guarantee instead: it adds nothing of its
 # own beyond the four-space indent and #141's sixteen-character mark, and a
 # statement that CAN fit does fit. That is the third assertion below.
-print("\n=== every line commit and commit check print fits an 80-column "
-      "console (#252, #271) ===")
+print("\n=== every line commit, commit check, rollback, save and --load "
+      "print fits an 80-column console (#252, #271, #276) ===")
 
 
 class _FrrStalled:
@@ -4827,8 +4827,332 @@ check(_LONG271 + "\n" not in _out.replace(f"password {_LONG271}\n", ""),
 print(f"  the widest line quoted whole: "
       f"{len('    line 3: password ' + _LONG271)} columns")
 
-print(f"  {len(_refusal_out)} fixture(s) driven through commit and "
-      f"commit check")
+
+# --- the same shape outside `commit`, and the one inside it #271 left (#276) ---
+#
+# #271 closed `commit` and `commit check` and recorded two limits rather than
+# doing them quietly. Both are the SAME defect, which is a row carrying a
+# QUOTED LINE and PROSE at once: neither half can be guaranteed there, because
+# a statement MUST be printed whole and a sentence MUST be wrapped, and under
+# one budget guaranteeing either breaks the other.
+#
+#   * `err(f"{stmt}: {why}")`, in the BGP, IS-IS, OSPF, route-map, AS-path and
+#     prefix-range checks. #271 measured every one inside 79 columns on the
+#     fixtures it drove and therefore did not touch them, because
+#     restructuring eight messages on no measurement is a wording change.
+#     That was a limit, not a clean bill, and it said so.
+#   * `Shell.revert_confirm` and `Shell.load`, which print the `line <n>:
+#     <text>    (<why>)` row that #271 split in `do_commit`. They belong to
+#     `rollback` and to `--load`, not to `commit`.
+#
+# `save` is driven here for the same reason: the issue names it beside the
+# other two, and what it prints had never been counted either. One of its rows
+# was wrapped BY HAND at what somebody took for 80 columns and is 87, which is
+# the defect #252 is named for, in a command #252 did not drive.
+#
+# Driven here on the input an ISP actually types - a real route-map name, an
+# IPv6 neighbour, an IPv6 prefix-list, an AS-path list name, a crypt hash
+# pasted without its leading '$', the box's own configuration path - every one
+# of them measures over, from 80 to 264 columns:
+#
+#   264  error: <neighbor ... route-map RM-TRANSIT-V6-IN in>: no route-map...
+#   222      line 2: password 6$Xq7kPz2r$4Pv...    (password: expected a crypt...)
+#   217  error: <neighbor 2001:db8:... route-reflector-client>: ... has no...
+#   201  error: <ipv6 prefix-list PL-... ge 24 le 16>: prefix range refused...
+#   184  error: <neighbor 2001:db8:1000:2::1 route-map ... in>: ... no 'remote-as'
+#   174  error: <bgp as-path access-list AS-PATH-...>: the regular expression...
+#   153  error: <neighbor 2001:db8:aaaa:bbbb::1 peer-group UPSTREAM-V6>: peer...
+#   141  error: <route-map RM-CUSTOMER-AGGREGATES-OUT deny 20>: a deny clause...
+#   135  warning: <match community CL-CUSTOMER-BLACKHOLE-V6>: no community...
+#   131  error: <passive-interface GigabitEthernet0/8/0.4094>: this box has no...
+#   128  warning: <route-map RM-CUSTOMER-AGGREGATES-OUT permit 10>: no 'match'...
+#   122  warning: <route-map RM-CUSTOMER-AGGREGATES-OUT deny 20>: ... nothing uses it
+#   116  warning: <match rpki notfound>: no RPKI cache is configured, so every...
+#   113  commit confirmed 10: nobody confirmed it within 10 minute(s), so this...
+#   104  error: <ip router isis CORE-BACKBONE-LEVEL2>: no 'router isis ...'...
+#   103  error: loaded, but no rollback revision could be recorded: <path>
+#   120  error: cannot write <CONFIG_PATH>: [Errno 13] Permission denied: ...
+#    98  error: giving up after 5 attempts: this box is still on the...
+#    87      this box rolls the running configuration back at <when>, and does not
+#    97  warning: <router isis CORE-BACKBONE-LEVEL2>: no interface joins it...
+#    91  error: <path>: refusing to load, these lines are not understood:
+#    88  error: rolled back, but <path> could not be removed: Permission denied
+#    85  error: revision 3 cannot be read: <path>
+#    84  error: <path>: refusing to load, the check above says why
+#    80  error: the configuration to roll back to has lines this VTY does not...
+#    80      the configuration it was to go back to is in <path>.failed
+#
+# The last two are one column over, which is the whole argument for measuring
+# rather than reading: both look like they fit. The four rows carrying <path>
+# are measured at the box's own `/etc/hexarouting/...`, and that width is the
+# operator's to choose, not this VTY's.
+#
+# Measured inside the budget on the same run, and therefore NOT touched, which
+# is what #271 did with these and the reason this list is written down:
+#
+#    70  error: the configuration to roll back to does not validate on this box
+#    67  error: the rollback failed (attempt 1 of 5); it will be tried again
+#    61  use 'show configuration compare' to review, 'commit' to apply
+#    56  error: the box is still on the unconfirmed configuration
+#    56  configuration saved to <CONFIG_PATH>
+#    51  warning: what you just saved has NOT been confirmed
+#    26  load complete (revision 3)
+#
+# The fixtures below append to the SAME `_refusal_out` the sweep already
+# reads. `apply()` is not stubbed, for the reason #271 gives: the checks that
+# print these lines live inside it.
+
+
+def _drive276(sh, run, needle, keep=True):
+    """Drive one command that is not `commit`, and keep what it printed.
+
+    The needle is the same guarantee `_drive271` asks for: a fixture whose
+    branch stopped being reached measures nothing and says nothing about it.
+
+    `keep=False` for the fixtures that deliberately QUOTE something wider than
+    the console: those are asserted whole below rather than swept, the same
+    way #271 keeps its crypt-hash fixture out of `_refusal_out`. Their PROSE
+    is measured all the same, by the fixture beside them that quotes a short
+    line and carries the identical reason.
+    """
+    buf = _io.StringIO()
+    with _ctx.redirect_stdout(buf):
+        run(sh)
+    out = buf.getvalue()
+    check(needle in " ".join(out.split()),
+          f"the fixture must reach the message, or it measures nothing - "
+          f"{needle!r} not in: {out!r}")
+    if keep:
+        _refusal_out.append(out)
+    return out
+
+
+# 1. `err(f"{stmt}: {why}")`, one fixture per check that prints it. The input
+#    is what an ISP types: IPv6 neighbours, and names long enough to say what
+#    the policy is for.
+_drive271(_shell271("! routing\nrouter bgp 65000\n"
+                    " neighbor 2001:db8:1000:2::1 remote-as 65001\n"
+                    " neighbor 2001:db8:1000:2::1 route-map RM-TRANSIT-V6-IN "
+                    "in\nexit\n", frr=_Frr271(daemons=_HEALTHY271)), [],
+          "no route-map called 'RM-TRANSIT-V6-IN' is defined")
+_drive271(_shell271("! routing\nrouter bgp 65000\n"
+                    " neighbor 2001:db8:aaaa:bbbb::1 peer-group UPSTREAM-V6\n"
+                    "exit\n", frr=_Frr271(daemons=_HEALTHY271)), [],
+          "is not declared; declare it with")
+_drive271(_shell271("! routing\nrouter bgp 65000\n"
+                    " neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff "
+                    "route-reflector-client\nexit\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "has no 'remote-as'")
+_drive271(_shell271("! routing\nbgp as-path access-list AS-PATH-CUST-V6 "
+                    "seq 5 permit ^65001_(\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "the regular expression does not compile")
+_drive271(_shell271("! routing\nipv6 prefix-list PL-CUST-V6 "
+                    "seq 10 permit 2001:db8::/32 ge 24 le 16\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "prefix range refused for 2001:db8::/32")
+_drive271(_shell271("! routing\nrouter ospf\n"
+                    " passive-interface GigabitEthernet0/8/0.4094\n",
+                    dp=_Dp271({"show interface": _IF271}),
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "so nothing is made passive")
+_drive271(_shell271("! routing\ninterface GigabitEthernet0/8/0\n"
+                    " ip router isis CORE-BACKBONE-LEVEL2\n",
+                    dp=_Dp271({"show interface": _IF271}),
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "declares that instance")
+_drive271(_shell271("! routing\nroute-map RM-CUSTOMER-AGGREGATES-OUT deny 20\n"
+                    " set local-preference 250\n set community 65000:100\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "the set never runs, because the route is denied")
+
+# 2. The warning half of the same row, which has the same defect and no
+#    refusal to make it obvious.
+_drive271(_shell271("! routing\nroute-map RM-CUSTOMER-IN permit 10\n"
+                    " match community CL-CUSTOMER-BLACKHOLE-V6\n"
+                    " set local-preference 50\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "no community list called 'CL-CUSTOMER-BLACKHOLE-V6' is defined")
+_drive271(_shell271("! routing\nroute-map RM-TRANSIT-V6-IN permit 10\n"
+                    " match rpki notfound\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "no RPKI cache is configured")
+_drive271(_shell271("! routing\n"
+                    "route-map RM-CUSTOMER-AGGREGATES-OUT permit 10\n"
+                    " set community 65000:100\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "no 'match': this permits every route")
+_drive271(_shell271("! routing\nrouter isis CORE-BACKBONE-LEVEL2\n"
+                    " net 49.0001.0000.0000.0001.00\n",
+                    frr=_Frr271(daemons=_HEALTHY271)), [],
+          "no interface joins it, so it runs and carries nothing")
+
+# 3. `rollback`: the configuration a "commit confirmed" was measured against,
+#    read back and found to carry a line this VTY cannot hold. Both halves of
+#    the deadline, because the in-session one is read by an operator and the
+#    unattended one by hexarouting-confirm.service, on the same console.
+#
+# Two configurations that carry the same refusal, and they are two because
+# the sweep cannot tell a quoted line from prose. `_BAD276` quotes something
+# short, so everything it prints is swept; `_WIDE276` quotes a real SHA-512
+# crypt hash with its leading '$' lost - what a paste into a terminal that
+# swallowed the first character looks like, and refused for exactly that -
+# and is asserted whole instead, the way #271 does with its own.
+_HASH276 = ("$6$Xq7kPz2r$4Pv3cJ9sQm2WdT1hRfLb8XkY6nAeUoZgC5iMtNrVwJ0yBpSlDqHx"
+            "KuGaEc7If3jOvMzTn1RbLd5WhQ9Pk2")
+_PASTED276 = _HASH276[1:]
+_BAD276 = "user alice\n password secret\n role administrator\n"
+_WIDE276 = f"user alice\n password {_PASTED276}\n role administrator\n"
+_GOOD276 = "! routing\nrouter static\n ip route 203.0.113.0/24 blackhole\n"
+# The box's own paths, not a temporary directory's: the width of a path is
+# the thing being measured, and `/tmp/tmpXXXXXXXX` is not what is printed on
+# an appliance.
+_CONFIRM276 = "/etc/hexarouting/confirm"
+_RBPATH276 = "/etc/hexarouting/rollback"
+
+
+def _confirm276(config, clear=None, attempts=1):
+    """A Shell whose confirm file holds an expired window on `config`."""
+    sh = _shell271("", frr=_Frr271(daemons=_HEALTHY271))
+    pending = {"config": config, "deadline": 0.0, "minutes": 10}
+    sh.confirm = type("_C276", (), {
+        "read": lambda self: pending,
+        "clear": clear or (lambda self: None),
+        "arm": lambda self, *a: None,
+        "count_attempt": lambda self, p: attempts,
+        "give_up": lambda self: _CONFIRM276 + ".failed",
+        "path": _CONFIRM276})()
+    return sh
+
+
+def _timeout276(sh):
+    sh.confirm_deadline = 1.0
+    sh.confirm_on_box = True
+    sh.confirm_backup = ""
+    sh.check_confirm_timeout()
+
+
+_drive276(_confirm276(_BAD276), _timeout276,
+          "the configuration to roll back to has lines this VTY cannot read")
+_drive276(_confirm276(_BAD276), lambda sh: sh.confirm_expired(),
+          "the configuration to roll back to has lines this VTY cannot read")
+
+# The window that expires and IS put back: the sentence the unit prints, which
+# was 113 columns and is the whole answer an operator gets from the box's log.
+_drive276(_confirm276(_GOOD276), lambda sh: sh.confirm_expired(),
+          "commit confirmed 10: nobody confirmed it within 10 minute(s)")
+
+
+def _refuse_clear276(self):
+    raise OSError(13, "Permission denied", _CONFIRM276)
+
+
+_drive276(_confirm276(_GOOD276, clear=_refuse_clear276),
+          lambda sh: sh.confirm_expired(),
+          "rolled back, but this file could not be removed")
+
+# The rollback that failed often enough for the box to stop trying, which is
+# the one outcome that must never be quiet.
+_drive276(_confirm276(_BAD276, attempts=hexash.CONFIRM_ATTEMPTS),
+          lambda sh: sh.confirm_expired(), "giving up after")
+
+# 4. `--load`, read at BOOT on a box that is refusing its own saved
+#    configuration, which is the worst moment to be handed a broken row. The
+#    file is written under a directory named the way the box's own is, so the
+#    path being measured is an appliance's and not a temporary file's.
+_DIR276 = _tf.mkdtemp()
+_os.makedirs(_os.path.join(_DIR276, "etc", "hexarouting"))
+_BOOT276 = _os.path.join(_DIR276, "etc", "hexarouting", "hexarouting.conf")
+
+
+def _write276(path, text):
+    with open(path, "w") as f:
+        f.write(text)
+    return path
+
+
+_drive276(_shell271("", frr=_Frr271(daemons=_HEALTHY271)),
+          lambda sh: sh.load(_write276(_BOOT276, _BAD276)),
+          "refusing to load this file, these lines are not understood")
+_drive276(_shell271("", frr=_Frr271(daemons=_HEALTHY271)),
+          lambda sh: sh.load(_write276(
+              _BOOT276,
+              "! routing\nrouter bgp 65000\n"
+              " neighbor 2001:db8:1000:2::1 route-map RM-TRANSIT-V6-IN in\n"
+              "exit\n")),
+          "refusing to load this file, the check above says why")
+
+_sh = _shell271("", frr=_Frr271(daemons=_HEALTHY271))
+_sh.rb = type("_RB276", (), {"push": lambda self, *a: (_ for _ in ()).throw(
+    hexash.RollbackUnavailable(f"{_RBPATH276}: Permission denied"))})()
+_drive276(_sh, lambda sh: sh.load(_write276(_BOOT276, _GOOD276)),
+          "loaded, but no rollback revision could be recorded")
+
+# 5. `rollback <n>` on a store this box cannot read.
+_sh = _shell271("", frr=_Frr271(daemons=_HEALTHY271))
+_sh.rb = type("_RB276", (), {"load": lambda self, n: (_ for _ in ()).throw(
+    hexash.RollbackUnavailable(f"{_RBPATH276}/{n}.conf: Permission denied"))})()
+_drive276(_sh, lambda sh: sh.do_rollback(["3"]),
+          "revision 3 cannot be read")
+
+# 6. `save`, which the issue names beside `rollback` and `--load`. Two rows:
+#    one hand-wrapped at what somebody took for 80 columns and measuring 87,
+#    which is the defect #252 is named for turning up in a command nobody had
+#    driven; and the write that failed, whose path and errno shared a row at
+#    120 columns.
+_SAVED276 = _os.path.join(_DIR276, "etc", "hexarouting", "saved.conf")
+
+
+def _save276(sh, path, pending=None):
+    """`save`, against `path` rather than the box's own CONFIG_PATH."""
+    was = hexash.CONFIG_PATH
+    hexash.CONFIG_PATH = path
+    sh.confirm.read = lambda: pending
+    try:
+        sh.save_running()
+    finally:
+        hexash.CONFIG_PATH = was
+
+
+_drive276(_shell271(_GOOD276, frr=_Frr271(daemons=_HEALTHY271)),
+          lambda sh: _save276(sh, _SAVED276,
+                              {"deadline": 1770820327.0, "minutes": 10}),
+          "what you just saved has NOT been confirmed")
+# A path under a FILE, so makedirs fails the way a read-only directory does.
+_drive276(_shell271(_GOOD276, frr=_Frr271(daemons=_HEALTHY271)),
+          lambda sh: _save276(sh, _os.path.join(_SAVED276, "hexarouting.conf")),
+          "cannot write the configuration file")
+
+# And the two quoted rows that are ALLOWED past the margin, asserted whole and
+# on one row each - the half of the rule the sweep cannot say. The sweep alone
+# would be satisfied by a short configuration line and `printed whole` alone
+# by a short reason; the defect is the two sharing a row, so it takes both.
+# Not swept, because these two rows are 114 columns on purpose.
+_LOAD276 = _drive276(_shell271("", frr=_Frr271(daemons=_HEALTHY271)),
+                     lambda sh: sh.load(_write276(_BOOT276, _WIDE276)),
+                     "not understood", keep=False)
+for _label, _out276 in (
+        ("rollback", _drive276(_confirm276(_WIDE276),
+                               lambda sh: sh.confirm_expired(),
+                               "cannot read", keep=False)),
+        ("--load", _LOAD276)):
+    check(f"    line 2: password {_PASTED276}" in _out276.splitlines(),
+          f"{_label} quotes a line too wide for the console whole, on one "
+          f"row: {_out276!r}")
+    check(_PASTED276 + "\n" not in _out276.replace(
+              f"password {_PASTED276}\n", ""),
+          f"and nowhere else, in pieces: {_out276!r}")
+# The path is quoted the same way and for the same reason: `--load` is given
+# it by whoever ran it, so its width is nobody's to bound.
+check(f"    {_BOOT276}" in _LOAD276.splitlines(),
+      f"--load quotes the path it is refusing whole, on a row of its own: "
+      f"{_LOAD276!r}")
+print(f"  the widest row quoted whole outside commit: "
+      f"{len('    line 2: password ' + _PASTED276)} columns")
+
+print(f"  {len(_refusal_out)} fixture(s) driven through commit, commit "
+      f"check, rollback, save and --load")
 
 # The same shape as the display's assertion above, on purpose and against the
 # same constant: these two are the only places that print a `<- not checked`
@@ -4841,7 +5165,7 @@ print(f"  {len(_refusal_out)} fixture(s) driven through commit and "
 _wide = [l for out in _refusal_out for l in out.splitlines()
          if len(l) > CONSOLE_COLUMNS]
 check(not _wide, f"these wrap on a serial console: {[(len(l), l) for l in _wide]}")
-print(f"  widest line commit or commit check printed: "
+print(f"  widest line these commands printed: "
       f"{max(len(l) for out in _refusal_out for l in out.splitlines())} "
       f"columns")
 

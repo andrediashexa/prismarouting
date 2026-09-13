@@ -45,9 +45,14 @@ expect_in() {
 # happened to fold. This is the shell half of unwrapped() in
 # test/test_hexash_bgp.py, which exists for the same reason.
 #
+# BOTH sides are collapsed, not only the haystack. A caller writing a long
+# sentence across two source lines is how these needles are written, and
+# collapsing one side alone fails on exactly that.
+#
 # Use expect_in for anything printed WHOLE - a statement, a path, a
 # configuration line, a counter. Those must not wrap, and collapsing the text
-# before comparing would hide it if they did.
+# before comparing would hide it if they did. That is a different question
+# and it has its own answer.
 expect_said() {
   _said=$(printf '%s' "$3" | tr '\n' ' ' | tr -s ' ')
   _want=$(printf '%s' "$2" | tr '\n' ' ' | tr -s ' ')

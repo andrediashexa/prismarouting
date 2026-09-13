@@ -866,7 +866,9 @@ UNDEF=$($HX -c "configure" \
         -c "route-map RM-UNDEF permit 10" \
         -c "match as-path AS-NAO-EXISTE" \
         -c "exit" -c "commit" 2>&1)
-expect_in "matching a list nothing defines is reported" \
+# expect_said and not expect_in: the reason is prose and is wrapped to the
+# console now, and this needle straddles the break (#276).
+expect_said "matching a list nothing defines is reported" \
   "until one is, the clause matches nothing" "$UNDEF"
 expect_in "and the commit is not refused for it" "commit complete" "$UNDEF"
 
