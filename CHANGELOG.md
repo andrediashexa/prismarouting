@@ -216,6 +216,42 @@ are to be interpreted as described in
   refusal, and they are not offered in the grammar for that reason.
 >>>>>>> issue/187-ospf6d
 
+* **A dynamic pool's capacity line understated what the box can serve.** The
+  caveat added for [#210](https://github.com/andrediashexa/hexarouting/issues/210)
+  divided the usable figure by the worker count, and that is only the smallest
+  block slice when there are at least as many inside addresses as blocks. A
+  pool with **more blocks than inside addresses** loses nothing to the
+  sharding, because no worker can be handed more subscribers than it has
+  blocks for. Measured on 12 blocks in front of 8 inside addresses: the box
+  printed 4 at two workers and 2 at three, while all 8 were served at one, two
+  and three. Understating is still a number an operator sizes wrongly - it just
+  sends them to buy addresses they already own.
+
+  The figure is now the largest *n* for which **every** set of *n* subscribers
+  is served: the smallest slice among the workers that can be crowded, and the
+  whole inside set when none of them can be. **A worst case and deliberately
+  not a mean** - the operator has no say over which of their addresses are
+  switched on at any moment, and a figure that holds on the average leaves a
+  box refusing subscribers below the number it printed, which is the same false
+  promise arriving one step quieter. It is printed only when it is below the
+  ceiling, because a caveat that repeats the number above it is one people
+  learn to skip.
+
+  `lab/dynamic.sh` now asks the box which thread holds the thinnest slice and
+  which thread each candidate lands on, then sends the claim's worth of
+  subscribers **crowded onto that slice**. Neither the sharding rule nor the
+  subscriber hash is recomputed in the lab: a lab that recomputes them agrees
+  with itself instead of with the product. `dynamic` is in `BOTH_WAYS` now,
+  which it was not - its single-threaded run cannot see this defect at all,
+  because with one slice the partition and the hash agree by accident.
+
+  The mechanism itself is unchanged and remains a decision for the maintainer,
+  with the evidence now on the issue: a shared subscriber-to-worker table costs
+  **16 to 21 clocks** against `bpa-in2out`'s own 396, so the read is not the
+  expensive part - the mutability is; and letting a worker borrow a block from
+  its neighbour, implemented and measured, **loses every reply**, because the
+  return path resolves the worker from the block index by arithmetic.
+
 ## 0.66.0 — six times a lab did the product's job, and the product now does it
 
 [#67](https://github.com/andrediashexa/hexarouting/issues/67),
@@ -312,6 +348,7 @@ are to be interpreted as described in
 [#215](https://github.com/andrediashexa/hexarouting/issues/215).
 
 [#214](https://github.com/andrediashexa/hexarouting/issues/214),
+[#210](https://github.com/andrediashexa/hexarouting/issues/210) (partly),
 [#217](https://github.com/andrediashexa/hexarouting/issues/217).
 
 ### Fixed
