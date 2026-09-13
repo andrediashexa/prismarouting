@@ -23,6 +23,14 @@ EVENT = {12: "EXHAUSTION", 16: "ALLOCATION", 17: "DEALLOCATION"}
 templates = {}   # template_id -> [(ie, length)]
 records = []
 pending = []     # data sets seen before their template
+# How many of those there were, over the life of this collector.
+#
+# The holding above is what a serious collector does (docs/logging.md), and it
+# is why the defect it forgives is invisible: a record that went out before its
+# template decodes here anyway, a few milliseconds later, and every count of
+# records still adds up. So the forgiveness is counted as well as performed,
+# and a lab can assert that the box never needed it.
+held_before_template = 0
 
 def decode(kind, raw):
     if kind == "ip":
@@ -74,6 +82,7 @@ def emit(tid, body, late=False):
               f"{rec.get('portRangeEnd')} pool {rec.get('natPoolId')}{tag}")
 
 def handle(pkt):
+    global held_before_template
     if len(pkt) < 16:
         return
     ver, length, exp_time, seq, domain = struct.unpack("!HHIII", pkt[:16])
@@ -108,11 +117,22 @@ def handle(pkt):
             fields = templates.get(set_id)
             if not fields:
                 # a real collector holds and reprocesses when the template arrives
+                held_before_template += 1
                 print(f"  data for template {set_id} with no template yet: holding")
                 pending.append((set_id, body))
             else:
                 emit(set_id, body)
         off += set_len
+
+def report_early():
+    """What arrived before the layout needed to read it.
+
+    Printed even when it is zero: a line that only appears on a defect is a
+    line a lab cannot tell from a collector that was never started.
+    """
+    print(f"EARLY DATA SETS: {held_before_template} arrived before their "
+          f"template")
+
 
 def report_open():
     """
@@ -298,6 +318,7 @@ def main():
         exh = sum(1 for r in records if r.get("natEvent") == 12)
         print(f"\nRESUMO: {len(records)} registros "
               f"({allocs} allocations, {deallocs} releases, {exh} exhaustions)")
+        report_early()
         report_open()
         return
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 4739
@@ -325,6 +346,7 @@ def main():
     elif allocs != deallocs:
         print(f"WARNING: {allocs} allocations against {deallocs} deallocations; "
               f"the difference is blocks still in use, or records lost.")
+    report_early()
     report_open()
 
 

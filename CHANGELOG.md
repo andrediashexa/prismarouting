@@ -242,7 +242,8 @@ are to be interpreted as described in
 [#244](https://github.com/andrediashexa/hexarouting/issues/244),
 [#245](https://github.com/andrediashexa/hexarouting/issues/245),
 [#246](https://github.com/andrediashexa/hexarouting/issues/246),
-[#247](https://github.com/andrediashexa/hexarouting/issues/247).
+[#247](https://github.com/andrediashexa/hexarouting/issues/247),
+[#258](https://github.com/andrediashexa/hexarouting/issues/258).
 
 ### Added
 
@@ -419,6 +420,33 @@ are to be interpreted as described in
   operands must be converted to network order before the correction is built.
 
 ### Fixed
+
+* **A record could go out ahead of its template and every check stayed green**
+  ([#258](https://github.com/andrediashexa/hexarouting/issues/258)).
+  `docs/logging.md` says events **MUST** be held while `last_template_sent` is
+  zero, because a data set that reaches a collector before its template has no
+  layout and cannot be read. Removing that guard from `bpa_log_drain()` put
+  four block events and the boot marker on the wire ahead of the template, and
+  all 38 suites and every one of `lab/ipfix.sh`'s checks stayed green.
+
+  **The oracle was the thing forgiving the defect.** `tools/ipfix_collector.py`
+  holds a data set that arrives without its template and reprocesses it when
+  the template comes - which the same document says a serious collector SHOULD
+  do, and which is how the ordering was found in the first place. So the
+  records all arrived, decoded and paired, and no count anywhere moved. The
+  collector now **counts** what it had to hold and prints the total, and
+  `lab/ipfix.sh` requires it to be zero.
+
+  **The collector is started before the exporter is configured**, which is half
+  the fix: one started afterwards cannot tell a box that sent a record too
+  early from a collector that joined the stream too late, because both read as
+  a data set with no template.
+
+  The window is the first template of a VPP process, so it opens on every boot
+  and on the first `cgnat logging enable` after one - and what falls in it is
+  the allocations of every subscriber reconnecting at once, plus the boot
+  marker a collector needs to tell an allocation still in force from one the
+  box died holding.
 
 * **Nothing stopped the ISO build from shipping an answer file, and the ISO it
   did ship carried three SSH host private keys.** `docs/appliance.md` says the
