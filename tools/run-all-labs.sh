@@ -49,7 +49,7 @@ set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ONLY=${1:-}
 JOBS=${LAB_JOBS:-16}
-pass=0; fail=0; ran=0
+pass=0; fail=0; ran=0; novpp=0
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
@@ -95,6 +95,58 @@ echo
 # own traffic lands on, and that is a sentence only a worker run can check.
 BOTH_WAYS="bypass esp extblocks forward frag ftp-alg hairpin icmp-tcp mss
            nat-behaviour pptp rtsp sip two-pools"
+
+# Labs that are run a THIRD time with the feature they test switched OFF.
+#
+# Seventeen labs document such a run in their own header, in the words "the
+# checks below MUST fail" - and until this list existed nothing ever performed
+# one. A lab whose off mode passes is an assertion that cannot fail, which is
+# this repository's most common defect sitting inside the machinery built to
+# catch it. Every finding in #151 is one of those, and two of them - the PPTP
+# ALG's own switch and lab/utilisation.sh's histogram - were green in exactly
+# the run their own file says must be red.
+#
+# The verdict is INVERTED here, in report_off(): "LAB FAILED" is what a pass
+# looks like. An off run that exits 0 with LAB PASSED is a failure OF THE
+# SUITE, not of the box.
+#
+# A third state matters as much as those two and is easy to lose: an off run
+# that produced no verdict at all - VPP did not start, the container died, the
+# cap killed it - has not shown anything about the assertions either. It is
+# counted as "ran", which the exit test at the bottom already refuses.
+#
+# The value after the colon is what the lab is given. Most take "off"; two
+# spell their own mode, because the opposite of what they test is not "off" -
+# ipfix runs with no exporter, nat-behaviour selects the other filtering mode.
+# A value containing "=" is set in the ENVIRONMENT instead of being passed as
+# an argument: lab/rtsp.sh's switch is on the pool line rather than a mode of
+# the lab, and its header spells the run exactly that way.
+#
+# Measured one at a time on this machine, with two other agents and a lab
+# suite sharing the same docker: the seventeen took between 56 s and 125 s
+# each, 1263 s in series, and every one of them FAILED - which is the answer
+# their headers ask for. The two labs whose header states a NUMBER, urpf ("six
+# checks MUST fail") and sip ("exactly 7"), produced exactly that. oom's
+# header is the one that says what must keep passing, and its section B was
+# green in the off run as it requires.
+#
+# bng is absent. Its header documents an off mode, but the lab clones and
+# builds accel-ppp-ng from GitHub, so a second run of it costs the network and
+# a compile rather than a VPP start, and #170 calls the whole file a spike
+# rather than a feature.
+OFF_MODES="audit:off bypass:off esp:off forward:off ftp-alg:off in-place:off
+           ipfix:no-exporter limits:off mss:off
+           nat-behaviour:address-dependent oom:off pptp:off
+           rtsp:BPA_RTSP_OFF=1 sip:off urpf:off utilisation:off vrf:off"
+
+# What a lab is given for its off run, or nothing when it has none.
+off_arg() {
+  for _m in $OFF_MODES; do
+    case "$_m" in "$1:"*) printf '%s' "${_m#*:}"; return 0 ;; esac
+  done
+  return 1
+}
+
 # The list, in the order the summary will print.
 LABS=""
 for f in "$REPO"/lab/*.sh; do
@@ -110,6 +162,7 @@ for f in "$REPO"/lab/*.sh; do
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
   LABS="$LABS $n"
   case " $BOTH_WAYS " in *" $n "*) LABS="$LABS $n+workers" ;; esac
+  off_arg "$n" >/dev/null && LABS="$LABS $n+off"
 done
 
 # Run them, at most $JOBS at a time, each into its own file.
@@ -123,10 +176,60 @@ done
 #
 # Order is still fixed: batches run in list order and each batch is judged in
 # list order, so the summary reads the same however the labs finish.
+#
+# Did this lab measure anything, or did the dataplane under it never come up?
+#
+# Two failures that read the same and need opposite work. A release run
+# reported `handoff FAIL (exit 1)` with no [FAIL] line at all - its capture
+# ends in a VPP startup backtrace out of lldp_plugin.so - and
+# `nat-behaviour+workers FAIL` with six of them, every vppctl call in it
+# answered "connect: Connection refused" and every assertion then reading an
+# empty value. Neither lab's source had changed, both passed in two earlier
+# suites the same day, and handoff run alone three times afterwards was LAB
+# PASSED every time. Load average during the suite was 12 to 15 with three
+# agents running labs beside it. The suite spent its verdict on the machine
+# and said it in the words it uses for a product defect.
+#
+# lab/install-iso.sh's console_gave_up() already draws this line and says why:
+# a driver that cannot tell "the box never answered" from "the box answered
+# and refused" sends whoever reads it to the wrong place, because both look
+# like a timeout and only one is about the product.
+#
+# The two signals, and the boundary between them:
+#
+#   "VPP did not start" is printed by the labs themselves, from the loop that
+#   waits for the socket. It is unambiguous.
+#
+#   "connect: Connection refused" is vppctl with no socket to talk to, and it
+#   is NOT unambiguous on its own - lab/oom.sh has the kernel kill VPP on
+#   purpose and reads that line as an answer. So it counts only when the
+#   capture holds not one single "[ ok ]": a lab that never got one check
+#   green measured nothing, and the [FAIL] lines under it describe empty
+#   strings rather than the box.
+#
+# The deliberately conservative direction: a lab whose VPP died HALFWAY has
+# green checks above the refusals and is still reported FAIL. That case is
+# genuinely ambiguous, and calling it a machine problem would hide a real
+# crash - which is the failure this whole file exists to avoid.
+lab_no_vpp() {
+  printf '%s' "$1" | grep -q "VPP did not start" && return 0
+  printf '%s' "$1" | grep -q "connect: Connection refused" || return 1
+  printf '%s' "$1" | grep -q "\[ ok \]" && return 1
+  return 0
+}
+
 # One lab's verdict. Called as each batch finishes, so the suite shows progress
 # instead of going quiet for twelve minutes.
 report() {
   _n=$1; _out=$2; _rc=$3
+  # Before the verdict: did the box come up at all? A lab that could not be
+  # run has neither passed nor failed, and saying either is a claim about the
+  # product that nothing measured.
+  if lab_no_vpp "$_out"; then
+    printf '  %-18s NO VPP - the dataplane never came up\n' "$_n"
+    novpp=$((novpp+1))
+    return
+  fi
   # The lab's exit status is the verdict. Grepping its output for the word
   # "error" made FRR's startup chatter look like a failing test.
   if [ "$_rc" -eq 0 ] && printf '%s' "$_out" | grep -q "LAB PASSED"; then
@@ -142,11 +245,48 @@ report() {
   fi
 }
 
+# The same verdict, read backwards. The lab was run with the feature it tests
+# switched off, so LAB FAILED is the result its own header demands and
+# LAB PASSED is the suite catching an assertion that cannot fail.
+#
+# The failure line is printed for a pass here, not for a fail: when an off run
+# does go red it is worth seeing WHICH checks noticed, because a lab that used
+# to fail eleven of them and now fails one has lost ten assertions without
+# losing its verdict.
+report_off() {
+  _n=$1; _out=$2; _rc=$3
+  # This one matters more here than above. An off run whose VPP never started
+  # fails every check it has, which is exactly the shape the inverted verdict
+  # calls a pass - so without this line a suite on a loaded machine would
+  # report the off modes green precisely when they proved nothing.
+  if lab_no_vpp "$_out"; then
+    printf '  %-18s NO VPP - the dataplane never came up\n' "$_n"
+    novpp=$((novpp+1))
+    return
+  fi
+  if printf '%s' "$_out" | grep -q "LAB FAILED"; then
+    printf '  %-18s pass (%s)\n' "$_n" \
+      "$(printf '%s' "$_out" | grep -c '\[FAIL\]') check(s) red, as the header says"
+    pass=$((pass+1))
+  elif [ "$_rc" -eq 0 ] && printf '%s' "$_out" | grep -q "LAB PASSED"; then
+    printf '  %-18s FAIL - PASSED with the feature off\n' "$_n"
+    fail=$((fail+1))
+  else
+    # No verdict either way. The lab did not run, so it has shown nothing
+    # about whether its assertions can fail - which is not a pass.
+    printf '  %-18s ran (no verdict yet)\n' "$_n"
+    ran=$((ran+1))
+  fi
+}
+
 judge_batch() {
   for n in $BATCH; do
     out=$(cat "$OUT/$n.out" 2>/dev/null || true)
     rc=$(cat "$OUT/$n.rc" 2>/dev/null || echo 1)
-    report "$n" "$out" "$rc"
+    case "$n" in
+      *+off) report_off "$n" "$out" "$rc" ;;
+      *)     report "$n" "$out" "$rc" ;;
+    esac
   done
   BATCH=""
 }
@@ -178,11 +318,22 @@ for n in $LABS; do
     # carried in the name so the two runs have separate output files and
     # separate lines in the summary - a lab that passes one way and fails the
     # other has to be readable as exactly that.
+    #
+    # "<lab>+off" is the third pass: the same lab with the feature it tests
+    # switched off, judged by report_off() with the verdict inverted.
+    argv=""; env_set=""
     case "$n" in
       *+workers) lab=${n%+workers}; workers=1 ;;
+      *+off)
+	lab=${n%+off}; workers=0
+	argv=$(off_arg "$lab")
+	# An off mode carried in the environment rather than in argv.
+	case "$argv" in *=*) env_set=$argv; argv="" ;; esac
+	;;
       *)	 lab=$n; workers=0 ;;
     esac
-    out=$(LAB_WORKERS=$workers timeout 900 sh "$REPO/tools/lab.sh" "$lab" 2>&1); rc=$?
+    out=$(env LAB_WORKERS=$workers $env_set \
+	    timeout 900 sh "$REPO/tools/lab.sh" "$lab" $argv 2>&1); rc=$?
     printf '%s\n' "$out" > "$OUT/$n.out"
     echo "$rc" > "$OUT/$n.rc"
   ) &
@@ -199,7 +350,15 @@ judge_batch
 
 
 echo
-echo "  pass=$pass  fail=$fail  ran=$ran"
+echo "  pass=$pass  fail=$fail  novpp=$novpp  ran=$ran"
+if [ "$novpp" -gt 0 ]; then
+  echo
+  echo "  $novpp lab(s) could not be run: vppctl never reached a dataplane"
+  echo "  under them. That is not a product defect and it is not a suite that"
+  echo "  cleared them - look at the machine's load and free memory first, then"
+  echo "  run those labs one at a time. A lab reported this way has said"
+  echo "  nothing about the product either way."
+fi
 # "ran (no verdict yet)" counts against the suite too. The comment forty lines
 # up worries about a number that never reaches zero, and the fix it got was to
 # stop counting the two libraries - which left the number able to reach zero
@@ -208,4 +367,9 @@ echo "  pass=$pass  fail=$fail  ran=$ran"
 # success over a lab that said nothing is the shape this suite exists to find.
 # Every lab in the list ends in `verdict`, so this is zero today; the day one
 # loses it, the suite says so instead of reading the way it always did.
-[ "$fail" -eq 0 ] && [ "$ran" -eq 0 ]
+# novpp counts against the suite for the same reason "ran" does, and for one
+# more: those labs were not measured at all, so the next change to them lands
+# on a suite that has never seen them run. It is reported separately so that
+# "nothing found a defect, two labs could not be run" is readable as that
+# sentence rather than as two failures.
+[ "$fail" -eq 0 ] && [ "$ran" -eq 0 ] && [ "$novpp" -eq 0 ]

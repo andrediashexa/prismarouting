@@ -354,6 +354,52 @@ main (void)
   CHECK (parse (pkt, PKT_LEN, &e) != 0, "an outer IHL below 20 is refused");
 
   /*
+   * The same bound, isolated.
+   *
+   * The check above shortens the outer IHL and leaves everything else where
+   * mk() put it, so the byte the parse then reads as the ICMP type is the
+   * middle of an IPv4 address - and the refusal comes from bpa_icmp_is_error()
+   * rather than from the bound it names. Delete "hlen < sizeof (ip4_header_t)"
+   * and that check stays green.
+   *
+   * This packet lays a complete, well-formed ICMP error out to START at
+   * offset 16, which is where an IHL of 4 says the outer header ends. Every
+   * test after the bound says yes to it, so only the bound can refuse it -
+   * and a 16-byte IPv4 header does not exist, so accepting it would mean
+   * reading somebody's arithmetic instead of a header.
+   */
+  {
+    u8 short_hdr[PKT_LEN];
+    const u32 h = 16;	     /* where an IHL of 4 claims the outer ends */
+    const u32 in = h + 8;    /* the embedded IP header */
+    const u32 l4 = in + 20;  /* and its L4 */
+
+    memset (short_hdr, 0, PKT_LEN);
+    short_hdr[0] = 0x44;
+    short_hdr[8] = 64;
+    short_hdr[9] = IP_PROTOCOL_ICMP;
+
+    short_hdr[h] = ICMP4_destination_unreachable;
+    short_hdr[h + 1] = 4;			      /* fragmentation needed */
+    short_hdr[h + 6] = 0x05; short_hdr[h + 7] = 0xdc; /* next-hop MTU 1500 */
+
+    short_hdr[in] = 0x45;
+    short_hdr[in + 8] = 64;
+    short_hdr[in + 9] = IP_PROTOCOL_UDP;
+    short_hdr[in + 12] = 200; short_hdr[in + 13] = 150;
+    short_hdr[in + 14] = 0;   short_hdr[in + 15] = 17;
+    short_hdr[in + 16] = 8;   short_hdr[in + 17] = 8;
+    short_hdr[in + 18] = 8;   short_hdr[in + 19] = 8;
+
+    short_hdr[l4] = 0x06;     short_hdr[l4 + 1] = 0x00;
+    short_hdr[l4 + 2] = 0x00; short_hdr[l4 + 3] = 0x35;
+
+    CHECK (parse (short_hdr, PKT_LEN, &e) != 0,
+	   "an outer IHL below 20 is refused even when the error behind it "
+	   "is laid out to match");
+  }
+
+  /*
    * Every truncation there is. The last two bytes of the embedded L4 may go
    * missing and the parse must still say no, because the port it wants is
    * right at the front of it - which is the check that is easiest to write so

@@ -180,6 +180,66 @@ main (void)
 	  "Transport: RTP/AVP;unicast;client_port;mode=\"PLAY\"\r\n"
 	  "\r\n",
 	  0, BPA_RTSP_UNPARSED, "");
+
+  /*
+   * The five below each isolate ONE guard. Their older neighbours above do
+   * not: "a single port with no range", "the parameter with no value", "a
+   * port that is not a number" and "a port beyond 65535" all still refuse
+   * with the guard they name deleted, because a LATER refusal catches the
+   * same message. Each case here is shaped so that every other guard says
+   * yes, which is the only way the assertion is about the one it names.
+   *
+   * Two guards are left without one, and deliberately. Both "nd == 0" tests
+   * are unreachable as a distinct verdict: the accumulator starts at zero and
+   * only digits raise it, so no digits means v == 0, which the line beside it
+   * already refuses - and in the second number hi would have to equal lo + 1
+   * with lo a 16-bit value, which no lo can satisfy. Deleting either changes
+   * which refusal fires, never whether one does, so no input can name them.
+   */
+
+  /* The '=' guard. "client_port;mode=..." above refuses without it too, on
+   * the digit count - so the value has to be there and only the '=' wrong. */
+  expect ("client_port introduced by something that is not '='",
+	  "SETUP rtsp://cam/track1 RTSP/1.0\r\n"
+	  "Transport: RTP/AVP;unicast;client_port:6970-6971\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_UNPARSED, "");
+
+  /* The '-' guard. A pair separated by anything else is a value whose shape
+   * we do not know; without the guard the second number is read anyway and
+   * 6970/6971 is a consecutive pair, so the message would be rewritten. */
+  expect ("the two ports separated by something that is not '-'",
+	  "SETUP rtsp://cam/track1 RTSP/1.0\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970/6971\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_UNPARSED, "");
+
+  /* The 16-bit bound on the FIRST number. 99999-100000 above is refused by
+   * the bound on the SECOND one, so the first has to overflow alone: 65536
+   * truncates to 0 and 0-1 is a pair the ALG would happily map. */
+  expect ("a first port that overflows 16 bits on its own",
+	  "SETUP rtsp://cam/track1 RTSP/1.0\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=65536-1\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_UNPARSED, "");
+
+  /* The 16-bit bound on the SECOND number, isolated the same way: 65542
+   * truncates to 6, and 5-6 is consecutive. */
+  expect ("a second port that overflows 16 bits on its own",
+	  "SETUP rtsp://cam/track1 RTSP/1.0\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=5-65542\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_UNPARSED, "");
+
+  /* What follows a complete, consecutive pair. Without this guard the range
+   * is accepted and the rest of the value - whatever it meant - is left
+   * behind a rewrite sized for the old digits. */
+  expect ("a complete pair followed by a byte that separates nothing",
+	  "SETUP rtsp://cam/track1 RTSP/1.0\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-6971/2\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_UNPARSED, "");
+
   /* Legal RFC 2326 header folding, essentially unseen in the wild and not
    * handled. It has to refuse, not silently read half the value. */
   expect ("a folded Transport header",
