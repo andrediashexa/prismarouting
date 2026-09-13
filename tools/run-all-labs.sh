@@ -195,6 +195,11 @@ OFF_MODES="audit:off ipfix-outbuf:no-stall ipfix-stop:no-marker bypass:off esp:o
            rtsp:BPA_RTSP_OFF=1 sip:off urpf:off utilisation:off vrf:off"
 
 # What a lab is given for its off run, or nothing when it has none.
+#
+# The same loop shape as not_lab_reason below, and correct here: every value in
+# OFF_MODES is a single word (`off`, `no-marker`, `BPA_RTSP_OFF=1`), so word
+# splitting cannot cut one in half. It was putting PROSE in such a list that
+# broke the other one.
 off_arg() {
   for _m in $OFF_MODES; do
     case "$_m" in "$1:"*) printf '%s' "${_m#*:}"; return 0 ;; esac
@@ -224,10 +229,16 @@ crossaddr:pins what #226 does TODAY, so it would go red on the fix
 "
 
 not_lab_reason() {  # <name> -> its reason, or nothing if it is a lab
-  for _e in $NOT_LABS; do
-    case "$_e" in "$1:"*) printf '%s' "${_e#*:}"; return 0 ;; esac
-  done
-  return 1
+  # Read a LINE at a time. `for _e in $NOT_LABS` splits on every space, so each
+  # WORD of a reason became its own iteration and the first one matched: the
+  # announcement printed "boot-iso: the" and stopped. The table was right and
+  # the line an operator reads was not, which is the half a check that reads
+  # the table cannot see.
+  printf '%s\n' "$NOT_LABS" | while IFS= read -r _e; do
+    case "$_e" in
+      "$1:"*) printf '%s' "${_e#*:}"; exit 0 ;;
+    esac
+  done | grep . || return 1
 }
 
 # Said before the first result, so the exclusions are in the artefact a release
