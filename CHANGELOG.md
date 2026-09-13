@@ -138,7 +138,49 @@ version has a chance of seeing it.
 [#261](https://github.com/andrediashexa/hexarouting/issues/261),
 [#265](https://github.com/andrediashexa/hexarouting/issues/265),
 [#266](https://github.com/andrediashexa/hexarouting/issues/266),
-[#269](https://github.com/andrediashexa/hexarouting/issues/269).
+[#269](https://github.com/andrediashexa/hexarouting/issues/269),
+[#259](https://github.com/andrediashexa/hexarouting/issues/259),
+[#262](https://github.com/andrediashexa/hexarouting/issues/262),
+[#263](https://github.com/andrediashexa/hexarouting/issues/263).
+
+### Fixed
+
+* **Three rules of the TCP exporter could be broken with every check green**
+  ([#259](https://github.com/andrediashexa/hexarouting/issues/259),
+  [#262](https://github.com/andrediashexa/hexarouting/issues/262),
+  [#263](https://github.com/andrediashexa/hexarouting/issues/263)).
+  `docs/logging.md` states them of `src/plugins/bpa/bpa_log_tcp.c`, and each was
+  mutated in the product with all 38 suites, `lab/ipfix-tcp.sh` and
+  `lab/ipfix-outbuf.sh` green. The product was right in all three; nothing was
+  holding it to being right. `lab/ipfix-outbuf.sh` now asserts all three, which
+  is 10 checks it did not have.
+
+  **The order of two records had never been asserted anywhere.** The spill
+  **MUST** be prepended on reconnect so that an allocation reaches the collector
+  before its release; replacing `vec_insert (outbuf, n, 0)` with `vec_add` put
+  82935 bytes of the previous boot's log behind a record written twenty seconds
+  later, and every check in the tree stayed green because all of them were true
+  of a stream in any order. The lab now finds the new incarnation's own boot
+  marker in the collector's log - by the init time the box reports, not by
+  position - and requires that no block event arrives behind it. Measured with
+  the append: the marker moved from line 6023 to line 2337, six lines after the
+  connection was accepted, with 1843 replayed records behind it.
+
+  **Nothing had ever made the spill itself fail.** If it fails the discard
+  **MUST** be counted, never silent, and both increments could be deleted
+  without a red anywhere. Reaching that code costs a megabyte: the spill only
+  triggers above 1 MB, `bpa stop-drain` does not flush the exporter, and a
+  counter in a process that is leaving cannot be read afterwards. So the lab
+  ends by writing 26000 records with no collector left, three times over - with
+  the path writable (1123695 bytes counted as spilled, none dropped), with a
+  directory where the file goes (`open()` fails: 1080036 counted as dropped),
+  and on a filesystem with no room left (`open()` succeeds and `write()` does
+  not: another 1170000 dropped).
+
+  **The stop was already measured in seconds and nothing read the number.** The
+  exit path **MUST NOT** wait for the socket; a ten second `poll(POLLOUT)`
+  added to `bpa_log_tcp_flush_exit()` took the stop from 1s to 11s, sent not one
+  byte, and put the same 82935 bytes in the file.
 
 ### Internal
 
