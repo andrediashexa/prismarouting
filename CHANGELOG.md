@@ -1621,6 +1621,30 @@ are to be interpreted as described in
 
 ### Internal
 
+* **Not one mapping vector had ever used a port range other than the default.**
+  `docs/context.md` invariant 1.3 says there are two specifications of the
+  mapping and they MUST agree, and `test/test_bpa_pool.c` compares them over
+  thousands of vectors. Every one of those vectors was generated from a pool
+  with `port_min` 1024 and `port_max` 65535, so `port_min` was a constant in
+  the comparison rather than a variable, and the two specifications had never
+  been asked whether they agree about it.
+
+  A sixth vector pool, `narrow-ports`, uses 2048-20479 with a 256 port block.
+  Measured against the plugin: **they agree**, over 3,296 forward, 9,888
+  reverse and 486 stride comparisons. There was no defect hiding here; there
+  was no evidence either.
+
+  **The red is the point.** Hardcoding `port_min` to 1024 where the block's
+  ports are computed - which is what the code effectively read for every pool
+  that existed before - fails 10 vectors, and **the lowest failing index is
+  3040, the first vector of the new pool.** Every one of the 3,039 before it
+  agreed with the broken implementation.
+
+  Building the pool cost me the same defect one layer up: the stride vectors
+  were generated from a pool built WITHOUT the port range, so they disagreed
+  with a plugin that was right, and the generator was at fault rather than the
+  product. The comment at that line says so.
+
 * **`docs/routing.md` sent readers to the wrong lab for four claims**
   ([#247](https://github.com/andrediashexa/hexarouting/issues/247)). The
   as-path regex cases, the two-origin policy test, the local-preference test
