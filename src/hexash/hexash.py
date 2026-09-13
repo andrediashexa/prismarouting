@@ -6245,6 +6245,12 @@ class Shell:
                 self.err(f"cgnat block-holddown {w[2]}: {r.reason}")
         elif w[1] == "logging" and len(w) >= 3:
             self.apply_logging(w)
+        elif w[1] not in CGNAT_CONFIG:
+            # Unreachable from the VTY, which refuses these at entry now. It is
+            # here because --load and the binary API reach this function too,
+            # and a global that applies nothing must never do it quietly.
+            self.err(f"cgnat {w[1]}: no such setting, so it was applied to "
+                     f"nothing")
         elif w[1] == "session-table":
             # "session-table buckets <n> memory <MB>", in either order.
             got = {}
@@ -7344,6 +7350,29 @@ class Shell:
             self.candidate.interfaces.pop(w[3], None)
             return True
         if line.startswith("cgnat "):
+            # Only the words this VTY actually has, and CGNAT_CONFIG is where
+            # they are written down - the same table `?` offers from, so a
+            # refusal here cannot drift from what the box says it takes.
+            #
+            # This used to accept anything matching `cgnat <words>`: the line
+            # went into the candidate, was rendered back by `show
+            # configuration`, was saved, and applied NOTHING, because
+            # apply_global() has four branches and no else. The operator was
+            # told `commit complete` for a setting the box does not have, and
+            # then shown it in the configuration, which is the one thing that
+            # would have told them otherwise (#273).
+            #
+            # docs/context.md 1.4: a counter is not evidence. An acceptance is
+            # not evidence either. This is #136's defect one layer up, in the
+            # VTY the operator actually types at rather than in vppctl.
+            if len(w) < 2 or w[1] not in CGNAT_CONFIG:
+                what = w[1] if len(w) > 1 else "(nothing)"
+                self.err(f"cgnat {what}: this VTY has no such setting")
+                print_prose(
+                    "it would have been accepted, saved and applied to "
+                    "nothing. What this box takes here is: "
+                    + ", ".join(sorted(CGNAT_CONFIG)))
+                return True
             key = global_key(line)
             self.candidate.globals = [g for g in self.candidate.globals
                                       if global_key(g) != key]

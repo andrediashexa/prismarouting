@@ -783,5 +783,87 @@ if "cgnat" in _kinds and "routing" in _kinds:
           f"doing it first widens the window in which the box is "
           f"half-configured: {_kinds}")
 
+
+print("\n=== a cgnat setting this VTY does not have is refused (#273) ===")
+# `cgnat <anything>` used to match a catch-all: the line went into the
+# candidate, was rendered back by `show configuration`, was saved, and applied
+# NOTHING, because apply_global() had four branches and no else. The operator
+# was told `commit complete` for a setting the box does not have, and then
+# shown it in the configuration - the one thing that would otherwise have told
+# them it was not real.
+#
+# docs/context.md 1.4: a counter is not evidence. An acceptance is not evidence
+# either, and this is #136's defect one layer up: in the VTY the operator types
+# at, rather than in vppctl.
+#
+# It is the failover lab (#9) that makes the cost concrete. A lab asserting the
+# box ACCEPTS an HA configuration would have been green here on a box with no
+# HA at all.
+
+
+def cfg_shell():
+    sh = shell_with(FakeApi())
+    sh.candidate = config.Config.parse("")
+    sh.mode = "config"
+    sh.failed = 0
+    return sh
+
+
+_sh = cfg_shell()
+_sh.do_config("cgnat ha peer 10.0.0.2 priority 200")
+check(_sh.failed == 1,
+      "an HA setting this VTY has no grammar for was accepted: it would be "
+      "saved, shown back by 'show configuration', and applied to nothing")
+check(not any("ha peer" in g for g in _sh.candidate.globals),
+      f"it was refused and reached the candidate anyway, so it would still be "
+      f"written to the configuration file: {_sh.candidate.globals}")
+
+_sh = cfg_shell()
+_sh.do_config("cgnat completely made up nonsense")
+check(_sh.failed == 1, "a wholly invented cgnat setting was accepted")
+
+# The other direction, and it is what keeps this from becoming a blanket
+# refusal. Reading the same table the refusal reads is deliberate: a second
+# list here would drift from what `?` says the box takes, which is the defect
+# this repository keeps finding.
+for _line in ("cgnat block-holddown 4",
+              "cgnat logging enable",
+              "cgnat timeout udp 300",
+              "cgnat session-table buckets 64 memory 8"):
+    _sh = cfg_shell()
+    _sh.do_config(_line)
+    check(_sh.failed == 0,
+          f"{_line!r} was refused, and its setting is in CGNAT_CONFIG: the "
+          f"refusal has become a blanket one")
+    check(_line in _sh.candidate.globals,
+          f"{_line!r} was accepted and did not reach the candidate: "
+          f"{_sh.candidate.globals}")
+
+# And the refusal has to say what the box does take, or the operator is left
+# guessing at a grammar nothing prints.
+_out = io.StringIO()
+_sh = cfg_shell()
+with contextlib.redirect_stdout(_out):
+    _sh.do_config("cgnat ha peer 10.0.0.2")
+_said = _out.getvalue()
+for _w in sorted(hexash.CGNAT_CONFIG):
+    check(_w in _said,
+          f"the refusal does not name {_w!r} among what this box takes, so it "
+          f"says no without saying what yes would be: {_said!r}")
+print(f"  refused, and named all {len(hexash.CGNAT_CONFIG)} settings the box "
+      f"takes")
+
+print("\n=== and apply_global refuses one too, for the paths with no VTY ===")
+# --load and the binary API reach apply_global() without passing do_config, so
+# the refusal above does not cover them. Unreachable from the VTY is not the
+# same as unreachable.
+_sh = shell_with(FakeApi())
+_sh.failed = 0
+_sh.apply_global("cgnat ha peer 10.0.0.2 priority 200")
+check(_sh.failed == 1,
+      "apply_global applied an unknown cgnat global to nothing and said "
+      "nothing: a configuration file with this line loads clean and the "
+      "setting does not exist")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

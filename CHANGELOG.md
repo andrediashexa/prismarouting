@@ -74,6 +74,28 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`cgnat <anything>` was accepted, saved, shown back, and applied to
+  nothing** ([#273](https://github.com/andrediashexa/hexarouting/issues/273)).
+  A catch-all in `do_config` took any line beginning `cgnat `. It passed
+  `commit check`, passed `commit`, went into the candidate, was written to
+  `/etc/hexarouting/hexarouting.conf`, and was rendered back by `show
+  configuration` - and `apply_global` had four branches and no else, so it
+  reached the dataplane as nothing at all. The operator was told `commit
+  complete` for a setting this box does not have, and then shown it in the
+  configuration, which is the one thing that would otherwise have told them it
+  was not real.
+
+  Measured on master: `cgnat ha peer 10.0.0.2 priority 200` and `cgnat
+  completely made up nonsense` both committed with `failed=0` and both came
+  back out of `show configuration`. The issue said such lines appear in no
+  `show running-config`; they do appear, and that is worse, because appearing
+  is what makes them look like settings.
+
+  The refusal reads `CGNAT_CONFIG`, which is the table `?` offers from, so
+  what the box turns away cannot drift from what the box says it takes, and it
+  prints that list rather than only saying no. `apply_global` gets the missing
+  else as well: `--load` and the binary API reach it without passing the VTY.
+
 * **`commit`'s refusal printed a 178-column line on an 80-column console**
   ([#252](https://github.com/andrediashexa/hexarouting/issues/252)). The
   message that says a commit did not take effect is read on the serial console
