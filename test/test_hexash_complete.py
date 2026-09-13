@@ -3323,6 +3323,50 @@ check(_ann(["router bgp 65000", "address-family ipv4 unicast",
             "ip route 200.150.0.0/24 blackhole"]),
       "and the scope holds in the flat shape too")
 
+# --- the six cases lab/bgp-policy.sh drives, in the shape the VTY builds ---
+#
+# Two shapes meet in one candidate and both are real. The stanza FRR read back
+# is INDENTED and carries the ` !` separator; everything the operator then
+# types is APPENDED FLAT at column 0, because `do_config` ends in
+# `candidate.routing.append(line)` and does not merge into the block above. So
+# a second `router bgp 65000` at column 0 sits after the indented one, and the
+# statements typed under it belong to THAT one.
+#
+# Asserted here as well as in the lab because the lab needs VPP and a
+# container, and a check whose only proof takes minutes to run is a check
+# nobody reruns while changing it.
+LAB_BASE = ["router bgp 65000",
+            " bgp router-id 10.0.0.1",
+            " neighbor 10.0.0.2 remote-as 65001",
+            " !",
+            " address-family ipv4 unicast",
+            "  neighbor 10.0.0.2 activate",
+            " exit-address-family",
+            "exit",
+            "!"]
+LAB_POOL = {"lab-ann": _pool("lab-ann", ["200.150.9.16/28"], "100.64.8.0/22")}
+LAB = (
+    ("NOANN", [], True),
+    ("ANN", ["router bgp 65000", "address-family ipv4 unicast",
+             "network 200.150.9.0/24", "exit-address-family", "exit"], False),
+    ("RED", ["router bgp 65000", "redistribute connected", "exit"], False),
+    ("RSTAT", ["ip route 200.150.9.0/24 blackhole",
+               "router bgp 65000", "address-family ipv4 unicast",
+               "redistribute static", "exit-address-family", "exit"], False),
+    ("RELSE", ["ip route 10.0.0.0/8 blackhole",
+               "router bgp 65000", "address-family ipv4 unicast",
+               "redistribute static", "exit-address-family", "exit"], True),
+    ("ROSPF", ["ip route 200.150.9.0/24 blackhole",
+               "router ospf", "redistribute static", "exit",
+               "router bgp 65000", "address-family ipv4 unicast",
+               "exit-address-family", "exit"], True),
+)
+for _name, _typed, _warns in LAB:
+    _f = pool_announce_findings(LAB_BASE + _typed, LAB_POOL)
+    check(bool(_f) == _warns,
+          f"lab case {_name}: expected {'a warning' if _warns else 'silence'}"
+          f", got {_f}")
+
 # Every pool, not the first one.
 two = pool_announce_findings(
     BGP + ["  network 200.150.0.0/24"],
