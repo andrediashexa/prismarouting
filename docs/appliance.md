@@ -12,6 +12,14 @@ Minimum requirements: **4 GB RAM** and a CPU with **SSE4.2**. Below either, VPP
 dies — by OOM or by SIGILL — and the boot self-test says so on the console
 before the operator has to guess.
 
+Two standing answers about the kernel live here as well, so that neither is
+re-derived every six months: a **custom-built kernel MUST NOT be introduced**
+without a defect proven to be the distribution kernel's and unfixable by
+configuration, because the appliance would stop receiving security updates; and
+the boot tuning **not** yet applied is listed as hypotheses with costs, to be
+measured by [#28](https://github.com/andrediashexa/hexarouting/issues/28) one
+knob at a time rather than switched on and declared an improvement.
+
 > The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY** and
 > **RECOMMENDED** in this document are to be interpreted as described in
 > [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
@@ -61,6 +69,43 @@ The latency knobs cost power, so they are a switch, not a law:
 `HEXA_LOW_LATENCY=0` in `/etc/hexarouting/tune.env` drops the C-state and THP
 parameters from the kernel command line and leaves the governor alone. The
 default is `1`, because this is a router.
+
+### The kernel command line, parameter by parameter
+
+The rules above are the reasons. This is the line the tuner actually writes
+into `/etc/default/grub.d/hexarouting.cfg`, parameter by parameter, because a
+reader diagnosing a box has the line in front of them and not the reasons.
+
+It is deliberately a **second copy** of something `render_grub()` already says,
+so `test/test_kernel_tuning.py` renders the line and compares the two. A
+parameter added to the tuner and not to this table, a value changed on one
+side, or a knob quietly promoted out of the `HEXA_LOW_LATENCY` half is a test
+failure rather than a document that stopped being true without telling anyone.
+
+| Parameter | Value | Only with `HEXA_LOW_LATENCY=1` | What it is for |
+|---|---|---|---|
+| `isolcpus` | computed | no | The worker cores and their SMT siblings, from the topology |
+| `nohz_full` | computed | no | The same list: an isolated core still taking the timer tick is not isolated |
+| `rcu_nocbs` | computed | no | The same list again: otherwise RCU callbacks run on the worker |
+| `default_hugepagesz` | `1G` | no | So that `hugepages=` below is counted in 1 GB units and not 2 MB ones |
+| `hugepagesz` | `1G` | no | Reserves the 1 GB pool |
+| `hugepages` | computed | no | Sized from `HEXA_SUBSCRIBERS`, then capped by the RAM the box actually has |
+| `intel_iommu` | `on` | no | `vfio-pci` hands the NIC to userspace, and it needs an IOMMU to do that safely |
+| `iommu` | `pt` | no | Pass-through: the IOMMU is here for the device assignment, and full translation on the DMA path costs throughput for a protection a single-purpose appliance does not buy |
+| `intel_idle.max_cstate` | `0` | **yes** | Deep C-states off, for the `intel_idle` driver |
+| `processor.max_cstate` | `1` | **yes** | The same, for the ACPI driver that takes over when `intel_idle` is not in play |
+| `transparent_hugepage` | `never` | **yes** | `khugepaged` compacts memory in the background and the compaction stalls whichever CPU holds the page |
+
+`GRUB_DISABLE_OS_PROBER=true` goes on the same file and is not a kernel
+parameter: `os-prober` scans every block device looking for other operating
+systems, finds nothing on an appliance, and can spend minutes doing it inside
+the tuning service.
+
+**Everything in the right-hand column is the switch, and it is the pattern any
+future knob follows.** A parameter that costs power or costs a diagnostic
+belongs in `LOW_LATENCY_CMDLINE`, never in the unconditional line — see
+*Boot tuning still on the table* below, where every candidate is classified
+that way before it is measured, let alone shipped.
 
 `HEXA_MAX_WORKERS` in the same file caps how many physical cores become
 forwarding workers. It ships **empty**, which means no cap and is exactly the
@@ -1086,11 +1131,21 @@ all. Three changes, all of which **MUST** hold:
 Diagnosing a box whose profile did not match its hardware meant guessing across
 whole build cycles, because the one component that knew why discarded it.
 
-## Is a newer kernel worth it?
+## The kernel question: upgrade it, or build our own?
+
+"We should upgrade or rebuild the kernel for performance" is the kind of
+proposal that returns every six months, and it is two questions wearing one
+coat. Both are answered here, in one place, so that neither has to be
+re-derived by whoever is asked next:
+
+| Question | Answer | Where |
+|---|---|---|
+| Should the appliance move to a **newer distribution kernel**? | **Not yet, and not for throughput** — it is an evidential answer, and [#28](https://github.com/andrediashexa/hexarouting/issues/28) can change it | below |
+| Should this project **build its own kernel**? | **No**, and that answer does not expire with a benchmark | *And building our own?* below |
+
+### Is a newer kernel worth it?
 
 Asked, analysed, and the answer is **no — not yet, and not for throughput**.
-Recorded here because "we should upgrade the kernel for performance" is the
-kind of proposal that returns every six months.
 
 ### Where the kernel is, and is not, on the packet path
 
@@ -1143,6 +1198,165 @@ argument for
 [#36](https://github.com/andrediashexa/hexarouting/issues/36), not a
 performance one. That upgrade is currently blocked upstream; the issue records
 why, with evidence.
+
+### And building our own? No, and for a reason that does not expire
+
+The question above is *not yet*. This one is **no**, and it is a different
+answer resting on a different kind of argument, which is why it gets its own
+section instead of a line in the one above.
+
+> A custom-built kernel **MUST NOT** be introduced unless a measured,
+> reproducible defect is shown to be **caused by the distribution kernel** and
+> to be **unfixable by configuration**. That bar is high on purpose.
+
+The analysis is recorded and not just the verdict, because a verdict alone gets
+re-litigated. Every argument normally made for a rebuild, and what happens to
+it here:
+
+| Argument usually made | Why it does not apply to this product |
+|---|---|
+| `PREEMPT_RT` for latency | Poll-mode workers never sleep and take no kernel path. RT preemption bounds the latency of **kernel** threads, and the packet path has none — that is the whole point of `vfio-pci`. Debian's kernel is already built `PREEMPT_DYNAMIC`, so even the preemption model is a boot parameter rather than a rebuild |
+| Strip drivers and subsystems | Reduces attack surface and boot time. Neither is a problem this project has stated, and neither is on the datapath. It also cuts the other way: a stripped kernel is a kernel that does not have the driver for the NIC in the next box |
+| Newer in-tree NIC drivers (`mlx5`) | Real, and it is an argument for a newer **distribution** kernel — [#36](https://github.com/andrediashexa/hexarouting/issues/36) — not for rebuilding the same source. A rebuild of 6.1 buys no driver that 6.1 does not have |
+| Tickless operation, a custom `CONFIG_HZ` | Already obtained on the stock kernel through `nohz_full`, which the tuner puts on every isolated core. The stock `CONFIG_HZ=250` then governs only the housekeeping cores, where nobody is forwarding |
+| Hugepages, IOMMU, `vfio-pci` configuration | Already on. Read off the shipped configuration of the kernel this tree develops against: `CONFIG_NO_HZ_FULL=y`, `CONFIG_RCU_NOCB_CPU=y`, `CONFIG_HARDLOCKUP_DETECTOR=y`, `CONFIG_AUDIT=y`, `CONFIG_HZ=250`, and `pdpe1gb` in `/proc/cpuinfo` for the 1 GB pages. There is nothing here to turn on |
+
+Against all of that stands one cost, and it is the one that matters:
+
+**The appliance stops receiving kernel security updates.** Debian publishes
+them for its own kernel and this product inherits them by doing nothing. A
+custom build inherits nothing: this project becomes the thing that tracks
+kernel CVEs by hand, on a box sitting in a provider's rack carrying
+subscribers, and the failure mode is silence — nobody notices a security update
+that did not happen. `make release-gate` would also have to build a kernel on
+every release, which turns the one procedure that has ever caught a release
+mistake into a much longer and much more fragile one.
+
+**That is why this answer is not the same shape as the one above.** The
+performance arguments are all answerable by measurement, and a measurement can
+arrive tomorrow; the maintenance cost is structural and arrives with the first
+build. So a proposal that returns carrying a benchmark has still not addressed
+this section. What would address it is the bar quoted at the top: a defect, in
+the distribution kernel, that configuration cannot fix.
+
+If that day comes, the cheaper answers **MUST** be exhausted first, in this
+order, because each of them keeps the security updates:
+
+1. A kernel parameter or a sysctl — see *Boot tuning still on the table*.
+2. A newer **Debian** kernel: backports today, Debian 13's 6.12 LTS with
+   [#36](https://github.com/andrediashexa/hexarouting/issues/36).
+3. A DPDK or VPP change, since the datapath is userspace and that is where a
+   datapath defect most likely lives.
+
+Only when all three have failed against a reproducible defect is a rebuild on
+the table, and then it is a decision about who carries the CVE tracking, not a
+decision about throughput.
+
+## Boot tuning still on the table
+
+Every line in this section is a **hypothesis with a named cost**, and **none of
+it is applied**. It is written down so that the list is a list rather than a
+memory, and so the next person to propose one of these starts from what it
+costs instead of from whether it sounds fast.
+
+> **Nothing here MUST be applied before
+> [#28](https://github.com/andrediashexa/hexarouting/issues/28) can measure
+> it**, on real NICs, **one knob at a time**. Applying jitter knobs and
+> declaring an improvement is asserting a gain nobody measured — the failure
+> `CONTRIBUTING.md` names and the one this repository has been bitten by
+> repeatedly. Measuring them as a batch answers nothing about any of them,
+> because a batch that helps does not say which member helped and a batch that
+> does not help does not say which member hurt.
+
+Two rules bind whatever eventually ships, and they are not new — both already
+have a worked example in the tuning that is live:
+
+* **Anything that costs power or costs a diagnostic MUST go behind
+  `HEXA_LOW_LATENCY`**, alongside the C-state and THP parameters, and **MUST
+  NOT** go into the unconditional command line. The right-hand column of *The
+  kernel command line, parameter by parameter* is that switch, and
+  `test/test_kernel_tuning.py` asserts the split is where this document says it
+  is.
+* **Anything that is runtime state rather than a kernel parameter MUST be
+  re-applied on every boot.** The `cpufreq` governor is the worked example of
+  why: asking for it in GRUB does nothing, and it does not survive a reboot on
+  its own, so `apply-tuning` sets it at every start. A runtime knob written
+  once by hand is a tuning that is true until the next power cut.
+
+### The candidates, and what each would cost
+
+`test/test_kernel_tuning.py` reads this table and asserts that **none** of it
+is set — in the generated kernel command line, in `apply-tuning` or in
+`sysctl.conf`. Applying one without measuring it and without moving it out of
+this table is a test failure, which is the point: the list cannot rot into
+"we probably do that already".
+
+| Candidate | Hypothesis | Cost if wrong | Status, from the readings below |
+|---|---|---|---|
+| `nmi_watchdog=0` | The NMI watchdog fires on every core, isolated ones included; removing it removes a periodic interruption of a worker | Loses hard-lockup detection, which is a real diagnostic on a box nobody can walk to | **Not measurable here**: already `0` on this KVM guest, so there is nothing to remove and no effect to see. `CONFIG_HARDLOCKUP_DETECTOR=y`, so on hardware with a real PMU it is on and the knob does have something to do |
+| `skew_tick=1` | Staggers the residual timer tick so that cores do not all take it in the same instant | Slightly more total tick work | **Not measurable here**: the parameter exists in this kernel, but no core is isolated on this machine and the residual tick is far below the vCPU preemption this guest already takes |
+| `tsc=reliable` | Stops the kernel demoting the TSC and falling back to a clocksource whose reads are expensive | Wrong on hardware with an unstable TSC, and then time itself goes bad, which is much worse than slow | **The premise is absent here and the reading argues against it**: the clocksource in use is `kvm-clock`, HPET is not even offered, and `/proc/cpuinfo` does not carry `nonstop_tsc`. Forcing it on this machine would be a guess dressed as a tuning |
+| `clocksource=tsc` | The same, stated as a choice rather than as a quality claim | The same, and it also overrides a hypervisor's paravirtualised clock | **Same reading**: `kvm-clock tsc acpi_pm` are the three offered and the kernel picked the first on purpose |
+| `nosoftlockup` | Removes off-path kernel bookkeeping from every core | Loses the soft-lockup diagnostic | **Not measurable here**: `soft_watchdog` is `1`, but what it costs a poll-mode worker cannot be separated from host preemption on a guest |
+| `audit=0` | The same, for the audit subsystem | Loses a diagnostic, and **may conflict with a provider's own compliance policy**, which is not this project's decision to make for them | **The gain is probably zero, and that is a reading rather than an opinion**: `CONFIG_AUDIT=y`, but the appliance installs no `auditd` and nothing sets `audit=` on the command line, so the subsystem is compiled in and idle |
+| `/sys/bus/workqueue/devices/writeback/cpumask` | Kernel writeback threads can still land on an isolated core; the mask moves them onto the housekeeping set | None known. It is **runtime state**, so it needs the "re-applied every boot" treatment the governor already has | **Confirmed present, and the strongest candidate of the list**: the mask reads `ffffffff` on a 32-cpu machine, so writeback is permitted on every core the tuner would isolate. What it is worth is still unmeasured |
+| `kthread_cpus` | Confines kernel threads to the housekeeping set | Interacts with `isolcpus`, so it needs checking rather than assuming | **Rejected on evidence, not on judgement**: the string does not occur anywhere in the Debian 6.1 kernel image. It is a downstream patch carried by other distributions, not a mainline parameter, so there is nothing on this kernel to set. It returns to the table only if the appliance ever moves to a kernel that has it |
+| `/sys/devices/system/cpu/intel_uncore_frequency` | Pinning the uncore stops it dropping frequency while workers poll and the cores look idle to the package | Power, and it is vendor-specific and model-specific | **Not measurable here**: this guest exposes no `cpufreq` policy at all, no `intel_pstate` and no `intel_uncore_frequency` |
+
+### What could be measured on this hardware, and what could not
+
+The readings below were taken on the development machine, which is a **KVM
+guest**, and that is the reason most of the column above says *not measurable*
+rather than *no effect*. The distinction matters: these knobs all claim to
+remove a periodic interruption of a worker, and on a guest the host scheduler
+preempts vCPUs whatever the guest isolates — so the interruption they target is
+underneath a larger one they cannot touch. This machine has taken **1 708
+seconds of stolen vCPU time in three days of uptime**; a knob that saves a
+timer tick cannot be seen through that. It is the same reason `CHANGELOG.md`
+gives for not shipping a `CPUQuota=` on the control plane.
+
+What could be read is **whether the knob applies to this kernel at all**, and
+that is worth taking here because it does not depend on the machine being fast.
+Two candidates were settled that way and did not need a NIC.
+
+| Reading | How | Result |
+|---|---|---|
+| the machine | `systemd-detect-virt` | `kvm` |
+| the kernel | `uname -v` | `#1 SMP PREEMPT_DYNAMIC Debian 6.1.180-1` |
+| CPUs | `lscpu` | 32 vCPUs, 1 thread per core, 2 sockets, **1 NUMA node** |
+| what is isolated now | `/sys/devices/system/cpu/isolated` | empty: this box runs untuned |
+| NMI watchdog | `/proc/sys/kernel/nmi_watchdog` | `0` — already off |
+| soft-lockup watchdog | `/proc/sys/kernel/soft_watchdog` | `1` |
+| clocksource in use | `.../clocksource0/current_clocksource` | `kvm-clock` |
+| clocksources offered | `.../clocksource0/available_clocksource` | `kvm-clock tsc acpi_pm` — **no HPET** |
+| TSC quality | `grep -o 'nonstop_tsc\|constant_tsc' /proc/cpuinfo` | `constant_tsc` only; **`nonstop_tsc` absent** |
+| writeback workqueue mask | `/sys/bus/workqueue/devices/writeback/cpumask` | `ffffffff` — all 32 cpus |
+| cpufreq | `ls /sys/devices/system/cpu/cpufreq/` | empty |
+| uncore frequency | `/sys/devices/system/cpu/intel_uncore_frequency` | does not exist |
+| idle states | `/sys/devices/system/cpu/cpu0/cpuidle` | does not exist |
+| `kthread_cpus` in this kernel | decompress `/boot/vmlinuz-6.1.0-52-amd64` and count the string | **0** — against `nohz_full` 17, `isolcpus` 7, `nmi_watchdog` 5, `skew_tick` 2, `nosoftlockup` 2 |
+| stolen vCPU time | field 8 of `cpu` in `/proc/stat` | 170 862 ticks = **1 708 s** over 3 d 8 h of uptime |
+
+Not read, and why: the kernel ring buffer. `dmesg` is restricted on this
+machine and there is no root on it, so the kernel's own statements about TSC
+demotion and watchdog setup could not be quoted. The `/proc` and `/sys` values
+above are the same facts after the fact, which is why they were used instead of
+being guessed at.
+
+### What the box already reports, and what it would have to report
+
+The acceptance criterion that the appliance **MUST** report the tuning *in
+effect* rather than the tuning *requested* is already met for everything the
+tuner sets today — that is *The CPU half* above, where the boot self-test reads
+`/sys/devices/system/cpu/isolated` and `/proc/<vpp pid>/task/*/status` rather
+than believing `startup.conf`.
+
+It is stated here because it is the acceptance criterion for the knobs in this
+section too, and it is not free for all of them. A kernel parameter the kernel
+**ignored** leaves `/proc/cmdline` saying it was asked for and the kernel
+behaving as though it was not, which is exactly the shape the self-test exists
+to catch. So any candidate that ships **MUST** arrive with the reading that
+proves it took, not with the parameter that requested it.
 
 ## Logging into the appliance
 

@@ -222,6 +222,17 @@ Not what it contains — what question it is the answer to.
   apart — giving up the property deterministic mode exists to provide.
 * **An IANA enterprise number.** The SNMP enterprise MIB stays dark until a
   maintainer registers one and sets `snmp enterprise-number`.
+* **A custom-built kernel.** Refused with the analysis, in
+  [appliance.md](appliance.md) — the appliance would stop receiving Debian's
+  kernel security updates, and nothing on the packet path is the kernel's
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+* **The boot-tuning knobs that are listed and not applied.**
+  `nmi_watchdog=0`, `skew_tick=1`, `tsc=reliable`, the writeback workqueue mask
+  and the rest are recorded in [appliance.md](appliance.md) as hypotheses with
+  costs, and `test/test_kernel_tuning.py` asserts none of them is set. They
+  wait on [#28](https://github.com/andrediashexa/hexarouting/issues/28), one
+  knob at a time
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
 
 ## 5. How this page is kept honest
 
