@@ -31,9 +31,13 @@ Ele também diz **o que não verificou**:
 
 ```
 configuration check succeeds for CGNAT and the box's own configuration
+  2 routing statement(s) have no grammar in this VTY and were not read at all
+    'show configuration' marks them; they go to FRR exactly as typed
   routing statements are checked for structure only; FRR validates them
   at commit, and can still refuse one
 ```
+
+A contagem é das sentenças que a caixa repassou ao roteamento sem ler. `show configuration` e `show this` mostram **quais** são, marcadas com `<- not checked`. O `commit` comum não diz nada sobre isso, de propósito: repassar sentença é o caso normal aqui, e um aviso em todo commit vira um aviso que ninguém lê - inclusive o aviso que importa, o de que o roteamento não guardou o que foi aplicado.
 
 
 :::warning

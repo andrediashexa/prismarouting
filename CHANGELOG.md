@@ -36,6 +36,7 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#141](https://github.com/andrediashexa/hexarouting/issues/141),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
@@ -49,6 +50,56 @@ are to be interpreted as described in
 [#223](https://github.com/andrediashexa/hexarouting/issues/223).
 
 ### Added
+
+* **A statement this VTY carried no longer looks like one it checked.** Inside
+  `router bgp 65000`, `neighbor 10.0.0.2 remote-as 65001` is walked by the
+  command tree while `coalesce-time 1000` is offered by `?` nowhere and reaches
+  FRR unread - and the two printed identically, so an operator reading a
+  configuration could not tell what the box had verified from what it had
+  merely forwarded, and read a guarantee into both. Every routing statement the
+  command tree cannot read is now marked `  <- not checked` in
+  `show configuration`, `show running-config` and `show this`, and a two-line
+  note at the end says what the mark means and how many there were.
+
+  What decides it is **the command tree itself** - the same walk that decides
+  what `?` offers in that block - and never a list of modelled statements kept
+  beside it: a second list has to be kept in step by hand, it goes stale, and a
+  stale list says a statement was checked when nothing checked it. So the same
+  statement is marked inside `router bgp` and not inside
+  `address-family ipv4 unicast`, because the two blocks have different
+  grammars, and teaching the tree a statement is the whole change needed to
+  stop it being marked. There is an assertion for that property specifically.
+
+  `show this` gets it too, and that is the one that matters most: it is what an
+  operator runs while they are still typing. A block this VTY has no grammar
+  for at all carries the mark **on its header**, because "nothing in here was
+  read" is different news from "this one statement was not".
+
+  The mark is sixteen characters because the console this box is reached on
+  when the network is down is 80 columns and the statements most likely to be
+  marked are the long ones; the marker it replaces put a realistic IPv6
+  neighbour statement at 89 columns and wrapped it. The closing note is
+  printed **only when something is marked** - passthrough is the normal case
+  for FRR configuration, and #205 and #208 are the standing precedent that an
+  alarm which is always on is one nobody reads.
+
+  `commit` says nothing about it, by that same rule, and `commit check` now
+  names the count: it is a question the operator chose to ask whose whole
+  subject is how much was verified, and it already answered with "structure
+  only", a sentence that names no number
+  ([#141](https://github.com/andrediashexa/hexarouting/issues/141)).
+
+* **The marking is presentation only, asserted separately.** `save` writes a
+  file the box reads back at boot and `commit` hands the same statements to
+  `frr-reload`; a mark that leaked into either becomes a statement FRR does not
+  understand, the load is refused whole, and the box comes up with **no
+  configuration at all** - which is how both boot defects behind #182 ended.
+  After a `show configuration`, a `show running-config`, a `show this` and a
+  `commit check`, `Config.text()` is byte for byte what it was, the list handed
+  to `frr-reload` is the statements as typed, and the saved file carries
+  neither the mark nor the note and parses back to the same statements.
+  `Config.parse` strips both, because an operator copies what is on their
+  screen into a file.
 
 * **OSPFv3 is a protocol this box runs, rather than one it offered and could
   not do.** `router ospf6` was a word the VTY did not model: it went to FRR

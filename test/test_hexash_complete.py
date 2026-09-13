@@ -829,8 +829,8 @@ print("  " + text.strip().replace("\n", " / "))
 # the header the command already printed.
 print("\n=== show this shows what this session typed (#180) ===")
 
-def this_in(block, *typed):
-    """`show this` inside `block` after `typed`, as a list of lines."""
+def this_in_raw(block, *typed):
+    """`show this` inside `block` after `typed`, exactly as it printed."""
     s = shell_with_box()
     s.feed("configure")
     s.feed(block)
@@ -840,6 +840,32 @@ def this_in(block, *typed):
     with contextlib.redirect_stdout(buf):
         s.feed("show this")
     return buf.getvalue().splitlines()
+
+
+def this_in(block, *typed):
+    """The same, with the boundary marking taken back off."""
+    return strip_marks(this_in_raw(block, *typed))
+
+
+def strip_marks(lines):
+    """
+    The same display with the boundary marking taken back off (#141).
+
+    These cases are about WHICH statements a block shows and in what shape,
+    and the marker is presentation laid over that. Stripped here so one set of
+    assertions keeps answering the question it was written for - and stripped
+    with the product's own constants, so a marker that changed spelling
+    without the parser changing with it fails somewhere rather than being
+    quietly tolerated here.
+    """
+    from config import UNCHECKED_MARK, UNCHECKED_NOTE       # noqa: E402
+    out = []
+    for l in lines:
+        if l.strip().startswith(UNCHECKED_NOTE):
+            continue
+        out.append(l[:-len(UNCHECKED_MARK)] if l.endswith(UNCHECKED_MARK)
+                   else l)
+    return out
 
 # Each case: the block, what is typed in it, and the line that MUST come back.
 # The expected line carries its own leading space, so a statement shown
@@ -1117,7 +1143,7 @@ check(sh.failed > before,
 # the check that the marker never leaves the display path.
 print("\n=== the unchecked marker never leaves the display ===")
 from hexash import mark_unchecked                                # noqa: E402
-from config import Config                                        # noqa: E402
+from config import Config, UNCHECKED_MARK, UNCHECKED_NOTE        # noqa: E402
 
 policy = [
     "route-map RM-X permit 10",
@@ -1130,11 +1156,11 @@ cfg.routing = list(policy)
 # Marked through the real text, header and all - the same string `show
 # running-config` prints and `save` writes.
 shown = mark_unchecked(cfg.text().splitlines())
-check(any("not checked by this VTY" in l for l in shown),
+check(any(l.endswith(UNCHECKED_MARK) for l in shown if " tag " in l),
       f"the unmodelled statement is marked: {[l for l in shown if 'tag' in l]}")
 check(not any("<-" in l for l in shown if "local-preference" in l),
       "and a modelled one is not")
-check("not checked" not in cfg.text(),
+check(UNCHECKED_MARK not in cfg.text() and UNCHECKED_NOTE not in cfg.text(),
       "the marker is not in the text a commit would send")
 # An operator WILL copy what is on their screen into a file, so the displayed
 # text has to parse back to exactly the configuration it was made from, with
@@ -3163,6 +3189,439 @@ check("interface" not in _o and "user" not in _o,
       f"the level above leaked into a pool block: {sorted(_o)}")
 check("block-size" in _o,
       f"the pool's own statements are gone from a pool block: {sorted(_o)}")
+
+# --- the boundary between what this VTY checked and what it carried (#141) ---
+#
+# A statement this VTY passes through without understanding is not the same as
+# one it validated, and a configuration that hides the difference is a
+# configuration that lies about how much it checked. Measured on master, these
+# three lines came out of `show configuration` looking identical:
+#
+#     router bgp 65000
+#     neighbor 10.0.0.2 remote-as 65001            <- the tree walks this
+#     coalesce-time 1000                           <- nothing here read it
+#     neighbor 10.0.0.2 soft-reconfiguration inbound   <- nor this
+#
+# The first is in the command tree. The other two are offered by `?` nowhere
+# and reach FRR unread.
+print("\n=== a statement the VTY carried does not look like one it checked ===")
+from hexash import (mark_routing, unchecked_note, statement_checked,
+                    block_grammar)                               # noqa: E402
+from config import group_static                                  # noqa: E402
+
+MEASURED = ["router bgp 65000",
+            "neighbor 10.0.0.2 remote-as 65001",
+            "coalesce-time 1000",
+            "neighbor 10.0.0.2 soft-reconfiguration inbound",
+            "exit"]
+
+
+def shown(lines, ctx=()):
+    """The lines as a display prints them, keyed by their statement."""
+    marked, n = mark_routing(lines, ctx)
+    return {l.strip().split(UNCHECKED_MARK.strip())[0].strip(): l
+            for l in marked}, n
+
+
+disp, n = shown(MEASURED)
+check(not disp["neighbor 10.0.0.2 remote-as 65001"].endswith(UNCHECKED_MARK),
+      f"a statement the tree walks is not marked: {disp}")
+check(disp["coalesce-time 1000"].endswith(UNCHECKED_MARK),
+      f"a statement no grammar reads is marked: {disp}")
+check(disp["neighbor 10.0.0.2 soft-reconfiguration inbound"]
+      .endswith(UNCHECKED_MARK),
+      f"and so is the second one: {disp}")
+check(n == 2, f"two of the five lines went through unread, not {n}")
+# The block's own `exit` is printed by this VTY, so marking it would be the
+# VTY reporting that it cannot read a word it wrote itself.
+check(not disp["exit"].endswith(UNCHECKED_MARK), f"`exit` is not marked: {disp}")
+print("  " + " / ".join(l.strip() for l in
+                        [disp["neighbor 10.0.0.2 remote-as 65001"],
+                         disp["coalesce-time 1000"]]))
+
+# THE SAME STATEMENT, IN TWO BLOCKS, WITH TWO ANSWERS. `soft-reconfiguration`
+# is in the address-family neighbour grammar and not in the plain one, so the
+# mark has to depend on where the statement sits - which is the proof that it
+# is being decided by the grammar in force and not by a list of words.
+af = ["router bgp 65000", "address-family ipv4 unicast",
+      "neighbor 10.0.0.2 soft-reconfiguration inbound", "exit", "exit"]
+disp_af, _ = shown(af)
+check(not disp_af["neighbor 10.0.0.2 soft-reconfiguration inbound"]
+      .endswith(UNCHECKED_MARK),
+      f"inside the address-family the same statement is modelled: {disp_af}")
+
+# --- it asks the command tree, and nothing else ---
+#
+# The defect this design is avoiding is a second list of "statements we model"
+# kept alongside the grammar by hand: it goes stale, and a stale list says a
+# statement was checked when nothing checked it. So the assertion is not that
+# `coalesce-time` is marked - it is that TEACHING THE TREE the statement is
+# enough to stop it being marked, with nothing else touched.
+print("\n=== the marker reads the grammar, not a list beside it ===")
+taught = dict(hexash.BGP_BLOCK)
+taught["coalesce-time"] = ("how long to wait for peers to converge", "<ms>")
+_real = hexash.BGP_BLOCK
+try:
+    hexash.BGP_BLOCK = taught
+    after, n_after = shown(MEASURED)
+finally:
+    hexash.BGP_BLOCK = _real
+check(not after["coalesce-time 1000"].endswith(UNCHECKED_MARK),
+      "a statement added to the tree stops being marked with no second edit: "
+      f"{after}")
+check(n_after == 1, f"and the count follows it: {n_after}")
+# And back again, so the test cannot pass by leaving the tree modified.
+again, _ = shown(MEASURED)
+check(again["coalesce-time 1000"].endswith(UNCHECKED_MARK),
+      "the tree is restored")
+
+# A block this VTY has no grammar for at all: every statement in it went
+# through unread, and so did the header. An operator standing in one needs
+# that on the first line rather than statement by statement.
+print("\n=== a block with no grammar says so on its header ===")
+check(block_grammar("vrf red", []) is None,
+      "the VTY models no `vrf` block")
+vrf, n_vrf = mark_routing(["vrf red", " ip route 10.9.0.0/16 10.0.0.9",
+                           " exit-vrf"])
+check(vrf[0].endswith(UNCHECKED_MARK), f"the header is marked: {vrf}")
+check(vrf[1].endswith(UNCHECKED_MARK), f"and its statement: {vrf}")
+check(not vrf[2].endswith(UNCHECKED_MARK), f"`exit-vrf` is not: {vrf}")
+check(n_vrf == 2, f"two statements, not {n_vrf}")
+# `?` inside that block still offers `exit`, which is a different question
+# from whether the VTY has a grammar for it, and the refactor that split the
+# two must not have taken the offer away (#221: a block that offers nothing
+# strands whoever is standing in it).
+_s = shell_with_box()
+with contextlib.redirect_stdout(io.StringIO()):
+    _s.feed("configure")
+    _s.feed("vrf red")
+_o, _, _ = _s._options("", False)
+check("exit" in _o and "show" in _o,
+      f"an unmodelled block still offers a way out and a way to read it: {_o}")
+
+# A static route answers the same in both shapes it exists in. The VTY
+# provides the `router static` block and translates it to FRR's top-level `ip
+# route` lines, so the DISPLAY puts the route back in the block and the
+# candidate list does not - and `commit check` counts the candidate list. Read
+# by the statement rather than by where it sits, every static route on the box
+# would have been reported as passed through unread.
+print("\n=== a static route is this VTY's own block in FRR's words ===")
+check(mark_routing(["ip route 0.0.0.0/0 10.0.0.2"])[1] == 0,
+      "a static route as the candidate holds it is not marked")
+check(mark_routing(group_static(["ip route 0.0.0.0/0 10.0.0.2"]))[1] == 0,
+      "nor as the display groups it")
+# And that is about the STATEMENT, not about the words `ip route`: the same
+# route inside a block this VTY has no grammar for is still unread, because
+# nothing read the block it is in. A VRF's routes go in another table.
+check(mark_routing(["vrf red", " ip route 10.0.0.0/8 1.1.1.1",
+                    " exit-vrf"])[1] == 2,
+      "a route inside an unmodelled block is still marked")
+
+# --- where the boundary is shown ---
+#
+# `show this` FIRST, because it is the one an operator runs while they are
+# still typing. Being told at `show configuration` time - or at commit - that
+# half of what they typed went through unread is being told after the fact.
+print("\n=== show this marks the block being typed in ===")
+lines = this_in_raw("router bgp 65001",
+                    "neighbor 10.0.0.2 remote-as 65002",
+                    "coalesce-time 1000")
+check(any(l.endswith(UNCHECKED_MARK) and "coalesce-time" in l for l in lines),
+      f"show this marks the statement nothing read: {lines}")
+check(not any(l.endswith(UNCHECKED_MARK) and "remote-as" in l for l in lines),
+      f"and not the one the tree walks: {lines}")
+check(any(l.startswith(UNCHECKED_NOTE) for l in lines),
+      f"and closes with what the mark means: {lines}")
+
+# And standing in a block the VTY has no grammar for, `show this` says so on
+# the header. That is the line an operator reads first, and "nothing in here
+# was read" is a different piece of news from "this one statement was not".
+_vrf_this = this_in_raw("vrf red", "ip route 10.9.0.0/16 10.0.0.9")
+check(_vrf_this[0].endswith(UNCHECKED_MARK),
+      f"show this marks the header of a block with no grammar: {_vrf_this}")
+check(any(l.endswith(UNCHECKED_MARK) and "ip route" in l for l in _vrf_this),
+      f"and the statements inside it: {_vrf_this}")
+
+# `show configuration` and `show running-config` print through one function,
+# so both get it; the CGNAT and system half does not, and that is deliberate.
+# Every statement above `! routing` is modelled by construction - `Config.parse`
+# records what it cannot hold and `commit` refuses to run while it holds one -
+# so there is no passthrough there to mark, and a mark is a claim that has to
+# stay worth something.
+print("\n=== show configuration marks the routing half and only that ===")
+_cfg = Config()
+_cfg.routing = list(MEASURED)
+_cfg.snmp_communities = ["public"]
+_out = mark_unchecked(_cfg.text().splitlines())
+_routing_at = _out.index("! routing")
+check(not any(l.endswith(UNCHECKED_MARK) for l in _out[:_routing_at]),
+      f"nothing above the routing header is marked: {_out[:_routing_at]}")
+check(sum(l.endswith(UNCHECKED_MARK) for l in _out[_routing_at:]) == 2,
+      f"and two below it are: {_out[_routing_at:]}")
+
+# --- the note at the end, and the silence when there is nothing to say ---
+#
+# The rule from #205 and #208: an alarm that is always on is one nobody reads.
+# Passing statements through is the normal case for FRR configuration, so the
+# note appears only when something is marked - and the marks are per line, so
+# the operator never has to take the count on trust.
+print("\n=== the closing note counts, and says nothing when there is nothing ===")
+check(unchecked_note(0) == [], "no note when nothing was passed through")
+check(unchecked_note(3) and "3" in unchecked_note(3)[0],
+      f"the count is in the note: {unchecked_note(3)}")
+_clean = ["router bgp 65000", "neighbor 10.0.0.2 remote-as 65001", "exit"]
+check(not any(l.startswith(UNCHECKED_NOTE)
+              for l in mark_unchecked(Config().text().splitlines())),
+      "an empty routing section prints no note")
+_c2 = Config()
+_c2.routing = list(_clean)
+check(not any(l.startswith(UNCHECKED_NOTE)
+              for l in mark_unchecked(_c2.text().splitlines())),
+      "nor does a routing section this VTY read every line of")
+
+# --- 80 columns, which is what the box is reached on when it matters ---
+#
+# The console an operator opens when the network is down is 80 columns wide,
+# and the statements most likely to be marked are the long ones. The marker is
+# therefore short enough to ride on a long IPv6 neighbour statement, and the
+# sentence that explains it goes once at the end instead of on every line.
+print("\n=== a marked line still fits an 80-column console ===")
+LONG = ["router bgp 65000",
+        "neighbor 2001:db8:aaaa:bbbb::1 soft-reconfiguration inbound",
+        "neighbor 2001:db8:aaaa:bbbb::1 coalesce-time 1000",
+        "exit"]
+_marked, _ = mark_routing(LONG)
+_wide = [l for l in _marked + unchecked_note(2) if len(l) > 79]
+check(not _wide, f"these wrap on a serial console: {[(len(l), l) for l in _wide]}")
+print(f"  longest marked line: {max(len(l) for l in _marked)} columns")
+
+# --- PRESENTATION ONLY: the saved file and the FRR handoff are untouched ---
+#
+# This is the constraint that breaks boxes if it is got wrong. `save` writes a
+# file the box reads back at boot and `commit` hands the same statements to
+# frr-reload. A marker that leaked into either becomes a statement FRR does not
+# understand, the load is refused whole, and the box comes up with NO
+# configuration - which is how both boot defects behind #182 ended.
+#
+# Asserted separately and explicitly, against the real paths: the bytes `save`
+# writes, and the list `apply` hands to frr-reload.
+print("\n=== the marking never leaves the screen ===")
+import tempfile                                                  # noqa: E402
+
+_sh = shell_with_box()
+_handed = []
+_sh.frr = type("F", (), {
+    "available": lambda s: True,
+    "running": lambda s: [],
+    "reload": lambda s, lines, check_only=False: (
+        _handed.append(list(lines)), (0, ""))[1],
+    "show": lambda s, c: (1, "")})()
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.feed("configure")
+    for _l in MEASURED[:-1]:
+        _sh.feed(_l)
+    _sh.feed("exit")
+_cand = _sh.candidate
+_text_before = _cand.text()
+_routing_before = list(_cand.routing)
+
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh.feed("show configuration")
+    _sh.feed("show running-config")
+    _applied = _sh.apply(_cand, check_only=True)
+
+# `show this` inside the block gets its own shell, because ENTERING a block
+# stages its header - that is the product working, not the marking leaking -
+# and a snapshot taken across the entry would be measuring the wrong thing.
+_sh2 = shell_with_box()
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh2.feed("configure")
+    for _l in MEASURED[:-1]:
+        _sh2.feed(_l)
+_before_this = list(_sh2.candidate.routing)
+with contextlib.redirect_stdout(io.StringIO()):
+    _sh2.feed("show this")
+check(_sh2.candidate.routing == _before_this,
+      f"`show this` inside a block changes nothing either: "
+      f"{_sh2.candidate.routing}")
+
+check(_cand.text() == _text_before,
+      "displaying a configuration does not change the text it renders to")
+check(_cand.routing == _routing_before,
+      f"nor the statements themselves: {_cand.routing}")
+check(UNCHECKED_MARK not in _cand.text()
+      and UNCHECKED_NOTE not in _cand.text(),
+      "and neither the marker nor the note is anywhere in that text")
+check(_applied and _handed,
+      f"the routing half reached frr-reload at all: {_handed}")
+check(_handed[-1] == _routing_before,
+      f"and what it got is the statements as typed: {_handed[-1]}")
+check(not any(UNCHECKED_MARK in l or UNCHECKED_NOTE in l
+              for l in _handed[-1]),
+      f"with no marking in them: {_handed[-1]}")
+
+# `save` for real: the file the box reads back at boot.
+_fd, _path = tempfile.mkstemp()
+os.close(_fd)
+_old_path = hexash.CONFIG_PATH
+try:
+    hexash.CONFIG_PATH = _path
+    _sh.running_config = lambda: _cand
+    with contextlib.redirect_stdout(io.StringIO()):
+        _sh.save_running()
+    with open(_path) as _f:
+        _saved = _f.read()
+finally:
+    hexash.CONFIG_PATH = _old_path
+    os.unlink(_path)
+check(_saved == _text_before,
+      "the saved file is byte for byte what it was before the marking existed")
+check(UNCHECKED_MARK not in _saved and UNCHECKED_NOTE not in _saved,
+      f"no marking reached the file the box boots from: {_saved!r}")
+# And read back the way the boot does it, because that is the failure mode:
+# the file is handed to `hexash --load`, and a line it cannot hold refuses the
+# whole configuration.
+_reloaded = Config.parse(_saved)
+check(_reloaded.routing == _routing_before,
+      f"the file loads back to the same statements: {_reloaded.routing}")
+check(not _reloaded.unknown,
+      f"with nothing the VTY cannot read: {_reloaded.unknown}")
+
+# The other half of the same hazard: an operator copies what is ON THE SCREEN
+# into a file. The displayed text - marks, note and all - has to parse back to
+# exactly the configuration it was made from.
+print("\n=== the marked display still parses back to the configuration ===")
+_screen = "\n".join(mark_unchecked(_cand.text().splitlines())) + "\n"
+check(UNCHECKED_MARK in _screen and UNCHECKED_NOTE in _screen,
+      "the screen really does carry the marking")
+_from_screen = Config.parse(_screen)
+check(_from_screen.routing == _routing_before,
+      f"and it parses back unchanged: {_from_screen.routing}")
+check(not _from_screen.unknown,
+      f"with nothing unreadable: {_from_screen.unknown}")
+
+# --- how much of a real box is outside the boundary ---
+#
+# The text below is a REAL read-back, typed at a live FRR 10.7.1 and read with
+# `show running-config`, filtered exactly as `Frr.running()` filters it: a
+# provider edge with a prefix-list, a route-map, an eBGP transit session with
+# policy, OSPF and a default route. It is here because the marking has to be
+# proportionate on a box that is working - a display where everything is
+# marked says as little as one where nothing is.
+#
+# Four statements of twenty-five, and each of the four is genuinely a
+# statement this VTY has no grammar for. `no bgp ebgp-requires-policy` is the
+# interesting one: nearly every FRR BGP configuration carries it, this VTY
+# models no `no` inside a block at all, and the marker naming it is the marker
+# working rather than the marker being noisy.
+print("\n=== a real FRR read-back, and how much of it is outside ===")
+FRR_READBACK = """!
+hostname hexarouting
+service integrated-vtysh-config
+!
+ip prefix-list PL-MEUS-BLOCOS seq 5 permit 200.150.8.0/22
+!
+route-map RM-OUT permit 10
+ match ip address prefix-list PL-MEUS-BLOCOS
+ set as-path prepend 65000
+exit
+!
+ip route 0.0.0.0/0 10.0.0.2
+!
+router bgp 65000
+ bgp router-id 10.0.0.1
+ bgp log-neighbor-changes
+ no bgp ebgp-requires-policy
+ neighbor 10.0.0.2 remote-as 65001
+ neighbor 10.0.0.2 description transito-primario
+ !
+ address-family ipv4 unicast
+  network 200.150.8.0/22
+  neighbor 10.0.0.2 soft-reconfiguration inbound
+  neighbor 10.0.0.2 route-map RM-OUT out
+ exit-address-family
+exit
+!
+router ospf
+ ospf router-id 10.0.0.1
+ network 10.0.0.0/24 area 0
+exit
+!""".splitlines()
+
+_real, _n_real = mark_routing(FRR_READBACK)
+_marked_now = [l.strip()[:-len(UNCHECKED_MARK.strip())].strip()
+               for l in _real if l.endswith(UNCHECKED_MARK)]
+check(sorted(_marked_now) == ["hostname hexarouting",
+                              "no bgp ebgp-requires-policy",
+                              "service integrated-vtysh-config"],
+      f"these three, and no others, are outside the grammar: {_marked_now}")
+# The other twenty-one are NOT marked, which is the half that makes the mark
+# mean something. Named one by one rather than counted, because a count passes
+# just as well when the wrong lines are clean.
+for _want in ["ip prefix-list PL-MEUS-BLOCOS seq 5 permit 200.150.8.0/22",
+              "route-map RM-OUT permit 10",
+              "match ip address prefix-list PL-MEUS-BLOCOS",
+              "set as-path prepend 65000",
+              "ip route 0.0.0.0/0 10.0.0.2",
+              "bgp router-id 10.0.0.1",
+              "bgp log-neighbor-changes",
+              "neighbor 10.0.0.2 remote-as 65001",
+              "neighbor 10.0.0.2 description transito-primario",
+              "address-family ipv4 unicast",
+              "network 200.150.8.0/22",
+              "neighbor 10.0.0.2 soft-reconfiguration inbound",
+              "neighbor 10.0.0.2 route-map RM-OUT out",
+              "router ospf", "ospf router-id 10.0.0.1",
+              "network 10.0.0.0/24 area 0"]:
+    check(_want not in _marked_now,
+          f"'{_want}' is in the tree and must not be marked")
+# FRR's own `!` separators are part of the routing statements and are handed
+# back to FRR as they were, so they are not statements to mark either.
+check(not any(l.strip().startswith("!") and l.endswith(UNCHECKED_MARK)
+              for l in _real),
+      f"FRR's separators are left alone: {_real}")
+
+# --- commit says nothing; `commit check` names the number ---
+#
+# Argued from the standing rule (#205, #208): an alarm that is always on is
+# one nobody reads. Passthrough is the NORMAL case here - a working FRR edge
+# has `no bgp ebgp-requires-policy` in it and this VTY models no `no` inside a
+# block at all - so a warning on every commit would be skipped within a week,
+# and the habit of skipping the end of a commit would take the "FRR kept none
+# of these statements" warning with it.
+#
+# `commit check` is the opposite: a question the operator chose to ask, whose
+# whole subject is how much was verified. It already said "structure only",
+# which names no number. Now it names one.
+print("\n=== commit check says how many statements it could not read ===")
+
+
+def check_output(routing):
+    s = shell_with_box()
+    s.frr = type("F", (), {"available": lambda _s: True,
+                           "running": lambda _s: [],
+                           "reload": lambda _s, l, check_only=False: (0, ""),
+                           "show": lambda _s, c: (1, "")})()
+    with contextlib.redirect_stdout(io.StringIO()):
+        s.feed("configure")
+    s.candidate.routing = list(routing)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        s.feed("commit check")
+    return buf.getvalue()
+
+
+_said = check_output(MEASURED)
+check("2 routing statement(s)" in _said,
+      f"commit check names the count: {_said!r}")
+check("were not read at all" in _said,
+      f"and what the count means: {_said!r}")
+_quiet = check_output(["router bgp 65000",
+                       "neighbor 10.0.0.2 remote-as 65001", "exit"])
+check("were not read at all" not in _quiet,
+      f"and says nothing when it read everything: {_quiet!r}")
+check("configuration check succeeds" in _quiet,
+      f"while still answering the question asked: {_quiet!r}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
