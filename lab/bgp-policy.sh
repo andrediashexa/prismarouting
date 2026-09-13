@@ -69,9 +69,21 @@ vpp -c "$(startup_conf lcp)" > /tmp/vpp.log 2>&1 &
 n=0; until vppctl show version >/dev/null 2>&1 || [ "$n" -ge 30 ]; do sleep 1; n=$((n+1)); done
 vppctl show version >/dev/null 2>&1 || { echo "VPP did not start"; tail -25 /tmp/vpp.log; exit 1; }
 
+# The BPA plugin for the binary API. Core VPP messages work without it, but a
+# pool goes through bpa_pool_add_del, and the check that a pool's public prefix
+# is announced needs both halves present.
+use_binary_api
+HX="python3 /src/src/hexash/hexash.py"
+
 vppctl create host-interface name veth-vpp
 vppctl set interface state host-veth-vpp up
-vppctl lcp create host-veth-vpp host-if vppwan0
+# Both pairs below are made by the PRODUCT (#182). `vppctl lcp create` stood on
+# these two lines, and while it did, every policy this lab asserts was measured
+# on a box somebody had paired by hand - on an installed appliance FRR had no
+# interface for either port and no session could come up at all. Moved up here
+# with use_binary_api, which has to come first for any commit to work.
+$HX -c "configure" -c "interface host-veth-vpp" -c "linux-name vppwan0" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 
 # The TAP inherits MTU 9000 while the wire is at 1500. BGP is TCP over that
 # TAP, so the kernel derives its MSS from 9000 and hands VPP segments the veth
@@ -83,7 +95,8 @@ vppctl set interface ip address host-veth-vpp 10.0.0.1/24
 
 vppctl create host-interface name veth2-vpp
 vppctl set interface state host-veth2-vpp up
-vppctl lcp create host-veth2-vpp host-if vppwan1
+$HX -c "configure" -c "interface host-veth2-vpp" -c "linux-name vppwan1" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 vppctl set interface mtu 1500 host-veth2-vpp
 vppctl set interface ip address host-veth2-vpp 10.1.0.1/24
 
@@ -162,11 +175,6 @@ for d in zebra bgpd; do
 done
 
 . /src/lab/verdict.sh
-# The BPA plugin for the binary API. Core VPP messages work without it, but a
-# pool goes through bpa_pool_add_del, and the check that a pool's public prefix
-# is announced needs both halves present.
-use_binary_api
-HX="python3 /src/src/hexash/hexash.py"
 
 # ---------------- the two sessions, configured through the VTY ----------------
 #

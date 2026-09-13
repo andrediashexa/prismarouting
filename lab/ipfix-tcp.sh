@@ -33,8 +33,13 @@ vppctl create host-interface name veth-vpp >/dev/null
 vppctl set interface state host-veth-vpp up
 # The TCP exporter uses a kernel socket, not VPP's dataplane: the collector has
 # to be reachable through the Linux stack. On a real box linux_cp provides that
-# path, mirroring the interface as a TAP.
-vppctl lcp create host-veth-vpp host-if vppmgmt0
+# path, mirroring the interface as a TAP - and the pair is created here the way
+# the box creates it, through the VTY over the binary API, rather than with
+# `vppctl lcp create` (#182). While that line was here, this lab proved a
+# transport that worked only on a box somebody had paired by hand.
+python3 /src/src/hexash/hexash.py -c "configure" \
+    -c "interface host-veth-vpp" -c "linux-name vppmgmt0" \
+    -c "exit" -c "commit" 2>&1 | tail -1 | sed 's/^/  pair: /'
 vppctl set interface mtu 1500 host-veth-vpp
 vppctl set interface ip address host-veth-vpp 10.0.0.1/24
 PEERMAC=$(ip netns exec peer cat /sys/class/net/veth-out/address)
@@ -145,6 +150,17 @@ python3 /src/src/hexash/hexash.py --load /tmp/logging.conf > /tmp/reload.log 2>&
 sed 's/^/    reload: /' /tmp/reload.log
 expect_in "reloading the saved configuration brought the collector back" \
   "10.0.0.2:4740" "$(vppctl show bpa logging)"
+
+# The pair is CONFIGURATION now (#182), and configuration here is declarative:
+# a file that does not name it removes it, exactly as this reload removed the
+# MTU from host-veth-vpp - the note is two lines above. Asserted rather than
+# left to be discovered, because it is a real consequence of the pair having
+# moved into the product: while `vppctl lcp create` made it, no reload could
+# touch it. The fragment above is deliberately a slice, one grep of the logging
+# lines; hexarouting.service reloads the whole saved file, which names the pair
+# and therefore keeps it.
+expect_not_in "and a file that does not name the pair takes the pair down" \
+  "vppmgmt0" "$(vppctl show lcp)"
 
 SKEW=$(worst_skew "$(cat /tmp/c1.out /tmp/c2.out)")
 expect "the record carries the time of day, not time since boot (worst skew ${SKEW:-none}s)" \

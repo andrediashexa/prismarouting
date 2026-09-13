@@ -31,7 +31,7 @@ from config import (Config, Pool, URPF_MODES, UNCHECKED_MARK,
                     NAT_HIERARCHY, STATIC_BLOCK, FRR_BLOCK_CLOSERS,
                     strip_nat, as_hierarchy, group_static,
                     block_paths, frr_block_lines, opens_frr_block,
-                    _address_family_error, _is_loopback,
+                    _address_family_error, _is_loopback, _is_lcp_tap,
                     global_key, ordered_globals)
 from system import (System, SnmpDaemon, SnmpUser, User,
                     can_anyone_log_in, can_anyone_configure, redact,
@@ -2860,7 +2860,37 @@ class Shell:
         cfg.users = self.sys.read_users()
         cfg.snmp, cfg.snmp_communities, cfg.snmp_users = self.snmp.read()
         cfg.routing = self.frr.running()
+        # The Linux end of every linux_cp pair, out. The dataplane reads above
+        # report EVERY interface VPP has, and one of them is the pair's own
+        # TAP - so `save` wrote `interface tap4097` into the file that
+        # hexarouting.service replays at boot, against a VPP with no pairs
+        # yet, and the box refused its own configuration and came up with
+        # nothing on it. config.Config.drop_lcp_taps carries the measurement.
+        #
+        # Which TAPs those are is READ OFF THE BOX rather than guessed from
+        # the name, because `tap0` is equally what an operator's own
+        # `create tap` produces and dropping that would be #47.
+        cfg.drop_lcp_taps(self.device_lcp_taps())
         return cfg
+
+    def device_lcp_taps(self) -> set:
+        """
+        The TAPs that are the Linux end of a pair, from `show lcp`.
+
+        A pair prints every name it answers to on one line:
+
+            itf-pair: [0] host-veth-vpp tap4096 vppwan0 5 type tap
+
+        and the one that is VPP's own spelling of a TAP is the pair's. Both
+        signals together: on the line AND shaped like an lcp TAP. Either alone
+        is wrong - the line also carries the dataplane name and the Linux one,
+        and the shape alone matches a TAP nobody paired.
+        """
+        rc, out = self.dp.run("show lcp")
+        if rc != 0:
+            return set()
+        return {n for names in routes.lcp_pairs(out).values()
+                for n in names if _is_lcp_tap(n)}
 
     def device_descriptions(self) -> dict:
         """
@@ -4176,7 +4206,32 @@ class Shell:
         # milliseconds it takes to apply the rest. Neither ordering is
         # observable in a lab that changes one thing at a time, which is
         # exactly why it is decided here rather than left to the dictionary.
+        #
+        # With ONE exception, and it is a box that does not come up. An
+        # interface this same delta is about to CREATE cannot be shut down
+        # before it exists, and a loopback is created administratively down -
+        # so its saved configuration carries `shutdown`, and replaying that
+        # file is the thing hexarouting.service does at every boot:
+        #
+        #   interface loop7
+        #    linux-name loop7
+        #    shutdown
+        #
+        #   error: interface loop7: the dataplane does not have it
+        #
+        # The commit fails, the unit fails, and the box comes up with none of
+        # its configuration - so every loopback this product can create (#179)
+        # survived exactly until the next reboot. Measured in lab/lcp.sh by
+        # saving a paired loopback, taking it down and handing the box back
+        # the file it wrote.
+        #
+        # The ordering argument above does not apply to these: an interface
+        # that does not exist yet is carrying no traffic, so there is nothing
+        # to stop before configuring it.
+        being_created = set(d["loopback_add"]) | set(d["subif_add"])
         for ifname in d["admin_down"]:
+            if ifname in being_created:
+                continue
             if not self.set_admin(ifname, False):
                 return False
 
@@ -4188,6 +4243,13 @@ class Shell:
                 return False
         for ifname, tag in d["subif_add"].items():
             if not self.create_subif(ifname, tag):
+                return False
+        # The half of the shutdown pass that had to wait for the interface to
+        # exist. Still before the addresses and the pair below, so the
+        # ordering the comment above argues for is kept for everything that
+        # can observe it.
+        for ifname in d["admin_down"]:
+            if ifname in being_created and not self.set_admin(ifname, False):
                 return False
 
         # IS-IS needs its frames punted before the adjacency can form, and
@@ -4419,7 +4481,7 @@ class Shell:
             # its shape, which is VPP's naming convention for an lcp TAP; if
             # that convention ever changes the warning names the tap again,
             # which is cosmetic rather than a false alarm.
-            if ifname.startswith("tap") and ifname[3:].isdigit():
+            if _is_lcp_tap(ifname):
                 continue
             names = pairs.get(ifname)
             if not names:
@@ -7829,6 +7891,22 @@ class Shell:
             return
         with open(path) as f:
             target = Config.parse(f.read())
+
+        # A `tap<n>` stanza naming an interface this box does NOT have is the
+        # Linux end of a pair that existed when the file was saved and does
+        # not exist now - which at boot is every pair, because VPP has just
+        # started. Left in, the interface-existence check refuses the whole
+        # file and the box comes up with nothing on it; this is what makes the
+        # boxes that already saved such a file boot again.
+        #
+        # Conditioned on the dataplane not having it, not on the name alone.
+        # `vppctl create tap id 0` also produces a `tap0`, and one that IS
+        # there is an interface somebody configured on purpose - lab/hw-vpp.sh
+        # runs its whole WAN over exactly that.
+        stale = {n for n in target.interface_names()
+                 if _is_lcp_tap(n) and self.api.interface_index(n) is None}
+        if stale:
+            target.drop_lcp_taps(stale)
         if target.unknown:
             self.err(f"{path}: refusing to load, these lines are not "
                      "understood:")
