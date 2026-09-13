@@ -10,6 +10,28 @@ after it changed, the BGP page's table of what the VTY checks, the wiki titles,
 RFC 8158 record written out in three places. A second copy of a truth is fine.
 A second copy nothing compares is not.
 
+WHAT DOES NOT WORK, measured three times, so nobody spends the afternoon on it
+again. Comparing a MESSAGE against the source that prints it is unsound in both
+directions, and every variant tried here was rejected on its own numbers:
+
+  * the wiki's quoted messages against `hexash.py`: 14 headings, 11 reported
+    missing, ALL 11 false positives. Real messages are split across two string
+    literals, so a whole-sentence match cannot find them, and Portuguese prose
+    headings are not messages at all.
+  * `lab/*.sh`'s `expect_not_in` needles against the whole product: 118
+    needles, 42 reported unproducible, almost all false. A needle is usually
+    composed at run time from a fixture the lab set up - a pool name, an
+    address, an interface - so its absence from the source proves nothing. And
+    it had false NEGATIVES from the same line-split literals: `no digest:
+    written before the chain existed` IS printed by `bpa_audit.c`, across two
+    lines.
+  * documentation tokens beside a lab reference: 26 findings, about a quarter
+    false, written up on #247.
+
+So: compare a truth against the OTHER PLACE IT IS WRITTEN DOWN, never against
+the code that would produce it. Every check in this file does the former, and
+that is why none of them needs an allowlist.
+
 WHICH ALGs SHIP ON, written down in the plugin and in the documentation.
 
 `BPA_ALG_DEFAULT` in `src/plugins/bpa/bpa_pool.h` is what the box does.

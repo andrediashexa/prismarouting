@@ -1584,6 +1584,13 @@ are to be interpreted as described in
   exactly the day both copies must move. `test/test_doc_copies.py` reads it out
   of `tools/build.sh` and out of the README and compares them.
 
+  **And the same line was in `TESTING.md`, which survived the fix.** `21 s`
+  against 36 measured on this machine, and the README's `25 suites` against 38
+  - one file was noticed and the other was not, which is the shape this entry
+  is about happening to the fix for it. `test/test_doc_copies.py` now refuses a
+  time or a suite count for `make test` in any of the three documents that
+  quote the command, so the next one cannot be added quietly either.
+
   The duplicated listing line hid from the repeated-sentence check added beside
   it, because that check strips fenced blocks on purpose: an example command
   repeated in two places is an example. A directory listed twice is a claim
