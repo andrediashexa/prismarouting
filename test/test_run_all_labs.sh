@@ -389,5 +389,36 @@ else
   bad "the suite excludes labs and never prints that it did"
 fi
 
+# And the reason reaches the LINE, not only the table.
+#
+# The first version of this section read NOT_LABS and stopped there, so it was
+# green while every announcement printed one word: `for _e in $NOT_LABS` splits
+# on every space, each WORD of a reason became its own iteration, and the first
+# one matched. A release run printed
+#
+#   not running, each for its own reason:
+#     boot-iso: the
+#     crossaddr: pins
+#
+# A check that reads the data a message is built from cannot see the message.
+# This one runs the lookup the suite uses and asks what comes back.
+_probe=$(mktemp)
+sed -n '/^NOT_LABS="/,/^"$/p' "$RA" > "$_probe"
+sed -n '/^not_lab_reason() {/,/^}/p' "$RA" >> "$_probe"
+printf 'for _n in $(sed -n "/^NOT_LABS=/,/^\"$/p" "%s" | grep ":" | cut -d: -f1); do\n' "$RA" >> "$_probe"
+printf '  not_lab_reason "$_n"; echo\ndone\n' >> "$_probe"
+short=""
+for _r in $(sh "$_probe" | grep . | tr ' ' '_'); do
+  case "$_r" in
+    *_*) : ;;
+    *) short="$short $_r" ;;
+  esac
+done
+rm -f "$_probe"
+[ -z "$short" ] \
+  && ok "and every reason comes back whole, not cut at its first space" \
+  || bad "these reasons come back as a single word, so the announcement prints "\
+"a fragment:$short"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

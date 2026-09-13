@@ -1830,6 +1830,22 @@ are to be interpreted as described in
 
   The set of labs that run is byte for byte the same seven exclusions as before.
 
+  **And the first version of this printed one word per reason.** `for _e in
+  $NOT_LABS` splits on every space, so each WORD of a reason became its own
+  iteration and the first matched. A release run announced:
+
+  ```
+  not running, each for its own reason:
+    boot-iso: the
+    crossaddr: pins
+  ```
+
+  The check beside it was green throughout, because it read `NOT_LABS` and
+  stopped there. A check that reads the data a message is built from cannot see
+  the message, and that is the same defect this entry is about, one layer in:
+  the table was right and the line an operator reads was not. The lookup reads
+  a line at a time now, and the check runs it and asks what comes back.
+
 * **`LAB_WORKERS=2` started a box with no workers at all**
   ([#229](https://github.com/andrediashexa/hexarouting/issues/229)). The
   variable was a 0/1 flag carrying the name of a count: `startup_conf` asked
