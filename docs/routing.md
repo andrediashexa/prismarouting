@@ -2610,7 +2610,9 @@ A cache is a service, so the lab runs one - `stayrtr` with a two-entry VRP set.
 
 The assertion is on the VPP FIB, and it is two-sided - the invalid route MUST
 NOT be there **and** the valid one MUST still be. Dropping everything would
-satisfy the first on its own.
+satisfy the first on its own. It is in `lab/bgp-policy.sh`, which is where every
+assertion in this section lives: `lab/routing.sh` states outright that it builds
+no RPKI module.
 
 ## The BGP commands an operator runs while something is wrong
 
@@ -2853,7 +2855,7 @@ does not compile: missing ), unterminated subpattern at position 6
 FRR uses POSIX extended regular expressions and Python's `re` is close but not
 identical, so the VTY now holds an opinion about what FRR accepts. An opinion
 that drifts refuses configurations that are fine, so ten cases go to **both**
-in `lab/routing.sh` and they MUST agree - the same arrangement as the
+in `lab/bgp-policy.sh` and they MUST agree - the same arrangement as the
 prefix-range rule, for the same reason.
 
 ### A regex that compiles and matches the wrong thing
@@ -2902,7 +2904,8 @@ answers both with "Unknown command", measured in `lab/bgp-policy.sh`.
 
 ### How it is tested
 
-`lab/routing.sh` runs a **third autonomous system** one hop behind the peer, so
+`lab/bgp-policy.sh` runs a **third autonomous system** one hop behind the peer,
+so
 the box receives paths with two different origins: `203.0.113.0/24` via
 `65001`, and `198.51.100.0/24` via `65001 65002`.
 
@@ -2985,7 +2988,8 @@ it must never reach the saved file are all in
 
 ### How it is tested
 
-On the tables, never on the text of the configuration. `lab/routing.sh` has a
+On the tables, never on the text of the configuration. `lab/bgp-policy.sh` has
+a
 **second link to the same peer**, so both sessions carry `203.0.113.0/24` and
 `set local-preference` has something to choose between:
 

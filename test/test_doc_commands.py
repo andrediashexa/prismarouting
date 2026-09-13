@@ -485,6 +485,69 @@ else:
     ok(f"all {len(_wanted)} of them are quoted on the page, in the words the "
        f"box prints")
 
+print("\n=== a lab the documentation names is the lab that holds the claim ===")
+# `docs/routing.md` attributed three sets of assertions to `lab/routing.sh` and
+# all three were in `lab/bgp-policy.sh`, which #167 split out of it. A reader
+# following the document ran the wrong lab, found nothing, and was left with
+# two readings that are both wrong: that the claim is unheld, or that the lab
+# lost it (#247). Naming which lab holds a claim is the one thing a document of
+# this kind has to get exactly right, because it is what somebody reaches for
+# when they want to know whether a behaviour is asserted or merely described.
+#
+# THE RULE IS NARROW ON PURPOSE, and the wider ones were measured and rejected.
+# Requiring every backticked token near a reference to appear in the named lab
+# gives 26 findings of which almost all are correct prose - a document
+# legitimately names a command it explains, or another test file - and a check
+# that goes red on work that is right is the worst kind there is. Requiring a
+# fixture token to be in ONLY the named lab says nothing here, because the
+# prefixes appear in several labs.
+#
+# What holds with no false positives at all: a paragraph that names exactly one
+# lab and quotes a FIXTURE - an IPv4 prefix, an AS number, an UPPERCASE-HYPHEN
+# policy name - is claiming that lab uses it, and that is checkable. Measured
+# over every document: one finding, and it was one of the three defects.
+LAB_SRC = {}
+for _f in sorted(os.listdir(os.path.join(REPO, "lab"))):
+    if _f.endswith(".sh"):
+        LAB_SRC[_f[:-3]] = open(os.path.join(REPO, "lab", _f),
+                                encoding="utf-8").read()
+
+_FIXTURE = re.compile(
+    r"`(\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}|6[0-9]{4}|[A-Z][A-Z0-9]*-[A-Z0-9-]{2,})`")
+
+_pairs = 0
+_wrong = []
+for _name in sorted(os.listdir(os.path.join(REPO, "docs"))) + ["../README.md",
+                                                               "../TESTING.md"]:
+    if not _name.endswith(".md"):
+        continue
+    _text = open(os.path.join(REPO, "docs", _name), encoding="utf-8").read()
+    for _para in re.split(r"\n\s*\n", _text):
+        _refs = set(re.findall(r"lab/([a-z0-9-]+)\.sh", _para))
+        if len(_refs) != 1:
+            continue
+        _lab = _refs.pop()
+        if _lab not in LAB_SRC:
+            _wrong.append(f"{_name} names lab/{_lab}.sh, which does not exist")
+            continue
+        for _tok in sorted(set(_FIXTURE.findall(_para))):
+            _pairs += 1
+            if _tok not in LAB_SRC[_lab]:
+                _owners = [k for k in sorted(LAB_SRC) if _tok in LAB_SRC[k]]
+                _where = (", ".join("lab/" + o + ".sh" for o in _owners)
+                          if _owners else "no lab at all")
+                _wrong.append(
+                    f"{_name} sends the reader to lab/{_lab}.sh for {_tok}, "
+                    f"and that fixture is in {_where}")
+if _wrong:
+    for _w in _wrong:
+        bad(_w)
+elif _pairs >= 5:
+    ok(f"{_pairs} fixture(s) quoted beside a lab, each present in that lab")
+else:
+    bad(f"only {_pairs} fixture-and-lab pair(s) were found, so this is "
+        f"asserting almost nothing")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
