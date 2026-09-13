@@ -199,6 +199,36 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A third lab needle split by a re-wrapped message, and this one is in the
+  lab the release gate runs**
+  ([#279](https://github.com/andrediashexa/hexarouting/issues/279)).
+  `lab/install-iso.sh` waits for the box to say, on a console nobody is logged
+  into, that it has put the previous configuration back. Reflowing that
+  sentence to fit the console moved the fold into the needle - but only at the
+  minute count the lab uses:
+
+  ```
+  commit confirmed 10: nobody confirmed it within 10 minute(s), so this box has
+  put the previous configuration back        <- needle intact
+
+  commit confirmed 1: nobody confirmed it within 1 minute(s), so this box has put
+  the previous configuration back            <- needle split
+  ```
+
+  The lab sends `commit confirmed 1`, so the assertion went red over a box
+  doing exactly the right thing: every other check around it, including that
+  the account really was reverted and that the timer really is what enforced
+  it, stayed green.
+
+  `wait_said` is `wait_for` over a console with its line breaks collapsed. The
+  offset bookkeeping stays on the raw capture, because that is a byte count.
+  The three other multi-word needles in that lab were checked and left on
+  `wait_for`: all three come from `err()` or a bare `print()`, which emit one
+  row with no wrapping, and none is over 55 columns.
+
+  This lab is in `NOT_LABS`, so only the release gate runs it. That is why the
+  first two of these were found in an hour and this one took a release.
+
 * **The appliance binds its own dataplane NIC**
   ([#283](https://github.com/andrediashexa/hexarouting/issues/283)). Nothing in
   this product ever bound a NIC or loaded `vfio-pci`. DPDK cannot take a device
