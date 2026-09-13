@@ -259,13 +259,18 @@ ROOMY_MISSING=$MISSING; ROOMY_REFUSED=$REFUSED
 echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
-if [ "${LAB_WORKERS:-0}" = 1 ]; then
-  # Three blocks over two workers: the smallest slice is one, and one is what
-  # the pool can serve however the addresses fall.
+DYN_NW=$(box_workers)
+# Asked of the box and not of LAB_WORKERS, which is a request and not an answer
+# (#229), and the number is used rather than assumed: a dynamic pool's blocks
+# are partitioned by block_idx % n_workers, so what the pool can serve whatever
+# the addresses are is the SMALLEST slice, and three blocks over DYN_NW workers
+# makes that 3 / DYN_NW. At the two counts the suite runs - none, and one
+# meaning the default of two - this is the same assertion it has always made.
+if [ "$DYN_NW" -ge 1 ]; then
   expect_in "the pool reports what it can serve whatever the addresses are" \
     "whatever the addresses are" "$POOLCAP"
   expect_in "and that number is the smallest slice, not the total" \
-    "1 whatever" "$POOLCAP"
+    "$((3 / DYN_NW)) whatever" "$POOLCAP"
 else
   # Single-threaded there is one slice and it is the whole pool, so the line
   # must NOT appear: a caveat printed where it does not apply is a caveat

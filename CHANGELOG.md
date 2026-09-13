@@ -1247,6 +1247,39 @@ are to be interpreted as described in
 
 ### Internal
 
+* **`LAB_WORKERS=2` started a box with no workers at all**
+  ([#229](https://github.com/andrediashexa/hexarouting/issues/229)). The
+  variable was a 0/1 flag carrying the name of a count: `startup_conf` asked
+  whether it was exactly `1` and everything else - `2`, `4`, `yes` - fell
+  through to the no-workers branch, silently. The lab then ran, measured a
+  single-threaded box and passed, which is the shape this release keeps
+  finding: a thing that looks like it did what you asked and did the opposite,
+  with no line saying so.
+
+  It cost a run on the day `lab/extblocks.sh` was repaired for the
+  worker-sharding case, verifying that case with `LAB_WORKERS=2` against a box
+  whose own output said `the box has 1 worker slice(s)`. Nothing was wrong with
+  the repair; the harness had not started what the command named.
+
+  Now the number is the count. `0` and unset are no workers, `1` is still the
+  documented default of two so `tools/run-all-labs.sh` is unchanged, `N` above
+  one is N, and a value that is not a count is **refused with what to pass
+  instead** rather than read as off. `test/test_lab_workers.sh` asserts all
+  five, and was shown failing against the old condition: the 2/4/8 assertions
+  each reported `started none worker(s)`.
+
+  **And the same defect one layer up, which the fix would otherwise have
+  created.** `lab/icmp-tcp.sh`, `lab/dynamic.sh` and `lab/hairpin.sh` each gated
+  their worker section on `LAB_WORKERS = 1`, so with a count that now really
+  works, a box with four workers would have skipped every section that is about
+  workers. They ask the box instead, through a new `box_workers` that counts
+  `vpp_wk_` threads: a request is not an answer. `lab/dynamic.sh` also derives
+  the slice it expects from that count - three blocks over N workers can serve
+  `3 / N` whatever the addresses are - rather than hardcoding the number two
+  workers happen to give, and `lab/hairpin.sh` asks for the two it needs to
+  steer between rather than for "some". At the counts the suite runs, none and
+  the default of two, every one of these is the same assertion as before.
+
 * **`lab/igp.sh` no longer holds a daemon list of its own.** It seeds a
   fakeroot with the distribution's `/etc/frr/daemons`, runs
   `appliance/install.sh` into it, and starts exactly what the installer

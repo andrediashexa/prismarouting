@@ -222,7 +222,10 @@ expect "the translated ICMP error passed every checksum" sh -c "python3 /src/lab
 # translation that was correct single-threaded and a drop with workers, and
 # hardcoding workers here would only move the blind spot to the small box.
 # tools/run-all-labs.sh is what runs it twice.
-if [ "${LAB_WORKERS:-0}" = 1 ]; then
+#
+# Asked of the box and not of LAB_WORKERS: the variable is a request and this
+# section is about what the request produced (#229).
+if [ "$(box_workers)" -ge 1 ]; then
   # The defect itself. Unfixed, the out2in handoff finds no port in the outer
   # header of an ICMP error, counts it here and leaves it where it landed.
   expect "the out2in handoff identified the subscriber the ICMP error is about" \
