@@ -952,6 +952,64 @@ enabled `ssh.service` are written by the installer **onto the target**, where
 they are a decision about the box being built rather than a property of the
 medium.
 
+#### And the build refuses to ship one
+
+The rule above was written down and enforced nowhere. Writing an answer file
+into the root `appliance/build-iso.sh` was about to squash left every suite
+green, which is a root password published to whoever downloads the release
+([#245](https://github.com/andrediashexa/hexarouting/issues/245)).
+
+`appliance/no-credentials-in-image` is the refusal. The build **MUST** run it
+on the root before `mksquashfs` and on the ISO tree before `grub-mkrescue`, and
+it refuses:
+
+| What | Why it is refused |
+|---|---|
+| a file whose name contains `answers` | `hexarouting.answers` with no argument reads `/run/live/medium/hexarouting.answers`, so such a file needs nobody to name it. An empty one still proves the build put one there |
+| a file whose every line parses as an install answer | That is the file `HEXA_ANSWERS=<path>` installs from, whatever it is called |
+| a private key | See below |
+| a non-empty `authorized_keys` | A login on every box installed from the image, for whoever holds the matching key |
+| an `/etc/shadow` entry that is not locked | The hash the locked live root account exists to keep out of the image |
+
+A file that merely *mentions* an answer key is not an answer file: every line
+has to parse, which is what keeps the rule off `hexarouting-install`, off
+`install-from-cmdline` and off this document, all three of which describe the
+format at length.
+
+The refusal is driven against fake roots by `test/test_no_credentials.sh` in
+`make test`, because reading a real ISO means building one. That suite also
+asserts that `build-iso.sh` **calls** it, and calls it **before** the two
+commands after which the result can no longer be read as a directory: a fast
+check that never looks at an image cannot tell a build that runs the refusal
+from one that quietly stopped calling it. `lab/install-iso.sh` runs the same
+script over the squashfs it unpacks out of the image that was actually built,
+which is the assertion on the artefact.
+
+#### The SSH host keys are generated per box, not shipped
+
+Every ISO this project published carried
+`/etc/ssh/ssh_host_{rsa,ecdsa,ed25519}_key`. `openssh-server`'s postinst
+generates them inside the build container and they were squashed into the image
+with everything else; the installer unpacks that squashfs onto the disk and then
+enables `sshd` with `PermitRootLogin yes`. Every appliance installed from one
+release therefore answered with the **same** host key, whose private half was in
+the download — so anybody holding the ISO could impersonate any of those boxes
+on the management channel, and the operator's client would not object, because
+the key it pinned is the key it was handed.
+
+Two changes, and both **MUST** hold, because either one alone is a defect:
+
+* `build-iso.sh` removes the host keys before squashing. Nothing is lost on the
+  live image, where `sshd` is masked.
+* `hexarouting-install` runs `ssh-keygen -A` on the target before it enables
+  `ssh.service`, and **fails the install** if it cannot. `sshd` does not start
+  without a host key, and that `sshd` is how a racked appliance is reached: an
+  install that finished with no management path is found by somebody who drove
+  to the site.
+
+`lab/install-iso.sh` asserts both halves on the artefact — no host key in the
+image, at least one on the installed disk.
+
 ### The disk is verified before the install reports success
 
 `hexarouting-selftest.service` runs on the **live medium**, before the
@@ -1086,7 +1144,9 @@ The installer says so when the file answers the password:
 * **No answer file is shipped in the ISO**, and the build **MUST NOT** put one
   there. A credential in a published image is the defect the locked live root
   account exists to prevent. Write the file onto the medium you install from,
-  or give a path to one on another device.
+  or give a path to one on another device. `appliance/no-credentials-in-image`
+  is what refuses it, and *[And the build refuses to ship
+  one](#and-the-build-refuses-to-ship-one)* says how that is held.
 * The file is not copied onto the installed system. Nothing but `/etc/shadow`
   carries the password once the install is finished.
 
