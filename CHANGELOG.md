@@ -44,7 +44,8 @@ are to be interpreted as described in
 [#218](https://github.com/andrediashexa/hexarouting/issues/218),
 [#219](https://github.com/andrediashexa/hexarouting/issues/219),
 [#220](https://github.com/andrediashexa/hexarouting/issues/220),
-[#221](https://github.com/andrediashexa/hexarouting/issues/221).
+[#221](https://github.com/andrediashexa/hexarouting/issues/221),
+[#223](https://github.com/andrediashexa/hexarouting/issues/223).
 
 ### Added
 
@@ -393,6 +394,33 @@ are to be interpreted as described in
   half-sent one, and drops the connection when a spill splits a message,
   because that stream can no longer be completed. The 1 MB spill and the 60
   second template refresh could both hit this on a live box today.
+
+* **The shipped collector read an allocation as ENDED AT RESTART at a restart
+  that had happened before it.** A wrong answer about a subscriber, in the one
+  report this product exists to produce. Captured in a release suite run: the
+  still-running box was given its block at **05:18:28** and the report said the
+  allocation ended when the exporter reinitialised at **05:18:17**, eleven
+  seconds earlier - the message carried its own refutation
+  ([#223](https://github.com/andrediashexa/hexarouting/issues/223)).
+
+  The rule compared the boot marker in force *at* the allocation with the
+  latest one, and markers are periodic. An allocation made in the gap between a
+  restart and the first marker of the new incarnation read its "init then" off
+  the **previous** incarnation, so every block handed out in the first seconds
+  after a reboot was read as one the subscriber had stopped holding. The window
+  is the marker interval, every time a box restarts.
+
+  What "ended at restart" means is that an incarnation started **after** the
+  allocation, which is one comparison against the allocation's own timestamp
+  and does not depend on when a periodic message lands. `tools/ipfix_collector.py`
+  ships as `/usr/lib/hexarouting/ipfix-collector`, so this is the box's own
+  reading and not a lab's.
+
+  `lab/ipfix-stop.sh` exercises the same rule against three real boxes and had
+  been passing: whether it sees the gap depends on when a marker lands, which
+  is how this reached a release. `test/test_collector_marker.py` is new and
+  drives the captured timeline to the second, so it fails on the rule rather
+  than on the machine's mood.
 
 ### Internal
 
