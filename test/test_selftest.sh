@@ -131,6 +131,10 @@ case "$*" in
   # an operator looks at to see whether the thing they configured is
   # there at all.
   "show bpa pool")    cat "$FAKE/bpa_pools" 2>/dev/null ;;
+  # The uRPF listing. Absent from $FAKE it is empty, which the self-test reads
+  # the same way as "no interface has uRPF enabled" - both mean the dataplane
+  # has none.
+  "show bpa urpf")    cat "$FAKE/bpa_urpf" 2>/dev/null ;;
 esac
 exit 0
 EOF
@@ -1490,6 +1494,112 @@ else
   ok "and it is not a failed check"
 fi
 rm -f "$FAKE/show_plugins"
+rm -rf "$FAKE/root"
+
+echo "=== the pools the box was told about, against the ones it has (#172) ==="
+# The same comparison the IPFIX block already makes, for the object this
+# product exists for. A pool in the saved file that the dataplane refused is
+# applied by nobody and reported by nothing: hexarouting.service succeeds
+# because the rest of the file applied, and the count above says how many pools
+# are there rather than how many are missing. Every subscriber behind that pool
+# is untranslated, on a box that boots and forwards other people's traffic.
+mkcpus "1-3" "0-3" "1-3" 0 1 2 3
+: > "$FAKE/vppctl_ok"
+printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
+# HEXA_CONFIG was unset by the IPFIX section above, which is right for the
+# sections between the two: without it the self-test reads the real box's
+# /etc/hexarouting/hexarouting.conf, and this check would then compare a
+# developer's own pools against the fake dataplane. Set again here, and unset
+# again at the end, for the same reason it was unset there.
+export HEXA_CONFIG="$FAKE/hexarouting.conf"
+printf 'nat cgnat pool alpha\n inside 100.64.0.0/24\n exit\nnat cgnat pool beta\n inside 100.64.1.0/24\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+# The dataplane's own line shape: "pool <name> [<mode> / <policy>]".
+printf 'pool alpha [deterministic / interleaved]\npool beta [dynamic / blocked]\n' \
+  > "$FAKE/bpa_pools"
+run
+if said '\[ ok \] and every pool the saved configuration names is on the dataplane'; then
+  ok "a box whose pools all applied is reported so"
+else
+  bad "both pools were there and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'pool' | tail -2 || echo '<nothing>')"
+fi
+# The pool the dataplane refused. Same file, one pool missing from the box.
+printf 'pool alpha [deterministic / interleaved]\n' > "$FAKE/bpa_pools"
+run
+if said '\[FAIL\] the saved configuration has pool\(s\) beta and the dataplane'; then
+  ok "a pool in the file and not on the box is a FAILED check, and it is named"
+else
+  bad "a refused pool passed: $(printf '%s\n' "$OUTPUT" | grep -i 'pool' | tail -2 || echo '<nothing>')"
+fi
+# The sentence wraps across two say() lines, so the needle is the half that
+# is on one of them. A needle that spans a line break can never match, which
+# is the first thing to check when an assertion about a message goes red.
+if said 'subscriber behind them is untranslated'; then
+  ok "and the failure says what it costs, in subscribers"
+else
+  bad "the failure does not say what a missing pool means"
+fi
+if said 'journalctl -u'; then
+  ok "and where the dataplane's own reason is"
+else
+  bad "the failure does not say where to find the reason"
+fi
+# A box with no pools in the file at all must say nothing here: an operator who
+# has not configured a pool yet is not a box with a defect, and the [info]
+# above already covers them.
+printf '\n' > "$FAKE/hexarouting.conf"
+rm -f "$FAKE/bpa_pools"
+run
+if said 'saved configuration has pool'; then
+  bad "a box with no pools configured was told a pool is missing"
+else
+  ok "a box that has configured no pool is not told one is missing"
+fi
+
+echo "=== uRPF: on in the file, and on in the dataplane (#172) ==="
+# More at stake than the pools. uRPF is what stops a spoofed source being
+# translated, and therefore what stops a packet nobody sent being attributed to
+# a subscriber in the retention log - a record indistinguishable from a true
+# one. A box whose saved configuration turns it on and whose dataplane does not
+# have it forwards, translates, logs and answers everything, and there is no
+# counter anywhere for a protection that is simply absent.
+printf 'nat cgnat pool alpha\n exit\ninterface TenGigabitEthernet0/0/0\n urpf strict\n exit\n' \
+  > "$FAKE/hexarouting.conf"
+printf 'pool alpha [deterministic / interleaved]\n' > "$FAKE/bpa_pools"
+printf 'TenGigabitEthernet0/0/0 strict\n' > "$FAKE/bpa_urpf"
+run
+if said '\[ ok \] uRPF is on in the dataplane, as the saved configuration asks'; then
+  ok "a box whose uRPF really is on is reported so, with what the box has"
+else
+  bad "uRPF was on in both and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i urpf || echo '<nothing>')"
+fi
+# The one that matters: the file asks for it and the dataplane has it nowhere.
+printf 'no interface has uRPF enabled\n' > "$FAKE/bpa_urpf"
+run
+if said '\[FAIL\] the saved configuration turns uRPF on and the dataplane has it on'; then
+  ok "uRPF asked for and absent is a FAILED check"
+else
+  bad "a box with no uRPF at all passed: $(printf '%s\n' "$OUTPUT" | grep -i urpf || echo '<nothing>')"
+fi
+if said 'attributed'; then
+  ok "and the failure says what it costs, which is a record about the wrong subscriber"
+else
+  bad "the failure does not say what an absent uRPF means"
+fi
+# A box that never asked for uRPF is told nothing: most boxes do not run it,
+# and an alarm that is always on is one nobody reads.
+printf 'nat cgnat pool alpha\n exit\n' > "$FAKE/hexarouting.conf"
+run
+if said 'uRPF'; then
+  bad "a box that never configured uRPF was told about it: $(printf '%s\n' "$OUTPUT" | grep -i urpf | head -1)"
+else
+  ok "a box that never asked for uRPF is not told about it"
+fi
+rm -f "$FAKE/bpa_urpf"
+
+rm -f "$FAKE/show_plugins" "$FAKE/bpa_pools"
+printf '\n' > "$FAKE/hexarouting.conf"
+unset HEXA_CONFIG
 rm -rf "$FAKE/root"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi

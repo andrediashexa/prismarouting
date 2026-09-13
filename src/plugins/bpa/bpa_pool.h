@@ -331,7 +331,14 @@ typedef struct
  * the one bpa_forward() gives it. Letting the operator name a different one
  * would break paired address pooling (RFC 4787 REQ-2) - the subscriber would
  * answer on an address it never sends from - and would make the deterministic
- * reverse arithmetic disagree with the session table. So the operator states
+ * reverse arithmetic disagree with the session table.
+ *
+ * That argument stands on its own, and the property it protects is not
+ * unconditional: in dynamic mode an extension block normally lands on another
+ * public address (#226). A forward is still refused on any address but the
+ * subscriber's own first one, which is the conservative side of that.
+ *
+ * So the operator states
  * the public PORT, and it MUST fall inside that subscriber's own block; a port
  * in someone else's block is refused rather than quietly taken from them.
  *
@@ -378,6 +385,24 @@ typedef struct
    * complaint for an outage.
    */
   u8 max_blocks;
+
+  /*
+   * Distance between the blocks one subscriber holds, in blocks of its own
+   * public address. Zero is what the allocator has always done: an extension
+   * is whatever comes off the free list next.
+   *
+   * One is contiguous - the second block's ports start where the first block's
+   * end - which is one range for an investigator to read instead of two.
+   * Larger spreads a subscriber across its address's port range, which is what
+   * makes it harder to profile one by watching a single range. Neither is
+   * obviously right, which is why it is a setting.
+   *
+   * NOT part of the mapping. bpa_forward() does not read it and must not: in
+   * deterministic mode a change to the mapping re-maps every subscriber on the
+   * pool, and a setting about the SECOND block a subscriber gets has no
+   * business moving the first (docs/pool-resize.md, issue #23).
+   */
+  u16 block_stride;
 
   /* Which ALGs run here, and which of those the operator actually chose.
    * Resolved once by bpa_pool_init(); see the registry above. */
@@ -740,6 +765,92 @@ bpa_join (const bpa_pool_t *p, u32 pub_idx, u32 blk_idx)
   if (PREDICT_TRUE (p->policy == BPA_POLICY_INTERLEAVED))
     return blk_idx * p->div.d + pub_idx;
   return pub_idx * p->div.d + blk_idx;
+}
+
+/* ------------------------------------------------------------------ */
+/* the blocks beyond the first                                         */
+
+/*
+ * What "one block further along this public address" is worth in block
+ * indices.
+ *
+ * The block index space is the one bpa_split() divides, so stepping one block
+ * along an address means stepping over whatever the policy puts between two
+ * blocks of the same address: the whole public set under interleaved, one
+ * under blocked. Equal to p->div.d in the interleaved case, and spelled out
+ * rather than reused because the two are the same number for different
+ * reasons.
+ */
+static_always_inline u32
+bpa_stride_unit (const bpa_pool_t *p)
+{
+  return p->policy == BPA_POLICY_INTERLEAVED ? p->outside.count : 1;
+}
+
+/*
+ * Block index of the nth block a subscriber holds after its first, under the
+ * pool's stride. Returns 0 on success, -1 when the stride cannot place it.
+ *
+ * -1 has two causes and the caller treats them alike - it falls back to the
+ * free list - but they are worth telling apart when reading a counter. With no
+ * stride there is no arithmetic to do. With one, the step ran off the end of
+ * the subscriber's own public address, and the block after that one belongs to
+ * a different address whose blocks this worker may not own.
+ */
+static_always_inline int
+bpa_stride_block (const bpa_pool_t *p, u32 primary_block, u32 nth, u32 *out)
+{
+  u32 pub_idx, blk_idx, target;
+
+  if (p->block_stride == 0)
+    return -1;
+
+  bpa_split (p, primary_block, &pub_idx, &blk_idx);
+  target = blk_idx + nth * p->block_stride;
+  if (PREDICT_FALSE (target >= p->blocks_per_ip))
+    return -1;
+
+  *out = bpa_join (p, pub_idx, target);
+  return 0;
+}
+
+/*
+ * Whether worker sharding lets this pool's stride be honoured at all.
+ *
+ * A dynamic pool partitions blocks by block_idx % n_workers so that allocation
+ * needs no lock, and a subscriber draws only from its own worker's slice -
+ * both directions of a flow have to meet on one thread, and out2in resolves
+ * the thread from the block index. The nth block under a stride sits exactly
+ * nth*stride*unit indices from the first, so it is in the same slice only when
+ * that distance is a multiple of the worker count.
+ *
+ * nth = 1 decides it for every nth: if stride*unit is a multiple of the worker
+ * count then so is every multiple of it, and if it is not then no nth makes it
+ * one that is congruent - the failure is total rather than partial, which is
+ * why this is a refusal at configuration time and not a counter.
+ */
+static_always_inline int
+bpa_stride_reachable (const bpa_pool_t *p, u32 n_workers)
+{
+  if (p->block_stride == 0 || n_workers <= 1)
+    return 1;
+  return ((u64) p->block_stride * bpa_stride_unit (p)) % n_workers == 0;
+}
+
+/*
+ * The smallest stride at or above `want` that the sharding can honour, so a
+ * refusal can say what to type instead. Zero when there is none below the
+ * blocks one public address holds.
+ */
+static_always_inline u32
+bpa_stride_next_ok (const bpa_pool_t *p, u32 want, u32 n_workers)
+{
+  u32 unit = bpa_stride_unit (p), s;
+
+  for (s = want ? want : 1; s < p->blocks_per_ip; s++)
+    if (((u64) s * unit) % n_workers == 0)
+      return s;
+  return 0;
 }
 
 /* ------------------------------------------------------------------ */

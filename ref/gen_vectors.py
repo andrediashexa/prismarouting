@@ -41,11 +41,20 @@ L = ["/* GERADO por ref/gen_vectors.py - NAO EDITAR A MAO. */",
      "  u32 exp_blocks_per_ip, exp_capacity;",
      "  u32 exp_inside_count, exp_outside_count;",
      "  u32 exp_in_ranges, exp_out_ranges;",
+     "  u32 exp_stride_unit;",
      "} bpa_vec_pool_t;", "",
      "typedef struct { u32 pool, ip_priv, ip_pub; u16 port_lo, port_hi; } bpa_vec_fwd_t;",
-     "typedef struct { u32 pool, ip_pub; u16 port; u32 ip_priv; } bpa_vec_rev_t;", ""]
+     "typedef struct { u32 pool, ip_pub; u16 port; u32 ip_priv; } bpa_vec_rev_t;",
+     "",
+     "/* Where the stride puts the nth block a subscriber holds. `has` is 0",
+     "   when the stride runs off the end of the subscriber's own public",
+     "   address, which the plugin must refuse to place rather than wrap. */",
+     "typedef struct {",
+     "  u32 pool; u16 stride; u32 primary_block, nth;",
+     "  int has; u32 block, ip_pub; u16 port_lo;",
+     "} bpa_vec_stride_t;", ""]
 
-built, fwd, rev = [], [], []
+built, fwd, rev, strd = [], [], [], []
 for pi, (name, ins, outs, bs, pol) in enumerate(POOLS):
     p = PoolConfig(name, ins, outs, block_size=bs, policy=pol)
     ri, ro = raw(ins), raw(outs)
@@ -60,7 +69,8 @@ for pi, (name, ins, outs, bs, pol) in enumerate(POOLS):
                  f'bpa_out_b_{pi}, bpa_out_c_{pi}, {len(ro)}u, '
                  f'{p.port_min}, {p.port_max}, {bs}, {polc}, '
                  f'{p.blocks_per_ip}u, {p.capacity}u, {p.inside.count}u, '
-                 f'{p.outside.count}u, {len(p.inside.ranges)}u, {len(p.outside.ranges)}u }},')
+                 f'{p.outside.count}u, {len(p.inside.ranges)}u, '
+                 f'{len(p.outside.ranges)}u, {p.stride_unit}u }},')
 
     n = min(p.capacity, p.inside.count)
     for sub in range(n):
@@ -71,6 +81,35 @@ for pi, (name, ins, outs, bs, pol) in enumerate(POOLS):
         for port in (f["port_lo"], f["port_lo"] + bs // 2, f["port_hi"]):
             back = int(ipaddress.IPv4Address(p.reverse(f["ip_pub"], port)))
             rev.append(f'  {{ {pi}u, {pub}u, {port}, {back}u }},')
+
+    # Where a stride puts the blocks beyond the first. The primary blocks
+    # sampled deliberately include the LAST blocks of a public address, which
+    # are the ones whose stride steps off the end: a plugin that wrapped
+    # instead of refusing would put the subscriber on an address whose blocks
+    # its own worker does not own, and every reply would land on the wrong
+    # thread.
+    probes = sorted(set(
+        [0, 1, p.blocks_per_ip // 2, p.capacity // 3]
+        + [p.join(0, b) for b in range(max(0, p.blocks_per_ip - 4), p.blocks_per_ip)]
+        + [p.join(p.outside.count - 1, p.blocks_per_ip - 1)]))
+    for stride in (1, 2, 3):
+        if stride >= p.blocks_per_ip:
+            continue
+        q = PoolConfig(name, ins, outs, block_size=bs, policy=pol,
+                       block_stride=stride)
+        for pb in probes:
+            if pb >= q.capacity:
+                continue
+            for nth in (1, 2, 3):
+                blk = q.extension_block(pb, nth)
+                if blk is None:
+                    strd.append(f'  {{ {pi}u, {stride}, {pb}u, {nth}u, 0, 0u, 0u, 0 }},')
+                    continue
+                pub_idx, blk_idx = q.split(blk)
+                ip = q.outside.addr_of(pub_idx)
+                lo = q.port_min + blk_idx * bs
+                strd.append(f'  {{ {pi}u, {stride}, {pb}u, {nth}u, 1, {blk}u, '
+                            f'{ip}u, {lo} }},')
 
 L.append("")
 L.append("static const bpa_vec_pool_t bpa_vec_pools[] = {")
@@ -85,8 +124,13 @@ L.append("static const bpa_vec_rev_t bpa_vec_rev[] = {")
 L += rev
 L.append("};")
 L.append(f"#define BPA_VEC_N_REV {len(rev)}\n")
+L.append("static const bpa_vec_stride_t bpa_vec_stride[] = {")
+L += strd
+L.append("};")
+L.append(f"#define BPA_VEC_N_STRIDE {len(strd)}\n")
 L.append("#endif")
 
 dest = os.path.join(os.path.dirname(__file__), "..", "test", "bpa_vectors.h")
 open(dest, "w").write("\n".join(L) + "\n")
-print(f"gerado: {len(POOLS)} pools, {len(fwd)} forward, {len(rev)} reverse")
+print(f"gerado: {len(POOLS)} pools, {len(fwd)} forward, {len(rev)} reverse, "
+      f"{len(strd)} stride")

@@ -48,7 +48,36 @@
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 ONLY=${1:-}
-JOBS=${LAB_JOBS:-16}
+# How many labs at once, and it is bounded by MEMORY as well as by cores.
+#
+# Each lab is a container with --memory=5g (tools/lab.sh), and each runs a VPP
+# that reserves hugepages up front. Sixteen of those is 80 GB of limits on a
+# box with 62.8 GB, and the way that fails is not a clean refusal: one
+# container's VPP does not start, its lab runs every check against a dataplane
+# that is not there, and the suite reported eight product failures - one of
+# them a checksum failure, on the run right after a checksum change landed
+# (#151). The same lab alone, on an idle box, passes eleven checks.
+#
+# So the default is the smaller of the core-based number and what the memory
+# will hold. LAB_JOBS still overrides it: a box with more memory per core
+# should use it, and the point here is that the DEFAULT stops over-subscribing
+# a machine it was never measured on.
+#
+# HEXA_MEMINFO is empty on every real run and is set only by
+# test/test_run_all_labs.sh, for the same reason HEXA_SELFTEST_ROOT exists:
+# a machine cannot be made to have 8 GB, or 512 GB, without being a different
+# machine, and the arithmetic is the whole of what is being checked.
+_jobs_by_mem() {
+  _kb=$(awk '/^MemTotal:/ {print $2}' "${HEXA_MEMINFO:-/proc/meminfo}" 2>/dev/null)
+  [ -n "${_kb:-}" ] || { echo 16; return; }
+  # LAB_MEM is a limit rather than a reservation, so a lab does not hold all
+  # of it all the time; two thirds is what this box was measured surviving.
+  _n=$(( _kb * 2 / 3 / 1048576 / 5 ))
+  [ "$_n" -lt 1 ] && _n=1
+  [ "$_n" -gt 16 ] && _n=16
+  echo "$_n"
+}
+JOBS=${LAB_JOBS:-$(_jobs_by_mem)}
 pass=0; fail=0; ran=0; novpp=0; nomeasure=0
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
@@ -183,7 +212,17 @@ for f in "$REPO"/lab/*.sh; do
   # library as "ran (no verdict yet)" leaves a number in the summary that never
   # reaches zero, and the day a real lab loses its verdict the line reads the
   # same as it always did.
-  case "$n" in hw-lab|hw-vpp|boot-iso|install-iso|verdict|lib) continue ;; esac
+  #
+  # crossaddr is out for a different reason, and it is worth writing down.
+  # Its checks assert what a dynamic pool's extension DOES today, which is a
+  # defect (#226): it lands on another public address and the box claims
+  # paired address pooling. A lab that pins a defect's current behaviour is a
+  # record, not a regression test - it would go red the day somebody FIXES the
+  # thing it measures, which is the opposite of what a release gate is for.
+  # It is run by hand from the issue.
+  case "$n" in hw-lab|hw-vpp|boot-iso|install-iso|verdict|lib|crossaddr)
+    continue ;;
+  esac
   [ -n "$ONLY" ] && [ "$ONLY" != "$n" ] && continue
   LABS="$LABS $n"
   case " $BOTH_WAYS " in *" $n "*) LABS="$LABS $n+workers" ;; esac
@@ -239,7 +278,22 @@ done
 lab_no_vpp() {
   printf '%s' "$1" | grep -q "VPP did not start" && return 0
   printf '%s' "$1" | grep -q "connect: Connection refused" || return 1
-  printf '%s' "$1" | grep -q "\[ ok \]" && return 1
+  # A green check BEFORE the first refusal means something really was
+  # measured, and the box then went: that is the half-dead case, and it stays
+  # FAIL until somebody looks at it.
+  #
+  # Green checks AFTER it are a different thing. A lab whose dataplane never
+  # came up reaches its verdict with every value empty, and an assertion
+  # written as `test "${X:-0}" = "0"` passes on an empty X - correctly guarded
+  # by a precondition that fails beside it, which is why the lab still reports
+  # FAILED. But those greens made this function answer "something was
+  # measured" when the first line of the run was already a refusal.
+  #
+  # Measured: lab/icmp-tcp.sh in the release suite of 2026-09-13 refused on
+  # line 2 of its output, printed three guarded greens at the verdict, and was
+  # reported as a product failure. What it was is a lab that could not be run.
+  _before=$(printf '%s' "$1" | sed -n '1,/connect: Connection refused/p')
+  printf '%s' "$_before" | grep -q "\[ ok \]" && return 1
   return 0
 }
 

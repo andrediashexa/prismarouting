@@ -87,17 +87,18 @@ flowchart TD
 These are stated here because two of them were asked for as if missing. A
 claim about current behaviour is worth nothing without the code that shows it.
 
-**These are now asserted, not read.** `lab/nat-behaviour.sh` measures them
-against a running dataplane; the evidence column below points at code because
-that is where the property comes from, but a change that breaks it fails a test
-rather than shipping.
+**These are now asserted, not read.** Every one of them is measured against a
+running dataplane, and the evidence column says by which lab and in what words,
+because an evidence column that points only at the code it came from is a map
+to the intention rather than to the proof. A change that breaks one of these
+fails a lab rather than shipping.
 
 | Behaviour | Why it already holds | Evidence |
 |---|---|---|
 | **Endpoint-Independent Mapping** (RFC 4787 REQ-1) | The `in2out` session key is `(private ip, private port, protocol)`. The remote address is not part of it, so one internal socket always maps to the same external port regardless of destination. | Measured: one socket reaching 8.8.8.8 then 1.1.1.1 keeps one public port (`lab/nat-behaviour.sh`) |
-| **Endpoint-Independent Filtering** (RFC 4787 REQ-8, full-cone) | The `out2in` key is `(public ip, public port, protocol)`. Any external host may reach an open mapping. | same key function, `bpa_out2in.c` |
-| **Paired address pooling** (RFC 4787 REQ-2) | A subscriber's public address comes from `bpa_forward()`, a function of the subscriber index alone. It cannot vary between sessions. | `bpa_pool.h`, `ref/bpa_model.py` |
-| **Port preservation where possible** | The allocator honours the original port when it is inside the block and free. | `bpa_ports.h`, `test/test_bpa_ports.c` |
+| **Endpoint-Independent Filtering** (RFC 4787 REQ-8, full-cone) | The `out2in` key is `(public ip, public port, protocol)`. Any external host may reach an open mapping. | Measured: *"endpoint-independent filtering lets an uninvited remote through"* and *"it arrives at the subscriber's own address and port"* (`lab/nat-behaviour.sh`); the key function is `bpa_out2in.c` |
+| **Paired address pooling** (RFC 4787 REQ-2) | A subscriber's FIRST public address comes from `bpa_forward()`, a function of the subscriber index alone, and cannot vary between sessions. In **dynamic** mode a subscriber that fills its block gets an extension from the free list, and under `policy interleaved` that block is normally on a **different** public address - measured, and it gets more likely as the pool grows ([#226](https://github.com/andrediashexa/hexarouting/issues/226)). So the property holds unconditionally in deterministic mode and until the first extension in dynamic mode. | `bpa_pool.h`, `ref/bpa_model.py` |
+| **Port preservation where possible** | The allocator honours the original port when it is inside the block and free. | Measured: *"port 1600 was available before the forward existed"* asserts `100.64.0.5:1600 -> 200.150.0.17:1600` off a running box (`lab/forward.sh`), where it is the precondition of the reservation test; the arithmetic is `bpa_ports.h` and `test/test_bpa_ports.c` |
 
 EIF is **not** universally desirable: it means unsolicited inbound traffic
 reaches the subscriber. That is why item 3.3 below is about making it a
@@ -124,7 +125,7 @@ What did **not** ship with it: RFC 5382 sets minimums an implementation
 **SHOULD** honour, and nothing warns an operator who goes below them. That is
 [#54](https://github.com/andrediashexa/hexarouting/issues/54).
 
-### 2.2 BPA step control — extended blocks delivered in v0.4.0 — [#13](https://github.com/andrediashexa/hexarouting/issues/13)
+### 2.2 BPA step control - delivered: extended blocks in v0.4.0, the stride in [#55](https://github.com/andrediashexa/hexarouting/issues/55)
 
 **Extended blocks** shipped: a subscriber that fills its block is given another,
 bounded by a per-pool `max-blocks`, and each one produces its own RFC 8158
@@ -140,10 +141,25 @@ subscriber, which is [#39](https://github.com/andrediashexa/hexarouting/issues/3
 and depends on the capacity-change procedure
 ([#23](https://github.com/andrediashexa/hexarouting/issues/23)).
 
-Still missing, now tracked as
-[#55](https://github.com/andrediashexa/hexarouting/issues/55): the **stride**
-between the blocks one subscriber holds, and **per-pool block-size ranges** so a
-pool can start subscribers small and grow only those who need it.
+**Stride** shipped with [#55](https://github.com/andrediashexa/hexarouting/issues/55):
+`block-stride` puts the nth block a subscriber holds `n × stride × block-size`
+ports above its first, on the same public address - side by side at one, spread
+at more - with zero, the historical behaviour, as the default. It is not part of
+the mapping and moves no existing subscriber, which is asserted rather than
+promised, and each block is still its own `natEvent 16` wherever it lands. Where
+the worker sharding cannot honour a stride the box warns and names one that
+works, rather than refusing and leaving a pool unable to come up after a
+restart.
+
+**Per-pool block-size ranges** were measured and found to be **already
+delivered** by `block-size` with `max-blocks`: a subscriber starts at
+`block-size` ports and grows one block at a time, only when it fills one, as far
+as `block-size × max-blocks`. What was missing was that nothing said so, and
+`show bpa pool` now prints the range in ports. A **growth step** - handing out
+several blocks at once - was measured and not built: it hands out the same
+blocks in fewer events and changes nothing a session pays, because a session
+walks the blocks a subscriber holds rather than the events that produced them.
+The reading is in `ref/validate.py` and is re-taken on every `make model`.
 
 ### 2.3 ALG — FTP, RTSP, PPTP, ESP and SIP-over-UDP built; TFTP missing, M per protocol — [#14](https://github.com/andrediashexa/hexarouting/issues/14)
 
@@ -1136,8 +1152,9 @@ actually start.
 |---|---|
 | [#202](https://github.com/andrediashexa/hexarouting/issues/202) the rename to PrismaRouting | the maintainer's, and one question is open: `hexash` is the recorded login shell of existing accounts, so whether it renames with the product changes the migration |
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
-| [#197](https://github.com/andrediashexa/hexarouting/issues/197) promotion to a refusal | not a decision - a **measurable condition** written in the code: it becomes a refusal when the full lab suite has run clean with it refusing. Four false positives in five encounters with real configuration is why it warns today |
-| Publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. Pages for #67, #182, #210, #213 and #217 are written and mirrored under `wiki/` and have not been pushed |
+| [#197](https://github.com/andrediashexa/hexarouting/issues/197) promotion to a refusal | not a decision - a **measurable condition** written in the code: it becomes a refusal when the full lab suite has run clean with it refusing. Four false positives in five encounters with real configuration is why it warns today. Two full runs with the refusal armed have now produced **no false refusal at all**, across 78 and 77 passing labs including every lab that commits routing statements; both closed `fail=1` on a lab whose container never started a dataplane, which is what #151's job-count and classifier fixes were about |
+| [#226](https://github.com/andrediashexa/hexarouting/issues/226) which mechanism restores paired address pooling | the **claim** is already corrected in all four places it was made, because a conformance statement the box cannot honour is worse than the absent property. The mechanism is the decision: it changes where every extension in every dynamic pool lands, and two of the four options inherit #55's reachability limit, so they would apply on a two-worker box and not on a four-worker one |
+| Publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. The mirror under `wiki/` now carries pages for #67, #182, #210, #213, #217, the block stride (#55), what `commit` refuses, and the four IGP `show` commands, and none of it has been pushed. `test/test_wiki_roundtrip.sh` checks the mirror keeps the format the two scripts agree on, after five pages were found opening with their own title up to four times (#225) |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), [#30](https://github.com/andrediashexa/hexarouting/issues/30), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
 | [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
 

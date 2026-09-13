@@ -68,6 +68,19 @@ typedef struct
   u32 n_pinned;	    /* of those, held because a forward says so */
   u64 n_allocations;
   u64 n_extensions;   /* blocks handed out as extensions *//* lifetime; becomes natEvent 16 count */
+  /*
+   * Extensions the pool's stride placed, and extensions it could not.
+   *
+   * Two counters because a stride that is configured and never honoured looks
+   * from outside exactly like no stride at all - the subscriber still gets a
+   * block and still translates - and the operator would be reading a setting
+   * the box is not applying. A miss is not a failure: the block the stride
+   * named was taken by somebody else, or the subscriber sits at the end of
+   * its public address, and falling back to the free list is what keeps the
+   * customer working. It is only a failure when it is every one of them.
+   */
+  u64 n_stride_placed;
+  u64 n_stride_missed;
   u64 n_releases;   /* lifetime; becomes natEvent 17 count */
   u64 n_exhausted;  /* allocation refused; becomes natEvent 12 */
   u8 active;
@@ -109,10 +122,21 @@ int bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
  * Another block for a subscriber that already has one. Separate from
  * bpa_dyn_acquire because that one returns the existing block when the
  * subscriber is known, which is exactly the wrong answer here.
+ *
+ * `primary` is the block the subscriber started with and `nth` is how many it
+ * already holds, which together are what the pool's stride is measured from:
+ * the nth block sits nth*stride blocks along the primary's own public
+ * address. Both are ignored when no stride is configured, which is the
+ * default and today's behaviour - whatever the free list hands out next.
+ *
+ * A stride the allocator cannot honour - the block is taken, or it is not in
+ * this worker's slice - falls back to the free list and is counted. Refusing
+ * the extension instead would turn a preference about layout into a customer
+ * losing traffic.
  */
 int bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
-			   u32 worker, u32 n_workers, bpa_block_t *b,
-			   int *is_new);
+			   u32 worker, u32 n_workers, u32 primary, u32 nth,
+			   bpa_block_t *b, int *is_new);
 
 /*
  * Holds one block for one subscriber until the configuration says otherwise.

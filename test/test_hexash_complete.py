@@ -43,7 +43,9 @@ o, _, _ = opts("operational", "show cgnat ")
 # Written out rather than derived from the tree: a test that reads the same
 # structure the code reads would agree with any mistake in it.
 check(o == {"pool", "session", "blocks", "logging", "history",
-            "subscriber", "translation", "top", "drops"}, f"got {o}")
+            "subscriber", "translation", "top", "drops",
+            # The two the dataplane had and this VTY did not reach (#228).
+            "alg", "forward"}, f"got {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== a partial prefix completes ===")
@@ -3146,6 +3148,276 @@ check(_nothing_took(_OMITTED_ONLY + ["ip route 10.0.0.0/8 10.0.0.1"])
       == ["ip route 10.0.0.0/8 10.0.0.1"],
       "and a mixed commit is judged on the statements that mean something")
 
+# --- a pool's public prefix that nothing announces (#145) ---
+#
+# The one finding here that needs both halves of the box. Its whole value is
+# that it fires on a configuration where the CGNAT is right AND the BGP is
+# right, so every assertion below is paired: the shape that must warn, and the
+# legitimate neighbour of it that must not.
+#
+# It had a lab and no unit assertion at all, which is the wrong way round for
+# a pure function over two lists.
+print("\n=== a pool's public prefix that nothing announces ===")
+from hexash import pool_announce_findings, bgp_originations   # noqa: E402
+
+
+def _pool(name, outside, inside="100.64.0.0/22"):
+    p = hexash.Pool(name)
+    p.inside = [inside]
+    p.outside = list(outside)
+    return p
+
+
+def _ann(routing, outside=("200.150.0.16/28",), name="clientes"):
+    return pool_announce_findings(routing, {name: _pool(name, outside)})
+
+
+BGP = ["router bgp 65000", " address-family ipv4 unicast"]
+
+bare = _ann(BGP)
+# Unpacked defensively so that a check which reports NOTHING fails every
+# assertion below it instead of raising an IndexError on the first. A
+# traceback here would abort the file and hide the rest of this section, which
+# is how a broken check looks like a passing suite.
+b0 = bare[0] if bare else ("", "", "", [])
+check(len(bare) == 1 and b0[0] == "warning",
+      f"a pool nobody announces is warned about, once: {bare}")
+check("nothing here announces 200.150.0.16/28" in b0[2],
+      f"and the prefix is named: {bare}")
+check(any("cannot route back" in l for l in b0[3]),
+      f"and the message says what it costs: {bare}")
+check("clientes" in b0[1], f"and which pool it is: {bare}")
+# Never an error. The reason is in pool_announce_findings' docstring and is
+# measured: `network <prefix>` with no matching route in the RIB is stored by
+# FRR 10.7.1 and advertised by nothing, so the condition this can test is a
+# proxy for the one that matters, and a commit MUST NOT be refused on it.
+check(not [f for f in bare if f[0] == "error"],
+      f"and it is never an error: {bare}")
+
+# Containment, not equality: a /24 covers the pool's /28.
+check(not _ann(BGP + ["  network 200.150.0.0/24"]),
+      "a covering aggregate silences it, which is the ordinary case")
+check(not _ann(BGP + ["  network 200.150.0.16/28"]),
+      "and so does the exact prefix")
+# The direction of containment, which is the whole reason routes.covers_prefix
+# exists beside routes._covers: a /28 cannot cover the /24 the pool asks for,
+# however their addresses line up.
+#
+# The two prefixes MUST share a network address for this to be worth asserting.
+# Written first as `network 200.150.0.16/28` against a `200.150.0.0/24` pool it
+# was green under an address test as well, because .0 is outside .16/28 and
+# both functions said no for different reasons - so it caught nothing. Lining
+# the addresses up is what makes the address test answer "covered" and the
+# containment test answer "not covered".
+check(_ann(BGP + ["  network 200.150.0.0/28"], outside=("200.150.0.0/24",)),
+      "a longer prefix does not cover a shorter one with the same address")
+
+# OSPF's `network` is `network <prefix> area <n>` and says nothing about what
+# BGP advertises. Read as an announcement it would silence this check on a box
+# that announces nothing at all.
+check(_ann(BGP + ["router ospf", " network 200.150.0.0/24 area 0"]),
+      "an OSPF network statement is not a BGP announcement")
+
+# `no network ...` takes the statement away. Counted as configuration it would
+# silence the check with the line that removed the announcement.
+check(_ann(BGP + ["  no network 200.150.0.0/24"]),
+      "a 'no network' does not announce anything")
+
+# --- what redistribution does and does not hide, measured on FRR 10.7.1 ---
+#
+#   router bgp / af ipv4 unicast / redistribute static, with the route:
+#     *>  200.150.9.16/28  0.0.0.0  0  32768 ?
+#   the same, route removed:
+#     No BGP prefixes displayed, 0 exist
+#   router ospf / redistribute static, BGP carrying none:
+#     No BGP prefixes displayed, 0 exist
+STATIC = ["ip route 200.150.0.0/24 blackhole"]
+check(not _ann(BGP + ["  redistribute static"] + STATIC),
+      "a static route redistributed into BGP announces the pool's prefix")
+check(_ann(BGP + ["  redistribute static"]),
+      "while 'redistribute static' with no covering route announces nothing")
+check(_ann(BGP + ["  redistribute static",
+                  "ip route 10.0.0.0/8 blackhole"]),
+      "nor does one that covers something else")
+# The seam between what the operator TYPES and what this reads. Inside `router
+# static` the VTY takes `route <prefix> <next-hop>` and stages FRR's `ip route
+# ...` - at the top level, which is what makes it a global route rather than a
+# VRF one. The two live in different files, and a rename on either side would
+# leave this check silently unable to resolve any static route at all, which is
+# a false warning on every correctly announced box.
+_sh = hexash.Shell()
+_sh.frr_ctx = []
+check(_sh.hierarchy_rewrite("router static") == "",
+      "'router static' is a block this VTY owns, not a statement it passes on")
+_staged = _sh.hierarchy_rewrite("route 200.150.0.0/24 blackhole")
+check(_staged == "ip route 200.150.0.0/24 blackhole",
+      f"the VTY stages a static route in FRR's spelling: {_staged!r}")
+check(not _ann(BGP + ["  redistribute static", _staged]),
+      "and what the VTY stages is what this check reads")
+# The scope. `redistribute static` under OSPF puts nothing into BGP - measured
+# above - so it must neither announce the prefix nor blind the check. Reading
+# the word wherever it appeared did the second, and went silent on the
+# ordinary edge box that redistributes into its IGP and announces nothing.
+check(_ann(BGP + ["router ospf", " redistribute static"] + STATIC),
+      "'redistribute static' under OSPF neither announces nor hides")
+check(_ann(BGP + ["router ospf", " redistribute bgp"]),
+      "and neither does a full table into the IGP")
+
+# A static route inside a VRF is in another table. Hoisting it into the global
+# answer is the mistake config.group_static() already had to be taught not to
+# make.
+check(_ann(BGP + ["  redistribute static",
+                  "vrf red", " ip route 200.150.0.0/24 blackhole"]),
+      "a VRF's static route does not announce a prefix in the global table")
+
+# --- what this check cannot see, and therefore must not warn about ---
+for hidden in ("  redistribute connected",
+               "  redistribute ospf",
+               "  redistribute static route-map RM",
+               "  aggregate-address 200.150.0.0/16 summary-only",
+               "  network 200.150.0.0/24 route-map RM"):
+    check(not _ann(BGP + [hidden]),
+          f"a statement this cannot follow silences it entirely: {hidden}")
+# And the reason that is not vacuous: each of those is genuinely unfollowable
+# rather than simply unparsed. Measured for the last two on FRR 10.7.1:
+# `aggregate-address 200.150.0.0/16 summary-only` originates the /16 when a
+# more-specific is in the table and nothing when none is, and `network
+# 200.150.9.16/28 route-map RM-DENY` originates nothing while the same
+# statement with a permit map originates it.
+_, blind, _ = bgp_originations(BGP + ["  aggregate-address 200.150.0.0/16"])
+check(len(blind) == 1 and "aggregate-address" in blind[0],
+      f"and the statement that blinds it is named: {blind}")
+
+# "announced" and "cannot see" are not the same answer, and the difference
+# shows on a box with more than one pool: an announcement silences only the
+# pools it covers, while a statement this cannot follow silences all of them.
+# A `network ... route-map` counted as a plain announcement would look right
+# on the pool it names and wrong on every other one.
+mixed = pool_announce_findings(
+    BGP + ["  network 200.150.0.0/24 route-map RM"],
+    {"a": _pool("a", ["203.0.113.0/28"])})
+check(not mixed,
+      f"a network with a route-map silences a pool it does not cover: {mixed}")
+
+# A box with no BGP announces nothing from here by definition, and is exactly
+# the deployment whose prefix is carried by a router upstream. Warning there
+# would be an alarm that is always on.
+check(not _ann(["interface vppwan0", " ip address 10.0.0.1/24"]),
+      "a box with no BGP stanza is told nothing")
+check(not pool_announce_findings(BGP, {}),
+      "and neither is a box with no pools")
+
+# --- the shape EVERY commit after the first one sees ---
+#
+# cfg.routing is read back from FRR, so this is not a hand-made indented
+# example: it is what FRR 10.7.1 printed during the measurement, ` !` and all.
+# That indented separator is the whole reason this is asserted on the captured
+# text rather than on something written to look like it - config.block_paths()
+# read it as "back to the top", which put the `network` statement in no block
+# at all, and the check then warned about a pool the box was announcing
+# correctly. A false positive on the ordinary case, invisible in a flat test.
+FRR_READBACK = ["router bgp 65000",
+                " !",
+                " address-family ipv4 unicast",
+                "  network 200.150.9.16/28",
+                " exit-address-family",
+                "exit"]
+check(not pool_announce_findings(
+        FRR_READBACK, {"c": _pool("c", ["200.150.9.16/28"])}),
+      "a prefix FRR reads back under router bgp is an announcement")
+_a, _b, _h = bgp_originations(FRR_READBACK)
+check(_a == ["200.150.9.16/28"] and _h,
+      f"and it is found in the stanza it was typed in: {_a} {_h}")
+# The same read-back shape carrying the scope mistake.
+check(pool_announce_findings(
+        ["ip route 200.150.9.16/28 blackhole",
+         "router ospf", " redistribute static", "exit",
+         "router bgp 65000", " !", " address-family ipv4 unicast",
+         " exit-address-family", "exit"],
+        {"c": _pool("c", ["200.150.9.16/28"])}),
+      "and the IGP redistribution is still not an announcement, indented")
+
+# Both shapes `routing` arrives in. Read back from FRR it is INDENTED; typed
+# at this VTY it is flat. A scanner that read either one alone was wrong for
+# the other, which is why the block context comes from config.block_paths().
+FLAT = ["router bgp 65000", "address-family ipv4 unicast",
+        "redistribute static", "exit-address-family", "exit",
+        "ip route 200.150.0.0/24 blackhole"]
+check(not _ann(FLAT),
+      "the flat shape typed at this VTY is read the same way as FRR's")
+check(_ann(["router bgp 65000", "address-family ipv4 unicast",
+            "exit-address-family", "exit",
+            "router ospf", "redistribute static",
+            "ip route 200.150.0.0/24 blackhole"]),
+      "and the scope holds in the flat shape too")
+
+# --- the six cases lab/bgp-policy.sh drives, in the shape the VTY builds ---
+#
+# Two shapes meet in one candidate and both are real. The stanza FRR read back
+# is INDENTED and carries the ` !` separator; everything the operator then
+# types is APPENDED FLAT at column 0, because `do_config` ends in
+# `candidate.routing.append(line)` and does not merge into the block above. So
+# a second `router bgp 65000` at column 0 sits after the indented one, and the
+# statements typed under it belong to THAT one.
+#
+# Asserted here as well as in the lab because the lab needs VPP and a
+# container, and a check whose only proof takes minutes to run is a check
+# nobody reruns while changing it.
+LAB_BASE = ["router bgp 65000",
+            " bgp router-id 10.0.0.1",
+            " neighbor 10.0.0.2 remote-as 65001",
+            " !",
+            " address-family ipv4 unicast",
+            "  neighbor 10.0.0.2 activate",
+            " exit-address-family",
+            "exit",
+            "!"]
+LAB_POOL = {"lab-ann": _pool("lab-ann", ["200.150.9.16/28"], "100.64.8.0/22")}
+LAB = (
+    ("NOANN", [], True),
+    ("ANN", ["router bgp 65000", "address-family ipv4 unicast",
+             "network 200.150.9.0/24", "exit-address-family", "exit"], False),
+    ("RED", ["router bgp 65000", "redistribute connected", "exit"], False),
+    ("RSTAT", ["ip route 200.150.9.0/24 blackhole",
+               "router bgp 65000", "address-family ipv4 unicast",
+               "redistribute static", "exit-address-family", "exit"], False),
+    ("RELSE", ["ip route 10.0.0.0/8 blackhole",
+               "router bgp 65000", "address-family ipv4 unicast",
+               "redistribute static", "exit-address-family", "exit"], True),
+    ("ROSPF", ["ip route 200.150.9.0/24 blackhole",
+               "router ospf", "redistribute static", "exit",
+               "router bgp 65000", "address-family ipv4 unicast",
+               "exit-address-family", "exit"], True),
+)
+for _name, _typed, _warns in LAB:
+    _f = pool_announce_findings(LAB_BASE + _typed, LAB_POOL)
+    check(bool(_f) == _warns,
+          f"lab case {_name}: expected {'a warning' if _warns else 'silence'}"
+          f", got {_f}")
+
+# Every pool, not the first one.
+two = pool_announce_findings(
+    BGP + ["  network 200.150.0.0/24"],
+    {"a": _pool("a", ["200.150.0.16/28"]),
+     "b": _pool("b", ["203.0.113.0/28"])})
+check(len(two) == 1 and "'b'" in two[0][1],
+      f"the announced pool is quiet and the other one is not: {two}")
+# And every prefix of one pool, not the first one.
+multi = pool_announce_findings(
+    BGP + ["  network 200.150.0.0/24"],
+    {"a": _pool("a", ["200.150.0.16/28", "203.0.113.0/28"])})
+check(len(multi) == 1 and "203.0.113.0/28" in multi[0][2],
+      f"a pool's second outside prefix is checked too: {multi}")
+
+# No input may put a traceback in front of an operator.
+for junk in ("network", "network /", "network 200.150.0.16/", "redistribute",
+             "ip route", "ip route 200.150.0.0/24", "aggregate-address"):
+    try:
+        _ann(BGP + ["  " + junk, junk])
+    except Exception as e:                                   # noqa: BLE001
+        check(False, f"half-typed statement raised {e!r}: {junk}")
+
+
 print("\n=== inside a block, `show` is offered and so is the tree under it ===")
 #
 # `show this` is the only way to read back what has been typed into a block
@@ -3747,11 +4019,11 @@ _sh = pool_shell()
 for _line in ("no timeout udp", "no alg ftp", "no max-blocks", "no tcp-mss",
               "no filter", "no max-sessions", "no max-session-rate",
               "no utilisation-alarm", "no bypass source",
-              "no bypass destination"):
+              "no bypass destination", "no block-stride"):
     check(said(_sh, _line) == "",
           f"'{_line}' on a pool that has none must be quiet: "
           f"{said(_sh, _line)!r}")
-print(f"  {10} removals on a pool with nothing to remove: all silent")
+print(f"  {11} removals on a pool with nothing to remove: all silent")
 
 # --- the word after `no` is the one that is wrong ---
 _sh = pool_shell()
@@ -4002,6 +4274,38 @@ check({"strict", "loose", "off"} <= set(_urpf),
 print(f"  no ip ospf ? -> {sorted(_ospf)}")
 print(f"  no urpf ?    -> {sorted(_urpf)}")
 
+
+print("\n=== the two dataplane show commands the VTY could not reach (#228) ===")
+#
+# Both answer "what does the box ACTUALLY have", which is a different question
+# from what the file says: whether an ALG is on in the dataplane, and which
+# port forwards the dataplane holds. Without them the way to that answer was
+# vppctl, which this VTY exists to keep an operator out of.
+#
+# Asserted at both ends: that `?` offers them, and that what reaches the
+# dataplane is the command the plugin actually registers. Offering a word that
+# sends nothing is the same defect one layer up.
+_probe = hexash.Shell()
+_probe.mode = "operational"
+_o, _, _ = _probe._options("show cgnat ", False)
+check("alg" in _o, f"`show cgnat ?` does not offer alg: {sorted(_o)}")
+check("forward" in _o, f"`show cgnat ?` does not offer forward: {sorted(_o)}")
+
+_sent = []
+_sh = shell_with_box()
+_sh.dp = type("D", (), {
+    "TRACE": False,
+    "run": lambda _s, c: (_sent.append(c) or (0, "")),
+    "reachable": lambda _s: True})()
+for _line, _want in (("show cgnat alg", "show bpa alg"),
+                     ("show cgnat forward", "show bpa forward"),
+                     ("show cgnat forward provider-a",
+                      "show bpa forward provider-a")):
+    _sent.clear()
+    with contextlib.redirect_stdout(io.StringIO()):
+        _sh.feed(_line)
+    check(_sent == [_want],
+          f"{_line!r} sent {_sent!r} to the dataplane, not {[_want]!r}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

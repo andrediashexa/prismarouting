@@ -80,6 +80,25 @@ case "$1 ${2:-}" in
   "ee-silent ")
     exit 0 ;;
 
+  # icmp-tcp's capture from the release suite of 2026-09-13: vppctl was
+  # refused on the SECOND line of the run, so nothing was ever measured - and
+  # the verdict still carried three greens, because an assertion written as
+  # `test "${X:-0}" = "0"` passes on an empty X. Each is guarded by a
+  # precondition that fails beside it, which is why the lab reports FAILED;
+  # what they are not is evidence that the box answered.
+  "ii-deadstart ")
+    echo "=========== 1. outbound UDP session ==========="
+    echo "connect: Connection refused"
+    echo "connect: Connection refused"
+    echo ""
+    echo "=========== VERDICT ==========="
+    echo "  [FAIL] the translated ICMP error passed every checksum"
+    echo "  [ ok ] the out2in handoff identified the subscriber"
+    echo "  [FAIL] and it really did have to cross a worker to get there"
+    echo "  [ ok ] and they expired on the SYN timer, not the transitory one"
+    echo "  [FAIL] three half-open sessions were created"
+    echo "LAB FAILED: 3 check(s)"; exit 1 ;;
+
   # igp's capture: the box cleared an adjacency, the reading was taken after
   # the hello interval, and the check says so rather than reporting a product
   # defect. It measured everything else first, which is what separates it from
@@ -118,7 +137,7 @@ EOF
 chmod +x "$d/tools/build.sh" "$d/tools/lab.sh"
 
 for n in aa-good bb-broken cc-panic dd-refused ee-silent ff-halfdead \
-         gg-late vrf audit urpf; do
+         gg-late ii-deadstart vrf audit urpf; do
   echo '#!/bin/sh' > "$d/lab/$n.sh"
 done
 # The lab with a floor in its header, and a lab file is where the floor lives
@@ -160,6 +179,24 @@ case "$out" in
   *"audit+off          FAIL - PASSED with the feature off"*)
     ok "and an off run that passed is the suite's own failure" ;;
   *) bad "an off mode that passed was not caught" ;;
+esac
+
+echo "=== green AFTER the first refusal is not evidence the box answered ==="
+# The boundary between this and ff-halfdead, and it is the whole of why
+# lab_no_vpp reads the ORDER rather than the presence of a green check. A lab
+# whose dataplane never came up reaches its verdict with every value empty, and
+# a guarded assertion passes on an empty value - correctly, with its
+# precondition failing beside it. Those greens are not a measurement.
+case "$out" in
+  *"ii-deadstart       NO VPP"*)
+    ok "a run refused before it measured anything is NO VPP, greens and all" ;;
+  *) bad "a lab that never reached the dataplane was called something else; got:
+$(printf '%s' "$out" | grep ii-deadstart)" ;;
+esac
+case "$out" in
+  *"ff-halfdead        FAIL"*)
+    ok "and one that measured something first is still a FAIL" ;;
+  *) bad "the half-dead case moved with it, which is the case this must not take" ;;
 esac
 
 echo "=== an off run that lost assertions is caught by its own floor ==="
@@ -211,7 +248,7 @@ esac
 
 echo "=== the summary counts them apart, and the suite still exits non-zero ==="
 case "$out" in
-  *"pass=7  fail=4  notmeasured=1  novpp=3  ran=1"*) ok "the five states are counted apart" ;;
+  *"pass=7  fail=4  notmeasured=1  novpp=4  ran=1"*) ok "the five states are counted apart" ;;
   *) bad "the summary line is not what was counted; got:
 $(printf '%s' "$out" | tail -12)" ;;
 esac
@@ -255,6 +292,48 @@ case "$out3" in
 esac
 [ "$rc3" -ne 0 ] && ok "and a suite with one unmeasured check does not exit 0" \
                  || bad "a suite that could not measure a check exited 0"
+
+echo "=== how many labs at once is bounded by memory, not only by cores ==="
+# Each lab is a container with --memory=5g and a VPP that reserves hugepages up
+# front. Sixteen of those is 80 GB of limits, and on the 62.8 GB box this
+# project runs on the way that failed was not a clean refusal: one container's
+# VPP did not start, its lab ran every check against a dataplane that was not
+# there, and the suite reported eight product failures - one of them a checksum
+# failure, on the run right after a checksum change landed.
+#
+# The arithmetic is read out of the script itself rather than copied here,
+# because a second copy of it is the thing this repository keeps finding.
+sed -n '/^_jobs_by_mem()/,/^}/p' "$REPO/tools/run-all-labs.sh" > "$d/jobs.sh"
+jobs_at() {  # <MemTotal in kB> -> the default job count
+  printf 'MemTotal: %s kB\n' "$1" > "$d/meminfo"
+  HEXA_MEMINFO="$d/meminfo" sh -c ". $d/jobs.sh; _jobs_by_mem"
+}
+got=$(jobs_at 8388608)
+[ "$got" = "1" ] && ok "an 8 GB box runs one lab at a time" \
+  || bad "an 8 GB box was given $got jobs, which is 5 GB each on 8 GB"
+got=$(jobs_at 65970176)
+[ "$got" = "8" ] && ok "and this box's 62 GB gives 8, which is what its clean runs used" \
+  || bad "62 GB gave $got jobs; 16 of them is 80 GB of limits on 62"
+got=$(jobs_at 536870912)
+[ "$got" = "16" ] && ok "and a 512 GB box is still capped at 16, because cores run out too" \
+  || bad "a 512 GB box was given $got jobs, with no core-based cap"
+# And the arithmetic has to be what the suite actually uses. The three checks
+# above read _jobs_by_mem straight out of the file, so they stay green on a
+# script that computes the right number and then ignores it - which is exactly
+# what putting the constant back does, and the first mutation of this section
+# proved by giving zero red. This is the line that connects the two.
+if grep -q 'JOBS=${LAB_JOBS:-$(_jobs_by_mem)}' "$REPO/tools/run-all-labs.sh"; then
+  ok "and the suite's own default is that function rather than a constant"
+else
+  bad "run-all-labs.sh computes a job count from memory and does not use it: "\
+"$(grep -n '^JOBS=' "$REPO/tools/run-all-labs.sh")"
+fi
+
+# And the override has to keep working: a box with more memory per core should
+# be able to say so.
+got=$(LAB_JOBS=3 sh -c 'JOBS=${LAB_JOBS:-99}; echo $JOBS')
+[ "$got" = "3" ] && ok "and LAB_JOBS still overrides the default" \
+  || bad "LAB_JOBS no longer overrides"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

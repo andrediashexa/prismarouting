@@ -73,6 +73,12 @@ MUTATIONS = {
     # --- settings the dataplane changes under a worker barrier, in place.
     "timeouts":     (lambda p: p.timeouts.update({"udp": 900}), "settings_set"),
     "max_blocks":   (lambda p: setattr(p, "max_blocks", 2), "settings_set"),
+    # In place, and the reason is the whole argument for it being a setting:
+    # a stride says where the NEXT extension goes. Nothing already handed out
+    # moves, and bpa_forward() never reads it, so no subscriber's own block
+    # changes. If it ever rebuilt the pool it would be a mapping change and
+    # would belong to the capacity-change procedure instead.
+    "block_stride": (lambda p: setattr(p, "block_stride", 1), "settings_set"),
     "tcp_mss":      (lambda p: setattr(p, "tcp_mss", "1400"), "settings_set"),
     "util_alarm":   (lambda p: setattr(p, "util_alarm", 80), "settings_set"),
     "filter":       (lambda p: setattr(p, "filter", "address-dependent"),
@@ -400,6 +406,51 @@ check(" route 10.0.0.0/8 192.0.2.1" not in lines,
 check(back.routing.index("vrf red") < back.routing.index(" ip route 10.0.0.0/8 192.0.2.1"),
       "and is still inside it after a round trip")
 
+# The same route with the separator FRR 10.7.1 actually writes between the
+# statements of a stanza: an INDENTED `!`. `block_paths` read any `!` as the
+# top-level separator and cleared the block stack, so everything after this one
+# looked top-level - and this route was hoisted out of `vrf red` into `router
+# static`, which is the other routing table and is the whole defect #180 was
+# about, reintroduced by a line the operator never typed.
+#
+# Written with the ` !` because that is what came back off a live daemon. The
+# case above has no separator and was green against this the entire time.
+bang = config.group_static(["vrf red", " !", " ip route 10.0.0.0/8 192.0.2.1",
+                            "exit-vrf"])
+check("router static" not in bang,
+      f"an indented '!' does not hoist a vrf's route out of it: {bang}")
+check(" ip route 10.0.0.0/8 192.0.2.1" in bang,
+      f"and the route is left exactly where FRR put it: {bang}")
+
+# The third thing that `!` broke, and the one no lab holds: `show this` inside
+# `router bgp`, on a configuration READ BACK from FRR rather than typed.
+#
+# frr_block_lines() promises the address-families are part of the answer - an
+# operator standing in `router bgp 65001` is asking what that router holds. FRR
+# 10.7.1 writes ` !` between the router's own statements and its first
+# address-family, and with the stack cleared there the family and everything
+# inside it sat at no path at all, so this function filtered the whole lot out
+# and `show this` answered with the router's bare statements. Not a wrong
+# answer an operator could see was wrong: a SHORTER one, with no marker saying
+# anything was missing.
+#
+# lab/vty.sh asserts the address-family is there, but mid-edit, where the
+# candidate is flat and carries no `!` - so it was green throughout. Its
+# after-commit case reads `router static`, which is top-level and cannot show
+# this. Hence an assertion here, on the read-back shape.
+READBACK = ["router bgp 65000",
+            " bgp router-id 10.0.0.1",
+            " !",
+            " address-family ipv4 unicast",
+            "  maximum-paths 4",
+            " exit-address-family",
+            "exit"]
+held = config.frr_block_lines(READBACK, ["router bgp 65000"])
+check(" address-family ipv4 unicast" in held,
+      f"show this in router bgp keeps the address-family FRR read back: {held}")
+check("  maximum-paths 4" in held,
+      f"and what the family holds, indented under it: {held}")
+
 # The family comes from the prefix, not from a keyword: a prefix with a colon
 # in it is IPv6 and nothing else, and asking for it twice is asking the
 # operator to contradict themselves.
@@ -594,6 +645,41 @@ interface tap4096
 """).interface_names()
 check(named == {"loop3", "tap4096"}, f"the interfaces a file names: {named}")
 
+
+# --- a statement that is typed and never reaches the dataplane -------------
+#
+# The shape of #47: `filter`, `max-blocks`, the per-pool timeouts and the ALG
+# switches were accepted at the prompt, accepted at commit, and arrived
+# nowhere. A pool setting has FOUR renderings that must all carry it - the
+# configuration text it is read back as, the device command, the pool-creation
+# message and the in-place settings message - and a field added to one of them
+# is a feature that exists through whichever path the author happened to test.
+print("\n=== block-stride survives every rendering of a pool ===")
+_p = config.Config.parse("""cgnat pool striding
+ inside 100.64.0.0/22
+ outside 200.150.0.16/28
+ block-stride 3
+ exit
+""").pools["striding"]
+check(_p.block_stride == 3, f"parsed: {_p.block_stride}")
+check(" block-stride 3" in _p.lines(),
+      f"read back as configuration: {_p.lines()}")
+check("block-stride 3" in _p.device_command(),
+      f"as a device command: {_p.device_command()}")
+check(_p.api_args()["block_stride"] == 3,
+      f"in the pool-creation message: {_p.api_args().get('block_stride')}")
+# In the settings message above all, because that is the one that says it can
+# be changed without dropping every session on the pool. Missing here, the
+# statement would be accepted, committed, and silently need a pool rebuild it
+# never gets.
+check(_p.settings_api_args()["block_stride"] == 3,
+      f"in the in-place settings message: "
+      f"{_p.settings_api_args().get('block_stride')}")
+# And absent from the text when it is not set, so a pool that says nothing
+# about the stride does not acquire a line for it on the next commit.
+check(" block-stride 0" not in config.Pool("plain").lines(),
+      "a pool with no stride emits no stride line")
+print("  parsed, read back, and in both API messages")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

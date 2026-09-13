@@ -165,6 +165,29 @@ format_bpa_pool (u8 *s, va_list *args)
 	      format_white_space, indent + 2, p->block_size, p->blocks_per_ip);
   s = format (s, "\n%Usharing      %u:1", format_white_space, indent + 2,
 	      p->blocks_per_ip);
+  /*
+   * The range of ports one subscriber can end up with, in ports.
+   *
+   * The operator sells ports and the box speaks in blocks, and "block 64,
+   * max-blocks 8" is already a per-pool range - a subscriber starts at 64
+   * ports and grows one block at a time, only when it fills one, as far as
+   * 512. Nothing said so, and a range nobody can see is a range nobody sizes
+   * a pool with. Only in dynamic mode, because a deterministic pool never
+   * extends: there the minimum is the maximum by construction (#39).
+   */
+  if (p->mode == BPA_MODE_DYNAMIC && p->max_blocks > 1)
+    s = format (s, "\n%Uper sub      %u-%u ports (1-%u blocks, grown one at a "
+		   "time as each fills)",
+		format_white_space, indent + 2, p->block_size,
+		p->block_size * p->max_blocks, p->max_blocks);
+  else
+    s = format (s, "\n%Uper sub      %u ports (one block)", format_white_space,
+		indent + 2, p->block_size);
+  if (p->block_stride)
+    s = format (s, "\n%Ustride       %u (%u ports between a subscriber's "
+		   "blocks, on its own public address)",
+		format_white_space, indent + 2, p->block_stride,
+		p->block_stride * p->block_size);
   s = format (s, "\n%Ucapacity     %u subscribers (usable %u)",
 	      format_white_space, indent + 2, p->capacity, usable);
   /*
@@ -357,7 +380,7 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
   u32 block = 512, port_min = 1024, port_max = 65535, mss = 0, vrf = 0;
   u32 tv = 0;
 
-  u32 maxb = 0;
+  u32 maxb = 0, stride = 0;
   u32 *in_b = 0, *in_c = 0, *out_b = 0, *out_c = 0;
   u32 *bys_b = 0, *bys_c = 0, *byd_b = 0, *byd_c = 0;
   bpa_pool_t cfg = { 0 };
@@ -444,6 +467,16 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       else if (unformat (line_input, "max-blocks %u", &maxb))
 	cfg.max_blocks = (u8) maxb;
+      else if (unformat (line_input, "block-stride %u", &stride))
+	{
+	  if (stride > 65535)
+	    {
+	      error = clib_error_return (
+		0, "block-stride %u: expected 0-65535 blocks", stride);
+	      goto done;
+	    }
+	  cfg.block_stride = (u16) stride;
+	}
       else if (unformat (line_input, "bypass destination %U/%d",
 			 unformat_ip4_address, &addr, &len))
 	{
@@ -777,7 +810,19 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
   /* After it is applied, never instead of applying it. */
   if (!error)
-    bpa_timeouts_warn (vm, &cfg.timeouts, name);
+    {
+      /* On a copy, the way bpa_pool_validate() computes derived values: the
+       * stride warning needs blocks_per_ip, which only exists after
+       * bpa_pool_init(), and `cfg` is the operator's input rather than a
+       * built pool. A copy also covers `check`, where the operator wants to
+       * hear about the stride before the pool exists. */
+      bpa_pool_t probe = cfg;
+
+      probe.statics = 0;
+      bpa_timeouts_warn (vm, &cfg.timeouts, name);
+      if (!bpa_pool_init (&probe))
+	bpa_stride_warn (vm, &probe);
+    }
 
 done:
   vec_free (in_b);
@@ -2333,7 +2378,7 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       u32 pi = p - bm->pools;
       u64 total = 0, alloc = 0, allocs = 0, rels = 0, exh = 0, exts = 0;
-      u64 pinned = 0;
+      u64 pinned = 0, placed = 0, missed = 0;
 
       if (p->mode != BPA_MODE_DYNAMIC)
 	continue;
@@ -2366,6 +2411,8 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  rels += d->n_releases;
 	  exh += d->n_exhausted;
 	  pinned += d->n_pinned;
+	  placed += d->n_stride_placed;
+	  missed += d->n_stride_missed;
 	}
       /*
        * Pinned is counted apart from "in use" and is a subset of it. An
@@ -2378,6 +2425,23 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 		       "(%Lu extensions), %Lu releases, %Lu refusals, "
 		       "%Lu pinned",
 		       alloc, total, allocs, exts, rels, exh, pinned);
+      /*
+       * Only where a stride is configured, and both numbers together.
+       *
+       * A stride that is set and never honoured looks from outside exactly
+       * like no stride at all - the subscriber still gets a block and still
+       * translates - so an operator reading their own configuration would
+       * believe a layout the box is not producing. A miss is not a fault: the
+       * block the stride named was held by somebody else, or the subscriber
+       * sits at the end of its public address. It is a fault when it is all
+       * of them, and that is only visible next to the number that was
+       * placed.
+       */
+      if (p->block_stride)
+	vlib_cli_output (vm,
+			 "  stride %u: %Lu extensions placed where it says, "
+			 "%Lu fell back to the free list",
+			 p->block_stride, placed, missed);
     }
 
   if (!any)
@@ -2678,6 +2742,8 @@ bpa_show_config_command_fn (vlib_main_t *vm, unformat_input_t *input,
 
       if (p->max_blocks > 1)
 	s = format (s, " max-blocks %u\n", p->max_blocks);
+      if (p->block_stride)
+	s = format (s, " block-stride %u\n", p->block_stride);
       for (i = 0; i < p->bypass_src.n_ranges; i++)
 	s = format (s, "%U", format_bpa_range_as_prefixes,
 		    p->bypass_src.ranges[i].base,

@@ -36,9 +36,11 @@ are to be interpreted as described in
 
 ## Unreleased
 
+[#55](https://github.com/andrediashexa/hexarouting/issues/55),
 [#63](https://github.com/andrediashexa/hexarouting/issues/63),
 [#83](https://github.com/andrediashexa/hexarouting/issues/83),
 [#141](https://github.com/andrediashexa/hexarouting/issues/141),
+[#145](https://github.com/andrediashexa/hexarouting/issues/145),
 [#172](https://github.com/andrediashexa/hexarouting/issues/172),
 [#187](https://github.com/andrediashexa/hexarouting/issues/187),
 [#210](https://github.com/andrediashexa/hexarouting/issues/210),
@@ -51,7 +53,83 @@ are to be interpreted as described in
 [#222](https://github.com/andrediashexa/hexarouting/issues/222),
 [#223](https://github.com/andrediashexa/hexarouting/issues/223),
 [#224](https://github.com/andrediashexa/hexarouting/issues/224),
+[#225](https://github.com/andrediashexa/hexarouting/issues/225),
+[#226](https://github.com/andrediashexa/hexarouting/issues/226),
+[#228](https://github.com/andrediashexa/hexarouting/issues/228).
+
+### Added
+
+* **`block-stride`: the distance between the blocks one subscriber holds**
+  ([#55](https://github.com/andrediashexa/hexarouting/issues/55)). An
+  extension used to be whatever came off the free list next. With a stride,
+  the nth block a subscriber holds starts `n × stride × block-size` ports
+  above its first, **on the same public address**: a stride of one puts them
+  side by side, which is one range for an investigator instead of several, and
+  a larger one spreads the subscriber across its own address's port range,
+  which is what makes it harder to profile a customer by watching a single
+  range. Neither is obviously right, so it is a setting.
+
+  **The default is zero and zero is what the box has always done**, so an
+  upgrade changes nothing - asserted in `ref/validate.py` and in
+  `test/test_bpa_pool.c` rather than promised: with no stride the model
+  predicts no block at all, because today's answer is a function of the
+  pool's history and not of its definition.
+
+  **It is not part of the mapping.** `bpa_forward()` does not read it and must
+  not: 40 pool-and-stride combinations in C and 32 in the model move zero
+  subscribers, which is what keeps a stride out of the capacity-change
+  procedure ([#23](https://github.com/andrediashexa/hexarouting/issues/23)) -
+  a change that moved even one would belong there. `commit` is unchanged and
+  reports no remap for it, and that is the measurement rather than a claim.
+
+  **Every block is still its own RFC 8158 `natEvent 16`, wherever the stride
+  puts it.** `lab/extblocks.sh` now runs a real IPFIX collector and asserts
+  two records for a subscriber holding two blocks, each naming its own port
+  range - the strided one included, which is the range a wrong implementation
+  would log as the one the allocator would have given.
+
+  **A stride is a preference and never costs a customer traffic.** When the
+  block it names is held by somebody else, or the subscriber sits at the end
+  of its public address, the allocator falls back to the free list and counts
+  it. `show bpa blocks` prints both numbers, because a stride that is
+  configured and never honoured looks from outside exactly like no stride at
+  all.
+
+  **A stride the worker sharding cannot honour is warned about, not refused.**
+  Blocks are partitioned by `block_idx % n_workers` and a subscriber draws
+  only from its own worker's slice, so a stride whose step is not a multiple
+  of the worker count names a block this worker may not hand out - for every
+  subscriber rather than for some. The box says so at pool creation and names
+  the nearest stride that works. It is a warning because the worker count is a
+  startup setting: a refusal would leave a pool that came up yesterday failing
+  to come up after a restart, and a pool that does not exist is every
+  subscriber on it losing traffic, which is not an acceptable price for a
+  preference about layout.
+
+* **`show bpa pool` prints the range of ports a subscriber can reach**, in
+  ports, which is the unit an operator sells in. `block-size 64` with
+  `max-blocks 8` already **is** a per-pool range - a subscriber starts at 64
+  ports and grows one block at a time, only when it fills one, as far as 512 -
+  and nothing said so.
 [#225](https://github.com/andrediashexa/hexarouting/issues/225).
+
+* **`show cgnat alg` and `show cgnat forward`**, which the dataplane had and
+  this VTY could not reach. Of fourteen `show bpa` commands the plugin
+  registers, twelve were reachable; the two that were not are the two that
+  answer *what does the box actually have* rather than what the file says -
+  whether an ALG is on **in the dataplane**, and which port forwards the
+  dataplane holds. The way to that answer was `vppctl`, which this VTY exists
+  to keep an operator out of and which is every capability at once
+  ([#228](https://github.com/andrediashexa/hexarouting/issues/228),
+  [#76](https://github.com/andrediashexa/hexarouting/issues/76)).
+
+  It is the shape of [#221](https://github.com/andrediashexa/hexarouting/issues/221)
+  and [#224](https://github.com/andrediashexa/hexarouting/issues/224) one step
+  over: those were things the box does that an operator cannot find; this is a
+  thing the box **says** that they cannot hear from here. And the distinction
+  the two commands draw is
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172)'s: the file
+  and the box come apart quietly, and only reading the box says so.
 
 ### Changed
 
@@ -220,6 +298,159 @@ are to be interpreted as described in
   instead of "you broke something", and this repository has already made that
   trade once. Gaining assertions needs no edit; losing them has to be
   deliberate.
+
+* **The RFC 8158 record this box exports was written down in three places and
+  nothing compared them.** The UDP template names its elements by IANA name,
+  the TCP template lists them by number, and `docs/logging.md` carries the
+  table an operator hands their collector. A field added to one and not the
+  others is neither a build error nor a test failure: it is two transports
+  exporting **different records**, decoded happily by any collector, giving two
+  different answers about the same box - and a document that describes neither.
+
+  `test/test_ipfix_record.py` reads all three and requires them to be the same
+  list, in the same order, with the same widths, for the block record and for
+  the boot marker; and it checks the size comment in `bpa_log.h`, which is a
+  fourth statement of the same fact and is arithmetic. The documentation is
+  where the name and the number meet, so it is what the two code lists are read
+  against - that keeps the comparison at three copies rather than adding a
+  fourth. They agree today; the guard is for the day one of them moves.
+
+* **Nine things `commit` refuses, and the page an operator would look at
+  carried none of them.** Refusing is the strongest thing this box does: it
+  knows the state of the box and the change at the same time, and there are
+  cases where applying means losing the box - nobody able to log in, nobody
+  able to configure, a log that is on and goes nowhere, routing staged against
+  an FRR that is not answering. The commit page described `commit remap` and
+  the structure-only caveat and said nothing about any of the rest, so an
+  operator who met one had nowhere to look it up.
+
+  The page now carries all nine, quoted **in the words the box prints**,
+  because that is the string somebody searches for, with the Portuguese
+  explanation and the way out beside each. `test/test_doc_commands.py` reads
+  them out of `hexash.py` rather than from a list of its own, so a refusal
+  added to the code and to no page fails - and it demands only the runs of at
+  least 25 characters that carry no interpolation, because shorter ones are too
+  generic to be a useful needle and demanding them would red a page that is
+  right.
+
+  The guard found six the first draft of that page had missed or paraphrased,
+  which is the check doing its job on the work that introduced it.
+
+* **The box claimed paired address pooling in four places and does not have it
+  in every mode.** RFC 4787 REQ-2 is stated as a property this product has in
+  `docs/roadmap.md`, `docs/architecture.md`, `src/plugins/bpa/bpa_pool.h` and
+  the wiki. It is true unconditionally in deterministic mode, and in dynamic
+  mode only until a subscriber fills its block: the extension comes from the
+  free list, and under `policy interleaved` the next block index **is** the
+  next public address, so it normally lands on a different one - and more often
+  as the pool grows, because staying put needs the gap to be a multiple of the
+  address count. Measured: an arrival pattern that left 0 of 4 subscribers
+  split at four public addresses split 4 of 4 at sixteen
+  ([#226](https://github.com/andrediashexa/hexarouting/issues/226)).
+
+  The four statements now say where the property holds and where it stops. The
+  mechanism is untouched and the choice between the ways of restoring it is on
+  the issue with the cost of each: it changes where every extension in a
+  dynamic pool lands, which is the maintainer's to make. What is not a choice
+  is the claim - an operator sizes and sells against a conformance statement,
+  so one the box cannot honour is worse than the absent property.
+
+  `lab/crossaddr.sh` carries the measurement and is deliberately **out** of the
+  suite: its checks assert what the box does today, so it would go red the day
+  somebody fixes what it measures, and that is a record rather than a
+  regression test.
+
+* **A lab whose dataplane never came up was reported as a product failure.**
+  `lab_no_vpp()` asked whether the capture contains any `[ ok ]` at all, and
+  answered "something was measured" for a run whose **second line** was
+  `connect: Connection refused`. Measured in a release suite:
+  `lab/icmp-tcp.sh+workers` reached its verdict with every value empty and
+  printed three greens, because an assertion written as `test "${X:-0}" = "0"`
+  passes on an empty `X` - each correctly guarded by a precondition that failed
+  beside it, which is why the lab still said FAILED. Those greens are not
+  evidence that the box answered.
+
+  It reads the **order** now: a green before the first refusal means something
+  really was measured and the box then went, which is the half-dead case and
+  stays a failure until somebody looks at it. A green after it is a guarded
+  assertion meeting an empty value. The boundary is asserted in both
+  directions, because moving it the other way would excuse the half-dead run,
+  and that is the case this must never take.
+
+* **Nothing compared what `appliance/install.sh` puts on the box with what the
+  repository has.** Two directions, and the dangerous one has no symptom at
+  all: a drop-in that exists under `appliance/systemd/` and that the installer
+  never names is a setting nobody applied, on a box that boots, runs and says
+  nothing. That is
+  [#172](https://github.com/andrediashexa/hexarouting/issues/172) one step
+  earlier - there, a drop-in systemd had parsed and **refused** read
+  identically to one that was working - and
+  [#182](https://github.com/andrediashexa/hexarouting/issues/182) again, for a
+  `linux_cp` pair the product never created.
+
+  `test/test_install_manifest.py` checks both ways, expanding the two `for`
+  loops so the nine files they cover are checked rather than skipped. Only
+  `appliance/systemd/` is required to be fully installed: the rest of
+  `appliance/` legitimately holds things the installer does not copy, and a
+  rule demanding everything would be one somebody switches off.
+
+  Everything agrees today. Writing the check found a defect in the check
+  itself, which is recorded in it: `install.sh` uses the loop variable `d`
+  twice, over the FRR daemons and over the three documents, and resolving it by
+  name took the first list for the second and reported four files missing that
+  nothing installs.
+
+* **The lab suite's default job count over-subscribed the machine's memory,
+  and the way it failed looked like a product defect.** Each lab is a container
+  with `--memory=5g` running a VPP that reserves hugepages up front, and the
+  default was a flat 16: **80 GB of limits on a 62.8 GB box**. What that
+  produced was not a clean refusal - one container's VPP did not start, its lab
+  ran every check against a dataplane that was not there, and the suite
+  reported eight product failures, one of them a **checksum failure on a
+  translated packet**, on the run right after a checksum change landed. The
+  same lab alone on an idle box passes eleven checks
+  ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+
+  The default is now the smaller of the core-based cap and what the memory
+  holds, which is 8 on this box - the number its clean runs had been using by
+  hand all along. `LAB_JOBS` still overrides it. The arithmetic is asserted at
+  8 GB, 62 GB and 512 GB through `HEXA_MEMINFO`, for the same reason
+  `HEXA_SELFTEST_ROOT` exists: a machine cannot be made to have 8 GB without
+  being a different machine.
+
+  Writing that found a gap in the check itself. Reading `_jobs_by_mem` out of
+  the script proves the arithmetic and stays green on a script that computes
+  the right number and then ignores it - putting the constant back gave **zero
+  red**. There is now an assertion connecting the function to the `JOBS=` line
+  that uses it.
+
+* **The boot self-test compared the IPFIX configuration with the dataplane and
+  not the pools.** The pattern was already there and well argued - *what the
+  box was TOLD at boot, from the file `hexarouting.service` hands to `hexash`,
+  against what the dataplane HAS* - and it covered logging only. A pool in the
+  saved file that the dataplane refused is applied by nobody and reported by
+  nothing: the service succeeds because the rest of the file applied, and the
+  line beside it counts the pools that are there rather than the one that is
+  missing. Every subscriber behind that pool is untranslated, on a box that
+  boots, forwards other people's traffic and answers every command
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)).
+
+  Names only, deliberately: comparing settings would mean re-deriving the
+  dataplane's own normalisation in the self-test, which is the mistake #184
+  names - a check that recomputes what it is checking agrees with its own
+  arithmetic rather than with the box. A box that has configured no pool is
+  told nothing, because an operator who has not made one yet is not a box with
+  a defect.
+
+  **uRPF the same way, and more is at stake there.** It is the check that stops
+  a spoofed source being translated, and therefore what stops a packet nobody
+  sent being attributed to a subscriber in the retention log - a record
+  indistinguishable from a true one. A box whose saved configuration turns it
+  on and whose dataplane has it nowhere forwards, translates, logs and answers
+  everything: there is no counter for a protection that is simply absent. A box
+  that never asked for uRPF is told nothing, because most do not run it.
+
+  57 checks on master before this run of work, **121** after.
 
 ### Added
 
@@ -440,6 +671,100 @@ are to be interpreted as described in
   necessarily reading it.
 
 ### Fixed
+
+* **The pool-announce warning went silent on the ordinary edge box, and had no
+  unit assertion at all.** The check that says a pool's public prefix is
+  advertised by nothing
+  ([#145](https://github.com/andrediashexa/hexarouting/issues/145)) treated any
+  line beginning `redistribute`, anywhere in the configuration, as something it
+  could not see through. Measured on FRR 10.7.1, with a covering static route
+  present and BGP configured throughout:
+
+  ```
+  router bgp 65000 / address-family ipv4 unicast / redistribute static
+    *>  200.150.9.16/28  0.0.0.0  0  32768 ?
+  router ospf / redistribute static        (BGP carrying no redistribute)
+    No BGP prefixes displayed, 0 exist
+  ```
+
+  The two statements are the same six characters and only one of them
+  announces anything. So an edge box that leaks BGP into its IGP - which is
+  what `ospf_findings` already warns about - exempted itself from this check
+  entirely and got no warning on a pool nothing announced.
+
+  The block context now comes from `config.block_paths()`, the one thing here
+  that reads both shapes `routing` arrives in: indented when FRR read it back,
+  flat when it was typed at this VTY. A `redistribute static` under `router
+  bgp` is also **resolved** against the candidate's own static routes rather
+  than treated as unfollowable, because FRR's static routes are all in the
+  configuration - so originating an aggregate from a blackhole route, which is
+  the ordinary way an ISP does it, silences the warning, and a static route
+  that covers something else does not. `aggregate-address` and `network …
+  route-map` blind it, both measured.
+
+  **It stays a warning**, and the reason is now measured rather than argued
+  from the issue's wording. `network 200.150.9.16/28` with no matching route in
+  the RIB is stored by FRR and appears in `show bgp ipv4 unicast` **without
+  `*>`** - not valid, not best, advertised to nobody - and becomes `*>` the
+  moment `ip route 200.150.9.16/28 blackhole` exists. What this check can test
+  is therefore a proxy for the announcement and not the announcement, and a
+  commit MUST NOT be refused on a proxy: it would block configurations that
+  work while still passing the box whose `network` statement originates
+  nothing. That is the shape of
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208), where
+  refusing a whole commit over a BGP statement was itself the defect. The
+  advice now names the blackhole route beside the `network`, because advice
+  that does not work when followed is worse than no advice.
+
+  The check was inline in `commit` and so could only be reached by running the
+  lab. It is `pool_announce_findings()` over `bgp_originations()` now, in the
+  family of `ospf_findings` and `bgp_errors`, with unit assertions in
+  `test/test_hexash_complete.py`; fourteen mutations of the product were each
+  run to red before the work was called done, and one of them found an
+  assertion that was green against the defect it claimed to guard.
+
+* **An indented `!` put every statement after it in the wrong block.**
+  `config.block_paths()` read any `!` as FRR's top-level stanza separator and
+  cleared the block stack. FRR 10.7.1 also writes an **indented** one inside a
+  stanza, captured from a live daemon:
+
+  ```
+  router bgp 65000
+   !
+   address-family ipv4 unicast
+    network 200.150.9.16/28
+   exit-address-family
+  exit
+  ```
+
+  So the `network` statement belonged to no block, and anything asking "is
+  this line under `router bgp`" answered no for a box that had typed it
+  exactly there. `cfg.routing` is read back from FRR, so that is the shape of
+  **every commit after the first one** - it was the pool-announce check above
+  that found it, warning about a pool the box was announcing correctly. Only a
+  `!` at column 0 returns to the top now.
+
+  It also **moved a route between tables**. A `vrf red` stanza whose static
+  route follows an indented `!` had that route hoisted into the global `router
+  static` block, so the file said the route was global and the operator had
+  put it in a VRF - which is exactly the defect
+  [#180](https://github.com/andrediashexa/hexarouting/issues/180) fixed,
+  reintroduced through a line nobody types. The assertion that existed for
+  #180 had no `!` in it and was green against this the whole time; the new one
+  is written against what a live daemon printed.
+
+  And it **shortened `show this`**. Asked what `router bgp 65000` holds, on a
+  configuration read back from FRR rather than typed, the box left out the
+  address-families and everything in them - because FRR writes ` !` between a
+  router's own statements and its first family, and past that separator the
+  family sat at no path at all. `frr_block_lines()` promises the opposite in
+  its docstring: an operator standing in a router is asking what that router
+  holds, and its address-families are part of the answer. Not a wrong answer
+  they could see was wrong, a **shorter** one, with nothing saying anything was
+  missing. `lab/vty.sh` asserts the family is there but does it mid-edit, where
+  the candidate is flat and carries no `!`, so it was green throughout; its
+  after-commit case reads `router static`, which is top-level and cannot show
+  this. The assertion for it is a unit one, on the read-back shape.
 
 * **`no <statement>` inside a pool block was accepted in silence and did
   nothing.** `no block-size 512`, `no policy interleaved`,

@@ -215,6 +215,15 @@ SHOW_CGNAT = {
                None),
     "logging": ("IPFIX export state", None),
     "history": ("dated configuration trail", None),
+    # The two the dataplane had and this VTY did not reach (#228). Both answer
+    # "what does the box ACTUALLY have", which is a different question from
+    # what the file says - the distinction #172 was about for worker cores,
+    # and the one an operator needs when an FTP transfer hangs or a port
+    # forward does not work. Without them the way to that answer was vppctl,
+    # which is the tool this VTY exists to keep them out of, and which is
+    # every capability at once (#76).
+    "alg": ("which ALGs the dataplane has on, per pool", None),
+    "forward": ("the port forwards the dataplane holds", "[<pool>]"),
 }
 
 SHOW = {
@@ -814,6 +823,8 @@ CGNAT_POOL = {
         "alg-expect": ("seconds an announced media port waits", ARG_NUM),
     }),
     "max-blocks": ("how many blocks one subscriber may hold", ARG_NUM),
+    "block-stride": ("blocks between the ones a subscriber holds; 1 puts them "
+                     "side by side, 0 lets the pool place them", ARG_NUM),
     "bypass": ("prefixes that leave untranslated", {
         "source": ("a source that must keep its own address", ARG_PREFIX),
         "destination": ("a destination that must see the real source",
@@ -980,6 +991,9 @@ POOL_NEGATE = {
                 "again", CGNAT_POOL["timeout"][1], _pool_no_timeout),
     "max-blocks": ("go back to one block per subscriber", None,
                    _pool_no_clear("max_blocks", 0)),
+    "block-stride": ("let the pool place a subscriber's extra blocks wherever "
+                     "it has one free", None,
+                     _pool_no_clear("block_stride", 0)),
     "bypass": ("stop excluding a prefix from translation",
                CGNAT_POOL["bypass"][1], _pool_no_bypass),
     "utilisation-alarm": ("stop alarming on block utilisation", None,
@@ -2948,6 +2962,182 @@ def bgp_errors(routing, have_interfaces=None, lcp_pairs=None,
     return out
 
 
+def bgp_originations(routing):
+    """
+    What this configuration would have BGP originate, and what hides the rest.
+
+    Returns (announced, blind, has_bgp).
+
+    `announced` is the prefixes this function can follow from the text alone:
+    a plain `network <prefix>` under `router bgp`, and - when the same stanza
+    carries a plain `redistribute static` - every top-level static route in
+    the candidate. `blind` is the statements that can originate a prefix whose
+    identity is NOT in the configuration. When `blind` is non-empty the caller
+    must say nothing at all, because a warning that fires on a working box is
+    worse than no warning: the next one, the real one, is ignored too.
+
+    Scope is taken from config.block_paths() rather than from indentation or
+    from a fourth hand-rolled stanza scanner. It is the only thing here that
+    answers "which block is this line in" correctly for BOTH shapes `routing`
+    arrives in - indented when FRR read it back, flat when it was typed at
+    this VTY - and the scope is load bearing rather than tidy. Measured on FRR
+    10.7.1, with a covering static route present the whole time:
+
+        router bgp 65000 / address-family ipv4 unicast / redistribute static
+          *>  200.150.9.16/28  0.0.0.0  0  32768 ?
+
+        router ospf / redistribute static      (BGP carrying no redistribute)
+          No BGP prefixes displayed, 0 exist
+
+    Both statements are stored, and they are the same six characters. Reading
+    the word wherever it appeared - which is what this replaces - treated the
+    second box as one it could not see through, so the ordinary edge box that
+    leaks its IGP nowhere near BGP got no warning at all.
+
+    Removing the static route under the FIRST configuration empties the BGP
+    table too ("No BGP prefixes displayed, 0 exist"), which is why
+    `redistribute static` is resolved against the candidate's own routes
+    instead of being treated as unfollowable. FRR's static routes are all in
+    the configuration, so that resolution is complete rather than a guess.
+
+    Only TOP-LEVEL static routes count. A route inside a `vrf red` block is in
+    another table, and hoisting one into the global answer is the mistake
+    config.group_static() already had to be taught not to make.
+    """
+    paths = block_paths(routing)
+    announced = []
+    statics = []
+    redistributes_static = False
+    blind = []
+    has_bgp = False
+    for path, raw in zip(paths, routing):
+        if path is None:
+            continue                   # a blank, a `!`, a block's own `exit`
+        line = raw.strip()
+        w = line.split()
+        # `no ...` takes a statement away; reading it as configuration would
+        # count a removed `network` as an announcement.
+        if not w or w[0] == "no":
+            continue
+        if line.startswith("router bgp"):
+            has_bgp = True
+        if not path and is_static_route(line) and len(w) >= 3:
+            statics.append(w[2])
+            continue
+        # A block's own header carries its PARENT's path, so the stanza a line
+        # belongs to is path[0] for a statement inside one and the line itself
+        # for a top-level statement.
+        if not (path[0] if path else line).startswith("router bgp"):
+            continue
+        if w[0] == "network" and len(w) >= 2:
+            if len(w) == 2:
+                announced.append(w[1])
+            else:
+                # `network <prefix> route-map <name>` is a real FRR form and
+                # the map decides. Measured on 10.7.1 with the prefix in the
+                # RIB: a `deny 10` map originates nothing ("No BGP prefixes
+                # displayed, 0 exist"), a `permit 10` map originates it
+                # ("*> 200.150.9.16/28"). Following the map is a job this does
+                # not do, so the honest answer is silence.
+                blind.append(line)
+        elif w[0] == "redistribute" and len(w) >= 2:
+            if w[1] == "static" and "route-map" not in w:
+                redistributes_static = True
+            else:
+                # `connected`, `ospf`, `isis`, `kernel`, and anything through a
+                # route-map: the prefixes these carry are not in the
+                # configuration, so nothing here can say whether one of them
+                # covers the pool.
+                blind.append(line)
+        elif w[0] == "aggregate-address":
+            # It can originate a covering prefix and it can originate nothing,
+            # and which one depends on the rest of the BGP table rather than on
+            # the text. Measured on 10.7.1, same aggregate both times:
+            #
+            #   with a more-specific in the table
+            #     *>  200.150.0.0/16   ...        s>  200.150.9.16/28  ...
+            #   with no more-specific
+            #     No BGP prefixes displayed, 0 exist
+            #
+            # The first of those covers the pool, so treating the statement as
+            # unfollowable is what keeps this check off a working aggregate.
+            blind.append(line)
+    if redistributes_static:
+        announced += statics
+    return announced, blind, has_bgp
+
+
+def pool_announce_findings(routing, pools):
+    """
+    Pools whose public prefix nothing in this configuration would advertise.
+
+    The check this product can make and nobody else can. Configure a pool with
+    `outside 200.150.0.16/28`, configure BGP, get both right, and unless
+    something advertises a prefix COVERING that /28 every subscriber behind
+    the pool is translated to an address the internet cannot route back to:
+    traffic leaves and nothing returns. The CGNAT is right, the routing is
+    right, the service is dead, and the two halves are configured in different
+    places by different people on different days.
+
+    Warning, never an error, and the decision is measured rather than taken
+    from the issue that asked for it:
+
+    * The condition this check can test is not the condition that matters. On
+      FRR 10.7.1, `network 200.150.9.16/28` with no matching route in the RIB
+      is stored, appears in `show bgp ipv4 unicast` WITHOUT `*>` - not valid,
+      not best, not advertised - and becomes `*> 200.150.9.16/28` the moment
+      `ip route 200.150.9.16/28 blackhole` exists. So the presence of a
+      `network` statement is a proxy for the announcement and not the
+      announcement. A commit refused for the absence of that proxy would block
+      configurations that work while still passing the box whose `network`
+      statement originates nothing.
+    * Two ordinary ways to originate a covering prefix are invisible here at
+      all - `aggregate-address` and `network ... route-map`, both measured
+      under bgp_originations() - so a refusal would fire on an arbitrary
+      subset of the mistake and be silent on the rest.
+    * Announcing the prefix from a router upstream of this box is a legitimate
+      design, and the common one: a CGNAT behind an edge router that carries
+      the aggregate is the ordinary ISP shape, and nothing about it is in this
+      box's configuration.
+
+    A refusal here would therefore be wrong on correct configurations, which
+    is the shape #208 established: refusing a whole commit over a BGP
+    statement was itself the defect there. An alarm that is always on is one
+    nobody reads.
+
+    Returns [(severity, subject, why, advice)] - four fields and not the three
+    the findings beside it return, because the sentence an operator acts on is
+    not the sentence that names the fault. `why` names it; `advice` is the
+    lines under it that say what it costs and what to type, and folding those
+    into `why` would put three sentences on one terminal line.
+    """
+    announced, blind, has_bgp = bgp_originations(routing)
+    out = []
+    # A box with no BGP stanza announces nothing from here by definition, and
+    # is exactly the deployment whose prefix is carried by somebody else. It
+    # is told nothing, for the same reason the blind case is.
+    if not pools or not has_bgp or blind:
+        return out
+    for pname, pool in sorted(pools.items()):
+        for pfx in pool.outside or ():
+            if any(routes.covers_prefix(a, pfx) for a in announced):
+                continue
+            out.append((
+                "warning", f"pool '{pname}'",
+                f"nothing here announces {pfx}",
+                # The advice names the blackhole route as well as the
+                # `network`, because measurement 4 above says the `network`
+                # alone is not enough: FRR stores it and advertises nothing
+                # until a route for the prefix exists. Advice that does not
+                # work when followed is worse than no advice.
+                ["subscribers behind it would be translated to an address "
+                 "the internet cannot route back to",
+                 "announce it from another box, or originate it here with",
+                 f"'ip route {pfx} blackhole' and 'network {pfx}' under the "
+                 "BGP address family"]))
+    return out
+
+
 def prefix_range_error(line):
     """
     Why FRR would refuse this prefix-list line, or None if it would not.
@@ -4782,45 +4972,16 @@ class Shell:
                     self.err(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
                              "would be refused")
                     ok = False
-            # A pool's public prefix that nothing announces.
-            #
-            # Configure a pool with `outside 200.150.0.16/28`, get BGP right,
-            # and unless something advertises a prefix covering it, every
-            # subscriber behind that pool is translated to an address the
-            # internet cannot route back to. Traffic leaves and nothing
-            # returns. The CGNAT is correct, the BGP is correct, and the
-            # service does not work - nothing in the box connected the two.
-            #
-            # Reported, never refused. Announcing the prefix from another box
-            # is a legitimate design, and a check that refuses a working
-            # topology gets worked around.
-            if target.pools and any(l.lstrip().startswith("router bgp")
-                                    for l in target.routing):
-                # BGP's form is `network <prefix>`, two words. OSPF's is
-                # `network <prefix> area <n>`, so the length test is what
-                # tells them apart without parsing the block structure.
-                announced = [w[1] for w in (l.split() for l in target.routing)
-                             if len(w) == 2 and w[0] == "network"]
-                # `redistribute` can advertise a prefix in ways this check
-                # cannot see. Saying nothing is right there: a warning that
-                # fires on a working box is worse than no warning, because the
-                # next real one is ignored too.
-                blind = any(l.lstrip().startswith("redistribute")
-                            for l in target.routing)
-                for pname, pool in sorted(target.pools.items()):
-                    for pfx in pool.outside:
-                        if any(routes.covers_prefix(a, pfx)
-                               for a in announced):
-                            continue
-                        if blind:
-                            continue
-                        print(f"warning: pool '{pname}': nothing here "
-                              f"announces {pfx}")
-                        print("    subscribers behind it would be translated "
-                              "to an address the internet cannot route back "
-                              "to")
-                        print(f"    add 'network {pfx}' under the BGP address "
-                              "family, or announce it from another box")
+            # A pool's public prefix that nothing announces (#145). The one
+            # check here that needs both halves of the box: FRR does not know
+            # what a CGNAT pool is, and the dataplane does not know what BGP
+            # is. Reported and never refused - pool_announce_findings() says
+            # why, and the reason is measured rather than argued.
+            for sev, subject, why, advice in pool_announce_findings(
+                    target.routing, target.pools):
+                print(f"{sev}: {subject}: {why}")
+                for line in advice:
+                    print("    " + line)
 
             # Only when FRR can answer. A box may run CGNAT with no routing -
             # Frr.available() has said so in its docstring since it was
@@ -6732,6 +6893,10 @@ class Shell:
                 if int(w[1]) < 1:
                     raise ValueError("max-blocks must be at least 1")
                 p.max_blocks = int(w[1])
+            elif w[0] == "block-stride":
+                if not 0 <= int(w[1]) <= 65535:
+                    raise ValueError("block-stride must be 0-65535")
+                p.block_stride = int(w[1])
             elif w[0] == "bypass":
                 why = Config._pool_line(p, " ".join(w))
                 if why:
@@ -6823,6 +6988,7 @@ class Shell:
             "show cgnat logging": "show bpa logging",
             "show cgnat history": "show bpa pool history",
             "show cgnat drops": "show bpa drops",
+            "show cgnat alg": "show bpa alg",
         }
         if line in m:
             self.vpp(m[line])
@@ -6830,8 +6996,11 @@ class Shell:
         # The ones that carry an argument. Matched by prefix so the argument
         # travels through untouched; hexash is not the place to re-validate an
         # address the dataplane is about to parse anyway.
+        # `show cgnat forward` is here rather than in the map above because it
+        # takes an optional pool name, and the argument travels through
+        # untouched for the same reason the other three do.
         for pfx in ("show cgnat subscriber", "show cgnat translation",
-                    "show cgnat top"):
+                    "show cgnat top", "show cgnat forward"):
             if line == pfx or line.startswith(pfx + " "):
                 self.vpp("show bpa" + line[len("show cgnat"):])
                 return

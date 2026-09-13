@@ -34,7 +34,9 @@ python3 test/test_hexash_confirm.py
 python3 test/test_hexash_igp.py
 sh test/test_hexash_login.sh
 python3 test/test_collector_marker.py
+python3 test/test_ipfix_record.py
 sh test/test_run_all_labs.sh
 sh test/test_run_tests.sh
 sh test/test_selftest.sh
+python3 test/test_install_manifest.py
 sh test/test_installer.sh

@@ -22,6 +22,29 @@ As quatro primeiras respondem a pergunta de um operador em vez de reportar um co
 
 `show cgnat history` é o outro lado disso no modo determinístico — qual configuração estava em vigor naquela data, e quem a colocou lá.
 
+### `show cgnat alg` e `show cgnat forward`: o que o dataplane tem, não o que o arquivo diz
+
+As duas respondem uma pergunta diferente da que o `show configuration` responde. O arquivo diz o que foi pedido; estas dizem o que a caixa está fazendo, e as duas coisas se separam em silêncio.
+
+```
+hexarouting> show cgnat alg
+provider-a
+  ftp    on   FTP: PORT e PASV no controle
+  rtsp   off  RTSP: Transport
+  pptp   on   PPTP: Call ID
+  sip    on   SIP sobre UDP
+```
+
+É a tela para "as transferências FTP deste cliente travam": ela diz se o ALG está ligado **no dataplane**, que não é a mesma pergunta que se ele está no arquivo.
+
+```
+hexarouting> show cgnat forward
+provider-a
+  tcp 200.150.0.17:8080 -> 100.64.0.5:80
+```
+
+E esta é a primeira coisa a estabelecer quando alguém liga dizendo que o encaminhamento de porta não funciona: se a caixa tem o encaminhamento. Aceita o nome de um pool para filtrar: `show cgnat forward provider-a`.
+
 ## `show route` — a tabela que encaminha
 
 | Comando | Mostra |
