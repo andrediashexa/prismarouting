@@ -52,8 +52,23 @@ class FakeApi:
         return vppapi.Reply(vppapi.OK)
 
 
-class FakeVpp:
-    """A dataplane that accepts every CLI command, including validation."""
+class FakeVpp(hexash.Vpp):
+    """A dataplane that accepts every CLI command, including validation.
+
+    Derived from hexash.Vpp, not free-standing, and #293 is the third time in
+    this repository that mattered. A refusal that came back from the dataplane
+    now reads the loaded plugin's build before it says anything about an
+    upgrade, this stub listed the methods it had, and every suite here died of
+    AttributeError before reaching a verdict. `_version272` in
+    test_hexash_complete.py makes the same argument over `plugin_build` and
+    `_Frr271` above it over `daemons()`: a stub that enumerates the product's
+    methods stops having whatever the product adds next, and both sides of
+    that merge pass on their own.
+
+    `run()` answering nothing means `plugin_build()` reads no build, so these
+    suites drive the path where there is nothing to compare - which is right
+    for them: what they are about is the refusal, not the upgrade window.
+    """
 
     TRACE = False
 

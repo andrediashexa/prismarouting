@@ -247,6 +247,29 @@ def hexarouting_version():
     return hexarouting_version_source()[0]
 
 
+def version_split(build, mine, source):
+    """
+    True when the dataplane answering is a DIFFERENT build from this box's.
+
+    ONE decision with two readers, for the reason the VERSION_UNKNOWN comment
+    above gives about its own literal: `show version` prints a paragraph when
+    the two disagree, and a refusal that came back from the dataplane says the
+    upgrade is why it did (#293). A second copy of this condition would be a
+    second answer to one question, and the two would drift the first time
+    either was corrected.
+
+    None of the other answers is a near miss and none of them may fall through
+    to True. `plugin_build()` answers None for a dataplane that never spoke
+    and "" for one that spoke without our plugin: neither of those STATES a
+    build, so there is nothing to disagree with, and both are already reported
+    as what they are. And a version that did not come out of an installed
+    stamp is not a build either - the repository's own VERSION names the next
+    release rather than any build - so a source tree compares nothing rather
+    than comparing two different kinds of thing (#291).
+    """
+    return bool(build) and source == VERSION_FROM_STAMP and build != mine
+
+
 # vppctl exits 0 even when a command fails: the text is what says so. Errors
 # come out as "<command>: <message>" or "unknown input ...". Replacing this
 # with the binary API, which has real return codes, is on the roadmap.
@@ -4794,6 +4817,75 @@ class Shell:
         print(f"error: {msg}")
         self.failed += 1
 
+    def err_dataplane(self, msg):
+        """
+        `err`, for a refusal the DATAPLANE produced rather than this VTY.
+
+        The difference is not cosmetic and it is the whole of #293. Between
+        `appliance/install.sh` finishing and the box being rebooted, the new
+        control plane is talking to the dataplane from before the upgrade, and
+        a message that grew a field the running plugin does not have comes
+        back as a refusal naming a symbol:
+
+            error: pool 'split291': Call failed: bpa_pool_add_del
+            error: commit failed; rolling back to the previous state
+
+        Measured on a box installed from v0.68.0 and upgraded with no reboot.
+        Nothing on that screen says the thing answering is the old build, that
+        the upgrade is why, or what clearing it would cost - so it reads as a
+        broken product rather than as a consequence of the upgrade that had
+        just been run.
+
+        WHICH REFUSALS GET IT. Exactly the ones carrying a reason out of a
+        `vppapi.Reply` that was not OK: the dataplane answered, or failed to
+        answer, a message this VTY sent it. A grammar error, a permission
+        refusal, or a check the VTY made itself must never blame an upgrade -
+        those never reach here, and they are the majority of what `err`
+        prints.
+        """
+        self.err(msg)
+        self.say_version_split()
+
+    def say_version_split(self):
+        """
+        The sentence under a dataplane refusal on a box that is mid-upgrade,
+        and nothing at all on any other box.
+
+        Said only where it is TRUE, which is what `version_split` is for. A
+        box running out of a source tree, or with no version stamp, has
+        nothing to compare and must not be told an upgrade is why its commit
+        failed - that is the same conflation this reading was fixed for once
+        already (#291), reached from the other side.
+
+        NOT A LOCK-OUT, and that is a decision rather than an omission. A box
+        between an upgrade and its reboot still forwards, still routes, and
+        still takes most changes; refusing to configure it would cost more
+        than the split does. A refusal that explains itself is the smallest
+        honest thing.
+
+        The build goes on a row of its own and not inside the prose. It
+        carries a space - `0.71.0 (4a7044e)` is a version, a space and a
+        commit - so wrapped into a sentence it is a token a fold can break in
+        half, which is the trap #252 named and the one thing on this screen
+        the operator has to read whole.
+        """
+        build = self.dp.plugin_build()
+        mine, source = hexarouting_version_source()
+        if not version_split(build, mine, source):
+            return
+        print_prose("this refusal came back from the dataplane, and the "
+                    "dataplane is not the build the rest of this box is: it "
+                    "is still the one it was loaded with at the last boot. "
+                    "An upgrade replaces the dataplane's files on disk and "
+                    "does not restart it, so the new control plane is asking "
+                    "the plugin from before the upgrade for things that "
+                    "build does not have.")
+        print(f"    the dataplane is running {build}")
+        print_prose("'show version' prints that beside this box's own build. "
+                    "'systemctl restart vpp', or a reboot, makes the new "
+                    "dataplane answer instead - and either one ends every "
+                    "session and every port block this box is carrying.")
+
     def say_finding(self, mark, stmt, why):
         """
         One check's finding: the reason, wrapped, and the statement below it.
@@ -5184,7 +5276,7 @@ class Shell:
                            "sw_if_index": idx})
         if r.state != vppapi.OK:
             verb = "attach CGNAT to" if is_add else "detach CGNAT from"
-            self.err(f"could not {verb} {ifname}: {r.reason}")
+            self.err_dataplane(f"could not {verb} {ifname}: {r.reason}")
             return False
         return True
 
@@ -5252,8 +5344,8 @@ class Shell:
                            "flags": ("IF_STATUS_API_FLAG_ADMIN_UP" if up
                                      else "IF_STATUS_API_FLAG_LINK_UP")})
         if r.state != vppapi.OK:
-            self.err(f"interface {ifname}: "
-                     f"{'no shutdown' if up else 'shutdown'}: {r.reason}")
+            self.err_dataplane(f"interface {ifname}: "
+                               f"{'no shutdown' if up else 'shutdown'}: {r.reason}")
             return False
         # The Linux side of the pair, by every name it answers to.
         rc, lcp_out = self.dp.run("show lcp")
@@ -5274,7 +5366,7 @@ class Shell:
         r = self.api_call("sw_interface_set_mac_address",
                           {"sw_if_index": idx, "mac_address": mac})
         if r.state != vppapi.OK:
-            self.err(f"interface {ifname}: could not set {mac}: {r.reason}")
+            self.err_dataplane(f"interface {ifname}: could not set {mac}: {r.reason}")
             return False
         return True
 
@@ -5303,7 +5395,7 @@ class Shell:
                            "min_interval": 0, "lifetime": 0,
                            "initial_count": 0, "initial_interval": 0})
         if r.state != vppapi.OK:
-            self.err(f"interface {ifname}: router advertisements: {r.reason}")
+            self.err_dataplane(f"interface {ifname}: router advertisements: {r.reason}")
             return False
         return True
 
@@ -5328,8 +5420,8 @@ class Shell:
                           {"sw_if_index": idx, "is_ipv6": False,
                            "vrf_id": table})
         if r.state != vppapi.OK:
-            self.err(f"interface {ifname}: could not move it to vrf {table}: "
-                     f"{r.reason}")
+            self.err_dataplane(f"interface {ifname}: could not move it to vrf {table}: "
+                               f"{r.reason}")
             return False
         return True
 
@@ -5389,6 +5481,10 @@ class Shell:
             print_prose(r.reason)
             print_prose("the adjacency would never form, and the only "
                         "evidence would be a dataplane error counter")
+            # `err_dataplane` spelled out, because this refusal prints its
+            # reason and its consequence on rows of their own and the upgrade
+            # note belongs under both rather than between them.
+            self.say_version_split()
             return False
         return True
 
@@ -5413,7 +5509,7 @@ class Shell:
                           {"mac_address": "00:00:00:00:00:00",
                            "is_specified": True, "user_instance": instance})
         if r.state != vppapi.OK:
-            self.err(f"could not create {ifname}: {r.reason}")
+            self.err_dataplane(f"could not create {ifname}: {r.reason}")
             return False
         return True
 
@@ -5424,7 +5520,7 @@ class Shell:
             return True
         r = self.api_call("delete_loopback", {"sw_if_index": idx})
         if r.state != vppapi.OK:
-            self.err(f"could not delete {ifname}: {r.reason}")
+            self.err_dataplane(f"could not delete {ifname}: {r.reason}")
             return False
         return True
 
@@ -5452,7 +5548,7 @@ class Shell:
                            "netns": ""})
         if r.state != vppapi.OK:
             verb = "pair" if is_add else "unpair"
-            self.err(f"could not {verb} {ifname} with {host_name}: {r.reason}")
+            self.err_dataplane(f"could not {verb} {ifname} with {host_name}: {r.reason}")
             return False
         return True
 
@@ -5537,7 +5633,7 @@ class Shell:
             r = self.api_call("create_vlan_subif",
                               {"sw_if_index": idx, "vlan_id": tag["outer"]})
         if r.state != vppapi.OK:
-            self.err(f"could not create {ifname}: {r.reason}")
+            self.err_dataplane(f"could not create {ifname}: {r.reason}")
             return False
         return True
 
@@ -5550,7 +5646,7 @@ class Shell:
             return True
         r = self.api_call("delete_subif", {"sw_if_index": idx})
         if r.state != vppapi.OK:
-            self.err(f"could not delete {ifname}: {r.reason}")
+            self.err_dataplane(f"could not delete {ifname}: {r.reason}")
             return False
         return True
 
@@ -5577,8 +5673,8 @@ class Shell:
                            "del_all": False, "prefix": prefix})
         if r.state != vppapi.OK:
             verb = "add" if is_add else "remove"
-            self.err(f"interface {ifname}: could not {verb} {prefix}: "
-                     f"{r.reason}")
+            self.err_dataplane(f"interface {ifname}: could not {verb} {prefix}: "
+                               f"{r.reason}")
             return False
         # An interface advertises only once it holds an IPv6 address, so this
         # is the moment the default becomes possible - and the moment to apply
@@ -5611,7 +5707,7 @@ class Shell:
                           {"is_add": bool(text), "sw_if_index": idx,
                            "tag": text or ""})
         if r.state != vppapi.OK:
-            self.err(f"interface {ifname}: description: {r.reason}")
+            self.err_dataplane(f"interface {ifname}: description: {r.reason}")
             return False
         rc, lcp_out = self.dp.run("show lcp")
         if rc == 0:
@@ -5639,7 +5735,7 @@ class Shell:
                           {"is_input": True, "sw_if_index": idx,
                            "mode": self.URPF_MODE[mode], "af": "ADDRESS_IP4"})
         if r.state != vppapi.OK:
-            self.err(f"interface {ifname}: urpf {mode}: {r.reason}")
+            self.err_dataplane(f"interface {ifname}: urpf {mode}: {r.reason}")
             return False
         return True
 
@@ -6280,7 +6376,7 @@ class Shell:
             p = Pool(name)
             r = self.api_call("bpa_pool_add_del", p.api_args(is_add=False))
             if not r.ok and r.state != vppapi.REFUSED:
-                self.err(f"removing pool '{name}': {r.reason}")
+                self.err_dataplane(f"removing pool '{name}': {r.reason}")
                 return False
         for pool in d["pool_replace"]:
             self.api_call("bpa_pool_add_del", pool.api_args(is_add=False))
@@ -6290,7 +6386,7 @@ class Shell:
                 # Named, because a commit carrying several pools has to say
                 # which one the dataplane refused. "commit failed" sends the
                 # operator to read the whole candidate.
-                self.err(f"pool '{pool.name}': {r.reason}")
+                self.err_dataplane(f"pool '{pool.name}': {r.reason}")
                 return False
 
         # The settings the dataplane can change in place, before the lists
@@ -6301,7 +6397,7 @@ class Shell:
             r = self.api_call("bpa_pool_settings_set",
                               pool.settings_api_args())
             if not r.ok:
-                self.err(f"pool '{name}': settings: {r.reason}")
+                self.err_dataplane(f"pool '{name}': settings: {r.reason}")
                 return False
 
         # The bypass lists first: they only ever let traffic past
@@ -6311,7 +6407,7 @@ class Shell:
             r = self.api_call("bpa_bypass_set", pool.bypass_api_args(is_dst))
             if not r.ok:
                 side = "destination" if is_dst else "source"
-                self.err(f"pool '{pool.name}': bypass {side}: {r.reason}")
+                self.err_dataplane(f"pool '{pool.name}': bypass {side}: {r.reason}")
                 return False
 
         # The per-subscriber bounds, before the forwards and before routing:
@@ -6320,7 +6416,7 @@ class Shell:
         for name, pool in d["limits_set"].items():
             r = self.api_call("bpa_limits_set", pool.limits_api_args())
             if not r.ok:
-                self.err(f"pool '{name}': limits: {r.reason}")
+                self.err_dataplane(f"pool '{name}': limits: {r.reason}")
                 return False
 
         # Removals first: a forward moved from one public port to another is
@@ -6330,15 +6426,15 @@ class Shell:
             r = self.api_call("bpa_forward_add_del",
                               pool.forward_api_args(fwd, is_add=False))
             if not r.ok and r.state != vppapi.REFUSED:
-                self.err(f"pool '{pool.name}': removing forward "
-                         f"{fwd[0]} {fwd[1]}: {r.reason}")
+                self.err_dataplane(f"pool '{pool.name}': removing forward "
+                                   f"{fwd[0]} {fwd[1]}: {r.reason}")
                 return False
         for pool, fwd in d["fwd_add"]:
             r = self.api_call("bpa_forward_add_del",
                               pool.forward_api_args(fwd))
             if not r.ok:
-                self.err(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
-                         f"to {fwd[2]} {fwd[3]}: {r.reason}")
+                self.err_dataplane(f"pool '{pool.name}': forward {fwd[0]} {fwd[1]} "
+                                   f"to {fwd[2]} {fwd[3]}: {r.reason}")
                 return False
 
         for ifname in d["if_remove"]:
@@ -6545,7 +6641,7 @@ class Shell:
             r = self.api_call("sw_interface_set_mtu",
                               {"sw_if_index": idx, "mtu": [mtu, 0, 0, 0]})
             if r.state != vppapi.OK:
-                self.err(f"interface {ifname}: mtu {mtu}: {r.reason}")
+                self.err_dataplane(f"interface {ifname}: mtu {mtu}: {r.reason}")
                 return False
             # Still read back. retval 0 means the message was accepted, not
             # that the driver took the value, and this is the assertion that
@@ -6795,13 +6891,13 @@ class Shell:
             t[field] = int(w[3]) if w[3].isdigit() else 0
             r = self.global_api(timeouts=t)
             if r.state != vppapi.OK:
-                self.err(f"cgnat timeout {w[2]} {w[3]}: {r.reason}")
+                self.err_dataplane(f"cgnat timeout {w[2]} {w[3]}: {r.reason}")
         elif w[1] == "block-holddown" and len(w) >= 3:
             r = self.global_api(set_block_holddown=True,
                                 block_holddown=int(w[2]) if w[2].isdigit()
                                 else 0)
             if r.state != vppapi.OK:
-                self.err(f"cgnat block-holddown {w[2]}: {r.reason}")
+                self.err_dataplane(f"cgnat block-holddown {w[2]}: {r.reason}")
         elif w[1] == "logging" and len(w) >= 3:
             self.apply_logging(w)
         elif w[1] not in CGNAT_CONFIG:
@@ -6827,7 +6923,7 @@ class Shell:
                 # The dataplane refuses this once pools exist, because the
                 # tables are allocated with the first pool and a new size
                 # would describe a table nobody is using.
-                self.err(f"cgnat session-table: {r.reason}")
+                self.err_dataplane(f"cgnat session-table: {r.reason}")
 
     def apply_logging(self, w):
         """
@@ -6878,7 +6974,7 @@ class Shell:
             return
         r = self.api_call("bpa_logging_set", args)
         if r.state != vppapi.OK:
-            self.err(f"cgnat {' '.join(w[1:])}: {r.reason}")
+            self.err_dataplane(f"cgnat {' '.join(w[1:])}: {r.reason}")
 
     def apply_logging_udp(self, w):
         """
@@ -6912,8 +7008,8 @@ class Shell:
         """
         r = self.api.dump("ipfix_exporter_dump", {})
         if r.state != vppapi.OK:
-            self.err(f"cgnat {' '.join(w[1:])}: cannot read the IPFIX "
-                     f"exporter: {r.reason}")
+            self.err_dataplane(f"cgnat {' '.join(w[1:])}: cannot read the IPFIX "
+                               f"exporter: {r.reason}")
             return
         rows = r.fields.get("rows") or []
         if not rows:
@@ -6962,7 +7058,7 @@ class Shell:
                 "udp_checksum": bool(cur["udp_checksum"])}
         rep = self.api_call("set_ipfix_exporter", args)
         if rep.state != vppapi.OK:
-            self.err(f"cgnat {' '.join(w[1:])}: {rep.reason}")
+            self.err_dataplane(f"cgnat {' '.join(w[1:])}: {rep.reason}")
 
     #: Terminators, which are structure rather than configuration.
     #:
@@ -10649,7 +10745,10 @@ class Shell:
                             "against", indent=self.VERSION_INDENT)
             return
 
-        if build == mine:
+        # THE decision, and it is made in one place. The refusal a dataplane
+        # gives while these two disagree says so too (#293), and a condition
+        # spelled out twice is two answers to one question.
+        if not version_split(build, mine, source):
             return
 
         # No version string inside the prose, and that is #252's rule applied
