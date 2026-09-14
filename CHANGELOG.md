@@ -387,6 +387,53 @@ version has a chance of seeing it.
   guest cannot stand in for, and the comment was the thing that would have sent
   whoever takes it to vary the wrong knob. `docs/appliance.md` points at the
   comment rather than restating the list, so there is one copy to keep true.
+
+* **A release note could name a file the tree does not have.** Nothing compared
+  the two, and the paths in a changelog entry are what a reader follows: the
+  entry for [#307](https://github.com/andrediashexa/hexarouting/issues/307)
+  names `tools/iso-ready.sh`, the one for
+  [#304](https://github.com/andrediashexa/hexarouting/issues/304) names
+  `test/test_ssh_settings.py`, and a rename between the branch and the merge
+  would leave either of them pointing at nothing.
+
+  `test/test_changelog_landing.py` checks the paths in the **unreleased**
+  section only, and that is the whole design. A tagged section describes a
+  medium somebody is running and must not be edited, so a file renamed after it
+  shipped leaves that section pointing at a name the tree no longer has and
+  there is nothing to be done about it. The section being written is the one
+  somebody can still fix.
+
+  Sound for the reason `test/test_doc_copies.py`'s header gives for rejecting
+  its opposite: the holder is the filesystem. A path either resolves or it does
+  not, and it cannot be reworded into passing. Absolute paths are skipped,
+  because `/etc/hexarouting/vpp-base.conf` is a file on the appliance and
+  asking this tree for it is asking the wrong machine.
+
+* **And the same for the documents, which is where the pointers actually
+  rot.** `docs/` and the wiki send a reader to 330 paths under this
+  repository's own directories. Nothing checked that any of them still
+  resolves, so a file renamed in one commit leaves every document that named
+  it pointing at nothing, silently, until somebody follows the pointer.
+
+  Sound for the same reason: the holder is the filesystem and nothing reads
+  what is at the other end. The rule that makes it usable is that the first
+  path component must be one of this repository's own directories, and that
+  rule replaced an allowlist. Measured before it was written: across `docs/`
+  alone, 280 mentions gave 4 misses, and **3 of the 4 were VPP's own headers**
+  (`vnet/error.h`, `vnet/ethernet/node.c`,
+  `vnet/ipfix-export/ipfix_info_elements.h`), which are real files on a box and
+  not files here. The fourth was a wiki page named relative to `wiki/` instead
+  of the root. With the rule: 330 mentions, 0 missing. An allowlist of three
+  would have been an allowlist somebody grows.
+
+  **The rule has one holder**, `test/doc_paths.py`, because both checks ask the
+  same question. Written out in each of them it took one commit to disagree:
+  the changelog copy did not know that `vnet/error.h` is VPP's header rather
+  than ours, and went red on the entry you are reading, whose whole subject is
+  that distinction. Breaking the holder turns both readers red at once, which
+  is the point of there being one.
+
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).

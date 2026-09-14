@@ -45,6 +45,9 @@ def ok(msg):
     print(f"  [ ok ] {msg}")
 
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import doc_paths                                     # noqa: E402
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = open(os.path.join(REPO, "CHANGELOG.md"), encoding="utf-8").read()
 
@@ -95,6 +98,48 @@ if vers and vers == sorted(vers, reverse=True):
 check(len(heads) >= 3,
       f"only {len(heads)} section(s) were found, so this file is asserting "
       f"almost nothing. The heading pattern no longer matches this CHANGELOG")
+
+print("\n=== the paths the unreleased entries name are still in the tree ===")
+# ONLY the unreleased section, and that is the whole design.
+#
+# A tagged section describes a medium somebody is running and MUST NOT be
+# edited, so a file renamed after 0.62.0 leaves that section pointing at a name
+# the tree no longer has and there is nothing to be done about it. The section
+# being WRITTEN is different: it is read by whoever cuts the release and by the
+# operator who takes it, and a path in it that does not exist is either a typo
+# or a rename that happened between the branch and the merge.
+#
+# The holder is the filesystem, which is the whole reason this is sound where
+# comparing a message against the code that prints it is not: a path either
+# resolves or it does not, and it cannot be reworded into passing.
+#
+# WHICH STRINGS COUNT AS A PATH is decided by test/doc_paths.py, which
+# test/test_doc_commands.py reads too. Written out here as well, this copy went
+# red on an entry naming `vnet/error.h` - VPP's header, not ours - which is
+# exactly the distinction that entry was about. One holder, two readers.
+_UNREL = re.search(r"^## Unreleased$(.*?)^## \d", TEXT, re.M | re.S)
+if not _UNREL:
+    check(False, "the unreleased section could not be sliced, so the paths in "
+                 "it are not being checked at all")
+else:
+    _body = _UNREL.group(1)
+    _named, _missing = set(), []
+    for _rel in doc_paths.repo_paths(_body):
+        _named.add(_rel)
+        if not os.path.exists(os.path.join(REPO, _rel)):
+            _missing.append(_rel)
+    for _r in sorted(set(_missing)):
+        check(False, f"an unreleased entry names {_r!r} and the tree does not "
+                     f"have it: a reader sent to that path finds nothing, and "
+                     f"a tagged section cannot be corrected afterwards")
+    if not _missing:
+        if len(_named) >= 3:
+            ok(f"all {len(_named)} of them")
+        else:
+            # An empty unreleased section is the ordinary state right after a
+            # release and names nothing. Saying so is better than an [ ok ]
+            # that reads as though something was checked.
+            ok(f"{len(_named)} path(s) named, so there is little here to check")
 
 print("\n=== every merged issue has an entry to be read in ===")
 # The other half of "there is somewhere for it to land": that something

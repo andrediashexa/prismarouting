@@ -60,6 +60,9 @@ def ok(msg):
     print(f"  [ ok ] {msg}")
 
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import doc_paths                                     # noqa: E402
+
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 #: Everything that shows a transcript of this VTY. README.md is in here
 #: because it is the first page anybody reads and it quotes the VTY too.
@@ -555,6 +558,53 @@ elif _pairs >= 5:
 else:
     bad(f"only {_pairs} fixture-and-lab pair(s) were found, so this is "
         f"asserting almost nothing")
+
+print("\n=== every path these documents send a reader to is in the tree ===")
+# A POINTER, not a second copy of a truth, which is why this is sound where
+# test/test_doc_copies.py's header rejects its own opposite. The holder is the
+# filesystem: a path either resolves or it does not, and it cannot be reworded
+# into passing. Nothing here reads what is at the other end.
+#
+# WHICH STRINGS COUNT AS A PATH is decided by test/doc_paths.py and not here,
+# because test/test_changelog_landing.py asks the same question. Written out
+# twice, the two immediately disagreed: the changelog copy did not know that
+# `vnet/error.h` is VPP's header rather than ours, and went red on an entry
+# whose whole subject was that distinction. The measurement behind the rule is
+# in that file.
+#
+# CHANGELOG.md is excluded here and checked separately in
+# test/test_changelog_landing.py, which looks only at the unreleased section.
+# A tagged section describes a medium somebody is running and MUST NOT be
+# edited, so a file renamed after it shipped leaves it naming something that
+# is gone and nobody may correct it.
+_seen, _dead = 0, {}
+for _root, _dirs, _files in os.walk(REPO):
+    _dirs[:] = [_d for _d in _dirs
+                if _d not in {".git", ".build", ".build-vpp", ".build-old",
+                              "build"}]
+    for _f in _files:
+        if not _f.endswith(".md"):
+            continue
+        _rel = os.path.relpath(os.path.join(_root, _f), REPO)
+        if _rel == "CHANGELOG.md":
+            continue
+        with open(os.path.join(REPO, _rel), encoding="utf-8") as _fh:
+            _text = _fh.read()
+        for _path in doc_paths.repo_paths(_text):
+            _seen += 1
+            if not os.path.exists(os.path.join(REPO, _path)):
+                _dead.setdefault(_path, set()).add(_rel)
+if _dead:
+    for _path, _where in sorted(_dead.items()):
+        bad(f"{', '.join(sorted(_where))} sends a reader to {_path!r} and the "
+            f"tree does not have it: the file was renamed or removed and the "
+            f"document was left behind")
+elif _seen >= 250:
+    ok(f"all {_seen} of them")
+else:
+    bad(f"only {_seen} path mention(s) were found, so this check is asserting "
+        f"almost nothing: the pattern no longer matches how these documents "
+        f"name a file")
 
 if fail == 0:
     print()
