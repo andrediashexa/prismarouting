@@ -1435,14 +1435,16 @@ which is the one question an upgrade leaves open. It carries its build stamp
 now, from the same calculation `install.sh` uses for the VERSION file, and
 `show version` prints both and says when they differ.
 
-**Still open, and all three were found by measuring the path rather than by
-reading it:**
+**Found by measuring the path rather than by reading it**, and each row says
+where it stands.
 
 | | |
 |---|---|
 | [#291](https://github.com/andrediashexa/hexarouting/issues/291) item 3 | `install.sh` behaves identically on a second run and closes with a first install's sentence, so an operator who has already tuned the box reads "and reboot so that isolcpus and hugepages take effect" as nothing to do. It does not restart `vpp.service`, which is the right default - restarting the dataplane drops every session on the box - and it does not say so |
-| [#293](https://github.com/andrediashexa/hexarouting/issues/293) | in that window the new VTY **cannot create a pool**: the API message grew fields the running plugin does not have, and the refusal names `bpa_pool_add_del` rather than the upgrade that caused it. Changing a setting on an existing pool works. The VTY now knows both versions, so a refusal arriving while they disagree can say which dataplane is answering |
-| [#294](https://github.com/andrediashexa/hexarouting/issues/294) | `hexash --load` refuses the **whole** configuration over a static route that is correct, because the next-hop check reads the live FIB and the address that makes the next hop reachable is in the file being loaded. A normal boot survives only because FRR is already holding the route from its own `frr.conf`, so a second copy of the configuration in another daemon's file is what keeps the box configured |
+| [#295](https://github.com/andrediashexa/hexarouting/issues/295) | **and the path itself does not exist where an operator is.** Measured on a real appliance: no `install.sh`, no source tree, no toolchain. The in-place route serves the release gate and `lab/upgrade.sh`, which have a build tree; anybody holding a published medium has only a reinstall, which erases the volume carrying a year of connection records. The claims are corrected and the wiki has a page saying what the real procedure is. **The mechanism is the decision**: an upgrade artifact published beside the ISO, an in-place upgrade in the installer, or a Debian package |
+| [#293](https://github.com/andrediashexa/hexarouting/issues/293) - *fixed* | in that window the new VTY could not create a pool, because the API message grew fields the running plugin does not have, and the refusal named `bpa_pool_add_del` rather than the upgrade that caused it. It now says which dataplane answered and what clearing it costs |
+| [#294](https://github.com/andrediashexa/hexarouting/issues/294) - *fixed* | `hexash --load` refused the **whole** configuration over a static route that was correct, because the next-hop check read the live FIB while the address making the next hop reachable was in the file being loaded. What a boot survived on was FRR's own copy of the route, in another daemon's file |
+| [#296](https://github.com/andrediashexa/hexarouting/issues/296) | the same path read the other way, and the dangerous direction. A pool whose public range contains one of the box's own interface addresses is refused when an operator types it and becomes one line in VPP's log when the same file is loaded at boot, because the plugin's check walks the LIVE addresses and `--load` creates pools before it applies any. What that costs is in `bpa_check_local_overlap()`'s own comment: the box's BGP session or OSPF adjacency gets translated, "which then breaks intermittently with nothing obvious in any log". Filed as a reading of the code, to be measured before anything is changed |
 
 #### The rename to PrismaRouting
 
