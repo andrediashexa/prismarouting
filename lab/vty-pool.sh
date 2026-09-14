@@ -147,6 +147,36 @@ printf '%s\n' "$VTY_WARN" | sed 's/^/  /'
 LOGGED=$(vppctl show logging 2>/dev/null | grep -c "below the")
 
 echo
+echo
+echo "=========== 9. a pool with nowhere for packets to enter (#299) ==========="
+# THE STATE A BOX IS IN ON THE DAY IT IS RACKED, and the one this lab has been
+# in all along without saying so: a pool is configured and no interface is
+# attached to CGNAT, so nothing can reach it. Measured on a real appliance
+# whose dataplane had only local0 - it committed cleanly, the boot self-test
+# gave it a green tick, and this command reported capacity for 504 subscribers
+# it would never serve.
+#
+# Both directions are driven here rather than only the broken one. A caveat
+# that appears on a correctly attached box is worse than none, because it is
+# the one people learn to skip past - and then they skip the real one too.
+NOATTACH=$(vppctl show bpa pool)
+printf '%s\n' "$NOATTACH" | grep -E "capacity|nobody yet" | sed 's/^/  /'
+
+vppctl set interface bpa in2out pg0 >/dev/null
+vppctl set interface bpa out2in pg1 >/dev/null
+BOTH=$(vppctl show bpa pool)
+echo "  with both sides attached:"
+printf '%s\n' "$BOTH" | grep -E "capacity|nobody yet" | sed 's/^/  /'
+
+# And one side only, because the two are different mistakes with different
+# fixes and a message that said "not attached" for both would send half the
+# readers to the wrong interface.
+vppctl set interface bpa out2in pg1 del >/dev/null
+INONLY=$(vppctl show bpa pool)
+echo "  with the outside detached again:"
+printf '%s\n' "$INONLY" | grep -E "capacity|nobody yet" | sed 's/^/  /'
+vppctl set interface bpa in2out pg0 del >/dev/null
+
 echo "=========== VERDICT ==========="
 expect_in "the dataplane has the pool" "cgnat pool lab" "$CFG"
 expect_in "max-blocks reached the dataplane" "max-blocks 3" "$CFG"
@@ -166,6 +196,20 @@ expect "and the commit that had to survive it did take effect" \
 expect "loading a file with an unknown line fails" test "$BADRC" -ne 0
 expect_in "and says which line, by number" "line 8" "$BAD"
 expect_in "and what it did not understand" "wibble" "$BAD"
+
+# #299: the capacity figure with the reason beside it, in both directions.
+expect_said "a pool nothing is attached to says it serves nobody yet" \
+  "nobody yet: no interface is attached to CGNAT" "$NOATTACH"
+expect_said "and why, in both directions" \
+  "no packet can reach this pool in either direction" "$NOATTACH"
+expect_not_said "and once both sides are attached it says nothing" \
+  "nobody yet" "$BOTH"
+expect_in "while still reporting the capacity it always did" \
+  "capacity" "$BOTH"
+expect_said "with only the inside attached it names THAT half" \
+  "no interface is attached on the outside" "$INONLY"
+expect_not_said "and does not blame the inside, which is attached" \
+  "attached on the inside" "$INONLY"
 
 expect_in "a forward typed into the VTY reached the dataplane" \
   "203.0.113.17:1100 -> 10.0.0.5:80" "$FWD"

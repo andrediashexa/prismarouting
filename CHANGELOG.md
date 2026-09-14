@@ -62,6 +62,29 @@ version has a chance of seeing it.
 
 ### Changed
 
+* **A pool on a box with no dataplane interface reported capacity for 504
+  subscribers it would never serve**
+  ([#299](https://github.com/andrediashexa/hexarouting/issues/299)). Measured
+  on a real appliance whose dataplane held only `local0`: the pool committed
+  cleanly, the boot self-test gave it a green tick, and `show cgnat pool` said
+  `capacity 504 subscribers (usable 504)`. Nothing was attached to CGNAT, so
+  no packet could reach it in either direction.
+
+  `show cgnat pool` now prints the reason beside the figure, and names which
+  half is missing, because an interface missing on the inside and one missing
+  on the outside are different mistakes with different fixes. A pool with both
+  sides attached is unchanged, under the same rule the worker-sharding caveat
+  beside it already follows: a line that appears on a correctly attached box
+  is one people learn to skip, and then they skip the real one too.
+
+  **Not a refusal.** Writing the pools before the interfaces exist is ordinary
+  staged work, and `hexash --load` applies them in that order at every boot, so
+  refusing would refuse a box its own saved configuration. This is
+  [#210](https://github.com/andrediashexa/hexarouting/issues/210)'s option 3
+  and [#226](https://github.com/andrediashexa/hexarouting/issues/226)'s option
+  A once more: the mechanism stays and the box stops claiming what it cannot
+  do.
+
 * **The boot self-test said "HexaRouting ready." on a box that had no
   interface to forward on**
   ([#297](https://github.com/andrediashexa/hexarouting/issues/297)). Measured
