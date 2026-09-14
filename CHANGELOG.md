@@ -48,6 +48,53 @@ version has a chance of seeing it.
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
+## Unreleased
+
+### Added
+
+* **`commit` says when an eBGP session is opened with no `maximum-prefix`**
+  ([#145](https://github.com/andrediashexa/hexarouting/issues/145)).
+  A peer that leaks a full table into a box sized for a few thousand routes
+  takes it down, and BGP stops nothing by default: FRR accepts every prefix
+  the neighbour sends until memory runs out. `maximum-prefix` is the only
+  statement that tears the session down instead, and nothing in this box ever
+  mentioned that it was absent.
+
+  ```
+  warning: this eBGP session has no 'maximum-prefix': a peer that leaks a full
+      table fills this box and nothing here stops it. 'neighbor 10.0.0.2
+      maximum-prefix 10000' tears the session down instead of the box
+      neighbor 10.0.0.2 remote-as 65001
+  ```
+
+  **A warning and never a refusal**, which is what the issue asking for it
+  decided: a route server, a customer whose table is known small and a lab
+  peer all run without a limit on purpose, and refusing them is the shape
+  [#208](https://github.com/andrediashexa/hexarouting/issues/208) named.
+
+  **It speaks once.** Only about the neighbours THIS CHANGE brings into that
+  state, the same subtraction the undefined-route-map refusal makes. A box
+  with three deliberately unlimited upstreams would otherwise carry three
+  warnings on every commit it ever takes, and an alarm that is always on is
+  one nobody reads.
+
+  **iBGP is out of scope by decision, not omission**: the peer is a box the
+  same operator runs, its table is the table this AS already decided to hold,
+  and a limit there fires on the network growing rather than on a leak. So is
+  a neighbour whose AS is not in the text - `remote-as auto`, or no
+  `remote-as` at all, which `bgp_errors` already refuses for a reason that
+  matters more. A peer group carrying the limit covers every member of it,
+  because the group is where an operator with six upstreams puts it exactly
+  once; `maximum-prefix-out` does not, because that statement limits what this
+  box **sends**. The local AS is read per `router bgp` stanza, so the same
+  neighbour AS is eBGP in one VRF and iBGP in another.
+
+  Recorded because the mutation said so and not because anybody noticed it:
+  the assertion that OSPF's `neighbor` is not a BGP session stays **green**
+  with the `router bgp` guard taken out of the walk, because `poll-interval`
+  is neither a `remote-as` nor a `peer-group` and the undecidable case is
+  skipped anyway. The property is true; that guard is not what pins it.
+
 ## 0.69.0 — the appliance brings up its own dataplane card, and a deterministic pool has one to give
 
 [#39](https://github.com/andrediashexa/hexarouting/issues/39),
@@ -216,7 +263,6 @@ version has a chance of seeing it.
   **dynamic** pool is refused outright - that pool's extension already comes
   off the free list, so a reserve would take blocks out of the list it is drawn
   from.
-
 * **`show hardware` - the VTY lists the box's own NICs, so the operator can
   see what there is to choose from**
   ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).

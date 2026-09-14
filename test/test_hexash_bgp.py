@@ -320,6 +320,129 @@ check(hexash.advertisement_fingerprint(RUN)
       "an interface description does not, so it earns no note")
 
 
+# ------------------------------------------------------------------ #145.4
+print("\n=== an eBGP neighbour with no maximum-prefix ===")
+
+# A warning and never a refusal, which is what the issue asking for it
+# decided: a route server, a customer whose table is known small and a lab
+# peer all run without a limit on purpose. What this section is really about
+# is the OTHER direction - every shape below that MUST stay silent is a
+# configuration somebody has, and a warning printed over one of them is the
+# same harm as a refusal, only quieter.
+NOLIMIT = ["router bgp 65000",
+           " neighbor 10.0.0.2 remote-as 65001"]
+mp = hexash.max_prefix_findings(NOLIMIT)
+check(len(mp) == 1 and mp[0][0] == "warning",
+      f"an eBGP neighbour with no limit is a warning, not a refusal: {mp}")
+check(mp and mp[0][1] == "neighbor 10.0.0.2 remote-as 65001",
+      f"and the statement that opens the session is named: {mp}")
+check(mp and "maximum-prefix 10000" in mp[0][2],
+      f"and the operator is told what to type, not only 'no': {mp}")
+
+# The limit itself, in both places FRR takes it.
+check(hexash.max_prefix_findings(
+    NOLIMIT + [" neighbor 10.0.0.2 maximum-prefix 10000"]) == [],
+    "a neighbour carrying the limit is told nothing")
+check(hexash.max_prefix_findings(
+    NOLIMIT + [" address-family ipv4 unicast",
+               "  neighbor 10.0.0.2 maximum-prefix 10000 90 restart 5",
+               " exit-address-family"]) == [],
+    "and so is one carrying it inside an address family")
+
+# `maximum-prefix-out` limits what this box SENDS. Counting it would silence
+# the warning on a session with no inbound defence at all.
+check(len(hexash.max_prefix_findings(
+    NOLIMIT + [" neighbor 10.0.0.2 maximum-prefix-out 100"])) == 1,
+    "'maximum-prefix-out' is a different statement and does not count")
+
+# iBGP, both spellings. The peer is a box the same operator runs, its table is
+# the table this AS already decided to hold, and a limit there fires on the
+# network growing rather than on a leak.
+check(hexash.max_prefix_findings(
+    ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65000"]) == [],
+    "an iBGP neighbour is not this check's business")
+check(hexash.max_prefix_findings(
+    ["router bgp 65000", " neighbor 10.0.0.2 remote-as internal"]) == [],
+    "and neither is one written 'remote-as internal'")
+check(len(hexash.max_prefix_findings(
+    ["router bgp 65000", " neighbor 10.0.0.2 remote-as external"])) == 1,
+    "while 'remote-as external' is eBGP and is warned about")
+
+# Peer groups, which is where an operator with six upstreams puts the limit
+# exactly once. Missing this is how a check earns a workaround.
+GROUP = ["router bgp 65000",
+         " neighbor UPSTREAM peer-group",
+         " neighbor UPSTREAM remote-as external",
+         " neighbor 10.0.0.2 peer-group UPSTREAM",
+         " neighbor 10.1.0.2 peer-group UPSTREAM"]
+check(len(hexash.max_prefix_findings(GROUP)) == 2,
+      f"members of a group with no limit are each warned: "
+      f"{hexash.max_prefix_findings(GROUP)}")
+check(hexash.max_prefix_findings(
+    GROUP + [" neighbor UPSTREAM maximum-prefix 500000"]) == [],
+    "the limit on the group covers every member of it")
+check(not [f for f in hexash.max_prefix_findings(GROUP)
+           if f[1].startswith("neighbor UPSTREAM ")],
+      "and the group itself is not a session, so it is never the subject")
+
+# What cannot be decided from the text is left alone. A second sentence about
+# a limit on a session that will never open is noise on top of a refusal
+# bgp_errors already makes.
+check(hexash.max_prefix_findings(
+    ["router bgp 65000", " neighbor 10.0.0.2 description upstream"]) == [],
+    "a neighbour with no remote-as anywhere is bgp_errors' business, not this")
+check(hexash.max_prefix_findings(
+    ["router bgp 65000", " neighbor 10.0.0.2 remote-as auto"]) == [],
+    "'remote-as auto' resolves to an AS that is not in the text")
+# `neighbor` is an OSPF word too, and reading every routing line for it is
+# how #208's sibling was filed. Recorded because the mutation says so: taking
+# the `router bgp` guard OUT of the walk leaves this assertion GREEN, because
+# `poll-interval` is neither a remote-as nor a peer-group and the undecidable
+# case is skipped anyway. The property is true and worth stating; the guard
+# that would make it true on its own is not what pins it.
+check(hexash.max_prefix_findings(
+    ["router ospf", " neighbor 10.0.0.2 poll-interval 60"]) == [],
+    "and OSPF's 'neighbor' is not a BGP session at all")
+
+# The unnumbered form, read by keyword. Read positionally it was a neighbour
+# with no AS, and that reading is what #208 refused a working commit over.
+check(len(hexash.max_prefix_findings(
+    ["router bgp 65000", " neighbor vppwan0 interface remote-as external"]))
+    == 1,
+    "an unnumbered eBGP session with no limit is warned about too")
+check(hexash.max_prefix_findings(
+    ["router bgp 65000", " neighbor vppwan0 interface remote-as internal"])
+    == [],
+    "and the internal one is not")
+
+# Printed, and measured against the console rather than eyeballed. The
+# neighbour name is in the sentence AND on the row below it, so the widest
+# real case is an IPv6 peer - which is one of the three rows #276 found over
+# budget after somebody had read them and decided they fitted.
+_sh = hexash.Shell.__new__(hexash.Shell)
+for _peer in ("10.0.0.2", "2001:db8:aaaa:bbbb::2", "vppwan0"):
+    _f = hexash.max_prefix_findings(
+        ["router bgp 65000", f" neighbor {_peer} remote-as 65001"])
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        _sh.say_finding(*_f[0])
+    _over = [l for l in _buf.getvalue().splitlines()
+             if len(l) > config.CONSOLE_COLUMNS]
+    check(not _over,
+          f"the warning for {_peer} fits {config.CONSOLE_COLUMNS} "
+          f"columns: {_over}")
+
+# A stanza's own AS, so the same neighbour AS is eBGP in one VRF and iBGP in
+# another. Reading one local AS for the file would get one of them wrong.
+TWO_AS = ["router bgp 65000",
+          " neighbor 10.0.0.2 remote-as 65001",
+          " neighbor 10.0.0.2 maximum-prefix 10000",
+          "router bgp 65001 vrf blue",
+          " neighbor 10.2.0.2 remote-as 65001"]
+check(hexash.max_prefix_findings(TWO_AS) == [],
+      f"a neighbour in the AS of its own stanza is iBGP there: "
+      f"{hexash.max_prefix_findings(TWO_AS)}")
+
 # ------------------------------------------------------------------- commit
 print("\n=== the commit path: the gate, and the way past it ===")
 
@@ -357,7 +480,12 @@ class Box:
         sh.frr = type("F", (hexash.Frr,), {
             "available": lambda s: True,
             "show": lambda s, cmd: (0, "zebra bgpd staticd mgmtd"),
-            "running": lambda s: [],
+            # What FRR holds AFTER the apply, which on a box that took the
+            # commit is the commit. A stub answering [] makes every applied
+            # statement look like one FRR silently dropped, and `commit` then
+            # prints a refusal listing them - noise that lands in the same
+            # captured output these assertions search.
+            "running": lambda s: config.Config.parse(self.running).routing,
             "outstanding": lambda s, out: [],
             "diagnostics": lambda s, out: [],
             "reload": lambda s, lines, check_only=False: (0, "")})()
@@ -455,6 +583,36 @@ box = Box(cfg_text(RUN))
 out, sh = box.commit(cfg_text(RUN + ["ip route 10.0.0.0/8 blackhole"]))
 check(len(box.applied) == 1, f"an unrelated change still commits:\n{out}")
 check("cutoff" not in out, f"and is told nothing about cutoff:\n{out}")
+
+# The maximum-prefix warning on the commit path, both directions: said over
+# the neighbour this commit opens, and not said over the one that carries a
+# limit. The second is the assertion that matters - it is the configuration an
+# operator who did everything right has.
+box = Box(cfg_text(["router bgp 65000"]))
+out, sh = box.commit(cfg_text(["router bgp 65000",
+                               " neighbor 10.0.0.2 remote-as 65001"]))
+check("maximum-prefix" in unwrapped(out),
+      f"opening an eBGP session with no limit is said out loud:\n{out}")
+check(len(box.applied) == 1,
+      f"and it is a warning, so the commit goes through: {box.applied}")
+box = Box(cfg_text(["router bgp 65000"]))
+out, sh = box.commit(cfg_text(["router bgp 65000",
+                               " neighbor 10.0.0.2 remote-as 65001",
+                               " neighbor 10.0.0.2 maximum-prefix 10000"]))
+check("maximum-prefix" not in unwrapped(out),
+      f"while the same session with a limit is told nothing:\n{out}")
+check(len(box.applied) == 1, f"and commits: {box.applied}")
+
+# And it speaks once, not on every commit afterwards. A box whose upstreams
+# are deliberately unlimited would otherwise carry the same warning forever,
+# which is the alarm nobody reads.
+LIVE = ["router bgp 65000", " neighbor 10.0.0.2 remote-as 65001"]
+box = Box(cfg_text(LIVE))
+out, sh = box.commit(cfg_text(LIVE + ["ip route 10.0.0.0/8 blackhole"]))
+check("maximum-prefix" not in unwrapped(out),
+      f"a box already in that state is not warned again:\n{out}")
+check(len(box.applied) == 1,
+      f"and its unrelated change commits: {box.applied}")
 
 # The console case: no address, and the box says which check it could not
 # make rather than letting the operator assume it passed.

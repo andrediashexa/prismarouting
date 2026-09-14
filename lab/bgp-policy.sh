@@ -347,6 +347,60 @@ expect_in "the box that warns about the pool still passes its check" \
   "configuration check succeeds" "$ROSPF"
 expect_not_in "and the warning is not an error" "error:" "$ROSPF"
 
+# --- an eBGP neighbour with no maximum-prefix (#145) ---
+#
+# A peer that leaks a full table into a box sized for a few thousand routes
+# takes it down, and BGP stops nothing by default. A WARNING and never a
+# refusal - a route server, a small customer and this lab itself all run
+# without a limit on purpose - so both halves are asserted here: the sentence
+# is said over the session that has no limit, and the SAME command with the
+# limit on it says nothing. The second is the one that matters; a check that
+# fires on a correct design teaches the operator to type past it.
+#
+# The needles use expect_said, not expect_in: the reason is prose, `commit`
+# wraps it to the console, and `neighbor 10.2.0.2 maximum-prefix 10000` folds
+# in the middle on an 80-column terminal (#271, #276).
+echo "=========== an eBGP neighbour with no maximum-prefix ==========="
+NOMAX=$($HX -c "configure" -c "router bgp 65000" \
+        -c "neighbor 10.2.0.2 remote-as 65002" -c "exit" \
+        -c "commit check" 2>&1)
+printf '%s\n' "$NOMAX" | tail -8 | sed 's/^/  check: /'
+expect_said "a new eBGP session with no limit is called out" \
+  "this eBGP session has no 'maximum-prefix'" "$NOMAX"
+expect_said "and the operator is told what to type, not only that it is wrong" \
+  "'neighbor 10.2.0.2 maximum-prefix 10000' tears the session down" "$NOMAX"
+expect_in "and it is a warning, so the configuration still passes" \
+  "configuration check succeeds" "$NOMAX"
+
+# The legitimate neighbour of it, which MUST commit with nothing said.
+WITHMAX=$($HX -c "configure" -c "router bgp 65000" \
+          -c "neighbor 10.2.0.2 remote-as 65002" \
+          -c "neighbor 10.2.0.2 maximum-prefix 10000" -c "exit" \
+          -c "commit check" 2>&1)
+expect_not_said "a session carrying the limit is told nothing" \
+  "this eBGP session has no 'maximum-prefix'" "$WITHMAX"
+expect_in "and it passes too" "configuration check succeeds" "$WITHMAX"
+
+# iBGP is out of scope by decision, not by omission: the peer is a box the
+# same operator runs, and a limit there fires on the network growing rather
+# than on a leak. 65000 is this box's own AS.
+IBGP=$($HX -c "configure" -c "router bgp 65000" \
+       -c "neighbor 10.2.0.2 remote-as 65000" -c "exit" \
+       -c "commit check" 2>&1)
+expect_not_said "an iBGP neighbour is not this check's business" \
+  "this eBGP session has no 'maximum-prefix'" "$IBGP"
+
+# And the box is not warned again about the two sessions it is already
+# running, which have no limit either. A warning repeated on every commit is
+# the alarm nobody reads, and these two are in the running configuration from
+# the section that brought them up.
+QUIET=$($HX -c "configure" -c "router static" \
+        -c "route 192.0.2.0/24 blackhole" -c "exit" \
+        -c "commit check" 2>&1)
+printf '%s\n' "$QUIET" | tail -4 | sed 's/^/  check: /'
+expect_not_said "a box already in that state is not warned again" \
+  "this eBGP session has no 'maximum-prefix'" "$QUIET"
+
 # --- what FRR says on a SUCCESSFUL apply (#145) ---
 #
 # frr-reload returning 0 does not mean FRR was silent. Told to use a route-map

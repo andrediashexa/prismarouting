@@ -3246,6 +3246,120 @@ def bgp_errors(routing, have_interfaces=None, lcp_pairs=None,
     return out
 
 
+def max_prefix_findings(routing):
+    """
+    eBGP neighbours with no `maximum-prefix`, as (severity, stmt, why).
+
+    A peer that leaks a full table into a box sized for a few thousand routes
+    takes it down, and nothing in BGP stops it by default: FRR accepts every
+    prefix the neighbour sends until memory runs out. `maximum-prefix` is the
+    only statement that tears the session down instead, and a box that does
+    not carry one has no defence that is written anywhere.
+
+    WARNING and never a refusal, which is the issue's own call and the right
+    one: a route server, a customer whose table is known small, a lab peer -
+    all of them run without a limit on purpose. Refusing them would be the
+    shape #208 named.
+
+    iBGP is out of scope, and not by omission. The peer on the other end of an
+    iBGP session is a box the same operator runs, its table is the table this
+    AS already decided to hold, and a limit there fires on a legitimate growth
+    of the network rather than on a leak. So the test is the AS: a neighbour
+    whose `remote-as` differs from the stanza's, or is the word `external`.
+
+    Everything that cannot be decided from the text is left alone, because a
+    warning printed over a configuration this function misread is the same
+    harm as a refusal, only quieter:
+
+    * A neighbour with no resolvable `remote-as` gets nothing from here.
+      `bgp_errors` already refuses that session for a reason that matters
+      more, and a second sentence about a limit on a session that will never
+      open is noise on top of a refusal.
+    * `remote-as auto` is a real FRR spelling and the AS it resolves to is not
+      in the text, so it is neither eBGP nor iBGP here.
+    * A member of a peer group carrying the limit is covered, and so is one
+      whose group carries the `remote-as`. Missing that is how a check earns
+      a workaround: the group is where an operator with six upstreams puts
+      the limit exactly once.
+    * `maximum-prefix-out` is a different statement - it limits what this box
+      SENDS - so the word is matched whole.
+    """
+    out = []
+    local_as = None
+    groups = set()
+    # name -> {"as": remote-as value or None, "group": name, "limit": bool,
+    #          "stmt": the line it is first named on}
+    peers = {}
+
+    def ent(name):
+        return peers.setdefault(name, {"as": None, "group": None,
+                                       "limit": False, "stmt": None})
+
+    # The same walk `bgp_errors` does, and for the same two reasons: `neighbor`
+    # is an OSPF word as well as a BGP one, and context is tracked by statement
+    # rather than by indentation because a configuration read back from FRR is
+    # indented and the same line typed at this VTY is not.
+    in_bgp = False
+    for line in routing:
+        w = line.split()
+        if not w:
+            continue
+        if w[:2] == ["router", "bgp"]:
+            in_bgp = True
+            local_as = w[2] if len(w) >= 3 else None
+            continue
+        if w[0] in ("router", "interface", "route-map", "rpki", "vrf"):
+            in_bgp = False
+            continue
+        if w[0] == "exit":
+            in_bgp = False      # `exit-address-family` is a different word
+            continue
+        if not in_bgp or w[0] != "neighbor" or len(w) < 3:
+            continue
+        name = w[1]
+        if len(w) == 3 and w[2] == "peer-group":
+            groups.add(name)
+            ent(name)
+            continue
+        e = ent(name)
+        if e["stmt"] is None:
+            e["stmt"] = line.strip()
+        if w[2] == "interface":
+            # The unnumbered form, read by keyword: `remote-as` and
+            # `peer-group` are later words on the same line, and the closed
+            # set after `interface` is what makes scanning it safe (#208).
+            rest = w[3:]
+            for i, word in enumerate(rest[:-1]):
+                if word == "remote-as":
+                    e["as"] = rest[i + 1]
+                elif word == "peer-group":
+                    e["group"] = rest[i + 1]
+        elif len(w) >= 4 and w[2] == "remote-as":
+            e["as"] = w[3]
+        elif len(w) >= 4 and w[2] == "peer-group":
+            e["group"] = w[3]
+        elif w[2] == "maximum-prefix":
+            e["limit"] = True
+
+    for name, e in sorted(peers.items()):
+        if name in groups or e["stmt"] is None:
+            continue
+        g = peers.get(e["group"] or "", {})
+        if e["limit"] or g.get("limit"):
+            continue
+        remote = e["as"] or g.get("as")
+        if remote is None or remote == "auto":
+            continue
+        if remote == "internal" or remote == local_as:
+            continue
+        out.append(("warning", e["stmt"],
+                    f"this eBGP session has no 'maximum-prefix': a peer that "
+                    f"leaks a full table fills this box and nothing here "
+                    f"stops it. 'neighbor {name} maximum-prefix 10000' tears "
+                    f"the session down instead of the box"))
+    return out
+
+
 def bgp_originations(routing):
     """
     What this configuration would have BGP originate, and what hides the rest.
@@ -5723,6 +5837,24 @@ class Shell:
                     ok = False
                 else:
                     self.say_finding("warning", stmt, why)
+
+            # An eBGP neighbour with no maximum-prefix (#145). A warning and
+            # never a refusal: running a session without a limit is a real
+            # design and the operator's call, which is what the issue asking
+            # for it said and what #208 is the standing reason for.
+            #
+            # Only about the neighbours THIS CHANGE brings into that state,
+            # the same subtraction the route-map refusal above makes. A box
+            # whose three upstreams are deliberately unlimited would otherwise
+            # print three warnings on every commit it ever takes, and an alarm
+            # that is always on is one nobody reads - the reason
+            # pool_announce_findings gives for being a warning applies just as
+            # well to how often a warning is allowed to speak.
+            carried = {stmt for _, stmt, _
+                       in max_prefix_findings(running.routing)}
+            for sev, stmt, why in max_prefix_findings(target.routing):
+                if stmt not in carried:
+                    self.say_finding(sev, stmt, why)
 
             # A policy that withdraws the prefix carrying THIS session (#145).
             # The SSH lockout check above refuses a configuration nobody could

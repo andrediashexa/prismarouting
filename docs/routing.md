@@ -3530,6 +3530,75 @@ An operator draining a prefix everywhere applies the policy everywhere,
 peer groups included, which is what the lab now does.
 
 
+## An eBGP neighbour with no maximum-prefix
+
+```
+warning: this eBGP session has no 'maximum-prefix': a peer that leaks a full
+    table fills this box and nothing here stops it. 'neighbor 10.0.0.2
+    maximum-prefix 10000' tears the session down instead of the box
+    neighbor 10.0.0.2 remote-as 65001
+```
+
+A peer that leaks a full table into a box sized for a few thousand routes takes
+it down, and BGP stops nothing by default: FRR accepts every prefix the
+neighbour sends until memory runs out. `maximum-prefix` is the only statement
+that tears the session down instead, and a box that does not carry one has no
+defence written anywhere.
+
+**A warning and never a refusal.** A route server, a customer whose table is
+known small and a lab peer all run without a limit on purpose. Refusing them
+would be the shape #208 named, and the operator who learns to work around one
+check works around the next.
+
+### It speaks once
+
+The subtraction `route_map_reference_findings` already uses, for a different
+reason. There the reason is that `--load` runs the same check at boot and
+refusing the file whole would leave the box with nothing on it. Here the reason
+is volume: a box with three deliberately unlimited upstreams would otherwise
+carry three warnings on every commit it ever takes, and an alarm that is always
+on is one nobody reads. So the warning is printed for the neighbours **this
+change** brings into that state, and a commit that touches something else is
+silent about sessions that were already running without a limit.
+
+### What it will not decide
+
+Every one of these is a configuration somebody has, and a warning printed over
+a configuration this check misread is the same harm as a refusal, only quieter.
+
+| Written | Said |
+|---|---|
+| `neighbor X remote-as <other AS>`, no limit | warned |
+| `neighbor X remote-as external`, no limit | warned |
+| `neighbor X interface remote-as external` | warned - the unnumbered form, read by keyword, because reading it positionally is what #208 refused a working commit over |
+| `neighbor X remote-as <this stanza's AS>` | nothing: iBGP |
+| `neighbor X remote-as internal` | nothing: iBGP |
+| `neighbor X remote-as auto` | nothing: the AS it resolves to is not in the text |
+| a neighbour with no `remote-as` anywhere | nothing: `bgp_errors` already refuses that session, and a second sentence about a limit on a session that will never open is noise on top of a refusal |
+| `neighbor X maximum-prefix 10000` | nothing |
+| the limit inside `address-family ipv4 unicast` | nothing: FRR takes it in both places and so does this |
+| `neighbor UPSTREAM maximum-prefix 500000` on the group | nothing, for every member of it - the group is where an operator with six upstreams puts the limit exactly once |
+| `neighbor X maximum-prefix-out 100` | warned: that statement limits what this box **sends**, so the word is matched whole |
+
+**iBGP is out of scope by decision.** The peer on the other end is a box the
+same operator runs, its table is the table this AS already decided to hold, and
+a limit there fires on the network growing rather than on a leak.
+
+**The local AS is the stanza's, not the file's.** `router bgp 65001 vrf blue`
+carries its own, so the same neighbour AS is eBGP in one stanza and iBGP in
+another; reading one AS for the whole file gets one of them wrong.
+
+### One assertion that is defended twice, recorded as such
+
+`neighbor` is an OSPF word as well as a BGP one - `neighbor 10.0.0.2
+poll-interval 60` under `router ospf` - and the walk tracks the stanza for that
+reason. Taking the `router bgp` guard **out** of the walk leaves the assertion
+about it **green**, because `poll-interval` is neither a `remote-as` nor a
+`peer-group` and the undecidable case is skipped anyway. The property is true
+and worth stating; the guard that would make it true on its own is not what
+pins it. Written down rather than passed over, because a mutation that produces
+no red is the trap this project keeps rediscovering.
+
 ## Prefix-lists
 
 ```
