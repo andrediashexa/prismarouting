@@ -335,7 +335,21 @@ SHOW_CGNAT = {
     "blocks": ("blocks allocated in dynamic mode, and how many a forward pins",
                None),
     "logging": ("IPFIX export state", None),
-    "history": ("dated configuration trail", None),
+    "history": ("dated configuration trail", {
+        # The tamper check the operator documentation sends people to, and
+        # until #313 there was no VTY spelling that reached it. The dataplane
+        # has had it since v0.23.0 - `show bpa pool history [verify]` - and
+        # this VTY proxied the command without its argument, so every page
+        # documenting the check named the dataplane's own spelling. The wiki
+        # must never do that: it is written for operators, and `show bpa ...`
+        # is not a command this product offers them.
+        #
+        # It is read where somebody is about to act on the answer: the page on
+        # taking a box to a new version puts it at the last step before the
+        # disk is erased, with a "pare aqui" attached to its result.
+        "verify": ("check the trail's hash chain, and name the first entry "
+                   "that does not match", None),
+    }),
     # The two the dataplane had and this VTY did not reach (#228). Both answer
     # "what does the box ACTUALLY have", which is a different question from
     # what the file says - the distinction #172 was about for worker cores,
@@ -8962,6 +8976,7 @@ class Shell:
             "show cgnat blocks": "show bpa blocks",
             "show cgnat logging": "show bpa logging",
             "show cgnat history": "show bpa pool history",
+            "show cgnat history verify": "show bpa pool history verify",
             "show cgnat drops": "show bpa drops",
             "show cgnat alg": "show bpa alg",
         }

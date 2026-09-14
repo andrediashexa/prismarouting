@@ -582,6 +582,35 @@ version has a chance of seeing it.
   message against the code that would produce it is unsound in both directions.
   The VTY half is the half a machine can hold, and it is held.
 
+* **The trail's tamper check had no VTY spelling, and the wiki documented the
+  dataplane's** ([#313](https://github.com/andrediashexa/hexarouting/issues/313)).
+  The dataplane has had `show bpa pool history [verify]` since v0.23.0. The VTY
+  proxied that command **without its argument**, so no VTY spelling reached the
+  check, and two operator pages named the dataplane's own - which the wiki must
+  never do, because it is written for people who have the VTY and not the
+  dataplane's CLI.
+
+  One of those pages puts it at the last step before the disk is erased, with a
+  *pare aqui* attached to its result. An operator following it to the letter
+  got a parser error at the moment they were told to stop if the answer was
+  wrong.
+
+  `show cgnat history verify` exists now and carries through. A third page's
+  `show bpa timeouts`, which an operator also cannot type, is replaced by what
+  they actually see: `commit` marks every value below its floor as the change
+  is applied.
+
+  **The check is narrow on purpose, and the width was measured.** Walking every
+  command in every wiki code block against the tree flags 12 of 193 lines and
+  **all 12 are false**: help-table rows with prose on the same line
+  (`commit    aplica`), output lines (`commit complete`), a command from the
+  installer's own tree, and commands with an argument. That is the rate
+  `test/test_doc_copies.py`'s header records getting a check switched off. So
+  the question asked has no heuristics in it: on a line that is a command
+  alone, is the word after `show` one the VTY offers? 62 such lines, 0 unknown,
+  and `show bpa ...` fails on the first word.
+
+
 
 
 

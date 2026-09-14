@@ -325,7 +325,7 @@ estar quebrada, não como cosmética.
 Cada entrada da trilha carrega um número de sequência e um resumo SHA-256 sobre **o resumo anterior e o próprio texto**. Mudar um byte muda o resumo daquela entrada e de todas as seguintes — uma alteração não pode ser feita "fechar" só corrigindo a linha em que está.
 
 ```
-show bpa pool history verify
+show cgnat history verify
   7 entries checked, chain intact
   head  seq 7 sha256 4e98de83…81f4
 ```
