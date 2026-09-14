@@ -75,6 +75,45 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The VTY refused its own `prohibit-password`, because sshd answers with the
+  other spelling**
+  ([#304](https://github.com/andrediashexa/hexarouting/issues/304)). OpenSSH
+  takes `prohibit-password` and `without-password` as two names for one
+  `PermitRootLogin` setting, and `sshd -T` - which is how the VTY reads the
+  effective daemon configuration - canonicalises to the OLD one. Measured on
+  OpenSSH 9.2: a config saying `prohibit-password` reads back as
+  `permitrootlogin without-password`, and `validate_ssh` answers
+
+  ```
+  ssh permit-root-login 'without-password': expected one of yes, no,
+  prohibit-password, forced-commands-only
+  ```
+
+  The VTY builds its candidate from the running configuration, so this is not
+  only a refused `ssh` statement: a box in that state cannot commit a change to
+  anything else, and it fails to load its own saved configuration at boot -
+  which is a box that comes up unconfigured on a machine nobody is watching.
+
+  Not reachable as the product ships, because `appliance/install.sh` writes
+  `PermitRootLogin yes`. Reachable on any box whose operator tightened it,
+  which is the box most likely to have been tightened for a reason. It was
+  found while building the one-NIC lab for
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303), where a
+  fixture worked around it - and a workaround in a fixture is a defect somebody
+  meets without one.
+
+  The daemon's other name is translated **on the way in**, in one place, rather
+  than added to the list of values the VTY accepts. Two names for one setting
+  inside the product would reach `show running-config` and the saved file, and
+  an operator comparing two boxes would see a difference that is not one. The
+  new `test/test_ssh_settings.py` holds both halves: anything `read_ssh()`
+  returns must pass `validate_ssh()`, and the completion tree an operator sees
+  with `?` must offer exactly the values the box accepts - so the tempting fix
+  of widening the list alone goes red.
+
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
