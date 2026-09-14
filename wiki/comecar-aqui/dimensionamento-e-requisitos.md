@@ -8,6 +8,7 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 |---------|--------|---------|
 | RAM     | **4 GB** | rodando pela ISO, a raiz gravável fica inteira em RAM sobre o squashfs; com 2 GB o OOM killer mata o VPP e leva o resto do boot junto |
 | CPU     | **SSE4.2** | o binário do VPP assume SSE4.2 e usa AVX quando existe |
+| Placas de rede | **1** | uma basta, e a caixa entrega essa mesma placa ao dataplane levando o endereço de gerência junto; duas é o formato de uma appliance no rack |
 
 
 :::warning
@@ -16,6 +17,32 @@ Quanto de máquina e quantos endereços públicos o seu caso exige. Leia antes d
 :::
 
 Medido durante a validação: com 2 GB a ISO reporta `Out of memory: Killed process (vpp)` com o VPP segurando apenas **19 MB residentes** — ele não era o glutão, era a vítima escolhida. Instalado em disco o consumo cai, porque não há a sobreposição em RAM, mas 4 GB continua sendo o piso sensato para um dataplane.
+
+# Quantas placas de rede
+
+**Uma placa já serve, e é assim que a maioria das pessoas conhece este produto:** uma máquina virtual com uma placa virtual. O dataplane fica com a porta e o endereço de gerência vai junto, para a interface que o dataplane mantém emparelhada com ela do lado do Linux. A caixa deixa de ser alcançada *ao lado* do dataplane e passa a ser alcançada *através* dele, com o mesmo MAC, então nada do outro lado do cabo precisa reaprender.
+
+**Duas placas é o formato de uma appliance no rack**, e a diferença não é desempenho: é o que acontece quando alguém erra. Com duas, a gerência não está no caminho do dataplane, e a caixa **recusa** a entrega da placa que carrega a rota default, dizendo qual é a outra. Com uma só não existe essa recusa a fazer - a placa que ela protegeria é a única que a caixa tem - então a entrega acontece, e o que a torna segura é outra coisa: ela é sempre um `commit confirmed`, com trinta minutos de janela, e uma caixa que ninguém confirmou põe a configuração anterior de volta **e se reinicia sozinha**. É seguro de tentar; continua sendo uma janela em que alguém precisa entrar.
+
+| Placas | O que a caixa faz | O que você paga |
+|--------|-------------------|-----------------|
+| 1 | entrega a placa ao dataplane e leva o endereço de gerência para o par | a entrega é uma janela de trinta minutos que alguém precisa confirmar |
+| 2 ou mais | a placa de gerência é recusada para o dataplane, com o nome da outra na recusa | nada |
+
+## A placa precisa ser um dispositivo PCI
+
+O dataplane pega a porta pelo endereço PCI dela. Uma interface que **não** tem endereço PCI não pode ser entregue: `lo`, uma bridge, um bond e um veth não têm. Nesse caso a caixa escreve `no-pci` no arquivo do dataplane, sobe, roteia, responde - e não encaminha nada. O autoteste de boot diz isso em vez de deixar você descobrir pelo contador parado.
+
+## IOMMU: com ou sem, e o que muda
+
+Havendo IOMMU no firmware, a placa vai para o `vfio-pci`, que passa o dispositivo pela IOMMU - um defeito no dataplane não consegue escrever em memória que o dispositivo nunca recebeu. Sem IOMMU o `vfio-pci` carrega e recusa todo dispositivo, então a caixa usa `uio_pci_generic`, que **não tem essa proteção**, e **diz na tela** que está usando:
+
+```
+bind: no IOMMU groups on this box, so vfio-pci cannot take a device;
+      using uio_pci_generic, which has no IOMMU protection
+```
+
+A escolha é feita onde dá para explicá-la, e não descoberta como um bind que falha sem motivo aparente. Ligue a IOMMU no firmware (`VT-d` na Intel, `AMD-Vi` na AMD) se a máquina tiver: é uma opção de firmware, não um ajuste do produto.
 
 # Se a caixa vai receber a tabela BGP completa
 
