@@ -301,7 +301,17 @@ class Frr:
                 "isisd"}
 
 
-_REAL_VERSION = hexash.hexarouting_version
+_REAL_SOURCE = hexash.hexarouting_version_source
+
+#: The box is not installed and hexash is being run out of a source tree.
+#
+# Nothing is replaced for this one: VERSION_PATH is pointed at a file that is
+# not there, so the product's OWN fallback runs and reaches the same file it
+# reaches on a developer's machine. That is the whole case, driven end to end.
+FROM_TREE = object()
+
+#: There is no VERSION file anywhere, not even the repository's.
+NOWHERE = None
 
 
 def screen(plugins_out, box_version, rc=0):
@@ -311,13 +321,17 @@ def screen(plugins_out, box_version, rc=0):
     buf = io.StringIO()
     real = hexash.VERSION_PATH
     with tempfile.TemporaryDirectory() as tmp:
-        if box_version is None:
-            # There is no seam for "no VERSION file anywhere": the fallback in
-            # hexarouting_version() reaches the repository's own VERSION,
-            # which exists whenever this suite runs. The function is replaced
-            # for this one case and put back, rather than this suite asserting
-            # a branch that nothing can reach.
-            hexash.hexarouting_version = lambda: hexash.VERSION_UNKNOWN
+        if box_version is NOWHERE:
+            # There is no seam for "no VERSION file anywhere": the fallback
+            # reaches the repository's own VERSION, which exists whenever this
+            # suite runs. The reading is replaced for this one case and put
+            # back, rather than this suite asserting a branch nothing can
+            # reach. It is the READING that is replaced and not the comparison
+            # - show_plugin_build still decides for itself what to do with it.
+            hexash.hexarouting_version_source = (
+                lambda: (hexash.VERSION_UNKNOWN, hexash.VERSION_FROM_NOWHERE))
+        elif box_version is FROM_TREE:
+            hexash.VERSION_PATH = os.path.join(tmp, "not-installed")
         else:
             path = os.path.join(tmp, "VERSION")
             open(path, "w").write(box_version + "\n")
@@ -327,7 +341,7 @@ def screen(plugins_out, box_version, rc=0):
                 sh.show_version()
         finally:
             hexash.VERSION_PATH = real
-            hexash.hexarouting_version = _REAL_VERSION
+            hexash.hexarouting_version_source = _REAL_SOURCE
     return buf.getvalue()
 
 
@@ -393,14 +407,55 @@ check("translates nothing" in unwrapped(_noplugin),
 #
 # A third answer, not a disagreement. Reporting it as one would announce a
 # reboot on a box whose only fault is a missing file.
-_unknown = screen(show_plugins(BOX), None)
+_unknown = screen(show_plugins(BOX), NOWHERE)
 show("the box has no VERSION file", _unknown)
 check(f"  plugin:    {BOX}" in _unknown.splitlines(),
       "the dataplane's build is still printed", repr(_unknown))
-check("cannot be decided here" in unwrapped(_unknown),
-      "and the box says the comparison is not available", repr(_unknown))
+check("nothing here to compare" in unwrapped(_unknown),
+      "and the box says the comparison is not available - the same words the "
+      "source-tree screen below uses, because it is the same answer",
+      repr(_unknown))
+check("cannot state its own version" in unwrapped(_unknown),
+      "with the reason that is particular to this one", repr(_unknown))
 check("restart vpp" not in unwrapped(_unknown),
       "rather than sending anybody to restart the dataplane", repr(_unknown))
+
+# --- hexash run out of a source tree, on a box that was never installed ---
+#
+# MEASURED before it was fixed, on a real VPP in a lab container with the real
+# plugin loaded and no /usr/share/hexarouting/VERSION on the box at all:
+#
+#   HexaRouting 0.71.0
+#     plugin:    0.71.0 (4a7044e)
+#                this is the build the dataplane was loaded with at the last
+#                boot, and it is not the HexaRouting build above.
+#
+# Nothing had been upgraded. The reading had fallen back to the repository's
+# own VERSION, which is "0.71.0" - the number the NEXT release will carry, and
+# not a build stamp of anything. Comparing it against one is comparing two
+# different kinds of thing, which is the defect class this repository is
+# organised against, and the people it landed on were every developer running
+# hexash out of the tree.
+#
+# It must not go SILENT either. "the two agree" and "there was nothing to
+# compare" are different answers, and conflating them is the same mistake one
+# step quieter.
+_tree = screen(show_plugins(stamp_of(REPO)), FROM_TREE)
+show("hexash run out of a source tree", _tree)
+check("it is not the HexaRouting build above" not in unwrapped(_tree),
+      "a source tree is not reported as an upgrade waiting for a reboot",
+      repr(_tree))
+check("restart vpp" not in unwrapped(_tree),
+      "and nobody is sent to restart a dataplane that is the right one",
+      repr(_tree))
+check("nothing here to compare" in unwrapped(_tree),
+      "the box says there was nothing to compare, rather than going quiet and "
+      "letting it read as agreement", repr(_tree))
+check("cannot state its own version" not in unwrapped(_tree),
+      "and NOT that it cannot state its own version - it stated one, it is "
+      "just not a build", repr(_tree))
+check(f"  plugin:    {stamp_of(REPO)}" in _tree.splitlines(),
+      "the dataplane's build is still printed", repr(_tree))
 
 
 # ----------------------------------------------------------------------------
@@ -417,7 +472,8 @@ check(CONSOLE_COLUMNS == 79,
       "raising it turns every width check here green without a line getting "
       "any narrower")
 _screens = {"agree": _agree, "disagree": _split, "silent": _silent,
-            "no plugin": _noplugin, "version unknown": _unknown}
+            "no plugin": _noplugin, "version unknown": _unknown,
+            "source tree": _tree}
 _wide = [(n, len(l), l) for n, s in _screens.items()
          for l in s.splitlines() if len(l) > CONSOLE_COLUMNS]
 check(not _wide,

@@ -190,20 +190,61 @@ VERSION_PATH = os.environ.get("HEXA_VERSION_FILE",
 # turn a box with no VERSION file into a box announcing a pending reboot.
 VERSION_UNKNOWN = "unknown (no VERSION file)"
 
+#: Where the version this box states was read from. WHICH FILE IT WAS decides
+#: whether that string can be compared with anything at all (#291).
+#
+# The stamp under /usr/share is written by appliance/install.sh from
+# tools/version-stamp.sh, which is the same calculation the plugin is built
+# with, so the two are the same KIND of thing and an equality between them
+# means something.
+#
+# The repository's own VERSION is not. It reads "0.71.0": the number the NEXT
+# release will carry, not a build stamp of anything, and it moves when
+# somebody edits it rather than when anything is built. Measured on a lab
+# container running hexash out of the tree, with the real plugin loaded and
+# nothing whatever upgraded:
+#
+#   HexaRouting 0.71.0
+#     plugin:    0.71.0 (4a7044e)
+#                this is the build the dataplane was loaded with at the last
+#                boot, and it is not the HexaRouting build above.
+#
+# Every developer running the VTY from a source tree was told their box needed
+# a reboot. The string alone cannot tell the two cases apart, which is why the
+# reading answers WHERE as well as WHAT.
+VERSION_FROM_STAMP = "stamp"
+VERSION_FROM_TREE = "tree"
+VERSION_FROM_NOWHERE = "nowhere"
 
-def hexarouting_version():
-    """Version of this build, or a string that admits it is unknown."""
-    for path in (VERSION_PATH,
-                 os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "..", "..", "VERSION")):
+
+def hexarouting_version_source():
+    """The version this box states, and which file it came out of.
+
+    ONE place decides which of those files exists, and this is it. A caller
+    that re-opened them to work out which one had answered would be a second
+    reader of the same truth, which is the shape #291 is about in the first
+    place - so the reading answers both halves at once and
+    `hexarouting_version()` below is the spelling for callers that only want
+    the text. That is the arrangement tools/version-stamp.sh already uses to
+    keep `--filename` beside its stamp: one calculation, two spellings.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path, source in ((VERSION_PATH, VERSION_FROM_STAMP),
+                         (os.path.join(here, "..", "..", "VERSION"),
+                          VERSION_FROM_TREE)):
         try:
             with open(path) as f:
                 v = f.read().strip()
             if v:
-                return v
+                return v, source
         except OSError:
             continue
-    return VERSION_UNKNOWN
+    return VERSION_UNKNOWN, VERSION_FROM_NOWHERE
+
+
+def hexarouting_version():
+    """Version of this build, or a string that admits it is unknown."""
+    return hexarouting_version_source()[0]
 
 
 # vppctl exits 0 even when a command fails: the text is what says so. Errors
@@ -10543,7 +10584,7 @@ class Shell:
         answering with nothing, and neither is a disagreement.
         """
         build = self.dp.plugin_build()
-        mine = hexarouting_version()
+        mine, source = hexarouting_version_source()
 
         if build is None:
             # NOT "the plugin is not loaded". A dataplane that cannot be
@@ -10577,13 +10618,35 @@ class Shell:
 
         print(f"  plugin:    {build}")
 
-        if mine == VERSION_UNKNOWN:
-            # The comparison is not available, and that is a third answer
-            # rather than a disagreement. Saying "these differ" here would be
-            # announcing a reboot on a box whose only fault is a missing file.
-            print_prose("this box cannot state its own version, so whether "
-                        "the dataplane is the build the rest of it is cannot "
-                        "be decided here", indent=self.VERSION_INDENT)
+        if source != VERSION_FROM_STAMP:
+            # THE COMPARISON IS NOT AVAILABLE, which is a third answer and not
+            # a disagreement. Both of these reach it and they are said
+            # differently, because what the reader should do about them is
+            # different: one is a box missing a file it should have, the other
+            # is a developer's checkout behaving exactly as it should.
+            #
+            # What neither of them may do is go SILENT. "the two agree" and
+            # "there was nothing to compare" are different answers, and a
+            # screen that says nothing is read as the first - which is the
+            # same conflation this whole issue is about, one step quieter.
+            if source == VERSION_FROM_TREE:
+                # The repository's VERSION is "0.71.0": the number the NEXT
+                # release will carry, not a build stamp, and it moves when
+                # somebody edits it rather than when anything is built. Held
+                # up against a build stamp it never matches, so every
+                # developer running this VTY out of the tree was being told
+                # their box needed a reboot.
+                print_prose("this VTY is running from a source tree, so the "
+                            "version above is the repository's own VERSION "
+                            "file: it names the next release rather than any "
+                            "build, and there is nothing here to compare the "
+                            "dataplane against. An installed box reads a "
+                            "build stamp instead.",
+                            indent=self.VERSION_INDENT)
+            else:
+                print_prose("this box cannot state its own version, so there "
+                            "is nothing here to compare the dataplane "
+                            "against", indent=self.VERSION_INDENT)
             return
 
         if build == mine:
