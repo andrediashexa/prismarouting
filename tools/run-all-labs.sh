@@ -5,6 +5,22 @@
 # only print observations for a human to read are reported as "ran" - claiming
 # they passed would be asserting something nobody checked.
 #
+# THE TREE IS READ AS EACH LAB STARTS, NOT ONCE AT THE BEGINNING. tools/lab.sh
+# bind-mounts the repository into every container, so a lab that starts in
+# minute twenty runs whatever is on disk in minute twenty. Merging into the
+# branch this suite is reading, while it is reading it, produces a verdict
+# about no single tree: the labs before the merge measured one product and the
+# labs after it measured another, and the summary line at the end adds the two
+# together as though they were one run.
+#
+# Nothing here can stop that, which is why it is written down rather than
+# guarded. A guard would have to be a lock somebody can take, and the thing it
+# would protect against is a person with a branch to merge and a green suite
+# in front of them - the moment when a lock is most tempting to work around.
+# So: while this is running, work in a worktree and merge afterwards. That is
+# also what the labs-do-not-compete rule is about from the other side, where
+# the cost is a false NO VPP rather than a verdict about two products.
+#
 # Labs run several at a time. Measured before this existed: 35 labs in series
 # took ~35 minutes at load 1.18 across 8 cores, with an ISO build running
 # alongside. The suite is not compute-bound and never was - each lab starts
