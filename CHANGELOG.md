@@ -633,6 +633,40 @@ version has a chance of seeing it.
   project does keep - does the command exist, does the path resolve - would
   both have passed this page.
 
+* **`TESTING.md` claimed a CI this repository has not got, and three numbers
+  it stated as measured**
+  ([#315](https://github.com/andrediashexa/hexarouting/issues/315),
+  [#316](https://github.com/andrediashexa/hexarouting/issues/316),
+  [#317](https://github.com/andrediashexa/hexarouting/issues/317)).
+
+  *"CI runs level 1 on every commit."* `.github/` holds `ISSUE_TEMPLATE` and
+  nothing else: no workflow, no run ever recorded. A reader takes that sentence
+  for a safety net that catches what they forget, and there is nothing behind
+  it. The document says there is none, and says what that means: every level is
+  run by whoever made the change, which is why `tools/release-gate.sh` exists.
+
+  Its first four commands include `sh tools/lab.sh hw-lab`, which has no host
+  networking. Under `set -eu` that lab flushes and rewrites the **peer
+  machine's** `ens19` over ssh first, then dies on the local `ip link set ens19
+  up` it cannot run. The document's own hardware section has the right
+  spelling, `make hw-up && make hw-lab`, three hundred lines further down.
+
+  Three numbers stated as measured: *"36 labs"* where the tree has 62 files and
+  the suite ran 87 lab runs; *"4 at a time"* where the default is a formula
+  over `MemTotal` that yields 8 on this machine; and `ipfix no-exporter`
+  turning *"19 of its assertions red"* where `lab/ipfix.sh` declares
+  `# OFF-RED-AT-LEAST: 20` and `tools/run-all-labs.sh` **fails** an off run
+  below its floor. So the document stated, as measured, a number the suite
+  would refuse - and somebody reading it to judge an off run would have called
+  a passing one a regression.
+
+  Two checks, both with a real holder. The off-run count in the document is
+  compared against the floor marker the suite enforces, number against number.
+  And the CI sentence is compared against whether `.github/workflows` has
+  anything in it: the first version of that one matched the very sentence that
+  says there is no CI, which is recorded in the file rather than quietly fixed.
+
+
 
 
 
