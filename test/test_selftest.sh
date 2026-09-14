@@ -2519,6 +2519,35 @@ if said 'HexaRouting ready'; then
 else
   ok "and the word 'ready' is not applied to a box that cannot forward"
 fi
+# And the green tick six lines above the warning, which is the other half of
+# #299 (#299's first half is `show cgnat pool`, on the dataplane side).
+#
+# This box has a pool - healthy() gives it one and taking the NIC away does
+# not remove it - so on the build this was written against it printed
+# "[ ok ] 1 CGNAT pool(s) configured" while the same run warned that the box
+# had been given no NIC. A reader scanning for green takes a tick as an
+# answer, and the answer here is that the pool exists and nothing can reach
+# it.
+if said '\[ ok \] 1 CGNAT pool\(s\) configured'; then
+  bad "a pool on a box that cannot forward is still a green tick: $(printf '%s\n' "$OUTPUT" | grep 'CGNAT pool')"
+else
+  ok "and the pool on it is not reported as a plain [ ok ]"
+fi
+if said_across '1 CGNAT pool\(s\) configured, and no interface to forward on: no packet can reach them yet'; then
+  ok "it says the pool is there AND that nothing can reach it"
+else
+  bad "the pool line does not say the pools cannot be reached: $(printf '%s\n' "$OUTPUT" | grep -A1 'CGNAT pool' | tr '\n' ' ')"
+fi
+# Not a second warning for one fact. The box is already warned about the cause
+# three checks up, and a count an operator is meant to act on stops meaning
+# anything when one cause contributes to it twice. This box has exactly one
+# warning and it is the one about the NIC.
+_w=$(printf '%s\n' "$OUTPUT" | grep -c '^  \[warn\] ')
+if [ "$_w" -eq 1 ]; then
+  ok "and it did not become a second warning about a cause already warned about"
+else
+  bad "the box has $_w warning(s), not the one about the NIC: $(printf '%s\n' "$OUTPUT" | grep '\[warn\]' | tr '\n' ' ')"
+fi
 
 echo "=== and the same box with the IPFIX collector in each of its states ==="
 # The check #300 is about, driven for the first time. Every fixture in this

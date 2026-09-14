@@ -225,6 +225,14 @@ version has a chance of seeing it.
   A once more: the mechanism stays and the box stops claiming what it cannot
   do.
 
+  The boot self-test's own green tick for the same pool is the other half, and
+  it is fixed with it: `[ ok ] 1 CGNAT pool(s) configured` sat six lines below
+  the warning saying the box had been given no NIC, and a reader scanning for
+  green takes a tick as an answer. It says the count and the consequence now,
+  as `[info]` rather than a second `[warn]`: the box is already warned about
+  the cause and the summary names it, and a count an operator is meant to act
+  on stops meaning anything when one cause contributes to it twice.
+
 * **A refusal that comes back from the dataplane says when an upgrade is why.**
   Between `appliance/install.sh` finishing and the next reboot, the new control
   plane is talking to the dataplane the box was loaded with, and asking it to
