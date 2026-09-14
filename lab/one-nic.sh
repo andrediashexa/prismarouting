@@ -247,12 +247,29 @@ PAIR=$(vppctl show lcp | sed -n 's/.*itf-pair: \[[0-9]*\] [^ ]* [^ ]* \([^ ]*\) 
 RX0=$(cat "/sys/class/net/${PAIR:-none}/statistics/rx_packets" 2>/dev/null || echo 0)
 PING=$(ip netns exec up ping -c 5 -W 2 -I $FAR $MGMT 2>&1)
 printf '%s\n' "$PING" | tail -2 | sed 's/^/    /'
-# Read a moment later. The counter is the kernel's own on the TAP and it is
-# updated as the dataplane punts, not as the reply leaves - so a reading taken
-# the instant `ping` returns can be short by the last packet or two, and has
-# been: one run said 1 -> 2 for three echo requests.
-sleep 2
-RX1=$(cat "/sys/class/net/${PAIR:-none}/statistics/rx_packets" 2>/dev/null || echo 0)
+# WAITED FOR, not slept on. The counter is the kernel's own on the TAP and it
+# is updated as the dataplane punts, not as the reply leaves, so a reading
+# taken the instant `ping` returns can be short by the last packet or two, and
+# has been: one run said 1 -> 2 for three echo requests.
+#
+# A fixed sleep was the first answer and it was not enough. Measured: this lab
+# passed alone at load 3.0 and failed in the release suite at load 4.5 with
+# sixteen labs in parallel, on this one check and no other - the ping in the
+# same run reported 0% packet loss, so the packets had arrived and only the
+# reading was early. A sleep long enough for the worst machine is a sleep
+# everybody else pays on every run, and it is still a guess about a machine
+# nobody has measured.
+#
+# So the deadline is generous and the wait ends the moment the counter moves.
+# It can still fail honestly: a box the packets never reached leaves RX1 equal
+# to RX0 and the check goes red after the deadline rather than never.
+_deadline=$(( $(date +%s) + 30 ))
+while :; do
+  RX1=$(cat "/sys/class/net/${PAIR:-none}/statistics/rx_packets" 2>/dev/null || echo 0)
+  [ "$RX1" -gt "$RX0" ] && break
+  [ "$(date +%s)" -ge "$_deadline" ] && break
+  sleep 1
+done
 echo "    the pair is '${PAIR:-none}', rx_packets $RX0 -> $RX1"
 TCP=$(ip netns exec up python3 /tmp/probe.py $MGMT 22 2>&1)
 echo "    TCP to port 22: $TCP"
