@@ -472,6 +472,19 @@ E se ele responder estando de pé **sem o plugin de CGNAT carregado**, a
 mensagem é outra, porque a correção é outra: aí a caixa encaminha e não traduz
 nada.
 
+### O que esta tela não confere
+
+A comparação acima é entre **dois** arquivos: o que está em disco e o que o
+dataplane carregou. A linha `HexaRouting` é uma frase sobre cerca de trinta,
+e os outros vinte e oito não são conferidos aqui, de propósito: `show version`
+é rodado o tempo todo enquanto se trabalha, e refazer a conta a cada vez sairia
+caro para dizer que está tudo certo.
+
+Quem confere todos é o **autoteste de boot**, uma vez por boot, contra a lista
+que a instalação deixou na caixa. Se algum arquivo não for da versão que a
+caixa informa, é lá que aparece, com o nome do arquivo. A página **Operação e
+diagnóstico** descreve essa linha e o que fazer com ela.
+
 ## `show` — restante
 
 | Comando | Mostra |

@@ -75,6 +75,39 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **A box can say which of its own files are not from the version it claims**
+  ([#302](https://github.com/andrediashexa/hexarouting/issues/302)).
+  `show version` printed one line about a box made of about twenty files and
+  could verify one of them. Measured before anything changed: a root stamped
+  `0.70.0 (f10a3ed)` with v0.68.0's `hexarouting-tune` copied onto it produced
+  a self-test report **identical line for line** to the same box untouched, 42
+  lines each.
+
+  `appliance/install.sh` records what it installed, with a checksum, as it
+  installs it - `install` is a shell function wrapping the real one, so
+  nothing is enumerated and there is no second list to fall out of date. The
+  boot self-test checks it with `sha256sum -c`, and the exit status is the
+  verdict: `<path>: FAILED` is coreutils' wording, not ours, and a needle for
+  it would stop matching the day coreutils rephrases - silently, and in the
+  direction that reports a broken box as a healthy one.
+
+  The three files `install.sh` deliberately does not overwrite - `tune.env`,
+  `vpp-base.conf` and `hexarouting.conf` - are named in the manifest with no
+  checksum at all, because a checksum nobody may act on is an invitation to
+  start acting on it. They go through one `keep()` that guards and records in
+  one statement, and `test/test_install_manifest.py` refuses a second guard
+  written by hand.
+
+  It is a `[FAIL]` and not a warning: the version line is the first thing
+  anybody reports on the phone, and when it is wrong every later diagnosis is
+  against the wrong release notes. It stops nothing.
+
+  31 files, 2.5 MB, **18 ms** at every boot on the machine this was measured
+  on, and the suite measures and prints that on every run rather than leaving
+  it as a claim.
+
 ### Fixed
 
 * **Two more readers of the self-test's verdict were still spelling the old

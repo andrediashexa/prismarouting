@@ -240,6 +240,29 @@ run() {  # -> $OUTPUT
   printf 'vpp:x:900:\nfrr:x:901:\nfrrvty:x:902:\nhexa-admin:x:903:\nhexa-cgnat:x:904:\n' \
     > "$FAKE/group"
   [ -f "$FAKE/api_rc" ] || echo 0 > "$FAKE/api_rc"
+  # A MANIFEST, on every box, for the same reason the groups above are
+  # rewritten every run: no case here is about it, and a box without one is
+  # warned about (#302) - which would put a warning on all hundred-odd of
+  # these, break the two cases that count the warnings on a box, and bury the
+  # ones each case arranged under a line none of them asked for.
+  #
+  # A file of its own rather than a checksum of something already in the fake
+  # root, because the roots differ from case to case and a manifest naming a
+  # file some of them do not have would report those boxes as carrying a file
+  # from another release. usr/share/hexarouting is read by name by the version
+  # check and the manifest check and globbed by nothing, so a file put there
+  # reaches no other check in this file.
+  #
+  # What the manifest MEANS is measured in test/test_manifest.sh, which
+  # installs a real root with appliance/install.sh and reads it back with this
+  # same self-test. This is a fixture, not an assertion.
+  if [ ! -f "$FAKE/root/usr/share/hexarouting/MANIFEST" ]; then
+    mkdir -p "$FAKE/root/usr/share/hexarouting"
+    echo "a file of the build this box says it is running" \
+      > "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
+    ( cd "$FAKE/root" && sha256sum usr/share/hexarouting/a-file-of-that-build ) \
+      > "$FAKE/root/usr/share/hexarouting/MANIFEST"
+  fi
   # The root is always pointed at the fake box, even for the cases that put
   # nothing in it: an absent file there reads the same as the absent one on
   # this machine, and a developer box that really does run VPP would otherwise

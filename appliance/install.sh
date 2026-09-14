@@ -133,6 +133,94 @@ fi
 # something - which is the defect this block exists to answer, with a different
 # component in it.
 
+# ------------------------------------------- what this run leaves on the box
+#
+# WHAT THE VERSION STAMP IS A CLAIM ABOUT. A hundred lines down this script
+# writes one line into /usr/share/hexarouting/VERSION, and that line is what
+# every reader of this box then believes: `show version` prints it, the boot
+# self-test puts it at the top of the console report, and it is the first
+# thing anybody asks for on the telephone. It is a sentence about the thirty
+# odd files installed below, and exactly ONE of them can answer for itself -
+# #291 gave the dataplane plugin a build stamp that `show version` compares
+# against the box's own. The other thirty carry no version of any kind.
+#
+# So a box stamped 0.70.0 carrying 0.71.0's hexarouting-tune reads as a 0.70.0
+# box, to every command and to every operator, permanently. That is not
+# hypothetical: it is the state the appliance supplied for the #290 work was
+# found in, and it got there honestly - somebody copied one file onto it to
+# prove a fix on a CPU they had, which is what debugging looks like. The
+# defect is not that it happened. It is that nothing on the box could say that
+# it had (#302).
+#
+# WHY THERE IS NO LIST IN THIS FILE. The obvious manifest is a list of the
+# files this script installs, written down beside the lines that install them.
+# That is the same defect one layer up: it would be right on the day it was
+# written and wrong the first time somebody adds an install line without
+# thinking about it, and it would be wrong SILENTLY, because a manifest that
+# does not name a file cannot report anything at all about that file. The two
+# lists would drift in the one direction nobody can see, which is precisely
+# the relationship between the version stamp and the files that this exists to
+# repair.
+#
+# So nothing is listed. `install` below is a FUNCTION: it calls the real one
+# and remembers where it put things, and every line of this script that
+# installs a file is in the manifest because it RAN. There is no second place
+# to keep in step, and a line added tomorrow is covered by having been added.
+#
+# The accumulators are plain strings split on spaces, which is the one thing
+# this makes fragile: a destination path with a space in it would become two
+# wrong entries. No path here has ever had one, and test/test_manifest.sh
+# resolves every path in a real manifest back to a real file, so one would go
+# red there rather than produce a manifest that silently checks nothing.
+BUILD_FILES=
+YOUR_FILES=
+
+install() {  # shadows /usr/bin/install for the rest of this script
+  command install "$@"
+  # -d creates a directory and copies nothing into it. A directory has no
+  # contents to checksum, and its mode - which IS this script's business, and
+  # argued about at length further down - is not a claim about which build the
+  # box is running.
+  case " $* " in *" -d "*) return 0 ;; esac
+  # install's last argument is the destination, whatever else was passed.
+  for _a in "$@"; do _dest=$_a; done
+  _rel=${_dest#"$DESTDIR"}
+  BUILD_FILES="$BUILD_FILES ${_rel#/}"
+}
+
+# THE FILES THAT ARE THE OPERATOR'S, and the one place that difference is
+# stated.
+#
+# This script writes two kinds of file. Most of them it overwrites on every
+# run, because they ARE the build. Three it writes once and then never touches
+# again - tune.env, vpp-base.conf and hexarouting.conf - because the operator
+# edits them, and an installer that overwrote an edited tune.env would undo a
+# tuning decision in the middle of an upgrade run at two in the morning.
+#
+# That difference is exactly the difference between a checksum somebody has to
+# act on and one nobody may. An edited tune.env is not a corrupted tune.env,
+# it is the file doing its job, and a manifest that shouted about it is a
+# manifest somebody switches off - after which the file that really IS from
+# another release goes unreported along with it (#302).
+#
+# So the guard and the class are ONE statement and cannot drift apart. There
+# is no way to write a file this installer will not overwrite except through
+# this function, and no way through this function without the guard.
+# test/test_install_manifest.py holds that shut: a second `[ -f ... ] ||`
+# anywhere in this file goes red, because a guard written by hand is a file
+# the operator owns that the manifest would report as corruption.
+#
+# No checksum is recorded for them, deliberately. A checksum nobody is allowed
+# to act on is an invitation to start acting on it, and the manifest is read
+# by a boot-time check that must stay quiet on a healthy box. They are named
+# and not checked, so that a reader of the manifest sees the whole install
+# rather than a complete-looking list with three files missing from it.
+keep() {  # <mode> <source> <destination> - a file this installer writes once
+  [ -f "$3" ] || command install -m "$1" "$2" "$3"
+  _rel=${3#"$DESTDIR"}
+  YOUR_FILES="$YOUR_FILES ${_rel#/}"
+}
+
 say "binaries"
 # hexash imports config.py from its own directory, so both have to travel
 # together. Installing only hexash.py put a VTY on the box that raised
@@ -289,13 +377,17 @@ fi
 # given instant, which is what makes an answer to a court order defensible.
 # 0750: it names subscribers and their public addresses.
 install -d -m 0750 "$DESTDIR/var/log/hexarouting"
-[ -f "$DESTDIR/etc/hexarouting/tune.env" ] || \
-  install -m 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
-[ -f "$DESTDIR/etc/hexarouting/vpp-base.conf" ] || \
-  install -m 0644 "$REPO/appliance/etc/vpp-base.conf" \
-    "$DESTDIR/etc/hexarouting/vpp-base.conf"
-[ -f "$DESTDIR/etc/hexarouting/hexarouting.conf" ] || \
-  printf '!\n! HexaRouting\n!\n' > "$DESTDIR/etc/hexarouting/hexarouting.conf"
+keep 0644 "$REPO/appliance/etc/tune.env" "$DESTDIR/etc/hexarouting/tune.env"
+keep 0644 "$REPO/appliance/etc/vpp-base.conf" \
+     "$DESTDIR/etc/hexarouting/vpp-base.conf"
+# The empty configuration is a FILE in the tree rather than a printf here, and
+# it moved for the manifest's sake: keep() is the one place a file the
+# operator owns may be written, so the thing it writes has to be a file. It is
+# read back by test/test_hexash_config.py, which loads it through the VTY's
+# own parser - "!" was not a comment there once, and hexarouting.service
+# FAILED on the first boot of every install for it (#94).
+keep 0660 "$REPO/appliance/etc/hexarouting.conf" \
+     "$DESTDIR/etc/hexarouting/hexarouting.conf"
 # 0660 for the same reason as the directory: an account that may configure
 # saves it, and it holds hashes. Never world-readable.
 chmod 0660 "$DESTDIR/etc/hexarouting/hexarouting.conf"
@@ -421,6 +513,67 @@ else
     "$DESTDIR/etc/systemd/system/timers.target.wants/hexarouting-confirm.timer"
   say "installed into ${DESTDIR:-/} (services enabled offline)"
 fi
+
+say "manifest"
+# WRITTEN HERE, BELOW EVERYTHING, because it is a statement about what this
+# run did and there is no honest place for it until the run has done it. An
+# install line added below this block would put a file on the box that the
+# manifest does not name, and a file the manifest does not name is a file
+# nothing will ever check - the silent half of the two-lists problem this
+# whole block exists to avoid. test/test_install_manifest.py refuses a write
+# below here for that reason, the same way it refuses one above the preflight.
+#
+# NOT A SECURITY MEASURE, and saying so is cheaper than letting somebody
+# assume it. Whoever can replace a file on this box can replace the line in
+# this manifest that describes it. What it answers is the accident and the
+# half-finished job - a file copied on to prove a fix and left behind, an
+# install that stopped in the middle, an upgrade that ran over some of the box
+# and not the rest - which is what #302 measured and what actually happens.
+#
+# WHY sha256 AND NOT A TIMESTAMP OR A SIZE. Both of those are properties of
+# the copy rather than of the contents, and both are what the reader of #302
+# had to work with: mtimes told that hexarouting-tune was written at 04:06 and
+# everything else at 02:38, which is evidence and not an answer, because the
+# same reading appears on a box whose files are all correct and were installed
+# in two passes.
+#
+# WHY IT IS A sha256sum FILE AND NOTHING CLEVERER. `sha256sum -c` reads this
+# format, it is one process over the whole list, and it skips the '#' lines -
+# so the box needs no parser of its own to check itself, and the reader who
+# opens the file gets its own explanation at the top. Paths are relative to /
+# so that a check can be run against a root that is not the running one, which
+# is how test/test_manifest.sh drives it and how an ISO build could.
+#
+# The version stamp itself is not in here. It is the claim, not one of the
+# files the claim is about, and its checksum would be a checksum of the very
+# line being questioned. Neither is this file, which cannot contain its own
+# checksum.
+{
+  echo "# What appliance/install.sh put on this box when it stamped it"
+  echo "# $stamp."
+  echo "#"
+  echo "# Paths are relative to /. A line with a checksum is a file OF that"
+  echo "# build: nothing on a working box changes it, and the boot self-test"
+  echo "# reports it when something has. A '# yours' line is a file this"
+  echo "# installer creates once and then never overwrites, so its contents"
+  echo "# are the operator's and nothing here has an opinion about them."
+  echo "#"
+  echo "# sha256sum -c reads this file as it stands."
+  for _f in $YOUR_FILES; do echo "# yours: $_f"; done
+  # Unquoted on purpose: the split into words IS the list. cd first so the
+  # names sha256sum prints are the ones that go in the file.
+  #
+  # Guarded because sha256sum with no operands reads STDIN. An installer whose
+  # wrapper had stopped recording would then sit there with the script's own
+  # stdin open instead of producing an empty list, and a suite that hangs is
+  # one somebody kills rather than one that goes red.
+  if [ -n "$BUILD_FILES" ]; then
+    # shellcheck disable=SC2086
+    ( cd "${DESTDIR:-/}" && sha256sum $BUILD_FILES )
+  fi
+} > "$DESTDIR/usr/share/hexarouting/MANIFEST"
+chmod 0644 "$DESTDIR/usr/share/hexarouting/MANIFEST"
+echo "  $(grep -c '^[^#]' "$DESTDIR/usr/share/hexarouting/MANIFEST") file(s) of this build, in /usr/share/hexarouting/MANIFEST"
 
 # THE CLOSING WORDS. Nothing below this line installs anything.
 #
