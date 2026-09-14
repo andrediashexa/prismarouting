@@ -105,18 +105,24 @@
 #
 #   1. IT RESTARTS THE DATAPLANE. appliance/install.sh writes the new
 #      bpa_plugin.so, runs `systemctl daemon-reload` and `systemctl enable`,
-#      and stops. It does not restart vpp.service, and the sentence it prints
-#      is a FIRST INSTALL'S sentence: "Installed. Adjust
-#      /etc/hexarouting/tune.env and reboot so that isolcpus and hugepages
-#      take effect." An operator who tuned the box a year ago reads that as
-#      "nothing to do". So until somebody reboots, the VTY, the tuner, the
-#      self-test and the collector are the new build and the TRANSLATING
-#      DATAPLANE IS THE OLD ONE. Section 5 measures that split through
-#      /proc/<vpp>/maps and prints it; section 6 then restarts VPP by hand,
-#      because a lab that did not would be measuring the old plugin and
-#      calling it the new one. Not an argument for restarting automatically -
-#      that drops every session on the box - it is an argument for saying so,
-#      which is acceptance item 3 of #291.
+#      and stops. It does not restart vpp.service. So until somebody reboots,
+#      the VTY, the tuner, the self-test and the collector are the new build
+#      and the TRANSLATING DATAPLANE IS THE OLD ONE. Section 5 measures that
+#      split through /proc/<vpp>/maps and prints it; section 6 then restarts
+#      VPP by hand, because a lab that did not would be measuring the old
+#      plugin and calling it the new one. That was never an argument for
+#      restarting automatically - it drops every session on the box - it was
+#      an argument for SAYING SO, which is acceptance item 3 of #291.
+#
+#      AND IT NOW SAYS SO. The installer used to close every run with a first
+#      install's sentence, "Installed. Adjust /etc/hexarouting/tune.env and
+#      reboot so that isolcpus and hugepages take effect.", which an operator
+#      who tuned the box a year ago reads as "nothing to do". It reads the
+#      version stamp before it overwrites it, and on a root that already had
+#      one it says which build replaced which and what is still running the
+#      old one. The verdict asserts that here, on a box that really was
+#      v0.68.0 an hour ago, which is the only place in this repository where
+#      those two stamps are real.
 #
 #      WHAT THE SPLIT COSTS IS NOW MEASURED, and it is worse than the issue
 #      says. #291 calls the combination "not tested, not documented and not
@@ -536,7 +542,12 @@ sh /src/appliance/install.sh > /tmp/new-install.log 2>&1 || {
     "appliance/install.sh failed, which is the upgrade itself failing:" \
     "$(tail -10 /tmp/new-install.log 2>/dev/null | sed 's/^/  | /')"
 }
-tail -6 /tmp/new-install.log | sed 's/^/  | /'
+# The CLOSING WORDS, whole, and not a fixed tail of them. What the installer
+# says when it finds a version already on the box is #291 item 3 and it is
+# asserted at the verdict, so cutting it to six rows would show the reader the
+# half that was already there and hide the half this lab is holding.
+NEW_INSTALL_SAID=$(cat /tmp/new-install.log)
+sed -n '/^==> documentation/,$p' /tmp/new-install.log | sed 's/^/  | /'
 NEW_STAMP=$(cat /usr/share/hexarouting/VERSION 2>/dev/null || echo "")
 NEW_INSTALLED_SUM=$(sha256sum "$PLUGIN_DIR/bpa_plugin.so" 2>/dev/null | cut -c1-16)
 AFTER_SUM=$(sha256sum "$CONF" 2>/dev/null | cut -d' ' -f1)
@@ -561,8 +572,16 @@ echo "  the running VPP has mapped: ${MAPPED:-<could not read>}"
 echo "  and everything the box can be ASKED says:"
 printf '%s\n' "$RUNNING_PLUGINS" | sed 's/^/    /'
 echo "  a '(deleted)' above is the installer having unlinked the .so under a"
-echo "  process that is still running out of it. The operator is told none of"
-echo "  this: install.sh's closing sentence is a first install's."
+echo "  process that is still running out of it."
+echo
+echo "  WHAT THE OPERATOR IS TOLD ABOUT IT is now the installer's closing"
+echo "  words, printed in section 4 above and asserted at the verdict. This"
+echo "  container has no systemd, so install.sh takes the offline arm of its"
+echo "  own branch here and says the half that is true of any root: which"
+echo "  build replaced which. The paragraph naming vpp.service and what"
+echo "  restarting it costs is the other half, and it is reachable only on a"
+echo "  box whose init is running - which is not this one, and is why"
+echo "  test/test_install_says.sh drives those screens directly."
 
 # AND WHAT THE SPLIT COSTS, which is worse than "untested" and was found here.
 #
@@ -812,6 +831,36 @@ expect "and it is not the one it was running before" \
   test "$OLD_STAMP" != "$NEW_STAMP"
 expect_in "the new version stamp is this tree's" \
   "$(tr -d '[:space:]' < /src/VERSION)" "$NEW_STAMP"
+
+# AND THAT THE INSTALLER SAID SO (#291 item 3).
+#
+# The two stamps here are real: this box was v0.68.0 twenty minutes ago and
+# the installer had to read that off the disk before it overwrote it. Nothing
+# else in this repository can assert that, because everywhere else one of the
+# two versions is a fixture.
+#
+# expect_said and not expect_in, on both directions. These are sentences the
+# installer wraps by hand, so a needle held against raw text matches only for
+# as long as the message goes on folding where it folds today - and the
+# negative below is the one that would then pass whether the box said it or
+# not, which is #279 exactly.
+expect_said "the installer said this was an upgrade and not a first install" \
+  "Upgraded. Every file is in place, and nothing was restarted." \
+  "$NEW_INSTALL_SAID"
+expect_said "and named the build that was on this box: $OLD_STAMP" \
+  "the version stamp was $OLD_STAMP" "$NEW_INSTALL_SAID"
+expect_said "and the build that is on it now: $NEW_STAMP" \
+  "and now says $NEW_STAMP" "$NEW_INSTALL_SAID"
+# The defect itself. Until #291 item 3 this ran over a configured, tuned,
+# production-shaped box and closed by telling the operator to go and tune it.
+expect_not_said "and did not close with a first install's sentence" \
+  "Adjust /etc/hexarouting/tune.env and reboot so that isolcpus and \
+hugepages take effect." "$NEW_INSTALL_SAID"
+# This container has no systemd, so install.sh takes the offline arm of its
+# own branch and must not describe services out of a root it did not write.
+# The paragraph itself is driven by test/test_install_says.sh.
+expect_not_said "and said nothing about services this root does not have" \
+  "it is what translates every packet on this box" "$NEW_INSTALL_SAID"
 expect "and the plugin on disk changed with it" \
   test "$OLD_INSTALLED_SUM" != "$NEW_INSTALLED_SUM"
 expect "the dataplane now runs the plugin the upgrade installed" \

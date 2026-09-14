@@ -55,6 +55,7 @@ sh test/test_apply_tuning.sh
 python3 test/test_selftest_daemons.py
 python3 test/test_stop_is_not_a_teardown.py
 sh test/test_installer.sh
+sh test/test_install_says.sh
 sh test/test_no_credentials.sh
 sh test/test_lab_workers.sh
 python3 test/test_doc_copies.py
