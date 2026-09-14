@@ -75,6 +75,18 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The release checklist now says to publish the medium's `sha256`.** Every
+  release so far has carried one and nothing said to. `tools/release-gate.sh`
+  prints it in the same breath as "ready to publish", so it has always been to
+  hand and has always been pasted in by whoever was cutting the release, which
+  is the definition of a step that goes missing the first time somebody else
+  does it. It is the only thing an operator who downloaded a 300 MB file over a
+  link they do not control can check it with, before installing it on a box
+  that will carry subscribers.
+
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).

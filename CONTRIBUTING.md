@@ -325,12 +325,21 @@ When it happens it **MUST** produce all six of:
 3. **A `CHANGELOG.md` entry** listing the issues the merge closes, in the
    order a reader cares about: behaviour changes first, then fixes, then
    internal work.
-4. **A published GitHub Release** on that tag, carrying the same note. A tag
-   is a pointer; a release is where an operator who does not clone the
-   repository actually reads what changed and downloads the artifact. The
-   release notes **MUST NOT** be generated from the commit list: a list of
-   commits describes the work, and what a reader needs is what changed for
-   them.
+4. **A published GitHub Release** on that tag, carrying the same note, the
+   medium as an asset, and **the medium's `sha256`**. A tag is a pointer; a
+   release is where an operator who does not clone the repository actually
+   reads what changed and downloads the artifact. The release notes **MUST
+   NOT** be generated from the commit list: a list of commits describes the
+   work, and what a reader needs is what changed for them.
+
+   The checksum is written down here because every release so far has carried
+   one and nothing said to. `tools/release-gate.sh` prints it in the same
+   breath as "ready to publish", so it has always been to hand and has always
+   been pasted in by whoever was cutting the release - which is the definition
+   of a step that goes missing the first time somebody else does it. It is the
+   only thing an operator who downloaded a 300 MB file over a link they do not
+   control can check it with, and this product asks them to install it on a box
+   that will carry subscribers.
 5. **An installation medium, built, booted, INSTALLED and booted again.**
    `make test-iso` builds the ISO from the tagged tree and boots it, demanding
    the self-test report ready. `make test-install` then installs it to a disk
