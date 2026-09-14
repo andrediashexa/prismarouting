@@ -6206,43 +6206,50 @@ for _row in _said.splitlines():
 print("  the count, where two of them go, and what to type")
 
 
-print("\n=== a box with no NIC it could be given is told now (#289) ===")
+print("\n=== a box with one NIC is told what to do with it (#289, #303) ===")
 # Reported from a real box: one virtio NIC, and it carries the default route
 # because it is the only one there is. The first-boot screen said "reboot once
 # the tuning has been applied", which is advice that cannot end anywhere - the
-# next screen would say no interface was named, and naming that one gets it
+# next screen would say no interface was named, and naming that one got it
 # refused, for the reason #123 exists.
+#
+# This screen then said the box needed a SECOND NIC before it could forward,
+# which was true of the product and was still a dead end: a VM with one
+# virtual NIC is how most people first meet this, and "buy more hardware" is
+# not something the operator reading a first-boot screen can act on. So what
+# it says now is what to type, and what the typing costs (#303).
 _FIRST = "plugin dpdk_plugin.so { disable }\n"
 
 _r = _nic_box(["ens18"], "ens18", _FIRST).why_no_dataplane_interface()
 _t = " ".join(_r)
-check("no NIC it could be given" in _t,
+check("This box has one NIC" in _t,
       f"a box whose only NIC is its management path is told to reboot and "
       f"nothing else, and the reboot cannot end anywhere: {_r}")
 check("'ens18'" in _t,
-      f"it does not name the NIC that is refused, so the operator cannot tell "
-      f"which one it means on a box with several: {_r}")
-check("second NIC" in _t,
-      f"it does not say what would fix it: {_r}")
-check("A reboot does not change that" in _t,
-      f"it leaves the reboot advice standing beside the reason a reboot is "
-      f"pointless: {_r}")
+      f"it does not name the NIC it means, so the operator cannot tell which "
+      f"one it is on a box with several: {_r}")
+check("dataplane interface ens18" in _t,
+      f"it does not say what to type, which is the whole of what the operator "
+      f"needs from this screen: {_r}")
+check("confirmed" in _t and "puts the card back" in _t,
+      f"it offers the handover without saying that the box undoes it when "
+      f"nobody confirms, which is the half that makes it safe to try: {_r}")
 
 # The other direction, and it is what stops this from being a line on every
 # boot. A box with a free NIC is told nothing extra.
 _r = _nic_box(["ens18", "ens19"], "ens18", _FIRST).why_no_dataplane_interface()
-check(not any("no NIC it could be given" in l for l in _r),
-      f"a box with a spare NIC was told it has none: {_r}")
+check(not any("This box has one NIC" in l for l in _r),
+      f"a box with a spare NIC was told it has one: {_r}")
 check(len(_r) == 2,
       f"a box with a spare NIC got more than the first-boot explanation: {_r}")
 
 # A box Linux shows no PCI NIC at all is its own answer, and must not read as
-# the management-NIC case.
+# the one-NIC case.
 _r = _nic_box([], "", _FIRST).why_no_dataplane_interface()
 check(any("no PCI NIC Linux can see" in l for l in _r),
       f"a box with no PCI NIC at all was not told: {_r}")
-check(not any("second NIC" in l for l in _r),
-      f"a box with no NIC at all was told to add a second one: {_r}")
+check(not any("This box has one NIC" in l for l in _r),
+      f"a box with no NIC at all was told it has one: {_r}")
 print("  said at the first screen that mentions it, and only when it is true")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

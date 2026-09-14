@@ -961,6 +961,18 @@ class Config:
         # whatever NIC it finds, and on a single-NIC box that is the
         # management port.
         self.dataplane_if: str = ""
+        # The management path a box with ONE card has to be given back after
+        # that card moves, as {"name", "address", "mac"} or empty.
+        #
+        # A record and not a decision: it is what Linux held on the card at
+        # the moment the operator named it, written down so that the box can
+        # put it back on the card's linux_cp pair once the dataplane has
+        # claimed it. The MAC is in here because the card has no name in the
+        # dataplane until the dataplane has it, and the MAC does not change
+        # across the handover - DPDK takes the device and keeps its address -
+        # so it is the one field that identifies the same card on both sides
+        # of the reboot (#303).
+        self.dataplane_mgmt: dict = {}
         self.globals: list[str] = []           # other cgnat statements
         self.routing: list[str] = []           # verbatim FRR statements
         # How many statements the text actually held. Counted rather than
@@ -1062,6 +1074,13 @@ class Config:
         # box and make the file describe a decision nobody took.
         if self.dataplane_if:
             out.append(f"dataplane interface {self.dataplane_if}")
+        # Directly under the card it belongs to, because the two are one
+        # decision: without this line a box that replays the file comes up
+        # with its only card in the dataplane and no address anywhere.
+        if self.dataplane_mgmt:
+            m = self.dataplane_mgmt
+            out.append(f"dataplane management {m['name']} "
+                       f"address {m['address']} mac {m['mac']}")
         for k in SSH_FIELDS:
             out.append(f"ssh {k} {self.ssh.get(k, SSH_DEFAULTS[k])}")
         for name in sorted(self.users):
@@ -1129,6 +1148,17 @@ class Config:
         out: dict = {}
         for name, addr in self.interface_addresses_v4():
             out.setdefault(self.vrfs.get(name, 0), []).append(addr)
+        # The management address of a card being handed to the dataplane, for
+        # exactly the reason above and one step earlier. That address is not
+        # in an `interface` block - the card has no name in the dataplane
+        # until the dataplane has claimed it, which is a reboot away - so the
+        # default route that comes with it has a next hop nothing in this file
+        # appears to connect, and the whole configuration is refused at the
+        # commit that names the card (#303). Table 0: a management path in a
+        # VRF is not a thing this box can be given.
+        m = self.dataplane_mgmt
+        if m and ":" not in m.get("address", ""):
+            out.setdefault(0, []).append(m["address"])
         return out
 
     def interface_addresses_v4(self) -> list:
@@ -1338,6 +1368,25 @@ class Config:
                 continue
             if s == "no dataplane interface":
                 cfg.dataplane_if = ""
+                cfg.dataplane_mgmt = {}
+                continue
+            if s.startswith("dataplane management"):
+                # Shape only, like the statement above it. Whether this box
+                # still has that card, and whether the dataplane has claimed
+                # it yet, is decided where a box is in reach.
+                w = s.split()
+                if len(w) != 7 or w[3] != "address" or w[5] != "mac":
+                    cfg.unknown.append(
+                        (lineno, s, "expected: dataplane management <name> "
+                                    "address <a.b.c.d/len> mac <xx:xx:...>"))
+                elif "/" not in w[4]:
+                    cfg.unknown.append(
+                        (lineno, s, "the management address needs a prefix "
+                                    "length: without one the box cannot say "
+                                    "which addresses are on its own subnet"))
+                else:
+                    cfg.dataplane_mgmt = {"name": w[2], "address": w[4],
+                                          "mac": w[6].lower()}
                 continue
             if s.startswith("dataplane"):
                 w = s.split()
@@ -1961,6 +2010,12 @@ class Config:
             # claiming the card, or a rollback could hand one over and never
             # take it back.
             "dataplane_if_changed": self.dataplane_if != other.dataplane_if,
+            # Separate from the card itself: the card is written into a file
+            # the tuner reads at the next boot, and this is applied to the
+            # dataplane here and now - on the boot where the card has arrived,
+            # they are the same commit and different work.
+            "dataplane_mgmt_changed":
+                self.dataplane_mgmt != other.dataplane_mgmt,
             "snmp_changed": snmp_changed,
             "ssh_changed": ssh_changed,
             "users_changed": users_changed,

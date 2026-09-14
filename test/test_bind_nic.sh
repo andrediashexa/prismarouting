@@ -82,6 +82,68 @@ said "eth9" \
   || ok "and nothing was written"
 
 echo
+echo "=== a box with ONE card may hand it over, with the way back recorded ==="
+# The refusal above is right about every box that has somewhere else to put the
+# dataplane. On a box with one card its advice named a card that does not
+# exist, and the box could never forward (#303). It steps aside here, and only
+# here, and only when tune.env carries the management path the VTY read off
+# the card before naming it - because without that record there is nothing to
+# put on the pair once the dataplane holds the port, and the box comes up
+# forwarding and unreachable.
+R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+mkdir -p "$R/etc/hexarouting"
+printf 'HEXA_DATAPLANE_IF=eth9\nHEXA_DATAPLANE_MGMT=eth9 10.95.200.198/24 52:54:00:00:00:01\n' \
+  > "$R/etc/hexarouting/tune.env"
+runbind "$R"
+# NOT on the exit status: this fake sysfs cannot actually move a driver, so
+# the verification at the end reports the device on the one it started on and
+# the script exits non-zero - which every other bind case here also does and
+# reads for what it wrote instead. What is being measured is the refusal, and
+# whether it fired.
+said "the only card this box has" && ! said "REFUSING" \
+  && ok "handed over, and it says that is what it did" \
+  || bad "a one-card box with a recorded management path was still refused: $OUT"
+said "10.95.200.198/24" \
+  && ok "and names the management path the box will come back on" \
+  || bad "it did not say what keeps the box reachable: $OUT"
+[ -e "$R/sys/bus/pci/devices/0000:03:00.0/driver_override" ] \
+  && ok "and the bind actually happened" \
+  || bad "it said it was handing the card over and bound nothing: $OUT"
+
+echo
+echo "=== with a SECOND card on the box, it is refused even so ==="
+# The record says the box knows how to come back on the pair. It does not say
+# it should: with a spare card there is one to name instead.
+R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+mkdir -p "$R/etc/hexarouting" "$R/sys/bus/pci/devices/0000:03:00.1" \
+         "$R/sys/class/net/eth8"
+ln -s "../../../bus/pci/devices/0000:03:00.1" "$R/sys/class/net/eth8/device"
+printf 'HEXA_DATAPLANE_MGMT=eth9 10.95.200.198/24 52:54:00:00:00:01\n' \
+  > "$R/etc/hexarouting/tune.env"
+runbind "$R"
+[ "$RC" != 0 ] && said "REFUSING" \
+  && ok "refused, because there is another card to name" \
+  || bad "the management card went to the dataplane with a spare card beside it: rc=$RC $OUT"
+said "eth8" \
+  && ok "and the refusal names the card to use instead" \
+  || bad "it says no without saying what yes would be: $OUT"
+
+echo
+echo "=== a virtio netdev is recognised as its PCI device (#286, here) ==="
+# The check resolved `device` by basename, so on a virtio guest - which is
+# every VM this product is first tried on - the management card's address
+# never matched and this last line of defence was not there at all.
+R=$(mkbox 0000:03:00.0 eth9 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+rm -f "$R/sys/class/net/eth9/device"
+mkdir -p "$R/sys/bus/pci/devices/0000:03:00.0/virtio7"
+ln -s "../../../bus/pci/devices/0000:03:00.0/virtio7" \
+  "$R/sys/class/net/eth9/device"
+runbind "$R"
+[ "$RC" != 0 ] && said "REFUSING" \
+  && ok "the management card is recognised through the virtio bus device" \
+  || bad "a virtio management card was about to be unbound: rc=$RC $OUT"
+
+echo
 echo "=== no device named: this says nothing, because two others already do ==="
 R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci)
 printf 'dpdk {\n  no-pci\n}\n' > "$R/etc/vpp/startup.conf"

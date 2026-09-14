@@ -555,6 +555,60 @@ with tempfile.TemporaryDirectory() as root:
           "and the refusal must be stated, not silent")
     print("  " + field(out, "# "))
 
+print("\n=== a box with ONE card may give it up, with the way back written "
+      "down (#303) ===")
+# The refusal above is right about every box with somewhere else to put the
+# dataplane. On a box with one card its advice - name the other one - named a
+# card that does not exist, and the box could never forward. It steps aside
+# there, and only there, and only when the box has recorded the management
+# path it is going to put back: `--keep-management`, which apply-tuning passes
+# when the VTY has written HEXA_DATAPLANE_MGMT beside the card's name.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    os.makedirs(f"{root}/proc/net", exist_ok=True)
+    with open(f"{root}/proc/net/route", "w") as f:
+        f.write("Iface\tDestination\tGateway\tFlags\n")
+        f.write("eth0\t00000000\t0102A8C0\t0003\n")
+    # Without the record: refused, exactly as before. A hand-edited tune.env
+    # naming the management card must not take the box off the network.
+    out = run(root, "--interface", "eth0")
+    check("no-pci" in out and "REFUSED" in out,
+          "the only card was handed over with no record of how to get the box "
+          "back, which is a box nobody can reach")
+    # With it: claimed, and the journal says what happened and why.
+    out = run(root, "--interface", "eth0", "--keep-management")
+    check("no-pci" not in out,
+          "a box with one card and a recorded management path still could not "
+          "be given a dataplane, which is the dead end #303 is about")
+    check("dev 0000:3b:00.0" in out,
+          f"and the card was not named: "
+          f"{field(out, '# dataplane NIC PCI address:')}")
+    check("only card" in out and "linux_cp" in out,
+          f"the journal does not say the box handed over its management card "
+          f"or what keeps it reachable: {field(out, '# ')}")
+    print("  " + field(out, "# "))
+
+print("\n=== and a box with a SECOND card is refused even with the record ===")
+# The record says the box knows how to come back on the pair. It does not say
+# the box should: with a spare card there is one to name instead, and giving
+# away the management card for nothing is the mistake #123 exists for.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
+    spare = f"{root}/sys/devices/pci0000:00/0000:3b:00.1"
+    os.makedirs(spare, exist_ok=True)
+    os.makedirs(f"{root}/sys/class/net/eth1", exist_ok=True)
+    os.symlink(spare, f"{root}/sys/class/net/eth1/device")
+    os.makedirs(f"{root}/proc/net", exist_ok=True)
+    with open(f"{root}/proc/net/route", "w") as f:
+        f.write("Iface\tDestination\tGateway\tFlags\n")
+        f.write("eth0\t00000000\t0102A8C0\t0003\n")
+    out = run(root, "--interface", "eth0", "--keep-management")
+    check("no-pci" in out and "REFUSED" in out,
+          "a box with a spare card gave away its management card anyway")
+    print("  " + field(out, "# "))
+
 print("\n=== a NIC that is not the default route is still claimed ===")
 # The refusal must not become "never claim anything", which would be the same
 # defect pointing the other way: a box that cannot forward is also a box that

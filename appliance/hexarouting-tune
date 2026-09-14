@@ -243,6 +243,27 @@ class Topology:
         # box has no card".
         return None
 
+    def pci_nics(self):
+        """
+        Every netdev on this box that resolves to a PCI address.
+
+        The cards DPDK could be given, which is not the same as the netdevs
+        Linux has: `lo`, a bridge, a bond and a veth have no PCI address, so
+        the dataplane could not be handed any of them. Used to tell a box with
+        a spare card from one with none, which is the difference between the
+        refusal below standing and its advice naming a card that does not
+        exist (#303).
+        """
+        out = []
+        try:
+            names = sorted(os.listdir(self.p("sys/class/net")))
+        except OSError:
+            return out
+        for name in names:
+            if self.nic_pci(name):
+                out.append(name)
+        return out
+
     def default_route_if(self):
         """
         The interface carrying the default route, from /proc/net/route.
@@ -286,7 +307,8 @@ class Topology:
         return out
 
 
-def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
+def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
+         keep_management=False):
     # Never the management path, even when it was named on purpose.
     #
     # Handing VPP the interface carrying the default route does not degrade
@@ -296,13 +318,27 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
     # site visit. So this overrides the setting rather than warning about it.
     #
     # It is not a guess about intent: an interface can carry subscriber
-    # traffic AND the default route only on a box that has one NIC, and such
-    # a box cannot run this product anyway.
+    # traffic AND the default route only on a box that has one NIC.
     # https://github.com/andrediashexa/hexarouting/issues/123
+    #
+    # And a box with one NIC is exactly the box that could then never forward,
+    # which is the dead end #303 was filed for. So the refusal keeps its
+    # ground wherever the advice behind it can be followed - another card
+    # means there is one to name instead - and steps aside only when there is
+    # no other card AND the box has written down how to stay reachable
+    # without it. `keep_management` is that record: apply-tuning passes it
+    # when HEXA_DATAPLANE_MGMT is set, which the VTY writes beside the card's
+    # own name and never without the address and MAC to put back.
+    # https://github.com/andrediashexa/hexarouting/issues/303
     mgmt = topo.default_route_if()
     refused = None
+    handover = False
     if ifname and mgmt and ifname == mgmt:
-        refused, ifname = ifname, None
+        others = [n for n in topo.pci_nics() if n != ifname]
+        if others or not keep_management:
+            refused, ifname = ifname, None
+        else:
+            handover = True
 
     node = topo.nic_node(ifname) if ifname else None
     if node is None or node not in topo.nodes:
@@ -317,6 +353,13 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
         nic_note = (f"REFUSED to give '{refused}' to the dataplane: it carries "
                     f"the default route, and the box would lose management. "
                     f"No device is claimed; using node {node}")
+    elif handover:
+        # Said as plainly as the refusal, and for the same reason: this is the
+        # line in the journal that explains a box which came back on a
+        # different path than it left on.
+        nic_note = (f"'{ifname}' carries the default route and is the only "
+                    f"card this box has, so it is being handed over with its "
+                    f"management path kept on its linux_cp pair; node {node}")
 
     node_cpus = [c for c in topo.nodes[node] if c in topo.cpus]
     cores = topo.physical_cores(node_cpus)
@@ -590,6 +633,10 @@ def main():
     ap.add_argument("--interface", help="dataplane NIC, to choose the NUMA node")
     ap.add_argument("--subscribers", type=int, default=200000)
     ap.add_argument("--max-workers", type=int)
+    ap.add_argument("--keep-management", action="store_true",
+                    help="the box has recorded the management path of the "
+                         "card being handed over, so a single-NIC box may "
+                         "give up the card carrying its default route")
     ap.add_argument("--no-low-latency", action="store_true",
                     help="do not disable C-states or THP on the kernel line")
     ap.add_argument("--sysfs-root", default="/")
@@ -601,7 +648,8 @@ def main():
 
     topo = Topology(a.sysfs_root)
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
-             low_latency=not a.no_low_latency)
+             low_latency=not a.no_low_latency,
+             keep_management=a.keep_management)
 
     grub = render_grub(p)
     vpp = render_vpp(p)

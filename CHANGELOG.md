@@ -175,6 +175,80 @@ version has a chance of seeing it.
   the published medium, where there are no other means. Saying the section was
   empty is what let it go unmeasured.
 
+### Added
+
+* **A box with one NIC can forward, and the card takes its address with it**
+  ([#303](https://github.com/andrediashexa/hexarouting/issues/303)). Measured
+  on a fresh install on the maintainer's VM: one card, carrying the address and
+  the default route, and `dataplane interface ens18` refused with "name the
+  card carrying subscriber traffic instead". There is no other card. The
+  advice could not be followed, so the box could not forward and could not be
+  told to - and a VM with one virtual NIC is how most people first meet this
+  product.
+
+  The refusal's reasoning is right and it keeps its ground. A box with a
+  second card is refused exactly as before, and the refusal now names the
+  cards to use instead rather than describing them. What changes is the box
+  where that advice names a card that does not exist: there the card moves,
+  and the management address moves with it onto the `linux_cp` pair the
+  dataplane keeps for the port, so the box is reached THROUGH the dataplane
+  rather than beside it. The card keeps its MAC across the handover, so
+  nothing upstream has to learn a new one.
+
+  The operator types one statement. The address, the prefix, the MAC and the
+  gateway are the box's own reading of Linux, written down as
+  `dataplane management <card> address <a/len> mac <xx:..>` and a static
+  default route, both visible in the candidate before the commit. A card whose
+  address the box cannot read back - none, or two, or no gateway - is refused
+  with the missing part named: an address it cannot see is one it cannot put
+  back, and a handover with no way back is the walk to the console the
+  original refusal was written to prevent.
+
+  The record lives in `tune.env` beside the card, because between the commit
+  that names the card and the boot that hands it over there is nothing on the
+  box to read: the dataplane has no such interface yet and Linux still holds
+  the address on a card that is about to stop existing. `apply-tuning` passes
+  `--keep-management` to the tuner when it is set, and `bind-dataplane-nic`
+  reads it before unbinding. All three places make the same decision from the
+  same two facts - is there another card, and has the box written the way back
+  down - and each checks both for itself.
+
+  **The handover is a confirmed commit whether or not it was asked for**, for
+  thirty minutes rather than the usual ten, because the window has to cover a
+  reboot and a login rather than a reconnection. The box does not lose the
+  session at the commit but at the restart after it, and if anything in
+  between is wrong there is no session left to fix it from. An unconfirmed
+  handover puts the configuration back AND restarts the box: the card was
+  unbound at boot and the dataplane holds it, so `tune.env` going back only
+  decides what the next start claims - and this runs on a box nobody can
+  reach, where there is no session to ask. A revert that gives back no card
+  restarts nothing, and neither does one whose card never moved: the window
+  runs from the commit, so it can expire while the box is still on its old
+  path, and the dataplane is asked whether it holds the recorded MAC before
+  anything is restarted.
+
+  `lab/one-nic.sh` measures it against a real dataplane: a box in a namespace
+  of its own with one card, its address and its default route, the card handed
+  to VPP, the product's own boot command replaying the saved file, and an
+  upstream that then pings the box and opens a TCP session to it from off its
+  own subnet. The bind cannot be performed in a container, so the kernel's
+  loss of the port is modelled - the netdev is emptied, its name released and
+  its ingress dropped - and the lab's negative check is what keeps that
+  honest: with the card in the dataplane and nothing configured the box MUST
+  be unreachable. Shown failing by making the model dishonest, where that one
+  check goes red and every other check in the file stays green.
+
+### Fixed
+
+* **`bind-dataplane-nic` could not recognise a virtio management card**
+  ([#286](https://github.com/andrediashexa/hexarouting/issues/286) again, in
+  the one place it still bites). It compared the basename of the netdev's
+  `device` link against the PCI address, and on a virtio guest that basename
+  is `virtio3`. The comparison never matched, so the last line of defence
+  against unbinding the card a box is reached over was not there at all - on
+  exactly the machines this product is first tried on. It now walks up to the
+  nearest PCI ancestor, the way the tuner already did.
+
 ## 0.73.0 - the box keeps the list of what was installed on it
 
 [#302](https://github.com/andrediashexa/hexarouting/issues/302).

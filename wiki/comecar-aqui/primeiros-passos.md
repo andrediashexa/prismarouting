@@ -103,7 +103,7 @@ Ou seja: **reinicie a caixa numa janela escolhida por você**, e ela sobe encami
 
 ### Duas recusas, na hora em que você digita
 
-**A placa que carrega a rota default é recusada**, mesmo que você a nomeie. As duas falhas não são simétricas: uma caixa sem interface de dataplane se resolve entrando por rede; uma caixa que engoliu a própria gerência se resolve indo até ela a pé.
+**Numa caixa que tem outra placa, a que carrega a rota default é recusada**, mesmo que você a nomeie. As duas falhas não são simétricas: uma caixa sem interface de dataplane se resolve entrando por rede; uma caixa que engoliu a própria gerência se resolve indo até ela a pé. E havendo outra placa, entregar a de gerência custa a caixa sem ganhar nada, então a recusa diz qual é a outra:
 
 ```
 hexarouting# [edit] dataplane interface enp1s0
@@ -113,7 +113,7 @@ error: dataplane interface enp1s0: it carries the default route
     the two mistakes do not cost the same: a box with no dataplane card is
     fixed over the network, and a box that ate its own management is fixed by
     walking to it
-    name the card carrying subscriber traffic instead
+    name the card carrying subscriber traffic instead: enp2s0
 ```
 
 **Um nome que a caixa não tem também é recusado, e ela diz quais tem:**
@@ -128,6 +128,66 @@ error: dataplane interface eth9: this box has no such interface
 ```
 
 Nos dois casos nada entra na candidata: a recusa é no prompt, não depois do `commit`.
+
+## 3b. Uma caixa com uma placa só
+
+Numa máquina virtual com uma placa virtual, que é como a maioria das pessoas conhece este produto, não existe segunda placa para nomear. A recusa acima mandaria você fazer uma coisa impossível, então ela não se aplica ali: **a placa vai para o dataplane e o endereço de gerência vai junto com ela**.
+
+Como isso funciona: o dataplane fica com a porta e mantém, do lado do Linux, uma interface emparelhada com ela. O endereço de gerência passa a morar nessa interface. A caixa deixa de ser alcançada *ao lado* do dataplane e passa a ser alcançada *através* dele. A placa mantém o mesmo endereço MAC na travessia, então nada do outro lado do cabo precisa reaprender coisa alguma.
+
+Você digita uma linha só. O resto a caixa lê sozinha da configuração que o Linux já tem na placa:
+
+```
+hexarouting> configure
+hexarouting# [edit] dataplane interface ens18
+dataplane interface ens18: this box has no other card, so it keeps its
+management
+    10.95.200.198/24 moves onto the linux_cp pair the dataplane keeps for
+    ens18, and the box is then reached through the dataplane rather than
+    beside it
+    the card keeps its MAC across the handover, so nothing upstream has to
+    learn a new one
+    'ip route 0.0.0.0/0 10.95.200.1' is added, because the default route this
+    box has now lives on a card Linux is about to lose
+    this does not happen at this commit: the dataplane claims its card when it
+    starts, and the box is on the old path until it is restarted
+```
+
+Confira o endereço e a rota que aparecem aí **antes** de confirmar. São a leitura que a caixa fez da placa, e é com eles que ela vai voltar.
+
+### O commit é confirmado, você tendo pedido ou não
+
+A caixa não perde a sua sessão no `commit`; ela perde no reinício seguinte. Se alguma coisa nesse meio estiver errada, não sobra sessão nenhuma para consertar, que é exatamente para isso que existe o `commit confirmed`. Então ele é aplicado assim de qualquer jeito, com uma janela maior que a de sempre, porque ela precisa caber um reinício e um login:
+
+```
+this commit hands over the card this box is reached on
+    the box keeps its address, on the dataplane's side of it, and nothing
+    proves that until it has been restarted and answered
+    applying it as 'commit confirmed 30' rather than as a plain commit: restart
+    the box, log in again and type 'commit' to keep it
+...
+rollback at 2026-09-14T18:36:13Z, in 30 minute(s)
+```
+
+O prazo fica gravado na caixa e **não é cancelado por reiniciar**: é justamente essa propriedade que faz a coisa funcionar aqui. A sequência é:
+
+1. `dataplane interface <placa>` e `commit`.
+2. Reinicie a caixa. Ela sobe com a placa no dataplane e o endereço no par do lado do Linux.
+3. Entre de novo, no mesmo endereço de sempre, e digite `commit`. Pronto.
+
+Se você **não** conseguir entrar, não faça nada: no fim da janela a caixa põe a configuração anterior de volta e **se reinicia sozinha**, porque devolver a placa ao Linux só acontece num novo start. Ela avisa isso no console:
+
+```
+commit confirmed 30: nobody confirmed it within 30 minute(s), so this box has
+put the previous configuration back
+restarting the box: the card goes back to Linux at the next start
+```
+
+Depois desse reinício a caixa está de volta como estava antes: sem dataplane, alcançável pela placa como sempre foi.
+
+:::tip
+Se a caixa **não** conseguir ler o endereço da placa (placa sem endereço, sem rota default, ou com dois endereços e nenhum jeito de escolher) ela recusa a entrega e diz o que está faltando. Um endereço que ela não consegue ler é um endereço que ela não consegue devolver, e aí a entrega não teria volta.
+:::
 
 ## 4. Identificar as interfaces
 

@@ -29,6 +29,7 @@ SYSBUS=${HEXA_PCI_BUS:-$ROOT/sys/bus/pci}
 SYSNET=${HEXA_SYS_NET:-$ROOT/sys/class/net}
 PROCROUTE=${HEXA_PROC_ROUTE:-$ROOT/proc/net/route}
 IOMMU=${HEXA_IOMMU_GROUPS:-$ROOT/sys/kernel/iommu_groups}
+TUNEENV=${HEXA_TUNE_ENV:-$ROOT/etc/hexarouting/tune.env}
 
 say() { echo "$@" >&2; }
 
@@ -60,19 +61,78 @@ for d in $DPDK_DRIVERS igb_uio; do
   fi
 done
 
+# The PCI address a netdev sits on, or nothing.
+#
+# The NEAREST PCI ancestor, not the basename of the link. A virtio NIC's
+# `device` points at .../0000:00:12.0/virtio3, so the basename is `virtio3`
+# and every comparison against a PCI address fails - which is #286 one
+# directory short, and here it fails in the dangerous direction: the check
+# below could not recognise the management card on any VM, so the last line of
+# defence was not there on exactly the machines this product is first tried on.
+pci_addr_of() {  # <netdev path>
+  _p=$(readlink -f "$1/device" 2>/dev/null) || return 1
+  while [ -n "$_p" ] && [ "$_p" != "/" ]; do
+    case "$(basename "$_p")" in
+      [0-9a-f]*:[0-9a-f]*:[0-9a-f]*.[0-9a-f]*) basename "$_p"; return 0 ;;
+    esac
+    _p=$(dirname "$_p")
+  done
+  return 1
+}
+
 # The last check before the irreversible part. `ip route` is not used because
 # this runs before the network is necessarily up and because /proc/net/route
 # is what the tuner reads - one source, one answer.
 defif=$(awk 'NR>1 && $2 == "00000000" { print $1; exit }' "$PROCROUTE" \
         2>/dev/null)
 if [ -n "$defif" ] && [ -e "$SYSNET/$defif/device" ]; then
-  defaddr=$(basename "$(readlink -f "$SYSNET/$defif/device")")
+  defaddr=$(pci_addr_of "$SYSNET/$defif")
   if [ "$defaddr" = "$ADDR" ]; then
-    say "bind: REFUSING $ADDR: it is $defif, which carries this box's default"
-    say "      route. Binding it would take the box off the network and leave"
-    say "      a console somebody has to walk to. Name a different interface"
-    say "      in /etc/hexarouting/tune.env."
-    exit 1
+    # A BOX WITH ONE CARD IS THE CASE THIS REFUSAL COULD NOT ANSWER (#303).
+    # Everywhere else it stands: another card means the operator has one to
+    # name instead, and giving this one away costs the box its management for
+    # nothing. With no other card that advice named a card the box has not
+    # got, and the box could never forward.
+    #
+    # Two things have to be true before the card may go. There must be no
+    # other card - checked here, from sysfs, rather than taken on trust - and
+    # the box must have written down the way back, which is what
+    # HEXA_DATAPLANE_MGMT is. That record is the address and MAC the VTY read
+    # off this card before it named it, and without it there is nothing to put
+    # on the pair once the dataplane has the port: the box would come up
+    # forwarding and unreachable, which is the outcome this whole check
+    # exists to prevent.
+    #
+    # tune.env is read HERE and nowhere else in this script, and that is the
+    # one exception to reading only what the tuner wrote. The tuner's output
+    # says which device to bind; it has no way to say "and the box knows how
+    # to stay reachable", which is the fact this needs.
+    others=""
+    for n in "$SYSNET"/*; do
+      [ -e "$n/device" ] || continue
+      a=$(pci_addr_of "$n") || continue
+      [ "$a" = "$ADDR" ] && continue
+      others="$others $(basename "$n")"
+    done
+    keep=$(sed -n 's/^[[:space:]]*HEXA_DATAPLANE_MGMT=//p' "$TUNEENV" \
+           2>/dev/null | tail -1 | tr -d '"'"'"'')
+    if [ -n "$others" ] || [ -z "$keep" ]; then
+      say "bind: REFUSING $ADDR: it is $defif, which carries this box's default"
+      say "      route. Binding it would take the box off the network and leave"
+      say "      a console somebody has to walk to."
+      if [ -n "$others" ]; then
+        say "      This box has another card:$others. Name one of those in"
+        say "      /etc/hexarouting/tune.env instead."
+      else
+        say "      It is the only card this box has, so it CAN be handed over -"
+        say "      but only with the management path written down beside it."
+        say "      Name it from the VTY: 'configure', 'dataplane interface"
+        say "      $defif', 'commit'."
+      fi
+      exit 1
+    fi
+    say "bind: $ADDR is $defif, the only card this box has. Handing it over,"
+    say "      with the management path the box recorded: $keep"
   fi
 fi
 

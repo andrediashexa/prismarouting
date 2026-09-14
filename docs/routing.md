@@ -386,6 +386,143 @@ VLAN, a NIC with no PCI address - is **named**:
 An unmarked list would otherwise read as "none of these is the management
 path", and that reading is the one that costs the box.
 
+### A box with one NIC: the card moves and the address goes with it
+
+The mark above says what the choice costs. On a box with **one** card it also
+used to say the box could never forward: the refusal's advice - name the card
+carrying subscriber traffic instead - named a card that does not exist, and a
+VM with one virtual NIC is how most people first meet this product
+([#303](https://github.com/andrediashexa/hexarouting/issues/303)).
+
+The refusal stands wherever that advice can be followed. With a second card
+present, naming the management one is refused exactly as before and the
+refusal now names the cards to use instead. With no second card it steps
+aside, because the dataplane has what a real router uses for this: `linux_cp`
+keeps a TAP paired with the port, and the management address lives on the TAP.
+The box is then reached **through** the dataplane rather than beside it. The
+card keeps its MAC across the handover - DPDK takes the device, address and
+all - so nothing upstream has to learn a new one.
+
+```
+hexarouting> configure
+hexarouting# [edit] dataplane interface ens18
+dataplane interface ens18: this box has no other card, so it keeps its
+management
+    10.95.200.198/24 moves onto the linux_cp pair the dataplane keeps for
+    ens18, and the box is then reached through the dataplane rather than
+    beside it
+    the card keeps its MAC across the handover, so nothing upstream has to
+    learn a new one
+    'ip route 0.0.0.0/0 10.95.200.1' is added, because the default route this
+    box has now lives on a card Linux is about to lose
+    this does not happen at this commit: the dataplane claims its card when it
+    starts, and the box is on the old path until it is restarted
+```
+
+Three things are written down at that moment, and all three are the box's own
+reading of Linux rather than anything the operator types:
+
+| written | read from | what it is for |
+|---|---|---|
+| the address and prefix | `ip -4 -o addr show dev <card>` | what goes on the pair after the handover |
+| the MAC | `/sys/class/net/<card>/address` | the card has no name in the dataplane until the dataplane has it, and the MAC is the one name it keeps on both sides |
+| `ip route 0.0.0.0/0 <gw>` | `/proc/net/route` | the default route lives on the card Linux is about to lose |
+
+A card whose address the box cannot read back is **refused**, and the refusal
+says which part is missing. An address it cannot see is an address it cannot
+put back, and a handover it cannot undo on the far side is the walk to the
+console the original refusal was written to prevent. Two addresses on the card
+is the same answer: choosing between them is choosing which address the box
+comes back on.
+
+The address reading is the one thing in this path that is not a file. Linux
+publishes an interface's own address nowhere under `/sys` or `/proc` in a form
+that names the interface - `/proc/net/route` carries the subnet and not the
+address, `/proc/net/fib_trie` carries the address and not the interface holding
+it - so this asks `ip`, through the same runner every other command on the box
+goes through.
+
+**The record lives in `tune.env`, beside the card.** It could not live only in
+the saved configuration: `show running-config` and `save` build the running
+state by reading the box, and between the commit that names the card and the
+boot that hands it over there is nothing on the box to read - the dataplane has
+no such interface yet, and Linux still holds the address on a card that is
+about to stop existing. Saved from a fresh session, the file came out naming
+the card with no way to keep the box reachable, which is the one file where
+that mistake cannot be recovered.
+
+```
+HEXA_DATAPLANE_IF=ens18
+HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 bc:24:11:a1:4f:c0
+```
+
+`apply-tuning` passes `--keep-management` to the tuner when that second line is
+set, and `bind-dataplane-nic` reads it before it unbinds. Both keep their own
+refusals: each checks for itself that there is no other card, and the bind
+refuses outright when the record is absent. A hand-edited `tune.env` naming the
+management card with no way back is still a box nobody can reach, and all three
+places say so.
+
+### The handover is a confirmed commit, asked for or not
+
+The box does not lose the session at the commit. It loses it at the restart
+after it, and if anything in between is wrong there is no session left to fix
+it from - which is precisely what `commit confirmed` is for
+([#212](https://github.com/andrediashexa/hexarouting/issues/212)). So the
+commit is a confirmed one whether or not the operator asked, the way an SSH or
+account change already is, with a longer window because it has to cover a
+reboot and a login rather than a reconnection:
+
+```
+this commit hands over the card this box is reached on
+    the box keeps its address, on the dataplane's side of it, and nothing
+    proves that until it has been restarted and answered
+    applying it as 'commit confirmed 30' rather than as a plain commit:
+    restart the box, log in again and type 'commit' to keep it
+...
+rollback at 2026-09-14T18:36:13Z, in 30 minute(s)
+```
+
+The deadline lives in `/etc/hexarouting/confirm-pending` and is watched by
+`hexarouting-confirm.timer`, so rebooting does not cancel it - which is the
+whole reason this change can use it. The box reboots into the handover, and
+the operator has the rest of the window to log back in over the new path and
+type `commit`.
+
+**An unconfirmed handover restarts the box.** The rest of a revert is a
+configuration: the file goes back, the dataplane is told, and the box is on
+the old settings. This one is not. The card was unbound from its kernel driver
+at boot and the dataplane holds it, so putting `tune.env` back only decides
+what the *next* start claims - and until that start happens Linux still has no
+card and the box is still unreachable. This runs only where nobody confirmed,
+which is to say on a box no operator can reach: there is no session to ask, and
+leaving it reverted and unreachable would be the revert promising something it
+did not do.
+
+```
+commit confirmed 30: nobody confirmed it within 30 minute(s), so this box has
+put the previous configuration back
+restarting the box: the card goes back to Linux at the next start
+    the dataplane holds it until then, so this is the only way back onto the
+    network without a reboot by hand
+```
+
+A revert that gives back no card restarts nothing, which is what keeps every
+other unconfirmed commit on every other box from rebooting it. Nor does one
+whose card never moved: the window runs from the commit and the commit does
+not move the card, so an operator who commits and waits before rebooting has
+the deadline pass while the box is still on its old path. There the revert is
+an ordinary one - the setting goes, and restarting would be this feature
+rebooting a box that was reachable the whole time. The dataplane is asked
+whether it actually holds the recorded MAC before anything is restarted.
+
+`lab/one-nic.sh` measures the whole of it against a real dataplane: a box with
+one card, its address and its default route, the card handed to VPP, the boot
+replay, and an upstream that pings and opens a TCP session to the box from off
+its own subnet afterwards. What that lab does not do - and what the header of
+the file says at length - is any part of the work the product is being measured
+for.
+
 ### What the dataplane holds is said once, and first
 
 A NIC VPP has claimed is **not under `/sys/class/net` at all** — the device has
