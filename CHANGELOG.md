@@ -255,6 +255,31 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A self-test fixture that passes, which the suite had never had**
+  ([#298](https://github.com/andrediashexa/hexarouting/issues/298)). It
+  arranged 105 boxes and every one of them failed something - its own count
+  line said `105 of 105` - so the summary every healthy appliance in the field
+  prints had never been executed, and the assertion written for
+  [#297](https://github.com/andrediashexa/hexarouting/issues/297) passed for
+  the wrong reason and stayed green under both mutations of it.
+
+  `healthy()` arranges a box the self-test finds nothing wrong with at all: 30
+  checks green, no `[FAIL]`, no `[warn]` and no `[info]`. Three of #297's four
+  source-reading assertions are gone, replaced by measurements through a box -
+  the ready line, the warning count, and the sentence a box gets when it cannot
+  forward each go red now when the summary is changed. The fourth stays, and
+  its own section says why no box can answer it: a warning added later with a
+  bare `say` still prints, and is missing only from a count the box has no
+  independent opinion about.
+
+  Two things had to be satisfied that are worth recording. The `mkcpus` pattern
+  almost every existing fixture uses leaves exactly one control-plane cpu,
+  which is a warning in its own right. And `hexash` is not installed on a build
+  machine, so all 105 existing boxes print `[FAIL] hexash is not installed`;
+  the stub for it is created inside the new section and removed at the end,
+  because putting it in the shared `$BIN` would have silently repaired a failed
+  check on every box above it.
+
 * **Every issue a merge closes now has to be written down here.** Two of the
   five merges since 0.71.0 landed with no entry at all, and the gap was found
   by reading the section rather than by anything failing. A release note is
