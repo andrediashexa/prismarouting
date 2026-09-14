@@ -85,6 +85,40 @@ A cópia recomeça sozinha e o autoteste passa a dizer `REBUILDING` com o percen
 
 :::
 
+## O autoteste diz que as chaves SSH não foram geradas nesta caixa
+
+A cada boot o autoteste compara as chaves de host do SSH com o sistema de arquivos em que elas estão guardadas. Um arquivo não pode ter conteúdo mais antigo que ele próprio: se as chaves forem mais antigas que o sistema de arquivos, elas não nasceram nesta caixa — vieram prontas, dentro da imagem do sistema. Nesse caso o autoteste avisa, e avisa como falha:
+
+```
+  [FAIL] the ssh host keys were not generated on this box
+```
+
+Isso importa porque uma chave de host que veio pronta de fora é a mesma em toda caixa instalada daquela mídia, e a metade privada dela está onde a mídia estiver. Quem tiver essa metade consegue se passar por esta caixa numa sessão SSH, **e o cliente de quem administra não reclama**: a impressão digital que ele guardou é exatamente a que ele recebeu.
+
+O conserto é a caixa gerar as suas. No console:
+
+```
+rm /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+ssh-keygen -A
+systemctl restart ssh
+```
+
+:::warning
+**Depois disso, toda máquina que já tinha esta caixa no `known_hosts` vai recusar a próxima conexão** e dizer que a chave do host mudou. Isso é o conserto acontecendo, não um ataque — e é o preço dele. Em cada máquina que administra a caixa, apague a entrada antiga com `ssh-keygen -R <endereço da caixa>` e confira a impressão digital nova na primeira conexão, lendo-a no console da caixa: é o único lugar onde ela não pode ter sido trocada no caminho.
+
+:::
+
+Quando as chaves são da própria caixa, a linha é outra e não pede nada:
+
+```
+  [ ok ] the ssh host keys were generated on this box, not handed to it
+```
+
+Há mais duas linhas vizinhas, que não querem dizer a mesma coisa:
+
+* `[FAIL] no ssh host keys in /etc/ssh: sshd cannot start` — não existe chave nenhuma. O SSH não sobe e a caixa só é alcançável pelo console; `ssh-keygen -A` seguido de `systemctl restart ssh` resolve.
+* `[warn] cannot tell where these ssh host keys were made` — o sistema de arquivos não registra quando cada arquivo foi criado, então não há com o que comparar. Não é um defeito e também não é um aval.
+
 # Serviços e ordem de boot
 
 ```mermaid

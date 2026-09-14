@@ -133,7 +133,66 @@ version has a chance of seeing it.
   recorded in `test/test_doc_copies.py`: line-split literals give false
   negatives and run-time composition gives false positives, and a check that
   goes red on work that is right is the worst kind.
+### Added
 
+* **The boot self-test says when the box's ssh host keys were handed to it
+  rather than generated on it**
+  ([#248](https://github.com/andrediashexa/hexarouting/issues/248)).
+  Every medium published up to and including 0.66.0 carried the host keys
+  openssh-server's postinst generated inside the build container, private
+  halves included, and `hexarouting-install` unpacked that squashfs onto the
+  disk before enabling sshd. So every appliance installed from one release
+  answers with the same host key and its private half is in the download.
+  [#245](https://github.com/andrediashexa/hexarouting/issues/245) removed the
+  keys from the image and made the installer generate a set per box, which
+  fixes every install from 0.67.0 onwards and does nothing for a box already
+  racked. Those boxes are still answering with it, and until now nothing told
+  their operators.
+
+  ```
+    [FAIL] the ssh host keys were not generated on this box
+          They are older than the filesystem they sit on, so they came in with
+          the system image. Every box installed from that medium answers with
+          this same key and the private half of it is in the published download:
+          an ssh session to this box can be impersonated, and the client will
+          not object, because the fingerprint it pinned is the fingerprint it
+          was handed.
+            ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key
+          regenerate them, at the console:
+            rm /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+            ssh-keygen -A
+            systemctl restart ssh
+          Every client that pinned the old fingerprint will then refuse to
+          connect and report that the host key changed. That is this being
+          fixed, not an attack, and it is the cost of fixing it.
+  ```
+
+  A box whose keys are its own gets the other line and nothing else:
+
+  ```
+    [ ok ] the ssh host keys were generated on this box, not handed to it
+  ```
+
+  **The signal is the timestamp, and deliberately not the key's comment.**
+  `ssh-keygen -A` stamps `<user>@<hostname>` into the comment, and the hostname
+  is the one `gethostname()` answers, which `chroot` does not change: the
+  installer runs `chroot "$MNT" ssh-keygen -A`, so a key a box generated for
+  itself carries the **live medium's** hostname, measured as `root@hexarouting`
+  whatever the operator named the box. A comment-against-hostname check would
+  report every correctly installed box with a name of its own, and the
+  installer would be the thing making the evidence. What separates the two
+  cases is that a file cannot have contents older than itself: `unsquashfs`
+  restores the mtime the build container wrote onto an inode created at install
+  time, so an image key's mtime is earlier than its birth time and a key
+  generated here is not. Measured on the published 0.37.0 medium, whose keys
+  are stamped three minutes before its squashfs was made. It costs nothing kept
+  in the tree, which a list of the fingerprints each release shipped would not
+  and which is the opposite of what #245 just did.
+
+  Not blind in either direction: a box with no host keys at all is a failed
+  check saying sshd cannot start, a key whose birth time the filesystem does
+  not record is reported as undecidable rather than as fine, and the live
+  medium - which carries no host keys on purpose - is not failed for it.
 
 ## 0.70.0 — a virtio NIC could never be the dataplane card, and a self-test that passed a box with none
 

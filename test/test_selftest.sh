@@ -110,6 +110,25 @@ esac
 EOF
 # A dataplane that answers, when a case needs one. Absent from $FAKE it fails,
 # which is what a box with no VPP looks like.
+# stat, for the ssh host keys only; everything else goes through to the real
+# one. The host-key check compares a key's mtime with the moment its file was
+# created on the filesystem, so the filesystem the tmpdir happens to be on -
+# one that records a birth time, or one that does not - would decide these
+# cases instead of the fixture, and differently on a developer box and on the
+# build runner. Same reason systemctl is stubbed whole rather than passed
+# through. A key with no line in the fixture is one stat could not answer for.
+cat > "$BIN/stat" <<'EOF'
+#!/bin/sh
+for a in "$@"; do p=$a; done
+case "$p" in
+  */etc/ssh/ssh_host_*_key)
+    if [ -f "$FAKE/keytimes" ]; then
+      sed -n "s|^${p##*/} ||p" "$FAKE/keytimes"
+      exit 0
+    fi ;;
+esac
+exec /usr/bin/stat "$@"
+EOF
 cat > "$BIN/vppctl" <<'EOF'
 #!/bin/sh
 [ -f "$FAKE/vppctl_ok" ] || exit 1
@@ -2019,6 +2038,203 @@ rm -f "$FAKE/show_plugins" "$FAKE/bpa_pools"
 printf '\n' > "$FAKE/hexarouting.conf"
 unset HEXA_CONFIG
 rm -rf "$FAKE/root"
+
+# A box's ssh host keys: made here, or handed to it inside the image?
+#
+# Every ISO published up to 0.66.0 carried the host keys its build container
+# generated, private halves included, and hexarouting-install unpacked them
+# onto the disk. Those boxes are still racked and still answering with a key
+# anybody who downloaded the medium holds (#248). #245 fixed the image and
+# every install after it; this is what tells the ones already in the field.
+#
+# The signal is the timestamp and NOT the key's comment. `ssh-keygen -A`
+# stamps "<user>@<gethostname()>", and chroot does not change gethostname():
+# the installer runs it as `chroot "$MNT" ssh-keygen -A`, so a correctly
+# generated key on a box named anything at all carries the LIVE MEDIUM's
+# hostname, measured as "root@hexarouting". A comment-against-hostname check
+# would report every correctly installed box that was given a name.
+#
+# What is left is that a file cannot have contents older than itself: a key
+# generated here has an mtime at or after the moment its inode was made on
+# this filesystem, and one restored from a squashfs carries the mtime the
+# build container wrote onto an inode created at install time.
+#
+# Both timestamps come from the stubbed stat, so a case is a pair of numbers
+# rather than a filesystem feature of whatever /tmp is.
+mkkeys() {  # <mtime> <birth> - three host keys with those timestamps
+  R="$FAKE/root"
+  rm -rf "$R"; mkdir -p "$R/etc/ssh"
+  : > "$FAKE/keytimes"
+  for _kt in ecdsa ed25519 rsa; do
+    : > "$R/etc/ssh/ssh_host_${_kt}_key"
+    [ -n "${1:-}" ] && printf 'ssh_host_%s_key %s %s\n' "$_kt" "$1" "$2" \
+      >> "$FAKE/keytimes"
+  done
+}
+
+echo "=== ssh host keys that came in with the image ==="
+# mtime is the 0.37.0 medium's own: its keys are stamped 2026-09-08 13:43,
+# three minutes before its squashfs was made. The birth time is the install,
+# six days later.
+mkkeys 1757349810 1789000000
+run
+if said '\[FAIL\] the ssh host keys were not generated on this box'; then
+  ok "it is a failed check, not a warning"
+else
+  bad "the handed-down key was not reported as a failure: $(printf '%s\n' "$OUTPUT" | grep -i "host key" || echo '<nothing about host keys>')"
+fi
+# The keys by name, on a row of their own: an operator who has to decide
+# whether to regenerate wants to see which files are being talked about.
+if said '^ *ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key$'; then
+  ok "and it names the key files, on a row of their own"
+else
+  bad "it did not name the key files on a row of their own"
+fi
+# WHY it matters, which is the half a bare "regenerate your keys" leaves out.
+if said_across 'private half of it is in the published download'; then
+  ok "and says the private half is in the download"
+else
+  bad "it did not say the private half is published"
+fi
+if said_across 'impersonated, and the client will not object, because the fingerprint it pinned is the fingerprint it was handed'; then
+  ok "and says an ssh session can be impersonated with nothing to notice"
+else
+  bad "it did not say the session can be impersonated unnoticed"
+fi
+# What to do, typeable as it stands.
+if said '^ *rm /etc/ssh/ssh_host_\*_key /etc/ssh/ssh_host_\*_key\.pub$' \
+   && said '^ *ssh-keygen -A$' && said '^ *systemctl restart ssh$'; then
+  ok "and gives the three commands that fix it, one per row"
+else
+  bad "it did not give the remediation as typeable commands: $(printf '%s\n' "$OUTPUT" | grep -c 'ssh-keygen') ssh-keygen line(s)"
+fi
+# And the cost of doing it, because an operator surprised by a changed
+# fingerprint assumes they are being attacked.
+if said_across 'pinned the old fingerprint will then refuse to connect'; then
+  ok "and warns that every client pinning the old fingerprint will object"
+else
+  bad "it did not warn that clients will refuse the next connection"
+fi
+
+echo "=== ssh host keys this box generated itself ==="
+# The other direction, and the one a check like this gets wrong: a box whose
+# keys are its own must not be accused. ssh-keygen creates the file and writes
+# it, so mtime is the birth time or a second past it when the write straddles
+# a second boundary.
+for _mt in 1789000000 1789000001; do
+  mkkeys "$_mt" 1789000000
+  run
+  if said 'the ssh host keys were not generated on this box'; then
+    bad "a box whose keys are its own was accused (mtime $_mt)"
+  else
+    ok "it is not accused (mtime $_mt, birth 1789000000)"
+  fi
+done
+if said '\[ ok \] the ssh host keys were generated on this box'; then
+  ok "and the box is told so in as many words"
+else
+  bad "a box with its own keys was told nothing about them"
+fi
+
+echo "=== one key of three came in with the image ==="
+# A box remediated by hand can end up here: `ssh-keygen -A` only makes the
+# types that are missing, so a leftover key from the image survives a partial
+# cleanup. The box is still impersonable over whichever type the client picks.
+mkkeys 1789000000 1789000000
+sed -i 's/^ssh_host_rsa_key .*/ssh_host_rsa_key 1757349810 1789000000/' \
+  "$FAKE/keytimes"
+run
+if said '\[FAIL\] the ssh host keys were not generated on this box'; then
+  ok "one key out of three is still a failed check"
+else
+  bad "a box with one image key among its own was passed"
+fi
+if said '^ *ssh_host_rsa_key$'; then
+  ok "and only that key is named"
+else
+  bad "it did not name the one key that came from the image: $(printf '%s\n' "$OUTPUT" | grep -E '^ *ssh_host' || echo '<no key row>')"
+fi
+
+echo "=== a box with no ssh host keys at all ==="
+# The check must not be blind. An installed box with no host key is a box
+# whose sshd will not start, and a silent check there would read as "these
+# are fine" - which is the failure mode the whole check exists to avoid.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/etc/ssh"; rm -f "$FAKE/keytimes"
+run
+if said '\[ ok \] the ssh host keys were generated on this box'; then
+  bad "a box with no host keys at all read as a box with good ones"
+else
+  ok "it does not read as a box whose keys are fine"
+fi
+if said '\[FAIL\] no ssh host keys in /etc/ssh: sshd cannot start'; then
+  ok "and says sshd cannot start without them"
+else
+  bad "a box with no host keys was not reported: $(printf '%s\n' "$OUTPUT" | grep -i "host key" || echo '<nothing about host keys>')"
+fi
+
+echo "=== a live medium, which carries no host keys on purpose ==="
+# #245 removed them from the image and masked sshd there. Reporting that as a
+# failure would fail a healthy medium on every boot, and a self-test that
+# cries wolf on the ISO is one whose failures get read past.
+mkdir -p "$FAKE/root/run/live/medium"
+run
+if said 'no ssh host keys in /etc/ssh'; then
+  bad "the live medium was failed for carrying no host keys, which is #245"
+else
+  ok "the live medium is not failed for it"
+fi
+rm -rf "$FAKE/root/run"
+
+echo "=== a key whose timestamps cannot be read ==="
+# Two ways to get here: a filesystem that records no birth time (stat answers
+# 0), and a file stat could not answer for at all. Neither is a pass. A check
+# that cannot see must not be mistaken for a check that agrees.
+mkkeys 1789000000 0
+run
+if said '\[ ok \] the ssh host keys were generated on this box'; then
+  bad "keys with no birth time read as keys that were generated here"
+else
+  ok "no birth time does not read as a pass"
+fi
+if said 'cannot tell where these ssh host keys were made'; then
+  ok "and it says so, rather than staying silent"
+else
+  bad "it said nothing at all about keys it could not judge"
+fi
+mkkeys 1789000000 1789000000
+sed -i '/^ssh_host_rsa_key /d' "$FAKE/keytimes"   # stat answers nothing for it
+run
+if said '\[ ok \] the ssh host keys were generated on this box'; then
+  bad "a key stat could not read was counted among keys that are fine"
+else
+  ok "a key stat could not read does not read as a pass either"
+fi
+if said '^ *ssh_host_rsa_key$'; then
+  ok "and it names the key it could not judge"
+else
+  bad "it did not name the unreadable key"
+fi
+
+echo "=== and the comment is not what any of that is decided on ==="
+# The measurement behind the choice, kept as an assertion because the comment
+# is the obvious signal and reads as the right one. `chroot "$MNT" ssh-keygen
+# -A` stamps the live medium's hostname into a key it generates on the target,
+# because gethostname() is not a filesystem property: a correctly installed
+# box named "cgnat-rj-01" carries "root@hexarouting". Reading the comment
+# would report it, and hexarouting-install would be the thing making the
+# evidence.
+# Comments and printed text are dropped: the remediation the check PRINTS
+# names the .pub files, because an operator has to delete them too. What must
+# not appear is a .pub, a fingerprint or a hostname being READ to decide.
+READS=$(sed -n '/were these ssh host keys made on this box/,/A live system says so/p' \
+          "$REPO/appliance/selftest" \
+        | grep -vE '^ *(#|say |say_list |bad |ok |\"|\\\\)' \
+        | grep -nE '\.pub|ssh-keygen -l|/etc/hostname|gethostname' || true)
+if [ -z "$READS" ]; then
+  ok "no .pub, no fingerprint and no hostname is read to decide it"
+else
+  bad "it decides on the key comment or the hostname, which a correctly installed box does not match: $READS"
+fi
 
 echo "=== the exit status, over every box the cases above arranged ==="
 # The rule this holds: docs/appliance.md, "always exits zero: the diagnostic
