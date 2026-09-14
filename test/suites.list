@@ -18,6 +18,7 @@
 .build/test_bpa_icmp
 .build/test_bpa_sip
 .build/test_bpa_rewrite
+.build/test_bpa_auto_mss
 python3 appliance/test_tune.py
 python3 test/test_hexash_complete.py
 python3 test/test_hexash_config.py
@@ -25,6 +26,7 @@ python3 test/test_ha_equality.py
 python3 test/test_dataplane_if.py
 python3 test/test_context_map.py
 python3 test/test_feature_order.py
+python3 test/test_attach_cost.py
 python3 test/test_routes.py
 sh test/test_boot_wait.sh
 sh test/test_version_stamp.sh

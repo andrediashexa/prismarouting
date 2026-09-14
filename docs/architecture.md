@@ -1026,10 +1026,26 @@ outside interface of this box anyway, so the minimum is the honest answer — an
 the error it can make is the safe one. A clamp smaller than necessary costs
 some throughput; a clamp larger than necessary protects nothing.
 
-It is recomputed when an interface joins or leaves the CGNAT, and once a second
-by the process node that already walks the session table, because an MTU can
-change under a running box and a clamp derived from a stale one is a clamp that
-quietly does nothing. `show bpa pool` prints the **resolved** number beside the
+It is updated when an interface joins or leaves the CGNAT, and reconciled once
+a second by the process node that already walks the session table, because an
+MTU can change under a running box and a clamp derived from a stale one is a
+clamp that quietly does nothing.
+
+**Updated, not recomputed**, and the difference is a defect this product
+shipped. Attaching an interface used to recompute the minimum by walking every
+interface on the box and asking the feature arc four times per interface
+whether the CGNAT was on it, so attaching N interfaces cost N walks: 4.3 ms per
+call on a box holding 5,000 interfaces, 8.3 ms at 10,000, 83 seconds to attach
+ten thousand, against 42 µs for `policer input` on the same arc
+([#287](https://github.com/andrediashexa/hexarouting/issues/287), measured
+while answering [#170](https://github.com/andrediashexa/hexarouting/issues/170)
+and written up in [bng.md](bng.md) section 3.4). The minimum is now carried
+across changes instead: an attach compares one MTU against it, which is all a
+new interface can do to a minimum. Only the departure of the last interface
+holding the smallest MTU on the box has to look at anything else, and what it
+looks at is the plugin's own array of per-interface MTUs rather than VPP's
+interface pool. The once-a-second pass is over the CGNAT interfaces alone,
+which is also where an interface deleted underneath the plugin is noticed. `show bpa pool` prints the **resolved** number beside the
 word — `tcp-mss      auto -> 1460` — for the same reason.
 
 ### What it deliberately does not do

@@ -11,6 +11,7 @@
 #include "bpa_pool.h"
 #include "bpa_ports.h"
 #include "bpa_session.h"
+#include "bpa_auto_mss.h"
 
 typedef struct
 {
@@ -46,10 +47,29 @@ typedef struct
    * needs to be costs some throughput, and one that is larger protects
    * nothing.
    *
-   * Recomputed when an interface joins or leaves the CGNAT, and once a second
-   * by the expiry process, because an MTU can change under a running box.
+   * Maintained as interfaces join and leave, and reconciled once a second by
+   * the expiry process, because an MTU can change under a running box.
+   *
+   * MAINTAINED and not recomputed. It used to be recomputed, by walking every
+   * interface on the box and asking the feature arc four times per interface
+   * whether the CGNAT was on it, on every attach. That made attaching N
+   * interfaces cost N walks: 8.3 ms per attach at 10,000 interfaces, 83
+   * seconds to attach them all, where `policer input` on the same arc costs
+   * 42 us (#287). bpa_auto_mss.h holds the bookkeeping that replaced it.
    */
   u16 auto_mss;
+
+  /*
+   * The minimum above, and the per-interface MTUs it is the minimum over.
+   *
+   * `auto_mss_mtu` is indexed by sw_if_index and is zero for every interface
+   * the CGNAT is not attached to, so it is also the only record of WHICH
+   * interfaces those are. It is written from what the feature arc says about
+   * the one interface being changed, never from a guess, so a toggle the arc
+   * refused cannot leave this disagreeing with it.
+   */
+  bpa_auto_mss_t auto_mss_track;
+  u32 *auto_mss_mtu;
 
   u32 hash_buckets;   /* session table sizing */
   u32 hash_memory;
@@ -291,7 +311,22 @@ clib_error_t *bpa_bypass_set (u8 *name, int is_dst, const u32 *bases,
 clib_error_t *bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index);
 clib_error_t *bpa_pool_del (u8 *name);
 void bpa_outside_window_update (void);
+/*
+ * Re-reads the MTU of every interface the CGNAT is attached to, and drops the
+ * ones that have been deleted. Called once a second by the expiry process:
+ * nothing in VPP tells this plugin that an MTU changed, and a clamp derived
+ * from an MTU that has moved is describing a path the box is no longer on.
+ *
+ * Proportional to the number of CGNAT interfaces, NOT to the number of
+ * interfaces on the box, and not on the attach path at all.
+ */
 void bpa_auto_mss_update (void);
+/*
+ * Records what ONE interface contributes to the "auto" clamp, reading the
+ * feature arc for that interface only. Constant work, which is the whole of
+ * #287: this is what an attach calls.
+ */
+void bpa_auto_mss_interface_update (u32 sw_if_index);
 /*
  * Attaches CGNAT to an interface, or takes it off. Returns what
  * vnet_feature_enable_disable() returned, and does nothing else when that
