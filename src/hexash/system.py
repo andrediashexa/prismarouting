@@ -50,6 +50,29 @@ _VALID = {
     "password-authentication": ("yes", "no"),
 }
 
+# THE SAME SETTING UNDER TWO NAMES, and the daemon answers with the one this
+# VTY does not offer (#304).
+#
+# OpenSSH accepts `prohibit-password` and `without-password` for
+# PermitRootLogin. They mean the same thing; `without-password` is the older
+# spelling, kept for compatibility. `sshd -T`, which is how this file reads the
+# effective configuration, canonicalises to the OLD one - measured on OpenSSH
+# 9.2: a config saying `prohibit-password` reads back as
+# `permitrootlogin without-password`.
+#
+# So the VTY offered `prohibit-password`, wrote it, read back a word it had
+# never heard of, and refused its own setting. The box then fails to load its
+# saved configuration at boot, which is a box that comes up unconfigured.
+#
+# Normalised HERE, on the way in, rather than widened in _VALID: two names for
+# one setting inside the product would reach `show running-config` and the
+# saved file, and an operator comparing two boxes would see a difference that
+# is not one. One spelling lives in this product - the one the VTY offers -
+# and this is the single place the daemon's other name is translated.
+_SSHD_T_ALIASES = {
+    "permit-root-login": {"without-password": "prohibit-password"},
+}
+
 # ------------------------------------------------------------------- roles
 #
 # The role an operator chooses, and the POSIX groups it is made of. Groups
@@ -317,6 +340,7 @@ class System:
                         # setting and repeating it here would put the same
                         # number in two places.
                         v = v.rsplit(":", 1)[0] if ":" in v else v
+                    v = _SSHD_T_ALIASES.get(field, {}).get(v, v)
                     s[field] = v
             return s
         # sshd could not be asked - not installed, or refusing its own config.
@@ -329,7 +353,9 @@ class System:
                         continue
                     for field, key in _SSHD_T.items():
                         if w[0].strip().lower() == key:
-                            s[field] = w[1].strip()
+                            v = w[1].strip()
+                            s[field] = _SSHD_T_ALIASES.get(field,
+                                                           {}).get(v, v)
         except OSError:
             pass
         return s
