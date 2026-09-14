@@ -75,6 +75,36 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+
+### Fixed
+
+* **The roadmap stated a measurement this project had already published a
+  correction for.** [#288](https://github.com/andrediashexa/hexarouting/issues/288)
+  quoted a cost for `statseg { size 1G }` that `docs/appliance.md` corrected in
+  the same release that shipped the self-test check: in the table that figure
+  came from it is the RSS difference between 0 and 40,000 **sessions** on a box
+  that already had the 1 GB segment, so it is the cost of the traffic and not of
+  the segment. `docs/roadmap.md` restated the retracted
+  number as fact anyway, in a row written from the issue body, and also still
+  described the box as dying with "nothing said about what ran out" after the
+  boot self-test had started saying it.
+
+  The row is replaced by the decision it was waiting on, which is that
+  **`hexarouting-tune` does not size the statistics segment and should not**.
+  Measured against this product's own RAM floor, 4 GB and the shipped
+  `HEXA_SUBSCRIBERS=200000`, the tuner already reports `5 GB of hugepages were
+  needed ... Capped at 2 GB`; sizing the segment from that subscriber count
+  would ask for a further 553 MB at the measured 2.9 kB per interface, out of
+  the 2 GB left outside hugepages, for interfaces that never appear. The number
+  stays with the operator in `/etc/hexarouting/vpp-base.conf`, which the tuner
+  concatenates ahead of its own stanzas and therefore never overrides.
+
+  `test/test_doc_copies.py` gains the reader that was missing: `docs/appliance.md`
+  is the one holder of that figure, because naming it is how the correction is
+  made, and no other document may restate it. Shown failing on
+  both halves, a second document naming the figure and the holder losing the
+  correction. No product behaviour changed.
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
