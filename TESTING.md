@@ -8,7 +8,7 @@ replaces the next.
 ```sh
 make test                 # core suites, no root, no VPP
 sh tools/lab.sh <name>    # min   — dataplane labs with injected packets
-sh tools/lab.sh hw-lab    # min   — two VMs, real Internet traffic
+make hw-up && make hw-lab # min   — two VMs, real Internet traffic
 sh tools/lab.sh boot-iso  # s/min — the appliance actually booting
 ```
 
@@ -22,8 +22,8 @@ sh tools/lab.sh boot-iso  # s/min — the appliance actually booting
 |---|---|
 | **What** | A test suite spanning pure arithmetic to a booted appliance carrying real traffic. |
 | **Why** | Each level catches defects the others structurally cannot; several bugs in this project were visible only at one specific level. |
-| **Who** | Anyone changing the code; CI runs level 1 on every commit. |
-| **When** | Level 1 before every commit; levels 2–4 before a release. |
+| **Who** | Anyone changing the code. **There is no CI**: nothing runs any of this on a push, so every level is run by whoever made the change. |
+| **When** | Level 1 before every commit; levels 2-4 before a release. Nothing enforces either, which is why `tools/release-gate.sh` exists. |
 | **Where** | Levels 1–2 need only the build container; level 3 needs two machines; level 4 needs KVM or patience. |
 | **How** | Every lab prints the **expected** value before the **observed** one, and several verify the captured packet rather than trusting a counter. |
 | **How much** | Level 1 is seconds. A full ISO rebuild plus boot is roughly fifteen minutes. |
@@ -147,7 +147,7 @@ one is a check nobody reaches.
 The whole suite runs several labs at a time:
 
 ```sh
-sh tools/run-all-labs.sh          # 4 at a time
+sh tools/run-all-labs.sh          # as many at a time as the memory holds
 LAB_JOBS=5 sh tools/run-all-labs.sh
 ```
 
@@ -165,7 +165,7 @@ alongside it**. It was a queue, not a workload.
 What makes it safe is that `tools/lab.sh` gives each lab its own container
 **without** `--network=host`, so the fixed `veth` and `netns` names in
 `routing`, `lcp`, `ipfix`, `ipfix-tcp` and `vty` cannot collide. The one piece
-of shared writable state is `/src/.build-vpp`, where 36 labs each run `ninja` —
+of shared writable state is `/src/.build-vpp`, where every lab would otherwise run `ninja` -
 so the plugin is built **once, before any lab starts**, and no lab is the one
 that happens to build it.
 
@@ -219,7 +219,7 @@ The most instructive to run:
 |-----|----------------------|
 | `handoff` | Predicts which thread each subscriber lands on, then proves it |
 | `frag` | The byte-order bug that created phantom sessions |
-| `ipfix` | Configures the UDP exporter **through the VTY** and decodes a record off the wire — the exporter used to be set here with `vppctl`, so the lab performed the product's missing step and UDP export had never once run on a box the product configured. `sh tools/lab.sh ipfix no-exporter` leaves the statement out and turns 19 of its assertions red |
+| `ipfix` | Configures the UDP exporter **through the VTY** and decodes a record off the wire — the exporter used to be set here with `vppctl`, so the lab performed the product's missing step and UDP export had never once run on a box the product configured. `sh tools/lab.sh ipfix no-exporter` leaves the statement out and turns at least 20 of its assertions red |
 | `ipfix-tcp` | Kills the collector mid-run and proves nothing is lost |
 | `ipfix-stop` | Stops the box, kills the box and leaves the box running, each holding a block, with one collector listening across all three. The killed box and the running box are byte for byte the same shape in the log - allocation, no release - and the lab asserts the collector separates them by the boot marker. The drain itself is never typed here: the command is read out of the shipped `vpp.service` drop-in, so a drop-in that loses its `ExecStop` takes the lab red. `sh tools/lab.sh ipfix-stop no-marker` blinds the collector to IE 160 and drops the assertions that tell the two apart |
 | `icmp-tcp` | Validates all three ICMP checksums on the captured packet |

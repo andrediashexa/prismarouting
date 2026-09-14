@@ -631,6 +631,80 @@ else:
     else:
         ok(f"and none of the other {_read} document(s) restates it")
 
+print("\n=== the off-run counts TESTING.md states, against the labs' floors ===")
+# THE DEFECT (#317). TESTING.md said `sh tools/lab.sh ipfix no-exporter`
+# "turns 19 of its assertions red". lab/ipfix.sh declares
+# `# OFF-RED-AT-LEAST: 20`, and tools/run-all-labs.sh FAILS an off run that
+# goes below its floor - so the document stated, as measured, a number the
+# suite would refuse. Somebody reading it to decide whether an off run looked
+# right would have called a passing run a regression.
+#
+# ONE HOLDER AND A READER, which is this file's subject. The floor marker in
+# the lab is what the suite enforces; TESTING.md is the second copy; nothing
+# compared them. The comparison is a number against a number, so it is sound
+# where this file's header rejects comparing prose.
+_FLOOR_RE = re.compile(r"^#\s*OFF-RED-AT-LEAST:\s*(\d+)", re.M)
+_floors = {}
+for _f in sorted(os.listdir(os.path.join(REPO, "lab"))):
+    if not _f.endswith(".sh"):
+        continue
+    _m = _FLOOR_RE.search(read(os.path.join("lab", _f)))
+    if _m:
+        _floors[_f[:-3]] = int(_m.group(1))
+_doc = read("TESTING.md")
+_stated = re.findall(
+    r"`sh tools/lab\.sh (\S+) (\S+)`[^|]*?(\d+) of its assertions red",
+    _doc)
+if not _floors:
+    bad("no lab declares an OFF-RED-AT-LEAST floor any more, so this check "
+        "has nothing to compare against")
+elif not _stated:
+    bad("TESTING.md states no off-run count for any lab, so this check is "
+        "reading nothing: the sentence it compares has been reworded")
+else:
+    for _lab, _mode, _n in _stated:
+        _floor = _floors.get(_lab)
+        if _floor is None:
+            bad(f"TESTING.md says `{_lab} {_mode}` turns {_n} assertions red "
+                f"and lab/{_lab}.sh declares no OFF-RED-AT-LEAST floor, so "
+                f"nothing enforces that number")
+        elif int(_n) != _floor:
+            bad(f"TESTING.md says `{_lab} {_mode}` turns {_n} assertions red "
+                f"and lab/{_lab}.sh's floor is {_floor}: the suite FAILS an "
+                f"off run below its floor, so the document states a number "
+                f"the suite would refuse")
+        else:
+            ok(f"{_lab} {_mode}: {_n}, which is the floor lab/{_lab}.sh "
+               f"declares")
+    ok(f"and {len(_floors)} lab(s) declare a floor for this to read")
+
+print("\n=== TESTING.md does not claim a CI this repository has not got ===")
+# It said "CI runs level 1 on every commit" (#315). There are no workflows and
+# no run has ever been recorded: `.github/` holds ISSUE_TEMPLATE and nothing
+# else. A reader takes that sentence as a safety net that catches what they
+# forget, and there is nothing behind it.
+#
+# The holder is the filesystem again: either there is a workflow directory
+# with something in it, or there is not.
+_WF = os.path.join(REPO, ".github", "workflows")
+_has_ci = os.path.isdir(_WF) and any(
+    _f.endswith((".yml", ".yaml")) for _f in os.listdir(_WF))
+# "no CI" is the document SAYING there is none, so it is removed before the
+# search rather than excluded by a lookahead - the first version of this
+# matched the very sentence that fixed the defect.
+_ci_text = re.sub(r"\bno CI\b", "", read("TESTING.md"))
+_claims_ci = re.search(r"\bCI\b", _ci_text)
+if _claims_ci and not _has_ci:
+    bad(f"TESTING.md says {_claims_ci.group(0)!r} at offset "
+        f"{_claims_ci.start()} and this repository has no workflow: a reader "
+        f"takes that for a safety net that catches what they forget")
+elif _has_ci and not _claims_ci:
+    bad("this repository has a workflow and TESTING.md does not say so, so "
+        "nobody reading it knows what already runs without them")
+else:
+    ok("no CI, and the document says so" if not _has_ci
+       else "a workflow exists and the document says so")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
