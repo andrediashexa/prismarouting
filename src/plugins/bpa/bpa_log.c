@@ -332,6 +332,49 @@ bpa_log_drain (vlib_main_t *vm)
 	return;
     }
 
+  /*
+   * The marker, BEFORE the queue is drained, and that order is the whole
+   * point of it rather than a detail of this function.
+   *
+   * bpa_log_enable() and bpa_log_tcp_enable() both arm it with
+   * `next_marker = 0` and then queue the pins, each under a comment saying the
+   * marker goes first, and docs/logging.md and the comment above
+   * bpa_log_marker_emit() say the same. Arming is all either of them can do:
+   * at that moment there is no vlib_main_t on the path and the block report's
+   * template may not have gone out yet, which is what the early return above
+   * guards. So the ordering is decided HERE, and since v0.67.0 - five
+   * releases - this block sat below the drain and put every replayed pin
+   * ahead of the marker that was supposed to introduce it (#282).
+   *
+   * What that costs is #217's argument read backwards: a collector takes
+   * records arriving before this incarnation's marker as belonging to the
+   * previous one, and the pins are this incarnation's allocations. A box that
+   * has just rebooted announces every forward it carries, and every one of
+   * them lands on the wrong side of the line.
+   *
+   * Safe above bpa_log_flush() because the marker does not travel in the block
+   * report's buffer: bpa_log_marker_emit() dispatches its own, for the reason
+   * given where it does it. And it carries both transports, since it opens
+   * with bpa_log_tcp_marker() before testing lm->enabled.
+   *
+   * Over TCP this is the whole story - a stream delivers in order. Over UDP
+   * two datagrams can still be reordered by the network, which is why the
+   * marker repeats: one that arrives late is the same class of event as one
+   * that is lost, and the next one closes it.
+   *
+   * Repeated rather than sent once, on its own timer: one 16-byte record every
+   * half minute.
+   */
+  {
+    f64 now = vlib_time_now (vm);
+
+    if (now >= bpa_log_main.next_marker)
+      {
+	bpa_log_main.next_marker = now + BPA_LOG_MARKER_INTERVAL;
+	bpa_log_marker_emit (vm);
+      }
+  }
+
   for (i = 0; i < vec_len (bm->per_thread); i++)
     {
       bpa_per_thread_t *pt = vec_elt_at_index (bm->per_thread, i);
@@ -347,22 +390,6 @@ bpa_log_drain (vlib_main_t *vm)
     }
 
   bpa_log_flush (vm);
-
-  /*
-   * The marker, on its own timer. Repeated rather than sent once: over UDP a
-   * marker that was lost leaves the collector reading this incarnation's
-   * records as the previous one's, which is the ambiguity it exists to
-   * remove. One 16-byte record every half minute.
-   */
-  {
-    f64 now = vlib_time_now (vm);
-
-    if (now >= bpa_log_main.next_marker)
-      {
-	bpa_log_main.next_marker = now + BPA_LOG_MARKER_INTERVAL;
-	bpa_log_marker_emit (vm);
-      }
-  }
 
   bpa_log_tcp_service (vlib_time_now (vm));
 }

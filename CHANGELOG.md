@@ -60,6 +60,30 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+- **The IPFIX boot marker was sent after the pin replay, and four places said
+  it came before it.** `docs/logging.md`, the comment above
+  `bpa_log_marker_emit()`, and the comments sitting on the two lines that arm
+  it in `bpa_log.c` and `bpa_log_tcp.c` all say the marker goes out when a
+  transport comes up, ahead of the blocks a pinned forward replays, so a
+  collector knows which incarnation those records belong to. Since 0.67.0 it
+  went out after them. That is [#217](https://github.com/andrediashexa/hexarouting/issues/217)'s
+  argument read backwards: a record reaching a collector before this
+  incarnation's marker belongs to the previous one as far as the collector can
+  tell, and a box that has just rebooted announces every forward it carries
+  ([#282](https://github.com/andrediashexa/hexarouting/issues/282)).
+
+  Neither enable path could have fixed it: both can only arm the marker, since
+  at that moment there is no `vlib_main_t` on the path and the block report's
+  template may not have gone out. The ordering is decided in `bpa_log_drain()`,
+  and the marker now goes out ahead of the queue there.
+
+  `lab/ipfix.sh` reads the order off a real collector, which is the only place
+  it is visible: the marker travels in its own report's buffer, so nothing
+  inside the plugin shows the difference. It anchors the marker to the template
+  announcement that opens the transition rather than to any earlier line,
+  because markers repeat every thirty seconds and a marker from the previous
+  transition would satisfy a looser check.
+
 ### Fixed
 
 - **The roadmap's "what is blocked on somebody else" table listed two things
