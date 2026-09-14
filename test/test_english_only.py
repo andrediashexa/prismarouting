@@ -50,7 +50,21 @@ def ok(msg):
 
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCOPE = ("src", "lab", "appliance", "tools", "ref")
+SCOPE = ("src", "lab", "appliance", "tools", "ref", "docs")
+
+#: The one file in SCOPE that is allowed to carry Portuguese, and why.
+#:
+#: `docs/` used to be out of scope ENTIRELY for this one file's sake, and that
+#: is how three sections of docs/routing.md came to be written in Portuguese
+#: without anything noticing: a directory excused to accommodate one file is a
+#: directory nobody measures. Measured when it was brought back in: 33 lines in
+#: docs/routing.md, every one of them real, and 14 in the file below, every one
+#: of them a quoted wiki title.
+EXCUSED = {
+    "docs/wiki-audit.md": "it quotes the titles and section headings of a "
+                          "Brazilian-Portuguese wiki, which are identifiers "
+                          "of somebody else's document",
+}
 
 WORDS = set("""nao não que pela pelo pelos pelas uma umas uns dos das nas aos
 este esta isso isto quando entao então porque sempre tambem também ja já sao
@@ -81,6 +95,16 @@ ALLOWED = {
     "PADRAO-DOCUMENTACAO.md": "the filename of the wiki writing standard, "
                               "which is written in Portuguese on purpose for "
                               "the people who write that wiki",
+    "ASSINANTES PON-3": "an interface description in a docs/routing.md "
+                        "transcript, and the same case as the uplink above: "
+                        "what a Brazilian operator types is what the box must "
+                        "store and read back",
+    "transito-primario": "a BGP neighbour description in a docs/routing.md "
+                         "transcript. Same case as TRANSITO above: the box "
+                         "must carry it back verbatim",
+    "PL-MEUS-BLOCOS": "a prefix-list name in a docs/routing.md transcript. A "
+                      "name an operator chose, which this product stores and "
+                      "reads back and does not translate",
 }
 
 
@@ -127,6 +151,11 @@ def offenders():
                                   and w not in WORDS)
                     if hit:
                         rel = os.path.relpath(path, REPO)
+                        # By NAME, not by directory. Excusing the directory is
+                        # what let three sections of docs/routing.md be
+                        # written in Portuguese with nothing noticing.
+                        if rel in EXCUSED:
+                            continue
                         out.append((rel, n, line.strip()[:90], hit[:3]))
     return out
 
