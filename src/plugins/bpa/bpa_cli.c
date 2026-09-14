@@ -81,6 +81,47 @@ format_bpa_addr (u8 *s, va_list *args)
 }
 
 /* Renders the ranges of an address set, e.g. "200.150.0.8+4, 45.170.16.64+2". */
+/*
+ * Whether this box has anywhere for CGNAT packets to enter and leave.
+ *
+ * The attachments are a property of the BOX and not of a pool - `cgnat
+ * interface <name> inside` is a top-level statement - so one answer serves
+ * every pool printed.
+ *
+ * Both sides are needed and neither is enough. A subscriber packet enters at
+ * bpa-in2out and its reply comes back at bpa-out2in; with either missing the
+ * pool translates nothing, and the two failures are told apart below because
+ * they are different mistakes with different fixes.
+ *
+ * The handoff spellings are tested as well as the plain ones, for the reason
+ * `show bpa config` gives where it does the same walk: with workers the
+ * feature an interface actually carries is the handoff node, and a check that
+ * looked for the plain name alone would report a correctly attached box as
+ * having nothing.
+ */
+static void
+bpa_attachments (int *inside, int *outside)
+{
+  vnet_main_t *vnm = vnet_get_main ();
+  vnet_sw_interface_t *si;
+
+  *inside = 0;
+  *outside = 0;
+  pool_foreach (si, vnm->interface_main.sw_interfaces)
+    {
+      if (vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out",
+				   si->sw_if_index) == 1
+	  || vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out-handoff",
+				      si->sw_if_index) == 1)
+	*inside = 1;
+      if (vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in",
+				   si->sw_if_index) == 1
+	  || vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in-handoff",
+				      si->sw_if_index) == 1)
+	*outside = 1;
+    }
+}
+
 static u8 *
 format_bpa_addr_set (u8 *s, va_list *args)
 {
@@ -231,6 +272,44 @@ format_bpa_pool (u8 *s, va_list *args)
    * caveat that repeats the number above it is a caveat people learn to skip
    * - which is how the one that matters gets skipped too.
    */
+  /*
+   * And the other reason that figure can be a number nobody will see (#299).
+   *
+   * Measured on a real appliance whose dataplane had no interface at all: a
+   * pool committed cleanly, the boot self-test gave it a green tick, and this
+   * line said "capacity 504 subscribers (usable 504)" for a box that would
+   * translate nothing, because there was nothing for CGNAT to be attached to.
+   * An operator sizes against that number and the honest one was zero.
+   *
+   * NOT a refusal, and that is deliberate. Writing the pools before the
+   * interfaces exist is ordinary staged work, and `hexash --load` applies them
+   * in that order at every boot, so refusing here would refuse a box its own
+   * saved configuration. This is #210's option 3 and #226's option A one more
+   * time: the mechanism stays and the box stops claiming what it cannot do.
+   *
+   * Printed only when it is true, for the reason the caveat above gives about
+   * itself: a line that appears on a correctly attached box is one people
+   * learn to skip, and then they skip this one too.
+   */
+  {
+    int has_in, has_out;
+
+    bpa_attachments (&has_in, &has_out);
+    if (!has_in && !has_out)
+      s = format (s, "\n%U             nobody yet: no interface is attached "
+		     "to CGNAT, so no packet can reach this pool in either "
+		     "direction",
+		  format_white_space, indent + 2);
+    else if (!has_in)
+      s = format (s, "\n%U             nobody yet: no interface is attached "
+		     "on the inside, so no subscriber packet can reach this "
+		     "pool",
+		  format_white_space, indent + 2);
+    else if (!has_out)
+      s = format (s, "\n%U             nobody yet: no interface is attached "
+		     "on the outside, so a translated packet has no way back",
+		  format_white_space, indent + 2);
+  }
   if (p->mode == BPA_MODE_DYNAMIC && bpa_main.n_workers > 1)
     {
       u32 nw = bpa_main.n_workers;
