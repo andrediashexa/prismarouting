@@ -62,6 +62,27 @@ version has a chance of seeing it.
 
 ### Changed
 
+* **The boot self-test said "HexaRouting ready." on a box that had no
+  interface to forward on**
+  ([#297](https://github.com/andrediashexa/hexarouting/issues/297)). Measured
+  on a real appliance: it printed `[warn] no dataplane interface: VPP was given
+  no NIC to forward on` and then ended with the word "ready". `appliance/selftest`
+  says why that matters two hundred lines above the summary it was thrown away
+  by: "a box that forwards nothing looks like a box that is working".
+
+  Warnings were never counted. `bad()` incremented a failure count and a
+  warning was a bare `say`, so the summary knew only about failures and a box
+  with five warnings ended identically to a box with none. That line is what
+  survives: a console scrolls, a serial session is read from the bottom, and
+  somebody racking a box reads the verdict rather than the forty lines above
+  it.
+
+  There are three outcomes under "nothing failed" now, because "installed,
+  healthy, and not yet able to do its job" is a different thing from both of
+  the others and is the ordinary state of a box on the day it is racked. It is
+  not a failure and is not reported as one; saying "ready" of it was the part
+  that misled. A live medium is unchanged, since DPDK is off there by design.
+
 * **The product stopped claiming an upgrade path its own users cannot run**
   ([#295](https://github.com/andrediashexa/hexarouting/issues/295)). Measured
   on a real appliance: there is no `install.sh` on it, no source tree and no
