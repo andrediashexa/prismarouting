@@ -479,6 +479,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release gate refused a release whose note was correct.** It required
+  "built", "booted", "installed" and "again" on one LINE, and this release's
+  note wrapped that sentence at a sensible width, so the gate read two lines
+  with two words each and refused. It reads one paragraph now.
+
+  It is the needle trap this repository has met six times, and it is worst
+  here: everywhere else it costs a false green, and on this gate it costs a
+  false red on the one thing that has caught every release mistake this
+  project has made. A gate that refuses correct work is a gate somebody learns
+  to argue with.
+
+  A paragraph and not the whole note, because the objection in the sentence it
+  replaces still holds: matching across everything would pass on a note that
+  mentions an installed box three paragraphs away for some other reason, which
+  every note about this product eventually does.
+
 * **`lab/upgrade.sh` would have been NOT MEASURED in every release suite it
   ever ran in.** Git inside the lab container refuses the bind-mounted
   repository outright - `fatal: detected dubious ownership in repository at

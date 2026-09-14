@@ -130,18 +130,42 @@ fi
 # the medium was installed and booted leaves them to assume it, and #119 and
 # #121 are what that assumption would have been wrong about.
 #
-# All four words on one line, the way v0.64.0 names them. Loose matching would
-# pass on a note that mentions an installed box for some other reason, which
-# every note about this product eventually does.
+# All four words in one PARAGRAPH, and the difference between that and one
+# line is what this gate refused 0.72.0 over. Its note said
+#
+#   Installation medium built from this tag, booted, installed to a disk and
+#   booted again from that disk.
+#
+# which is the sentence this asks for, wrapped at a sensible width. Matching
+# per line reads that as two lines with two words each and refuses a release
+# whose note is correct.
+#
+# That is the needle trap this repository has now met six times (#279, #285,
+# and three of the messages in 0.72.0 itself), and it is worst here: every
+# other instance costs a false green, and this one costs a false RED on the
+# one gate that has caught every release mistake this project has made. A gate
+# that refuses correct work is a gate somebody learns to argue with.
+#
+# A paragraph and not the whole note, because the objection in the sentence
+# this replaces is still right: matching across the whole thing would pass on
+# a note that mentions an installed box three paragraphs away for some other
+# reason, which every note about this product eventually does. Blank lines
+# separate the claim from everything else, and a claim is one paragraph.
 note=$(git -C "$WORK" tag -l --format="%(contents)" "$TAG")
-if ! printf '%s\n' "$note" | grep -qiE "built.*booted.*installed.*(again|second)"; then
+# Paragraphs joined onto single lines: awk prints a newline only where a blank
+# line was, and spaces elsewhere.
+folded=$(printf '%s\n' "$note" | awk 'BEGIN{s=""} /^[[:space:]]*$/{if(s!=""){print s; s=""}; next} {s = (s=="" ? $0 : s " " $0)} END{if(s!="")print s}')
+if ! printf '%s\n' "$folded" | grep -qiE "built.*booted.*installed.*(again|second)"; then
   echo "error: the release note for $TAG does not record that the medium was" >&2
   echo "       built, booted, installed and booted again." >&2
   echo "       CONTRIBUTING.md section 5 requires the note to say it, because" >&2
   echo "       the note is what an operator who does not clone this repository" >&2
   echo "       reads. This gate is about to do all four; say so in the tag." >&2
-  echo "       v0.64.0 put it in one line:" >&2
+  echo "       v0.64.0 put it in one sentence, and it may wrap:" >&2
   echo "         Built, booted, installed to a disk and booted again." >&2
+  echo "       All four have to be in ONE PARAGRAPH: a note that mentions an" >&2
+  echo "       installed box somewhere else, for some other reason, is not" >&2
+  echo "       this claim." >&2
   exit 1
 fi
 
