@@ -63,6 +63,7 @@ docs/logging.md        BPA log export over IPFIX (RFC 8158)
 docs/appliance.md      boot tuning, systemd, install, ISO
 docs/roadmap.md        what a CGNAT still needs, and why each item matters
 docs/ha.md             high-availability analysis (NOT implemented)
+docs/bng.md            BNG analysis: what VPP gives and what it would cost (NOT implemented)
 docs/wiki-audit.md     the brief for auditing the wiki against this repository
 PADRAO-DOCUMENTACAO.md how a wiki page is written (not the same as CONTRIBUTING)
 wiki/                  read-only mirror of the wiki, refreshed by tools/wiki-pull.sh
