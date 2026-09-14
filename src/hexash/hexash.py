@@ -9592,9 +9592,18 @@ class Shell:
             # banner says so two lines above this command, and this said the
             # opposite (#305).
             #
-            # running_from_live_medium() is the test appliance/selftest already
-            # uses in four places to keep exactly this apart. It was here in
-            # this file and this message did not ask it.
+            # running_from_live_medium() was already in this file and this
+            # message did not ask it.
+            #
+            # NOT the same test appliance/selftest uses, which is worth being
+            # exact about because an earlier version of this comment said it
+            # was. The self-test asks `-d /run/live/medium || -f
+            # /run/live/overlay`; this asks for the squashfs AND an executable
+            # installer. They agree on every box either has been run on, and
+            # they are two tests: a root with the overlay and no squashfs is
+            # live to one and installed to the other. Neither has been seen,
+            # and saying they are one test would be the second copy this file
+            # spends its comments warning about.
             if running_from_live_medium():
                 return ["the dataplane is off on the installation medium, and "
                         "a reboot does not change that: nothing here survives "
@@ -10400,8 +10409,20 @@ class Shell:
             print_prose("restarting it hands the card over and ends every "
                         "session on this box, including this one, so it is "
                         "not done for you")
-            print_prose("reboot the box in a window you have chosen, and it "
-                        "comes up forwarding on that card")
+            # AND NOT ON THE MEDIUM, where the reboot this sentence asks
+            # for throws the commit away with everything else (#310). This is
+            # #305 one message over: the advice is right on a box that has a
+            # disk and wrong on the one screen that says so itself, two lines
+            # under a banner reading "nothing here survives a reboot".
+            if running_from_live_medium():
+                print_prose("this is the installation medium, so the commit "
+                            "does not survive a reboot either: there is "
+                            "nothing here for the dataplane to come back to")
+                print_prose("type 'install' to put HexaRouting on a disk, and "
+                            "name the card there")
+            else:
+                print_prose("reboot the box in a window you have chosen, and "
+                            "it comes up forwarding on that card")
         else:
             print_prose("the card this box has now is given up at the next "
                         "start of the dataplane, not at this commit")
