@@ -105,6 +105,27 @@ version has a chance of seeing it.
   is neither a `remote-as` nor a `peer-group` and the undecidable case is
   skipped anyway. The property is true; that guard is not what pins it.
 
+### Fixed
+
+* **Every branch merged after a release filed its entry into a section that
+  had already shipped** ([#284](https://github.com/andrediashexa/hexarouting/issues/284)).
+  Five in one day after 0.68.0 was cut: #280, #281 and #39 into `## 0.68.0`,
+  #145 into `## 0.69.0`, and #163 into `## 0.66.0`, which shipped in February.
+
+  Nothing was wrong with any of the branches. Each was cut while master said
+  `## Unreleased` and added its entry there; by the time it merged, the release
+  had renamed that heading, so git had nothing to match and anchored on the
+  `### Fixed` of whatever section was now at the top. No conflict, no warning.
+
+  A release rename leaves an empty `## Unreleased` above the new section now,
+  which gives git the anchor it was looking for. The release gate already
+  tolerated that - its check refuses `## Unreleased` with entries under it, not
+  an empty one - so nothing there had to change.
+
+  `test/test_changelog_landing.py` holds it, in `make test` rather than in the
+  gate: by the time the gate runs, the merges have already gone wherever they
+  were going.
+
 ## 0.69.0 — the appliance brings up its own dataplane card, and a deterministic pool has one to give
 
 [#39](https://github.com/andrediashexa/hexarouting/issues/39),
@@ -420,25 +441,6 @@ version has a chance of seeing it.
   through.
 
 ### Fixed
-
-* **Every branch merged after a release filed its entry into a section that
-  had already shipped** ([#284](https://github.com/andrediashexa/hexarouting/issues/284)).
-  Five in one day after 0.68.0 was cut: #280, #281 and #39 into `## 0.68.0`,
-  #145 into `## 0.69.0`, and #163 into `## 0.66.0`, which shipped in February.
-
-  Nothing was wrong with any of the branches. Each was cut while master said
-  `## Unreleased` and added its entry there; by the time it merged, the release
-  had renamed that heading, so git had nothing to match and anchored on the
-  `### Fixed` of whatever section was now at the top. No conflict, no warning.
-
-  A release rename leaves an empty `## Unreleased` above the new section now,
-  which gives git the anchor it was looking for. The release gate already
-  tolerated that - its check refuses `## Unreleased` with entries under it, not
-  an empty one - so nothing there had to change.
-
-  `test/test_changelog_landing.py` holds it, in `make test` rather than in the
-  gate: by the time the gate runs, the merges have already gone wherever they
-  were going.
 
 * **A third lab needle split by a re-wrapped message, and this one is in the
   lab the release gate runs**
