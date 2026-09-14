@@ -15,8 +15,16 @@ a real box by a person rather than by anything in this repository:
 in common is where they live: in the first thing an operator reads, usually
 next to something correct.
 
-Swept against v0.74.0, on `chore/claims-sweep`. Nothing was fixed. The
-deliverable is the record.
+Swept against v0.74.0. Nothing was fixed *during* the sweep, deliberately: a
+sweep that stops to fix is a sweep that stops. **All ten were fixed afterwards
+and shipped in 0.74.1**, each with its own issue carrying the measurement and
+the three proofs, and every finding below is left as it was written so that
+what was found can be read apart from what was done about it.
+
+What the shape turned out to be, which is worth more than the ten:
+[docs/roadmap.md](roadmap.md) records it under *Ten things the product said and
+did not do*. In one line: a sentence that is true of one box and false of
+another, printed by a path that never asked which box it was on.
 
 ## What was found
 
