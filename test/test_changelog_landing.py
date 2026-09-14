@@ -138,9 +138,23 @@ if subjects is None:
     # that turned that into a red light would be one people learn to ignore.
     print("  [skip] no git history here, so no merge subjects to compare")
 else:
+    # The issue a merge CLOSES is the one its subject opens with - "Merge
+    # #294: ..." or "Merge #291 item 1: ..." - which is the form this
+    # repository already uses when a branch closes something. An issue named
+    # anywhere else in a subject is being referred to, not closed, and
+    # counting those was measured wrong on the first run after this check
+    # shipped: "Merge: the roadmap carries #295 and #296" gives #296 a home in
+    # a document and closes nothing, and the check demanded an entry for it.
+    #
+    # The cost is a merge that closes an issue and does not say so in that
+    # form, which this check will not see. That is the right way round: a miss
+    # is a check that did not fire, and a false finding is a check people turn
+    # off.
     merged = set()
     for line in subjects.split("\n"):
-        merged |= set(re.findall(r"#(\d+)", line))
+        m = re.match(r"Merge #(\d+)\b", line.strip())
+        if m:
+            merged.add(m.group(1))
     # The section as it stands, which is where an entry has to be.
     m = re.search(r"^## Unreleased\n", TEXT, re.M)
     end = re.search(r"^## \S", TEXT[m.end():], re.M) if m else None
