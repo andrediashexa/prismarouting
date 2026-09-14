@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`lab/one-nic.sh` failed in the release suite and passed alone**, on one
+  check and no other: the counter that says the packets came through the pair
+  rather than past it. The ping in the same run reported 0% packet loss, so the
+  packets had arrived and only the reading was early - the counter is the
+  kernel's own on the TAP and moves as the dataplane punts, not as the reply
+  leaves.
+
+  It was a fixed `sleep 2`, which was enough alone at load 3.0 and not enough
+  in a sixteen-way suite at load 4.5. A sleep long enough for the worst machine
+  is a sleep everybody pays on every run and is still a guess about a machine
+  nobody measured, so the reading waits for the counter to move instead, with a
+  deadline. It can still fail honestly: packets that never arrive leave the
+  counter where it was and the check goes red after the deadline rather than
+  never.
+
+### Fixed
+
 * **A box installed from the medium had no management network at all, and one
   typed at the console did not survive a reboot**
   ([#303](https://github.com/andrediashexa/hexarouting/issues/303)).
