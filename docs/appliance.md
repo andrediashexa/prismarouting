@@ -434,6 +434,16 @@ preempts vCPUs whatever the guest isolates. A quota shipped without it would be
 a number nobody could defend, which is the mistake `frr.service` already
 avoided once.
 
+**What that measurement will have to vary is settled from the source, and is
+not the session table.** The comment above `bpa_expire_process` in
+`src/plugins/bpa/bpa_session.c` names what runs inside that one barrier
+acquisition and which cap bounds each part. The short of it: `BPA_EXPIRE_BUDGET`
+bounds the session walk and nothing else in there, and on a dynamic-mode box
+with logging on the rest of the interval scales with the logging load and the
+pool count. The list is kept in that comment and not copied here, because it is
+a property of that function and a second copy of it is a second thing to keep
+true.
+
 **Why no `AllowedCPUs=` or `CPUAffinity=` for the control plane: the bound is
 already applied, by the kernel, and it is inherited rather than enforced.**
 This was the one worth measuring, because the number would not have been

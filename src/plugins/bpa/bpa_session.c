@@ -1343,8 +1343,28 @@ bpa_expire_walk (bpa_per_thread_t *pt, const bpa_timeouts_t *t, f64 now,
  * Expiry process.
  *
  * Session state is per-worker and freeing an entry races with the worker
- * reading it, so the walk runs under the worker barrier. The budget keeps
- * each pass short: at 10k sessions the barrier is held for microseconds.
+ * reading it, so the walk runs under the worker barrier. The budget keeps the
+ * WALK short: at 10k sessions that part is held for microseconds.
+ *
+ * The walk is not the whole barrier, and the sentence above used to be read as
+ * though it were. Three other things run inside the same acquisition and
+ * BPA_EXPIRE_BUDGET bounds none of them:
+ *
+ *   - the per-pool bpa_dyn_reap() loop below, up to ARRAY_LEN(rel) releases
+ *     per pool per thread, each one emitting an IPFIX record from here;
+ *   - bpa_blocks_log_all(), in the drained-but-not-stopped case, which walks
+ *     every block every pool is holding and carries no budget at all;
+ *   - bpa_log_drain(), which encodes and dispatches everything every thread
+ *     queued since the last pass, capped per thread by BPA_LOG_QUEUE_MAX
+ *     (8192) and not by the expiry budget.
+ *
+ * So on a dynamic-mode box with logging enabled the held interval is set by
+ * the logging load and the pool count rather than by the session table. This
+ * is written where the code is because the open half of #172 is the
+ * held-barrier interval measured under control-plane load on real hardware,
+ * and it cannot be taken on a virtio guest. Whoever takes it needs to know
+ * which knob moves the number before they choose what to vary, and reading it
+ * back out of this function afterwards is how the first attempt gets spent.
  *
  * The phase-2 version moves expiry inline into each worker's node, which
  * removes the barrier entirely. That only pays off once the table is large,
