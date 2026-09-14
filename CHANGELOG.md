@@ -75,6 +75,17 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The release checklist now says to publish the medium's `sha256`.** Every
+  release so far has carried one and nothing said to. `tools/release-gate.sh`
+  prints it in the same breath as "ready to publish", so it has always been to
+  hand and has always been pasted in by whoever was cutting the release, which
+  is the definition of a step that goes missing the first time somebody else
+  does it. It is the only thing an operator who downloaded a 300 MB file over a
+  link they do not control can check it with, before installing it on a box
+  that will carry subscribers.
+
 ### Fixed
 
 * **The VTY refused its own `prohibit-password`, because sshd answers with the
@@ -112,6 +123,7 @@ version has a chance of seeing it.
   returns must pass `validate_ssh()`, and the completion tree an operator sees
   with `?` must offer exactly the values the box accepts - so the tempting fix
   of widening the list alone goes red.
+
 * **The bind message lost the name of the card it was taking, on every VM.**
   `bind-dataplane-nic` resolves a netdev to its PCI address twice: once for the
   refusal that stops the management card being unbound, and once, thirty lines
@@ -131,16 +143,7 @@ version has a chance of seeing it.
   0.72.0 twice, once after the first reader had already been fixed. Both
   readers go through the same `pci_addr_of()` now, and `test/test_bind_nic.sh`
   binds a virtio device and reads the line back.
-### Changed
 
-* **The release checklist now says to publish the medium's `sha256`.** Every
-  release so far has carried one and nothing said to. `tools/release-gate.sh`
-  prints it in the same breath as "ready to publish", so it has always been to
-  hand and has always been pasted in by whoever was cutting the release, which
-  is the definition of a step that goes missing the first time somebody else
-  does it. It is the only thing an operator who downloaded a 300 MB file over a
-  link they do not control can check it with, before installing it on a box
-  that will carry subscribers.
 * **An install from a medium that carries ssh host keys no longer puts them on
   the disk** ([#248](https://github.com/andrediashexa/hexarouting/issues/248)).
   `ssh-keygen -A` generates only the key types that are MISSING, so on a target
@@ -187,6 +190,7 @@ version has a chance of seeing it.
   finished box over an `/etc/ssh` with no host key in it, and `sshd` is the
   only way back to a racked one. The function now looks for a key afterwards,
   and the test drives a `ssh-keygen` that succeeds and writes nothing.
+
 * **The mirror under `wiki/` stood 28 pages ahead of the wiki operators read,
   and the documented way to publish them did not work.** Measured with
   `git diff --name-status` between the last commit that wrote `wiki/.pulled`
@@ -236,8 +240,6 @@ version has a chance of seeing it.
   of a mirror it did not refresh. The refusal names it, since a refusal with no
   way past it is a script somebody edits out.
 
-### Fixed
-
 * **The roadmap stated a measurement this project had already published a
   correction for.** [#288](https://github.com/andrediashexa/hexarouting/issues/288)
   quoted a cost for `statseg { size 1G }` that `docs/appliance.md` corrected in
@@ -265,8 +267,6 @@ version has a chance of seeing it.
   both halves, a second document naming the figure and the holder losing the
   correction. No product behaviour changed.
 [#306](https://github.com/andrediashexa/hexarouting/issues/306).
-
-### Fixed
 
 * **`show interface` counts what can forward, and says so**
   ([#306](https://github.com/andrediashexa/hexarouting/issues/306)). Read off
@@ -337,7 +337,6 @@ version has a chance of seeing it.
 
   Costs five and a half minutes less per release as a side effect, on the one
   tool this project says must be what cuts a release.
-
 
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
