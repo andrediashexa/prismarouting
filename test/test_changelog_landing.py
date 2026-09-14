@@ -96,6 +96,71 @@ check(len(heads) >= 3,
       f"only {len(heads)} section(s) were found, so this file is asserting "
       f"almost nothing. The heading pattern no longer matches this CHANGELOG")
 
+print("\n=== every merged issue has an entry to be read in ===")
+# The other half of "there is somewhere for it to land": that something
+# actually landed. CONTRIBUTING.md's release procedure makes a CHANGELOG entry
+# listing the issues the merge closes one of six MUSTs, and nothing compared
+# the result against it.
+#
+# It has already been missed. #293 and #294 were merged into master on
+# 2026-09-14 from branches that carried no entry, and the gap was found by
+# reading the section rather than by anything failing. A reader of a release
+# note is then told about four of the six things that changed, and the two
+# they are not told about are the two nobody wrote down.
+#
+# The comparison is offline and uses nothing but git: a merge commit's SUBJECT
+# names the issue it closes - "Merge #294: ..." - and the entry under
+# `## Unreleased` links it. Merges that name no issue are not a finding: a
+# chore branch legitimately closes nothing, and demanding a number would teach
+# people to invent one.
+#
+# Deliberately compared against the merge SUBJECT and not against the tracker.
+# make test has to work with no network, which is the same line
+# tools/roadmap-state.sh sits on the other side of.
+import subprocess
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def git(*args):
+    try:
+        return subprocess.run(("git", "-C", REPO) + args, check=True,
+                              capture_output=True, text=True).stdout
+    except Exception:
+        return None
+
+
+last_tag = git("describe", "--tags", "--abbrev=0")
+subjects = git("log", "--merges", "--format=%s",
+               f"{last_tag.strip()}..HEAD") if last_tag else None
+if subjects is None:
+    # Not a failure. A tarball of this tree has no git history, and a check
+    # that turned that into a red light would be one people learn to ignore.
+    print("  [skip] no git history here, so no merge subjects to compare")
+else:
+    merged = set()
+    for line in subjects.split("\n"):
+        merged |= set(re.findall(r"#(\d+)", line))
+    # The section as it stands, which is where an entry has to be.
+    m = re.search(r"^## Unreleased\n", TEXT, re.M)
+    end = re.search(r"^## \S", TEXT[m.end():], re.M) if m else None
+    unrel = TEXT[m.end():m.end() + end.start()] if m and end else ""
+    written = set(re.findall(r"/hexarouting/issues/(\d+)\)", unrel))
+    missing = sorted(merged - written, key=int)
+    if missing:
+        for n in missing:
+            check(False,
+                  f"a merge since {last_tag.strip()} closes #{n} and nothing "
+                  f"under '## Unreleased' mentions it. The release note is "
+                  f"written from that section, so #{n} is a change the reader "
+                  f"is not told about")
+    elif merged:
+        print(f"  [ ok ] {len(merged)} issue(s) closed by merges since "
+              f"{last_tag.strip()}, all of them written down")
+    else:
+        print(f"  [ ok ] no merge since {last_tag.strip()} names an issue, "
+              f"so there is nothing this check can be wrong about")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
