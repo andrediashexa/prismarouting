@@ -5,6 +5,11 @@ __pycache__/
 .build/
 test/bpa_vectors.h
 .build-vpp/
+# The released tree lab/upgrade.sh installs as the OLD side, when git inside
+# the build container cannot extract it itself - which is every run out of a
+# git worktree. It is a checkout of a tag and not work of ours, and it is
+# several megabytes of a copy of this repository.
+.build-old/
 # Both the old name and the versioned one. Narrowing this to the versioned
 # pattern alone un-ignored the image already on disk under the old name, and
 # "git add -A" committed 321 MB before GitHub refused the push (#91).

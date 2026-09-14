@@ -203,6 +203,8 @@ sh tools/lab.sh throughput     # CPU clocks per packet, from VPP's own accountin
 sh tools/lab.sh api            # binary API
 sh tools/lab.sh commit         # candidate, commit, rollback
 sh tools/lab.sh audit          # dated configuration trail
+sh tools/lab.sh upgrade        # install v0.68.0, configure it, put this tree over it
+sh tools/lab.sh upgrade v0.70.0  # the same, from another released tag
 ```
 
 These use VPP's packet generator: no NIC and no external traffic required. Each
@@ -232,6 +234,7 @@ The most instructive to run:
 | `vty-ssh` | Produces the lockout — a change leaving nobody able to log in — and watches the commit refuse it |
 | `snmp` | Kills the dataplane mid-run and asserts the agent serves *nothing* rather than the numbers it last saw |
 | `throughput` | Prints the conditions above the numbers, and asserts the packets were **translated** rather than dropped — its first version measured a drop path and reported it as the cost of translating |
+| `upgrade` | The only lab that puts one version of the product on top of another. It compiles `v0.68.0`'s plugin, runs **that tag's** `appliance/install.sh`, configures the box through the VTY the install put there — pool, attachments, a static forward, addresses, a static route, `save`, three rollback revisions — then runs this tree's `install.sh` over it and asserts the box is still configured: the file the old version saved is accepted **whole** by `hexash --load`, the pool is in the dataplane, the forward still forwards a real packet, the old version's revisions still load, and the configuration trail was appended to rather than restarted. Removing one statement's spelling from the new grammar turns 17 of its 35 checks red, which is the blast radius [#291](https://github.com/andrediashexa/hexarouting/issues/291) is about. It also measures what an upgrade does **not** do: the installer replaces `bpa_plugin.so` under a running VPP — `/proc/<pid>/maps` shows it `(deleted)` — restarts nothing, and in that window the new VTY can change a setting on an existing pool and **cannot create one**, because the API message grew fields the running plugin does not have |
 
 Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An

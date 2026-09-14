@@ -60,6 +60,43 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **An upgrade lab: nothing in this repository had ever put one version of the
+  product on top of another**
+  ([#291](https://github.com/andrediashexa/hexarouting/issues/291)).
+  `appliance/install.sh` says at its own line 4 that it is the path "for
+  updating a box in production without reinstalling it", and five places in
+  the product assert that doing so is safe. None of them had a red light
+  behind it. `lab/upgrade.sh` compiles `v0.68.0`'s dataplane plugin, runs that
+  tag's own `install.sh`, configures a box an operator would recognise through
+  the VTY that install put there - a CGNAT pool with a block size and a
+  timeout, both interfaces attached, a static port forward, addresses, a
+  static route, `save`, and three rollback revisions - then runs the current
+  tree's `install.sh` over it and asserts the box is **still configured**: the
+  file the old version saved is accepted whole by `hexash --load`, the pool is
+  in the dataplane, the forward still forwards a real packet, the old
+  version's revisions still load into the new VTY, and the configuration trail
+  was appended to rather than restarted. Removing one statement's spelling
+  from the new grammar takes 17 of its 35 checks red, which is the hazard the
+  issue is about: `--load` refuses the file **whole**, so a statement the new
+  VTY does not accept does not degrade an upgraded box, it unconfigures it, at
+  a boot nobody is watching.
+
+  Two things it measured on the way, neither of which it asserts, because both
+  are defects somebody is going to fix and an assertion would go red on the
+  fix. First, the installer replaces `bpa_plugin.so` under a running VPP -
+  `/proc/<pid>/maps` shows the mapping `(deleted)` - and restarts nothing, so
+  between an upgrade and the next reboot the control plane is new and the
+  dataplane is old. In that window the new VTY changes a setting on an
+  existing pool normally and **cannot create a pool at all**: `error: pool
+  'x': Call failed: bpa_pool_add_del`, because the API message grew fields the
+  running plugin does not have. Second, `hexash --load` refuses the whole file
+  for a **correct** static route when FRR is not already holding it, because
+  the next-hop check reads the live VPP FIB and the addresses that make the
+  next hop reachable are in the file being loaded. A normal boot survives that
+  only because FRR read the route out of its own `frr.conf` first.
+
 - **The IPFIX boot marker was sent after the pin replay, and four places said
   it came before it.** `docs/logging.md`, the comment above
   `bpa_log_marker_emit()`, and the comments sitting on the two lines that arm
