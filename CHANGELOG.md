@@ -353,6 +353,28 @@ version has a chance of seeing it.
   guest cannot stand in for, and the comment was the thing that would have sent
   whoever takes it to vary the wrong knob. `docs/appliance.md` points at the
   comment rather than restating the list, so there is one copy to keep true.
+
+* **A release note could name a file the tree does not have.** Nothing compared
+  the two, and the paths in a changelog entry are what a reader follows: the
+  entry for [#307](https://github.com/andrediashexa/hexarouting/issues/307)
+  names `tools/iso-ready.sh`, the one for
+  [#304](https://github.com/andrediashexa/hexarouting/issues/304) names
+  `test/test_ssh_settings.py`, and a rename between the branch and the merge
+  would leave either of them pointing at nothing.
+
+  `test/test_changelog_landing.py` checks the paths in the **unreleased**
+  section only, and that is the whole design. A tagged section describes a
+  medium somebody is running and must not be edited, so a file renamed after it
+  shipped leaves that section pointing at a name the tree no longer has and
+  there is nothing to be done about it. The section being written is the one
+  somebody can still fix.
+
+  Sound for the reason `test/test_doc_copies.py`'s header gives for rejecting
+  its opposite: the holder is the filesystem. A path either resolves or it does
+  not, and it cannot be reworded into passing. Absolute paths are skipped,
+  because `/etc/hexarouting/vpp-base.conf` is a file on the appliance and
+  asking this tree for it is asking the wrong machine.
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
