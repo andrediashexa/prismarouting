@@ -107,6 +107,112 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`HEXA_LOW_LATENCY=true` turned the latency tuning OFF, and
+  `HEXA_SUBSCRIBERS=200k` failed the whole tuning unit — and nothing had ever
+  run the script that does both**
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+  `appliance/apply-tuning` reads `/etc/hexarouting/tune.env` on every boot and
+  turns it into the kernel command line. It was tested as **text**:
+  `test/test_kernel_tuning.py` greps it for candidate knobs that must not be
+  set, and `appliance/test_tune.py` tests the tuner it calls. Nothing executed
+  it. Two defects were measured by running it for the first time:
+
+  ```
+  HEXA_LOW_LATENCY=true  ->  # ARGV: --write --subscribers 200000 --no-low-latency
+                             HEXA_LOW_LATENCY=0: leaving the cpufreq governor alone
+  ```
+
+  Any value that was not exactly `1` took the "not 1" branch. A typo meaning
+  **yes** stripped `intel_idle.max_cstate=0`, `processor.max_cstate=1` and
+  `transparent_hugepage=never` off the kernel command line and left the
+  governor alone — the opposite of what it says — while the journal reported a
+  value the operator never wrote. And:
+
+  ```
+  HEXA_SUBSCRIBERS=200k  ->  hexarouting-tune: error: argument --subscribers:
+                             invalid int value: '200k'
+                             rc=1
+  ```
+
+  The unit failed, **no tuning was written at all**, and the kernel command
+  line stayed at whatever the previous boot put there — disagreeing with the
+  `startup.conf` beside it. That is the failure mode the `HEXA_MAX_WORKERS`
+  guard in the same file already named as "far worse than an ignored setting",
+  standing unfixed for the two values next to it.
+
+  Every value is now checked before it is used, and one this box does not
+  accept is **refused out loud and replaced by the shipped default** — never by
+  the opposite of what it says, and never by failing the unit. The refusal says
+  **what the box does accept**, with what each value would do, because it is
+  read on a serial console by somebody who then has to guess the spelling:
+
+  ```
+  REFUSED HEXA_LOW_LATENCY='true' in /etc/hexarouting/tune.env.
+    Two values are accepted, and nothing else:
+      1  deep C-states off, transparent hugepages off, and the
+         cpufreq governor held on performance
+      0  leave all three alone, for a box that must save power
+    Using 1, the shipped default, because this is a router.
+    Fix the file and restart hexarouting-tune.service.
+  ```
+
+  `test/test_apply_tuning.sh` is new and drives the script against fake `/etc`,
+  `/proc` and `/sys` trees through a `HEXA_ROOT` seam, with the tuner,
+  `update-grub` and the NIC binder stubbed on `PATH` — the same shape
+  `test/test_bind_nic.sh` uses. Thirty-two assertions, each shown failing: which
+  arguments each value produces, that the governor is written only where the
+  kernel offers `performance`, that the tuner runs before the NIC binder and a
+  failing binder does not fail the tuning, that `update-grub` runs on a change
+  and not on a repeat, and that a tuner which really fails **still** fails the
+  unit, so the refusals did not turn every error into a shrug.
+
+* **The boot self-test reported the C-state tuning it was ASKED for as though
+  it were the tuning in effect, and told operators to do what they had already
+  done** ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+  The line read `/proc/cmdline` and nothing else. `/proc/cmdline` is a request:
+  it is what the bootloader asked for. So a box with `HEXA_LOW_LATENCY=0` —
+  deep C-states left on, deliberately — was warned that deep C-states were
+  still enabled and advised to *"set `HEXA_LOW_LATENCY=0`"*, about a state it
+  had been told to be in. And the case worth the most had **no line at all**:
+  `tune.env` saying one thing while this boot's command line says the other,
+  which is a box running a command line older than the file that generates it.
+
+  It now reads **two** sources and says which is which, and the four
+  combinations are four different sentences. `tune.env` is read, never sourced:
+  sourcing a file an operator edits would run its contents as root inside the
+  boot self-test. A value the box does not accept is named on the console and
+  read as `1`, which is what `apply-tuning` does with it — two components
+  disagreeing about one file is worse than either being wrong. Beside it sits
+  the one readback available without a reboot: where the kernel exposes no
+  idle-state driver, nothing on the box enters a C-state and those parameters
+  have nothing to act on, so the green line was a green line about nothing.
+
+  **Not claimed**, and recorded in `docs/appliance.md` as not claimed: whether
+  `intel_idle.max_cstate=0` was *taken* by a kernel that does have idle states.
+  `/sys/module/intel_idle/parameters/max_cstate` reads `9` on the development
+  machine with no such parameter on its command line, but confirming that it
+  follows the boot parameter needs a reboot of a machine with a real idle
+  driver, and neither is available here.
+
+* **The candidate-knob sweep read three files while the other half of the same
+  table read the whole tree, and a missing file killed the suite instead of
+  failing it** ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+  `test/test_kernel_tuning.py` asserts that none of the boot-tuning candidates
+  waiting on [#28](https://github.com/andrediashexa/hexarouting/issues/28) is
+  applied. It looked for candidate **parameters** in the generated command
+  line, `apply-tuning` and `sysctl.conf` — three files — while looking for
+  candidate **sysfs paths** across all of `appliance/`. A parameter can reach a
+  box from a systemd unit's `ExecStartPre`, from the installer, from
+  `build-iso.sh`, or from a branch of `hexarouting-tune` that the one synthetic
+  topology the suite renders never takes. It now sweeps every file the
+  appliance ships, 28 of them, and fails when there are fewer than ten to sweep
+  — an empty sweep finds nothing wrong with everything.
+
+  Renaming `appliance/etc/sysctl.conf` produced a `FileNotFoundError` and **no
+  verdict line at all**, so the runner reported the suite as unread rather than
+  failed. That is the same repair the `section()` helper already carried, for
+  the other half of the same file.
+
 * **Every branch merged after a release filed its entry into a section that
   had already shipped** ([#284](https://github.com/andrediashexa/hexarouting/issues/284)).
   Five in one day after 0.68.0 was cut: #280, #281 and #39 into `## 0.68.0`,

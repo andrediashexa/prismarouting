@@ -70,6 +70,51 @@ The latency knobs cost power, so they are a switch, not a law:
 parameters from the kernel command line and leaves the governor alone. The
 default is `1`, because this is a router.
 
+### What `tune.env` accepts, and what happens to anything else
+
+`tune.env` is a file an operator edits by hand and `apply-tuning` reads on
+every boot. Every value in it used to be **believed**, and two of the ways that
+went wrong were measured by running the script:
+
+| Written | What the box did | What it does now |
+|---|---|---|
+| `HEXA_LOW_LATENCY=true` | Took the "not `1`" branch: the C-state and THP parameters were **removed** from the kernel command line and the governor left alone — the opposite of what it says — while the journal reported `HEXA_LOW_LATENCY=0`, naming a value nobody wrote | Refused by name, and read as `1` |
+| `HEXA_SUBSCRIBERS=200k` | The tuner's argument parser refused it with a usage dump naming neither the variable nor the file; `apply-tuning` exited non-zero and the unit failed, so **no tuning was written at all** and the kernel command line stayed at whatever the previous boot put there, disagreeing with the `startup.conf` beside it | Refused by name, and read as `200000` |
+
+So each value is checked before it is used, and one this box does not accept is
+**refused out loud and replaced by the shipped default** — never by the
+opposite of what it says, and never by failing the unit. A typo **MUST NOT**
+cost the box its tuning: an ignored setting is recoverable by editing one line,
+while a failed tuning unit leaves `isolcpus` and `startup.conf` describing
+different machines. That is the same reasoning `HEXA_MAX_WORKERS` already
+carried, applied to the other two.
+
+| Variable | Accepted | Shipped | Used when refused |
+|---|---|---|---|
+| `HEXA_DATAPLANE_IF` | an interface name, or empty | empty | — any name is possible, and the one carrying the default route is refused by the tuner itself |
+| `HEXA_SUBSCRIBERS` | digits only | `200000` | `200000` |
+| `HEXA_LOW_LATENCY` | `1` or `0`, nothing else | `1` | `1`, because this is a router |
+| `HEXA_MAX_WORKERS` | digits only, or empty for no cap | empty | no cap |
+
+**A refusal says what the box does accept**, with what each value would do, not
+only that this one was wrong: it is read on a serial console by somebody who
+then has to guess the spelling. Every line of it is wrapped by hand to 79
+columns and the refused value is quoted and printed whole, so it can be grepped
+for and typed back.
+
+`test/test_apply_tuning.sh` drives `apply-tuning` against fake `/etc`, `/proc`
+and `/sys` trees through its `HEXA_ROOT` seam, with the tuner, `update-grub`
+and the NIC binder stubbed on `PATH`. Before it existed **nothing ran this
+script at all**: `test/test_kernel_tuning.py` reads it as text looking for
+candidate knobs, and `appliance/test_tune.py` tests the tuner it calls, so the
+one component that turns an operator's file into a kernel command line had
+never been executed by a test. It asserts the arguments each value produces,
+that the governor is written only where the kernel offers `performance`, that
+the tuner runs before the NIC binder and that a failing binder does not fail
+the tuning, that `update-grub` runs on a change and not on a repeat, and that a
+tuner which really fails still fails the unit — so the refusals above did not
+turn every error into a shrug.
+
 ### The kernel command line, parameter by parameter
 
 The rules above are the reasons. This is the line the tuner actually writes
@@ -1488,10 +1533,20 @@ have a worked example in the tuning that is live:
 ### The candidates, and what each would cost
 
 `test/test_kernel_tuning.py` reads this table and asserts that **none** of it
-is set — in the generated kernel command line, in `apply-tuning` or in
-`sysctl.conf`. Applying one without measuring it and without moving it out of
-this table is a test failure, which is the point: the list cannot rot into
+is set — in the generated kernel command line, and in **every file the
+appliance ships**. Applying one without measuring it and without moving it out
+of this table is a test failure, which is the point: the list cannot rot into
 "we probably do that already".
+
+It used to read three files: the generated line, `apply-tuning` and
+`sysctl.conf`, while the sysfs-path half of the same table was already swept
+across the whole of `appliance/`. The asymmetry was the hole, and it is now
+closed both ways. A candidate parameter can reach a box from a systemd unit's
+`ExecStartPre`, from the installer, from `build-iso.sh` writing a boot line
+into the medium, or from a branch of `hexarouting-tune` that the one synthetic
+topology the suite renders never takes — and none of those was being read. The
+tuner's own source is swept for exactly that last reason: rendering one
+topology proves what **that topology** emits, not what the tuner can emit.
 
 | Candidate | Hypothesis | Cost if wrong | Status, from the readings below |
 |---|---|---|---|
@@ -1548,16 +1603,53 @@ being guessed at.
 ### What the box already reports, and what it would have to report
 
 The acceptance criterion that the appliance **MUST** report the tuning *in
-effect* rather than the tuning *requested* is already met for everything the
-tuner sets today — that is *The CPU half* above, where the boot self-test reads
+effect* rather than the tuning *requested* is met for the CPU half — that is
+*The CPU half* above, where the boot self-test reads
 `/sys/devices/system/cpu/isolated` and `/proc/<vpp pid>/task/*/status` rather
 than believing `startup.conf`.
 
-It is stated here because it is the acceptance criterion for the knobs in this
-section too, and it is not free for all of them. A kernel parameter the kernel
-**ignored** leaves `/proc/cmdline` saying it was asked for and the kernel
-behaving as though it was not, which is exactly the shape the self-test exists
-to catch. So any candidate that ships **MUST** arrive with the reading that
+**It was not met for the latency half, and saying it was is what this section
+got wrong.** The C-state line read `/proc/cmdline` and nothing else, and
+`/proc/cmdline` is a **request**: it is what the bootloader asked for. Two
+consequences, both measured by driving the self-test:
+
+* A box with `HEXA_LOW_LATENCY=0` — deep C-states left on, deliberately — was
+  warned that deep C-states were still enabled and advised to *"set
+  `HEXA_LOW_LATENCY=0`"*. The console was telling the operator to do the thing
+  they had already done, about a state they had chosen.
+* The case worth the most had **no line at all**: `tune.env` saying one thing
+  while this boot's command line says the other. That is a box running a
+  command line older than the file that generates it, and it is precisely
+  "the tuning in effect is not the tuning requested".
+
+So the line now reads **two** sources and says which is which: `/proc/cmdline`
+for what this boot got, `/etc/hexarouting/tune.env` for what was asked. The
+four combinations are four different sentences, and the two that disagree are
+reported as a disagreement with the reason, not as a tuned or an untuned box.
+`tune.env` is read, never sourced — sourcing a file an operator edits would run
+its contents as root inside the boot self-test. A value the box does not accept
+is named on the console and read as `1`, which is what `apply-tuning` does with
+it: two components disagreeing about one file is worse than either being wrong.
+
+Next to that sits the one **readback** that can be taken without a reboot:
+`/sys/devices/system/cpu/cpuidle/current_driver`. Where the kernel exposes no
+idle-state driver at all — which is what the development machine reads, and is
+usual on a virtual machine — nothing on the box enters a C-state and those
+parameters have nothing to act on either way, so a green line about them is a
+green line about nothing. The self-test says so.
+
+**What still cannot be read from here.** Whether `intel_idle.max_cstate=0` and
+`processor.max_cstate=1` were *taken* by a kernel that does have idle states.
+`/sys/module/intel_idle/parameters/max_cstate` exists on this machine and reads
+`9`, with no `intel_idle.max_cstate` on its command line — but confirming that
+it follows the boot parameter needs a reboot of a machine with a real idle
+driver, and neither is available here. So the self-test does not claim it. That
+reading is part of the bar below, not something already met.
+
+It is the acceptance criterion for the knobs in this section too, and it is not
+free for any of them. A kernel parameter the kernel **ignored** leaves
+`/proc/cmdline` saying it was asked for and the kernel behaving as though it
+was not. So any candidate that ships **MUST** arrive with the reading that
 proves it took, not with the parameter that requested it.
 
 ## Logging into the appliance

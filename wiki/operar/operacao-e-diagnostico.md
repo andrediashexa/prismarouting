@@ -129,6 +129,16 @@ O limite de 60 segundos é generoso de propósito: o VPP responde em 5 a 21 segu
 
 O tuning roda em todo boot justamente para que uma mudança em `tune.env` ou uma troca de NIC seja honrada.
 
+Nesse mesmo boot, o que a caixa **pediu** e o que ela **recebeu** são conferidos um contra o outro. Três linhas que valem a pena reconhecer no console:
+
+| O que aparece | O que significa |
+|---|---|
+| `deep C-states left enabled on purpose` | você pôs `HEXA_LOW_LATENCY=0` e a caixa está fazendo o que foi mandada. Não é aviso |
+| `booted a command line older than that file` | `tune.env` foi editado e a caixa ainda não reiniciou desde então. Reinicie para valer |
+| `the kernel exposes no idle-state driver` | numa máquina virtual não há estado de energia para desligar, então esse ajuste não muda nada ali |
+
+Um valor que a caixa não aceita em `tune.env` também aparece aí, com os valores que ela aceita no lugar. O que cada variável aceita está em *Dimensionamento e requisitos*.
+
 # Diagnóstico
 
 ```mermaid

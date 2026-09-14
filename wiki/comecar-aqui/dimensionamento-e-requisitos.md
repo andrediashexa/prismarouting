@@ -77,6 +77,29 @@ O modo conservador do segundo caso não é um defeito: o equipamento não pode f
 Quem decide quanto de CPU o plano de controle tem é `HEXA_MAX_WORKERS`, e isso é uma decisão de dimensionamento, não um limite de processo.
 
 :::
+## O que o arquivo de ajuste aceita
+
+`/etc/hexarouting/tune.env` é lido a cada boot, e cada valor dele tem uma forma. Um valor fora dessa forma é **recusado em voz alta**, com o nome da variável e o valor entre aspas, e a caixa usa o padrão de fábrica no lugar.
+
+| Variável | Aceita | De fábrica | Se for recusado |
+|---|---|---|---|
+| `HEXA_DATAPLANE_IF` | nome de interface, ou vazio | vazio | — |
+| `HEXA_SUBSCRIBERS` | só dígitos | `200000` | `200000` |
+| `HEXA_LOW_LATENCY` | `1` ou `0`, mais nada | `1` | `1` |
+| `HEXA_MAX_WORKERS` | só dígitos, ou vazio para sem limite | vazio | sem limite |
+
+`HEXA_LOW_LATENCY=1` desliga os estados profundos de economia de energia do processador, desliga as páginas grandes transparentes e mantém o governador de frequência em `performance`. Custa energia e compra rajada previsível, e é por isso que vem `1`: isto é um roteador. `0` deixa os três em paz, para uma caixa que precisa economizar mais do que precisa encaminhar.
+
+
+:::warning
+**Escreva exatamente `1` ou `0`.** Um valor como `true` ou `sim` é recusado: a caixa diz qual variável recusou, com que valor, e quais são os dois valores que ela aceita e o que cada um faz. Ela segue com `1` e o boot continua.
+
+Isso é deliberado: um erro de digitação **não** pode custar o ajuste da caixa. Uma configuração ignorada você conserta editando uma linha; um boot que falha no meio do ajuste deixa a linha de comando do kernel dizendo uma coisa e o arquivo do dataplane dizendo outra, e aí a caixa encaminha pela metade sem contador nenhum para mostrar.
+
+:::
+
+**Mudou `tune.env`? Só vale no boot seguinte.** Isolamento de núcleos, hugepages e estados de energia são linha de comando do kernel. O self-test de boot compara as duas coisas e avisa quando elas discordam — quando o arquivo já diz uma coisa e a caixa ainda está rodando a linha antiga, ele diz isso com todas as letras, em vez de dar a caixa por ajustada.
+
 ## O self-test confere os núcleos que o dataplane recebeu
 
 O equipamento calcula o plano de núcleos a cada boot e o grava em um arquivo que o dataplane lê ao iniciar. Duas coisas podem sair do lugar sem nenhum sintoma:
