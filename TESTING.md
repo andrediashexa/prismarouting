@@ -259,6 +259,58 @@ written before the feature exists, so it is red because the feature is
 dataplanes, breaks the active one three ways, and its six `FIXTURE` checks are
 green so that a broken topology can be told apart from a missing feature.
 
+`soak` is excluded for a third reason: **its length**. Every other lab here
+finishes in seconds or in a couple of minutes, and this one is worth running
+for hours — a suite that waited on it would stop being run, which loses the
+whole suite rather than the one lab
+([#30](https://github.com/andrediashexa/hexarouting/issues/30)).
+
+```sh
+sh tools/lab.sh soak            # 210 s of churn, about four minutes in all
+sh tools/lab.sh soak 28800      # eight hours of it
+```
+
+**Every cycle fills the session table and every cycle empties it.** Fifteen
+seconds of traffic — 32 subscribers, 199 source ports each, at a rate that
+fills the whole burst so sessions are created while others time out — then
+twenty seconds of nothing, which is longer than the UDP timeout and the block
+hold-down together. The ports rotate every cycle so each cycle's five-tuples
+are new, and the subscribers rotate over four groups. The box is read at the
+end of each half: a **peak** with the table full and a **trough** with it
+empty.
+
+Every trough is the same state of the box — no session, no block held, nothing
+arriving — so two troughs are directly comparable and anything a later one
+holds that an earlier one did not is memory the box did not give back. There
+is no working set to subtract, no settling to wait out and no allocator wobble
+to make room for. It asserts the table back at its baseline **at every
+trough**, every session created also expired, every block back in the pool,
+the box's own allocation and release counters equal, the heap and the resident
+size unmoved between two empty tables, and a real IPFIX collector's count of
+`natEvent` 17 equal to its count of 16 with no allocation left open and
+nothing dropped.
+
+**The argument is seconds, and the argument is the whole point.** The default
+run is six cycles and 38208 sessions; it proves the mechanism — that each
+assertion is wired to something that can move — and proves nothing about a
+week. A leak is a rate, so what the memory assertion can see is its 1.00 MB
+margin divided by the sessions the run churned: about 27 bytes per session
+over 210 s, 0.2 bytes over eight hours, one byte in 3000 over a week. That
+factor is bought with wall time and with nothing else, and the lab's header
+states it in those terms.
+
+It is not in `make test` either, and could not be: `make test` installs
+nothing and starts no dataplane.
+
+**It has no off mode and its control is eight broken runs**, listed in its
+header with the red each one produced. There is no feature here to switch off,
+so `OFF_MODES` has nothing to give it; instead each assertion was shown red
+against an edited plugin and against mis-set-up runs that turn the lab's own
+preconditions red. One of those controls found a defect in the **lab**: with
+the heap parser broken on purpose, the check written to catch a missing
+reading passed, because `awk` collapses an empty field and every column after
+it shifted left.
+
 A lab under which the dataplane never came up is reported as `NO VPP` and
 counted apart from both, because "the box never answered" and "the box
 answered and refused" need opposite work. `test/test_run_all_labs.sh` pins

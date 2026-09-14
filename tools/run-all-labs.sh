@@ -230,6 +230,7 @@ boot-iso:the release gate runs this, against a tag
 install-iso:the release gate runs this, against a tag
 crossaddr:pins what #226 does TODAY, so it would go red on the fix
 ha-failover:the acceptance test for HA, written before HA exists (#9), so it is red because the feature is MISSING and not because anything is broken
+soak:hours of churn is the point of it (#30), and four minutes is its SHORTEST run. The longest lab here is about two minutes, and a suite that waited on this one would stop being run - which is how a suite loses the assertion instead of the lab losing it. Run it deliberately: sh tools/lab.sh soak, or sh tools/lab.sh soak 28800 for the eight hours it is for
 "
 
 not_lab_reason() {  # <name> -> its reason, or nothing if it is a lab

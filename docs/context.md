@@ -223,6 +223,7 @@ Not what it contains — what question it is the answer to.
 | change the VTY | 1.6, 1.7 · `hexash.py` · `test/test_hexash_complete.py` · `lab/vty.sh` |
 | work on the appliance | 1.5 · [appliance.md](appliance.md) · `appliance/hexarouting-install` · [#83](https://github.com/andrediashexa/hexarouting/issues/83) |
 | measure performance | `lab/throughput.sh` · and note that no figure is trusted without hardware, [#28](https://github.com/andrediashexa/hexarouting/issues/28) |
+| ask whether it leaks | `lab/soak.sh` · run it deliberately, `sh tools/lab.sh soak 28800`; it is outside `tools/run-all-labs.sh` and outside `make test` because of its length, and what it can see is its margin over the sessions the run churned |
 
 ## 4. Deliberately absent — do not report these as gaps
 
