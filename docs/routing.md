@@ -112,7 +112,7 @@ the first argument ([#98](https://github.com/andrediashexa/hexarouting/issues/98
 
 `local0` is never offered: it is VPP's own loopback and configures nothing.
 
-Dentro de um bloco, `?` oferece **apenas o que vale ali**:
+Inside a block, `?` offers **only what is valid there**:
 
 ```
 hexarouting# [edit interface GigabitEthernet0/12/0] ?
@@ -133,27 +133,27 @@ hexarouting# [edit interface GigabitEthernet0/12/0] ?
   vrf          the routing table this interface's addresses live in
 ```
 
-Antes oferecia a árvore de configuração inteira — quinze opções, das quais três
-valiam ali. Oferecer o nível de cima convida alguém a digitar `cgnat pool`
-dentro de uma interface e descobrir depois o que aquilo significou. As quinze
-de hoje são outras quinze: todas valem dentro de uma interface, porque a
-interface passou a ser um objeto de primeira classe.
+It used to offer the whole configuration tree - fifteen options, of which
+three were valid there. Offering the level above invites somebody to type
+`cgnat pool` inside an interface and find out afterwards what that meant. The
+fifteen it offers today are a different fifteen: every one of them is valid
+inside an interface, because the interface became a first-class object.
 
-Um bloco do FRR oferece `exit` e `show` e nada mais: este VTY não modela as
-declarações do FRR, e oferecer algumas seria **um palpite apresentado como
-gramática**.
+An FRR block offers `exit` and `show` and nothing else. This VTY does not model
+FRR's statements, and offering some of them would be **a guess presented as a
+grammar**.
 
-A completação **ignora maiúsculas e minúsculas** e sempre insere a grafia da
-máquina — `ten`, `TEN` e `TenGig` completam todos para
-`TenGigabitEthernet0/8/0`. Exigir a capitalização certa antes de ajudar é
-completação que só funciona para quem já sabe a resposta.
+Completion **ignores case** and always inserts the machine's spelling: `ten`,
+`TEN` and `TenGig` all complete to `TenGigabitEthernet0/8/0`. Demanding the
+right capitalisation before it will help is completion that only works for
+somebody who already knows the answer.
 
 **A source that cannot answer offers nothing and says so.** A VTY that becomes
 unusable when the dataplane is down is a VTY that cannot be used to fix it — so
 a dead or missing source leaves the `<interface>` hint in place and completes
 nothing, rather than hanging or raising.
 
-## `show interface` — as do dataplane
+## `show interface` - the dataplane's own
 
 ```
 hexarouting> show interface
@@ -166,21 +166,21 @@ hexarouting> show interface
   local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
-Responde pelo **dataplane**. Antes era repassado ao `vtysh`, que enxerga só o
-que o `linux_cp` espelhou — numa caixa com uma `GigabitEthernet0/12/0`
-configurada, a resposta era `lo`
-([#112](https://github.com/andrediashexa/hexarouting/issues/112)). É a mesma
-forma do `show ip route` respondendo pela RIB.
+It answers from the **dataplane**. It used to be handed to `vtysh`, which sees
+only what `linux_cp` has mirrored: on a box with a `GigabitEthernet0/12/0`
+configured, the answer was `lo`
+([#112](https://github.com/andrediashexa/hexarouting/issues/112)). Same shape as
+`show ip route` answering from the RIB.
 
-A coluna **Linux** traz o par do `linux_cp`, porque esse é o nome que o FRR e o
-`ip` usam.
+The **Linux** column carries the `linux_cp` pair, because that is the name FRR
+and `ip` know the interface by.
 
-* `local0` **aparece** — esconder uma interface que o dataplane reporta seria
-  este comando decidindo o que o operador pode ver — mas **não é oferecida na
-  completação**, porque não configura nada.
+* `local0` **is listed** - hiding an interface the dataplane reports would be
+  this command deciding what the operator may see - but it is **not offered for
+  completion**, because it configures nothing.
 * FRR's view of the same interfaces stays at `show ip interface`.
-* Com o dataplane fora, ele diz que não conseguiu perguntar. Uma tabela vazia
-  leria como *"esta caixa não tem interfaces"*, que é afirmação bem diferente.
+* With the dataplane down it says it could not ask. An empty table would read
+  as *"this box has no interfaces"*, which is a very different statement.
 
 ### `terse`, `description` and `utilization`
 
@@ -565,7 +565,7 @@ sentences. It is a seam, so on a box under test it would name a directory that
 exists nowhere, and a transcript an operator is comparing against their own box
 would be comparing against scaffolding.
 
-## Um nome de interface que não existe é recusado
+## An interface name this box has not got is refused
 
 ```
 error: interface Ten0: this box has no such interface
@@ -574,24 +574,25 @@ error: interface Ten0: this box has no such interface
     the statement would commit and do nothing
 ```
 
-`interface Ten0` — um erro de digitação de `TenGigabitEthernet0/8/0` — criava
-uma estrofe no FRR para algo que não está lá: commitava limpo, aparecia na
-configuração em vigor e não fazia nada
+`interface Ten0` - a typo for `TenGigabitEthernet0/8/0` - used to create an
+FRR stanza for something that is not there: it committed cleanly, appeared in
+the running configuration, and did nothing
 ([#105](https://github.com/andrediashexa/hexarouting/issues/105)).
 
-A recusa **lista o que a caixa tem**, porque ela já sabe — é a mesma fonte da
-completação — e quem recebe só um "não" tem de ir procurar.
+The refusal **lists what the box has**, because it already knows - it is the
+same source the completion reads - and somebody handed a bare "no" has to go
+and look.
 
-Vale para as quatro formas de nomear uma interface: o bloco do FRR, o
-`cgnat interface`, e as declarações `mtu` e `urpf`, que o VTY modela por fora
-da seção de roteamento.
+It holds for all four ways of naming an interface: the FRR block,
+`cgnat interface`, and the `mtu` and `urpf` statements, which this VTY models
+outside the routing section.
 
-* **`hexash --load` recusa o arquivo inteiro**, e não statement a statement.
-  Isso roda no boot, sem ninguém olhando, e aplicar metade de um arquivo deixa
-  a caixa segurando metade dele.
-* **Com o dataplane inalcançável a checagem é pulada, não reprovada.** Um VTY
-  que não consegue commitar enquanto o dataplane está fora é um VTY que não
-  serve para consertá-lo.
+* **`hexash --load` refuses the whole file**, not statement by statement. It
+  runs at boot with nobody watching, and applying half a file leaves the box
+  holding half of it.
+* **With the dataplane unreachable the check is skipped, not failed.** A VTY
+  that cannot commit while the dataplane is down is a VTY that cannot be used
+  to fix it.
 
 ## An interface is more than its MTU
 

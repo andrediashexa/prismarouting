@@ -803,6 +803,33 @@ version has a chance of seeing it.
   is the distinction that makes it sound where matching a document against the
   source that builds a message is not.
 
+* **`docs/` was out of scope for the English-only rule, and three sections of
+  `docs/routing.md` were in Portuguese.** `CONTRIBUTING.md` section 1 rule 1
+  says documentation, source comments and VTY output are in English, and
+  `test/test_english_only.py` holds it. It excused the whole of `docs/` for the
+  sake of one file - `docs/wiki-audit.md`, which quotes the titles of a
+  Brazilian-Portuguese wiki - and **a directory excused to accommodate one file
+  is a directory nobody measures**, which is the same sentence as the roadmap
+  section that said the installation work was empty and let
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303) through.
+
+  Measured when it was brought back in: **33 lines** of real Portuguese prose
+  in `docs/routing.md` - the `?`-inside-a-block section, the `show interface`
+  section and the refused-interface-name section - and 14 in `wiki-audit.md`,
+  every one of those a quoted wiki title. The 33 are translated. The one file
+  is excused **by name**, with its reason, instead of by directory.
+
+  Three identifiers joined the allowances and each is the same case the list
+  already had for `TRANSITO`: `ASSINANTES PON-3`, `transito-primario` and
+  `PL-MEUS-BLOCOS` are an interface description, a neighbour description and a
+  prefix-list name that a Brazilian operator types, and what they type is what
+  the box stores and reads back.
+
+  The check's own rule that an allowance nobody needs is one nobody re-reads
+  turns out to guard this from the other side: narrowing the scope back to
+  where it was makes `ASSINANTES PON-3` unnecessary, and the file says so.
+
+
 
 
 
