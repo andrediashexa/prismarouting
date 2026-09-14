@@ -263,6 +263,7 @@ version has a chance of seeing it.
   **dynamic** pool is refused outright - that pool's extension already comes
   off the free list, so a reserve would take blocks out of the list it is drawn
   from.
+
 * **`show hardware` - the VTY lists the box's own NICs, so the operator can
   see what there is to choose from**
   ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
