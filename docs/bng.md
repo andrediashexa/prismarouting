@@ -427,6 +427,16 @@ CGNAT is attached to a handful of interfaces that an operator typed, and it
 worth fixing whether or not a BNG is ever built, and a BNG **MUST NOT** be the
 justification offered for fixing it.
 
+> It was raised as
+> [#287](https://github.com/andrediashexa/hexarouting/issues/287) and fixed
+> there. The walk is gone from the attach path: the minimum is carried across
+> changes, so an attach costs one interface's worth of work regardless of how
+> many the box holds. **The measurements above are left exactly as they were
+> taken** - they are what the defect cost, and a record edited to describe the
+> repair would no longer be a record. Nothing below was re-measured after the
+> fix, and the numbers in this section **MUST** be read as the ones the box
+> produced in that state.
+
 It also changes what this section concludes. The honest reading is that the
 per-subscriber attach *ought* to cost what the policer's does, about 42 µs, and
 that the 83 seconds measured is this product's own bug rather than the price of

@@ -205,6 +205,63 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Attaching CGNAT to an interface cost time proportional to how many
+  interfaces the box already had**
+  ([#287](https://github.com/andrediashexa/hexarouting/issues/287)).
+  `set interface bpa in2out` cost about **4.3 ms** per call on a box holding
+  5,000 interfaces and **8.3 ms** at 10,000, so attaching ten thousand took
+  **83 seconds** of main-thread work. On a box with workers every one of those
+  calls takes the worker barrier, and while it is held no packet moves.
+
+  **The feature arc was not to blame**, and three controls measured in the same
+  session say so: `set interface mtu` 32 µs, `policer add` 22 µs, and
+  `policer input` - which is also a `vnet_feature_enable_disable` on the same
+  `ip4-unicast` arc - 42 µs. The attach was two hundred times the cost of the
+  arc operation it performs.
+
+  The cause was ours. `bpa_interface_feature_enable_disable()` called
+  `bpa_auto_mss_update()`, which recomputed what `tcp-mss auto` resolves to -
+  the smallest IPv4 MTU among the interfaces the CGNAT runs on - by walking
+  **every interface on the box** and asking the feature arc four times per
+  interface whether the CGNAT was on it. Each attach re-walked the whole set,
+  so N attaches were N walks.
+
+  **The minimum is maintained now instead of recomputed.** Adding an interface
+  can only lower a minimum, which is one compare against one MTU, and that is
+  the operation the quadratic was made of. Taking one away is the direction a
+  running value cannot answer, so the plugin also counts how many interfaces
+  sit exactly at the minimum: every removal above it, and every removal from a
+  minimum that more than one interface shares, is a decrement. Only the
+  departure of the last interface holding the smallest MTU on the box looks at
+  anything else, and what it looks at is a flat array of MTUs rather than VPP's
+  interface pool through the feature arc.
+
+  **Nothing an operator sees changes.** `tcp-mss auto` still resolves to the
+  same number, `show bpa pool` still prints it, and a box with a handful of
+  interfaces behaves exactly as before. What changes is that the cost of an
+  attach no longer depends on the size of the box.
+
+  **The cost is asserted by counting, not by timing.** A wall-clock assertion
+  would be a fact about the machine rather than about the code, and this
+  repository runs a release lab suite alongside `make test`, where a stopwatch
+  goes red for reasons that have nothing to do with what it is measuring. So
+  `test/test_bpa_auto_mss.c` attaches 8,192 interfaces and asserts that the
+  last one reads exactly as many slots as the first, and that the whole sweep
+  reads 8,192 slots rather than the 33 million a rescan-per-attach would need.
+  It asserts the ANSWER against a full walk written independently in the test,
+  after every one of twenty thousand changes in an arbitrary order, because
+  incremental bookkeeping is wrong in ways that depend on the order operations
+  arrive in. `test/test_attach_cost.py` asserts the half a unit test cannot
+  see: that the attach path still calls the constant-cost update, since putting
+  the walk back restores the quadratic with every unit assertion still green.
+
+  **The limit, stated rather than left to be found.** A box whose interfaces
+  all have DIFFERENT MTUs, detached narrowest first, still rescans on every
+  detach. That rescan is a scan of a `u32` array rather than a walk of VPP's
+  interface pool through the feature arc, and it is not on the attach path at
+  all - but it is not constant, and the detach direction was not what was
+  measured.
+
 * **A virtio NIC could never be the dataplane interface, so every box in a VM
   was given no card** ([#286](https://github.com/andrediashexa/hexarouting/issues/286)).
   Reported from a box under evaluation: `show interface` still had nothing,

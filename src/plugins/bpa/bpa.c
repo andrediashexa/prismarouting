@@ -940,52 +940,119 @@ bpa_outside_window_update (void)
 }
 
 /*
- * Recomputes the MSS a pool set to "auto" clamps to.
+ * What ONE interface contributes to the "auto" clamp: its IPv4 MTU while the
+ * CGNAT is on it, and zero once it is not.
  *
- * Cheap and called often rather than hooked to an MTU change: the box has a
- * handful of interfaces, and a callback that fires on every MTU change
- * anywhere in VPP is a subscription to somebody else's lifecycle for a number
- * that is one loop to recompute.
+ * Asked of the feature arc rather than of a copy kept here, because the arc
+ * is what the datapath obeys. A toggle the arc refused, or one it counted
+ * twice because the same interface was attached twice, must not leave this
+ * plugin's idea of the set disagreeing with the set that is actually running.
+ *
+ * The handoff variants are the same interface carrying the same traffic; a
+ * box with workers would otherwise report no CGNAT interfaces at all and
+ * leave "auto" resolving to nothing.
+ */
+static u32
+bpa_interface_cgnat_mtu (vnet_main_t *vnm, u32 sw_if_index)
+{
+  int on = 0;
+
+  on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out", sw_if_index)
+	== 1;
+  on |=
+    vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out-handoff", sw_if_index)
+    == 1;
+  on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in", sw_if_index)
+	== 1;
+  on |=
+    vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in-handoff", sw_if_index)
+    == 1;
+  if (!on)
+    return 0;
+
+  return vnet_sw_interface_get_mtu (vnm, sw_if_index, VNET_MTU_IP4);
+}
+
+/* Points the tracker at the vector, which vec_validate may have moved. */
+static void
+bpa_auto_mss_slots (bpa_main_t *bm, u32 sw_if_index)
+{
+  vec_validate (bm->auto_mss_mtu, sw_if_index);
+  bpa_auto_mss_storage (&bm->auto_mss_track, bm->auto_mss_mtu,
+			vec_len (bm->auto_mss_mtu));
+}
+
+/*
+ * One interface changed. Constant work: one interface's feature state, one
+ * MTU, one slot - and no reference at all to how many interfaces the box has,
+ * which is the whole of #287.
+ */
+void
+bpa_auto_mss_interface_update (u32 sw_if_index)
+{
+  bpa_main_t *bm = &bpa_main;
+  vnet_main_t *vnm = bm->vnet_main;
+
+  if (!vnm)
+    return;
+
+  bpa_auto_mss_slots (bm, sw_if_index);
+  bpa_auto_mss_set (&bm->auto_mss_track, sw_if_index,
+		    bpa_interface_cgnat_mtu (vnm, sw_if_index));
+  bm->auto_mss = bpa_auto_mss_value (&bm->auto_mss_track);
+}
+
+/*
+ * Reconciles the clamp with the MTUs the box is actually carrying.
+ *
+ * Over the interfaces the CGNAT is attached to, and not over the box: an MTU
+ * that moved under a running box is the only thing this pass can learn, and
+ * an interface the CGNAT is not on cannot change the answer.
+ *
+ * Still a pass and not a callback on MTU changes, for the reason the previous
+ * version of this function gave: a hook that fires on every MTU change
+ * anywhere in VPP is a subscription to somebody else's lifecycle. What made
+ * that argument fail was not the pass, it was running the pass on every
+ * attach as well.
  */
 void
 bpa_auto_mss_update (void)
 {
   bpa_main_t *bm = &bpa_main;
   vnet_main_t *vnm = bm->vnet_main;
-  vnet_sw_interface_t *si;
-  u32 min = ~0u;
+  u32 i;
 
   if (!vnm)
     return;
 
-  pool_foreach (si, vnm->interface_main.sw_interfaces)
-    {
-      u32 idx = si->sw_if_index, mtu;
-      int on = 0;
+  bpa_auto_mss_storage (&bm->auto_mss_track, bm->auto_mss_mtu,
+			vec_len (bm->auto_mss_mtu));
 
-      /* The handoff variants are the same interface carrying the same
-       * traffic; a box with workers would otherwise report no CGNAT
-       * interfaces at all and leave "auto" resolving to nothing. */
-      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out", idx) == 1;
-      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-in2out-handoff", idx)
-	    == 1;
-      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in", idx) == 1;
-      on |= vnet_feature_is_enabled ("ip4-unicast", "bpa-out2in-handoff", idx)
-	    == 1;
-      if (!on)
+  for (i = 0; i < vec_len (bm->auto_mss_mtu); i++)
+    {
+      if (bm->auto_mss_mtu[i] == 0)
 	continue;
 
-      mtu = vnet_sw_interface_get_mtu (vnm, idx, VNET_MTU_IP4);
-      if (mtu && mtu < min)
-	min = mtu;
+      /*
+       * An interface deleted while the CGNAT was on it leaves its slot
+       * behind, and reading the MTU of a freed pool entry is a read of
+       * whatever is there now. Deletion does not come through
+       * bpa_interface_feature_enable_disable(), so this is where it is
+       * noticed - within a second, during which the clamp can only be
+       * SMALLER than the surviving interfaces need, which costs throughput
+       * and breaks nothing.
+       */
+      if (!vnet_sw_interface_is_valid (vnm, i))
+	{
+	  bpa_auto_mss_set (&bm->auto_mss_track, i, 0);
+	  continue;
+	}
+
+      bpa_auto_mss_set (&bm->auto_mss_track, i,
+			vnet_sw_interface_get_mtu (vnm, i, VNET_MTU_IP4));
     }
 
-  /* No CGNAT interface yet, or an MTU smaller than the headers themselves:
-   * zero, which the datapath reads as "do not clamp". Inventing a number
-   * here would be a clamp nobody configured. */
-  bm->auto_mss = (min == ~0u || min <= BPA_MSS_OVERHEAD)
-		   ? 0
-		   : (u16) (min - BPA_MSS_OVERHEAD);
+  bm->auto_mss = bpa_auto_mss_value (&bm->auto_mss_track);
 }
 
 /*
@@ -1030,8 +1097,11 @@ bpa_interface_feature_enable_disable (u32 sw_if_index, int is_inside,
   /* The set of interfaces the CGNAT runs on has just changed, and that set is
    * what "tcp-mss auto" is the minimum over. Left alone, the clamp keeps
    * describing an interface set that no longer exists, and a subscriber
-   * behind the new interface is handed an MSS larger than the path takes. */
-  bpa_auto_mss_update ();
+   * behind the new interface is handed an MSS larger than the path takes.
+   *
+   * THIS interface and not all of them: see bpa_auto_mss.h for why that
+   * distinction is the difference between an attach and 83 seconds of them. */
+  bpa_auto_mss_interface_update (sw_if_index);
 
   /*
    * Recorded only once the dataplane has accepted it, and by NAME: an entry
@@ -1989,6 +2059,13 @@ bpa_init (vlib_main_t *vm)
    * person is worse than one that names nobody.
    */
   bm->actor_uid = ~0u;
+
+  /*
+   * Empty, with a minimum of ~0u rather than the zero bpa_main starts at:
+   * zero is the smallest MTU there is, so an empty set left at zero would
+   * claim to have found the narrowest path on the box.
+   */
+  bpa_auto_mss_init (&bm->auto_mss_track, 0, 0);
 
   /*
    * When this incarnation started. Latched here, once: see bpa_main_t, and

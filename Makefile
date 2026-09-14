@@ -8,7 +8,8 @@ BUILD  := .build
 
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
-      $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite
+      $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
+      $(BUILD)/test_bpa_auto_mss
 	@sh tools/run-tests.sh
 
 vectors:
@@ -53,6 +54,21 @@ $(BUILD)/test_bpa_rewrite: test/test_bpa_rewrite.c \
                            test/bpa_shim.h test/bpa_tcp_shim.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rewrite.c
+
+# The "tcp-mss auto" minimum: which MTU the clamp is derived from as interfaces
+# join and leave. Standalone because the bookkeeping is INCREMENTAL (#287) and
+# incremental bookkeeping is wrong in ways that depend on the order of the
+# operations, which is a thing to enumerate rather than to hope a lab meets.
+# It is also where the COST is asserted - by counting the slots an attach
+# reads, not by timing it, because a stopwatch on a loaded machine measures
+# the machine.
+$(BUILD)/test_bpa_auto_mss: test/test_bpa_auto_mss.c \
+                            src/plugins/bpa/bpa_auto_mss.h \
+                            src/plugins/bpa/bpa_mss.h \
+                            test/bpa_shim.h test/bpa_tcp_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_auto_mss.c
 
 $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
                        test/bpa_shim.h test/bpa_tcp_shim.h
