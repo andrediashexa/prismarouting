@@ -75,6 +75,23 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The roadmap said the installation section was empty of work, and a box
+  installed from the medium has no way of being reached.** Measured on a real
+  VM running 0.72.0
+  ([#303](https://github.com/andrediashexa/hexarouting/issues/303)):
+  `/etc/network/interfaces.d/` is empty, `appliance/hexarouting-install` writes
+  nothing under `/etc/network/`, and `networking.service` is enabled with
+  nothing to do. The NIC boots DOWN with no address and the `ip` commands typed
+  at the console do not survive a reboot.
+
+  The management address had been dropped from the installer's scope on the
+  reading that it is "arranged by other means before the box is installed".
+  That reading is wrong for the case everybody meets first: a VM created from
+  the published medium, where there are no other means. Saying the section was
+  empty is what let it go unmeasured.
+
 ## 0.73.0 - the box keeps the list of what was installed on it
 
 [#302](https://github.com/andrediashexa/hexarouting/issues/302).

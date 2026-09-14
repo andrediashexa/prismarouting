@@ -572,7 +572,8 @@ the hierarchy being edited. Large, and paid every single day someone uses the
 box.
 
 **4. [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the
-installer**, with the management address dropped from its scope. The **log
+installer**, whose management address was dropped from scope and is back as
+[#303](https://github.com/andrediashexa/hexarouting/issues/303). The **log
 volume** is *delivered in v0.30.0*; **verifying the disk that was just
 written**, **answers from a file** and the **mirror** are all *delivered*.
 It was led by the log volume because: in dynamic mode the allocation log *is*
@@ -1246,8 +1247,16 @@ operator supplied, and will not overwrite the medium it booted from. What it
 did not do was everything that happens **after** the disk is written, and the
 paragraphs below are that list, now worked through.
 
-The management address was dropped from the scope by the maintainer: it is
-arranged by other means before the box is installed.
+The management address was dropped from the scope by the maintainer, on the
+reading that it is arranged by other means before the box is installed. That
+reading is wrong for the case everybody meets first, and it was measured wrong
+on a real VM running 0.72.0
+([#303](https://github.com/andrediashexa/hexarouting/issues/303)):
+`/etc/network/interfaces.d/` is empty, `hexarouting-install` writes nothing
+under `/etc/network/`, and `networking.service` is enabled with nothing to do.
+The box boots with its NIC DOWN and no address, reachable only at the console,
+and the `ip` commands typed there do not survive a reboot. On a VM created
+from the published medium there are no other means.
 
 The allocation log — which in dynamic mode **is** the connection record the
 Marco Civil requires for a year — used to share a filesystem with everything
@@ -1288,8 +1297,11 @@ A box with **one** disk is untouched, and the default run of the same lab
 asserts it: no question, no array, and a self-test that does not mention a
 mirror.
 
-This section is now empty of work. The management address was the other half
-and the maintainer dropped it.
+This section is NOT empty of work, and saying that it was is what let the
+measurement above go three months without being taken. The management address
+is back in it, as [#303](https://github.com/andrediashexa/hexarouting/issues/303):
+an appliance that cannot be reached after a reboot is not an appliance, and
+every box installed from the medium is in that state today.
 
 #### Phase 4 - capacity, and it went through #23
 
