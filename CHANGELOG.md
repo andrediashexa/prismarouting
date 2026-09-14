@@ -330,6 +330,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Every change a commit can make now has to need a capability.**
+  `cap_needed()` answers `CAP_ALL` for anything in `DELTA_ADMIN`, `CAP_CGNAT`
+  for anything in `DELTA_CGNAT`, and `None` for a delta that changes nothing -
+  and the caller reads `if need and not self.require(need, "commit")`, so
+  `None` is not "refuse", it is "do not ask". That is right for an empty delta,
+  and it means a key `config.py` produces that neither list names falls through
+  to no check at all: a cgnat-operator account commits a change that should
+  have needed an administrator, with no refusal and nothing in the trail,
+  because no check ran.
+
+  Measured: 36 keys, 36 covered, no gaps and no ghosts. This is a guard rather
+  than a repair, and what it guards against is a configuration kind added by
+  somebody who did not know the second file existed.
+
+  The smaller list is also frozen by name, because coverage cannot see the
+  other failure: moving a key from `DELTA_ADMIN` into `DELTA_CGNAT` is a grant
+  that reaches every cgnat-operator account on every box at the next upgrade,
+  and the key is still covered. There is no independent source to derive that
+  list from - which changes a CGNAT operator may make **is** that tuple - so
+  frozen is the honest shape, in the way an `OFF-RED-AT-LEAST` floor is:
+  widening it is one line, and the line is in a test, where it needs a reason.
+
 * **A self-test fixture that passes, which the suite had never had**
   ([#298](https://github.com/andrediashexa/hexarouting/issues/298)). It
   arranged 105 boxes and every one of them failed something - its own count
