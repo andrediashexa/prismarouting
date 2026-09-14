@@ -24,8 +24,8 @@ def w(path, content):
         f.write(str(content) + "\n")
 
 def build(root, sockets, cores_per_socket, threads, nic_node=None,
-          hugepages_1g=0, isolated="", nic_pci=None, ram_gb=64,
-          nic_bus=None):
+          hugepages_gb=0, isolated="", nic_pci=None, ram_gb=64,
+          nic_bus=None, hugepage_kb=1048576):
     """
     Typical Linux numbering: first every first thread, then every second one.
     With 2 sockets x 8 cores x 2 threads, the sibling of cpu0 is cpu16.
@@ -66,8 +66,13 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
             os.symlink(target, f"{root}/sys/class/net/eth0/device")
         else:
             w(f"{root}/sys/class/net/eth0/device/numa_node", nic_node)
-    w(f"{root}/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages",
-      hugepages_1g)
+    # The POOL THAT EXISTS, and only that one. A box whose CPU cannot do 1G
+    # has no hugepages-1048576kB directory at all - asking for one on the
+    # kernel command line is silently ignored - and the fixture has to be
+    # shaped that way or it cannot build the box this was measured on (#290).
+    for _kb in ((2048, 1048576) if hugepage_kb == "both" else (hugepage_kb,)):
+        w(f"{root}/sys/kernel/mm/hugepages/hugepages-{_kb}kB/nr_hugepages",
+          hugepages_gb * (1048576 // _kb))
     w(f"{root}/sys/devices/system/cpu/isolated", isolated)
     # Plenty of RAM unless a case says otherwise, so the existing cases are
     # unaffected by the cap below.
@@ -180,7 +185,7 @@ print("\n=== a cap below the count frees the cores, not just the worker list ===
 # scheduler still would not be allowed to put frr, hexash or sshd there.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=2, nic_node=0,
-          hugepages_1g=8, isolated="1-7,9-15", nic_pci="0000:3b:00.0")
+          hugepages_gb=8, isolated="1-7,9-15", nic_pci="0000:3b:00.0")
     out = run(root, "--interface", "eth0", "--max-workers", "3")
     workers = expand(field(out, "# workers").split(": ")[-1])
     isolated = expand(field(out, "# isolated:"))
@@ -233,7 +238,7 @@ print("\n=== the statistics segment is reported, and never written (#288) ===")
 # base file and a generated one would be the last word on every boot.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1-7")
+          hugepages_gb=6, isolated="1-7")
     out = run(root, "--interface", "eth0")
     check("statistics segment" in out,
           "the tuner must say what it is doing about the statistics segment, "
@@ -258,7 +263,7 @@ with tempfile.TemporaryDirectory() as root:
     # First boot takes a different branch of render_vpp entirely, and a stanza
     # added to one and not the other is the shape half this file exists for.
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=0, isolated="")
+          hugepages_gb=0, isolated="")
     out = run(root, "--interface", "eth0")
     check("statistics segment" in out,
           "the first-boot report must say it too: that box runs a dataplane")
@@ -270,7 +275,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== first boot: kernel still without hugepages or isolcpus ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=0, isolated="")
+          hugepages_gb=0, isolated="")
     out = run(root, "--interface", "eth0")
     check("FIRST BOOT" in out, "should detect that the kernel is not tuned")
     check("FIRST BOOT MODE" in out, "startup.conf should come out conservative")
@@ -290,7 +295,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== next boot: kernel already tuned ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1-7")
+          hugepages_gb=6, isolated="1-7")
     out = run(root, "--interface", "eth0")
     check("FIRST BOOT" not in out, "should no longer be in first boot")
     check("corelist-workers 1-7" in out, "should pin the workers")
@@ -303,7 +308,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== hugepages reserved but isolcpus missing: still conservative ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="")
+          hugepages_gb=6, isolated="")
     out = run(root, "--interface", "eth0")
     check("FIRST BOOT" in out,
           "without isolcpus, pinning a worker makes VPP compete with the OS")
@@ -316,7 +321,7 @@ print("\n=== hugepages are bounded by the RAM the machine has ===")
 # what produced it.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=2, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1", ram_gb=3)
+          hugepages_gb=6, isolated="1", ram_gb=3)
     out = run(root, "--interface", "eth0", "--subscribers", "200000")
     asked = int(field(out, "# 1G hugepages:").split()[0])
     check(asked == 0,
@@ -326,7 +331,7 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1-7", ram_gb=16)
+          hugepages_gb=6, isolated="1-7", ram_gb=16)
     out = run(root, "--interface", "eth0", "--subscribers", "200000")
     asked = int(field(out, "# 1G hugepages:").split()[0])
     check(0 < asked <= 12, f"16 GB should allow a real pool, got {asked}")
@@ -335,7 +340,7 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1-7", ram_gb=8)
+          hugepages_gb=6, isolated="1-7", ram_gb=8)
     out = run(root, "--interface", "eth0", "--subscribers", "2000000")
     check("WARNING" in out, "an oversized target on a small box must warn")
     check("add RAM" in out, "and say what to do about it")
@@ -347,7 +352,7 @@ print("\n=== the main heap is sized from the pages actually reserved ===")
 # the boot that computed the tuning and the boot that used it.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          hugepages_1g=2, isolated="1-3", ram_gb=16)
+          hugepages_gb=2, isolated="1-3", ram_gb=16)
     out = run(root, "--interface", "eth0", "--subscribers", "200000")
     heap = [l for l in out.splitlines() if "main-heap-size" in l]
     check(any("1G" in l for l in heap),
@@ -356,7 +361,7 @@ with tempfile.TemporaryDirectory() as root:
 
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          hugepages_1g=8, isolated="1-3", ram_gb=32)
+          hugepages_gb=8, isolated="1-3", ram_gb=32)
     out = run(root, "--interface", "eth0", "--subscribers", "200000")
     heap = [l for l in out.splitlines() if "main-heap-size" in l]
     check(any("2G" in l for l in heap),
@@ -366,7 +371,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== one RX queue per worker, and the NIC's PCI address ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1-7", nic_pci="0000:3b:00.0")
+          hugepages_gb=6, isolated="1-7", nic_pci="0000:3b:00.0")
     out = run(root, "--interface", "eth0")
     workers = expand(field(out, "# workers").split(": ")[-1])
     check("dev 0000:3b:00.0" in out, "the dpdk stanza must name the PCI device")
@@ -378,7 +383,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== a NIC that is not PCI must not invent an address ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1-3")
+          hugepages_gb=6, isolated="1-3")
     out = run(root, "--interface", "eth0")
     check("dev 0000:" not in out, "must not invent a PCI address")
     # This used to assert "dev default" - sizing the queues on the default
@@ -396,7 +401,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== C-states and THP off by default ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_1g=6, isolated="1-7")
+          hugepages_gb=6, isolated="1-7")
     out = run(root, "--interface", "eth0")
     check("processor.max_cstate=1" in out, "deep C-states must leave the command line")
     check("intel_idle.max_cstate=0" in out, "intel_idle also governs C-states")
@@ -409,7 +414,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== IRQs banned from the isolated cores ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=2, nic_node=0,
-          hugepages_1g=6, isolated="1-7,9-15")
+          hugepages_gb=6, isolated="1-7,9-15")
     out = run(root, "--interface", "eth0")
     banned = field(out, "IRQBALANCE_BANNED_CPULIST=")
     check(expand(banned) == expand(field(out, "# isolated:")),
@@ -516,7 +521,7 @@ _sh.rmtree(fakebin, ignore_errors=True)
 print("\n=== an unidentified dataplane NIC must claim no device ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          hugepages_1g=8, isolated="1-3")
+          hugepages_gb=8, isolated="1-3")
     out = run(root, "--interface", "ens18")   # no such interface in the tree
     check("no-pci" in out,
           "an unresolvable NIC must produce 'no-pci', so nothing is claimed")
@@ -527,7 +532,7 @@ with tempfile.TemporaryDirectory() as root:
 print("\n=== no interface named at all: same answer ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          hugepages_1g=8, isolated="1-3")
+          hugepages_gb=8, isolated="1-3")
     out = run(root)
     check("no-pci" in out, "an empty setting must claim nothing either")
     check("dev default" not in out, "and must not fall back to probing")
@@ -538,7 +543,7 @@ print("\n=== the interface carrying the default route is refused ===")
 # dataplane starts, and gets it back by walking to a console.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          hugepages_1g=8, isolated="1-3")
+          hugepages_gb=8, isolated="1-3")
     os.makedirs(f"{root}/proc/net", exist_ok=True)
     with open(f"{root}/proc/net/route", "w") as f:
         f.write("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n")
@@ -556,7 +561,7 @@ print("\n=== a NIC that is not the default route is still claimed ===")
 # does not work.
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=4, threads=1, nic_node=0,
-          nic_pci="0000:3b:00.0", hugepages_1g=8, isolated="1-3")
+          nic_pci="0000:3b:00.0", hugepages_gb=8, isolated="1-3")
     os.makedirs(f"{root}/proc/net", exist_ok=True)
     with open(f"{root}/proc/net/route", "w") as f:
         f.write("Iface\tDestination\tGateway\tFlags\n")
@@ -648,7 +653,7 @@ print("\n=== a virtio box gets a dpdk stanza naming its card (#286) ===")
 # reads. Those are different failures: a resolver that works and a stanza that
 # still says no-pci would leave the box exactly as broken.
 _vd = tempfile.mkdtemp()
-build(_vd, 1, 4, 1, nic_node=0, hugepages_1g=8, isolated="1-3",
+build(_vd, 1, 4, 1, nic_node=0, hugepages_gb=8, isolated="1-3",
       nic_pci="0000:00:13.0", nic_bus="virtio4")
 _vout = run(_vd, "--interface", "eth0", "--subscribers", "1000")
 check("dev 0000:00:13.0" in _vout,
@@ -662,13 +667,87 @@ check("no-pci" not in _vout,
 # And the bare-metal shape still works, because the walk must not depend on
 # there being a bus device in the way.
 _bd = tempfile.mkdtemp()
-build(_bd, 1, 4, 1, nic_node=0, hugepages_1g=8, isolated="1-3",
+build(_bd, 1, 4, 1, nic_node=0, hugepages_gb=8, isolated="1-3",
       nic_pci="0000:3b:00.0")
 _bout = run(_bd, "--interface", "eth0", "--subscribers", "1000")
 check("dev 0000:3b:00.0" in _bout,
       f"a card whose device link points straight at the PCI device stopped "
       f"working: {_bout[_bout.find('dpdk'):][:120]!r}")
 print("  the stanza names the card on both shapes")
+
+
+print("\n=== a box with no 1G pool is tuned on 2M, not left in first boot (#290) ===")
+# Measured on a customer VM: the CPU does not advertise pdpe1gb, so the kernel
+# has no hugepages-1048576kB pool, ignored `hugepagesz=1G hugepages=5` on the
+# command line, and the tuner read 0 reserved on every boot. `tuned_now` was
+# never true, DPDK stayed disabled, and the box told the operator to reboot -
+# for the life of the box. It already had 2 GB of 2M pages reserved by VPP's
+# own shipped sysctl, sitting unused.
+#
+# 2M is not a degraded mode. VPP runs on it; 1G is a preference about TLB
+# entries.
+_h2 = tempfile.mkdtemp()
+build(_h2, 1, 8, 1, nic_node=0, hugepages_gb=2, isolated="1-7",
+      nic_pci="0000:00:12.0", nic_bus="virtio3", ram_gb=8,
+      hugepage_kb=2048)
+_o2 = run(_h2, "--interface", "eth0", "--subscribers", "200000")
+check("default_hugepagesz=2M" in _o2 and "hugepagesz=2M" in _o2,
+      f"a box with no 1G pool was still asked for 1G pages, which the kernel "
+      f"ignores: {[l for l in _o2.splitlines() if 'hugepagesz' in l]}")
+check("FIRST BOOT" not in _o2,
+      f"a box with hugepages reserved and cores isolated was left in the "
+      f"first-boot profile, which is where it stays for ever: "
+      f"{[l for l in _o2.splitlines() if 'state:' in l]}")
+check("plugin dpdk_plugin.so { disable }" not in _o2,
+      "DPDK was left disabled on a box that has hugepages")
+check("2M hugepages:" in _o2,
+      f"the report says 1G on a box getting 2M pages: "
+      f"{[l for l in _o2.splitlines() if 'hugepages:' in l]}")
+
+# And a box that CAN do 1G still gets 1G, because it is the better page.
+_h1 = tempfile.mkdtemp()
+build(_h1, 1, 8, 1, nic_node=0, hugepages_gb=2, isolated="1-7",
+      nic_pci="0000:3b:00.0", ram_gb=64)
+_o1 = run(_h1, "--interface", "eth0", "--subscribers", "200000")
+check("default_hugepagesz=1G" in _o1,
+      f"a box that can do 1G was given 2M pages: "
+      f"{[l for l in _o1.splitlines() if 'hugepagesz' in l]}")
+check("1G hugepages:" in _o1,
+      "the report does not say 1G on a box getting 1G pages")
+
+# A box with BOTH pools, which is what ordinary bare metal has. Without this
+# the preference is unasserted: a box with one pool gets that one whatever
+# order the sizes are tried in, so reversing the order changed nothing and the
+# mutation stayed green.
+_hb = tempfile.mkdtemp()
+build(_hb, 1, 8, 1, nic_node=0, hugepages_gb=2, isolated="1-7",
+      nic_pci="0000:3b:00.0", ram_gb=64, hugepage_kb="both")
+_ob = run(_hb, "--interface", "eth0", "--subscribers", "200000")
+check("default_hugepagesz=1G" in _ob,
+      f"a box that has both pools was given 2M pages, and 1G is one TLB entry "
+      f"where 2M is five hundred and twelve: "
+      f"{[l for l in _ob.splitlines() if 'hugepagesz' in l]}")
+
+# And the COUNT, which is what the kernel actually reserves. Asking for 6 on a
+# 2M box reserves 12 MB, not 6 GB, and the box comes up with almost no
+# hugepage memory while every other number says it has six gigabytes of it.
+import re as _re                                                  # noqa: E402
+_m = _re.search(r"default_hugepagesz=2M hugepagesz=2M hugepages=(\d+)", _o2)
+check(_m is not None and int(_m.group(1)) == 6 * 512,
+      f"a 2M box asked the kernel for {_m.group(1) if _m else '?'} pages, and "
+      f"6 GB of 2M pages is {6 * 512}: the kernel reserves what was asked for "
+      f"and every other number in the profile assumes the GB figure")
+
+# A box with NEITHER pool is a box with no hugepages, and must stay
+# conservative rather than claim a size it has not got.
+_h0 = tempfile.mkdtemp()
+build(_h0, 1, 8, 1, nic_node=0, hugepages_gb=0, isolated="",
+      nic_pci="0000:3b:00.0", ram_gb=64)
+_o0 = run(_h0, "--interface", "eth0", "--subscribers", "200000")
+check("FIRST BOOT" in _o0,
+      f"a box with no hugepages reserved and nothing isolated left the "
+      f"conservative profile: {[l for l in _o0.splitlines() if 'state:' in l]}")
+print("  2M where 1G cannot exist, 1G where it can, conservative where neither")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

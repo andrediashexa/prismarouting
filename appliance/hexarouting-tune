@@ -71,14 +71,63 @@ def fmt_list(cpus):
     return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
 
 
-def hugepages_1g_reserved(root):
-    """1G hugepages actually reserved RIGHT NOW."""
+#: The hugepage sizes this tuner will use, largest first. 1G is preferred
+#: because a 1G page is one TLB entry where 2M pages are five hundred and
+#: twelve, and the dataplane's whole working set wants to stay resident in it.
+HUGEPAGE_KB = (1048576, 2048)
+
+
+def hugepage_supported(root, kb):
+    """Does this kernel have a pool of `kb` pages at all?
+
+    The directory exists only when the CPU and the kernel can do that size.
+    A virtual machine whose CPU does not advertise `pdpe1gb` has no 1G pool,
+    and asking for one on the kernel command line is silently ignored.
+    """
+    return os.path.isdir(os.path.join(
+        root, "sys/kernel/mm/hugepages", f"hugepages-{kb}kB"))
+
+
+def hugepages_reserved_for(root, kb=1048576):
+    """Pages of size `kb` actually reserved RIGHT NOW."""
     v = read(os.path.join(
-        root, "sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages"), "0")
+        root, "sys/kernel/mm/hugepages", f"hugepages-{kb}kB",
+        "nr_hugepages"), "0")
     try:
         return int(v)
     except (TypeError, ValueError):
         return 0
+
+
+def p_gb_to_pages(gb, kb):
+    """How many pages of `kb` make `gb` gigabytes."""
+    return gb * (1048576 // kb)
+
+
+def hugepage_choice(root):
+    """
+    (page size in kB, GB already reserved of it) for the size this box can use.
+
+    THE BOX MUST NOT WAIT FOREVER FOR A PAGE SIZE IT CANNOT HAVE. The tuner
+    used to read the 1G pool and nothing else, so on a CPU without `pdpe1gb`
+    the reserved count was 0 on every boot, `tuned_now` was never true, and
+    the dataplane stayed in the first-boot profile with DPDK disabled - for
+    the life of the box, however many times it was rebooted. Measured on a
+    customer VM: the kernel command line carried `hugepagesz=1G hugepages=5`,
+    the kernel ignored it, `/sys/kernel/mm/hugepages/` held only the 2048kB
+    pool, and the box reported "1G hugepages reserved: 0" and told the
+    operator to reboot (issue #290).
+
+    2M is not a fallback in the sense of a degraded mode: VPP runs on 2M pages
+    perfectly well, and the box on which this was measured already had 2 GB of
+    them reserved by VPP's own shipped sysctl, sitting unused. 1G is a
+    preference about TLB entries, not a requirement.
+    """
+    for kb in HUGEPAGE_KB:
+        if hugepage_supported(root, kb):
+            per_gb = 1048576 // kb
+            return kb, hugepages_reserved_for(root, kb) // per_gb
+    return HUGEPAGE_KB[0], 0
 
 
 def total_ram_gb(root):
@@ -304,17 +353,21 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
         cap_gb = max(0, total_gb - for_os)
     else:
         cap_gb = want_gb          # unknown RAM: do not silently shrink
-    hugepages_1g = min(want_gb, cap_gb)
+    hugepages_gb = min(want_gb, cap_gb)
 
     # Below two pages there is no room for buffers and a heap both. Asking for
     # one page would produce a tuned profile that cannot start, so ask for
     # none - which keeps tuned_now false and leaves the box on the
     # conservative profile, where it runs.
-    if hugepages_1g < 2:
-        hugepages_1g = 0
-    capped = bool(total_gb) and hugepages_1g < want_gb
+    if hugepages_gb < 2:
+        hugepages_gb = 0
+    capped = bool(total_gb) and hugepages_gb < want_gb
 
-    reserved = hugepages_1g_reserved(topo.root)
+    # The page size this box can actually have, and how many GB of it are
+    # reserved now. Both come from the pools that exist rather than from the
+    # size this tuner would prefer, so a box that cannot do 1G is tuned on 2M
+    # instead of waiting for a page size it will never get (#290).
+    hugepage_kb, reserved = hugepage_choice(topo.root)
     isolated_active = isolated_now(topo.root)
 
     # The tuning only takes effect on the next boot: isolcpus and hugepages
@@ -323,14 +376,14 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
     # - and that breaks every first boot after an install. While the kernel
     # is not tuned, the config comes out conservative: no pinning and no
     # hugepages. It runs anywhere, it just does not perform.
-    # hugepages_1g == 0 means this machine was judged too small for a hugepage
+    # hugepages_gb == 0 means this machine was judged too small for a hugepage
     # pool. Emitting the tuned profile anyway - because some pages happen to be
     # reserved right now - produces a startup.conf that asks for memory the
     # tuner just decided not to ask the kernel for. Pages can be reserved for
     # reasons this run knows nothing about: a previous configuration, or VPP
     # itself pre-allocating during a crash loop. The decision has to be
     # self-consistent, or the tuner argues with itself across boots.
-    tuned_now = (hugepages_1g >= 1 and reserved >= 1
+    tuned_now = (hugepages_gb >= 1 and reserved >= 1
                  and set(isolated) <= set(isolated_active) and bool(isolated))
 
     return {
@@ -341,6 +394,13 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
         "nic_pci": topo.nic_pci(ifname) if ifname else None,
         "tuned_now": tuned_now,
         "hugepages_reserved": reserved,
+        # The page size in kB, the name the kernel command line uses for it,
+        # and how many of them make up hugepages_gb. Carried rather than
+        # recomputed, so the grub line and the report cannot disagree about
+        # what was asked for.
+        "hugepage_kb": hugepage_kb,
+        "hugepage_name": "1G" if hugepage_kb == 1048576 else "2M",
+        "hugepage_count": p_gb_to_pages(hugepages_gb, hugepage_kb),
         "isolated_active": isolated_active,
         "node": node,
         "nic_note": nic_note,
@@ -348,7 +408,7 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True):
         "main_core": os_core,
         "workers": workers,
         "isolated": isolated,
-        "hugepages_1g": hugepages_1g,
+        "hugepages_gb": hugepages_gb,
         "subscribers": subscribers,
         "total_cpus": len(topo.cpus),
     }
@@ -381,7 +441,8 @@ def render_grub(p):
         "# Generated by hexarouting-tune. Do not edit by hand.\n"
         'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT '
         f"isolcpus={iso} nohz_full={iso} rcu_nocbs={iso} "
-        f"default_hugepagesz=1G hugepagesz=1G hugepages={p['hugepages_1g']} "
+        f"default_hugepagesz={p['hugepage_name']} "
+        f"hugepagesz={p['hugepage_name']} hugepages={p['hugepage_count']} "
         f'intel_iommu=on iommu=pt{latency}"\n'
         # os-prober scans every block device looking for other systems. On
         # an appliance there is nothing to find, and the scan can take
@@ -433,7 +494,8 @@ def render_vpp(p):
             "# Generated by hexarouting-tune. Do not edit by hand.\n"
             "#\n"
             "# FIRST BOOT MODE. The kernel is not tuned yet:\n"
-            f"#   1G hugepages reserved: {p['hugepages_reserved']}\n"
+            f"#   {p['hugepage_name']} hugepages reserved: "
+            f"{p['hugepages_reserved']} GB worth\n"
             f"#   isolated CPUs: {fmt_list(p['isolated_active']) or '(none)'}\n"
             "#\n"
             "# Conservative configuration, no pinning and no hugepages: it runs\n"
@@ -470,7 +532,7 @@ def render_vpp(p):
     # dies with SIGSEGV - which is what a box did after its RAM was reduced
     # between one boot and the next. Reserved pages are ground truth; the
     # request is only an intention.
-    pool_gb = p["hugepages_reserved"] or p["hugepages_1g"]
+    pool_gb = p["hugepages_reserved"] or p["hugepages_gb"]
     heap_gb = max(1, min(2, pool_gb - max(1, (len(p["workers"]) + 3) // 4)))
 
     nq = max(1, len(p["workers"]))
@@ -550,7 +612,7 @@ def main():
     print(f"# operating system and VPP main: {fmt_list(p['os_cpus'])}")
     print(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
     print(f"# isolated: {fmt_list(p['isolated']) or '(none)'}")
-    print(f"# 1G hugepages: {p['hugepages_1g']} requested "
+    print(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
           f"(sized for {p['subscribers']} subscribers), "
           f"{p['hugepages_reserved']} reserved right now")
     if p["hugepages_capped"]:
@@ -559,11 +621,11 @@ def main():
         print(f"# WARNING: {p['hugepages_wanted']} GB of hugepages were needed "
               f"for {p['subscribers']} subscribers, but this machine has "
               f"{p['total_gb']} GB of RAM.")
-        if p["hugepages_1g"] == 0:
+        if p["hugepages_gb"] == 0:
             print("#          Hugepages disabled: the box stays on the "
                   "conservative profile, where it runs but does not perform.")
         else:
-            print(f"#          Capped at {p['hugepages_1g']} GB. Expect fewer "
+            print(f"#          Capped at {p['hugepages_gb']} GB. Expect fewer "
                   "subscribers than configured, or add RAM.")
     # The statistics segment, said out loud precisely because it is the one
     # memory resource above that is NOT sized here - and the only one with a
