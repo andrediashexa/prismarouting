@@ -187,7 +187,54 @@ version has a chance of seeing it.
   finished box over an `/etc/ssh` with no host key in it, and `sshd` is the
   only way back to a racked one. The function now looks for a key afterwards,
   and the test drives a `ssh-keygen` that succeeds and writes nothing.
+* **The mirror under `wiki/` stood 28 pages ahead of the wiki operators read,
+  and the documented way to publish them did not work.** Measured with
+  `git diff --name-status` between the last commit that wrote `wiki/.pulled`
+  (d53b44e, 2026-09-09) and v0.74.0: 27 pages corrected here and still showing
+  the old text, plus one page written here that the wiki does not have at all.
+  One of the 27 is the page that told an operator a refused `commit` applies
+  nothing, which stopped being true when the FRR read-back check became a
+  refusal that leaves the box half-configured.
 
+  Three things stopped it being publishable. `tools/wiki-push.sh` took a
+  document id that lived nowhere in the repository, so publishing 28 pages
+  meant finding 28 ids in a web interface first. `tools/wiki-pull.sh` deletes
+  `wiki/` and rewrites it from the live wiki, so the published order - pull
+  first, then push - would have destroyed all 28 before one went out. And the
+  pull command written in `CONTRIBUTING.md`, `docs/wiki-audit.md` and
+  `wiki/README.md` set `WIKI_HOST`, which is read by nothing in this tree:
+  `grep -rn WIKI_HOST tools/ src/ appliance/` returns no line, and the script
+  exits on the missing `WIKI_TOKEN` every time.
+
+  Now: the pull writes `wiki/.ids`, the document id beside the path the same
+  line decides, so `sh tools/wiki-push.sh <file>` publishes a page on its own.
+  A file with no entry is refused rather than aimed at a guessed document -
+  `documents.update` cannot create one. The pull refuses while unpublished
+  drafts are outstanding, naming them, and `WIKI_PULL_DISCARD=1` is how you say
+  you meant it. The three documents say push first, then pull.
+
+- **Nothing could answer "what is drafted here and not published yet".** Added
+  `tools/wiki-status.sh`. The holder is the history and not a second file that
+  could disagree with it: the last commit touching `wiki/.pulled` is the last
+  moment the mirror and the wiki were the same text, so every page changed
+  after it is unpublished. No page content is parsed and no message is matched.
+  Added and modified pages are reported apart, because a page the wiki has
+  never seen needs creating there first and cannot be pushed at all.
+
+  The 28 pages themselves are still unpublished. Publishing needs `WIKI_TOKEN`,
+  which no session in this repository has; the wiki answers
+  `{"ok":false,"error":"authentication_required"}` to an unauthenticated read.
+
+  Those two fixes then deadlocked each other, which is the state somebody
+  arriving with the token is actually in: the push needs `wiki/.ids`, only the
+  pull writes it, and the pull refuses while the drafts are outstanding. The
+  only ways out were the 28 ids by hand that the index removed, or throwing the
+  work away. `WIKI_IDS_ONLY=1 sh tools/wiki-pull.sh` fetches the index alone -
+  same walk and the same line deciding a page's path and its id together, so it
+  cannot describe a layout the pull would not produce - and writes nothing
+  else: no page, no `.pulled`, no README stamp, because none of those is true
+  of a mirror it did not refresh. The refusal names it, since a refusal with no
+  way past it is a script somebody edits out.
 
 ## 0.74.0 - the installed box can be reached, and one card is enough
 

@@ -34,6 +34,48 @@ URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
 }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+
+# This script DELETES wiki/ and rewrites it from the live wiki. Anything
+# corrected here and not yet published is gone from the tree the moment it
+# runs, and #277 is what that costs: 28 pages were corrected here over five
+# days, one of them saying what state a box is left in by a refused commit,
+# and the published advice to "pull first, then push" would have thrown all 28
+# away before a single one went out.
+#
+# There is no need to pull first. tools/wiki-push.sh reads the live document
+# before it writes and refuses if somebody edited it after wiki/.pulled - the
+# protection is per document and it does not depend on this having just run.
+# So the order is push, then pull.
+
+# rc is captured off the assignment itself. Inside `if ! VAR=$(cmd)` the shell
+# has already replaced $? with the status of the negation, so the three cases
+# below would all read 0.
+rc=0
+DRAFTS=$(sh "$REPO/tools/wiki-status.sh" 2>&1) || rc=$?
+if [ "$rc" -ne 0 ] && [ "${WIKI_IDS_ONLY:-0}" != "1" ]; then
+  case $rc in
+    1)
+      echo "$DRAFTS" >&2
+      echo >&2
+      echo "error: refusing to pull. The lines above are edits that exist" >&2
+      echo "       ONLY here, and this rewrites wiki/ from the live wiki." >&2
+      echo "       Publish them first. If the push cannot find their" >&2
+      echo "       document ids, WIKI_IDS_ONLY=1 sh tools/wiki-pull.sh" >&2
+      echo "       fetches only wiki/.ids and touches no page." >&2
+      echo "       WIKI_PULL_DISCARD=1 throws the edits away on purpose." >&2
+      [ "${WIKI_PULL_DISCARD:-0}" = "1" ] || exit 1
+      echo "==> WIKI_PULL_DISCARD=1: discarding the edits listed above" >&2
+      ;;
+    *)
+      # Not a git checkout, or a checkout that never recorded a pull. The
+      # question cannot be answered here, and answering it wrongly either way
+      # is worse than saying so.
+      echo "$DRAFTS" >&2
+      echo "warning: could not tell whether wiki/ holds unpublished edits." >&2
+      ;;
+  esac
+fi
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -87,11 +129,25 @@ PYEOF
 
 [ -s "$TMP/docs.json" ] || { echo "error: nothing came back" >&2; exit 1; }
 
-python3 - "$TMP/docs.json" "$REPO" <<'PYEOF'
+python3 - "$TMP/docs.json" "$REPO" "${WIKI_IDS_ONLY:-0}" <<'PYEOF'
 import json, os, re, shutil, sys, unicodedata
 from datetime import datetime, timezone
 
 src, repo = sys.argv[1], sys.argv[2]
+# INDEX ONLY: learn which document each page is, and touch nothing else.
+#
+# Without it the two halves of #277 deadlock. The push needs wiki/.ids; only
+# this script writes it; and this script refuses to run while there are
+# unpublished drafts, because it deletes wiki/ - which is exactly the state
+# somebody arriving with the token is in. The only way through was to pass 28
+# ids by hand, which is what the index was added to stop.
+#
+# Same walk, same slug(), same line deciding the path and the id together, so
+# the index cannot describe a layout the pull would not produce. What is
+# skipped is every write except the index: no rmtree, no page, no .pulled, and
+# no README stamp, because none of those is true of a mirror this did not
+# refresh.
+ids_only = sys.argv[3] == "1"
 docs = json.load(open(src))
 # Outline ships these; they are not ours and mirroring them would suggest they
 # are.
@@ -108,12 +164,20 @@ for d in docs:
 
 root = os.path.join(repo, "wiki")
 keep = os.path.join(root, "README.md")
-saved = open(keep).read() if os.path.exists(keep) else None
-if os.path.isdir(root):
-    shutil.rmtree(root)
-os.makedirs(root)
+saved = None
+if not ids_only:
+    saved = open(keep).read() if os.path.exists(keep) else None
+    if os.path.isdir(root):
+        shutil.rmtree(root)
+    os.makedirs(root)
 
 n = [0]
+# Which document each file came from. Written here because this is the only
+# place that knows: the id and the path are decided by the same line, so they
+# cannot drift apart. It is read by tools/wiki-push.sh, which until #277 made
+# the caller supply the id by hand - and a mirror 28 pages behind is 28 ids to
+# find in a web interface before a single correction reaches an operator.
+ids = []
 def walk(parent, path):
     for d in sorted(by_parent.get(parent, []), key=lambda x: x["title"]):
         if d["title"] in DEFAULTS:
@@ -123,11 +187,15 @@ def walk(parent, path):
         name = slug(d["title"])
         if kids:
             sub = os.path.join(path, name)
-            os.makedirs(sub, exist_ok=True)
+            if not ids_only:
+                os.makedirs(sub, exist_ok=True)
             f = os.path.join(sub, "index.md")
         else:
             f = os.path.join(path, name + ".md")
-        open(f, "w").write("# %s\n\n%s\n" % (d["title"], (d["text"] or "").strip()))
+        if not ids_only:
+            open(f, "w").write("# %s\n\n%s\n"
+                               % (d["title"], (d["text"] or "").strip()))
+        ids.append((os.path.relpath(f, root), d["id"]))
         n[0] += 1
         if kids:
             walk(d["id"], sub)
@@ -143,8 +211,20 @@ if saved:
 # and editing from a snapshot of unknown age is how somebody else's work gets
 # overwritten.
 newest = max((d.get("updatedAt") or "") for d in docs) if docs else ""
-open(os.path.join(root, ".pulled"), "w").write(newest + "\n")
-print("%d pages, newest change %s" % (n[0], newest))
+if not ids_only:
+    open(os.path.join(root, ".pulled"), "w").write(newest + "\n")
+# Sorted by path, one page per line, so a diff of this file reads as pages
+# appearing and disappearing rather than as a reordering. Neither field can
+# contain a space: an Outline id is a uuid and a path is built out of slug()
+# above, which keeps nothing but letters, digits and hyphens.
+with open(os.path.join(root, ".ids"), "w") as fh:
+    for rel, doc_id in sorted(ids):
+        fh.write("%s %s\n" % (rel, doc_id))
+if ids_only:
+    print("%d document id(s) written to wiki/.ids; no page was touched"
+          % len(ids))
+else:
+    print("%d pages, newest change %s" % (n[0], newest))
 PYEOF
 
 echo "==> done. 'git diff wiki/' shows what changed since the last pull."

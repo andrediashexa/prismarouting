@@ -109,14 +109,20 @@ it is *no*, and why.
 
 * `PADRAO-DOCUMENTACAO.md` governs how a wiki page is written. Read it before
   writing one; it is not the same standard as this file.
-* `wiki/` is a read-only mirror of the live wiki, refreshed with
-  `WIKI_HOST=<host> sh tools/wiki-pull.sh`. Read it to see what is already
-  documented. **Editing it changes nothing** — the next pull overwrites it, and
-  Outline is where a page is actually edited.
-* **Pull immediately before editing, and publish with
-  `tools/wiki-push.sh`**, which refuses to overwrite a page that changed after
-  the pull. Other people write the wiki at the same time: a page built from a
-  snapshot of unknown age discards whoever made the change in between.
+* `wiki/` is a mirror of the live wiki, refreshed with
+  `WIKI_TOKEN=... sh tools/wiki-pull.sh`. Read it to see what is already
+  documented. An edit drafted there **reaches nobody until it is published** -
+  `sh tools/wiki-status.sh` lists what is drafted and still unpublished, and
+  `sh tools/wiki-push.sh <file>` publishes one page.
+* **Publish before you pull, never after.** `tools/wiki-push.sh` refuses to
+  overwrite a page that changed after the last pull, and that guard is per
+  document: it does not need a fresh pull to work. Other people write the wiki
+  at the same time, and a page built from a snapshot of unknown age discards
+  whoever made the change in between.
+* **Pulling first destroys unpublished work.** The pull deletes `wiki/` and
+  rewrites it from the live wiki. The mirror once stood 28 pages ahead for five
+  days, and the advice to pull first would have lost all 28 (#277). The pull
+  now refuses while drafts are outstanding.
 
   That guard exists because of a near miss. Four pages were updated, the mirror
   was never refreshed, and a later edit was built from the stale copy — while
