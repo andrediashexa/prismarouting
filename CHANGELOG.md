@@ -60,6 +60,34 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+
+### Fixed
+
+* **Two places said the reserve block "has to land" on the subscriber's own
+  public address, and the code says the opposite in as many words**
+  ([#226](https://github.com/andrediashexa/hexarouting/issues/226)).
+  `bpa_dyn.c`, where the choice is actually made, says *"A PREFERENCE and not a
+  rule"* and gives the reason: the reserve is sharded by index, so the blocks
+  on a subscriber's own address are not all in its worker's slice and the ones
+  that are may be held. Refusing the extension rather than taking a block
+  elsewhere would turn a property about layout into a customer losing traffic.
+
+  `bpa_pool.h` and `docs/architecture.md` both stated it as a requirement. That
+  is a guarantee the product does not make, in the one place a reader looks to
+  find out whether it does - and RFC 4787 REQ-2 is exactly the kind of claim
+  somebody quotes in a tender.
+
+  `docs/architecture.md` states the same property correctly a thousand lines
+  further down, and the roadmap and the operator wiki both had it right, which
+  is what made the two wrong copies findable at all.
+
+  No mechanical check is added. Comparing a sentence against the code that
+  implements it was measured and rejected three times this cycle and is
+  recorded in `test/test_doc_copies.py`: line-split literals give false
+  negatives and run-time composition gives false positives, and a check that
+  goes red on work that is right is the worst kind.
+
+
 ## 0.70.0 — a virtio NIC could never be the dataplane card, and a self-test that passed a box with none
 
 [#8](https://github.com/andrediashexa/hexarouting/issues/8),
