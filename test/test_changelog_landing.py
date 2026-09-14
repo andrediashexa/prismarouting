@@ -155,19 +155,44 @@ else:
         m = re.match(r"Merge #(\d+)\b", line.strip())
         if m:
             merged.add(m.group(1))
-    # The section as it stands, which is where an entry has to be.
-    m = re.search(r"^## Unreleased\n", TEXT, re.M)
-    end = re.search(r"^## \S", TEXT[m.end():], re.M) if m else None
-    unrel = TEXT[m.end():m.end() + end.start()] if m and end else ""
-    written = set(re.findall(r"/hexarouting/issues/(\d+)\)", unrel))
+    # Where an entry is allowed to be, and it is not only `## Unreleased`.
+    #
+    # A release is cut in two steps: the heading is renamed to the new version
+    # and the tag is created after it. In between, `git describe` still
+    # answers the PREVIOUS tag, so every merge since it is legitimately filed
+    # under the new version's heading and `## Unreleased` is correctly empty.
+    # Reading only `## Unreleased` reported all twelve of 0.72.0's issues as
+    # unwritten, at the one moment somebody is looking at this file hardest.
+    #
+    # So: `## Unreleased`, plus the section named by VERSION when that is not
+    # the tag `git describe` answers. Both, not either, because a branch may
+    # have merged after the rename and its entry belongs in the open section.
+    # Anything older than those two is a released section, and an entry
+    # landing there is what #284 is about and what the check above catches.
+    def section(head):
+        mm = re.search(r"^" + re.escape(head) + r"\s*$", TEXT, re.M)
+        if not mm:
+            return ""
+        nxt = re.search(r"^## \S", TEXT[mm.end():], re.M)
+        return TEXT[mm.end():mm.end() + nxt.start()] if nxt else TEXT[mm.end():]
+
+    open_text = section("## Unreleased")
+    version = open(os.path.join(REPO, "VERSION"), encoding="utf-8").read().strip()
+    if last_tag.strip().lstrip("v") != version:
+        # The heading carries a title after the number, so it is matched by
+        # its opening rather than whole.
+        mm = re.search(r"^## " + re.escape(version) + r"\b.*$", TEXT, re.M)
+        if mm:
+            open_text += section(mm.group(0))
+    written = set(re.findall(r"/hexarouting/issues/(\d+)\)", open_text))
     missing = sorted(merged - written, key=int)
     if missing:
         for n in missing:
             check(False,
-                  f"a merge since {last_tag.strip()} closes #{n} and nothing "
-                  f"under '## Unreleased' mentions it. The release note is "
-                  f"written from that section, so #{n} is a change the reader "
-                  f"is not told about")
+                  f"a merge since {last_tag.strip()} closes #{n} and no "
+                  f"entry above the last released section mentions it. The "
+                  f"release note is written from there, so #{n} is a change "
+                  f"the reader is not told about")
     elif merged:
         print(f"  [ ok ] {len(merged)} issue(s) closed by merges since "
               f"{last_tag.strip()}, all of them written down")

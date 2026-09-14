@@ -75,6 +75,21 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+## 0.72.0 - the box said it was ready, and could not forward a packet
+
+[#282](https://github.com/andrediashexa/hexarouting/issues/282),
+[#291](https://github.com/andrediashexa/hexarouting/issues/291),
+[#292](https://github.com/andrediashexa/hexarouting/issues/292),
+[#293](https://github.com/andrediashexa/hexarouting/issues/293),
+[#294](https://github.com/andrediashexa/hexarouting/issues/294),
+[#295](https://github.com/andrediashexa/hexarouting/issues/295) (in part),
+[#296](https://github.com/andrediashexa/hexarouting/issues/296),
+[#297](https://github.com/andrediashexa/hexarouting/issues/297),
+[#298](https://github.com/andrediashexa/hexarouting/issues/298),
+[#299](https://github.com/andrediashexa/hexarouting/issues/299),
+[#300](https://github.com/andrediashexa/hexarouting/issues/300),
+[#301](https://github.com/andrediashexa/hexarouting/issues/301).
+
 ### Changed
 
 * **A disconnected IPFIX collector was reported as connected**
@@ -337,6 +352,18 @@ version has a chance of seeing it.
   rewrote that header, which is exactly the day a quotation rots.
 
 ### Added
+
+* **The merged-issue check understands a release being cut.** It compared the
+  merges since the last tag against `## Unreleased` alone, and a release is cut
+  in two steps: the heading is renamed to the new version, and the tag is
+  created after it. In between, `git describe` still answers the previous tag,
+  every merge since it is legitimately under the new version's heading, and
+  `## Unreleased` is correctly empty. It reported all twelve of this release's
+  issues as unwritten, at the one moment somebody is reading this file hardest.
+
+  It reads `## Unreleased` and the section named by `VERSION` when that is not
+  the tag `git describe` answers. Both and not either: a branch may merge after
+  the rename, and its entry belongs in the open section.
 
 * **Every change a commit can make now has to need a capability.**
   `cap_needed()` answers `CAP_ALL` for anything in `DELTA_ADMIN`, `CAP_CGNAT`
