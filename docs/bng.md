@@ -483,7 +483,7 @@ It is a different product that happens to share a dataplane.
 | A control-plane supervisor that owns `accel-ppp`'s lifecycle, its configuration file and its failures, inside `hexash`'s commit/rollback/audit model | `accel-ppp` brings a second configuration file that `hexash` does not model at all |
 | Product code that enables per-interface features on an interface that appears at runtime, and removes them when it goes | Does not exist anywhere in this repository today (3.4) |
 | A fix for `bpa_auto_mss_update()`'s walk over every interface on every attach | O(N²) attach, measured (3.4). Worth doing regardless of any BNG |
-| A `statseg` stanza in `hexarouting-tune`, sized against a subscriber count | Without it the box aborts at ~7,500 sessions (2.1) |
+| A statistics segment sized for one interface per subscriber | Without it the box aborts at ~7,500 sessions (2.1). [#288](https://github.com/andrediashexa/hexarouting/issues/288) settled where that number comes from and it is **not** the tuner: nothing the tuner reads predicts an interface count, so the segment is set by the operator in `/etc/hexarouting/vpp-base.conf` and the boot self-test reports how much of it is spent. A BNG would have to set it, and would have to know its own subscriber ceiling to do so |
 | A RADIUS client with accounting and CoA/DM, and an append-only retained store for what it records, to `logging.md`'s standard | This is [#21](https://github.com/andrediashexa/hexarouting/issues/21)'s work plus a retention obligation |
 | Per-subscriber shaping | VPP 26.06 has no shaper (2.2). This is not integration work; it is a queueing discipline that is not there |
 | A VTY model for operational, non-configuration state | `show interfaces` returning 40,007 lines is the symptom (2.1) |

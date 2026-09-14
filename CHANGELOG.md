@@ -62,6 +62,62 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The boot self-test reports the statistics segment, the one resource with
+  an abort behind it**
+  ([#288](https://github.com/andrediashexa/hexarouting/issues/288)).
+  VPP exports its counters through a segment of fixed size. `hexarouting-tune`
+  writes no `statseg` stanza, so a shipped box runs on VPP's built-in 32 MB,
+  and each interface costs about 2.9 kB of it. Filling it is **not** a refused
+  interface: `vnet_register_interface` reaches `os_panic`, the process takes
+  `SIGABRT`, and the whole dataplane goes without a sentence in front of it.
+  Measured while sizing a BNG: a box built by this product's own tuner aborted
+  between 7,000 and 8,000 interfaces, twice, at the same step.
+
+  ```
+    [ ok ] statistics segment: 4.20M of 31.99M used, 3 interface(s)
+          size: VPP's own default, which this product does not set
+  ```
+
+  Half the segment is a warning and three quarters is a failed check naming
+  the signal and the stanza that raises it. Three quarters rather than nine
+  tenths because the counter directory is one contiguous block that is copied
+  to grow, so a growth has to hold two copies and the last part of the segment
+  cannot be spent. The size is read from the **dataplane's own heap** and its
+  provenance from `startup.conf`, so a box somebody has already sized is not
+  reported as running on a default - and the shipped base file's *comment*
+  about `statseg` does not count as somebody having sized it.
+
+  **The tuner still does not size the segment, and now says so.** Every other
+  figure it writes comes from ground truth or from a number the operator set:
+  hugepages from `HEXA_SUBSCRIBERS` then from the RAM the machine has,
+  `buffers-per-numa` from the worker count, `main-heap-size` from the pages the
+  kernel actually reserved. Nothing it reads predicts an interface **count**,
+  and a CGNAT subscriber is not an interface - 200,000 of them share a handful
+  of ports, so sizing from `HEXA_SUBSCRIBERS` would reserve roughly 540 MB for
+  interfaces that never appear on a box whose RAM floor is 4 GB. A constant
+  would be a number nobody can justify. So the number stays the operator's, in
+  `/etc/hexarouting/vpp-base.conf`, which the tuner concatenates ahead of what
+  it generates:
+
+  ```
+  # statistics segment: NOT sized here, so VPP's built-in 32 MB applies.
+  #          Measured: a box on that default aborted between 7,000 and 8,000
+  #          interfaces. It is per INTERFACE, not per subscriber, which is why
+  #          nothing here sizes it. To raise it, put a statseg stanza in the
+  #          base file (/etc/hexarouting/vpp-base.conf):
+  #          it is concatenated ahead of these stanzas.
+  ```
+
+  `appliance/test_tune.py` asserts the tuner generates **no** `statseg` stanza
+  in either the tuned or the first-boot configuration, so an operator's own is
+  never overridden on the next boot. `docs/appliance.md` carries what one
+  interface costs, read from VPP's sources: 17 directory entries of 144 bytes
+  plus 200 bytes per thread, which predicts the 2.9 kB measured at 40,000
+  interfaces. It also records what could **not** be determined without running
+  VPP and is claimed nowhere: the interface count a given segment size
+  supports, because the contiguous directory's growth depends on whether the
+  allocator can extend it in place.
+
 * **`show cgnat ha`: whether two boxes would map subscribers the same way**
   ([#8](https://github.com/andrediashexa/hexarouting/issues/8)).
   In deterministic mode a subscriber's public address and port block are a

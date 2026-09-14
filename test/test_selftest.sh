@@ -130,6 +130,12 @@ case "$*" in
   # the CGNAT plugin, which is a box that forwards nothing and fails every
   # CGNAT command while answering "show version" perfectly well.
   "show plugins")     cat "$FAKE/show_plugins" 2>/dev/null ;;
+  # The statistics segment's own heap. VPP answers this with a named counter
+  # and `verbose`, and how full it is is the only thing between the box and an
+  # os_panic, so it is the variable under test rather than a fixture the
+  # harness keeps constant. Absent from $FAKE it answers nothing, which is a
+  # dataplane that did not report it - a state of its own.
+  "show statistics segment"*) cat "$FAKE/statseg" 2>/dev/null ;;
   # What the box ended up carrying. The last line of the report is the one
   # an operator looks at to see whether the thing they configured is
   # there at all.
@@ -641,6 +647,133 @@ else
   ok "and neither warned nor failed over it"
 fi
 rm -f "$FAKE/vppctl_ok" "$FAKE/show_interface" "$FAKE/show_lcp"
+
+echo "=== the statistics segment, which the dataplane ABORTS on (#288) ==="
+# The one resource the tuner does not size, and the only one with a hard abort
+# behind it: a full statistics segment is not a refused interface, it is
+# os_panic and SIGABRT taking the whole dataplane. A shipped box runs on VPP's
+# built-in 32 MB and was measured aborting between 7,000 and 8,000 interfaces.
+#
+# Nothing on an installed box ever looked at it, so the operator's first
+# knowledge of the limit was the box being gone. These cases are the three
+# distances from that wall plus the two ways the reading itself can be wrong,
+# and every one of them is arranged in $FAKE: the machine running this suite
+# cannot be made to fill a real statistics segment without creating several
+# thousand interfaces on it.
+mkcpus "" "0-3" "" 0
+touch "$FAKE/vppctl_ok"
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+local0                            0     down          0/0/0/0
+GigabitEthernet0/8/0              1      up          9000/0/0/0
+tap0                              2      up          9000/0/0/0
+IFACE
+: > "$FAKE/show_lcp"
+
+echo "--- a box with room, on a segment nobody here chose ---"
+# The shipped base file explains in a COMMENT where a statseg stanza goes, and
+# that comment is copied into startup.conf verbatim. A box carrying only the
+# comment has not been sized by anybody, and reading the word rather than the
+# stanza would report every shipped box as one somebody had chosen a number for.
+printf '# statseg{} DOES belong here, and this is the only place it can go.\n' \
+  >> "$FAKE/root/etc/vpp/startup.conf"
+cat > "$FAKE/statseg" <<'SEG'
+Entry: /sys/vector_rate (type 2)
+base 0x7fb3c0000000, size 32.00M, locked, name 'stat segment'
+  total: 31.99M, used: 4.20M, free: 27.79M, trimmable: 27.79M
+SEG
+run
+if said_across '\[ ok \] statistics segment: 4.20M of 31.99M used, 3 interface'; then
+  ok "it reports what the dataplane holds, and over how many interfaces"
+else
+  bad "the healthy segment was not reported: $(printf '%s\n' "$OUTPUT" | grep -i statist || echo '<nothing about it>')"
+fi
+# The point of the issue in one line: the number is VPP's, not this product's.
+if said_across "size: VPP's own default, which this product does not set"; then
+  ok "and says the size is VPP's own, which is the thing nobody was told"
+else
+  bad "it did not say where the size came from"
+fi
+echo "--- the same box, sized by somebody, on the same numbers ---"
+# Proves the provenance line is read off the box and is not a constant: only
+# the startup.conf changed.
+printf 'statseg {\n  size 1G\n}\n' >> "$FAKE/root/etc/vpp/startup.conf"
+run
+if said_across 'size: set in /etc/hexarouting/vpp-base.conf'; then
+  ok "a box carrying a statseg stanza is not reported as running on the default"
+else
+  bad "the provenance did not follow the box: $(printf '%s\n' "$OUTPUT" | grep -i 'size:' || echo '<nothing>')"
+fi
+mkcpus "" "0-3" "" 0
+
+echo "--- half spent, which is the last moment a warning is any use ---"
+cat > "$FAKE/statseg" <<'SEG'
+Entry: /sys/vector_rate (type 2)
+  total: 31.99M, used: 19.20M, free: 12.79M, trimmable: 12.79M
+SEG
+run
+if said_across '\[warn\] statistics segment 60% used: 19.20M of 31.99M'; then
+  ok "it is a warning with the fraction spent, not a green line"
+else
+  bad "a segment 60% spent was not warned about: $(printf '%s\n' "$OUTPUT" | grep -i statist || echo '<nothing about it>')"
+fi
+if said_across 'ABORTS when this fills, it does not refuse the next interface'; then
+  ok "and says the failure is an abort and not a refusal"
+else
+  bad "the warning did not say what happens when it fills"
+fi
+if said_across "size 256M .* stanza in /etc/hexarouting/vpp-base.conf"; then
+  ok "and names the stanza and the file it goes in"
+else
+  bad "the warning did not say how to raise it"
+fi
+
+echo "--- three quarters spent, which is a box about to lose its dataplane ---"
+cat > "$FAKE/statseg" <<'SEG'
+Entry: /sys/vector_rate (type 2)
+  total: 31.99M, used: 28.80M, free: 3.19M, trimmable: 3.19M
+SEG
+run
+if said_across '\[FAIL\] statistics segment 90% used: 28.80M of 31.99M'; then
+  ok "a nearly full segment is a FAILED check"
+else
+  bad "a segment 90% spent was not a failed check: $(printf '%s\n' "$OUTPUT" | grep -i statist || echo '<nothing about it>')"
+fi
+if said_across 'os_panic, SIGABRT, the whole dataplane'; then
+  ok "and it names the signal the operator will otherwise find on their own"
+else
+  bad "it did not name what the box does when the segment fills"
+fi
+# The measured reason the last quarter is not spendable, and the reason 75%
+# rather than 95% is the line: the directory is one contiguous block that is
+# copied to grow, so a growth holds the old and the new at once.
+if said_across 'one block that is COPIED to grow'; then
+  ok "and why the remainder is not usable either"
+else
+  bad "it did not say why the free space is not headroom"
+fi
+
+echo "--- a dataplane that does not report it at all ---"
+# Unknown is a third state. Reading it as fine is how a box gets a green line
+# it has not earned.
+rm -f "$FAKE/statseg"
+run
+if said_across "did not report its statistics segment"; then
+  ok "it says the reading is missing"
+else
+  bad "a box that reported nothing produced no line: $(printf '%s\n' "$OUTPUT" | grep -i statist || echo '<nothing about it>')"
+fi
+if said_across "unknown - which is not the same as being far from it"; then
+  ok "and does not read the silence as room"
+else
+  bad "it did not distinguish unknown from safe"
+fi
+if said '\[ ok \] statistics segment'; then
+  bad "it reported a segment it never read"
+else
+  ok "and no green line was printed for a segment nobody read"
+fi
+rm -f "$FAKE/vppctl_ok" "$FAKE/show_interface" "$FAKE/show_lcp" "$FAKE/statseg"
 
 echo "=== the routing daemons, which is the list the VTY's offers rest on ==="
 # #187: the VTY accepts `router ospf6`, and ospf6d was in no list the product

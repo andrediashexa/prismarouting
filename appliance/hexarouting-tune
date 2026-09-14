@@ -363,6 +363,15 @@ LOW_LATENCY_CMDLINE = ("intel_idle.max_cstate=0 processor.max_cstate=1 "
                        "transparent_hugepage=never")
 
 
+# VPP's own STAT_SEGMENT_DEFAULT_SIZE, in MB, and the only figure in this file
+# that this product neither chooses nor writes.
+#
+# It is here so the report below can name it. Kept as a constant rather than
+# read from the running dataplane because the tuner runs before VPP does, and
+# the image pins the VPP version on purpose.
+STATSEG_DEFAULT_MB = 32
+
+
 def render_grub(p):
     if not p["isolated"]:
         return "# no core to isolate: machine too small for dedicated workers"
@@ -556,6 +565,36 @@ def main():
         else:
             print(f"#          Capped at {p['hugepages_1g']} GB. Expect fewer "
                   "subscribers than configured, or add RAM.")
+    # The statistics segment, said out loud precisely because it is the one
+    # memory resource above that is NOT sized here - and the only one with a
+    # hard abort behind it. VPP exports every counter through a segment of
+    # fixed size; each dataplane interface adds entries to it; filling it
+    # reaches os_panic and SIGABRT rather than refusing the interface. So the
+    # box loses its whole dataplane and says nothing about why.
+    #
+    # It is not sized because nothing this program reads predicts how many
+    # INTERFACES a box will carry. Every other figure above comes either from
+    # ground truth - the topology, the RAM, the pages the kernel really
+    # reserved - or from a subscriber target the operator set. A CGNAT
+    # subscriber is not an interface: HEXA_SUBSCRIBERS=200000 describes
+    # 200,000 translations sharing a handful of ports, so sizing the segment
+    # from it would reserve hundreds of MB, on a box whose RAM floor is 4 GB,
+    # for interfaces that never appear. A constant instead would be a number
+    # nobody can justify, which is what main-heap-size stopped being when it
+    # started reading the pages the kernel had actually reserved.
+    #
+    # What is left is to say where the box stands, here and at every boot in
+    # the self-test, so the limit is met as a sentence rather than as a signal.
+    print(f"# statistics segment: NOT sized here, so VPP's built-in "
+          f"{STATSEG_DEFAULT_MB} MB applies.")
+    print("#          Measured: a box on that default aborted between 7,000 "
+          "and 8,000")
+    print("#          interfaces. It is per INTERFACE, not per subscriber, "
+          "which is why")
+    print("#          nothing here sizes it. To raise it, put a statseg "
+          "stanza in the")
+    print(f"#          base file ({a.vpp_base}):")
+    print("#          it is concatenated ahead of these stanzas.")
     print(f"# dataplane NIC PCI address: {p['nic_pci'] or '(not a PCI device)'}")
     print(f"# low latency (C-states off, THP off): {'yes' if p['low_latency'] else 'no'}")
     print(f"# state: {'kernel tuned, full configuration' if p['tuned_now'] else 'FIRST BOOT, conservative configuration until reboot'}")
