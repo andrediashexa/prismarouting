@@ -6,7 +6,7 @@ The development machine has neither SMT nor multiple NUMA nodes, which is
 exactly where the tuning decisions matter. So the topologies are built on
 disk and checked.
 """
-import os, shutil, subprocess, sys, tempfile
+import os, re, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TUNE = os.path.join(HERE, "hexarouting-tune")
@@ -802,6 +802,46 @@ check("FIRST BOOT" in _o0,
       f"a box with no hugepages reserved and nothing isolated left the "
       f"conservative profile: {[l for l in _o0.splitlines() if 'state:' in l]}")
 print("  2M where 1G cannot exist, 1G where it can, conservative where neither")
+
+print("\n=== the report docs/appliance.md quotes is the report the box prints ===")
+# THE DEFECT (#326). The page quoted the tuner as printing
+# `1G hugepages: 6 requested`. It prints `6 GB requested`, and on a machine
+# with no 1 GB pool the line begins `2M hugepages:`. The commit that rewrote
+# that line landed three hours after the one that quoted it correctly and did
+# not touch the page.
+#
+# Nothing could compare the two: the report was printed inline in main(), so
+# there was no way to render it without running the whole tuner. It is
+# render_report() now, beside render_grub(), render_vpp() and
+# render_irqbalance(), and this drives the tuner for real and reads its output.
+#
+# THE FIXED TEXT, not the numbers. The page's box is not this fixture's box, so
+# the figures differ and should. What must agree is the wording between them -
+# that is what a reader compares their own console against, and that is what
+# changed underneath the page.
+_rep = tempfile.mkdtemp()
+build(_rep, 1, 8, 1, nic_node=0, hugepages_gb=2, isolated="1-7",
+      nic_pci="0000:3b:00.0", ram_gb=64)
+_repout = run(_rep, "--interface", "eth0", "--subscribers", "200000")
+_printed = [l for l in _repout.splitlines() if "hugepages:" in l]
+_doc = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "docs", "appliance.md"), encoding="utf-8").read()
+_quoted = [l.strip() for l in _doc.splitlines() if "hugepages:" in l
+           and l.lstrip().startswith("#")]
+check(bool(_printed), f"the tuner printed no hugepages line: {_repout[:200]!r}")
+check(bool(_quoted), "docs/appliance.md quotes no hugepages line any more, so "
+                     "this check is comparing nothing")
+if _printed and _quoted:
+    # The wording either side of the numbers.
+    _fixed = re.sub(r"\d+", "", _printed[0])
+    _badly = [q for q in _quoted if re.sub(r"\d+", "", q) != _fixed]
+    check(not _badly,
+          f"docs/appliance.md quotes the tuner as printing\n    {_badly}\n"
+          f"and the tuner prints\n    ['{_printed[0]}']\n"
+          f"(numbers ignored: the page's box is not this fixture's box, but "
+          f"the wording is what a reader compares their console against)")
+    if not _badly:
+        print(f"  the page and the box agree on: {_fixed.strip()}")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
