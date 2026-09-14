@@ -76,6 +76,32 @@ version has a chance of seeing it.
 ## Unreleased
 
 ### Fixed
+* **The English rule binds every `*.md` and the check read 11 of 54**
+  ([#323](https://github.com/andrediashexa/hexarouting/issues/323)).
+  `CONTRIBUTING.md` rule 1 says documentation MUST be in English and binds it
+  to "every `*.md` added to this repository". `test/test_english_only.py` walks
+  directories, so `CONTRIBUTING.md`, `README.md` and `TESTING.md` - the three
+  documents most likely to be read first - sat outside every one of them.
+
+  And the rule was **broken thirty-five times on purpose** with the exception
+  written down only inside the check: `wiki/` is the operator wiki's mirror,
+  and `PADRAO-DOCUMENTACAO.md` and `PROMPT-DOCUMENTAR-WIKI.md` are the standard
+  and the brief for writing it. A MUST that is broken thirty-five times and
+  says so nowhere teaches a reader that the MUST is decorative. The exception
+  is in `CONTRIBUTING.md` now, where the rule is.
+
+  `CHANGELOG.md` is excused for a different reason and it is worth stating:
+  it **quotes** Portuguese strings the product used to carry, inside sections
+  that have been tagged - and this file's own rule is that a tagged section
+  describes a medium somebody is running and must not be edited. Those
+  quotations cannot be corrected even in principle.
+
+  Two walks became one on the way. The guard that asks whether the check is
+  reading anything did its own walk over the directories alone, so with the
+  root markdown deleted from the real walk it still reported six root files
+  and passed. It counts what the walk returned now.
+
+
 
 * **The unattended-install tables left out the four answers that decide whether
   the box can be reached**
