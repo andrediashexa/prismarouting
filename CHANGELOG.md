@@ -128,6 +128,33 @@ version has a chance of seeing it.
   three readers, and `test/test_selftest.sh` refuses any of the three spelling
   them outside a comment. The gate is first in that list rather than last.
 
+* **And the rest of that path was audited once, by hand**, so that nobody has
+  to wonder how many more needles were waiting. Every literal string the three
+  release-gate files look for in a console: 42, once the regexes and the labs'
+  own probes are set aside. Nine do not appear literally in the product and all
+  nine are accounted for in `tools/selftest-verdict.sh` - three belong to GRUB,
+  `login(1)` and systemd, five are composed at run time, and one is a lab
+  reading back its own configuration. Nothing else had gone stale.
+
+  Recorded and deliberately not automated: nine findings and zero defects is a
+  false rate somebody switches a check off over, and `test/test_doc_copies.py`
+  already records the general version of that check being measured and rejected
+  three times at worse rates.
+
+* **The roadmap tool stopped reporting work that was not outstanding.** Four of
+  its needles read as ordinary English about anything - `what remains`, `what
+  is left`, `is missing`, `not yet` - and each had produced a finding about a
+  sentence that was not a claim about work at all: a rule saying what remains
+  can wait when a release is cut, a box that is not yet able to do its job, and
+  a message that names which half of something is missing. Three false findings
+  against five true ones is a tool somebody stops reading.
+
+  Those four are attributed only within their own clause now. The five that are
+  about work - `still open`, `remains open`, `still needs`, `why it waits`, and
+  a row queued as pending - keep the fallback to the paragraph, because nobody
+  writes those about a box or a message. The cost is a miss, shown rather than
+  asserted: one of the weak four, with the issue number in the sentence before
+  it, is no longer seen.
 ## 0.72.0 - the box said it was ready, and could not forward a packet
 
 [#282](https://github.com/andrediashexa/hexarouting/issues/282),
