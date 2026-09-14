@@ -2833,27 +2833,64 @@ echo "=== the verdict the last line prints, and the lab that reads it ==="
 # By the distinctive half of each sentence, not the whole line: two of the
 # four interpolate a count, and the lab matches a prefix for the same reason.
 ST_SRC=$(cat "$ST")
-LAB=$(cat "$REPO/lab/install-iso.sh" 2>/dev/null || echo "")
+# The lab's own pattern, read out of the lab, and every sentence the self-test
+# can print tested AGAINST it rather than looked for inside it. One pattern
+# legitimately covers two sentences - "HexaRouting ready" matches both the
+# plain verdict and the one with a warning count - so a check that demanded
+# the literal string would report a correct lab as broken. That is the shape
+# this whole run of failures is about, and it happened here too, on the first
+# version of this check.
+LAB_RE=$(sed -n 's/^VERDICT_RE="\(.*\)"$/\1/p' "$REPO/lab/install-iso.sh")
 verdicts_found=0
-for _v in "HexaRouting ready." \
-          "HexaRouting ready, with" \
-          "HexaRouting is installed and healthy, and has" \
-          "check(s) failed. The box is NOT ready."; do
+if [ -z "$LAB_RE" ]; then
+  bad "lab/install-iso.sh has no VERDICT_RE, so nothing there reads a verdict by a rule this can check"
+fi
+# The sentences as the self-test prints them, with the counts filled in: the
+# pattern has to match what reaches a console, not what the source spells.
+for _v in "  HexaRouting ready." \
+          "  HexaRouting ready, with 2 warning(s) above." \
+          "  HexaRouting is installed and healthy, and has no interface to forward on:" \
+          "  3 check(s) failed. The box is NOT ready."; do
   case "$ST_SRC" in
-    *"$_v"*) ;;
+    *"$(printf '%s' "$_v" | sed 's/^  //; s/2 warning(s)/$warns warning(s)/; s/3 check(s)/$fail check(s)/; s/no interface to forward on:/$noforward:/')"*) ;;
     *) bad "appliance/selftest can no longer print '$_v', so the lab reads for a verdict that does not exist"
        continue ;;
   esac
   verdicts_found=$((verdicts_found + 1))
-  case "$LAB" in
-    *"$_v"*) ;;
-    *) bad "appliance/selftest ends with '$_v' and lab/install-iso.sh does not know that sentence: an installed box printing it is a box the gate cannot read" ;;
-  esac
+  if [ -n "$LAB_RE" ] && ! printf '%s\n' "$_v" | grep -qE "$LAB_RE"; then
+    bad "the self-test can end with '$_v' and lab/install-iso.sh's VERDICT_RE does not match it: an installed box printing it is a box the gate reads as never having booted"
+  fi
 done
 if [ "$verdicts_found" -eq 4 ]; then
-  ok "all four verdicts the self-test can end with are read by lab/install-iso.sh"
+  ok "all four verdicts the self-test can end with match lab/install-iso.sh's VERDICT_RE"
 else
   bad "only $verdicts_found of the four verdicts were found in appliance/selftest, so this check is asserting almost nothing"
+fi
+
+# AND IN ONE PLACE IN THAT FILE, which is the half the first version of this
+# check could not see.
+#
+# It asked whether the lab knew each sentence SOMEWHERE, and the lab knew them
+# all - in the ordering assertion, which had just been fixed. Four hundred
+# lines below it a second reader went on grepping for "HexaRouting ready" to
+# decide whether the installed box had come up at all, so a box that printed a
+# complete report was reported as a box that never booted, and the release gate
+# refused the medium a second time for the first time's reason.
+#
+# So the strings live in VERDICT_RE and nothing else in that file may spell
+# them outside a comment. A third reader written by hand goes red here rather
+# than at a release.
+spelled=$(grep -n "HexaRouting ready\|is installed and healthy, and has" \
+            "$REPO/lab/install-iso.sh" \
+          | grep -v "VERDICT_RE=" | grep -v "VERDICT_OK_RE=" \
+          | grep -vE "^[0-9]+:[[:space:]]*#" | wc -l)
+if [ "$spelled" -eq 0 ]; then
+  ok "and the sentences are spelled once in that file, in VERDICT_RE"
+else
+  bad "$spelled line(s) of lab/install-iso.sh spell a verdict outside VERDICT_RE: a second reader of the same truth is what refused 0.72.0 twice"
+  grep -n "HexaRouting ready\|is installed and healthy, and has" \
+    "$REPO/lab/install-iso.sh" | grep -v "VERDICT_RE=" \
+    | grep -v "VERDICT_OK_RE=" | grep -vE "^[0-9]+:[[:space:]]*#" | sed 's/^/        /'
 fi
 
 echo "=== every self-test line fits the 80-column console it is printed on ==="

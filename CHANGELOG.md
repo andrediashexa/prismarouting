@@ -495,7 +495,16 @@ version has a chance of seeing it.
   given.
 
   `test/test_selftest.sh` compares the two files: every sentence the self-test
-  can end with has to be one the lab knows how to read. It found a fifth
+  can end with has to match the pattern the lab reads verdicts by, and that
+  pattern has to be the only place in the lab those sentences are spelled.
+
+  The first version of that check was not enough and the gate said so. It
+  asked whether the lab knew each sentence somewhere, and the lab did - in the
+  assertion that had just been fixed. Four hundred lines below it a second
+  reader went on deciding whether the box had come up at all by grepping for
+  `HexaRouting ready`, so a box that printed a complete report was reported as
+  a box that never booted, and the gate refused the medium a second time for
+  the first time's reason. It found a fifth
   defect while being written - the lab knew three of the four, and `ready,
   with N warning(s) above` is not matched by a needle for `ready.`, so a
   healthy box that carried one warning would have failed the gate too.
