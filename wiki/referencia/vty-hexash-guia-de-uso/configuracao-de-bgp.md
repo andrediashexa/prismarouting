@@ -113,6 +113,61 @@ São recusas de **forma**, não de funcionamento: se o vizinho vai responder nã
 * **membro cujo grupo também não tem AS** — o membro herda o AS do grupo, então um vizinho sem AS próprio está certo quando o grupo tem um; o que não pode é nenhum dos dois ter;
 * `**update-source**` **apontando para uma interface que a caixa não tem** — o FRR aceita, a sessão sai de lugar nenhum e nunca sobe, e a configuração continua lendo bem.
 
+## Uma route-map citada e nunca definida
+
+```
+error: no route-map called 'RM-TRANSITO-IN' is defined, and FRR denies
+    everything this statement governs until one is; define it, or write
+    'route-map RM-TRANSITO-IN permit 10' to let everything through
+    neighbor 200.150.0.2 route-map RM-TRANSITO-IN in
+```
+
+Esta é a recusa que evita a sessão silenciosa. O roteamento **aceita** apontar um vizinho para uma route-map que não existe: a sessão sobe, fica Established, e não carrega rota nenhuma. Três semanas depois `show bgp summary` mostra uma sessão de pé com zero prefixos, e a configuração continua lendo perfeitamente bem — a política está lá, escrita, apontando para o nada.
+
+A recusa vale para as três formas que foram medidas negando tudo: `neighbor <endereço> route-map`, `redistribute ... route-map` e `network <prefixo> route-map`. A mensagem **nomeia a route-map que falta** e diz as duas saídas: definir a política, ou escrever a cláusula que deixa tudo passar.
+
+:::info
+`call` para uma route-map inexistente **não** é recusado, e a diferença foi medida e não deduzida: o roteamento pula uma chamada que não resolve e a cláusula segue adiante, então o prefixo continua sendo anunciado. É uma linha morta, não uma linha perigosa:
+
+```
+warning: no route-map called 'RM-COMUNIDADES' is defined; FRR skips a call it
+    cannot resolve, so this line does nothing
+    call RM-COMUNIDADES
+```
+
+O contrário — uma route-map definida que ninguém usa — também é só aviso. Configuração morta é desarrumação, não perigo, e é exatamente o que fica na caixa entre dois commits de quem monta a política pela política primeiro.
+
+:::
+
+:::info
+Numa caixa que **já está** nesse estado a sentença sai como aviso e o commit passa. É de propósito: a mesma verificação roda quando a caixa carrega a configuração salva no boot, e ali ela recusaria o arquivo **inteiro** — uma caixa cuja configuração guardada tem a referência subiria sem nada. Recusa-se o commit que **introduz** a referência; a caixa que já a tem continua podendo ser trabalhada.
+
+:::
+
+# O que é avisado e não recusado
+
+## Uma sessão eBGP sem `maximum-prefix`
+
+```
+warning: this eBGP session has no 'maximum-prefix': a peer that leaks a full
+    table fills this box and nothing here stops it. 'neighbor 200.150.0.2
+    maximum-prefix 10000' tears the session down instead of the box
+    neighbor 200.150.0.2 remote-as 65001
+```
+
+Um vizinho que vaza a tabela inteira dentro de um equipamento dimensionado para alguns milhares de rotas derruba o equipamento, e o BGP **não impede nada por padrão**: o roteamento aceita cada prefixo que o vizinho mandar até a memória acabar. `maximum-prefix` é a única sentença que derruba a sessão em vez do equipamento, e até aqui nada nesta caixa mencionava que ela estava faltando.
+
+É **aviso e nunca recusa**, e é a decisão certa: um route server, um cliente cuja tabela se conhece pequena e um enlace de laboratório rodam sem limite de propósito. A escolha é de quem opera.
+
+:::info
+O aviso **fala uma vez**: ele sai pelos vizinhos que **esta mudança** coloca nesse estado. Uma caixa com três trânsitos deliberadamente sem limite carregaria três avisos em todo commit que fizesse pelo resto da vida, e alarme que está sempre ligado é alarme que ninguém lê.
+
+Sessões **iBGP** ficam de fora por decisão, não por esquecimento: do outro lado está um equipamento do mesmo operador, a tabela é a que este AS já decidiu carregar, e um limite ali dispara quando a rede cresce e não quando alguém vaza. Vale para `remote-as` igual ao AS da própria estrofe e para `remote-as internal`.
+
+Um `maximum-prefix` no **peer group** cobre todos os membros dele — é onde quem tem seis trânsitos põe o limite uma vez só. Já `maximum-prefix-out` não cobre: aquela sentença limita o que **esta** caixa anuncia, que é outro assunto.
+
+:::
+
 # A senha
 
 `neighbor <endereço> password <senha>` é o segredo em si, não um hash dele, e ele abre a sessão **no outro roteador** também. Por isso ele não é impresso de volta:
