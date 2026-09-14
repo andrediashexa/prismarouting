@@ -21,7 +21,7 @@
 # an operator types it. The topology - interfaces, routes, the pool - is still
 # vppctl, because the topology is not what is under test.
 #
-# OFF-RED-AT-LEAST: 18
+# OFF-RED-AT-LEAST: 20
 #
 # A FLOOR, not a target, and the number is measured rather than chosen: it is
 # what this lab's off run went red on in the release suite of 2026-09-13.
