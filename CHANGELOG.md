@@ -77,7 +77,7 @@ version has a chance of seeing it.
 
 ### Fixed
 
-- **The mirror under `wiki/` stood 28 pages ahead of the wiki operators read,
+* **The mirror under `wiki/` stood 28 pages ahead of the wiki operators read,
   and the documented way to publish them did not work.** Measured with
   `git diff --name-status` between the last commit that wrote `wiki/.pulled`
   (d53b44e, 2026-09-09) and v0.74.0: 27 pages corrected here and still showing
@@ -114,6 +114,17 @@ version has a chance of seeing it.
   The 28 pages themselves are still unpublished. Publishing needs `WIKI_TOKEN`,
   which no session in this repository has; the wiki answers
   `{"ok":false,"error":"authentication_required"}` to an unauthenticated read.
+
+  Those two fixes then deadlocked each other, which is the state somebody
+  arriving with the token is actually in: the push needs `wiki/.ids`, only the
+  pull writes it, and the pull refuses while the drafts are outstanding. The
+  only ways out were the 28 ids by hand that the index removed, or throwing the
+  work away. `WIKI_IDS_ONLY=1 sh tools/wiki-pull.sh` fetches the index alone -
+  same walk and the same line deciding a page's path and its id together, so it
+  cannot describe a layout the pull would not produce - and writes nothing
+  else: no page, no `.pulled`, no README stamp, because none of those is true
+  of a mirror it did not refresh. The refusal names it, since a refusal with no
+  way past it is a script somebody edits out.
 
 ## 0.74.0 - the installed box can be reached, and one card is enough
 

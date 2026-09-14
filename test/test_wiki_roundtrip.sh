@@ -341,6 +341,34 @@ fi
   ok "and the correction is still in the tree" || \
   bad "the pull refused and deleted the page anyway"
 
+# THE DEADLOCK THE TWO HALVES MAKE TOGETHER, which is the state somebody
+# arriving with the token is actually in. The push needs wiki/.ids; only the
+# pull writes it; and the pull refuses while drafts are outstanding. Without a
+# way to fetch the index alone, the only route left is the 28 ids by hand that
+# the index was added to remove - or WIKI_PULL_DISCARD=1, which destroys the
+# work. So: the index is fetched, and NOT ONE PAGE MOVES.
+rm -f "$GITREPO/wiki/.ids"
+pulled_before=$(cat "$GITREPO/wiki/.pulled")
+before=$(cat "$GITREPO/wiki/primeiros-passos.md")
+if WIKI_IDS_ONLY=1 sh "$GITREPO/tools/wiki-pull.sh" \
+     > "$WORK/idsonly.log" 2>&1; then
+  [ -s "$GITREPO/wiki/.ids" ] && \
+    ok "the index alone can be fetched with drafts outstanding" || \
+    bad "WIKI_IDS_ONLY=1 succeeded and wrote no index"
+else
+  bad "WIKI_IDS_ONLY=1 could not fetch the index:"
+  sed 's/^/    /' "$WORK/idsonly.log"
+fi
+[ "$(cat "$GITREPO/wiki/primeiros-passos.md")" = "$before" ] && \
+  ok "and the unpublished correction is untouched" || \
+  bad "WIKI_IDS_ONLY=1 overwrote the page it was supposed to leave alone"
+[ -f "$GITREPO/wiki/outra-pagina.md" ] && \
+  ok "and the page the wiki has never seen is still there" || \
+  bad "WIKI_IDS_ONLY=1 deleted a page that exists only here"
+[ "$(cat "$GITREPO/wiki/.pulled")" = "$pulled_before" ] && \
+  ok "and .pulled is unmoved, so the mirror does not claim to be fresh" || \
+  bad "WIKI_IDS_ONLY=1 moved .pulled, which would report 28 drafts as published"
+
 # The override, because a refusal with no way past it is a script somebody
 # edits out. It has to be asked for by name, and only then.
 if WIKI_PULL_DISCARD=1 sh "$GITREPO/tools/wiki-pull.sh" \
