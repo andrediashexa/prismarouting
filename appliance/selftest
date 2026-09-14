@@ -1376,6 +1376,125 @@ ADDRS
   fi
 fi
 
+# --- the network this box is managed on (#303) ---
+#
+# THE ONE CHECK THAT ANSWERS "can anybody reach this box tomorrow". Measured on
+# a 0.72.0 appliance: /etc/network/interfaces.d empty, networking.service
+# enabled with nothing to do, the card DOWN with no address, and nothing on
+# the console saying any of it. The operator brought the card up by hand at
+# the console, and the next reboot undid that, three times, before it was
+# filed.
+#
+# The installer writes the answer to ONE file and this reads that same file
+# back. It is deliberately not a second opinion: what the box was asked to be
+# is in the file, what the box IS comes from the kernel, and every line below
+# is one of those two compared against the other. A check that decided for
+# itself what the management network ought to be would be a third answer for
+# the next person to reconcile.
+#
+# The live medium is skipped whole. It has no persisted configuration by
+# definition, it is reached at the console it is being installed from, and a
+# [FAIL] there would fail a healthy medium on every boot - the same argument
+# the ssh host keys below are skipped on a live image for.
+MGMTCONF="$ROOT/etc/network/interfaces.d/hexarouting"
+if [ -d "$ROOT/run/live/medium" ] || [ -f "$ROOT/run/live/overlay" ]; then
+  :
+elif [ ! -f "$MGMTCONF" ]; then
+  bad "no management network: nothing was ever written for one"
+  say_list "        " "This box has no /etc/network/interfaces.d/hexarouting," \
+    "so nothing configures a card at boot. It comes back from every reboot" \
+    "with its card down and no address, reachable at this console and" \
+    "nowhere else - and what is typed at a console does not survive the" \
+    "next reboot. Media up to 0.72.0 never asked."
+  # No backslash and no escape in the lines below, deliberately: say() is
+  # echo, /bin/sh here is dash, and dash's echo expands a backslash escape in
+  # what it is handed. A "\\n" written into an instruction somebody is meant to
+  # TYPE would reach the console as a line break, and the operator would copy a
+  # command that is missing half of itself.
+  say "        to fix it here, and have it survive a reboot:"
+  say "          F=/etc/network/interfaces.d/hexarouting"
+  say "          echo \"auto eth0\" > \$F"
+  say "          echo \"iface eth0 inet dhcp\" >> \$F"
+  say "          ifup eth0"
+  # The box's own card names, because the operator reading this is at a
+  # console with no network and eth0 is almost certainly not what this machine
+  # calls its card. Without them the instruction above needs a command they
+  # have to know to run before they can run the instruction.
+  _have=$(ls "$ROOT/sys/class/net" 2>/dev/null | grep -v '^lo$' | tr '\n' ' ')
+  say_list "        " "in place of eth0, use one of this box's own cards:" \
+    "${_have:-<this box reports no network card at all>}"
+  say_list "        " "and 'inet static' with 'address' and 'gateway' lines" \
+    "where there is no DHCP server. Reinstalling asks the question."
+else
+  # What the file ASKS FOR. One "iface" line, written by the installer, and
+  # read here with awk rather than grepped for a string: the words on that
+  # line are interfaces(5)'s and not this product's, so they cannot be
+  # reworded, and taking the interface name out of column two is what makes
+  # this check about the box rather than about the message.
+  mgmt_if=$(awk '$1 == "iface" { print $2; exit }' "$MGMTCONF" 2>/dev/null)
+  mgmt_how=$(awk '$1 == "iface" { print $4; exit }' "$MGMTCONF" 2>/dev/null)
+  if [ -z "$mgmt_if" ]; then
+    # Installed with "none". A decision somebody made, said quietly: the file
+    # exists, so this box is NOT one the installer forgot to ask.
+    say "  [info] no management network was asked for at install time; this"
+    say "         box is reached at its console"
+  elif [ ! -e "$ROOT/sys/class/net/$mgmt_if" ]; then
+    bad "management network: this box has no card called $mgmt_if"
+    say_list "        " "It was named at install time and is not here now: a" \
+      "card that was moved, replaced, or renamed. Nothing is configuring" \
+      "any interface, so this box is reachable at its console only."
+    _have=$(ls "$ROOT/sys/class/net" 2>/dev/null | grep -v '^lo$' | tr '\n' ' ')
+    say_list "        " "cards this box has:${_have:+ $_have}"
+  else
+    mgmt_addrs=$(ip -o -4 addr show dev "$mgmt_if" 2>/dev/null | awk '{printf "%s ", $4}')
+    mgmt_def=$(ip -o -4 route list default 2>/dev/null | head -1)
+    mgmt_gw_asked=$(awk '$1 == "gateway" { print $2; exit }' "$MGMTCONF" 2>/dev/null)
+    if [ -z "$mgmt_addrs" ]; then
+      bad "management network: $mgmt_if has no address"
+      if [ "$mgmt_how" = dhcp ]; then
+        say_list "        " "It is configured by DHCP and has none, so either" \
+          "no server answered or the cable is not in. This box is reachable" \
+          "at its console only until it does."
+      else
+        say_list "        " "It is configured statically and has none, so" \
+          "bringing it up failed. 'ifup $mgmt_if' says why. This box is" \
+          "reachable at its console only until it does."
+      fi
+    elif [ -z "$mgmt_def" ] && [ -n "$mgmt_gw_asked" ]; then
+      # The signature of the answer that was wrong rather than missing. ifup
+      # refuses a gateway that is not on the interface's own subnet - "Error:
+      # Nexthop has invalid gateway" - and carries on, so the box comes up
+      # with an address, without a default route, and reachable from its own
+      # subnet only. From a floor away that is indistinguishable from a box
+      # that did not boot.
+      bad "management network: $mgmt_if has an address and no default route"
+      say_list "         " "$mgmt_addrs"
+      say_list "        " "The gateway this box was installed with is" \
+        "$mgmt_gw_asked, and it did not take: a gateway outside the" \
+        "interface's own subnet is refused when the interface comes up. So" \
+        "only this box's own subnet can reach it. Check that the address and" \
+        "the gateway are on the same subnet."
+    elif [ -z "$mgmt_def" ]; then
+      warn "$mgmt_if is up with no default route: its own subnet reaches it"
+      say_list "         " "$mgmt_addrs"
+      if [ "$mgmt_how" = dhcp ]; then
+        say_list "         " "DHCP answered with an address and no router." \
+          "Anything on another subnet cannot reach this box."
+      else
+        say_list "         " "No gateway was given at install time. Anything" \
+          "on another subnet cannot reach this box."
+      fi
+    else
+      ok "managed on $mgmt_if ($mgmt_how)"
+      # The address is PRINTED, on every boot, and that is half of why the
+      # DHCP answer can be the default at all: a racked box whose address
+      # nobody chose still tells whoever is at the console where to ssh to.
+      say_list "         " "$mgmt_addrs"
+      say_list "         " "$mgmt_def"
+    fi
+  fi
+fi
+
 # --- were these ssh host keys made on this box, or handed to it? ---
 #
 # Every ISO this project published up to and including 0.66.0 carried the host

@@ -3,6 +3,20 @@ Description=HexaRouting - boot self-test on the console
 Documentation=file:///usr/share/doc/hexarouting/appliance.md
 After=hexarouting.service frr.service
 Wants=hexarouting.service
+# And after the management network is configured, because this unit REPORTS on
+# it (#303) and a report taken while ifup is still running would say a healthy
+# box has no address - intermittently, which is the worst kind of wrong: it
+# would be reproduced by nobody and blamed on the hardware.
+#
+# After= only, with no Wants=: networking.service is enabled on every installed
+# box and this must not pull it onto a live medium that has nothing for it to
+# do. And it costs something, said here rather than discovered: on a box whose
+# DHCP answer gets no reply, ifup waits for the client to give up before this
+# unit runs, and the console getty is ordered after this unit - so the login
+# prompt on a box with a broken network arrives about a minute later than it
+# used to. That is the box whose console most needs to say something true when
+# it finally draws, which is the trade being made.
+After=networking.service
 # Runs even when hexarouting.service fails: that is precisely when the
 # diagnosis matters.
 DefaultDependencies=no

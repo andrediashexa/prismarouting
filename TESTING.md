@@ -427,6 +427,18 @@ container against a VPP the lab started itself. It is also the only place
 systemd runs at all, so it is the only place the drop-in that lets a non-root
 account reach the binary API is exercised.
 
+It also **reaches that box from outside, over the network**, which is the one
+thing it could not do until
+[#303](https://github.com/andrediashexa/hexarouting/issues/303). Everything
+above is the box talking about itself down a serial cable, and a box with no
+address behaves identically down a serial line to a box with one - so a
+management network that was never configured was invisible here for the life
+of the product. Every boot now gets one NIC at a fixed PCI address with a
+forwarded port, and the lab opens a TCP connection to the box's `sshd` and
+reads the banner it sends back. Then it **switches the machine off and starts
+it again** and does it a second time, because the question is not whether the
+box is reachable once.
+
 ```sh
 sh tools/lab.sh install-iso                 # the lab
 sh tools/lab.sh install-iso wrong-password  # the driver typing a password

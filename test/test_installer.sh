@@ -9,6 +9,9 @@
 # HEXA_INSTALL_CHECK=1 collects and validates and writes nothing, which is why
 # this runs as an ordinary user in a couple of milliseconds.
 INSTALLER=$(cd "$(dirname "$0")/.." && pwd)/appliance/hexarouting-install
+# The self-test, because the installer writes one file the self-test reads back
+# and the two have to name it identically (#303).
+SELFTEST=$(cd "$(dirname "$0")/.." && pwd)/appliance/selftest
 fail=0
 
 # A real block device, because check mode deliberately does not relax that:
@@ -358,6 +361,339 @@ esac
 rm -rf "$adir"
 
 echo
+echo "=== the management network: the answers, and what they refuse (#303) ==="
+#
+# A box installed from the medium up to and including 0.72.0 came back from
+# every reboot with its card DOWN and no address: the installer wrote nothing
+# whatever under /etc/network, on an image whose networking.service is enabled
+# and whose /etc/network/interfaces.d is empty. The box was reachable at its
+# console and nowhere else, and what an operator typed there did not survive
+# the next reboot (#303).
+#
+# Everything below is check mode, so each case costs milliseconds instead of a
+# boot cycle - and each one is an install that must stop BEFORE it partitions
+# anything, because an answer refused after the disk is written is an answer
+# refused too late.
+#
+# HEXA_NET_SYS is what lets a machine with one card be asked the questions a
+# machine with two would be. It is set by nothing on a real box.
+netsys=$(mktemp -d)
+mkdir -p "$netsys/ens18/device" "$netsys/ens19/device" "$netsys/lo"
+echo up > "$netsys/ens18/operstate"
+echo down > "$netsys/ens19/operstate"
+
+NOK="HEXA_DISK=$DISK HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo"
+# shellcheck disable=SC2086
+run 0 "a static address, its gateway and a resolver are accepted" $NOK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
+    HEXA_MGMT_GATEWAY=192.0.2.1 HEXA_MGMT_DNS=192.0.2.53,198.51.100.53
+case "$LAST_OUT" in
+  *"management     ens18, 192.0.2.10/24 via 192.0.2.1"*)
+    ok "and the summary repeats the whole answer back" ;;
+  *) bad "the summary does not repeat the management network back:
+$LAST_OUT" ;;
+esac
+
+# shellcheck disable=SC2086
+run 0 "DHCP on a named card is accepted" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens19 HEXA_MGMT_ADDRESS=dhcp
+case "$LAST_OUT" in
+  *"management     ens19, by DHCP"*) ok "and the summary says which card" ;;
+  *) bad "the summary does not name the card DHCP was asked for:
+$LAST_OUT" ;;
+esac
+
+# The answer that means "this box is reached at its console". It has to be
+# possible, or an operator with an out-of-band management path is forced to
+# write an address the box does not need - and it has to be DISTINGUISHABLE
+# from the absent answer, which is what the file written for it is for.
+# shellcheck disable=SC2086
+run 0 "'none' is an answer, not an omission" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_NET_SYS="$netsys" HEXA_MGMT_ADDRESS=none
+case "$LAST_OUT" in
+  *"management     none: this box is reached at its console only"*)
+    ok "and the summary says so in as many words" ;;
+  *) bad "'none' did not reach the summary:
+$LAST_OUT" ;;
+esac
+
+# THE REFUSAL THAT MATTERS MOST. A gateway outside the address's own subnet is
+# wrong on the arithmetic alone: ifup refuses the route when the interface
+# comes up and carries on, so the box boots with an address, no default route,
+# and is reachable from its own subnet only. From anywhere else that is
+# indistinguishable from a box that did not boot - and the operator has driven
+# to the site by the time anybody finds out.
+# shellcheck disable=SC2086
+run 1 "a gateway that is not on the address's subnet: refused" $NOK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
+    HEXA_MGMT_GATEWAY=198.51.100.1
+case "$LAST_OUT" in
+  *"is not on 192.0.2.10/24's subnet"*)
+    ok "and says which two answers disagree" ;;
+  *) bad "refused without naming the address it disagrees with: $LAST_OUT" ;;
+esac
+# And the other side of that arithmetic, because a check that refuses
+# everything is not a check: a gateway that IS on the subnet has to pass, and
+# the two cases differ by one octet.
+# shellcheck disable=SC2086
+run 0 "and a gateway that IS on it is accepted" $NOK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
+    HEXA_MGMT_GATEWAY=192.0.2.254
+
+# shellcheck disable=SC2086
+run 1 "a card this machine has not got: refused" $NOK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens99 HEXA_MGMT_ADDRESS=dhcp
+case "$LAST_OUT" in
+  *"no card called 'ens99'"*) ok "and names the card it was asked for" ;;
+  *) bad "refused without naming the card: $LAST_OUT" ;;
+esac
+# The cards it DOES have, printed with the refusal. An operator at a console
+# being told the name they typed is wrong, without being told the right ones,
+# has to go and find them with a command they do not have a prompt for.
+case "$LAST_OUT" in
+  *ens18*ens19*) ok "and lists the cards this machine does have" ;;
+  *) bad "the refusal did not list the cards: $LAST_OUT" ;;
+esac
+
+# shellcheck disable=SC2086
+run 1 "an address with no prefix: refused" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens18 \
+    HEXA_MGMT_ADDRESS=192.0.2.10
+case "$LAST_OUT" in
+  *"address with a prefix"*) ok "and says what an address looks like" ;;
+  *) bad "refused with no shape to compare against: $LAST_OUT" ;;
+esac
+# shellcheck disable=SC2086
+run 1 "an address that is not one: refused" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens18 \
+    HEXA_MGMT_ADDRESS=192.0.2.300/24
+# A prefix outside 1..32 is an address nobody can be reached at, and /0 is the
+# one that reads as a typo for /8 rather than as nonsense.
+# shellcheck disable=SC2086
+run 1 "a prefix outside 1..32: refused" $NOK HEXA_ROOT_PASSWORD=s3cr3t \
+    HEXA_NET_SYS="$netsys" HEXA_MGMT_INTERFACE=ens18 \
+    HEXA_MGMT_ADDRESS=192.0.2.10/33
+# shellcheck disable=SC2086
+run 1 "a gateway given with the DHCP answer: refused" $NOK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=dhcp \
+    HEXA_MGMT_GATEWAY=192.0.2.1
+case "$LAST_OUT" in
+  *"DHCP carries its own"*) ok "and says why the two disagree" ;;
+  *) bad "refused without saying which answer wins: $LAST_OUT" ;;
+esac
+# shellcheck disable=SC2086
+run 1 "a DNS server that is not an address: refused" $NOK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
+    HEXA_MGMT_DNS=192.0.2.53,nameserver
+
+# The unattended path, which is how the release gate installs a box. Nothing
+# about the management network may be REQUIRED of it: every existing caller
+# passes none of these answers, and an installer that started asking would
+# stop them dead at a prompt with no console to answer from.
+# shellcheck disable=SC2086
+run 0 "an unattended install that says nothing about the network still runs" \
+    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1
+case "$LAST_OUT" in
+  *"management network: ens18 by DHCP (unattended)"*)
+    ok "and takes DHCP on the default card, saying that it did" ;;
+  *) bad "the unattended default was taken in silence, or not at all:
+$LAST_OUT" ;;
+esac
+
+# Every line of that screen on the console it is read at. The installer prints
+# to a serial console on a racked machine, and a question folded by the
+# terminal is a question whose default nobody can see.
+#
+# Up to the summary and no further. What follows it in CHECK MODE is the list
+# of reasons this machine could not run the install - "missing tools: sfdisk
+# mkfs.ext4 ..." - which is a line composed from whatever this particular
+# machine lacks, is printed on a developer box and never on an install
+# console, and would make this check measure the runner rather than the
+# screen.
+WIDE=$(printf '%s\n' "$LAST_OUT" | sed '/could not run the install/,$d' \
+       | awk 'length > 79 {print length": "$0}')
+[ -z "$WIDE" ] && ok "and no line of the install screen is over 79 columns" \
+  || bad "the installer printed lines wider than the console:
+$WIDE"
+
+echo
+echo "=== the file the answer becomes, written into a root (#303) ==="
+#
+# THE CENTRAL FACT, shown against a directory rather than a disk. Before this
+# existed the whole of an install left nothing under /etc/network at all:
+#
+#   $ grep -c 'etc/network' appliance/hexarouting-install    ->  0
+#
+# so the checks below are the ones that would have been red for the life of
+# the product. They drive write_network_config() at the library seam, which is
+# there for the reason verify_installed() is: the alternative is a boot cycle
+# per case, and the cases that matter are the unusual answers.
+wnc() {  # <root> <interface> <address> <gateway> <dns>
+  ( HEXA_INSTALL_LIB=1
+    export HEXA_INSTALL_LIB
+    . "$INSTALLER"
+    write_network_config "$@" )
+}
+NETF=/etc/network/interfaces.d/hexarouting
+
+w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
+printf 'source /etc/network/interfaces.d/*\n' > "$w/etc/network/interfaces"
+if wnc "$w" ens18 dhcp "" ""; then
+  if grep -q "^auto ens18\$" "$w$NETF" && \
+     grep -q "^iface ens18 inet dhcp\$" "$w$NETF"; then
+    ok "the DHCP answer becomes an ifupdown stanza for that card"
+  else
+    bad "the DHCP answer did not produce a stanza:
+$(cat "$w$NETF" 2>&1)"
+  fi
+else
+  bad "write_network_config refused an ordinary DHCP answer"
+fi
+# The name has no dot in it, and that is load-bearing rather than taste.
+# "source-directory", which an operator may move to and which other Debian
+# images ship, applies run-parts naming rules and silently SKIPS a file with a
+# dot in its name - and a management network that is skipped is this defect
+# again, arriving through an edit somebody made to a neighbouring line.
+case "${NETF##*/}" in
+  *.*) bad "the management stanza is named '$NETF': a dot in the name is"\
+" skipped by source-directory" ;;
+  *) ok "and its name carries no dot, so source-directory would read it too" ;;
+esac
+rm -rf "$w"
+
+w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
+printf 'source /etc/network/interfaces.d/*\n' > "$w/etc/network/interfaces"
+wnc "$w" ens18 192.0.2.10/24 192.0.2.1 "192.0.2.53, 198.51.100.53"
+if grep -q "^iface ens18 inet static\$" "$w$NETF" && \
+   grep -q "^    address 192.0.2.10/24\$" "$w$NETF" && \
+   grep -q "^    gateway 192.0.2.1\$" "$w$NETF"; then
+  ok "the static answer becomes an address and a gateway"
+else
+  bad "the static answer did not reach the file:
+$(cat "$w$NETF" 2>&1)"
+fi
+# The resolver is written to /etc/resolv.conf and NOT as "dns-nameservers" in
+# the stanza, because that option is implemented by resolvconf's if-up hook
+# and this image has no resolvconf: measured on the 0.73.0 squashfs, which has
+# no /sbin/resolvconf. The line would be read by nothing at all.
+if grep -q "^nameserver 192.0.2.53\$" "$w/etc/resolv.conf" && \
+   grep -q "^nameserver 198.51.100.53\$" "$w/etc/resolv.conf"; then
+  ok "and the resolver reaches /etc/resolv.conf, one server per line"
+else
+  bad "the DNS answer did not reach the resolver:
+$(cat "$w/etc/resolv.conf" 2>&1)"
+fi
+if grep -q "dns-nameservers" "$w$NETF"; then
+  bad "the stanza carries dns-nameservers, which needs resolvconf - a"\
+" package this image does not have, so the line would do nothing"
+else
+  ok "and the stanza does not use dns-nameservers, which nothing here reads"
+fi
+rm -rf "$w"
+
+# DHCP must not write a resolver: dhclient writes that file itself when
+# resolvconf is absent, and two writers of /etc/resolv.conf is one of them
+# losing.
+w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
+printf 'source /etc/network/interfaces.d/*\n' > "$w/etc/network/interfaces"
+wnc "$w" ens18 dhcp "" "192.0.2.53"
+if [ -f "$w/etc/resolv.conf" ]; then
+  bad "a DHCP install wrote /etc/resolv.conf, which dhclient also writes"
+else
+  ok "a DHCP install leaves /etc/resolv.conf to dhclient"
+fi
+rm -rf "$w"
+
+# The answer 'none' still writes the file. Without it, a box whose operator
+# chose no management network and a box installed by a medium that never asked
+# are the same box on disk - and the second of those is every appliance
+# installed before this existed, which is the one the self-test must shout
+# about.
+w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
+printf 'source /etc/network/interfaces.d/*\n' > "$w/etc/network/interfaces"
+wnc "$w" none none "" ""
+if [ -f "$w$NETF" ] && ! grep -q "^iface " "$w$NETF"; then
+  ok "'none' writes the file and no stanza, so the answer is on the disk"
+else
+  bad "'none' left nothing to tell a chosen absence from a forgotten one:
+$(cat "$w$NETF" 2>&1)"
+fi
+rm -rf "$w"
+
+# And the file that has to READ the stanza. The image already sources
+# interfaces.d, so this repairs nothing on a box built from it - which is why
+# it is tested: a stanza written into a directory nobody sources produces the
+# identical unreachable box, with a perfect file on it saying it should not be.
+w=$(mktemp -d); mkdir -p "$w/etc/network"
+printf '# nothing here reads interfaces.d\nauto lo\niface lo inet loopback\n' \
+  > "$w/etc/network/interfaces"
+wnc "$w" ens18 dhcp "" ""
+if grep -q "^source /etc/network/interfaces.d/\*\$" "$w/etc/network/interfaces"
+then
+  ok "an /etc/network/interfaces that read nothing is made to read the stanza"
+else
+  bad "the stanza was written where nothing sources it:
+$(cat "$w/etc/network/interfaces")"
+fi
+# And it is not added twice to a file that already had it, which over
+# reinstalls would grow a list of identical source lines.
+before=$(grep -c "^source " "$w/etc/network/interfaces")
+wnc "$w" ens18 dhcp "" ""
+after=$(grep -c "^source " "$w/etc/network/interfaces")
+[ "$before" = "$after" ] \
+  && ok "and a second install does not add the line again" \
+  || bad "the source line was added twice ($before then $after)"
+rm -rf "$w"
+
+# The installer WRITES this path and the boot self-test READS it. They are two
+# files that have to agree about one name, which in this repository is a thing
+# with a history: the rule is that one holds it and the other reads it, and
+# where that is impossible - a path is a filesystem contract, not a message -
+# the agreement is asserted.
+if grep -q "interfaces\.d/hexarouting" "$SELFTEST" 2>/dev/null; then
+  ok "the self-test reads the same path the installer writes"
+else
+  bad "appliance/selftest does not read $NETF, so the box would be installed"\
+" with a management network nothing reports on"
+fi
+
+# And the OTHER pair that has to agree: the default answer to the management
+# question is DHCP, and verify_installed() refuses a disk that answered DHCP
+# with no client on it. That refusal is only ever reached on a real install,
+# which is a ten-minute boot cycle away - so the thing it depends on is
+# asserted here, in milliseconds.
+#
+# ifupdown merely RECOMMENDS a DHCP client and debootstrap installs no
+# Recommends: the 0.73.0 squashfs carried no dhclient, no udhcpc and no
+# dhcpcd at all, so this is a package that has to be NAMED and would be
+# dropped by anybody tidying the --include list.
+#
+# The --include LINE and not the file. The comment above that line explains at
+# length why the package is named, and it names it - so a grep over the file
+# passes on a build that stopped installing it and kept the paragraph saying
+# it does. Measured: removing the package from the list left this check green.
+BUILDISO=$(cd "$(dirname "$0")/.." && pwd)/appliance/build-iso.sh
+INCLUDE_LINE=$(grep -m1 -- "--include=" "$BUILDISO")
+case "$INCLUDE_LINE" in
+  *isc-dhcp-client*|*dhcpcd-base*|*udhcpc*) _dhcpok=1 ;;
+  *) _dhcpok=0 ;;
+esac
+if [ "$_dhcpok" = 1 ]; then
+  ok "and the image names a DHCP client, which the default answer needs"
+else
+  bad "appliance/build-iso.sh installs no DHCP client, and DHCP is the"\
+" default answer to the management question: every box installed with it"\
+" would write a perfect stanza that nothing on the disk can carry out"
+fi
+rm -rf "$netsys"
+
+echo
 echo "=== the disk that was just written is verified before success ==="
 #
 # hexarouting-selftest runs on the LIVE MEDIUM, before the installer, so until
@@ -383,7 +719,14 @@ BLKID
 chmod +x "$vbin/blkid"
 
 mkroot() {  # <dir>: what a good install leaves behind
-  mkdir -p "$1/boot/grub" "$1/etc"
+  mkdir -p "$1/boot/grub" "$1/etc/network/interfaces.d" "$1/sbin"
+  # The management network, which a good install now leaves behind too (#303):
+  # the stanza, an /etc/network/interfaces that reads the directory it is in,
+  # and something on the disk able to carry out a DHCP answer.
+  printf 'auto ens18\niface ens18 inet dhcp\n' \
+    > "$1/etc/network/interfaces.d/hexarouting"
+  printf 'source /etc/network/interfaces.d/*\n' > "$1/etc/network/interfaces"
+  : > "$1/sbin/dhclient"; chmod +x "$1/sbin/dhclient"
   : > "$1/boot/vmlinuz-6.1.0-test"
   printf 'menuentry "HexaRouting" {\n\tlinux\t/boot/vmlinuz-6.1.0-test root=UUID=11111111-1111-1111-1111-111111111111 ro\n\tinitrd\t/boot/initrd.img-6.1.0-test\n}\n' \
     > "$1/boot/grub/grub.cfg"
@@ -393,10 +736,15 @@ mkroot() {  # <dir>: what a good install leaves behind
     > "$1/etc/shadow"
 }
 
+# The cards the "machine being installed" has, so that a management network
+# naming a card that is not there can be arranged without unplugging one.
+vnet=$(mktemp -d); mkdir -p "$vnet/ens18/device"; echo up > "$vnet/ens18/operstate"
+
 verify() {  # <root> -> output on stdout, status in $?
   ( PATH="$vbin:$PATH"
     HEXA_INSTALL_LIB=1
-    export HEXA_INSTALL_LIB
+    HEXA_NET_SYS=$vnet
+    export HEXA_INSTALL_LIB HEXA_NET_SYS
     . "$INSTALLER"
     verify_installed "$1" 2>&1 )
 }
@@ -443,7 +791,55 @@ vcase "the root account is still the live image's locked one" \
 vcase "there is no root account" \
       "no root line" 'printf "daemon:*:19000:0:99999:7:::\n" > etc/shadow'
 
-rm -rf "$vgood" "$vbin"
+# The management network (#303). Every one of these is a disk that boots
+# perfectly and cannot be reached, which is why they are checked here: while
+# the operator is still standing in front of the machine with the medium in
+# the drive, rather than after the drive to the site.
+vcase "no management network was written at all" \
+      "was not written" 'rm -f etc/network/interfaces.d/hexarouting'
+vcase "the stanza was written where nothing sources it" \
+      "does not read interfaces.d" \
+      'printf "auto lo\n" > etc/network/interfaces'
+vcase "the management card is not on this machine" \
+      "is not on this machine" \
+      'printf "auto ens99\niface ens99 inet dhcp\n" > etc/network/interfaces.d/hexarouting'
+# THE ONE THAT WAS TRUE OF THE PUBLISHED MEDIUM. ifupdown only RECOMMENDS a
+# DHCP client and debootstrap installs no Recommends, so the 0.73.0 squashfs
+# carried no dhclient, no udhcpc and no dhcpcd - and "iface ens18 inet dhcp"
+# on that disk is a file that reads perfectly and does nothing. The default
+# answer to the management question is DHCP, so a default that quietly does
+# nothing would be worse than no question at all.
+# The needle is a whole line of the message and not a phrase that straddles
+# the fold. A needle written across a hand-wrapped message matches only while
+# the message goes on folding where it folds today, which this repository has
+# paid for seven times.
+vcase "DHCP is asked for and the disk has no DHCP client" \
+      "DHCP client, so nothing on it can ask for an address" \
+      'rm -f sbin/dhclient'
+
+# And the answer that is not a fault: 'none' verifies, because an operator who
+# said the box is reached at its console said something and the installer
+# wrote it down.
+vnone=$(mktemp -d); mkroot "$vnone"
+printf '# no management network was asked for\n' \
+  > "$vnone/etc/network/interfaces.d/hexarouting"
+out=$(verify "$vnone"); rc=$?
+if [ "$rc" = 0 ]; then
+  case "$out" in
+    *"no management network was asked for"*)
+      ok "'none' verifies, and the report says which answer it was" ;;
+    *) bad "'none' verified silently, so a chosen absence and a forgotten one
+read the same:
+$out" ;;
+  esac
+else
+  bad "a box installed with no management network on purpose was reported
+broken:
+$out"
+fi
+rm -rf "$vnone"
+
+rm -rf "$vgood" "$vbin" "$vnet"
 
 echo
 echo "=== the records mirror: the answer, and what it refuses (#83) ==="

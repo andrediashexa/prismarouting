@@ -1247,16 +1247,19 @@ operator supplied, and will not overwrite the medium it booted from. What it
 did not do was everything that happens **after** the disk is written, and the
 paragraphs below are that list, now worked through.
 
-The management address was dropped from the scope by the maintainer, on the
-reading that it is arranged by other means before the box is installed. That
-reading is wrong for the case everybody meets first, and it was measured wrong
-on a real VM running 0.72.0
-([#303](https://github.com/andrediashexa/hexarouting/issues/303)):
-`/etc/network/interfaces.d/` is empty, `hexarouting-install` writes nothing
-under `/etc/network/`, and `networking.service` is enabled with nothing to do.
-The box boots with its NIC DOWN and no address, reachable only at the console,
-and the `ip` commands typed there do not survive a reboot. On a VM created
-from the published medium there are no other means.
+The management address **was** dropped from the scope by the maintainer, on
+the grounds that it is arranged by other means before the box is installed.
+That was wrong for the case everybody meets this product in and it is
+delivered ([#303](https://github.com/andrediashexa/hexarouting/issues/303)):
+on a virtual machine created from this ISO there are no other means, and the
+box came back from every reboot with its card `DOWN` and no address, reachable
+at its console and nowhere else. The installer asks which card and how it is
+addressed, writes `/etc/network/interfaces.d/hexarouting`, and refuses a disk
+whose DHCP answer has no client on it - the medium carried none, because
+`ifupdown` merely Recommends one. The boot self-test prints the address on
+every boot, which is what makes DHCP usable on a box whose address nobody
+chose, and `lab/install-iso.sh` switches the machine off and starts it again
+to prove it comes back by itself.
 
 The allocation log — which in dynamic mode **is** the connection record the
 Marco Civil requires for a year — used to share a filesystem with everything

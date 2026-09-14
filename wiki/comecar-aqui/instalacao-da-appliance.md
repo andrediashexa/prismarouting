@@ -7,7 +7,7 @@ flowchart TD
     A["boot pela ISO"] --> B["VTY do meio de instalação"]
     B --> C["digitar <code>install</code>"]
     C --> D["escolher o disco<br/><i>menu por letras, maior primeiro<br/>o disco de boot nunca aparece</i>"]
-    D --> E["hostname · fuso · senha de root"]
+    D --> E["hostname · fuso<br/>rede de gerência · senha de root"]
     E --> F{"confirmar com a palavra<br/><code>yes</code>"}
     F -->|"Enter ou y não valem"| F
     F -->|yes| G["escreve no disco"]
@@ -62,6 +62,61 @@ A confirmação repete o disco com tamanho e modelo, e é respondida com a palav
 
 Enter vazio não é resposta. `y` também não. **Um disco não pode ser destruído segurando a tecla Enter.**
 
+## Rede de gerência
+
+**Uma appliance que não pode ser alcançada depois de reiniciar não é uma appliance.** Até a 0.72.0 o instalador não escrevia nada em `/etc/network`: a placa subia `DOWN`, sem endereço, e a caixa só existia pelo console. O que o operador digitava lá não sobrevivia ao próximo boot.
+
+O instalador pergunta, junto com as outras perguntas e antes de qualquer escrita, **em qual placa** a caixa é gerenciada e **como ela é endereçada**:
+
+```
+  This box is reached over the network AFTER it reboots, and nothing
+  else arranges that. An install with no answer here comes back with
+  its card down and no address, reachable only at this console - and
+  what is typed at a console does not survive the next reboot.
+
+Network cards on this machine:
+  a) ens18      up     virtio_net   10.95.200.196/24   <- default
+  b) ens19      down   virtio_net   none
+  none) no management network   (this box is reached at its console)
+
+Which card is this box managed on (letter, or a name) [ens18]:
+Address: 'dhcp', or one like 10.0.0.2/24 [dhcp]:
+```
+
+A lista mostra **o que cada placa é** - se está no ar, qual driver a move, qual endereço ela está carregando neste minuto - porque `ens18` e `ens19` não dizem a ninguém qual cabo está em qual. O padrão é a placa pela qual a própria mídia está alcançando a rede agora.
+
+
+:::info
+**O padrão do endereço é** `**dhcp**`**.** Uma máquina virtual em rede de laboratório tem servidor DHCP e nenhum endereço reservado; uma appliance no rack tem endereço reservado e muitas vezes nenhum DHCP. Só um dos dois pode ser o padrão, e é o primeiro: quem aperta Enter precisa receber uma caixa que funciona. Quem está montando o rack já tem o endereço anotado na frente e digita - é uma resposta nos dois casos.
+
+O preço está dito: uma caixa que responde `dhcp` onde ninguém responde espera o cliente desistir antes de terminar o boot, e depois **diz no console** que está sem endereço.
+
+:::
+
+Com endereço estático, o instalador ainda pergunta o gateway e os servidores DNS. **Um gateway fora da sub-rede do endereço é recusado na hora**, por aritmética: o `ifup` recusa essa rota quando a interface sobe e segue em frente, então a caixa subiria com endereço, sem rota padrão, alcançável a partir da própria sub-rede e de mais lugar nenhum. De longe isso é indistinguível de uma caixa que não bootou.
+
+`none` também é resposta, e é **gravada**. Sem o arquivo, uma caixa cujo operador escolheu não ter rede de gerência e uma caixa instalada por uma mídia que nunca perguntou são a mesma caixa no disco - e uma das duas precisa ser gritada em todo boot enquanto a outra não.
+
+### O que a caixa diz depois
+
+O autoteste de boot lê **o mesmo arquivo** de volta em todo boot e conta o que aconteceu com ele:
+
+| Linha no autoteste | Significado |
+|--------------------|-------------|
+| `[ ok ] managed on ens18 (dhcp)` | com o endereço e a rota impressos embaixo |
+| `[warn] ens18 is up with no default route` | tem endereço, não tem rota padrão, e nenhum gateway foi pedido |
+| `[FAIL] ... has an address and no default route` | **o gateway respondido não valeu.** A linha nomeia o gateway que não entrou |
+| `[FAIL] ... has no address` | DHCP sem resposta, ou o `ifup` falhou |
+| `[FAIL] this box has no card called ens18` | a placa da instalação não está mais na caixa. Lista as que estão |
+| `[FAIL] no management network: nothing was ever written for one` | mídia até a 0.72.0. A linha traz os comandos que resolvem a partir daquele console |
+| `[info] no management network was asked for at install time` | respondeu `none` |
+
+
+:::success
+**O endereço é impresso em todo boot**, e é metade do motivo de o DHCP poder ser o padrão: uma caixa cujo endereço ninguém escolheu ainda diz, para quem está de pé na frente do console serial, para onde dar `ssh`.
+
+:::
+
 ## Tudo é perguntado antes de qualquer escrita
 
 | Pergunta | Recusada quando |
@@ -69,6 +124,9 @@ Enter vazio não é resposta. `y` também não. **Um disco não pode ser destru�
 | Disco alvo | não é dispositivo de bloco, ou é o meio de onde o sistema deu boot |
 | Hostname | contém caracteres que um hostname não pode ter |
 | Fuso horário | não existe essa zona em `/usr/share/zoneinfo` |
+| Placa de gerência | esta máquina não tem placa com esse nome |
+| Endereço de gerência | não é `dhcp`, não é `none` e não é endereço com prefixo entre 1 e 32 |
+| Gateway | não é endereço, não está na sub-rede do endereço, ou veio junto com `dhcp` |
 | Senha de root | está vazia, ou as duas digitações não conferem |
 
 Nenhum byte é escrito no disco antes de todas as respostas estarem coletadas e válidas.
@@ -169,6 +227,10 @@ Para laboratório, teste de boot e PXE, as respostas vêm da linha de comando do
 | `hexarouting.password=<senha>` | responde a pergunta da senha de root |
 | `hexarouting.log-gb=<n>` | gigabytes para os registros de conexão |
 | `hexarouting.mirror=<disco>` | espelha os registros nesse segundo disco |
+| `hexarouting.mgmt-interface=<placa>` | placa pela qual a caixa é gerenciada |
+| `hexarouting.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, ou `none` |
+| `hexarouting.mgmt-gateway=<ip>` | só com endereço estático |
+| `hexarouting.mgmt-dns=<ip>[,<ip>]` | só com endereço estático |
 | `hexarouting.yes` | pula as confirmações e depois **desliga a máquina** |
 
 
@@ -187,6 +249,7 @@ Depois do primeiro boot sem a mídia:
 
 * o console mostra o relatório do self-test, **sem nenhuma linha** `**[FAIL]**`;
 * entre elas, `binary API registered, so pools can be configured` — sem ela a caixa roteia e responde, e nenhum pool pode ser criado;
+* uma linha `managed on <placa>` com o endereço embaixo dela - é por ali que você chega na caixa sem voltar ao console;
 * `show version` responde com a versão do HexaRouting, do VPP e do FRR;
 * você consegue entrar com a senha definida durante a instalação.
 

@@ -166,6 +166,20 @@ case "$*" in
 esac
 exit 0
 EOF
+# The kernel's account of one interface, and of the default route. Stubbed for
+# the reason findmnt and systemctl are: what a card is carrying is exactly the
+# variable under test in the management-network cases (#303), and the machine
+# running these tests cannot be made to answer differently about its own.
+cat > "$BIN/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"addr show dev "*)
+    # "-o -4 addr show dev ens18" -> ens18, which is the fixture's name.
+    cat "$FAKE/ip_addr_${*##* }" 2>/dev/null ;;
+  *"route list default") cat "$FAKE/ip_default" 2>/dev/null ;;
+esac
+exit 0
+EOF
 # FRR, and only when a case asks for it. Left failing by default because that
 # is what the machine running these tests looks like, and because the pair
 # check reads the running configuration to decide how loudly to speak.
@@ -262,6 +276,25 @@ run() {  # -> $OUTPUT
       > "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
     ( cd "$FAKE/root" && sha256sum usr/share/hexarouting/a-file-of-that-build ) \
       > "$FAKE/root/usr/share/hexarouting/MANIFEST"
+  fi
+  # A management network on every box, for the same reason the MANIFEST above
+  # is written on every box: no case here is about it, a box that has none is
+  # a FAILED check (#303), and without this every one of the hundred-odd runs
+  # would carry that [FAIL] - burying whatever the case actually arranged and
+  # breaking the two cases that count what a box reports.
+  #
+  # mgmt.keep is how the cases that ARE about it opt out, including the one
+  # that needs no file at all. A fixture the harness overwrites is a fixture
+  # that measures the harness.
+  if [ ! -f "$FAKE/mgmt.keep" ]; then
+    mkdir -p "$FAKE/root/etc/network/interfaces.d" \
+             "$FAKE/root/sys/class/net/ens18"
+    printf 'auto ens18\niface ens18 inet dhcp\n' \
+      > "$FAKE/root/etc/network/interfaces.d/hexarouting"
+    printf '2: ens18    inet 10.0.2.15/24 brd 10.0.2.255 scope global ens18\n' \
+      > "$FAKE/ip_addr_ens18"
+    printf 'default via 10.0.2.2 dev ens18 proto dhcp metric 100\n' \
+      > "$FAKE/ip_default"
   fi
   # The root is always pointed at the fake box, even for the cases that put
   # nothing in it: an absent file there reads the same as the absent one on
@@ -2714,6 +2747,203 @@ rm -f "$BIN/hexash" "$FAKE/vppctl_ok" "$FAKE/show_plugins" "$FAKE/show_interface
 printf '\n' > "$FAKE/hexarouting.conf"
 unset HEXA_CONFIG
 rm -rf "$FAKE/root"
+
+# =========================================================================
+# The network this box is managed on (#303)
+# =========================================================================
+#
+# Measured on a 0.72.0 appliance: /etc/network/interfaces.d empty,
+# networking.service enabled with nothing to do, the card DOWN with no
+# address, and NOTHING on the console about any of it. The operator brought
+# the card up by hand at the console; the next reboot undid that. Three times.
+#
+# Every case below is a state a real box is found in, and none of them can be
+# arranged on the machine running these tests - it has its own cards, its own
+# addresses and its own default route, and it is not going to lose them to
+# make a test pass. So the box's configuration is a fake root and the kernel's
+# answer is a stubbed `ip`, and what is asserted is what the self-test SAYS
+# about the two together.
+mgmt_box() {  # <stanza or ""> <addresses on ens18> <default route>
+  touch "$FAKE/mgmt.keep"
+  rm -rf "$FAKE/root"
+  mkdir -p "$FAKE/root/etc/network/interfaces.d" \
+           "$FAKE/root/sys/class/net/ens18"
+  if [ -n "$1" ]; then printf '%s\n' "$1" > "$FAKE/root/etc/network/interfaces.d/hexarouting"; fi
+  printf '%s' "$2" > "$FAKE/ip_addr_ens18"
+  printf '%s' "$3" > "$FAKE/ip_default"
+}
+ADDR18='2: ens18    inet 10.0.2.15/24 brd 10.0.2.255 scope global ens18
+'
+DEFRT='default via 10.0.2.2 dev ens18 proto dhcp metric 100
+'
+
+echo "=== a box installed by a medium that never asked (the defect) ==="
+# The file is ABSENT, which is every appliance installed up to and including
+# 0.72.0. It is a failed check and not a warning: the box comes back from
+# every reboot unreachable, and a warning on a console that scrolls is a line
+# the verdict at the bottom takes back.
+mgmt_box "" "" ""
+run
+if said '\[FAIL\] no management network: nothing was ever written for one'; then
+  ok "it is a failed check, and the headline says the box has none"
+else
+  bad "a box with no management network at all was not reported: $(printf '%s\n' "$OUTPUT" | grep -i 'management\|managed' || echo '<nothing about it>')"
+fi
+if said_across "comes back from every reboot with its card down and no address"; then
+  ok "and it says what that costs at the next reboot"
+else
+  bad "the report does not say what an unconfigured box does at a reboot"
+fi
+# The fix, typed at the console this is printed on, by somebody who cannot
+# reach the box any other way. Without the commands it is an alarm nobody can
+# act on from where they are standing.
+if said_across "ifup eth0"; then
+  ok "and it gives the commands that fix it from this console"
+else
+  bad "the report says the box is unreachable and not how to make it reachable"
+fi
+# With this box's OWN card names in it. "eth0" is almost certainly not what
+# the machine calls its card, and an operator at a console with no network
+# cannot look them up without knowing the command to look them up with.
+if said_across "in place of eth0, use one of this box's own cards: ens18"; then
+  ok "and it names the cards this box actually has"
+else
+  bad "the instruction says eth0 and never says what this box calls its own"
+fi
+
+echo "=== a box whose operator said 'none', which is not the same box ==="
+# The installer writes the file even for this answer, and this is the whole
+# reason: without it a chosen absence and a forgotten one are the same box on
+# disk, and one of them must be shouted about while the other must not.
+mgmt_box "# Generated by hexarouting-install. Do not edit by hand.
+# NO MANAGEMENT NETWORK was asked for" "" ""
+run
+if said '\[FAIL\].*management'; then
+  bad "an operator who chose no management network is reported as a failure"
+else
+  ok "it is not a failed check: the answer was given, not forgotten"
+fi
+if said_across "no management network was asked for at install time"; then
+  ok "and the box says which of the two it is"
+else
+  bad "nothing distinguishes a chosen absence from a forgotten one"
+fi
+
+echo "=== the card it was installed on is not in the box any more ==="
+mgmt_box "auto ens19
+iface ens19 inet dhcp" "" "$DEFRT"
+run
+if said '\[FAIL\] management network: this box has no card called ens19'; then
+  ok "it is a failed check, and it names the card that is missing"
+else
+  bad "a management stanza for a card the box does not have was not reported"
+fi
+if said_across "cards this box has: ens18"; then
+  ok "and it lists the cards the box does have, which is the next question"
+else
+  bad "it says the card is gone without saying what is there: $(printf '%s\n' "$OUTPUT" | grep -A3 'no card called' | tail -2)"
+fi
+
+echo "=== configured by DHCP, and no server answered ==="
+mgmt_box "auto ens18
+iface ens18 inet dhcp" "" ""
+run
+if said '\[FAIL\] management network: ens18 has no address'; then
+  ok "a card with no address is a failed check"
+else
+  bad "a box configured by DHCP with no lease was not reported"
+fi
+if said_across "no server answered or the cable is not in"; then
+  ok "and the two things that cause it are named"
+else
+  bad "it does not say why a DHCP card has no address"
+fi
+
+echo "=== an address on the wrong subnet: the answer that was wrong ==="
+# THE CASE THE ISSUE ASKS ABOUT. ifup refuses a gateway outside the
+# interface's own subnet - "Error: Nexthop has invalid gateway" - and carries
+# on, so the box comes up with an address, no default route, and is reachable
+# from its own subnet and nowhere else. From a floor away that is
+# indistinguishable from a box that did not boot, and the console is the only
+# place it is visible.
+mgmt_box "auto ens18
+iface ens18 inet static
+    address 10.0.2.15/24
+    gateway 192.168.99.1" "$ADDR18" ""
+run
+if said '\[FAIL\] management network: ens18 has an address and no default route'; then
+  ok "an address with no default route is a failed check"
+else
+  bad "a box that came up on the wrong subnet reported nothing: $(printf '%s\n' "$OUTPUT" | grep -i 'managed on\|management' || echo '<nothing>')"
+fi
+if said_across "The gateway this box was installed with is 192.168.99.1"; then
+  ok "and it names the gateway that did not take"
+else
+  bad "it does not name the gateway, which is the answer to change"
+fi
+if said_across "the address and the gateway are on the same subnet"; then
+  ok "and says which two answers have to agree"
+else
+  bad "it reports the symptom without the thing to look at"
+fi
+
+echo "=== an address, no default route, and none was asked for ==="
+# A management LAN with no way off it is a real arrangement - a jump host on
+# the same subnet is exactly that - so this is a warning and not a failure.
+# The box IS reachable; it is reachable from one place.
+mgmt_box "auto ens18
+iface ens18 inet static
+    address 10.0.2.15/24" "$ADDR18" ""
+run
+if said '\[warn\] ens18 is up with no default route'; then
+  ok "it is a warning: the box is reachable, from one subnet"
+else
+  bad "a deliberate gateway-less box was not reported as a warning"
+fi
+if said '\[FAIL\].*management'; then
+  bad "and it was ALSO reported as a failure, which it is not"
+else
+  ok "and it is not a failed check"
+fi
+
+echo "=== a box that came back on the network it was installed on ==="
+mgmt_box "auto ens18
+iface ens18 inet dhcp" "$ADDR18" "$DEFRT"
+run
+if said '\[ ok \] managed on ens18 \(dhcp\)'; then
+  ok "it passes, and says which card and how it was addressed"
+else
+  bad "a healthy management network did not pass: $(printf '%s\n' "$OUTPUT" | grep -i 'managed on\|management' || echo '<nothing>')"
+fi
+# THE ADDRESS IS PRINTED, and this is half of why DHCP can be the default at
+# all: an operator who did not choose the address still reads it off the
+# console of the box in front of them and ssh's to it.
+if said_across "10.0.2.15/24"; then
+  ok "and the address is on the console, which is where DHCP becomes usable"
+else
+  bad "a DHCP box does not print the address it was given, so nobody at the console knows where to reach it"
+fi
+if said_across "default via 10.0.2.2"; then
+  ok "and the default route with it"
+else
+  bad "the route off the subnet is not printed"
+fi
+
+echo "=== and a LIVE medium is not asked the question at all ==="
+# The live image has no persisted configuration by definition and is reached
+# at the console it is being installed from. A [FAIL] here would fail a
+# healthy medium on every boot, which is the shape of the defect the DPDK
+# check in this same file carries a scar for.
+mgmt_box "" "" ""
+mkdir -p "$FAKE/root/run/live/medium"
+run
+if said '\[FAIL\].*management'; then
+  bad "the live medium was failed for having no management network"
+else
+  ok "a live medium is not failed for having no management network"
+fi
+rm -f "$FAKE/mgmt.keep"
+rm -rf "$FAKE/root/run/live"
 
 echo "=== the exit status, over every box the cases above arranged ==="
 # The rule this holds: docs/appliance.md, "always exits zero: the diagnostic
