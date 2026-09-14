@@ -76,6 +76,99 @@ else
   bad "no version stamp in /usr/share/hexarouting/VERSION"
 fi
 
+# --- and the files that line is a claim about ---
+#
+# The line above is one sentence about thirty-odd files, and until #302 it
+# could be checked against exactly one of them: the dataplane plugin carries a
+# build stamp (#291) and the other thirty carry no version of any kind. So a
+# box stamped 0.70.0 with 0.71.0's hexarouting-tune on it printed that line,
+# correctly as far as anything could tell, and went on printing it. That is
+# not a hypothesis - it is the appliance supplied for the #290 work, and the
+# file got there by somebody proving a fix on it, which is what debugging
+# looks like.
+#
+# WHY HERE AND NOT IN `show version`. Three places were open: this file, the
+# VTY's version command, and a command of its own. `show version` is where the
+# claim is MADE, which is the argument for putting it there, and it is also a
+# command an operator runs several times a minute while working - so the cost
+# of the check would be paid over and over to be told nothing, and the one
+# reading that matters would be the one nobody waited for. A command of its
+# own is honest and is one more thing nobody runs. This file already reports
+# on the state of the box, it already runs unattended on every boot with
+# nobody watching, and a set of files that is not the set this box says it is
+# running is precisely the shape of thing it exists to notice - it is the same
+# check as "is VPP responding", one layer down.
+#
+# NOT FATAL, and it cannot be: this whole script is forbidden from stopping a
+# boot (see the exit at the bottom, and hexarouting-selftest.service's
+# "ExecStart=-"). A box carrying one file from another release is a box that
+# should be looked at, not a box that should be refused - it is very probably
+# still forwarding, and the operator who copied the file on may be in the
+# middle of using it.
+#
+# WHY IT IS [FAIL] AND NOT [warn]. The version line is the first thing anybody
+# reads about a box and the first thing anybody reports on the telephone. When
+# it is wrong, every later diagnosis is being made against the wrong release
+# notes, which is the cost #302 is about and the reason it was written. A
+# warning is what #301 refused one component over: a box that asserts a build
+# it only partly has, with something quieter than the assertion saying so.
+#
+# THE OPERATOR'S OWN FILES ARE NOT IN THIS. tune.env, vpp-base.conf and
+# hexarouting.conf are named in the manifest with no checksum, because
+# install.sh writes them once and then leaves them alone for the operator to
+# edit - so an edit is the file working, not the file broken. A check that
+# reported those would be switched off, and the one file that really was from
+# another release would go quiet with it.
+MANIFEST="$ROOT/usr/share/hexarouting/MANIFEST"
+if ! command -v sha256sum >/dev/null 2>&1; then
+  # Not a pass: a check that cannot look is not a check that agrees.
+  warn "no sha256sum here, so nothing checked that line against the files"
+elif [ ! -f "$MANIFEST" ]; then
+  warn "no /usr/share/hexarouting/MANIFEST, so nothing checked that line"
+  say_list "         " "the installer that put this version on the box writes" \
+    "one. Without it the version above is a claim about thirty files that" \
+    "no longer answer for themselves (#302)."
+else
+  # `grep -c` PRINTS its count and EXITS 1 when the count is zero, so a
+  # `|| echo 0` beside it puts TWO numbers in the substitution and the test
+  # below compares "0 0" against 0. Written that way, a manifest of nothing
+  # but comments fell through to the comparison instead of being reported as
+  # empty, and the box read as failing a check nothing had run. Found by
+  # mutating install.sh's recording away and reading what this said.
+  nfiles=$(grep -c '^[^#]' "$MANIFEST" 2>/dev/null) || nfiles=0
+  if [ "${nfiles:-0}" -eq 0 ]; then
+    warn "/usr/share/hexarouting/MANIFEST names no files, so it checked nothing"
+  # THE EXIT STATUS IS THE VERDICT AND THE TEXT ONLY NAMES NAMES. sha256sum
+  # writes "<path>: FAILED", which is its wording and not ours, and a needle
+  # for it is a needle that stops matching the day coreutils rephrases it -
+  # silently, and in the direction that reports a broken box as a healthy one.
+  # So whether anything is wrong is read off the status, which is defined
+  # behaviour, and the parse below only decides how much detail can be given.
+  elif changed=$(cd "${ROOT:-/}" && sha256sum --quiet -c "$MANIFEST" 2>/dev/null)
+  then
+    ok "all $nfiles files of that build are the ones it shipped"
+  else
+    names=$(printf '%s\n' "$changed" | sed -n 's/:[[:space:]]*FAILED.*$//p')
+    nbad=$(printf '%s\n' "$names" | grep -c . || true)
+    if [ "${nbad:-0}" -gt 0 ]; then
+      bad "$nbad file(s) on this box are not from ${ver:-that build}:"
+      say_list "          " "$names"
+    else
+      # The status said something is wrong and the output could not be read.
+      # Reporting nothing here would turn a broken box into a silent one.
+      bad "this box does not match its own manifest and this check could not"
+      say "        read which files: $(printf '%s' "$changed" | tr -s '[:space:]' ' ' | cut -c1-40)"
+    fi
+    say_list "        " "that line is one sentence about $nfiles files, and" \
+      "these are not the ones that build shipped. A file replaced by hand," \
+      "an install that stopped half way, or an upgrade that ran over part" \
+      "of the box leaves exactly this, and every diagnosis from here is" \
+      "made against the wrong release notes (#302). Compared with" \
+      "/usr/share/hexarouting/MANIFEST, which that version's own installer" \
+      "wrote."
+  fi
+fi
+
 # --- memory ---
 # A live system keeps the whole overlay in RAM. Together with VPP, 2 GB is
 # not enough: the OOM killer takes VPP and brings the rest down with it. Found

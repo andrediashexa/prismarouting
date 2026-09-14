@@ -293,16 +293,26 @@ print("\n=== the configuration the installer writes must parse ===")
 #
 # The default is read out of install.sh rather than copied here, so that
 # changing one side without the other fails this test instead of a box.
+#
+# It used to be a `printf` in the installer and this read the format string.
+# It is a file in the tree now, because the installer writes three files it
+# will never overwrite again and the manifest has to know which three (#302):
+# keep() is the one place a file the operator owns may be written, and what
+# keep() writes is a file. So what is read out of install.sh is now WHICH file
+# it installs, and the content comes from that - which is the same property
+# this comment claimed, with one more hop and no second copy.
 import re  # noqa: E402
 installer = os.path.join(os.path.dirname(__file__), "..", "appliance",
                          "install.sh")
-m = re.search(r"printf '([^']+)' > \"\$DESTDIR/etc/hexarouting/hexarouting\.conf\"",
+m = re.search(r'keep\s+\S+\s+"\$REPO/([^"]+)"\s*\\?\s*'
+              r'"\$DESTDIR/etc/hexarouting/hexarouting\.conf"',
               open(installer).read())
 check(m is not None,
       "could not find the default configuration in appliance/install.sh; "
       "if it moved, this test no longer checks anything")
 if m:
-    default = m.group(1).replace("\\n", "\n")
+    default = open(os.path.join(os.path.dirname(__file__), "..",
+                                m.group(1)), encoding="utf-8").read()
     print("  what install.sh writes:")
     for line in default.splitlines():
         print(f"    {line!r}")

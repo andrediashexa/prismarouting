@@ -244,6 +244,86 @@ elif marker_at:
         f"carries on without, which is #301 exactly: it warned on stderr, "
         f"installed the rest and stamped the box with a build it had half of")
 
+print("\n=== the file list the box keeps is written after the last write ===")
+# WHY THIS IS A PROPERTY OF THE TEXT. install.sh writes
+# /usr/share/hexarouting/MANIFEST, which is what the box compares itself
+# against at every boot (#302), and it can only be a complete list of what
+# this run installed if it is written after this run has installed it. An
+# install line added below that block puts a file on the box that the manifest
+# does not name - and a file the manifest does not name is a file nothing will
+# ever check, which is the two-lists defect the manifest exists to avoid,
+# arriving by the back door.
+#
+# It cannot be measured by running the installer: test/test_manifest.sh does
+# run it and compares the manifest against the root, and that comparison is
+# what proves the mechanism works TODAY, on the lines that exist today. A line
+# added below the block would have to be added to that suite's list of
+# expected exceptions to go green, which is a thing somebody does while looking
+# at the failure. This is the half that goes red without being negotiated
+# with. Same division of labour as the preflight marker above.
+MANIFEST_AT = 'say "manifest"'
+manifest_at = [n for n, t in logical if t.strip() == MANIFEST_AT]
+if len(manifest_at) != 1:
+    bad(f"appliance/install.sh has {len(manifest_at)} line(s) reading "
+        f"{MANIFEST_AT!r} and this check needs exactly one to know where the "
+        f"installing stops. It is asserting nothing about what the manifest "
+        f"is a list of")
+else:
+    # The manifest's own two lines are the only writes allowed below it, and
+    # they are recognised by naming it: a rule that counted lines would go
+    # green on any two writes at all.
+    after = [(n, t.strip()) for n, t in writes
+             if n > manifest_at[0] and "MANIFEST" not in t]
+    own = [n for n, t in writes if n > manifest_at[0] and "MANIFEST" in t]
+    if after:
+        for n, t in after:
+            bad(f"appliance/install.sh line {n} writes below the manifest at "
+                f"line {manifest_at[0]}: {t!r}. The manifest is the list this "
+                f"box checks itself against, and a file installed after it is "
+                f"written is a file nothing on the box will ever check")
+    elif len(own) < 2:
+        bad(f"only {len(own)} line(s) below line {manifest_at[0]} write the "
+            f"manifest at all, so this check would stay green on an installer "
+            f"that has stopped writing one")
+    else:
+        ok(f"the {len(own)} line(s) that write it are the last writes in the "
+           f"file")
+
+print("\n=== and a file the operator owns is guarded in exactly one place ===")
+# THE DECISION THE MANIFEST RESTS ON. install.sh writes two kinds of file:
+# those it overwrites on every run, which ARE the build, and those it writes
+# once and never touches again because the operator edits them - tune.env,
+# vpp-base.conf and hexarouting.conf. The boot self-test reports the first kind
+# when it does not match and says nothing about the second, because an edited
+# tune.env is the file working rather than the file broken, and a check that
+# shouted about it is a check somebody switches off - taking the file that
+# really IS from another release quiet with it (#302).
+#
+# That only holds while the guard and the class are the SAME statement. A
+# fourth file guarded by hand with `[ -f ... ] ||` would be a file this
+# installer will not overwrite and the manifest would call part of the build,
+# so the first operator to edit it gets a failed self-test on every boot. So
+# there is one guard in this file, it is inside keep(), and keep() is what
+# records the class.
+guards = [(n, t.strip()) for n, t in logical
+          if not t.lstrip().startswith("#")
+          and re.search(r"\[\s+-f\s.*\]\s*\|\|", t)]
+if len(guards) == 1 and "command install" in guards[0][1]:
+    ok(f"line {guards[0][0]} is the only one, and it is keep()'s")
+elif not guards:
+    bad("no `[ -f ... ] ||` guard is left in appliance/install.sh, so nothing "
+        "there writes a file once and leaves it to the operator - or keep() "
+        "has stopped guarding, and an upgrade now overwrites an edited "
+        "tune.env")
+else:
+    for n, t in guards:
+        if "command install" not in t:
+            bad(f"appliance/install.sh line {n} guards a write by hand: {t!r}. "
+                f"A file this installer will not overwrite has to go through "
+                f"keep(), which is what puts it in the manifest as the "
+                f"operator's - otherwise the first edit to it is reported as a "
+                f"box running a build it is not")
+
 print("\n=== and the check is reading something ===")
 # Without this the whole file passes on an install.sh that has been emptied,
 # which is the shape #151 spent an issue on.
