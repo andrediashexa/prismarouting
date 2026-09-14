@@ -1127,11 +1127,50 @@ class Config:
         implementation of it to keep in step.
         """
         out: dict = {}
-        for name, addrs in self.addresses.items():
-            v4 = [a for a in addrs if ":" not in a]
-            if v4:
-                out.setdefault(self.vrfs.get(name, 0), []).extend(v4)
+        for name, addr in self.interface_addresses_v4():
+            out.setdefault(self.vrfs.get(name, 0), []).append(addr)
         return out
+
+    def interface_addresses_v4(self) -> list:
+        """
+        [(interface, address)] - every IPv4 address this file puts on a port.
+
+        THE one reader of that question, and connected_prefixes() above is
+        built on it rather than beside it. That is not tidiness, it is #296.
+
+        Two checks now ask what addresses this box will have once a candidate
+        is applied. The next-hop check asks it by TABLE, because an address in
+        `vrf 10` connects nothing in table 0 (#255). The local-overlap check in
+        Shell.apply() asks it by INTERFACE and ignores the table entirely,
+        because the thing it is defending against does too: `bpa-out2in` sits
+        on the ip4-unicast arc of whatever port the pool is attached to, ahead
+        of ip4-lookup and therefore ahead of anything that knows about a VRF.
+        Two questions, two shapes, and it would have been easy to write the
+        second walk over self.addresses here and be done.
+
+        That second walk is exactly the defect #296 is about, one layer up.
+        The plugin's live walk and hexash's next-hop check were two readers of
+        "what addresses does this box have" that disagreed about the moment
+        being asked about, and a box loading its own file at four in the
+        morning fell through the gap between them. Adding a third reader that
+        could drift on the IPv6 filter, or on secondary addresses, or on a
+        future kind of address statement, would rebuild that gap in this file.
+        So both callers turn the same crank and differ only in what they do
+        with the handle.
+
+        IPv4 only, and the filter lives here for the same reason. routes.py is
+        IPv4 throughout and a CGNAT pool's public set is IPv4 by construction,
+        so an IPv6 address offered to either caller could not match anything -
+        which is a check that looks as though it ran.
+
+        NOT masked down to the network. Both callers want it that way and for
+        opposite reasons: routes._covers() masks the prefix it is given, and
+        the local-overlap check wants the HOST address, which is the one the
+        box answers BGP on. Doing the arithmetic here would take that away
+        from the second caller to save the first a line.
+        """
+        return [(name, a) for name, addrs in self.addresses.items()
+                for a in addrs if ":" not in a]
 
     def drop_lcp_taps(self, taps):
         """
