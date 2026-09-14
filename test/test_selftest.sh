@@ -2236,6 +2236,276 @@ else
   bad "it decides on the key comment or the hostname, which a correctly installed box does not match: $READS"
 fi
 
+echo "=== a box with nothing wrong with it, which is every box in the field (#298) ==="
+# THE CONTROL, and the reason it is worth the screen it takes.
+#
+# Every fixture above exists to make something go wrong, which is the right
+# instinct: a check is proven by the fault it catches. The other half was
+# missing. Until this box the suite's own count line read "105 of 105 runs
+# arranged a box with failed checks", so the three summary branches under
+# `fail = 0` - the last line every healthy appliance in the field prints - had
+# nothing behind them at all, and neither did any other behaviour that appears
+# only when nothing is wrong.
+#
+# #297 found that out the hard way. Its assertion was driven through the
+# no-pci box, came out green, and then STAYED green under both mutations of
+# the thing it was meant to test: that box carries eight failures of its own,
+# so "the summary does not say ready" was true whatever the summary did. A
+# check that cannot go red is worse than no check, and the only reason that
+# one is not in the tree is that somebody ran the mutations.
+#
+# lab/nat-behaviour.sh already makes this argument for the labs - it runs in a
+# mode where its full-cone assertions MUST fail, because an assertion that
+# passes under both conditions is not testing anything. This is that mode for
+# the self-test, the other way up.
+#
+# It is also the only place in the tree that says, in one screen, what a
+# working appliance looks like: a box this file finds NOTHING wrong with has
+# to answer every check in it at once.
+
+# hexash, which no box above has and none of them should.
+#
+# `command -v hexash` is the first thing the VTY check does, and the machine
+# running this suite has no hexash - so all 105 boxes above say "[FAIL] hexash
+# is not installed". Putting this stub in $BIN at the top of the file would
+# quietly repair a failed check on every one of them, and those boxes are not
+# this issue's to change: this adds a control, it does not soften a fault. So
+# the front door is stubbed here and taken away again at the end of the
+# section.
+cat > "$BIN/hexash" <<'EOF'
+#!/bin/sh
+echo "no rollback point saved yet"
+EOF
+chmod +x "$BIN/hexash"
+
+# A box the self-test finds nothing wrong with, arranged in the order the
+# self-test reads it. The order is not decoration: a check added there without
+# a fixture added here shows up as this box going red, which is the whole
+# value of keeping one box that has to satisfy all of them.
+healthy() {
+  # The cores. FOUR left over for the control plane and not one: one cpu left
+  # while more than one is isolated is a warning in its own right, and the
+  # point of this box is that it has none.
+  mkcpus "4-7" "0-7" "4-7" 0 4 5 6 7
+  R="$FAKE/root"
+  mkdir -p "$R/usr/share/hexarouting" "$R/proc" "$R/etc/ssh" \
+           "$R/var/log/hexarouting" "$R/sys/devices/system/cpu/cpuidle" \
+           "$R/sys/devices/system/cpu/cpufreq/policy0"
+  printf '0.71.0 (a1b2c3d)\n' > "$R/usr/share/hexarouting/VERSION"
+  printf 'MemTotal:       8388608 kB\n' > "$R/proc/meminfo"
+  printf 'model name\t: Synthetic CPU\nflags\t\t: fpu sse4_2 avx2\n' \
+    > "$R/proc/cpuinfo"
+  # What this boot GOT, and what the kernel exposes for it to act on. Both,
+  # because a parameter the kernel ignored leaves /proc/cmdline saying it was
+  # asked for and the kernel behaving as though it was not.
+  echo "BOOT_IMAGE=/vmlinuz isolcpus=4-7 processor.max_cstate=1" \
+    > "$R/proc/cmdline"
+  echo intel_idle > "$R/sys/devices/system/cpu/cpuidle/current_driver"
+  echo performance > "$R/sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+  # The NIC the tuner was told to claim, and a statistics segment somebody
+  # chose the size of.
+  printf 'dpdk {\n  dev 0000:03:00.0\n}\nstatseg {\n  size 256M\n}\n' \
+    >> "$R/etc/vpp/startup.conf"
+  # The records, on their own volume and on the two disks #83 is about.
+  echo /dev/vda2 > "$FAKE/mnt_root"
+  echo /dev/md0 > "$FAKE/mnt_records"
+  cat > "$R/proc/mdstat" <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vdb1[1] vda3[0]
+      2094080 blocks super 1.2 [2/2] [UU]
+
+unused devices: <none>
+MD
+  # Host keys whose contents are not older than the inode they sit on, which
+  # is what a key generated on this box looks like and what a key that came in
+  # with the system image does not (#248).
+  : > "$FAKE/keytimes"
+  for _kt in ecdsa ed25519 rsa; do
+    : > "$R/etc/ssh/ssh_host_${_kt}_key"
+    printf 'ssh_host_%s_key 1789000000 1789000000\n' "$_kt" >> "$FAKE/keytimes"
+  done
+  # The dataplane: answering, with the plugin, out of the OOM killer's
+  # selection, holding the NIC that startup.conf names, and paired into the
+  # kernel so that FRR can see the port the traffic is on.
+  : > "$FAKE/vppctl_ok"
+  echo -1000 > "$FAKE/oom_score_adj"
+  printf 'Plugin path\n bpa_plugin.so\n' > "$FAKE/show_plugins"
+  cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+TenGigabitEthernet3/0/0           1      up          9000/0/0/0     rx packets                  12
+local0                            0     down          0/0/0/0
+tap0                              2      up          9000/0/0/0
+IFACE
+  cat > "$FAKE/show_interface_addr" <<'ADDR'
+TenGigabitEthernet3/0/0 (up):
+  L3 200.150.0.1/24
+ADDR
+  printf 'itf-pair: [0] TenGigabitEthernet3/0/0 tap0 wan0 3 type tap\n' \
+    > "$FAKE/show_lcp"
+  cat > "$FAKE/statseg" <<'SEG'
+Entry: /sys/vector_rate (type 2)
+  total: 31.99M, used: 4.20M, free: 27.79M, trimmable: 27.79M
+SEG
+  printf 'pool alpha [dynamic / blocked]\n' > "$FAKE/bpa_pools"
+  printf 'TenGigabitEthernet3/0/0: strict\n' > "$FAKE/bpa_urpf"
+  printf ' mode dynamic\n' > "$FAKE/bpa_config"
+  printf 'IPFIX export of block events (RFC 8158)\n  state       enabled\n  exporter    10.0.0.2:4739 src 10.0.0.1 (path mtu 512)\n  records     0 emitted, 0 dropped\nTCP transport: disabled\n' \
+    > "$FAKE/bpa_logging"
+  # FRR answering, with every daemon the VTY offers a protocol for (#187) and
+  # the module bgpd refuses to start without.
+  printf 'router bgp 65000\n bgp router-id 10.0.0.1\n' > "$FAKE/frr_running"
+  printf 'RPKI Cache Servers\n' > "$FAKE/rpki"
+  # The saved configuration, and a dataplane that took all of it: the pool,
+  # the export, the MTU, the address and uRPF. Every one of those comparisons
+  # has a fixture above where the two sides disagree; this is the box where
+  # they agree, which none of them had.
+  export HEXA_CONFIG="$FAKE/hexarouting.conf"
+  cat > "$FAKE/hexarouting.conf" <<'CONF'
+nat cgnat pool alpha
+ inside 100.64.0.0/24
+ exit
+cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739
+cgnat logging enable
+interface TenGigabitEthernet3/0/0
+ mtu 9000
+ ipv4 address 200.150.0.1/24
+ urpf strict
+ exit
+CONF
+  # An operator account with a role the box granted it AND the memberships
+  # that make the role real, which for the whole life of the product was the
+  # one thing no box had (#184).
+  printf 'root:x:0:0::/root:/usr/bin/hexash-login\nnoc:x:1000:1000::/home/noc:/usr/bin/hexash-login\n' \
+    > "$FAKE/passwd"
+  printf 'noc hexa-admin vpp frr frrvty\n' > "$FAKE/groups"
+  echo 0 > "$FAKE/api_rc"
+}
+
+healthy
+run
+# The control's own control, and it comes first. Every assertion in this
+# section is about a box the self-test finds nothing wrong with, so if this
+# one is red the rest of them are measuring a different box - which is exactly
+# how #297's assertion came to pass for the wrong reason. It names the lines
+# that went red, because the answer is always one check and one fixture.
+if said '\[FAIL\]'; then
+  bad "the healthy box fails a check, so nothing below it is about a healthy box:
+$(printf '%s\n' "$OUTPUT" | grep '\[FAIL\]')"
+else
+  ok "$(printf '%s\n' "$OUTPUT" | grep -c '\[ ok \]') checks pass on it and not one goes red"
+fi
+# The headline only. A continuation row carries no marker, and the summary
+# itself says "See the [warn] above" on the box below.
+if said '^  \[warn\] '; then
+  bad "the healthy box is warned about something, so it is not the box that
+has nothing wrong with it:
+$(printf '%s\n' "$OUTPUT" | grep '^  \[warn\] ')"
+else
+  ok "and nothing on it is warned about either"
+fi
+# THE LINE THE FIELD READS, which until now had never been executed by a test.
+# Anchored whole: "ready" appearing somewhere is not the same statement as the
+# summary being that and nothing else, and the two boxes below are exactly the
+# cases where the difference matters.
+if said '^  HexaRouting ready\.$'; then
+  ok "so the last line is 'HexaRouting ready.' and nothing more"
+else
+  bad "a box with nothing wrong did not say it is ready: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
+fi
+
+echo "--- the same box with two warnings on it, and still nothing failed ---"
+# The second branch under `fail = 0`, and the one #297 exists for: a box with
+# five warnings and a box with none used to end identically, on a console that
+# scrolls and is read from the bottom by somebody racking a box.
+#
+# Two warnings that are ordinary hardware rather than a fault: 3 GB of RAM is
+# enough to boot and tight under load, and a CPU without avx2 runs VPP and
+# delivers less. Neither is a failure, which is the whole point - if either
+# were, this box would take the branch above it and the assertion would be
+# about something else.
+healthy
+printf 'MemTotal:       3145728 kB\n' > "$FAKE/root/proc/meminfo"
+printf 'model name\t: Synthetic CPU\nflags\t\t: fpu sse4_2\n' \
+  > "$FAKE/root/proc/cpuinfo"
+run
+if said '\[FAIL\]'; then
+  bad "the warning box failed a check, so its summary is not the one under test:
+$(printf '%s\n' "$OUTPUT" | grep '\[FAIL\]')"
+else
+  ok "nothing on it failed"
+fi
+# Read off the box rather than assumed, so that a warning arriving from
+# somewhere else makes this red instead of making the count below wrong.
+nwarn=$(printf '%s\n' "$OUTPUT" | grep -c '^  \[warn\] ')
+if [ "$nwarn" = 2 ]; then
+  ok "and it printed the two warnings it was arranged to have"
+else
+  bad "it has $nwarn warnings, not the 2 arranged: $(printf '%s\n' "$OUTPUT" | grep '^  \[warn\] ')"
+fi
+if said '^  HexaRouting ready, with 2 warning\(s\) above\.$'; then
+  ok "and the last line says it is ready AND how many warnings are above it"
+else
+  bad "a box with 2 warnings and no failures said: $(printf '%s\n' "$OUTPUT" | tail -2 | head -1)"
+fi
+
+echo "--- and the same box with no NIC to forward on, which is racking day ---"
+# The third branch, and the box #297 was measured on: installed, healthy, and
+# not yet able to do its job. It is not a failure - nothing is broken and
+# nothing needs fixing, there is a step left - and it is not "ready" either,
+# in the sense the person reading that line means it.
+#
+# The whole box is the healthy one with the NIC taken away: startup.conf as
+# the tuner writes it when no interface has been named, a dataplane holding
+# nothing but local0, and a saved configuration that says nothing about an
+# interface, because on this box nobody has configured one yet.
+healthy
+sed -i 's/^  dev 0000:03:00.0$/  no-pci/' "$FAKE/root/etc/vpp/startup.conf"
+cat > "$FAKE/show_interface" <<'IFACE'
+              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+local0                            0     down          0/0/0/0
+IFACE
+: > "$FAKE/show_lcp"
+rm -f "$FAKE/show_interface_addr"
+printf 'nat cgnat pool alpha\n inside 100.64.0.0/24\n exit\ncgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\n' \
+  > "$FAKE/hexarouting.conf"
+run
+if said '\[FAIL\]'; then
+  bad "the no-NIC box failed a check, which would make it the other summary:
+$(printf '%s\n' "$OUTPUT" | grep '\[FAIL\]')"
+else
+  ok "nothing on it failed: it is installed and healthy, and cannot forward"
+fi
+# said_across, because this sentence is two say() calls and the needle spans
+# the break between them. A needle written against the raw text matches only
+# while the message happens to fold where it folds today, which is the trap
+# this repository has now hit four times (#279, #285).
+if said_across 'HexaRouting is installed and healthy, and has no interface to forward on: it is not forwarding. See the \[warn\] above for the one step left.'; then
+  ok "it gets a sentence of its own that says which state it is in"
+else
+  bad "a box with no interface to forward on said: $(printf '%s\n' "$OUTPUT" | tail -3 | head -2 | tr '\n' ' ')"
+fi
+# The measurement from #297, which was taken on a real appliance at
+# 10.95.200.198 and had nothing in this suite holding it: the box that
+# prompted the issue printed "HexaRouting ready." with two warnings above it,
+# one of them saying it had no NIC to forward on.
+if said 'HexaRouting ready'; then
+  bad "a box that cannot forward a packet is still called ready: $(printf '%s\n' "$OUTPUT" | grep 'HexaRouting ready')"
+else
+  ok "and the word 'ready' is not applied to a box that cannot forward"
+fi
+
+# $BIN is on the PATH of every run, so the VTY stub goes away with the rest:
+# a fixture left behind is a fixture the next section measures by accident,
+# which is #222 in one line.
+rm -f "$BIN/hexash" "$FAKE/vppctl_ok" "$FAKE/show_plugins" "$FAKE/show_interface" \
+      "$FAKE/show_interface_addr" "$FAKE/show_lcp" "$FAKE/statseg" \
+      "$FAKE/bpa_pools" "$FAKE/bpa_urpf" "$FAKE/bpa_config" "$FAKE/bpa_logging" \
+      "$FAKE/frr_running" "$FAKE/rpki" "$FAKE/oom_score_adj" "$FAKE/mainpid" \
+      "$FAKE/keytimes" "$FAKE/mnt_root" "$FAKE/mnt_records"
+printf '\n' > "$FAKE/hexarouting.conf"
+unset HEXA_CONFIG
+rm -rf "$FAKE/root"
+
 echo "=== the exit status, over every box the cases above arranged ==="
 # The rule this holds: docs/appliance.md, "always exits zero: the diagnostic
 # MUST NOT bring down the boot". It is a diagnostic, and a diagnostic reports
@@ -2250,6 +2520,17 @@ if [ "$runs_with_fail" -gt 0 ]; then
   ok "$runs_with_fail of $runs runs arranged a box with failed checks"
 else
   bad "no run produced a [FAIL] line, so the exit status below proves nothing"
+fi
+# And the control the other way up, which this line read "105 of 105" on until
+# #298. A suite in which EVERY box fails something has never executed a single
+# thing that only happens when nothing is wrong - the summary an operator reads
+# on a working appliance first among them - and it cannot tell an assertion
+# that is true of the product from one that is true of every fixture it has.
+# That is not a hypothetical: #297's assertion passed for exactly that reason.
+if [ "$runs_with_fail" -lt "$runs" ]; then
+  ok "and $((runs - runs_with_fail)) of them arranged a box with nothing wrong"
+else
+  bad "every one of the $runs boxes fails something, so nothing here tests a box that passes (#298)"
 fi
 if [ "$bad_exits" -eq 0 ]; then
   ok "the self-test exited 0 on all $runs of them"
@@ -2302,57 +2583,45 @@ else
   bad "a hard dependency on the self-test can carry its failure onward: $HARD"
 fi
 
-echo "=== the last line is the one that survives (#297) ==="
-# READ OFF THE SOURCE, and that is a retreat worth explaining rather than
-# hiding, because this suite drives 105 real boxes and none of them can answer
-# this question.
+echo "=== no warning added later can escape the count (#297, #298) ==="
+# WHAT IS LEFT OF READING THE SOURCE, and what is left is the one question no
+# box can answer.
 #
-# The summary has four branches and three of them live under `fail = 0`. Not
-# one of the 105 boxes arranged above reaches that: the suite's own count says
-# "105 of 105 runs arranged a box with failed checks". Every fixture here
-# exists to make something go wrong, which is the right instinct, and it
-# leaves the line every healthy appliance in the field prints with nothing
-# behind it. Driving the change through a box was tried first and the
-# assertion passed for the wrong reason - the no-pci box has eight failures of
-# its own, so "does not say ready" was true whatever the summary did, and both
-# mutations of it stayed green. A check that cannot go red is worse than none.
+# Four assertions stood here, all of them reading appliance/selftest as text,
+# and #297 recorded that as a retreat rather than hiding it: the summary has
+# four branches, three of them under `fail = 0`, and not one of the 105 boxes
+# this suite arranged reached that. Driving them through a box was tried first
+# and the assertion passed for the wrong reason - the no-pci box carries eight
+# failures of its own, so "does not say ready" was true whatever the summary
+# did, and both mutations of it stayed green.
 #
-# So this reads the file, in the shape test_stop_is_not_a_teardown.py already
-# uses for a rule that lives in a unit file. It is weaker than a measurement
-# and it is not nothing: each of these has been shown red.
+# #298 built the box that can answer them. Three of the four are now
+# measurements on real boxes, three sections up - "HexaRouting ready.", "ready,
+# with N warning(s) above." and the sentence a box that cannot forward gets -
+# and each of those was shown red under a mutation of the summary that
+# produces it. They are gone from here rather than kept alongside, because two
+# checks of one fact disagree eventually and the weaker one is the one people
+# then believe.
 #
-# The measurement that DID happen is on a real appliance with no NIC, recorded
-# on #297: "HexaRouting ready." before, and the sentence below after.
-ST_SRC=$(cat "$ST")
-case "$ST_SRC" in
-  *'warn() { say "  [warn] $*"; warns=$((warns+1)); }'*)
-    ok "a warning is counted rather than only printed" ;;
-  *) bad "there is no warn() that counts, so the summary cannot know" ;;
-esac
-# EVERY headline, not the count. A warning added later with a bare `say` would
-# be invisible to the summary, and nothing else in this file would notice: the
-# box still prints it, the operator still reads it if they are looking, and
-# the count it is missing from is the thing that tells them to look.
+# THIS ONE STAYS, because it is not about what the summary says on any
+# particular box. It is about a warning added later with a bare `say`, which
+# is invisible to the count on EVERY box: the box still prints it, the
+# operator still reads it if they are looking, and the count it is missing
+# from is the thing that tells them to look. A measurement would have to know
+# how many warnings this file is supposed to have, which is a number that
+# changes every time somebody adds one - and the box above would go on saying
+# "ready, with 2 warning(s) above" while a third went uncounted.
+#
 # warn()'s own definition is the one line that legitimately spells it out, so
 # it is excluded by name rather than by a looser pattern that would also let a
 # real bypass through. Found by this check on its first run, which is the
 # argument for writing the exclusion narrowly.
 stray=$(grep 'say "  \[warn\]' "$ST" | grep -cv '^warn() {' || true)
 if [ "${stray:-0}" -eq 0 ]; then
-  ok "and every [warn] headline goes through it, so none can escape the count"
+  ok "every [warn] headline goes through warn(), so none can escape the count"
 else
   bad "$stray [warn] headline(s) bypass warn() and are not counted"
 fi
-case "$ST_SRC" in
-  *'elif [ -n "$noforward" ]; then'*)
-    ok "a box with no way to forward gets a summary of its own" ;;
-  *) bad "the summary has no branch for a box that cannot forward, so it is called ready" ;;
-esac
-case "$ST_SRC" in
-  *'HexaRouting ready, with $warns warning(s) above.'*)
-    ok "and a box that can forward says how many warnings are above" ;;
-  *) bad "the summary does not report the warning count" ;;
-esac
 
 echo "=== every self-test line fits the 80-column console it is printed on ==="
 # The self-test writes to /dev/console on a racked appliance, which is 80
