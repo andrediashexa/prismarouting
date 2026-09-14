@@ -56,6 +56,16 @@ def ok(msg):
     print(f"  [ ok ] {msg}")
 
 
+def ok_unless_red(before, msg):
+    """The green line only when nothing above it went red.
+
+    A `[ ok ]` printed directly under a FAIL of its own block reads as though
+    the block passed, which is how a red run gets skimmed past.
+    """
+    if fail == before:
+        ok(msg)
+
+
 def body_of(text, name):
     """The braces of one C function definition, or None.
 
@@ -101,6 +111,7 @@ check(sweep is not None,
       "reconcile this test distinguishes from the attach path is gone")
 
 if attach is not None:
+    before = fail
     # The call itself, and not merely the word: `bpa_auto_mss_interface_update`
     # contains `bpa_auto_mss_update` as a substring, so the boundary matters.
     check(not re.search(r"(?<![_a-zA-Z])bpa_auto_mss_update\s*\(", attach),
@@ -114,9 +125,10 @@ if attach is not None:
           "bpa_interface_feature_enable_disable() does not tell the auto-MSS "
           "bookkeeping which interface changed, so the clamp is left "
           "describing a set of interfaces that no longer exists (#183)")
-    ok("the attach path updates one interface, not every interface")
+    ok_unless_red(before, "the attach path updates one interface, not every interface")
 
 if per_if is not None:
+    before = fail
     # What "proportional to the box" looks like in this file: a walk of VPP's
     # interface pool, or a walk of the plugin's own per-interface array.
     for needle, what in (
@@ -130,9 +142,10 @@ if per_if is not None:
               f"bpa_auto_mss_interface_update() contains {what}. It is what "
               f"one attach calls, so anything in it that grows with the number "
               f"of interfaces is the quadratic coming back")
-    ok("the per-interface update contains no loop at all")
+    ok_unless_red(before, "the per-interface update contains no loop at all")
 
 if sweep is not None:
+    before = fail
     # The once-a-second reconcile is allowed a pass, and is allowed it only
     # over the interfaces the CGNAT is on. Over the BOX is what was removed.
     check("sw_interfaces" not in sweep and "pool_foreach" not in sweep,
@@ -145,7 +158,7 @@ if sweep is not None:
           "not come through bpa_interface_feature_enable_disable(), so its "
           "slot survives, and reading the MTU of a freed pool entry reads "
           "whatever is there now")
-    ok("the once-a-second reconcile is over the CGNAT interfaces, not the box")
+    ok_unless_red(before, "the once-a-second reconcile is over the CGNAT interfaces, not the box")
 
 # And the counting assertion must still be in the build. A suite that is
 # written and not run is a suite that is not there.
