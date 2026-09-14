@@ -1681,7 +1681,8 @@ fixed.
 
 #### A count that answers a different question from the line above it
 
-[#306](https://github.com/andrediashexa/hexarouting/issues/306) - *open*.
+[#306](https://github.com/andrediashexa/hexarouting/issues/306) - *fixed,
+v0.75.0*.
 `show interface` on a box with no dataplane interface says "the dataplane has
 no interface to forward on" and then, four lines down, "1 interface(s) on the
 dataplane". The one it counts is `local0`, VPP's own null interface, which can
