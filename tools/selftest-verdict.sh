@@ -65,7 +65,28 @@ said_a_verdict() {  # <file>
   grep -qE "$VERDICT_RE" "$1"
 }
 
+VERDICT_BAD_RE="check\(s\) failed\. The box is NOT ready\."
+
 # And did it reach one that means the box can be handed over?
+#
+# THIS WAS DEFINED AND CALLED BY NOBODY, for two releases (#311). Every reader
+# asked said_a_verdict, which is true of a box that failed its own checks, so
+# tools/release-gate.sh and lab/boot-iso.sh accepted a medium whose self-test
+# ended "N check(s) failed. The box is NOT ready." and the gate reprinted that
+# line underneath its own "is ready to publish". The gate's error text names
+# the failure it was written for - "reached no verdict" - and the absence of a
+# verdict is not the dangerous case.
 said_a_good_verdict() {  # <file>
   grep -qE "$VERDICT_OK_RE" "$1"
+}
+
+# And did it reach the one that means it failed?
+#
+# Separate from "not good", because a console with no verdict at all is a
+# different failure needing different work: a box that came up and failed its
+# checks sends the reader to the checks, and a box that said nothing sends
+# them to the bootloader. lab/install-iso.sh already told those two apart and
+# was spelling this sentence by hand in two places to do it.
+said_a_failed_verdict() {  # <file>
+  grep -qE "$VERDICT_BAD_RE" "$1"
 }

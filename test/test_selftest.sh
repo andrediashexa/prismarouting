@@ -3144,20 +3144,76 @@ fi
 #
 # The gate is the file where a false red is most expensive, so it is in this
 # list first and not last.
+# DERIVED FROM VERDICT_RE, not typed out here. The hand-written list covered
+# the two sentences that mean the box is fit to hand over and not the one that
+# means it failed - so lab/install-iso.sh spelled "check(s) failed. The box is
+# NOT ready." by hand in two places and this check said nothing, for as long as
+# it has existed. A rule about second copies that itself keeps a second copy of
+# what to look for is the same defect wearing the check's clothes (#311).
+#
+# The pattern is a grep -E alternation, so the alternatives are its `|` parts
+# with the regex escapes taken back out.
+# THE NEEDLE IS THE LAST SENTENCE OF EACH ALTERNATIVE, minus its full stop.
+# A reader that spells the whole of "check(s) failed. The box is NOT ready."
+# is caught by the whole string, and one that spells only "The box is NOT
+# ready" is not - which is exactly what lab/install-iso.sh had. Taking the
+# final sentence catches both, and dropping the stop catches a reader that
+# left it off.
+#
+# WHAT THIS STILL MISSES, said out loud rather than left to be discovered: a
+# reader spelling a shorter fragment than the final sentence. "NOT ready"
+# alone would pass. There is no sound way to derive "distinctive enough" from
+# the pattern, and a list of fragments typed here would be the second copy
+# this check exists to forbid.
+SPELL=$(printf '%s' "$LAB_RE" | sed 's/\\(/(/g; s/\\)/)/g; s/\\\././g' \
+        | tr '|' '\n' \
+        | sed 's/^.*\. //; s/\.$//' )
 spelled=0
 for _f in tools/release-gate.sh lab/boot-iso.sh lab/install-iso.sh; do
-  _n=$(grep -n "HexaRouting ready\|is installed and healthy, and has" \
-         "$REPO/$_f" 2>/dev/null \
-       | grep -vE "^[0-9]+:[[:space:]]*#" | wc -l)
+  _hits=$(printf '%s\n' "$SPELL" | while IFS= read -r _s; do
+            [ -n "$_s" ] || continue
+            grep -nF -e "$_s" "$REPO/$_f" 2>/dev/null
+          done | grep -vE "^[0-9]+:[[:space:]]*#" | sort -u)
+  _n=$(printf '%s' "$_hits" | grep -c . || true)
   if [ "$_n" -ne 0 ]; then
     spelled=$((spelled + _n))
     bad "$_n line(s) of $_f spell a verdict instead of sourcing tools/selftest-verdict.sh: a second reader of the same truth refused 0.72.0 twice"
-    grep -n "HexaRouting ready\|is installed and healthy, and has" "$REPO/$_f" \
-      | grep -vE "^[0-9]+:[[:space:]]*#" | sed 's/^/        /'
+    printf '%s\n' "$_hits" | sed 's/^/        /'
   fi
 done
 if [ "$spelled" -eq 0 ]; then
   ok "and no reader spells them: all three source tools/selftest-verdict.sh"
+fi
+
+# EVERY READER THE HOLDER DEFINES HAS A CALLER.
+#
+# said_a_good_verdict() sat in tools/selftest-verdict.sh for two releases with
+# nothing calling it, and the consequence was not cosmetic: every reader asked
+# said_a_verdict instead, which is true of "N check(s) failed. The box is NOT
+# ready.", so tools/release-gate.sh accepted a medium that had just said it was
+# not fit to hand over and reprinted that line under its own "is ready to
+# publish" (#311).
+#
+# A function nobody calls is the quietest way for a rule to stop applying: the
+# holder still reads as though the rule is enforced, and the file that would
+# have enforced it is the one that stopped. Derived from the holder rather than
+# listed, so a fifth reader added later has to be called too.
+uncalled=""
+for _fn in $(grep -oE "^said_a_[a-z_]+\(\)" "$REPO/tools/selftest-verdict.sh" \
+             | tr -d "()"); do
+  # A CALL, not a mention. The comment above the gate's call names the
+  # function while explaining why it had none, and a grep that counted that
+  # would have been satisfied by the very sentence describing the defect.
+  _callers=$(grep -hn "$_fn" "$REPO/tools/release-gate.sh" \
+                            "$REPO/lab/boot-iso.sh" \
+                            "$REPO/lab/install-iso.sh" 2>/dev/null \
+             | grep -vE "^[0-9]+:[[:space:]]*#" | grep -c . || true)
+  [ "$_callers" -eq 0 ] && uncalled="$uncalled $_fn"
+done
+if [ -n "$uncalled" ]; then
+  bad "tools/selftest-verdict.sh defines$uncalled and no lab or gate calls it: a reader nobody calls is a rule that has quietly stopped applying, and the holder still reads as though it had not"
+else
+  ok "every verdict reader the holder defines has a caller"
 fi
 
 echo "=== every self-test line fits the 80-column console it is printed on ==="

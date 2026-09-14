@@ -1028,7 +1028,7 @@ drive_console() {
     echo "         console carries none of them. Either it stopped before its"
     echo "         summary, or the summary was reworded and this lab was not."
     fail=1
-  elif grep -q "check(s) failed. The box is NOT ready." /tmp/verdict-probe.log; then
+  elif said_a_failed_verdict /tmp/verdict-probe.log; then
     echo "  [FAIL] the installed box failed its own self-test"
     echo "         the console above says which checks. This is the box an"
     echo "         operator is handed, so a failed check here is a defect"
@@ -1882,7 +1882,7 @@ up=1
 # failures needing different work, and reporting the first as the second sent
 # the diagnosis to the bootloader while the real problem was VPP segfaulting
 # in a restart loop, plainly printed on the same console.
-if grep -q "The box is NOT ready" /tmp/disk-clean.log; then
+if said_a_failed_verdict /tmp/disk-clean.log; then
   echo
   echo "=========== THE INSTALLED SYSTEM CAME UP AND FAILED ITS CHECKS ==========="
   sed -n '/boot self-test/,/=====$/p' /tmp/disk-clean.log \
