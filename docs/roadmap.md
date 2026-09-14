@@ -304,7 +304,7 @@ of the logging obligation. If the scope ever changes, that is where to start.
 | **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: **346 clocks** in `bpa-in2out`, about 22 cores for 100 Gbps of 64-byte frames, down from 470 when [#63](https://github.com/andrediashexa/hexarouting/issues/63) was taken. Bits per second still needs an E810 or CX6 - [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it. | M |
 | **Symmetric RSS** | The handoff works, but symmetric hashing would put both directions on the right worker before the handoff, saving the extra enqueue. | M |
 | **RFC 4787 / 5382 conformance suite** | Turns section 1's claims into assertions. | M |
-| **Sustained-load soak test** | Session table behaviour under churn over hours is not covered. Exhaustion bugs show up at hour six, not minute six. | M |
+| **Sustained-load soak test** — *delivered* | `lab/soak.sh` ([#30](https://github.com/andrediashexa/hexarouting/issues/30)), for as many seconds as its one argument says. Every cycle fills the session table and every cycle empties it — fifteen seconds of traffic at a rate that fills the burst, then twenty seconds of nothing, which outlasts the UDP timeout and the block hold-down together — and the box is read at the end of each half. **Every trough is the same state of the box**, so two troughs are directly comparable and anything a later one holds is memory the box did not give back: no working set to subtract and no settling to wait out. Asserts the table back at its baseline at every trough, every session created also expired, every block back in the pool, the box's own allocation and release counters equal, the heap and the resident size unmoved between two empty tables, and a real collector's `natEvent` 17 count equal to its 16 count with no allocation left open. Outside `tools/run-all-labs.sh` (`NOT_LABS`) and outside `make test`: four minutes is its shortest run. | M |
 
 ## 4. Deliberately out of scope
 
@@ -348,7 +348,7 @@ promises about order that the work then rearranged. What the plan is for is the
 | **v0.17.0 to v0.18.0** — *released* | Protection and control | [#27](https://github.com/andrediashexa/hexarouting/issues/27) utilisation, [#26](https://github.com/andrediashexa/hexarouting/issues/26) pool selection by VRF | Bounds on the customer who takes too much, and the controls an operator needs before a pool fills. #26's ACL half is what remains. |
 | *then* | Compliance | [#20](https://github.com/andrediashexa/hexarouting/issues/20) syslog, [#21](https://github.com/andrediashexa/hexarouting/issues/21) subscriber identity, [#22](https://github.com/andrediashexa/hexarouting/issues/22) trail integrity, [#23](https://github.com/andrediashexa/hexarouting/issues/23) pool-resize procedure | The log already exists and is correct. This makes it usable by the systems and the people who have to act on it. |
 | *then* | High availability | [#6](https://github.com/andrediashexa/hexarouting/issues/6), [#7](https://github.com/andrediashexa/hexarouting/issues/7), [#8](https://github.com/andrediashexa/hexarouting/issues/8), [#9](https://github.com/andrediashexa/hexarouting/issues/9) | Deliberately after correctness. HA over a CGNAT with known gaps replicates the gaps. |
-| *then* | Performance, measured | [#28](https://github.com/andrediashexa/hexarouting/issues/28) throughput on real NICs, [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS, [#30](https://github.com/andrediashexa/hexarouting/issues/30) soak test | The per-packet cost is measured ([#63](https://github.com/andrediashexa/hexarouting/issues/63)); bits per second is not, and needs a NIC DPDK drives natively. |
+| *then* | Performance, measured | [#28](https://github.com/andrediashexa/hexarouting/issues/28) throughput on real NICs, [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS, [#30](https://github.com/andrediashexa/hexarouting/issues/30) soak test — *delivered* | The per-packet cost is measured ([#63](https://github.com/andrediashexa/hexarouting/issues/63)); bits per second is not, and needs a NIC DPDK drives natively. The soak needed neither, and shipped first. |
 | *not planned* | The way out of CGNAT | [#31](https://github.com/andrediashexa/hexarouting/issues/31) NAT64, DS-Lite, MAP-E/MAP-T, 464XLAT | **Out of scope by decision** — see section 3.4. The row is kept because the reasoning is worth keeping, not because the work is scheduled. |
 | *backlog* | | [#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP | PCP's dependency is met now that #17 has shipped; it earns its cost once manual forwards become a volume. |
 
@@ -1281,8 +1281,49 @@ remains of [#63](https://github.com/andrediashexa/hexarouting/issues/63), which 
 session carries its correction, so what is left is the one part a NIC does
 instead of the CPU. The line above used to say offload was the only real remedy
 for the whole of it, and that was true when it was written and is not now.
-[#30](https://github.com/andrediashexa/hexarouting/issues/30) the soak test can run earlier but pays most on a stable base — it
-catches the leak that appears at hour six.
+[#30](https://github.com/andrediashexa/hexarouting/issues/30) the soak test is **delivered**, and it did run earlier: `lab/soak.sh`
+needs no NIC, because a leak is visible at the packet rate a packet generator
+reaches. What it still pays most on is a stable base, which is why it sits
+here rather than in the release that wrote it.
+
+**What its short run proves and what only a long one does**, because the
+difference is the whole design and not a caveat. The default 210 s run is six
+cycles and 38208 sessions, and it proves the mechanism: that the table empties
+at every trough, that blocks return, that the box's own allocation and release
+counters end equal, that one `natEvent` 17 reaches a real collector for every
+16, and that each assertion is wired to something that can move. It proves
+nothing about a week. A leak is a **rate**, so what the memory assertion can
+see is its 1.00 MB margin divided by the sessions the run churned: about 27
+bytes per session over 210 s, 0.2 bytes over eight hours, and one byte in 3000
+over a week — a leak nothing else in this repository could detect. That factor
+is bought with wall time and with nothing else, which is why the duration is
+the argument.
+
+Measured on 2026-09-14 over 700 s: 127360 sessions created and 127360 expired,
+2532 blocks taken and 2532 given back, 2532 allocation records and 2532 release
+records at the collector, and a trough heap that moved by **0.01 MB in
+nineteen comparisons** — one step of the smallest size the reading can show —
+with resident size unchanged.
+
+**Its control is eight deliberately broken runs, not an off mode**, and that
+is a departure from `OFF_MODES` worth stating. There is no feature here to
+switch off; a mode that made the box leak on purpose would be the lab
+performing the product's step in the other direction. So each assertion was
+shown red against an edited plugin — sessions that never expire, blocks that
+are never reaped, a `natEvent` 17 that is never exported, a kilobyte leaked
+per translated packet, one exported record in a hundred dropped — and against
+three mis-set-up runs that turn the lab's own preconditions red. None of them
+is left in the tree.
+
+**One of those controls found a defect in the lab rather than in the box**,
+which is the argument for running them at all. Breaking the heap parser on
+purpose — the shape a VPP release that renames a field would produce — left
+the check written to catch exactly that **green**: the empty column shifted
+every column after it left, so three assertions were answering about the wrong
+number and the one guarding them said yes. The sample line carries a
+placeholder for a missing reading now, and the two memory deltas are computed
+with a guard, because under `dash` `$(( NA - NA ))` is zero and zero is inside
+any margin.
 
 [#163](https://github.com/andrediashexa/hexarouting/issues/163) kernel and boot tuning is also here, and **only** here: it lists the
 parameters the tuner does not yet set, each as a hypothesis with a named cost,

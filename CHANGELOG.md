@@ -250,7 +250,102 @@ version has a chance of seeing it.
   Not blind in either direction: a box with no host keys at all is a failed
   check saying sshd cannot start, a key whose birth time the filesystem does
   not record is reported as undecidable rather than as fine, and the live
-  medium - which carries no host keys on purpose - is not failed for it.
+  medium - which carries no host keys on purpose - is not failed for it.### Added
+
+* **A soak test: hours of session churn, and what does not come back is a
+  leak** ([#30](https://github.com/andrediashexa/hexarouting/issues/30)).
+  Every other lab in this repository finishes before the first timeout
+  expires, so none of them can see the failure that reaches production: the
+  box that works for a week and then stops. `lab/soak.sh` runs for as long as
+  its argument says, and the argument is the only one it takes.
+
+  ```
+    sh tools/lab.sh soak            210 s of churn, about four minutes in all
+    sh tools/lab.sh soak 28800      eight hours of it
+  ```
+
+  **Every cycle fills the table and every cycle empties it**, and that shape
+  is what makes the memory question answerable at all. Fifteen seconds of
+  traffic — 32 subscribers, 199 source ports each, at a rate that fills the
+  whole burst so sessions are created while others time out — then twenty
+  seconds of nothing, which is longer than the UDP timeout and the block
+  hold-down together. The lab reads the box at the end of each half. **Every
+  trough is the same state of the box**: no session, no block held, nothing
+  arriving. So two troughs are directly comparable, and anything a later one
+  holds that an earlier one did not is memory the box did not give back —
+  with no working set to subtract, no settling to wait out and no allocator
+  wobble to make room for.
+
+  **That shape was arrived at by measurement, and the first one was wrong.**
+  The first version ran a 12 s burst inside a 15 s cycle against a 20 s
+  timeout, so the tail of one burst was still alive when the next began. Over
+  60 cycles the live session count never settled: it climbed by about 21 a
+  cycle for 21 cycles, dropped by 511 in one, and began climbing again — a
+  beat between the idle gap and the timeout, with the heap following its
+  high-water mark upward in steps for five and a half minutes. **Nothing was
+  wrong with the box.** A load that never reaches a steady state cannot be
+  asserted to plateau, and a lab that asserted it anyway would have been
+  reporting its own generator as a product defect. Filling the cycle removes
+  the gap the beat needs.
+
+  What it asserts, and every one of them against a number the box printed:
+  the session table is back at the baseline **at every trough**, not only at
+  the end; every session the box created, the box expired; every block came
+  back to the pool at every trough and the box's own allocation and release
+  counters end equal; blocks were already being given back at the first
+  trough, because a box that only released at the end would look the same in
+  the closing numbers and be broken for the whole run; the heap and the
+  resident size between two empty tables did not grow; and a real IPFIX
+  collector on the far side of a veth counted one `natEvent` 17 for every
+  `natEvent` 16, with **no allocation left open** — matched by port range and
+  not merely by total — and nothing dropped on the way out.
+
+  Measured on 2026-09-14 over 700 s: 127360 sessions created and 127360
+  expired, 2532 blocks taken and 2532 given back, 2532 allocation records and
+  2532 release records at the collector, and a trough heap that moved by
+  **0.01 MB in nineteen comparisons** — one step of the smallest size the
+  reading can show — with resident size unchanged. The 210 s default run, six
+  cycles and 38208 sessions, moved neither:
+
+  ```
+    at the warm-up trough:  heap 238.37M, rss 446280 kB
+    highest later trough:   heap 238.37M (+0.00M), rss 446280 kB (+0 kB)
+    margins allowed:        heap 1.00M, rss 8192 kB
+    troughs compared: 5, of which 0 held a session and 0 held a block
+  ```
+
+  **What a short run proves and what only a long one does** is arithmetic
+  rather than a caveat, and the header states it in those terms. A leak is a
+  rate, so what the memory assertion can see is its 1.00 MB margin divided by
+  the sessions the run churned: 27 bytes per session over the 210 s default,
+  0.2 bytes over eight hours, one byte in 3000 over a week.
+
+  **It is not in `make test` and not in `tools/run-all-labs.sh`.** The suite's
+  longest lab is about two minutes and this one is four at its shortest; a
+  suite that waited on it would stop being run, which loses the suite rather
+  than the lab. `NOT_LABS` carries that reason as data, so the run prints what
+  it skipped before its first result.
+
+  **Its control is not an off mode, and could not honestly be one.** There is
+  no feature here to switch off, and a mode that made the box leak on purpose
+  would be the lab performing the product's step in the other direction. Each
+  assertion was instead shown red against a deliberately broken product —
+  sessions that never expire, blocks that are never reaped, a `natEvent` 17
+  that is never exported, a kilobyte leaked per translated packet, one
+  exported record in a hundred dropped — and against three mis-set-up runs that
+  turn the lab's own preconditions red, which is what those preconditions are
+  for: a soak whose traffic missed the pool empties an empty table, gives back
+  no block it never took, balances a log with no records in it, and reports a
+  green run after eight hours. None of the mutations is left in the tree.
+
+  **One of those controls found a defect in the lab and not in the box.**
+  Breaking the heap parser on purpose — the shape a VPP release that renames a
+  field would produce — left the check written to catch exactly that **green**:
+  `awk` collapses an empty field, so every column after it shifted left, three
+  assertions answered about the wrong number and the one guarding them said
+  yes. The sample line carries a placeholder for a missing reading now, and
+  the two memory deltas are computed with a guard, because under `dash`
+  `$(( NA - NA ))` is zero and zero is inside any margin.
 
 ## 0.70.0 — a virtio NIC could never be the dataplane card, and a self-test that passed a box with none
 
