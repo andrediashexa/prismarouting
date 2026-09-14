@@ -316,7 +316,7 @@ diff.
 A merge into `master` happens only when the maintainer asks for it — with one
 standing exception, below.
 
-When it happens it **MUST** produce all five of:
+When it happens it **MUST** produce all six of:
 
 1. **A version bump** in `VERSION`, which is the single source of truth. No
    version string is hardcoded anywhere else.
@@ -368,6 +368,21 @@ When it happens it **MUST** produce all five of:
    moment it is downloaded, copied to a USB stick or handed to somebody at a
    site, and two images with the same name are indistinguishable at exactly
    the moment it matters — when an operator is deciding which one to install.
+
+6. **The roadmap compared against the tracker**, with
+   `sh tools/roadmap-state.sh`. It prints every issue `docs/roadmap.md` names
+   with its state, flags the ones a section still discusses as work that
+   remains while they are closed, and flags open issues the file never
+   mentions. The argument for it, and the reason it is neither in `make test`
+   nor in `make release-gate`, is rule 5 of that file's own working rules and
+   is not restated here.
+
+   It is in this list rather than only in the roadmap because cutting a
+   release is the moment somebody reads the roadmap to write a release note,
+   and a checklist that does not say so is a second copy of this procedure
+   that disagrees with the first by leaving something out. What the tool finds
+   is either a sentence to move into the past tense or an issue that needs a
+   home in the file; neither blocks the release.
 
    `make release-gate` is the whole procedure — clone at the tag, build the
    plugin, build the medium, boot it, install it to a disk and boot the disk —
