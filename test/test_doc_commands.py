@@ -60,6 +60,9 @@ def ok(msg):
     print(f"  [ ok ] {msg}")
 
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import doc_paths                                     # noqa: E402
+
 REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 #: Everything that shows a transcript of this VTY. README.md is in here
 #: because it is the first page anybody reads and it quotes the VTY too.
@@ -562,25 +565,18 @@ print("\n=== every path these documents send a reader to is in the tree ===")
 # filesystem: a path either resolves or it does not, and it cannot be reworded
 # into passing. Nothing here reads what is at the other end.
 #
-# FIRST COMPONENT MUST BE ONE OF THIS REPOSITORY'S OWN DIRECTORIES, and that
-# rule is what replaces an exception list. Measured before it was written:
-# across every markdown file in the tree, 280 mentions in docs/ alone resolved
-# to 4 missing, and 3 of the 4 were VPP's own headers - `vnet/error.h`,
-# `vnet/ethernet/node.c`, `vnet/ipfix-export/ipfix_info_elements.h` - which are
-# real files on a box and not files here. The fourth was a wiki page named
-# relative to wiki/ rather than to the root. With the first-component rule:
-# 330 mentions, 0 missing. An allowlist of three would have been an allowlist
-# somebody grows.
+# WHICH STRINGS COUNT AS A PATH is decided by test/doc_paths.py and not here,
+# because test/test_changelog_landing.py asks the same question. Written out
+# twice, the two immediately disagreed: the changelog copy did not know that
+# `vnet/error.h` is VPP's header rather than ours, and went red on an entry
+# whose whole subject was that distinction. The measurement behind the rule is
+# in that file.
 #
 # CHANGELOG.md is excluded here and checked separately in
 # test/test_changelog_landing.py, which looks only at the unreleased section.
 # A tagged section describes a medium somebody is running and MUST NOT be
 # edited, so a file renamed after it shipped leaves it naming something that
 # is gone and nobody may correct it.
-_OWN_DIRS = {"src", "appliance", "tools", "test", "lab", "wiki", "docs", "ref"}
-_PATH_RE = re.compile(
-    r"`([A-Za-z0-9_][A-Za-z0-9_./-]*"
-    r"\.(?:sh|py|c|h|md|conf|env|list|service|json|yml))`")
 _seen, _dead = 0, {}
 for _root, _dirs, _files in os.walk(REPO):
     _dirs[:] = [_d for _d in _dirs
@@ -594,10 +590,7 @@ for _root, _dirs, _files in os.walk(REPO):
             continue
         with open(os.path.join(REPO, _rel), encoding="utf-8") as _fh:
             _text = _fh.read()
-        for _m in _PATH_RE.finditer(_text):
-            _path = _m.group(1)
-            if _path.split("/")[0] not in _OWN_DIRS:
-                continue
+        for _path in doc_paths.repo_paths(_text):
             _seen += 1
             if not os.path.exists(os.path.join(REPO, _path)):
                 _dead.setdefault(_path, set()).add(_rel)

@@ -45,6 +45,9 @@ def ok(msg):
     print(f"  [ ok ] {msg}")
 
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import doc_paths                                     # noqa: E402
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEXT = open(os.path.join(REPO, "CHANGELOG.md"), encoding="utf-8").read()
 
@@ -110,8 +113,10 @@ print("\n=== the paths the unreleased entries name are still in the tree ===")
 # comparing a message against the code that prints it is not: a path either
 # resolves or it does not, and it cannot be reworded into passing.
 #
-# Absolute paths are skipped. `/etc/hexarouting/vpp-base.conf` is a file on the
-# appliance and asking this tree for it would be asking the wrong machine.
+# WHICH STRINGS COUNT AS A PATH is decided by test/doc_paths.py, which
+# test/test_doc_commands.py reads too. Written out here as well, this copy went
+# red on an entry naming `vnet/error.h` - VPP's header, not ours - which is
+# exactly the distinction that entry was about. One holder, two readers.
 _UNREL = re.search(r"^## Unreleased$(.*?)^## \d", TEXT, re.M | re.S)
 if not _UNREL:
     check(False, "the unreleased section could not be sliced, so the paths in "
@@ -119,12 +124,7 @@ if not _UNREL:
 else:
     _body = _UNREL.group(1)
     _named, _missing = set(), []
-    for _m in re.finditer(
-            r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.(?:sh|py|c|h|md|conf|env|list|"
-            r"service|json|yml))`", _body):
-        _rel = _m.group(1)
-        if "/" not in _rel:          # a bare filename names no place to look
-            continue
+    for _rel in doc_paths.repo_paths(_body):
         _named.add(_rel)
         if not os.path.exists(os.path.join(REPO, _rel)):
             _missing.append(_rel)

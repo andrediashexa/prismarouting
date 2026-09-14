@@ -392,6 +392,13 @@ version has a chance of seeing it.
   of the root. With the rule: 330 mentions, 0 missing. An allowlist of three
   would have been an allowlist somebody grows.
 
+  **The rule has one holder**, `test/doc_paths.py`, because both checks ask the
+  same question. Written out in each of them it took one commit to disagree:
+  the changelog copy did not know that `vnet/error.h` is VPP's header rather
+  than ours, and went red on the entry you are reading, whose whole subject is
+  that distinction. Breaking the holder turns both readers red at once, which
+  is the point of there being one.
+
 
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
