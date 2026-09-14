@@ -23,9 +23,40 @@
 # So: one definition, and test/test_selftest.sh refuses a reader that spells
 # these anywhere else.
 #
+# AND THE REST OF THE GATE PATH WAS AUDITED ONCE, BY HAND, so that the next
+# reader does not have to wonder whether more of these are waiting. Every
+# literal string lab/install-iso.sh, lab/boot-iso.sh and tools/release-gate.sh
+# look for in a console: 42 of them, once the regexes and the labs' own HXLAB
+# probes are set aside. Nine do not appear literally anywhere under
+# appliance/, src/ or tools/, and all nine are accounted for:
+#
+#   Welcome to GRUB / Login incorrect / Ordering cycle found
+#                                      not ours: GRUB, login(1), systemd
+#   HexaRouting installed to /dev/vda  composed with the chosen disk
+#   dataplane NIC: 0000:               composed, matched as a prefix
+#   entering /bin                      composed, matched as a prefix
+#   records mirrored on /dev/md0, 2 of 2 disks present
+#                                      composed with the device and the counts
+#   start shell: permission denied for a read-only account
+#                                      composed by require(), "{what}: ..."
+#   cgnat pool lab-a                   the lab's own configuration, read back
+#
+# So nothing else on this path had gone stale. The two refusals were not
+# needles rotting in general: they were ONE contract read by four files, which
+# is what this file exists to end.
+#
+# Recorded and NOT automated, deliberately. Nine findings and zero defects is
+# a false rate somebody switches the check off over, and
+# test/test_doc_copies.py's header already records the general version being
+# measured and rejected three times at worse rates. A truth that has to agree
+# across files gets one holder and a reader, as here. It does not get a grep
+# that guesses.
+#
 # The order matters to nobody here, and the four are not equally good news:
 # VERDICT_OK_RE is the three that mean the box is fit to be handed over, and
 # the fourth is a box that failed its own checks.
+# One line and over the margin, on purpose: a pattern split across two shell
+# assignments is a pattern somebody edits half of.
 VERDICT_RE="HexaRouting ready|HexaRouting is installed and healthy, and has|check\(s\) failed\. The box is NOT ready\."
 VERDICT_OK_RE="HexaRouting ready|HexaRouting is installed and healthy, and has"
 
