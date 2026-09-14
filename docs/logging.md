@@ -4,7 +4,7 @@
 
 Log **block allocations**, not flows. RFC 8158 defines `natEvent` 16 (port
 block allocation) and 17 (de-allocation) for exactly this. Roughly 80 MB/day
-for 200k subscribers in dynamic mode, against ~2.4 GB/day for per-flow NAT —
+for 200k subscribers in dynamic mode, against ~1.6 GB/day for per-flow NAT —
 and **zero** in deterministic mode, where the proof is the algorithm plus the
 configuration.
 
@@ -498,7 +498,7 @@ bending the UDP exporter around.
   it misframed.
 
 Three of those statements held only in prose. Each was mutated in
-`src/plugins/bpa/bpa_log_tcp.c`, and all 38 suites, `lab/ipfix-tcp.sh` and
+`src/plugins/bpa/bpa_log_tcp.c`, and every suite, `lab/ipfix-tcp.sh` and
 `lab/ipfix-outbuf.sh` stayed green
 ([#259](https://github.com/andrediashexa/hexarouting/issues/259),
 [#262](https://github.com/andrediashexa/hexarouting/issues/262),
@@ -585,7 +585,7 @@ zero. The collector is started **before** the exporter is configured, because
 one started afterwards cannot tell a box that sent a record too early from a
 collector that joined the stream too late. Measured with the guard removed:
 five data sets arrived ahead of the template, every check in the lab stayed
-green and so did all 38 suites
+green and so did every suite
 ([#258](https://github.com/andrediashexa/hexarouting/issues/258)).
 
 ### The wrong clock reads exactly like a time of day
