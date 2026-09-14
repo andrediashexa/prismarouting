@@ -217,7 +217,23 @@ Embaixo de cada placa vêm o **MAC**, inteiro numa linha só — é o que se com
 
 É a metade mais importante da tela. A placa que carrega a rota padrão é por onde esta caixa é alcançada: entregá-la ao dataplane não degrada a caixa, **tira a caixa da rede** — sem SSH, sem ping, nada além de um console até onde alguém precisa caminhar.
 
-A caixa **recusa** essa placa como interface de dataplane por esse motivo. A recusa acontece depois da escolha, o que é tarde demais para ensinar alguma coisa; a marca aparece antes, para que a escolha não seja essa.
+Numa caixa que tem outra placa, ela **recusa** essa por esse motivo. A recusa acontece depois da escolha, o que é tarde demais para ensinar alguma coisa; a marca aparece antes, para que a escolha não seja essa.
+
+Numa caixa que tem **só essa** placa, a marca não é uma recusa: é um aviso do que a entrega envolve. Ali a placa pode ir para o dataplane, e o endereço de gerência vai junto, para a interface que o dataplane mantém emparelhada com a porta. A própria tela diz o que digitar e o que isso custa:
+
+```
+  1 NIC(s) on this box, as Linux has them
+  This box has one NIC, 'ens18', and it carries the default route, so giving
+  it to the dataplane is also giving away the path this box is reached on.
+  It can still be done, and the address goes with it: name it with
+  'configure', 'dataplane interface ens18', 'commit', and the box keeps that
+  address on the linux_cp pair the dataplane holds for the card.
+  The commit is a confirmed one whether or not you ask: restart the box, log
+  back in and type 'commit' to keep it, and if nobody does the box puts the
+  card back on its own.
+```
+
+O passo a passo dessa entrega está em [Primeiros passos](../../comecar-aqui/primeiros-passos.md).
 
 Numa caixa sem rota padrão nenhuma, a tela diz isso em vez de simplesmente não marcar nada:
 
