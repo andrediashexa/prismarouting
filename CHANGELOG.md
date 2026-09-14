@@ -666,6 +666,49 @@ version has a chance of seeing it.
   anything in it: the first version of that one matched the very sentence that
   says there is no CI, which is recorded in the file rather than quietly fixed.
 
+* **Five things the three largest documents said and the code does not do**
+  ([#318](https://github.com/andrediashexa/hexarouting/issues/318),
+  [#319](https://github.com/andrediashexa/hexarouting/issues/319),
+  [#320](https://github.com/andrediashexa/hexarouting/issues/320)).
+  `docs/architecture.md`, `docs/routing.md` and `docs/logging.md` are 7,126
+  lines and the previous sweep recorded, as its own gap, that nobody had read
+  them end to end.
+
+  **The commercial argument was stated two ways.** `docs/logging.md`'s opening
+  said per-flow NAT costs `~2.4 GB/day`; its own volume table said `~1.6 GB`
+  for the same 40 million records at the `~40 bytes` the page states as its
+  premise, and 40e6 x 40 is 1.6e9. The wiki's table - the one an operator sizes
+  hardware with - said `2,4 GB` directly under a premise line saying 40 bytes.
+  The ratio between those two rows **is** the argument for BPA, and it read as
+  30x in one place and 20x in the other.
+
+  **A page described a refusal the box stopped printing that way.** Under *A
+  route-map referenced and not defined*, `docs/routing.md` showed the message
+  in four wrapped rows and then said it was reflowed, that `err()` wraps
+  nothing, and that the box prints one line of 221 columns. Measured by calling
+  `say_finding()`: four rows, widest **77**, inside the 79 budget - exactly the
+  block above the sentence. The commit that made that change rewrote the width
+  section the sentence points at and left the sentence.
+
+  **Two numbers, each mirrored in a test comment beside an assertion that
+  disagreed with it.** "four of the twenty-five statements are marked" where
+  the assertion names three and the comment beside it says the other
+  twenty-one are clean; and a statement quoted "at 66" columns that is 67,
+  where the line the suite prints computes 87 against the comment's 86. And
+  "all 38 suites" twice, where `test/suites.list` holds 54 - one of those was
+  already wrong on the day it was written. Those two became "every suite",
+  because the claim is that everything stayed green and the count goes stale
+  every release.
+
+  Three checks, each with a holder that is not prose. The volume tables are
+  multiplied out against the bytes-per-record their own page states. A width a
+  document claims for a line it quotes is measured off the quoted text. And the
+  block `docs/routing.md` shows for that refusal is compared against the output
+  of **calling** `say_finding()` - a fixture comparison and not a needle, which
+  is the distinction that makes it sound where matching a document against the
+  source that builds a message is not.
+
+
 
 
 

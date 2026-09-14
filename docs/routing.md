@@ -3486,8 +3486,16 @@ error: no route-map called 'RM-IN' is defined, and FRR denies everything this
     neighbor 10.0.0.2 route-map RM-IN in
 ```
 
-Reflowed here. `err()` wraps nothing, so the box prints that as one line of 221
-columns; the width section at the end of this page says why it was left alone.
+That is what the box prints, not a reflowing of it. Four rows, the widest 77
+columns, inside the 79 a serial console leaves usable: the reason first because
+it is the verdict, and the statement last on a row of its own so an operator can
+grep `show configuration` for it and type it back. The width section at the end
+of this page is where that shape comes from.
+
+Until #319 this paragraph said the opposite - that `err()` wraps nothing and the
+box prints one line of 221 columns, with a pointer to the width section for why
+it had been left alone. The commit that made the change above rewrote that
+section and left this sentence describing what it had just stopped doing.
 
 **REFUSED.** The commit does not happen and the statement never reaches FRR
 ([#145](https://github.com/andrediashexa/hexarouting/issues/145)).
@@ -3942,8 +3950,8 @@ on FRR's side. Different first moves.
 than weighed.** By the rule of
 [#205](https://github.com/andrediashexa/hexarouting/issues/205) and
 [#208](https://github.com/andrediashexa/hexarouting/issues/208), a marker that
-fires on a line every box has is one operators learn to skip - and four of the
-twenty-five statements of the provider read-back above are marked, one of them
+fires on a line every box has is one operators learn to skip - and three of the
+twenty-four statements of the provider read-back above are marked, one of them
 `no bgp ebgp-requires-policy`. That same read-back, committed against an FRR
 holding it, prints `commit complete` and nothing else. All sixteen statements
 it introduces **can** produce this refusal and three of them are unread, but
@@ -4030,7 +4038,7 @@ does fit. The refusal adds the four-space indent and nothing else beside the
 mark, so the budget is 79 less four less sixteen: **59 columns** of statement,
 which holds `neighbor 2001:db8:aaaa:bbbb::1 soft-reconfiguration inbound` at
 59 and does not hold
-`neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff route-server-client` at 66.
+`neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff route-server-client` at 67.
 That arithmetic is asserted against the same two constants the code uses, so a
 third thing appearing on the line fails, and widening the mark moves both
 sides of it together.

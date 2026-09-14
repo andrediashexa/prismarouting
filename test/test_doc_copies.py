@@ -705,6 +705,92 @@ else:
     ok("no CI, and the document says so" if not _has_ci
        else "a workflow exists and the document says so")
 
+print("\n=== a width a document states for a line it quotes ===")
+# THE DEFECT (#319). docs/routing.md said
+# `neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff route-server-client` sits
+# "at 66" columns. It is 67. The number is the whole of the argument in that
+# paragraph - it is the statement that does NOT fit inside 79 less the indent
+# and the mark - so it is a number a reader checks the arithmetic of, and the
+# arithmetic was one column out.
+#
+# SOUND BECAUSE THE HOLDER IS THE STRING ITSELF. Nothing here reads a document
+# against another document or against a message: the quoted text is right
+# there, and its length either is the stated number or is not. Measured before
+# it was written: 2 such pairs in docs/routing.md, both checkable, 0 false.
+#
+# The pattern spans a line break because prose wraps: the backticks and the
+# "at <n>" are frequently on different lines, and a check that only matched
+# them together on one line would have found neither of these two.
+_flat = re.sub(r"\s*\n\s*", " ", read("docs/routing.md"))
+_pairs = re.findall(r"`([^`\n]{8,120})`\s+at\s+(\d+)", _flat)
+if not _pairs:
+    bad("docs/routing.md states no width for any line it quotes, so this "
+        "check is reading nothing: the sentence it compares has been reworded")
+else:
+    for _stmt, _n in _pairs:
+        if len(_stmt) != int(_n):
+            bad(f"docs/routing.md says `{_stmt}` is at {_n} columns and it is "
+                f"{len(_stmt)}: the paragraph's argument is about whether that "
+                f"number fits inside the console budget, so it is a number the "
+                f"reader does the arithmetic with")
+    if all(len(_s) == int(_n) for _s, _n in _pairs):
+        ok(f"both of them, measured off the quoted text"
+           if len(_pairs) == 2 else f"all {len(_pairs)} of them")
+
+print("\n=== the volume tables do their own arithmetic ===")
+# THE DEFECT (#320). docs/logging.md's TL;DR said per-flow NAT is "~2.4 GB/day"
+# and its own Volume table, 320 lines down, said "~1.6 GB" for the same 40
+# million records at the ~40 bytes the page states as its premise. The wiki's
+# table, which is what an operator sizes hardware with, said 2,4 GB in a table
+# whose own premise line says 40 bytes. 40e6 x 40 = 1.6e9, so the table was
+# right and the other two were not.
+#
+# The number is not decoration: the ratio between the two rows IS the
+# commercial argument for BPA, and it reads as 30x in one place and 20x in the
+# other.
+#
+# ARITHMETIC AND NOT A NEEDLE. The premise is on the page, in the sentence
+# above the table; the rows are on the page; the check multiplies. Nothing is
+# compared against code or against another document's prose.
+_VOL = [("docs/logging.md", r"~(\d+) bytes with IPFIX framing",
+         r"\|[^|]*\|\s*~?([\d.]+) (million|thousand)\s*\|\s*~?([\d.]+) (GB|MB)\s*\|"),
+        ("wiki/comecar-aqui/dimensionamento-e-requisitos.md",
+         r"~(\d+) bytes por registro",
+         r"\|[^|]*\|\s*\\?~?([\d.]+) milh[oõ]es?\s*\|\s*\\?~?([\d,]+) (GB|MB)")]
+_checked = 0
+for _path, _premise_re, _row_re in _VOL:
+    _txt = read(_path)
+    _pm = re.search(_premise_re, _txt)
+    if not _pm:
+        bad(f"{_path} no longer states the bytes-per-record its volume table "
+            f"is computed from, so the table is a set of numbers nothing can "
+            f"check")
+        continue
+    _bytes = int(_pm.group(1))
+    for _m in re.finditer(_row_re, _txt):
+        _g = _m.groups()
+        _recs = float(_g[0]) * 1e6
+        _vol = float(_g[-2].replace(",", ".")) if _g[-1] in ("GB", "MB") \
+            else None
+        _unit = _g[-1]
+        if _vol is None:
+            continue
+        _want = _recs * _bytes / (1e9 if _unit == "GB" else 1e6)
+        _checked += 1
+        # A tenth either way: the tables say "order of magnitude, not
+        # precision" and round to one decimal.
+        if abs(_want - _vol) > 0.15:
+            bad(f"{_path}: {_g[0]} million records at {_bytes} bytes is "
+                f"{_want:.1f} {_unit} and the table says {_g[-2]}: the ratio "
+                f"between these rows is the commercial argument, and it is "
+                f"being stated wrong")
+if _checked >= 2:
+    ok(f"{_checked} row(s) across {len(_VOL)} table(s), each against the "
+       f"bytes-per-record its own page states")
+else:
+    bad(f"only {_checked} volume row(s) were read, so this check is asserting "
+        f"almost nothing")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

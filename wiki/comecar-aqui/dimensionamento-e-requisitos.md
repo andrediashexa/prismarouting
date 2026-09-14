@@ -265,7 +265,7 @@ Premissas explícitas, para ordem de grandeza e não para precisão: 200 mil ass
 | Cenário | Registros/dia | Volume bruto/dia | Um ano |
 |---------|--------------:|-----------------:|-------:|
 | BPA dinâmico (alocação + liberação) | \~2 milhões   | \~80 MB          | dezenas de GB |
-| NAT por fluxo (referência) | \~40 milhões  | \~2,4 GB         | dezenas de TB |
+| NAT por fluxo (referência) | \~40 milhões  | \~1,6 GB         | dezenas de TB |
 | BPA determinístico | 0             | 0                | 0      |
 
 ## Os registros têm sistema de arquivos próprio

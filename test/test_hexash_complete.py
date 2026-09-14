@@ -4246,8 +4246,11 @@ check(not _from_screen.unknown,
 # proportionate on a box that is working - a display where everything is
 # marked says as little as one where nothing is.
 #
-# Four statements of twenty-five, and each of the four is genuinely a
-# statement this VTY has no grammar for. `no bgp ebgp-requires-policy` is the
+# Three statements of twenty-four, and each of the three is genuinely a
+# statement this VTY has no grammar for. The count is the one the assertion
+# below names one by one; this comment said four of twenty-five and was
+# wrong on the day it was written (#319), which is what a count in prose
+# beside an assertion that disagrees with it is for. `no bgp ebgp-requires-policy` is the
 # interesting one: nearly every FRR BGP configuration carries it, this VTY
 # models no `no` inside a block at all, and the marker naming it is the marker
 # working rather than the marker being noisy.
@@ -4759,7 +4762,7 @@ check(UNCHECKED_MARK.strip() not in _out,
 # --- the #205/#208 objection, measured rather than argued ---
 #
 # A marker that fires on a line every box has is one operators learn to skip,
-# and #141 measured this very marker doing it: four of the twenty-five
+# and #141 measured this very marker doing it: three of the twenty-four
 # statements a working provider edge reads back are marked, one of them
 # `no bgp ebgp-requires-policy`. That is why `commit` itself says nothing.
 #
@@ -5617,8 +5620,10 @@ print(f"  widest line these commands printed: "
 
 # --- a statement too long for the console is QUOTED, not cut ---
 #
-# The case the issue names. 66 columns of statement, which is 86 with the
-# indent and the mark, and it is printed as it stands: the operator can grep
+# The case the issue names. 67 columns of statement, which is 87 with the
+# four-space indent and the sixteen-character mark, and it is printed as it
+# stands (#319: this said 66 and 86, and the line the check below prints
+# computes 87 from the same constants): the operator can grep
 # `show configuration` for that line and find it, and can type it back.
 _LONG_STMT = ("neighbor 2001:db8:aaaa:bbbb:cccc:dddd:eeee:ffff "
               "route-server-client")
@@ -6434,6 +6439,45 @@ check("reboot the box" in _disk,
       f"{_disk!r}")
 check("install" not in _disk,
       f"and is not told to install over itself: {_disk!r}")
+
+print("\n=== the block docs/routing.md shows IS what the box prints (#318) ===")
+# THE DEFECT. Under "A route-map referenced and not defined", the page shows
+# the refusal in four wrapped rows and then said: "Reflowed here. `err()` wraps
+# nothing, so the box prints that as one line of 221 columns". Every part of
+# that was false. #276 replaced `err(f"{stmt}: {why}")` with say_finding(),
+# which produces exactly the block above the sentence - four rows, widest 77 -
+# and the same commit rewrote the width section the sentence points at and left
+# the sentence describing what it had just stopped doing.
+#
+# THIS IS A FIXTURE COMPARISON, NOT A NEEDLE, which is the difference that
+# makes it sound where test/test_doc_copies.py's header rejects matching a
+# document against the code that prints a message. Nothing is searched for in
+# the source: the function is CALLED and its output is compared to the block
+# the document shows, line for line. A reworded message fails this, which is
+# the point - the document is showing the message.
+_rm_out = io.StringIO()
+with contextlib.redirect_stderr(_rm_out), contextlib.redirect_stdout(_rm_out):
+    hexash.Shell().say_finding(
+        "error", "neighbor 10.0.0.2 route-map RM-IN in",
+        "no route-map called 'RM-IN' is defined, and FRR denies everything "
+        "this statement governs until one is; define it, or write 'route-map "
+        "RM-IN permit 10' to let everything through")
+_rm_rows = [l for l in _rm_out.getvalue().splitlines() if l.strip()]
+_doc = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "docs", "routing.md"), encoding="utf-8").read()
+_sec = _doc.split("## A route-map referenced and not defined", 1)
+if len(_sec) != 2:
+    check(False, "docs/routing.md has no 'A route-map referenced and not "
+                 "defined' section, so this check is comparing nothing")
+else:
+    _blk = _sec[1].split("```")
+    _shown = [l for l in _blk[1].splitlines() if l.strip()] if len(_blk) > 2 \
+        else []
+    check(_shown == _rm_rows,
+          f"the block the page shows is what say_finding() prints:\n"
+          f"    page: {_shown}\n    box:  {_rm_rows}")
+    check(max((len(l) for l in _rm_rows), default=999) <= 79,
+          f"and it fits the console: widest {max(len(l) for l in _rm_rows)}")
 
 print("\n=== the trail's tamper check has a VTY spelling (#313) ===")
 # The dataplane has had `show bpa pool history [verify]` since v0.23.0 and the
