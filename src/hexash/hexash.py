@@ -9495,6 +9495,31 @@ class Shell:
         except OSError:
             return []                   # not an appliance: nothing to explain
         if "plugin dpdk_plugin.so { disable }" in conf:
+            # THE SAME STARTUP FILE, TWO DIFFERENT BOXES, and until #305 this
+            # branch gave both of them the same advice.
+            #
+            # On an INSTALLED box's first boot the tuner has written a profile
+            # and asked for pages that the next boot picks up, so "reboot and
+            # come back" is exactly right.
+            #
+            # On the MEDIUM the dataplane is off deliberately and permanently.
+            # Nothing here survives a reboot, so the tuning can never be
+            # applied and the pages never reserved, and a reboot comes back to
+            # this same screen having thrown the session away. The medium's own
+            # banner says so two lines above this command, and this said the
+            # opposite (#305).
+            #
+            # running_from_live_medium() is the test appliance/selftest already
+            # uses in four places to keep exactly this apart. It was here in
+            # this file and this message did not ask it.
+            if running_from_live_medium():
+                return ["the dataplane is off on the installation medium, and "
+                        "a reboot does not change that: nothing here survives "
+                        "one.",
+                        "Hugepages are reserved by the tuning an INSTALLED box "
+                        "applies at its first boot. Type 'install' to put "
+                        "HexaRouting on a disk, and the card is claimed "
+                        "there."]
             said = ["DPDK is off until hugepages exist, so no NIC can be "
                     "claimed yet.",
                     "This is the first-boot profile. Reboot once the tuning "
