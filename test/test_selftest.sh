@@ -177,6 +177,22 @@ said() {  # <extended regexp> - does a line of the last run match it?
   printf '%s\n' "$OUTPUT" | grep -qE "$1"
 }
 
+said_across() {  # <extended regexp> - does the run say it, wherever it folds?
+  # said() over the output with its line breaks collapsed.
+  #
+  # The self-test is read on an 80-column console, so a message carrying an
+  # interface name, a PCI address or a 31-cpu list puts the value on a row of
+  # its own (#285). A needle written when the message was one line then
+  # straddles the break and stops matching - over a box saying exactly the
+  # right thing. That is the same mechanism as #279, which cost three needles
+  # in the labs, and it is worse here: half of these assertions are the ones
+  # that check a FAILURE is reported.
+  #
+  # said() stays for anything that must be on ONE line, which is what the
+  # width check itself is about.
+  printf '%s\n' "$OUTPUT" | tr -s '[:space:]' ' ' | grep -qE "$1"
+}
+
 # Every run's exit status, accumulated here and judged once at the end.
 #
 # docs/appliance.md says of the self-test that it "always exits zero: the
@@ -470,7 +486,7 @@ printf 'cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739\ncgnat logging enable\
   > "$FAKE/hexarouting.conf"
 logging enabled "10.0.0.2:4739 src 10.0.0.1 (path mtu 512, template every 20s)"
 run
-if said '\[ ok \] UDP export running to 10.0.0.2:4739'; then
+if said_across '\[ ok \] UDP export running 10.0.0.2:4739'; then
   ok "a box that is exporting says where to"
 else
   bad "an exporting box said nothing: $(printf '%s\n' "$OUTPUT" | grep -i export || echo '<nothing>')"
@@ -727,7 +743,7 @@ fi
 # with. "full tuning active" above reports the file, so it says yes.
 mkcpus "1-3" "0-3" "1-3" 0 1 2
 run
-if said '\[FAIL\] startup.conf pins workers to 1 2 3 but the running dataplane holds'; then
+if said_across '\[FAIL\] startup.conf pins workers to cores the dataplane is not holding pinned: 1 2 3'; then
   ok "a dataplane older than its own profile is a FAILED check"
 else
   bad "a stale VPP was reported as tuned: $(printf '%s\n' "$OUTPUT" | grep -iE 'workers hold|pins workers' || echo '<nothing>')"
@@ -742,7 +758,7 @@ fi
 # its main thread. This is the whole of the box's capacity, missing.
 mkcpus "1-3" "0-3" "1-3" 0
 run
-if said '\[FAIL\] startup.conf pins workers to 1 2 3 and the running dataplane has no'; then
+if said_across '\[FAIL\] startup.conf pins workers to cores the dataplane has none of pinned: 1 2 3'; then
   ok "a dataplane with no worker thread at all is a FAILED check"
 else
   bad "a dataplane forwarding on its main thread was not reported: $(printf '%s\n' "$OUTPUT" | grep -i worker | head -2 || echo '<nothing>')"
@@ -1365,7 +1381,7 @@ nicconf 'dpdk {
   dev 0000:03:00.0
 }'
 run
-if said '\[FAIL\] the dataplane has no interface: 0000:03:00.0 is named'; then
+if said_across '\[FAIL\] the dataplane has no interface, and one is named 0000:03:00.0'; then
   ok "a named device the dataplane does NOT have is a FAILED check, not an ok"
 else
   bad "a box whose dataplane has only local0 passed on the strength of a name "\
@@ -1790,7 +1806,7 @@ fi
 printf 'interface TenGigabitEthernet0/0/0\n ipv4 address 200.150.0.1/24\n ipv4 address 203.0.113.1/24\n exit\n' \
   > "$FAKE/hexarouting.conf"
 run
-if said '\[FAIL\] the saved configuration has address\(es\) the dataplane does not: TenGigabitEthernet0/0/0:203.0.113.1/24'; then
+if said_across '\[FAIL\] the saved configuration has address\(es\) the dataplane does not: TenGigabitEthernet0/0/0:203.0.113.1/24'; then
   ok "an address the dataplane did not take is a FAILED check, named with its interface"
 else
   bad "a refused address passed: $(printf '%s\n' "$OUTPUT" | grep -i 'address' | head -2 || echo '<nothing>')"
@@ -1844,7 +1860,7 @@ fi
 printf 'interface TenGigabitEthernet0/0/0\n mtu 9000\n exit\n' \
   > "$FAKE/hexarouting.conf"
 run
-if said '\[FAIL\] the saved MTU is not the MTU the dataplane has: TenGigabitEthernet0/0/0\(9000/1500\)'; then
+if said_across '\[FAIL\] the saved MTU is not the MTU the dataplane has: TenGigabitEthernet0/0/0\(9000/1500\)'; then
   ok "an MTU the dataplane did not take is a FAILED check, naming both numbers"
 else
   bad "a refused MTU passed: $(printf '%s\n' "$OUTPUT" | grep -i mtu || echo '<nothing>')"
@@ -1937,27 +1953,25 @@ else
   bad "a hard dependency on the self-test can carry its failure onward: $HARD"
 fi
 
-echo "=== every tuning line fits the 80-column console it is printed on ==="
+echo "=== every self-test line fits the 80-column console it is printed on ==="
 # The self-test writes to /dev/console on a racked appliance, which is 80
 # columns. Nothing measured that. A line goes over only when a value is
 # interpolated into it, so reading the source finds nothing and driving every
 # box does.
 #
-# SCOPED TO THE TUNING AND LATENCY LINES, which is what #163 is answerable
-# for. The whole output was measured the same way and SIX other lines are
-# over, at 87, 91, 92, 101, 111 and 153 columns: the worker-pinning failure
-# interpolating a 31-cpu list, the uRPF, address and MTU comparisons
-# interpolating an interface name, the missing-dataplane-interface failure
-# interpolating a PCI address, and the IPFIX line interpolating a destination. They belong
-# to the checks that own them and to the same shape #276 records, not to this
-# issue, and widening this check to cover them without fixing them would only
-# make the suite red about work it is not doing.
+# EVERY LINE, not only the tuning ones. This was scoped to the lines #163 was
+# answerable for, with the other six recorded in a comment rather than fixed.
+# They are fixed now (#285): the widest was the worker-pinning failure at 153
+# columns on an 80-column console, which is the message an operator reads at a
+# serial console because the box is forwarding badly.
+#
+# A line only goes over when a value is interpolated into it, so reading the
+# source finds nothing and driving every fixture finds them.
 LAT=$FAKE/latency-lines
-grep -iE 'C-state|HEXA_LOW_LATENCY|idle-state|cpufreq|governor' \
-  "$FAKE/every-line" > "$LAT" || true
+cp "$FAKE/every-line" "$LAT"
 if [ ! -s "$LAT" ]; then
-  bad "no tuning or latency line was collected at all, so this check" \
-      "measured nothing: an empty file has no line over 79 columns"
+  bad "no self-test output was collected at all, so this check measured" \
+      "nothing: an empty file has no line over 79 columns"
 else
   WIDE=$(awk 'length > 79 {print length": "$0}' "$LAT" | sort -u)
   if [ -z "$WIDE" ]; then

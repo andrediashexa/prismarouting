@@ -107,6 +107,38 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Six boot self-test lines ran past the 80-column console, the widest at 153
+  columns** ([#285](https://github.com/andrediashexa/hexarouting/issues/285)).
+  The self-test writes to `/dev/console` on a racked appliance. A line only
+  goes over when a value is interpolated into it, so reading the source finds
+  nothing; driving all 92 fixtures finds them.
+
+  This is read by somebody who has just booted a box that is not working, at a
+  serial console because SSH does not answer - so the terminal folds the line
+  for them, and the interface name, the PCI address or the 31-cpu list arrives
+  split across the fold, inside the message that was meant to say what is
+  wrong. Five of the six were `[FAIL]` lines, and the widest was the
+  worker-pinning failure, which is what an operator reads when the box is
+  forwarding badly.
+
+  Each value now has a row of its own, the way the VTY has done since
+  [#252](https://github.com/andrediashexa/hexarouting/issues/252). The cpu list
+  is FOLDED rather than given a row, because it is a list and not a token: `fold
+  -s` breaks between numbers and never cuts one. A PCI address or an interface
+  name is still printed whole, and may still run past the margin, because
+  splitting what the reader greps for destroys it.
+
+  Two of the six came from checks added the same week, so this was not old debt
+  settling: it is the same mistake being made again in a file that had nothing
+  measuring it. The check that #163 scoped to the tuning lines now covers every
+  line - 248 distinct ones over 92 fixtures, widest 78 columns.
+
+  Splitting the messages broke six of the suite's own needles, which is
+  [#279](https://github.com/andrediashexa/hexarouting/issues/279) a fourth
+  time and the worst instance of it: half of those needles are the ones
+  checking that a FAILURE is reported. `said_across` is the matcher that asks
+  whether the box said something rather than where it folded.
+
 * **`HEXA_LOW_LATENCY=true` turned the latency tuning OFF, and
   `HEXA_SUBSCRIBERS=200k` failed the whole tuning unit — and nothing had ever
   run the script that does both**

@@ -30,6 +30,24 @@ say()  { echo "$*" > "$OUT" 2>/dev/null || echo "$*"; }
 ok()   { say "  [ ok ] $*"; }
 bad()  { say "  [FAIL] $*"; fail=$((fail+1)); }
 
+# say, folded to the console, continuation rows aligned under the first.
+#
+# For a LIST of values rather than one value. A single token - a PCI address,
+# an interface name - is printed whole and may run past the margin, because it
+# is what the reader greps for or types back and splitting it destroys that.
+# A list of cpu numbers is not one token: it can be folded between its items
+# and nothing is lost. On a 32-core box the worker-pinning failure measured
+# 153 columns on an 80-column console, and that is the message somebody reads
+# at a serial console because the box is forwarding badly (#285).
+#
+# `fold -s` breaks at spaces only, so no number is ever cut in half.
+say_list() {  # <indent> <text...>
+  _ind=$1; shift
+  printf '%s\n' "$*" | fold -s -w $((79 - ${#_ind})) | while IFS= read -r _r; do
+    say "${_ind}${_r% }"
+  done
+}
+
 say ""
 say "================ HexaRouting: boot self-test ================"
 
@@ -261,8 +279,10 @@ elif [ "${vpid:-0}" = 0 ]; then
   say "         actually run cannot be read: the profile names"
   say "        $(disp "$told_wk") and nothing confirms it"
 elif [ -z "$has_wk" ]; then
-  bad "startup.conf pins workers to$told_wk and the running dataplane has no"
-  say "        worker thread at all: it is forwarding on its main thread, at a"
+  bad "startup.conf pins workers to cores the dataplane has none of"
+  say_list "        " "pinned:$told_wk"
+  say "        the dataplane has no worker thread at all: it is forwarding on"
+  say "        its main thread, at a"
   say "        fraction of this box's capacity. VPP was started before that"
   say "        profile was written - 'systemctl restart vpp.service'"
 else
@@ -272,8 +292,10 @@ else
   if [ "$(norm "$has_wk")" = "$(norm "$told_wk")" ]; then
     ok "dataplane workers hold the cores the profile names: $(disp "$has_wk")"
   else
-    bad "startup.conf pins workers to$told_wk but the running dataplane holds"
-    say "        $(disp "$has_wk"). This VPP is older than the"
+    bad "startup.conf pins workers to cores the dataplane is not holding"
+    say_list "        " "pinned:$told_wk"
+    say_list "        " "holding: $(disp "$has_wk")"
+    say "        This VPP is older than the"
     say "        profile it is being judged against; the box is running the"
     say "        previous tuning. 'systemctl restart vpp.service'"
   fi
@@ -647,7 +669,8 @@ elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
   then
     ok "dataplane NIC: $NICPCI"
   else
-    bad "the dataplane has no interface: $NICPCI is named and VPP does not have it"
+    bad "the dataplane has no interface, and one is named"
+    say "        $NICPCI"
     NICDRV=$(basename "$(readlink -f "/sys/bus/pci/devices/$NICPCI/driver" \
                          2>/dev/null)" 2>/dev/null)
     case "$NICDRV" in
@@ -909,7 +932,8 @@ if vppctl show version >/dev/null 2>&1; then
     say "        every record is produced and none leaves this box. Set one"
     say "        with 'nat cgnat logging udp <collector> src <source>'."
   elif [ "$udp_on" = yes ]; then
-    ok "UDP export running to $udp_dst"
+    ok "UDP export running"
+    say "        $udp_dst"
   fi
 
   # TCP, which has a state UDP does not: a collector that is named, accepted,
@@ -1018,7 +1042,8 @@ if vppctl show version >/dev/null 2>&1 && [ -f "$LOGCONF" ]; then
         say "        to a subscriber who did not send it, and nothing counts it."
         say "        'journalctl -u hexarouting' has the reason it was refused." ;;
       *)
-        ok "uRPF is on in the dataplane, as the saved configuration asks: $(printf '%s' "$have_urpf" | tr '\n' ';' | cut -c1-60)" ;;
+        ok "uRPF is on in the dataplane, as the saved configuration asks"
+           say "        $(printf '%s' "$have_urpf" | tr '\n' ';' | cut -c1-60)" ;;
     esac
   fi
 
@@ -1069,7 +1094,8 @@ MTUS
 $(awk '/^interface /{ifn=$2} /^ *ipv[46] address /{if (ifn != "") print ifn, $3}' "$LOGCONF")
 ADDRS
   if [ -n "$addr_missing" ]; then
-    bad "the saved configuration has address(es) the dataplane does not:$addr_missing"
+    bad "the saved configuration has address(es) the dataplane does not:"
+    say "       $addr_missing"
     say "        the box answers on one fewer address than whoever configured"
     say "        it believes, and if that was the management address nobody"
     say "        can reach it to find out. 'journalctl -u hexarouting' has the"
@@ -1077,7 +1103,8 @@ ADDRS
   fi
 
   if [ -n "$mtu_wrong" ]; then
-    bad "the saved MTU is not the MTU the dataplane has:$mtu_wrong"
+    bad "the saved MTU is not the MTU the dataplane has:"
+    say "       $mtu_wrong"
     say "        (interface(saved/actual)). An OSPF adjacency stops at Exchange"
     say "        when the two ends disagree, and neither end logs anything."
     say "        'journalctl -u hexarouting' has why it was refused."
