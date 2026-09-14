@@ -2278,6 +2278,29 @@ echo "no rollback point saved yet"
 EOF
 chmod +x "$BIN/hexash"
 
+# What the dataplane reports about the allocation log, with the TCP transport
+# in a state the caller names. ONE producer for every TCP case below, because
+# the only thing under test is which word is in the collector line: three
+# fixtures written out by hand would let the lines around it drift and turn a
+# difference in the state word into a difference in something else.
+#
+# Copied field for field from bpa_show_logging_command_fn() in
+# src/plugins/bpa/bpa_cli.c, spacing included, because the self-test reads the
+# collector line with a sed anchored on that spacing.
+bpa_logging_tcp() {  # <state word> [collector, default 10.0.0.2:4739]
+  cat > "$FAKE/bpa_logging" <<LOG
+IPFIX export of block events (RFC 8158)
+  state       enabled
+  exporter    10.0.0.2:4739 src 10.0.0.1 (path mtu 512)
+  records     0 emitted, 0 dropped
+TCP transport (survives collector outage)
+  collector   ${2:-10.0.0.2:4739}  $1
+  records     12 emitted, 4096 bytes sent, 0 pending
+  spill       0 bytes on disk, 0 replayed, 0 dropped
+  connections 1, service 42, send 3, errno 0
+LOG
+}
+
 # A box the self-test finds nothing wrong with, arranged in the order the
 # self-test reads it. The order is not decoration: a check added there without
 # a fixture added here shows up as this box going red, which is the whole
@@ -2349,8 +2372,10 @@ SEG
   printf 'pool alpha [dynamic / blocked]\n' > "$FAKE/bpa_pools"
   printf 'TenGigabitEthernet3/0/0: strict\n' > "$FAKE/bpa_urpf"
   printf ' mode dynamic\n' > "$FAKE/bpa_config"
-  printf 'IPFIX export of block events (RFC 8158)\n  state       enabled\n  exporter    10.0.0.2:4739 src 10.0.0.1 (path mtu 512)\n  records     0 emitted, 0 dropped\nTCP transport: disabled\n' \
-    > "$FAKE/bpa_logging"
+  # The TCP transport CONNECTED, which no box in this suite had: every fixture
+  # ended "TCP transport: disabled", so the collector line was never produced
+  # and neither arm of the check that reads it had ever run (#300).
+  bpa_logging_tcp connected
   # FRR answering, with every daemon the VTY offers a protocol for (#187) and
   # the module bgpd refuses to start without.
   printf 'router bgp 65000\n bgp router-id 10.0.0.1\n' > "$FAKE/frr_running"
@@ -2365,6 +2390,7 @@ nat cgnat pool alpha
  inside 100.64.0.0/24
  exit
 cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739
+cgnat logging tcp 10.0.0.2 port 4739
 cgnat logging enable
 interface TenGigabitEthernet3/0/0
  mtu 9000
@@ -2492,6 +2518,137 @@ if said 'HexaRouting ready'; then
   bad "a box that cannot forward a packet is still called ready: $(printf '%s\n' "$OUTPUT" | grep 'HexaRouting ready')"
 else
   ok "and the word 'ready' is not applied to a box that cannot forward"
+fi
+
+echo "=== and the same box with the IPFIX collector in each of its states ==="
+# The check #300 is about, driven for the first time. Every fixture in this
+# file ended "TCP transport: disabled", so the collector line was never
+# produced, `tcp_dst` was always empty and NEITHER arm of the case had ever
+# run - which is how `*connected` matching `disconnected`, tested first,
+# survived 105 boxes and reported an unreachable collector as "[ ok ] TCP
+# export 192.0.2.5:4739 connected".
+#
+# Variations of the healthy box rather than fixtures of their own, so that the
+# collector's state word is the only thing that differs between the three. A
+# box assembled from nothing here would be green or red for reasons this
+# section is not about, which is exactly how #297's assertion came to pass.
+#
+# The three words come from bpa_show_logging_command_fn(): connected,
+# connecting when pending_connect is set, disconnected otherwise. There is no
+# fourth, so the fourth case below arranges one that does not exist - the
+# point being that a word this file does not know must be REPORTED and not
+# fall through a case with nothing to match.
+
+echo "--- connected, which is the healthy box and must stay green ---"
+healthy
+bpa_logging_tcp connected
+run
+# The half a careless fix breaks. Widening the disconnected pattern until it
+# stops matching "connected" is easy to do in a way that also stops the OK arm
+# matching anything, and the box would then be warned about a collector that
+# is working - which is the mutation this assertion exists to catch.
+if said '\[ ok \] TCP export 10.0.0.2:4739 connected'; then
+  ok "a connected collector is an [ ok ] line that names it"
+else
+  bad "a connected collector said: $(printf '%s\n' "$OUTPUT" | grep -i 'TCP collector\|TCP export' || echo '<nothing at all>')"
+fi
+if said '\[warn\].*TCP collector'; then
+  bad "a connected collector is warned about: $(printf '%s\n' "$OUTPUT" | grep '\[warn\].*TCP collector')"
+else
+  ok "and nothing is warned about it"
+fi
+
+echo "--- disconnected, which is the state the whole spill file exists for ---"
+healthy
+bpa_logging_tcp disconnected
+run
+# Today's build prints "[ ok ] TCP export 10.0.0.2:4739 connected" here.
+if said '\[ ok \] TCP export 10.0.0.2:4739 connected'; then
+  bad "a DISCONNECTED collector is reported as connected (#300): $(printf '%s\n' "$OUTPUT" | grep 'TCP export')"
+else
+  ok "a disconnected collector is not called connected"
+fi
+if said '\[warn\] the TCP collector 10.0.0.2:4739 is disconnected'; then
+  ok "it is a warning, and it names the collector and the state"
+else
+  bad "a disconnected collector said: $(printf '%s\n' "$OUTPUT" | grep -i 'TCP collector\|TCP export' || echo '<nothing at all>')"
+fi
+# said_across: this sentence is two say() calls under the headline and the
+# needle spans the break between them. A needle written against the raw text
+# matches only while the message happens to fold where it folds today, which
+# is the trap this repository has now hit five times (#279, #285).
+if said_across 'records are spilling to /var/log/hexarouting and will be replayed when it comes back'; then
+  ok "and it says where the records are going and that they come back"
+else
+  bad "the warning does not say what a disconnected collector costs: $(printf '%s\n' "$OUTPUT" | grep -A2 'TCP collector' | tr '\n' ' ')"
+fi
+# A warning and not a failure, because the records are on disk rather than
+# lost. If this went red the box would take the other summary branch and the
+# operator would be told the boot failed over a collector that is coming back.
+if said '\[FAIL\]'; then
+  bad "a disconnected collector failed the box: $(printf '%s\n' "$OUTPUT" | grep '\[FAIL\]')"
+else
+  ok "and it is a warning, not a failure: nothing on the box is broken"
+fi
+
+echo "--- connecting, which is not the same thing and is not always transient ---"
+healthy
+bpa_logging_tcp connecting
+run
+if said '\[ ok \] TCP export 10.0.0.2:4739 connected'; then
+  bad "a collector still connecting is reported as connected: $(printf '%s\n' "$OUTPUT" | grep 'TCP export')"
+else
+  ok "a collector still connecting is not called connected"
+fi
+# Its own words, not the disconnected ones. bpa_tcp_disconnect() does not
+# clear pending_connect, so a handshake that times out keeps the state word at
+# "connecting" and starts over every 5 s: a collector whose SYN is dropped
+# reads as "connecting" for as long as the firewall is there. That is worth
+# saying, and it is not the same fault as a connection that was refused.
+if said '\[warn\] the TCP collector 10.0.0.2:4739 is still connecting'; then
+  ok "it is said out loud, in words of its own"
+else
+  bad "a connecting collector said: $(printf '%s\n' "$OUTPUT" | grep -i 'TCP collector\|TCP export' || echo '<nothing at all>')"
+fi
+if said 'is disconnected'; then
+  bad "a connecting collector is reported as disconnected, which is a different fault"
+else
+  ok "and it is not reported as the disconnected box above"
+fi
+if said_across 'records are spilling to /var/log/hexarouting'; then
+  ok "and it still says the records are not leaving the box"
+else
+  bad "a connecting collector does not say the records are spilling: $(printf '%s\n' "$OUTPUT" | grep -A3 'TCP collector' | tr '\n' ' ')"
+fi
+
+echo "--- a state word the dataplane does not have today ---"
+# The lesson of #300 rather than a state that exists. The bug hid because a
+# case with an arm that never runs reads, from the console, exactly like a
+# case with no arm at all: both say nothing. So a fourth word has to produce a
+# line, and the sed above it has to let one through to be reported.
+# A hyphen in it on purpose. The sed that lifts this line out captured the
+# state as [a-z]* until #300, so a word shaped like this one never reached the
+# case at all and no arm of it - not even a default arm - could have said so.
+# The filter in front of a case is part of the case.
+healthy
+bpa_logging_tcp half-open 198.51.100.254:65535
+run
+if said '\[warn\] the TCP collector reports a state this self-test does not know'; then
+  ok "an unknown state is reported rather than silently dropped"
+else
+  bad "the collector reported a state this file does not know and the self-test said: $(printf '%s\n' "$OUTPUT" | grep -i 'TCP collector\|TCP export' || echo '<nothing at all>')"
+fi
+# said_across: the address and the word are on a folded continuation row, and
+# where that row breaks depends on how long they are.
+if said_across "198.51.100.254:65535 is 'half-open'"; then
+  ok "and it names the collector and quotes the word it does not know"
+else
+  bad "it did not say which collector or which word: $(printf '%s\n' "$OUTPUT" | grep -A3 'TCP collector' | tr '\n' ' ')"
+fi
+if said '\[ ok \] TCP export'; then
+  bad "an unknown state is reported as a working export: $(printf '%s\n' "$OUTPUT" | grep 'TCP export')"
+else
+  ok "and it is not called a working export"
 fi
 
 # $BIN is on the PATH of every run, so the VTY stub goes away with the rest:

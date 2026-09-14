@@ -1047,13 +1047,61 @@ if vppctl show version >/dev/null 2>&1; then
   # and never reached. The records are on disk in the spill file rather than
   # lost, so this is a warning and not a failure - but nothing else on the box
   # would say so.
-  tcp_dst=$(echo "$log" | sed -n 's/^  collector  *\([0-9][^ ]*\)  *\([a-z]*\)$/\1 \2/p')
-  case "$tcp_dst" in
-    *connected) ok "TCP export ${tcp_dst% *} connected" ;;
-    *disconnected|*connecting)
-      warn "the TCP collector ${tcp_dst% *} is ${tcp_dst##* }:"
+  #
+  # The STATE WORD ON ITS OWN, matched whole. This was `case "$tcp_dst" in
+  # *connected)` first and `*disconnected|*connecting)` second, and `*connected`
+  # matches `disconnected` - so a box whose collector was unreachable printed
+  # "[ ok ] TCP export 192.0.2.5:4739 connected" and the warning arm below it
+  # was dead code (#300). Suffix globs over a field that ends in another
+  # field's name cannot be ordered safely; whole words can, because no two of
+  # bpa_show_logging_command_fn's three are each other's tail.
+  #
+  # The state is captured as any run of non-blanks rather than as [a-z]* for
+  # the same reason the default arm exists: a word this does not recognise
+  # must ARRIVE here to be reported, and a sed that only matches the three
+  # known words would drop it before the case could say so.
+  tcp_dst=$(echo "$log" | sed -n 's/^  collector  *\([0-9][^ ]*\)  *\([^ ][^ ]*\)$/\1 \2/p')
+  tcp_addr=${tcp_dst% *}
+  tcp_state=${tcp_dst##* }
+  case "$tcp_state" in
+    # No TCP transport at all: "TCP transport: disabled" prints no collector
+    # line. Silent here on purpose - the dynamic-pool check below is the one
+    # that decides whether having no transport matters on this box.
+    "") ;;
+    connected) ok "TCP export $tcp_addr connected" ;;
+    disconnected)
+      warn "the TCP collector $tcp_addr is disconnected:"
       say "         records are spilling to /var/log/hexarouting and will be"
       say "         replayed when it comes back" ;;
+    # Its own arm, and a warning, because "connecting" is NOT the harmless
+    # half-second it reads as. bpa_tcp_disconnect() does not clear
+    # pending_connect, so a handshake that times out leaves the state word at
+    # "connecting" while it starts over every 5 s - which is exactly what a
+    # collector whose SYN is dropped by a firewall looks like, for as long as
+    # the firewall is there. Records spill in this state the same as in
+    # disconnected. Said differently from it because the cause is different:
+    # disconnected is a connect() that was answered and refused, connecting is
+    # one that was not answered at all.
+    connecting)
+      warn "the TCP collector $tcp_addr is still connecting:"
+      say "         records are spilling to /var/log/hexarouting. This clears"
+      say "         on its own if the box has just booted; if it is still"
+      say "         here on the next look, nothing is reaching the collector"
+      say "         and the handshake is being dropped rather than refused" ;;
+    # A word the dataplane grew after this was written. Without this arm the
+    # case would say nothing at all, which is how the bug above survived 105
+    # boxes: an arm that never runs and an arm that does not exist read the
+    # same from the console.
+    #
+    # The address and the word go on a folded continuation row rather than
+    # into the headline: both are interpolated, the state word has no bound at
+    # all, and a headline carrying them measured 80 columns on the widest
+    # address this can print - on the 79-column console this file is read at.
+    *)
+      warn "the TCP collector reports a state this self-test does not know:"
+      say_list "         " "$tcp_addr is '$tcp_state'. Read the spill counters" \
+               "under 'hexash -c \"show cgnat logging\"': they say whether the" \
+               "records are leaving the box." ;;
   esac
 
   # A dynamic pool and no transport at all. Not a failure - an operator may

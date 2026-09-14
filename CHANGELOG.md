@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Changed
 
+* **A disconnected IPFIX collector was reported as connected**
+  ([#300](https://github.com/andrediashexa/hexarouting/issues/300)). The
+  pattern for it was a suffix glob: `*connected` matches `disconnected`, and it
+  was tested first, so the arm that warns was dead code. A box whose retention
+  records were spilling to disk because the collector was unreachable printed
+  `[ ok ] TCP export 192.0.2.5:4739 connected` on its console.
+
+  The state word is lifted out and matched whole. Four named arms and a
+  default, and the `sed` in front of them was widened too: a word this file
+  does not recognise has to arrive before any arm can report it, so the filter
+  ahead of a `case` is part of the `case`.
+
+  `connecting` gets words of its own rather than being folded into either
+  neighbour, and that is a reading of `bpa_log_tcp.c` and not a guess:
+  `bpa_tcp_disconnect()` does not clear `pending_connect`, so a handshake
+  nothing answers leaves the box saying `connecting` while the exporter
+  retries every five seconds, indefinitely. That is what a collector behind a
+  firewall dropping the SYN looks like, and the records are not leaving the box
+  in that state either.
+
+  Nothing caught it because every fixture had the TCP transport disabled, so
+  neither arm had ever run - which is
+  [#298](https://github.com/andrediashexa/hexarouting/issues/298)'s argument one
+  layer down.
+
 * **`hexash --load` no longer refuses a box's whole configuration over a static
   route that is correct**
   ([#294](https://github.com/andrediashexa/hexarouting/issues/294)). The
