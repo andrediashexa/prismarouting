@@ -592,13 +592,21 @@ else:
     ok(f"{_HOLDER} holds the correction, so there is something to compare "
        f"against")
     _restated = []
+    _read = 0
+    # SKIPPED BY PATH COMPONENT, not by substring. Written as
+    # `any(s in dirpath for s in (".git", "/build", "/ref"))` this walk
+    # silently skipped `wiki/referencia/` and everything under it, because
+    # "/ref" is a substring of "/referencia" - eleven of the pages an operator
+    # actually reads, reported green having never been opened. Found by
+    # counting what the walk reached (38 files) against what the tree has.
+    _SKIP = {".git", "build", "ref", ".build-vpp"}
     for _dirpath, _dirnames, _filenames in os.walk(REPO):
-        if any(_s in _dirpath for _s in (".git", "/build", "/ref")):
-            continue
+        _dirnames[:] = [_d for _d in _dirnames if _d not in _SKIP]
         for _f in _filenames:
             if not _f.endswith(".md"):
                 continue
             _rel = os.path.relpath(os.path.join(_dirpath, _f), REPO)
+            _read += 1
             # No exception but the holder, and the holder earns it because
             # naming the figure is how the correction is made. Measured before
             # the rule was written: zero occurrences anywhere else, the
@@ -613,8 +621,15 @@ else:
             bad(f"the retracted +395 MB figure is stated again, and the only "
                 f"document allowed to name it is the one that corrects it "
                 f"({_HOLDER}):\n    {_r}")
+    elif _read < 45:
+        # A walk that skips too much reports green having opened nothing, and
+        # says the same words as a walk that read everything. The first version
+        # of this one skipped wiki/referencia/ and reported on 38 files where
+        # the tree has 52.
+        bad(f"only {_read} document(s) were read, so this check is asserting "
+            f"almost nothing: something in the walk is skipping the tree")
     else:
-        ok("and no other document restates it")
+        ok(f"and none of the other {_read} document(s) restates it")
 
 if fail == 0:
     print()
