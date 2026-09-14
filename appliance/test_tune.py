@@ -509,5 +509,79 @@ with tempfile.TemporaryDirectory() as root:
     check("dev 0000:" in out,
           f"and named by PCI address: {field(out, '# dataplane NIC PCI address:')}")
 
+
+print("\n=== a virtio NIC resolves to the PCI device behind it (#286) ===")
+# Every VM has one, and the tuner could not name a single one of them. The
+# `device` link points at the device that OWNS the netdev, and on virtio that
+# is the virtio bus device whose PARENT is the PCI one:
+#
+#   /sys/class/net/ens18/device -> ../../../virtio3
+#   realpath: /sys/devices/pci0000:00/0000:00:12.0/virtio3
+#
+# Reading the basename gave `virtio3`, so nic_pci() answered None, the tuner
+# wrote `no-pci`, and VPP was given nothing - with the interface named
+# correctly. DPDK drives virtio through its own poll-mode driver; the card was
+# always eligible.
+#
+# Bare metal hid it: an Intel NIC's `device` link points straight at the PCI
+# device, and there the basename IS the address.
+_d = tempfile.mkdtemp()
+os.makedirs(f"{_d}/sys/devices/pci0000:00/0000:00:12.0/virtio3", exist_ok=True)
+os.makedirs(f"{_d}/sys/class/net/ens18", exist_ok=True)
+os.symlink(f"{_d}/sys/devices/pci0000:00/0000:00:12.0/virtio3",
+           f"{_d}/sys/class/net/ens18/device")
+# Something genuinely not on PCI, which must still answer "nothing to give".
+os.makedirs(f"{_d}/sys/devices/platform/soc/eth-mmio", exist_ok=True)
+os.makedirs(f"{_d}/sys/class/net/eth9", exist_ok=True)
+os.symlink(f"{_d}/sys/devices/platform/soc/eth-mmio",
+           f"{_d}/sys/class/net/eth9/device")
+
+# The tuner is a script, not a module, so it is loaded rather than imported.
+# Its own functions are what is under test here: driving the whole thing as a
+# subprocess would answer "was a dpdk stanza written" and this asks the
+# narrower question of what one interface resolves to.
+_ns = {"__name__": "hexarouting_tune"}
+exec(compile(open(TUNE).read().split("\ndef plan(")[0], TUNE, "exec"), _ns)
+Topology, is_pci_addr = _ns["Topology"], _ns["is_pci_addr"]
+
+_t = Topology.__new__(Topology)
+_t.root = _d
+check(_t.nic_pci("ens18") == "0000:00:12.0",
+      f"a virtio NIC resolved to {_t.nic_pci('ens18')!r}: the tuner writes "
+      f"no-pci for it, so every box in a VM is given no dataplane card even "
+      f"with the interface named correctly")
+check(_t.nic_pci("eth9") is None,
+      f"a device that is not on PCI at all resolved to "
+      f"{_t.nic_pci('eth9')!r}; DPDK has nothing it could be given and saying "
+      f"otherwise puts a name in startup.conf that claims no device")
+check(_t.nic_pci("nosuch") is None,
+      "an interface this box has not got resolved to something")
+
+# The shape test itself, because it decides which directory is handed to DPDK.
+for _good in ("0000:00:12.0", "0000:3b:00.0", "10000:ff:1f.7"):
+    check(is_pci_addr(_good), f"{_good!r} is a PCI address and was rejected")
+for _bad in ("virtio3", "soc", "0000:00:12", "0000:zz:12.0", "", "a:b:c.d"):
+    check(not is_pci_addr(_bad),
+          f"{_bad!r} is not a PCI address and was accepted, so it could be "
+          f"handed to DPDK as a device")
+# AND THE VTY MUST AGREE WITH THE TUNER. The tuner decides what goes into
+# startup.conf; `show hardware` decides what the operator is offered. A box
+# where the two disagree offers a card the tuner then refuses, or hides one it
+# would have accepted - and this is a second copy of one truth, which is the
+# defect this repository keeps finding. Compared here rather than trusted.
+sys.path.insert(0, os.path.join(HERE, "..", "src", "hexash"))
+import hexash as _hx     # noqa: E402
+
+for _if in ("ens18", "eth9", "nosuch"):
+    _mine = _t.nic_pci(_if)
+    _theirs = _hx.pci_address_of(f"{_d}/sys/class/net/{_if}/device") or None
+    check(_mine == _theirs,
+          f"the tuner resolves {_if!r} to {_mine!r} and 'show hardware' to "
+          f"{_theirs!r}: one of them offers a card the other will not take")
+for _n in ("0000:00:12.0", "10000:ff:1f.7", "virtio3", "a:b:c.d", ""):
+    check(is_pci_addr(_n) == _hx.is_pci_addr(_n),
+          f"the two copies of the PCI shape test disagree about {_n!r}")
+print("  the virtio parent, nothing that is not PCI, and the VTY agreeing")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

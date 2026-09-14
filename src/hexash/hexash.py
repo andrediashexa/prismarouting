@@ -4531,6 +4531,61 @@ class ConfirmPending:
 BLOCK_MODES = ("pool", "user", "snmp-user")
 
 
+def is_pci_addr(name):
+    """
+    Is `name` a PCI address as sysfs spells it: 0000:3b:00.0
+
+    Domain, bus, then device.function, all hexadecimal. Checked by SHAPE
+    rather than by a looser pattern, because what it decides is which
+    directory gets handed to DPDK.
+    """
+    parts = name.split(":")
+    if len(parts) != 3 or "." not in parts[2]:
+        return False
+    dev, _, func = parts[2].partition(".")
+    hexd = "0123456789abcdefABCDEF"
+    # The WIDTHS sysfs uses: a four-digit domain (wider on a box with many),
+    # two-digit bus, two-digit device, one-digit function. Without them
+    # 'a:b:c.d' is accepted as an address, and what this decides is which
+    # directory is handed to DPDK.
+    return bool(len(parts[0]) >= 4 and len(parts[1]) == 2
+                and len(dev) == 2 and len(func) == 1
+                and all(c in hexd for c in parts[0] + parts[1] + dev + func))
+
+
+def pci_address_of(device_link):
+    """
+    The PCI address behind a `/sys/class/net/<if>/device` link, or "".
+
+    WALKED UP rather than read off the first component. That link points at
+    the device which OWNS the netdev, and on a virtio guest that is the virtio
+    bus device, whose parent is the PCI one:
+
+        /sys/class/net/ens18/device -> ../../../virtio3
+        realpath: /sys/devices/pci0000:00/0000:00:12.0/virtio3
+
+    The basename is `virtio3`, so a reading that stopped there answered "not
+    PCI" for every NIC in every VM, and `show hardware` printed that a virtio
+    guest simply has nothing to choose from (#286). DPDK drives virtio through
+    its own poll-mode driver; the card was always eligible.
+
+    The SAME walk as `nic_pci()` in appliance/hexarouting-tune, and it has to
+    be: the tuner decides what goes into startup.conf and this decides what
+    the operator is offered, so a box where the two disagree offers a card the
+    tuner then refuses.
+    """
+    try:
+        path = os.path.realpath(device_link)
+    except OSError:
+        return ""
+    while path and path != "/":
+        base = os.path.basename(path)
+        if is_pci_addr(base):
+            return base
+        path = os.path.dirname(path)
+    return ""
+
+
 class Shell:
     def __init__(self):
         self.sys = System()
@@ -9074,18 +9129,10 @@ class Shell:
             return out
         for name in names:
             base = os.path.join(self.SYS_CLASS_NET, name)
-            try:
-                addr = os.path.basename(
-                    os.path.realpath(os.path.join(base, "device")))
-            except OSError:
-                addr = ""
-            # 0000:3b:00.0, and anything that is not shaped like that is not
-            # PCI: `lo`, a bridge, a tap and a virtio-mmio NIC all fail this,
-            # and none of them is a device DPDK could be given. Same test as
-            # the tuner's, so the two cannot disagree about what is a
-            # candidate.
-            parts = addr.split(":")
-            if len(parts) != 3 or not parts[0].isalnum():
+            addr = pci_address_of(os.path.join(base, "device"))
+            if not addr:
+                # Not PCI at all: `lo`, a bridge, a tap, a virtio-mmio NIC.
+                # None of them is a device DPDK could be given.
                 continue
             driver = None
             link = os.path.join(base, "device", "driver")
