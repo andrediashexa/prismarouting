@@ -9726,7 +9726,18 @@ class Shell:
             # done the binding needs to be told it is not the binding.
             said.append(f"It is bound to {driver}, which DPDK can use, so the "
                         f"binding is not the problem.")
-            said.append("'show log' and the VPP journal say why the dataplane "
+            # NAMED AS A COMMAND THAT EXISTS (#308). This said "'show log'",
+            # and this VTY has no `show log`: the tree offers `show logging`,
+            # which is FRR's system log and says nothing about a NIC the
+            # dataplane refused. It was the only occurrence of that spelling
+            # in the product, and it printed on the one screen an operator
+            # reaches when the box forwards nothing AND the binding is already
+            # right - so the next thing they type is a command the box has not
+            # got.
+            #
+            # appliance/selftest reaches the same state and says "The VPP
+            # journal says why", naming journalctl elsewhere. One account.
+            said.append("'journalctl -u vpp.service' says why the dataplane "
                         "refused it.")
             return said
 
