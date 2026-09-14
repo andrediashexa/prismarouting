@@ -20,6 +20,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
 import config      # noqa: E402
 import hexash      # noqa: E402
+import routes      # noqa: E402
 import system      # noqa: E402
 import vppapi      # noqa: E402
 
@@ -50,6 +51,12 @@ class FakeApi:
             return vppapi.Reply(vppapi.REFUSED, retval=-7,
                                 reason="the dataplane refused it: invalid value")
         return vppapi.Reply(vppapi.OK)
+
+    def dump(self, message, args):
+        # The named-FIB-table map (#268). An empty answer is a real one: the
+        # boxes here have no named table, and it is what a VTY that cannot
+        # reach the API gets too.
+        return vppapi.Reply(vppapi.OK, fields={"rows": []})
 
 
 class FakeVpp(hexash.Vpp):
@@ -625,6 +632,266 @@ check(mtus, f"a TAP nobody paired keeps its configuration: {buf.getvalue()!r}")
 print(f"  tap0 mtu calls: {mtus}")
 os.unlink(saved)
 os.unlink(own)
+
+print("\n=== a file's own address makes its own static route reachable (#294) ===")
+# The most serious shape this repository has had: `hexash --load` refusing a
+# box's ENTIRE configuration over a static route that is correct.
+#
+# The next-hop check reads the live VPP FIB. At boot the FIB is
+# MID-CONSTRUCTION - VPP has just started and the interface addresses that
+# make the next hop connected are in the very file being read - so the check
+# answers a question about a box that does not exist yet, and `--load` refuses
+# the file whole. The box then comes up with no pools, no addresses and no
+# attachments, which is the same door drop_lcp_taps() was opened for.
+#
+# What has hidden it is worse than the defect: hexarouting.service runs after
+# frr.service, FRR has already read the same static route out of its OWN
+# /etc/frr/frr.conf, so `routing_changed` is false and the failing branch is
+# never reached. The configuration a box boots with is protected by a second
+# copy of it in another daemon's file - one lost conffile, one unit-ordering
+# change, one hand-run `--load` away from refusing everything (#294).
+#
+# `flat` here for the same reason it exists in test_hexash_complete.py: the
+# console folds prose, so where it breaks is a measurement and not a promise.
+
+
+def flat(text):
+    return " ".join(text.split())
+
+
+# Captured from a real VPP started with lab/startup-test.conf and nothing
+# configured on it, not written by hand: table 0 holds the five drop entries
+# VPP creates for itself and no connected prefix at all. That is the dataplane
+# `hexash --load` is handed at every boot.
+FRESH_FIB = """ipv4-VRF:0, fib_index:0, flow hash:[src dst sport dport proto flowlabel ] epoch:0 flags:none locks:[default-route:1, ]
+0.0.0.0/0
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:1 buckets:1 uRPF:0 to:[0:0]]
+    [0] [@0]: dpo-drop ip4
+0.0.0.0/32
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:2 buckets:1 uRPF:1 to:[0:0]]
+    [0] [@0]: dpo-drop ip4
+224.0.0.0/4
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:4 buckets:1 uRPF:3 to:[0:0]]
+    [0] [@0]: dpo-drop ip4
+240.0.0.0/4
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:3 buckets:1 uRPF:2 to:[0:0]]
+    [0] [@0]: dpo-drop ip4
+255.255.255.255/32
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:5 buckets:1 uRPF:4 to:[0:0]]
+    [0] [@0]: dpo-drop ip4
+"""
+
+# The same box once its configuration HAS been applied: the outside interface's
+# address is connected. This is the box the interactive refusal is typed at.
+CONFIGURED_FIB = FRESH_FIB + """200.150.0.0/24
+  unicast-ip4-chain
+  [@0]: dpo-load-balance: [proto:ip4 index:10 buckets:1 uRPF:9 to:[0:0]]
+    [0] [@4]: ipv4-glean: [src:200.150.0.0/24] GigabitEthernet0/12/0: mtu:9000 next:1 flags:[] ffffffffffff02fefecd294a0806
+"""
+
+DP_IFACES = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)     Counter          Count
+GigabitEthernet0/12/0             1      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+"""
+
+# What `save` writes on an ordinary edge box, trimmed to the two statements
+# that are the whole question: the address, and the route it makes reachable.
+SAVED_ROUTE = """interface GigabitEthernet0/12/0
+ ipv4 address 200.150.0.1/24
+ exit
+! routing
+router static
+ route 200.150.0.0/24 200.150.0.2
+"""
+
+
+class BootVpp:
+    """The dataplane at boot: it has its card, and nothing is configured."""
+
+    TRACE = False
+
+    def __init__(self, fib=FRESH_FIB):
+        self.fib = fib
+        self.commands = []
+
+    def run(self, cmd):
+        self.commands.append(cmd)
+        if cmd.startswith("show ip fib"):
+            return 0, self.fib
+        if cmd.startswith("show interface"):
+            return 0, DP_IFACES
+        return 0, ""
+
+    def running(self):
+        return 0, ""
+
+
+def boot_shell(fib=FRESH_FIB, running_text=""):
+    """A Shell whose FRR holds NOTHING, which is the case #294 is about.
+
+    `hexash --load` survives today only because FRR has already converged onto
+    its own copy of the route. A stub that answered `running` with the route in
+    it would reproduce the crutch instead of the defect.
+    """
+    api = FakeDataplane(existing=("GigabitEthernet0/12/0",))
+    sh = shell_with(api, running_text=running_text)
+    sh.dp = BootVpp(fib)
+    sh.frr = type("F", (hexash.Frr,), {
+        "available": lambda s: True,
+        "running": lambda s: [],
+        "daemons": lambda s: {"zebra", "mgmtd", "staticd"},
+        "reload": lambda s, l, check_only=False: (0, ""),
+        "show": lambda s, c: ((0, "vrf default id 0 table 254\n")
+                              if c == "show vrf" else (1, "")),
+    })()
+    sh.rb = type("RB", (), {"push": lambda self, *a: None})()
+    return sh
+
+
+def load_text(sh, text):
+    with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as fh:
+        fh.write(text)
+        p = fh.name
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sh.load(p)
+    os.unlink(p)
+    return flat(buf.getvalue())
+
+
+# A. THE CASE THE BOX BOOTS INTO. Nothing on the dataplane, nothing in FRR,
+#    and the address that makes 200.150.0.2 connected is three lines above the
+#    route in the same file.
+_out = load_text(boot_shell(), SAVED_ROUTE)
+check("refusing to load this file" not in _out,
+      f"a box must load the configuration it saved: {_out!r}")
+check("no connected network" not in _out,
+      f"and must not refuse its own route over an address in the same "
+      f"file: {_out!r}")
+print(f"  loaded against an empty dataplane: {_out!r}")
+
+# B. AND THE CHECK IS STILL RUN AT `--load`. Switching it off for the boot
+#    path would trade a box that refuses its configuration loudly for one that
+#    accepts a route which never forwards, silently - and #197's argument is
+#    that the second is worse. This is the assertion that says so: the file
+#    below carries no address for 172.31.99.0/24 and the dataplane has none
+#    either, so nothing anywhere makes this next hop connected.
+_out = load_text(boot_shell(),
+                 SAVED_ROUTE + " route 10.55.0.0/16 172.31.99.1\n")
+check("this next hop is on no connected network: 172.31.99.1" in _out,
+      f"--load still refuses a next hop nothing makes connected: {_out!r}")
+check("refusing to load this file" in _out,
+      f"and refuses the file rather than applying half of it: {_out!r}")
+print(f"  a next hop nothing makes reachable: {_out!r}")
+
+# C. THE INTERACTIVE DIRECTION, at a box that IS configured. This is where the
+#    FIB is the right thing to read and the refusal is the whole point of the
+#    check (#95): a route accepted here sits in FRR, never reaches the FIB, and
+#    `show ip route` looks correct.
+_sh = boot_shell(fib=CONFIGURED_FIB, running_text=SAVED_ROUTE)
+_sh.candidate = config.Config.parse(
+    SAVED_ROUTE + " route 10.55.0.0/16 172.31.99.1\n")
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    _sh.do_commit(["check"])
+_out = flat(_buf.getvalue())
+check("this next hop is on no connected network: 172.31.99.1" in _out,
+      f"a configured box still refuses a next hop on no connected "
+      f"network: {_out!r}")
+check("this next hop is on no connected network: 200.150.0.2" not in _out,
+      f"and does not refuse the one its own address covers: {_out!r}")
+print(f"  at a configured box: {_out!r}")
+
+# THE SAME MID-CONSTRUCTION PROBLEM, IN THE OTHER `--load`-time check that
+# reads live dataplane state. Found while fixing the one above, and measured
+# before it was believed.
+#
+# The interface-existence check builds "what this box has" from `show
+# interface` and `show lcp`. Three things a file CREATES are already carved out
+# of it - a sub-interface, a loopback, and (in Shell.load) a stale `tap<n>`
+# stanza - and the fourth was not: the LINUX side of a linux_cp pair, which
+# since #182 this product creates itself from `linux-name`. An FRR stanza names
+# that side and no other, because FRR configures by the Linux name: `interface
+# vppwan0 / ip ospf area 0` is what lab/igp.sh and lab/routing.sh both write.
+#
+# At boot `show lcp` is empty, so the name is in the file and on no box, and
+# `--load` refused the whole configuration. Measured on the build this section
+# was written against:
+#
+#   error: interface vppwan0: this box has no such interface
+#       it has: GigabitEthernet0/12/0, local0
+#
+# Worse than #294's own half in one respect: this check is not gated on
+# `routing_changed`, so FRR's second copy of the configuration does not hide it.
+SAVED_PAIR = """interface GigabitEthernet0/12/0
+ linux-name vppwan0
+ exit
+! routing
+interface vppwan0
+ ip ospf area 0
+exit
+"""
+_out = load_text(boot_shell(), SAVED_PAIR)
+check("refusing to load this file" not in _out,
+      f"a pair this file CREATES is not an interface the box is "
+      f"missing: {_out!r}")
+check("no such interface" not in _out,
+      f"and the FRR stanza naming its Linux side loads: {_out!r}")
+print(f"  a pair created by the file being loaded: {_out!r}")
+
+# And the carve-out must not become "every name is fine". A name nothing on the
+# box has and nothing in the file creates is still refused, or the check has
+# been turned off rather than corrected.
+_out = load_text(boot_shell(), SAVED_PAIR.replace("interface vppwan0\n",
+                                                  "interface vppwan9\n"))
+check("interface vppwan9: this box has no such interface" in _out,
+      f"a name nothing has and nothing creates is still refused: {_out!r}")
+print(f"  a name nothing creates: {_out!r}")
+
+# THE TWO HALVES OF "WHAT IS CONNECTED", ASKED DIRECTLY. The union above goes
+# through apply(), which needs a whole box to drive; these two are the pieces
+# it is built from, and one of them has an edge that the load path cannot
+# reach.
+#
+# A VRF address in the file makes a VRF route in the same file reachable, the
+# same way the global one does - `vrfs` is already the table number, which is
+# what makes the two halves key the same way (#255).
+_cfg = config.Config.parse("""interface GigabitEthernet0/12/0
+ vrf 10
+ ipv4 address 172.31.99.1/24
+ exit
+""")
+check(_cfg.connected_prefixes() == {10: ["172.31.99.1/24"]},
+      f"a VRF address lands in its own table: {_cfg.connected_prefixes()}")
+
+# And a VRF this file only puts an IPv6 address in is NOT a table here. In
+# routes.unreachable_next_hops a table present with an empty list is a
+# REFUSAL and a table that is absent is a note saying the check could not be
+# made, so a key added here would turn the note into a refusal of a
+# configuration this VTY cannot see - the harm #208 was filed for. This half
+# may only ever ADD prefixes.
+_cfg = config.Config.parse("""interface GigabitEthernet0/12/0
+ vrf 10
+ ipv6 address 2001:db8::1/64
+ exit
+""")
+check(_cfg.connected_prefixes() == {},
+      f"an IPv6-only VRF is not a table this half claims to know: "
+      f"{_cfg.connected_prefixes()}")
+_bad, _unplaced = routes.unreachable_next_hops(
+    ["vrf red", " ip route 10.55.0.0/16 172.31.99.1", "exit"],
+    _cfg.connected_prefixes(),
+    config.block_paths(["vrf red", " ip route 10.55.0.0/16 172.31.99.1",
+                        "exit"]),
+    {"red": 10})
+check(not _bad and _unplaced,
+      f"so the VRF is still a note and not a refusal: {_bad}, {_unplaced}")
+print(f"  the unchecked VRF is still said out loud: {_unplaced}")
 
 print("\n=== a commit that fails halfway puts back what it took away ===")
 # docs/routing.md:1528 is one sentence with two halves - `commit` MUST validate

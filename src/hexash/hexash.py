@@ -5916,6 +5916,19 @@ class Shell:
                 # the commit that would have brought it into existence - which
                 # is the same trap the sub-interface line above exists for.
                 have |= set(target.loopbacks)
+                # And the LINUX side of a linux_cp pair the configuration
+                # creates, which is the third name in the same sentence and was
+                # the one still missing. `pairs` above is read from `show lcp`,
+                # so at boot it is empty and this name is in the file and on no
+                # box - while FRR configures by that name and no other, so
+                # `interface vppwan0 / ip ospf area 0` is what a saved file
+                # holds. Measured: `--load` refused the whole configuration
+                # with "interface vppwan0: this box has no such interface"
+                # (#294, the same mid-construction reading as the next-hop
+                # check below). Not hidden by FRR's own copy of the
+                # configuration the way that one was, because this check is not
+                # gated on `routing_changed`.
+                have |= set(target.linux_names.values())
                 named = set(target.interfaces)
                 named |= set(target.mtus)
                 named |= set(target.urpf)
@@ -6233,8 +6246,50 @@ class Shell:
                     rc_vrf, vrf_text = self.frr.show("show vrf")
                     vrf_tables = (routes.parse_vrf_tables(vrf_text)
                                   if rc_vrf == 0 else None)
+                    # WHAT IS CONNECTED, asked of both moments at once: what
+                    # the dataplane forwards on now, and what this
+                    # configuration puts on it. The check is about the box
+                    # that exists AFTER the change, and neither half on its
+                    # own describes that box.
+                    #
+                    # The FIB alone is what #294 was filed for. `hexash
+                    # --load` runs this at boot against a VPP that has just
+                    # started, so the addresses that make a next hop connected
+                    # are in the very file being read and the FIB has none of
+                    # them - and `--load` refuses the file WHOLE, leaving the
+                    # box with no pools, no addresses and no attachments. It
+                    # has not been seen because hexarouting.service runs after
+                    # frr.service and FRR has already read the same static
+                    # route out of its own frr.conf, so `routing_changed` is
+                    # false and this branch is never reached: the
+                    # configuration a box boots with was protected by a second
+                    # copy of it in another daemon's file.
+                    #
+                    # MEASURED, and it is why this is a union and not a switch
+                    # on "are we loading a file". The same refusal comes out of
+                    # an ordinary interactive commit that brings an address and
+                    # the route it makes reachable in one candidate, which is
+                    # how an operator configures a new uplink:
+                    #
+                    #   error: this next hop is on no connected network:
+                    #       200.150.0.2
+                    #
+                    # A branch for `--load` would have left that standing, and
+                    # it is the same defect through the door the operator uses
+                    # every day.
+                    #
+                    # The candidate's addresses can only ADD to the set, so
+                    # nothing the check refuses today stops being refused: a
+                    # next hop on no connected network typed at a configured
+                    # box is covered by neither half. The check is not switched
+                    # off for any path, which is #197's argument - a route that
+                    # is accepted and never forwards is worse than one refused
+                    # loudly.
+                    connected = routes.connected_from_fib(fibs)
+                    for table, prefixes in target.connected_prefixes().items():
+                        connected.setdefault(table, []).extend(prefixes)
                     bad, unplaced = routes.unreachable_next_hops(
-                        target.routing, fibs,
+                        target.routing, connected,
                         block_paths(target.routing), vrf_tables)
                     for stmt, nexthop in bad:
                         # #251: named in the block it is in, because a VRF

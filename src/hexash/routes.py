@@ -441,7 +441,28 @@ def _covers(prefix: str, addr: str) -> bool:
     return (n & mask) == (a & mask)
 
 
-def unreachable_next_hops(routing: list, fibs: dict, paths: list,
+def connected_from_fib(fibs: dict) -> dict:
+    """
+    {table: [prefix]} - what the dataplane has connected RIGHT NOW.
+
+    One of the two ways to answer "what is connected", and the only one that
+    was ever built. The other is Config.connected_prefixes(), which answers it
+    from a configuration rather than from a box, and the two exist because the
+    question has two moments: what a running box forwards on, and what a box
+    will forward on once a file has been applied to it. See
+    unreachable_next_hops(), which takes the answer and does not care which
+    moment produced it.
+
+    Every table the FIB reported is a key here, INCLUDING one with no connected
+    prefix in it. The empty list and the missing key mean different things to
+    the caller - "this table connects nothing" against "this box has no such
+    table" - and collapsing them turned a refusal into a note (#255).
+    """
+    return {tid: [p for p, e in entries.items() if e["kind"] == CONNECTED]
+            for tid, entries in fibs.items()}
+
+
+def unreachable_next_hops(routing: list, connected: dict, paths: list,
                           vrf_tables) -> tuple:
     """
     Static routes whose next hop is on no connected network OF THEIR TABLE.
@@ -459,6 +480,15 @@ def unreachable_next_hops(routing: list, fibs: dict, paths: list,
     200.150.0.2 was ACCEPTED - the first is a correct configuration turned away
     at the prompt, which is the harm #208 was filed for, and the second is the
     inert route this check exists to catch, committed in silence.
+
+    `connected` is {table: [prefix]} and is the whole of what this function
+    knows about the box. It USED to be the parsed FIB, and taking the FIB here
+    is what made `hexash --load` refuse a box's entire configuration at boot:
+    at boot the FIB is MID-CONSTRUCTION, the addresses that make the next hop
+    connected are in the file being read and have not been applied yet, so the
+    check answered a question about a box that does not exist (#294). The set
+    is the caller's to assemble precisely so that the caller can say which
+    moment it is asking about; this function asks one question of it.
 
     `paths` is where each line sits, as `config.block_paths` reports it, and
     `vrf_tables` is `parse_vrf_tables`'s answer - or None when FRR could not be
@@ -480,8 +510,6 @@ def unreachable_next_hops(routing: list, fibs: dict, paths: list,
                 operator believes ran and passed, which is the silence this
                 whole function exists to break.
     """
-    connected = {tid: [p for p, e in entries.items() if e["kind"] == CONNECTED]
-                 for tid, entries in fibs.items()}
     bad, unplaced = [], {}
     for path, line in zip(paths, routing):
         m = _IP_ROUTE.match(line)
