@@ -657,16 +657,11 @@ printed_before() {  # <first> <second>
 # test/test_selftest.sh holds the other half: the four sentences may appear in
 # this file only inside this function, so a third reader cannot be written by
 # hand without going red.
-# The four sentences, written down ONCE. Everything that reads a verdict out
-# of a console uses this, so there is no second copy to leave behind.
-VERDICT_RE="HexaRouting ready|HexaRouting is installed and healthy, and has|check\(s\) failed\. The box is NOT ready\."
-# The three that mean the box is fit to be handed over. The fourth is a box
-# that failed its own checks, and it is told apart where that matters.
-VERDICT_OK_RE="HexaRouting ready|HexaRouting is installed and healthy, and has"
+# The four sentences live in tools/selftest-verdict.sh, which boot-iso.sh and
+# the release gate take too. See that file for what two of them being copied
+# by hand cost.
+. /src/tools/selftest-verdict.sh
 
-said_a_verdict() {  # <file>
-  grep -qE "$VERDICT_RE" "$1"
-}
 
 console_gave_up() {  # <string> <what the driver was doing> <how long>
   echo

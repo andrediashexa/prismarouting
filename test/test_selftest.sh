@@ -2840,10 +2840,10 @@ ST_SRC=$(cat "$ST")
 # the literal string would report a correct lab as broken. That is the shape
 # this whole run of failures is about, and it happened here too, on the first
 # version of this check.
-LAB_RE=$(sed -n 's/^VERDICT_RE="\(.*\)"$/\1/p' "$REPO/lab/install-iso.sh")
+LAB_RE=$(sed -n 's/^VERDICT_RE="\(.*\)"$/\1/p' "$REPO/tools/selftest-verdict.sh")
 verdicts_found=0
 if [ -z "$LAB_RE" ]; then
-  bad "lab/install-iso.sh has no VERDICT_RE, so nothing there reads a verdict by a rule this can check"
+  bad "tools/selftest-verdict.sh has no VERDICT_RE, so nothing reads a verdict by a rule this can check"
 fi
 # The sentences as the self-test prints them, with the counts filled in: the
 # pattern has to match what reaches a console, not what the source spells.
@@ -2858,11 +2858,11 @@ for _v in "  HexaRouting ready." \
   esac
   verdicts_found=$((verdicts_found + 1))
   if [ -n "$LAB_RE" ] && ! printf '%s\n' "$_v" | grep -qE "$LAB_RE"; then
-    bad "the self-test can end with '$_v' and lab/install-iso.sh's VERDICT_RE does not match it: an installed box printing it is a box the gate reads as never having booted"
+    bad "the self-test can end with '$_v' and VERDICT_RE does not match it: an installed box printing it is a box the gate reads as never having booted"
   fi
 done
 if [ "$verdicts_found" -eq 4 ]; then
-  ok "all four verdicts the self-test can end with match lab/install-iso.sh's VERDICT_RE"
+  ok "all four verdicts the self-test can end with match VERDICT_RE"
 else
   bad "only $verdicts_found of the four verdicts were found in appliance/selftest, so this check is asserting almost nothing"
 fi
@@ -2880,17 +2880,31 @@ fi
 # So the strings live in VERDICT_RE and nothing else in that file may spell
 # them outside a comment. A third reader written by hand goes red here rather
 # than at a release.
-spelled=$(grep -n "HexaRouting ready\|is installed and healthy, and has" \
-            "$REPO/lab/install-iso.sh" \
-          | grep -v "VERDICT_RE=" | grep -v "VERDICT_OK_RE=" \
-          | grep -vE "^[0-9]+:[[:space:]]*#" | wc -l)
+# EVERY file that reads a console, not just the one that was fixed first.
+#
+# After both fixes there were still two readers spelling the old needle by
+# hand - lab/boot-iso.sh and tools/release-gate.sh - and they went on passing
+# for a reason that is luck rather than design: a LIVE medium takes the branch
+# where DPDK is off deliberately, so it ends with "HexaRouting ready." and the
+# old needle matched. A live image that ever ended any other way would have
+# had the gate refuse the release and name the wrong cause.
+#
+# The gate is the file where a false red is most expensive, so it is in this
+# list first and not last.
+spelled=0
+for _f in tools/release-gate.sh lab/boot-iso.sh lab/install-iso.sh; do
+  _n=$(grep -n "HexaRouting ready\|is installed and healthy, and has" \
+         "$REPO/$_f" 2>/dev/null \
+       | grep -vE "^[0-9]+:[[:space:]]*#" | wc -l)
+  if [ "$_n" -ne 0 ]; then
+    spelled=$((spelled + _n))
+    bad "$_n line(s) of $_f spell a verdict instead of sourcing tools/selftest-verdict.sh: a second reader of the same truth refused 0.72.0 twice"
+    grep -n "HexaRouting ready\|is installed and healthy, and has" "$REPO/$_f" \
+      | grep -vE "^[0-9]+:[[:space:]]*#" | sed 's/^/        /'
+  fi
+done
 if [ "$spelled" -eq 0 ]; then
-  ok "and the sentences are spelled once in that file, in VERDICT_RE"
-else
-  bad "$spelled line(s) of lab/install-iso.sh spell a verdict outside VERDICT_RE: a second reader of the same truth is what refused 0.72.0 twice"
-  grep -n "HexaRouting ready\|is installed and healthy, and has" \
-    "$REPO/lab/install-iso.sh" | grep -v "VERDICT_RE=" \
-    | grep -v "VERDICT_OK_RE=" | grep -vE "^[0-9]+:[[:space:]]*#" | sed 's/^/        /'
+  ok "and no reader spells them: all three source tools/selftest-verdict.sh"
 fi
 
 echo "=== every self-test line fits the 80-column console it is printed on ==="

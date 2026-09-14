@@ -75,6 +75,26 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **Two more readers of the self-test's verdict were still spelling the old
+  needle by hand**, in the two files where a false red costs most:
+  `lab/boot-iso.sh` and `tools/release-gate.sh` itself. Both survived 0.72.0's
+  two gate refusals by luck rather than by design - a LIVE medium takes the
+  branch where DPDK is off deliberately, so it ends with a sentence the old
+  needle still matched. Measured on the boot log of the gate run that passed:
+  the live medium said `HexaRouting ready, with 2 warning(s) above.` and the
+  installed box said `HexaRouting is installed and healthy, and has no
+  interface to forward on:`. The first matches `HexaRouting ready`; the second
+  does not.
+
+  A live image that ever ended any other way would have had the gate refuse
+  the release and name the wrong cause.
+
+  The four sentences are in `tools/selftest-verdict.sh` now, sourced by all
+  three readers, and `test/test_selftest.sh` refuses any of the three spelling
+  them outside a comment. The gate is first in that list rather than last.
+
 ## 0.72.0 - the box said it was ready, and could not forward a packet
 
 [#282](https://github.com/andrediashexa/hexarouting/issues/282),
