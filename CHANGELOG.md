@@ -62,168 +62,6 @@ version has a chance of seeing it.
 
 ### Changed
 
-* **`appliance/install.sh` says when it upgraded a box instead of installing
-  one** ([#291](https://github.com/andrediashexa/hexarouting/issues/291) item
-  3, which closes that issue). It behaved identically on a second run and
-  closed with a first install's sentence - "Adjust /etc/hexarouting/tune.env
-  and reboot so that isolcpus and hugepages take effect" - which an operator
-  who tuned the box a year ago reads as nothing to do. It writes a new
-  `bpa_plugin.so`, runs `daemon-reload` and `enable`, and restarts nothing.
-
-  It reads the version stamp before anything is overwritten, and on an upgrade
-  it names the version that was there and the one that is there now. On a box
-  with systemd it also names which running services are still the older build
-  and what restarting each costs: `vpp.service` picks up the new plugin and
-  drops every session and every port block; `hexarouting.service` re-applies
-  the configuration and drops none, and on its own leaves the split exactly
-  where it was.
-
-  **It still restarts nothing.** Restarting the dataplane unasked is worse than
-  the split; the defect was that the split happened in silence. A stopped
-  `vpp.service` gets a different paragraph, because telling an operator there
-  is a split to clear when there is none sends them to book a maintenance
-  window for nothing.
-
-* **A pool that would translate the box's own BGP session was refused when an
-  operator typed it and only logged when the same file was loaded at boot**
-  ([#296](https://github.com/andrediashexa/hexarouting/issues/296)). Driven on
-  a real dataplane, both doors, before anything was changed. Typed at a
-  configured box the candidate is refused and no pool exists; loaded into a VPP
-  with nothing on it the pool is created, the address is applied afterwards,
-  and one `vlib_log_err` goes into a log nobody is reading.
-
-  The plugin's check walks the LIVE interface addresses, and `--load` creates
-  pools before it applies any, so at boot the walk finds nothing. That is the
-  mirror image of
-  [#294](https://github.com/andrediashexa/hexarouting/issues/294) and the
-  dangerous direction: a false refusal is loud and immediate, a missed one is
-  on the path that runs unattended.
-
-  The VTY now refuses a candidate whose pool public range contains an
-  interface address the same candidate configures, in one code path, so
-  `commit`, `--load` and `rollback` agree. Every pool in the candidate and not
-  only the one being added: at `--load` the distinction buys nothing, and at an
-  interactive commit it is what stops a commit writing a file that `--load`
-  will refuse whole months later.
-
-  The plugin is untouched. Its live walk still catches an address that arrived
-  from somewhere the candidate does not describe, and both fire together on a
-  configured box.
-
-* **A pool on a box with no dataplane interface reported capacity for 504
-  subscribers it would never serve**
-  ([#299](https://github.com/andrediashexa/hexarouting/issues/299)). Measured
-  on a real appliance whose dataplane held only `local0`: the pool committed
-  cleanly, the boot self-test gave it a green tick, and `show cgnat pool` said
-  `capacity 504 subscribers (usable 504)`. Nothing was attached to CGNAT, so
-  no packet could reach it in either direction.
-
-  `show cgnat pool` now prints the reason beside the figure, and names which
-  half is missing, because an interface missing on the inside and one missing
-  on the outside are different mistakes with different fixes. A pool with both
-  sides attached is unchanged, under the same rule the worker-sharding caveat
-  beside it already follows: a line that appears on a correctly attached box
-  is one people learn to skip, and then they skip the real one too.
-
-  **Not a refusal.** Writing the pools before the interfaces exist is ordinary
-  staged work, and `hexash --load` applies them in that order at every boot, so
-  refusing would refuse a box its own saved configuration. This is
-  [#210](https://github.com/andrediashexa/hexarouting/issues/210)'s option 3
-  and [#226](https://github.com/andrediashexa/hexarouting/issues/226)'s option
-  A once more: the mechanism stays and the box stops claiming what it cannot
-  do.
-
-* **The boot self-test said "HexaRouting ready." on a box that had no
-  interface to forward on**
-  ([#297](https://github.com/andrediashexa/hexarouting/issues/297)). Measured
-  on a real appliance: it printed `[warn] no dataplane interface: VPP was given
-  no NIC to forward on` and then ended with the word "ready". `appliance/selftest`
-  says why that matters two hundred lines above the summary it was thrown away
-  by: "a box that forwards nothing looks like a box that is working".
-
-  Warnings were never counted. `bad()` incremented a failure count and a
-  warning was a bare `say`, so the summary knew only about failures and a box
-  with five warnings ended identically to a box with none. That line is what
-  survives: a console scrolls, a serial session is read from the bottom, and
-  somebody racking a box reads the verdict rather than the forty lines above
-  it.
-
-  There are three outcomes under "nothing failed" now, because "installed,
-  healthy, and not yet able to do its job" is a different thing from both of
-  the others and is the ordinary state of a box on the day it is racked. It is
-  not a failure and is not reported as one; saying "ready" of it was the part
-  that misled. A live medium is unchanged, since DPDK is off there by design.
-
-* **The product stopped claiming an upgrade path its own users cannot run**
-  ([#295](https://github.com/andrediashexa/hexarouting/issues/295)). Measured
-  on a real appliance: there is no `install.sh` on it, no source tree and no
-  toolchain. `appliance/install.sh` says at the top of the file that it is the
-  path "for updating a box in production without reinstalling it", and that is
-  true of the release gate and of `lab/upgrade.sh`, which have a build tree.
-  It is not true of anybody holding a published medium, whose only route to a
-  new version is a reinstall that erases the disk - and with it the volume
-  holding, in dynamic mode, the connection record the Marco Civil requires for
-  a year, and in deterministic mode the configuration trail that says which
-  pool definition was in force at a past instant.
-
-  Nothing was deleted: the mechanism is real and works for the person it works
-  for. Five sentences now say who that is, and the Portuguese twins of three
-  of them moved with their originals. The wiki has a page on taking a new
-  version, written for somebody holding a medium, which says what the
-  procedure is today, what it destroys, what has to be outside the box before
-  the window opens, and in what order.
-
-  The mechanism that would make an in-place upgrade possible is not chosen
-  here and is not this entry's subject.
-
-  `test/test_doc_copies.py` now refuses a document that quotes
-  `appliance/install.sh`'s opening sentence and gets either the words or the
-  line number wrong. Two files quote it and cite a line, and this change
-  rewrote that header, which is exactly the day a quotation rots.
-
-* **The IPFIX boot marker was sent after the pin replay, and four places said
-  it came before it.** `docs/logging.md`, the comment above
-  `bpa_log_marker_emit()`, and the comments sitting on the two lines that arm
-  it in `bpa_log.c` and `bpa_log_tcp.c` all say the marker goes out when a
-  transport comes up, ahead of the blocks a pinned forward replays, so a
-  collector knows which incarnation those records belong to. Since 0.67.0 it
-  went out after them. That is [#217](https://github.com/andrediashexa/hexarouting/issues/217)'s
-  argument read backwards: a record reaching a collector before this
-  incarnation's marker belongs to the previous one as far as the collector can
-  tell, and a box that has just rebooted announces every forward it carries
-  ([#282](https://github.com/andrediashexa/hexarouting/issues/282)).
-
-  Neither enable path could have fixed it: both can only arm the marker, since
-  at that moment there is no `vlib_main_t` on the path and the block report's
-  template may not have gone out. The ordering is decided in `bpa_log_drain()`,
-  and the marker now goes out ahead of the queue there.
-
-  `lab/ipfix.sh` reads the order off a real collector, which is the only place
-  it is visible: the marker travels in its own report's buffer, so nothing
-  inside the plugin shows the difference. It anchors the marker to the template
-  announcement that opens the transition rather than to any earlier line,
-  because markers repeat every thirty seconds and a marker from the previous
-  transition would satisfy a looser check.
-
-* **A refusal that comes back from the dataplane says when an upgrade is why.**
-  Between `appliance/install.sh` finishing and the next reboot, the new control
-  plane is talking to the dataplane the box was loaded with, and asking it to
-  create a pool fails: the API message grew fields that build does not have.
-  The refusal named `bpa_pool_add_del` and nothing else. It now says which of
-  the two answered, names the build that answered, says an upgrade is the
-  reason rather than the configuration, and states what clearing it costs -
-  every session and every port block on the box - so the operator decides
-  ([#293](https://github.com/andrediashexa/hexarouting/issues/293)).
-
-  Only when the two builds actually disagree, and only when there is something
-  to compare: a box running from a source tree, or without a version stamp, is
-  told the comparison is not available rather than being handed a sentence
-  about an upgrade that did not happen. `version_split()` is the one decision
-  `show version` and the refusal both ask, so they cannot drift apart.
-
-  Attached to refusals carrying a reason back from the dataplane, and to no
-  others. A grammar error must not blame an upgrade.
-
 * **`hexash --load` no longer refuses a box's whole configuration over a static
   route that is correct**
   ([#294](https://github.com/andrediashexa/hexarouting/issues/294)). The
@@ -252,6 +90,168 @@ version has a chance of seeing it.
   FRR configures by that name only. That one is worse in one respect: it is not
   gated on the routing having changed, so FRR's second copy did not hide it at
   all.
+
+* **A pool that would translate the box's own BGP session was refused when an
+  operator typed it and only logged when the same file was loaded at boot**
+  ([#296](https://github.com/andrediashexa/hexarouting/issues/296)). Driven on
+  a real dataplane, both doors, before anything was changed. Typed at a
+  configured box the candidate is refused and no pool exists; loaded into a VPP
+  with nothing on it the pool is created, the address is applied afterwards,
+  and one `vlib_log_err` goes into a log nobody is reading.
+
+  The plugin's check walks the LIVE interface addresses, and `--load` creates
+  pools before it applies any, so at boot the walk finds nothing. That is the
+  mirror image of
+  [#294](https://github.com/andrediashexa/hexarouting/issues/294) and the
+  dangerous direction: a false refusal is loud and immediate, a missed one is
+  on the path that runs unattended.
+
+  The VTY now refuses a candidate whose pool public range contains an
+  interface address the same candidate configures, in one code path, so
+  `commit`, `--load` and `rollback` agree. Every pool in the candidate and not
+  only the one being added: at `--load` the distinction buys nothing, and at an
+  interactive commit it is what stops a commit writing a file that `--load`
+  will refuse whole months later.
+
+  The plugin is untouched. Its live walk still catches an address that arrived
+  from somewhere the candidate does not describe, and both fire together on a
+  configured box.
+
+* **The IPFIX boot marker was sent after the pin replay, and four places said
+  it came before it.** `docs/logging.md`, the comment above
+  `bpa_log_marker_emit()`, and the comments sitting on the two lines that arm
+  it in `bpa_log.c` and `bpa_log_tcp.c` all say the marker goes out when a
+  transport comes up, ahead of the blocks a pinned forward replays, so a
+  collector knows which incarnation those records belong to. Since 0.67.0 it
+  went out after them. That is [#217](https://github.com/andrediashexa/hexarouting/issues/217)'s
+  argument read backwards: a record reaching a collector before this
+  incarnation's marker belongs to the previous one as far as the collector can
+  tell, and a box that has just rebooted announces every forward it carries
+  ([#282](https://github.com/andrediashexa/hexarouting/issues/282)).
+
+  Neither enable path could have fixed it: both can only arm the marker, since
+  at that moment there is no `vlib_main_t` on the path and the block report's
+  template may not have gone out. The ordering is decided in `bpa_log_drain()`,
+  and the marker now goes out ahead of the queue there.
+
+  `lab/ipfix.sh` reads the order off a real collector, which is the only place
+  it is visible: the marker travels in its own report's buffer, so nothing
+  inside the plugin shows the difference. It anchors the marker to the template
+  announcement that opens the transition rather than to any earlier line,
+  because markers repeat every thirty seconds and a marker from the previous
+  transition would satisfy a looser check.
+
+* **The boot self-test said "HexaRouting ready." on a box that had no
+  interface to forward on**
+  ([#297](https://github.com/andrediashexa/hexarouting/issues/297)). Measured
+  on a real appliance: it printed `[warn] no dataplane interface: VPP was given
+  no NIC to forward on` and then ended with the word "ready". `appliance/selftest`
+  says why that matters two hundred lines above the summary it was thrown away
+  by: "a box that forwards nothing looks like a box that is working".
+
+  Warnings were never counted. `bad()` incremented a failure count and a
+  warning was a bare `say`, so the summary knew only about failures and a box
+  with five warnings ended identically to a box with none. That line is what
+  survives: a console scrolls, a serial session is read from the bottom, and
+  somebody racking a box reads the verdict rather than the forty lines above
+  it.
+
+  There are three outcomes under "nothing failed" now, because "installed,
+  healthy, and not yet able to do its job" is a different thing from both of
+  the others and is the ordinary state of a box on the day it is racked. It is
+  not a failure and is not reported as one; saying "ready" of it was the part
+  that misled. A live medium is unchanged, since DPDK is off there by design.
+
+* **A pool on a box with no dataplane interface reported capacity for 504
+  subscribers it would never serve**
+  ([#299](https://github.com/andrediashexa/hexarouting/issues/299)). Measured
+  on a real appliance whose dataplane held only `local0`: the pool committed
+  cleanly, the boot self-test gave it a green tick, and `show cgnat pool` said
+  `capacity 504 subscribers (usable 504)`. Nothing was attached to CGNAT, so
+  no packet could reach it in either direction.
+
+  `show cgnat pool` now prints the reason beside the figure, and names which
+  half is missing, because an interface missing on the inside and one missing
+  on the outside are different mistakes with different fixes. A pool with both
+  sides attached is unchanged, under the same rule the worker-sharding caveat
+  beside it already follows: a line that appears on a correctly attached box
+  is one people learn to skip, and then they skip the real one too.
+
+  **Not a refusal.** Writing the pools before the interfaces exist is ordinary
+  staged work, and `hexash --load` applies them in that order at every boot, so
+  refusing would refuse a box its own saved configuration. This is
+  [#210](https://github.com/andrediashexa/hexarouting/issues/210)'s option 3
+  and [#226](https://github.com/andrediashexa/hexarouting/issues/226)'s option
+  A once more: the mechanism stays and the box stops claiming what it cannot
+  do.
+
+* **A refusal that comes back from the dataplane says when an upgrade is why.**
+  Between `appliance/install.sh` finishing and the next reboot, the new control
+  plane is talking to the dataplane the box was loaded with, and asking it to
+  create a pool fails: the API message grew fields that build does not have.
+  The refusal named `bpa_pool_add_del` and nothing else. It now says which of
+  the two answered, names the build that answered, says an upgrade is the
+  reason rather than the configuration, and states what clearing it costs -
+  every session and every port block on the box - so the operator decides
+  ([#293](https://github.com/andrediashexa/hexarouting/issues/293)).
+
+  Only when the two builds actually disagree, and only when there is something
+  to compare: a box running from a source tree, or without a version stamp, is
+  told the comparison is not available rather than being handed a sentence
+  about an upgrade that did not happen. `version_split()` is the one decision
+  `show version` and the refusal both ask, so they cannot drift apart.
+
+  Attached to refusals carrying a reason back from the dataplane, and to no
+  others. A grammar error must not blame an upgrade.
+
+* **`appliance/install.sh` says when it upgraded a box instead of installing
+  one** ([#291](https://github.com/andrediashexa/hexarouting/issues/291) item
+  3, which closes that issue). It behaved identically on a second run and
+  closed with a first install's sentence - "Adjust /etc/hexarouting/tune.env
+  and reboot so that isolcpus and hugepages take effect" - which an operator
+  who tuned the box a year ago reads as nothing to do. It writes a new
+  `bpa_plugin.so`, runs `daemon-reload` and `enable`, and restarts nothing.
+
+  It reads the version stamp before anything is overwritten, and on an upgrade
+  it names the version that was there and the one that is there now. On a box
+  with systemd it also names which running services are still the older build
+  and what restarting each costs: `vpp.service` picks up the new plugin and
+  drops every session and every port block; `hexarouting.service` re-applies
+  the configuration and drops none, and on its own leaves the split exactly
+  where it was.
+
+  **It still restarts nothing.** Restarting the dataplane unasked is worse than
+  the split; the defect was that the split happened in silence. A stopped
+  `vpp.service` gets a different paragraph, because telling an operator there
+  is a split to clear when there is none sends them to book a maintenance
+  window for nothing.
+
+* **The product stopped claiming an upgrade path its own users cannot run**
+  ([#295](https://github.com/andrediashexa/hexarouting/issues/295)). Measured
+  on a real appliance: there is no `install.sh` on it, no source tree and no
+  toolchain. `appliance/install.sh` says at the top of the file that it is the
+  path "for updating a box in production without reinstalling it", and that is
+  true of the release gate and of `lab/upgrade.sh`, which have a build tree.
+  It is not true of anybody holding a published medium, whose only route to a
+  new version is a reinstall that erases the disk - and with it the volume
+  holding, in dynamic mode, the connection record the Marco Civil requires for
+  a year, and in deterministic mode the configuration trail that says which
+  pool definition was in force at a past instant.
+
+  Nothing was deleted: the mechanism is real and works for the person it works
+  for. Five sentences now say who that is, and the Portuguese twins of three
+  of them moved with their originals. The wiki has a page on taking a new
+  version, written for somebody holding a medium, which says what the
+  procedure is today, what it destroys, what has to be outside the box before
+  the window opens, and in what order.
+
+  The mechanism that would make an in-place upgrade possible is not chosen
+  here and is not this entry's subject.
+
+  `test/test_doc_copies.py` now refuses a document that quotes
+  `appliance/install.sh`'s opening sentence and gets either the words or the
+  line number wrong. Two files quote it and cite a line, and this change
+  rewrote that header, which is exactly the day a quotation rots.
 
 ### Added
 
