@@ -233,9 +233,13 @@ echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 
-# The precondition. Without the sessions there is nothing being timed.
-expect "the small table was filled" test "${SMALL_N:-0}" -ge 9000
-expect "the large table was several times it" \
+# The precondition. Without the sessions there is nothing being timed - so a
+# box that could not fill the tables has not measured this lab's subject, and
+# expect_setup says NOT MEASURED rather than blaming the product. Measured in
+# a release suite: this reported FAIL on a box filling two tables while three
+# other labs ran, and passed alone minutes later at 10000 and 50000.
+expect_setup "the small table was filled" test "${SMALL_N:-0}" -ge 9000
+expect_setup "the large table was several times it" \
   test "${BIG_N:-0}" -ge "$(( ${SMALL_N:-1} * 4 ))"
 
 # Read the number before believing it. A harness that reports no stall reads

@@ -97,6 +97,44 @@ expect_not_in() {
 #
 # The case it was written for: lab/igp.sh clears an IS-IS adjacency and then
 # asserts it is gone. The hello interval is three seconds, so the adjacency can
+# expect_setup <description> <command...>
+#
+# A PRECONDITION, whose failure is NOT MEASURED and never FAIL.
+#
+# Some checks need a fixture the lab builds before it measures anything: a
+# session table filled to a size, a second table several times larger. When
+# the box cannot build it, the lab has learned nothing about its own subject -
+# and reporting that as a product failure is the #253 shape one step earlier.
+#
+# It happened in a release suite: lab/pool-del.sh reported
+#
+#   [FAIL] the large table was several times it
+#
+# and passed alone minutes later with 10000 and 50000 sessions. The box was
+# filling two tables while three other labs ran, so it did not get there
+# inside the lab's own patience. Nothing about the barrier cost - which is
+# what that lab is for - was wrong, or even read.
+#
+# It is NOT a pass: VERDICT_NOMEASURE makes the lab exit non-zero and the
+# suite counts it against itself, so a fixture that stops being buildable is
+# still somebody's problem. What it stops is a release being blamed on the
+# product for a machine that was busy.
+#
+# And it is only for the fixture. Whether the box can create a session at all
+# is another lab's subject; using this for the thing under test would be a
+# check that cannot fail.
+expect_setup() {
+  _d=$1; shift
+  if "$@" >/dev/null 2>&1; then
+    echo "  [ ok ] $_d"
+  else
+    echo "  [NOT MEASURED] $_d"
+    echo "         the lab could not build what it measures, so nothing below"
+    echo "         it was read. Look at the machine's load before the product"
+    VERDICT_NOMEASURE=$((VERDICT_NOMEASURE + 1))
+  fi
+}
+
 # be back before a loaded box gets around to reading the state - and the check
 # then reports "clearing it took the adjacency down there and then" as a
 # product defect. It did exactly that in one release suite and passed in

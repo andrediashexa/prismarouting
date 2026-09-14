@@ -64,6 +64,39 @@ version has a chance of seeing it.
 ### Fixed
 
 
+
+* **Nothing tested the assertions every lab's verdict is made of.**
+  `lab/verdict.sh` defines `expect`, `expect_in`, `expect_said`,
+  `expect_not_said`, `expect_timed` and `verdict` itself. Each lab is judged by
+  them, the suite by the labs, and a release by the suite - so a helper that
+  silently always passed would make every lab using it green for the wrong
+  reason, invisibly at every level above it.
+
+  Not hypothetical: three needles broke in one day because a message was
+  reflowed ([#279](https://github.com/andrediashexa/hexarouting/issues/279)),
+  and one was an `expect_not_in` that then passed whether the box said the
+  thing or not. `expect_said` and `expect_not_said` were written for that and
+  nothing held them to it either.
+
+  `test/test_verdict.sh` asserts the COUNTER rather than the words: a helper
+  that prints `[FAIL]` and forgets to raise `VERDICT_FAILURES` is a lab that
+  prints red checks and exits 0. Each case runs in its own shell, because the
+  counters are globals and a leaked one would make the next case pass on the
+  previous one's result.
+
+* **A fixture the box could not build was reported as a product failure.**
+  `lab/pool-del.sh` fills two session tables and times a barrier across them.
+  In a release suite it reported `[FAIL] the large table was several times it`
+  and passed alone minutes later at 10000 and 50000 sessions: the box was
+  filling two tables while three other labs ran. Nothing about the barrier
+  cost, which is what that lab is for, was wrong or even read.
+
+  `expect_setup` says NOT MEASURED for a precondition. It is **not** a pass -
+  the lab still exits 2 and the suite counts it - but it stops a release being
+  blamed on the product for a machine that was busy. Only for the fixture:
+  whether the box can create a session at all is another lab's subject, and
+  using this for the thing under test would be a check that cannot fail.
+
 * **The tuner's fixture only ever built the NIC shape that already worked.**
   `appliance/test_tune.py` symlinked `/sys/class/net/eth0/device` straight at
   the PCI device, which is the bare-metal layout - so every assertion about the
