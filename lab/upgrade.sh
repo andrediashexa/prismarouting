@@ -189,10 +189,14 @@
 # read the route out of its own frr.conf, so `routing_changed` is false and
 # the check never runs. Which means a box is one lost frr.conf - or one
 # ordering change between frr.service and hexarouting.service - away from
-# refusing its entire configuration for a static route that is correct. Not
-# asserted here, because it is not this lab's subject and an assertion either
-# way would be a claim about an ordering nothing in this file controls. It is
-# written down because it was measured.
+# refusing its entire configuration for a static route that is correct.
+#
+# That was filed as #294 and fixed, and section 6 now ASSERTS it rather than
+# printing it: FRR's own copy is taken away before the boot, so the file below
+# is read by a box with nothing on the dataplane and nothing behind it. The
+# claim about an ordering this file does not control is still not made - what
+# is staged is a reset frr.conf, which is one of the three doors #294 names and
+# the one an FRR package upgrade opens on its own.
 set -u
 . /src/lab/lib.sh      # startup_conf, start_frr, wait_vpp, vc
 . /src/lab/verdict.sh  # expect, expect_in, expect_setup, verdict
@@ -640,6 +644,40 @@ NEW_MAPPED=$(tr -d '\0' < /proc/"$NEW_VPP_PID"/maps 2>/dev/null \
              | grep -o '/[^ ]*bpa_plugin.so.*' | head -1)
 echo "  the new dataplane has mapped: ${NEW_MAPPED:-<could not read>}"
 make_ports
+
+# THE CRUTCH THIS BOOT HAS BEEN LEANING ON, TAKEN AWAY (#294).
+#
+# Until here FRR has been running since section 1 with the static route in its
+# own /etc/frr/frr.conf, and that is what made the boot below survive: the
+# route is already in FRR, so `routing_changed` is false and the next-hop check
+# never reaches the branch that refused the file. The box's configuration was
+# protected by a second copy of it in another daemon's file - and this
+# repository treats a second copy as a defect in its own right, so it may not
+# be what holds the boot up.
+#
+# What this stages is the FIRST of the three doors #294 names, and it is a door
+# an FRR package upgrade opens by itself: frr.conf is a conffile, and a
+# reinstall replaces it. Nothing here is a step the product is missing - the
+# box is left with LESS than a real boot has, never more, which is the only
+# direction a fixture is allowed to move a boot in.
+pkill -f '/usr/lib/frr/' 2>/dev/null
+n=0
+while pgrep -f '/usr/lib/frr/' >/dev/null 2>&1 && [ "$n" -lt 15 ]; do
+  sleep 1; n=$((n + 1))
+done
+: > /etc/frr/frr.conf
+printf 'hostname hexarouting\n' > /etc/frr/zebra.conf
+chown -R frr:frr /var/run/frr /etc/frr 2>/dev/null
+start_frr
+# READ, not assumed. A reset that left the route in place would make the
+# assertion below green for the boot nobody is worried about, which is the
+# whole reason this is an expect_setup at the verdict and not a comment.
+FRR_ROUTES_BEFORE=$(vtysh -c "show running-config" 2>/dev/null \
+                    | grep -c "^ip route" || true)
+echo "  FRR was reset: it holds ${FRR_ROUTES_BEFORE:-?} static route(s)"
+echo "  the dataplane holds no address at all:"
+vc show interface address | grep -c "L3" | sed 's/^/    L3 addresses: /'
+
 LOAD=$("$HX" --load "$CONF" 2>&1); LOAD_RC=$?
 printf '%s\n' "$LOAD" | sed 's/^/  | /'
 echo "  exit status: $LOAD_RC"
@@ -736,6 +774,12 @@ expect_setup "its installer put that plugin on the box" \
   test "$OLD_INSTALLED_SUM" = "$OLD_SO_SUM"
 expect_setup "and the vat2 plugin the VTY needs to reach the API" \
   test -n "$OLD_VAT2_SUM" -a "$OLD_VAT2_SUM" = "$OLD_VAT2_BUILT"
+# #294: the file was read by a box with nothing on it and nothing behind it.
+# Without this the central assertion below is about a boot where FRR had
+# already converged onto its own copy of the static route, which is the one
+# case that was never in doubt.
+expect_setup "FRR held no copy of the configuration when the file was read" \
+  test "${FRR_ROUTES_BEFORE:-1}" -eq 0
 
 # THE CENTRAL ASSERTION. Two halves, because they fail differently: a file
 # that was refused says so and exits non-zero, and `--load` also returns
@@ -745,6 +789,13 @@ expect "the new VTY accepted the old version's file whole" \
 expect_not_said "nothing in it was refused" "refusing to load this file" "$LOAD"
 expect_not_said "and no line of it was unreadable to the new grammar" \
   "are not understood" "$LOAD"
+# #294 by name. The file's static route is made reachable by an interface
+# address a few lines above it in the same file, and the check that reads
+# whether a next hop is connected used to read the LIVE FIB - which at this
+# moment holds nothing, because the addresses have not been applied yet. The
+# box refused its entire configuration over a route that is correct.
+expect_not_said "and not over a next hop its own address makes reachable" \
+  "this next hop is on no connected network" "$LOAD"
 
 # The upgrade must not have touched the operator's file. install.sh creates
 # hexarouting.conf only when it is absent, and this is what says so on a box

@@ -1091,6 +1091,48 @@ class Config:
                 | set(self.vrfs) | set(self.macs) | set(self.linux_names)
                 | set(self.loopbacks) | set(self.ra_enabled))
 
+    def connected_prefixes(self) -> dict:
+        """
+        {table: [prefix]} - what this configuration MAKES connected.
+
+        The other half of routes.connected_from_fib(), and the reason it is
+        needed is #294: the next-hop check read the live FIB, and at
+        `hexash --load` the FIB is mid-construction. A box was refusing its
+        ENTIRE saved configuration over a static route whose next hop is made
+        reachable by an interface address three lines above it in the same
+        file, because at the moment the route was read the dataplane had
+        nothing on it and FRR - on the path that lost its own frr.conf - held
+        nothing either.
+
+        Keyed by TABLE, because that is the question routes.py asks and the one
+        #255 was filed for: an address in `vrf 10` connects nothing in table 0.
+        `vrfs` is already the numeric table id, which is why it is numeric.
+
+        IPv4 only, like the whole of routes.py: the next-hop check is IPv4, and
+        an IPv6 address offered to it would be silently unable to cover
+        anything, which is a check that looks as though it ran.
+
+        A table with no IPv4 address in this file is NOT a key here, and that
+        is the difference from connected_from_fib(), which keeps its empty
+        tables. The caller unions the two, and in routes.unreachable_next_hops
+        a table that is present with an empty list is a REFUSAL while a table
+        that is absent is a note saying the check could not be made. Adding a
+        key for a VRF this file only puts an IPv6 address in would turn that
+        note into a refusal of a configuration this VTY cannot see, which is
+        the harm #208 was filed for. This half may only ever ADD prefixes.
+
+        The address is NOT masked down to its network here. routes._covers()
+        masks the prefix it is given, so 200.150.0.1/24 already answers for
+        200.150.0.2, and doing the arithmetic twice would be a second
+        implementation of it to keep in step.
+        """
+        out: dict = {}
+        for name, addrs in self.addresses.items():
+            v4 = [a for a in addrs if ":" not in a]
+            if v4:
+                out.setdefault(self.vrfs.get(name, 0), []).extend(v4)
+        return out
+
     def drop_lcp_taps(self, taps):
         """
         Take the named linux_cp TAPs out of this configuration.
