@@ -13,6 +13,7 @@
 # rest down with it. It was not VPP being greedy: it was killed with 19 MB
 # resident.
 set -u
+. /src/tools/selftest-verdict.sh
 ISO=${ISO:-/src/$(sh /src/tools/version-stamp.sh --filename /src)}
 SRC=${SRC:-/src}
 
@@ -61,7 +62,7 @@ sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
 # "ready" alone does not prove the ISO carries a version stamp: the self-test
 # prints the version line and carries on without it. Demanding both stops a
 # build that lost the stamp from passing green.
-if grep -q "HexaRouting ready" /tmp/clean.log; then
+if said_a_verdict /tmp/clean.log; then
   if ! grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
     echo
     echo "=========== READY, BUT NO VERSION STAMP ==========="
@@ -100,7 +101,7 @@ if grep -q "HexaRouting ready" /tmp/clean.log; then
     # both would pass a boot where the prompt was drawn early and again at the
     # end - which is the shape of the bug, not the shape of a fix.
     _sel=$(grep -n "boot self-test" /tmp/clean.log | head -1 | cut -d: -f1)
-    _end=$(grep -n "HexaRouting ready" /tmp/clean.log | tail -1 | cut -d: -f1)
+    _end=$(grep -nE "$VERDICT_RE" /tmp/clean.log | tail -1 | cut -d: -f1)
     _pmt=$(grep -n "^hexarouting>" /tmp/clean.log | head -1 | cut -d: -f1)
     echo
     echo "=========== console order ==========="

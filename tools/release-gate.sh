@@ -21,6 +21,10 @@
 # repository and the version stamp can verify it.
 set -eu
 
+
+# The sentences the self-test can end with. See that file: two readers of
+# them were copied by hand and refused a correct medium twice.
+. "$(dirname "$0")/selftest-verdict.sh"
 TAG=${1:-}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${RELEASE_WORK:-/tmp/hexa-release}
@@ -355,8 +359,8 @@ echo "==> booting it"
   tail -20 "$WORK/boot.log" >&2
   exit 1
 }
-grep -q "HexaRouting ready" "$WORK/boot.log" || {
-  echo "error: the medium booted and did not report ready." >&2
+said_a_verdict "$WORK/boot.log" || {
+  echo "error: the medium booted and its self-test reached no verdict." >&2
   grep -E "\[FAIL\]|\[warn\]" "$WORK/boot.log" | head -10 >&2
   exit 1
 }
@@ -385,6 +389,6 @@ echo
 echo "==> $NAME is ready to publish"
 echo "    $WORK/$NAME"
 echo "    sha256 $(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
-grep -E "^\s+\[ ok \] HexaRouting|HexaRouting ready" "$WORK/boot.log" | sed 's/^/    /'
+grep -E "^\s+\[ ok \] HexaRouting|$VERDICT_RE" "$WORK/boot.log" | sed 's/^/    /'
 grep -E "\[ ok \] the installed box can configure a pool" "$WORK/install.log" \
   | sed 's/^/    /'
