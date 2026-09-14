@@ -6362,6 +6362,51 @@ check(not any("This box has one NIC" in l for l in _r),
       f"a box with no NIC at all was told it has one: {_r}")
 print("  said at the first screen that mentions it, and only when it is true")
 
+print("\n=== what a commit on the MEDIUM says about rebooting (#310) ===")
+# #305 one message over. `dataplane interface <name>` followed by `commit`
+# ends with "reboot the box in a window you have chosen, and it comes up
+# forwarding on that card" - right on a box with a disk, and wrong on the one
+# screen that says so itself, two lines under a banner reading "nothing here
+# survives a reboot". say_dataplane_if_pending() asked no live-medium question
+# at all.
+
+
+def _pending_said(on_medium):
+    _sh = hexash.Shell()
+    _keep = (hexash.LIVE_SQUASHFS, hexash.INSTALLER)
+    if on_medium:
+        _live = os.path.join(_d, "fs310.squashfs")
+        _inst = os.path.join(_d, "install310")
+        open(_live, "w").write("")
+        open(_inst, "w").write("#!/bin/sh\n")
+        os.chmod(_inst, 0o755)
+        hexash.LIVE_SQUASHFS, hexash.INSTALLER = _live, _inst
+    else:
+        hexash.LIVE_SQUASHFS = os.path.join(_d, "no-such-squashfs")
+    _buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(_buf):
+            _sh.say_dataplane_if_pending("ens19")
+    finally:
+        hexash.LIVE_SQUASHFS, hexash.INSTALLER = _keep
+    return _buf.getvalue()
+
+
+_med = _pending_said(True)
+check("reboot the box" not in _med,
+      f"the medium is not told to reboot into a box that forwards: {_med!r}")
+check("install" in _med,
+      f"and it is told what does work there: {_med!r}")
+check("survive" in _med,
+      f"and why a reboot is not the answer on a medium: {_med!r}")
+
+_disk = _pending_said(False)
+check("reboot the box" in _disk,
+      f"an installed box still gets the advice that is right for it: "
+      f"{_disk!r}")
+check("install" not in _disk,
+      f"and is not told to install over itself: {_disk!r}")
+
 print("\n=== every command a message names is one this VTY has ===")
 # THE DEFECT (#308). `show interface` on a box whose NIC is bound correctly and
 # still absent from the dataplane told the operator that "'show log' and the

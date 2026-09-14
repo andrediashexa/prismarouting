@@ -532,6 +532,30 @@ version has a chance of seeing it.
   dict and a check that demanded `30` be a tree key would reject every command
   that takes a value.
 
+* **The medium was still told to reboot, by a second message**
+  ([#310](https://github.com/andrediashexa/hexarouting/issues/310)).
+  [#305](https://github.com/andrediashexa/hexarouting/issues/305) fixed the one
+  `show interface` prints. `commit` after `dataplane interface <name>` ends with
+  `reboot the box in a window you have chosen, and it comes up forwarding on
+  that card`, which is right on a box with a disk and wrong on the one screen
+  that says so itself, two lines under a banner reading *nothing here survives
+  a reboot*. `say_dataplane_if_pending()` asked no live-medium question at all.
+
+  On the medium the commit does not survive that reboot either, so there is
+  nothing for the dataplane to come back to. It says that, and says to
+  `install`.
+
+  **And a comment that claimed something untrue, in the #305 fix itself.** It
+  said `running_from_live_medium()` is "the test `appliance/selftest` already
+  uses in four places". It is not the same test: the self-test asks
+  `-d /run/live/medium || -f /run/live/overlay`, and this asks for the squashfs
+  **and** an executable installer. They agree on every box either has been run
+  on, and they are two tests - a root with the overlay and no squashfs is live
+  to one and installed to the other. Neither state has been seen; saying they
+  were one test would be the second copy this file's comments spend their
+  length warning about.
+
+
 
 
 
