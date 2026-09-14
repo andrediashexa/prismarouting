@@ -6,9 +6,10 @@ They exercise the command tree with no terminal: what readline would do when
 completing or asking for help comes from _options(), and that is what is
 checked here.
 """
+import ast
 import contextlib
 import io
-import os, sys
+import os, re, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
 import hexash
 
@@ -6360,6 +6361,67 @@ check(any("no PCI NIC Linux can see" in l for l in _r),
 check(not any("This box has one NIC" in l for l in _r),
       f"a box with no NIC at all was told it has one: {_r}")
 print("  said at the first screen that mentions it, and only when it is true")
+
+print("\n=== every command a message names is one this VTY has ===")
+# THE DEFECT (#308). `show interface` on a box whose NIC is bound correctly and
+# still absent from the dataplane told the operator that "'show log' and the
+# VPP journal say why". This VTY has no `show log`: the tree offers `show
+# logging`, which is FRR's system log and says nothing about a NIC the
+# dataplane refused. It printed on the one screen an operator reaches when the
+# box forwards nothing AND the binding is already right, so the next thing they
+# type after reading it is refused.
+#
+# SOUND BECAUSE THE HOLDER IS THE TREE. Nothing here reads a message against
+# another message: each quoted command is walked against the same structure
+# readline completes from, in both modes. Measured before it was written: 18
+# quoted commands across hexash.py, 0 rejected with the fix in place and
+# exactly 1 with it taken back out. No exception list, because there was
+# nothing to except.
+#
+# AN ARGUMENT STOPS THE WALK. `commit confirmed 30` reaches `confirmed`, whose
+# child is a hint string rather than a dict, and the 30 after it is a value. A
+# check that demanded it be a tree key would reject every command that takes
+# one.
+_MODES = [hexash.TREE["operational"], hexash.TREE["config"]]
+
+
+def _accepted(words):
+    for _root in _MODES:
+        _node, _ok = _root, True
+        for _w in words:
+            if not isinstance(_node, dict):
+                break
+            if _w not in _node:
+                _ok = False
+                break
+            _node = _node[_w][1]
+        if _ok:
+            return True
+    return False
+
+
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "src", "hexash", "hexash.py"),
+            encoding="utf-8").read()
+_quoted = {}
+for _n in ast.walk(ast.parse(_src)):
+    if isinstance(_n, ast.Constant) and isinstance(_n.value, str):
+        for _m in re.finditer(
+                r"'((?:show|configure|commit|rollback|save)[a-z0-9 <>_-]*)'",
+                _n.value):
+            _quoted.setdefault(_m.group(1).strip(), _n.lineno)
+_missing = {_c: _l for _c, _l in _quoted.items()
+            if not _accepted([_w for _w in _c.split()
+                              if not _w.startswith("<")])}
+for _c, _l in sorted(_missing.items(), key=lambda x: x[1]):
+    check(False, f"a message at line {_l} tells the operator to type {_c!r} "
+                 f"and this VTY has no such command: the next thing they type "
+                 f"after reading it is refused")
+check(len(_quoted) >= 12,
+      f"only {len(_quoted)} quoted command(s) were found, so this check is "
+      f"asserting almost nothing")
+if not _missing and len(_quoted) >= 12:
+    print(f"  [ ok ] all {len(_quoted)} of them")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

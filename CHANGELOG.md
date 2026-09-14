@@ -509,6 +509,30 @@ version has a chance of seeing it.
 
   Below zero armed a deadline already in the past.
 
+* **`show interface` sent the operator to a command this VTY has not got**
+  ([#308](https://github.com/andrediashexa/hexarouting/issues/308)). On a box
+  whose NIC is bound to a driver DPDK can use and is still absent from the
+  dataplane, the diagnosis ended `'show log' and the VPP journal say why the
+  dataplane refused it.` There is no `show log`: the tree offers `show
+  logging`, which is FRR's system log and says nothing about a NIC the
+  dataplane refused.
+
+  It was the only occurrence of that spelling in the product, and it printed on
+  the one screen an operator reaches when the box forwards nothing **and** the
+  binding is already right - so the next thing they type after reading it is
+  refused. `appliance/selftest` reaches the same state and already names the
+  journal properly; there is one account of it now.
+
+  **And a check, because the holder was there all along.** Every command a
+  message quotes is walked against the same command tree readline completes
+  from, in both modes. Measured before it was written: 18 quoted commands
+  across `hexash.py`, 0 rejected with the fix in place and exactly 1 with it
+  taken back out, so there was no exception list to write. An argument stops
+  the walk, because `commit confirmed 30` reaches a hint string rather than a
+  dict and a check that demanded `30` be a tree key would reject every command
+  that takes a value.
+
+
 
 
 
