@@ -60,6 +60,17 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+## 0.70.0 — a virtio NIC could never be the dataplane card, and a self-test that passed a box with none
+
+[#8](https://github.com/andrediashexa/hexarouting/issues/8),
+[#145](https://github.com/andrediashexa/hexarouting/issues/145),
+[#163](https://github.com/andrediashexa/hexarouting/issues/163),
+[#284](https://github.com/andrediashexa/hexarouting/issues/284),
+[#285](https://github.com/andrediashexa/hexarouting/issues/285),
+[#286](https://github.com/andrediashexa/hexarouting/issues/286),
+[#287](https://github.com/andrediashexa/hexarouting/issues/287),
+[#288](https://github.com/andrediashexa/hexarouting/issues/288).
+
 ### Added
 
 * **The boot self-test reports the statistics segment, the one resource with
