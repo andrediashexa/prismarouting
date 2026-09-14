@@ -60,6 +60,14 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+## 0.71.0 — the box waited for a page size its CPU cannot have, and told the operator to reboot
+
+[#30](https://github.com/andrediashexa/hexarouting/issues/30),
+[#226](https://github.com/andrediashexa/hexarouting/issues/226),
+[#248](https://github.com/andrediashexa/hexarouting/issues/248),
+[#279](https://github.com/andrediashexa/hexarouting/issues/279),
+[#289](https://github.com/andrediashexa/hexarouting/issues/289),
+[#290](https://github.com/andrediashexa/hexarouting/issues/290).
 
 ### Fixed
 
