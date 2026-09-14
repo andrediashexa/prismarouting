@@ -1440,11 +1440,57 @@ where it stands.
 
 | | |
 |---|---|
-| [#291](https://github.com/andrediashexa/hexarouting/issues/291) item 3 | `install.sh` behaves identically on a second run and closes with a first install's sentence, so an operator who has already tuned the box reads "and reboot so that isolcpus and hugepages take effect" as nothing to do. It does not restart `vpp.service`, which is the right default - restarting the dataplane drops every session on the box - and it does not say so |
+| [#291](https://github.com/andrediashexa/hexarouting/issues/291) item 3 - *fixed* | `install.sh` behaved identically on a second run and closed with a first install's sentence, so an operator who had already tuned the box read "and reboot so that isolcpus and hugepages take effect" as nothing to do. It reads the stamp before overwriting it now, names both versions, and on a box with systemd names which services are still the older build and what restarting each costs. It still restarts nothing: the default was never the defect, the silence was |
 | [#295](https://github.com/andrediashexa/hexarouting/issues/295) | **and the path itself does not exist where an operator is.** Measured on a real appliance: no `install.sh`, no source tree, no toolchain. The in-place route serves the release gate and `lab/upgrade.sh`, which have a build tree; anybody holding a published medium has only a reinstall, which erases the volume carrying a year of connection records. The claims are corrected and the wiki has a page saying what the real procedure is. **The mechanism is the decision**: an upgrade artifact published beside the ISO, an in-place upgrade in the installer, or a Debian package |
 | [#293](https://github.com/andrediashexa/hexarouting/issues/293) - *fixed* | in that window the new VTY could not create a pool, because the API message grew fields the running plugin does not have, and the refusal named `bpa_pool_add_del` rather than the upgrade that caused it. It now says which dataplane answered and what clearing it costs |
 | [#294](https://github.com/andrediashexa/hexarouting/issues/294) - *fixed* | `hexash --load` refused the **whole** configuration over a static route that was correct, because the next-hop check read the live FIB while the address making the next hop reachable was in the file being loaded. What a boot survived on was FRR's own copy of the route, in another daemon's file |
-| [#296](https://github.com/andrediashexa/hexarouting/issues/296) | the same path read the other way, and the dangerous direction. A pool whose public range contains one of the box's own interface addresses is refused when an operator types it and becomes one line in VPP's log when the same file is loaded at boot, because the plugin's check walks the LIVE addresses and `--load` creates pools before it applies any. What that costs is in `bpa_check_local_overlap()`'s own comment: the box's BGP session or OSPF adjacency gets translated, "which then breaks intermittently with nothing obvious in any log". Filed as a reading of the code, to be measured before anything is changed |
+| [#296](https://github.com/andrediashexa/hexarouting/issues/296) - *fixed* | the same path read the other way, and the dangerous direction: a pool whose public range held one of the box's own addresses was refused when typed and became one line in VPP's log when the same file was loaded at boot. Driven on a real dataplane both ways before anything was changed. The VTY refuses it in one code path now; the plugin's live walk stays, because it catches an address the candidate does not describe |
+| [#301](https://github.com/andrediashexa/hexarouting/issues/301) | an install that cannot find the vat2 plugin warns on **stderr**, keeps the previous version's, writes the new `bpa_plugin.so` over the old one, and stamps the box with the new version. The box then asserts a build it has only half of, with a vat2 plugin older than the dataplane plugin beside it - which is the skew #293 measured as unable to answer a message that grew a field. Three shapes on the issue and none chosen |
+
+#### What the box said about itself, and what it was
+
+Four findings from one afternoon of driving a real appliance and then reading
+what the checks around it could actually see. They are one shape: a green line
+about a box that was not in the state the line described.
+
+[#297](https://github.com/andrediashexa/hexarouting/issues/297) - *fixed*. The
+boot self-test printed `[warn] no dataplane interface: VPP was given no NIC to
+forward on` and ended with `HexaRouting ready.` Warnings were never counted:
+`bad()` incremented a failure count and a warning was a bare `say`, so a box
+with five warnings ended identically to a box with none. That last line is the
+one that survives a scrolling console. There are three outcomes under
+`fail = 0` now, because a box that is installed and healthy and cannot forward
+is a third thing, and is the ordinary state of one on the day it is racked.
+
+[#298](https://github.com/andrediashexa/hexarouting/issues/298) - *fixed*, and
+it is why #297 nearly shipped a check that could not fail. `test/test_selftest.sh`
+arranged 105 boxes and **every one of them failed something** - its own count
+line said `105 of 105`. So the summary every healthy appliance prints had never
+been executed, and the assertion written for #297 went green and then stayed
+green under both mutations of the thing it was testing. There is a box that
+passes now: 30 checks green, no `[FAIL]`, no `[warn]` and no `[info]`. The
+suite had the failing half of the control and not the passing one, which is
+the argument `lab/nat-behaviour.sh` already makes about its own off mode.
+
+[#300](https://github.com/andrediashexa/hexarouting/issues/300). Found by
+building that fixture, by reading rather than by anything failing: `*connected`
+matches `disconnected` and is tested first, so a box whose retention records
+are spilling to disk because the collector is unreachable prints
+`[ ok ] TCP export ... connected`. Neither arm of that `case` has ever run,
+because every fixture has the TCP transport disabled - #298's argument one
+layer down.
+
+[#299](https://github.com/andrediashexa/hexarouting/issues/299) - **half
+fixed**. On a box whose dataplane held only `local0`, a pool committed cleanly
+and `show cgnat pool` reported `capacity 504 subscribers (usable 504)`. Nothing
+was attached to CGNAT, so no packet could reach it in either direction. The
+figure now carries the reason beside it and names which half is missing, under
+the rule the worker-sharding caveat three lines above it already follows: a
+line that appears on a correctly attached box is one people learn to skip, and
+then they skip the real one too. Not a refusal, because pools before interfaces
+is what `--load` does at every boot. What is left is the self-test's own
+`[ ok ] 1 CGNAT pool(s) configured` for that same pool, six lines below the
+warning saying the box cannot forward.
 
 #### The rename to PrismaRouting
 
