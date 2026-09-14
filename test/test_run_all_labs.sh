@@ -686,5 +686,74 @@ done
   || bad "OFF_MODES names these and there is no such lab, so whatever it was "\
 "meant to be is getting no off run:$_ghost"
 
+echo
+echo "=== a run whose tree moved under it says so, and does not pass ==="
+# THE DEFECT THIS HOLDS. The suite reads the tree as each lab STARTS, so a
+# merge landing mid-run gives a verdict about no single tree: the labs before
+# it measured one product and the labs after it measured another, and the
+# summary adds the two together. Done on 2026-09-14 - eight merges over forty
+# minutes, three of them touching the very labs being run - and the output was
+# 85 pass / 1 fail / 1 novpp with nothing in it that looked wrong. That is
+# worse than a false NO VPP: the number was clean and meant nothing.
+#
+# Not a lock, deliberately. The script's own header explains why: a lock is
+# removed by whoever has the branch ready and the green suite in front of them.
+# A verdict that reports its own validity is not something anybody has to
+# remember.
+#
+# Driven by making a STUB LAB commit. That is the product's own path: the
+# suite takes its two readings around the labs, and what moves the tree between
+# them is not this test's business.
+g=$(mktemp -d)
+mkdir -p "$g/tools" "$g/lab"
+cp "$REPO/tools/run-all-labs.sh" "$g/tools/"
+cp "$d/tools/build.sh" "$g/tools/"
+git -C "$g" init -q
+git -C "$g" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  add -A >/dev/null 2>&1
+git -C "$g" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "the tree the suite starts on"
+
+cat > "$g/tools/lab.sh" <<'LABEOF'
+#!/bin/sh
+# One lab lands a commit while the suite is running, which is the whole case.
+if [ "$1" = "zz-merger" ]; then
+  R=$(cd "$(dirname "$0")/.." && pwd)
+  date > "$R/landed-mid-run"
+  git -C "$R" -c user.email=t@t -c user.name=t -c commit.gpgsign=false     add -A >/dev/null 2>&1
+  git -C "$R" -c user.email=t@t -c user.name=t -c commit.gpgsign=false     commit -q -m "a merge that landed while the suite was reading the tree"
+fi
+echo "  [ ok ] something was measured"
+echo "LAB PASSED"
+exit 0
+LABEOF
+chmod +x "$g/tools/lab.sh"
+for n in aa-good zz-merger; do echo '#!/bin/sh' > "$g/lab/$n.sh"; done
+git -C "$g" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  add -A >/dev/null 2>&1
+git -C "$g" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "the labs"
+
+mout=$(sh "$g/tools/run-all-labs.sh" 2>&1); mrc=$?
+case "$mout" in
+  *"THIS RUN IS ABOUT NO SINGLE TREE"*)
+    ok "a tree that moved mid-run is reported, not summed" ;;
+  *) bad "the suite summed two trees and said nothing; got:
+$mout" ;;
+esac
+[ "$mrc" -ne 0 ] \
+  && ok "and the run does not pass, because the counts are about nothing" \
+  || bad "every lab passed and the suite exited 0 over a verdict about two trees"
+case "$mout" in
+  *"a merge that landed while the suite was reading the tree"*)
+    ok "and it names what landed, so the reader knows what changed" ;;
+  *) bad "it said the tree moved without saying to what" ;;
+esac
+case "$mout" in
+  *"pass=2"*) ok "the counts are still printed, above the line that voids them" ;;
+  *) bad "the counts went missing, which is a different report" ;;
+esac
+rm -rf "$g"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

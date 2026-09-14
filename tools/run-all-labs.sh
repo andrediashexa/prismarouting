@@ -13,13 +13,20 @@
 # labs after it measured another, and the summary line at the end adds the two
 # together as though they were one run.
 #
-# Nothing here can stop that, which is why it is written down rather than
-# guarded. A guard would have to be a lock somebody can take, and the thing it
-# would protect against is a person with a branch to merge and a green suite
-# in front of them - the moment when a lock is most tempting to work around.
-# So: while this is running, work in a worktree and merge afterwards. That is
-# also what the labs-do-not-compete rule is about from the other side, where
-# the cost is a false NO VPP rather than a verdict about two products.
+# Nothing here can stop that, and a lock is the wrong answer: it would have to
+# be taken by a person with a branch to merge and a green suite in front of
+# them, which is the moment a lock is most tempting to work around. So: while
+# this is running, work in a worktree and merge afterwards. That is also what
+# the labs-do-not-compete rule is about from the other side, where the cost is
+# a false NO VPP rather than a verdict about two products.
+#
+# WHAT IS GUARDED IS THE VERDICT, not the merge. This run records the tree it
+# started on and compares it at the end, and a tree that moved turns a clean
+# summary into one that says it is about no single tree. The sentence above was
+# here, and the rule was in the maintainer's notes, and the merge happened
+# anyway - eight of them in forty minutes on 2026-09-14. Nothing in the output
+# looked wrong, which is what makes it worse than a false NO VPP: the number
+# was clean and meant nothing.
 #
 # Labs run several at a time. Measured before this existed: 35 labs in series
 # took ~35 minutes at load 1.18 across 8 cores, with an ISO build running
@@ -97,6 +104,28 @@ JOBS=${LAB_JOBS:-$(_jobs_by_mem)}
 pass=0; fail=0; ran=0; novpp=0; nomeasure=0
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
+
+# WHICH TREE THIS RUN IS ABOUT, recorded before the first lab reads it.
+#
+# The header above says nothing here can stop a merge landing mid-run, and
+# that is still true. What it can do is stop the verdict being read as though
+# one had not: compared again at the end, a tree that moved turns a clean
+# summary into a summary that says it is about no single tree.
+#
+# Written after doing exactly that on 2026-09-14 - suite started, eight merges
+# landed into master over the next forty minutes, three of them touching
+# lab/boot-iso.sh, lab/install-iso.sh and appliance/selftest, and the run
+# reported 85 pass / 1 fail / 1 novpp. Nothing in that output looked wrong,
+# which is what makes it worse than a false NO VPP: the number was clean and
+# meant nothing. It was caught by comparing commit times against the log by
+# hand, before cutting a release on it.
+#
+# Not a lock, for the reason the header gives: a lock is removed by whoever
+# has the branch ready and the green suite in front of them. A verdict that
+# reports its own validity is not something anybody has to remember.
+TREE_AT_START=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
+DIRTY_AT_START=$(git -C "$REPO" status --porcelain 2>/dev/null | md5sum \
+                 | cut -d' ' -f1)
 
 # Built once, before anything runs. No lab may be the one that happens to
 # build it: that is the only shared writable state between them.
@@ -610,5 +639,31 @@ if [ "$nomeasure" -gt 0 ]; then
   echo "  them: the machine could not keep the timing those checks need. Run"
   echo "  those labs one at a time before reading anything into it."
 fi
+# And whether this run is about one tree at all. Last, because it is the only
+# line here that can invalidate every line above it.
+TREE_AT_END=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
+DIRTY_AT_END=$(git -C "$REPO" status --porcelain 2>/dev/null | md5sum \
+               | cut -d' ' -f1)
+MOVED=0
+if [ "$TREE_AT_START" != "$TREE_AT_END" ]; then
+  MOVED=1
+  echo
+  echo "  THIS RUN IS ABOUT NO SINGLE TREE. The repository moved while it was"
+  echo "  running: every lab reads the tree as IT starts, so the labs before"
+  echo "  the change measured one product and the labs after it measured"
+  echo "  another, and the counts above add the two together."
+  echo "    at the start: $TREE_AT_START"
+  echo "    at the end:   $TREE_AT_END"
+  git -C "$REPO" log --oneline "$TREE_AT_START..$TREE_AT_END" 2>/dev/null \
+    | sed 's/^/    /'
+  echo "  Run it again on a tree that stays still. Nothing above this line"
+  echo "  says anything about the product."
+elif [ "$DIRTY_AT_START" != "$DIRTY_AT_END" ]; then
+  MOVED=1
+  echo
+  echo "  THIS RUN IS ABOUT NO SINGLE TREE. HEAD did not move, but the working"
+  echo "  tree did: an edit landed under the labs while they were reading it."
+  echo "  Run it again on a tree that stays still."
+fi
 [ "$fail" -eq 0 ] && [ "$ran" -eq 0 ] && [ "$novpp" -eq 0 ] \
-  && [ "$nomeasure" -eq 0 ]
+  && [ "$nomeasure" -eq 0 ] && [ "$MOVED" -eq 0 ]

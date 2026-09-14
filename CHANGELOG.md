@@ -666,6 +666,32 @@ version has a chance of seeing it.
   anything in it: the first version of that one matched the very sentence that
   says there is no CI, which is recorded in the file rather than quietly fixed.
 
+* **The lab suite says which tree it measured, and refuses a verdict about
+  two.** Every lab reads the repository as **it** starts, not once at the
+  beginning, so a merge landing mid-run gives a summary that adds two different
+  products together. `tools/run-all-labs.sh` has said so in its header for
+  releases, and the rule was written down outside the repository too.
+
+  It happened anyway, here, on the run before this release: the suite started,
+  **eight merges landed into master over the next forty minutes**, three of
+  them touching `lab/boot-iso.sh`, `lab/install-iso.sh` and
+  `appliance/selftest` - the very files being measured - and the run reported
+  `85 pass / 1 fail / 1 novpp`. Nothing in that output looked wrong, which is
+  what makes it worse than a false `NO VPP`: the number was clean and meant
+  nothing. It was caught by comparing commit times against the log by hand,
+  before a release was cut on it.
+
+  The suite records the tree it starts on and compares it at the end. A tree
+  that moved prints what landed and **exits non-zero**, because counts that are
+  about two products are not a verdict. The working tree is compared too, for
+  an edit that lands without a commit.
+
+  **Not a lock**, and that is the same argument the header already made: a lock
+  is taken by whoever has the branch ready and the green suite in front of
+  them. What is guarded is the verdict, not the merge - a run that reports its
+  own validity is not something anybody has to remember.
+
+
 
 
 
