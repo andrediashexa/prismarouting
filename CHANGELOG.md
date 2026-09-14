@@ -484,6 +484,32 @@ version has a chance of seeing it.
   though it were enforced. It counts calls and not mentions, measured: the
   first version was satisfied by the comment that explains the defect.
 
+* **`commit confirmed` took any number, and `0` looked like it had worked**
+  ([#312](https://github.com/andrediashexa/hexarouting/issues/312)). `?` and
+  the operator page have always said `<1-60>` minutes. Nothing enforced it, and
+  the two ends of the range fail in opposite directions.
+
+  Above it, `commit confirmed 600` armed a ten-hour window. The window exists
+  so a box that lost its operator puts itself back while somebody is still at
+  the console; ten hours is a box that reverts in the middle of the night, long
+  after whoever made the change has gone home and concluded it held.
+
+  **At zero it was worse, because it looked like it had worked.** `0` is falsy,
+  so `if confirm_min:` never ran: nothing was armed, nothing was written to
+  disk, no deadline was printed, and the box answered `commit complete`.
+  Measured over a change to an interface description, on the shipped code:
+  `SAID: ['commit complete']`, `PENDING: None`, change applied. An operator who
+  asked for the protection, was told the commit had gone through, and had none.
+
+  It took a non-access change to see it. A change to SSH or to accounts is
+  forced into a ten-minute window whether or not the operator asked, so
+  `confirmed 0` on one of those was quietly rescued by that path - which is why
+  the first version of this test, written over an account change, could not
+  tell the defect from the fix.
+
+  Below zero armed a deadline already in the past.
+
+
 
 
 ## 0.74.0 - the installed box can be reached, and one card is enough

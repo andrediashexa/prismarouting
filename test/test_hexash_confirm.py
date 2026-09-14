@@ -399,6 +399,52 @@ banner = buf.getvalue()
 check("commit confirmed" in banner and "rolls the last change back" in banner,
       f"the banner names the pending revert: {banner[-300:]!r}")
 
+print("\n=== the window has bounds, and the two ends fail differently ===")
+# `?` and the operator documentation have always said <1-60>. Nothing enforced
+# it, and the two ends are not the same mistake (#312).
+b = box()
+said = b.commit(AFTER, ["confirmed", "600"])
+check(b.pending() is None,
+      "600 minutes is refused rather than arming a ten-hour window that "
+      "reverts in the middle of the night")
+check("1-60" in said, f"and the refusal names the range: {said.strip()!r}")
+check("user bob" not in b.running,
+      "and nothing was applied, so a refused commit costs the box nothing")
+
+# ZERO IS THE WORST OF THE THREE, because it is the one that looked like it
+# worked, and it needs a change that does NOT touch access to show it.
+#
+# A change to SSH or to accounts is forced into a ten-minute window whether or
+# not the operator asked, so `confirmed 0` on one of those was quietly rescued
+# by that path. On any other change 0 is falsy, `if confirm_min:` never ran,
+# nothing was armed and nothing was written - and the box answered "commit
+# complete" to an operator who had asked for the protection and had none.
+#
+# Measured on the shipped behaviour with the bound removed, over a change to
+# an interface description: SAID `commit complete`, PENDING `None`, and the
+# change applied.
+PLAIN_BEFORE = "!\ninterface ens19\n description one\n!\n"
+PLAIN_AFTER = "!\ninterface ens19\n description two\n!\n"
+b = Box(tempfile.mkdtemp(), PLAIN_BEFORE)
+said = b.commit(PLAIN_AFTER, ["confirmed", "0"])
+check(b.pending() is None, "0 arms nothing, which it also did before")
+check("1-60" in said,
+      f"but it SAYS so now, instead of answering 'commit complete' to an "
+      f"operator who asked for a window and got none: {said.strip()!r}")
+check("description two" not in b.running,
+      "and the change is not applied either, so the box and the answer agree")
+
+b = box()
+said = b.commit(AFTER, ["confirmed", "-5"])
+check(b.pending() is None,
+      "a negative window is refused rather than armed in the past")
+
+# And the range itself still works, at both ends.
+for _m in ("1", "60"):
+    b = box()
+    b.commit(AFTER, ["confirmed", _m])
+    check(b.pending() is not None, f"{_m} minutes is accepted")
+
 for d in (b.root,):
     shutil.rmtree(d, ignore_errors=True)
 

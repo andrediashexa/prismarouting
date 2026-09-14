@@ -7586,6 +7586,29 @@ class Shell:
             except (IndexError, ValueError):
                 self.err("usage: commit confirmed <minutes>")
                 return
+            # BOUNDED, because the two ends fail in opposite directions and
+            # both were reachable (#312). `?` and the operator documentation
+            # have always said <1-60>; nothing enforced it.
+            #
+            # Above the range: `commit confirmed 600` arms ten hours. The
+            # window exists so a box that lost its operator puts itself back
+            # while somebody is still at the console; ten hours is a box that
+            # reverts in the middle of the night, long after whoever made the
+            # change has gone home and concluded it held.
+            #
+            # At zero: 0 is falsy, so `if confirm_min:` below never armed
+            # anything. Nothing was written, no deadline was printed, and the
+            # box answered "commit complete" - an operator who asked for the
+            # protection, was told the commit had gone through, and had none.
+            # That is the worst of the three, because it is the one that looks
+            # like it worked.
+            #
+            # Below zero: a deadline already in the past.
+            if not 1 <= confirm_min <= 60:
+                self.err(f"commit confirmed {confirm_min}: expected 1-60 "
+                         f"minutes. The window has to outlast a reconnection "
+                         f"and end while somebody is still at the console")
+                return
         elif args and args[0] == "comment":
             comment = " ".join(args[1:]).strip('"')
 
