@@ -372,6 +372,21 @@ version has a chance of seeing it.
   Costs five and a half minutes less per release as a side effect, on the one
   tool this project says must be what cuts a release.
 
+  **`test-mirror` kept its prerequisite through that fix**, which is the same
+  defect one target over and the shape that had the release gate refuse 0.72.0
+  twice: two readers of one fact, only one corrected. Found by reading the
+  Makefile for others rather than by anything going red, because the check
+  written with the fix named `test-install` and `test-iso` by hand.
+
+  It does not name them any more. The targets it checks are **derived**: the
+  scripts that open a medium are the ones naming it through
+  `tools/version-stamp.sh --filename`, which is the single place that
+  calculation lives, and the targets are the Makefile recipes that invoke those
+  scripts or the wrapper around one. Measured on the way: "calls `ISO_RUN`" is
+  not the same set, because `hw-down` does that and opens no image, and an
+  unanchored script name matched `lab/hw-lab.sh` as a substring of
+  `tools/lab.sh`.
+
 * **The comment over `bpa-expire-process` claimed a bound the barrier does not
   have** ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). It
   said "the budget keeps each pass short: at 10k sessions the barrier is held
