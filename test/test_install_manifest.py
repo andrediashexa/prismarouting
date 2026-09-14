@@ -334,6 +334,63 @@ else:
     bad(f"only {len(named)} installed path(s) and {len(units)} systemd file(s) "
         f"were found, so this file is asserting almost nothing")
 
+print("\n=== every answer the installer knows is in the reference tables ===")
+# THE DEFECT (#322). docs/appliance.md's two unattended-install tables - the
+# kernel command line and the answer file - listed seven keys where the
+# installer knows eleven. The four missing ones were exactly the management
+# network: mgmt-interface, mgmt-address, mgmt-gateway, mgmt-dns.
+#
+# An unattended install written from those tables answers nothing about the
+# network, which means the DHCP default - and the same page warns, 250 lines
+# up, what that costs on a box where nothing replies. That is #303's box,
+# reached by reading the page rather than by the installer being wrong.
+#
+# ONE HOLDER: the installer's own refusal names every key it knows, because it
+# has to print them when it rejects one. So the list cannot drift from what the
+# installer accepts without the refusal drifting too, and that is a message an
+# operator reads.
+_INST = open(os.path.join(REPO, "appliance", "hexarouting-install"),
+             encoding="utf-8").read()
+_m = re.search(r'echo "  known: (.*?)"\s*>&2\n(.*?)_rc=1', _INST, re.S)
+if not _m:
+    bad("appliance/hexarouting-install no longer prints the keys it knows "
+        "when it refuses one, so this check has nothing to read them from")
+else:
+    _known = set(re.findall(r"[a-z][a-z-]+",
+                            _m.group(1) + " " + _m.group(2)))
+    _known -= {"echo", "rc"}
+    _doc = open(os.path.join(REPO, "docs", "appliance.md"),
+                encoding="utf-8").read()
+    # THE TABLES, not the page. The first version of this searched the whole
+    # document and passed with a key dropped from both tables, because the
+    # page discusses the management network in prose 250 lines up. What an
+    # unattended install is written from is the reference table, so that is
+    # what has to carry the key.
+    _tables = ""
+    for _hdr in ("| Parameter | Effect |", "| Key | Answers |"):
+        _at = _doc.find(_hdr)
+        if _at < 0:
+            bad(f"docs/appliance.md has no {_hdr!r} table any more, so the "
+                f"unattended-install reference this checks is gone")
+            continue
+        _tables += _doc[_at:_doc.index("\n\n", _at)]
+    # `disk` is spelled `install=<dev>` on the kernel command line and `disk`
+    # in the answer file, so the two tables are searched together.
+    _missing = sorted(k for k in _known
+                      if f"`{k}`" not in _tables
+                      and f"hexarouting.{k}=" not in _tables
+                      and f"`hexarouting.{k}" not in _tables)
+    if _missing:
+        bad(f"appliance/hexarouting-install accepts {_missing} and "
+            f"docs/appliance.md's unattended-install tables do not list them: "
+            f"an install written from the page answers nothing about them and "
+            f"takes the default the same page warns about")
+    elif len(_known) >= 8:
+        ok(f"all {len(_known)} of them")
+    else:
+        bad(f"only {len(_known)} key(s) were read out of the installer's own "
+            f"refusal, so this check is asserting almost nothing")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

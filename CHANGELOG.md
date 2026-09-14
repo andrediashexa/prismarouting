@@ -75,6 +75,47 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The unattended-install tables left out the four answers that decide whether
+  the box can be reached**
+  ([#322](https://github.com/andrediashexa/hexarouting/issues/322)).
+  `docs/appliance.md` has two reference tables, one for the kernel command line
+  and one for the answer file, and both listed **seven** keys where
+  `appliance/hexarouting-install` accepts **eleven**. The four missing ones were
+  exactly `mgmt-interface`, `mgmt-address`, `mgmt-gateway` and `mgmt-dns`.
+
+  An unattended install written from those tables answers nothing about the
+  network and takes the DHCP default - and the same page warns, 250 lines
+  above, what that costs on a box where nothing replies. That is
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303)'s box,
+  reached by reading the documentation rather than by the installer being
+  wrong.
+
+  **One holder, and it is a message an operator reads:** the installer prints
+  every key it knows when it refuses one, because it has to. The check reads
+  that refusal and looks for each key **inside the two tables** rather than
+  anywhere on the page. The first version searched the whole document and
+  passed with a key deleted from both tables, because the page discusses the
+  management network in prose elsewhere - and what an unattended install is
+  written from is the table.
+
+* **A count above a table, and a transcript the box stopped printing**
+  ([#321](https://github.com/andrediashexa/hexarouting/issues/321),
+  [#326](https://github.com/andrediashexa/hexarouting/issues/326)).
+  `docs/appliance.md` said **"Two refusals fire at the prompt"** over a table of
+  three. #303 added the third row and left the count. The sentence states no
+  number now: the table is the list, and a number in the sentence above a table
+  is a number that outlives the table it describes. The third row also named
+  one of the three conditions that fire it, where the code refuses on a missing
+  address **or** gateway **or** MAC.
+
+  And the page quoted the tuner as printing `1G hugepages: 6 requested`. The
+  box prints `6 GB requested`, and on a machine without 1 GB pages the line
+  begins `2M hugepages:`. The commit that rewrote that line landed three hours
+  after the one that quoted it correctly, and did not touch the page.
+
+
 ## 0.74.1 - fifteen things this product said that were not true, and the checks that hold them
 
 [#163](https://github.com/andrediashexa/hexarouting/issues/163), [#172](https://github.com/andrediashexa/hexarouting/issues/172), [#248](https://github.com/andrediashexa/hexarouting/issues/248), [#277](https://github.com/andrediashexa/hexarouting/issues/277), [#288](https://github.com/andrediashexa/hexarouting/issues/288), [#304](https://github.com/andrediashexa/hexarouting/issues/304), [#306](https://github.com/andrediashexa/hexarouting/issues/306), [#307](https://github.com/andrediashexa/hexarouting/issues/307), [#308](https://github.com/andrediashexa/hexarouting/issues/308), [#309](https://github.com/andrediashexa/hexarouting/issues/309), [#310](https://github.com/andrediashexa/hexarouting/issues/310), [#311](https://github.com/andrediashexa/hexarouting/issues/311), [#312](https://github.com/andrediashexa/hexarouting/issues/312), [#313](https://github.com/andrediashexa/hexarouting/issues/313), [#314](https://github.com/andrediashexa/hexarouting/issues/314), [#315](https://github.com/andrediashexa/hexarouting/issues/315), [#316](https://github.com/andrediashexa/hexarouting/issues/316), [#317](https://github.com/andrediashexa/hexarouting/issues/317), [#318](https://github.com/andrediashexa/hexarouting/issues/318), [#319](https://github.com/andrediashexa/hexarouting/issues/319), [#320](https://github.com/andrediashexa/hexarouting/issues/320).
