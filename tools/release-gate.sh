@@ -378,6 +378,21 @@ said_a_verdict "$WORK/boot.log" || {
   grep -E "\[FAIL\]|\[warn\]" "$WORK/boot.log" | head -10 >&2
   exit 1
 }
+# AND THAT VERDICT HAS TO BE A GOOD ONE (#311). Reaching a verdict is true of a
+# box that failed its own checks: "N check(s) failed. The box is NOT ready." is
+# one of the four. So this gate accepted such a medium and reprinted that line
+# under its own "is ready to publish", because the failure it was written for
+# was the ABSENCE of a verdict, which is not the dangerous case.
+#
+# said_a_good_verdict() has been in tools/selftest-verdict.sh since that file
+# was written and nothing called it.
+said_a_good_verdict "$WORK/boot.log" || {
+  echo "error: the medium booted and FAILED ITS OWN SELF-TEST. This is the" >&2
+  echo "       image an operator is handed, so a failed check here is a" >&2
+  echo "       defect that ships." >&2
+  grep -E "\[FAIL\]" "$WORK/boot.log" | head -10 >&2
+  exit 1
+}
 
 # The live image booting proves the medium is bootable. It does not prove the
 # medium produces a working appliance, and those are different claims: the live

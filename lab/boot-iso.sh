@@ -123,6 +123,19 @@ else
   exit 1
 fi
 
+# A FAILED VERDICT IS A FAILED MEDIUM, and this lab used to read it as a
+# booted one (#311). said_a_verdict is true of "N check(s) failed. The box is
+# NOT ready.", so every check below ran on a medium that had just said it was
+# not fit to hand over, and the lab reported it booted.
+if said_a_failed_verdict /tmp/clean.log; then
+  echo
+  echo "=========== THE MEDIUM BOOTED AND FAILED ITS OWN CHECKS ==========="
+  sed -n '/boot self-test/,/=====$/p' /tmp/clean.log \
+    | grep -E "\[FAIL\]" | sed 's/^/  /'
+  echo "--- full console in ${LOGCOPY:-/src/boot-console.log} ---"
+  exit 1
+fi
+
 if said_a_verdict /tmp/clean.log; then
   if ! grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
     echo

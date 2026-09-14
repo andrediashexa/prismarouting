@@ -448,6 +448,43 @@ version has a chance of seeing it.
   that distinction. Breaking the holder turns both readers red at once, which
   is the point of there being one.
 
+* **The release gate passed a medium that had failed its own self-test**
+  ([#311](https://github.com/andrediashexa/hexarouting/issues/311)).
+  `appliance/selftest` can end with four sentences and one of them is
+  `N check(s) failed. The box is NOT ready.`. Every reader on the gate path
+  asked `said_a_verdict()`, which is true of that sentence, so
+  `tools/release-gate.sh` and `lab/boot-iso.sh` accepted such a medium and the
+  gate reprinted that line underneath its own `is ready to publish`.
+
+  `said_a_good_verdict()` has been in `tools/selftest-verdict.sh` since that
+  file was written, for exactly this, and **nothing called it**. The gate's own
+  error text names the failure it was written for - "reached no verdict" - and
+  the absence of a verdict was never the dangerous case.
+
+  Three things, because it is one defect wearing three coats:
+
+  * the gate and `lab/boot-iso.sh` demand a **good** verdict now, and a failed
+    one is reported as a failed medium with its `[FAIL]` lines;
+  * `lab/install-iso.sh` did catch it, by spelling `check(s) failed. The box is
+    NOT ready.` **by hand in two places**. It reads `said_a_failed_verdict()`
+    from the holder instead, which is a separate reader from "not good" because
+    a console with no verdict at all sends the reader to the bootloader while
+    a box that failed its checks sends them to the checks;
+  * `test/test_selftest.sh`'s rule against a second speller covered the two
+    sentences that mean the box is fit to hand over and **not** the one that
+    means it failed, which is why it said nothing about those two lines for as
+    long as they existed. The needles are derived from `VERDICT_RE` now, as the
+    last sentence of each alternative. A rule about second copies that keeps a
+    second copy of what to look for is the same defect wearing the check's
+    clothes.
+
+  And a new rule that would have caught it on the day: **every reader the
+  holder defines has to have a caller.** A function nobody calls is the
+  quietest way for a rule to stop applying, because the holder still reads as
+  though it were enforced. It counts calls and not mentions, measured: the
+  first version was satisfied by the comment that explains the defect.
+
+
 
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
