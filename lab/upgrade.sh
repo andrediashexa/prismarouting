@@ -568,13 +568,20 @@ echo "  this: install.sh's closing sentence is a first install's."
 # talking to a plugin that does not speak the message their VTY is sending.
 # Measured below, on a box in exactly the state appliance/install.sh leaves.
 #
-# PRINTED AND NOT ASSERTED, deliberately. An assertion that this FAILS pins
-# today's behaviour and would go red on the day somebody fixes it, which is
-# why lab/crossaddr.sh is excluded from the suite (tools/run-all-labs.sh's
-# NOT_LABS says so in as many words). An assertion that it SUCCEEDS would make
-# this lab permanently red for a defect it is not the one holding - #291's
-# items 2 and 3 are. So the reading goes in the artefact and the argument goes
-# in the issue.
+# WHETHER IT IS REFUSED AT ALL IS STILL PRINTED AND NOT ASSERTED, deliberately
+# and for the reason this comment has always given. An assertion that this
+# FAILS pins today's behaviour and would go red on the day somebody fixes it,
+# which is why lab/crossaddr.sh is excluded from the suite
+# (tools/run-all-labs.sh's NOT_LABS says so in as many words). An assertion
+# that it SUCCEEDS would make this lab permanently red for a defect it is not
+# the one holding.
+#
+# WHAT IS ASSERTED NOW is the other half, which is the one #293 fixed: IF the
+# old dataplane refuses, the refusal says which dataplane answered, that the
+# upgrade is why, and what clearing it would cost. The verdict makes that
+# assertion conditional on the refusal having happened, and says so - so a
+# released tag whose API this tree has not moved runs green, and the default
+# v0.68.0, which does refuse, is READ rather than assumed.
 # A COMMIT and not a `commit check`. Measured both: the check passes in this
 # window, because checking a per-pool setting does not send the message the
 # dataplane would have to understand. It is the write that finds out, and the
@@ -596,7 +603,11 @@ SPLIT_ADD=$($HX -c "configure" -c "cgnat pool split291" \
             -c "block-size 512" -c "exit" \
             -c "commit comment \"a pool created in the split window\"" 2>&1)
 echo "  and to create a pool it has never seen:"
-printf '%s\n' "$SPLIT_ADD" | tail -3 | sed 's/^/    /'
+# Printed WHOLE, not tailed. Three lines was right while the answer was two -
+# a refusal naming a symbol, and a rollback. The refusal now carries its
+# reason with it and that reason is this reading's whole subject (#293), so
+# cutting it off would leave the lab showing the half that was already known.
+printf '%s\n' "$SPLIT_ADD" | sed 's/^/    /'
 
 echo
 echo "=========== 6. the boot ==========="
@@ -754,6 +765,61 @@ expect "and the plugin on disk changed with it" \
   test "$OLD_INSTALLED_SUM" != "$NEW_INSTALLED_SUM"
 expect "the dataplane now runs the plugin the upgrade installed" \
   test "$NEW_INSTALLED_SUM" = "$NEW_SO_SUM"
+
+# AND WHAT THE BOX SAYS WHILE THE TWO DISAGREE (#293).
+#
+# Section 5 tried to create a pool through the new VTY while the old plugin
+# was still loaded, and printed what came back. Until #293 that was
+#
+#   error: pool 'split291': Call failed: bpa_pool_add_del
+#   error: commit failed; rolling back to the previous state
+#
+# which names a symbol and nothing an operator can act on: not that the thing
+# answering is the build from before the upgrade, not that the upgrade is why,
+# not what clearing it would cost. #293 moved this reading from printed to
+# asserted, which is what its own last line asked for.
+#
+# CONDITIONAL, and the condition is read rather than assumed. This lab takes a
+# tag, and only a tag whose API message this tree has since changed produces
+# the refusal at all - v0.68.0 does, a tag that does not would make an
+# unconditional assertion red for no defect. So the refusal is the fixture and
+# the explanation is the subject, which is the split expect_setup exists for;
+# it is not spelled expect_setup because a dataplane that ACCEPTS the pool has
+# not failed to build anything, it has simply left this lab nothing to read.
+#
+# expect_said and not expect_in, for the reason verdict.sh gives beside it:
+# the VTY wraps this paragraph to the console, so a needle matched against raw
+# text only matches while the message happens to fold somewhere else. This
+# repository has been bitten by that four times.
+case "$SPLIT_ADD" in
+  *"commit failed"*)
+    expect_said "a pool refused by the old dataplane says WHICH dataplane \
+answered" \
+      "the dataplane is not the build the rest of this box is" "$SPLIT_ADD"
+    expect_said "and names the build that answered" \
+      "the dataplane is running" "$SPLIT_ADD"
+    # The claim is "which of the two", so what is asserted is that the build
+    # named is NOT the one the upgrade just stamped on this box. The literal
+    # the old plugin reports is "0.1" on every tag before #291 and a real
+    # stamp on every tag after it, and pinning either would be this lab
+    # asserting its own fixture's history instead of the sentence.
+    expect_not_said "and it is not the build the upgrade just installed" \
+      "the dataplane is running $NEW_STAMP" "$SPLIT_ADD"
+    expect_said "and that the upgrade is the reason, not the configuration" \
+      "An upgrade replaces the dataplane's files on disk and does not \
+restart it" "$SPLIT_ADD"
+    expect_said "and what clearing it would cost, which makes it the \
+operator's decision" \
+      "ends every session and every port block this box is carrying" \
+      "$SPLIT_ADD"
+    ;;
+  *)
+    echo "  ---- ${OLD_TAG}'s dataplane accepted a pool created in the split"
+    echo "       window, so there was no refusal here to explain. #293's"
+    echo "       assertions are read on a tag whose API message moved;"
+    echo "       v0.68.0, this lab's default, is one."
+    ;;
+esac
 
 # A file that is accepted and applies nothing would pass everything above.
 # These are the box.

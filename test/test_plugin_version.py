@@ -52,6 +52,7 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
 import hexash                                                   # noqa: E402
+import vppapi                                                   # noqa: E402
 
 from config import CONSOLE_COLUMNS                              # noqa: E402
 
@@ -314,11 +315,15 @@ FROM_TREE = object()
 NOWHERE = None
 
 
-def screen(plugins_out, box_version, rc=0):
-    """`show version`, driven whole, with the VERSION file at `box_version`."""
-    sh = hexash.Shell.__new__(hexash.Shell)
-    sh.dp, sh.frr = Dp(plugins_out, rc), Frr()
-    buf = io.StringIO()
+@contextlib.contextmanager
+def box_at(box_version):
+    """This box's version reading, set to one of the three cases and put back.
+
+    A context manager rather than a step inside `screen()`, because the
+    refusal section further down needs the SAME three cases: the disagreement
+    is one reading with two readers now (#293), and a second copy of this swap
+    is a second place for the NOWHERE case to be got subtly wrong.
+    """
     real = hexash.VERSION_PATH
     with tempfile.TemporaryDirectory() as tmp:
         if box_version is NOWHERE:
@@ -327,7 +332,7 @@ def screen(plugins_out, box_version, rc=0):
             # suite runs. The reading is replaced for this one case and put
             # back, rather than this suite asserting a branch nothing can
             # reach. It is the READING that is replaced and not the comparison
-            # - show_plugin_build still decides for itself what to do with it.
+            # - the product still decides for itself what to do with it.
             hexash.hexarouting_version_source = (
                 lambda: (hexash.VERSION_UNKNOWN, hexash.VERSION_FROM_NOWHERE))
         elif box_version is FROM_TREE:
@@ -337,11 +342,20 @@ def screen(plugins_out, box_version, rc=0):
             open(path, "w").write(box_version + "\n")
             hexash.VERSION_PATH = path
         try:
-            with contextlib.redirect_stdout(buf):
-                sh.show_version()
+            yield
         finally:
             hexash.VERSION_PATH = real
             hexash.hexarouting_version_source = _REAL_SOURCE
+
+
+def screen(plugins_out, box_version, rc=0):
+    """`show version`, driven whole, with the VERSION file at `box_version`."""
+    sh = hexash.Shell.__new__(hexash.Shell)
+    sh.dp, sh.frr = Dp(plugins_out, rc), Frr()
+    buf = io.StringIO()
+    with box_at(box_version):
+        with contextlib.redirect_stdout(buf):
+            sh.show_version()
     return buf.getvalue()
 
 
@@ -459,6 +473,168 @@ check(f"  plugin:    {stamp_of(REPO)}" in _tree.splitlines(),
 
 
 # ----------------------------------------------------------------------------
+print("\n=== a refusal that came back from that dataplane says so (#293) ===")
+# WHAT WAS WRONG. Between appliance/install.sh finishing and the box being
+# rebooted the new control plane talks to the old dataplane, and it cannot
+# create a pool. The refusal named a symbol and nothing else: not that the
+# thing answering is the build from before the upgrade, not that the upgrade
+# is why, not what clearing it would cost. It read as a broken product rather
+# than as a consequence of the upgrade that had just been run.
+#
+# The reading above is what makes this fixable: the box already knows both
+# builds and already knows whether they can be compared at all. This section
+# asserts that the SAME decision reaches the refusal, in both directions, and
+# that it reaches nothing else.
+
+#: What vat2 printed on the upgraded box.
+#
+# MEASURED on a box installed from v0.68.0 and upgraded with the current
+# tree's installer, with no reboot and no 'systemctl restart vpp':
+#
+#     error: pool 'split291': Call failed: bpa_pool_add_del
+#     error: commit failed; rolling back to the previous state
+#
+# bpa_pool_add_del grew fields the loaded plugin does not have. This text is
+# fed to the REAL vppapi.Vat2 rather than to a Reply written here by hand, so
+# the headline below is the product's own reading of what the box produced
+# and not this file's idea of it.
+VAT2_SAID = "Call failed: bpa_pool_add_del\n"
+
+#: The refusal as it reads today. This change may add to it and may not
+#: reword it, so it is asserted verbatim in every case below - the ones where
+#: the new sentence fires and the ones where it must not.
+REFUSAL = "error: pool 'split291': Call failed: bpa_pool_add_del"
+
+
+def vat2_answers(argv, timeout=10):
+    """A vat2 that refuses the pool the way the upgraded box refused it."""
+    if argv[0].endswith("vppctl"):
+        return 0, "vpp v26.06-release built by root on host at 2026-06-24\n", ""
+    if "--dump-apis" in argv:
+        # The plugin's API IS registered. That is the point of this window:
+        # the message exists, and it is not the same message any more.
+        return 0, "bpa_pool_add_del\nbpa_pool_settings_set\n", ""
+    return 1, "", VAT2_SAID
+
+
+def candidate():
+    """A pool being CREATED, which is the change the split window refuses.
+
+    Changing a setting on a pool that already exists goes through in the same
+    window - measured, and recorded in #293 - so a candidate that edited a
+    running pool would assert nothing.
+    """
+    cfg = hexash.Config()
+    p = hexash.Pool("split291")
+    p.inside = ["100.64.0.0/22"]
+    p.outside = ["200.150.0.16/30"]
+    p.block_size = "512"
+    cfg.pools["split291"] = p
+    return cfg
+
+
+def refused(plugins_out, box_version, caps=None, rc=0):
+    """`commit`'s apply path, refused by the dataplane, on that box.
+
+    The product's own `Shell.apply` and the product's own `vppapi.Vat2`: the
+    only things replaced here are the two subprocesses, which is what decides
+    whether this asserts the product or a rewrite of it.
+    """
+    sh = hexash.Shell.__new__(hexash.Shell)
+    sh.dp, sh.frr = Dp(plugins_out, rc), Frr()
+    sh.api = vppapi.Vat2(runner=vat2_answers)
+    sh.failed = 0
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT} if caps is None else caps
+    sh.running_config = lambda: hexash.Config()
+    buf = io.StringIO()
+    with box_at(box_version):
+        with contextlib.redirect_stdout(buf):
+            sh.apply(candidate())
+    return buf.getvalue()
+
+
+# --- the box between an upgrade and its reboot: the refusal explains itself -
+_r_split = refused(show_plugins("0.1"), BOX)
+show("refused while the two builds disagree", _r_split)
+check(REFUSAL in _r_split.splitlines(),
+      "the refusal itself is unchanged, word for word", repr(_r_split))
+check("the dataplane is not the build the rest of this box is"
+      in unwrapped(_r_split),
+      "and the box says WHICH of the two answered it", repr(_r_split))
+check("    the dataplane is running 0.1" in _r_split.splitlines(),
+      "the build that answered is named, on a row of its own and whole - it "
+      "carries a space, so wrapped into a sentence a fold could break it in "
+      "half", repr(_r_split))
+check("An upgrade replaces the dataplane's files on disk and does not "
+      "restart it" in unwrapped(_r_split),
+      "the upgrade is named as the reason, so this does not read as a broken "
+      "product", repr(_r_split))
+check("ends every session and every port block this box is carrying"
+      in unwrapped(_r_split),
+      "and what clearing it costs is stated, which is what makes it a "
+      "decision for the operator rather than an instruction", repr(_r_split))
+check("systemctl restart vpp" in unwrapped(_r_split),
+      "with the thing that clears it named", repr(_r_split))
+
+# --- the same refusal on a box whose builds agree: nothing is added ---------
+#
+# The other direction, and the one that decides whether this is a diagnosis or
+# a paragraph printed under every failed commit. A dataplane that refuses a
+# pool on an up-to-date box is refusing it for some other reason entirely, and
+# an upgrade note there sends the operator to restart vpp - ending every
+# session on the box - over something a restart cannot fix.
+_r_agree = refused(show_plugins(BOX), BOX)
+show("refused while the two builds agree", _r_agree)
+check(REFUSAL in _r_agree.splitlines(),
+      "the refusal is there, unchanged", repr(_r_agree))
+for _alarm in ("not the build the rest of this box is", "An upgrade replaces",
+               "systemctl restart vpp", "the dataplane is running"):
+    check(_alarm not in unwrapped(_r_agree),
+          f"and nothing on the screen says {_alarm!r}", repr(_r_agree))
+
+# --- the three boxes where the comparison is not available -----------------
+#
+# Not a disagreement, and each must stay silent here rather than guess. A
+# source tree compares the repository's VERSION - the number the NEXT release
+# will carry - against a build stamp, which is two different kinds of thing;
+# #291 shipped that as a false "reboot me" once already and this must not be
+# the door it comes back through.
+for _what, _plugins, _box, _rc in (
+        ("hexash run out of a source tree", show_plugins("0.1"), FROM_TREE, 0),
+        ("no VERSION file on the box", show_plugins("0.1"), NOWHERE, 0),
+        ("the dataplane did not answer 'show plugins'", "", BOX, 1),
+        ("VPP up without bpa_plugin.so", _no_bpa, BOX, 0)):
+    _quiet = refused(_plugins, _box, rc=_rc)
+    check(REFUSAL in _quiet.splitlines(),
+          f"{_what}: the refusal is still printed", repr(_quiet))
+    check("An upgrade replaces" not in unwrapped(_quiet),
+          f"{_what}: and no upgrade is blamed for it", repr(_quiet))
+
+# --- a refusal the VTY made itself is not blamed on an upgrade --------------
+#
+# The narrowing this needs. `err` prints grammar errors, permission refusals
+# and the VTY's own checks, and the great majority of them never touch the
+# dataplane at all. Driven on the same box, disagreeing builds and all, so a
+# green here cannot be an accident of the fixture.
+_r_perms = refused(show_plugins("0.1"), BOX, caps=set())
+show("refused by this VTY, on the same split box", _r_perms)
+check("permission denied" in unwrapped(_r_perms),
+      "the VTY's own refusal is the one printed", repr(_r_perms))
+check(REFUSAL not in _r_perms,
+      "and the dataplane was never asked", repr(_r_perms))
+check("An upgrade replaces" not in unwrapped(_r_perms),
+      "so no upgrade is blamed for a refusal that has nothing to do with the "
+      "dataplane", repr(_r_perms))
+
+# --- the widest stamp the build will let through still fits the console -----
+#
+# The build goes on an unwrapped row, so the one thing that can push it over
+# is the stamp itself. bpa.c's STATIC_ASSERT bounds it at 31 columns, which is
+# the budget measured above, and this is that budget spent in full.
+_r_widest = refused(show_plugins(_fits), BOX)
+
+
+# ----------------------------------------------------------------------------
 print("\n=== and every one of those screens fits the console ===")
 # 79 columns, for the reason test_hexash_complete.py pins the constant on: 80
 # is what a serial console gives an appliance and the last column is left free
@@ -473,7 +649,13 @@ check(CONSOLE_COLUMNS == 79,
       "any narrower")
 _screens = {"agree": _agree, "disagree": _split, "silent": _silent,
             "no plugin": _noplugin, "version unknown": _unknown,
-            "source tree": _tree}
+            "source tree": _tree,
+            # And the refusal screens, including the one carrying the widest
+            # stamp the build will let through. The build is printed on a row
+            # that is NOT wrapped, so the stamp's own width is the only thing
+            # that can push it over and that is the row measured here.
+            "refused, split": _r_split, "refused, agreeing": _r_agree,
+            "refused, widest stamp": _r_widest}
 _wide = [(n, len(l), l) for n, s in _screens.items()
          for l in s.splitlines() if len(l) > CONSOLE_COLUMNS]
 check(not _wide,
