@@ -174,7 +174,8 @@ test-install:
 # pulled out. It is a separate target and not a flag on the one above because
 # they answer different questions and the one above is the one that says a
 # box with a single disk is unchanged (#83).
-test-mirror: iso
+test-mirror:
+	@sh tools/iso-ready.sh || $(MAKE) iso
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 qemu-utils squashfs-tools \
 	      fdisk mdadm >/dev/null 2>&1; \

@@ -79,7 +79,46 @@ echo
 echo "=== the Makefile does not reintroduce the rebuild ==="
 # The holder is the recipe itself. A `test-install: iso` prerequisite is the
 # defect, whatever iso-ready.sh does, because make runs the prerequisite first.
-for target in test-install test-iso; do
+# EVERY TARGET THAT CONSUMES A MEDIUM, derived rather than listed.
+#
+# test-mirror kept its `iso` prerequisite through the first fix, which is the
+# same defect one target over and the shape that had the release gate refuse
+# 0.72.0 twice: two readers of one fact and only one of them corrected. A list
+# typed here would be a list somebody forgets to extend.
+#
+# "Consumes a medium" is not "calls ISO_RUN": hw-down does that and reads no
+# image, it just wants the container. It is "runs a script that opens the ISO",
+# and the scripts that do are the ones naming the image through
+# version-stamp.sh --filename, which is the single place that calculation
+# lives. So: find those scripts, then find the Makefile targets that invoke
+# them, directly or through tools/test-install.sh.
+READERS=$(grep -rlE 'ISO=\$\{ISO:-.*version-stamp\.sh --filename' \
+            "$REPO/lab" "$REPO/tools" 2>/dev/null \
+          | while read -r f; do basename "$f"; done | sort -u)
+[ -n "$READERS" ] \
+  || bad "no script was found that opens the medium, so the target list below"\
+" is derived from nothing"
+# tools/test-install.sh is a wrapper around one of them and a Makefile recipe
+# names the wrapper, not the lab.
+WRAPPERS=$(for r in $READERS; do
+             grep -rl "$r" "$REPO/tools"/*.sh 2>/dev/null \
+             | while read -r f; do basename "$f"; done
+           done | sort -u)
+# Anchored on the path separator and with the dot escaped, because a bare
+# `lab.sh` matches `/src/lab/hw-lab.sh` as a substring - hw-lab opens no medium
+# and was reported as a target that does. The same substring trap cost a
+# document check eleven pages earlier today.
+PAT=$(printf '%s\n' $READERS $WRAPPERS | sort -u \
+      | sed 's/\./\\./g; s|^|/|' | paste -sd'|')
+TARGETS=$(awk -v pat="$PAT" '
+  /^[a-z][a-z0-9-]*:/ { t = $0; sub(/:.*/, "", t); next }
+  t != "" && t != "iso" && $0 ~ pat { print t; t = "" }
+' "$REPO/Makefile" | sort -u)
+[ -n "$TARGETS" ] \
+  && ok "$(echo "$TARGETS" | wc -l) target(s) open the medium: $(echo $TARGETS)" \
+  || bad "no Makefile target was found to open the medium, so the loop below"\
+" runs over nothing and this section asserts about no target at all"
+for target in $TARGETS; do
   line=$(grep -E "^$target:" "$REPO/Makefile")
   case "$line" in
     "$target:") ok "$target has no ISO prerequisite" ;;
