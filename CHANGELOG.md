@@ -479,6 +479,27 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release gate refused this release over a box that had reported itself
+  correctly.** `lab/install-iso.sh` asserts that an installed box says what it
+  is before it offers a login prompt, and it anchored that on the literal
+  `HexaRouting ready.` - the last line the self-test printed, which made it the
+  right anchor for an ordering question. #297 gave that summary four forms, and
+  a box with no NIC to forward on - which is every box this lab builds - ends
+  with a different sentence. The report was complete, in the right order, and
+  the gate refused the medium.
+
+  The ordering check anchors on the row of equals signs the self-test writes on
+  every path, which cannot be changed by a verdict being reworded. What the
+  verdict SAID is a separate assertion now, and it accepts any of the four,
+  because demanding "ready" would demand the box lie about a NIC it was never
+  given.
+
+  `test/test_selftest.sh` compares the two files: every sentence the self-test
+  can end with has to be one the lab knows how to read. It found a fifth
+  defect while being written - the lab knew three of the four, and `ready,
+  with N warning(s) above` is not matched by a needle for `ready.`, so a
+  healthy box that carried one warning would have failed the gate too.
+
 * **The release gate refused a release whose note was correct.** It required
   "built", "booted", "installed" and "again" on one LINE, and this release's
   note wrapped that sentence at a sensible width, so the gate read two lines

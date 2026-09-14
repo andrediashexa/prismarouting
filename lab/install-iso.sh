@@ -811,14 +811,33 @@ drive_console() {
   wait_for "$NEW_HOST login:" 420 \
     "the installed box to boot and offer its first login prompt" || return 1
 
-  # Half one, read off the transcript: the readiness line came FIRST.
+  # Half one, read off the transcript: the self-test FINISHED first.
   #
-  # Not a proxy for it. "HexaRouting ready." is printed by the self-test, which
-  # is ordered after hexarouting.service, so its position in the transcript is
-  # the ordering itself. Before the drop-in was split in two, the installer
-  # deleted the file carrying this ordering along with the autologin it was
-  # sharing a file with, and an installed box had no ordering at all.
-  if printed_before "HexaRouting ready." "$NEW_HOST login:"; then
+  # Not a proxy for it. The self-test is ordered after hexarouting.service,
+  # whose ExecStartPre waits for VPP, so the position of its output in the
+  # transcript is the ordering itself. Before the drop-in was split in two,
+  # the installer deleted the file carrying this ordering along with the
+  # autologin it was sharing a file with, and an installed box had no ordering
+  # at all.
+  #
+  # THE ANCHOR IS THE CLOSING ROW AND NOT THE VERDICT SENTENCE, and that is a
+  # scar. It used to look for "HexaRouting ready." - the last line the
+  # self-test printed, which made it the right anchor for an ordering
+  # question. #297 gave that summary three forms, because a box that is
+  # installed and healthy and has no NIC to forward on is neither ready nor
+  # failed, and this gate then refused 0.72.0 over a box that had reported
+  # itself correctly and in the right order.
+  #
+  # The row of equals signs is the last thing the self-test writes on every
+  # path, so it answers the ordering question and cannot be changed by a
+  # verdict being reworded. It is a bare row, and the header at the top of the
+  # report carries text between its runs of equals, so the two cannot be
+  # confused.
+  #
+  # What the verdict SAID is asserted separately, below. One of these is about
+  # order and the other about content, and merging them is how the first one
+  # broke.
+  if printed_before "=============================================================" "$NEW_HOST login:"; then
     echo "  [ ok ] the box reports itself ready before it offers a login"
   else
     echo "  [FAIL] the box offered a login prompt before it was ready"
@@ -829,6 +848,42 @@ drive_console() {
     echo "         ordering is in 10-after-selftest.conf; on an installed box"
     echo "         it is the same file, and the installer must delete only"
     echo "         20-autologin.conf beside it."
+    fail=1
+  fi
+
+  # And WHAT it said, which is a different question from when it said it.
+  #
+  # All three of the self-test's verdicts are a report, and any of them
+  # answers the ordering check above. Only two of them say this box is fit to
+  # be handed over. The third - installed and healthy with no interface to
+  # forward on - is the state an appliance is in on the day it is racked, and
+  # it is what a box built by this lab is in, because nothing here names a
+  # dataplane interface.
+  #
+  # So the assertion is that the verdict is one the self-test can print, and
+  # NOT that it is any particular one. A lab that demanded "ready" would be
+  # demanding the box lie about having a NIC it was never given.
+  if printed_before "HexaRouting ready." "$NEW_HOST login:"; then
+    echo "  [ ok ] and its verdict was that the box is ready"
+  elif printed_before "HexaRouting ready, with" "$NEW_HOST login:"; then
+    echo "  [ ok ] and its verdict was ready, with warnings above it"
+  elif printed_before "HexaRouting is installed and healthy, and has" \
+                      "$NEW_HOST login:"; then
+    echo "  [ ok ] and its verdict was that the box is healthy and has no NIC"
+    echo "         to forward on, which is what this lab builds"
+  elif printed_before "check(s) failed. The box is NOT ready." \
+                      "$NEW_HOST login:"; then
+    echo "  [FAIL] the installed box failed its own self-test"
+    echo "         the console above says which checks. This is the box an"
+    echo "         operator is handed, so a failed check here is a defect"
+    echo "         that ships."
+    fail=1
+  else
+    echo "  [FAIL] the self-test printed no verdict this lab recognises"
+    echo "         appliance/selftest ends with one of three sentences and"
+    echo "         the console carries none of them. Either it stopped before"
+    echo "         its summary, or the summary was reworded and this lab was"
+    echo "         not - which is what happened in 0.72.0, one line up."
     fail=1
   fi
 
