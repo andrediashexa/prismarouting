@@ -66,6 +66,38 @@ version has a chance of seeing it.
 
 
 
+
+* **A box whose CPU cannot do 1G hugepages never left the first-boot profile,
+  however many times it rebooted**
+  ([#290](https://github.com/andrediashexa/hexarouting/issues/290)). Measured
+  on the maintainer's own box, and it is why that machine never got a dataplane
+  card: DPDK was off, so no NIC could be claimed, whatever the card was. It is
+  why switching to `vmxnet3` changed nothing.
+
+  `grep -c pdpe1gb /proc/cpuinfo` is **0** there, so the kernel has no
+  `hugepages-1048576kB` pool and silently ignores `hugepagesz=1G hugepages=5`
+  on the command line. The tuner read that one path, got 0 on every boot,
+  never set `tuned_now`, and emitted the conservative profile with
+  `plugin dpdk_plugin.so { disable }` - for the life of the box. It printed
+  `(no 1G support)` and told the operator to reboot.
+
+  Meanwhile VPP's own shipped `/etc/sysctl.d/80-vpp.conf` had reserved
+  **2 GB of 2 MB pages**, sitting unused.
+
+  The tuner now uses the largest page size the box actually has, reading the
+  pools that exist rather than the one it would prefer. 2 MB is not a degraded
+  mode: VPP runs on it, and 1 GB is a preference about TLB entries - one entry
+  against five hundred and twelve - not a requirement. A box with both pools
+  still gets 1 GB, and a box with neither stays conservative rather than
+  claiming a size it has not got.
+
+  The fixture could not build the failing box either: it always wrote a
+  `hugepages-1048576kB` pool, so every assertion about the profile was made on
+  hardware that works. Two of the three mutations stayed green until it could
+  build a box with both pools and the page COUNT was asserted - asking for 6
+  on a 2 MB box reserves 12 MB rather than 6 GB, while every other number in
+  the profile assumes the gigabyte figure.
+
 * **A box whose only NIC is its management path was told to reboot, and the
   reboot could not end anywhere**
   ([#289](https://github.com/andrediashexa/hexarouting/issues/289)). Reported
