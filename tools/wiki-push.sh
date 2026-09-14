@@ -1,7 +1,16 @@
 #!/bin/sh
 # Publish one page to the wiki, refusing to overwrite somebody else's edit.
 #
+#   WIKI_TOKEN=... sh tools/wiki-push.sh <file.md>
 #   WIKI_TOKEN=... sh tools/wiki-push.sh <document-id> <file.md>
+#
+# One argument is the ordinary case: the document id comes from wiki/.ids,
+# which tools/wiki-pull.sh writes as it lays the mirror out. Two arguments
+# still work, for a page that is not in the mirror.
+#
+# The id used to be the caller's problem, and #277 is what that cost. The
+# mirror stood 28 pages ahead of the live wiki, and publishing them meant
+# finding 28 ids in a web interface first. Nobody did.
 #
 # The wiki is being written by people, and this pushes over what they wrote.
 # So it checks first: if the live document has changed since the mirror under
@@ -23,18 +32,48 @@
 # and the same applies to the repository that mirrors it.
 set -eu
 
-ID=${1:-}
-FILE=${2:-}
 URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
-[ -n "$ID" ] && [ -n "$FILE" ] || {
-  echo "usage: WIKI_TOKEN=... sh tools/wiki-push.sh <document-id> <file.md>" >&2
-  exit 1
-}
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+STAMP="$REPO/wiki/.pulled"
+INDEX="$REPO/wiki/.ids"
+
+case $# in
+  1) ID=""   ; FILE=$1 ;;
+  2) ID=$1   ; FILE=$2 ;;
+  *)
+    echo "usage: WIKI_TOKEN=... sh tools/wiki-push.sh <file.md>" >&2
+    echo "       WIKI_TOKEN=... sh tools/wiki-push.sh <document-id> <file.md>" >&2
+    exit 1 ;;
+esac
 [ -n "${WIKI_TOKEN:-}" ] || { echo "error: set WIKI_TOKEN" >&2; exit 1; }
 [ -f "$FILE" ] || { echo "error: $FILE does not exist" >&2; exit 1; }
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
-STAMP="$REPO/wiki/.pulled"
+# Looked up by the file's path under wiki/, which is the key wiki-pull.sh
+# wrote. A page drafted here that the wiki does not have yet is absent from
+# the index, and that is not a lookup failure to shrug at: documents.update
+# cannot create a document, so the push would go out against whatever id was
+# guessed. It stops instead, and says which half of the work is missing.
+if [ -z "$ID" ]; then
+  [ -f "$INDEX" ] || {
+    echo "error: $INDEX does not exist, so there is nothing to look the" >&2
+    echo "       document id up in. Run tools/wiki-pull.sh, which writes it," >&2
+    echo "       or pass the id as the first argument." >&2
+    exit 1
+  }
+  REL=$(python3 -c '
+import os, sys
+print(os.path.relpath(os.path.abspath(sys.argv[1]),
+                      os.path.join(sys.argv[2], "wiki")))' "$FILE" "$REPO")
+  ID=$(awk -v want="$REL" '$1 == want { print $2; found = 1 }
+                           END { exit !found }' "$INDEX") || {
+    echo "error: $REL is not in $INDEX, so the wiki has no document for it." >&2
+    echo "       This publishes an existing page and cannot create one." >&2
+    echo "       Create the page on the wiki, pull, then push." >&2
+    exit 1
+  }
+  echo "  $REL is document $ID"
+fi
+
 PAYLOAD=/tmp/wiki-push-payload.json
 
 live=$(curl -sk -X POST "$URL/api/documents.info" \

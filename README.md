@@ -66,7 +66,7 @@ docs/ha.md             high-availability analysis (NOT implemented)
 docs/bng.md            BNG analysis: what VPP gives and what it would cost (NOT implemented)
 docs/wiki-audit.md     the brief for auditing the wiki against this repository
 PADRAO-DOCUMENTACAO.md how a wiki page is written (not the same as CONTRIBUTING)
-wiki/                  read-only mirror of the wiki, refreshed by tools/wiki-pull.sh
+wiki/                  mirror of the wiki; tools/wiki-status.sh says what is unpublished
 ref/                   executable reference model of BPA, in Python
 src/plugins/bpa/       the VPP CGNAT plugin
 src/hexash/            the VTY

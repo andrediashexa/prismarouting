@@ -5,7 +5,7 @@ be read, searched and diffed from inside the repository.
 
 Snapshot taken 2026-09-10T00:23Z, 31 pages.
 
-Refresh it with `WIKI_HOST=<host> sh tools/wiki-pull.sh`. No address or
+Refresh it with `WIKI_TOKEN=... sh tools/wiki-pull.sh`. No address or
 credential is kept here — `PADRAO-DOCUMENTACAO.md` says those never go into the
 wiki, and the same applies to the repository that mirrors it.
 
@@ -28,9 +28,14 @@ and `TESTING.md` answer it; these pages are the thing being corrected.
 
 **It is not where a page is published.** Outline is the live copy and the one
 people read. An edit is *drafted* here, against what the page actually says,
-and `tools/wiki-push.sh <document-id> <file>` is what publishes it. A file
-changed here and never pushed reaches nobody, and the next pull overwrites it
-silently.
+and `sh tools/wiki-push.sh <file>` is what publishes it. A file changed here
+and never pushed reaches nobody.
+
+`sh tools/wiki-status.sh` says what is drafted here and not published yet. It
+exists because nothing did: this mirror stood 28 pages ahead of the live wiki
+for five days, and the only way to see that was to read the git log by hand.
+`tools/wiki-pull.sh` rewrites this directory from the live wiki, so it now
+refuses while that list is not empty.
 
 **It is not a second source of truth about the product.** `docs/`, `README.md`
 and `TESTING.md` are authoritative — the wiki is a usage layer on top of them,

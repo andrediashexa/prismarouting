@@ -43,9 +43,10 @@ and `docs/` disagree, the page is a defect. A claim **MUST NOT** be checked
 against another wiki page — several of them are wrong in the same direction,
 and agreeing with each other is what wrong pages do.
 
-`wiki/` in this repository is a **read-only mirror**, refreshed with
-`WIKI_HOST=<host> sh tools/wiki-pull.sh`. Editing a file there changes nothing:
-the next pull overwrites it, and Outline is where a page is actually edited.
+`wiki/` in this repository is a **mirror**, refreshed with
+`WIKI_TOKEN=... sh tools/wiki-pull.sh`. An edit is drafted there and reaches
+nobody until `tools/wiki-push.sh` publishes it; `sh tools/wiki-status.sh` lists
+what is drafted and still unpublished.
 
 ## 2. The error to hunt
 
@@ -116,16 +117,31 @@ mirrors it. Ask the maintainer for the host and login.
 
 ### Reading
 
-Prefer the mirror: `WIKI_HOST=<host> sh tools/wiki-pull.sh`, then read `wiki/`.
+Prefer the mirror: `WIKI_TOKEN=... sh tools/wiki-pull.sh`, then read `wiki/`.
 It is markdown, greppable, and diffable against the last pull.
 
 ### Writing
 
-**Pull first, then push with `tools/wiki-push.sh`.** It refuses to publish over
-a document that changed after the mirror was pulled. The wiki is being written
-by people right now — a category was renamed and two pages removed during the
-work that produced this brief — and an edit built from an old snapshot
-discards whoever made the change in between.
+**Push first, then pull.** `tools/wiki-push.sh <file>` reads the live document
+before it writes and refuses to publish over one that changed after
+`wiki/.pulled`. That guard is per document and does not need a fresh pull to
+work. The wiki is being written by people right now - a category was renamed
+and two pages removed during the work that produced this brief - and an edit
+built from an old snapshot discards whoever made the change in between.
+
+**The order matters, and the opposite order is a defect this project has
+already paid for.** `tools/wiki-pull.sh` deletes `wiki/` and rewrites it from
+the live wiki, so "pull first" throws away every correction drafted here and
+not yet published. The mirror stood 28 pages ahead for five days and following
+that advice would have lost all 28 (#277). The pull now refuses when
+`tools/wiki-status.sh` reports drafts, and `WIKI_PULL_DISCARD=1` is how you say
+you meant it.
+
+`tools/wiki-push.sh` takes the file alone: the document id comes from
+`wiki/.ids`, which the pull writes as it lays the mirror out. Pass an id as a
+first argument only for a file that is not in the mirror. A page drafted here
+that the wiki does not have yet is refused, because `documents.update` cannot
+create a document - create it on the wiki, pull, then push.
 
 **Through the API, never the database.** Outline keeps revisions, a search
 index and collaborative state; writing document rows underneath it corrupts all

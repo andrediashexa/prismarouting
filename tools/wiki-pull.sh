@@ -34,6 +34,46 @@ URL=${WIKI_URL:-https://hexarouting.hexanetworks.com.br}
 }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+
+# This script DELETES wiki/ and rewrites it from the live wiki. Anything
+# corrected here and not yet published is gone from the tree the moment it
+# runs, and #277 is what that costs: 28 pages were corrected here over five
+# days, one of them saying what state a box is left in by a refused commit,
+# and the published advice to "pull first, then push" would have thrown all 28
+# away before a single one went out.
+#
+# There is no need to pull first. tools/wiki-push.sh reads the live document
+# before it writes and refuses if somebody edited it after wiki/.pulled - the
+# protection is per document and it does not depend on this having just run.
+# So the order is push, then pull.
+
+# rc is captured off the assignment itself. Inside `if ! VAR=$(cmd)` the shell
+# has already replaced $? with the status of the negation, so the three cases
+# below would all read 0.
+rc=0
+DRAFTS=$(sh "$REPO/tools/wiki-status.sh" 2>&1) || rc=$?
+if [ "$rc" -ne 0 ]; then
+  case $rc in
+    1)
+      echo "$DRAFTS" >&2
+      echo >&2
+      echo "error: refusing to pull. The lines above are edits that exist" >&2
+      echo "       ONLY here, and this rewrites wiki/ from the live wiki." >&2
+      echo "       Publish them first, or set WIKI_PULL_DISCARD=1 to throw" >&2
+      echo "       them away on purpose." >&2
+      [ "${WIKI_PULL_DISCARD:-0}" = "1" ] || exit 1
+      echo "==> WIKI_PULL_DISCARD=1: discarding the edits listed above" >&2
+      ;;
+    *)
+      # Not a git checkout, or a checkout that never recorded a pull. The
+      # question cannot be answered here, and answering it wrongly either way
+      # is worse than saying so.
+      echo "$DRAFTS" >&2
+      echo "warning: could not tell whether wiki/ holds unpublished edits." >&2
+      ;;
+  esac
+fi
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -114,6 +154,12 @@ if os.path.isdir(root):
 os.makedirs(root)
 
 n = [0]
+# Which document each file came from. Written here because this is the only
+# place that knows: the id and the path are decided by the same line, so they
+# cannot drift apart. It is read by tools/wiki-push.sh, which until #277 made
+# the caller supply the id by hand - and a mirror 28 pages behind is 28 ids to
+# find in a web interface before a single correction reaches an operator.
+ids = []
 def walk(parent, path):
     for d in sorted(by_parent.get(parent, []), key=lambda x: x["title"]):
         if d["title"] in DEFAULTS:
@@ -128,6 +174,7 @@ def walk(parent, path):
         else:
             f = os.path.join(path, name + ".md")
         open(f, "w").write("# %s\n\n%s\n" % (d["title"], (d["text"] or "").strip()))
+        ids.append((os.path.relpath(f, root), d["id"]))
         n[0] += 1
         if kids:
             walk(d["id"], sub)
@@ -144,6 +191,13 @@ if saved:
 # overwritten.
 newest = max((d.get("updatedAt") or "") for d in docs) if docs else ""
 open(os.path.join(root, ".pulled"), "w").write(newest + "\n")
+# Sorted by path, one page per line, so a diff of this file reads as pages
+# appearing and disappearing rather than as a reordering. Neither field can
+# contain a space: an Outline id is a uuid and a path is built out of slug()
+# above, which keeps nothing but letters, digits and hyphens.
+with open(os.path.join(root, ".ids"), "w") as fh:
+    for rel, doc_id in sorted(ids):
+        fh.write("%s %s\n" % (rel, doc_id))
 print("%d pages, newest change %s" % (n[0], newest))
 PYEOF
 

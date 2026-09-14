@@ -93,7 +93,8 @@ PYEOF
 # a test that rewrites the mirror it is run from is a test nobody can run
 # twice.
 mkdir -p "$WORK/repo/tools" "$WORK/repo/wiki"
-cp "$REPO/tools/wiki-pull.sh" "$REPO/tools/wiki-push.sh" "$WORK/repo/tools/"
+cp "$REPO/tools/wiki-pull.sh" "$REPO/tools/wiki-push.sh" \
+   "$REPO/tools/wiki-status.sh" "$WORK/repo/tools/"
 cp "$REPO/wiki/README.md" "$WORK/repo/wiki/"
 
 export PATH="$WORK/bin:$PATH"
@@ -212,6 +213,144 @@ import json,sys; print(json.load(open(sys.argv[1]))['text'])" "$STUB/sent.json")
     bad "a file with no heading came out as '$got'"
 else
   bad "a plain file sent nothing"
+fi
+
+echo "=== the pull records which document each file came from (#277) ==="
+# The mirror stood 28 pages ahead of the live wiki and none of them could be
+# published without first finding 28 document ids in a web interface by hand.
+# The ids are known at pull time and were thrown away; now they are written
+# down, keyed on the path the same line decides.
+INDEX="$WORK/repo/wiki/.ids"
+if [ -f "$INDEX" ]; then
+  line=$(grep '^primeiros-passos\.md ' "$INDEX" || true)
+  [ "$line" = "primeiros-passos.md $DOCID" ] && ok "index says: $line" || \
+    bad "the index does not map the page to $DOCID: ${line:-<no entry>}"
+else
+  bad "wiki-pull.sh wrote no index at $INDEX"
+fi
+
+echo "=== push takes the file alone and looks the id up ==="
+rm -f "$STUB/sent.json"
+sh "$WORK/repo/tools/wiki-push.sh" "$MIRROR" > "$WORK/byfile.log" 2>&1 || {
+  bad "wiki-push.sh refused a file that is in the index:"
+  sed 's/^/    /' "$WORK/byfile.log"; }
+if [ -f "$STUB/sent.json" ]; then
+  # The id it RESOLVED, not the id it printed. A push that says doc-0001 and
+  # sends something else overwrites a page nobody was looking at.
+  sent_id=$(python3 -c "
+import json,sys; print(json.load(open(sys.argv[1]))['id'])" "$STUB/sent.json")
+  [ "$sent_id" = "$DOCID" ] && ok "it sent to $sent_id, from the index alone" \
+    || bad "one argument resolved to '$sent_id', not '$DOCID'"
+else
+  bad "one argument sent nothing"
+fi
+
+echo "=== a page the wiki does not have yet stops the push ==="
+# The one page in #277's list that no token would have published either:
+# documents.update cannot create a document, so a file with no entry has no
+# id to guess and the push must not invent one.
+mkdir -p "$WORK/repo/wiki/operar"
+printf '# Pagina nova\n\ncorpo\n' > "$WORK/repo/wiki/operar/pagina-nova.md"
+rm -f "$STUB/sent.json"
+if sh "$WORK/repo/tools/wiki-push.sh" "$WORK/repo/wiki/operar/pagina-nova.md" \
+     > "$WORK/new.log" 2>&1; then
+  bad "a page with no document id was published against some other id"
+else
+  if grep -q "cannot create one" "$WORK/new.log"; then
+    ok "refused: $(grep -o 'is not in .*' "$WORK/new.log" | head -1)"
+  else
+    bad "it failed, but not with the sentence that says why:"
+    sed 's/^/    /' "$WORK/new.log"
+  fi
+fi
+[ -f "$STUB/sent.json" ] && bad "it refused and sent the document anyway"
+
+echo "=== and with no index at all it says to pull, not 'no such id' ==="
+mv "$INDEX" "$WORK/ids.saved"
+rm -f "$STUB/sent.json"
+if sh "$WORK/repo/tools/wiki-push.sh" "$MIRROR" > "$WORK/noindex.log" 2>&1; then
+  bad "a push with no index published anyway"
+else
+  grep -q "wiki-pull.sh" "$WORK/noindex.log" && \
+    ok "refused, and names the script that writes the index" || {
+      bad "it failed without saying where the index comes from:"
+      sed 's/^/    /' "$WORK/noindex.log"; }
+fi
+mv "$WORK/ids.saved" "$INDEX"
+rm -f "$WORK/repo/wiki/operar/pagina-nova.md"
+
+echo "=== the pull refuses to throw away work nobody published (#277) ==="
+# The whole of #277 in one case. The advice an operator was given was "pull
+# first, then push"; the pull deletes wiki/ and rewrites it from the live
+# wiki, so following that advice with 28 corrections in the tree loses all 28
+# before one of them goes out.
+#
+# A separate repository, because this one needs a git history: the last commit
+# that wrote wiki/.pulled is what the mirror is compared against, and that is
+# the only holder of "when were these the same text". Nothing greps a page.
+GITREPO="$WORK/gitrepo"
+mkdir -p "$GITREPO/tools" "$GITREPO/wiki"
+cp "$REPO/tools/wiki-pull.sh" "$REPO/tools/wiki-push.sh" \
+   "$REPO/tools/wiki-status.sh" "$GITREPO/tools/"
+cp "$REPO/wiki/README.md" "$GITREPO/wiki/"
+printf '# %s\n\n%s' "$TITLE" "$BODY" > "$GITREPO/wiki/primeiros-passos.md"
+printf 'primeiros-passos.md %s\n' "$DOCID" > "$GITREPO/wiki/.ids"
+printf '2026-09-01T00:00Z\n' > "$GITREPO/wiki/.pulled"
+git -C "$GITREPO" init -q
+git -C "$GITREPO" -c user.email=t@t -c user.name=t add -A
+git -C "$GITREPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "the mirror as pulled"
+
+if sh "$GITREPO/tools/wiki-status.sh" > "$WORK/clean.log" 2>&1; then
+  ok "a mirror that matches the last pull is reported clean"
+else
+  bad "a freshly pulled mirror was reported as holding drafts:"
+  sed 's/^/    /' "$WORK/clean.log"
+fi
+
+# One page corrected and one page written, both AFTER the pull commit. The two
+# need different work and the report must not merge them into one number.
+printf '# %s\n\n%s\n\nUma frase corrigida.\n' "$TITLE" "$BODY" \
+  > "$GITREPO/wiki/primeiros-passos.md"
+printf '# Outra pagina\n\ncorpo\n' > "$GITREPO/wiki/outra-pagina.md"
+git -C "$GITREPO" -c user.email=t@t -c user.name=t add -A
+git -C "$GITREPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "a correction nobody published"
+
+if sh "$GITREPO/tools/wiki-status.sh" > "$WORK/dirty.log" 2>&1; then
+  bad "an unpublished correction was reported as nothing to do:"
+  sed 's/^/    /' "$WORK/dirty.log"
+else
+  grep -q "primeiros-passos.md" "$WORK/dirty.log" && \
+  grep -q "do not exist on the wiki at all" "$WORK/dirty.log" && \
+    ok "$(grep -c '^  wiki/' "$WORK/dirty.log") unpublished page(s) named, split by what they need" || {
+      bad "it reported drafts without naming them, or without splitting them:"
+      sed 's/^/    /' "$WORK/dirty.log"; }
+fi
+
+before=$(cat "$GITREPO/wiki/primeiros-passos.md")
+if sh "$GITREPO/tools/wiki-pull.sh" > "$WORK/refused.log" 2>&1; then
+  bad "wiki-pull.sh wiped the mirror with unpublished corrections in it"
+else
+  grep -q "primeiros-passos.md" "$WORK/refused.log" && \
+    ok "the pull refused and named the page it would have destroyed" || {
+      bad "the pull failed without saying which work was at risk:"
+      sed 's/^/    /' "$WORK/refused.log"; }
+fi
+[ "$(cat "$GITREPO/wiki/primeiros-passos.md")" = "$before" ] && \
+  ok "and the correction is still in the tree" || \
+  bad "the pull refused and deleted the page anyway"
+
+# The override, because a refusal with no way past it is a script somebody
+# edits out. It has to be asked for by name, and only then.
+if WIKI_PULL_DISCARD=1 sh "$GITREPO/tools/wiki-pull.sh" \
+     > "$WORK/discard.log" 2>&1; then
+  [ "$(cat "$GITREPO/wiki/primeiros-passos.md")" = "$before" ] && \
+    bad "WIKI_PULL_DISCARD=1 was asked to overwrite and did not" || \
+    ok "WIKI_PULL_DISCARD=1 pulls over it, having said so"
+else
+  bad "WIKI_PULL_DISCARD=1 could not pull:"
+  sed 's/^/    /' "$WORK/discard.log"
 fi
 
 echo "=== and the mirror itself keeps to that format (#225) ==="
