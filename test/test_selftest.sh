@@ -2809,6 +2809,53 @@ else
   bad "$stray [warn] headline(s) bypass warn() and are not counted"
 fi
 
+echo "=== the verdict the last line prints, and the lab that reads it ==="
+# A CONTRACT BETWEEN TWO FILES, and it cost a refused release before anything
+# compared them.
+#
+# lab/install-iso.sh boots an installed box and asserts that the self-test
+# reported itself before the getty offered a login. It anchored that on the
+# literal "HexaRouting ready." - correct when there was one verdict, and #297
+# gave the summary three. A box with no NIC to forward on then reported itself
+# correctly, in the right order, and the release gate refused 0.72.0 over it.
+#
+# The lab is fixed - it anchors the ORDER on the closing row, which is printed
+# on every path, and asks separately WHICH verdict was given - and this is what
+# stops the two drifting again. Every sentence the self-test can end with has
+# to be one the lab knows how to read.
+#
+# FOUR of them, and the fourth was missing from this list until a mutation
+# removed its branch and nothing went red. "HexaRouting ready, with N
+# warning(s) above" is NOT matched by a needle for "HexaRouting ready." - the
+# comma is exactly where they part - so the lab knew three of the four and
+# would have failed a healthy box that happened to carry a warning.
+#
+# By the distinctive half of each sentence, not the whole line: two of the
+# four interpolate a count, and the lab matches a prefix for the same reason.
+ST_SRC=$(cat "$ST")
+LAB=$(cat "$REPO/lab/install-iso.sh" 2>/dev/null || echo "")
+verdicts_found=0
+for _v in "HexaRouting ready." \
+          "HexaRouting ready, with" \
+          "HexaRouting is installed and healthy, and has" \
+          "check(s) failed. The box is NOT ready."; do
+  case "$ST_SRC" in
+    *"$_v"*) ;;
+    *) bad "appliance/selftest can no longer print '$_v', so the lab reads for a verdict that does not exist"
+       continue ;;
+  esac
+  verdicts_found=$((verdicts_found + 1))
+  case "$LAB" in
+    *"$_v"*) ;;
+    *) bad "appliance/selftest ends with '$_v' and lab/install-iso.sh does not know that sentence: an installed box printing it is a box the gate cannot read" ;;
+  esac
+done
+if [ "$verdicts_found" -eq 4 ]; then
+  ok "all four verdicts the self-test can end with are read by lab/install-iso.sh"
+else
+  bad "only $verdicts_found of the four verdicts were found in appliance/selftest, so this check is asserting almost nothing"
+fi
+
 echo "=== every self-test line fits the 80-column console it is printed on ==="
 # The self-test writes to /dev/console on a racked appliance, which is 80
 # columns. Nothing measured that. A line goes over only when a value is
