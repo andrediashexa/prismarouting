@@ -1818,6 +1818,37 @@ that did not happen. `make release-gate` would also have to build a kernel on
 every release, which turns the one procedure that has ever caught a release
 mistake into a much longer and much more fragile one.
 
+**"Inherits them by doing nothing" is a mechanism, and it is the one a rebuild
+removes.** It is named here rather than assumed, because it is the load-bearing
+half of the cost above. The medium installs a *metapackage*, not a version, so
+the kernel is whatever Debian's stable kernel is on the day the ISO is built,
+and whatever `apt` moves it to afterwards. From `appliance/build-iso.sh`:
+
+```
+debootstrap --arch=amd64 --variant=minbase \
+  --include=systemd-sysv,linux-image-amd64,live-boot,...
+```
+
+`linux-image-amd64` carries no version and no pin, which is precisely what lets
+a security update arrive without anyone here deciding anything. Two readings
+show the kernel moving with nobody in this repository choosing it:
+
+| Reading | Where | Result |
+|---|---|---|
+| the kernel a built medium actually booted | `Linux version`, in the boot lab's console log | `6.1.0-50-amd64`, `Debian 6.1.176-1 (2026-07-02)` |
+| the kernel this tree develops against today | `uname -r`, `uname -v` | `6.1.0-52-amd64`, `Debian 6.1.180-1 (2026-08-03)` |
+
+Two ABI revisions, a month apart, and no commit in this repository selected
+either one. That is the whole of the kernel security maintenance this project
+performs today, and a custom build replaces it with a person who has to
+remember. The bar at the top of this section is high because that is what sits
+on the other side of it.
+
+`test/test_kernel_tuning.py` asserts that the medium still installs an unpinned
+Debian metapackage and that this section still names it, so a pin or a private
+`linux-image` cannot arrive quietly and leave the argument above describing a
+box that no longer exists.
+
 **That is why this answer is not the same shape as the one above.** The
 performance arguments are all answerable by measurement, and a measurement can
 arrive tomorrow; the maintenance cost is structural and arrives with the first
