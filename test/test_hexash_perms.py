@@ -16,6 +16,7 @@ everybody - is decidable in milliseconds and needs no root.
 import contextlib
 import io
 import os
+import re
 import shutil
 import stat
 import sys
@@ -212,6 +213,109 @@ try:
 finally:
     os.environ.pop("HEXA_TEST_ARGV", None)
     shutil.rmtree(d, ignore_errors=True)
+
+print("\n=== every change a commit can make needs a capability ===")
+# cap_needed() answers CAP_ALL for anything in DELTA_ADMIN, CAP_CGNAT for
+# anything in DELTA_CGNAT, and None for a delta that changes nothing. The
+# caller reads:
+#
+#     need = cap_needed(d)
+#     if need and not self.require(need, "commit"):
+#
+# so None is not "refuse", it is "do not ask". That is right for an empty
+# delta and it is what makes this worth checking: a key the delta dict
+# produces and NEITHER list names falls through to None, and a cgnat-operator
+# account commits a change that should have needed an administrator. No
+# refusal, no message, nothing in the trail to say a check was skipped,
+# because none was.
+#
+# A read-only account is not the exposure. It is outside vpp, frr and frrvty,
+# so the sockets refuse it on every command, the read-only ones included -
+# docs/routing.md says so where it explains why the VTY writes those three
+# memberships for every account it owns. The account that gets through is the
+# one holding a role already.
+#
+# Three copies of one truth, which is the shape test_doc_copies.py exists for
+# one layer out: config.py decides what a change CAN be, and hexash.py decides
+# twice over what each kind is worth. They agree today - 36 keys, 36 covered,
+# measured - so this is a guard rather than a repair, and the thing it guards
+# is a configuration kind added to config.py by somebody who did not know the
+# second file existed.
+DELTA_SRC = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "..", "src", "hexash", "config.py"),
+                 encoding="utf-8").read()
+try:
+    _i = DELTA_SRC.index("    def delta_to")
+    _r = DELTA_SRC.index("\n        return {", _i)
+except ValueError:
+    _i = _r = -1
+# To the first line that is exactly eight spaces and a brace, which is where
+# that dict literal ends. Reading to the next `def` would swallow whatever
+# follows and count its strings as delta keys.
+_m = re.search(r"\n        \}\n", DELTA_SRC[_r:]) if _r >= 0 else None
+produced = (re.findall(r'^\s+"([a-z_0-9]+)":', DELTA_SRC[_r:_r + _m.end()], re.M)
+            if _m else [])
+covered = set(hexash.DELTA_CGNAT) | set(hexash.DELTA_ADMIN)
+
+uncovered = [k for k in produced if k not in covered]
+ghost = sorted(covered - set(produced))
+if len(produced) < 20:
+    fail += 1
+    print(f"  FAIL: only {len(produced)} delta key(s) were read out of "
+          f"config.py, so this check is asserting almost nothing")
+if uncovered:
+    fail += 1
+    print(f"  FAIL: these changes need no capability at all, so an account "
+          f"with any role commits them unasked: {uncovered}")
+if ghost:
+    fail += 1
+    print(f"  FAIL: these are named as needing a capability and no commit can "
+          f"produce them, so one of the two files has renamed a key: {ghost}")
+# The other direction is not a hole and is still worth saying. A name in one
+# of those lists that the delta dict never produces is a rule about nothing,
+# and the usual cause is a key that was renamed in one file only - which
+# leaves a real change uncovered under its new name at the same moment.
+# WHICH list, and not only that there is one. The check above is about a
+# change nobody classified; this is about one classified wrongly, and the two
+# fail differently. Moving a key from DELTA_ADMIN into DELTA_CGNAT is a grant:
+# every cgnat-operator account on every box gets to make that change at the
+# next upgrade, with no refusal and nothing in the trail to mark the moment.
+# Coverage cannot see it - the key is still covered.
+#
+# So the smaller list is frozen by name. There is no independent source to
+# derive it from: which changes a CGNAT operator may make IS this tuple, and a
+# check that re-derived it from the names would be agreeing with its own
+# reading rather than with a decision. Frozen is the honest shape, in the way
+# an OFF-RED-AT-LEAST floor is: widening it is one line, and the line is in a
+# test, where it needs a reason.
+#
+# The argument for the current eleven is cap_needed()'s own docstring:
+# everything outside CGNAT is routing, the accounts that may log in, and the
+# SSH and SNMP daemons, none of which a CGNAT operator was given.
+CGNAT_GRANTED = {
+    "pool_add", "pool_remove", "pool_replace", "settings_set", "limits_set",
+    "bypass_set", "fwd_add", "fwd_del", "if_add", "if_remove", "globals",
+}
+widened = sorted(set(hexash.DELTA_CGNAT) - CGNAT_GRANTED)
+narrowed = sorted(CGNAT_GRANTED - set(hexash.DELTA_CGNAT))
+if widened:
+    fail += 1
+    print(f"  FAIL: a cgnat-operator account can now make changes it could "
+          f"not before, and nothing asked: {widened}. If that is meant, say "
+          f"so here and say why")
+if narrowed:
+    fail += 1
+    print(f"  FAIL: these are no longer a cgnat-operator's to make: "
+          f"{narrowed}. That is a refusal appearing on boxes in the field, so "
+          f"it belongs in a release note")
+if not widened and not narrowed:
+    print(f"  [ ok ] and the {len(CGNAT_GRANTED)} a cgnat-operator may make "
+          f"are the same {len(CGNAT_GRANTED)} as before")
+
+if not uncovered and not ghost and len(produced) >= 20:
+    print(f"  [ ok ] all {len(produced)} of them, "
+          f"{len(hexash.DELTA_CGNAT)} cgnat and {len(hexash.DELTA_ADMIN)} "
+          f"administrator, with none left over either way")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
