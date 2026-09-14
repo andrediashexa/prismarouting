@@ -1728,6 +1728,72 @@ artifact was booted on its own**, because the gate's live boot had run against
 the other build.
 
 
+#### Ten things the product said and did not do, found by looking for them
+
+*Fixed, v0.74.1.* Five defects of one shape had been found in two releases, each
+one on a real box by a person rather than by anything in this repository:
+[#303](https://github.com/andrediashexa/hexarouting/issues/303) (no management
+network), [#305](https://github.com/andrediashexa/hexarouting/issues/305) (the
+medium told to reboot),
+[#306](https://github.com/andrediashexa/hexarouting/issues/306) (a count that
+answered a different question from the line above it),
+[#307](https://github.com/andrediashexa/hexarouting/issues/307) (the gate
+publishing a medium it had not booted) and
+[#295](https://github.com/andrediashexa/hexarouting/issues/295) (an upgrade path
+that does not exist on an installed box). **Five of one shape is a pattern, and
+a pattern is something to go looking for rather than to keep meeting.**
+
+So the shape was swept for deliberately, with every candidate reproduced before
+it was written down. Ten held, and roughly sixty-six were discarded:
+
+* [#311](https://github.com/andrediashexa/hexarouting/issues/311) - the release
+  gate accepted a medium whose self-test said the box was **not ready**, and
+  reprinted that line under its own "is ready to publish". `said_a_good_verdict()`
+  had been in the holder since it was written, for exactly this, and nothing
+  called it.
+* [#312](https://github.com/andrediashexa/hexarouting/issues/312) -
+  `commit confirmed 0` armed nothing, wrote nothing, printed no deadline and
+  answered `commit complete`. `600` armed ten hours. The help had always said
+  `<1-60>`.
+* [#313](https://github.com/andrediashexa/hexarouting/issues/313) - the audit
+  trail's tamper check had no VTY spelling, and the page that sends an operator
+  to it puts it at the last step before the disk is erased.
+* [#308](https://github.com/andrediashexa/hexarouting/issues/308),
+  [#309](https://github.com/andrediashexa/hexarouting/issues/309),
+  [#310](https://github.com/andrediashexa/hexarouting/issues/310) - a command
+  that does not exist, a refusal the box stopped making, and #305 living on in
+  a second message.
+* [#314](https://github.com/andrediashexa/hexarouting/issues/314) - three pages
+  confirming a port forward with a command that cannot print one.
+* [#315](https://github.com/andrediashexa/hexarouting/issues/315),
+  [#316](https://github.com/andrediashexa/hexarouting/issues/316),
+  [#317](https://github.com/andrediashexa/hexarouting/issues/317) - a CI that
+  does not exist, a first-page command that rewrites the peer machine and then
+  dies, and three numbers stated as measured.
+
+**What the shape actually is**, now that there are fifteen of them: a sentence
+that is true of one box and false of another, printed by a path that never asked
+which box it was on. #305 and #310 are the same startup file on a medium and on
+an installed box. #309 is the refusal that holds with two cards and not with one.
+#312 is the value that is falsy and the value that is out of range taking the
+same branch. It is not carelessness in the wording; it is a missing question.
+
+**What was checked, and what deliberately was not.** Every command a message
+quotes is now walked against the command tree; every path any document names is
+resolved against the filesystem; the off-run counts in `TESTING.md` are compared
+against the floors the suite enforces; and every reader the verdict holder
+defines must have a caller. What has no check is whether a command answers the
+question a page is asking, and that is written into
+[#314](https://github.com/andrediashexa/hexarouting/issues/314) rather than
+approximated: the general version of it was measured at 12 false findings out of
+193 lines, which is the rate `test/test_doc_copies.py` records getting a check
+switched off.
+
+**Not swept:** `docs/architecture.md`, `docs/routing.md` and `docs/logging.md`,
+7,126 lines, recorded here because a section nobody measured is how #303
+happened.
+
+
 #### The rename to PrismaRouting
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
