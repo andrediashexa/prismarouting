@@ -306,7 +306,21 @@ END {
       # the block alone was measured wrong on "What it does not do is
       # everything that happens after the disk is written", whose clause names
       # nobody and whose paragraph is about #83.
-      tgt = near(clause, rel); if (!tgt) tgt = near(txt, p)
+      #
+      # The fallback looks BACKWARDS only, and the clause does not. Within one
+      # clause a reference can sit either side of the needle - "still open
+      # here: #67" and "#67 forwards on dynamic pools still needs the block
+      # pinned" are both ordinary - so distance is the right measure there. A
+      # paragraph is different: it introduces its subject and then discusses
+      # it, so a reference AFTER the needle is a later sentence about
+      # something else.
+      #
+      # Measured. The "Working rules for each release" list is one block, and
+      # rule 4 - "A release is cut when its milestone is empty, or when the
+      # maintainer decides what remains can wait" - was attributed to the #292
+      # named in rule 5, two rules further down. A false finding in a tool
+      # that flags drift is how the tool stops being run.
+      tgt = near(clause, rel); if (!tgt) tgt = back(txt, p)
       if (bt[k] == "row" && subj) tgt = subj
       if (!tgt || state[tgt] != "CLOSED") continue
       if ((tgt " @" k) in seen) continue
@@ -340,6 +354,19 @@ END {
 }
 
 # The nearest reference to position p in s, or 0.
+# The nearest reference BEFORE p, and nothing after it. See the call site for
+# why a paragraph is read one way and a clause the other.
+function back(s, p,   best, tgt, t, o, q, v, d) {
+  best = 1000000; tgt = 0; t = s; o = 0
+  while (match(t, /#[0-9]+/)) {
+    q = o + RSTART; v = substr(t, RSTART + 1, RLENGTH - 1) + 0
+    o = o + RSTART + RLENGTH - 1; t = substr(t, RSTART + RLENGTH)
+    if (q > p) break
+    d = p - q
+    if (d < best) { best = d; tgt = v }
+  }
+  return tgt
+}
 function near(s, p,   best, tgt, t, o, q, v, d) {
   best = 1000000; tgt = 0; t = s; o = 0
   while (match(t, /#[0-9]+/)) {
