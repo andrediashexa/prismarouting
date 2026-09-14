@@ -62,6 +62,22 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The release checklist now says to compare the roadmap against the
+  tracker.** `tools/roadmap-state.sh` shipped with
+  [#292](https://github.com/andrediashexa/hexarouting/issues/292) and the only
+  place that said to run it was the roadmap itself. Cutting a release is the
+  moment somebody reads the roadmap in order to write a release note, so a
+  checklist that does not mention it is a second copy of the release procedure
+  disagreeing with the first by leaving something out. It is item 6 and it
+  blocks nothing: what it finds is either a sentence to move into the past
+  tense or an issue that needs a home in the file.
+
+  `test/test_doc_copies.py` now refuses a counted list whose count is wrong.
+  That sentence opens "produce all six of" and the number is the copy a reader
+  trusts: somebody who has done five things and read "all five of" stops, and
+  the item that does not get done is the last one. The count had to be changed
+  by hand when this item was added, which is the argument for checking it.
+
 * **`lab/upgrade.sh` would have been NOT MEASURED in every release suite it
   ever ran in.** Git inside the lab container refuses the bind-mounted
   repository outright - `fatal: detected dubious ownership in repository at

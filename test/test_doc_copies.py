@@ -368,6 +368,44 @@ else:
         bad(f"only {len(blocked)} issue(s) were read out of the blocked "
             f"table, so this check is asserting almost nothing")
 
+print("\n=== a counted list says how many it has ===")
+# CONTRIBUTING.md's release procedure opens "When it happens it MUST produce
+# all <n> of:" and then numbers them. The number and the list are two copies
+# of the same fact, and the number is the one a reader trusts: somebody who
+# has done five things and read "all five of" stops, and the sixth is the one
+# that does not get done. This list gained an item today and the count had to
+# be changed by hand, which is the whole reason for checking it.
+#
+# Only this one list. A rule that demanded every "three reasons" in the
+# repository be countable would be a rule somebody switches off, and the
+# argument above is specific to a checklist somebody works through.
+WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+         "eight": 8, "nine": 9, "ten": 10}
+CONTRIB = read("CONTRIBUTING.md")
+m = re.search(r"MUST\*\* produce all ([a-z]+) of:\n", CONTRIB)
+if not m:
+    bad("CONTRIBUTING.md no longer opens the release list with a count, so "
+        "this check is reading nothing")
+else:
+    said = WORDS.get(m.group(1))
+    # From the sentence to the next heading, so a numbered list further down
+    # the file is not counted into this one.
+    end = CONTRIB.find("\n### ", m.end())
+    items = re.findall(r"^(\d+)\. \*\*", CONTRIB[m.end():end], re.M)
+    if said is None:
+        bad(f"CONTRIBUTING.md says 'all {m.group(1)} of' and that is not a "
+            f"number this check knows")
+    elif len(items) != said:
+        bad(f"CONTRIBUTING.md's release procedure says 'all {m.group(1)} of' "
+            f"and lists {len(items)}. A reader who has done {said} things "
+            f"stops, and the item that does not get done is the last one")
+    elif [int(i) for i in items] != list(range(1, said + 1)):
+        bad(f"CONTRIBUTING.md's release list is numbered {items}, which is "
+            f"not 1 to {said}")
+    else:
+        ok(f"the release procedure says 'all {m.group(1)} of' and lists "
+           f"{len(items)}, numbered 1 to {said}")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
