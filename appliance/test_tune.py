@@ -24,7 +24,8 @@ def w(path, content):
         f.write(str(content) + "\n")
 
 def build(root, sockets, cores_per_socket, threads, nic_node=None,
-          hugepages_1g=0, isolated="", nic_pci=None, ram_gb=64):
+          hugepages_1g=0, isolated="", nic_pci=None, ram_gb=64,
+          nic_bus=None):
     """
     Typical Linux numbering: first every first thread, then every second one.
     With 2 sockets x 8 cores x 2 threads, the sibling of cpu0 is cpu16.
@@ -53,7 +54,16 @@ def build(root, sockets, cores_per_socket, threads, nic_node=None,
             dev = f"{root}/sys/devices/pci0000:00/{nic_pci}"
             w(f"{dev}/numa_node", nic_node)
             os.makedirs(f"{root}/sys/class/net/eth0", exist_ok=True)
-            os.symlink(dev, f"{root}/sys/class/net/eth0/device")
+            # `nic_bus` puts a BUS device between the netdev and the PCI one,
+            # which is the shape of every virtio guest: `device` points at
+            # virtio4 and the PCI address is its parent. Without it this
+            # fixture only ever built the bare-metal shape, where the basename
+            # already is the address - so the whole generated stanza was only
+            # ever exercised on the layout that happened to work (#286).
+            target = dev if nic_bus is None else f"{dev}/{nic_bus}"
+            if nic_bus is not None:
+                os.makedirs(target, exist_ok=True)
+            os.symlink(target, f"{root}/sys/class/net/eth0/device")
         else:
             w(f"{root}/sys/class/net/eth0/device/numa_node", nic_node)
     w(f"{root}/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages",
@@ -630,6 +640,35 @@ for _n in ("0000:00:12.0", "10000:ff:1f.7", "virtio3", "a:b:c.d", ""):
     check(is_pci_addr(_n) == _hx.is_pci_addr(_n),
           f"the two copies of the PCI shape test disagree about {_n!r}")
 print("  the virtio parent, nothing that is not PCI, and the VTY agreeing")
+
+
+print("\n=== a virtio box gets a dpdk stanza naming its card (#286) ===")
+# END TO END, and not just nic_pci(). The unit check asserts the address is
+# resolved; this asserts the GENERATED STANZA names it, which is the thing VPP
+# reads. Those are different failures: a resolver that works and a stanza that
+# still says no-pci would leave the box exactly as broken.
+_vd = tempfile.mkdtemp()
+build(_vd, 1, 4, 1, nic_node=0, hugepages_1g=8, isolated="1-3",
+      nic_pci="0000:00:13.0", nic_bus="virtio4")
+_vout = run(_vd, "--interface", "eth0", "--subscribers", "1000")
+check("dev 0000:00:13.0" in _vout,
+      f"a virtio card produced no device line, so VPP is handed nothing and "
+      f"the box forwards nothing with the interface named correctly: "
+      f"{_vout[_vout.find('dpdk'):][:120]!r}")
+check("no-pci" not in _vout,
+      f"the stanza says no-pci for a card with a PCI address: "
+      f"{_vout[_vout.find('dpdk'):][:120]!r}")
+
+# And the bare-metal shape still works, because the walk must not depend on
+# there being a bus device in the way.
+_bd = tempfile.mkdtemp()
+build(_bd, 1, 4, 1, nic_node=0, hugepages_1g=8, isolated="1-3",
+      nic_pci="0000:3b:00.0")
+_bout = run(_bd, "--interface", "eth0", "--subscribers", "1000")
+check("dev 0000:3b:00.0" in _bout,
+      f"a card whose device link points straight at the PCI device stopped "
+      f"working: {_bout[_bout.find('dpdk'):][:120]!r}")
+print("  the stanza names the card on both shapes")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
