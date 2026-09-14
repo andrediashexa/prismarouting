@@ -75,6 +75,24 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The comment over `bpa-expire-process` claimed a bound the barrier does not
+  have** ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). It
+  said "the budget keeps each pass short: at 10k sessions the barrier is held
+  for microseconds", which is true of the session walk and of nothing else in
+  that acquisition. Read from the source: the per-pool `bpa_dyn_reap()` loop,
+  `bpa_blocks_log_all()` and `bpa_log_drain()` all run inside the same barrier,
+  and `BPA_EXPIRE_BUDGET` bounds none of them. On a dynamic-mode box with
+  logging enabled the held interval therefore follows the logging load and the
+  pool count, not the session table.
+
+  No behaviour changes. The open half of that issue is the held-barrier
+  interval measured under control-plane load, which needs hardware a virtio
+  guest cannot stand in for, and the comment was the thing that would have sent
+  whoever takes it to vary the wrong knob. `docs/appliance.md` points at the
+  comment rather than restating the list, so there is one copy to keep true.
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
