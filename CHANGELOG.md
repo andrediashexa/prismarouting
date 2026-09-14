@@ -75,6 +75,10 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+## 0.73.0 - the box keeps the list of what was installed on it
+
+[#302](https://github.com/andrediashexa/hexarouting/issues/302).
+
 ### Added
 
 * **A box can say which of its own files are not from the version it claims**
