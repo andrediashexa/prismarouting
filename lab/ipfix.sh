@@ -356,6 +356,44 @@ expect "a block pinned while the log was off is announced when it comes on (got 
 expect "and its release still arrives (got ${OFF_D})" \
   test "${OFF_D:-0}" -eq 1
 
+# --- and the marker comes FIRST, which is what four places say it does ---
+#
+# docs/logging.md, bpa_log.h above bpa_log_marker_emit(), and the comments
+# sitting on the two lines that arm it in bpa_log.c and bpa_log_tcp.c all say
+# the marker is sent when a transport comes up, BEFORE the pin replay, so that
+# a collector knows which incarnation the records that follow belong to before
+# it reads them. That is #217's whole argument: records reaching a collector
+# ahead of this boot's marker belong to the previous incarnation as far as the
+# collector can tell, and the pins are this boot's allocations.
+#
+# Read off the collector and not off our own counters, because the ordering
+# being asserted is an ordering ON THE WIRE. bpa_log_marker_emit() dispatches
+# its own buffer and the block records go out of a different report's, so
+# nothing inside the plugin would show the difference.
+#
+# The marker is anchored to the template announcement that precedes the pin
+# rather than simply required to have a lower line number. Markers repeat
+# every 30 s, so "a marker appeared earlier in the capture" is satisfied by a
+# marker from a previous transition and by one from the timer - neither of
+# which is the marker this box owes this transport. Between the template and
+# the pin is the only window that belongs to this transition.
+marker_before() {
+  # $1: an extended regex matching the allocation record that ends the window.
+  printf '%s\n' "$C" | awk -v want="$1" '
+    /TEMPLATE/                 { tmpl = NR; marker = 0; next }
+    /RESTART-MARKER/           { if (!marker) marker = NR; next }
+    $0 ~ want && !done          { done = 1
+                                 print (marker > tmpl) ? "yes" : "no" }'
+}
+FIRST_PIN=" ALLOCATION +100\.64\.0\.2 -> 200\.150\.0\.16 portas 33792-50175"
+expect "the marker reached the collector before the pin it replayed" \
+  test "$(marker_before "$FIRST_PIN")" = yes
+# The same question at the FIRST time the transport came up, which is the one
+# a rebooted box lives through. A fix that only reordered the reconnect path
+# would leave every boot wrong and this lab green.
+expect "and before the first record of the first transport to come up" \
+  test "$(marker_before " ALLOCATION ")" = yes
+
 # --- a pool deleted while it was holding blocks (#215) ---
 #
 # The precondition first. With no block held at the instant of the delete

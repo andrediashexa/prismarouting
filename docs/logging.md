@@ -268,7 +268,15 @@ no private codepoint. It is in VPP's own element table already.
 
 * Sent when a transport comes up, **before** the pin replay, so a collector
   knows which incarnation the records that follow belong to before it reads
-  them.
+  them. Over TCP that is a guarantee, because a stream delivers in order. Over
+  UDP it is the order the box puts them on the wire in and nothing more: two
+  datagrams can be reordered by the network, and a marker that arrives late is
+  the same class of event as one that is lost, which the next one closes.
+  Emitted in `bpa_log_drain()` ahead of the queue, because that is the only
+  place the ordering can be decided: the two enable paths can arm the marker
+  and cannot send it, and for five releases the arming was followed by a drain
+  that sent the pins first
+  ([#282](https://github.com/andrediashexa/hexarouting/issues/282)).
 * Repeated every 30 s. Over UDP a marker that went out once and was lost would
   leave the collector reading this incarnation's records as the previous one's,
   which is the ambiguity it exists to remove. Sixteen bytes every half minute.
