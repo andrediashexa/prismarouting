@@ -1970,8 +1970,8 @@ echo "=== every self-test line fits the 80-column console it is printed on ==="
 LAT=$FAKE/latency-lines
 cp "$FAKE/every-line" "$LAT"
 if [ ! -s "$LAT" ]; then
-  bad "no tuning or latency line was collected at all, so this check" \
-      "measured nothing: an empty file has no line over 79 columns"
+  bad "no self-test output was collected at all, so this check measured" \
+      "nothing: an empty file has no line over 79 columns"
 else
   WIDE=$(awk 'length > 79 {print length": "$0}' "$LAT" | sort -u)
   if [ -z "$WIDE" ]; then
