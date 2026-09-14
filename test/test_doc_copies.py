@@ -565,6 +565,72 @@ else:
         else:
             ok(f"{path}: all {len(rows)}, by name, seconds and RFC")
 
+print("\n=== a figure this project has published a correction for ===")
+# #288 reported that `statseg { size 1G }` costs `+395 MB`. It does not: in the
+# table that number came from it is the RSS difference between 0 and 40,000
+# SESSIONS on a box that already had the 1 GB segment, so it is the cost of the
+# traffic and not of the segment. Nothing measured isolates what a larger
+# statseg costs an idle box, and docs/appliance.md says so in as many words.
+#
+# docs/roadmap.md restated the retracted number as fact anyway, in the same
+# release that shipped the correction, because the row was written from the
+# issue body and nothing compared the two. That is this file's subject exactly:
+# a second copy of a truth is fine, a second copy nothing compares is not.
+#
+# A NUMBER and not a sentence, which is why the needle is sound here where the
+# header above rejects needles against messages: a retracted figure either
+# appears or it does not, and it cannot be reworded into passing.
+_CORRECTION = re.compile(r"\+395 MB.{0,400}?correction", re.S)
+_FIGURE = re.compile(r"\+?\s*395\s*MB")
+_HOLDER = "docs/appliance.md"
+
+if not _CORRECTION.search(read(_HOLDER)):
+    bad(f"{_HOLDER} no longer carries the correction for the +395 MB figure, "
+        f"so this check is holding the other documents to nothing and the "
+        f"retracted number has no owner")
+else:
+    ok(f"{_HOLDER} holds the correction, so there is something to compare "
+       f"against")
+    _restated = []
+    _read = 0
+    # SKIPPED BY PATH COMPONENT, not by substring. Written as
+    # `any(s in dirpath for s in (".git", "/build", "/ref"))` this walk
+    # silently skipped `wiki/referencia/` and everything under it, because
+    # "/ref" is a substring of "/referencia" - eleven of the pages an operator
+    # actually reads, reported green having never been opened. Found by
+    # counting what the walk reached (38 files) against what the tree has.
+    _SKIP = {".git", "build", "ref", ".build-vpp"}
+    for _dirpath, _dirnames, _filenames in os.walk(REPO):
+        _dirnames[:] = [_d for _d in _dirnames if _d not in _SKIP]
+        for _f in _filenames:
+            if not _f.endswith(".md"):
+                continue
+            _rel = os.path.relpath(os.path.join(_dirpath, _f), REPO)
+            _read += 1
+            # No exception but the holder, and the holder earns it because
+            # naming the figure is how the correction is made. Measured before
+            # the rule was written: zero occurrences anywhere else, the
+            # changelog included, so an exception list would be an unused one.
+            if _rel == _HOLDER:
+                continue
+            for _line in read(_rel).split("\n"):
+                if _FIGURE.search(_line):
+                    _restated.append(f"{_rel}: {_line.strip()[:120]}")
+    if _restated:
+        for _r in _restated:
+            bad(f"the retracted +395 MB figure is stated again, and the only "
+                f"document allowed to name it is the one that corrects it "
+                f"({_HOLDER}):\n    {_r}")
+    elif _read < 45:
+        # A walk that skips too much reports green having opened nothing, and
+        # says the same words as a walk that read everything. The first version
+        # of this one skipped wiki/referencia/ and reported on 38 files where
+        # the tree has 52.
+        bad(f"only {_read} document(s) were read, so this check is asserting "
+            f"almost nothing: something in the walk is skipping the tree")
+    else:
+        ok(f"and none of the other {_read} document(s) restates it")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

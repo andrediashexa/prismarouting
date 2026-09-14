@@ -1222,6 +1222,58 @@ run: FRR 10.7.1 answers `% Unknown command`. The probe that produced the wrong
 claim had typed the target spelling before looking for it, which is the trap
 section 4d of that file already existed to warn about.
 
+#### The one memory figure the box does not choose
+
+[#288](https://github.com/andrediashexa/hexarouting/issues/288) - *settled, and
+the answer is that nothing here sizes it*. `hexarouting-tune` computes
+hugepages, workers, `buffers-per-numa` and `main-heap-size`, and writes no
+`statseg` stanza, so a shipped box runs on VPP's built-in 32 MB. Measured
+twice, at the same step: that box aborted between 7,000 and 8,000 interfaces,
+in `os_panic` and `SIGABRT`, taking the whole dataplane rather than refusing
+the interface that was one too many.
+
+**The decision was whether the tuner should size it, and it should not.** The
+tuner reads the CPU topology, the pages the kernel actually reserved, the RAM,
+the NIC's PCI address and `HEXA_SUBSCRIBERS`. None of those is an interface
+count. Run against this product's own RAM floor - 4 GB, 4 cores, the shipped
+`HEXA_SUBSCRIBERS=200000` - the tuner already reports:
+
+```
+# 1G hugepages: 2 GB requested (sized for 200000 subscribers), 2 reserved right now
+# WARNING: 5 GB of hugepages were needed for 200000 subscribers, but this machine has 4 GB of RAM.
+#          Capped at 2 GB. Expect fewer subscribers than configured, or add RAM.
+  main-heap-size 1G
+```
+
+Sizing the segment from `HEXA_SUBSCRIBERS` on that box would ask for a further
+**553 MB** at the measured 2.9 kB per interface, out of the 2 GB the tuner
+leaves outside hugepages, for interfaces that never appear: a CGNAT subscriber
+is a translation and 200,000 of them share a handful of ports. A constant
+instead is what `main-heap-size` stopped being when it started reading the
+reserved pages, and a new `HEXA_INTERFACES` is a knob whose right value the
+operator cannot know before the box is configured.
+
+So the number stays with the operator, in `/etc/hexarouting/vpp-base.conf`,
+which the tuner concatenates **ahead of** the stanzas it generates and
+therefore never overrides. What shipped instead is that the box says where it
+stands: one line in the tuner's report, and a self-test check that is a warning
+at half the segment and a failed check naming `os_panic` and `SIGABRT` at three
+quarters. Three quarters rather than nine tenths because the counter directory
+is one contiguous block copied to grow, so the last part cannot be spent.
+`appliance/test_tune.py` asserts no `statseg` stanza is generated in either the
+tuned or the first-boot configuration, and `test/test_selftest.sh` drives the
+check over a comfortable box, a box at 60%, a box at 90%, a box whose
+`startup.conf` carries a stanza, and a dataplane that does not answer.
+
+The cost this issue quoted for `statseg { size 1G }` is **not** the cost of the
+segment, and `docs/appliance.md` holds that correction and is the only document
+that names the figure: in the table it came from it is the RSS difference
+between 0 and 40,000 sessions on the 1 GB box, so it is the cost of the traffic.
+Nothing measured isolates what a larger segment costs an idle box. What remains
+genuinely open is only what a **BNG** would set it to, which is
+[#170](https://github.com/andrediashexa/hexarouting/issues/170)'s to answer
+because it is the thing that would know its own subscriber ceiling.
+
 #### What is blocked on somebody else, and on what
 
 Kept short and kept honest, so the rest of this file is read as work that can
@@ -1234,7 +1286,6 @@ actually start.
 | [#226](https://github.com/andrediashexa/hexarouting/issues/226) which mechanism restores paired address pooling | the **claim** is already corrected in all four places it was made, because a conformance statement the box cannot honour is worse than the absent property. The mechanism is the decision: it changes where every extension in every dynamic pool lands, and two of the four options inherit #55's reachability limit, so they would apply on a two-worker box and not on a four-worker one |
 | [#248](https://github.com/andrediashexa/hexarouting/issues/248) every box installed from a released ISO shares one SSH host key | the maintainer's, and it is a disclosure rather than a repair. An appliance installed from any release up to 0.66.0 carries the host key its build container generated, and the private half of it is inside the published artefact, so an operator's SSH session can be impersonated by anybody holding the ISO and the client will not object. #245 generates a set per box at install time and does nothing for a box already in the field. What those operators are told, and whether the public wiki or the release note carries it, is the decision |
 | [#277](https://github.com/andrediashexa/hexarouting/issues/277) publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. `sh tools/wiki-status.sh` measures the gap: **27 pages corrected here and still showing operators the old text, plus one page the wiki does not have at all**. One is wrong rather than merely stale: the published page says a refused `commit` applies nothing, which stopped being true when the read-back check became a refusal and is read by somebody deciding what state their box is in. The mirror also carries pages for #67, #182, #210, #213, #217, the block stride (#55), what `commit` refuses, and the four IGP `show` commands. `test/test_wiki_roundtrip.sh` checks the mirror keeps the format the two scripts agree on, after five pages were found opening with their own title up to four times (#225). The tooling no longer stands in the way: `tools/wiki-push.sh <file>` reads the document id from `wiki/.ids`, so nobody has to find 28 ids by hand, and `tools/wiki-pull.sh` refuses to rewrite the mirror while those pages are unpublished - it deletes `wiki/`, so pulling first would have lost all 28. What is left is the token |
-| [#288](https://github.com/andrediashexa/hexarouting/issues/288) whether `hexarouting-tune` sizes the statistics segment, and from what | the tuner sizes hugepages, workers, buffers and the main heap and writes no `statseg` stanza at all, so VPP takes its 32 MB default and the box **aborts** between 7,000 and 8,000 interfaces - `SIGABRT`, with nothing said about what ran out. `statseg { size 1G }` reaches 40,000 at +395 MB. A CGNAT box terminating subscribers on a handful of ports never approaches it, which is why nothing has hit it; anything creating an interface per subscriber reaches it at a few thousand |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
 | [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
 
