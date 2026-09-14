@@ -65,7 +65,7 @@ save
 Confirme:
 
 ```
-show cgnat pool
+show cgnat forward
 ```
 
 

@@ -17,7 +17,7 @@ save
 ```
 
 ```
-show cgnat pool
+show cgnat forward
 ```
 
 É ajuste **aplicado no lugar**: não derruba sessão de ninguém.
@@ -135,7 +135,7 @@ show cgnat subscriber 100.64.0.5     diz que o bloco está preso por um forward
 # Como conferir
 
 ```
-show cgnat pool
+show cgnat forward
 show cgnat subscriber 100.64.0.5
 ```
 

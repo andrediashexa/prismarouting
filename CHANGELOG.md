@@ -610,6 +610,30 @@ version has a chance of seeing it.
   alone, is the word after `show` one the VTY offers? 62 such lines, 0 unknown,
   and `show bpa ...` fails on the first word.
 
+* **Three operator pages confirmed a port forward with a command that cannot
+  print one**
+  ([#314](https://github.com/andrediashexa/hexarouting/issues/314)). The
+  *Como conferir* after `forward tcp 8080 to ...` said `show cgnat pool`.
+  `format_bpa_pool` is 256 lines and prints the pool's addresses, blocks, mode,
+  timeouts, ALGs and utilisation, and **no forwards**: they are in
+  `show cgnat forward`.
+
+  So an operator who set a forward and checked it the way the page said saw a
+  pool that looked exactly as it did before, and had no way to tell a forward
+  that took from one that did not. The reference page one directory over gets
+  it right and even says this is the first thing to establish when somebody
+  calls about port forwarding.
+
+  The ALG recipe on the same page keeps `show cgnat pool`, because the pool
+  view **does** print `alg`. Checked rather than assumed: changing both would
+  have been the same mistake in the other direction.
+
+  No mechanical check. Whether a command answers the question a page is asking
+  is not something a machine can decide, and the sound narrow checks this
+  project does keep - does the command exist, does the path resolve - would
+  both have passed this page.
+
+
 
 
 
