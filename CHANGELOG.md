@@ -149,6 +149,37 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A virtio NIC could never be the dataplane interface, so every box in a VM
+  was given no card** ([#286](https://github.com/andrediashexa/hexarouting/issues/286)).
+  Reported from a box under evaluation: `show interface` still had nothing,
+  with the interface named.
+
+  `/sys/class/net/<if>/device` points at the device that OWNS the netdev, and
+  on a virtio guest that is the virtio bus device, whose PARENT is the PCI one:
+
+  ```
+  /sys/class/net/ens18/device -> ../../../virtio3
+  realpath: /sys/devices/pci0000:00/0000:00:12.0/virtio3
+  ```
+
+  The card has a PCI address - `0000:00:12.0`. Both readers took the basename,
+  got `virtio3`, decided it was not PCI, and the tuner wrote `no-pci`. DPDK
+  drives virtio through its own poll-mode driver, so the card was always
+  eligible; the resolution stopped one directory short.
+
+  **Bare metal is why it was not noticed.** An Intel NIC's `device` link points
+  straight at the PCI device, and there the basename IS the address - so the
+  same code works on the hardware it was written against and fails on every
+  VM, which is where it is evaluated and where a great many deployments run.
+
+  Both readers walk up to the nearest PCI ancestor now, and a check drives them
+  against the same tree and compares their answers: the tuner decides what goes
+  into `startup.conf` and `show hardware` decides what the operator is offered,
+  so a box where those two disagree offers a card the tuner will refuse.
+
+  The shape test gained sysfs's field widths. Without them `a:b:c.d` parses as
+  a PCI address, and what this decides is which directory is handed to DPDK.
+
 * **Six boot self-test lines ran past the 80-column console, the widest at 153
   columns** ([#285](https://github.com/andrediashexa/hexarouting/issues/285)).
   The self-test writes to `/dev/console` on a racked appliance. A line only

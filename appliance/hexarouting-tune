@@ -101,6 +101,27 @@ def isolated_now(root):
         root, "sys/devices/system/cpu/isolated"), ""))
 
 
+def is_pci_addr(name):
+    """
+    Is `name` a PCI address as sysfs spells it: 0000:3b:00.0
+
+    Domain, bus, then device.function. Checked by SHAPE and not by a looser
+    pattern, because what this decides is which directory gets handed to DPDK.
+    """
+    parts = name.split(":")
+    if len(parts) != 3 or "." not in parts[2]:
+        return False
+    dev, _, func = parts[2].partition(".")
+    hexd = "0123456789abcdefABCDEF"
+    # The WIDTHS sysfs uses: a four-digit domain (wider on a box with many),
+    # two-digit bus, two-digit device, one-digit function. Without them
+    # 'a:b:c.d' is accepted as an address, and what this decides is which
+    # directory is handed to DPDK.
+    return bool(len(parts[0]) >= 4 and len(parts[1]) == 2
+                and len(dev) == 2 and len(func) == 1
+                and all(c in hexd for c in parts[0] + parts[1] + dev + func))
+
+
 class Topology:
     def __init__(self, root="/"):
         self.root = root
@@ -137,15 +158,41 @@ class Topology:
             self.nodes = {0: sorted(self.cpus)}
 
     def nic_pci(self, ifname):
-        """PCI address of the NIC, to name the device in the dpdk stanza."""
+        """
+        PCI address of the NIC, to name the device in the dpdk stanza.
+
+        WALKED UP, not taken from the first component. `device` points at the
+        device that OWNS the netdev, and on a virtio guest that is the virtio
+        bus device, whose parent is the PCI one:
+
+            /sys/class/net/ens18/device -> ../../../virtio3
+            realpath: /sys/devices/pci0000:00/0000:00:12.0/virtio3
+
+        Taking the basename gives `virtio3`, so this returned None and the
+        tuner wrote `no-pci` - on every VM, with the interface named correctly
+        (#286). DPDK drives virtio through its own poll-mode driver, so the
+        card was always eligible; the resolution stopped one directory short.
+
+        Bare metal is why it went unnoticed for so long: an Intel NIC's
+        `device` link points straight at the PCI device, and there the
+        basename IS the address.
+        """
         link = self.p("sys/class/net", ifname, "device")
         try:
-            addr = os.path.basename(os.path.realpath(link))
+            path = os.path.realpath(link)
         except OSError:
             return None
-        # 0000:3b:00.0 - anything else is not PCI (virtio-mmio, and so on)
-        parts = addr.split(":")
-        return addr if len(parts) == 3 and parts[0].isalnum() else None
+        # Nearest PCI ancestor first. A device can sit several buses below the
+        # PCI one, and it is the nearest that DPDK is handed.
+        while path and path != "/":
+            base = os.path.basename(path)
+            if is_pci_addr(base):
+                return base
+            path = os.path.dirname(path)
+        # Genuinely not PCI: virtio-mmio, a platform device, a veth. DPDK has
+        # nothing it could be given, which is a different answer from "this
+        # box has no card".
+        return None
 
     def default_route_if(self):
         """
