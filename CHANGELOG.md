@@ -62,6 +62,28 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`lab/upgrade.sh` would have been NOT MEASURED in every release suite it
+  ever ran in.** Git inside the lab container refuses the bind-mounted
+  repository outright - `fatal: detected dubious ownership in repository at
+  '/src'`, because the container is root and the tree is the operator's - so
+  the `git archive` the lab extracts the old release with never answered, on
+  any machine, in a clone as much as in a worktree. It fell back to a cache
+  somebody had to populate by hand, and without one the verdict was NOT
+  MEASURED: a lab reporting nothing wrong while asserting nothing at all.
+  Measured in a fresh clone, which is what the release suite runs from: NOT
+  MEASURED before, 35 checks and LAB PASSED after.
+
+  Fixed with a one-shot `git -c safe.directory=/src` rather than a config
+  write. The container is thrown away so the global file would cost nothing
+  here, but [#220](https://github.com/andrediashexa/hexarouting/issues/220) is
+  what the habit costs: 2325 copies of one line in a `~/.gitconfig` this
+  product does not own.
+
+  The message blamed the wrong cause, which is how this survived being
+  written. It named a git worktree and a missing tag, and both were innocent.
+  It now prints git's own line and says what each of the two remaining causes
+  means, neither of which can be fixed from inside the container.
+
 * **An upgrade lab: nothing in this repository had ever put one version of the
   product on top of another**
   ([#291](https://github.com/andrediashexa/hexarouting/issues/291)).
