@@ -143,6 +143,28 @@ END {
   # positive that survived review.
   NEEDLE = "still open|remains open|what remains|remains |what is left|" \
            "does not do|depends on|is missing|still needs|not yet|why it waits"
+  # THE WEAK HALF, which may only be attributed to a reference in its own
+  # CLAUSE and never by falling back to the paragraph.
+  #
+  # These four read as ordinary English about anything, and each of them has
+  # now produced a finding about a sentence that was not a claim at all:
+  # "what remains can wait" in a rule about when a release is cut, "not yet
+  # able to do its job" about a BOX, and "names which half is missing" about a
+  # MESSAGE the product prints. Three false findings, three different
+  # sentences, all of them attributed through the block fallback to an issue
+  # named elsewhere in the same paragraph.
+  #
+  # The strong half keeps the fallback. "still open", "remains open", "still
+  # needs", "why it waits" and "queued as pending" are not things anybody
+  # writes about a box or a message: they are about work, so a paragraph that
+  # names one issue and says one of them is making a claim about that issue.
+  #
+  # The cost is a miss: a clause that says "is missing" about real remaining
+  # work, with the issue number in the sentence before it, will not be seen.
+  # That is the right way round. A tool that reports work as outstanding when
+  # it is not is a tool somebody stops reading, and this one had produced
+  # three such findings against five true ones.
+  WEAK = "what remains|what is left|is missing|not yet"
 
   # ---- every reference, and the first line it appears on
   for (i = 1; i <= last; i++) {
@@ -320,7 +342,10 @@ END {
       # maintainer decides what remains can wait" - was attributed to the #292
       # named in rule 5, two rules further down. A false finding in a tool
       # that flags drift is how the tool stops being run.
-      tgt = near(clause, rel); if (!tgt) tgt = back(txt, p)
+      tgt = near(clause, rel)
+      # The fallback is for the strong needles only. See WEAK above for the
+      # three sentences that bought this rule.
+      if (!tgt && w !~ "^(" WEAK ")$") tgt = back(txt, p)
       if (bt[k] == "row" && subj) tgt = subj
       if (!tgt || state[tgt] != "CLOSED") continue
       if ((tgt " @" k) in seen) continue

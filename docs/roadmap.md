@@ -1480,17 +1480,19 @@ are spilling to disk because the collector is unreachable prints
 because every fixture has the TCP transport disabled - #298's argument one
 layer down.
 
-[#299](https://github.com/andrediashexa/hexarouting/issues/299) - **half
-fixed**. On a box whose dataplane held only `local0`, a pool committed cleanly
+[#299](https://github.com/andrediashexa/hexarouting/issues/299) - *fixed*. On a box whose dataplane held only `local0`, a pool committed cleanly
 and `show cgnat pool` reported `capacity 504 subscribers (usable 504)`. Nothing
 was attached to CGNAT, so no packet could reach it in either direction. The
 figure now carries the reason beside it and names which half is missing, under
 the rule the worker-sharding caveat three lines above it already follows: a
 line that appears on a correctly attached box is one people learn to skip, and
 then they skip the real one too. Not a refusal, because pools before interfaces
-is what `--load` does at every boot. What is left is the self-test's own
+is what `--load` does at every boot. The self-test's own
 `[ ok ] 1 CGNAT pool(s) configured` for that same pool, six lines below the
-warning saying the box cannot forward.
+warning saying the box could not forward, went with it: it says the count and
+the consequence now, as `[info]` rather than a second `[warn]`, because the
+box is already warned about the cause and a count an operator acts on stops
+meaning anything when one cause contributes to it twice.
 
 #### What a box can say about itself, and what it cannot
 
@@ -1519,6 +1521,29 @@ mismatch means are the decisions**, and the second is the harder one - a file
 that differs is not necessarily wrong, since an operator may have edited a
 conffile `install.sh` deliberately does not overwrite, and a check that
 shouted about every deliberate edit is one somebody switches off.
+
+#### A box can say which of its own files are not from the version it claims
+
+[#302](https://github.com/andrediashexa/hexarouting/issues/302) - *fixed*.
+`show version` printed one line about a box made of about twenty files and
+could verify one of them. Measured on a root stamped `0.70.0 (f10a3ed)` with
+v0.68.0's `hexarouting-tune` copied onto it: the self-test report was
+**identical line for line** to the same box untouched, 42 lines each.
+
+`appliance/install.sh` records what it installed as it installs it, through a
+wrapper around `install`, so nothing is enumerated and there is no second list
+to fall out of date. The boot self-test checks it with `sha256sum -c` and takes
+the verdict from the **exit status**: `<path>: FAILED` is coreutils' wording
+rather than ours, and a needle for it would stop matching the day coreutils
+rephrased, silently and in the direction that reports a broken box as healthy.
+
+The three files the installer deliberately does not overwrite are named with no
+checksum at all, because a checksum nobody may act on is an invitation to start
+acting on it. There were three and not the two anybody would guess:
+`hexarouting.conf` was a `printf` of a banner rather than a copy.
+
+18 ms at every boot over 31 files and 2.5 MB, measured and printed by the suite
+on every run rather than left as a number in a commit message.
 
 #### The rename to PrismaRouting
 
