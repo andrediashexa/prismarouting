@@ -27,6 +27,24 @@ PLUGIN_DIR=${PLUGIN_DIR:-/usr/lib/x86_64-linux-gnu/vpp_plugins}
 
 say() { echo "==> $*"; }
 
+# WHAT WAS HERE BEFORE, read before a single byte of it is overwritten.
+#
+# This is the only moment the question can be asked. Forty lines down this
+# script writes /usr/share/hexarouting/VERSION with the build it is putting on
+# the box, and from then on there is nothing left that remembers what the box
+# used to be - the stamp is the one file that answers it, and this script is
+# what destroys the answer. Read late, it reads back what this run just wrote
+# and every install looks like a first install, which is the state this file
+# shipped in.
+#
+# Empty means a first install: an ISO build into a fresh debootstrap, or a box
+# that never had this product. It is also what a box whose stamp somebody
+# deleted looks like, and that is the right way round - saying nothing about
+# running services is the quiet failure, and saying they are the old build
+# when there is no evidence of an older build would be a claim this script
+# cannot support.
+PREV_STAMP=$(cat "$DESTDIR/usr/share/hexarouting/VERSION" 2>/dev/null || true)
+
 say "binaries"
 # hexash imports config.py from its own directory, so both have to travel
 # together. Installing only hexash.py put a VTY on the box that raised
@@ -311,15 +329,14 @@ done
 # is being assembled.
 if [ -z "$DESTDIR" ] && systemctl --version >/dev/null 2>&1 \
    && [ -d /run/systemd/system ]; then
+  LIVE_BOX=1
   say "enabling services"
   systemctl daemon-reload
   systemctl enable hexarouting-tune.service hexarouting.service \
     hexarouting-selftest.service hexarouting-installer.service \
     hexarouting-confirm.timer
-  echo
-  echo "Installed. Adjust /etc/hexarouting/tune.env and reboot so that"
-  echo "isolcpus and hugepages take effect."
 else
+  LIVE_BOX=0
   # offline enablement: creates the link systemctl enable would create
   install -d -m 0755 "$DESTDIR/etc/systemd/system/multi-user.target.wants"
   for u in hexarouting-tune.service hexarouting.service \
@@ -335,4 +352,135 @@ else
   ln -sf "/lib/systemd/system/hexarouting-confirm.timer" \
     "$DESTDIR/etc/systemd/system/timers.target.wants/hexarouting-confirm.timer"
   say "installed into ${DESTDIR:-/} (services enabled offline)"
+fi
+
+# THE CLOSING WORDS. Nothing below this line installs anything.
+#
+# WHY ANY OF THIS IS SAID. Everything above is a file copy. None of it
+# restarts anything, and that default is deliberate and is not changing:
+# restarting the dataplane drops every session and every port block the box is
+# carrying, which is not a decision an installer gets to take on behalf of an
+# operator who ran it at two in the morning. What was wrong was that the
+# script took that decision silently and then closed with a first install's
+# sentence, so the reader walked away from a box whose control plane is the
+# new build and whose translating dataplane is the old one (#291).
+#
+# WHY IT IS GATED ON THE STAMP AND NOT ON ANYTHING ELSE. A stamp that was
+# there before this run is the one piece of evidence on the box that an older
+# build was installed, and an older build that was installed is an older build
+# something may still be running. A debootstrap has no stamp, so the ISO build
+# reaches this and prints nothing, which is why there is no second condition
+# here keeping it quiet: the honest test and the ISO test are the same test.
+#
+# WHY THE VERSIONS ARE PRINTED WHEREVER THERE IS A STAMP AND THE SERVICES ARE
+# NOT. The two halves answer different questions. "Which build replaced which"
+# is true of any root this script wrote into, including a $DESTDIR fakeroot.
+# "What is still running the old one" is only true of the machine this script
+# is running ON, and a fakeroot install that talked about the host's
+# vpp.service would be describing a box it did not touch.
+#
+# WHY IT IS ALL DOWN HERE, BELOW THE BRANCH THAT ENABLES THE SERVICES, RATHER
+# THAN ONE MESSAGE IN EACH ARM OF IT. Because otherwise nothing could ever
+# test it. Three of these four screens are only reachable on a root that IS
+# the running machine, with systemd up - and a unit suite that installed into
+# / to read a sentence is a unit suite nobody can run twice, while every
+# container this product's labs run in has no systemd at all. Written as one
+# section at the end of the file, reading three variables set above and
+# touching nothing, it can be run on its own against a box state this machine
+# cannot be put into. test/test_install_says.sh does exactly that, from the
+# marker line above, and it is the only reason the paragraph about vpp.service
+# has a red light behind it.
+#
+# So: PREV_STAMP, stamp and LIVE_BOX in, words out. Nothing else, and nothing
+# after it.
+if [ -z "$PREV_STAMP" ]; then
+  # A FIRST INSTALL'S sentence, and now only on a first install. It tells the
+  # operator to do two things that have already been done on a box that is
+  # being upgraded: tune.env is theirs and this script does not touch it once
+  # it exists, and the reboot it asks for is about isolcpus and hugepages,
+  # which took effect the first time. Printed on an upgrade it reads as
+  # "nothing to do here", which is the opposite of true.
+  #
+  # Still only on a live box, because on any other root there is nothing to
+  # reboot and no tune.env of the operator's to adjust yet. That is where this
+  # sentence has always been printed and this change does not move it.
+  if [ "$LIVE_BOX" = 1 ]; then
+    echo
+    echo "Installed. Adjust /etc/hexarouting/tune.env and reboot so that"
+    echo "isolcpus and hugepages take effect."
+  fi
+else
+  echo
+  echo "Upgraded. Every file is in place, and nothing was restarted."
+  echo
+  echo "  the version stamp was  $PREV_STAMP"
+  echo "  and now says           $stamp"
+fi
+
+if [ -n "$PREV_STAMP" ] && [ "$LIVE_BOX" = 1 ]; then
+  echo
+  echo "A process does not re-read the file it was loaded from, so whatever"
+  echo "was already up when this started is still the OLD build:"
+  echo
+  # ASKED, not assumed, and each answer gets its own paragraph rather than one
+  # paragraph with a word swapped in the middle of it.
+  #
+  # A box being upgraded normally has both of these up, but one being repaired
+  # or one that has never been booted into service may have neither - and the
+  # sentence that is right for a running dataplane is WRONG for a stopped one
+  # in the direction that matters. "It is what translates every packet on this
+  # box" printed over a stopped vpp.service sends an operator to schedule a
+  # maintenance window for a restart that would cost them nothing, and the
+  # real answer, that this box is already going to come up on the new plugin,
+  # is the one they needed.
+  if systemctl is-active --quiet vpp.service 2>/dev/null; then
+    echo "  vpp.service is running, and it is still holding the"
+    echo "  bpa_plugin.so that this install has just replaced underneath it."
+    echo "  For as long as it stays up it is what translates every packet on"
+    echo "  this box, and it is the old build."
+  else
+    echo "  vpp.service is NOT running, so nothing on this box is"
+    echo "  translating anything. Whenever it is next started it loads the"
+    echo "  bpa_plugin.so this install has just written, which is the new"
+    echo "  build, and there is no split to clear."
+  fi
+  echo
+  # RemainAfterExit=yes is why the oneshot can be asked this at all: it reports
+  # active for as long as the configuration it applied is the one in force.
+  if systemctl is-active --quiet hexarouting.service 2>/dev/null; then
+    echo "  hexarouting.service is active. It is a Type=oneshot: it applied"
+    echo "  /etc/hexarouting/hexarouting.conf at the last boot, with the VTY"
+    echo "  that was installed then, and exited."
+  else
+    echo "  hexarouting.service is NOT active, so nothing has applied"
+    echo "  /etc/hexarouting/hexarouting.conf to the dataplane. It is a"
+    echo "  Type=oneshot and it runs at boot; it has not run on this one."
+  fi
+  echo
+  # Pointed at rather than repeated. `show version` prints the dataplane's
+  # build beside the box's own and explains the split in its own words
+  # (#291 item 2), and a refusal that comes back from a dataplane older than
+  # the VTY says the upgrade is why (#293). A second copy of that paragraph
+  # here is a second copy to keep in step with the first.
+  echo "'show version' on this box reads both builds and compares them. Take"
+  echo "that reading before deciding anything below."
+  echo
+  echo "Clearing the split is the operator's call, and this installer does"
+  echo "not take it, because neither restart is free:"
+  echo
+  echo "  systemctl restart vpp.service"
+  echo "      picks up the new plugin, and DROPS EVERY SESSION AND EVERY PORT"
+  echo "      BLOCK on this box: every subscriber behind it is translated"
+  echo "      from nothing again. hexarouting.service is PartOf=vpp.service,"
+  echo "      so it is stopped and started with it and re-applies the"
+  echo "      configuration to the new dataplane."
+  echo
+  echo "  systemctl restart hexarouting.service"
+  echo "      re-applies /etc/hexarouting/hexarouting.conf through the new"
+  echo "      VTY and exits. It drops no session. It also does not change"
+  echo "      which plugin the dataplane is running, so on its own the split"
+  echo "      above stays exactly where it is."
+  echo
+  echo "  a reboot does both, and takes any /etc/hexarouting/tune.env change"
+  echo "  with it."
 fi

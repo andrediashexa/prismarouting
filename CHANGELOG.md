@@ -62,6 +62,28 @@ version has a chance of seeing it.
 
 ### Changed
 
+* **`appliance/install.sh` says when it upgraded a box instead of installing
+  one** ([#291](https://github.com/andrediashexa/hexarouting/issues/291) item
+  3, which closes that issue). It behaved identically on a second run and
+  closed with a first install's sentence - "Adjust /etc/hexarouting/tune.env
+  and reboot so that isolcpus and hugepages take effect" - which an operator
+  who tuned the box a year ago reads as nothing to do. It writes a new
+  `bpa_plugin.so`, runs `daemon-reload` and `enable`, and restarts nothing.
+
+  It reads the version stamp before anything is overwritten, and on an upgrade
+  it names the version that was there and the one that is there now. On a box
+  with systemd it also names which running services are still the older build
+  and what restarting each costs: `vpp.service` picks up the new plugin and
+  drops every session and every port block; `hexarouting.service` re-applies
+  the configuration and drops none, and on its own leaves the split exactly
+  where it was.
+
+  **It still restarts nothing.** Restarting the dataplane unasked is worse than
+  the split; the defect was that the split happened in silence. A stopped
+  `vpp.service` gets a different paragraph, because telling an operator there
+  is a split to clear when there is none sends them to book a maintenance
+  window for nothing.
+
 * **A pool that would translate the box's own BGP session was refused when an
   operator typed it and only logged when the same file was loaded at boot**
   ([#296](https://github.com/andrediashexa/hexarouting/issues/296)). Driven on
