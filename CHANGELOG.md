@@ -555,6 +555,34 @@ version has a chance of seeing it.
   were one test would be the second copy this file's comments spend their
   length warning about.
 
+* **Two screens promised a refusal the box stopped making**
+  ([#309](https://github.com/andrediashexa/hexarouting/issues/309)). Since
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303) a box with
+  only one card **accepts** `dataplane interface` for the card carrying the
+  default route: it moves, and the management address goes with it onto the
+  `linux_cp` pair. Two places still said otherwise, and both of them are read
+  by an operator of exactly that box.
+
+  The boot self-test ended its no-dataplane-interface warning with *"and so is
+  the interface carrying the default route, so naming the management one
+  cannot cut it off"*. `dataplane interface <TAB>` marked that card
+  `carries the default route: refused`. So on a one-NIC VM - how most people
+  meet this product - the completion told the operator their only card was
+  refused, and then the box took it.
+
+  The completion asks the same question the refusal itself asks: is there
+  another card to name instead, read from the same `host_nics()`, so the hint
+  and the answer cannot disagree about what the box has. The self-test states
+  **both** cases rather than deciding which applies: working it out there would
+  put a second copy of the VTY's rule in a shell script, and the two would
+  disagree the first time one of them moved.
+
+  No mechanical check on the self-test's wording, and the reason is the one
+  `test/test_doc_copies.py`'s header already measured three times: comparing a
+  message against the code that would produce it is unsound in both directions.
+  The VTY half is the half a machine can hold, and it is held.
+
+
 
 
 

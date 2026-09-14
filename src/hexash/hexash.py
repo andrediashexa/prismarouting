@@ -11746,15 +11746,30 @@ class Shell:
         The cards LINUX has, with the one carrying the default route marked.
 
         Marked rather than withheld. The operator is choosing between cards
-        that all look alike at the prompt, and the one that must not be chosen
-        is the one they are reached over - so naming it here is the difference
-        between a refusal they read after typing and a choice they never make.
-        It is still refused if they type it anyway.
+        that all look alike at the prompt, and the one they are reached over is
+        the one the answer has to say something about - so naming it here is
+        the difference between a refusal they read after typing and a choice
+        they never make.
+
+        AND THE MARK IS NOT ALWAYS "REFUSED" (#309). It said so unconditionally
+        and has been wrong since #303 on the box where it matters most: with no
+        other card, that name is ACCEPTED and the address moves with it. So on
+        a one-NIC VM - which is how most people meet this product - the
+        completion told the operator their only card was refused, and then the
+        box took it.
+
+        The condition is the one the refusal itself uses: is there another card
+        to name instead. Read from the same host_nics() the refusal reads, so
+        the hint and the answer cannot disagree about what the box has.
         """
         default = self.default_route_nic()
-        return {n["name"]: ("carries the default route: refused"
-                            if n["name"] == default else "card")
-                for n in self.host_nics()}
+        names = [n["name"] for n in self.host_nics()]
+        alone = len(names) == 1
+        return {n: ("carries the default route: the only card, so it is "
+                    "handed over and its address goes with it" if alone
+                    else "carries the default route: refused")
+                if n == default else "card"
+                for n in names}
 
     def dyn_neighbours(self):
         """
