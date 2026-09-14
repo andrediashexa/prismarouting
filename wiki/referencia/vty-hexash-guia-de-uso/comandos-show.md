@@ -80,7 +80,8 @@ hexarouting> show interface
   TenGigabitEthernet0/8/0    up     1500   -                   -
   local0                     down   0      -                   -
 
-  3 interface(s) on the dataplane
+  2 interface(s) on the dataplane can forward
+  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 Responde pelo **dataplane**, com estado, MTU, endereços e o par do `linux_cp`. Esse último porque é o nome que o FRR e o `ip` usam, e quem transita entre as duas ferramentas precisa dos dois lado a lado.
@@ -95,6 +96,8 @@ Este comando já foi repassado ao `vtysh`, que enxerga apenas o que o `linux_cp`
 
 `local0` é o loopback interno do VPP. Aparece na lista — esconder o que o dataplane reporta seria o comando decidindo o que você pode ver — mas não é oferecido na completação, porque não configura nada.
 
+**E não entra na conta.** O número no fim da lista é o de interfaces que encaminham, que é o número a comparar com as placas que você instalou. Contando o `local0`, uma caixa com duas placas dizia três, e uma caixa sem placa nenhuma dizia *uma* logo abaixo da frase que avisava que ela não tinha interface para encaminhar. A linha seguinte ao número diz o que ficou de fora.
+
 A visão do FRR continua em `show ip interface`.
 
 ### `show interface terse` — administrativo e enlace, separados
@@ -108,7 +111,8 @@ hexarouting> show interface terse
   TenGigabitEthernet0/8/0    up     down   -      -
   local0                     down   down   -      -
 
-  3 interface(s) on the dataplane
+  2 interface(s) on the dataplane can forward
+  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
   TenGigabitEthernet0/8/0: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
@@ -133,8 +137,8 @@ hexarouting> show interface description
   TenGigabitEthernet0/8/0    up     down   TRANSITO Vivo AS26599
   local0                     down   down   
 
-  2 of 3 interface(s) described
-  set one with 'description <text>' inside 'interface <name>'
+  2 of 2 interface(s) described
+  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 A descrição fica guardada como a **etiqueta da interface no próprio dataplane**, com espaços e tudo: ela sobrevive a um restart da VTY e diz a mesma coisa a quem consultar o dataplane por outro caminho. Escreve-se com `description <texto>` dentro de `interface <nome>`.

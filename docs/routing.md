@@ -162,7 +162,8 @@ hexarouting> show interface
   TenGigabitEthernet0/8/0    up     1500   -                   -
   local0                     down   0      -                   -
 
-  3 interface(s) on the dataplane
+  2 interface(s) on the dataplane can forward
+  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 Responde pelo **dataplane**. Antes era repassado ao `vtysh`, que enxerga só o
@@ -196,7 +197,8 @@ hexarouting> show interface terse
   TenGigabitEthernet0/8/0    up     down   -      -
   local0                     down   down   -      -
 
-  3 interface(s) on the dataplane
+  2 interface(s) on the dataplane can forward
+  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
   TenGigabitEthernet0/8/0: configured up, link down - that is the wire or the far end, not this configuration
 ```
 
@@ -224,8 +226,8 @@ hexarouting> show interface description
   TenGigabitEthernet0/8/0    up     down   TRANSITO Vivo AS26599
   local0                     down   down   
 
-  2 of 3 interface(s) described
-  set one with 'description <text>' inside 'interface <name>'
+  2 of 2 interface(s) described
+  local0 is listed above but not counted: it is the dataplane's own null interface and forwards nothing
 ```
 
 The description is the dataplane's own interface tag, read back from the box, so
