@@ -8971,10 +8971,18 @@ class Shell:
         except OSError:
             return []                   # not an appliance: nothing to explain
         if "plugin dpdk_plugin.so { disable }" in conf:
-            return ["DPDK is off until hugepages exist, so no NIC can be "
+            said = ["DPDK is off until hugepages exist, so no NIC can be "
                     "claimed yet.",
                     "This is the first-boot profile. Reboot once the tuning "
                     "has been applied and the pages reserved."]
+            # And whether a reboot can end anywhere. "Reboot and come back" is
+            # the right advice only if there is a card to claim afterwards; on
+            # a box whose only NIC carries the default route there is not, and
+            # that NIC is refused for the reason #123 exists. Saying it here
+            # costs nothing and saves two reboots and a naming attempt to
+            # learn it (#289).
+            said += self.no_eligible_nic_note()
+            return said
         if "no-pci" in conf:
             named = ""
             try:
@@ -9013,6 +9021,39 @@ class Shell:
     #: the other two are older and are recognised so a box already set up that
     #: way is not told it is wrong.
     DPDK_DRIVERS = ("vfio-pci", "uio_pci_generic", "igb_uio")
+
+    def no_eligible_nic_note(self):
+        """
+        Whether this box has a NIC the dataplane could be given at all, or "".
+
+        Only ever ADDS to an explanation. A box that has one is told nothing
+        extra, because a line on every boot is a line nobody reads.
+
+        The management interface is refused by `hexarouting-tune` and again by
+        the binder, for the reason a box that hands its own path to the
+        dataplane is recovered by walking to it (#123). A box where that is
+        the ONLY card therefore cannot be given one at all, and no amount of
+        rebooting changes that - so the operator needs to hear it at the first
+        screen that mentions the subject rather than after the loop.
+
+        Reads host_nics() and default_route_nic(), which are what
+        `show hardware` prints and what the tuner decides on, so this cannot
+        say a card is eligible that they would then refuse.
+        """
+        nics = self.host_nics()
+        if not nics:
+            return ["This box has no PCI NIC Linux can see, so there is "
+                    "nothing to give the dataplane whatever the tuning does."]
+        default = self.default_route_nic()
+        usable = [n["name"] for n in nics if n["name"] != default]
+        if usable:
+            return []
+        return ["And this box has no NIC it could be given: the only one it "
+                f"has, '{default}', carries the default route, which is "
+                "refused because handing it over takes the box off the "
+                "network.",
+                "A reboot does not change that. This box needs a second NIC "
+                "before it can forward. 'show hardware' lists what it has."]
 
     def why_named_nic_absent(self, conf):
         """
