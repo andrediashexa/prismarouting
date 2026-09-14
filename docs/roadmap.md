@@ -1628,6 +1628,28 @@ does not reproduce against a real `sshd -T`, the issue is closed rather than
 fixed.
 
 
+#### The gate installed a medium it had not booted
+
+[#307](https://github.com/andrediashexa/hexarouting/issues/307) - *fixed,
+v0.75.0*. `make test-install` depended on the phony `iso` target, so
+`tools/release-gate.sh` built a medium, booted it, and then built a second one
+over the same path and installed that. Measured on the v0.74.0 run: the boot
+finished at 18:02:23 and the file's mtime is 18:07:51.
+
+The gate's own argument for the install phase is that booting a medium and
+installing it are different claims about **the same medium**, and the `sha256`
+it prints for publication is taken at the end - so it described the build
+nobody booted. The boot phase goes through `tools/lab.sh`, which does not
+rebuild; the install phase went through `make`, which does. The asymmetry is
+what hid it for the life of the script.
+
+`tools/iso-ready.sh` decides between absent, current and stale, and the gate
+records the medium's checksum before the boot and compares it after the
+install, so a second cause is caught too. **v0.74.0 was published after its
+artifact was booted on its own**, because the gate's live boot had run against
+the other build.
+
+
 #### The rename to PrismaRouting
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
