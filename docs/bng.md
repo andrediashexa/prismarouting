@@ -515,7 +515,9 @@ Each of these is unmeasured today and each can invalidate the plan:
 ### What could not be refused once shipped
 
 This is the part that makes it a product rather than a feature. A box that
-terminates subscribers is asked for, and cannot decline:
+terminates subscribers is asked for, and cannot decline. **These are commercial
+judgements, not measurements**, and they are marked as such here so that
+section 6's list stays about evidence:
 
 * **per-subscriber speed**, because that is the thing a BNG is bought for, and
   VPP has no shaper to do it with;
