@@ -6362,6 +6362,34 @@ check(not any("This box has one NIC" in l for l in _r),
       f"a box with no NIC at all was told it has one: {_r}")
 print("  said at the first screen that mentions it, and only when it is true")
 
+print("\n=== the completion marks the default-route card truthfully (#309) ===")
+# It said "carries the default route: refused" unconditionally, and has been
+# wrong since #303 on the box where it matters most: with no other card that
+# name is ACCEPTED and the address moves with it. So on a one-NIC VM - how most
+# people meet this product - the completion told the operator their only card
+# was refused, and then the box took it.
+
+
+def _nic_hints(names, default):
+    _sh = hexash.Shell()
+    _sh.host_nics = lambda: [{"name": _n} for _n in names]
+    _sh.default_route_nic = lambda: default
+    return _sh.dyn_host_nics()
+
+
+_h = _nic_hints(["ens18"], "ens18")
+check("refused" not in _h["ens18"],
+      f"the only card is not marked refused, because it is not: {_h}")
+check("goes with it" in _h["ens18"],
+      f"and the mark says what does happen to it: {_h}")
+
+_h = _nic_hints(["ens18", "ens19"], "ens18")
+check("refused" in _h["ens18"],
+      f"with a second card the default-route one is still marked refused: "
+      f"{_h}")
+check(_h["ens19"] == "card",
+      f"and the other card is just a card: {_h}")
+
 print("\n=== what a commit on the MEDIUM says about rebooting (#310) ===")
 # #305 one message over. `dataplane interface <name>` followed by `commit`
 # ends with "reboot the box in a window you have chosen, and it comes up

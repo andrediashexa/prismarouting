@@ -750,15 +750,27 @@ then
   say "  [info] DPDK is off until hugepages exist; no NIC can be claimed yet"
 elif grep -q "no-pci" "$STARTUP" 2>/dev/null; then
   # The remedy is a command in the VTY now, not a path and an editor (#283).
-  # The same words the VTY's own diagnosis uses: two accounts of one fact that
-  # disagree are worse than one, and this is the account an operator reads on
-  # the console of a box that has just come up forwarding nothing.
+  # This is the account an operator reads on the console of a box that has
+  # just come up forwarding nothing, so it has to be true of THIS box.
+  #
+  # IT WAS NOT, ON THE BOX WHERE IT MATTERS MOST (#309). It used to end "and
+  # so is the interface carrying the default route, so naming the management
+  # one cannot cut it off". Since #303 a box with only that card ACCEPTS it:
+  # the card moves and the management address goes with it onto the linux_cp
+  # pair. So on a one-NIC VM - which is how most people meet this product -
+  # this promised a refusal the box does not make.
+  #
+  # Both cases are stated rather than computed here. Deciding which applies
+  # would mean a second copy of the VTY's rule living in a shell script, and
+  # the two would disagree the first time one of them moved; the operator is
+  # about to type the command anyway, and the box answers for itself.
   noforward="no interface to forward on"
   warn "no dataplane interface: VPP was given no NIC to forward on"
   say "         name it from the VTY: 'configure', then"
   say "         'dataplane interface <name>', then 'commit'. A name this box"
-  say "         has not got is refused, and so is the interface carrying the"
-  say "         default route, so naming the management one cannot cut it off."
+  say "         has not got is refused. With more than one card, the one"
+  say "         carrying the default route is refused too; with only that"
+  say "         card, it is handed over and its address goes with it."
 elif grep -q "dev 0000:" "$STARTUP" 2>/dev/null; then
   # A NAME IN A FILE IS NOT A NIC. This said [ ok ] as soon as a device
   # appeared in startup.conf, so a box whose dataplane has no interface at all
