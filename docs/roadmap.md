@@ -1628,6 +1628,33 @@ does not reproduce against a real `sshd -T`, the issue is closed rather than
 fixed.
 
 
+#### A count that answers a different question from the line above it
+
+[#306](https://github.com/andrediashexa/hexarouting/issues/306) - *open*.
+`show interface` on a box with no dataplane interface says "the dataplane has
+no interface to forward on" and then, four lines down, "1 interface(s) on the
+dataplane". The one it counts is `local0`, VPP's own null interface, which can
+never forward. Read off the console of the 0.74.0 medium during that tag's
+release gate.
+
+It is the third instance of one shape in two releases, and each of the first
+two was found on a real box rather than by a test:
+[#299](https://github.com/andrediashexa/hexarouting/issues/299), where the
+self-test reported a configured pool six lines under a warning that the box
+could not forward, and
+[#305](https://github.com/andrediashexa/hexarouting/issues/305), where the
+medium was told to reboot two lines under a banner saying nothing there
+survives one. **A count an operator acts on stops meaning anything when it
+counts something that does not count**, and the pattern is that the wrong
+sentence is always the one nothing was asking about.
+
+The decision is the work and it is not obvious. `local0` should still be
+listed, because a listing that hides an interface the dataplane has stops
+being what people reach for when something is off. It is the count that claims
+to be about forwarding. Whichever way it goes, the box must not be able to say
+both things about itself in one screen.
+
+
 #### The rename to PrismaRouting
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
