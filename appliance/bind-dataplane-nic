@@ -138,10 +138,18 @@ fi
 
 # The interface name, for the messages, while it still has one: once the
 # device is bound to vfio-pci the kernel netdev is gone.
+#
+# Through pci_addr_of() and not the basename of the link, for the reason that
+# function was written: on a virtio guest the basename is `virtio7` and never
+# equals a PCI address. The defence above was the dangerous half of that and is
+# fixed; this is the same comparison thirty lines later, and it fails quietly -
+# every bind message on every VM lost the interface name, which is the one word
+# in it an operator recognises. Two readers of one fact, and only one of them
+# was corrected, is how the release gate refused 0.72.0 twice.
 ifname=""
 for n in "$SYSNET"/*; do
   [ -e "$n/device" ] || continue
-  if [ "$(basename "$(readlink -f "$n/device")")" = "$ADDR" ]; then
+  if [ "$(pci_addr_of "$n")" = "$ADDR" ]; then
     ifname=$(basename "$n")
     break
   fi

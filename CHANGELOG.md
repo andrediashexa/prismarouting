@@ -112,6 +112,25 @@ version has a chance of seeing it.
   returns must pass `validate_ssh()`, and the completion tree an operator sees
   with `?` must offer exactly the values the box accepts - so the tempting fix
   of widening the list alone goes red.
+* **The bind message lost the name of the card it was taking, on every VM.**
+  `bind-dataplane-nic` resolves a netdev to its PCI address twice: once for the
+  refusal that stops the management card being unbound, and once, thirty lines
+  later, for the line it prints about what it is doing. 0.74.0 fixed the first
+  and left the second comparing the basename of the `device` link against a PCI
+  address - which on a virtio guest is `virtio7` and never matches. So the
+  refusal works now and the message still reads
+
+  ```
+  bind: 0000:04:00.0 from virtio-pci to vfio-pci
+  ```
+
+  with the one word in it an operator recognises missing.
+
+  Harmless on its own and worth the entry for its shape: two readers of one
+  fact with only one of them corrected is what had the release gate refuse
+  0.72.0 twice, once after the first reader had already been fixed. Both
+  readers go through the same `pci_addr_of()` now, and `test/test_bind_nic.sh`
+  binds a virtio device and reads the line back.
 
 
 ## 0.74.0 - the installed box can be reached, and one card is enough

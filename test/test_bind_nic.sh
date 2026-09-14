@@ -195,6 +195,23 @@ said "it is on ixgbe now" \
   || bad "it did not say where the device ended up: $OUT"
 
 echo
+echo "=== and it names the card, on a virtio box too ==="
+# The same comparison as the refusal above, thirty lines further down in the
+# binder and used only for the message. It failed quietly rather than
+# dangerously: on every VM this product is tried on, the one word in this line
+# an operator recognises was missing. A fact read two ways with only one of
+# them corrected is the shape that cost two release-gate refusals.
+R=$(mkbox 0000:04:00.0 eth0 iommu vfio-pci); on_driver "$R" virtio-pci 0000:04:00.0
+rm -f "$R/sys/class/net/eth9/device"
+mkdir -p "$R/sys/bus/pci/devices/0000:04:00.0/virtio7"
+ln -s "../../../bus/pci/devices/0000:04:00.0/virtio7" \
+  "$R/sys/class/net/eth9/device"
+runbind "$R"
+said "0000:04:00.0 (eth9) from" \
+  && ok "the bind line carries the interface name on a virtio device" \
+  || bad "the bind line lost the name of the card it is taking: $OUT"
+
+echo
 echo "=== a box with no IOMMU falls back, and says what that costs ==="
 R=$(mkbox 0000:03:00.0 eth0 noiommu uio_pci_generic)
 on_driver "$R" ixgbe 0000:03:00.0
