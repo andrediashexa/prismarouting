@@ -62,6 +62,20 @@ version has a chance of seeing it.
 
 ### Added
 
+* **A lab whose fixture was never built reported the product as broken twenty
+  ways.** `sh tools/lab.sh upgrade v0.40.0` closed `LAB FAILED: 20 check(s)`.
+  That tag's VTY refuses the configuration the lab types - "pool 'minas':
+  inside and outside required", a grammar that has moved since - so the old
+  box was never configured and there was no upgrade to measure at all. The two
+  preconditions that would have said so were evaluated at the verdict, after
+  every assertion had already been made, and a FAILED outranks a NOT MEASURED:
+  the run said the product was broken about a box that had never existed.
+
+  They now stop the lab where they are known, alongside the extraction and the
+  compile, and the message quotes what the old VTY actually said. Measured:
+  the same command now closes `LAB NOT MEASURED: 1 check(s)` with nothing red,
+  and `sh tools/lab.sh upgrade` is still `LAB PASSED`.
+
 * **The release checklist now says to compare the roadmap against the
   tracker.** `tools/roadmap-state.sh` shipped with
   [#292](https://github.com/andrediashexa/hexarouting/issues/292) and the only

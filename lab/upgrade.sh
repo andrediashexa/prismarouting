@@ -381,6 +381,12 @@ make_ports
 echo "  the old dataplane answers: $(vc show version | head -1 | cut -c1-40)"
 
 echo
+# Everything the old VTY says while it is being configured, kept so that a tag
+# whose grammar this lab cannot speak can QUOTE the refusal instead of leaving
+# the reader to scroll for it.
+SAID=/tmp/old-vty-said.txt
+: > "$SAID"
+
 echo "=========== 2. an operator configures the box ==========="
 # Through /usr/bin/hexash, which is the launcher the INSTALL put on the box,
 # reading /usr/lib/hexarouting/hexash.py. Every other lab runs
@@ -413,13 +419,13 @@ $HX -c "configure" \
     -c "exit" \
     -c "cgnat interface pg0 inside" \
     -c "cgnat interface pg1 outside" \
-    -c "commit comment \"pool minas and the two ports\"" 2>&1 | sed 's/^/  /'
+    -c "commit comment \"pool minas and the two ports\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
 
 # The route in its own commit, so the rollback store holds a revision that is
 # the box WITHOUT it - which is what section 9 loads.
 $HX -c "configure" \
     -c "ip route 10.99.0.0/24 200.150.0.2" \
-    -c "commit comment \"reach the management range\"" 2>&1 | sed 's/^/  /'
+    -c "commit comment \"reach the management range\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
 
 # And the forward in a third, for the same reason. 1600 is inside subscriber
 # .5's block on this pool - 100.64.0.5 is subscriber 5, block 1536-2047 - and
@@ -429,9 +435,9 @@ $HX -c "configure" \
     -c "cgnat pool minas" \
     -c "forward tcp 1600 to 100.64.0.5 80" \
     -c "exit" \
-    -c "commit comment \"port 80 for the camera at .5\"" 2>&1 | sed 's/^/  /'
+    -c "commit comment \"port 80 for the camera at .5\"" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
 
-$HX -c "save" 2>&1 | sed 's/^/  /'
+$HX -c "save" 2>&1 | tee -a "$SAID" | sed 's/^/  /'
 
 echo
 echo "=========== 3. what the old box is ==========="
@@ -481,6 +487,40 @@ echo "  an unsolicited packet to 200.150.0.17:1600, on the OLD dataplane:"
 tcp 8.8.8.8 200.150.0.17 33000 1600 syn pg1
 OLD_TRACE=$(trace)
 printf '%s\n' "$OLD_TRACE" | sed 's/^/    /'
+
+
+# The fixture, judged HERE and not at the verdict, because walking past it is
+# what makes a run lie.
+#
+# Measured: `sh tools/lab.sh upgrade v0.40.0` closed LAB FAILED: 20 check(s).
+# That tag's VTY refused the configuration this lab types - "pool 'minas':
+# inside and outside required", a grammar that moved since - so the old box
+# was never configured and there was no upgrade to measure. The two
+# preconditions below did report NOT MEASURED, and it made no difference: a
+# FAILED outranks a NOT MEASURED in the verdict, so the run said the PRODUCT
+# was broken in twenty ways, about a box that had never been configured in
+# the first place. A false red costs more than a wait, because somebody goes
+# and investigates it.
+#
+# So this joins the extraction and the compile in give_up(), for the reason
+# the header gives about those two: past this point every assertion is about
+# a box that does not exist, and an assertion about a box that does not exist
+# has no verdict to give. It is not restated at the verdict, where it could
+# only ever be green.
+has "pool minas" "$SAVED" || give_up \
+  "the old box was configured and saved its configuration" \
+  "$OLD_TAG's VTY did not accept the configuration this lab types, so there" \
+  "is no configured box to upgrade. What it said:" \
+  "$(grep -m1 '^ *error:' "$SAID" 2>/dev/null | sed 's/^ *//')" \
+  "$(grep -m3 '^ *error:' "$SAID" 2>/dev/null | tail -1 | sed 's/^ *//')" \
+  "This is the lab's fixture and not the product: the statements here are" \
+  "spelled the way the CURRENT VTY spells them, and a tag old enough to" \
+  "spell them differently cannot be configured by it."
+has 100.64.0.5 "$OLD_TRACE" || give_up \
+  "the old box really forwarded the pinned port" \
+  "the forward was configured and the old dataplane did not translate a" \
+  "packet through it, so section 8 would be reading a box that never" \
+  "forwarded anything, and an upgrade would take the blame for it."
 
 echo
 echo "=========== 4. the upgrade ==========="
@@ -675,23 +715,16 @@ echo "=========== VERDICT ==========="
 
 # The fixture first, all of it, so a reader can tell a lab that measured an
 # upgrade from one that never got as far as making one.
-# The two preconditions that are NOT here - the tree was extracted, and its
-# plugin compiled - are reported by give_up() at the point they fail, because
-# the lab cannot walk past either of them. Restating them at the verdict would
-# be two checks that can only ever be green, which is the defect this whole
+# The preconditions that are NOT here - the tree was extracted, its plugin
+# compiled, the old box was configured, and it forwarded - are reported by
+# give_up() at the point they fail, because the lab cannot walk past any of
+# them and produce a reading about anything. Restating them at the verdict
+# would be checks that can only ever be green, which is the defect this whole
 # repository keeps finding inside the machinery built to catch it.
 expect_setup "its installer put that plugin on the box" \
   test "$OLD_INSTALLED_SUM" = "$OLD_SO_SUM"
 expect_setup "and the vat2 plugin the VTY needs to reach the API" \
   test -n "$OLD_VAT2_SUM" -a "$OLD_VAT2_SUM" = "$OLD_VAT2_BUILT"
-# The POOL in the file, not the file's existence. install.sh writes a default
-# hexarouting.conf on a first install - three comment lines - so `test -s` is
-# true of a box whose VTY never ran at all, and this precondition would be
-# green for a lab that configured nothing.
-expect_setup "the old box was configured and saved its configuration" \
-  has "pool minas" "$SAVED"
-expect_setup "the old box really forwarded the pinned port" \
-  has 100.64.0.5 "$OLD_TRACE"
 
 # THE CENTRAL ASSERTION. Two halves, because they fail differently: a file
 # that was refused says so and exits non-zero, and `--load` also returns
