@@ -76,9 +76,24 @@ ROOT=$WORK/chroot
 rm -rf "$WORK"
 mkdir -p "$ROOT" "$WORK/iso/live" "$WORK/iso/boot/grub"
 
+# isc-dhcp-client is NAMED here, and it is not a package anybody would think
+# to name: ifupdown only RECOMMENDS a DHCP client, and debootstrap installs no
+# Recommends at all. Measured on a bookworm root built the way this one is:
+#
+#   # apt-get install -y --no-install-recommends ifupdown iproute2
+#   dhclient: NONE   udhcpc: NONE   dhcpcd: NONE
+#
+# and the same three absences were read back out of the 0.73.0 squashfs. The
+# installer's default answer for the management network is DHCP (#303), so
+# without this the file it writes is a stanza with nothing on the box able to
+# carry it out - a box that boots, says nothing, and has no address, which is
+# precisely the defect being fixed wearing a different hat.
+#
+# hexarouting-install's verify_installed() refuses such a disk before it
+# reports success, so this is asserted on the box and not only decided here.
 say "debootstrap $SUITE"
 debootstrap --arch=amd64 --variant=minbase \
-  --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,iproute2,ifupdown,openssh-server,snmpd,python3,less,vim-tiny \
+  --include=systemd-sysv,linux-image-amd64,live-boot,grub2-common,grub-pc-bin,grub-efi-amd64-bin,ca-certificates,curl,gnupg,iproute2,ifupdown,isc-dhcp-client,openssh-server,snmpd,python3,less,vim-tiny \
   "$SUITE" "$ROOT" "$MIRROR"
 
 say "VPP and FRR repositories"

@@ -6,25 +6,46 @@
 # script is what turns it into a box somebody can log into. Everything it needs
 # is asked BEFORE the first write, and the answers include the root password.
 #
-# Four rules this script exists to honour:
+# Five rules this script exists to honour:
 #
 #   - it never touches a disk that was not named,
 #   - it never runs without a confirmation that repeats the disk back, with
 #     its size and model, and that a bare Enter does not answer,
-#   - it never finishes without a root password the operator supplied, and
+#   - it never finishes without a root password the operator supplied,
+#   - it never finishes without deciding how the box is reached after the
+#     reboot it is about to do, and
 #   - it asks everything before it writes anything.
 #
-# The last two are new and they are the point. Before, /etc/shadow travelled
-# from the live image onto the disk and "passwd root" ran at the very end,
-# after GRUB: an install that was aborted, that failed late, or that ran
+# The password rule and the ordering rule came together. Before, /etc/shadow
+# travelled from the live image onto the disk and "passwd root" ran at the very
+# end, after GRUB: an install that was aborted, that failed late, or that ran
 # unattended left a BOOTABLE disk carrying the image's published password. Now
 # the image has no password to inherit, and an install with no answer for it
 # stops before it partitions anything.
+#
+# The management network is the newest of the five and it is the same argument
+# one step on (#303). This installer used to write nothing whatever under
+# /etc/network, on an image that carries ifupdown with networking.service
+# enabled and an /etc/network/interfaces holding one line - "source
+# /etc/network/interfaces.d/*" - over an EMPTY directory. So the service came
+# up with nothing to do, the card booted DOWN with no address, and the box was
+# reachable at its console and nowhere else. What the operator then typed at
+# that console did not survive the reboot, because nothing had written it
+# down. An appliance that cannot be reached after a reboot is not an
+# appliance, and "the address is arranged by other means before the box is
+# installed" is not true of the case everybody meets this product in: a
+# virtual machine with one virtual NIC, created from this ISO, with no other
+# means in existence.
 #
 # Non-interactive answers, for automated installs and for the lab:
 #
 #   HEXA_DISK, HEXA_HOSTNAME, HEXA_TIMEZONE, HEXA_ROOT_PASSWORD, HEXA_LOG_GB
 #   HEXA_MIRROR=<disk>        mirror the records onto a second disk
+#   HEXA_MGMT_INTERFACE=<if>  the card this box is managed on
+#   HEXA_MGMT_ADDRESS=dhcp    or <a.b.c.d/nn>, or "none" for no management
+#                             network at all
+#   HEXA_MGMT_GATEWAY=<ip>    with a static address only
+#   HEXA_MGMT_DNS=<ip>[,<ip>] with a static address only
 #   HEXA_ANSWERS=<file>       read those same answers from a file
 #   HEXA_INSTALL_YES=1        skip the confirmations
 #   HEXA_INSTALL_CHECK=1      collect and validate, write nothing, exit
@@ -89,6 +110,14 @@ read_answers() {   # <file>; exports HEXA_* for the questions still unanswered
                 [ -n "${HEXA_ROOT_PASSWORD:-}" ] || { HEXA_ROOT_PASSWORD=$_v; export HEXA_ROOT_PASSWORD ; } ;;
       log-gb)   [ -n "${HEXA_LOG_GB:-}" ]        || { HEXA_LOG_GB=$_v;        export HEXA_LOG_GB ; } ;;
       mirror)   [ -n "${HEXA_MIRROR:-}" ]        || { HEXA_MIRROR=$_v;        export HEXA_MIRROR ; } ;;
+      mgmt-interface)
+                [ -n "${HEXA_MGMT_INTERFACE:-}" ] || { HEXA_MGMT_INTERFACE=$_v; export HEXA_MGMT_INTERFACE ; } ;;
+      mgmt-address)
+                [ -n "${HEXA_MGMT_ADDRESS:-}" ]   || { HEXA_MGMT_ADDRESS=$_v;   export HEXA_MGMT_ADDRESS ; } ;;
+      mgmt-gateway)
+                [ -n "${HEXA_MGMT_GATEWAY:-}" ]   || { HEXA_MGMT_GATEWAY=$_v;   export HEXA_MGMT_GATEWAY ; } ;;
+      mgmt-dns)
+                [ -n "${HEXA_MGMT_DNS:-}" ]       || { HEXA_MGMT_DNS=$_v;       export HEXA_MGMT_DNS ; } ;;
       yes)
         case "$_v" in
           1|yes|true) _y=1 ;;
@@ -98,7 +127,9 @@ read_answers() {   # <file>; exports HEXA_* for the questions still unanswered
         esac
         [ -n "${HEXA_INSTALL_YES:-}" ] || { HEXA_INSTALL_YES=$_y; export HEXA_INSTALL_YES ; } ;;
       *) echo "error: $_f line $_n: '$_k' is not an answer this installer knows" >&2
-         echo "  known: disk, hostname, timezone, password, log-gb, mirror, yes" >&2
+         echo "  known: disk, hostname, timezone, password, log-gb, mirror," >&2
+         echo "         mgmt-interface, mgmt-address, mgmt-gateway, mgmt-dns," >&2
+         echo "         yes" >&2
          _rc=1 ;;
     esac
   done < "$_f"
@@ -132,6 +163,10 @@ fi
 
 DISK=${HEXA_DISK:-${1:-}}
 MIRROR=${HEXA_MIRROR:-}
+MGMT_IF=${HEXA_MGMT_INTERFACE:-}
+MGMT_ADDR=${HEXA_MGMT_ADDRESS:-}
+MGMT_GW=${HEXA_MGMT_GATEWAY:-}
+MGMT_DNS=${HEXA_MGMT_DNS:-}
 HOSTNAME_NEW=${HEXA_HOSTNAME:-}
 TIMEZONE=${HEXA_TIMEZONE:-}
 ROOTPW=${HEXA_ROOT_PASSWORD:-}
@@ -340,6 +375,364 @@ choose_mirror() {   # <target disk>; the chosen disk on stdout, or nothing
   done
 }
 
+# ===================================================================
+# The management network (#303)
+# ===================================================================
+#
+# WHAT THE BOX HAS, MEASURED BEFORE ANY OF THIS WAS DECIDED. The image is
+# debootstrapped with "--include=...,iproute2,ifupdown,..." and nothing else
+# that touches an interface: no NetworkManager, no systemd-networkd
+# configuration, no netplan. A bookworm root with ifupdown on it carries
+# /etc/network/interfaces holding "source /etc/network/interfaces.d/*" over an
+# empty directory, and networking.service - "ifup -a" - enabled. So the
+# mechanism that is already installed, already enabled and already running on
+# every box this product has ever installed is ifupdown, and the one thing
+# missing from it is a file. That is where this writes. Bringing a second
+# mechanism onto the box to configure one card would leave two things that
+# answer for the same interface and disagree at the worst moment.
+#
+# The same measurement found the trap underneath it: ifupdown Recommends a
+# DHCP client and debootstrap installs no Recommends, so
+#
+#   # apt-get install -y --no-install-recommends ifupdown iproute2
+#   dhclient: NONE
+#   udhcpc: NONE
+#   dhcpcd: NONE
+#
+# and "iface ens18 inet dhcp" on that root is a stanza with nothing to run it.
+# appliance/build-iso.sh now installs isc-dhcp-client, and verify_installed()
+# below REFUSES an install whose answer was dhcp on a disk with no client on
+# it - because the default answer to this question is dhcp, and a default that
+# quietly does nothing is worse than no question at all.
+#
+# The same measurement is why the DNS servers are written to /etc/resolv.conf
+# directly rather than as "dns-nameservers" in the stanza: that option is
+# implemented by resolvconf's if-up hook, the image has no resolvconf, and the
+# line would be read by nothing. dhclient writes /etc/resolv.conf itself when
+# resolvconf is absent, which is why the dhcp answer does not write one.
+#
+# HEXA_NET_SYS is empty on every box and is set only by test/test_installer.sh.
+# A machine with two cards, one of them up and carrying the default route and
+# one of them down, cannot be arranged on the machine running the tests - and
+# the menu this feeds is the question whose wrong answer leaves a box nobody
+# can reach. Same argument as HEXA_SELFTEST_ROOT, and the same shape.
+NET_SYS=${HEXA_NET_SYS:-/sys/class/net}
+
+# Where the answer is written, and the ONE file that decides the box's
+# management network. appliance/selftest reads this same path back on every
+# boot and says what became of it: the installer is the writer, the self-test
+# is the reader, and neither of them keeps a second opinion about what the
+# operator asked for.
+#
+# No dot in the name, deliberately. /etc/network/interfaces on this image says
+# "source /etc/network/interfaces.d/*", which takes any name at all, but
+# "source-directory" - which an operator may well move to, and which other
+# Debian images ship - applies run-parts naming rules and SKIPS a file with a
+# dot in it. A file that is silently skipped by an edit somebody made to a
+# neighbouring line is exactly the failure this whole section exists to end.
+MGMT_CONF=/etc/network/interfaces.d/hexarouting
+
+# The cards this box could be managed on, one per line:
+#   "<name> <operstate> <driver> <addresses or none>"
+#
+# A card, and not everything the kernel calls an interface. The test is
+# /sys/class/net/<name>/device, which exists for a real NIC and for a virtio
+# one and does NOT exist for lo, for a bridge, for a veth end, or for the TAP
+# a linux_cp pair creates. A menu that offered those would be offering to
+# configure the management address onto something that carries no cable.
+nic_table() {
+  for _d in "$NET_SYS"/*; do
+    [ -e "$_d" ] || continue
+    _n=${_d##*/}
+    [ "$_n" = lo ] && continue
+    [ -e "$_d/device" ] || continue
+    _st=$(cat "$_d/operstate" 2>/dev/null || echo unknown)
+    _drv=$(basename "$(readlink -f "$_d/device/driver" 2>/dev/null)" 2>/dev/null)
+    case "$_drv" in ""|.|/) _drv=unknown ;; esac
+    _a=$(ip -o -4 addr show dev "$_n" 2>/dev/null | awk '{printf "%s ", $4}')
+    printf '%s %s %s %s\n' "$_n" "$_st" "$_drv" "${_a:-none}"
+  done
+}
+
+# The card the LIVE system is reaching the network through, when there is one.
+#
+# Usually there is not, and that is worth saying rather than discovering: the
+# medium has no management configuration either - it is the thing being fixed,
+# one step earlier - so on an ordinary live boot no card has an address and
+# this answers nothing. It answers when the medium was PXE-booted, or when
+# somebody gave it an address by hand to install over the network, and in
+# those cases it is the card they are using right now, which is the best
+# answer anything here has.
+#
+# When it answers nothing the caller falls back to the first card, which on
+# the one-NIC box this issue is about is the only card there is. Either way it
+# is a DEFAULT and is never taken in silence: the summary repeats it back, the
+# unattended path says it out loud, and the self-test names it at every boot
+# afterwards.
+default_route_nic() {
+  ip -o -4 route list default 2>/dev/null \
+    | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' \
+    | head -1
+}
+
+ipv4_ok() {  # <a.b.c.d>; true when it is four octets and each one fits
+  [ -n "${1:-}" ] || return 1
+  printf '%s' "$1" | awk -F. '
+    NF != 4 { exit 1 }
+    { for (i = 1; i <= 4; i++) {
+        # The length test is not redundant with the range test: "0001" is 1
+        # and is not an octet anybody typed on purpose, and leading zeroes
+        # are read as octal by some of what reads this file back.
+        if ($i !~ /^[0-9]+$/ || length($i) > 3 || $i + 0 > 255) exit 1
+      }
+      exit 0 }'
+}
+
+cidr_ok() {  # <a.b.c.d/nn>; true when the address and the prefix are both sane
+  case "${1:-}" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+  ipv4_ok "${1%%/*}" || return 1
+  _p=${1#*/}
+  case "$_p" in
+    ""|*[!0-9]*) return 1 ;;
+  esac
+  [ "$_p" -ge 1 ] && [ "$_p" -le 32 ]
+}
+
+# Is the gateway on the subnet the address is on?
+#
+# THE ONE WRONG ANSWER THIS INSTALLER CAN CATCH BY ITSELF. A typo in the
+# address puts the box on a subnet that exists somewhere and this machine
+# cannot know which; a gateway outside the address's own subnet is wrong on
+# the arithmetic alone, and what it produces is a box that boots with an
+# address, refuses the default route - "Error: Nexthop has invalid gateway" -
+# and is then reachable from its own subnet and from nowhere else. That is a
+# box somebody drives to.
+#
+# Integer division rather than a bitwise mask: mawk has no and(), and the
+# numbers involved are under 2^32, where a double is exact.
+same_subnet() {  # <a.b.c.d/nn> <gateway>
+  printf '%s %s\n' "$1" "$2" | awk '
+    function n(a,   p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
+    { split($1, c, "/"); block = 2 ^ (32 - (c[2] + 0))
+      exit (int(n(c[1]) / block) == int(n($2) / block)) ? 0 : 1 }'
+}
+
+# Prints the menu and returns the chosen interface on stdout.
+#
+# It cannot guess silently, and on a box with several cards it must not guess
+# at all: the operator is shown what each card IS - whether it is up, what
+# drives it, what address it is carrying this minute - because "ens18" and
+# "ens19" tell nobody which cable is in which, and the card that is up with an
+# address on it is the one the person standing there is already using.
+choose_interface() {   # <default>; the chosen name on stdout
+  _table=$(nic_table)
+  _def=$1
+  echo >&2
+  echo "  This box is reached over the network AFTER it reboots, and nothing" >&2
+  echo "  else arranges that. An install with no answer here comes back with" >&2
+  echo "  its card down and no address, reachable only at this console - and" >&2
+  echo "  what is typed at a console does not survive the next reboot." >&2
+  echo >&2
+  echo "Network cards on this machine:" >&2
+  _i=1
+  printf '%s\n' "$_table" | while read -r n st drv a; do
+    _mark=""
+    [ "$n" = "$_def" ] && _mark="   <- default"
+    printf '  %s) %-10s %-6s %-12s %s%s\n' \
+      "$(letter_at "$_i")" "$n" "$st" "$drv" "$a" "$_mark" >&2
+    _i=$((_i + 1))
+  done
+  echo "  none) no management network   (this box is reached at its console)" >&2
+  echo >&2
+
+  while : ; do
+    _a=$(ask "Which card is this box managed on (letter, or a name)" "$_def")
+    case "$_a" in
+      none|no|n)
+        printf 'none\n'
+        return 0 ;;
+      [a-z])
+        # A letter picks a line. A NAME is still accepted, and on this
+        # question a name is the likelier answer: predictable interface names
+        # are what an operator has written down, and "ens18" is one character
+        # longer than "a" to type.
+        _n=$(printf '%s' "abcdefghijklmnopqrstuvwxyz" | tr -d "\n" | \
+             awk -v c="$_a" '{print index($0, c)}')
+        _pick=$(printf '%s\n' "$_table" | sed -n "${_n}p" | cut -d' ' -f1)
+        if [ -n "$_pick" ]; then
+          printf '%s\n' "$_pick"
+          return 0
+        fi
+        # A single-letter interface name would land here and there is none on
+        # any box this runs on; the message says both halves anyway.
+        echo "  there is no card '$_a' in that list." >&2 ;;
+      "")
+        printf '%s\n' "$_def"
+        return 0 ;;
+      *)
+        if [ -e "$NET_SYS/$_a" ]; then
+          printf '%s\n' "$_a"
+          return 0
+        fi
+        echo "  this box has no card called '$_a'." >&2 ;;
+    esac
+  done
+}
+
+# How that card is addressed. DHCP is the default, and the argument is the box
+# this product is first met on.
+#
+# A virtual machine on a lab network has a DHCP server on it and no reserved
+# address; a racked appliance has a reserved address and often no DHCP server
+# at all. Only one of those can be the default, and it is the first: an
+# operator who wants the box to work and presses Enter gets an address, and
+# the self-test prints it on the console at every boot so they can ssh to it.
+# The operator who is racking an appliance has an address written down in
+# front of them and types it, which is one answer either way.
+#
+# The cost is stated rather than hidden: a box answering dhcp where no server
+# replies waits for the client to give up before the boot finishes, and then
+# says on the console that it has no address. That is slower than a static
+# answer and it is still a box that says what is wrong with it, which is what
+# the previous behaviour - up to 0.72.0, a card DOWN with nothing said at all -
+# was not.
+ask_address() {   # the answer on stdout: "dhcp" or "<a.b.c.d/nn>"
+  while : ; do
+    _a=$(ask "Address: 'dhcp', or one like 10.0.0.2/24" "dhcp")
+    case "$_a" in
+      dhcp|DHCP) printf 'dhcp\n'; return 0 ;;
+      *)
+        if cidr_ok "$_a"; then
+          printf '%s\n' "$_a"
+          return 0
+        fi
+        case "$_a" in
+          */*) echo "  '$_a' is not an address and a prefix, like 10.0.0.2/24." >&2 ;;
+          *)   echo "  an address needs its prefix: '$_a/24', not '$_a'." >&2 ;;
+        esac ;;
+    esac
+  done
+}
+
+# The default gateway for a static address.
+#
+# Asked with no default and an empty answer accepted, because a management
+# network with no way off it is a real arrangement - an out-of-band management
+# LAN with a jump host on it is exactly that - and inventing ".1" would be a
+# guess this installer writes into the box's routing table. What an empty
+# answer COSTS is said out loud at the moment it is given, which is the only
+# moment anybody can act on it.
+ask_gateway() {   # <address/prefix>; the answer on stdout, possibly empty
+  _addr=$1
+  while : ; do
+    _a=$(ask "Default gateway (empty: only this box's own subnet reaches it)" "")
+    [ -n "$_a" ] || { printf '\n'; return 0; }
+    if ! ipv4_ok "$_a"; then
+      echo "  '$_a' is not an address." >&2
+      continue
+    fi
+    if ! same_subnet "$_addr" "$_a"; then
+      echo "  $_a is not on $_addr's subnet, so this box would come up with" >&2
+      echo "  an address, refuse the default route, and be reachable from its" >&2
+      echo "  own subnet only. Check which of the two is wrong." >&2
+      continue
+    fi
+    printf '%s\n' "$_a"
+    return 0
+  done
+}
+
+# The file that decides the box's management network, written onto the target.
+#
+# A FUNCTION, above the library seam, for the reason verify_installed() is one:
+# the alternative is proving this by installing a box, and what has to be
+# proved is mostly what happens when the answers are unusual - a card that is
+# named and absent, an address with no gateway, an operator who asked for no
+# management network at all. Those are cases to enumerate in milliseconds, not
+# boot cycles. test/test_installer.sh drives it against a directory.
+#
+# It writes the file EVEN WHEN THE ANSWER WAS NONE, and that is not
+# bookkeeping. A box with no file at all is a box installed by something that
+# never asked - every medium up to and including 0.72.0 - and the self-test
+# must say so loudly, because that box is one reboot from being unreachable. A
+# box whose operator answered "none" is a decision somebody made, and the
+# self-test says so quietly. Without the file those two are the same box.
+write_network_config() {   # <root> <interface|none> <address> <gateway> <dns>
+  _r=$1; _wif=$2; _waddr=$3; _wgw=$4; _wdns=$5
+  mkdir -p "$_r/etc/network/interfaces.d" || return 1
+  {
+    echo "# Generated by hexarouting-install. Do not edit by hand."
+    echo "#"
+    echo "# This file is the box's management network, answered at install"
+    echo "# time. The boot self-test reads it back and reports what became of"
+    echo "# it on every boot."
+    if [ "$_wif" = none ] || [ -z "$_wif" ]; then
+      echo "#"
+      echo "# NO MANAGEMENT NETWORK was asked for: the answer to the interface"
+      echo "# question was 'none'. This box is reached at its console. To give"
+      echo "# it an address later, write the stanza here and run"
+      echo "# 'ifup <interface>'."
+    else
+      echo ""
+      # "auto" and not "allow-hotplug", which is what Debian's own installer
+      # writes and is the wrong choice here. allow-hotplug configures the
+      # interface from a udev event, so networking.service can finish with the
+      # card still unconfigured and nothing downstream can wait for it - and
+      # something downstream does: hexarouting-selftest.service is ordered
+      # after networking.service precisely so that its report about the
+      # management network is taken after the management network exists. With
+      # "auto" the interface is brought up by "ifup -a" inside that unit, so
+      # the unit finishing means the answer has been carried out. On an
+      # appliance the card is in the machine at boot, every time, which is the
+      # case allow-hotplug buys nothing for.
+      echo "auto $_wif"
+      if [ "$_waddr" = dhcp ]; then
+        echo "iface $_wif inet dhcp"
+      else
+        echo "iface $_wif inet static"
+        echo "    address $_waddr"
+        [ -n "$_wgw" ] && echo "    gateway $_wgw"
+      fi
+    fi
+  } > "$_r$MGMT_CONF" || return 1
+
+  # And the file that has to READ it. /etc/network/interfaces on this image
+  # already says "source /etc/network/interfaces.d/*", so this repairs nothing
+  # on a box built from it - which is exactly why it is here: the stanza above
+  # is inert without that line, the line is not this installer's to assume,
+  # and an install that wrote a perfect file into a directory nobody sources
+  # would produce the identical unreachable box with a file on it saying it
+  # should not be.
+  _main="$_r/etc/network/interfaces"
+  if ! grep -qE '^[[:space:]]*source(-directory)?[[:space:]].*interfaces\.d' \
+         "$_main" 2>/dev/null; then
+    { echo "# Added by hexarouting-install: the management network is written"
+      echo "# to interfaces.d and nothing here was reading it."
+      echo "source /etc/network/interfaces.d/*"
+    } >> "$_main" || return 1
+  fi
+
+  # The resolver, for a static answer that gave one. dhclient writes this file
+  # itself, so the dhcp answer must not: two writers of /etc/resolv.conf is
+  # one of them losing.
+  if [ -n "$_wdns" ] && [ "$_waddr" != dhcp ]; then
+    {
+      echo "# Generated by hexarouting-install. Do not edit by hand."
+      # Written here rather than as "dns-nameservers" in the stanza above,
+      # because that option is resolvconf's and this image has no resolvconf:
+      # the line would be read by nothing at all.
+      printf '%s\n' "$_wdns" | tr ',' ' ' | tr -s ' ' '\n' \
+        | while read -r _ns; do
+            [ -n "$_ns" ] && echo "nameserver $_ns"
+          done
+    } > "$_r/etc/resolv.conf" || return 1
+  fi
+  return 0
+}
+
 # Check mode validates the ANSWERS and writes nothing, so it neither needs root
 # nor a medium to run from - which is what lets the questions be tested without
 # a virtual machine. Everything it cannot check it reports rather than passing
@@ -358,15 +751,20 @@ fatal() { if [ "$CHECK_ONLY" = 1 ]; then note "$*"; else die "$*"; fi }
 # to a "grub>" prompt in front of whoever is standing there - by which time the
 # person who could have re-run the install has left the cage.
 #
-# Three checks, because three things stop a freshly written disk from being a
+# Four checks, because four things stop a freshly written disk from being a
 # box somebody owns, and each has been seen on this product:
 #
 #   - GRUB has an entry whose kernel is on the disk (the squashfs built without
 #     /boot installed a bootloader with nothing to boot),
 #   - every UUID in fstab resolves to a device that exists (a mistyped or stale
-#     UUID drops the boot into an initramfs prompt), and
+#     UUID drops the boot into an initramfs prompt),
 #   - root has a password hash (a late failure leaves the LOCKED account the
-#     live image carries, which is a disk nobody can log into).
+#     live image carries, which is a disk nobody can log into), and
+#   - the management network reached the disk, names a card this machine has,
+#     and has something on the disk able to carry out the answer (#303). The
+#     last of those is the one with teeth: "iface ens18 inet dhcp" on a root
+#     with no DHCP client is a file that reads perfectly and does nothing, and
+#     the medium carried no client at all until this was measured.
 #
 # Each failure NAMES its check. "Verification failed" tells the operator to
 # reinstall and hope; naming it tells them what to look at.
@@ -426,6 +824,41 @@ verify_installed() {   # <mounted root>; non-zero if the disk is not usable
     *)    _vbad "login: the root account is still LOCKED - this is the live
          image's account, so the password answer never reached the disk" ;;
   esac
+
+  # The management network, which is the whole of #303 and is checked here
+  # because here is where the disk still exists to be looked at. Every one of
+  # these leaves a box that boots perfectly and cannot be reached, which is
+  # the failure this verification exists for: it is found while the operator
+  # is still standing there with the medium in the drive.
+  if [ ! -f "$_r$MGMT_CONF" ]; then
+    _vbad "network: $MGMT_CONF was not written, so this box would
+         boot with its card down and no address"
+  else
+    _mif=$(awk '$1 == "iface" { print $2; exit }' "$_r$MGMT_CONF")
+    _mmethod=$(awk '$1 == "iface" { print $4; exit }' "$_r$MGMT_CONF")
+    if [ -z "$_mif" ]; then
+      # The operator answered "none". It is a decision and not a fault, and
+      # saying it here is what makes the file's absence mean something else.
+      _vok "no management network was asked for: this box is reached at its
+         console"
+    elif ! grep -qE '^[[:space:]]*source(-directory)?[[:space:]].*interfaces\.d' \
+            "$_r/etc/network/interfaces" 2>/dev/null; then
+      _vbad "network: /etc/network/interfaces does not read interfaces.d, so
+         the stanza for $_mif was written where nothing looks"
+    elif [ ! -e "$NET_SYS/$_mif" ]; then
+      # This machine is the one being installed, so the card it has now is the
+      # card the installed box has. A name that is not here is a name that
+      # will not be there either.
+      _vbad "network: the management card $_mif is not on this machine
+         (it was named at install time and is not here now)"
+    elif [ "$_mmethod" = dhcp ] && [ ! -x "$_r/sbin/dhclient" ] \
+         && [ ! -x "$_r/usr/sbin/dhclient" ]; then
+      _vbad "network: $_mif is configured by DHCP and this disk carries no
+         DHCP client, so nothing on it can ask for an address"
+    else
+      _vok "management network: $_mif, $_mmethod"
+    fi
+  fi
 
   [ "$_bad" = 0 ]
 }
@@ -668,6 +1101,94 @@ if [ -n "$MIRROR" ]; then
     fatal "this medium has no mdadm, so it cannot build the records mirror"
 fi
 
+# ------------------------------------------------ 3d. the management network
+#
+# Asked here, with the other questions and before the first write, for the
+# reason every question in this script is: a box that is going to be rebooted
+# into a rack has to know how it is reached before anything is written, not
+# after. The ANSWER is written much further down, next to the hostname, which
+# is the other thing that makes a disk into a particular box.
+MGMT_DEFAULT_IF=$(default_route_nic)
+[ -n "$MGMT_DEFAULT_IF" ] || MGMT_DEFAULT_IF=$(nic_table | head -1 | cut -d' ' -f1)
+MGMT_NICS=$(nic_table | wc -l | tr -d ' ')
+
+# "none" from either answer means the same thing, because an operator setting
+# this unattended will reach for whichever of the two they remember.
+case "$MGMT_ADDR" in none|no) MGMT_IF=none ;; esac
+
+if [ "$MGMT_NICS" = 0 ]; then
+  # A machine with no card at all. There is nothing to ask and nothing to
+  # write a stanza for, and a question with no possible answer is noise on the
+  # one console where noise costs attention - the same argument the mirror
+  # question makes about a box with one disk.
+  [ -n "$MGMT_IF" ] || say "management network: this machine has no network card"
+  MGMT_IF=none
+elif [ -z "$MGMT_IF" ]; then
+  if [ "$ASSUME_YES" = 1 ]; then
+    # Unattended, and nothing said. It takes the default and SAYS it took the
+    # default, for the reason the log volume does: an unattended install has no
+    # console to answer from, and a question nobody can answer is a machine
+    # that hangs. The default is the card this medium is reaching the network
+    # through right now, which is the best answer anything here has.
+    MGMT_IF=$MGMT_DEFAULT_IF
+    say "management network: $MGMT_IF by DHCP (unattended)"
+    say "  (pass hexarouting.mgmt-interface= and hexarouting.mgmt-address= to"
+    say "  choose; hexarouting.mgmt-address=none for no management network)"
+  else
+    MGMT_IF=$(choose_interface "$MGMT_DEFAULT_IF") || exit 1
+  fi
+fi
+
+if [ "$MGMT_IF" = none ]; then
+  # Recorded rather than dropped. The file written for this case is what lets
+  # the boot self-test tell a box whose operator chose this from a box that
+  # was installed by a medium which never asked - and the second of those is
+  # every box installed before this existed.
+  MGMT_ADDR=none
+  MGMT_GW=""
+  MGMT_DNS=""
+else
+  [ -e "$NET_SYS/$MGMT_IF" ] || { echo "Cards on this machine:" >&2
+    nic_table | sed 's/^/  /' >&2
+    die "this machine has no card called '$MGMT_IF'"; }
+  if [ -z "$MGMT_ADDR" ]; then
+    if [ "$ASSUME_YES" = 1 ]; then
+      MGMT_ADDR=dhcp
+    else
+      MGMT_ADDR=$(ask_address)
+    fi
+  fi
+  case "$MGMT_ADDR" in
+    dhcp|DHCP) MGMT_ADDR=dhcp ;;
+    *) cidr_ok "$MGMT_ADDR" || die "'$MGMT_ADDR' is not 'dhcp' and not an
+  address with a prefix, like 10.0.0.2/24" ;;
+  esac
+  if [ "$MGMT_ADDR" = dhcp ]; then
+    # A gateway and a DHCP answer name two different authorities for the same
+    # route. Refused rather than quietly ignored: whoever wrote both down
+    # believes one of them, and this installer cannot know which.
+    [ -z "$MGMT_GW" ] || die "a gateway was given and DHCP carries its own:
+  one of the two answers is not what was meant, and this cannot know which"
+  else
+    if [ -z "$MGMT_GW" ] && [ "$ASSUME_YES" != 1 ]; then
+      MGMT_GW=$(ask_gateway "$MGMT_ADDR")
+    fi
+    if [ -n "$MGMT_GW" ]; then
+      ipv4_ok "$MGMT_GW" || die "the gateway '$MGMT_GW' is not an address"
+      same_subnet "$MGMT_ADDR" "$MGMT_GW" || \
+        die "the gateway $MGMT_GW is not on $MGMT_ADDR's subnet: this box would
+  come up with an address, refuse the default route, and be reachable from its
+  own subnet only"
+    fi
+    if [ -z "$MGMT_DNS" ] && [ "$ASSUME_YES" != 1 ]; then
+      MGMT_DNS=$(ask "DNS servers, comma separated (empty: none)" "")
+    fi
+    for _ns in $(printf '%s' "$MGMT_DNS" | tr ',' ' '); do
+      ipv4_ok "$_ns" || die "the DNS server '$_ns' is not an address"
+    done
+  fi
+fi
+
 # --------------------------------------------------------- 4. root password
 #
 # Refused, not defaulted. A first boot that never asks for a password is a
@@ -706,6 +1227,18 @@ else
 fi
 echo "  hostname       $HOSTNAME_NEW"
 echo "  timezone       $TIMEZONE"
+# Repeated back with the other answers, because it is the one answer whose
+# consequence the operator cannot see until the medium is out of the drive and
+# the box has rebooted without them.
+if [ "$MGMT_IF" = none ]; then
+  echo "  management     none: this box is reached at its console only"
+elif [ "$MGMT_ADDR" = dhcp ]; then
+  echo "  management     $MGMT_IF, by DHCP"
+else
+  echo "  management     $MGMT_IF, $MGMT_ADDR${MGMT_GW:+ via $MGMT_GW}"
+  [ -n "$MGMT_DNS" ] && echo "                 DNS $MGMT_DNS"
+  [ -n "$MGMT_GW" ] || echo "                 no gateway: its own subnet reaches it, nothing else"
+fi
 echo "  root password  set"
 echo
 
@@ -1017,6 +1550,24 @@ printf '127.0.0.1 localhost\n127.0.1.1 %s\n' "$HOSTNAME_NEW" > "$MNT/etc/hosts"
 ln -sf "/usr/share/zoneinfo/$TIMEZONE" "$MNT/etc/localtime"
 echo "$TIMEZONE" > "$MNT/etc/timezone"
 
+# The management network (#303), written here because it belongs with the
+# hostname: both are the answers that make this disk a particular box rather
+# than a copy of the medium. Everything about WHAT is written, and why it is
+# written where it is, is at write_network_config() above.
+#
+# A hard failure. An install that finished with no management path is found by
+# somebody who drove to the site, which is the same argument the ssh host keys
+# are generated under, and the box this leaves is worse: sshd with no key
+# refuses a connection, and a card with no address does not answer at all.
+if [ "$MGMT_IF" = none ]; then
+  say "management network: none, by answer"
+else
+  say "management network: $MGMT_IF"
+fi
+write_network_config "$MNT" "$MGMT_IF" "$MGMT_ADDR" "$MGMT_GW" "$MGMT_DNS" \
+  || die "could not write the management network onto the target; the box
+  would boot with its card down and no address"
+
 # A racked appliance is reached by serial console or IPMI. The live ISO gets a
 # console because the boot loader is handed console=ttyS0 on the command line;
 # an installed system has to configure its own, and without it the box boots
@@ -1206,6 +1757,19 @@ fi
 echo
 say "installed on $DISK"
 echo "    hostname $HOSTNAME_NEW, timezone $TIMEZONE, root password set."
+# Said at the end as well as in the summary, because this is the screen the
+# operator is looking at when they decide whether they can walk away from the
+# machine - and on a DHCP answer it is also the sentence that tells them where
+# the address will be printed, which is the console they are about to leave.
+if [ "$MGMT_IF" = none ]; then
+  echo "    No management network was asked for: this box is reached at its"
+  echo "    console, and the boot self-test says so at every boot."
+elif [ "$MGMT_ADDR" = dhcp ]; then
+  echo "    Managed on $MGMT_IF by DHCP. The address it is given is printed"
+  echo "    by the boot self-test, on this console, at every boot."
+else
+  echo "    Managed on $MGMT_IF at $MGMT_ADDR${MGMT_GW:+ via $MGMT_GW}."
+fi
 if [ -n "$MIRROR" ]; then
   echo "    The connection records are on $DISK and $MIRROR. The mirror may"
   echo "    still be synchronising; it survives the reboot and finishes on its"

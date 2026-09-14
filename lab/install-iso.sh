@@ -115,6 +115,82 @@ DISK2=${DISK2:-/tmp/hexa-disk2.qcow2}
 DISK2_SIZE=${DISK2_SIZE:-4G}
 MIRROR_DEV=/dev/vdb
 
+# ------------------------------------------------- reaching the box (#303)
+#
+# THE ONE THING THIS LAB COULD NOT DO, and the reason a box with no management
+# network passed the release gate for the whole life of the product: every
+# assertion in this file is driven down the SERIAL CONSOLE. A box with no
+# address behaves identically down a serial line to a box with one, so the
+# missing network was invisible here by construction - and an assertion that
+# reads the box's own words about its address ("ip a" typed at a shell, a line
+# the self-test printed) would pass on a box nobody can reach, which is the
+# exact shape of check this repository keeps finding and throwing away.
+#
+# So the lab opens a TCP connection to the box's sshd FROM OUTSIDE, over the
+# network, and reads the banner the box sends back. qemu's user-mode
+# networking runs a DHCP server handing the guest 10.0.2.15, and hostfwd
+# forwards a port on this host to that address inside the guest: the
+# connection completes only if the guest really holds the address, with the
+# interface up and sshd listening on it. Nothing is typed at the console for
+# it and the box is never asked.
+#
+# WHAT IT PROVES AND WHAT IT DOES NOT, said here rather than left to be
+# assumed. The host side of a forwarded port is libslirp, a userspace TCP
+# stack, so this is not a packet over a wire and says nothing about any real
+# NIC driver. The GUEST side is real: slirp sends a SYN to the address its own
+# DHCP server handed out, inside the guest's virtual network, and the box must
+# hold that address, answer for it and have sshd listening on it for a byte to
+# come back. So it proves the box took the lease, configured the card and is
+# answering on it, which is the whole of what #303 is about, and it proves
+# nothing about 10-gigabit optics.
+#
+# ONE card, explicitly, at a FIXED PCI address, on every boot. qemu adds a
+# default NIC when told nothing, which is how this lab has been running - and
+# a card that changes model or slot between the install and the boot changes
+# its predictable NAME, so the box would come up looking for a card that is
+# not there and this lab would be measuring its own inconsistency. The box is
+# then the same shape as the one in #303: a machine with a single NIC.
+SSH_PORT=${SSH_PORT:-2222}
+MGMT_NET="-netdev user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
+  -device virtio-net-pci,netdev=mgmt,addr=0x9"
+
+# Does the box answer on the network? <seconds> to keep trying.
+#
+# The SSH BANNER and not a completed connection. libslirp accepts the host
+# side of a forwarded port before it knows whether anything inside the guest
+# will answer, so "the connect() returned" is not evidence: what proves a
+# round trip to the box is bytes the box itself sent. An unreachable guest
+# gives an empty read and this keeps trying until the deadline, which is also
+# what an sshd that has not started yet looks like.
+#
+# python3, because this lab already needs it for the password hash and because
+# /bin/sh here has no /dev/tcp. Nothing is authenticated: whether an account
+# can log in is proved at the console above, and what is being asked here is
+# only whether the box is on the network at all.
+reachable_over_the_network() {   # <seconds>; prints the banner, or the reason
+  python3 - "$SSH_PORT" "$1" <<'PYPROBE'
+import socket, sys, time
+port, secs = int(sys.argv[1]), float(sys.argv[2])
+deadline = time.time() + secs
+last = "nothing answered on the forwarded port"
+while time.time() < deadline:
+    try:
+        s = socket.create_connection(("127.0.0.1", port), 5)
+        s.settimeout(5)
+        data = s.recv(128)
+        s.close()
+        if data.startswith(b"SSH-"):
+            print(data.split(b"\r")[0].split(b"\n")[0].decode("ascii", "replace"))
+            sys.exit(0)
+        last = "the connection was accepted and the box sent nothing back"
+    except OSError as e:
+        last = str(e)
+    time.sleep(2)
+print(last)
+sys.exit(1)
+PYPROBE
+}
+
 [ -f "$ISO" ] || { echo "no ISO at $ISO"; exit 1; }
 fail=0
 
@@ -214,7 +290,7 @@ echo "=========== PHASE 1: install onto a blank disk ==========="
 timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   $ACCEL -m "${BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
-  -drive file="$DISK",format=qcow2,if=virtio $MIRROR_DRIVE \
+  -drive file="$DISK",format=qcow2,if=virtio $MIRROR_DRIVE $MGMT_NET \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
            hexarouting.install=/dev/vda hexarouting.yes \
            hexarouting.log-gb=2 $MIRROR_ANSWER \
@@ -280,7 +356,7 @@ echo "  install reported success"
 # install that succeeds cannot demonstrate what a failed verification does.
 if grep -q "verifying the disk that was just written" /tmp/install-clean.log; then
   echo "  [ ok ] the installer verified the disk before reporting success"
-  grep -E "\[ ok \] (GRUB boots|fstab:|root has a password)" \
+  grep -E "\[ ok \] (GRUB boots|fstab:|root has a password|management network)" \
     /tmp/install-clean.log | sed 's/^/         /'
 else
   echo "  [FAIL] the installer reported success without checking what it wrote:"
@@ -569,6 +645,68 @@ print("%d %d" % (len(p), p[0]["start"]))
       fail=1 ;;
   esac
 fi
+
+# ------------------------------------------- booting the disk, more than once
+#
+# These four were written inside "if MODE = mirror" - the only path that
+# booted a machine more than once - and they are here now because the one-disk
+# path boots twice as well: the box is booted, driven, and then booted AGAIN
+# with nothing typed at all, which is the only way to answer "does this box
+# come back on the network by itself" (#303). Two copies of a console boot
+# would be two things to keep in step.
+#
+# One machine at a time, each with its own console. The driver's waits, its
+# report and its rewinding all read $CONSOLE_LOG and $CONSOLE_POS, so a boot
+# is "a fresh log and a fresh pipe" and nothing else.
+# shellcheck disable=SC2086
+boot_vm() {  # <seconds> <qemu arguments...>
+  _secs=$1; shift
+  CONSOLE_POS=1
+  : > "$CONSOLE_LOG"
+  rm -f "$CONSOLE_IN"
+  mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
+  timeout "$_secs" qemu-system-x86_64 \
+    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot "$@" \
+    < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
+  QEMU_PID=$!
+  # Held open for the whole session: a writer that opens and closes the pipe
+  # for each line hands qemu an end-of-file on the serial console in between.
+  exec 3> "$CONSOLE_IN"
+}
+
+# Asked to power off, not killed, wherever the box has something to flush.
+# The record written on the mirrored volume is the whole point of the boot
+# before this one, and a machine killed mid-write proves the mirror lost
+# something it never held.
+stop_vm() {  # <seconds to wait for a machine that was asked to power off>
+  exec 3>&-
+  _n=0
+  while kill -0 "$QEMU_PID" 2>/dev/null && [ "$_n" -lt "${1:-0}" ]; do
+    sleep 1
+    _n=$((_n + 1))
+  done
+  kill "$QEMU_PID" 2>/dev/null || true
+  sleep 2
+  pkill -9 -f qemu-system-x86_64 2>/dev/null || true
+  wait "$QEMU_PID" 2>/dev/null || true
+  sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$CONSOLE_LOG" | tr -d '\r' > "$CONSOLE_CLEAN"
+  cat "$CONSOLE_CLEAN" >> "$LOG" 2>/dev/null || true
+}
+
+mfield() {  # <clean console> <name>
+  sed -n "s/^HXLAB $2=//p" "$1" | head -1 | tr -d '\r'
+}
+
+login_root() {  # the first prompt the box offers, and root in the VTY
+  wait_for "$NEW_HOST login:" 420 "$1" || return 1
+  send "root"
+  wait_for "Password:" 60 "login to ask for root's password" || return 1
+  send "$LOGIN_PW"
+  wait_for "HexaRouting VTY" 180 "root's login to land in the VTY" || return 1
+  send "start shell"
+  wait_for "entering /bin" 60 "root's shell escape to open" || return 1
+}
+
 
 echo
 if [ "$MODE" = mirror ]; then
@@ -1019,6 +1157,32 @@ drive_console() {
   send 'echo "HX""LAB arrays=$(grep -cE "^md[0-9]" /proc/mdstat 2>/dev/null || echo no-mdstat)"'
   wait_for "HXLAB arrays=" 30 \
     "the box to say how many arrays it has" || return 1
+  # The management network, asked of the KERNEL and of the box's own
+  # configuration, not of what the installer printed while it was installing
+  # (#303). Nothing in this lab typed an `ip` command, and that is the whole
+  # assertion: on 0.72.0 this card came up DOWN with no address, and the
+  # operator's `ip addr add` at the console did not survive the next reboot.
+  #
+  # The interface NAME is read off the box, never assumed. It is whatever
+  # predictable naming calls qemu's card on this host, the installer chose it
+  # from what the machine had, and a lab that hard-coded "ens3" would be
+  # asserting against its own guess - which is #161's standing rule.
+  send 'M=$(sed -n "s/^iface \([^ ]*\) .*/\1/p" /etc/network/interfaces.d/hexarouting | head -1); echo "HX""LAB mgmt-if=$M"'
+  wait_for "HXLAB mgmt-if=" 30 \
+    "the box to say which card it was installed to be managed on" || return 1
+  send 'echo "HX""LAB mgmt-addr=$(ip -o -4 addr show dev $M | awk "{print \$4}" | tr "\n" " ")"'
+  wait_for "HXLAB mgmt-addr=" 30 \
+    "the box to say what address that card is carrying" || return 1
+  send 'echo "HX""LAB mgmt-route=$(ip -o -4 route list default | tr "\n" "/")"'
+  wait_for "HXLAB mgmt-route=" 30 \
+    "the box to say how it reaches anything off its own subnet" || return 1
+  # And what systemd did with the file. A stanza in a directory nothing
+  # sources, or a networking.service that failed, are both a box with a
+  # perfect configuration file and no address - and they look identical from
+  # the file alone.
+  send 'echo "HX""LAB mgmt-unit=$(systemctl is-enabled networking 2>&1) $(systemctl is-active networking 2>&1)"'
+  wait_for "HXLAB mgmt-unit=" 30 \
+    "systemd to say what it did with the management network" || return 1
   # What systemd will do when this box is stopped, asked of SYSTEMD and not of
   # the drop-in file. In dynamic mode the block log is the connection record
   # the Marco Civil requires, and a block held when the dataplane stops leaves
@@ -1349,58 +1513,6 @@ drive_console() {
 #                  system: what the survivor does on its own.
 if [ "$MODE" = mirror ]; then
 
-# One machine at a time, each with its own console. The driver's waits, its
-# report and its rewinding all read $CONSOLE_LOG and $CONSOLE_POS, so a boot
-# is "a fresh log and a fresh pipe" and nothing else.
-# shellcheck disable=SC2086
-boot_vm() {  # <seconds> <qemu arguments...>
-  _secs=$1; shift
-  CONSOLE_POS=1
-  : > "$CONSOLE_LOG"
-  rm -f "$CONSOLE_IN"
-  mkfifo "$CONSOLE_IN" || { echo "cannot create the console pipe $CONSOLE_IN"; exit 1; }
-  timeout "$_secs" qemu-system-x86_64 \
-    $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot "$@" \
-    < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
-  QEMU_PID=$!
-  # Held open for the whole session: a writer that opens and closes the pipe
-  # for each line hands qemu an end-of-file on the serial console in between.
-  exec 3> "$CONSOLE_IN"
-}
-
-# Asked to power off, not killed, wherever the box has something to flush.
-# The record written on the mirrored volume is the whole point of the boot
-# before this one, and a machine killed mid-write proves the mirror lost
-# something it never held.
-stop_vm() {  # <seconds to wait for a machine that was asked to power off>
-  exec 3>&-
-  _n=0
-  while kill -0 "$QEMU_PID" 2>/dev/null && [ "$_n" -lt "${1:-0}" ]; do
-    sleep 1
-    _n=$((_n + 1))
-  done
-  kill "$QEMU_PID" 2>/dev/null || true
-  sleep 2
-  pkill -9 -f qemu-system-x86_64 2>/dev/null || true
-  wait "$QEMU_PID" 2>/dev/null || true
-  sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$CONSOLE_LOG" | tr -d '\r' > "$CONSOLE_CLEAN"
-  cat "$CONSOLE_CLEAN" >> "$LOG" 2>/dev/null || true
-}
-
-mfield() {  # <clean console> <name>
-  sed -n "s/^HXLAB $2=//p" "$1" | head -1 | tr -d '\r'
-}
-
-login_root() {  # the first prompt the box offers, and root in the VTY
-  wait_for "$NEW_HOST login:" 420 "$1" || return 1
-  send "root"
-  wait_for "Password:" 60 "login to ask for root's password" || return 1
-  send "$LOGIN_PW"
-  wait_for "HexaRouting VTY" 180 "root's login to land in the VTY" || return 1
-  send "start shell"
-  wait_for "entering /bin" 60 "root's shell escape to open" || return 1
-}
-
 # What the box says about its own disks, asked of the KERNEL and of the
 # mount table - not of the installer's console output, which says what the
 # installer meant to do, and not of mdadm.conf, which says what it was told.
@@ -1456,7 +1568,7 @@ echo
 echo "=========== PHASE 2: both disks, and a record written ==========="
 CONSOLE_LOG=/tmp/mirror-healthy.log
 CONSOLE_CLEAN=/tmp/mirror-healthy-clean.log
-boot_vm "${MIRROR_BOOT_SECS:-900}" \
+boot_vm "${MIRROR_BOOT_SECS:-900}" $MGMT_NET \
   -drive file="$DISK",format=qcow2,if=virtio \
   -drive file="$DISK2",format=qcow2,if=virtio
 HEALTHY_DRIVEN=1
@@ -1503,7 +1615,7 @@ echo "=========== PHASE 3: the mirror disk is GONE ==========="
 # looks like from inside the box, and it is the state no unit test can reach.
 CONSOLE_LOG=/tmp/mirror-degraded.log
 CONSOLE_CLEAN=/tmp/mirror-degraded-clean.log
-boot_vm "${MIRROR_BOOT_SECS:-900}" \
+boot_vm "${MIRROR_BOOT_SECS:-900}" $MGMT_NET \
   -drive file="$DISK",format=qcow2,if=virtio
 DEGRADED_DRIVEN=1
 degraded_session || { DEGRADED_DRIVEN=0; fail=1; }
@@ -1666,7 +1778,7 @@ timeout "${INSTALL_SECS:-600}" qemu-system-x86_64 \
   $ACCEL -m "${BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -drive file="$DISK",format=qcow2,if=virtio \
-  -drive file="$DISK2",format=qcow2,if=virtio \
+  -drive file="$DISK2",format=qcow2,if=virtio $MGMT_NET \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1 \
            hexarouting.install=/dev/vda hexarouting.yes \
            hexarouting.log-gb=2 hexarouting.mirror=$MIRROR_DEV \
@@ -1714,7 +1826,7 @@ fi
 # logins around it.
 timeout "${BOOT_SECS:-1200}" qemu-system-x86_64 \
   $ACCEL -m "${DISK_BOOT_MEM:-8192}" -smp 2 -nographic -no-reboot \
-  -drive file="$DISK",format=qcow2,if=virtio \
+  -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET \
   < "$CONSOLE_IN" > "$CONSOLE_LOG" 2>&1 &
 QEMU_PID=$!
 # Held open for the whole session. A writer that opens the pipe for each line
@@ -1734,6 +1846,20 @@ if ! drive_console; then
   CONSOLE_DRIVEN=0
   fail=1
 fi
+
+# THE BOX, FROM OUTSIDE, WHILE IT IS STILL RUNNING (#303).
+#
+# Taken here because the machine is alive here and nowhere else in this
+# section, and taken over the network rather than asked: everything above this
+# line is the box's own account of itself down a serial cable, and a box with
+# no address gives exactly the same account as a box with one.
+#
+# 90 seconds and not one attempt. sshd is up long before the driven session
+# ends, so this normally answers on the first try; the window is for the run
+# where it does not, so that "the box is not reachable" is a measurement and
+# not a race.
+BOOT_BANNER=$(reachable_over_the_network 90)
+BOOT_REACHED=$?
 
 # The box has answered everything it is going to be asked. Killing it is not a
 # shutdown test - nothing here asserts anything about how it goes down - and
@@ -1802,6 +1928,127 @@ if [ "$up" = 1 ]; then
     echo "  [FAIL] connection records share a filesystem with the root"
     grep -A2 "records are on the ROOT" /tmp/disk-clean.log | head -3 \
       | sed 's/^/         /'
+    fail=1
+  fi
+fi
+
+# ------- the network this box comes back on, with nothing typed (#303) -------
+#
+# THE ACCEPTANCE. Measured on a 0.72.0 appliance and escalated three times: the
+# installer wrote nothing whatever under /etc/network, so a box installed from
+# the published medium booted with its card DOWN and no address, was reachable
+# at its console and nowhere else, and what the operator typed at that console
+# - `ip link set up`, `ip addr add`, `ip route add` - did not survive the next
+# reboot.
+#
+# Nothing in this lab passes a management answer to the installer and nothing
+# in it types an `ip` command. The install above is the one the release gate
+# runs, with the same command line it has always had, so what is asserted here
+# is the DEFAULT: an operator who answers nothing gets a box that comes back.
+#
+# The interface name is read off the box and never assumed. It is whatever
+# predictable naming calls qemu's card, the installer chose it from what the
+# machine had, and a lab that spelled it out would be asserting against its
+# own guess (#161).
+if [ "$up" = 1 ]; then
+  MGMT_IF=$(sed -n 's/^HXLAB mgmt-if=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  MGMT_ADDR=$(sed -n 's/^HXLAB mgmt-addr=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  MGMT_ROUTE=$(sed -n 's/^HXLAB mgmt-route=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  MGMT_UNIT=$(sed -n 's/^HXLAB mgmt-unit=//p' /tmp/disk-clean.log | head -1 | tr -d '\r')
+  # WAS THE BOX ASKED AT ALL, which is a different thing from what it
+  # answered. Measured on the wrong-password control, whose driver never gets
+  # past the login: the four markers above were absent, and the three checks
+  # below read that absence as "this box has no management network" and said
+  # so in as many words about a box that had one. A lab that cannot tell "the
+  # box never answered" from "the box answered badly" sends whoever reads it
+  # to the wrong place, which is the whole argument behind that control
+  # existing. The marker LINE, not its value: an empty value is an answer.
+  MGMT_ASKED=$(grep -c "^HXLAB mgmt-if=" /tmp/disk-clean.log)
+  if [ "$MGMT_ASKED" = 0 ]; then
+    echo "  [FAIL] the box was never asked what network it is on, so nothing"
+    echo "         here says whether it has one. The console driver did not"
+    echo "         reach the shell; the two checks below it were taken over"
+    echo "         the network and stand on their own"
+    fail=1
+  elif [ -n "$MGMT_IF" ]; then
+    echo "  [ ok ] the installed box was given a management card: $MGMT_IF"
+  else
+    echo "  [FAIL] the installed box has no /etc/network/interfaces.d/hexarouting"
+    echo "         naming a card, so nothing configures an interface at boot."
+    echo "         This is the box of #303: it comes back from every reboot"
+    echo "         down and unreachable, and the console is the only way in"
+    fail=1
+  fi
+  # An address, in the shape of one. The failure being caught is the ABSENCE
+  # of any address at all, which is what a box with no stanza has; the exact
+  # value is qemu's to choose and is printed rather than demanded.
+  #
+  # Skipped when the box was never asked, for the reason above: silence from a
+  # driver that never logged in is not a reading about the box.
+  if [ "$MGMT_ASKED" != 0 ]; then
+    case "$MGMT_ADDR" in
+      *[0-9].[0-9]*/[0-9]*)
+        echo "  [ ok ] and it came up carrying an address, with nothing typed:"
+        echo "         $MGMT_ADDR" ;;
+      *)
+        echo "  [FAIL] the management card carries no IPv4 address"
+        echo "         ('${MGMT_ADDR:-<empty>}'). The box booted, and it"
+        echo "         cannot be reached over the network"
+        fail=1 ;;
+    esac
+    case "$MGMT_ROUTE" in
+      default*)
+        echo "  [ ok ] and a default route, so it is reachable off its subnet:"
+        echo "         $MGMT_ROUTE" ;;
+      *)
+        echo "  [FAIL] the box has no default route ('${MGMT_ROUTE:-<none>}'),"
+        echo "         so only its own subnet can reach it"
+        fail=1 ;;
+    esac
+    # What systemd did with the file, asked of systemd. A stanza in a
+    # directory nothing sources and a networking.service that failed both
+    # leave a box with a perfect configuration file and no address, and they
+    # are identical from the file alone.
+    case "$MGMT_UNIT" in
+      "enabled active")
+        echo "  [ ok ] and networking.service is enabled and ran: $MGMT_UNIT" ;;
+      *)
+        echo "  [FAIL] networking.service is '${MGMT_UNIT:-<unread>}' on the"
+        echo "         installed box, so whatever is in interfaces.d was not"
+        echo "         applied by anything"
+        fail=1 ;;
+    esac
+  fi
+  # AND IT ANSWERED FROM OUTSIDE. This is the assertion the other five cannot
+  # make: they are the box talking about itself on a serial line, and the
+  # release gate has been reading those for the whole life of a product whose
+  # boxes had no network at all.
+  if [ "$BOOT_REACHED" = 0 ]; then
+    echo "  [ ok ] and it answered a TCP connection from outside, over the"
+    echo "         network, with nothing typed to make it: $BOOT_BANNER"
+  else
+    echo "  [FAIL] the box does not answer on the network. A connection to"
+    echo "         its sshd through qemu's forwarded port got:"
+    echo "         ${BOOT_BANNER:-<nothing at all>}"
+    echo "         Every other line in this section is the box's own account"
+    echo "         of itself down a serial cable. This one is the only thing"
+    echo "         here that an operator could not fake by standing at the"
+    echo "         console, and it is what #303 is about"
+    fail=1
+  fi
+
+  # And the console SAID it, before anybody logged in. The address is what
+  # somebody standing at a serial console needs in order to leave the rack and
+  # carry on over ssh, and on a DHCP answer it is the only place it appears.
+  sed -n "1,/$NEW_HOST login:/p" /tmp/disk-clean.log > /tmp/boot-before-login.log
+  if grep -q "managed on" /tmp/boot-before-login.log; then
+    echo "  [ ok ] and the boot self-test said so before any login, unprompted:"
+    grep -A2 "managed on" /tmp/boot-before-login.log | head -3 | sed 's/^/        /'
+  else
+    echo "  [FAIL] nothing on the console before the login prompt says what"
+    echo "         network this box is on. On a DHCP answer that console is"
+    echo "         the only place the address appears, and whoever racked the"
+    echo "         box is standing in front of it"
     fail=1
   fi
 fi
@@ -2408,6 +2655,108 @@ else
   fi
 fi
 
+# =========================================================================
+# PHASE 3: the same box, switched off and started again (#303)
+# =========================================================================
+#
+# The acceptance says "comes back after a reboot on the network it was
+# installed on, with no `ip` command typed by hand", and every phase above
+# this one is the FIRST boot after the install. That is not the same question.
+# A box can be reachable once because something in the install left an
+# interface up; the question an operator is asking is whether it is reachable
+# again tomorrow, which on the box in #303 it was not - the address the
+# operator typed at the console went away with the power.
+#
+# So this is a cold start of the same disk image, with a fresh console, and
+# nothing has been typed into it. It is deliberately the LAST thing this lab
+# does: the session above left the box configured, committed to and rebooted
+# once, which is the state a box that has been worked on is in.
+#
+# Skipped when the box never came up at all, and when the session above never
+# got into it. "It came back" about a machine that never arrived is a sentence
+# with no subject - and the wrong-password control, whose whole job is to fail
+# at the login, must not spend another seven minutes booting a box it was
+# never able to talk to.
+if [ "$up" = 1 ] && [ "${CONSOLE_DRIVEN:-0}" = 1 ]; then
+  echo
+  echo "=========== PHASE 3: the box is switched off and started again ==========="
+  CONSOLE_LOG=/tmp/reboot.log
+  CONSOLE_CLEAN=/tmp/reboot-clean.log
+  # shellcheck disable=SC2086
+  boot_vm "${REBOOT_SECS:-900}" \
+    -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET
+  # Reached from outside BEFORE anything is typed into it. In this phase the
+  # box has had nothing at all done to it since the power came back, so a
+  # connection completing here is the whole of the acceptance: it came back on
+  # the network by itself.
+  #
+  # 420 seconds because this is a cold boot and the wait is for the box, not
+  # for the network: sshd starts when the box has finished starting.
+  RB_BANNER=$(reachable_over_the_network 420)
+  RB_REACHED=$?
+  if [ "$RB_REACHED" = 0 ]; then
+    echo "  [ ok ] it answered from outside after the power cycle, with"
+    echo "         nothing typed at its console: $RB_BANNER"
+  else
+    echo "  [FAIL] after the power cycle the box does not answer on the"
+    echo "         network: ${RB_BANNER:-<nothing at all>}"
+    echo "         This is #303 exactly: whatever made it reachable before"
+    echo "         did not survive being switched off, and the console is"
+    echo "         the only way back in"
+    fail=1
+  fi
+
+  if login_root "the installed box to come back from a cold start"; then
+    send 'M=$(sed -n "s/^iface \([^ ]*\) .*/\1/p" /etc/network/interfaces.d/hexarouting | head -1); echo "HX""LAB rb-if=$M"'
+    wait_for "HXLAB rb-if=" 30 "the box to name its management card again" \
+      || fail=1
+    send 'echo "HX""LAB rb-addr=$(ip -o -4 addr show dev $M | awk "{print \$4}" | tr "\n" " ")"'
+    wait_for "HXLAB rb-addr=" 30 \
+      "the box to say what address it came back with" || fail=1
+    send 'echo "HX""LAB rb-route=$(ip -o -4 route list default | tr "\n" "/")"'
+    wait_for "HXLAB rb-route=" 30 \
+      "the box to say whether it can reach anything off its subnet" || fail=1
+    send "sync"
+    send "systemctl poweroff"
+  else
+    echo "  [FAIL] the box did not come back from a cold start at all"
+    fail=1
+  fi
+  stop_vm 60
+  RB_IF=$(sed -n 's/^HXLAB rb-if=//p' "$CONSOLE_CLEAN" | head -1)
+  RB_ADDR=$(sed -n 's/^HXLAB rb-addr=//p' "$CONSOLE_CLEAN" | head -1)
+  RB_ROUTE=$(sed -n 's/^HXLAB rb-route=//p' "$CONSOLE_CLEAN" | head -1)
+  case "$RB_ADDR" in
+    *[0-9].[0-9]*/[0-9]*)
+      echo "  [ ok ] it came back on the network by itself: $RB_IF $RB_ADDR"
+      echo "         nothing was typed on this boot before it was asked" ;;
+    *)
+      echo "  [FAIL] the box came back with no address on ${RB_IF:-its card}"
+      echo "         ('${RB_ADDR:-<the box was never asked>}'). This is #303:"
+      echo "         whatever made it reachable the first time did not"
+      echo "         survive the power cycle, and the console is the only"
+      echo "         way in again"
+      fail=1 ;;
+  esac
+  case "$RB_ROUTE" in
+    default*) echo "  [ ok ] and with its default route: $RB_ROUTE" ;;
+    *) echo "  [FAIL] it came back with no default route ('${RB_ROUTE:-<none>}')"
+       fail=1 ;;
+  esac
+  # The address it came back with is the address it had. A box that comes back
+  # on a DIFFERENT address is reachable and is not where anybody left it: every
+  # script, every monitoring check and every ssh known-host entry points at the
+  # old one. On this lab's network that is qemu's DHCP server handing out the
+  # same lease, which is what a real one does too.
+  if [ -n "$RB_ADDR" ] && [ "$RB_ADDR" = "${MGMT_ADDR:-}" ]; then
+    echo "  [ ok ] and it is the same address it had before the power cycle"
+  else
+    echo "  [warn] the address changed over the power cycle:"
+    echo "         before: ${MGMT_ADDR:-<unread>}"
+    echo "         after:  ${RB_ADDR:-<unread>}"
+  fi
+fi
+
 echo
 if [ "$fail" = 0 ]; then
   echo "LAB PASSED"
@@ -2416,4 +2765,3 @@ fi
 echo "LAB FAILED"
 echo "--- full console in $LOG ---"
 exit 1
-

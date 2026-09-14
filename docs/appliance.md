@@ -1232,6 +1232,9 @@ that console to skip the line that matters.
 | Timezone | there is no such zone in `/usr/share/zoneinfo` |
 | Gigabytes for connection records | not a whole number, below 1 GB, or it would leave the system less than 8 GB |
 | Records mirror | it is the target, the medium, a partition, or too small for the records |
+| Management card | this machine has no card by that name |
+| Management address | it is neither `dhcp` nor `none` nor an address with a prefix in 1..32 |
+| Default gateway | it is not an address, it is not on the address's own subnet, or it was given together with `dhcp` |
 | Root password | it is empty, or the two entries do not match |
 
 Then a summary, then the disk repeated back with its size and model, and the
@@ -1243,6 +1246,141 @@ remove the medium.
 Asking first is not cosmetic. It used to ask for the password **last**, after
 GRUB was already written, so an install that was abandoned at the prompt left a
 bootable disk carrying whatever password the image had.
+
+### The management network
+
+An appliance that cannot be reached after a reboot is not an appliance. Up to
+and including 0.72.0 this installer wrote **nothing whatever** under
+`/etc/network`, measured on a real box:
+
+```
+# ls -la /etc/network/interfaces.d/      (empty)
+# cat /etc/network/interfaces
+source /etc/network/interfaces.d/*
+# systemctl is-enabled networking
+enabled
+```
+
+So `networking.service` came up with nothing to do, the card booted `DOWN`
+with no address, and the box was reachable at its console and nowhere else.
+What an operator typed there - `ip link set up`, `ip addr add`, `ip route
+add` - did not survive the next reboot, because nothing wrote it down. It was
+escalated three times
+([#303](https://github.com/andrediashexa/hexarouting/issues/303)).
+
+| Question | Answer |
+|---|---|
+| Which card | a menu of the machine's cards with what each one IS - up or down, its driver, the address it is carrying now. The default is the card the medium is reaching the network through, or `none` |
+| How it is addressed | `dhcp`, an address with a prefix (`10.0.0.2/24`), or `none` |
+| Default gateway | static only, empty accepted, refused when it is not on the address's own subnet |
+| DNS servers | static only, written to `/etc/resolv.conf` |
+| Unattended | `hexarouting.mgmt-interface=`, `.mgmt-address=`, `.mgmt-gateway=`, `.mgmt-dns=`, or the same keys in the answers file |
+
+**It is written to `/etc/network/interfaces.d/hexarouting`, and `ifupdown` is
+the mechanism because it is the one the box already has.** The image
+installs `iproute2` and `ifupdown` and nothing else that touches an interface:
+no NetworkManager, no `systemd-networkd` configuration, no netplan, all three
+read out of the built squashfs rather than assumed. `networking.service` is
+enabled, `/etc/network/interfaces` already sources `interfaces.d`, and the one
+thing missing was the file. A second mechanism brought onto the box to
+configure one card would leave two things answering for the same interface and
+disagreeing at the worst possible moment.
+
+The file has **no dot in its name**. `source /etc/network/interfaces.d/*`
+takes any name, but `source-directory` - which an operator may move to and
+which other Debian images ship - applies run-parts naming rules and silently
+skips a file with a dot in it.
+
+**The default is DHCP, and the argument is the box this product is first met
+on.** A virtual machine on a lab network has a DHCP server and no reserved
+address; a racked appliance has a reserved address and often no DHCP server at
+all. Only one of those can be the default, and it is the first: an operator
+who presses Enter has to get a box that works, and the operator racking an
+appliance is typing an address they already have written down. The cost is
+stated rather than hidden - a box answering `dhcp` where nothing replies waits
+for the client to give up before the boot finishes, and then says on its
+console that it has no address.
+
+#### The medium carried no DHCP client
+
+`ifupdown` only **Recommends** one and `debootstrap` installs no Recommends.
+Measured on a bookworm root built the way this one is, and again on the 0.73.0
+squashfs: `dhclient`, `udhcpc` and `dhcpcd` all absent. `iface ens18 inet
+dhcp` on that disk is a file that reads perfectly and does nothing.
+
+Two changes, and both **MUST** hold:
+
+* `build-iso.sh` installs `isc-dhcp-client`, named in the `--include` list
+  where nobody would think to look for it;
+* the install **refuses the disk** when the answer was DHCP and no client is
+  on it, before it reports success.
+
+For the same reason the DNS answer is written to `/etc/resolv.conf` and
+**not** as `dns-nameservers` in the stanza: that option is implemented by
+`resolvconf`'s `if-up` hook, and this image has no `resolvconf`, so the line
+would be read by nothing. The DHCP answer writes no resolver at all, because
+`dhclient` writes that file itself and two writers of it is one of them
+losing.
+
+#### `none` is an answer and is written down
+
+A box managed out of band, or one whose only card is going to the dataplane,
+is a real arrangement. Answering `none` writes the file with no stanza in it -
+and that is the point: without the file, a box whose operator chose this and a
+box installed by a medium that never asked are the same box on disk. One of
+them has to be shouted about on every boot and the other must not be.
+
+#### What the box says about it afterwards
+
+The boot self-test reads the same file back on every boot. It is the only
+reader, the installer is the only writer, and neither keeps a second opinion.
+
+| What the box is | What the self-test says |
+|---|---|
+| card up, address, default route | `[ ok ] managed on ens18 (dhcp)`, **with the address and the route printed under it** |
+| address, no default route, none was asked for | `[warn] ens18 is up with no default route` |
+| address, no default route, a gateway WAS asked for | `[FAIL] ... has an address and no default route`, naming the gateway that did not take |
+| the card has no address | `[FAIL] ... has no address`, and whether it was DHCP or static |
+| the card is not in the box | `[FAIL] this box has no card called ens18`, and the cards it does have |
+| no file at all | `[FAIL] no management network: nothing was ever written for one`, with the commands to fix it from that console |
+| answered `none` | `[info] no management network was asked for at install time` |
+
+**The address is printed on every boot, and that is half of why DHCP can be
+the default.** A box whose address nobody chose still tells whoever is
+standing at the serial console where to `ssh` to.
+
+The `[FAIL]` for an address with no default route is the wrong answer rather
+than a missing one. `ifup` refuses a gateway outside the interface's own
+subnet - `Error: Nexthop has invalid gateway` - and carries on, so the box
+comes up with an address and is reachable from its own subnet and nowhere
+else; from a floor away that is indistinguishable from a box that did not
+boot. The installer refuses that pair at the one moment somebody can act on
+it, by arithmetic, and the self-test says so at every boot if it ever happens
+anyway.
+
+#### How the lab proves it, and why it could not before
+
+Every assertion `lab/install-iso.sh` makes is driven down the **serial
+console**, and a box with no address behaves identically down a serial line to
+a box with one. The release gate's box has a single NIC and qemu's default
+user-mode networking, so it was the same shape as the box in
+[#303](https://github.com/andrediashexa/hexarouting/issues/303) the whole
+time: the missing network was invisible here by construction, and an assertion
+that read the box's own words about its address would pass on a box nobody can
+reach.
+
+So the lab now gives every boot **one** NIC, explicitly, at a fixed PCI
+address - the same card at the install and at each boot, or its predictable
+name would change under the box - with `hostfwd` forwarding a host port to
+port 22 at the address qemu's DHCP server hands out. After the install, and
+again after the machine has been switched off and started, the lab opens a TCP
+connection to that port from **outside** and reads the SSH banner the box
+sends back. The banner and not the connection: libslirp accepts the host side
+before it knows whether anything inside will answer, so bytes from the box are
+the evidence.
+
+That second boot is the acceptance. The question is not whether the box is
+reachable once, it is whether it is reachable tomorrow.
 
 ### The medium carries no credentials
 

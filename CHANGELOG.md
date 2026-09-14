@@ -77,6 +77,89 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box installed from the medium had no management network at all, and one
+  typed at the console did not survive a reboot**
+  ([#303](https://github.com/andrediashexa/hexarouting/issues/303)).
+  Measured on a 0.72.0 appliance: `/etc/network/interfaces.d` empty,
+  `/etc/network/interfaces` holding one line - `source
+  /etc/network/interfaces.d/*` - and `networking.service` **enabled with
+  nothing to do**. `appliance/hexarouting-install` contained zero occurrences
+  of `/etc/network`. So the card came up `DOWN` with no address, the box was
+  reachable at its console and nowhere else, and the `ip link` / `ip addr` /
+  `ip route` the operator typed there went away with the power. It was
+  escalated three times.
+
+  The installer asks, with the other questions and before the first write:
+  **which card**, and **how it is addressed**. The card is chosen from a menu
+  showing what each one is - up or down, its driver, what address it is
+  carrying this minute - because `ens18` and `ens19` tell nobody which cable
+  is in which; the default is the card the medium is reaching the network
+  through right now. The address answer is `dhcp`, an address with a prefix,
+  or `none`.
+
+  **DHCP is the default**, and the argument is the box this product is first
+  met on: a virtual machine on a lab network has a DHCP server and no reserved
+  address, and an operator who wants it to work and presses Enter has to get
+  something that works. The operator racking an appliance has an address
+  written down in front of them and types it, which is one answer either way.
+  The cost of the default is stated rather than hidden - a box answering
+  `dhcp` where nothing replies waits for the client to give up, and then says
+  on its console that it has no address.
+
+  **The medium carried no DHCP client.** `ifupdown` only *Recommends* one and
+  `debootstrap` installs no Recommends, so `dhclient`, `udhcpc` and `dhcpcd`
+  were all absent from the 0.73.0 squashfs: `iface ens18 inet dhcp` on that
+  disk is a file that reads perfectly and does nothing. `build-iso.sh`
+  installs `isc-dhcp-client`, and the install **refuses a disk** whose answer
+  was DHCP with no client on it, so a default that quietly does nothing cannot
+  ship again. For the same reason the resolver is written to
+  `/etc/resolv.conf` and not as `dns-nameservers`, which is `resolvconf`'s
+  option and this image has no `resolvconf`.
+
+  `ifupdown` and not a second mechanism: it is what the image installs, what
+  `networking.service` runs, and the only thing on the box that touches an
+  interface. There is no NetworkManager, no `systemd-networkd` configuration
+  and no netplan in the image, all three measured rather than assumed. The one
+  thing missing was the file.
+
+  **The answer is written even when it is `none`**, because without it a box
+  whose operator chose no management network and a box installed by a medium
+  that never asked are the same box on disk - and one of those has to be
+  shouted about while the other must not.
+
+  **The boot self-test reads that same file back on every boot** and reports
+  what became of it: the address and the default route on a healthy box -
+  which is what makes DHCP usable on a racked appliance, since the console is
+  where the address it was given appears - and a failed check, naming the
+  cause, for a box with no configuration at all, a card that is no longer
+  there, a DHCP answer with no lease, or an address whose gateway did not take.
+  That last one is the wrong answer rather than a missing one: `ifup` refuses
+  a gateway outside the interface's own subnet and carries on, so the box comes
+  up with an address, no default route, and reachable from its own subnet only.
+  The installer refuses that pair at the one moment somebody can act on it, and
+  the self-test says so at every boot if it ever happens anyway.
+
+  **A box that is already racked is told.** The installer fixes every box
+  installed from now on and does nothing for the ones in the field, which is
+  the shape of [#248](https://github.com/andrediashexa/hexarouting/issues/248)
+  and was left unsaid there for a release. A box upgraded with
+  `appliance/install.sh` has no such file, so its next boot prints the failed
+  check and the three commands that fix it from the console the operator is
+  standing at - which is the only channel a box with no management network
+  has.
+
+  **The unattended path is unchanged and answers nothing new.**
+  `hexarouting.mgmt-interface`, `.mgmt-address`, `.mgmt-gateway` and
+  `.mgmt-dns` exist, and an install that passes none of them - which is every
+  existing caller, the release gate included - takes DHCP on the default card
+  and says out loud that it did.
+
+  `lab/install-iso.sh` installs a box with the command line it has always had,
+  boots it, reads the address off the kernel with nothing typed, and then
+  **switches the machine off and starts it again** to answer the question the
+  issue actually asks: not "is it reachable once", but "is it reachable
+  tomorrow".
+
 * **The roadmap said the installation section was empty of work, and a box
   installed from the medium has no way of being reached.** Measured on a real
   VM running 0.72.0
