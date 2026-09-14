@@ -337,7 +337,6 @@ version has a chance of seeing it.
 
   Costs five and a half minutes less per release as a side effect, on the one
   tool this project says must be what cuts a release.
-### Fixed
 
 * **The comment over `bpa-expire-process` claimed a bound the barrier does not
   have** ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). It
@@ -354,7 +353,6 @@ version has a chance of seeing it.
   guest cannot stand in for, and the comment was the thing that would have sent
   whoever takes it to vary the wrong knob. `docs/appliance.md` points at the
   comment rather than restating the list, so there is one copy to keep true.
-
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
