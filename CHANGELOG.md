@@ -375,6 +375,24 @@ version has a chance of seeing it.
   because `/etc/hexarouting/vpp-base.conf` is a file on the appliance and
   asking this tree for it is asking the wrong machine.
 
+* **And the same for the documents, which is where the pointers actually
+  rot.** `docs/` and the wiki send a reader to 330 paths under this
+  repository's own directories. Nothing checked that any of them still
+  resolves, so a file renamed in one commit leaves every document that named
+  it pointing at nothing, silently, until somebody follows the pointer.
+
+  Sound for the same reason: the holder is the filesystem and nothing reads
+  what is at the other end. The rule that makes it usable is that the first
+  path component must be one of this repository's own directories, and that
+  rule replaced an allowlist. Measured before it was written: across `docs/`
+  alone, 280 mentions gave 4 misses, and **3 of the 4 were VPP's own headers**
+  (`vnet/error.h`, `vnet/ethernet/node.c`,
+  `vnet/ipfix-export/ipfix_info_elements.h`), which are real files on a box and
+  not files here. The fourth was a wiki page named relative to `wiki/` instead
+  of the root. With the rule: 330 mentions, 0 missing. An allowlist of three
+  would have been an allowlist somebody grows.
+
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).

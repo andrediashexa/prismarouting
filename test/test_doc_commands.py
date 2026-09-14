@@ -556,6 +556,63 @@ else:
     bad(f"only {_pairs} fixture-and-lab pair(s) were found, so this is "
         f"asserting almost nothing")
 
+print("\n=== every path these documents send a reader to is in the tree ===")
+# A POINTER, not a second copy of a truth, which is why this is sound where
+# test/test_doc_copies.py's header rejects its own opposite. The holder is the
+# filesystem: a path either resolves or it does not, and it cannot be reworded
+# into passing. Nothing here reads what is at the other end.
+#
+# FIRST COMPONENT MUST BE ONE OF THIS REPOSITORY'S OWN DIRECTORIES, and that
+# rule is what replaces an exception list. Measured before it was written:
+# across every markdown file in the tree, 280 mentions in docs/ alone resolved
+# to 4 missing, and 3 of the 4 were VPP's own headers - `vnet/error.h`,
+# `vnet/ethernet/node.c`, `vnet/ipfix-export/ipfix_info_elements.h` - which are
+# real files on a box and not files here. The fourth was a wiki page named
+# relative to wiki/ rather than to the root. With the first-component rule:
+# 330 mentions, 0 missing. An allowlist of three would have been an allowlist
+# somebody grows.
+#
+# CHANGELOG.md is excluded here and checked separately in
+# test/test_changelog_landing.py, which looks only at the unreleased section.
+# A tagged section describes a medium somebody is running and MUST NOT be
+# edited, so a file renamed after it shipped leaves it naming something that
+# is gone and nobody may correct it.
+_OWN_DIRS = {"src", "appliance", "tools", "test", "lab", "wiki", "docs", "ref"}
+_PATH_RE = re.compile(
+    r"`([A-Za-z0-9_][A-Za-z0-9_./-]*"
+    r"\.(?:sh|py|c|h|md|conf|env|list|service|json|yml))`")
+_seen, _dead = 0, {}
+for _root, _dirs, _files in os.walk(REPO):
+    _dirs[:] = [_d for _d in _dirs
+                if _d not in {".git", ".build", ".build-vpp", ".build-old",
+                              "build"}]
+    for _f in _files:
+        if not _f.endswith(".md"):
+            continue
+        _rel = os.path.relpath(os.path.join(_root, _f), REPO)
+        if _rel == "CHANGELOG.md":
+            continue
+        with open(os.path.join(REPO, _rel), encoding="utf-8") as _fh:
+            _text = _fh.read()
+        for _m in _PATH_RE.finditer(_text):
+            _path = _m.group(1)
+            if _path.split("/")[0] not in _OWN_DIRS:
+                continue
+            _seen += 1
+            if not os.path.exists(os.path.join(REPO, _path)):
+                _dead.setdefault(_path, set()).add(_rel)
+if _dead:
+    for _path, _where in sorted(_dead.items()):
+        bad(f"{', '.join(sorted(_where))} sends a reader to {_path!r} and the "
+            f"tree does not have it: the file was renamed or removed and the "
+            f"document was left behind")
+elif _seen >= 250:
+    ok(f"all {_seen} of them")
+else:
+    bad(f"only {_seen} path mention(s) were found, so this check is asserting "
+        f"almost nothing: the pattern no longer matches how these documents "
+        f"name a file")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
