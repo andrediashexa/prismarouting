@@ -142,6 +142,40 @@ version has a chance of seeing it.
   begins `2M hugepages:`. The commit that rewrote that line landed three hours
   after the one that quoted it correctly, and did not touch the page.
 
+* **Two invariants in `docs/context.md` that stopped being true, and a number
+  that was never measured**
+  ([#324](https://github.com/andrediashexa/hexarouting/issues/324),
+  [#325](https://github.com/andrediashexa/hexarouting/issues/325)).
+
+  **1.8 said "every merge into `master` is a release."** `CONTRIBUTING.md`,
+  which that section cites as authoritative, excepts a whole class in as many
+  words: a fix merged under the standing exception rides in the next tagged
+  release, because a version number that moves for a corrected typo tells an
+  operator nothing about whether they should upgrade. Measured: **300
+  first-parent merges, 78 tags**, and the last released window is six merges to
+  one release. The invariant is the other direction and it holds - a release
+  has a version bump, an annotated tag, a CHANGELOG entry and a published
+  Release, all four or none. An invariant stated one step too wide is one a
+  reader checks once, finds false, and stops checking.
+
+  **1.9 said `wiki/` is a read-only mirror and editing it changes nothing.**
+  Since [#277](https://github.com/andrediashexa/hexarouting/issues/277) editing
+  it is exactly how a page is changed: the correction is written there,
+  `wiki-status.sh` lists what is unpublished, and `wiki-push.sh <file>`
+  publishes one page. What is still true is that the edit reaches nobody until
+  it is pushed, which is what that issue was about.
+
+  **And the throughput section justified publishing no figure with a measured
+  one.** "The bench resolves differences above roughly 3%" appears nowhere
+  else: not in `lab/throughput.sh`, not in
+  [#28](https://github.com/andrediashexa/hexarouting/issues/28), not in this
+  file. The lab runs once, keeps no repeats and reports no spread, so how small
+  a change it could tell from run-to-run variation has never been measured -
+  which is a **better** argument for claiming nothing, and is what the section
+  says now. Publishing no number was right; supporting it with an unmeasured
+  one was the same mistake in miniature.
+
+
 
 ## 0.74.1 - fifteen things this product said that were not true, and the checks that hold them
 
