@@ -1789,9 +1789,36 @@ approximated: the general version of it was measured at 12 false findings out of
 193 lines, which is the rate `test/test_doc_copies.py` records getting a check
 switched off.
 
-**Not swept:** `docs/architecture.md`, `docs/routing.md` and `docs/logging.md`,
-7,126 lines, recorded here because a section nobody measured is how #303
-happened.
+**Then those three were swept too**, because a section nobody measured is how
+#303 happened and writing "not swept" is not the same as measuring it.
+`docs/architecture.md`, `docs/routing.md` and `docs/logging.md`, 7,126 lines,
+read end to end: five more held, about forty candidates were checked and
+discarded.
+
+* [#320](https://github.com/andrediashexa/hexarouting/issues/320) is the
+  expensive one and it is not technical. The **commercial argument** was stated
+  two ways: `docs/logging.md`'s opening said per-flow NAT costs ~2.4 GB/day and
+  its own volume table said ~1.6 GB for the same 40 million records at the ~40
+  bytes the page states as its premise. The wiki's table, which is what an
+  operator sizes hardware with, said 2,4 GB directly under a premise line
+  saying 40 bytes. The ratio between those rows read as 30x in one place and
+  20x in the other.
+* [#318](https://github.com/andrediashexa/hexarouting/issues/318) - a page
+  describing a refusal the box stopped printing that way, where the commit that
+  changed it rewrote the section the sentence points at and left the sentence.
+* [#319](https://github.com/andrediashexa/hexarouting/issues/319) - two numbers,
+  **each repeated in a test comment beside an assertion that disagreed with
+  it**.
+
+And one the sweep found and set aside as a rule question: `docs/` was outside
+the English-only check's scope entirely, for the sake of one file that quotes a
+Brazilian-Portuguese wiki's titles. Three sections of `docs/routing.md` were in
+Portuguese. 33 lines, translated; the one file excused by name instead of the
+directory being excused for it.
+
+**Still not swept:** `docs/appliance.md`, `docs/bng.md`, `CONTRIBUTING.md`,
+`docs/ha.md`, `docs/context.md`, `docs/pool-resize.md` and `README.md` - 4,094
+lines. Named here for the same reason the three above were.
 
 
 #### The rename to PrismaRouting
