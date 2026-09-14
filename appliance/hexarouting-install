@@ -909,6 +909,64 @@ verify_mirror() {   # <mdstat> <md device>; non-zero unless both legs are there
   return 1
 }
 
+# The ssh host keys, generated on the target and on nothing else.
+#
+# `ssh-keygen -A` GENERATES ONLY THE KEYS THAT ARE MISSING, so on a tree that
+# already has a set it is a no-op that exits 0 and says nothing. Measured, on
+# the published hexarouting-0.37.0-ab23bd7-dirty.iso rather than reasoned
+# about: its squashfs carries ssh_host_{rsa,ecdsa,ed25519}_key stamped
+# 2026-09-08 16:43 against a squashfs made at 16:46:15, unpacking it with the
+# installer's own `unsquashfs -f -d` line puts them on the target, and
+# `ssh-keygen -A` over that tree left all three fingerprints exactly as the
+# medium had them - ed25519 SHA256:hwhc4Nfxh3lzwZNoIlON9ehRISKN1BBeo1wcEQi/DJg,
+# comment root@a3bcac8dc76e, the build container. The installer would print
+# "generating this box's own ssh host keys" and generate none.
+#
+# It did not reach a box only because build-iso.sh removes them from the image
+# first (#245), which makes the whole guarantee a property of the medium: the
+# install step had no opinion of its own and could not fail. So the removal is
+# repeated here, against whatever /etc/ssh the medium handed over, and what
+# this box answers with is what the next line makes.
+#
+# The public halves go too. Left behind they are a set of .pub files that do
+# not match the private keys beside them, which is a puzzle for whoever next
+# reads a fingerprint off the disk.
+install_ssh_host_keys() {   # <mounted root>; non-zero if no keys could be made
+  _r=${1:-}
+  # An unset argument would make the rm below read /etc/ssh/ssh_host_*_key,
+  # which on the live medium is nothing and on a developer box running this
+  # sourced is that machine's own host keys. The install dies instead.
+  [ -n "$_r" ] && [ -d "$_r/etc/ssh" ] || return 1
+  # Named, not counted: an operator installing from a medium that carries host
+  # keys is holding a medium every other box was installed from, and those
+  # boxes are still answering with this key.
+  _handed=""
+  for _k in "$_r"/etc/ssh/ssh_host_*_key; do
+    [ -f "$_k" ] || continue
+    _handed="$_handed ${_k##*/}"
+  done
+  if [ -n "$_handed" ]; then
+    say "  this medium carries ssh host keys; they are not going on the disk:"
+    say "   $_handed"
+    say "  every box installed from this medium answers with them"
+  fi
+  rm -f "$_r"/etc/ssh/ssh_host_*_key "$_r"/etc/ssh/ssh_host_*_key.pub
+  say "  generating this box's own ssh host keys"
+  chroot "$_r" ssh-keygen -A >/dev/null 2>&1 || return 1
+  # THE EFFECT, not the exit status. This is the one line between an operator
+  # and a racked box, and `ssh-keygen -A` reporting success is not the same
+  # claim as the box having a key: it exits 0 having written nothing whenever
+  # it thinks the keys are already there, which is exactly the mistake this
+  # function exists to stop, and it would do it silently. The removal above
+  # means there is nothing it may decline to make, so an empty /etc/ssh after
+  # a successful run is a target that cannot run sshd and must not be reported
+  # as installed.
+  for _k in "$_r"/etc/ssh/ssh_host_*_key; do
+    [ -f "$_k" ] && return 0
+  done
+  return 1
+}
+
 # A seam, so the disk menu and the verification can be tested without
 # installing anything.
 #
@@ -1711,21 +1769,22 @@ chroot "$MNT" systemctl enable ssh.service >/dev/null 2>&1 || true
 mkdir -p "$MNT/etc/ssh/sshd_config.d"
 echo "PermitRootLogin yes" > "$MNT/etc/ssh/sshd_config.d/hexarouting.conf"
 
-# The host keys are generated HERE, per box, because the medium carries none.
+# The host keys are made HERE, per box, out of whatever the medium handed over.
 #
 # They used to come out of the squashfs, which meant every appliance installed
 # from one release answered with one host key whose private half was in the
 # published ISO - impersonation of any of them by anybody who downloaded it,
 # with nothing on the operator's client to notice, since the key it pinned is
-# the key it was given. build-iso.sh removes them for that reason (#245).
+# the key it was given. build-iso.sh removes them for that reason (#245) and
+# install_ssh_host_keys() refuses to inherit them for the reason recorded at
+# the function (#248).
 #
 # A hard failure, not a warning. sshd will not start without a host key, and
 # the sshd this box just enabled is the management path an operator reaches a
 # racked appliance through: an install that finished with no way in over the
 # network is worse than one that says so while the operator is still standing
 # there with the medium in the drive.
-say "  generating this box's own ssh host keys"
-chroot "$MNT" ssh-keygen -A >/dev/null 2>&1 \
+install_ssh_host_keys "$MNT" \
   || die "could not generate ssh host keys on the target; sshd would not start"
 
 # Before the success line, not after it, and before the medium is removed.

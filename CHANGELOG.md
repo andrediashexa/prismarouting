@@ -141,6 +141,52 @@ version has a chance of seeing it.
   does it. It is the only thing an operator who downloaded a 300 MB file over a
   link they do not control can check it with, before installing it on a box
   that will carry subscribers.
+* **An install from a medium that carries ssh host keys no longer puts them on
+  the disk** ([#248](https://github.com/andrediashexa/hexarouting/issues/248)).
+  `ssh-keygen -A` generates only the key types that are MISSING, so on a target
+  that already has a set it is a no-op that exits 0 and prints nothing.
+  Measured on the published `hexarouting-0.37.0-ab23bd7-dirty.iso`, whose
+  squashfs carries `ssh_host_{rsa,ecdsa,ed25519}_key` stamped 2026-09-08 16:43
+  against a squashfs made at 16:46:15: unpacking it with the installer's own
+  `unsquashfs -f -d` line and then running `ssh-keygen -A` over the result left
+  all three fingerprints exactly as the medium had them, ed25519
+  `SHA256:hwhc4Nfxh3lzwZNoIlON9ehRISKN1BBeo1wcEQi/DJg`, comment
+  `root@a3bcac8dc76e`, which is the build container. The installer said
+  "generating this box's own ssh host keys" and generated none.
+
+  It reached no box, because `build-iso.sh` empties the image first and the
+  0.74.0 ISO built by the release gate carries zero host keys, measured with
+  `unsquashfs -ll` on the artefact. But that made the whole guarantee a
+  property of the medium: the install step had no opinion of its own and could
+  not fail. `hexarouting-install` now removes whatever `/etc/ssh/ssh_host_*`
+  the medium handed over before it generates, and says on the console when a
+  medium carried any, because an operator holding such a medium is holding the
+  medium every other box was installed from. Driven against the real 0.37.0
+  medium, the disk that comes out answers with a key made on it rather than
+  with `root@a3bcac8dc76e`.
+
+  The public halves go with the private ones. `ssh-keygen -A` rewrites the
+  `.pub` of every key it generates, so the ones it can leave behind are the
+  types it does not generate: measured here, `ssh-keygen -A` on OpenSSH_9.2p1
+  Debian-2+deb12u10 writes RSA, ECDSA and ED25519 and nothing else.
+
+  Boxes already racked are not reached by any of this, and were never going to
+  be: the installer on a medium that carries keys is the one that shipped on
+  that medium. The boot self-test is what reaches them, on the console they are
+  standing at, and it already ships. Driving `appliance/selftest` against a
+  root unpacked from `hexarouting-0.37.0-ab23bd7-dirty.iso` reports "the ssh
+  host keys were not generated on this box", names
+  `ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key`, and gives the
+  three commands that regenerate them. The disclosure itself, and where it is
+  published, remain the maintainer's to decide.
+
+  And the install reads the EFFECT rather than the exit status.
+  `ssh-keygen -A` exits 0 having written nothing whenever it believes the keys
+  are there, which is not a hypothetical: it is the whole of how this defect
+  worked. An install that takes the exit status for the answer reports a
+  finished box over an `/etc/ssh` with no host key in it, and `sshd` is the
+  only way back to a racked one. The function now looks for a key afterwards,
+  and the test drives a `ssh-keygen` that succeeds and writes nothing.
 
 
 ## 0.74.0 - the installed box can be reached, and one card is enough

@@ -117,6 +117,35 @@ O autoteste de boot lê **o mesmo arquivo** de volta em todo boot e conta o que 
 
 :::
 
+## Mídia antiga traz chave de SSH, e a instalação avisa
+
+Mídias antigas deste produto vinham com as chaves de host do SSH já prontas
+dentro da imagem. Toda caixa instalada de uma dessas mídias respondia com a
+mesma chave, e a metade privada dela está na própria mídia.
+
+Essas chaves não vão para o disco: a instalação apaga o que veio na mídia e
+gera um par novo, desta caixa. Quando a mídia carrega chaves, ela diz isso no
+console:
+
+```
+==>   this medium carries ssh host keys; they are not going on the disk:
+==>     ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key
+==>   every box installed from this medium answers with them
+```
+
+:::warning
+**A caixa recém-instalada está limpa; o aviso é sobre a mídia.** As outras
+caixas que foram instaladas dessa mesma mídia continuam respondendo com aquela
+chave até alguém gerar chaves novas em cada uma. O procedimento, e o que ele
+custa a quem administra, estão em
+[Operação e diagnóstico](/doc/operacao-e-diagnostico-A4fcKDVwZt), na seção
+sobre o autoteste dizer que as chaves SSH não foram geradas na caixa.
+
+:::
+
+Mídia nova não carrega chave nenhuma, e nesse caso a instalação não diz nada
+disso.
+
 ## Tudo é perguntado antes de qualquer escrita
 
 | Pergunta | Recusada quando |
