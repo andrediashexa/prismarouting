@@ -75,6 +75,11 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+## 0.74.1 - fifteen things the box said that were not true, and the checks that hold them
+
+[#163](https://github.com/andrediashexa/hexarouting/issues/163), [#172](https://github.com/andrediashexa/hexarouting/issues/172), [#248](https://github.com/andrediashexa/hexarouting/issues/248), [#277](https://github.com/andrediashexa/hexarouting/issues/277), [#288](https://github.com/andrediashexa/hexarouting/issues/288), [#304](https://github.com/andrediashexa/hexarouting/issues/304), [#306](https://github.com/andrediashexa/hexarouting/issues/306), [#307](https://github.com/andrediashexa/hexarouting/issues/307), [#308](https://github.com/andrediashexa/hexarouting/issues/308), [#309](https://github.com/andrediashexa/hexarouting/issues/309), [#310](https://github.com/andrediashexa/hexarouting/issues/310), [#311](https://github.com/andrediashexa/hexarouting/issues/311), [#312](https://github.com/andrediashexa/hexarouting/issues/312), [#313](https://github.com/andrediashexa/hexarouting/issues/313), [#314](https://github.com/andrediashexa/hexarouting/issues/314), [#315](https://github.com/andrediashexa/hexarouting/issues/315), [#316](https://github.com/andrediashexa/hexarouting/issues/316), [#317](https://github.com/andrediashexa/hexarouting/issues/317), [#318](https://github.com/andrediashexa/hexarouting/issues/318), [#319](https://github.com/andrediashexa/hexarouting/issues/319), [#320](https://github.com/andrediashexa/hexarouting/issues/320).
+
+
 ### Changed
 
 * **The release checklist now says to publish the medium's `sha256`.** Every
