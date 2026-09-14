@@ -7,12 +7,71 @@
 # and regenerates GRUB only on a difference.
 set -u
 
-GRUBFILE=/etc/default/grub.d/hexarouting.cfg
-VPPCONF=/etc/vpp/startup.conf
+# HEXA_ROOT is empty on every box and is set only by test/test_apply_tuning.sh.
+# This script runs as root before VPP and writes the kernel command line, so
+# the only way to read what it decides without rewriting the machine's own
+# /etc, /proc and /sys is to point it at a tree shaped like them - the same
+# reason appliance/bind-dataplane-nic takes one.
+ROOT=${HEXA_ROOT:-}
+GRUBFILE=$ROOT/etc/default/grub.d/hexarouting.cfg
+PROCCMDLINE=$ROOT/proc/cmdline
+CPUFREQ=$ROOT/sys/devices/system/cpu/cpufreq
+HUGEPAGES=$ROOT/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+LIVEDIR=$ROOT/run/live
 : "${HEXA_DATAPLANE_IF:=}"
 : "${HEXA_SUBSCRIBERS:=200000}"
 : "${HEXA_LOW_LATENCY:=1}"
 : "${HEXA_MAX_WORKERS:=}"
+
+# tune.env is a file an operator edits by hand, and every value in it used to
+# be believed. A value that is neither 0 nor 1 took the "not 1" branch, so
+# HEXA_LOW_LATENCY=true silently produced a kernel command line with the
+# C-state and THP parameters REMOVED - the opposite of what it says - and the
+# journal reported "HEXA_LOW_LATENCY=0", naming a value the operator never
+# wrote. HEXA_SUBSCRIBERS='200k' was worse: the tuner's own argument parser
+# refused it, this script exited non-zero, and the unit failed with no tuning
+# written at all.
+#
+# So each value is checked here, and a value this script does not accept is
+# REFUSED OUT LOUD and replaced by the shipped default - never by the opposite
+# of what it says, and never by failing the unit. A typo must not cost the box
+# its tuning: the kernel command line would stay at whatever the previous boot
+# wrote, disagreeing with the startup.conf beside it, which is far worse than
+# an ignored setting. The refusal names what IS accepted, because "rejected"
+# alone leaves the operator guessing at the spelling.
+#
+# The value is quoted and printed whole on a line of its own, and the prose
+# around it is wrapped by hand to 79 columns: this comes out of the journal
+# onto an 80-column serial console, where a wrapped value cannot be grepped
+# for and a value that pushes the sentence off the edge takes the reason with
+# it.
+say_refused() {  # <variable> <value>
+  echo "REFUSED $1='$2' in /etc/hexarouting/tune.env." >&2
+}
+say_using() {    # <what is used instead>
+  echo "  Using $1." >&2
+  echo "  Fix the file and restart hexarouting-tune.service." >&2
+}
+
+case "$HEXA_LOW_LATENCY" in
+  0|1) ;;
+  *) say_refused HEXA_LOW_LATENCY "$HEXA_LOW_LATENCY"
+     echo "  Two values are accepted, and nothing else:" >&2
+     echo "    1  deep C-states off, transparent hugepages off, and the" >&2
+     echo "       cpufreq governor held on performance" >&2
+     echo "    0  leave all three alone, for a box that must save power" >&2
+     say_using "1, the shipped default, because this is a router"
+     HEXA_LOW_LATENCY=1 ;;
+esac
+
+case "$HEXA_SUBSCRIBERS" in
+  *[!0-9]*|"")
+    say_refused HEXA_SUBSCRIBERS "$HEXA_SUBSCRIBERS"
+    echo "  It is the subscriber count that sizes the 1G hugepage pool, so" >&2
+    echo "  it is digits only: 200000, not 200k and not 200.000." >&2
+    say_using "200000, the shipped default"
+    HEXA_SUBSCRIBERS=200000 ;;
+esac
 
 # The governor is runtime state, not a kernel parameter: asking for it in
 # GRUB does nothing, and it does not survive a reboot on its own. On
@@ -22,7 +81,7 @@ VPPCONF=/etc/vpp/startup.conf
 governor_performance() {
   found=0
   changed=0
-  for g in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
+  for g in "$CPUFREQ"/policy*/scaling_governor; do
     [ -w "$g" ] || continue
     found=1
     avail=$(cat "$(dirname "$g")/scaling_available_governors" 2>/dev/null || echo "")
@@ -66,8 +125,10 @@ set -- --write --subscribers "$HEXA_SUBSCRIBERS"
 case "$HEXA_MAX_WORKERS" in
   "") ;;
   *[!0-9]*)
-    echo "HEXA_MAX_WORKERS='$HEXA_MAX_WORKERS' is not a whole number:" \
-         "ignoring it and using every available core" >&2 ;;
+    say_refused HEXA_MAX_WORKERS "$HEXA_MAX_WORKERS"
+    echo "  It is a number of physical cores, so it is digits only - or" >&2
+    echo "  empty, which is the shipped value and means no cap." >&2
+    say_using "no cap: every physical core on the dataplane node but the first" ;;
   *) set -- "$@" --max-workers "$HEXA_MAX_WORKERS" ;;
 esac
 # The decision goes to the journal. Diagnosing a box whose profile did not
@@ -76,7 +137,7 @@ esac
 report=$(hexarouting-tune "$@" 2>&1) || { printf '%s\n' "$report" >&2; exit 1; }
 printf '%s\n' "$report" | grep -E "^# |WARNING" >&2
 printf 'kernel cmdline hugepages: %s\n' \
-  "$(tr ' ' '\n' < /proc/cmdline | grep '^hugepages=' || echo '(none)')" >&2
+  "$(tr ' ' '\n' < "$PROCCMDLINE" | grep '^hugepages=' || echo '(none)')" >&2
 # THE NIC ITSELF, once the tuner has said which one. Naming a device in
 # startup.conf is not the same as the dataplane having it: DPDK cannot take a
 # device through ixgbe, i40e or bnxt_en, and nothing in this product ever bound
@@ -93,12 +154,12 @@ printf 'kernel cmdline hugepages: %s\n' \
 # journal, and the self-test says it again on the console.
 if command -v hexarouting-bind-nic >/dev/null 2>&1; then
   hexarouting-bind-nic || true
-elif [ -x /usr/lib/hexarouting/bind-dataplane-nic ]; then
-  /usr/lib/hexarouting/bind-dataplane-nic || true
+elif [ -x "$ROOT/usr/lib/hexarouting/bind-dataplane-nic" ]; then
+  "$ROOT/usr/lib/hexarouting/bind-dataplane-nic" || true
 fi
 
 printf 'reserved 1G pages now: %s\n' \
-  "$(cat /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages 2>/dev/null \
+  "$(cat "$HUGEPAGES" 2>/dev/null \
      || echo '(no 1G support)')" >&2
 
 after=$(cat "$GRUBFILE" 2>/dev/null || true)
@@ -111,7 +172,7 @@ fi
 # On a live system GRUB is not installed to disk: running update-grub there
 # changes nothing and can take minutes scanning devices. The tuning starts to
 # apply once the box is installed.
-if [ -d /run/live/medium ] || [ -f /run/live/overlay ]; then
+if [ -d "$LIVEDIR/medium" ] || [ -f "$LIVEDIR/overlay" ]; then
   echo "live system: skipping update-grub (tuning applies once installed)" >&2
   exit 0
 fi

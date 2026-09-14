@@ -69,6 +69,25 @@ def read(path):
         return f.read()
 
 
+def read_required(path):
+    """A file this suite names by path, read so that its ABSENCE is a verdict.
+
+    Reading it directly raised FileNotFoundError and the suite died with no
+    verdict line at all - so renaming appliance/etc/sysctl.conf, or moving the
+    tuner, turned "this knob is not set" into a traceback. A suite that dies
+    has not been read, it has been interrupted, and tools/run-tests.sh says so
+    rather than guessing. Same repair as section() above, for the other half.
+    """
+    try:
+        return read(path)
+    except OSError as e:
+        check(False,
+              f"{os.path.relpath(path, REPO)} is named by this suite and "
+              f"could not be read ({e.strerror}). Everything this file "
+              f"asserts about it is unmeasured, not satisfied")
+        return ""
+
+
 # --------------------------------------------------------------------------
 # What the tuner actually emits, taken from the tuner and not from its source:
 # a synthetic topology on disk, the real script, and the line it prints.
@@ -145,7 +164,7 @@ def section(heading):
     walks into the "this table is unreadable" check below, which names the
     heading that moved.
     """
-    text = read(DOC)
+    text = read_required(DOC)
     marker = "\n" + heading + "\n"
     if marker not in text:
         return ""
@@ -255,16 +274,71 @@ for cells in CAND:
         (cand_paths if tok.startswith("/") else cand_params).add(
             tok.split("=", 1)[0])
 
-WHERE_SET = {
-    "the generated kernel command line": (line_on or "") + " " + (line_off or ""),
-    "appliance/apply-tuning": read(os.path.join(REPO, "appliance", "apply-tuning")),
-    "appliance/etc/sysctl.conf": read(
-        os.path.join(REPO, "appliance", "etc", "sysctl.conf")),
-}
+# EVERY FILE THE APPLIANCE SHIPS, not three of them.
+#
+# This used to read the generated command line, appliance/apply-tuning and
+# appliance/etc/sysctl.conf, and nothing else - while the sysfs-path half of
+# the same table was already swept across the whole of appliance/. The
+# asymmetry was the hole: a candidate parameter can reach a box from a systemd
+# unit's ExecStartPre, from the installer, from build-iso.sh writing a boot
+# line into the medium, or from a branch of hexarouting-tune that this file's
+# one synthetic topology never takes - and none of those was being read. The
+# tuner's own source is included for exactly that last reason: rendering one
+# topology proves what that topology emits, not what the tuner can emit.
+APPLIANCE = os.path.join(REPO, "appliance")
+
+
+def appliance_files():
+    """Every readable file under appliance/, with its repo-relative name."""
+    for dirpath, _, names in os.walk(APPLIANCE):
+        for n in sorted(names):
+            f = os.path.join(dirpath, n)
+            try:
+                yield os.path.relpath(f, REPO), read(f)
+            except (OSError, UnicodeDecodeError):
+                continue
+
+
+SHIPPED = list(appliance_files())
+# An empty sweep finds nothing wrong with everything. appliance/ having no
+# readable file at all means this check is comparing against nothing, which
+# must read as a failure and not as a clean bill.
+check(len(SHIPPED) >= 10,
+      f"only {len(SHIPPED)} readable files under appliance/: the sweep below "
+      f"is looking for candidate knobs in almost nothing and will find none")
+
+# A sweep of a whole directory says nothing about a file that left it. Reading
+# appliance/etc/sysctl.conf by name used to raise FileNotFoundError and kill
+# the suite with no verdict; walking the tree instead turned that into
+# SILENCE, which is worse - a knob moved out of a swept file into an unswept
+# one would read as "none of them is set anywhere". So the files this suite is
+# actually about are named, and one that is not in the sweep is a failure.
+MUST_SWEEP = [
+    os.path.join("appliance", "apply-tuning"),
+    os.path.join("appliance", "hexarouting-tune"),
+    os.path.join("appliance", "selftest"),
+    os.path.join("appliance", "build-iso.sh"),
+    os.path.join("appliance", "install.sh"),
+    os.path.join("appliance", "etc", "sysctl.conf"),
+    os.path.join("appliance", "etc", "tune.env"),
+    os.path.join("appliance", "systemd", "hexarouting-tune.service"),
+]
+swept = {name for name, _ in SHIPPED}
+absent = [m for m in MUST_SWEEP if m not in swept]
+if check(not absent,
+         f"these are named by this suite and were not swept: {absent}. Either "
+         f"they were renamed and this list must follow, or they are gone - "
+         f"and until then everything below is unmeasured about them, not "
+         f"satisfied"):
+    ok(f"{len(SHIPPED)} files under appliance/ swept, including all "
+       f"{len(MUST_SWEEP)} this suite is about")
+
+WHERE_SET = [("the generated kernel command line",
+              (line_on or "") + " " + (line_off or ""))] + SHIPPED
 
 clean = True
 for name in sorted(cand_params):
-    for where, text in WHERE_SET.items():
+    for where, text in WHERE_SET:
         clean &= check(
             not re.search(r"(?<![\w.-])" + re.escape(name) + r"(?![\w-])", text),
             f"`{name}` is listed in docs/appliance.md as tuning NOT applied, "
@@ -272,29 +346,20 @@ for name in sorted(cand_params):
             f"document must move it into the applied table, or it was "
             f"switched on without a measurement")
 if clean and cand_params:
-    ok(f"none of the {len(cand_params)} candidate parameters is set anywhere: "
-       + ", ".join(sorted(cand_params)))
+    ok(f"none of the {len(cand_params)} candidate parameters appears in the "
+       f"kernel command line or in any of the {len(SHIPPED)} files under "
+       f"appliance/: " + ", ".join(sorted(cand_params)))
 
 # The runtime-state candidates are sysfs paths rather than parameters. The
 # governor is the precedent for how one would ship - written by apply-tuning
 # on every boot - so apply-tuning is where one would first appear.
-APPLIANCE = os.path.join(REPO, "appliance")
-written = []
-for dirpath, _, names in os.walk(APPLIANCE):
-    for n in names:
-        f = os.path.join(dirpath, n)
-        try:
-            body = read(f)
-        except (OSError, UnicodeDecodeError):
-            continue
-        for path in cand_paths:
-            if path in body:
-                written.append((os.path.relpath(f, REPO), path))
+written = [(where, path) for where, body in SHIPPED
+           for path in sorted(cand_paths) if path in body]
 if check(not written,
          "docs/appliance.md lists these as runtime state NOT yet applied, and "
          "the appliance references them: " + repr(written)) and cand_paths:
     ok(f"and neither of the {len(cand_paths)} runtime-state candidates is "
-       f"touched by anything under appliance/")
+       f"touched by any of them")
 
 overlap = cand_params & set(documented)
 check(not overlap,

@@ -207,6 +207,10 @@ run() {  # -> $OUTPUT
   OUTPUT=$(PATH="$BIN:$PATH" HEXA_SELFTEST_OUT=/dev/stdout \
            HEXA_SELFTEST_ROOT="$FAKE/root" sh "$ST" 2>/dev/null)
   rc=$?
+  # Every line the self-test has printed, over every box this suite arranges,
+  # kept for the 80-column check at the end. A line only goes over when a
+  # value is interpolated into it, so reading the source cannot find one.
+  printf '%s\n' "$OUTPUT" >> "$FAKE/every-line"
   runs=$((runs + 1))
   printf '%s\n' "$OUTPUT" | grep -q '\[FAIL\]' && runs_with_fail=$((runs_with_fail + 1))
   if [ "$rc" -ne 0 ]; then
@@ -1016,6 +1020,88 @@ if said '\[info\] no cpufreq exposed'; then
 else
   bad "a box with no cpufreq: $(printf '%s\n' "$OUTPUT" | grep -i 'cpufreq\|governor' || echo '<nothing>')"
 fi
+
+echo "=== the C-state line against tune.env, not against the command line alone (#163) ==="
+# /proc/cmdline is what this boot GOT. tune.env is what was ASKED FOR. The
+# line above read only the first, so a box with HEXA_LOW_LATENCY=0 - deep
+# C-states left on, on purpose - was warned that deep C-states were still
+# enabled and advised to "set HEXA_LOW_LATENCY=0". The console was telling the
+# operator to do the thing they had already done, about a state they chose.
+mkdir -p "$FAKE/root/etc/hexarouting"
+echo "HEXA_LOW_LATENCY=0" > "$FAKE/root/etc/hexarouting/tune.env"
+echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3" > "$FAKE/root/proc/cmdline"
+run
+if said '\[info\] deep C-states left enabled on purpose'; then
+  ok "HEXA_LOW_LATENCY=0 with no C-state parameter is reported as a choice"
+else
+  bad "a box that turned the latency knobs off was not told it had: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
+fi
+if said '\[warn\] deep C-states still enabled'; then
+  bad "a box that set HEXA_LOW_LATENCY=0 is still warned about the state it chose"
+else
+  ok "and not warned about it, nor told to set the value it already set"
+fi
+
+# The case that had no line at all: the file says 0 and this boot's command
+# line still carries the parameters. That is a box running a command line
+# older than the file that generates it - the tuning in effect is not the
+# tuning requested, which is the whole criterion.
+echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3 processor.max_cstate=1" \
+  > "$FAKE/root/proc/cmdline"
+run
+if said "booted a command line older"; then
+  ok "tune.env and the command line disagreeing is reported, with the reason"
+else
+  bad "the file says 0, the command line disables C-states, and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
+fi
+if said '\[ ok \] deep C-states disabled on the kernel command line'; then
+  bad "the box reported the tuning as correct while tune.env asks for the opposite"
+else
+  ok "and it is not reported as a tuned box: the two readings do not agree"
+fi
+
+# A value tune.env must not carry. apply-tuning refuses it and uses 1; the
+# self-test MUST say the same thing, because two components disagreeing about
+# one file is worse than either of them being wrong.
+echo "HEXA_LOW_LATENCY=true" > "$FAKE/root/etc/hexarouting/tune.env"
+echo "BOOT_IMAGE=/vmlinuz isolcpus=1-3 processor.max_cstate=1" \
+  > "$FAKE/root/proc/cmdline"
+run
+if said "HEXA_LOW_LATENCY='true'"; then
+  ok "a value the box does not accept is refused on the console, quoted"
+else
+  bad "HEXA_LOW_LATENCY=true passed silently: $(printf '%s\n' "$OUTPUT" | grep -i low_latency || echo '<nothing>')"
+fi
+if said "Only 1 .deep C-states off," && said "and 0 .leave all three alone"; then
+  ok "and the refusal says what the box does accept, both values"
+else
+  bad "the refusal does not say what IS accepted: $(printf '%s\n' "$OUTPUT" | grep -i low_latency || echo '<nothing>')"
+fi
+if said '\[ ok \] deep C-states disabled on the kernel command line'; then
+  ok "and the refused value is read as 1, which is what apply-tuning does with it"
+else
+  bad "the refused value was not read as the shipped default: $(printf '%s\n' "$OUTPUT" | grep -i 'c-state' || echo '<nothing>')"
+fi
+rm -f "$FAKE/root/etc/hexarouting/tune.env"
+
+# The readback. A parameter the kernel IGNORED leaves /proc/cmdline saying it
+# was asked for and the kernel behaving as though it was not, so the green
+# line above can be about nothing at all.
+run
+if said "the kernel exposes no idle-state driver"; then
+  ok "a box with no idle-state driver is told the parameters act on nothing"
+else
+  bad "no cpuidle driver and the box still reported only the request: $(printf '%s\n' "$OUTPUT" | grep -i 'idle' || echo '<nothing>')"
+fi
+mkdir -p "$FAKE/root/sys/devices/system/cpu/cpuidle"
+echo intel_idle > "$FAKE/root/sys/devices/system/cpu/cpuidle/current_driver"
+run
+if said "the kernel exposes no idle-state driver"; then
+  bad "a box WITH an idle-state driver was told it has none"
+else
+  ok "and a box that has one is not told that it does not"
+fi
+rm -rf "$FAKE/root/sys/devices/system/cpu/cpuidle"
 
 echo "=== the records volume, which is a legal requirement here (#222) ==="
 # In dynamic mode the allocation log IS the record the Marco Civil requires to
@@ -1849,6 +1935,37 @@ if [ -z "$HARD" ]; then
   ok "nothing Requires=/BindsTo= the self-test, so its state cannot fail another unit"
 else
   bad "a hard dependency on the self-test can carry its failure onward: $HARD"
+fi
+
+echo "=== every tuning line fits the 80-column console it is printed on ==="
+# The self-test writes to /dev/console on a racked appliance, which is 80
+# columns. Nothing measured that. A line goes over only when a value is
+# interpolated into it, so reading the source finds nothing and driving every
+# box does.
+#
+# SCOPED TO THE TUNING AND LATENCY LINES, which is what #163 is answerable
+# for. The whole output was measured the same way and SIX other lines are
+# over, at 87, 91, 92, 101, 111 and 153 columns: the worker-pinning failure
+# interpolating a 31-cpu list, the uRPF, address and MTU comparisons
+# interpolating an interface name, the missing-dataplane-interface failure
+# interpolating a PCI address, and the IPFIX line interpolating a destination. They belong
+# to the checks that own them and to the same shape #276 records, not to this
+# issue, and widening this check to cover them without fixing them would only
+# make the suite red about work it is not doing.
+LAT=$FAKE/latency-lines
+grep -iE 'C-state|HEXA_LOW_LATENCY|idle-state|cpufreq|governor' \
+  "$FAKE/every-line" > "$LAT" || true
+if [ ! -s "$LAT" ]; then
+  bad "no tuning or latency line was collected at all, so this check" \
+      "measured nothing: an empty file has no line over 79 columns"
+else
+  WIDE=$(awk 'length > 79 {print length": "$0}' "$LAT" | sort -u)
+  if [ -z "$WIDE" ]; then
+    ok "$(sort -u "$LAT" | wc -l | tr -d ' ') distinct lines over $runs boxes, widest $(awk '{print length}' "$LAT" | sort -rn | head -1) columns"
+  else
+    bad "lines wider than the 79-column console:
+$WIDE"
+  fi
 fi
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi

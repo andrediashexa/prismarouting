@@ -337,11 +337,67 @@ if [ -n "$cp_isolated" ] && [ -n "$cp_left" ]; then
 fi
 
 # --- latency: without this the box forwards and still loses under burst ---
-if grep -q "processor.max_cstate=1" "$ROOT/proc/cmdline" 2>/dev/null; then
-  ok "deep C-states disabled on the kernel command line"
-else
-  say "  [warn] deep C-states still enabled: expect jitter on bursts."
-  say "         reboot after tuning applies, or set HEXA_LOW_LATENCY=0."
+#
+# TWO readings, not one. /proc/cmdline is what THIS boot actually got;
+# /etc/hexarouting/tune.env is what was asked for and what the next boot will
+# get. The line used to read only the first and then advise "set
+# HEXA_LOW_LATENCY=0" - which on a box that had already set it was the console
+# telling the operator to do the thing they did, about a state they chose.
+#
+# And the case worth the most is the one that had no line at all: tune.env
+# saying 0 while the command line still carries the parameters, or the reverse.
+# That is a box running a command line older than the file that generates it,
+# which is exactly "the tuning requested is not the tuning in effect".
+#
+# Read, never sourced: tune.env is a file an operator edits by hand, and
+# sourcing it would run whatever is in it as root inside the boot self-test.
+TUNEENV=${HEXA_TUNE_ENV:-$ROOT/etc/hexarouting/tune.env}
+ll=$(sed -n 's/^[[:space:]]*HEXA_LOW_LATENCY[[:space:]]*=[[:space:]]*//p' \
+     "$TUNEENV" 2>/dev/null | tail -1 | tr -d '"'"'"' \t')
+ll=${ll:-1}
+ll_refused=""
+case "$ll" in
+  0|1) ;;
+  # apply-tuning refuses anything else and uses 1. The self-test says the same
+  # thing rather than a second, different answer: two components disagreeing
+  # about one file is worse than either being wrong.
+  *) ll_refused=$ll; ll=1 ;;
+esac
+if [ -n "$ll_refused" ]; then
+  say "  [warn] HEXA_LOW_LATENCY='$ll_refused' in /etc/hexarouting/tune.env is"
+  say "         not a value the box accepts. Only 1 (deep C-states off,"
+  say "         transparent hugepages off, cpufreq governor on performance)"
+  say "         and 0 (leave all three alone). Being read as 1, the default"
+fi
+
+cst=no
+grep -q "processor.max_cstate=1" "$ROOT/proc/cmdline" 2>/dev/null && cst=yes
+case "$ll$cst" in
+  1yes) ok "deep C-states disabled on the kernel command line" ;;
+  1no)  say "  [warn] deep C-states still enabled: expect jitter on bursts."
+        say "         HEXA_LOW_LATENCY=1 asks for them off, so the tuning has"
+        say "         not reached this boot's command line. Reboot; if it is"
+        say "         still missing after that, read the generated file"
+        say "         /etc/default/grub.d/hexarouting.cfg and run update-grub" ;;
+  0no)  say "  [info] deep C-states left enabled on purpose:"
+        say "         HEXA_LOW_LATENCY=0 in /etc/hexarouting/tune.env. Expect"
+        say "         jitter on bursts; set 1 and reboot to trade power for it" ;;
+  0yes) say "  [warn] this boot's command line disables deep C-states and"
+        say "         HEXA_LOW_LATENCY=0 in /etc/hexarouting/tune.env asks for"
+        say "         them left alone: the box booted a command line older"
+        say "         than that file. Reboot to run what it now says" ;;
+esac
+
+# And what the kernel actually exposes, which is not what it was asked for. A
+# parameter the kernel IGNORED leaves /proc/cmdline saying it was requested
+# and the kernel behaving as though it was not, so a green line above can be
+# about nothing at all. This is the readback that says when it is.
+idle=$(cat "$ROOT/sys/devices/system/cpu/cpuidle/current_driver" 2>/dev/null \
+       || echo "")
+if [ -z "$idle" ] || [ "$idle" = none ]; then
+  say "  [info] the kernel exposes no idle-state driver, so nothing here"
+  say "         enters a C-state and those parameters have nothing to act"
+  say "         on either way. Usual on a virtual machine"
 fi
 
 gov=$(cat "$ROOT/sys/devices/system/cpu/cpufreq/policy0/scaling_governor" 2>/dev/null || echo "")
