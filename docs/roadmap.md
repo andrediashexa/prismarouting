@@ -572,8 +572,8 @@ the hierarchy being edited. Large, and paid every single day someone uses the
 box.
 
 **4. [#83](https://github.com/andrediashexa/hexarouting/issues/83) — the
-installer**, whose management address was dropped from scope and is back as
-[#303](https://github.com/andrediashexa/hexarouting/issues/303). The **log
+installer**, whose management address was dropped from scope and came back as
+[#303](https://github.com/andrediashexa/hexarouting/issues/303), *delivered in v0.74.0*. The **log
 volume** is *delivered in v0.30.0*; **verifying the disk that was just
 written**, **answers from a file** and the **mirror** are all *delivered*.
 It was led by the log volume because: in dynamic mode the allocation log *is*
@@ -1559,6 +1559,74 @@ acting on it. There were three and not the two anybody would guess:
 
 18 ms at every boot over 31 files and 2.5 MB, measured and printed by the suite
 on every run rather than left as a number in a commit message.
+
+#### A box installed from the medium could not be reached, and a box with one card could not forward
+
+[#303](https://github.com/andrediashexa/hexarouting/issues/303) - *fixed,
+v0.74.0*. Escalated three times by the maintainer, from a fresh install on a
+real VM, and it is two defects that meet on the same machine.
+
+The installer wrote nothing under `/etc/network/`. Measured on a 0.72.0
+appliance: `/etc/network/interfaces.d/` empty, `networking.service` enabled
+with nothing to do, the card up with no address, and the `ip` commands typed at
+the console gone with the power. The installer asks now, with the other
+questions and before the first write, which card the box is managed on and how
+it is addressed, and the boot self-test reads that same file back on every boot
+and reports what became of it. The medium also carried no DHCP client at all -
+`ifupdown` only *Recommends* one and `debootstrap` installs no Recommends - so
+the default answer was a file that read perfectly and did nothing.
+
+And that VM has one card, so `dataplane interface ens18` was refused with
+advice naming a card the box has not got. The refusal keeps its ground
+everywhere it can be followed; where it cannot, the card goes to the dataplane
+and the management address goes with it onto the `linux_cp` pair, MAC and all,
+as a confirmed commit that puts the configuration back and restarts the box if
+nobody confirms.
+
+**Why the gate never caught it**, measured rather than shrugged at: the gate's
+box has one NIC, it never contacts the box over the network, and it never asks
+the box to accept a dataplane interface. `lab/install-iso.sh` now power-cycles
+the machine and reaches it from outside, and `lab/one-nic.sh` carries the
+handover against a real dataplane.
+
+The wiki was the third half. The requirements page listed RAM and an
+instruction set and said nothing about network cards - the one resource the
+appliance exists for - and the install and getting-started pages assumed two.
+All three say it now.
+
+#### The installation medium told the operator to reboot
+
+[#305](https://github.com/andrediashexa/hexarouting/issues/305) - *fixed,
+v0.74.0*. Two lines apart on the same screen: the banner said nothing there
+survives a reboot, and `show interface` said to reboot once the tuning has been
+applied. The explanation decided from the startup file alone, and that file is
+identical on a medium and on an installed box's first boot, where the advice is
+right. `running_from_live_medium()` was already in the same file and the boot
+self-test already used it in four places.
+
+**Nothing tested it**, which is the part worth keeping: `lab/boot-iso.sh`
+booted the medium and only ever read, and the gate read the self-test's line,
+which is correct on a medium. The one sentence that was wrong was the one
+nothing asked for. That lab now writes on the console - waiting for the prompt
+rather than guessing when it arrives - and refuses both a medium that answers
+with a reboot and a run where the question was never asked.
+
+#### The VTY refuses its own `prohibit-password`
+
+[#304](https://github.com/andrediashexa/hexarouting/issues/304) - *open*.
+`sshd -T` answers `permitrootlogin without-password` for the
+`prohibit-password` the VTY offers and writes; the VTY reads its own setting
+back, does not recognise the spelling sshd replies with, and refuses. A box
+configured that way fails to load its own saved configuration at boot.
+
+Not reachable as the product ships, because `appliance/install.sh` writes
+`PermitRootLogin yes`. Reachable on any box whose operator tightens it, which
+is the box most likely to be tightened for a reason. Found while building the
+one-NIC lab, where a fixture worked around it - and a workaround in a fixture
+is a defect somebody will meet without one. **Measure first**: if the refusal
+does not reproduce against a real `sshd -T`, the issue is closed rather than
+fixed.
+
 
 #### The rename to PrismaRouting
 

@@ -75,47 +75,72 @@ version has a chance of seeing it.
 
 ## Unreleased
 
-### Fixed
+## 0.74.0 - the installed box can be reached, and one card is enough
 
-* **On the installation medium, `show interface` told the operator to reboot,
-  and rebooting the medium throws everything away**
-  ([#305](https://github.com/andrediashexa/hexarouting/issues/305)). Two lines
-  apart on the same screen: the banner said "nothing here survives a reboot",
-  and the next command said "Reboot once the tuning has been applied and the
-  pages reserved".
+[#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
 
-  The explanation decided from the startup file alone, and that file is
-  identical on a medium and on an installed box's first boot. On the installed
-  box the advice is exactly right: the tuner has asked for pages a reboot picks
-  up. On the medium the dataplane is off deliberately and permanently, so the
-  tuning is never applied and the reboot comes back to the same screen. The
-  product already had `running_from_live_medium()`, in that same file, and the
-  boot self-test uses it in four places to keep the two apart. This message did
-  not ask it.
+### Added
 
-  **And nothing tested it.** `lab/boot-iso.sh` booted the medium and only ever
-  read; the release gate read the self-test's line, which is correct on a
-  medium and says nothing about rebooting. The one sentence that was wrong was
-  the one nothing asked for. That lab now has a writer on the console, waits
-  for the prompt rather than guessing when it arrives, asks `show interface`,
-  and refuses a medium that answers with a reboot.
+* **A box with one NIC can forward, and the card takes its address with it**
+  ([#303](https://github.com/andrediashexa/hexarouting/issues/303)). Measured
+  on a fresh install on the maintainer's VM: one card, carrying the address and
+  the default route, and `dataplane interface ens18` refused with "name the
+  card carrying subscriber traffic instead". There is no other card. The
+  advice could not be followed, so the box could not forward and could not be
+  told to - and a VM with one virtual NIC is how most people first meet this
+  product.
 
-### Fixed
+  The refusal's reasoning is right and it keeps its ground. A box with a
+  second card is refused exactly as before, and the refusal now names the
+  cards to use instead rather than describing them. What changes is the box
+  where that advice names a card that does not exist: there the card moves,
+  and the management address moves with it onto the `linux_cp` pair the
+  dataplane keeps for the port, so the box is reached THROUGH the dataplane
+  rather than beside it. The card keeps its MAC across the handover, so
+  nothing upstream has to learn a new one.
 
-* **`lab/one-nic.sh` failed in the release suite and passed alone**, on one
-  check and no other: the counter that says the packets came through the pair
-  rather than past it. The ping in the same run reported 0% packet loss, so the
-  packets had arrived and only the reading was early - the counter is the
-  kernel's own on the TAP and moves as the dataplane punts, not as the reply
-  leaves.
+  The operator types one statement. The address, the prefix, the MAC and the
+  gateway are the box's own reading of Linux, written down as
+  `dataplane management <card> address <a/len> mac <xx:..>` and a static
+  default route, both visible in the candidate before the commit. A card whose
+  address the box cannot read back - none, or two, or no gateway - is refused
+  with the missing part named: an address it cannot see is one it cannot put
+  back, and a handover with no way back is the walk to the console the
+  original refusal was written to prevent.
 
-  It was a fixed `sleep 2`, which was enough alone at load 3.0 and not enough
-  in a sixteen-way suite at load 4.5. A sleep long enough for the worst machine
-  is a sleep everybody pays on every run and is still a guess about a machine
-  nobody measured, so the reading waits for the counter to move instead, with a
-  deadline. It can still fail honestly: packets that never arrive leave the
-  counter where it was and the check goes red after the deadline rather than
-  never.
+  The record lives in `tune.env` beside the card, because between the commit
+  that names the card and the boot that hands it over there is nothing on the
+  box to read: the dataplane has no such interface yet and Linux still holds
+  the address on a card that is about to stop existing. `apply-tuning` passes
+  `--keep-management` to the tuner when it is set, and `bind-dataplane-nic`
+  reads it before unbinding. All three places make the same decision from the
+  same two facts - is there another card, and has the box written the way back
+  down - and each checks both for itself.
+
+  **The handover is a confirmed commit whether or not it was asked for**, for
+  thirty minutes rather than the usual ten, because the window has to cover a
+  reboot and a login rather than a reconnection. The box does not lose the
+  session at the commit but at the restart after it, and if anything in
+  between is wrong there is no session left to fix it from. An unconfirmed
+  handover puts the configuration back AND restarts the box: the card was
+  unbound at boot and the dataplane holds it, so `tune.env` going back only
+  decides what the next start claims - and this runs on a box nobody can
+  reach, where there is no session to ask. A revert that gives back no card
+  restarts nothing, and neither does one whose card never moved: the window
+  runs from the commit, so it can expire while the box is still on its old
+  path, and the dataplane is asked whether it holds the recorded MAC before
+  anything is restarted.
+
+  `lab/one-nic.sh` measures it against a real dataplane: a box in a namespace
+  of its own with one card, its address and its default route, the card handed
+  to VPP, the product's own boot command replaying the saved file, and an
+  upstream that then pings the box and opens a TCP session to it from off its
+  own subnet. The bind cannot be performed in a container, so the kernel's
+  loss of the port is modelled - the netdev is emptied, its name released and
+  its ingress dropped - and the lab's negative check is what keeps that
+  honest: with the card in the dataplane and nothing configured the box MUST
+  be unreachable. Shown failing by making the model dishonest, where that one
+  check goes red and every other check in the file stays green.
 
 ### Fixed
 
@@ -217,70 +242,25 @@ version has a chance of seeing it.
   the published medium, where there are no other means. Saying the section was
   empty is what let it go unmeasured.
 
-### Added
+* **The requirements page did not say how many network cards a box needs**
+  ([#303](https://github.com/andrediashexa/hexarouting/issues/303)). The issue
+  was met on a VM with one virtual NIC, which is how most people first meet
+  this product, and the page somebody reads before buying hardware listed RAM
+  and an instruction set and nothing about the network. The one resource the
+  whole appliance exists for was the one the requirements did not mention.
 
-* **A box with one NIC can forward, and the card takes its address with it**
-  ([#303](https://github.com/andrediashexa/hexarouting/issues/303)). Measured
-  on a fresh install on the maintainer's VM: one card, carrying the address and
-  the default route, and `dataplane interface ens18` refused with "name the
-  card carrying subscriber traffic instead". There is no other card. The
-  advice could not be followed, so the box could not forward and could not be
-  told to - and a VM with one virtual NIC is how most people first meet this
-  product.
+  It now says one card is enough and what the box does with it, what a second
+  card buys - not throughput, but a card for the refusal to name instead - that
+  the card must be a PCI device because `lo`, a bridge, a bond and a veth have
+  no PCI address and cannot be handed over, and that an IOMMU is what decides
+  between `vfio-pci` and a `uio_pci_generic` with no IOMMU protection.
 
-  The refusal's reasoning is right and it keeps its ground. A box with a
-  second card is refused exactly as before, and the refusal now names the
-  cards to use instead rather than describing them. What changes is the box
-  where that advice names a card that does not exist: there the card moves,
-  and the management address moves with it onto the `linux_cp` pair the
-  dataplane keeps for the port, so the box is reached THROUGH the dataplane
-  rather than beside it. The card keeps its MAC across the handover, so
-  nothing upstream has to learn a new one.
+  No mechanical check was added, deliberately: the obvious one compares a
+  message against the source that prints it, which `test/test_doc_copies.py`
+  has already measured and rejected three times in its own header - 11 of 11
+  false positives on one variant. There is no second written copy of this
+  truth to compare against.
 
-  The operator types one statement. The address, the prefix, the MAC and the
-  gateway are the box's own reading of Linux, written down as
-  `dataplane management <card> address <a/len> mac <xx:..>` and a static
-  default route, both visible in the candidate before the commit. A card whose
-  address the box cannot read back - none, or two, or no gateway - is refused
-  with the missing part named: an address it cannot see is one it cannot put
-  back, and a handover with no way back is the walk to the console the
-  original refusal was written to prevent.
-
-  The record lives in `tune.env` beside the card, because between the commit
-  that names the card and the boot that hands it over there is nothing on the
-  box to read: the dataplane has no such interface yet and Linux still holds
-  the address on a card that is about to stop existing. `apply-tuning` passes
-  `--keep-management` to the tuner when it is set, and `bind-dataplane-nic`
-  reads it before unbinding. All three places make the same decision from the
-  same two facts - is there another card, and has the box written the way back
-  down - and each checks both for itself.
-
-  **The handover is a confirmed commit whether or not it was asked for**, for
-  thirty minutes rather than the usual ten, because the window has to cover a
-  reboot and a login rather than a reconnection. The box does not lose the
-  session at the commit but at the restart after it, and if anything in
-  between is wrong there is no session left to fix it from. An unconfirmed
-  handover puts the configuration back AND restarts the box: the card was
-  unbound at boot and the dataplane holds it, so `tune.env` going back only
-  decides what the next start claims - and this runs on a box nobody can
-  reach, where there is no session to ask. A revert that gives back no card
-  restarts nothing, and neither does one whose card never moved: the window
-  runs from the commit, so it can expire while the box is still on its old
-  path, and the dataplane is asked whether it holds the recorded MAC before
-  anything is restarted.
-
-  `lab/one-nic.sh` measures it against a real dataplane: a box in a namespace
-  of its own with one card, its address and its default route, the card handed
-  to VPP, the product's own boot command replaying the saved file, and an
-  upstream that then pings the box and opens a TCP session to it from off its
-  own subnet. The bind cannot be performed in a container, so the kernel's
-  loss of the port is modelled - the netdev is emptied, its name released and
-  its ingress dropped - and the lab's negative check is what keeps that
-  honest: with the card in the dataplane and nothing configured the box MUST
-  be unreachable. Shown failing by making the model dishonest, where that one
-  check goes red and every other check in the file stays green.
-
-### Fixed
 
 * **`bind-dataplane-nic` could not recognise a virtio management card**
   ([#286](https://github.com/andrediashexa/hexarouting/issues/286) again, in
@@ -290,6 +270,44 @@ version has a chance of seeing it.
   against unbinding the card a box is reached over was not there at all - on
   exactly the machines this product is first tried on. It now walks up to the
   nearest PCI ancestor, the way the tuner already did.
+
+* **On the installation medium, `show interface` told the operator to reboot,
+  and rebooting the medium throws everything away**
+  ([#305](https://github.com/andrediashexa/hexarouting/issues/305)). Two lines
+  apart on the same screen: the banner said "nothing here survives a reboot",
+  and the next command said "Reboot once the tuning has been applied and the
+  pages reserved".
+
+  The explanation decided from the startup file alone, and that file is
+  identical on a medium and on an installed box's first boot. On the installed
+  box the advice is exactly right: the tuner has asked for pages a reboot picks
+  up. On the medium the dataplane is off deliberately and permanently, so the
+  tuning is never applied and the reboot comes back to the same screen. The
+  product already had `running_from_live_medium()`, in that same file, and the
+  boot self-test uses it in four places to keep the two apart. This message did
+  not ask it.
+
+  **And nothing tested it.** `lab/boot-iso.sh` booted the medium and only ever
+  read; the release gate read the self-test's line, which is correct on a
+  medium and says nothing about rebooting. The one sentence that was wrong was
+  the one nothing asked for. That lab now has a writer on the console, waits
+  for the prompt rather than guessing when it arrives, asks `show interface`,
+  and refuses a medium that answers with a reboot.
+
+* **`lab/one-nic.sh` failed in the release suite and passed alone**, on one
+  check and no other: the counter that says the packets came through the pair
+  rather than past it. The ping in the same run reported 0% packet loss, so the
+  packets had arrived and only the reading was early - the counter is the
+  kernel's own on the TAP and moves as the dataplane punts, not as the reply
+  leaves.
+
+  It was a fixed `sleep 2`, which was enough alone at load 3.0 and not enough
+  in a sixteen-way suite at load 4.5. A sleep long enough for the worst machine
+  is a sleep everybody pays on every run and is still a guess about a machine
+  nobody measured, so the reading waits for the counter to move instead, with a
+  deadline. It can still fail honestly: packets that never arrive leave the
+  counter where it was and the check goes red after the deadline rather than
+  never.
 
 ## 0.73.0 - the box keeps the list of what was installed on it
 
