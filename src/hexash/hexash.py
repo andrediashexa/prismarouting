@@ -56,6 +56,24 @@ ROLLBACK_KEEP = 20
 # has to outlive the session that set it - see ConfirmPending (#212).
 CONFIRM_PATH = os.environ.get("HEXA_CONFIRM",
                               "/etc/hexarouting/confirm-pending")
+# The peer's saved configuration, as a file on THIS box.
+#
+# A file rather than a protocol because this box has no way to ask the other
+# one anything: VRRP is not implemented (#7), so there is no session between
+# the two and nothing to carry a request over. What does exist is a saved
+# configuration - `save` writes one, `--load` reads one at boot, and every
+# rollback revision is one - so the peer's configuration is an artefact this
+# product already produces, and copying it here is a step an operator can
+# perform today with what they have.
+#
+# The seam is deliberate and is the whole of what #8 can honestly deliver on
+# its own: the COMPARISON is complete and tested, and whatever ends up
+# carrying the peer's configuration writes this file. Until something does,
+# the file is whatever was last copied to it, which is why every report that
+# reads it prints its date beside the digest: a stale copy that reads as a
+# match is the same silent agreement this check exists to remove.
+PEER_CONFIG_PATH = os.environ.get("HEXA_PEER_CONFIG",
+                                  "/etc/hexarouting/peer.conf")
 # How many times the box may fail to put the old configuration back before it
 # stops trying and says so.
 #
@@ -252,6 +270,13 @@ SHOW_CGNAT = {
     # every capability at once (#76).
     "alg": ("which ALGs the dataplane has on, per pool", None),
     "forward": ("the port forwards the dataplane holds", "[<pool>]"),
+    # The one entry here that is NOT the dataplane's own command forwarded on.
+    # See Shell.show_ha: the dataplane holds one box's configuration and has
+    # never heard of the other, so the comparison is answered where both can
+    # be read.
+    "ha": ("whether this box and its peer map subscribers the same way", {
+        "peer": ("compare against a peer configuration file elsewhere",
+                 "<file>")}),
 }
 
 SHOW = {
@@ -1231,6 +1256,43 @@ def udp_export_without_collector(globals_) -> bool:
         return False
     return not any(w[:3] == ["cgnat", "logging", "udp"] and len(w) > 3
                    and w[3] != "disable" for w in words)
+
+
+def read_peer_config(path=None):
+    """
+    The peer's configuration as this box could read it, or WHY it could not.
+
+    Returns `(Config, None)` or `(None, reason)`, and never an empty `Config`
+    with no reason. That asymmetry is the whole point of the function: an empty
+    configuration compares equal to another empty configuration, so a file that
+    is absent, unreadable, truncated or written in statements this VTY cannot
+    hold would otherwise be reported as "the two boxes agree". That is the
+    silent agreement this check exists to remove, reached from the other side -
+    and it is worse than the original, because now something has said so.
+
+    A file that parses but names no pool is refused for the same reason. A box
+    in an HA pair has a pool; a peer configuration with none is a copy that did
+    not finish, and "the peer maps nobody" is not an answer anybody asked for.
+    """
+    path = path or PEER_CONFIG_PATH
+    if not os.path.exists(path):
+        return None, f"there is no peer configuration at {path}"
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError as e:
+        # The reason, not a traceback. This runs in front of somebody in a
+        # maintenance window, the same argument RollbackUnavailable makes.
+        return None, f"{path}: {e.strerror}"
+    cfg = Config.parse(text)
+    if cfg.unknown:
+        first = cfg.unknown[0]
+        return None, (f"{path} line {first[0]} is a statement this VTY cannot "
+                      f"read ({first[2]}), so the pool it belongs to is not "
+                      "what the peer actually has")
+    if not cfg.pools:
+        return None, f"{path} names no CGNAT pool"
+    return cfg, None
 
 
 # What FRR does NOT read back the way it was typed.
@@ -5995,6 +6057,34 @@ class Shell:
                 for line in advice:
                     print("    " + line)
 
+            # Would this commit leave the two boxes mapping subscribers
+            # differently? Asked only when a peer configuration has been put
+            # on this box at all, and only about the half of a pool that
+            # decides the mapping - `mapping_diff_to` says why that is not
+            # `is_same`.
+            #
+            # WARNED, never refused, and that is measured rather than
+            # timidity. The two boxes cannot be committed in the same instant:
+            # every legitimate capacity change diverges the pair between the
+            # first commit and the second, so a refusal here would fire on
+            # every correct procedure, and the only way past it would be to
+            # stop copying the peer's configuration - which removes the check
+            # rather than the divergence. A refusal that fires on a correct
+            # configuration is the harm #208 was filed for, and an operator
+            # who meets it once stops reading the message that matters.
+            # The reason is dropped on purpose: `show cgnat ha` is where a
+            # box says why it could not read the peer. A commit that printed
+            # "there is no peer configuration" every time would say it on
+            # every box that is not in a pair, which is most of them.
+            peer_cfg = read_peer_config()[0]
+            if peer_cfg is not None:
+                ha = target.mapping_diff_to(peer_cfg)
+                if ha:
+                    self.say_divergence("warning", ha)
+                    print_prose("'show cgnat ha' compares the two in full; "
+                                "the peer's configuration here was copied "
+                                f"from {PEER_CONFIG_PATH}")
+
             # Only when FRR can answer. A box may run CGNAT with no routing -
             # Frr.available() has said so in its docstring since it was
             # written, and was never called, so validation ran unconditionally
@@ -8276,6 +8366,12 @@ class Shell:
         if line in m:
             self.vpp(m[line])
             return
+        # Before the forwarding below, which would otherwise hand `ha` to a
+        # dataplane that has no such command.
+        _ha = line.split()
+        if _ha[:3] == ["show", "cgnat", "ha"]:
+            self.show_ha(_ha[3:])
+            return
         # The ones that carry an argument. Matched by prefix so the argument
         # travels through untouched; hexash is not the place to re-validate an
         # address the dataplane is about to parse anyway.
@@ -10318,6 +10414,119 @@ class Shell:
         print(head + rows[0].lstrip())
         for row in rows[1:]:
             print(row)
+
+    # ------------------------------------------------ HA: do we agree?
+
+    def say_divergence(self, mark, findings):
+        """
+        One row of prose per pool, then the two statements, each whole.
+
+        `say_finding` wraps the reason and prints ONE statement under it; a
+        divergence has two, because "block-size 2048" means nothing without
+        the 1024 it is being compared against. So the reason and this box's
+        statement go through `say_finding` unchanged, and the peer's statement
+        is the row below it - still a statement on a row of its own, never
+        folded into the prose, because it is what the operator greps for and
+        types back (#271, #276).
+        """
+        for name, here, there in findings:
+            if not there:
+                self.say_finding(
+                    mark, here,
+                    f"pool '{name}' is on this box and not on the peer, so "
+                    "after a failover its subscribers are translated by "
+                    "nothing at all")
+            elif not here:
+                self.say_finding(
+                    mark, there,
+                    f"pool '{name}' is on the peer and not on this box, so "
+                    "the peer translates subscribers this box does not know "
+                    "about")
+            else:
+                self.say_finding(
+                    mark, f"this box: {here}",
+                    f"pool '{name}' does not map subscribers the same way on "
+                    "the two boxes, so a failover moves them to other public "
+                    "addresses and port blocks, and neither box logs anything")
+                print(f"    the peer: {there}")
+
+    def show_ha(self, args):
+        """
+        Whether this box and its peer would map subscribers the same way.
+
+        Answers the three questions in that order: what this box carries, what
+        the peer carries, and whether the two agree. Each of them can be
+        UNKNOWN, and unknown is printed as unknown - the one answer this
+        command may never give is a quiet "they agree" over a comparison it
+        did not make.
+
+        It is `show cgnat ha` and not `show bpa ha`: the other `show cgnat`
+        commands are the dataplane's own, forwarded word for word, and the
+        dataplane holds ONE box's configuration and has never heard of the
+        other. This comparison is between two configurations, so it is answered
+        where both can be read.
+        """
+        path = None
+        if args[:1] == ["peer"] and len(args) > 1:
+            path = args[1]
+        elif args:
+            self.err("show cgnat ha: takes nothing, or 'peer <file>'")
+            return
+
+        print("  this box")
+        if not self.dp.reachable():
+            # Without this the empty configuration a dead dataplane produces is
+            # compared as if it were the truth, and a box with ten pools
+            # reports every one of them as "the peer has it and this box does
+            # not" - or, if the peer file is empty too, as agreement.
+            print_prose("the dataplane is not answering, so this box cannot "
+                        "say what it maps and nothing below would mean "
+                        "anything")
+            return
+        mine = self.running_config()
+        print(f"    mapping fingerprint  {mine.mapping_fingerprint()}")
+        print("    pools                "
+              + (", ".join(sorted(mine.pools)) if mine.pools else "(none)"))
+
+        print()
+        print("  role")
+        print_prose("neither box elects one: this VTY has no virtual router "
+                    "and nothing here takes a service address over. What is "
+                    "checked below is whether a takeover WOULD land "
+                    "subscribers where they already are.")
+
+        print()
+        peer, why = read_peer_config(path)
+        where = path or PEER_CONFIG_PATH
+        if peer is None:
+            print("  peer")
+            print_prose(why)
+            print_prose("nothing here says the two boxes agree, and an "
+                        "unanswered question is not a match")
+            return
+        print(f"  peer, from {where}")
+        print(f"    mapping fingerprint  {peer.mapping_fingerprint()}")
+        # No "(none)" case here, unlike this box above: read_peer_config
+        # refuses a configuration with no pool in it rather than handing one
+        # back to be compared.
+        print("    pools                " + ", ".join(sorted(peer.pools)))
+        # The date, because this file is a COPY and a copy has an age. A digest
+        # that matches a configuration the peer stopped running last week is
+        # the same false agreement as no check at all.
+        try:
+            when = time.strftime("%Y-%m-%d %H:%M:%S",
+                                 time.localtime(os.path.getmtime(where)))
+            print(f"    copied               {when}")
+        except OSError:
+            pass
+
+        print()
+        findings = mine.mapping_diff_to(peer)
+        if not findings:
+            print_prose("the two boxes map every subscriber to the same "
+                        "public address and the same port block", indent="  ")
+            return
+        self.say_divergence("warning", findings)
 
     def show_compare(self):
         if self.candidate is None:

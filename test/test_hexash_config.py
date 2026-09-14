@@ -130,7 +130,37 @@ for field, (mutate, bucket) in sorted(MUTATIONS.items()):
               f"changing {field} must be reported in {bucket}, "
               f"which was empty")
 
+    # The SAME classification, asked of the fingerprint two HA peers compare
+    # (#8). It is asserted here, in the loop that owns the table, and nowhere
+    # else, precisely so that there is no second list of "fields the peers
+    # must agree on": a field added to Pool and forgotten fails the
+    # completeness case below, and a field classified as mapping that the
+    # fingerprint does not see fails right here.
+    #
+    # The consequence of getting it wrong is the one docs/ha.md names: in
+    # deterministic mode a subscriber's public address and port block are a
+    # function of the pool definition, so a fingerprint that ignores a mapping
+    # field reports two boxes as identical while they hand the same subscriber
+    # different addresses, and neither box logs anything.
+    moved = (before.mapping_fingerprint() != after.mapping_fingerprint())
+    if bucket == "pool_replace":
+        check(moved,
+              f"changing {field} re-maps subscribers, so the HA fingerprint "
+              "must move with it; it did not")
+    else:
+        check(not moved,
+              f"changing {field} moves no subscriber, so the HA fingerprint "
+              "must NOT move; it did, which would report a correctly "
+              "configured pair as divergent")
+    # And the comparison itself, which is what an operator is shown. Same
+    # direction, so a fingerprint that moved for the wrong reason cannot pass
+    # by moving without the diff being able to say which pool.
+    named = [n for n, _, _ in before.mapping_diff_to(after)]
+    check(named == (["p"] if bucket == "pool_replace" else []),
+          f"changing {field}: mapping_diff_to named {named}")
+
 print("  every field classified above behaves as classified")
+print("  and the HA fingerprint moves for exactly the mapping fields")
 
 print("\n=== the table covers every field a pool has ===")
 # The assertion that survives the next feature. Without it, a field added to

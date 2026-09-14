@@ -45,7 +45,11 @@ o, _, _ = opts("operational", "show cgnat ")
 check(o == {"pool", "session", "blocks", "logging", "history",
             "subscriber", "translation", "top", "drops",
             # The two the dataplane had and this VTY did not reach (#228).
-            "alg", "forward"}, f"got {o}")
+            "alg", "forward",
+            # The one that is NOT the dataplane's: a comparison between two
+            # boxes, which the dataplane cannot answer because it holds one
+            # of them (#8).
+            "ha"}, f"got {o}")
 print(f"  {sorted(o)}")
 
 print("\n=== a partial prefix completes ===")

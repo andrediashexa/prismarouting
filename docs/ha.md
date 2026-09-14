@@ -14,6 +14,14 @@ drops in-flight connections — as any NAT does — but they re-establish on the
 The trap for whoever implements this: in deterministic mode, two boxes with
 **different** configuration fail **silently**.
 
+**That trap now has a check on it, and only that.** `show cgnat ha` compares
+the two boxes' mappings and says which pool differs; nothing here elects a
+role, moves an address or takes anything over. See
+[Configuration equality](#configuration-equality-what-exists) below, which
+also states the seam the comparison ends at: the peer's configuration reaches
+this box as a file somebody copies, because there is no session between the
+two boxes to carry it.
+
 The acceptance test is written and **is red on `master`**: `lab/ha-failover.sh`
 stands up two boxes, runs a subscriber's translated flow through a service
 address, breaks the active box three different ways, and fails every check that
@@ -103,7 +111,11 @@ To be built:
 
 1. Integration with `keepalived` or FRR's VRRP, coherent with `linux_cp`.
 2. Verification that both boxes carry the **same** pool configuration.
-3. A `show bpa ha` comparing a configuration hash between peers.
+   **Done**, as far as a box with no peer session can take it
+   ([#8](https://github.com/andrediashexa/hexarouting/issues/8)) - the section
+   below says where it stops.
+3. A `show cgnat ha` comparing a configuration hash between peers. **Done**,
+   and spelled `cgnat` rather than `bpa` for a reason recorded below.
 4. A lab test with two instances and a forced failure, confirming the
    subscriber keeps address and block. **Done, and red**: `lab/ha-failover.sh`
    ([#9](https://github.com/andrediashexa/hexarouting/issues/9)), written before
@@ -114,6 +126,111 @@ Item 2 **MUST NOT** be skipped. In deterministic mode, two boxes with different
 configuration fail silently: the failover starts mapping subscribers to the
 wrong blocks with no visible error, and the logs of both boxes will look
 perfectly healthy. Configuration equality is a requirement, not a convenience.
+
+## Configuration equality: what exists
+
+`show cgnat ha` answers one question and refuses to answer any other: would a
+takeover put subscribers where they already are?
+
+```
+hexarouting> show cgnat ha
+  this box
+    mapping fingerprint  50e2b92f23c2707c
+    pools                residencial
+
+  role
+    neither box elects one: this VTY has no virtual router and nothing here
+    takes a service address over. What is checked below is whether a takeover
+    WOULD land subscribers where they already are.
+
+  peer, from /etc/hexarouting/peer.conf
+    mapping fingerprint  9e7394fc505d2eff
+    pools                residencial
+    copied               2026-09-12 09:14:31
+
+warning: pool 'residencial' does not map subscribers the same way on the two
+    boxes, so a failover moves them to other public addresses and port
+    blocks, and neither box logs anything
+    this box: block-size 2048
+    the peer: block-size 1024
+```
+
+The same comparison runs at `commit check` and at `commit`, so a change that
+diverges the pair says so at the moment it is made rather than at the moment
+the other box is needed.
+
+### Which fields must match, and why there is no list of them
+
+There is no table anywhere of "the fields two peers must agree on", and there
+must not be one. The set is **derived**: a subscriber's address and block are a
+function of the pool definition, so the fields that must match are exactly the
+fields that change the mapping - and the product already decides that, in one
+place, for a different reason.
+
+`Config.delta_to` rebuilds a pool on the dataplane exactly when
+`Pool.lines(in_place=False)` moves, because a mapping change invalidates every
+session on the pool. `test/test_hexash_config.py` asserts that classification
+field by field, and asserts that **every field a pool has is classified** - a
+field added later and forgotten fails there rather than defaulting to whatever
+the diff happens to do with it.
+
+The fingerprint is a digest of that same text. So the question "which fields
+must two peers agree on" has one answer, held once, and a field added to a pool
+is classified once. A second list would be a second copy of a decision this
+product has already made, and the two would disagree the first time one of them
+was edited.
+
+What that derivation yields today, for the record rather than as a list to
+maintain: the inside and outside prefixes, the block size, the port range, the
+policy, the mode, the reserve, and both VRFs. Note what is **absent** - the
+timeouts, the ALG switches, the TCP clamp, the bypass lists, the session and
+rate ceilings, the port forwards, the stride, the utilisation alarm. Those the
+dataplane changes on a pool that is carrying traffic, and they move no
+subscriber anywhere: two peers that differ on them are correctly configured,
+and warning about them would be a warning an operator learns to skip.
+
+### Where the check stops, and why it stops there
+
+The comparison is between two configurations. Getting the peer's configuration
+to this box is a **separate problem**, and it is not solved here: there is no
+session between the two boxes, because VRRP is
+[#7](https://github.com/andrediashexa/hexarouting/issues/7) and does not exist
+yet, so nothing can ask the peer anything.
+
+So the peer's configuration arrives as a file, `/etc/hexarouting/peer.conf`
+(`HEXA_PEER_CONFIG` overrides it), which is the same artefact `save` writes and
+`--load` reads. That seam is deliberate: whatever ends up carrying a peer
+relationship writes that file, and the comparison above does not change. Until
+something does, the file is whatever was last copied there - which is why every
+report prints its date beside the digest. **A digest that matches a
+configuration the peer stopped running last week is the same false agreement
+this check exists to remove.**
+
+Three consequences worth stating outright, because each of them is a way for a
+check like this to lie:
+
+* **An unreadable peer never reads as a match.** Absent, unreadable, empty,
+  naming no pool, or carrying a statement this VTY cannot hold: each is
+  reported as itself, and none of them as agreement. All five parse to an empty
+  configuration if they are parsed carelessly, and an empty configuration
+  compares equal to another empty configuration.
+* **A dataplane that is not answering stops the report.** This box's own
+  configuration is read from the dataplane, so a dead one yields an empty
+  configuration and would make the peer look like the one that changed.
+* **The divergence is a warning, never a refusal.** Two boxes cannot be
+  committed in the same instant, so every legitimate capacity change diverges
+  the pair between the first commit and the second. A refusal would fire on
+  every correct procedure, and the only way past it would be to stop copying
+  the peer's configuration - which removes the check rather than the
+  divergence.
+
+### `show cgnat ha` and not `show bpa ha`
+
+Every other `show cgnat` command is the dataplane's own, forwarded word for
+word. This one is not, and cannot be: the dataplane holds one box's
+configuration and has never heard of the other, so a comparison between two
+boxes is answered where both can be read. The issue asking for this wrote it
+`show bpa ha`; the spelling changed and the answer did not.
 
 ## What the acceptance test measured on `master`
 
@@ -158,3 +275,23 @@ appears in no `show running-config` and changes nothing on the box. That is why
 the lab asserts nothing about the configuration being *accepted* and everything
 about the packet: a check on acceptance would be green on a box that does
 nothing. The silent acceptance is a defect of its own, filed separately.
+
+**That second finding no longer holds, and saying so is part of keeping this
+page worth reading.** Re-measured at 0.69.0: the same statement the lab types,
+`nat cgnat ha peer 200.150.0.12 priority 200`, is now refused at the prompt
+before it can enter the candidate at all.
+
+```
+error: cgnat ha: this VTY has no such setting
+    it would have been accepted, saved and applied to nothing. What this box
+    takes here is: block-holddown, interface, logging, pool, session-table,
+    timeout
+```
+
+[#273](https://github.com/andrediashexa/hexarouting/issues/273) closed the hole
+one layer up, in the VTY rather than in the dataplane: the words under `cgnat`
+now come from the same table `?` offers from, so a refusal there cannot drift
+from what the box says it takes. The lab's stage 2 still carries the old
+measurement in a comment, and its verdict is unaffected - it asserted nothing
+about acceptance then and asserts nothing about it now, which is exactly why
+the finding changing underneath it cost nothing.
