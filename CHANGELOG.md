@@ -665,15 +665,54 @@ version has a chance of seeing it.
   And the CI sentence is compared against whether `.github/workflows` has
   anything in it: the first version of that one matched the very sentence that
   says there is no CI, which is recorded in the file rather than quietly fixed.
+* **A sweep for claims this product makes and does not honour, and ten of them
+  written down.** Not a fix: the deliverable is `docs/claims-sweep.md` and ten
+  issues, each reproduced before it was filed. The shape swept for is the one
+  that has now been found on a real box five times in two releases
+  ([#303](https://github.com/andrediashexa/hexarouting/issues/303),
+  [#305](https://github.com/andrediashexa/hexarouting/issues/305),
+  [#306](https://github.com/andrediashexa/hexarouting/issues/306),
+  [#307](https://github.com/andrediashexa/hexarouting/issues/307),
+  [#295](https://github.com/andrediashexa/hexarouting/issues/295)): a sentence
+  the box says out loud that it does not honour, in the first place an
+  operator reads.
 
+  Four are in what a box prints. `show interface` sends an operator to
+  `show log`, which this VTY does not have and which occurs nowhere else in
+  the product ([#308](https://github.com/andrediashexa/hexarouting/issues/308)).
+  The boot self-test says the management card is refused, and since #303 the
+  VTY accepts it on a box that has only one
+  ([#309](https://github.com/andrediashexa/hexarouting/issues/309)). #305's
+  contradiction survives in a second message, where committing a dataplane
+  interface on the medium still says a reboot brings the box up forwarding
+  ([#310](https://github.com/andrediashexa/hexarouting/issues/310)). And
+  `commit confirmed 0` arms nothing, writes no record, prints no deadline and
+  answers `commit complete`, while the help and the wiki both say the range is
+  1 to 60 ([#312](https://github.com/andrediashexa/hexarouting/issues/312)).
 
+  Two are in the operator wiki. The audit-trail tamper check is documented at
+  the last step before an irreversible disk wipe, and no VTY spelling reaches
+  it ([#313](https://github.com/andrediashexa/hexarouting/issues/313)). Two
+  pages confirm a port forward with `show cgnat pool`, which cannot print one
+  ([#314](https://github.com/andrediashexa/hexarouting/issues/314)).
 
+  Four are in the process. The release gate passes a medium whose self-test
+  says `The box is NOT ready.` and reprints that under "ready to publish";
+  `tools/selftest-verdict.sh` defines the reader that would catch it and
+  nothing calls it, which is #307's asymmetry in the same two files
+  ([#311](https://github.com/andrediashexa/hexarouting/issues/311)).
+  `TESTING.md` claims a CI that does not exist
+  ([#315](https://github.com/andrediashexa/hexarouting/issues/315)), opens
+  with a command that rewrites a peer machine's NIC and then cannot run
+  ([#316](https://github.com/andrediashexa/hexarouting/issues/316)), and
+  states three numbers the code disagrees with, one of them in the direction
+  that would take the release suite red
+  ([#317](https://github.com/andrediashexa/hexarouting/issues/317)).
 
-
-
-
-
-
+  What was swept and found clean is in the record too, because a section
+  nobody measured reads exactly like a clean one, and that is how #303
+  happened. No lab was run and no container was started: the full suite was
+  running on another tree throughout.
 
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
