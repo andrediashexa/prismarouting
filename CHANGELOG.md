@@ -60,59 +60,95 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The IPFIX boot marker was sent after the pin replay, and four places said
+  it came before it.** `docs/logging.md`, the comment above
+  `bpa_log_marker_emit()`, and the comments sitting on the two lines that arm
+  it in `bpa_log.c` and `bpa_log_tcp.c` all say the marker goes out when a
+  transport comes up, ahead of the blocks a pinned forward replays, so a
+  collector knows which incarnation those records belong to. Since 0.67.0 it
+  went out after them. That is [#217](https://github.com/andrediashexa/hexarouting/issues/217)'s
+  argument read backwards: a record reaching a collector before this
+  incarnation's marker belongs to the previous one as far as the collector can
+  tell, and a box that has just rebooted announces every forward it carries
+  ([#282](https://github.com/andrediashexa/hexarouting/issues/282)).
+
+  Neither enable path could have fixed it: both can only arm the marker, since
+  at that moment there is no `vlib_main_t` on the path and the block report's
+  template may not have gone out. The ordering is decided in `bpa_log_drain()`,
+  and the marker now goes out ahead of the queue there.
+
+  `lab/ipfix.sh` reads the order off a real collector, which is the only place
+  it is visible: the marker travels in its own report's buffer, so nothing
+  inside the plugin shows the difference. It anchors the marker to the template
+  announcement that opens the transition rather than to any earlier line,
+  because markers repeat every thirty seconds and a marker from the previous
+  transition would satisfy a looser check.
+
+* **A refusal that comes back from the dataplane says when an upgrade is why.**
+  Between `appliance/install.sh` finishing and the next reboot, the new control
+  plane is talking to the dataplane the box was loaded with, and asking it to
+  create a pool fails: the API message grew fields that build does not have.
+  The refusal named `bpa_pool_add_del` and nothing else. It now says which of
+  the two answered, names the build that answered, says an upgrade is the
+  reason rather than the configuration, and states what clearing it costs -
+  every session and every port block on the box - so the operator decides
+  ([#293](https://github.com/andrediashexa/hexarouting/issues/293)).
+
+  Only when the two builds actually disagree, and only when there is something
+  to compare: a box running from a source tree, or without a version stamp, is
+  told the comparison is not available rather than being handed a sentence
+  about an upgrade that did not happen. `version_split()` is the one decision
+  `show version` and the refusal both ask, so they cannot drift apart.
+
+  Attached to refusals carrying a reason back from the dataplane, and to no
+  others. A grammar error must not blame an upgrade.
+
+* **`hexash --load` no longer refuses a box's whole configuration over a static
+  route that is correct**
+  ([#294](https://github.com/andrediashexa/hexarouting/issues/294)). The
+  next-hop check asked the live VPP FIB what was connected, and at boot the FIB
+  is mid-construction: the interface address that makes the next hop reachable
+  is in the very file being read. `--load` refuses a file whole or not at all,
+  so the box came up with no pools, no addresses and no attachments.
+
+  What hid it is that `hexarouting.service` runs after `frr.service` and FRR
+  already held the same route from its own `frr.conf`. A second copy of the
+  configuration, in another daemon's file, was what kept the box configured -
+  which left it one lost `frr.conf`, one conffile reinstall or one unit
+  ordering change away from refusing everything.
+
+  "What is connected" is now one set handed to one function, and the
+  candidate's own interface addresses are unioned with the FIB's rather than
+  replacing them on a path of their own. That is measured rather than
+  preferred: the same refusal came out of an ordinary interactive `commit` that
+  brings up an address and the route it makes reachable together, which is how
+  an operator configures a new uplink. A union can only add prefixes, so
+  nothing refused before stops being refused - a next hop on no connected
+  network is still refused, at a configured box and at boot alike.
+
+  The same file also refused a saved configuration naming the Linux side of a
+  `linux_cp` pair, which the product creates itself from `linux-name` and which
+  FRR configures by that name only. That one is worse in one respect: it is not
+  gated on the routing having changed, so FRR's second copy did not hide it at
+  all.
+
 ### Added
 
-* **A lab whose fixture was never built reported the product as broken twenty
-  ways.** `sh tools/lab.sh upgrade v0.40.0` closed `LAB FAILED: 20 check(s)`.
-  That tag's VTY refuses the configuration the lab types - "pool 'minas':
-  inside and outside required", a grammar that has moved since - so the old
-  box was never configured and there was no upgrade to measure at all. The two
-  preconditions that would have said so were evaluated at the verdict, after
-  every assertion had already been made, and a FAILED outranks a NOT MEASURED:
-  the run said the product was broken about a box that had never existed.
+* **Every issue a merge closes now has to be written down here.** Two of the
+  five merges since 0.71.0 landed with no entry at all, and the gap was found
+  by reading the section rather than by anything failing. A release note is
+  written from `## Unreleased`, so an entry nobody wrote is a change the reader
+  is never told about. `test/test_changelog_landing.py` compares the issue
+  numbers in the merge subjects since the last tag against the links under that
+  heading.
 
-  They now stop the lab where they are known, alongside the extraction and the
-  compile, and the message quotes what the old VTY actually said. Measured:
-  the same command now closes `LAB NOT MEASURED: 1 check(s)` with nothing red,
-  and `sh tools/lab.sh upgrade` is still `LAB PASSED`.
-
-* **The release checklist now says to compare the roadmap against the
-  tracker.** `tools/roadmap-state.sh` shipped with
-  [#292](https://github.com/andrediashexa/hexarouting/issues/292) and the only
-  place that said to run it was the roadmap itself. Cutting a release is the
-  moment somebody reads the roadmap in order to write a release note, so a
-  checklist that does not mention it is a second copy of the release procedure
-  disagreeing with the first by leaving something out. It is item 6 and it
-  blocks nothing: what it finds is either a sentence to move into the past
-  tense or an issue that needs a home in the file.
-
-  `test/test_doc_copies.py` now refuses a counted list whose count is wrong.
-  That sentence opens "produce all six of" and the number is the copy a reader
-  trusts: somebody who has done five things and read "all five of" stops, and
-  the item that does not get done is the last one. The count had to be changed
-  by hand when this item was added, which is the argument for checking it.
-
-* **`lab/upgrade.sh` would have been NOT MEASURED in every release suite it
-  ever ran in.** Git inside the lab container refuses the bind-mounted
-  repository outright - `fatal: detected dubious ownership in repository at
-  '/src'`, because the container is root and the tree is the operator's - so
-  the `git archive` the lab extracts the old release with never answered, on
-  any machine, in a clone as much as in a worktree. It fell back to a cache
-  somebody had to populate by hand, and without one the verdict was NOT
-  MEASURED: a lab reporting nothing wrong while asserting nothing at all.
-  Measured in a fresh clone, which is what the release suite runs from: NOT
-  MEASURED before, 35 checks and LAB PASSED after.
-
-  Fixed with a one-shot `git -c safe.directory=/src` rather than a config
-  write. The container is thrown away so the global file would cost nothing
-  here, but [#220](https://github.com/andrediashexa/hexarouting/issues/220) is
-  what the habit costs: 2325 copies of one line in a `~/.gitconfig` this
-  product does not own.
-
-  The message blamed the wrong cause, which is how this survived being
-  written. It named a git worktree and a missing tag, and both were innocent.
-  It now prints git's own line and says what each of the two remaining causes
-  means, neither of which can be fixed from inside the container.
+  Offline, against git and this file and nothing else, which is the same line
+  `tools/roadmap-state.sh` sits on the other side of: `make test` has to work
+  with no network. A merge that names no issue is not a finding - a chore
+  branch legitimately closes nothing, and demanding a number would teach people
+  to invent one.
 
 * **An upgrade lab: nothing in this repository had ever put one version of the
   product on top of another**
@@ -149,33 +185,61 @@ version has a chance of seeing it.
   next hop reachable are in the file being loaded. A normal boot survives that
   only because FRR read the route out of its own `frr.conf` first.
 
-- **The IPFIX boot marker was sent after the pin replay, and four places said
-  it came before it.** `docs/logging.md`, the comment above
-  `bpa_log_marker_emit()`, and the comments sitting on the two lines that arm
-  it in `bpa_log.c` and `bpa_log_tcp.c` all say the marker goes out when a
-  transport comes up, ahead of the blocks a pinned forward replays, so a
-  collector knows which incarnation those records belong to. Since 0.67.0 it
-  went out after them. That is [#217](https://github.com/andrediashexa/hexarouting/issues/217)'s
-  argument read backwards: a record reaching a collector before this
-  incarnation's marker belongs to the previous one as far as the collector can
-  tell, and a box that has just rebooted announces every forward it carries
-  ([#282](https://github.com/andrediashexa/hexarouting/issues/282)).
+* **The release checklist now says to compare the roadmap against the
+  tracker.** `tools/roadmap-state.sh` shipped with
+  [#292](https://github.com/andrediashexa/hexarouting/issues/292) and the only
+  place that said to run it was the roadmap itself. Cutting a release is the
+  moment somebody reads the roadmap in order to write a release note, so a
+  checklist that does not mention it is a second copy of the release procedure
+  disagreeing with the first by leaving something out. It is item 6 and it
+  blocks nothing: what it finds is either a sentence to move into the past
+  tense or an issue that needs a home in the file.
 
-  Neither enable path could have fixed it: both can only arm the marker, since
-  at that moment there is no `vlib_main_t` on the path and the block report's
-  template may not have gone out. The ordering is decided in `bpa_log_drain()`,
-  and the marker now goes out ahead of the queue there.
-
-  `lab/ipfix.sh` reads the order off a real collector, which is the only place
-  it is visible: the marker travels in its own report's buffer, so nothing
-  inside the plugin shows the difference. It anchors the marker to the template
-  announcement that opens the transition rather than to any earlier line,
-  because markers repeat every thirty seconds and a marker from the previous
-  transition would satisfy a looser check.
+  `test/test_doc_copies.py` now refuses a counted list whose count is wrong.
+  That sentence opens "produce all six of" and the number is the copy a reader
+  trusts: somebody who has done five things and read "all five of" stops, and
+  the item that does not get done is the last one. The count had to be changed
+  by hand when this item was added, which is the argument for checking it.
 
 ### Fixed
 
-- **The roadmap's "what is blocked on somebody else" table listed two things
+* **`lab/upgrade.sh` would have been NOT MEASURED in every release suite it
+  ever ran in.** Git inside the lab container refuses the bind-mounted
+  repository outright - `fatal: detected dubious ownership in repository at
+  '/src'`, because the container is root and the tree is the operator's - so
+  the `git archive` the lab extracts the old release with never answered, on
+  any machine, in a clone as much as in a worktree. It fell back to a cache
+  somebody had to populate by hand, and without one the verdict was NOT
+  MEASURED: a lab reporting nothing wrong while asserting nothing at all.
+  Measured in a fresh clone, which is what the release suite runs from: NOT
+  MEASURED before, 35 checks and LAB PASSED after.
+
+  Fixed with a one-shot `git -c safe.directory=/src` rather than a config
+  write. The container is thrown away so the global file would cost nothing
+  here, but [#220](https://github.com/andrediashexa/hexarouting/issues/220) is
+  what the habit costs: 2325 copies of one line in a `~/.gitconfig` this
+  product does not own.
+
+  The message blamed the wrong cause, which is how this survived being
+  written. It named a git worktree and a missing tag, and both were innocent.
+  It now prints git's own line and says what each of the two remaining causes
+  means, neither of which can be fixed from inside the container.
+
+* **A lab whose fixture was never built reported the product as broken twenty
+  ways.** `sh tools/lab.sh upgrade v0.40.0` closed `LAB FAILED: 20 check(s)`.
+  That tag's VTY refuses the configuration the lab types - "pool 'minas':
+  inside and outside required", a grammar that has moved since - so the old
+  box was never configured and there was no upgrade to measure at all. The two
+  preconditions that would have said so were evaluated at the verdict, after
+  every assertion had already been made, and a FAILED outranks a NOT MEASURED:
+  the run said the product was broken about a box that had never existed.
+
+  They now stop the lab where they are known, alongside the extraction and the
+  compile, and the message quotes what the old VTY actually said. Measured:
+  the same command now closes `LAB NOT MEASURED: 1 check(s)` with nothing red,
+  and `sh tools/lab.sh upgrade` is still `LAB PASSED`.
+
+* **The roadmap's "what is blocked on somebody else" table listed two things
   that were not blocked**, and that table's own opening sentence is the
   promise it broke: "Kept short and kept honest, so the rest of this file is
   read as work that can actually start." The soak test shipped in 0.71.0 and
