@@ -639,8 +639,10 @@ Two decisions worth explaining:
 * **No `ExecStop` on `hexarouting.service`.** The configuration lives in VPP.
   Stopping the service **MUST NOT** delete production pools; removing a pool is
   the operator's action, through the VTY. A stop-time command also runs on every
-  **restart**, so it would fire during an ordinary upgrade rather than only when
-  somebody meant to take CGNAT down.
+  **restart**, so it would fire on any of them rather than only when somebody
+  meant to take CGNAT down - and `PartOf=vpp.service` means `systemctl restart
+  vpp` is one, which is the command `show version` tells an operator to run to
+  pick up a new dataplane build.
 * **There is one on `vpp.service`**, shipped as the drop-in
   `/etc/systemd/system/vpp.service.d/hexarouting-stop-drain.conf`. It runs
   `vppctl bpa stop-drain` before the signal, so every block the dataplane is
