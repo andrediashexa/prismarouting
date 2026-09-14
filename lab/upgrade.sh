@@ -58,11 +58,35 @@
 # so it is expect_setup and the verdict is NOT MEASURED, never FAILED. That is
 # the #253 shape and lab/verdict.sh already holds the argument for it.
 #
-# Where the tag's tree comes from: `git archive` inside the container, which
-# works in a clone and CANNOT work in a git worktree - a worktree's .git is a
-# file pointing at a directory outside the bind mount, and tools/release-gate.sh
-# carries the same scar ("Built from a git WORKTREE, whose .git is a pointer to
-# a repository the build container does not have mounted"). So the lab looks
+# Where the tag's tree comes from: `git archive` inside the container, and
+# TWO different things stop that, which was measured rather than reasoned
+# about. The first version of this file named only the second of them, and the
+# consequence was worse than an unclear message: the lab came out NOT MEASURED
+# in a clean CLONE, where everything it blamed was fine.
+#
+# The one that fires everywhere is git's ownership check. The container runs as
+# root and /src is bind-mounted from a tree owned by the operator, so git
+# refuses it outright:
+#
+#   fatal: detected dubious ownership in repository at '/src'
+#
+# That is not a property of a worktree and not a property of the tag. It is
+# every run, on every machine, in a clone as much as anywhere - so without the
+# override below this lab would have been NOT MEASURED in every release suite
+# it ever ran in, asserting nothing while reporting nothing wrong.
+#
+# `git -c safe.directory=/src` and NOT `git config --global --add`. The
+# container is thrown away, so the global file would cost nothing here, but
+# #220 is what a habit of writing to it costs: 2325 copies of one line in a
+# ~/.gitconfig this product does not own, and an earlier reading with 12710
+# entries for clones that no longer existed. A one-shot override has no file to
+# grow.
+#
+# The second only fires in a git WORKTREE: its .git is a file pointing at a
+# directory outside the bind mount, so the repository genuinely is not there.
+# tools/release-gate.sh carries the same scar ("Built from a git WORKTREE,
+# whose .git is a pointer to a repository the build container does not have
+# mounted"). Nothing can fix that from inside the container, so the lab looks
 # first for a tree somebody extracted on the host:
 #
 #   git -C <repo> archive v0.68.0 \
@@ -70,8 +94,8 @@
 #        && tar -x -C <repo>/.build-old/v0.68.0)
 #
 # and falls back to that being absent as NOT MEASURED, with that command
-# printed. In the clone the release suite runs from, git answers and none of
-# this is reached.
+# printed. In the clone the release suite runs from, git now answers and none
+# of this is reached - which is the state this file claimed it was already in.
 #
 # ---------------------------------------------------------------------------
 # WHAT THIS LAB DOES BY HAND THAT A REAL UPGRADE WOULD NOT
@@ -205,17 +229,19 @@ if [ -d "$CACHE" ] && [ -f "$CACHE/appliance/install.sh" ]; then
   cp -a "$CACHE/." "$OLD/"
   echo "  the tag's tree came from $CACHE"
 else
-  git -C /src archive "$OLD_TAG" 2>/tmp/git-archive.err | tar -x -C "$OLD" \
-    2>/dev/null || true
+  # safe.directory as a one-shot -c and not as a config write: see the header.
+  git -c safe.directory=/src -C /src archive "$OLD_TAG" \
+    2>/tmp/git-archive.err | tar -x -C "$OLD" 2>/dev/null || true
   if [ -f "$OLD/appliance/install.sh" ]; then
     echo "  the tag's tree came from 'git archive $OLD_TAG' inside /src"
   else
     give_up "the released tree $OLD_TAG could be extracted" \
       "git inside the container could not produce that tree:" \
       "  $(head -1 /tmp/git-archive.err 2>/dev/null)" \
-      "Two things say this, and git's own line above says which: /src is a" \
-      "WORKTREE, whose .git points outside the bind mount, or the tag is not" \
-      "in this repository. Either way, extract it on the host and run again:" \
+      "git's own line above says which. /src is a WORKTREE, whose .git" \
+      "points at a repository outside the bind mount, or the tag is not in" \
+      "this repository at all. Neither can be fixed from in here, so extract" \
+      "the tree on the host and run again:" \
       "  git -C <repo> archive $OLD_TAG \\" \
       "    | (mkdir -p <repo>/.build-old/$OLD_TAG \\" \
       "       && tar -x -C <repo>/.build-old/$OLD_TAG)"
