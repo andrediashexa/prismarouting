@@ -3,6 +3,22 @@
 #
 # Does not build an ISO: for a fresh install see build-iso.sh. This path is
 # for updating a box in production without reinstalling it.
+#
+# WHO HAS THAT PATH: somebody with this source tree and a build of it. Every
+# install line below copies out of $REPO, and the plugin comes from .build-vpp
+# or from a build container's /vpp_plugins, so this script cannot run where
+# those are not. A box installed from a published medium has none of them -
+# measured on one: /usr/lib/hexarouting holds the runtime files and no
+# install.sh, there is no repository and there is no toolchain (#295). The
+# callers this really serves are the release gate and lab/upgrade.sh, which is
+# where the path is measured rather than asserted.
+#
+# So an operator holding an ISO does not have it. Their only route to a new
+# version today is a reinstall from the new medium, which erases the disk and
+# takes /var/log/hexarouting with it - a year of connection records and the
+# configuration trail that makes a past answer defensible. The wiki page on
+# taking a new version states that procedure and what it costs. Nothing here
+# closes the gap; #295 is where the choice of what would is being made.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)

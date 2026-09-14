@@ -216,7 +216,8 @@ endereço público. É a opção para quem quer que observar um intervalo de por
 de fora diga o mínimo possível sobre um cliente.
 
 Nenhuma das duas é obviamente certa - por isso é um ajuste, e por isso o padrão
-é o comportamento antigo: quem atualiza a caixa não muda de comportamento.
+é o comportamento antigo: uma configuração escrita antes de o `stride` existir
+se comporta igual quando a caixa passa a rodar uma versão nova.
 
 :::info
 **O `stride` nunca custa tráfego a um cliente.** Se o bloco que a distância

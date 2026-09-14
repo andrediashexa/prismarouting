@@ -186,7 +186,12 @@ release for the same subscriber and the same port range.
 ## Stopping the box closes them too, and a crash cannot
 
 A box that is stopped is the commonest of the three cases, not the rarest:
-every planned reboot and every upgrade goes through it, while a pool is
+every planned reboot goes through it, and taking a new version is a planned
+reboot on the only route an operator holding a published medium has - the
+reinstall begins by booting the new medium. `appliance/install.sh` over a
+running box does **not** reach this path at all: it replaces the plugin under a
+running VPP and restarts nothing, so the blocks that dataplane is holding are
+closed at the next reboot and not at the install. A pool, meanwhile, is
 deleted rarely
 ([#217](https://github.com/andrediashexa/hexarouting/issues/217)).
 

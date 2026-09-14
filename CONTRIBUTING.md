@@ -308,7 +308,7 @@ Until then:
 
 Breaking changes are permitted before 1.0.0 — that is what `0.x` means — but
 they **MUST** be called out in the changelog entry, under their own heading.
-An operator who upgrades an appliance in the field has no way to read the
+An operator who takes a new version in the field has no way to read the
 diff.
 
 ### Every merge is a release

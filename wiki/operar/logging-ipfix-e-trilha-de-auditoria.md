@@ -205,15 +205,17 @@ Por isso o `natEvent 17` na liberação é correção, não capricho.
 # Quando a caixa para, e quando ela cai
 
 A mesma lacuna aparece no reinício, e por um motivo mais comum do que a
-ociosidade: **todo reboot planejado e toda atualização** deixavam para trás um
-bloco segurado no instante da parada, sem liberação nenhuma.
+ociosidade: **todo reboot planejado** deixava para trás um bloco segurado no
+instante da parada, sem liberação nenhuma. E reboot planejado inclui o que
+inicia uma troca de versão, porque levar a caixa para uma versão nova começa
+bootando pela mídia nova.
 
 ## Parada planejada
 
-Uma parada ordenada - `systemctl stop`, `systemctl restart`, um reboot, uma
-atualização - **libera todos os blocos antes de sair**. Sai um `natEvent 17`
-por bloco ainda segurado, nos dois transportes, carimbado com o **instante da
-parada**.
+Uma parada ordenada - `systemctl stop`, `systemctl restart`, um reboot,
+inclusive o reboot que começa uma troca de versão - **libera todos os blocos
+antes de sair**. Sai um `natEvent 17` por bloco ainda segurado, nos dois
+transportes, carimbado com o **instante da parada**.
 
 O instante é o da parada e não um anterior de propósito: a caixa não observou o
 momento em que o bloco deixou de ser usado, e um registro que chutasse esse

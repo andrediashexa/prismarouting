@@ -406,6 +406,116 @@ else:
         ok(f"the release procedure says 'all {m.group(1)} of' and lists "
            f"{len(items)}, numbered 1 to {said}")
 
+print("\n=== a document that quotes install.sh's own line quotes it right ===")
+# `appliance/install.sh` opens by saying what it is for, and two other files
+# quote that opening back AND cite the line number it is on. #295 is the change
+# that rewrites that header - the claim was measured false for anybody without
+# a build tree - so this is the day the copies could go stale, and nothing
+# compared them.
+#
+# Same shape as everything above, and the same rule: compared against the OTHER
+# PLACE IT IS WRITTEN DOWN, never against a behaviour. A quoted sentence with a
+# line number attached is the strongest form of that shape in this tree,
+# because both halves can rot independently - the words can be edited, or a
+# line can be inserted above them and move the sentence without changing it.
+#
+# CHANGELOG.md quotes the same line and is deliberately NOT read. A changelog
+# entry records what a release said; it is not a claim about the tree today,
+# and a check that made it track the source would be a check that asks somebody
+# to rewrite history to stay green.
+_INSTALL = read("appliance/install.sh").split("\n")
+
+# The opening comment block only, down to the first line that is not a comment.
+# Stopping there keeps the `#` comments further down the script - which say
+# other things about other subjects - out of the haystack a quotation is
+# searched for in.
+_head_text, _head_line = "", []
+for _n, _ln in enumerate(_INSTALL, 1):
+    if _n == 1 and _ln.startswith("#!"):
+        continue
+    if not _ln.startswith("#"):
+        break
+    _txt = _ln.lstrip("#").strip()
+    if _head_text:
+        _head_text += " "
+        _head_line.append(_n)
+    _head_text += _txt
+    _head_line.extend([_n] * len(_txt))
+
+
+def _prose(text):
+    """Comment markers off and whitespace flattened.
+
+    A sentence in this repository wraps at 79 columns, and in a shell file it
+    wraps across `#` lines as well. A quotation that spans a wrap is one
+    string to the reader and two lines to a naive search, and the first
+    version of this check reported both real quotations as missing for
+    exactly that reason.
+    """
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^\s*#+ ?", "", text))
+
+
+_ORDINAL = {"second": 2, "third": 3, "fourth": 4, "fifth": 5}
+# The quoted text has to look like PROSE: letters, spaces and ordinary
+# punctuation, nothing else. Without that clause lab/upgrade.sh produced a
+# third finding, and it was false - the file says "itself claims at its line 4"
+# in an echo and the next line is `sh /src/appliance/install.sh > ...`, so the
+# window reached past the sentence into the command and called a shell line a
+# quotation. A lab that drives the path is full of install.sh beside quoted
+# strings, and that is the one place this would have gone red on work that is
+# right.
+# And no full stop anywhere between the three parts, because a quotation
+# attributed to a line sits in the SAME SENTENCE as the attribution. That is
+# what finally separated the two real citations from the lab: `echo "itself
+# claims at its line 4."` ends the sentence there, and the quoted strings the
+# window was reaching are two shell lines further down, in a give_up call.
+# Prose-shaped and all of it, so the shape test alone could not tell them
+# apart. The cost is that a citation written "see appliance/install.sh. Its
+# line 4 says ..." is not read at all, which is a miss and not a false alarm.
+_CITE = re.compile(r"install\.sh\b[^.]{0,160}?"
+                   r"(?:line (\d+)|(second|third|fourth|fifth) line)"
+                   r"[^.]{0,160}?\"([A-Za-z0-9 ,.'()`-]{20,})\"")
+_QUOTERS = ("docs/roadmap.md", "docs/appliance.md", "docs/routing.md",
+            "lab/upgrade.sh", "README.md", "TESTING.md", "CONTRIBUTING.md")
+_quotations = 0
+for _path in _QUOTERS:
+    if not os.path.exists(os.path.join(REPO, _path)):
+        continue
+    for _m in _CITE.finditer(_prose(read(_path))):
+        _quotations += 1
+        _cited = int(_m.group(1)) if _m.group(1) else _ORDINAL[_m.group(2)]
+        _quote = re.sub(r"\s+", " ", _m.group(3)).strip()
+        _at = _head_text.find(_quote)
+        if _at < 0:
+            bad(f"{_path} quotes appliance/install.sh as saying {_quote!r} and "
+                f"its opening comment does not say that. One of the two was "
+                f"edited and the other was left behind")
+        else:
+            # From the start of the SENTENCE the quote sits in, not from the
+            # quote. Both citations say "line 4", and line 4 is where the
+            # sentence "This path is for updating a box in production without
+            # reinstalling it." begins - the quoted fragment itself starts one
+            # line further down, because the line wraps in the middle of it.
+            # Holding the fragment alone reported both of them wrong, which
+            # would have been this check going red on prose that is correct.
+            _dot = _head_text.rfind(". ", 0, _at)
+            _from = _dot + 2 if _dot >= 0 else 0
+            _span = set(_head_line[_from:_at + len(_quote)])
+            if _cited not in _span:
+                bad(f"{_path} says appliance/install.sh carries {_quote!r} on "
+                    f"line {_cited} and it is on line "
+                    f"{'-'.join(str(x) for x in sorted(_span))}. A reader sent "
+                    f"to a line number reads whatever is there now")
+            else:
+                ok(f"{_path}: install.sh line {_cited} still says "
+                   f"{_quote[:46]!r}...")
+if _quotations >= 2:
+    ok(f"{_quotations} quotation(s) of install.sh's own words, each held "
+       f"against the line it cites")
+else:
+    bad(f"only {_quotations} quotation(s) of appliance/install.sh were found, "
+        f"so this check is asserting almost nothing")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

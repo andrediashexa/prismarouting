@@ -918,8 +918,11 @@ point of allocating a block per subscriber — and it is also why the operator
 has nothing to point at when that customer calls. The CGNAT gets blamed for an
 infection on the far side of the access network.
 
-Two bounds, per pool, **zero meaning unlimited** so an upgrade refuses nothing
-that worked yesterday:
+Two bounds, per pool, **zero meaning unlimited** so a configuration written
+before they existed refuses nothing that worked yesterday. That holds whichever
+way the new version reached the box: `appliance/install.sh` over a running one,
+which needs a source tree, or the reinstall an operator holding a published
+medium has to do, after which the same file is loaded again.
 
 ```
 nat cgnat pool residential

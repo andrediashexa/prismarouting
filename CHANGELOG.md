@@ -62,6 +62,33 @@ version has a chance of seeing it.
 
 ### Changed
 
+* **The product stopped claiming an upgrade path its own users cannot run**
+  ([#295](https://github.com/andrediashexa/hexarouting/issues/295)). Measured
+  on a real appliance: there is no `install.sh` on it, no source tree and no
+  toolchain. `appliance/install.sh` says at the top of the file that it is the
+  path "for updating a box in production without reinstalling it", and that is
+  true of the release gate and of `lab/upgrade.sh`, which have a build tree.
+  It is not true of anybody holding a published medium, whose only route to a
+  new version is a reinstall that erases the disk - and with it the volume
+  holding, in dynamic mode, the connection record the Marco Civil requires for
+  a year, and in deterministic mode the configuration trail that says which
+  pool definition was in force at a past instant.
+
+  Nothing was deleted: the mechanism is real and works for the person it works
+  for. Five sentences now say who that is, and the Portuguese twins of three
+  of them moved with their originals. The wiki has a page on taking a new
+  version, written for somebody holding a medium, which says what the
+  procedure is today, what it destroys, what has to be outside the box before
+  the window opens, and in what order.
+
+  The mechanism that would make an in-place upgrade possible is not chosen
+  here and is not this entry's subject.
+
+  `test/test_doc_copies.py` now refuses a document that quotes
+  `appliance/install.sh`'s opening sentence and gets either the words or the
+  line number wrong. Two files quote it and cite a line, and this change
+  rewrote that header, which is exactly the day a quotation rots.
+
 * **The IPFIX boot marker was sent after the pin replay, and four places said
   it came before it.** `docs/logging.md`, the comment above
   `bpa_log_marker_emit()`, and the comments sitting on the two lines that arm

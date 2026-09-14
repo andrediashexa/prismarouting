@@ -155,7 +155,7 @@ caixa - a caixa avisa no momento em que o pool é criado e diz qual serve.
 
 # Limites por assinante
 
-Dois limites, por pool. **Zero significa ilimitado**, para que uma atualização não recuse nada que funcionava ontem.
+Dois limites, por pool. **Zero significa ilimitado**, para que uma configuração escrita antes de esses limites existirem não passe a recusar nada que funcionava ontem quando a caixa roda uma versão nova.
 
 ```
 configure
