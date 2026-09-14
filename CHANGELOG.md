@@ -76,6 +76,7 @@ version has a chance of seeing it.
 ## Unreleased
 
 ### Fixed
+
 * **The English rule binds every `*.md` and the check read 11 of 54**
   ([#323](https://github.com/andrediashexa/hexarouting/issues/323)).
   `CONTRIBUTING.md` rule 1 says documentation MUST be in English and binds it
