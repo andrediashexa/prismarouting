@@ -65,6 +65,32 @@ version has a chance of seeing it.
 
 
 
+
+* **A box whose only NIC is its management path was told to reboot, and the
+  reboot could not end anywhere**
+  ([#289](https://github.com/andrediashexa/hexarouting/issues/289)). Reported
+  from a VM with one virtio NIC: `show interface` said "DPDK is off until
+  hugepages exist ... Reboot once the tuning has been applied", and after that
+  reboot the next screen says no interface was named, and naming the only one
+  gets it refused because it carries the default route
+  ([#123](https://github.com/andrediashexa/hexarouting/issues/123)). Two
+  reboots and a naming attempt to learn the machine cannot forward until it has
+  a second NIC.
+
+  `show hardware` already said the important half, marking the card as refused,
+  but nothing sent the operator there from the screen they actually opened.
+
+  The first-boot explanation now says it, **only when it is true**: that there
+  is no NIC this box could be given, which one is refused and why, and that a
+  reboot does not change it. A box with a spare NIC is told nothing extra,
+  because a line printed on every boot is one nobody reads. A box Linux shows
+  no PCI NIC at all gets its own answer rather than being told to add a second
+  one.
+
+  It reads `host_nics()` and `default_route_nic()` - what `show hardware`
+  prints and what the tuner decides on - so it cannot call a card eligible that
+  they would then refuse.
+
 * **Nothing tested the assertions every lab's verdict is made of.**
   `lab/verdict.sh` defines `expect`, `expect_in`, `expect_said`,
   `expect_not_said`, `expect_timed` and `verdict` itself. Each lab is judged by

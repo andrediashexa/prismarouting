@@ -2080,6 +2080,40 @@ check(any("default route" in l for l in r),
 # without this.
 
 
+def _nic_box(nics, default, conf):
+    """A fake box with `nics`, `default` carrying the default route."""
+    d = tempfile.mkdtemp()
+    os.makedirs(f"{d}/proc/net")
+    os.makedirs(f"{d}/etc/vpp")
+    os.makedirs(f"{d}/sys/class/net/lo")
+    for i, n in enumerate(nics):
+        dev = f"{d}/sys/devices/pci0000:00/0000:00:1{i}.0/virtio{i}"
+        os.makedirs(dev)
+        os.makedirs(f"{d}/sys/class/net/{n}")
+        os.symlink(dev, f"{d}/sys/class/net/{n}/device")
+        open(f"{d}/sys/class/net/{n}/address", "w").write(f"bc:24:11:0:0:{i}\n")
+        open(f"{d}/sys/class/net/{n}/operstate", "w").write("down\n")
+    # Eleven fields, which is what /proc/net/route really has: the reader
+    # requires more than two, so a shorter fixture measures a box with no
+    # default route at all and every assertion below would be about the wrong
+    # thing. Found by writing a two-field one first.
+    rt = ("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\t"
+          "Mask\tMTU\tWindow\tIRTT\n")
+    if default:
+        rt += (f"{default}\t00000000\t0102000A\t0003\t0\t0\t0\t"
+               "00000000\t0\t0\t0\n")
+    open(f"{d}/proc/net/route", "w").write(rt)
+    open(f"{d}/etc/vpp/startup.conf", "w").write(conf)
+    probe = hexash.Shell.__new__(hexash.Shell)
+    probe.STARTUP_CONF = f"{d}/etc/vpp/startup.conf"
+    probe.TUNE_ENV = f"{d}/etc/hexarouting/tune.env"
+    probe.SYS_CLASS_NET = f"{d}/sys/class/net"
+    probe.PROC_NET_ROUTE = f"{d}/proc/net/route"
+    probe.PCI_DEVICES = f"{d}/sys/bus/pci/devices"
+    probe.PCI_DRIVERS = f"{d}/sys/bus/pci/drivers"
+    return probe
+
+
 def why_pci(driver=None, loaded=()):
     """The same explanation, with a PCI tree Linux would have."""
     dev = os.path.join(_d, "pci", "devices", "0000:01:00.0")
@@ -6159,6 +6193,46 @@ for _row in _said.splitlines():
     check(len(_row) <= CONSOLE_COLUMNS or _row.strip().startswith("100."),
           f"this wraps on a serial console ({len(_row)}): {_row!r}")
 print("  the count, where two of them go, and what to type")
+
+
+print("\n=== a box with no NIC it could be given is told now (#289) ===")
+# Reported from a real box: one virtio NIC, and it carries the default route
+# because it is the only one there is. The first-boot screen said "reboot once
+# the tuning has been applied", which is advice that cannot end anywhere - the
+# next screen would say no interface was named, and naming that one gets it
+# refused, for the reason #123 exists.
+_FIRST = "plugin dpdk_plugin.so { disable }\n"
+
+_r = _nic_box(["ens18"], "ens18", _FIRST).why_no_dataplane_interface()
+_t = " ".join(_r)
+check("no NIC it could be given" in _t,
+      f"a box whose only NIC is its management path is told to reboot and "
+      f"nothing else, and the reboot cannot end anywhere: {_r}")
+check("'ens18'" in _t,
+      f"it does not name the NIC that is refused, so the operator cannot tell "
+      f"which one it means on a box with several: {_r}")
+check("second NIC" in _t,
+      f"it does not say what would fix it: {_r}")
+check("A reboot does not change that" in _t,
+      f"it leaves the reboot advice standing beside the reason a reboot is "
+      f"pointless: {_r}")
+
+# The other direction, and it is what stops this from being a line on every
+# boot. A box with a free NIC is told nothing extra.
+_r = _nic_box(["ens18", "ens19"], "ens18", _FIRST).why_no_dataplane_interface()
+check(not any("no NIC it could be given" in l for l in _r),
+      f"a box with a spare NIC was told it has none: {_r}")
+check(len(_r) == 2,
+      f"a box with a spare NIC got more than the first-boot explanation: {_r}")
+
+# A box Linux shows no PCI NIC at all is its own answer, and must not read as
+# the management-NIC case.
+_r = _nic_box([], "", _FIRST).why_no_dataplane_interface()
+check(any("no PCI NIC Linux can see" in l for l in _r),
+      f"a box with no PCI NIC at all was not told: {_r}")
+check(not any("second NIC" in l for l in _r),
+      f"a box with no NIC at all was told to add a second one: {_r}")
+print("  said at the first screen that mentions it, and only when it is true")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
