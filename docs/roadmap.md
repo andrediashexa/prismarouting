@@ -1492,6 +1492,34 @@ is what `--load` does at every boot. What is left is the self-test's own
 `[ ok ] 1 CGNAT pool(s) configured` for that same pool, six lines below the
 warning saying the box cannot forward.
 
+#### What a box can say about itself, and what it cannot
+
+[#302](https://github.com/andrediashexa/hexarouting/issues/302). `show version`
+prints one line about the whole box and can verify exactly one of the files
+that box is made of. Measured on the appliance the maintainer supplied: the
+stamp reads `0.70.0 (f10a3ed)`, `hexash.py` and `bpa_plugin.so` are from that
+install, and `/usr/bin/hexarouting-tune` is from 0.71.0. Nothing on the box
+says so, and `show version` is right about the only thing it checks.
+
+That box reached the state honestly - one file was copied onto it to prove the
+page-size fix on a CPU that was available - and the point is not that it
+happened. It is that nothing on the box can tell you it happened.
+
+[#291](https://github.com/andrediashexa/hexarouting/issues/291) item 2 gave the
+dataplane plugin a real build stamp and made `show version` compare it, which
+was the right first move and covers one file. `install.sh` puts about twenty
+on a box and the other nineteen carry no version at all.
+[#301](https://github.com/andrediashexa/hexarouting/issues/301) is the instance
+of this with a sharp edge, where the file that is wrong is the interface the
+VTY needs to learn that a configuration was refused.
+
+`install.sh` is the only thing that knows what it installed. A manifest with a
+checksum per file is the cheap shape; **where it is read back and what a
+mismatch means are the decisions**, and the second is the harder one - a file
+that differs is not necessarily wrong, since an operator may have edited a
+conffile `install.sh` deliberately does not overwrite, and a check that
+shouted about every deliberate edit is one somebody switches off.
+
 #### The rename to PrismaRouting
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
