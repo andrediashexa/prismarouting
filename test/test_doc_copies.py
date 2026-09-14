@@ -516,6 +516,55 @@ else:
     bad(f"only {_quotations} quotation(s) of appliance/install.sh were found, "
         f"so this check is asserting almost nothing")
 
+print("\n=== the RFC timeout floors, in three places ===")
+# The numbers an operator sizes a pool's timeouts against, written down three
+# times: the X-macro in src/plugins/bpa/bpa_pool.h that the dataplane actually
+# enforces, the table in docs/architecture.md, and the page an operator reads
+# on the wiki. Nothing compared them.
+#
+# The macro is the one that decides. `show bpa timeouts` marks a value below a
+# floor by asking the dataplane, and hexash reads the answer back rather than
+# recomputing it - which is right, and is why a wrong number in a DOCUMENT is
+# the failure mode here rather than a wrong refusal. An operator who shortens
+# a timeout because a pool is filling reads the page, not the header, and a
+# page carrying last year's floor tells them a value is safe when the box will
+# mark it.
+#
+# Compared by NAME, SECONDS and RFC REFERENCE, not by the prose after them.
+# The three copies say what goes wrong in three different sentences, two of
+# them in Portuguese, and demanding one wording would be demanding a
+# translation nobody wants.
+FLOOR_H = read("src/plugins/bpa/bpa_pool.h")
+m = re.search(r"#define foreach_bpa_timeout_floor(.*?)\n\n", FLOOR_H, re.S)
+if not m:
+    bad("bpa_pool.h no longer has foreach_bpa_timeout_floor, so this check is "
+        "reading nothing")
+else:
+    macro = [(name, int(secs), rfc) for name, secs, rfc in
+             re.findall(r'_ \(\w+, "([a-z-]+)", (\d+), "([^"]+)"', m.group(1))]
+
+    def doc_floors(path, pattern):
+        rows = []
+        for line in read(path).split("\n"):
+            r = re.match(pattern, line)
+            if r:
+                rows.append((r.group(1), int(r.group(2)), r.group(3).strip()))
+        return rows
+
+    ROW = r"^\|\s*`([a-z-]+)`\s*\|\s*(\d+) s\s*\|\s*(RFC [^|]+)\|"
+    copies = [("docs/architecture.md", doc_floors("docs/architecture.md", ROW)),
+              ("wiki/referencia/timeouts-e-os-pisos-das-rfcs.md",
+               doc_floors("wiki/referencia/timeouts-e-os-pisos-das-rfcs.md", ROW))]
+    if len(macro) < 4:
+        bad(f"only {len(macro)} floor(s) were read out of the macro, so this "
+            f"check is asserting almost nothing")
+    for path, rows in copies:
+        if rows != macro:
+            bad(f"{path}'s floor table is not what the dataplane enforces:\n"
+                f"    document  {rows}\n    bpa_pool.h {macro}")
+        else:
+            ok(f"{path}: all {len(rows)}, by name, seconds and RFC")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

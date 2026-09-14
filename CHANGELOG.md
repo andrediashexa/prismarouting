@@ -22,6 +22,21 @@ to drift from.
 **Renaming `## Unreleased` to a version MUST leave an empty `## Unreleased`
 above it.** Without one, a branch cut before the rename has nowhere to put its
 entry: git no longer finds that heading, anchors on the `### Fixed` of the
+
+* **The RFC timeout floors are written down three times and nothing compared
+  them.** The X-macro in `src/plugins/bpa/bpa_pool.h` is what the dataplane
+  enforces; `docs/architecture.md` and the wiki page an operator reads carry
+  the same four numbers. They agree today. An operator who shortens a timeout
+  because a pool is filling reads the page, not the header, and a page carrying
+  last year's floor would tell them a value is safe when the box will mark it.
+
+  `test/test_doc_copies.py` compares them by name, seconds and RFC reference,
+  and not by the prose after them: the three copies say what goes wrong in
+  three different sentences, two of them in Portuguese, and demanding one
+  wording would be demanding a translation nobody wants.
+
+  The roadmap said "the three timeout floors" where there are four, which is
+  the same drift one step further out, and is corrected.
 section now at the top, and files the entry inside a release that has already
 shipped - cleanly, with no conflict, and with nothing wrong in the branch. It
 happened to five branches in one day after 0.68.0 was cut, one of them landing
