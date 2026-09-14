@@ -6022,9 +6022,20 @@ def _version272(vtysh_path):
     """What `show version` prints on a box whose vtysh is this one."""
     sh = hexash.Shell()
     sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
-    sh.dp = type("D", (), {"TRACE": False,
-                           "run": lambda _s, c: (1, "not here"),
-                           "reachable": lambda _s: False})()
+    # Derived from hexash.Vpp, not free-standing, and #291 is the second time
+    # that mattered in this file: `show version` grew a row for the build the
+    # loaded dataplane carries, this stub had no `plugin_build`, and the suite
+    # died of AttributeError two hundred checks before its verdict. It is the
+    # same argument `_Frr271` above makes about `daemons()` arriving with
+    # #272 - a stub that lists the methods it has stops having whatever the
+    # product adds next, and both sides of that merge pass on their own.
+    #
+    # This one answers rc=1 to everything, which is a dataplane that is not
+    # answering. That is what this fixture is about: the box it models has
+    # FRR to talk to and no VPP.
+    sh.dp = type("D", (hexash.Vpp,), {"TRACE": False,
+                                      "run": lambda _s, c: (1, "not here"),
+                                      "reachable": lambda _s: False})()
     sh.frr = hexash.Frr()
     saved, hexash.VTYSH = hexash.VTYSH, vtysh_path
     try:

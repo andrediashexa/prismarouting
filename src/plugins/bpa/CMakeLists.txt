@@ -19,3 +19,24 @@ add_vpp_plugin(bpa
   API_FILES
   bpa.api
 )
+
+# The build stamp the loaded plugin carries (#291).
+#
+# A custom TARGET rather than a custom command on a file, and it runs on every
+# build on purpose: what the stamp says changes when HEAD moves or the tree
+# goes dirty, and neither of those touches a file this build already depends
+# on. The script writes the header only when its content changed, so a build
+# that is genuinely the same build does not relink.
+#
+# The dependency is on the target and not on the header, because the header
+# does not exist on the first configure - the compiler's own depfile is what
+# recompiles bpa.c afterwards, which is exactly right: only the objects that
+# include it.
+set(BPA_VERSION_H ${CMAKE_CURRENT_BINARY_DIR}/bpa_version.h)
+add_custom_target(bpa_version_h ALL
+  COMMAND sh ${CMAKE_SOURCE_DIR}/tools/plugin-version-h.sh
+              ${CMAKE_SOURCE_DIR} ${BPA_VERSION_H}
+  BYPRODUCTS ${BPA_VERSION_H}
+  COMMENT "stamping the plugin with this tree's version"
+  VERBATIM)
+add_dependencies(bpa_plugin bpa_version_h)

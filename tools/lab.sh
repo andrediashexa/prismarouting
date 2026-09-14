@@ -50,8 +50,22 @@ if ! docker ps >/dev/null 2>&1; then
   # reintroduced by the runner.
   exec sg docker -c "IMAGE='$IMAGE' LAB_WORKERS='${LAB_WORKERS:-}' \
                      LAB_WORKER_COUNT='${LAB_WORKER_COUNT:-}' \
+                     HEXA_VERSION_STAMP='${HEXA_VERSION_STAMP:-}' \
                      '$0' '$LAB' $LAB_ARGV"
 fi
+
+# The version stamp the plugin carries, read on the HOST and handed over (#291).
+#
+# Every lab starts with `ninja` in the shared /src/.build-vpp, and since #291
+# that build regenerates the header holding the stamp. Inside the container a
+# git WORKTREE has no .git directory - the file there points outside the bind
+# mount - so the stamp read in here is "not a git tree" while the one read out
+# there is the commit. Without this the header would flip back and forth, every
+# one of the forty labs would relink the plugin before it started, and sixteen
+# of them running at once would be writing that header in the same build
+# directory at the same time. The whole reason run-all-labs.sh builds first is
+# that ninja is then a no-op; this is what keeps it one.
+HEXA_VERSION_STAMP=${HEXA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
 
 # --device=/dev/kvm when it exists: an ISO boots in seconds instead of minutes
 KVM=""
@@ -82,6 +96,7 @@ exec docker run --rm --privileged $KVM --memory="${LAB_MEM:-5g}" \
   -e BPA_RTSP_OFF="${BPA_RTSP_OFF:-}" \
   -e LAB_WORKERS="${LAB_WORKERS:-}" \
   -e LAB_WORKER_COUNT="${LAB_WORKER_COUNT:-}" \
+  -e HEXA_VERSION_STAMP="$HEXA_VERSION_STAMP" \
   -v "$REPO:/src" -v "$HOME/.ssh:/root/.ssh:ro" -w /src "$IMAGE" \
   sh -c "cat > /etc/apt/apt.conf.d/99lab <<'APTCONF'
 Acquire::ForceIPv4 \"true\";
