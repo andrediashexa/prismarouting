@@ -40,6 +40,18 @@ These rules apply to every document under `docs/`, every `README.md`, every
 GitHub**: issue bodies, issue comments, pull request descriptions, release
 notes and tag messages.
 
+**Three things are written in Brazilian Portuguese on purpose, and rule 1 does
+not bind them.** `wiki/` is a mirror of the operator wiki, which is published
+for the people who run this box and is written in their language;
+`PADRAO-DOCUMENTACAO.md` and `PROMPT-DOCUMENTAR-WIKI.md` are the standard and
+the brief for writing it, and they are read by the same people. That is 35
+files, and the exception was written down only inside
+`test/test_english_only.py` until
+[#323](https://github.com/andrediashexa/hexarouting/issues/323): a rule that
+says MUST and is broken thirty-five times on purpose teaches a reader that the
+MUST is decorative. The check enforces exactly this list and a test compares
+the two, so neither can quietly grow.
+
 GitHub text is documentation that happens to live outside the tree. An issue
 is where the reason for a change is recorded, and it is read by the same
 people, under the same conditions, as a file in `docs/` — often years later,

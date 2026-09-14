@@ -75,6 +75,108 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The English rule binds every `*.md` and the check read 11 of 54**
+  ([#323](https://github.com/andrediashexa/hexarouting/issues/323)).
+  `CONTRIBUTING.md` rule 1 says documentation MUST be in English and binds it
+  to "every `*.md` added to this repository". `test/test_english_only.py` walks
+  directories, so `CONTRIBUTING.md`, `README.md` and `TESTING.md` - the three
+  documents most likely to be read first - sat outside every one of them.
+
+  And the rule was **broken thirty-five times on purpose** with the exception
+  written down only inside the check: `wiki/` is the operator wiki's mirror,
+  and `PADRAO-DOCUMENTACAO.md` and `PROMPT-DOCUMENTAR-WIKI.md` are the standard
+  and the brief for writing it. A MUST that is broken thirty-five times and
+  says so nowhere teaches a reader that the MUST is decorative. The exception
+  is in `CONTRIBUTING.md` now, where the rule is.
+
+  `CHANGELOG.md` is excused for a different reason and it is worth stating:
+  it **quotes** Portuguese strings the product used to carry, inside sections
+  that have been tagged - and this file's own rule is that a tagged section
+  describes a medium somebody is running and must not be edited. Those
+  quotations cannot be corrected even in principle.
+
+  Two walks became one on the way. The guard that asks whether the check is
+  reading anything did its own walk over the directories alone, so with the
+  root markdown deleted from the real walk it still reported six root files
+  and passed. It counts what the walk returned now.
+
+
+
+* **The unattended-install tables left out the four answers that decide whether
+  the box can be reached**
+  ([#322](https://github.com/andrediashexa/hexarouting/issues/322)).
+  `docs/appliance.md` has two reference tables, one for the kernel command line
+  and one for the answer file, and both listed **seven** keys where
+  `appliance/hexarouting-install` accepts **eleven**. The four missing ones were
+  exactly `mgmt-interface`, `mgmt-address`, `mgmt-gateway` and `mgmt-dns`.
+
+  An unattended install written from those tables answers nothing about the
+  network and takes the DHCP default - and the same page warns, 250 lines
+  above, what that costs on a box where nothing replies. That is
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303)'s box,
+  reached by reading the documentation rather than by the installer being
+  wrong.
+
+  **One holder, and it is a message an operator reads:** the installer prints
+  every key it knows when it refuses one, because it has to. The check reads
+  that refusal and looks for each key **inside the two tables** rather than
+  anywhere on the page. The first version searched the whole document and
+  passed with a key deleted from both tables, because the page discusses the
+  management network in prose elsewhere - and what an unattended install is
+  written from is the table.
+
+* **A count above a table, and a transcript the box stopped printing**
+  ([#321](https://github.com/andrediashexa/hexarouting/issues/321),
+  [#326](https://github.com/andrediashexa/hexarouting/issues/326)).
+  `docs/appliance.md` said **"Two refusals fire at the prompt"** over a table of
+  three. #303 added the third row and left the count. The sentence states no
+  number now: the table is the list, and a number in the sentence above a table
+  is a number that outlives the table it describes. The third row also named
+  one of the three conditions that fire it, where the code refuses on a missing
+  address **or** gateway **or** MAC.
+
+  And the page quoted the tuner as printing `1G hugepages: 6 requested`. The
+  box prints `6 GB requested`, and on a machine without 1 GB pages the line
+  begins `2M hugepages:`. The commit that rewrote that line landed three hours
+  after the one that quoted it correctly, and did not touch the page.
+
+* **Two invariants in `docs/context.md` that stopped being true, and a number
+  that was never measured**
+  ([#324](https://github.com/andrediashexa/hexarouting/issues/324),
+  [#325](https://github.com/andrediashexa/hexarouting/issues/325)).
+
+  **1.8 said "every merge into `master` is a release."** `CONTRIBUTING.md`,
+  which that section cites as authoritative, excepts a whole class in as many
+  words: a fix merged under the standing exception rides in the next tagged
+  release, because a version number that moves for a corrected typo tells an
+  operator nothing about whether they should upgrade. Measured: **300
+  first-parent merges, 78 tags**, and the last released window is six merges to
+  one release. The invariant is the other direction and it holds - a release
+  has a version bump, an annotated tag, a CHANGELOG entry and a published
+  Release, all four or none. An invariant stated one step too wide is one a
+  reader checks once, finds false, and stops checking.
+
+  **1.9 said `wiki/` is a read-only mirror and editing it changes nothing.**
+  Since [#277](https://github.com/andrediashexa/hexarouting/issues/277) editing
+  it is exactly how a page is changed: the correction is written there,
+  `wiki-status.sh` lists what is unpublished, and `wiki-push.sh <file>`
+  publishes one page. What is still true is that the edit reaches nobody until
+  it is pushed, which is what that issue was about.
+
+  **And the throughput section justified publishing no figure with a measured
+  one.** "The bench resolves differences above roughly 3%" appears nowhere
+  else: not in `lab/throughput.sh`, not in
+  [#28](https://github.com/andrediashexa/hexarouting/issues/28), not in this
+  file. The lab runs once, keeps no repeats and reports no spread, so how small
+  a change it could tell from run-to-run variation has never been measured -
+  which is a **better** argument for claiming nothing, and is what the section
+  says now. Publishing no number was right; supporting it with an unmeasured
+  one was the same mistake in miniature.
+
+
+
 ## 0.74.1 - fifteen things this product said that were not true, and the checks that hold them
 
 [#163](https://github.com/andrediashexa/hexarouting/issues/163), [#172](https://github.com/andrediashexa/hexarouting/issues/172), [#248](https://github.com/andrediashexa/hexarouting/issues/248), [#277](https://github.com/andrediashexa/hexarouting/issues/277), [#288](https://github.com/andrediashexa/hexarouting/issues/288), [#304](https://github.com/andrediashexa/hexarouting/issues/304), [#306](https://github.com/andrediashexa/hexarouting/issues/306), [#307](https://github.com/andrediashexa/hexarouting/issues/307), [#308](https://github.com/andrediashexa/hexarouting/issues/308), [#309](https://github.com/andrediashexa/hexarouting/issues/309), [#310](https://github.com/andrediashexa/hexarouting/issues/310), [#311](https://github.com/andrediashexa/hexarouting/issues/311), [#312](https://github.com/andrediashexa/hexarouting/issues/312), [#313](https://github.com/andrediashexa/hexarouting/issues/313), [#314](https://github.com/andrediashexa/hexarouting/issues/314), [#315](https://github.com/andrediashexa/hexarouting/issues/315), [#316](https://github.com/andrediashexa/hexarouting/issues/316), [#317](https://github.com/andrediashexa/hexarouting/issues/317), [#318](https://github.com/andrediashexa/hexarouting/issues/318), [#319](https://github.com/andrediashexa/hexarouting/issues/319), [#320](https://github.com/andrediashexa/hexarouting/issues/320).

@@ -64,7 +64,27 @@ EXCUSED = {
     "docs/wiki-audit.md": "it quotes the titles and section headings of a "
                           "Brazilian-Portuguese wiki, which are identifiers "
                           "of somebody else's document",
+    "PADRAO-DOCUMENTACAO.md": "the standard for writing the operator wiki, "
+                              "written in Portuguese on purpose for the "
+                              "people who write it",
+    "PROMPT-DOCUMENTAR-WIKI.md": "the brief that goes with that standard, "
+                                 "and read by the same people",
+    "CHANGELOG.md": "it QUOTES Portuguese strings the product used to carry - "
+                    "a VTY help line, a lab's old needle - inside sections "
+                    "that have been tagged. This file's own rule is that a "
+                    "tagged section describes a medium somebody is running "
+                    "and MUST NOT be edited, so those quotations cannot be "
+                    "corrected even in principle",
 }
+
+# MARKDOWN AT THE REPOSITORY ROOT IS READ TOO, and it was not.
+#
+# SCOPE walks directories, so `CONTRIBUTING.md`, `README.md` and `TESTING.md`
+# sat outside every one of them - while CONTRIBUTING.md's own rule 1 binds
+# "every `*.md` added to this repository" (#323). Measured when they were
+# brought in: 54 markdown files in the tree and 11 of them checked. Of the six
+# at the root, three are clean, two are Portuguese on purpose, and one quotes
+# Portuguese it is not allowed to edit.
 
 WORDS = set("""nao não que pela pelo pelos pelas uma umas uns dos das nas aos
 este esta isso isto quando entao então porque sempre tambem também ja já sao
@@ -126,37 +146,58 @@ SUFFIXES = ("cao", "coes", "ando", "endo", "mente", "agem", "dade", "arem",
             "eira")
 
 
-def offenders():
-    out = []
+def scanned():
+    """Every file this rule binds, root markdown and SCOPE together.
+
+    ONE LIST, because the "is this reading anything" guard below used to do its
+    own walk over SCOPE alone. Two walks of one set is two answers to one
+    question, and the guard's answer was the one that did not include the root
+    markdown it was supposed to be guarding.
+    """
+    paths = [os.path.join(REPO, f) for f in sorted(os.listdir(REPO))
+             if f.endswith(".md")]
     for root in SCOPE:
         for dirpath, dirnames, filenames in os.walk(os.path.join(REPO, root)):
             dirnames[:] = [d for d in dirnames
                            if d not in (".git", "__pycache__", ".build-vpp")]
-            for name in sorted(filenames):
-                path = os.path.join(dirpath, name)
-                try:
-                    text = open(path, encoding="utf-8", errors="ignore").read()
-                except OSError:
-                    continue
-                for n, line in enumerate(text.split("\n"), 1):
-                    # A URL is not prose. github.com would otherwise match
-                    # `com` on every issue link in the tree.
-                    probe = re.sub(r"https?://\S+", "", line)
-                    for allowed in ALLOWED:
-                        probe = probe.replace(allowed, " ")
-                    words = set(re.findall(r"[a-zà-ú]+", probe.lower()))
-                    hit = sorted(words & WORDS)
-                    hit += sorted(w for w in words
-                                  if len(w) >= 6 and w.endswith(SUFFIXES)
-                                  and w not in WORDS)
-                    if hit:
-                        rel = os.path.relpath(path, REPO)
-                        # By NAME, not by directory. Excusing the directory is
-                        # what let three sections of docs/routing.md be
-                        # written in Portuguese with nothing noticing.
-                        if rel in EXCUSED:
-                            continue
-                        out.append((rel, n, line.strip()[:90], hit[:3]))
+            paths += [os.path.join(dirpath, n) for n in sorted(filenames)]
+    return paths
+
+
+def offenders():
+    """Every line this rule binds that is not in English.
+
+    The paths are gathered first and walked once, because the set has two
+    parts: the directories in SCOPE, and the markdown at the repository ROOT.
+    The root half was missing and CONTRIBUTING.md's rule 1 binds "every `*.md`
+    added to this repository" - so `CONTRIBUTING.md`, `README.md` and
+    `TESTING.md` sat outside every directory the check walked (#323).
+    """
+    out = []
+    for path in scanned():
+        rel = os.path.relpath(path, REPO)
+        # By NAME, not by directory. Excusing the directory is what let three
+        # sections of docs/routing.md be written in Portuguese with nothing
+        # noticing.
+        if rel in EXCUSED:
+            continue
+        try:
+            text = open(path, encoding="utf-8", errors="ignore").read()
+        except OSError:
+            continue
+        for n, line in enumerate(text.split("\n"), 1):
+            # A URL is not prose. github.com would otherwise match `com` on
+            # every issue link in the tree.
+            probe = re.sub(r"https?://\S+", "", line)
+            for allowed in ALLOWED:
+                probe = probe.replace(allowed, " ")
+            words = set(re.findall(r"[a-zà-ú]+", probe.lower()))
+            hit = sorted(words & WORDS)
+            hit += sorted(w for w in words
+                          if len(w) >= 6 and w.endswith(SUFFIXES)
+                          and w not in WORDS)
+            if hit:
+                out.append((rel, n, line.strip()[:90], hit[:3]))
     return out
 
 
@@ -173,12 +214,16 @@ else:
 print("\n=== and the check is reading something ===")
 # Without this the file passes on a scope that resolved to nothing, which is
 # the shape #151 spent an issue on and #235 found again in test/ itself.
-seen = 0
-for root in SCOPE:
-    for _, _, filenames in os.walk(os.path.join(REPO, root)):
-        seen += len(filenames)
-if seen >= 100 and len(WORDS) >= 50:
-    ok(f"{seen} file(s) in scope")
+# Counted OUT OF WHAT THE WALK RETURNED, not out of a second listing of the
+# directory. The first version asked os.listdir() how many root markdown files
+# exist, which is true whether or not the walk read any of them: with the root
+# half deleted from scanned(), it still said six.
+_scanned = scanned()
+seen = len(_scanned)
+_root_md = [p for p in _scanned
+            if os.path.dirname(p) == REPO and p.endswith(".md")]
+if seen >= 100 and len(WORDS) >= 50 and len(_root_md) >= 4:
+    ok(f"{seen} file(s) in scope, {len(_root_md)} of them markdown at the root")
 else:
     bad(f"only {seen} file(s) and {len(WORDS)} word(s), so this is asserting "
         f"almost nothing")
