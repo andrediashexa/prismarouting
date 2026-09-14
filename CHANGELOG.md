@@ -62,6 +62,48 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`show cgnat ha`: whether two boxes would map subscribers the same way**
+  ([#8](https://github.com/andrediashexa/hexarouting/issues/8)).
+  In deterministic mode a subscriber's public address and port block are a
+  function of the pool definition, so two boxes with different pools fail
+  **silently**: the failover starts handing subscribers other blocks and the
+  logs on both boxes look healthy. Nothing on the box could answer the
+  question at all - the command did not exist, and on a box with FRR up it
+  answered `% Unknown command`.
+
+  ```
+  warning: pool 'residencial' does not map subscribers the same way on the two
+      boxes, so a failover moves them to other public addresses and port
+      blocks, and neither box logs anything
+      this box: block-size 2048
+      the peer: block-size 1024
+  ```
+
+  **Which fields must match is derived, not listed.** The digest covers
+  `Pool.lines(in_place=False)` - the same text `Config.delta_to` uses to
+  decide a pool must be rebuilt, whose classification `test_hexash_config.py`
+  asserts field by field and asserts is complete. A second list of "fields the
+  peers must agree on" would be a second copy of that decision. Asserted in
+  the same loop that owns the table: a mapping field whose change does not
+  move the digest fails there, and so does an in-place field whose change
+  does.
+
+  **A warning at `commit`, never a refusal.** The two boxes cannot be
+  committed in the same instant, so every legitimate capacity change diverges
+  the pair between the first commit and the second. A refusal would fire on
+  every correct procedure.
+
+  **What it does NOT do**, said here because a release note that implies HA
+  would be worse than none: nothing elects a role, moves a service address or
+  takes anything over. The peer's configuration reaches this box as a file at
+  `/etc/hexarouting/peer.conf` - what `save` writes, copied across - because
+  there is no session between the two boxes until
+  [#7](https://github.com/andrediashexa/hexarouting/issues/7). Every way that
+  file can be missing or unreadable is reported as itself and never as
+  agreement, and the report prints the file's date beside the digest: a match
+  against a configuration the peer stopped running last week is the same false
+  agreement the check exists to remove.
+
 * **`commit` says when an eBGP session is opened with no `maximum-prefix`**
   ([#145](https://github.com/andrediashexa/hexarouting/issues/145)).
   A peer that leaks a full table into a box sized for a few thousand routes

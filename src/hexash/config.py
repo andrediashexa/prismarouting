@@ -12,12 +12,29 @@ a state that never existed.
 from __future__ import annotations
 
 import difflib
+import hashlib
 
 from system import (SSH_FIELDS, SSH_DEFAULTS, User, validate_ssh,
                     validate_role,
                     SNMP_FIELDS, SNMP_DEFAULTS, SnmpUser, validate_snmp)
 
 CGNAT_PREFIXES = ("cgnat ", "no cgnat ")
+
+#: How many hex characters of the digest are shown. Sixteen is 64 bits, which
+#: is far past any accident two configurations could have; what decides the
+#: number is the operator reading one off a console and comparing it against
+#: the other box, so it is short enough to be read aloud without being
+#: re-read. It is a LABEL for a text both boxes can print whole, never a
+#: security boundary: nothing here defends against somebody choosing a
+#: configuration to collide with another.
+MAPPING_DIGEST_CHARS = 16
+
+
+def mapping_digest(lines) -> str:
+    """The digest of a mapping text, in one place so both halves agree."""
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[
+        :MAPPING_DIGEST_CHARS]
+
 
 # Unicast RPF modes, as VPP names them. "off" is accepted in configuration text
 # so that an operator can write the absence explicitly, but it is stored as the
@@ -1613,6 +1630,95 @@ class Config:
 
     def is_same(self, other: "Config") -> bool:
         return self.text() == other.text()
+
+    # -------------------------------------------------- mapping equality
+
+    def mapping_lines(self) -> list[str]:
+        """
+        Every line two boxes must agree on, and no line they need not.
+
+        DERIVED, not listed. The text is `Pool.lines(in_place=False)`, which is
+        already the product's own answer to "does this change re-map
+        subscribers": `delta_to` rebuilds a pool exactly when that text moves,
+        and `test/test_hexash_config.py` asserts field by field that the
+        classification is right AND that every field a pool has is classified.
+        A second table of "the fields two peers must agree on" would be a
+        second copy of that decision, and the two would disagree the first time
+        a field was added to one of them - which is the defect this repository
+        keeps finding. There is ONE text and one digest over it, for the same
+        reason.
+
+        The pools in name order, each as `lines(in_place=False)`. Order is
+        fixed here rather than taken from the file, because the same pools
+        typed in a different order are the same mapping, and a digest that
+        said otherwise would report a divergence on two boxes that map every
+        subscriber identically - the refusal on a correct configuration is the
+        harm, not the absence of one.
+        """
+        out = []
+        for _, pool in sorted(self.pools.items()):
+            out += pool.lines(in_place=False)
+        return out
+
+    def mapping_fingerprint(self) -> str:
+        """This box's whole mapping, as one digest. See `mapping_lines`."""
+        return mapping_digest(self.mapping_lines())
+
+    def mapping_diff_to(self, other: "Config") -> list[tuple[str, str, str]]:
+        """
+        Which pools the two boxes would map differently, and how.
+
+        `(pool, here, there)` per finding, with `here` or `there` empty when
+        only one box has the pool at all. An empty list means every subscriber
+        lands on the same public address and port block on both boxes.
+
+        WHY this is not `is_same`. `is_same` compares the whole configuration
+        text, so it reports a divergence when the two boxes differ on a TCP
+        clamp, an ALG or a session limit - settings the dataplane changes on a
+        pool that is carrying traffic, which move no subscriber anywhere. A
+        check built on it would fire on a pair that is correctly configured,
+        and an operator who is warned about a pair that is fine learns to skip
+        the warning that means their subscribers are about to move.
+
+        And it is not a list of field names either. The fields compared are
+        whatever `lines(in_place=False)` emits, which is the same text
+        `delta_to` uses to decide a pool must be rebuilt - one decision, in one
+        place.
+        """
+        findings = []
+        for name in sorted(set(self.pools) | set(other.pools)):
+            mine = self.pools.get(name)
+            theirs = other.pools.get(name)
+            if mine is None:
+                findings.append((name, "", "cgnat pool " + name))
+                continue
+            if theirs is None:
+                findings.append((name, "cgnat pool " + name, ""))
+                continue
+            a = mine.lines(in_place=False)
+            b = theirs.lines(in_place=False)
+            if a == b:
+                continue
+            # The differing STATEMENTS, not the field names. A pool with two
+            # `outside` prefixes has two lines with the same first word, and
+            # naming the field would report "outside differs" while leaving
+            # the operator to work out which prefix. Matched by first word so
+            # that a changed value pairs with its opposite number instead of
+            # appearing twice as an addition and a removal.
+            seen = set()
+            for line in a + b:
+                key = line.split()[0] if line.split() else ""
+                if key in seen:
+                    continue
+                seen.add(key)
+                mine_rows = [l for l in a if l.split()[:1] == [key]]
+                their_rows = [l for l in b if l.split()[:1] == [key]]
+                if mine_rows == their_rows:
+                    continue
+                findings.append(
+                    (name, "; ".join(l.strip() for l in mine_rows),
+                     "; ".join(l.strip() for l in their_rows)))
+        return findings
 
     # ------------------------------------------------------------ delta
 

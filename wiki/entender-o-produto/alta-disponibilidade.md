@@ -6,6 +6,8 @@ O que acontece hoje quando esta caixa cai, o que o modo determinístico já reso
 :::warning
 **Alta disponibilidade não está implementada.** Esta página descreve a análise e o piso que o produto já oferece, não um recurso existente. Não dimensione um projeto contando com failover automático.
 
+O que já existe é a **conferência de igualdade** entre as duas caixas — `show cgnat ha`, descrito mais abaixo. Ele não elege ninguém, não move endereço e não assume serviço: só responde se uma troca colocaria os assinantes onde eles já estão.
+
 :::
 
 # O que o modo determinístico dá de graça
@@ -61,8 +63,8 @@ A construir:
 
 
 1. Integração com `keepalived` ou o VRRP do FRR, coerente com o `linux_cp`.
-2. Verificação de que as duas caixas carregam a **mesma** configuração de pool.
-3. Um `show bpa ha` comparando um hash de configuração entre os pares.
+2. Verificação de que as duas caixas carregam a **mesma** configuração de pool. **Já existe**, até onde uma caixa sem sessão com a outra consegue ir.
+3. Um `show cgnat ha` comparando uma impressão digital de configuração entre os pares. **Já existe.**
 4. Uma verificação com duas instâncias e uma falha forçada, confirmando que o assinante mantém endereço e bloco.
 
 
@@ -71,9 +73,84 @@ O item 2 não pode ser pulado. No modo determinístico, duas caixas com configur
 
 :::
 
+# Conferir se as duas caixas concordam
+
+A pergunta é uma só: uma troca de caixa deixaria cada assinante no mesmo endereço público e no mesmo bloco de portas? `show cgnat ha` responde isso e nada além disso.
+
+Para que a caixa possa comparar, ela precisa ter a configuração da outra. Não existe sessão entre as duas — o VRRP ainda não existe —, então a configuração da parceira chega como arquivo: salve a configuração da outra caixa e copie o arquivo para `/etc/hexarouting/peer.conf` desta.
+
+Quando as duas divergem:
+
+```
+hexarouting> show cgnat ha
+  this box
+    mapping fingerprint  50e2b92f23c2707c
+    pools                residencial
+
+  role
+    neither box elects one: this VTY has no virtual router and nothing here
+    takes a service address over. What is checked below is whether a takeover
+    WOULD land subscribers where they already are.
+
+  peer, from /etc/hexarouting/peer.conf
+    mapping fingerprint  9e7394fc505d2eff
+    pools                residencial
+    copied               2026-09-12 09:14:31
+
+warning: pool 'residencial' does not map subscribers the same way on the two
+    boxes, so a failover moves them to other public addresses and port
+    blocks, and neither box logs anything
+    this box: block-size 2048
+    the peer: block-size 1024
+```
+
+A caixa diz **qual pool** difere e **quais linhas** diferem, não só que os números batem ou não batem. Quando concordam, a última parte vira uma frase só:
+
+```
+  the two boxes map every subscriber to the same public address and the same
+  port block
+```
+
+A mesma comparação roda em `commit check` e em `commit`: uma alteração que afasta o par avisa na hora em que é feita, e não na hora em que a outra caixa é necessária.
+
+:::info
+O aviso **nunca recusa o commit**, e isso é de propósito. As duas caixas não podem ser alteradas no mesmo instante: toda ampliação de capacidade legítima afasta o par entre o primeiro commit e o segundo. Uma recusa dispararia em todo procedimento correto, e o jeito de escapar dela seria parar de copiar a configuração da parceira — o que tira a conferência, não a divergência.
+
+:::
+
+## Quais campos precisam ser iguais
+
+Os que mudam o **mapeamento**. No modo determinístico o endereço público e o bloco de portas do assinante são função da definição do pool, então o que precisa bater é exatamente o que muda essa conta — e é a mesma lista de campos que, quando alterada, derruba as sessões do pool.
+
+| Precisam ser iguais nas duas caixas | Podem diferir |
+|---|---|
+| `inside`, `outside` | `timeout ...` |
+| `block-size`, `ports` | `alg` de cada protocolo, `tcp-mss` |
+| `policy`, `mode` | `bypass source`, `bypass destination` |
+| `reserve` | `max-sessions`, `max-session-rate` |
+| `vrf`, `outside-vrf` | `forward ...`, `block-stride`, `max-blocks`, `utilisation-alarm` |
+
+A coluna da direita o dataplane altera num pool que está passando tráfego, e nenhum desses ajustes move assinante nenhum. Duas caixas que diferem só ali estão corretas, e avisar sobre elas seria ensinar o operador a ignorar o aviso que importa.
+
+## O que a conferência nunca faz
+
+Ela pode dizer "diferem", pode dizer "concordam" e pode dizer "não sei" — e a terceira resposta nunca vira a segunda.
+
+| Situação | O que a caixa diz |
+|---|---|
+| Não há arquivo da parceira | Que não há, e que isso não é uma concordância |
+| O arquivo está vazio, truncado ou sem pool nenhum | O motivo, nunca "iguais" |
+| O arquivo tem uma linha que esta VTY não sabe ler | Qual linha, porque o pool comparado não seria o que a parceira tem |
+| O dataplane não responde | Que parou aí: sem ele esta caixa não sabe o que ela própria mapeia |
+
+:::warning
+O arquivo da parceira é uma **cópia**, e cópia tem idade. Por isso o relatório mostra a data ao lado da impressão digital: uma impressão digital que bate com uma configuração que a outra caixa parou de usar semana passada é a mesma falsa concordância que a conferência existe para remover. Copie de novo sempre que alterar a parceira.
+
+:::
+
 # O que fazer enquanto isso
 
-* Mantenha a configuração dos pares idêntica e versionada — a trilha de configuração de cada caixa é a evidência disso.
+* Mantenha a configuração dos pares idêntica e versionada, e confira com `show cgnat ha` depois de toda alteração — a trilha de configuração de cada caixa é a evidência do que foi feito, e a conferência é a evidência de que as duas continuam concordando.
 * Trate uma troca manual como uma janela: os assinantes voltam nos mesmos endereços, mas as conexões em curso caem.
 * Se você opera modo dinâmico, lembre que o bloco **não** é reproduzível por fórmula: ali o failover muda de fato o bloco do assinante.
 

@@ -21,6 +21,7 @@
 python3 appliance/test_tune.py
 python3 test/test_hexash_complete.py
 python3 test/test_hexash_config.py
+python3 test/test_ha_equality.py
 python3 test/test_dataplane_if.py
 python3 test/test_context_map.py
 python3 test/test_feature_order.py
