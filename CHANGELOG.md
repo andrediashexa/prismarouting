@@ -77,6 +77,31 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **On the installation medium, `show interface` told the operator to reboot,
+  and rebooting the medium throws everything away**
+  ([#305](https://github.com/andrediashexa/hexarouting/issues/305)). Two lines
+  apart on the same screen: the banner said "nothing here survives a reboot",
+  and the next command said "Reboot once the tuning has been applied and the
+  pages reserved".
+
+  The explanation decided from the startup file alone, and that file is
+  identical on a medium and on an installed box's first boot. On the installed
+  box the advice is exactly right: the tuner has asked for pages a reboot picks
+  up. On the medium the dataplane is off deliberately and permanently, so the
+  tuning is never applied and the reboot comes back to the same screen. The
+  product already had `running_from_live_medium()`, in that same file, and the
+  boot self-test uses it in four places to keep the two apart. This message did
+  not ask it.
+
+  **And nothing tested it.** `lab/boot-iso.sh` booted the medium and only ever
+  read; the release gate read the self-test's line, which is correct on a
+  medium and says nothing about rebooting. The one sentence that was wrong was
+  the one nothing asked for. That lab now has a writer on the console, waits
+  for the prompt rather than guessing when it arrives, asks `show interface`,
+  and refuses a medium that answers with a reboot.
+
+### Fixed
+
 * **`lab/one-nic.sh` failed in the release suite and passed alone**, on one
   check and no other: the counter that says the packets came through the pair
   rather than past it. The ping in the same run reported 0% packet loss, so the

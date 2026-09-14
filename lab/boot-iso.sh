@@ -45,11 +45,42 @@ else
   echo "no KVM: emulating with ${BOOT_CPU:-Nehalem} (slow)"
 fi
 
+# A WRITER ON THE CONSOLE, so that the medium can be ASKED something.
+#
+# This lab used to boot the medium and read. That is why #305 shipped: the one
+# sentence that was wrong on a medium was the one nothing asked for. The gate
+# read the self-test's line, which is correct there and says nothing about
+# rebooting, and never typed the command whose answer told the operator to
+# reboot a machine where nothing survives one.
+#
+# A fifo and not a timed `printf`, for the reason lab/install-iso.sh gives
+# where it does the same: a command typed on a guess about when the prompt
+# arrives is a test of the guess. The writer waits for the prompt to appear in
+# the log and then sends, so it cannot type into a boot.
+rm -f /tmp/boot-in
+mkfifo /tmp/boot-in || { echo "cannot create the console pipe"; exit 1; }
+(
+  # Wait for the VTY, then ask. The medium autologins into it, so the prompt
+  # appearing means there is something to ask.
+  _n=0
+  while [ "$_n" -lt "${BOOT_SECS:-420}" ]; do
+    grep -q "^hexarouting>" /tmp/boot.log 2>/dev/null && break
+    sleep 1; _n=$((_n + 1))
+  done
+  # Held open to the end: a writer that closes hands qemu an end of file on
+  # the serial console, and the box then has no console for the rest of the
+  # run.
+  printf 'show interface\n'
+  sleep "${BOOT_SECS:-420}"
+) > /tmp/boot-in &
+BOOT_WRITER=$!
+
 timeout "${BOOT_SECS:-420}" qemu-system-x86_64 \
   $ACCEL -m "${BOOT_MEM:-4096}" -smp 2 -nographic -no-reboot \
   -cdrom "$ISO" -kernel /tmp/bf/vmlinuz -initrd /tmp/bf/initrd \
   -append "boot=live components console=ttyS0,115200 systemd.show_status=1" \
-  > /tmp/boot.log 2>&1
+  < /tmp/boot-in > /tmp/boot.log 2>&1
+kill "$BOOT_WRITER" 2>/dev/null || true
 
 sed 's/\x1b\[[0-9;]*m//g' /tmp/boot.log > /tmp/clean.log
 
@@ -62,6 +93,36 @@ sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
 # "ready" alone does not prove the ISO carries a version stamp: the self-test
 # prints the version line and carries on without it. Demanding both stops a
 # build that lost the stamp from passing green.
+# WHAT THE MEDIUM TELLS AN OPERATOR TO DO, which is the half nothing asked
+# for until #305. The banner two lines above this command says nothing here
+# survives a reboot; the command used to answer "Reboot once the tuning has
+# been applied", which on a medium throws the session away and comes back to
+# the same screen.
+#
+# Read from the console rather than from the source, because the defect was
+# that the product decided from a startup file that is identical on a medium
+# and on an installed box's first boot. Only a medium can answer this.
+if grep -q "show interface" /tmp/clean.log; then
+  if grep -qiE "Reboot once the tuning" /tmp/clean.log; then
+    echo "  [FAIL] the medium tells the operator to reboot, and nothing here"
+    echo "         survives one: the reboot comes back to this same screen"
+    grep -A 3 "no interface to forward on" /tmp/clean.log | head -4 | sed 's/^/         /'
+    exit 1
+  fi
+  if grep -qiE "installation medium|'install'" /tmp/clean.log; then
+    echo "  [ ok ] the medium says a reboot is not the answer there, and what is"
+  else
+    echo "  [FAIL] the medium says nothing about what does work there"
+    grep -A 3 "no interface to forward on" /tmp/clean.log | head -4 | sed 's/^/         /'
+    exit 1
+  fi
+else
+  echo "  [FAIL] 'show interface' was never asked on the medium, so what it"
+  echo "         tells an operator there is still untested - which is how"
+  echo "         #305 shipped"
+  exit 1
+fi
+
 if said_a_verdict /tmp/clean.log; then
   if ! grep -qE "\[ ok \] HexaRouting [0-9]" /tmp/clean.log; then
     echo

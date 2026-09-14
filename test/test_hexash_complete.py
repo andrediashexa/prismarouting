@@ -2044,6 +2044,42 @@ def why(conf, env=""):
     return probe.why_no_dataplane_interface()
 
 
+# THE MEDIUM AND AN INSTALLED BOX WRITE THE SAME STARTUP FILE, and until #305
+# this answered both with the same advice: reboot and wait for the tuning.
+#
+# True of an installed box's first boot, where the tuner has asked for pages a
+# reboot picks up. False on the medium, where the dataplane is off deliberately
+# and permanently: nothing there survives a reboot, so the tuning is never
+# applied and the reboot comes back to the same screen having thrown the
+# session away. The medium's own banner says so two lines above the command.
+#
+# Driven both ways from ONE startup file, because that file is what the product
+# was deciding from and the whole defect is that it is not enough to decide on.
+def why_on_medium(conf):
+    """`why` with the box looking like the live medium, and put back after."""
+    live = os.path.join(_d, "filesystem.squashfs")
+    inst = os.path.join(_d, "hexarouting-install")
+    open(live, "w").write("")
+    open(inst, "w").write("#!/bin/sh\n")
+    os.chmod(inst, 0o755)
+    keep = (hexash.LIVE_SQUASHFS, hexash.INSTALLER)
+    hexash.LIVE_SQUASHFS, hexash.INSTALLER = live, inst
+    try:
+        return why(conf)
+    finally:
+        hexash.LIVE_SQUASHFS, hexash.INSTALLER = keep
+
+
+m = why_on_medium("plugin dpdk_plugin.so { disable }")
+check(m and not any("Reboot" in l or "reboot once" in l.lower() for l in m),
+      f"the medium is not told to reboot, which throws its session away "
+      f"and comes back to the same screen: {m}")
+check(any("install" in l.lower() for l in m),
+      f"and it is told what does work there, which is to install to a disk: "
+      f"{m}")
+check(any("survives" in l or "does not change that" in l for l in m),
+      f"and why a reboot is not the answer on a medium: {m}")
+
 r = why("plugin dpdk_plugin.so { disable }")
 check(r and "hugepages" in r[0],
       f"first-boot mode is named as first-boot mode: {r[:1]}")
