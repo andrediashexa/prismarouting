@@ -13,12 +13,32 @@ if ! docker ps >/dev/null 2>&1; then
   exec sg docker -c "IMAGE='$IMAGE' '$0' '$TARGET'"
 fi
 
+# The version the plugin will carry, read HERE and not in the container (#291).
+#
+# The container gets /src as a bind mount and nothing else, so a repository
+# that is a git WORKTREE has no .git directory inside it - the file there
+# points at one under the main clone, outside the mount. Measured on this
+# tree:
+#
+#   on this host                        0.71.0 (d07ebda)
+#   inside hexarouting-dev:26.06        0.71.0 (not a git tree)
+#
+# The second one would be stamped into every plugin built here, would differ
+# from the VERSION file install.sh writes on the host, and `show version`
+# would report a pending reboot on a box that owes nobody one.
+#
+# HEXA_VERSION_STAMP is not a new knob: it is the override install.sh already
+# honours for the same file, so an ISO build that pins a stamp pins both.
+HEXA_VERSION_STAMP=${HEXA_VERSION_STAMP:-$(sh "$REPO/tools/version-stamp.sh" "$REPO")}
+export HEXA_VERSION_STAMP
+
 case "$TARGET" in
   image)
     docker build -f "$REPO/build/Dockerfile.dev" -t "$IMAGE" "$REPO"
     ;;
   plugin)
-    docker run --rm -v "$REPO:/src" -w /src "$IMAGE" sh -c \
+    docker run --rm -v "$REPO:/src" -w /src \
+      -e "HEXA_VERSION_STAMP=$HEXA_VERSION_STAMP" "$IMAGE" sh -c \
       "set -e
        mkdir -p .build-vpp && cd .build-vpp && cmake -G Ninja .. >/dev/null && ninja
        # VPP's macros link straight into /vpp_plugins, which belongs to the

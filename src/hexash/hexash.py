@@ -181,19 +181,71 @@ VERSION_PATH = os.environ.get("HEXA_VERSION_FILE",
                               "/usr/share/hexarouting/VERSION")
 
 
-def hexarouting_version():
-    """Version of this build, or a string that admits it is unknown."""
-    for path in (VERSION_PATH,
-                 os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "..", "..", "VERSION")):
+#: What `hexarouting_version()` answers when there is no VERSION file to read.
+#
+# A constant because there are now two readers. `show version` prints it, and
+# it also compares that string against the build the loaded dataplane reports
+# (#291) - and "the box does not know its own version" is a THIRD answer to
+# that comparison, not a disagreement. A second copy of this literal would
+# turn a box with no VERSION file into a box announcing a pending reboot.
+VERSION_UNKNOWN = "unknown (no VERSION file)"
+
+#: Where the version this box states was read from. WHICH FILE IT WAS decides
+#: whether that string can be compared with anything at all (#291).
+#
+# The stamp under /usr/share is written by appliance/install.sh from
+# tools/version-stamp.sh, which is the same calculation the plugin is built
+# with, so the two are the same KIND of thing and an equality between them
+# means something.
+#
+# The repository's own VERSION is not. It reads "0.71.0": the number the NEXT
+# release will carry, not a build stamp of anything, and it moves when
+# somebody edits it rather than when anything is built. Measured on a lab
+# container running hexash out of the tree, with the real plugin loaded and
+# nothing whatever upgraded:
+#
+#   HexaRouting 0.71.0
+#     plugin:    0.71.0 (4a7044e)
+#                this is the build the dataplane was loaded with at the last
+#                boot, and it is not the HexaRouting build above.
+#
+# Every developer running the VTY from a source tree was told their box needed
+# a reboot. The string alone cannot tell the two cases apart, which is why the
+# reading answers WHERE as well as WHAT.
+VERSION_FROM_STAMP = "stamp"
+VERSION_FROM_TREE = "tree"
+VERSION_FROM_NOWHERE = "nowhere"
+
+
+def hexarouting_version_source():
+    """The version this box states, and which file it came out of.
+
+    ONE place decides which of those files exists, and this is it. A caller
+    that re-opened them to work out which one had answered would be a second
+    reader of the same truth, which is the shape #291 is about in the first
+    place - so the reading answers both halves at once and
+    `hexarouting_version()` below is the spelling for callers that only want
+    the text. That is the arrangement tools/version-stamp.sh already uses to
+    keep `--filename` beside its stamp: one calculation, two spellings.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path, source in ((VERSION_PATH, VERSION_FROM_STAMP),
+                         (os.path.join(here, "..", "..", "VERSION"),
+                          VERSION_FROM_TREE)):
         try:
             with open(path) as f:
                 v = f.read().strip()
             if v:
-                return v
+                return v, source
         except OSError:
             continue
-    return "unknown (no VERSION file)"
+    return VERSION_UNKNOWN, VERSION_FROM_NOWHERE
+
+
+def hexarouting_version():
+    """Version of this build, or a string that admits it is unknown."""
+    return hexarouting_version_source()[0]
+
 
 # vppctl exits 0 even when a command fails: the text is what says so. Errors
 # come out as "<command>: <message>" or "unknown input ...". Replacing this
@@ -1910,6 +1962,65 @@ class Vpp:
         colon, so the pattern that recognises a VPP error does not match it.
         """
         return self.run("show version")[0] == 0
+
+    #: The bpa plugin's row in `show plugins`, and the version field of it.
+    #
+    # MEASURED, VPP 26.06, rather than guessed at:
+    #
+    #      Plugin                                   Version         Description
+    #   8. bpa_plugin.so                            0.1             CGNAT with...
+    #
+    # with the name starting at column 5, the version at 46 and the description
+    # at 79. The field is therefore read as "everything between the plugin's
+    # file name and the run of two or more spaces that ends it", not by column
+    # offsets and not by splitting on whitespace. Both of those looked simpler
+    # and both are wrong here: the stamp this product puts in that field is
+    # `0.71.0 (d07ebda)`, which CONTAINS A SPACE, so `line.split()[2]` returns
+    # "0.71.0" and silently drops the commit - the half that says which build
+    # it is. Column offsets would pin this to one VPP release's formatting.
+    #
+    # The plugin's own registration is bounded at 31 characters by a
+    # STATIC_ASSERT in bpa.c, which is what guarantees the two spaces are
+    # there. A wider stamp fails the build rather than this parser.
+    # The field MUST be closed by two or more spaces, with no "or the end of
+    # the line" alternative, and that is the whole reason an EMPTY version is
+    # reported as one rather than as a description. With the alternative, a
+    # row whose version column is blank matches the description instead and
+    # `show version` reports "CGNAT with allocated port blocks (BPA)" as the
+    # build the dataplane is running. Measured on the real layout, which is
+    # what made the trap visible.
+    PLUGIN_ROW = re.compile(r"\bbpa_plugin\.so\s{2,}(\S.*?)\s{2,}\S", re.M)
+
+    def plugin_build(self):
+        """
+        The build the LOADED bpa plugin was made from - three answers, not two.
+
+        `None`  the dataplane did not answer at all.
+        `""`    it answered, and it is not running a plugin that reports a
+                build: bpa_plugin.so was never loaded, or it is one whose
+                version field is empty.
+        a string  the stamp the plugin carries.
+
+        The split between the first two is the one `Frr.daemons()` argues for
+        a few hundred lines up, for the same reason and with the same cost of
+        getting it wrong. A dataplane that cannot be reached is a box that is
+        forwarding nothing, and the fix is to get VPP back; a dataplane that
+        is up without our plugin is a box that routes and translates nothing,
+        and the fix is in the plugin path or in VPP's own log. An operator who
+        reads the first as the second looks in the wrong file.
+
+        This is read from `show plugins` and not from a command of our own on
+        purpose. The reason is the boxes this has to work on: every build ever
+        shipped registered `.version = "0.1"` (#291), and `show plugins` is
+        the one place that answers on all of them. A new command would answer
+        "unknown input" on exactly the dataplane this is here to identify -
+        the old one still loaded after an upgrade.
+        """
+        rc, out = self.run("show plugins")
+        if rc != 0 or not out.strip():
+            return None
+        m = self.PLUGIN_ROW.search(out)
+        return m.group(1).strip() if m else ""
 
 
 def mark_routing(lines, ctx=()):
@@ -10431,10 +10542,129 @@ class Shell:
         print(f"HexaRouting {hexarouting_version()}")
         rc, out = self.dp.run("show version")
         print(f"  dataplane: {out.strip().splitlines()[0] if rc == 0 and out.strip() else 'not responding'}")
+        self.show_plugin_build()
         rc, out = self.frr.show("show version")
         line = out.strip().splitlines()[0] if out.strip() else ""
         print(f"  routing:   {line or 'not responding'}")
         self.show_daemons()
+
+    #: The column the rows of `show version` line their values up on, and the
+    #: indent the prose under them is wrapped against.
+    #
+    # "  dataplane: ", "  routing:   " and "  daemons:   " are all thirteen
+    # wide. Written down because the sentences below are wrapped against it by
+    # measurement, and a hand-counted string of spaces is the thing #252 found
+    # shipping an 82-column line under the belief it was inside 80.
+    VERSION_INDENT = " " * 13
+
+    def show_plugin_build(self):
+        """
+        Which build the RUNNING dataplane is, and a sentence when that is not
+        the build the rest of this box is.
+
+        THE POINT OF THE ROW. `show version` printed the VERSION file and
+        VPP's own version, and neither of those is the plugin: the first is a
+        stamp `appliance/install.sh` writes at install time, the second is
+        upstream's and says nothing about ours. An upgrade writes the new
+        bpa_plugin.so and does NOT restart the dataplane - deliberately, since
+        restarting it ends every session on the box - so between an upgrade
+        and the next reboot every word on this screen was the new build except
+        the thing actually forwarding packets. There was no reading anywhere
+        on the box that could contradict it (#291).
+
+        THE POINT OF SAYING NOTHING WHEN THEY AGREE. That is the normal state
+        and it is the state on every box that has been rebooted since its
+        upgrade. A paragraph printed under every `show version` is a paragraph
+        read once and skipped for ever, including on the box where it means
+        something - the argument `unchecked_note` makes for the same decision.
+
+        Four answers and not two, because they are four different faults with
+        four different fixes, and the `show_daemons` comment below is the same
+        distinction argued at length: not answering is not the same as
+        answering with nothing, and neither is a disagreement.
+        """
+        build = self.dp.plugin_build()
+        mine, source = hexarouting_version_source()
+
+        if build is None:
+            # NOT "the plugin is not loaded". A dataplane that cannot be
+            # reached is a box forwarding nothing at all, and a dataplane that
+            # is up without our plugin is a box that forwards and translates
+            # nothing. An operator who reads the first as the second goes
+            # looking in the plugin path on a box where VPP is not running.
+            print("  plugin:    the dataplane is not answering, so its "
+                  "build is not known")
+            print_prose("this box is not forwarding at all rather than "
+                        "forwarding with an old build: 'systemctl status "
+                        "vpp' and its journal say why the dataplane is "
+                        "silent", indent=self.VERSION_INDENT)
+            return
+
+        if not build:
+            print("  plugin:    the dataplane is answering and reports no "
+                  "build")
+            # 'systemctl status vpp' and not 'vppctl show plugins', even
+            # though the second is where the answer is written out. This VTY
+            # exists to keep an operator out of vppctl (#98), and a message
+            # that sends them there at the first difficulty gives that up for
+            # a list they would then have to interpret. The journal says which
+            # plugins VPP loaded AND why one was refused, which is the whole
+            # question, and it is the same door show_daemons opens for FRR.
+            print_prose("VPP is up and did not load bpa_plugin.so, so this "
+                        "box forwards and translates nothing: 'systemctl "
+                        "status vpp' and its journal say why the plugin was "
+                        "left out", indent=self.VERSION_INDENT)
+            return
+
+        print(f"  plugin:    {build}")
+
+        if source != VERSION_FROM_STAMP:
+            # THE COMPARISON IS NOT AVAILABLE, which is a third answer and not
+            # a disagreement. Both of these reach it and they are said
+            # differently, because what the reader should do about them is
+            # different: one is a box missing a file it should have, the other
+            # is a developer's checkout behaving exactly as it should.
+            #
+            # What neither of them may do is go SILENT. "the two agree" and
+            # "there was nothing to compare" are different answers, and a
+            # screen that says nothing is read as the first - which is the
+            # same conflation this whole issue is about, one step quieter.
+            if source == VERSION_FROM_TREE:
+                # The repository's VERSION is "0.71.0": the number the NEXT
+                # release will carry, not a build stamp, and it moves when
+                # somebody edits it rather than when anything is built. Held
+                # up against a build stamp it never matches, so every
+                # developer running this VTY out of the tree was being told
+                # their box needed a reboot.
+                print_prose("this VTY is running from a source tree, so the "
+                            "version above is the repository's own VERSION "
+                            "file: it names the next release rather than any "
+                            "build, and there is nothing here to compare the "
+                            "dataplane against. An installed box reads a "
+                            "build stamp instead.",
+                            indent=self.VERSION_INDENT)
+            else:
+                print_prose("this box cannot state its own version, so there "
+                            "is nothing here to compare the dataplane "
+                            "against", indent=self.VERSION_INDENT)
+            return
+
+        if build == mine:
+            return
+
+        # No version string inside the prose, and that is #252's rule applied
+        # where it is cheap to apply: both of them are already on the screen
+        # whole, one on the row above and one on the first line of this
+        # screen, so the sentence can point at them instead of carrying copies
+        # that a wrap could break in half.
+        print_prose("this is the build the dataplane was loaded with at the "
+                    "last boot, and it is not the HexaRouting build above. "
+                    "An upgrade replaces bpa_plugin.so on disk and does not "
+                    "restart the dataplane, so until this box is rebooted, "
+                    "or 'systemctl restart vpp' is run, it goes on "
+                    "translating with the old one - and both of those end "
+                    "every session it is carrying.",
+                    indent=self.VERSION_INDENT)
 
     def show_daemons(self):
         """

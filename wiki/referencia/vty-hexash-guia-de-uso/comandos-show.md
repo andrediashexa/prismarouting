@@ -379,7 +379,7 @@ Zero vizinhos num circuito que está `Up` é o sintoma do IS-IS não estar sendo
 
 `show isis adjacency` é a mesma leitura por vizinho, com a mesma última linha sobre a tabela que encaminha.
 
-## `show version` — e quais daemons estão de pé
+## `show version` — as versões da caixa e quais daemons estão de pé
 
 Quando um `show bgp`, um `show ospf` ou um `show isis` não responde, e quando um
 `commit` recusa uma instância de roteamento, a caixa manda você para cá. Esta
@@ -387,8 +387,9 @@ tela responde: ela nomeia os daemons rodando e os parados, um por um.
 
 ```
 hexarouting> show version
-HexaRouting 0.67.0
+HexaRouting 0.67.0 (a1b2c3d)
   dataplane: 26.06
+  plugin:    0.67.0 (a1b2c3d)
   routing:   FRRouting 10.7.1
   daemons:   running  bgpd mgmtd ospfd staticd zebra
              stopped  isisd ospf6d
@@ -420,6 +421,57 @@ nada de pé é uma caixa cujos daemons nunca foram habilitados, e a correção e
 em `/etc/frr/daemons`. Ler a primeira como a segunda manda o operador editar um
 arquivo numa caixa que não o teria lido.
 
+### Qual build está encaminhando de verdade
+
+
+A linha `plugin:` é a versão do **dataplane que está carregado agora**, lida da
+própria caixa. A primeira linha, `HexaRouting`, é a versão do que está instalado
+em disco. Na imensa maioria das vezes as duas são iguais e a caixa não diz mais
+nada a respeito.
+
+Elas se separam num momento previsível: **entre uma atualização e o próximo
+boot**. Atualizar troca o dataplane em disco e **não reinicia** o dataplane que
+está rodando — de propósito, porque reiniciá-lo derruba todas as sessões da
+caixa. Até o reboot, portanto, a VTY, o autoteste e o coletor já são a versão
+nova e quem traduz pacotes ainda é a antiga. A tela passa a dizer isso:
+
+```
+hexarouting> show version
+HexaRouting 0.68.0 (9f8e7d6)
+  dataplane: 26.06
+  plugin:    0.67.0 (a1b2c3d)
+             this is the build the dataplane was loaded with at the last boot,
+             and it is not the HexaRouting build above. An upgrade replaces
+             bpa_plugin.so on disk and does not restart the dataplane, so until
+             this box is rebooted, or 'systemctl restart vpp' is run, it goes
+             on translating with the old one - and both of those end every
+             session it is carrying.
+```
+
+Não é um defeito, é um estado — e é um estado que **você escolhe quando
+encerrar**. Reiniciar o dataplane, por reboot ou pelo comando que a própria
+mensagem cita, carrega a versão nova e derruba todas as sessões traduzidas no
+momento em que o comando é dado. Por isso a caixa informa e não age sozinha:
+essa é uma janela de manutenção, não uma tarefa de rotina.
+
+O sufixo entre parênteses identifica a árvore de onde aquele build saiu. Se ele
+terminar em `-dirty`, aquele build **não** é uma versão publicada: saiu de uma
+árvore com alterações não commitadas, e isso precisa aparecer antes de qualquer
+investigação começar pelo caminho errado.
+
+Se o dataplane não responder, a linha diz isso — e não "sem plugin":
+
+```
+  plugin:    the dataplane is not answering, so its build is not known
+             this box is not forwarding at all rather than forwarding with an
+             old build: 'systemctl status vpp' and its journal say why the
+             dataplane is silent
+```
+
+E se ele responder estando de pé **sem o plugin de CGNAT carregado**, a
+mensagem é outra, porque a correção é outra: aí a caixa encaminha e não traduz
+nada.
+
 ## `show` — restante
 
 | Comando | Mostra |
@@ -429,7 +481,7 @@ arquivo numa caixa que não o teria lido.
 | `show running-config` | a configuração em efeito, CGNAT e roteamento |
 | `show rollback` | revisões commitadas disponíveis |
 | `show hardware` | as placas de rede físicas da caixa, com endereço PCI, driver, enlace e **qual delas carrega a rota padrão** |
-| `show version` | versões do HexaRouting, do VPP e do FRR, e **quais daemons de roteamento estão rodando** |
+| `show version` | versões do HexaRouting, do VPP e do FRR, **qual build o dataplane carregado é** e **quais daemons de roteamento estão rodando** |
 | `show ip ...` | informação de IP (repassado ao FRR) |
 | `show bgp summary` | uma linha por sessão BGP, com o que chegou à tabela que encaminha |
 | `show bgp ...` | o restante do BGP (repassado ao FRR) |
