@@ -157,7 +157,14 @@ iso:
 # Three conditions, because two of them are easy to write in a way that cannot
 # go red: the run must FAIL, it must fail AT THE LOGIN, and this recipe must
 # fail if it ever starts passing.
-test-install: iso
+# NOT `test-install: iso`. The medium this installs has to be the medium the
+# gate booted, and a phony prerequisite rebuilt it: tools/release-gate.sh ran
+# `make iso`, booted that image, and this target then built a second one over
+# the same path and installed that (#307). tools/iso-ready.sh answers whether
+# there is already an image and whether the tree has moved since it was built,
+# so a developer with no image still gets one and nobody gets yesterday's.
+test-install:
+	@sh tools/iso-ready.sh || $(MAKE) iso
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 qemu-utils squashfs-tools \
 	      fdisk mdadm >/dev/null 2>&1; \
@@ -174,7 +181,9 @@ test-mirror: iso
 	    sh /src/lab/install-iso.sh mirror)
 
 # Boots the freshly built ISO and demands the self-test say "ready".
-test-iso: iso
+# Same as test-install below, and for the same reason.
+test-iso:
+	@sh tools/iso-ready.sh || $(MAKE) iso
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 >/dev/null 2>&1; \
 	    BOOT_SECS=$${BOOT_SECS:-240} sh /src/lab/boot-iso.sh)

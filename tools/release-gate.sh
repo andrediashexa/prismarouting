@@ -353,6 +353,20 @@ echo "==> building the medium"
 ( cd "$WORK" && make iso >/dev/null )
 [ -f "$WORK/$NAME" ] || { echo "error: $NAME was not produced" >&2; exit 1; }
 
+# ONE MEDIUM, and this is what says so.
+#
+# The argument for the install phase is that booting a medium and installing it
+# are different claims about THE SAME MEDIUM. For the life of this script they
+# were claims about two builds: `make test-install` depended on the phony `iso`
+# target and rebuilt the image over this path, five and a half minutes after
+# the boot that had just passed, and the sha256 printed at the end described
+# the build nobody booted (#307).
+#
+# `make test-install` no longer rebuilds. This is the assertion that keeps it
+# that way, and it holds whatever the cause: anything that replaces the file
+# between here and the end is caught, not just a make prerequisite.
+MEDIUM_SHA=$(sha256sum "$WORK/$NAME" | cut -d" " -f1)
+
 echo "==> booting it"
 ( cd "$WORK" && sh tools/lab.sh boot-iso ) > "$WORK/boot.log" 2>&1 || {
   echo "error: the medium did not boot. Last of the console:" >&2
@@ -382,6 +396,16 @@ echo "==> installing it to a disk and booting the disk"
   echo "error: the medium installed and the installed box failed its checks." >&2
   grep -E "\[FAIL\]" "$WORK/install.log" | head -10 >&2
   echo "       full console: $WORK/install.log" >&2
+  exit 1
+}
+
+now=$(sha256sum "$WORK/$NAME" | cut -d" " -f1)
+[ "$now" = "$MEDIUM_SHA" ] || {
+  echo "error: the medium was rebuilt between the boot and now, so this gate" >&2
+  echo "       booted one image and installed another. Nothing here says the" >&2
+  echo "       one it installed would have booted." >&2
+  echo "       booted:    $MEDIUM_SHA" >&2
+  echo "       installed: $now" >&2
   exit 1
 }
 

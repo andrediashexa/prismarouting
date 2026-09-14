@@ -307,6 +307,38 @@ version has a chance of seeing it.
   that has to go under it. Breaking any one of the three turns that view's
   assertions red; breaking the holder turns all twelve red at once.
 
+* **The release gate installed a different medium from the one it booted, and
+  published the one it never booted**
+  ([#307](https://github.com/andrediashexa/hexarouting/issues/307)).
+  `make test-install` depended on the phony `iso` target, so the gate built a
+  medium, booted it, and then built a **second** one over the same path and
+  installed that. Measured on the v0.74.0 run: the boot phase finished at
+  18:02:23 and the file's mtime is 18:07:51.
+
+  The whole argument for the install phase is that booting a medium and
+  installing it are different claims about **the same medium**. They were
+  claims about two builds, and the `sha256` the gate prints for publication is
+  taken at the end, so it described the build that was installed and never
+  booted. The boot phase went through `tools/lab.sh`, which does not rebuild,
+  and the install phase went through `make`, which does: the asymmetry is what
+  hid it.
+
+  `tools/iso-ready.sh` answers whether the medium this tree would build is
+  already here and is newer than everything that goes into it. Absent, the
+  caller builds one; present and current, it is used, which is the fix;
+  present and **stale**, the caller builds one, because quietly installing
+  yesterday's image trades one wrong medium for another and that one has no
+  boot behind it at all.
+
+  The gate also records the medium's `sha256` before the boot and compares it
+  after the install, so anything that replaces the file between the two is
+  caught rather than only this cause. A check that knows one cause stops
+  working the day there is a second.
+
+  Costs five and a half minutes less per release as a side effect, on the one
+  tool this project says must be what cuts a release.
+
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
