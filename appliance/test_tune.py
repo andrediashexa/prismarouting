@@ -209,6 +209,54 @@ with tempfile.TemporaryDirectory() as root:
     check(big > small, f"500k subscribers ({big}G) should ask for more than 10k ({small}G)")
     print(f"  10k subscribers -> {small}G ; 500k -> {big}G")
 
+print("\n=== the statistics segment is reported, and never written (#288) ===")
+# The one memory resource the tuner does not size, and the only one whose
+# limit is an abort rather than a refusal: VPP exports its counters through a
+# fixed segment, every interface adds entries to it, and a full segment reaches
+# os_panic and SIGABRT. A box built by this tuner runs on VPP's built-in 32 MB
+# and was measured aborting between 7,000 and 8,000 interfaces, twice.
+#
+# Two halves, and the second is the one that would rot quietly. NOT sizing it
+# is a decision - nothing the tuner reads predicts an interface count, and a
+# CGNAT subscriber is not an interface - so the tuner has to SAY so, and it
+# must not emit a stanza of its own, because the operator's stanza lives in the
+# base file and a generated one would be the last word on every boot.
+with tempfile.TemporaryDirectory() as root:
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_1g=6, isolated="1-7")
+    out = run(root, "--interface", "eth0")
+    check("statistics segment" in out,
+          "the tuner must say what it is doing about the statistics segment, "
+          "which is the resource it does not size")
+    check("32 MB" in out,
+          f"it must name the default the box actually gets; output was {out!r}")
+    check("7,000 and 8,000" in out,
+          "a limit without the measured number behind it is a rumour")
+    check("/etc/hexarouting/vpp-base.conf" in out,
+          "saying there is a wall without saying where the stanza goes leaves "
+          "the operator with nothing to do about it")
+    # The generated half, read apart from the report: a statseg stanza written
+    # HERE would come after the base file and take precedence over the one an
+    # operator put there, so the only correct number of them is zero.
+    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+    check("statseg" not in stanzas,
+          "the tuner must not generate a statseg stanza: it would override the "
+          f"operator's own on every boot. Generated: {stanzas!r}")
+    print("  reported with the measured wall, and no stanza generated")
+
+with tempfile.TemporaryDirectory() as root:
+    # First boot takes a different branch of render_vpp entirely, and a stanza
+    # added to one and not the other is the shape half this file exists for.
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_1g=0, isolated="")
+    out = run(root, "--interface", "eth0")
+    check("statistics segment" in out,
+          "the first-boot report must say it too: that box runs a dataplane")
+    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+    check("statseg" not in stanzas,
+          f"no statseg stanza on first boot either. Generated: {stanzas!r}")
+    print("  and the same on a box whose kernel is not tuned yet")
+
 print("\n=== first boot: kernel still without hugepages or isolcpus ===")
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,

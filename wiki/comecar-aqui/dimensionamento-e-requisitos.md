@@ -127,6 +127,48 @@ nat cgnat session-table buckets <n> memory <MB>
 
 O padrão é 16 mil buckets e 16 MB por tabela. A reserva é **virtual**: ela não custa RAM enquanto a tabela não é preenchida, e o OOM killer também não a enxerga — quem escolhe a vítima olha memória **residente**, não memória mapeada. O padrão modesto continua certo pelo motivo mais simples: a tabela acaba sendo usada, e uma caixa pequena não tem essa memória. Uma implantação de 200 mil assinantes deve elevar esse valor; uma caixa pequena não deve pagar por capacidade que nunca vai usar.
 
+# O segmento de contadores, que derruba o dataplane quando enche
+
+O dataplane publica todos os contadores dele num segmento de memória de tamanho **fixo**. Cada interface que ele carrega ocupa cerca de **2,9 kB** desse segmento, e o segmento não cresce.
+
+Quando ele enche, o dataplane **não recusa a interface seguinte: ele aborta**. A caixa perde o encaminhamento inteiro, de uma vez, e não escreve nenhuma explicação antes de cair.
+
+O tamanho de fábrica é o do próprio dataplane: **32 MB**. Medido, duas vezes e no mesmo ponto: uma caixa nesse tamanho abortou entre **7.000 e 8.000 interfaces**. Com o segmento em 1 GB, a mesma caixa chegou a 40.000 interfaces, que foi onde a medição parou e não onde ela encontrou um limite.
+
+**Uma caixa de CGNAT comum não chega perto disso.** Assinante não é interface: 200 mil assinantes atrás de um pool dividem um punhado de portas. Quem chega perto é quem cria **uma interface por cliente** - uma subinterface QinQ por assinante, por exemplo.
+
+
+:::info
+**O equipamento não escolhe esse número, e é por isso que ele te mostra onde você está.** Nada do que ele lê no boot prevê quantas interfaces a caixa vai ter: a quantidade de assinantes não prevê, e o hardware muito menos. Então ele não inventa um valor e não reserva memória por precaução; ele reporta o segmento a cada boot, para você ver a parede chegando em vez de encontrá-la.
+
+:::
+O self-test de boot imprime quanto do segmento está gasto e sobre quantas interfaces:
+
+```
+  [ ok ] statistics segment: 4.20M of 31.99M used, 3 interface(s)
+        size: VPP's own default, which this product does not set
+```
+
+Passando da metade isso vira um aviso. Passando de três quartos vira uma **falha**, com o que acontece quando enche e com o que fazer a respeito. Três quartos, e não noventa por cento, porque o último pedaço não é aproveitável: a tabela de contadores é um bloco só de memória, e crescer significa copiá-la inteira, o que exige a cópia velha e a nova ao mesmo tempo.
+
+## Como aumentar
+
+Em `/etc/hexarouting/vpp-base.conf`, que é o arquivo base que você edita:
+
+```
+statseg {
+  size 256M
+}
+```
+
+Reinicie a caixa depois. O ajuste automático de boot **nunca sobrescreve** esse trecho: ele acrescenta os blocos que calcula **depois** do que está nesse arquivo, e não escreve nenhum `statseg` por conta própria.
+
+
+:::warning
+**Esse segmento é RAM que sai do resto.** Não peça 1 GB numa caixa de 4 GB por precaução. Peça o que o número de interfaces da sua topologia pede, e confira no self-test do boot seguinte quanto disso está realmente sendo usado.
+
+:::
+
 # Quantos endereços públicos
 
 No **modo determinístico** todo assinante ocupa seu bloco esteja online ou não. A conta é direta:

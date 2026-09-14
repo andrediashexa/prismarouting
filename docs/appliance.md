@@ -482,6 +482,131 @@ nothing this product ships does, and which an operator in `start shell` typing
 parent that explains it, that trade changes, and the measurement that would
 change it is already being taken on every run of this lab.
 
+## The statistics segment, and why the tuner does not size it
+
+Every other memory figure on this page is computed. This one is not, and that
+is a decision rather than an omission — but it is the only resource on the box
+whose limit is an **abort** instead of a refusal, so the decision is written
+down here and the box says where it stands at every boot.
+
+VPP exports its counters through a shared memory segment of **fixed** size,
+named by a `statseg` stanza in `startup.conf`. `hexarouting-tune` emits no such
+stanza, so a shipped box runs on VPP's built-in default of **32 MB**
+(`STAT_SEGMENT_DEFAULT_SIZE`, 32 << 20, in the VPP release this image pins).
+
+Each interface VPP holds costs the segment, and the cost was measured while
+sizing a BNG (`docs/bng.md` section 2.1):
+
+| Segment | Interfaces reached | What happened at the end |
+|---|---|---|
+| 32 MB, the default | between 7,000 and 8,000 | `vlib_stats_create_counter` → `os_panic` → `SIGABRT`. Reproduced twice, at the same step |
+| 1 GB, set by hand | 40,000, using 114.7 MB | nothing; that is where the measurement stopped, not a wall it found |
+
+**The failure is the whole dataplane, and it is silent.** VPP does not refuse
+the interface that would not fit and carry on. `vnet_register_interface` tries
+to grow the counter directory, the allocation fails inside the segment, and the
+process aborts. What the operator gets is a dead box and a signal.
+
+### What one interface actually costs, read from VPP's sources
+
+Per software interface, registered by `statseg_sw_interface_add_del`:
+
+* **17 directory entries** — nine simple counters and eight combined ones, one
+  symlink each, at 144 bytes per entry (`vlib_stats_entry_t`, static-asserted
+  to that size). That is **2,448 bytes**, and it is the dominant term.
+* **200 bytes per thread** — 9 × 8 for the simple counters and 8 × 16 for the
+  combined ones, grown per thread by `vlib_stats_validate`. So this half grows
+  with the worker count as well as with the interface count.
+* the interface's name in the `/if/names` string vector, a small vector each.
+
+On a single-threaded box that is about 2.6 kB. The measured figure is
+(114.7 − 4.2) MB over 40,000 interfaces, or **about 2.9 kB each**, which is the
+same number with the allocator's own rounding on top.
+
+**What could not be determined without running VPP, and is therefore not
+claimed anywhere:** the interface count a given segment size supports. Dividing
+the size by 2.9 kB predicts about 12,000 interfaces on the 32 MB default, and
+the box aborted below 8,000. The reason is visible in the source and its size
+is not: the directory is **one contiguous vector**, grown by
+`clib_mem_heap_realloc_aligned` to 1.5× whenever it overflows, so a growth may
+need the old copy and the new one inside the segment at the same time. Whether
+dlmalloc extends it in place depends on the state of that heap, which is a
+question about a running dataplane. No formula is offered here, and the two
+measured points above are the only numbers stated.
+
+The `+395 MB` quoted for `statseg { size 1G }` in
+[#288](https://github.com/andrediashexa/hexarouting/issues/288) is worth one
+correction, since it is the cost side of the decision below: in the table it
+came from it is the RSS difference between **0 and 40,000 sessions** on the
+1 GB box, not the cost of the segment at rest. Nothing measured so far isolates
+what a larger `statseg` costs an idle box.
+
+### Why the tuner does not size it
+
+Every other figure the tuner writes comes from ground truth or from a number
+the operator set: hugepages from `HEXA_SUBSCRIBERS` and then from the RAM the
+machine has, `buffers-per-numa` from the worker count, `main-heap-size` from
+the pages the kernel **actually reserved**. The statistics segment has no such
+input, and the candidates were each rejected on their own arithmetic:
+
+| Option | Cost |
+|---|---|
+| Size it from `HEXA_SUBSCRIBERS` | Wrong units. A CGNAT subscriber is a translation, not an interface: 200,000 of them share a handful of ports. The shipped default would ask for roughly 540 MB of segment for interfaces that never appear, on a box whose RAM floor is 4 GB |
+| Size it from a constant — 256 MB, 1 GB | A number nobody can justify, which is exactly what `main-heap-size` stopped being when it started reading the reserved pages. It is also not free: the segment is what the operator's RAM is not |
+| Add a `HEXA_INTERFACES` to `tune.env` | A knob whose correct value the operator cannot know before the box is configured, on a product that today creates interfaces from a configuration the tuner never reads. A refusal path, a document and a wiki page for a number that would be guessed |
+| Leave it to VPP and say nothing | The status quo, and the reason the report was filed: the box meets the limit as a `SIGABRT` |
+| **Leave the number to the operator, in the file that already takes it, and make the box say where it stands** | One line in the tuner's report, one check in the self-test. No RAM reserved for a box that does not need it, and no number invented |
+
+The last one is what ships. `statseg` belongs in
+`/etc/hexarouting/vpp-base.conf`, which is the operator-editable base the tuner
+concatenates ahead of the stanzas it generates — the same seam that already
+carries `unix`, `linux-cp` and `socksvr`. The tuner generates **no** `statseg`
+stanza precisely so that an operator's own is never overridden on the next
+boot, and `appliance/test_tune.py` asserts that in both the tuned and the
+first-boot configuration.
+
+This closes only the silence. **A box that needs more than the default still
+has to be told**, and the number it is told is the operator's. Anything that
+creates an interface per subscriber — a BNG, or QinQ sub-interfaces per
+customer — reaches the wall at a few thousand and **MUST** set it.
+
+### What the box says
+
+`hexarouting-tune` names the segment in its report, beside the figures it does
+compute, so the one resource it does not size is not the one resource it is
+silent about:
+
+```
+# 1G hugepages: 6 requested (sized for 200000 subscribers), 6 reserved right now
+# statistics segment: NOT sized here, so VPP's built-in 32 MB applies.
+#          Measured: a box on that default aborted between 7,000 and 8,000
+#          interfaces. It is per INTERFACE, not per subscriber, which is why
+#          nothing here sizes it. To raise it, put a statseg stanza in the
+#          base file (/etc/hexarouting/vpp-base.conf):
+#          it is concatenated ahead of these stanzas.
+```
+
+The boot self-test reads the **dataplane's own heap**, not the configuration
+file, and reports how much of it is spent over how many interfaces:
+
+```
+  [ ok ] statistics segment: 4.20M of 31.99M used, 3 interface(s)
+        size: VPP's own default, which this product does not set
+```
+
+At half the segment that becomes a warning, and at three quarters a failed
+check naming `os_panic` and `SIGABRT` and the stanza that raises it. Three
+quarters rather than nine tenths because of the contiguous directory above: the
+last part of a segment cannot be spent on a growth that has to hold two copies.
+Where the size came from is read off the box too, so a box somebody has already
+sized is not reported as running on a default.
+
+Driven in `test/test_selftest.sh` against a stubbed `vppctl`, over a
+comfortable box, a box at 60%, a box at 90%, a box whose `startup.conf` carries
+a stanza, and a dataplane that does not answer the question at all — because
+filling a real statistics segment means creating several thousand interfaces on
+the machine running the tests.
+
 ## CPU requirement
 
 VPP's binary assumes **SSE4.2** and uses AVX where available. On a CPU without

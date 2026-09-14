@@ -776,6 +776,97 @@ if vppctl show version >/dev/null 2>&1; then
   fi
 fi
 
+# --- the statistics segment, the one resource with an abort behind it ---
+#
+# VPP exports every counter through a shared segment of FIXED size, and each
+# dataplane interface adds seventeen directory entries to it plus one counter
+# slot per thread. The segment never grows. Filling it is not a refusal:
+# vnet_register_interface reaches os_panic and the process takes SIGABRT, so
+# the whole dataplane goes, not the interface that was one too many.
+#
+# Measured on a box this product's own tuner built: the segment was VPP's
+# built-in 32 MB and creating subscriber interfaces aborted it between 7,000
+# and 8,000, twice, at the same step.
+#
+# hexarouting-tune does not size the segment, and that is a decision rather
+# than an omission: nothing it reads predicts how many INTERFACES a box will
+# carry. HEXA_SUBSCRIBERS counts subscribers behind a CGNAT pool, and those
+# share a handful of interfaces. Sizing from it would buy 200,000 interfaces
+# that never appear, on a box whose floor is 4 GB of RAM.
+#
+# This line is what pays for that decision. An operator stacking a
+# sub-interface per customer can see the wall approaching instead of meeting
+# it as a SIGABRT with no sentence in front of it.
+#
+# Read and never written (#184): what is reported is what the dataplane says
+# its own heap holds, not what a configuration file asked for.
+if vppctl show version >/dev/null 2>&1; then
+  # A named counter plus `verbose` prints that one entry and then the heap,
+  # instead of the whole directory - which on the box this matters for is
+  # forty thousand lines. /sys/vector_rate is registered when the segment is
+  # created, so it is on every box.
+  seg=$(vppctl show statistics segment /sys/vector_rate verbose 2>/dev/null \
+        | grep -m1 'total:.*used:')
+  if [ -z "$seg" ]; then
+    say "  [warn] the dataplane did not report its statistics segment, so how"
+    say "         close this box is to aborting on it is unknown - which is"
+    say "         not the same as being far from it"
+  else
+    # VPP prints "total: 31.99M, used: 4.20M, free: ..., trimmable: ...",
+    # with K/M/G and two decimals, and bytes below 1 K. awk because sh has no
+    # floating point, and the percentage is the whole judgement.
+    segpct=$(printf '%s\n' "$seg" | awk -F'[:,]' '
+      function bytes(v,  n, u) {
+        gsub(/ /, "", v); u = substr(v, length(v)); n = v + 0
+        if (u == "G") return n * 1073741824
+        if (u == "M") return n * 1048576
+        if (u == "K") return n * 1024
+        return n
+      }
+      { t = bytes($2); u = bytes($4); if (t > 0) printf "%d", u * 100 / t }')
+    segtot=$(printf '%s\n' "$seg" | sed -n 's/.*total: *\([^,]*\),.*/\1/p')
+    segused=$(printf '%s\n' "$seg" | sed -n 's/.*used: *\([^,]*\),.*/\1/p')
+    # Same listing, same exclusions as the pair check above, except that
+    # local0 and the tap ends are COUNTED here: every interface VPP holds has
+    # its entries in the segment, whoever created it.
+    segif=$(vppctl show interface 2>/dev/null \
+            | awk '/^[^ \t]/ && $1 != "Name"' | wc -l | tr -d ' ')
+    [ -n "$segpct" ] || segpct=0
+    if [ "$segpct" -ge 75 ]; then
+      bad "statistics segment ${segpct}% used: $segused of $segtot, with"
+      say "        $segif interface(s). VPP ABORTS when this fills - os_panic,"
+      say "        SIGABRT, the whole dataplane - and it neither refuses the"
+      say "        interface first nor says why afterwards. The last part of"
+      say "        the segment cannot be spent either: the counter directory"
+      say "        is one block that is COPIED to grow, so a growth needs the"
+      say "        old and the new at the same time."
+      say "        Put 'statseg { size 256M }' in"
+      say "        /etc/hexarouting/vpp-base.conf and restart vpp.service."
+    elif [ "$segpct" -ge 50 ]; then
+      say "  [warn] statistics segment ${segpct}% used: $segused of $segtot,"
+      say "         with $segif interface(s). The dataplane ABORTS when this"
+      say "         fills, it does not refuse the next interface. Raise it"
+      say "         with a 'statseg { size 256M }' stanza in"
+      say "         /etc/hexarouting/vpp-base.conf, then restart vpp.service."
+    else
+      # Where the size came from, which is the sentence nobody was ever told:
+      # a box carrying a statseg stanza was sized by somebody, and a box
+      # without one is running on a number nobody on this project chose.
+      #
+      # A STANZA, not the word. The base file ships a comment block explaining
+      # where statseg goes and that comment is copied into startup.conf, so a
+      # plain grep would report every shipped box as one somebody had sized.
+      if grep -qE '^[[:space:]]*statseg' "$STARTUP" 2>/dev/null; then
+        segsrc="set in /etc/hexarouting/vpp-base.conf"
+      else
+        segsrc="VPP's own default, which this product does not set"
+      fi
+      ok "statistics segment: $segused of $segtot used, $segif interface(s)"
+      say "        size: $segsrc"
+    fi
+  fi
+fi
+
 # --- where the connection records live ---
 #
 # In dynamic mode the allocation log IS the record the Marco Civil requires to
