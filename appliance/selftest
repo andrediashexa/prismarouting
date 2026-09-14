@@ -1137,7 +1137,24 @@ fi
 # --- the configuration that is applied ---
 pools=$(vppctl show bpa pool 2>/dev/null | grep -c "^pool ")
 [ -n "$pools" ] || pools=0
-if [ "$pools" -gt 0 ]; then
+if [ "$pools" -gt 0 ] && [ -n "$noforward" ]; then
+  # NOT a green tick, and not a second warning either (#299).
+  #
+  # Measured on a real appliance whose dataplane held only local0: the pool
+  # committed cleanly and this line read "[ ok ] 1 CGNAT pool(s) configured",
+  # six lines below the warning saying the box had been given no NIC. A reader
+  # scanning for green takes a tick as an answer, and the answer here is that
+  # the pool exists and cannot be reached.
+  #
+  # [info] rather than [warn] because the box is already warned about the
+  # cause, three checks up, and the summary line names it. A second warning
+  # for one fact inflates a count an operator is meant to act on, which is how
+  # a count stops meaning anything. What this line owes the reader is the
+  # CONSEQUENCE, which the no-NIC warning does not state: the pools they
+  # configured are not doing anything.
+  say "  [info] $pools CGNAT pool(s) configured, and $noforward:"
+  say "         no packet can reach them yet"
+elif [ "$pools" -gt 0 ]; then
   ok "$pools CGNAT pool(s) configured"
 else
   say "  [info] no CGNAT pool configured yet (use 'hexash')"
