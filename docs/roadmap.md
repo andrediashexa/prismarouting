@@ -1682,7 +1682,7 @@ fixed.
 #### A count that answers a different question from the line above it
 
 [#306](https://github.com/andrediashexa/hexarouting/issues/306) - *fixed,
-v0.75.0*.
+v0.74.1*.
 `show interface` on a box with no dataplane interface says "the dataplane has
 no interface to forward on" and then, four lines down, "1 interface(s) on the
 dataplane". The one it counts is `local0`, VPP's own null interface, which can
@@ -1709,7 +1709,7 @@ both things about itself in one screen.
 #### The gate installed a medium it had not booted
 
 [#307](https://github.com/andrediashexa/hexarouting/issues/307) - *fixed,
-v0.75.0*. `make test-install` depended on the phony `iso` target, so
+v0.74.1*. `make test-install` depended on the phony `iso` target, so
 `tools/release-gate.sh` built a medium, booted it, and then built a second one
 over the same path and installed that. Measured on the v0.74.0 run: the boot
 finished at 18:02:23 and the file's mtime is 18:07:51.
