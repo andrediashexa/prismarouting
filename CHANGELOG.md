@@ -86,6 +86,40 @@ version has a chance of seeing it.
   link they do not control can check it with, before installing it on a box
   that will carry subscribers.
 
+* **The refusal to build a custom kernel now names the mechanism it rests on**
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)).
+  `docs/appliance.md` refuses a custom-built kernel chiefly because the
+  appliance would stop inheriting Debian's kernel security updates, and nothing
+  in the tree said how it inherits them in the first place. It is one word in
+  `appliance/build-iso.sh`: the debootstrap `--include` list names
+  `linux-image-amd64`, a metapackage carrying no version and no pin, so the box
+  follows Debian's stable kernel without anybody deciding to. Read off two
+  boxes a month apart rather than asserted: the medium the boot lab actually
+  booted says `Linux version 6.1.0-50-amd64 ... Debian 6.1.176-1 (2026-07-02)`
+  in its console log, while this tree develops against `6.1.0-52-amd64`,
+  `Debian 6.1.180-1 (2026-08-03)`. Two ABI revisions, and no commit in this
+  repository selected either one.
+
+  `test/test_kernel_tuning.py` grew three assertions, because that argument was
+  resting on a line anybody could change for an unrelated reason - freezing a
+  kernel to reproduce a bug arrives looking like a debugging convenience rather
+  than like the decision the section refuses. Each was shown failing on its
+  own: dropping the package from `--include`, pinning it while keeping its name
+  so that only the pin check fires, and a document that stops naming it.
+
+  ```
+  FAIL: appliance/build-iso.sh pins a kernel version:
+  ['linux-image-amd64=6.1.180-1']. An unpinned metapackage is what makes the
+  security update arrive without a decision, so a pin takes on the maintenance
+  cost docs/appliance.md refuses a custom kernel over, without the argument
+  that section demands
+  ```
+
+  **No kernel parameter was added and nothing a box boots with changed.** The
+  eight tuning candidates in that section stay hypotheses deferred to
+  [#28](https://github.com/andrediashexa/hexarouting/issues/28), which is the
+  half of #163 that is still blocked.
+
 ### Fixed
 
 * **The VTY refused its own `prohibit-password`, because sshd answers with the
