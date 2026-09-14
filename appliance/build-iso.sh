@@ -116,9 +116,20 @@ say "version: $HEXA_VERSION_STAMP"
 chroot "$ROOT" /bin/sh -c "cd /src && HEXA_VERSION_STAMP='$HEXA_VERSION_STAMP' HEXA_VTY_LOGIN=1 sh appliance/install.sh"
 rm -rf "$ROOT/src"
 
-# install.sh warns and carries on when it cannot find the vat2 plugin, which is
-# right for a source install on a box that may not want the API and wrong for a
-# medium. A warning in a build log this long is not a signal; this is.
+# install.sh REFUSES a tree with only one of the two plugins now, before it
+# writes anything (#301), so the run above cannot get this far without having
+# placed it. This sentence used to say install.sh "warns and carries on ...
+# which is right for a source install on a box that may not want the API", and
+# both halves of that turned out to be wrong: there is no such box, since the
+# vat2 plugin is how hexash learns that a configuration was REFUSED rather
+# than applied, and #119 is that warning having already cost every ISO the
+# binary API.
+#
+# Kept anyway, and not because the refusal might be removed. It asserts on a
+# different thing: install.sh refuses on what the BUILD TREE has, and this
+# checks what reached the IMAGE. A copy step that stops copying, a chroot that
+# silently did nothing, a path that moved - none of those is a missing plugin
+# in the tree, and none of them would reach install.sh's refusal at all.
 #
 # The assertion is on the file install.sh was supposed to place, not on the
 # copy staged above, so it fails if the copy is there and the install step
