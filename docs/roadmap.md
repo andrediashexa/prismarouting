@@ -23,9 +23,11 @@ bits per second still needs a real NIC
 per-packet CPU cost is measured: `bpa-in2out` spends **346 clocks per packet**
 where the nodes around it spend 20–35, down from 470 on the same machine once
 [#63](https://github.com/andrediashexa/hexarouting/issues/63) moved the
-checksum arithmetic off the packet path and onto the session. What is left of
-it needs NIC offload, which needs a NIC. The rest is
-ordered by the cost of not having it.
+checksum arithmetic off the packet path and onto the session and was closed on
+that. The one part of the per-packet cost nothing here can take further is the
+L4 checksum, which a NIC does instead of the CPU, so it waits on the same card
+[#28](https://github.com/andrediashexa/hexarouting/issues/28) waits on. The
+rest is ordered by the cost of not having it.
 
 Most "delivered" markers below name the release they shipped in, and where a
 feature can be switched off there is a lab that goes red when it is - nineteen
@@ -89,19 +91,21 @@ flowchart TD
 These are stated here because two of them were asked for as if missing. A
 claim about current behaviour is worth nothing without the code that shows it.
 
-**Three of the four are asserted, not read**: measured against a running
-dataplane, with the evidence column saying by which lab and in what words,
-because an evidence column that points only at the code it came from is a map
-to the intention rather than to the proof. Paired address pooling is the
-exception - its evidence is the code and the model, because the lab that pins
-it, `lab/crossaddr.sh`, records what #226 does TODAY and is excluded from the
-suite for that reason.
+**Three of the four are asserted end to end, and the fourth in part**: measured
+against a running dataplane, with the evidence column saying by which lab and in
+what words, because an evidence column that points only at the code it came from
+is a map to the intention rather than to the proof. Paired address pooling is
+the partial one. Its deterministic half is asserted on a running box by
+`lab/detreserve.sh`, which is in the suite and has an off mode; the rest rests
+on the code and the model, because the lab that pins the dynamic case,
+`lab/crossaddr.sh`, records what #226 does TODAY and is excluded from the suite
+for that reason.
 
 | Behaviour | Why it already holds | Evidence |
 |---|---|---|
 | **Endpoint-Independent Mapping** (RFC 4787 REQ-1) | The `in2out` session key is `(private ip, private port, protocol)`. The remote address is not part of it, so one internal socket always maps to the same external port regardless of destination. | Measured: one socket reaching 8.8.8.8 then 1.1.1.1 keeps one public port (`lab/nat-behaviour.sh`) |
 | **Endpoint-Independent Filtering** (RFC 4787 REQ-8, full-cone) | The `out2in` key is `(public ip, public port, protocol)`. Any external host may reach an open mapping. | Measured: *"endpoint-independent filtering lets an uninvited remote through"* and *"it arrives at the subscriber's own address and port"* (`lab/nat-behaviour.sh`); the key function is `bpa_out2in.c` |
-| **Paired address pooling** (RFC 4787 REQ-2) | A subscriber's FIRST public address comes from `bpa_forward()`, a function of the subscriber index alone, and cannot vary between sessions. In **dynamic** mode a subscriber that fills its block gets an extension from the free list, and under `policy interleaved` that block is normally on a **different** public address - measured, and it gets more likely as the pool grows ([#226](https://github.com/andrediashexa/hexarouting/issues/226)). So the property holds unconditionally in deterministic mode and until the first extension in dynamic mode. | `bpa_pool.h`, `ref/bpa_model.py` |
+| **Paired address pooling** (RFC 4787 REQ-2) | A subscriber's FIRST public address comes from `bpa_forward()`, a function of the subscriber index alone, and cannot vary between sessions. In **dynamic** mode a subscriber that fills its block gets an extension from the free list, and under `policy interleaved` that block is normally on a **different** public address - measured, and it gets more likely as the pool grows ([#226](https://github.com/andrediashexa/hexarouting/issues/226)). So the property holds unconditionally in deterministic mode and until the first extension in dynamic mode. | `bpa_pool.h`, `ref/bpa_model.py`, and for the deterministic extension it is measured: *"on the subscriber's own public address, so it is still one host"* (`lab/detreserve.sh`) |
 | **Port preservation where possible** | The allocator honours the original port when it is inside the block and free. | Measured: *"port 1600 was available before the forward existed"* asserts `100.64.0.5:1600 -> 200.150.0.17:1600` off a running box (`lab/forward.sh`), where it is the precondition of the reservation test; the arithmetic is `bpa_ports.h` and `test/test_bpa_ports.c` |
 
 EIF is **not** universally desirable: it means unsolicited inbound traffic
@@ -303,8 +307,29 @@ of the logging obligation. If the scope ever changes, that is where to start.
 |---|---|---|
 | **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: **346 clocks** in `bpa-in2out`, about 22 cores for 100 Gbps of 64-byte frames, down from 470 when [#63](https://github.com/andrediashexa/hexarouting/issues/63) was taken. Bits per second still needs an E810 or CX6 - [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it. | M |
 | **Symmetric RSS** | The handoff works, but symmetric hashing would put both directions on the right worker before the handoff, saving the extra enqueue. | M |
-| **RFC 4787 / 5382 conformance suite** | Turns section 1's claims into assertions. | M |
+| **RFC 4787, 5382 and 5508: the requirements this box states** - *delivered, under a narrower title than it had* | This row used to read "RFC 4787 / 5382 conformance suite", which promises the whole of both documents. Measured over the tree rather than judged: the requirement numbers named anywhere in this repository are **RFC 4787 REQ-1, REQ-2, REQ-5, REQ-8 and REQ-9**, **RFC 5382 REQ-5** and **RFC 5508 REQ-2**. That is five of RFC 4787's fourteen, one of RFC 5382's ten, and one from an RFC the old title did not admit to. Nothing else is claimed, so nothing else is asserted falsely, but a reader judging the product against that title was being told otherwise, which is the direction this file cares about. What stands behind each claim, so the next reader does not measure it again: **REQ-1** mapping and **REQ-8** filtering in `lab/nat-behaviour.sh`, whose `address-dependent` run is the control because the full-cone assertions **MUST** fail in it, and whose own header says the evidence before it was a reading of a hash key; **REQ-9** hairpinning in `lab/hairpin.sh`; **port preservation** off a running box in `lab/forward.sh`; **REQ-2** paired address pooling in `lab/detreserve.sh` for the deterministic reserve, and in `lab/crossaddr.sh` for where the property stops, the second being outside the suite on purpose because it pins what [#226](https://github.com/andrediashexa/hexarouting/issues/226) does today and would go red on the fix; and the three **timeout floors** in `bpa_pool.h`, which `show bpa timeouts` marks a value below rather than refusing it ([#54](https://github.com/andrediashexa/hexarouting/issues/54), v0.16.0). | **not an effort.** Every requirement this box states is asserted, so there is no suite left to write. What is not asserted is what is not claimed, and a requirement arrives as an implementation and its assertion together, on an issue of its own. |
 | **Sustained-load soak test** — *delivered* | `lab/soak.sh` ([#30](https://github.com/andrediashexa/hexarouting/issues/30)), for as many seconds as its one argument says. Every cycle fills the session table and every cycle empties it — fifteen seconds of traffic at a rate that fills the burst, then twenty seconds of nothing, which outlasts the UDP timeout and the block hold-down together — and the box is read at the end of each half. **Every trough is the same state of the box**, so two troughs are directly comparable and anything a later one holds is memory the box did not give back: no working set to subtract and no settling to wait out. Asserts the table back at its baseline at every trough, every session created also expired, every block back in the pool, the box's own allocation and release counters equal, the heap and the resident size unmoved between two empty tables, and a real collector's `natEvent` 17 count equal to its 16 count with no allocation left open. Outside `tools/run-all-labs.sh` (`NOT_LABS`) and outside `make test`: four minutes is its shortest run. | M |
+
+### 3.6 BNG, asked for and not scoped - [#170](https://github.com/andrediashexa/hexarouting/issues/170)
+
+Open, and the reason it is here rather than in a phase is that the answer is a
+scope decision and not an estimate. VPP 26.06 ships `pppoe_plugin.so` and
+`ppp_plugin.so`, both of which already load on every installed box, and they are
+**the dataplane half only**: two nodes and three API messages, with no PADI,
+PADO, PADR, PADS, LCP, IPCP, PAP, CHAP or RADIUS anywhere in the binary. For
+IPoE it is worse rather than easier, because VPP's `dhcp` plugin is client and
+proxy only and there is no DHCP server at all, and per-subscriber QoS has a
+policer where a BNG needs a hierarchical shaper.
+
+So the missing control plane is larger than everything in this repository
+today, which is the argument on the issue for calling it a second product. Two
+measured limits are worth carrying here because they bound any answer: the
+plugin parses at most one VLAN tag, which is not how this market's access
+networks are built, and its link table is keyed on the client MAC alone, so two
+subscribers with the same MAC on different ports collide. Running accel-ppp on
+a `linux_cp` TAP **MUST NOT** be the shape, whatever else is: `linux_cp` and the
+pppoe plugin both claim ethertypes 0x8863 and 0x8864 box-wide and the pppoe
+plugin has to win or no session can be created.
 
 ## 4. Deliberately out of scope
 
@@ -338,7 +363,7 @@ promises about order that the work then rearranged. What the plan is for is the
 | **v0.2.0** | Foundations already built | [#1](https://github.com/andrediashexa/hexarouting/issues/1) comments in English, [#2](https://github.com/andrediashexa/hexarouting/issues/2) MTU in the VTY, [#10](https://github.com/andrediashexa/hexarouting/issues/10) versioning, [#11](https://github.com/andrediashexa/hexarouting/issues/11) this roadmap | Three of these sit finished in branches. Merging them first means every later release is tagged, changelogged and readable by whoever inherits it. |
 | **v0.3.0** | A control plane that reports failure | [#3](https://github.com/andrediashexa/hexarouting/issues/3), [#4](https://github.com/andrediashexa/hexarouting/issues/4), [#5](https://github.com/andrediashexa/hexarouting/issues/5) hexash on the binary API | Everything after this adds configuration. Adding it on top of a `commit` that cannot tell success from failure means each new feature inherits a control plane that lies. This is the one ordering constraint that is not negotiable. |
 | **v0.4.0** | Subscriber experience | [#12](https://github.com/andrediashexa/hexarouting/issues/12) per-pool timeouts and half-open state, [#13](https://github.com/andrediashexa/hexarouting/issues/13) extended blocks | The two things an operator notices in the first month: ports held by dead connections, and one customer cut off while the pool is half empty. |
-| **v0.5.0** — *released* | Application compatibility | [#42](https://github.com/andrediashexa/hexarouting/issues/42) FTP, [#43](https://github.com/andrediashexa/hexarouting/issues/43) RTSP and [#44](https://github.com/andrediashexa/hexarouting/issues/44) PPTP/GRE ALGs; [#50](https://github.com/andrediashexa/hexarouting/issues/50) full cone asserted. [#15](https://github.com/andrediashexa/hexarouting/issues/15) and [#16](https://github.com/andrediashexa/hexarouting/issues/16) landed earlier, in v0.4.0. | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. Only TFTP remains open under [#14](https://github.com/andrediashexa/hexarouting/issues/14); SIP-over-UDP and ESP shipped later and are in `BPA_ALG_DEFAULT`. |
+| **v0.5.0** — *released* | Application compatibility | [#42](https://github.com/andrediashexa/hexarouting/issues/42) FTP, [#43](https://github.com/andrediashexa/hexarouting/issues/43) RTSP and [#44](https://github.com/andrediashexa/hexarouting/issues/44) PPTP/GRE ALGs; [#50](https://github.com/andrediashexa/hexarouting/issues/50) full cone asserted. [#15](https://github.com/andrediashexa/hexarouting/issues/15) and [#16](https://github.com/andrediashexa/hexarouting/issues/16) landed earlier, in v0.4.0. | The failures that do not look like NAT failures to the subscriber, and therefore become long calls. [#14](https://github.com/andrediashexa/hexarouting/issues/14) is closed, with TFTP decided against rather than left to build; SIP-over-UDP and ESP shipped later and are in `BPA_ALG_DEFAULT`. |
 | **v0.6.0 to v0.8.0** — *released* | Not what this table said | The appliance and its installer, SSH and local accounts, SNMP, the first performance measurement and a hardware lab that carries packets. | The order below was written before the first ISO was installed by hand. Three releases went to making the box installable and observable, which is the reordering the plan itself says to expect. |
 | **v0.9.0** — *released* | Inbound | [#17](https://github.com/andrediashexa/hexarouting/issues/17) static port forwarding | The customer who needs a port **in**, answered. The rest of the "inbound and protection" theme this row used to carry moved to v0.10.0: one feature, one release, rather than a milestone that stays open for months. |
 | **v0.10.0** — *released* | The log, protected | [#24](https://github.com/andrediashexa/hexarouting/issues/24) uRPF on an interface | A spoofed source translated and attributed to a subscriber who sent nothing is the one failure the record cannot show as a failure. |
@@ -365,7 +390,7 @@ schedule is the one produced after the work.
 | [#69](https://github.com/andrediashexa/hexarouting/issues/69) in-place per-pool settings through the VTY — *delivered, v0.14.0* | Every setting added **after** this inherits the right behaviour for nothing. Turning on a mitigation during an incident no longer tears down the pool. |
 | [#35](https://github.com/andrediashexa/hexarouting/issues/35) roles in the VTY — *delivered, v0.15.0* | Read-only, CGNAT operator and administrator, mapped onto system groups and checked where the change is applied. The boundary it does **not** draw — every role still needs the VPP CLI socket, which is total control — is [#76](https://github.com/andrediashexa/hexarouting/issues/76). |
 | [#54](https://github.com/andrediashexa/hexarouting/issues/54) warn below the RFC floors — *delivered, v0.16.0* | Accepted and never silent: the warning names the RFC, the floor and what breaks, reaches the operator and the log, and `show bpa timeouts` marks the state for somebody who did not know to ask. |
-| [#76](https://github.com/andrediashexa/hexarouting/issues/76) the VTY off the VPP CLI socket | Roles bound what the VTY will do, not what an account can reach. Also carries the appliance plumbing a non-root operator needs. |
+| [#76](https://github.com/andrediashexa/hexarouting/issues/76) the VTY off the VPP CLI socket - *delivered* | Roles bound what the VTY will do, not what an account can reach, and every role still needed the socket that is total control. The appliance plumbing a non-root operator wants came with it. |
 
 #### Phase 2 — finish protection and control
 
@@ -649,28 +674,38 @@ the VTY:
 | Issue | What it is | State |
 |---|---|---|
 | [#196](https://github.com/andrediashexa/hexarouting/issues/196) | six labs started an FRR the product does not ship — no mgmtd, no staticd, so any statement mgmtd owns was silently dropped | *delivered*: one `start_frr` in `lab/lib.sh`, used by every lab that starts FRR |
-| [#197](https://github.com/andrediashexa/hexarouting/issues/197) | `commit` reported success for a statement FRR dropped: `frr-reload` exits 0, its own log noticing on a second pass that the line is still missing and sending it again | **partly** — a static route whose daemon is not running is refused now; the general read-back check is still open |
+| [#197](https://github.com/andrediashexa/hexarouting/issues/197) | `commit` reported success for a statement FRR dropped: `frr-reload` exits 0, its own log noticing on a second pass that the line is still missing and sending it again | *delivered*: the static-route half first, then the general read-back check promoted from a warning to a refusal in v0.66.0 |
 
-#197 is ahead of anything else in this section that is still open, and half of
-it is done. The reachable half was that a static route is neither a `router`
-line nor a policy statement, so both existing daemon checks — the one from
+#197 was ahead of everything else in this section, and it landed in two halves.
+The reachable half was that a static route is neither a `router` line nor a
+policy statement, so both existing daemon checks - the one from
 [#99](https://github.com/andrediashexa/hexarouting/issues/99) and the one from
-[#155](https://github.com/andrediashexa/hexarouting/issues/155) — walked
+[#155](https://github.com/andrediashexa/hexarouting/issues/155) - walked
 straight past it, and a default route is the most common statement there is on
 an edge box. That is refused now, at `commit check` as well as at `commit`.
 
-What remains is the class, and it is the harder half: `frr-reload` exits 0
-having dropped a statement, and the product believes it. The general answer is a
-read-back check — a statement the candidate holds that is not in FRR's running
-configuration afterwards is a failed commit whatever the exit status said, the
-same argument `show bgp summary` already makes about the FIB. It is written and
-it **warns**: `statements_frr_dropped()` in `hexash.py`, with the exception list
-beside it. What keeps it from being a refusal is a measured false positive
-rather than a missing idea: FRR omits a statement from its read-back when the
-value equals a default, so `poll-interval 60` typed explicitly comes back absent
-(recorded in `lab/igp.sh`), and refusing on that would be worse than the bug.
-Promoting the warning to a refusal needs that exception list to be exhaustive
-rather than measured-so-far — a small piece of research, not a redesign.
+The class was the harder half: `frr-reload` exits 0 having dropped a statement,
+and the product believed it. The general answer is a read-back check - a
+statement the candidate holds that is not in FRR's running configuration
+afterwards is a failed commit whatever the exit status said, the same argument
+`show bgp summary` already makes about the FIB. `statements_frr_dropped()` in
+`hexash.py` shipped printing `warning:`, with the promotion condition written
+into the code rather than left to anybody's confidence: it becomes a refusal
+once the full lab suite has run clean with it refusing. That suite ran with the
+refusal in force, 79 runs over 57 lab files and not one of them losing a
+`commit complete` it used to have, and **v0.66.0 carries the refusal**. What had
+held it back was a measured false positive rather than a missing idea: FRR omits
+a statement from its read-back when the value equals a default, so
+`poll-interval 60` typed explicitly came back absent (recorded in
+`lab/igp.sh`), and refusing on that would have been worse than the bug. The
+exception list beside the function is what that measurement became.
+
+v0.68.0 then added the half
+[#227](https://github.com/andrediashexa/hexarouting/issues/227) asked for: the
+refusal carries the same `<- not checked` mark `show configuration` uses, and
+one line saying what the mark means. A statement this VTY walked through its own
+grammar and one it forwarded word for word were the same five lines before that,
+and those two need different first moves.
 
 `commit` returning success is the one thing in this product an operator has to
 be able to trust, because every diagnosis they make afterwards starts from it.
@@ -883,8 +918,8 @@ nobody reviewed, and the issue is the only place the measurement survives.
 | [#214](https://github.com/andrediashexa/hexarouting/issues/214) | a public port can be forwarded once per **pool** rather than once per public address, so on an interleaved pool with N addresses only one subscriber in N can hold a forward at a given offset | *fixed* |
 | [#215](https://github.com/andrediashexa/hexarouting/issues/215) | deleting a pool emits no `natEvent 17`, so every block it held stays **open** in the retention log — the answer to a court order then names a subscriber who had already been disconnected | *fixed* |
 | [#217](https://github.com/andrediashexa/hexarouting/issues/217) | and a box that is **stopped** does the same, on every planned reboot — with a second allocation and no release between them when it comes back | *fixed*, drain and marker together |
-| [#219](https://github.com/andrediashexa/hexarouting/issues/219) | TCP bytes still in `outbuf` when the box stops may go with the process — written from reading the path, **not yet reproduced** | **open** |
-| [#218](https://github.com/andrediashexa/hexarouting/issues/218) | `make test` failed twice under a release suite and nothing recorded which assertion | **open** |
+| [#219](https://github.com/andrediashexa/hexarouting/issues/219) | TCP bytes still in `outbuf` when the box stops may go with the process - written from reading the path, and reproduced afterwards with 1501 blocks held | *delivered*, and the measurement is further down this file |
+| [#218](https://github.com/andrediashexa/hexarouting/issues/218) | `make test` failed twice under a release suite and nothing recorded which assertion | *delivered*, v0.67.0: a runner that reads each suite's verdict line, and the race it then named |
 | [#216](https://github.com/andrediashexa/hexarouting/issues/216) | `bpa_dyn_active()` has no callers; either it is unnecessary or a call is missing, and nothing in the code says which | *fixed* — and it was neither: calling it would have leaked a block |
 
 #215's fix also covers a pool being **replaced**, which was not obvious: a
@@ -899,6 +934,19 @@ ambiguity that makes the log unreadable after exactly the failures where it
 matters. The marker is proposed rather than decided: IE 160
 `systemInitTimeMilliseconds`, IANA-registered and already in VPP's element
 table, with four rejected alternatives argued in `bpa_log.h`.
+
+The marker then spent four releases on the wrong side of its own replay, and
+that was [#282](https://github.com/andrediashexa/hexarouting/issues/282) - *fixed*.
+`bpa_log_enable()` queued the pins and only afterwards checked the marker, so
+this boot's allocations went out ahead
+of this boot's marker and a collector had to read them as the previous
+incarnation's - which is the exact attribution the marker exists to settle.
+Nothing inside the plugin could show it, because the marker travels in one
+report's buffer and the block records in another, so it was read off a real
+collector, both ways, before it was believed. `docs/logging.md` also stops
+promising a UDP reader an ordering no box can keep: over TCP the stream
+delivers in order, over UDP it is the order the box puts them on the wire in
+and nothing more.
 
 **Where the drain hangs was measured, not chosen.** With only the in-process
 exit hook, a UDP record is written, the counter advances, and it never reaches
@@ -1183,17 +1231,20 @@ actually start.
 | [#202](https://github.com/andrediashexa/hexarouting/issues/202) the rename to PrismaRouting | the maintainer's, and one question is open: `hexash` is the recorded login shell of existing accounts, so whether it renames with the product changes the migration |
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
 | [#226](https://github.com/andrediashexa/hexarouting/issues/226) which mechanism restores paired address pooling | the **claim** is already corrected in all four places it was made, because a conformance statement the box cannot honour is worse than the absent property. The mechanism is the decision: it changes where every extension in every dynamic pool lands, and two of the four options inherit #55's reachability limit, so they would apply on a two-worker box and not on a four-worker one |
-| Publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. The mirror under `wiki/` now carries pages for #67, #182, #210, #213, #217, the block stride (#55), what `commit` refuses, and the four IGP `show` commands, and none of it has been pushed. `test/test_wiki_roundtrip.sh` checks the mirror keeps the format the two scripts agree on, after five pages were found opening with their own title up to four times (#225) |
+| [#248](https://github.com/andrediashexa/hexarouting/issues/248) every box installed from a released ISO shares one SSH host key | the maintainer's, and it is a disclosure rather than a repair. An appliance installed from any release up to 0.66.0 carries the host key its build container generated, and the private half of it is inside the published artefact, so an operator's SSH session can be impersonated by anybody holding the ISO and the client will not object. #245 generates a set per box at install time and does nothing for a box already in the field. What those operators are told, and whether the public wiki or the release note carries it, is the decision |
+| [#277](https://github.com/andrediashexa/hexarouting/issues/277) publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. The mirror under `wiki/` is **25 pages ahead** of what an operator can open, and one of them is wrong rather than merely stale: the published page says a refused `commit` applies nothing, which stopped being true when the read-back check became a refusal and is read by somebody deciding what state their box is in. The mirror also carries pages for #67, #182, #210, #213, #217, the block stride (#55), what `commit` refuses, and the four IGP `show` commands. `test/test_wiki_roundtrip.sh` checks the mirror keeps the format the two scripts agree on, after five pages were found opening with their own title up to four times (#225). `tools/wiki-push.sh` refuses a mirror older than the live page, so `tools/wiki-pull.sh` runs first |
+| [#288](https://github.com/andrediashexa/hexarouting/issues/288) whether `hexarouting-tune` sizes the statistics segment, and from what | the tuner sizes hugepages, workers, buffers and the main heap and writes no `statseg` stanza at all, so VPP takes its 32 MB default and the box **aborts** between 7,000 and 8,000 interfaces - `SIGABRT`, with nothing said about what ran out. `statseg { size 1G }` reaches 40,000 at +395 MB. A CGNAT box terminating subscribers on a handful of ports never approaches it, which is why nothing has hit it; anything creating an interface per subscriber reaches it at a few thousand |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
 | [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
 
-#### Installation — blocked by nothing, paid on every box
+#### Installation - what the installer did not do, and now does
 
-[#83](https://github.com/andrediashexa/hexarouting/issues/83) — the installer
-gets the hard parts right already: it asks everything before it writes
-anything, refuses to finish without a root password the operator supplied, and
-will not overwrite the medium it booted from. What it does not do is everything
-that happens **after** the disk is written.
+[#83](https://github.com/andrediashexa/hexarouting/issues/83) - *delivered*.
+The installer got the hard parts right from the start: it asks everything
+before it writes anything, refuses to finish without a root password the
+operator supplied, and will not overwrite the medium it booted from. What it
+did not do was everything that happens **after** the disk is written, and the
+paragraphs below are that list, now worked through.
 
 The management address was dropped from the scope by the maintainer: it is
 arranged by other means before the box is installed.
@@ -1240,12 +1291,17 @@ mirror.
 This section is now empty of work. The management address was the other half
 and the maintainer dropped it.
 
-#### Phase 4 — capacity, which depends on #23
+#### Phase 4 - capacity, and it went through #23
 
-| Issue | Why it waits |
+[#23](https://github.com/andrediashexa/hexarouting/issues/23) had to come first
+and did, in v0.19.0: `commit` refuses a change that re-maps existing
+subscribers until it is asked for by name. That is what made the two rows below
+safe to build, and both have since shipped.
+
+| Issue | What it took |
 |---|---|
-| [#39](https://github.com/andrediashexa/hexarouting/issues/39) a reserve of blocks in deterministic mode | Carving a reserve **reduces capacity**, which changes `blocks_per_ip`, which re-maps every subscriber — the hazard #23 documents. Today a deterministic subscriber that fills its block is simply dropped while the box is healthy. |
-| [#55](https://github.com/andrediashexa/hexarouting/issues/55) stride and per-pool block-size ranges | Block-size ranges have the same blast radius. The stride half is independent and small. |
+| [#39](https://github.com/andrediashexa/hexarouting/issues/39) a reserve of blocks in deterministic mode - *delivered, v0.69.0* | Carving a reserve **reduces capacity**, which changes `blocks_per_ip`, which re-maps every subscriber - the hazard #23 documents, and the reason this waited for it. Until `reserve <n>` existed, a deterministic subscriber that filled its block was dropped while the box was healthy. |
+| [#55](https://github.com/andrediashexa/hexarouting/issues/55) stride and per-pool block-size ranges - *delivered, v0.67.0* | The stride half was independent and small and went in on its own. The block-size half carried the same blast radius, and was then measured to be satisfied by `block-size` with `max-blocks` rather than needing a feature; section 2.2 has the reading. |
 
 #### Phase 5 — applications
 
@@ -1259,9 +1315,14 @@ turned out not to need #48's work at all, which is the useful thing to record:
 a datagram has no stream to renumber, so the ALG carries none of that
 apparatus. **SIP over TCP** is written up as not done rather than half done.
 
-Still open here: [#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on dynamic pools, which needs the block pinned; and
-[#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP last — now unblocked, since it depends on #17 and should be
-bounded by #18, both delivered.
+[#67](https://github.com/andrediashexa/hexarouting/issues/67) forwards on
+dynamic pools followed and is *delivered*, in v0.9.0: the forward pins the
+block that carries it, so it cannot move to another customer while the forward
+exists. The one thing here nobody has built is
+[#32](https://github.com/andrediashexa/hexarouting/issues/32) PCP, and nothing
+stands in front of it any more: the forwarding table it automates arrived with
+#17 in v0.9.0, and the per-subscriber bounds it should respect with #18 in
+v0.12.0.
 
 #### Phase 6 — high availability
 
@@ -1275,11 +1336,14 @@ subscribers to the wrong blocks and both boxes log nothing.
 
 #### Phase 7 — performance, which needs hardware
 
-[#28](https://github.com/andrediashexa/hexarouting/issues/28) on a real NIC unblocks [#29](https://github.com/andrediashexa/hexarouting/issues/29) symmetric RSS and what
-remains of [#63](https://github.com/andrediashexa/hexarouting/issues/63), which is now the L4 checksum alone: the
-session carries its correction, so what is left is the one part a NIC does
-instead of the CPU. The line above used to say offload was the only real remedy
-for the whole of it, and that was true when it was written and is not now.
+[#28](https://github.com/andrediashexa/hexarouting/issues/28) on a real NIC
+unblocks [#29](https://github.com/andrediashexa/hexarouting/issues/29)
+symmetric RSS, and with it the last piece of the per-packet cost: the L4
+checksum. [#63](https://github.com/andrediashexa/hexarouting/issues/63) is
+closed, having put the checksum correction on the session where it is worked
+out once, and the checksum itself is the part a NIC does instead of the CPU.
+The line above used to say offload was the only real remedy for the whole of
+it, and that was true when it was written and is not now.
 [#30](https://github.com/andrediashexa/hexarouting/issues/30) the soak test is **delivered**, and it did run earlier: `lab/soak.sh`
 needs no NIC, because a leak is visible at the packet rate a packet generator
 reaches. What it still pays most on is a stable base, which is why it sits
@@ -1345,6 +1409,41 @@ Debian 13 verifies with `sqv`, which rejects the key's SHA-1 binding signature,
 so it would survive trixie packages appearing under the same key. Revisit when
 upstream moves, not on a schedule.
 
+#### Upgrading a box
+
+[#291](https://github.com/andrediashexa/hexarouting/issues/291), and it was
+ahead of the rename below rather than part of it. `appliance/install.sh` says
+on its fourth line that it is the path "for updating a box in production
+without reinstalling it", and the repository asserted upgrade-safety in at
+least five places with no red light behind any of them. `lab/install-iso.sh`
+installed a box and booted it; `lab/in-place.sh` changed a setting on a running
+one; **nothing installed one version and then put another on top of it**.
+
+`lab/upgrade.sh` does now. It compiles v0.68.0's dataplane plugin, runs that
+tag's own `install.sh`, configures the box through the VTY that install put
+there, then runs the current tree's `install.sh` over it and asserts the box is
+still configured. The central assertion is the file the old version saved being
+accepted whole, because `hexash --load` refuses it whole or not at all: a
+statement the new VTY does not accept does not degrade an upgraded box, it
+unconfigures it, at a boot nobody is watching. Renaming one pool statement out
+of the new tree's grammar takes nineteen of its thirty-five checks red and
+leaves the box with no pool and no addresses.
+
+The plugin's version was the constant `"0.1"`, unmoved in seventy-one releases,
+so `show plugins` could not tell an operator which dataplane they were running,
+which is the one question an upgrade leaves open. It carries its build stamp
+now, from the same calculation `install.sh` uses for the VERSION file, and
+`show version` prints both and says when they differ.
+
+**Still open, and all three were found by measuring the path rather than by
+reading it:**
+
+| | |
+|---|---|
+| [#291](https://github.com/andrediashexa/hexarouting/issues/291) item 3 | `install.sh` behaves identically on a second run and closes with a first install's sentence, so an operator who has already tuned the box reads "and reboot so that isolcpus and hugepages take effect" as nothing to do. It does not restart `vpp.service`, which is the right default - restarting the dataplane drops every session on the box - and it does not say so |
+| [#293](https://github.com/andrediashexa/hexarouting/issues/293) | in that window the new VTY **cannot create a pool**: the API message grew fields the running plugin does not have, and the refusal names `bpa_pool_add_del` rather than the upgrade that caused it. Changing a setting on an existing pool works. The VTY now knows both versions, so a refusal arriving while they disagree can say which dataplane is answering |
+| [#294](https://github.com/andrediashexa/hexarouting/issues/294) | `hexash --load` refuses the **whole** configuration over a static route that is correct, because the next-hop check reads the live FIB and the address that makes the next hop reachable is in the file being loaded. A normal boot survives only because FRR is already holding the route from its own `frr.conf`, so a second copy of the configuration in another daemon's file is what keeps the box configured |
+
 #### The rename to PrismaRouting
 
 [#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
@@ -1370,11 +1469,11 @@ covered by [#91](https://github.com/andrediashexa/hexarouting/issues/91)'s rule
 that a medium's name must carry its identity, because a file loses its context
 the moment it is copied to a USB stick.
 
-The acceptance test does not exist yet and is the real work: `lab/install-iso.sh`
-installs and boots a real box, and nothing upgrades one. **An upgrade lab — install
-the old name, upgrade, boot, and assert the configuration is still in effect — is
-what makes this issue closeable**, and it is worth having whatever the box is
-called.
+The acceptance test is the real work, and it is the one
+[#291](https://github.com/andrediashexa/hexarouting/issues/291) asks for rather than a second: install the old name, upgrade,
+boot, and assert the configuration is still in effect. **That is what makes this
+issue closeable**, and it is worth having whatever the box is called, which is
+why it is written up in its own section above.
 
 Two ordering rules, both for the reader of the release note rather than for the
 work. It **MUST** ship alone: a note that says "renamed, and also fixed the
@@ -1446,6 +1545,19 @@ reason than this table.
    intended, and it is why each one has to stand on its own.
 4. A release is cut when its milestone is empty, or when the maintainer
    decides what remains can wait.
+5. **This file is compared against the tracker when a release is cut**, with
+   `sh tools/roadmap-state.sh`. It prints every issue named here with its
+   state, flags the ones a section still discusses as work that remains while
+   they are closed, and flags open issues this file never mentions.
+   [#292](https://github.com/andrediashexa/hexarouting/issues/292) is why: on 2026-09-14 the file named 116 issues, 99 of
+   them closed, and had never mentioned seven that were open - two of which an
+   operator was exposed to that day. A roadmap wrong in both directions is
+   worse than no roadmap, because it is the document people check instead of
+   the code. The tool is deliberately **not** part of `make test`, which has to
+   work with no network, and deliberately not part of `make release-gate`:
+   whether a stale roadmap should refuse a release is the maintainer's call,
+   and the gate is the one thing here that has caught every release mistake
+   this project has made.
 
 ### What this plan does not promise
 
