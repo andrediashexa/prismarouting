@@ -1474,18 +1474,55 @@ the download — so anybody holding the ISO could impersonate any of those boxes
 on the management channel, and the operator's client would not object, because
 the key it pinned is the key it was handed.
 
-Two changes, and both **MUST** hold, because either one alone is a defect:
+Three changes, and all three **MUST** hold, because any one alone is a defect:
 
 * `build-iso.sh` removes the host keys before squashing. Nothing is lost on the
   live image, where `sshd` is masked.
-* `hexarouting-install` runs `ssh-keygen -A` on the target before it enables
-  `ssh.service`, and **fails the install** if it cannot. `sshd` does not start
-  without a host key, and that `sshd` is how a racked appliance is reached: an
-  install that finished with no management path is found by somebody who drove
-  to the site.
+* `hexarouting-install` removes whatever `/etc/ssh/ssh_host_*` the medium
+  handed over, on the target, before it generates anything. `ssh-keygen -A`
+  generates only the key types that are **missing**, so on a tree that already
+  has a set it is a no-op that exits 0 and prints nothing. Measured on the
+  published `hexarouting-0.37.0-ab23bd7-dirty.iso`: unpacking its squashfs with
+  the installer's own `unsquashfs -f -d` line and then running `ssh-keygen -A`
+  over the result left all three fingerprints exactly as the medium had them,
+  ed25519 `SHA256:hwhc4Nfxh3lzwZNoIlON9ehRISKN1BBeo1wcEQi/DJg`, comment
+  `root@a3bcac8dc76e`. Without this removal the generation step has no opinion
+  of its own: it cannot fail, and the guarantee is a property of the medium
+  rather than of the install.
+* `hexarouting-install` then runs `ssh-keygen -A` on the target before it
+  enables `ssh.service`, and **fails the install** if it cannot. `sshd` does not
+  start without a host key, and that `sshd` is how a racked appliance is
+  reached: an install that finished with no management path is found by somebody
+  who drove to the site.
 
-`lab/install-iso.sh` asserts both halves on the artefact — no host key in the
-image, at least one on the installed disk.
+The public halves are removed with the private ones. `ssh-keygen -A` rewrites
+the `.pub` of every key it generates, so the ones it can leave behind are the
+types it does **not** generate: measured here, `ssh-keygen -A` on
+OpenSSH_9.2p1 Debian-2+deb12u10 writes RSA, ECDSA and ED25519 and nothing else,
+so a `ssh_host_dsa_key.pub` from a build container would otherwise sit on the
+disk for the life of the box, naming a fingerprint the box does not have.
+
+`lab/install-iso.sh` asserts the first and third on the artefact - no host key
+in the image, at least one on the installed disk. It cannot reach the second,
+because the only medium it can install from is the one it just built, and that
+one carries no host keys. `test/test_installer.sh` drives
+`install_ssh_host_keys` at the installer's library seam against a target that
+carries the medium's keys, which is the case the lab has no way to set up.
+
+An appliance already installed from a medium that carried them keeps that key
+until somebody regenerates it, and nothing above reaches it: the installer on
+such a medium is the one that shipped on it. The boot self-test is what reaches
+those boxes, on the console they are standing at. It compares each key's mtime
+with the moment its file was created on the filesystem, because `unsquashfs`
+restores the build container's mtime onto an inode made at install time and a
+key generated here cannot be older than its own file, and on mtime earlier than
+birth time it fails with the three commands that regenerate the set and the
+warning that every client pinning the old fingerprint will refuse to connect
+afterwards. Driving it against a root unpacked from
+`hexarouting-0.37.0-ab23bd7-dirty.iso` produces exactly that, naming
+`ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key`. The reasoning for
+using the timestamp rather than the key comment or a list of published
+fingerprints is recorded at the check in `appliance/selftest`.
 
 ### The disk is verified before the install reports success
 

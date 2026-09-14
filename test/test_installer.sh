@@ -1289,6 +1289,191 @@ STUBEOF
 fi
 
 echo
+echo "=== the ssh host keys: what the medium handed over does not reach the disk (#248) ==="
+#
+# Measured on the published hexarouting-0.37.0-ab23bd7-dirty.iso, which is the
+# shape every medium up to 0.66.0 has: its squashfs carries
+# ssh_host_{rsa,ecdsa,ed25519}_key, the installer's own `unsquashfs -f -d`
+# line restores them onto the target, and `ssh-keygen -A` over that tree
+# printed nothing, exited 0 and left all three fingerprints as the medium had
+# them - ed25519 SHA256:hwhc4Nfxh3lzwZNoIlON9ehRISKN1BBeo1wcEQi/DJg, comment
+# root@a3bcac8dc76e, the build container. `-A` generates only what is MISSING.
+# So the install step had no opinion of its own: the keys were this box's only
+# because build-iso.sh had emptied the image first.
+#
+# WHY THE FIXTURE CANNOT BE WHAT IS PASSING HERE. It writes no key. It puts
+# three files of marker text where unsquashfs would have put the medium's
+# keys, which is the medium's half and nothing else, and every assertion below
+# reads what install_ssh_host_keys() left behind. The removal and the
+# generation are both the product's. With the removal taken out, `ssh-keygen
+# -A` sees three files that already exist, does nothing, and the marker text
+# is still on the disk - which is this section going red.
+#
+# lab/install-iso.sh cannot reach this. It installs from the ISO it just
+# built, and that ISO carries no host keys, so the only medium the lab can
+# offer the installer is the one this case is not about.
+if ! command -v ssh-keygen >/dev/null 2>&1; then
+  echo "  SKIP: no ssh-keygen on this machine to generate keys with"
+else
+  kwork=$(mktemp -d)
+  kfake=$kwork/bin; mkdir -p "$kfake"
+  # The installer's line is `chroot <root> ssh-keygen -A`. `ssh-keygen -A -f
+  # <root>` is that same call without needing root: it writes
+  # <root>/etc/ssh/ssh_host_*_key exactly where the chroot would. Anything
+  # else the installer might chroot for is not this function's business and
+  # exits 0.
+  cat > "$kfake/chroot" <<CHROOT
+#!/bin/sh
+_r=\$1; shift
+if [ -f "$kwork/chroot_fails" ]; then exit 1; fi
+case "\$*" in
+  "ssh-keygen -A") exec ssh-keygen -A -f "\$_r" ;;
+esac
+exit 0
+CHROOT
+  chmod +x "$kfake/chroot"
+
+  MEDIUM_KEY='PRIVATE KEY THE MEDIUM HANDED OVER'
+  # dsa is in the fixture and not in the list below it, deliberately. Measured
+  # here: `ssh-keygen -A` on OpenSSH_9.2p1 Debian-2+deb12u10 prints
+  # "generating new host keys: RSA ECDSA ED25519" and writes those three. A
+  # type the medium carried that -A does not make is the one file that can
+  # outlive the generation, which is the case the .pub half of the removal
+  # exists for: without it a public half from the build container stays on the
+  # disk for the life of the box, naming a fingerprint the box does not have.
+  MEDIUM_TYPES='rsa ecdsa ed25519 dsa'
+  OWN_TYPES='rsa ecdsa ed25519'
+  handed_root() {  # <dir>; a target as unsquashfs leaves it, medium keys and all
+    mkdir -p "$1/etc/ssh"
+    for _t in $MEDIUM_TYPES; do
+      printf '%s\n' "$MEDIUM_KEY" > "$1/etc/ssh/ssh_host_${_t}_key"
+      printf 'ssh-%s AAAAmedium root@a3bcac8dc76e\n' "$_t" \
+        > "$1/etc/ssh/ssh_host_${_t}_key.pub"
+    done
+  }
+  drive_keys() {  # <target>; output in $KOUT, exit status in $KRC
+    KRC=0
+    KOUT=$( ( PATH="$kfake:$PATH"
+              HEXA_INSTALL_LIB=1
+              export HEXA_INSTALL_LIB
+              . "$INSTALLER"
+              install_ssh_host_keys "$1" ) 2>&1 ) || KRC=$?
+  }
+
+  T=$kwork/from-old-medium
+  handed_root "$T"
+  drive_keys "$T"
+  [ "$KRC" = 0 ] \
+    && ok "a target carrying the medium's keys is accepted" \
+    || bad "install_ssh_host_keys refused a target it must fix: exit $KRC"
+
+  # THE ONE THAT MATTERS. Not "three keys exist" - three existed before the
+  # function ran - but that not one of them is still the file the medium put
+  # there.
+  left=""
+  for _t in $MEDIUM_TYPES; do
+    if grep -q "$MEDIUM_KEY" "$T/etc/ssh/ssh_host_${_t}_key" 2>/dev/null; then
+      left="$left ssh_host_${_t}_key"
+    fi
+  done
+  [ -z "$left" ] \
+    && ok "none of the medium's private keys is on the target" \
+    || bad "the medium's private key is still on the disk that was just "\
+"installed, so this box answers with the key in the published download:$left"
+
+  # And the public halves, which are how anybody reads a fingerprint off the
+  # disk. A .pub the medium wrote beside a private key this box made names a
+  # fingerprint the box does not have.
+  left=""
+  for _t in $MEDIUM_TYPES; do
+    if grep -q 'AAAAmedium' "$T/etc/ssh/ssh_host_${_t}_key.pub" 2>/dev/null; then
+      left="$left ssh_host_${_t}_key.pub"
+    fi
+  done
+  [ -z "$left" ] \
+    && ok "and neither is any of their public halves" \
+    || bad "a public half from the medium was left beside a key this box "\
+"made, so a fingerprint read off this disk is not the box's:$left"
+
+  # A key that is not the medium's is not yet a key. Without this the whole
+  # section passes on a function that only deletes.
+  made=0; unreadable=""
+  for _t in $OWN_TYPES; do
+    if ssh-keygen -lf "$T/etc/ssh/ssh_host_${_t}_key" >/dev/null 2>&1; then
+      made=$((made + 1))
+    else
+      unreadable="$unreadable ssh_host_${_t}_key"
+    fi
+  done
+  [ "$made" = 3 ] \
+    && ok "and this box has three host keys of its own that ssh-keygen reads" \
+    || bad "the target has no usable host key, so sshd will not start and the "\
+"box is reachable at its console only:$unreadable"
+
+  # The operator is holding a medium every box was installed from, and those
+  # boxes are still answering with this key. Saying so is the only moment
+  # anybody is standing in front of it.
+  case "$KOUT" in
+    *"this medium carries ssh host keys"*)
+      ok "and the console says the medium carried host keys" ;;
+    *) bad "the install said nothing about a medium that carries host keys:
+$KOUT" ;;
+  esac
+  case "$KOUT" in
+    *ssh_host_ed25519_key*) ok "and names them" ;;
+    *) bad "it did not name the keys the medium carried:
+$KOUT" ;;
+  esac
+
+  # A current medium carries none (build-iso.sh removes them), and an install
+  # from one must not accuse it. A warning printed on every healthy install is
+  # a warning nobody reads on the one install it is about.
+  T2=$kwork/from-current-medium
+  mkdir -p "$T2/etc/ssh"
+  drive_keys "$T2"
+  KOUT2=$KOUT
+  [ "$KRC" = 0 ] \
+    && ok "a medium that carries no host keys installs" \
+    || bad "install_ssh_host_keys failed on a clean medium: exit $KRC"
+  made=0
+  for _t in $OWN_TYPES; do
+    ssh-keygen -lf "$T2/etc/ssh/ssh_host_${_t}_key" >/dev/null 2>&1 \
+      && made=$((made + 1))
+  done
+  [ "$made" = 3 ] \
+    && ok "and the box still gets its own three keys" \
+    || bad "a box installed from a clean medium got $made host keys"
+  case "$KOUT2" in
+    *"this medium carries ssh host keys"*)
+      bad "a medium carrying no host keys was reported as carrying them:
+$KOUT2" ;;
+    *) ok "and a clean medium is not accused of carrying keys" ;;
+  esac
+
+  # The install must stop here rather than finish. sshd does not start without
+  # a host key, and that sshd is the management path to a racked box.
+  T3=$kwork/keygen-broken
+  handed_root "$T3"
+  : > "$kwork/chroot_fails"
+  drive_keys "$T3"
+  rm -f "$kwork/chroot_fails"
+  [ "$KRC" != 0 ] \
+    && ok "a target where the keys cannot be made fails the install" \
+    || bad "keygen failed and the installer carried on: it would report a "\
+"finished install with no host key and no way in over the network"
+
+  # The argument, because the rm in this function is a glob. Sourced with
+  # nothing to work on it would read /etc/ssh/ssh_host_*_key, which on a
+  # developer box is that machine's own keys.
+  drive_keys ""
+  [ "$KRC" != 0 ] \
+    && ok "and no target at all is refused rather than globbed" \
+    || bad "install_ssh_host_keys accepted an empty root"
+
+  rm -rf "$kwork"
+fi
+
+echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
 exit 1
