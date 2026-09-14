@@ -60,6 +60,23 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+- **The roadmap's "what is blocked on somebody else" table listed two things
+  that were not blocked**, and that table's own opening sentence is the
+  promise it broke: "Kept short and kept honest, so the rest of this file is
+  read as work that can actually start." The soak test shipped in 0.71.0 and
+  is called delivered in three other places in the same file, while the table
+  went on listing it beside the two issues that really do need a NIC - and the
+  soak needs none, which is the first argument of its own section ninety-six
+  lines further down. The commit read-back promotion was listed as pending
+  after it had shipped and its issue had been closed. Both rows are gone.
+
+  `test/test_doc_copies.py` now refuses a document that calls an issue blocked
+  in that table and delivered anywhere else in itself. It is the only half a
+  test with no network can see: an issue simply closed, with nothing in the
+  file saying so, is invisible to it, and the second row was exactly that.
+
 ## 0.71.0 — the box waited for a page size its CPU cannot have, and told the operator to reboot
 
 [#30](https://github.com/andrediashexa/hexarouting/issues/30),

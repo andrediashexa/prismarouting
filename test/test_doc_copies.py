@@ -280,6 +280,94 @@ for path in ("docs/roadmap.md", "docs/architecture.md", "docs/logging.md",
     elif rows:
         ok(f"    and {len(rows)} listing row(s), none repeated")
 
+print("\n=== nothing is blocked and delivered in the same document ===")
+# docs/roadmap.md has a table headed "What is blocked on somebody else, and on
+# what", and the sentence above it states what the table is FOR: "Kept short
+# and kept honest, so the rest of this file is read as work that can actually
+# start." That promise is the thing being checked. A row naming an issue the
+# same file elsewhere calls delivered does not merely age badly: it tells the
+# next reader that the queue is shorter than it is, which is the one question
+# this table exists to answer.
+#
+# It has already happened. #30, the soak test, was shipped in 0.71.0 and
+# described as delivered in three separate places in this file, while the
+# blocked table went on listing it beside #28 and #29 as "hardware this box
+# does not have". The soak needs no NIC - that is the first sentence of its
+# own section, 96 lines further down.
+#
+# Compared against the OTHER PLACE IT IS WRITTEN DOWN and never against the
+# issue tracker, which is the rule at the top of this file and is also the
+# only rule a test with no network can follow. What that cannot see is an
+# issue simply closed with nothing in this file saying so, and #197 was
+# exactly that on the same day: the table described a promotion to a refusal
+# as pending when it had shipped and the issue was closed. Nothing offline
+# could have caught it, and saying so here is better than implying this check
+# covers more than it does.
+ROADMAP = read("docs/roadmap.md")
+BLOCKED_HEAD = "#### What is blocked on somebody else, and on what"
+start = ROADMAP.find(BLOCKED_HEAD)
+if start < 0:
+    bad("docs/roadmap.md no longer has the blocked-on-somebody-else section, "
+        "so this check is reading nothing")
+else:
+    # To the next heading of the same level, not to the next blank line: the
+    # table has rows long enough to wrap in any editor and short enough to be
+    # missed by a needle that stops early.
+    end = ROADMAP.find("\n#### ", start + 1)
+    table = ROADMAP[start:end if end > 0 else len(ROADMAP)]
+
+    def issues(text):
+        return set(int(n) for n in
+                   re.findall(r"/hexarouting/issues/(\d+)\)", text))
+
+    blocked = issues(table)
+    # The marker is the EMPHASISED word - `*delivered*` or `**delivered**` -
+    # attributed to the nearest issue link before it on the SAME LINE. Both
+    # halves of that are there because a looser rule was measured and was
+    # wrong in the way this file's own header warns about.
+    #
+    # A window of characters came first: one row reads
+    #
+    #   [#28](...) throughput on real NICs, [#29](...) symmetric RSS,
+    #   [#30](...) soak test - *delivered*
+    #
+    # and any window wide enough to reach #30's marker from #30 reached it
+    # from #29 too. Three findings, two false.
+    #
+    # Nearest-link-in-the-same-paragraph came next, and a markdown table is
+    # one paragraph: it attributed a `*delivered*` in the table's fourth row
+    # to the last link in its first row, three rows above. Hence the same
+    # line.
+    #
+    # And the word has to be emphasised, which is the only part that is a
+    # judgement rather than a measurement. Plain "shipped" and plain
+    # "delivered" are ordinary English in this file - "two newer release
+    # trains have shipped since" is about fd.io and not about #36 - so a
+    # marker spelling is what separates a claim from a sentence. The cost is
+    # that somebody can write the claim unemphasised and this will not see
+    # it; the alternative was a check nobody could leave switched on.
+    delivered = set()
+    outside = ROADMAP[:start] + ROADMAP[end:] if end > 0 else ROADMAP[:start]
+    LINK = re.compile(r"/hexarouting/issues/(\d+)\)")
+    for m in re.finditer(r"\*\*?(delivered|shipped)\*?\*", outside):
+        line_start = outside.rfind("\n", 0, m.start()) + 1
+        before = list(LINK.finditer(outside, line_start, m.start()))
+        if before:
+            delivered.add(int(before[-1].group(1)))
+    both = sorted(blocked & delivered)
+    if both:
+        for n in both:
+            bad(f"docs/roadmap.md lists #{n} as blocked on somebody else and "
+                f"elsewhere in the same file calls it delivered. The table's "
+                f"own promise is that the rest of the file is work that can "
+                f"actually start")
+    elif len(blocked) >= 5:
+        ok(f"the blocked table names {len(blocked)} issue(s) and the file "
+           f"calls {len(delivered)} delivered, with no issue in both")
+    else:
+        bad(f"only {len(blocked)} issue(s) were read out of the blocked "
+            f"table, so this check is asserting almost nothing")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
