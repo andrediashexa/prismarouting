@@ -1326,6 +1326,9 @@ else
 #!/bin/sh
 _r=\$1; shift
 if [ -f "$kwork/chroot_fails" ]; then exit 1; fi
+# Success with nothing written, which is what `ssh-keygen -A` really does
+# when it believes the keys are already there.
+if [ -f "$kwork/chroot_silent" ]; then exit 0; fi
 case "\$*" in
   "ssh-keygen -A") exec ssh-keygen -A -f "\$_r" ;;
 esac
@@ -1461,6 +1464,21 @@ $KOUT2" ;;
     && ok "a target where the keys cannot be made fails the install" \
     || bad "keygen failed and the installer carried on: it would report a "\
 "finished install with no host key and no way in over the network"
+
+  # KEYGEN THAT SUCCEEDS AND WRITES NOTHING, which is not a hypothetical: it
+  # is exactly what `ssh-keygen -A` does when it thinks the keys are there,
+  # and it is how this defect worked in the first place. An install that takes
+  # the exit status for the answer reports a finished box with no host key,
+  # and sshd is the only way back to a racked one.
+  T4=$kwork/keygen-silent
+  handed_root "$T4"
+  : > "$kwork/chroot_silent"
+  drive_keys "$T4"
+  rm -f "$kwork/chroot_silent"
+  [ "$KRC" != 0 ] \
+    && ok "keygen that exits 0 and writes no key fails the install too" \
+    || bad "the installer read the exit status and not the effect: it would "\
+"report a finished install over an /etc/ssh with no host key in it"
 
   # The argument, because the rm in this function is a glob. Sourced with
   # nothing to work on it would read /etc/ssh/ssh_host_*_key, which on a

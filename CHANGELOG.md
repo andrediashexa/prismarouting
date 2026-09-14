@@ -116,6 +116,15 @@ version has a chance of seeing it.
   three commands that regenerate them. The disclosure itself, and where it is
   published, remain the maintainer's to decide.
 
+  And the install reads the EFFECT rather than the exit status.
+  `ssh-keygen -A` exits 0 having written nothing whenever it believes the keys
+  are there, which is not a hypothetical: it is the whole of how this defect
+  worked. An install that takes the exit status for the answer reports a
+  finished box over an `/etc/ssh` with no host key in it, and `sshd` is the
+  only way back to a racked one. The function now looks for a key afterwards,
+  and the test drives a `ssh-keygen` that succeeds and writes nothing.
+
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).

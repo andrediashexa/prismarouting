@@ -952,7 +952,19 @@ install_ssh_host_keys() {   # <mounted root>; non-zero if no keys could be made
   fi
   rm -f "$_r"/etc/ssh/ssh_host_*_key "$_r"/etc/ssh/ssh_host_*_key.pub
   say "  generating this box's own ssh host keys"
-  chroot "$_r" ssh-keygen -A >/dev/null 2>&1
+  chroot "$_r" ssh-keygen -A >/dev/null 2>&1 || return 1
+  # THE EFFECT, not the exit status. This is the one line between an operator
+  # and a racked box, and `ssh-keygen -A` reporting success is not the same
+  # claim as the box having a key: it exits 0 having written nothing whenever
+  # it thinks the keys are already there, which is exactly the mistake this
+  # function exists to stop, and it would do it silently. The removal above
+  # means there is nothing it may decline to make, so an empty /etc/ssh after
+  # a successful run is a target that cannot run sshd and must not be reported
+  # as installed.
+  for _k in "$_r"/etc/ssh/ssh_host_*_key; do
+    [ -f "$_k" ] && return 0
+  done
+  return 1
 }
 
 # A seam, so the disk menu and the verification can be tested without
