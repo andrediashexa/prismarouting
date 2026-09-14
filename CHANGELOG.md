@@ -63,6 +63,20 @@ version has a chance of seeing it.
 
 ### Fixed
 
+
+* **The tuner's fixture only ever built the NIC shape that already worked.**
+  `appliance/test_tune.py` symlinked `/sys/class/net/eth0/device` straight at
+  the PCI device, which is the bare-metal layout - so every assertion about the
+  generated `dpdk` stanza was exercised on the one shape where taking the
+  basename happens to be right, and #286 could sit in the tuner with a green
+  suite.
+
+  The fixture can now put a bus device in the way, which is what every virtio
+  guest looks like, and the stanza is asserted end to end on both shapes.
+  Asserting that `nic_pci()` resolves the address is not the same claim: a
+  resolver that works and a stanza that still says `no-pci` leaves the box
+  exactly as broken, and the red prints that stanza.
+
 * **Two places said the reserve block "has to land" on the subscriber's own
   public address, and the code says the opposite in as many words**
   ([#226](https://github.com/andrediashexa/hexarouting/issues/226)).
