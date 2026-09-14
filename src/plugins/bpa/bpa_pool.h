@@ -415,11 +415,20 @@ typedef struct
    * no error anywhere. A reserve is the only way to have one to give, and it
    * is paid for in capacity (issue #39).
    *
-   * Counted PER PUBLIC ADDRESS rather than as a pool-wide total. The
-   * extension has to land on the subscriber's own public address - RFC 4787
-   * REQ-2, the same reason a static forward may not name another address - so
-   * a total that did not divide evenly would leave some addresses with no
-   * reserve and the subscribers on them with nothing to be given.
+   * Counted PER PUBLIC ADDRESS rather than as a pool-wide total, because the
+   * allocator PREFERS the subscriber's own public address for its reserve
+   * block - RFC 4787 REQ-2, the same property a static forward is refused on
+   * another address to protect. A total that did not divide evenly would
+   * leave some addresses with no reserve at all, so the preference could
+   * never be honoured for the subscribers on them.
+   *
+   * A preference and not a rule, and `bpa_dyn.c` says why where it is made:
+   * the reserve is sharded by index, so the blocks on a subscriber's own
+   * address are not all in its worker's slice and the ones that are may be
+   * held. Refusing the extension rather than taking a block elsewhere would
+   * turn a property about layout into a customer losing traffic. This comment
+   * used to say the extension "has to land" there, which is a guarantee the
+   * code deliberately does not make (#226).
    *
    * Zero is every configuration written before this existed, and leaves
    * blocks_mapped equal to blocks_per_ip and the mapping untouched.

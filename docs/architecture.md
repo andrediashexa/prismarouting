@@ -219,10 +219,20 @@ reserve_count  = outside.count × reserve
 ```
 
 The reserve is counted **per public address** and not as a pool-wide total, for
-three reasons that all point the same way. A subscriber's extension has to land
-on the subscriber's own public address (RFC 4787 REQ-2, paired address pooling),
-so a total that did not divide evenly would leave some addresses with no reserve
-and the subscribers on them with nothing to be given. The reverse direction
+three reasons that all point the same way. The allocator **prefers** the
+subscriber's own public address for its reserve block (RFC 4787 REQ-2, paired
+address pooling), so a total that did not divide evenly would leave some
+addresses with no reserve at all and the preference could never be honoured for
+the subscribers on them.
+
+A preference and not a rule. The reserve is sharded by index, so the blocks on
+a subscriber's own address are not all in its worker's slice and the ones that
+are may be held by somebody else; refusing the extension rather than taking a
+block elsewhere would turn a property about layout into a customer losing
+traffic. This paragraph said "has to land" until
+[#226](https://github.com/andrediashexa/hexarouting/issues/226) was read
+against the code, which states the opposite in as many words where the choice
+is made. The reverse direction
 tests one comparison — is this block above the mapped ones — and an uneven total
 would make that test depend on which address the packet arrived on. And
 `blocks_per_ip` is uniform across the pool, which is the property the whole
