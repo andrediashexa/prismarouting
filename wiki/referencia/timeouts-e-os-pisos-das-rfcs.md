@@ -75,7 +75,7 @@ Todos são ajustes **aplicados no lugar**: não derrubam sessão.
 show cgnat pool
 ```
 
-No dataplane, `show bpa timeouts` marca **todo valor abaixo do piso**, global e por pool com as sobrescritas já resolvidas — para que o estado fique visível a quem não sabia que devia perguntar.
+E o `commit` avisa: **todo valor abaixo do piso** é marcado no momento em que a mudança é aplicada, global e por pool com as sobrescritas já resolvidas, para que o estado fique visível a quem não sabia que devia perguntar.
 
 
 :::success

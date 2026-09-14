@@ -6435,6 +6435,24 @@ check("reboot the box" in _disk,
 check("install" not in _disk,
       f"and is not told to install over itself: {_disk!r}")
 
+print("\n=== the trail's tamper check has a VTY spelling (#313) ===")
+# The dataplane has had `show bpa pool history [verify]` since v0.23.0 and the
+# VTY proxied the command WITHOUT its argument, so no VTY spelling reached the
+# check. Two operator pages documented it by the dataplane's own name - one of
+# them at the last step before the disk is erased, with a "pare aqui" attached
+# to its result - so an operator following the page got a parser error at the
+# moment they were told to stop if the answer was wrong.
+# The tree directly: `opts` is shadowed by a local dict further up this file.
+_hist = hexash.TREE["operational"]["show"][1]["cgnat"][1]["history"][1]
+check(isinstance(_hist, dict) and "verify" in _hist,
+      f"'show cgnat history' offers verify: {_hist}")
+_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "src", "hexash", "hexash.py"),
+            encoding="utf-8").read()
+check('"show cgnat history verify": "show bpa pool history verify"' in _src,
+      "and the proxy carries it through to the dataplane, which is where the "
+      "check lives")
+
 print("\n=== every command a message names is one this VTY has ===")
 # THE DEFECT (#308). `show interface` on a box whose NIC is bound correctly and
 # still absent from the dataplane told the operator that "'show log' and the

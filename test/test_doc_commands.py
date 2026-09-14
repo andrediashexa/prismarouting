@@ -559,6 +559,64 @@ else:
     bad(f"only {_pairs} fixture-and-lab pair(s) were found, so this is "
         f"asserting almost nothing")
 
+print("\n=== the wiki names no command from the dataplane's own CLI ===")
+# THE DEFECT (#313). Two operator pages told the reader to run
+# `show bpa pool history verify` - the dataplane's spelling, which no VTY
+# command reached. One of them puts it at the last step before the disk is
+# erased, with a "pare aqui" attached to its result, so an operator following
+# the page to the letter gets a parser error at the moment they are told to
+# stop if the answer is wrong.
+#
+# NARROW ON PURPOSE, and the width was measured rather than chosen. Walking
+# every command in every wiki code block against the tree flags 12 of 193
+# lines and all 12 are false: help-table rows with their prose on the same
+# line (`commit    aplica`), output lines (`commit complete`), a command from
+# the installer's own tree (`install`), and commands with an argument. That is
+# the rate test/test_doc_copies.py's header records getting a check switched
+# off.
+#
+# So this asks one question with no heuristics in it: on a line that is a
+# command ALONE - no run of two spaces, which is what separates a command from
+# the prose beside it in a help table - is the word after `show` one the VTY
+# offers? Measured: 62 such lines, 0 unknown. The dataplane's `show bpa ...`
+# fails it on the first word, which is the whole class this is for.
+_SHOW = hexash.TREE["operational"]["show"][1]
+_lines, _unknown = 0, {}
+for _root, _dirs, _files in os.walk(os.path.join(REPO, "wiki")):
+    for _f in _files:
+        if not _f.endswith(".md"):
+            continue
+        _rel = os.path.relpath(os.path.join(_root, _f), REPO)
+        _inblock = False
+        with open(os.path.join(REPO, _rel), encoding="utf-8") as _fh:
+            for _ln, _line in enumerate(_fh, 1):
+                if _line.startswith("```"):
+                    _inblock = not _inblock
+                    continue
+                if not _inblock:
+                    continue
+                _s = _line.strip()
+                if _s.startswith("hexarouting>"):
+                    _s = _s[len("hexarouting>"):].strip()
+                if "  " in _s:
+                    continue
+                _w = _s.split()
+                if len(_w) < 2 or _w[0] != "show":
+                    continue
+                _lines += 1
+                if _w[1] not in _SHOW:
+                    _unknown.setdefault(_s, []).append(f"{_rel}:{_ln}")
+for _s, _where in sorted(_unknown.items()):
+    bad(f"{_where[0]} tells an operator to run {_s!r} and this VTY has no "
+        f"'show {_s.split()[1]}': the wiki is written for people who have the "
+        f"VTY and not the dataplane's CLI")
+if not _unknown:
+    if _lines >= 40:
+        ok(f"all {_lines} of them")
+    else:
+        bad(f"only {_lines} command line(s) were found in the wiki's code "
+            f"blocks, so this check is reading almost nothing")
+
 print("\n=== every path these documents send a reader to is in the tree ===")
 # A POINTER, not a second copy of a truth, which is why this is sound where
 # test/test_doc_copies.py's header rejects its own opposite. The holder is the

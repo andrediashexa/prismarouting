@@ -76,7 +76,7 @@ A consequência é que a cópia que você levou **não restaura acesso nenhum**.
 **Modo determinístico.** Não há alocação para exportar: a prova é o algoritmo mais a configuração que estava em vigor, e é a trilha que diz qual era. Confira a trilha e compare o resumo do topo com a cópia no seu syslog remoto:
 
 ```
-show bpa pool history verify
+show cgnat history verify
   7 entries checked, chain intact
   head  seq 7 sha256 4e98de83…81f4
 ```
