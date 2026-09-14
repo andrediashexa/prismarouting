@@ -158,6 +158,92 @@ else:
         ok(f"all {len(reads)} of them: {sorted(reads)}, out of the "
            f"{len(carried)} the medium carries")
 
+print("\n=== nothing is written before the installer can still refuse ===")
+# THE PROPERTY test/test_install_says.sh CANNOT HOLD. That file RUNS the
+# installer and reads what it did to one root, so it proves that the three
+# files it checksums did not move. It cannot prove that no OTHER write happens
+# before the refusal, because a write it does not know about is a write it does
+# not look at. This is a property of the text and belongs here.
+#
+# WHY IT MATTERS. install.sh refuses when it cannot find one of the two plugins
+# the build produces, and a refusal is only worth taking while it still costs
+# nothing - which is true only while nothing has been written. Both refusals
+# used to sit forty lines down, past the whole of src/hexash: a tree with no
+# dataplane plugin left a box carrying a NEW VTY over an OLD dataplane, and a
+# tree with no vat2 plugin left one carrying a new dataplane behind the
+# PREVIOUS version's vat2 plugin with the new version stamped on it (#301).
+# Both are the same shape: the run got far enough that stopping no longer put
+# the box back. An install line added above the marker brings that shape back,
+# and it would come back silently, because a half-installed root still boots.
+#
+# HOW A WRITE IS RECOGNISED, and it is deliberately generous. The verbs that
+# put bytes somewhere, plus any redirection into $DESTDIR. groupadd, chsh and
+# `systemctl enable` are in the list although they never name $DESTDIR: they
+# write on the live box, and a refusal after root's login shell has been
+# changed is exactly as expensive as one after a file copy. Reads are not
+# writes: the PREV_STAMP `cat` and the `grep` over /etc/frr/daemons name
+# $DESTDIR and stay out of the list, which is why the verb has to be there.
+MARKER = "# END OF THE PREFLIGHT."
+WRITE = re.compile(r"\binstall\s+-|\bln\s+-s|\bchmod\s|\bchgrp\s|"
+                   r"\bsed\s+-i\s|\bgroupadd\s|\bchsh\s|"
+                   r"\bsystemctl\s+enable\b|\bsystemctl\s+daemon-reload\b|"
+                   r'>>?\s*"\$DESTDIR')
+
+# Backslash continuations joined first. Nine of the install lines in this file
+# put the source on one line and the destination on the next, and a check that
+# read physical lines would call `install -D -m 0644 "$REPO/..." \` a write and
+# miss nothing - but it would also fail to see the `sed -i` whose $DESTDIR
+# argument is on the following line. The line number kept is the first physical
+# one, which is what a reader would go and look at.
+logical, buf, start = [], "", None
+for n, raw in enumerate(SCRIPT.split("\n"), 1):
+    if start is None:
+        start = n
+    if raw.endswith("\\"):
+        buf += raw[:-1] + " "
+        continue
+    logical.append((start, buf + raw))
+    buf, start = "", None
+
+marker_at = [n for n, t in logical if t.lstrip().startswith(MARKER)]
+writes = [(n, t.strip()) for n, t in logical
+          if not t.lstrip().startswith("#") and WRITE.search(t)]
+
+if len(marker_at) != 1:
+    bad(f"appliance/install.sh has {len(marker_at)} line(s) beginning "
+        f"{MARKER!r} and this check needs exactly one. It cannot tell where "
+        f"the preflight ends, so it is asserting nothing about where the "
+        f"installer can still refuse for free")
+elif not writes:
+    bad("no line in appliance/install.sh was recognised as writing anything, "
+        "so this check would stay green on an installer that refuses after "
+        "installing the whole product")
+else:
+    early = [(n, t) for n, t in writes if n < marker_at[0]]
+    if early:
+        for n, t in early:
+            bad(f"appliance/install.sh line {n} writes before the preflight "
+                f"ends at line {marker_at[0]}: {t!r}. A refusal below it is a "
+                f"refusal on a root that has already been changed, which is "
+                f"the half-installed box #301 is about")
+    else:
+        ok(f"all {len(writes)} write(s) are below line {marker_at[0]}, so "
+           f"every refusal above them leaves the root untouched")
+
+# And that there is something up there to refuse WITH. The marker on its own
+# would keep the check green on a preflight that resolves both plugins and
+# shrugs, which is the build this replaced.
+head = SCRIPT.split(MARKER)[0] if marker_at else ""
+_missing = [so for so in ("bpa_plugin.so", "bpa_test_plugin_bpa_plugin.so")
+            if not re.search(re.escape(so) + r'[^"]*not found', head)]
+if marker_at and not _missing:
+    ok("and both plugins are refused by name above it")
+elif marker_at:
+    bad(f"the preflight of appliance/install.sh does not refuse {_missing} by "
+        f"name. A component resolved and not refused is one the installer "
+        f"carries on without, which is #301 exactly: it warned on stderr, "
+        f"installed the rest and stamped the box with a build it had half of")
+
 print("\n=== and the check is reading something ===")
 # Without this the whole file passes on an install.sh that has been emptied,
 # which is the shape #151 spent an issue on.

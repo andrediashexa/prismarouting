@@ -90,6 +90,17 @@ install_run() {  # <version stamp> <output file>
     sh "$TREE/appliance/install.sh" > "$2" 2>&1
 }
 
+# The same run with the two streams kept apart, and the exit status returned
+# rather than swallowed. #301 is a defect about WHICH STREAM a sentence went
+# to and what the exit status was beside it, so a runner that merges them
+# cannot ask the question: a warning on stderr followed by exit 0 and a
+# refusal on stderr followed by exit 1 are the same text in one file.
+install_try() {  # <version stamp> <stdout file> <stderr file>
+  DESTDIR="$DEST" HEXA_VERSION_STAMP="$1" PLUGIN_DIR=/usr/lib/vpp_plugins \
+    VAT2_DIR=/usr/lib/vat2_plugins \
+    sh "$TREE/appliance/install.sh" > "$2" 2> "$3"
+}
+
 echo "=== the first install: there was nothing here before ==="
 if install_run "$OLD_V" "$WORK/run1"; then
   ok "appliance/install.sh ran into an empty root"
@@ -204,6 +215,141 @@ repairing a box is told the same thing a first install is told"
 said "$RUN3" "the version stamp was $NEW_V" \
   && ok "and names it on both sides" \
   || bad "the third run does not name $NEW_V as what was there"
+
+echo
+echo "=== an upgrade it cannot install every component of ==="
+#
+# The defect this answers, measured on the build before it: install.sh could
+# not find a vat2 plugin, printed "warning: no vat2 plugin; the binary API
+# will not be reachable" ON STDERR, wrote the new bpa_plugin.so over the old
+# one, left the PREVIOUS version's vat2 plugin exactly where it was, stamped
+# the box with the new version and exited 0. The box then asserted a build it
+# had half of, with a vat2 plugin older than the dataplane plugin beside it,
+# which is the skew #293 measured as unable to answer a message that grew a
+# field - and #291's `show version` cannot see it, because the stamp and the
+# loaded plugin's build are both the new version (#301).
+#
+# WHAT IS ASSERTED HERE IS NOT THE WORDING, IT IS THAT NOTHING MOVED. A
+# refusal that still wrote the dataplane plugin, or still moved the stamp,
+# would be the same half state with a longer message in front of it, and the
+# message is the easiest half to get right. So the three files this run could
+# have touched are checksummed before it and compared after: the version
+# stamp, the dataplane plugin on the root, and the previous version's vat2
+# plugin. That is also why the stand-in bpa_plugin.so is CHANGED first - over
+# an identical file a copy that did happen is indistinguishable from one that
+# did not, and this check would pass on an installer that wrote everything.
+BUILT_VAT2=$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+BUILT_DP=$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so
+ROOT_VAT2=$DEST/usr/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+ROOT_DP=$DEST/usr/lib/vpp_plugins/bpa_plugin.so
+STAMP_FILE=$DEST/usr/share/hexarouting/VERSION
+
+sum() { md5sum "$1" 2>/dev/null | cut -d' ' -f1; }
+
+WAS_VAT2=$(sum "$ROOT_VAT2")
+WAS_DP=$(sum "$ROOT_DP")
+WAS_STAMP=$(cat "$STAMP_FILE" 2>/dev/null)
+
+# The fixture is only a fixture if the box really is carrying a vat2 plugin to
+# begin with. Asserted rather than assumed: if the three runs above never put
+# one on this root, "the old one is still there" below is true of nothing.
+[ -n "$WAS_VAT2" ] \
+  && ok "the root is carrying a vat2 plugin from the runs above" \
+  || bad "no vat2 plugin ever reached $ROOT_VAT2 across three installs, so \
+appliance/install.sh is not installing it at all and every check below is \
+about a file that is not there"
+
+echo "a NEWER stand-in bpa_plugin.so" > "$BUILT_DP"
+rm -f "$BUILT_VAT2"
+NEXT_V="0.73.0 (dddddd)"
+
+if install_try "$NEXT_V" "$WORK/out4" "$WORK/err4"; then
+  bad "the installer exited 0 on a build tree with no vat2 plugin. That is \
+#301: it warns on stderr, installs the rest, and stamps the box with a \
+version it only has half of"
+else
+  ok "it refuses: a build tree with no vat2 plugin is not an upgrade"
+fi
+ERR4=$(cat "$WORK/err4")
+OUT4=$(cat "$WORK/out4")
+
+said "$ERR4" "bpa_test_plugin_bpa_plugin.so not found" \
+  && ok "and names the file that is missing" \
+  || bad "the refusal does not name bpa_test_plugin_bpa_plugin.so, so the \
+reader is told the install failed and not which component it could not \
+install: $ERR4"
+said "$ERR4" "run tools/build.sh plugin" \
+  && ok "and the command that produces it" \
+  || bad "the refusal does not say how to produce the missing plugin"
+said "$ERR4" "Nothing has been written." \
+  && ok "and says the root was not touched, which is the whole reason to \
+refuse this early" \
+  || bad "the refusal does not tell the reader that nothing was written. A \
+failed upgrade whose blast radius is not stated is one an operator has to go \
+and measure at two in the morning"
+
+# Every negative below is satisfied by an installer that refuses for some
+# unrelated reason before it reaches the plugins at all, so the messages are
+# read first and the state second.
+[ "$(cat "$STAMP_FILE" 2>/dev/null)" = "$WAS_STAMP" ] \
+  && ok "the version stamp still says $WAS_STAMP" \
+  || bad "the refused install moved the version stamp from $WAS_STAMP to \
+$(cat "$STAMP_FILE" 2>/dev/null). The box now asserts a build it does not \
+wholly have, which is #301 with a refusal printed over it"
+[ "$(sum "$ROOT_DP")" = "$WAS_DP" ] \
+  && ok "and the dataplane plugin on the root is the one that was there" \
+  || bad "the refused install wrote the new bpa_plugin.so anyway, so the box \
+is carrying a new dataplane behind the previous version's vat2 plugin - the \
+exact skew this refusal exists to prevent"
+[ "$(sum "$ROOT_VAT2")" = "$WAS_VAT2" ] \
+  && ok "and the vat2 plugin it could not replace was left alone, not \
+half-replaced" \
+  || bad "the refused install changed $ROOT_VAT2, which it had no new \
+version of"
+[ -z "$OUT4" ] \
+  && ok "it printed nothing at all on stdout: it refused before it announced \
+installing anything" \
+  || bad "the refused install narrated work on stdout before it refused, so \
+it got past the point where refusing is free: $OUT4"
+
+# #252, #271, #285. This is prose an operator reads on an 80-column serial
+# console, and three messages in this product have shipped wider than one.
+WIDE=$(awk 'length > 79 {print length" columns: "$0}' "$WORK/err4")
+if [ -z "$WIDE" ] && [ "$(wc -l < "$WORK/err4")" -ge 6 ]; then
+  ok "the refusal is $(wc -l < "$WORK/err4") lines, widest $(awk '{print \
+length}' "$WORK/err4" | sort -rn | head -1) columns"
+else
+  bad "the refusal is $(wc -l < "$WORK/err4") line(s) and these are wider \
+than the 79-column console an operator reads it on: $WIDE"
+fi
+
+echo
+echo "=== and the same tree, once the build is finished ==="
+# The other half of the refusal, and the one that says it is about the missing
+# file rather than about anything else on this root. It also proves the
+# refused run did not consume the previous stamp: the notice below still names
+# the version the THIRD run left, not the one the refused fourth run carried.
+echo "a NEWER stand-in vat2 plugin" > "$BUILT_VAT2"
+if install_try "$NEXT_V" "$WORK/out5" "$WORK/err5"; then
+  ok "the same tree installs once both plugins are in it"
+else
+  bad "the installer still refuses a tree that has both plugins, so the \
+refusal above was not about the vat2 plugin at all:"
+  sed 's/^/        /' "$WORK/err5"
+fi
+RUN5=$(cat "$WORK/out5")
+[ "$(cat "$ROOT_VAT2" 2>/dev/null)" = "a NEWER stand-in vat2 plugin" ] \
+  && ok "and the new vat2 plugin is the one on the root" \
+  || bad "the run that found a vat2 plugin did not install it: $ROOT_VAT2 is \
+still $(cat "$ROOT_VAT2" 2>/dev/null)"
+[ "$(cat "$ROOT_DP" 2>/dev/null)" = "a NEWER stand-in bpa_plugin.so" ] \
+  && ok "and so is the new dataplane plugin" \
+  || bad "the dataplane plugin on the root is not the one this run installed"
+said "$RUN5" "the version stamp was $WAS_STAMP" \
+  && ok "and it upgrades from $WAS_STAMP, the build the refused run left \
+standing" \
+  || bad "the upgrade after the refusal does not name $WAS_STAMP as what was \
+here, so the refused run moved the stamp after all: $RUN5"
 
 echo
 echo "=== the three screens only a running box can reach ==="

@@ -241,6 +241,41 @@ version has a chance of seeing it.
   is a split to clear when there is none sends them to book a maintenance
   window for nothing.
 
+* **`appliance/install.sh` refuses a build it cannot install every component
+  of, before it has written anything**
+  ([#301](https://github.com/andrediashexa/hexarouting/issues/301)). It could
+  not find a vat2 plugin, printed `warning: no vat2 plugin; the binary API
+  will not be reachable` on stderr, wrote the new `bpa_plugin.so` over the old
+  one, left the PREVIOUS version's vat2 plugin where it was, stamped the box
+  with the new version and exited 0. The box then asserted a build it had half
+  of, with a vat2 plugin older than the dataplane plugin beside it - the skew
+  [#293](https://github.com/andrediashexa/hexarouting/issues/293) measured as
+  unable to answer a message that grew a field.
+
+  Nothing on the box could read the half that was wrong.
+  [#291](https://github.com/andrediashexa/hexarouting/issues/291)'s `show
+  version` compares the stamp against the build the loaded plugin reports and
+  both of those were the new version, and the self-test asks whether the
+  binary API answers, not which build is answering.
+
+  Both plugins are now resolved at the top of the script, before the first
+  byte is written, and a missing one is refused there. A box whose upgrade is
+  refused is still wholly the build it was that morning, which is the only
+  outcome an operator woken at two in the morning can act on. The
+  `bpa_plugin.so` refusal moved up with it: it used to sit past the whole of
+  `src/hexash`, so a tree with no dataplane plugin left a box carrying a new
+  VTY over an old dataplane.
+
+  **The same on both paths**, because what is refused is a property of the
+  build tree and not of the root being written. A `$DESTDIR` fakeroot gets no
+  old vat2 plugin left behind, it gets none at all - and the medium assembled
+  from that tree would carry the missing half to every box installed from it,
+  which is what
+  [#119](https://github.com/andrediashexa/hexarouting/issues/119) cost.
+  `appliance/build-iso.sh` already refused both plugins before the
+  debootstrap; this is the first of those guards inside the script the others
+  were watching.
+
 * **The product stopped claiming an upgrade path its own users cannot run**
   ([#295](https://github.com/andrediashexa/hexarouting/issues/295)). Measured
   on a real appliance: there is no `install.sh` on it, no source tree and no

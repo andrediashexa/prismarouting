@@ -45,6 +45,94 @@ say() { echo "==> $*"; }
 # cannot support.
 PREV_STAMP=$(cat "$DESTDIR/usr/share/hexarouting/VERSION" 2>/dev/null || true)
 
+# EVERY COMPONENT THIS BUILD IS MADE OF, RESOLVED BEFORE ANY OF IT IS WRITTEN.
+#
+# THE TWO PLUGINS ARE ONE BUILD PRODUCT. tools/build.sh compiles them in one
+# ninja run and copies both out of the container in the same block, and
+# lab/upgrade.sh's build_plugin does the same with `|| return 1` on each. So a
+# tree that has bpa_plugin.so and no vat2 plugin beside it is not a tree
+# somebody chose to build that way, it is a build that did not finish. And
+# there is no box that wants one and not the other: the vat2 plugin is what
+# lets anything outside VPP speak this plugin's binary API, which is how hexash
+# learns that a configuration was REFUSED rather than applied. #119 is what a
+# medium without it cost - every release shipped with that API unregistered and
+# no CGNAT pool configurable on the installed box, which is the one thing the
+# appliance exists to do.
+#
+# WHY THIS REFUSES WHERE IT USED TO WARN. It printed "warning: no vat2 plugin"
+# on stderr and carried on: it wrote the new bpa_plugin.so over the old one,
+# left the PREVIOUS version's vat2 plugin exactly where it was, and stamped the
+# box with the new version. The box then asserts a build it has half of, with a
+# vat2 plugin older than the dataplane plugin beside it - the skew #293
+# measured as unable to answer a message that grew a field. Nothing on the box
+# can read the half that is wrong: #291's `show version` compares the stamp
+# against the build the loaded plugin reports and both of those are the new
+# version, and the self-test asks whether the API answers, not which build is
+# answering. That is why the combination is worse than either half of it, and
+# why the answer is a refusal and not a louder warning (#301).
+#
+# WHY IT IS UP HERE AND NOT WHERE THE PLUGINS ARE INSTALLED. A refusal is only
+# worth taking while it still costs nothing, and it costs nothing only while
+# nothing has been written. The bpa_plugin.so refusal used to sit forty lines
+# down, past the whole of src/hexash: a tree with no dataplane plugin left a
+# box carrying a NEW VTY over an OLD dataplane and told the reader to run
+# tools/build.sh, which is this same half state with one component swapped.
+# Resolved up here, a box whose upgrade is refused is still wholly the build it
+# was this morning, and an upgrade that failed having changed nothing is the
+# only outcome an operator woken at two in the morning can act on.
+#
+# THE SAME ON BOTH PATHS, deliberately, because what is refused is a property
+# of the BUILD TREE and not of the root being written. A $DESTDIR fakeroot gets
+# no old vat2 plugin left behind - it gets none at all - but the medium
+# assembled from that tree carries the missing half to every box installed from
+# it, permanently, and #295 says those boxes have no install.sh to re-run.
+# appliance/build-iso.sh already refuses both plugins before it spends ten
+# minutes on a debootstrap, and asserts afterwards that the vat2 plugin reached
+# the image. This is the third of those guards and the first one inside the
+# script the other two are watching.
+if [ -f "$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so" ]; then
+  SO="$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
+elif [ -f /vpp_plugins/bpa_plugin.so ]; then
+  SO=/vpp_plugins/bpa_plugin.so
+else
+  echo "bpa_plugin.so not found; run tools/build.sh plugin first. Nothing" >&2
+  echo "has been written, so this root is still whatever it was before." >&2
+  exit 1
+fi
+
+VAT2_DIR=${VAT2_DIR:-/usr/lib/x86_64-linux-gnu/vat2_plugins}
+if [ -f "$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so" ]; then
+  VSO="$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+elif [ -f /vat2_plugins/bpa_test_plugin_bpa_plugin.so ]; then
+  VSO=/vat2_plugins/bpa_test_plugin_bpa_plugin.so
+else
+  # Named in full, and it names the OTHER plugin too: the reader is standing
+  # in front of a tree that has one and not the other, and the single most
+  # useful thing to tell them is that the build is half done rather than
+  # absent. Whoever reads this has a source tree by definition (#295).
+  echo "bpa_test_plugin_bpa_plugin.so not found; run tools/build.sh plugin" >&2
+  echo "first. This tree HAS bpa_plugin.so and the two are built" >&2
+  echo "together, so this build did not finish." >&2
+  echo >&2
+  echo "Refused rather than installed without it. The vat2 plugin is how" >&2
+  echo "anything outside VPP reaches this plugin's binary API, so a box" >&2
+  echo "that took this upgrade would run a new dataplane behind the" >&2
+  echo "PREVIOUS version's vat2 plugin and stamp itself the new version" >&2
+  echo "anyway - a build it has half of, and the half that is wrong is the" >&2
+  echo "one nothing on the box reads (#301)." >&2
+  echo >&2
+  echo "Nothing has been written. This root is still whatever it was" >&2
+  echo "before this ran, which is the state it can be upgraded from once" >&2
+  echo "the build is finished." >&2
+  exit 1
+fi
+
+# END OF THE PREFLIGHT. Every line below this one writes into ${DESTDIR:-/}.
+# test/test_install_manifest.py reads this file to keep it that way, because a
+# refusal that comes after the first write is a refusal that has already cost
+# something - which is the defect this block exists to answer, with a different
+# component in it.
+
 say "binaries"
 # hexash imports config.py from its own directory, so both have to travel
 # together. Installing only hexash.py put a VTY on the box that raised
@@ -76,33 +164,13 @@ install -D -m 0755 "$REPO/appliance/hexarouting-snmp-agent" \
     "$DESTDIR/usr/lib/hexarouting/snmp-agent"
 
 say "dataplane plugin"
-if [ -f "$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so" ]; then
-  SO="$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
-elif [ -f /vpp_plugins/bpa_plugin.so ]; then
-  SO=/vpp_plugins/bpa_plugin.so
-else
-  echo "bpa_plugin.so not found; run tools/build.sh plugin first" >&2
-  exit 1
-fi
+# Both paths were resolved by the preflight, which refused if either was
+# missing, so these two are a copy and nothing else. The vat2 plugin used to be
+# guarded here with `[ -n "$VSO" ]` and a warning on stderr, and that guard is
+# what left a box running the previous version's vat2 plugin under a new
+# dataplane (#301). There is nothing left to decide at this point in the file.
 install -D -m 0644 "$SO" "$DESTDIR$PLUGIN_DIR/bpa_plugin.so"
-
-# The vat2 plugin is what lets anything outside VPP speak the binary API for
-# this plugin - which is how hexash learns that a configuration was refused
-# rather than applied. Without it, vat2 answers "No such command" and the
-# control plane is back to parsing CLI text.
-VAT2_DIR=${VAT2_DIR:-/usr/lib/x86_64-linux-gnu/vat2_plugins}
-if [ -f "$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so" ]; then
-  VSO="$REPO/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
-elif [ -f /vat2_plugins/bpa_test_plugin_bpa_plugin.so ]; then
-  VSO=/vat2_plugins/bpa_test_plugin_bpa_plugin.so
-else
-  VSO=""
-fi
-if [ -n "$VSO" ]; then
-  install -D -m 0644 "$VSO" "$DESTDIR$VAT2_DIR/bpa_test_plugin_bpa_plugin.so"
-else
-  echo "warning: no vat2 plugin; the binary API will not be reachable" >&2
-fi
+install -D -m 0644 "$VSO" "$DESTDIR$VAT2_DIR/bpa_test_plugin_bpa_plugin.so"
 
 say "systemd"
 for u in hexarouting.service hexarouting-tune.service hexarouting-selftest.service \
