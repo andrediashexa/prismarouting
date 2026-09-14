@@ -2643,7 +2643,11 @@ check("Admin" in capture(sh, "show interfaces terse"),
 # number of interfaces the box has.
 sh = box_192(TERSE_IF, addr_text=ADDRS)
 out = capture(sh, "show interface terse pg0.100")
-check("1 of 4 interface(s) shown" in out, f"a narrowed listing says so: {out}")
+# TERSE_IF has four rows and three of them can forward, so both sides of the
+# "N of M" are forwarding counts (#306). This read "1 of 4" while the box had
+# three usable ports.
+check("1 of 3 interface(s) that can forward are shown" in out,
+      f"a narrowed listing says so: {out}")
 
 # The description view. This used to print a table and then say the dataplane
 # carries no descriptions - true when written, false since `description`
@@ -2653,9 +2657,78 @@ out = capture(sh, "show interface description")
 check("TRANSITO Vivo" in out, f"a description is shown: {out}")
 check("carries no per-interface description" not in out,
       "and the box no longer denies having them")
-check("1 of 4 interface(s) described" in out, f"counted: {out}")
+check("1 of 3 interface(s) described" in out, f"counted: {out}")
 check("description <text>" in out,
       "an empty column is a question; the answer is how to fill it")
+
+# ---------------------------------------------------------------------------
+# The count is of what can forward, in EVERY view that prints one (#306)
+#
+# 0.74.0's installation medium said "the dataplane has no interface to forward
+# on" and, four lines below it, "1 interface(s) on the dataplane". The one it
+# counted was local0. The count is printed from three places and all three
+# read the same holder now, so this walks all three rather than the one the
+# console happened to show.
+print("\n=== the interface count counts what can forward (#306) ===")
+
+_IF_NONE = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+local0                            0     down          0/0/0/0
+"""
+_HW_NONE = """              Name                Idx   Link  Hardware
+local0                             0    down  local0
+  Link speed: unknown
+"""
+# Two cards installed, which is the case the issue had NOT measured. The old
+# count read three here, so an operator comparing the box against the cards
+# they put in was off by one on a working box, not only on an empty one.
+_IF_TWO = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+TenGigabitEthernet0/8/0           1      up          9000/0/0/0
+TenGigabitEthernet0/8/1           2      up          9000/0/0/0
+local0                            0     down          0/0/0/0
+"""
+_HW_TWO = """              Name                Idx   Link  Hardware
+TenGigabitEthernet0/8/0            1     up   TenGigabitEthernet0/8/0
+  Link speed: 10 Gbps
+TenGigabitEthernet0/8/1            2     up   TenGigabitEthernet0/8/1
+  Link speed: 10 Gbps
+local0                             0    down  local0
+  Link speed: unknown
+"""
+
+for _cmd in ("show interface", "show interface terse",
+             "show interface description"):
+    _o = capture(box_192(_IF_NONE, _HW_NONE), _cmd)
+    # The contradiction itself, as one assertion: whatever the wording, a box
+    # that has nothing to forward on must not print a 1 next to the word
+    # interface. The number is what an operator reads off this screen.
+    check("1 interface(s)" not in _o and "of 1 interface(s)" not in _o,
+          f"a box with no NIC does not count local0 as one - {_cmd}: {_o}")
+    check("local0" in _o,
+          f"and local0 is still LISTED, not hidden - {_cmd}: {_o}")
+    check("local0 is listed above but not counted" in _o,
+          f"the count says what it left out - {_cmd}: {_o}")
+
+    _o = capture(box_192(_IF_TWO, _HW_TWO), _cmd)
+    check("3 interface(s)" not in _o and "of 3 interface(s)" not in _o,
+          f"two cards installed do not read three - {_cmd}: {_o}")
+    check("2 interface(s)" in _o or "of 2 interface(s)" in _o,
+          f"two cards installed read two - {_cmd}: {_o}")
+print("  all three count lines, on an empty box and on a two-card box")
+
+# And the two sentences together, off the product's own path, because the
+# defect was never one line: it was two lines in one screen.
+_probe = box_192(_IF_NONE, _HW_NONE)
+_d = tempfile.mkdtemp()
+_probe.STARTUP_CONF = os.path.join(_d, "startup.conf")
+_probe.TUNE_ENV = os.path.join(_d, "tune.env")
+open(_probe.STARTUP_CONF, "w").write(
+    "plugins { plugin dpdk_plugin.so { disable } }\n")
+_o = capture(_probe, "show interface")
+check("no interface to forward on" in _o,
+      f"the diagnosis is still printed: {_o}")
+check("0 interface(s) on the dataplane can forward" in _o,
+      f"and the count under it agrees with it: {_o}")
+print("  the diagnosis and the count no longer disagree in one screen")
 
 # Utilisation. The rate must come from the MEASURED elapsed time, not from the
 # interval that was asked for: on a box busy enough to be worth asking about,

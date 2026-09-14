@@ -9115,6 +9115,51 @@ class Shell:
         # better than printing it twice under two names.
         self.print_config(cfg)
 
+    #: VPP's own null interface. It is on every box, it is always down, it
+    #: cannot be configured and it forwards nothing. Named here because three
+    #: different count lines have to leave it out and a fourth reader must not
+    #: have to rediscover which string it is.
+    NULL_INTERFACE = "local0"
+
+    @classmethod
+    def forwarding_count(cls, ifaces):
+        """
+        How many of these interfaces can forward, and the note that goes under
+        any count printed from them.
+
+        THE ONE HOLDER of that decision. `show interface` printed
+        `len(ifaces)` in three places, and on a box with no NIC the dataplane
+        reports exactly `local0`, so the first screen of 0.74.0 said "the
+        dataplane has no interface to forward on" and, four lines below it,
+        "1 interface(s) on the dataplane" (#306). Measured on a box with two
+        NICs as well, which the issue had not: the same count read THREE, so
+        an operator checking the cards they installed against what the box
+        reports is off by one on every box, not only on the empty one.
+
+        The count is of what can forward, and the wording says so, because the
+        number an operator acts on is the number of cards they put in. Naming
+        what is in the old count instead - "1 interface(s), including local0"
+        - was the other candidate and was rejected: it leaves the operator
+        doing arithmetic underneath a sentence that already answered the
+        question, it leaves `show interface description` with a denominator
+        that can never be reached (local0 takes no description), and it keeps
+        a number in the screen that disagrees with the diagnosis above it. A
+        count an operator acts on stops meaning anything when it counts
+        something that does not count (#299).
+
+        What that choice costs is that the count no longer matches the number
+        of rows in the table, and the cost is paid by the note rather than by
+        hiding the row: `local0` STAYS LISTED, because hiding an interface the
+        dataplane has is how a listing stops being the thing people reach for
+        when something is off.
+        """
+        n = sum(1 for name in ifaces if name != cls.NULL_INTERFACE)
+        if cls.NULL_INTERFACE in ifaces:
+            return n, [f"  {cls.NULL_INTERFACE} is listed above but not "
+                       "counted: it is the dataplane's own null interface and "
+                       "forwards nothing"]
+        return n, []
+
     @staticmethod
     def link_state(name, hardware):
         """
@@ -9159,10 +9204,17 @@ class Shell:
                       f"{e['state'] if first else '':<6} "
                       f"{link if first else '':<6} {proto:<6} {addr}")
                 first = False
-        if total is not None and total != len(ifaces):
-            print(f"\n  {len(ifaces)} of {total} interface(s) shown")
+        # Both sides of the "N of M" come from the one holder, so a filtered
+        # listing cannot end up comparing a forwarding count against a raw one.
+        shown, note = self.forwarding_count(ifaces)
+        if total is not None and len(total) != len(ifaces):
+            whole, _ = self.forwarding_count(total)
+            print(f"\n  {shown} of {whole} interface(s) that can forward are "
+                  "shown")
         else:
-            print(f"\n  {len(ifaces)} interface(s) on the dataplane")
+            print(f"\n  {shown} interface(s) on the dataplane can forward")
+        for line in note:
+            print(line)
         if mismatched:
             # The one conclusion this view exists to make reachable without
             # being read for.
@@ -9190,9 +9242,17 @@ class Shell:
             print(f"  {name:<26} {ifaces[name]['state']:<6} "
                   f"{self.link_state(name, hardware):<6} "
                   f"{descs.get(name, '')}")
-        described = sum(1 for n in ifaces if descs.get(n))
-        print(f"\n  {described} of {len(ifaces)} interface(s) described")
-        if described < len(ifaces):
+        # The denominator is the forwarding count for the same reason the
+        # other two are (#306): counting local0 into it made a progress
+        # figure the operator can never finish, because local0 takes no
+        # description.
+        countable, note = self.forwarding_count(ifaces)
+        described = sum(1 for n in ifaces
+                        if n != self.NULL_INTERFACE and descs.get(n))
+        print(f"\n  {described} of {countable} interface(s) described")
+        for line in note:
+            print(line)
+        if described < countable:
             # An empty column is a question, and it has an answer. Saying
             # nothing here is what made the old wrong sentence seem worth
             # printing in the first place.
@@ -10364,7 +10424,7 @@ class Shell:
                                                "descr", "brief"):
             _, hw = self.dp.run("show hardware-interfaces brief")
             hardware = routes.parse_hardware(hw)
-            total = len(ifaces)
+            total = dict(ifaces)
             rest = [a for a in args[1:] if a]
             if rest:
                 ifaces = {n: e for n, e in ifaces.items()
@@ -10418,9 +10478,12 @@ class Shell:
         # local0 is VPP's own loopback and configures nothing. It IS listed -
         # hiding an interface the dataplane reports would be this command
         # deciding what the operator may see - but it is not offered for
-        # completion, and the difference is worth stating rather than leaving
-        # as an inconsistency somebody has to work out.
-        print(f"\n  {len(ifaces)} interface(s) on the dataplane")
+        # completion, and it is not in the count: see forwarding_count(), the
+        # one holder the other two count lines read as well.
+        shown, note = self.forwarding_count(ifaces)
+        print(f"\n  {shown} interface(s) on the dataplane can forward")
+        for line in note:
+            print(line)
 
 
     def show_bgp(self, args):

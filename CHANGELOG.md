@@ -75,6 +75,49 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+[#306](https://github.com/andrediashexa/hexarouting/issues/306).
+
+### Fixed
+
+* **`show interface` counts what can forward, and says so**
+  ([#306](https://github.com/andrediashexa/hexarouting/issues/306)). Read off
+  the console of the 0.74.0 installation medium during that tag's release
+  gate: the box printed `the dataplane has no interface to forward on` and,
+  four lines below it, `1 interface(s) on the dataplane`. The one it counted
+  was `local0`, VPP's own null interface, which forwards nothing. Two
+  statements about the same box, in one screen, that read as a contradiction.
+
+  The issue left one case unmeasured and it is the one with a cost. Measured
+  here on a box with two NICs, against the same fixtures the suite uses:
+  `show interface` reported `3 interface(s) on the dataplane`, and
+  `show interface description` reported `1 of 3 interface(s) described`. An
+  operator who installed two cards read three, and a description column that
+  can never be filled - `local0` takes no description - reported progress
+  towards a total it could never reach. The empty box was the visible half of
+  a count that was off by one on every box.
+
+  The count is now of interfaces that can forward, and the wording says so:
+  `2 interface(s) on the dataplane can forward`. Naming what was in the old
+  count instead - "1 interface(s), including local0" - was the other candidate
+  and was rejected: it leaves the operator doing arithmetic underneath a
+  sentence that had already answered the question, it does not repair the
+  description denominator, and it keeps a number on the screen that disagrees
+  with the diagnosis above it.
+
+  **`local0` is still listed.** Hiding an interface the dataplane has is how a
+  listing stops being the thing people reach for when something is off. What
+  the choice costs is that the count no longer matches the number of rows, and
+  that is paid by a line under the count rather than by dropping the row:
+  `local0 is listed above but not counted: it is the dataplane's own null
+  interface and forwards nothing`.
+
+  Three views printed that count - `show interface`, `show interface terse`
+  and `show interface description` - each computing it for itself, which is
+  the shape that had the release gate refuse 0.72.0 twice. They now read one
+  holder, `Shell.forwarding_count()`, which returns the number and the line
+  that has to go under it. Breaking any one of the three turns that view's
+  assertions red; breaking the holder turns all twelve red at once.
+
 ## 0.74.0 - the installed box can be reached, and one card is enough
 
 [#303](https://github.com/andrediashexa/hexarouting/issues/303), [#305](https://github.com/andrediashexa/hexarouting/issues/305).
