@@ -122,6 +122,53 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The three documents nobody had read end to end were read end to end, and
+  five statements in them do not hold.** An earlier sweep closed ten defects in
+  `docs/` and recorded one gap in its own coverage: `docs/architecture.md`
+  (2,063 lines), `docs/routing.md` (4,194) and `docs/logging.md` (869) had
+  never been read whole. Nothing here is fixed and nothing in the product
+  changed; the five are filed, and the reading is recorded in the new
+  `docs/docs-sweep.md` so the next reader can tell a claim that was checked
+  from one that was read past.
+
+  [#318](https://github.com/andrediashexa/hexarouting/issues/318): `routing.md`
+  tells a reader the undefined-route-map refusal is what the box prints "as one
+  line of 221 columns" and sends them to the width section for why it "was left
+  alone". [#276](https://github.com/andrediashexa/hexarouting/issues/276)
+  replaced that shape with `Shell.say_finding()`, which prints four rows with
+  the widest at 77, and rewrote the section the sentence points at without
+  touching the sentence. Driven in-process, 221 is the length of the shape
+  nothing builds any more.
+
+  [#319](https://github.com/andrediashexa/hexarouting/issues/319): two counts
+  `routing.md` states as measured are wrong, and each is repeated in a comment
+  in the test that measures the same thing, beside an assertion that says
+  otherwise. The provider-edge read-back is three statements of twenty-four
+  marked, which `routing.md:1347` also says and `routing.md:3946` contradicts
+  three sections later; and the long IPv6 statement is 67 columns, not 66,
+  which is 87 with the indent and the mark rather than 86.
+
+  [#320](https://github.com/andrediashexa/hexarouting/issues/320):
+  `logging.md`'s TL;DR sizes per-flow NAT at ~2.4 GB/day and its own Volume
+  table sizes the same 40 million records at ~1.6 GB, from assumptions the same
+  page states. The ratio is the commercial argument for BPA and the page gives
+  it as 30x in one place and 20x in the other. "All 38 suites" is 54, and was
+  39 at the commit that wrote one of the two occurrences, which is
+  [#317](https://github.com/andrediashexa/hexarouting/issues/317)'s first
+  number in a second file.
+
+  Four of the five are numbers, which is why they are the ones a sweep of prose
+  can be held to. What held is the larger half and is listed by class rather
+  than asserted: every C symbol, VPP node name and struct field; all twenty-nine
+  `VLIB_CLI_COMMAND` paths against what the pages name; the four RFC timeout
+  floors against the X-macro; all five ALG off-run counts against their labs'
+  `OFF-RED-AT-LEAST` headers; the seven IPFIX elements against
+  `bpa_block_elements[]`; and `ref/check_magic.py` run, which prints
+  `architecture.md`'s sentence word for word. `test/test_doc_commands.py`
+  already covers the wiki's commands and every repo-relative path in every
+  markdown file, so none of this is in scope there, and a number in prose is in
+  neither class.
+
 * **The VTY refused its own `prohibit-password`, because sshd answers with the
   other spelling**
   ([#304](https://github.com/andrediashexa/hexarouting/issues/304)). OpenSSH
