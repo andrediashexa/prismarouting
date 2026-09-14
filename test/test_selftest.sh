@@ -2302,6 +2302,58 @@ else
   bad "a hard dependency on the self-test can carry its failure onward: $HARD"
 fi
 
+echo "=== the last line is the one that survives (#297) ==="
+# READ OFF THE SOURCE, and that is a retreat worth explaining rather than
+# hiding, because this suite drives 105 real boxes and none of them can answer
+# this question.
+#
+# The summary has four branches and three of them live under `fail = 0`. Not
+# one of the 105 boxes arranged above reaches that: the suite's own count says
+# "105 of 105 runs arranged a box with failed checks". Every fixture here
+# exists to make something go wrong, which is the right instinct, and it
+# leaves the line every healthy appliance in the field prints with nothing
+# behind it. Driving the change through a box was tried first and the
+# assertion passed for the wrong reason - the no-pci box has eight failures of
+# its own, so "does not say ready" was true whatever the summary did, and both
+# mutations of it stayed green. A check that cannot go red is worse than none.
+#
+# So this reads the file, in the shape test_stop_is_not_a_teardown.py already
+# uses for a rule that lives in a unit file. It is weaker than a measurement
+# and it is not nothing: each of these has been shown red.
+#
+# The measurement that DID happen is on a real appliance with no NIC, recorded
+# on #297: "HexaRouting ready." before, and the sentence below after.
+ST_SRC=$(cat "$ST")
+case "$ST_SRC" in
+  *'warn() { say "  [warn] $*"; warns=$((warns+1)); }'*)
+    ok "a warning is counted rather than only printed" ;;
+  *) bad "there is no warn() that counts, so the summary cannot know" ;;
+esac
+# EVERY headline, not the count. A warning added later with a bare `say` would
+# be invisible to the summary, and nothing else in this file would notice: the
+# box still prints it, the operator still reads it if they are looking, and
+# the count it is missing from is the thing that tells them to look.
+# warn()'s own definition is the one line that legitimately spells it out, so
+# it is excluded by name rather than by a looser pattern that would also let a
+# real bypass through. Found by this check on its first run, which is the
+# argument for writing the exclusion narrowly.
+stray=$(grep 'say "  \[warn\]' "$ST" | grep -cv '^warn() {' || true)
+if [ "${stray:-0}" -eq 0 ]; then
+  ok "and every [warn] headline goes through it, so none can escape the count"
+else
+  bad "$stray [warn] headline(s) bypass warn() and are not counted"
+fi
+case "$ST_SRC" in
+  *'elif [ -n "$noforward" ]; then'*)
+    ok "a box with no way to forward gets a summary of its own" ;;
+  *) bad "the summary has no branch for a box that cannot forward, so it is called ready" ;;
+esac
+case "$ST_SRC" in
+  *'HexaRouting ready, with $warns warning(s) above.'*)
+    ok "and a box that can forward says how many warnings are above" ;;
+  *) bad "the summary does not report the warning count" ;;
+esac
+
 echo "=== every self-test line fits the 80-column console it is printed on ==="
 # The self-test writes to /dev/console on a racked appliance, which is 80
 # columns. Nothing measured that. A line goes over only when a value is
