@@ -643,6 +643,31 @@ printed_before() {  # <first> <second>
     END { exit !(pa > 0 && pb > 0 && pa < pb) }'
 }
 
+# Did the self-test reach its verdict, whatever that verdict was?
+#
+# ONE reader, and the reason is that there were two and only one of them was
+# fixed. appliance/selftest ends with one of four sentences (#297): ready,
+# ready with warnings above, installed and healthy with no NIC to forward on,
+# and n checks failed. The ordering assertion above was corrected to accept
+# all four and this one, four hundred lines below it, went on grepping for
+# "HexaRouting ready" - so an installed box that had printed a complete report
+# was reported as a box that never came up, and the gate refused the medium a
+# second time for the same reason it had refused it the first.
+#
+# test/test_selftest.sh holds the other half: the four sentences may appear in
+# this file only inside this function, so a third reader cannot be written by
+# hand without going red.
+# The four sentences, written down ONCE. Everything that reads a verdict out
+# of a console uses this, so there is no second copy to leave behind.
+VERDICT_RE="HexaRouting ready|HexaRouting is installed and healthy, and has|check\(s\) failed\. The box is NOT ready\."
+# The three that mean the box is fit to be handed over. The fourth is a box
+# that failed its own checks, and it is told apart where that matters.
+VERDICT_OK_RE="HexaRouting ready|HexaRouting is installed and healthy, and has"
+
+said_a_verdict() {  # <file>
+  grep -qE "$VERDICT_RE" "$1"
+}
+
 console_gave_up() {  # <string> <what the driver was doing> <how long>
   echo
   echo "=========== THE CONSOLE DRIVER GAVE UP ==========="
@@ -863,28 +888,27 @@ drive_console() {
   # So the assertion is that the verdict is one the self-test can print, and
   # NOT that it is any particular one. A lab that demanded "ready" would be
   # demanding the box lie about having a NIC it was never given.
-  if printed_before "HexaRouting ready." "$NEW_HOST login:"; then
-    echo "  [ ok ] and its verdict was that the box is ready"
-  elif printed_before "HexaRouting ready, with" "$NEW_HOST login:"; then
-    echo "  [ ok ] and its verdict was ready, with warnings above it"
-  elif printed_before "HexaRouting is installed and healthy, and has" \
-                      "$NEW_HOST login:"; then
-    echo "  [ ok ] and its verdict was that the box is healthy and has no NIC"
-    echo "         to forward on, which is what this lab builds"
-  elif printed_before "check(s) failed. The box is NOT ready." \
-                      "$NEW_HOST login:"; then
+  console_all > /tmp/verdict-probe.log 2>/dev/null || true
+  if ! said_a_verdict /tmp/verdict-probe.log; then
+    echo "  [FAIL] the self-test printed no verdict this lab recognises"
+    echo "         appliance/selftest ends with one of four sentences and the"
+    echo "         console carries none of them. Either it stopped before its"
+    echo "         summary, or the summary was reworded and this lab was not."
+    fail=1
+  elif grep -q "check(s) failed. The box is NOT ready." /tmp/verdict-probe.log; then
     echo "  [FAIL] the installed box failed its own self-test"
     echo "         the console above says which checks. This is the box an"
     echo "         operator is handed, so a failed check here is a defect"
     echo "         that ships."
     fail=1
   else
-    echo "  [FAIL] the self-test printed no verdict this lab recognises"
-    echo "         appliance/selftest ends with one of three sentences and"
-    echo "         the console carries none of them. Either it stopped before"
-    echo "         its summary, or the summary was reworded and this lab was"
-    echo "         not - which is what happened in 0.72.0, one line up."
-    fail=1
+    # Which of the three healthy verdicts it was is printed and not asserted.
+    # All three mean the box is fit to be handed over, and demanding a
+    # particular one would demand the box lie about a NIC it was never given,
+    # which is the defect #297 fixed, reintroduced from the test side.
+    echo "  [ ok ] and its verdict was one the self-test can reach:"
+    grep -m1 -E "$VERDICT_OK_RE" /tmp/verdict-probe.log \
+      | sed 's/^ */         /'
   fi
 
   send "root"
@@ -1749,7 +1773,7 @@ if grep -q "The box is NOT ready" /tmp/disk-clean.log; then
   grep -iE "vpp.service|SEGV|Killed|Out of memory" /tmp/disk-clean.log \
     | tail -6 | sed 's/^/  /'
   fail=1
-elif ! grep -q "HexaRouting ready" /tmp/disk-clean.log; then
+elif ! said_a_verdict /tmp/disk-clean.log; then
   echo
   echo "=========== THE INSTALLED SYSTEM DID NOT COME UP ==========="
   if grep -q "grub>" /tmp/disk-clean.log; then
