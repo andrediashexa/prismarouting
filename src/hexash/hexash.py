@@ -6322,6 +6322,88 @@ class Shell:
                         print_prose(why)
                         print(f"    first one: {stmts[0]}")
 
+            # A POOL'S PUBLIC RANGE OVER ONE OF THE BOX'S OWN ADDRESSES,
+            # asked of the CANDIDATE and not only of the live box (#296).
+            #
+            # The dataplane makes this check itself and keeps it: `pool ...
+            # check` below runs bpa_check_local_overlap(), which walks vnet's
+            # interface table. What that walk can see depends on what the box
+            # already has, and at `hexash --load` the answer is nothing at
+            # all. Apply creates pools BEFORE it applies addresses, so the
+            # walk reads an empty list, the pool is created, and the collision
+            # comes back a moment later as a vlib_log_err on the plugin's log
+            # class - which is not on the console, not in
+            # `appliance/selftest`, and not in anything this VTY prints.
+            #
+            # MEASURED on this build before a line of this was written, the
+            # same two statements in one file:
+            #
+            #   typed at a configured box: refused, exit 1, no pool created
+            #   loaded into an empty box:  exit 0, pool created, address
+            #                              applied, one line in `show logging`
+            #
+            # So the box that refuses it is the one an operator is watching,
+            # and the box that takes it is the one that came up on its own at
+            # four in the morning. What it costs is the sentence
+            # bpa_check_local_overlap()'s own comment names: bpa-out2in runs
+            # on the ip4-unicast arc ahead of ip4-lookup, so the box's own BGP
+            # session or OSPF adjacency is translated by its own CGNAT and
+            # drops with nothing obvious in any log.
+            #
+            # EVERY pool in the candidate, not only the ones being added, and
+            # that is the direction that had to be got right rather than
+            # guessed at. At `--load` every pool is an add and the distinction
+            # buys nothing; at an interactive commit it decides whether
+            # `commit` can write a file that `--load` will later refuse WHOLE.
+            # An address moved into a standing pool's range is the same
+            # collision, `save` puts both statements in hexarouting.conf, and
+            # the next boot would then meet a refusal over a commit this VTY
+            # had accepted - a box coming up with no pools and no addresses
+            # because of a change that went through months earlier. The two
+            # paths agree on what is legal or neither of them is worth having.
+            #
+            # The plugin's live walk is NOT replaced by this and must not be.
+            # It catches the address that arrived from somewhere this
+            # candidate does not describe - DHCP, `vppctl set interface ip
+            # address`, an operator at the dataplane - and no reading of a
+            # configuration file can see any of those. Both therefore fire on
+            # a configured box where the address is in the running
+            # configuration, which is one fault said twice, and that is the
+            # cheaper half of the trade.
+            #
+            # Addresses come from Config.interface_addresses_v4(), which
+            # connected_prefixes() is also built on: one reader of "what
+            # addresses will this box have", because two of them disagreeing
+            # about which moment is being asked about is this defect.
+            for ifname, addr in target.interface_addresses_v4():
+                host = addr.split("/")[0]
+                for pname, pool in sorted(target.pools.items()):
+                    hit = next((p for p in pool.outside
+                                if routes.covers_address(p, host)), None)
+                    if hit is None:
+                        continue
+                    # The dataplane's own first clause, word for word. An
+                    # operator who meets this from the VTY on one box and
+                    # from the plugin on the next reads one sentence rather
+                    # than two that have to be reconciled.
+                    self.err(f"pool '{pname}': public address {host} is "
+                             f"configured on {ifname}")
+                    # Both statements whole and on their own rows, because
+                    # the operator's next move is to grep one of them out of
+                    # `show configuration` and delete it (#252).
+                    print(f"    interface {ifname} / ipv4 address {addr}")
+                    print(f"    cgnat pool {pname} / outside {hit}")
+                    print_prose("cgnat would translate the box's own "
+                                "control-plane traffic on that address: "
+                                "bpa-out2in runs before the box decides a "
+                                "packet is for itself, so the BGP session or "
+                                "OSPF adjacency on it drops for no apparent "
+                                "reason")
+                    print_prose("take the address off the interface, or "
+                                "narrow the pool's public range so that it "
+                                "does not contain it")
+                    ok = False
+
             for pool in d["pool_add"] + d["pool_replace"]:
                 if not pool.inside or not pool.outside:
                     self.err(f"pool '{pool.name}': inside and outside required")

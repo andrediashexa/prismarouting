@@ -62,6 +62,32 @@ version has a chance of seeing it.
 
 ### Changed
 
+* **A pool that would translate the box's own BGP session was refused when an
+  operator typed it and only logged when the same file was loaded at boot**
+  ([#296](https://github.com/andrediashexa/hexarouting/issues/296)). Driven on
+  a real dataplane, both doors, before anything was changed. Typed at a
+  configured box the candidate is refused and no pool exists; loaded into a VPP
+  with nothing on it the pool is created, the address is applied afterwards,
+  and one `vlib_log_err` goes into a log nobody is reading.
+
+  The plugin's check walks the LIVE interface addresses, and `--load` creates
+  pools before it applies any, so at boot the walk finds nothing. That is the
+  mirror image of
+  [#294](https://github.com/andrediashexa/hexarouting/issues/294) and the
+  dangerous direction: a false refusal is loud and immediate, a missed one is
+  on the path that runs unattended.
+
+  The VTY now refuses a candidate whose pool public range contains an
+  interface address the same candidate configures, in one code path, so
+  `commit`, `--load` and `rollback` agree. Every pool in the candidate and not
+  only the one being added: at `--load` the distinction buys nothing, and at an
+  interactive commit it is what stops a commit writing a file that `--load`
+  will refuse whole months later.
+
+  The plugin is untouched. Its live walk still catches an address that arrived
+  from somewhere the candidate does not describe, and both fire together on a
+  configured box.
+
 * **A pool on a box with no dataplane interface reported capacity for 504
   subscribers it would never serve**
   ([#299](https://github.com/andrediashexa/hexarouting/issues/299)). Measured

@@ -1151,5 +1151,148 @@ check(_sh.failed == 1,
       "nothing: a configuration file with this line loads clean and the "
       "setting does not exist")
 
+print("\n=== a pool over an address the same candidate configures is refused "
+      "at check time (#296) ===")
+# THE BOOT CASE, and this file is the only place it can be asked cheaply.
+# FakeVpp accepts every CLI command, so `pool ... check` comes back clean -
+# which is exactly the box `hexash --load` runs against at a boot: a dataplane
+# that has just started, with no address on it for
+# bpa_check_local_overlap()'s walk to find. The plugin is not weakened here
+# and is not being tested here; it is simply blind at this moment, by
+# construction, and lab/localaddr.sh is where its own refusal is asserted
+# against a real vnet.
+#
+# MEASURED before the check existed, on a real dataplane: the same file typed
+# at a configured box was refused with exit 1 and no pool created, and loaded
+# into a box with nothing on it came back exit 0 with the pool in `show bpa
+# pool`, the address on the interface, and one vlib_log_err in `show logging`
+# that nothing else on the box reads back. That reading is lab/localaddr.sh
+# sections 5 to 7, which drive both doors against a real vnet; this suite is
+# the cheap half of it and runs in `make test`.
+
+
+def candidate_with_clash():
+    """One file, one address, one pool whose public range contains it.
+
+    200.150.0.16/28 is .16 through .31, so it holds .20 - the same arithmetic
+    bpa_addr_set_build() does, which stores a prefix as base+count with every
+    address in it.
+    """
+    cfg = target_with("clash", "100.64.0.0/22", "200.150.0.16/28")
+    cfg.addresses["pg1"] = ["200.150.0.20/28"]
+    return cfg
+
+
+_out = io.StringIO()
+_sh = shell_with(FakeApi())
+with contextlib.redirect_stdout(_out):
+    _ok = _sh.apply(candidate_with_clash(), check_only=True)
+_said = _out.getvalue()
+check(_ok is False,
+      "a candidate that puts a pool's public range over its own interface "
+      "address passed the check: at --load the pool is created before the "
+      "address is applied, so the plugin's walk finds nothing and the box "
+      "translates its own BGP session")
+check("200.150.0.20" in _said,
+      f"the refusal does not name the address: {_said!r}")
+check("pg1" in _said,
+      f"the refusal does not name the interface it is on: {_said!r}")
+check("clash" in _said,
+      f"the refusal does not name the pool: {_said!r}")
+# The two statements, whole and greppable, because deleting one of them is
+# the operator's next move (#252).
+check("    interface pg1 / ipv4 address 200.150.0.20/28" in _said,
+      f"the address statement is not printed whole: {_said!r}")
+check("    cgnat pool clash / outside 200.150.0.16/28" in _said,
+      f"the pool statement is not printed whole: {_said!r}")
+# WHAT IT COSTS, not only that it is refused. The needle is collapsed on both
+# sides: console_prose wraps by measurement, so a raw-text needle only matches
+# while the sentence happens to fold somewhere else, and this repository has
+# been caught by that four times.
+_flat = " ".join(_said.split())
+check("translate the box's own control-plane traffic" in _flat,
+      f"the refusal does not say what breaks: {_said!r}")
+check("take the address off the interface" in _flat,
+      f"the refusal does not say what to do about it: {_said!r}")
+# And it is a CHECK: nothing was applied, which is the whole difference
+# between this and the vlib_log_err it replaces on this path.
+_writes = [m for m, a in _sh.api.calls if m in vppapi.WRITE_MESSAGES]
+check(_writes == [], f"the refusal wrote to the dataplane: {_writes}")
+print("  " + _said.strip().replace("\n", "\n  "))
+
+# The console this is read on, asserted rather than eyeballed. Five messages
+# in this product shipped over 80 columns having been wrapped by hand (#252).
+# The two configuration statements are exempt by that same rule: they are
+# printed whole, past the margin if they have to be.
+_wide = [l for l in _said.splitlines()
+         if len(l) > config.CONSOLE_COLUMNS and " / " not in l]
+check(not _wide,
+      f"the refusal's own prose is over {config.CONSOLE_COLUMNS} columns: "
+      f"{_wide}")
+
+print("\n=== and when the box is already carrying the address ===")
+# The configured box, which is the other door. `commit`, `--load` and
+# `rollback` all reach this through one apply(check_only=True) and there is no
+# branch for which of them called - deliberately, because a branch for the boot
+# would have left the interactive door open. What differs between the two is
+# not the code path but the CANDIDATE: at a boot the address exists only in the
+# file being read, and at a configured box it is in the running configuration
+# too and therefore in the candidate built from it. Both are asserted, because
+# a check that read only the delta would pass this one.
+_run = "interface pg1\n ipv4 address 200.150.0.20/28\n"
+_out = io.StringIO()
+_sh = shell_with(FakeApi(), running_text=_run)
+with contextlib.redirect_stdout(_out):
+    _ok = _sh.apply(config.Config.parse(
+        _run + "cgnat pool clash\n inside 100.64.0.0/22\n"
+        " outside 200.150.0.16/28\n"), check_only=True)
+check(_ok is False,
+      "a pool typed at a box that already carries the address passed the "
+      "VTY's own check: it would then be refused only by the plugin, which "
+      "is the half that is blind at a boot")
+
+print("\n=== a pool over an address in a STANDING pool's range too ===")
+# The pool is not being added or replaced; the ADDRESS is what moved into it.
+# It is the same collision, and refusing it is what stops `commit` writing a
+# hexarouting.conf that `--load` will refuse whole at the next boot - a box
+# unconfigured by a change that went through months earlier.
+_run = ("cgnat pool clash\n inside 100.64.0.0/22\n"
+        " outside 200.150.0.16/28\n exit\n")
+_out = io.StringIO()
+_sh = shell_with(FakeApi(), running_text=_run)
+_cand = config.Config.parse(
+    _run + "interface pg1\n ipv4 address 200.150.0.20/28\n")
+# The fixture READ back rather than assumed. Without the ` exit` above, the
+# interface statement is swallowed into the pool block, the candidate holds no
+# address at all, and the section below would be green over a candidate that
+# has nothing to collide with.
+check(_cand.addresses == {"pg1": ["200.150.0.20/28"]},
+      f"the candidate does not carry the address: {_cand.addresses}")
+check(list(_cand.pools) == ["clash"],
+      f"and the standing pool did not survive the parse: {list(_cand.pools)}")
+with contextlib.redirect_stdout(_out):
+    _ok = _sh.apply(_cand, check_only=True)
+check(_ok is False,
+      "an address moved into a pool that already exists was accepted: "
+      "`save` would write both statements and the next boot would refuse "
+      "the file whole")
+
+print("\n=== and a pool that collides with nothing still goes through ===")
+# The control, and it is the assertion that keeps the one above from being
+# satisfied by a box that refuses every pool. Without it the check could be
+# `ok = False` and this suite would be green.
+_cfg = target_with("clean", "100.64.0.0/22", "200.150.9.0/28")
+_cfg.addresses["pg1"] = ["200.150.0.20/28", "2001:db8::1/64"]
+_out = io.StringIO()
+_sh = shell_with(FakeApi())
+with contextlib.redirect_stdout(_out):
+    _ok = _sh.apply(_cfg, check_only=True)
+check(_ok is True,
+      f"a pool whose public range holds none of this box's addresses was "
+      f"refused: {_out.getvalue()!r}")
+check("control-plane traffic" not in _out.getvalue(),
+      f"and it said so anyway: {_out.getvalue()!r}")
+print("  a non-colliding pool and an IPv6 address alongside it: accepted")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
