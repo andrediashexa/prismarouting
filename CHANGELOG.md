@@ -48,9 +48,27 @@ version has a chance of seeing it.
 | **How** | One section per version: behaviour changes first, then fixes, then internal work, each naming the issues it closes. |
 | **How much** | A few lines per release. An entry that needs a page is a merge that should have been two. |
 
-## Unreleased
+## 0.69.0 — the appliance brings up its own dataplane card, and a deterministic pool has one to give
+
+[#39](https://github.com/andrediashexa/hexarouting/issues/39),
+[#105](https://github.com/andrediashexa/hexarouting/issues/105),
+[#123](https://github.com/andrediashexa/hexarouting/issues/123),
+[#252](https://github.com/andrediashexa/hexarouting/issues/252),
+[#271](https://github.com/andrediashexa/hexarouting/issues/271),
+[#276](https://github.com/andrediashexa/hexarouting/issues/276),
+[#279](https://github.com/andrediashexa/hexarouting/issues/279),
+[#283](https://github.com/andrediashexa/hexarouting/issues/283).
 
 ### Breaking
+
+* **The binary API moves to 0.13.0 and two messages change layout.**
+  `bpa_pool_add_del` gains `block_reserve`, and `bpa_pool_details` gains
+  `block_reserve`, `blocks_mapped` and `reserve_count`
+  ([#39](https://github.com/andrediashexa/hexarouting/issues/39)). A client
+  built against 0.12.0 must be rebuilt; the CRC will not match. `block_reserve`
+  is deliberately **absent** from `bpa_pool_settings_set`, whose contract is
+  "safe to change on a pool that is carrying traffic" — a reserve is not, and a
+  field there would be accepted by a dataplane that cannot act on it.
 
 * **A refusal naming a statement printed it and its reason on one row, up to
   264 columns wide, and `rollback`, `save` and `--load` had never been
@@ -127,6 +145,78 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`reserve`: blocks a deterministic pool can give away**
+  ([#39](https://github.com/andrediashexa/hexarouting/issues/39)). A
+  deterministic pool had no spare block by construction - the formula assigns
+  every block to some subscriber - so a customer whose block filled up was
+  dropped and their internet stopped while the box was healthy.
+  `reserve <n>` holds n blocks of **every public address** out of the formula,
+  and those are the blocks a subscriber that fills its own is given.
+
+  **It is paid for in capacity, and it re-maps subscribers.** `capacity` is now
+  `outside.count × (blocks_per_ip - reserve)`, so enabling or resizing a
+  reserve is a capacity change and `commit` refuses it until it is asked for by
+  name with `commit remap`, exactly like adding a public prefix
+  ([#23](https://github.com/andrediashexa/hexarouting/issues/23)). How much it
+  moves depends on the policy and the two answers are not close, measured on a
+  pair of definitions that differ only in the reserve: under `interleaved` the
+  divisor is untouched, so **no retained subscriber moves** and the pool is
+  simply truncated by `outside.count × reserve` subscribers; under `blocked`
+  the divisor **is** the mapped block count, and 738 of 882 subscribers move on
+  top of the 21 the truncation drops.
+
+  **The default is zero and zero is byte for byte what the box did before**,
+  asserted rather than promised: `ref/validate.py` compares every mapping of
+  every pool against the same pool built without the parameter, and
+  `test/test_bpa_pool.c` asserts that five pools with no reserve hold nothing
+  back and reserve no port - including the last ports of the range, which are
+  the ones a reserve takes first. `lab/detreserve.sh off` runs the whole lab
+  against `reserve 0` and the subscriber stays on one block.
+
+  **Every reserve block is its own RFC 8158 `natEvent 16`, and its release its
+  own `natEvent 17`.** This is the only thing deterministic mode logs per
+  subscriber, and it has to be: the reserve block is the one block in that mode
+  the formula does not produce, so the dated configuration trail cannot answer
+  for it. `lab/detreserve.sh` reads both records off a real IPFIX collector on
+  the far side of a wire, at the port range the model predicted.
+
+  **The return path resolves a reserve port through the allocator.**
+  `bpa_reverse_sub()` refuses one on purpose - under the blocked policy its
+  arithmetic would name a real and different customer, who would then receive
+  somebody else's traffic - so the reserve has an index space of its own, and
+  the handoff steers on it.
+
+  **Running out of reserve is counted apart from reaching `max-blocks`**, in
+  `show bpa blocks`, because the two need different actions: a larger reserve
+  against one and a larger cap against the other.
+
+  **The control the case rests on was not being performed.** `lab/detreserve.sh`
+  says in its header that running with `reserve 0` must turn the extension
+  assertions red, and that "that argument is the only thing that makes the
+  green run worth anything". The lab was not in `OFF_MODES`, so the suite never
+  ran it - and the off run would not have been a control anyway: the extension
+  assertions sat inside `if [ "$RESERVE" -gt 0 ]`, with three different
+  assertions in the else branch, so it passed with nothing red. Since
+  `tools/run-all-labs.sh` INVERTS an off run's verdict, that pass would have
+  been counted as a failure of the suite.
+
+  The extension assertions run in both modes now. With `reserve 0` nine of them
+  go red - measured, and written into `# OFF-RED-AT-LEAST: 9` - and the three
+  that say what the box does instead stay green. A tenth check stays green in
+  both modes and is deliberately not counted: "the second subscriber found the
+  reserve empty" is true for free when there is no reserve, and an assertion
+  that cannot discriminate is not evidence.
+
+  Three limits, stated rather than left to be discovered. A reserve smaller
+  than the worker count leaves some workers with none, and that is a **warning
+  and not a refusal**, for the reason `block-stride` gives: refusing would stop
+  a pool accepted on a single-threaded box from coming up after the box is
+  given workers. The subscriber's own public address is a **preference** for
+  where its reserve block comes from, not a guarantee. And a reserve on a
+  **dynamic** pool is refused outright - that pool's extension already comes
+  off the free list, so a reserve would take blocks out of the list it is drawn
+  from.
+
 * **`show hardware` - the VTY lists the box's own NICs, so the operator can
   see what there is to choose from**
   ([#283](https://github.com/andrediashexa/hexarouting/issues/283)).
@@ -195,7 +285,9 @@ version has a chance of seeing it.
 
   Registered in the grammar, so `?` and TAB offer it. It is **not** `show
   hardware-interfaces`, which is the dataplane's own command for its ports; this
-  one answers about the box.* **The dataplane interface can be named from the VTY, so a fresh appliance
+  one answers about the box.
+
+* **The dataplane interface can be named from the VTY, so a fresh appliance
   can be put to work without leaving it**
   ([#283](https://github.com/andrediashexa/hexarouting/issues/283)). The empty
   `HEXA_DATAPLANE_IF` is the right answer to
@@ -476,91 +568,6 @@ version has a chance of seeing it.
 [#279](https://github.com/andrediashexa/hexarouting/issues/279),
 [#280](https://github.com/andrediashexa/hexarouting/issues/280),
 [#281](https://github.com/andrediashexa/hexarouting/issues/281).
-
-### Breaking
-
-* **The binary API moves to 0.13.0 and two messages change layout.**
-  `bpa_pool_add_del` gains `block_reserve`, and `bpa_pool_details` gains
-  `block_reserve`, `blocks_mapped` and `reserve_count`
-  ([#39](https://github.com/andrediashexa/hexarouting/issues/39)). A client
-  built against 0.12.0 must be rebuilt; the CRC will not match. `block_reserve`
-  is deliberately **absent** from `bpa_pool_settings_set`, whose contract is
-  "safe to change on a pool that is carrying traffic" — a reserve is not, and a
-  field there would be accepted by a dataplane that cannot act on it.
-
-### Added
-
-* **`reserve`: blocks a deterministic pool can give away**
-  ([#39](https://github.com/andrediashexa/hexarouting/issues/39)). A
-  deterministic pool had no spare block by construction - the formula assigns
-  every block to some subscriber - so a customer whose block filled up was
-  dropped and their internet stopped while the box was healthy.
-  `reserve <n>` holds n blocks of **every public address** out of the formula,
-  and those are the blocks a subscriber that fills its own is given.
-
-  **It is paid for in capacity, and it re-maps subscribers.** `capacity` is now
-  `outside.count × (blocks_per_ip - reserve)`, so enabling or resizing a
-  reserve is a capacity change and `commit` refuses it until it is asked for by
-  name with `commit remap`, exactly like adding a public prefix
-  ([#23](https://github.com/andrediashexa/hexarouting/issues/23)). How much it
-  moves depends on the policy and the two answers are not close, measured on a
-  pair of definitions that differ only in the reserve: under `interleaved` the
-  divisor is untouched, so **no retained subscriber moves** and the pool is
-  simply truncated by `outside.count × reserve` subscribers; under `blocked`
-  the divisor **is** the mapped block count, and 738 of 882 subscribers move on
-  top of the 21 the truncation drops.
-
-  **The default is zero and zero is byte for byte what the box did before**,
-  asserted rather than promised: `ref/validate.py` compares every mapping of
-  every pool against the same pool built without the parameter, and
-  `test/test_bpa_pool.c` asserts that five pools with no reserve hold nothing
-  back and reserve no port - including the last ports of the range, which are
-  the ones a reserve takes first. `lab/detreserve.sh off` runs the whole lab
-  against `reserve 0` and the subscriber stays on one block.
-
-  **Every reserve block is its own RFC 8158 `natEvent 16`, and its release its
-  own `natEvent 17`.** This is the only thing deterministic mode logs per
-  subscriber, and it has to be: the reserve block is the one block in that mode
-  the formula does not produce, so the dated configuration trail cannot answer
-  for it. `lab/detreserve.sh` reads both records off a real IPFIX collector on
-  the far side of a wire, at the port range the model predicted.
-
-  **The return path resolves a reserve port through the allocator.**
-  `bpa_reverse_sub()` refuses one on purpose - under the blocked policy its
-  arithmetic would name a real and different customer, who would then receive
-  somebody else's traffic - so the reserve has an index space of its own, and
-  the handoff steers on it.
-
-  **Running out of reserve is counted apart from reaching `max-blocks`**, in
-  `show bpa blocks`, because the two need different actions: a larger reserve
-  against one and a larger cap against the other.
-
-  **The control the case rests on was not being performed.** `lab/detreserve.sh`
-  says in its header that running with `reserve 0` must turn the extension
-  assertions red, and that "that argument is the only thing that makes the
-  green run worth anything". The lab was not in `OFF_MODES`, so the suite never
-  ran it - and the off run would not have been a control anyway: the extension
-  assertions sat inside `if [ "$RESERVE" -gt 0 ]`, with three different
-  assertions in the else branch, so it passed with nothing red. Since
-  `tools/run-all-labs.sh` INVERTS an off run's verdict, that pass would have
-  been counted as a failure of the suite.
-
-  The extension assertions run in both modes now. With `reserve 0` nine of them
-  go red - measured, and written into `# OFF-RED-AT-LEAST: 9` - and the three
-  that say what the box does instead stay green. A tenth check stays green in
-  both modes and is deliberately not counted: "the second subscriber found the
-  reserve empty" is true for free when there is no reserve, and an assertion
-  that cannot discriminate is not evidence.
-
-  Three limits, stated rather than left to be discovered. A reserve smaller
-  than the worker count leaves some workers with none, and that is a **warning
-  and not a refusal**, for the reason `block-stride` gives: refusing would stop
-  a pool accepted on a single-threaded box from coming up after the box is
-  given workers. The subscriber's own public address is a **preference** for
-  where its reserve block comes from, not a guarantee. And a reserve on a
-  **dynamic** pool is refused outright - that pool's extension already comes
-  off the free list, so a reserve would take blocks out of the list it is drawn
-  from.
 
 ### Fixed
 
