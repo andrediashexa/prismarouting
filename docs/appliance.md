@@ -493,17 +493,17 @@ nothing this product ships does, and which an operator in `start shell` typing
 parent that explains it, that trade changes, and the measurement that would
 change it is already being taken on every run of this lab.
 
-## The statistics segment, and why the tuner does not size it
+## The statistics segment, and what the tuner sizes it from
 
-Every other memory figure on this page is computed. This one is not, and that
-is a decision rather than an omission — but it is the only resource on the box
-whose limit is an **abort** instead of a refusal, so the decision is written
-down here and the box says where it stands at every boot.
+It is the only resource on the box whose limit is an **abort** instead of a
+refusal, so both the arithmetic and the box's own report about it are written
+down here.
 
 VPP exports its counters through a shared memory segment of **fixed** size,
-named by a `statseg` stanza in `startup.conf`. `hexarouting-tune` emits no such
-stanza, so a shipped box runs on VPP's built-in default of **32 MB**
-(`STAT_SEGMENT_DEFAULT_SIZE`, 32 << 20, in the VPP release this image pins).
+named by a `statseg` stanza in `startup.conf`. Left unnamed, a box runs on
+VPP's built-in default of **32 MB** (`STAT_SEGMENT_DEFAULT_SIZE`, 32 << 20, in
+the VPP release this image pins), and that is what every box built by this
+product ran on until the tuner started sizing it.
 
 Each interface VPP holds costs the segment, and the cost was measured while
 sizing a BNG (`docs/bng.md` section 2.1):
@@ -552,13 +552,43 @@ came from it is the RSS difference between **0 and 40,000 sessions** on the
 1 GB box, not the cost of the segment at rest. Nothing measured so far isolates
 what a larger `statseg` costs an idle box.
 
-### Why the tuner does not size it
+### The budget the tuner uses, and why it is not 2.9 kB
+
+`hexarouting-tune` sizes the segment at **4,793 bytes per interface**, which is
+the measurement divided rather than a figure anybody chose: the run above
+printed `after 7000: 7000 live` and then died creating the next batch, so
+**7,000** interfaces is the density that 32 MiB segment was measured surviving,
+and 33,554,432 / 7,000 is 4,793.
+
+It is deliberately **not** the 2.9 kB above. That number is what the entries
+weigh; this one is what they cost, and the 1.65x between them is the contiguous
+directory that has to hold two copies while it grows. A segment sized at 2.9 kB
+each promises about 12,000 interfaces on 32 MB, and the box aborted below 8,000
+- it would fail at two thirds of what it offered.
+
+Two things fall out of dividing the measurement rather than adding up the
+content:
+
+* the 4.2 MB the segment holds with nothing configured on it is **inside** the
+  figure, amortised over the 7,000, so nothing has to be added on top for the
+  box's own interfaces;
+* at 40,000 interfaces it asks for 183 MB where the measurement used 114.7 MB.
+  Conservative, which is the direction to be wrong in when the alternative is
+  `SIGABRT`.
+
+What no per-interface figure covers is an interface created **while the box
+runs** - a PPPoE session, a linux_cp pair made from the VTY - because those are
+in no configuration file. A box that makes them **MUST** set the size itself.
+
+### What the tuner sizes it from
 
 Every other figure the tuner writes comes from ground truth or from a number
 the operator set: hugepages from `HEXA_SUBSCRIBERS` and then from the RAM the
 machine has, `buffers-per-numa` from the worker count, `main-heap-size` from
-the pages the kernel **actually reserved**. The statistics segment has no such
-input, and the candidates were each rejected on their own arithmetic:
+the pages the kernel **actually reserved**, the NIC's queue count and maximum
+MTU from the card itself. The statistics segment now has such an input too -
+the interfaces the box is **configured** for - and the candidates that are not
+that were each rejected on their own arithmetic:
 
 | Option | Cost |
 |---|---|
@@ -566,35 +596,85 @@ input, and the candidates were each rejected on their own arithmetic:
 | Size it from a constant — 256 MB, 1 GB | A number nobody can justify, which is exactly what `main-heap-size` stopped being when it started reading the reserved pages. It is also not free: the segment is what the operator's RAM is not |
 | Add a `HEXA_INTERFACES` to `tune.env` | A knob whose correct value the operator cannot know before the box is configured, on a product that today creates interfaces from a configuration the tuner never reads. A refusal path, a document and a wiki page for a number that would be guessed |
 | Leave it to VPP and say nothing | The status quo, and the reason the report was filed: the box meets the limit as a `SIGABRT` |
-| **Leave the number to the operator, in the file that already takes it, and make the box say where it stands** | One line in the tuner's report, one check in the self-test. No RAM reserved for a box that does not need it, and no number invented |
+| **Count the interfaces the box is configured for, and write a stanza only when they need more than 32 MB** | The count is read from `/etc/hexarouting/hexarouting.conf`, which is the file `hexarouting.service` hands to `hexash --load` at every boot, so the interfaces in it are the interfaces the box will create. Nothing is reserved on a box that does not need it, and no number is invented |
 
-The last one is what ships. `statseg` belongs in
-`/etc/hexarouting/vpp-base.conf`, which is the operator-editable base the tuner
-concatenates ahead of the stanzas it generates — the same seam that already
-carries `unix`, `linux-cp` and `socksvr`. The tuner generates **no** `statseg`
-stanza precisely so that an operator's own is never overridden on the next
-boot, and `appliance/test_tune.py` asserts that in both the tuned and the
-first-boot configuration.
+The last one is what ships, and the count is taken with **hexash's own parser**
+rather than a grep for `^interface `: a second reader of that grammar answers
+the same until the VTY learns another way to name an interface, and the box
+that would find out is the one with twenty thousand of them. The routing half
+of the file names interfaces too, in FRR's own blocks, and `interface_names()`
+already returns the union by name.
 
-This closes only the silence. **A box that needs more than the default still
-has to be told**, and the number it is told is the operator's. Anything that
-creates an interface per subscriber — a BNG, or QinQ sub-interfaces per
-customer — reaches the wall at a few thousand and **MUST** set it.
+Three things the tuner will not do with that number:
+
+* **write a stanza smaller than VPP's own default.** Below 7,000 interfaces the
+  arithmetic asks for less than 32 MB, and a box already has 32 MB;
+* **override an operator's own stanza.** `statseg` belongs in
+  `/etc/hexarouting/vpp-base.conf`, the operator-editable base the tuner
+  concatenates **ahead** of the stanzas it generates - the same seam that
+  already carries `unix`, `linux-cp` and `socksvr` - so a generated one would
+  be the last word on every boot. A stanza there means nothing is generated;
+* **say anything about a size to a box with no interfaces to size for.** A box
+  with no saved configuration, one whose configuration could not be read, and
+  one this program could not reach hexash's parser from are three different
+  sentences, and none of them is a number.
+
+The stanza is written in the conservative first-boot profile as well as the
+tuned one. The hugepages and the pinning wait for a reboot because the kernel
+has to grant them; the statistics segment does not, and `hexash --load` creates
+the configured interfaces on that first boot too.
+
+**A box that creates an interface per subscriber still has to be told**, and the
+number it is told is the operator's: a BNG session or a pair made at runtime is
+in no file the tuner reads.
+
+**The size takes effect when VPP next starts, not when the configuration is
+saved.** `statseg` is read at startup and the segment never grows, so an
+operator who adds several thousand sub-interfaces to a running box is spending
+the segment that box booted with. The tuner writes the new size into
+`startup.conf` at the next run of `hexarouting-tune.service`; the dataplane
+takes it at the next `vpp.service` start. Until then the boot self-test's
+reading is the only thing between that box and the abort, which is why it warns
+at half.
 
 ### What the box says
 
-`hexarouting-tune` names the segment in its report, beside the figures it does
-compute, so the one resource it does not size is not the one resource it is
-silent about:
+`hexarouting-tune` says what it found and what it did about it, beside the
+figures it computes from the hardware. A box configured for 20,000
+sub-interfaces:
 
 ```
 # 1G hugepages: 6 GB requested (sized for 200000 subscribers), 6 reserved right now
-# statistics segment: NOT sized here, so VPP's built-in 32 MB applies.
-#          Measured: a box on that default aborted between 7,000 and 8,000
-#          interfaces. It is per INTERFACE, not per subscriber, which is why
-#          nothing here sizes it. To raise it, put a statseg stanza in the
-#          base file (/etc/hexarouting/vpp-base.conf):
-#          it is concatenated ahead of these stanzas.
+# statistics segment: 92M, for the 20000 interface(s) configured in
+#          /etc/hexarouting/hexarouting.conf, at 4793 bytes each.
+#          That is the density a box on VPP's 32 MB default was measured
+#          surviving: 7,000 interfaces live, aborting before 8,000.
+#          Interfaces created while the box runs - a PPPoE session, a pair
+#          made from the VTY - are not in that file nor in this number.
+#          Put your own statseg in /etc/hexarouting/vpp-base.conf
+#          to choose the size instead.
+```
+
+and the stanza that reaches `/etc/vpp/startup.conf`:
+
+```
+statseg {
+  # sized for the 20000 interface(s) in /etc/hexarouting/hexarouting.conf, at
+  # 4793 bytes each. Put your own statseg in /etc/hexarouting/vpp-base.conf
+  # to choose the size yourself: this one steps aside for it.
+  size 92M
+}
+```
+
+The CGNAT box this product mostly ships to gets no stanza at all, and is told
+why:
+
+```
+# statistics segment: VPP's built-in 32 MB, which was measured holding
+#          7,000 interfaces. This box is configured for 3, in
+#          /etc/hexarouting/hexarouting.conf: nothing is written, because a
+#          stanza smaller than what VPP gives away would buy the box
+#          nothing and cost it the counters.
 ```
 
 The boot self-test reads the **dataplane's own heap**, not the configuration
@@ -609,14 +689,20 @@ At half the segment that becomes a warning, and at three quarters a failed
 check naming `os_panic` and `SIGABRT` and the stanza that raises it. Three
 quarters rather than nine tenths because of the contiguous directory above: the
 last part of a segment cannot be spent on a growth that has to hold two copies.
-Where the size came from is read off the box too, so a box somebody has already
-sized is not reported as running on a default.
+
+Where the size came from is read off the box too, and there are **three**
+answers since the tuner started writing stanzas of its own: a `statseg` in
+`/etc/hexarouting/vpp-base.conf` is the operator's (`set in
+/etc/hexarouting/vpp-base.conf`), one that reached `startup.conf` without being
+in the base is the tuner's (`chosen by hexarouting-tune from this box's
+configuration`), and neither is VPP's default. Reading only `startup.conf`
+would tell a box the tuner sized that its operator had sized it.
 
 Driven in `test/test_selftest.sh` against a stubbed `vppctl`, over a
 comfortable box, a box at 60%, a box at 90%, a box whose `startup.conf` carries
-a stanza, and a dataplane that does not answer the question at all — because
-filling a real statistics segment means creating several thousand interfaces on
-the machine running the tests.
+a stanza, a box whose `vpp-base.conf` carries one, and a dataplane that does
+not answer the question at all - because filling a real statistics segment
+means creating several thousand interfaces on the machine running the tests.
 
 ## CPU requirement
 

@@ -1222,57 +1222,64 @@ run: FRR 10.7.1 answers `% Unknown command`. The probe that produced the wrong
 claim had typed the target spelling before looking for it, which is the trap
 section 4d of that file already existed to warn about.
 
-#### The one memory figure the box does not choose
+#### The one memory figure with an abort behind it
 
-[#288](https://github.com/andrediashexa/hexarouting/issues/288) - *settled, and
-the answer is that nothing here sizes it*. `hexarouting-tune` computes
-hugepages, workers, `buffers-per-numa` and `main-heap-size`, and writes no
-`statseg` stanza, so a shipped box runs on VPP's built-in 32 MB. Measured
-twice, at the same step: that box aborted between 7,000 and 8,000 interfaces,
-in `os_panic` and `SIGABRT`, taking the whole dataplane rather than refusing
-the interface that was one too many.
+[#288](https://github.com/andrediashexa/hexarouting/issues/288) - *delivered:
+the tuner sizes the statistics segment from the interfaces the box is
+configured for*. `hexarouting-tune` computes hugepages, workers,
+`buffers-per-numa` and `main-heap-size`, and used to write no `statseg` stanza
+at all, so a shipped box ran on VPP's built-in 32 MB. Measured twice, at the
+same step: that box aborted between 7,000 and 8,000 interfaces, in `os_panic`
+and `SIGABRT`, taking the whole dataplane rather than refusing the interface
+that was one too many.
 
-**The decision was whether the tuner should size it, and it should not.** The
-tuner reads the CPU topology, the pages the kernel actually reserved, the RAM,
-the NIC's PCI address and `HEXA_SUBSCRIBERS`. None of those is an interface
-count. Run against this product's own RAM floor - 4 GB, 4 cores, the shipped
-`HEXA_SUBSCRIBERS=200000` - the tuner already reports:
+**Where the number comes from is the measurement, divided.** The run printed
+`after 7000: 7000 live` and then died creating the next batch, so 32 MiB over
+7,000 interfaces - **4,793 bytes each** - is the density that segment was
+measured surviving. It is deliberately not the 2.9 kB of counter content
+measured at 40,000 interfaces on a 1 GB segment: that figure predicts 12,000
+interfaces on the 32 MB default, and the box died below 8,000, because the
+counter directory is one contiguous vector that must hold two copies while it
+grows.
 
-```
-# 1G hugepages: 2 GB requested (sized for 200000 subscribers), 2 reserved right now
-# WARNING: 5 GB of hugepages were needed for 200000 subscribers, but this machine has 4 GB of RAM.
-#          Capped at 2 GB. Expect fewer subscribers than configured, or add RAM.
-  main-heap-size 1G
-```
+**What it is sized from is the box, not the subscriber target.**
+`/etc/hexarouting/hexarouting.conf` is the file `hexarouting.service` hands to
+`hexash --load` at every boot, so the interfaces named in it are the interfaces
+the box will create, and the count is taken with **hexash's own parser** rather
+than a second reader of that grammar. Sizing from `HEXA_SUBSCRIBERS` was
+rejected on its own arithmetic and stays rejected: on this product's 4 GB RAM
+floor it would ask for a further 553 MB, out of the 2 GB the tuner leaves
+outside hugepages, for interfaces that never appear - a CGNAT subscriber is a
+translation, and 200,000 of them share a handful of ports.
 
-Sizing the segment from `HEXA_SUBSCRIBERS` on that box would ask for a further
-**553 MB** at the measured 2.9 kB per interface, out of the 2 GB the tuner
-leaves outside hugepages, for interfaces that never appear: a CGNAT subscriber
-is a translation and 200,000 of them share a handful of ports. A constant
-instead is what `main-heap-size` stopped being when it started reading the
-reserved pages, and a new `HEXA_INTERFACES` is a knob whose right value the
-operator cannot know before the box is configured.
+Three things the tuner will not do with that count: write a stanza smaller than
+what VPP gives away (below 7,000 interfaces it does nothing at all); override a
+`statseg` an operator put in `/etc/hexarouting/vpp-base.conf`, which is
+concatenated **ahead of** the generated stanzas; or say anything about a size
+to a box with no interfaces to size for. A box with no saved configuration, one
+whose configuration could not be read, and one this program could not reach
+hexash's parser from are three different sentences and none of them is a
+number.
 
-So the number stays with the operator, in `/etc/hexarouting/vpp-base.conf`,
-which the tuner concatenates **ahead of** the stanzas it generates and
-therefore never overrides. What shipped instead is that the box says where it
-stands: one line in the tuner's report, and a self-test check that is a warning
-at half the segment and a failed check naming `os_panic` and `SIGABRT` at three
-quarters. Three quarters rather than nine tenths because the counter directory
-is one contiguous block copied to grow, so the last part cannot be spent.
-`appliance/test_tune.py` asserts no `statseg` stanza is generated in either the
-tuned or the first-boot configuration, and `test/test_selftest.sh` drives the
-check over a comfortable box, a box at 60%, a box at 90%, a box whose
-`startup.conf` carries a stanza, and a dataplane that does not answer.
+The self-test still reads the **dataplane's own heap**: a warning at half the
+segment, a failed check naming `os_panic` and `SIGABRT` at three quarters, and
+the provenance of the size now has three answers - the operator's stanza, the
+tuner's, and VPP's default - because reading only `startup.conf` would tell a
+box the tuner sized that its operator had sized it.
+`appliance/test_tune.py` drives a box configured for 20,000 interfaces, one for
+7,000 and one for 3, a box with no configuration, one whose file cannot be
+read, one this program cannot find the parser from, and a box whose operator
+already chose the size.
 
 The cost this issue quoted for `statseg { size 1G }` is **not** the cost of the
 segment, and `docs/appliance.md` holds that correction and is the only document
 that names the figure: in the table it came from it is the RSS difference
 between 0 and 40,000 sessions on the 1 GB box, so it is the cost of the traffic.
 Nothing measured isolates what a larger segment costs an idle box. What remains
-genuinely open is only what a **BNG** would set it to, which is
-[#170](https://github.com/andrediashexa/hexarouting/issues/170)'s to answer
-because it is the thing that would know its own subscriber ceiling.
+open is the **BNG**: a PPPoE session interface is in no configuration file, so
+nothing the tuner reads counts it, and
+[#170](https://github.com/andrediashexa/hexarouting/issues/170) is the thing
+that would know its own subscriber ceiling.
 
 #### What is blocked on somebody else, and on what
 

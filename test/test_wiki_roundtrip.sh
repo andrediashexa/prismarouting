@@ -433,5 +433,72 @@ else
   bad "the mirror has drifted from the format the two scripts agree on"
 fi
 
+echo
+echo "=== the release gate reads this, so nothing ships past a stale wiki ==="
+# WHY THE GATE AND NOT THIS SUITE. A page on the published wiki that disagrees
+# with the product is the product lying to somebody holding a screen and
+# deciding what state their box is in - one of the pages sitting uncorrected
+# told an operator that a refused commit applies nothing, which stopped being
+# true when the FRR read-back check became a refusal that leaves the box
+# half-configured. But a check that goes red on every `make test` is a check
+# people learn to run around, and the person who can publish a page is the one
+# with the token, standing in front of a release. So the gate asks, once, at
+# the act it belongs to (#277).
+#
+# WHAT IS ASSERTED HERE IS AGREEMENT, not a verdict. "The gate refuses" would
+# be a check that breaks the day the wiki is published, which is the day the
+# product gets better - so this runs the holder and the gate and requires them
+# to say the same thing, which is true before and after. The verdict itself is
+# measured above, on the holder, in both directions.
+#
+# RELEASE_GATE_CHECK_ONLY, so this costs a clone and not a 321 MB image.
+GATE_TAG=$(git -C "$REPO" tag --sort=-v:refname 2>/dev/null | head -1)
+if [ -z "$GATE_TAG" ]; then
+  bad "this repository has no tag, so the gate cannot be driven at all"
+else
+  if sh "$REPO/tools/wiki-status.sh" >/dev/null 2>&1; then
+    HOLDER=clean
+  else
+    HOLDER=drafts
+  fi
+  RELEASE_WORK="$WORK/gate" RELEASE_GATE_CHECK_ONLY=1 \
+    sh "$REPO/tools/release-gate.sh" "$GATE_TAG" > "$WORK/gate.log" 2>&1 || true
+  # The gate has checks before this one and any of them can refuse first. What
+  # proves it reached the wiki step is one of the wiki step's own two lines,
+  # and a run that shows neither proves nothing either way - so it is a
+  # failure here rather than a silent pass.
+  if grep -q "the published wiki matches this tree" "$WORK/gate.log"; then
+    GATE=clean
+  elif grep -q "would ship with the published wiki behind it" "$WORK/gate.log"; then
+    GATE=drafts
+  else
+    GATE=unreached
+  fi
+  case "$GATE" in
+    unreached)
+      bad "the gate never reached the wiki step for $GATE_TAG, so nothing \
+here says whether it reads this at all. It stopped at:"
+      grep -m1 '^error:' "$WORK/gate.log" | sed 's/^/    /' ;;
+    "$HOLDER")
+      ok "the gate and tools/wiki-status.sh agree: $GATE" ;;
+    *)
+      bad "the holder says '$HOLDER' and the gate says '$GATE', so the gate \
+is deciding this for itself instead of reading the one place it is written" ;;
+  esac
+  # And it repeats what the holder said rather than listing pages of its own.
+  # A second list is a second thing to keep true, and this one would be read
+  # by somebody about to publish.
+  if [ "$HOLDER" = drafts ] && [ "$GATE" = drafts ]; then
+    FIRSTPAGE=$(sh "$REPO/tools/wiki-status.sh" 2>&1 |
+                sed -n 's/^  \(wiki\/.*\.md\)$/\1/p' | head -1)
+    if [ -n "$FIRSTPAGE" ] && grep -q "$FIRSTPAGE" "$WORK/gate.log"; then
+      ok "and the refusal names the pages the holder named"
+    else
+      bad "the gate refused without naming what the holder named \
+($FIRSTPAGE), so an operator with the token is told to publish and not what"
+    fi
+  fi
+fi
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

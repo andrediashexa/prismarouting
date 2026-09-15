@@ -253,53 +253,251 @@ with tempfile.TemporaryDirectory() as root:
     check(big > small, f"500k subscribers ({big}G) should ask for more than 10k ({small}G)")
     print(f"  10k subscribers -> {small}G ; 500k -> {big}G")
 
-print("\n=== the statistics segment is reported, and never written (#288) ===")
-# The one memory resource the tuner does not size, and the only one whose
-# limit is an abort rather than a refusal: VPP exports its counters through a
-# fixed segment, every interface adds entries to it, and a full segment reaches
-# os_panic and SIGABRT. A box built by this tuner runs on VPP's built-in 32 MB
-# and was measured aborting between 7,000 and 8,000 interfaces, twice.
+print("\n=== the statistics segment is sized for the interfaces configured (#288) ===")
+# THE DEFECT, measured twice at the same step (docs/bng.md 2.1): a box built by
+# this tuner runs on VPP's built-in 32 MB statistics segment, and creating
+# subscriber interfaces on it printed "after 7000: 7000 live" and then "VPP
+# DIED while creating sessions 7000..8000", with _vec_realloc_internal under
+# vlib_stats_create_counter on the stack. The limit of the one memory resource
+# the tuner did not size is an ABORT and not a refusal: the whole dataplane,
+# and nothing said about what ran out.
 #
-# Two halves, and the second is the one that would rot quietly. NOT sizing it
-# is a decision - nothing the tuner reads predicts an interface count, and a
-# CGNAT subscriber is not an interface - so the tuner has to SAY so, and it
-# must not emit a stanza of its own, because the operator's stanza lives in the
-# base file and a generated one would be the last word on every boot.
+# So it is sized, and from the same kind of fact as the queue count beside it
+# (#330): the interfaces this box is CONFIGURED for, read from the file that
+# creates them, rather than inferred from a subscriber target that counts
+# translations. The arithmetic is the measurement divided: 32 MiB over the
+# 7,000 interfaces that segment was measured holding is 4,793 bytes each.
+
+def interfaces_conf(root, n, extra=""):
+    """A saved configuration naming `n` interfaces, as hexash writes them."""
+    path = os.path.join(root, "hexarouting.conf")
+    with open(path, "w") as f:
+        f.write("! cgnat\n")
+        for i in range(n):
+            f.write(f"interface Ten0/0/0.{i}\n vlan {i % 4000 + 1}\n exit\n")
+        f.write(extra)
+    return path
+
 with tempfile.TemporaryDirectory() as root:
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
           hugepages_gb=6, isolated="1-7")
-    out = run(root, "--interface", "eth0")
-    check("statistics segment" in out,
-          "the tuner must say what it is doing about the statistics segment, "
-          "which is the resource it does not size")
-    check("32 MB" in out,
-          f"it must name the default the box actually gets; output was {out!r}")
+    # The routing half of the file names interfaces too, in FRR's own blocks,
+    # and names ONES THAT ARE ALREADY ABOVE. A box carrying 20,000
+    # sub-interfaces with OSPF on one of them is configured for 20,000
+    # interfaces, not 20,001 - and a reader that counted `interface ` lines
+    # would say 20,001 here and something further off on a real file.
+    conf = interfaces_conf(root, 20000,
+                           extra="! routing\ninterface Ten0/0/0.0\n"
+                                 " ip ospf cost 10\n exit\n")
+    out = run(root, "--interface", "eth0", "--config", conf)
+    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+    check("statseg" in stanzas,
+          f"a box configured for 20,000 interfaces was left on VPP's 32 MB "
+          f"default, which was measured aborting below 8,000. Generated: "
+          f"{stanzas!r}")
+    # THE ARITHMETIC, and it is the measurement rather than a constant
+    # somebody liked: 20,000 x 4,793 B is 95,860,000 B, which is 91.4 MiB, so
+    # 92M. Sized instead from the 2.9 kB of counter CONTENT measured at 40,000
+    # interfaces it would be 56M - and that is the figure that predicts 12,000
+    # interfaces on a segment that died below 8,000, because it leaves out the
+    # contiguous directory that has to hold two copies while it grows.
+    check("size 92M" in stanzas,
+          f"20,000 interfaces at the measured 4,793 bytes each is 92M; the "
+          f"stanza says: "
+          f"{[l.strip() for l in stanzas.splitlines() if 'size' in l]}")
+    # AND THE REPORT CARRIES THE SAME NUMBER. Two computations of one figure
+    # is the shape #326 was: the page quoted a line the tuner had stopped
+    # printing, and nothing compared them. Here the operator's screen and the
+    # file VPP reads are the two copies.
+    _in_stanza = re.search(r"^\s*size (\d+M)$", stanzas, re.M)
+    _in_report = re.search(r"statistics segment: (\d+M)", out)
+    check(bool(_in_report) and bool(_in_stanza)
+          and _in_report.group(1) == _in_stanza.group(1),
+          f"the report and the generated stanza must carry the same size, "
+          f"and the report has "
+          f"{_in_report.group(1) if _in_report else 'none'} where "
+          f"startup.conf has "
+          f"{_in_stanza.group(1) if _in_stanza else 'none'} - so the one "
+          f"screen an operator reads is not about the box: "
+          f"{[l for l in out.splitlines() if 'statistics' in l]}")
+    check("20000" in out.split("###")[0],
+          f"the report names no interface count, so a size appears in "
+          f"startup.conf with nothing saying what it was sized for: "
+          f"{[l for l in out.splitlines() if 'statistics' in l]}")
+    # AND THE COUNT IS HEXASH'S OWN. The tuner loads the VTY's parser instead
+    # of grepping the file, because a second reader of that grammar answers
+    # the same until the VTY learns another way to name an interface, and the
+    # box that finds out is the one with twenty thousand of them.
+    sys.path.insert(0, os.path.join(HERE, "..", "src", "hexash"))
+    import config as _cfg     # noqa: E402
+    _theirs = len(_cfg.Config.parse(open(conf).read()).interface_names())
+    check(f"the {_theirs} interface(s)" in out,
+          f"the tuner and hexash do not agree about how many interfaces that "
+          f"file configures: hexash says {_theirs} and the report says "
+          f"{[l for l in out.splitlines() if 'interface(s)' in l]}")
+    print(f"  20,000 interfaces -> "
+          f"{[l.strip() for l in stanzas.splitlines() if l.strip().startswith('size ')]}")
+
+with tempfile.TemporaryDirectory() as root:
+    # THE FIRST BOOT CARRIES IT TOO, and this is not symmetry for its own
+    # sake: the hugepages and the pinning wait for a reboot because the kernel
+    # has to grant them, and the statistics segment does not - hexarouting.service
+    # hands the same saved configuration to `hexash --load` on the first boot,
+    # so a box that aborts on its own configuration aborts on it that time.
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_gb=0, isolated="")
+    conf = interfaces_conf(root, 20000)
+    out = run(root, "--interface", "eth0", "--config", conf)
+    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+    check("FIRST BOOT MODE" in stanzas,
+          "this fixture stopped being the first-boot branch, so the check "
+          "below is about the other profile")
+    check("size 92M" in stanzas,
+          f"the conservative profile left the segment at 32 MB for a box "
+          f"configured for 20,000 interfaces, and that box loads the same "
+          f"configuration on its first boot: {stanzas!r}")
+    print("  and on the first boot, where the same configuration is loaded")
+
+with tempfile.TemporaryDirectory() as root:
+    # THE BOX THIS PRODUCT ACTUALLY SHIPS TO, and the one rule 7 of this file
+    # is about: a CGNAT box terminating subscribers on a handful of ports has
+    # nothing to size for, and must not be told about a size it does not need.
+    # 7,000 is not an arbitrary second case - it is the count that segment was
+    # measured holding, so it is the last box on the default's own evidence.
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_gb=6, isolated="1-7")
+    for _n in (3, 7000):
+        conf = interfaces_conf(root, _n)
+        out = run(root, "--interface", "eth0", "--config", conf)
+        stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+        check("statseg" not in stanzas,
+              f"a box configured for {_n} interface(s) was given a statseg "
+              f"stanza. VPP's own default holds 7,000, so anything written "
+              f"here is either the same number or a smaller segment than the "
+              f"box already had: "
+              f"{[l.strip() for l in stanzas.splitlines() if 'size' in l]}")
+        check(f"configured for {_n}, in" in out,
+              f"the report does not say what it counted, so a box on the "
+              f"default cannot be told from a box nobody read the "
+              f"configuration of: "
+              f"{[l for l in out.splitlines() if 'statistics' in l]}")
+    print("  and a box with a handful of ports is left on the default")
+
+with tempfile.TemporaryDirectory() as root:
+    # A BOX WITH NOTHING CONFIGURED YET, which is every box on the boot after
+    # the installer. Every defect this file has carried was a sentence true of
+    # one box and false of another, and "sized for 0 interfaces" would be one.
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_gb=6, isolated="1-7")
+    out = run(root, "--interface", "eth0",
+              "--config", os.path.join(root, "not-configured-yet.conf"))
+    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+    check("statseg" not in stanzas,
+          f"a box with no saved configuration was given a statistics segment "
+          f"sized for the interfaces it has not got: {stanzas!r}")
+    check(not re.search(r"statistics segment: \d+M", out),
+          f"a box with no interfaces to size for was told about a size it "
+          f"does not need: {[l for l in out.splitlines() if 'statistics' in l]}")
+    # And the standing advice, which is what that box can act on instead.
+    check("32 MB" in out, f"it must name the default the box actually gets; "
+                          f"output was {out!r}")
     check("7,000 and 8,000" in out,
           "a limit without the measured number behind it is a rumour")
     check("/etc/hexarouting/vpp-base.conf" in out,
           "saying there is a wall without saying where the stanza goes leaves "
           "the operator with nothing to do about it")
-    # The generated half, read apart from the report: a statseg stanza written
-    # HERE would come after the base file and take precedence over the one an
-    # operator put there, so the only correct number of them is zero.
-    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
-    check("statseg" not in stanzas,
-          "the tuner must not generate a statseg stanza: it would override the "
-          f"operator's own on every boot. Generated: {stanzas!r}")
-    print("  reported with the measured wall, and no stanza generated")
+    print("  a box with nothing configured is told about the wall, not a size")
 
 with tempfile.TemporaryDirectory() as root:
-    # First boot takes a different branch of render_vpp entirely, and a stanza
-    # added to one and not the other is the shape half this file exists for.
+    # SOMEBODY ELSE'S STANZA WINS, ALWAYS. The base file is concatenated AHEAD
+    # of these stanzas, so a generated one is the last word on every boot: a
+    # box whose operator chose 1G would silently get whatever this program
+    # computed, on every reboot, for as long as the box lived.
     build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
-          hugepages_gb=0, isolated="")
-    out = run(root, "--interface", "eth0")
-    check("statistics segment" in out,
-          "the first-boot report must say it too: that box runs a dataplane")
+          hugepages_gb=6, isolated="1-7")
+    conf = interfaces_conf(root, 20000)
+    base = os.path.join(root, "vpp-base.conf")
+    with open(base, "w") as f:
+        f.write("unix {\n  nodaemon\n}\n\nstatseg {\n  size 1G\n}\n")
+    out = run(root, "--interface", "eth0", "--config", conf, "--vpp-base", base)
     stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
     check("statseg" not in stanzas,
-          f"no statseg stanza on first boot either. Generated: {stanzas!r}")
-    print("  and the same on a box whose kernel is not tuned yet")
+          f"the operator's own statseg stanza was overridden by a generated "
+          f"one, which is the last word on every boot: {stanzas!r}")
+    check("left to the stanza somebody already put in" in out,
+          f"the report does not say the segment was left to the stanza in the "
+          f"base file, so a box whose operator chose the size reads exactly "
+          f"like a box this program sized: "
+          f"{[l for l in out.splitlines() if 'statistics' in l]}")
+    # THE SHIPPED BASE FILE IS NOT SOMEBODY'S DECISION. It explains where a
+    # statseg goes in a comment block, and a box that read its own
+    # documentation as a stanza would never size anything at all.
+    with open(base, "w") as f:
+        f.write("# statseg{} DOES belong here, and this is the only place\n"
+                "#   statseg {\n#     size 256M\n#   }\n"
+                "unix {\n  nodaemon\n}\n")
+    out = run(root, "--interface", "eth0", "--config", conf, "--vpp-base", base)
+    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+    check("size 92M" in stanzas,
+          f"the comment block the product ships in vpp-base.conf was read as "
+          f"somebody having sized the segment, so this box keeps the 32 MB "
+          f"that aborts at 7,000: {stanzas!r}")
+    print("  an operator's stanza is left alone; the shipped comment is not one")
+
+with tempfile.TemporaryDirectory() as root:
+    # A CONFIGURATION THIS PROGRAM COULD NOT READ is the state #288 lives on
+    # after this change: the box keeps the segment that aborts, and the only
+    # thing standing between that and a dead dataplane is the sentence. Same
+    # reason the unreadable card says so above (#330): "could not read it" and
+    # "read it and it is fine" must not look the same on the one screen.
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_gb=6, isolated="1-7")
+    conf = os.path.join(root, "hexarouting.conf")
+    # Half-written by a box that lost power mid-save: real bytes, not UTF-8.
+    with open(conf, "wb") as f:
+        f.write(b"! cgnat\ninterface Ten0/0/0.1\n description \xff\xfe\n exit\n")
+    out = run(root, "--interface", "eth0", "--config", conf)
+    stanzas = out.split("### stanzas appended to /etc/vpp/startup.conf")[1]
+    check("statseg" not in stanzas,
+          f"a configuration that could not be read produced a segment size "
+          f"anyway, so the number is not the box's: {stanzas!r}")
+    # THE PATH AND THE WORDS TOGETHER. "could not be read" alone is already
+    # printed two lines up by the card that could not be read (#330), so a
+    # check for it passes on a box whose configuration was never opened -
+    # which is the check that cannot fail, and the whole point of this one.
+    check(f"{conf} could not be read" in out,
+          f"the box could not read its own configuration, sized nothing on "
+          f"the strength of it, and said nothing about it - which reads "
+          f"exactly like a box that has nothing to size for: "
+          f"{[l for l in out.splitlines() if 'segment' in l or conf in l]}")
+    print("  and a configuration it could not read is said out loud")
+
+with tempfile.TemporaryDirectory() as root:
+    # AND A BOX THAT CANNOT REACH THE PARSER AT ALL, which is an install that
+    # put /usr/lib/hexarouting somewhere this program cannot see it. The
+    # configuration on that box is fine, so telling the operator it could not
+    # be parsed sends them to edit the one thing that is right - and it is the
+    # same mistake as reading a card badly and calling the card broken (#330).
+    # Reached by running the tuner from a directory with neither hexash beside
+    # it nor one installed, which is exactly what that box has.
+    build(root, sockets=1, cores_per_socket=8, threads=1, nic_node=0,
+          hugepages_gb=6, isolated="1-7")
+    conf = interfaces_conf(root, 20000)
+    _alone = os.path.join(root, "bin")
+    os.makedirs(_alone, exist_ok=True)
+    shutil.copy(TUNE, os.path.join(_alone, "hexarouting-tune"))
+    _p = subprocess.run([sys.executable, os.path.join(_alone, "hexarouting-tune"),
+                         "--sysfs-root", root, "--interface", "eth0",
+                         "--config", conf], capture_output=True, text=True)
+    _o = _p.stdout
+    check("parser is not installed" in _o,
+          f"the box could not reach hexash's parser and reported its "
+          f"configuration as unreadable, which is the one file on it that is "
+          f"fine: {[l for l in _o.splitlines() if 'segment' in l or 'parser' in l]}")
+    check("statseg" not in _o.split("### stanzas appended to /etc/vpp/startup.conf")[1],
+          f"a box that could not count its interfaces sized the segment "
+          f"anyway: {_o.split('### stanzas')[1]!r}")
+    print("  and so is an install this program cannot find the parser in")
 
 print("\n=== first boot: kernel still without hugepages or isolcpus ===")
 with tempfile.TemporaryDirectory() as root:
@@ -686,7 +884,9 @@ os.symlink(f"{_d}/sys/devices/platform/soc/eth-mmio",
 # Its own functions are what is under test here: driving the whole thing as a
 # subprocess would answer "was a dpdk stanza written" and this asks the
 # narrower question of what one interface resolves to.
-_ns = {"__name__": "hexarouting_tune"}
+# `__file__` too: the tuner resolves hexash's configuration parser relative to
+# its own path, and a namespace without one is not standing in for the module.
+_ns = {"__name__": "hexarouting_tune", "__file__": TUNE}
 exec(compile(open(TUNE).read().split("\ndef plan(")[0], TUNE, "exec"), _ns)
 Topology, is_pci_addr = _ns["Topology"], _ns["is_pci_addr"]
 
