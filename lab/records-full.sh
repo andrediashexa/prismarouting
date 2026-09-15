@@ -5,8 +5,10 @@
 #
 # The README claims two things about this, in its status table:
 #
-#   Configuration trail  | Attributable and tamper-evident: every entry names
-#                          the operator and is chained by SHA-256
+#   Configuration trail  | Attributable and tamper-evident: every entry says
+#                          who asked, one that cannot be attributed says so
+#                          rather than leaving the field off, and the whole is
+#                          chained by SHA-256
 #   Connection records   | On their own filesystem, so a full log cannot stop
 #                          the box working
 #

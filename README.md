@@ -131,7 +131,7 @@ stays on `0.x.x` until it is declared ready for production; see
 | Appliance (ISO, tuning, systemd) | ISO boots clean, self-test reports ready; **since v0.28.0** every release is built from its tag, booted, installed to a disk and booted again from that disk before publishing, by `tools/release-gate.sh`. The 26 releases before it, v0.2.0 to v0.27.0, were published without that gate |
 | Connection records | On their own filesystem, so a full log cannot stop the box working |
 | **HA / failover** | **NOT implemented** — see [docs/ha.md](docs/ha.md) |
-| **Throughput** | **NOT measured** — every performance figure is untested; see [#28](https://github.com/andrediashexa/hexarouting/issues/28) |
+| **Throughput** | **Bits per second NOT measured** - that needs a NIC DPDK drives natively; see [#28](https://github.com/andrediashexa/hexarouting/issues/28). What a packet costs the translation nodes in CPU clocks IS measured, by `lab/throughput.sh` against VPP's own counters, and [docs/roadmap.md](docs/roadmap.md) section 3.5 carries the figure |
 
 What is planned, in which release, and why in that order:
 [docs/roadmap.md](docs/roadmap.md) section 5.

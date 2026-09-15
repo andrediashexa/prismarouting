@@ -120,6 +120,64 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Three of `README.md`'s ten state-table rows had nothing holding them, and
+  one of the three was false.** That table is what a reader consults to decide
+  whether to trust this product, and two of its rows were read and corrected
+  earlier in this cycle - the appliance row, which claimed a release gate that
+  26 of the 74 published releases predate, and the configuration trail row,
+  which claimed every entry names the operator where the product has a shape
+  that says it cannot. Both were found by reading. The question nobody had
+  asked was what held the other eight, so each was measured against the tree:
+  what in `test/`, `tools/` or `lab/` goes red if this row becomes false?
+
+  **The Throughput row was false, and had been for 66 releases.** It said
+  *"NOT measured - every performance figure is untested"*. The first half is
+  true of bits per second and [#28](https://github.com/andrediashexa/hexarouting/issues/28)
+  stays open for it, because that needs a NIC DPDK drives natively. The second
+  half is not: `lab/throughput.sh` has measured what a packet costs the
+  translation nodes in CPU clocks since v0.8.0, `tools/run-all-labs.sh` runs it
+  in the release suite, and `docs/roadmap.md` section 3.5 states the number it
+  produced - **346 clocks** in `bpa-in2out`. A reader deciding whether this
+  design can reach a target at all was being told the one measurement that
+  answers them does not exist. The row now separates the figure nobody has
+  taken from the one this project takes on every suite run.
+
+  **Six rows are held by a lab and by nothing else, and that is left as it
+  is.** "Routes reach the VPP FIB" is `lab/igp.sh` and `lab/routing.sh`
+  requiring a prefix out of `vppctl show ip fib`; "verified with a decoding
+  collector" is `lab/ipfix.sh` and `lab/ipfix-tcp.sh` reading
+  `tools/ipfix_collector.py`'s decoded records; the roles half of the VTY row
+  is `lab/vty.sh` driving three real POSIX accounts. `make test` runs offline
+  and can answer none of them, and a check written here that looked as though
+  it did would be worse than the nothing it replaced.
+
+  **One clause has no holder in any suite at all**, and saying so is the point
+  of measuring: the dataplane row's *"and real traffic"* is `lab/hw-vpp.sh`,
+  which needs two machines and a NIC bound to `vfio-pci`, and which
+  `tools/run-all-labs.sh` excludes for that reason. `lab/hw-lab.sh` is 77 lines
+  of setup and asserts nothing.
+
+  **Four rows are answerable from the tree, and now are.** Each is in
+  `test/test_doc_copies.py`, beside the two from this cycle, with one owner of
+  the truth and one reader of it:
+
+  | Row | Owner of the truth | What makes it red |
+  |---|---|---|
+  | BPA mapping core, *"every mapping in the pool one by one"* | `ref/gen_vectors.py`, through the counts in the header it generates | a generator that samples. `test/test_bpa_pool.c` walks whatever the vectors hold and never asks how many there should be - at `BPA_VEC_N_FWD` zero it prints "0 comparisons" and passes. The check recomputes the total from each pool's own capacity and inside count: 5031 forward mappings across 9 pools, and 2517 when the enumeration is cut to every second subscriber |
+  | Connection records, *"on their own filesystem"* | the fstab `appliance/hexarouting-install` writes | one UUID variable for both mount points, or no line for `/var/log/hexarouting` at all. `appliance/selftest` reports the arrangement on a running box and `test/test_selftest.sh` drives both of its arms, so what an installed box does was held; what the installer writes was not |
+  | HA / failover, *"NOT implemented"* | `tools/run-all-labs.sh`'s `NOT_LABS`, which excludes `lab/ha-failover.sh` because the feature is MISSING | the day [#9](https://github.com/andrediashexa/hexarouting/issues/9) lands that lab joins the suite and this row would still say the feature is absent, which is how a README goes stale here: by describing a smaller product than the one that now exists |
+  | Throughput, *"every performance figure is untested"* | `lab/throughput.sh`, while the release suite runs it | the clause above, put back |
+
+  Every one of the four was shown red in both directions before it was kept -
+  the owner broken with the document left alone, and the document broken with
+  the owner left alone. `TESTING.md`'s fourth way a mutation lies is the trap
+  for a documentation check specifically: mutating the sentence the needle is
+  cut from moves both sides together and proves nothing.
+
+  Also corrected: `lab/records-full.sh`'s header quoted the configuration trail
+  row as it read before this cycle, which made it a second copy of a state
+  table row that had already moved.
+
 * **A check that compared two trees, and the day the wiki was published is
   the day it broke.** `test/test_wiki_roundtrip.sh` drives the release gate and
   requires it to agree with `tools/wiki-status.sh` rather than asserting a

@@ -1067,6 +1067,203 @@ else:
     ok("the trail has an unattributed shape and the README does not claim "
        "otherwise")
 
+# ---------------------------------------------------------------------------
+# The rest of README.md's state table. Two of its ten rows were read and found
+# false in one cycle - the appliance row above and the trail row above it - and
+# the question that produced the four checks below is what held the other
+# eight. Six of them turned out to be held by a lab and by nothing else, which
+# is the honest answer and is written up in TESTING.md rather than papered over
+# here: `make test` runs offline and cannot say whether a route reached a FIB.
+# These four are the ones that can be answered from the tree, and each has one
+# owner of the truth and one reader of it.
+# ---------------------------------------------------------------------------
+
+print("\n=== every mapping in the pool, or a sample of them ===")
+# The BPA row says the core is verified "every mapping in the pool one by one",
+# and `every` is the whole of what that row promises: an enumeration and a
+# sample read identically in a green run. test/test_bpa_pool.c walks whatever
+# the vectors hold and never asks how many there should be - with
+# BPA_VEC_N_FWD at zero it prints "0 forward vectors", "0 comparisons" and
+# passes, which is this project's defect class exactly.
+#
+# ONE OWNER AND A READER, and they are not one number computed twice.
+# exp_capacity and exp_inside_count are what ref/bpa_model.py says a pool
+# HOLDS; BPA_VEC_N_FWD is how many mappings ref/gen_vectors.py actually wrote
+# out. A generator that sampled would move the second and leave the first
+# where it was.
+#
+# The header is generated rather than committed, and `make test` builds it
+# before any suite runs - the `vectors` target is a prerequisite of `test` in
+# the Makefile, and `make vectors` alone does it too. Its absence is a
+# FAILURE and not a skip: a check that passes for free on a tree where the
+# vectors were never built has said something about nothing.
+_VEC = os.path.join(REPO, "test", "bpa_vectors.h")
+if not os.path.exists(_VEC):
+    bad("test/bpa_vectors.h is not generated, so nothing here compares the "
+        "vectors against the pools they were cut from. `make test` generates "
+        "it; so does `make vectors` on its own")
+else:
+    _vec = open(_VEC, encoding="utf-8").read()
+    # Read by POSITION, because bpa_vec_pool_t is positional: the numbers
+    # after the policy are blocks_per_ip, blocks_mapped, reserve_count,
+    # capacity, inside_count, and the ones after that are not needed here.
+    _pools = []
+    for _ln in _vec.split("\n"):
+        _m = re.match(r'\s*\{\s*"([\w-]+)",.*?BPA_POLICY_\w+,\s*([0-9u,\s]+)\}',
+                      _ln)
+        if _m:
+            _n = [int(_x.strip().rstrip("u")) for _x in _m.group(2).split(",")
+                  if _x.strip()]
+            if len(_n) >= 5:
+                _pools.append((_m.group(1), _n[3], _n[4]))
+    _m = re.search(r"#define BPA_VEC_N_POOLS (\d+)", _vec)
+    _f = re.search(r"#define BPA_VEC_N_FWD (\d+)", _vec)
+    if not _m or not _f:
+        bad("test/bpa_vectors.h names no pool count or no forward count, so "
+            "the generated header is not the shape this check reads")
+    elif len(_pools) != int(_m.group(1)):
+        # A regex that reads four of nine pools reports a shortfall that is
+        # its own, and the message would send the next reader to the
+        # generator. Say which it is.
+        bad(f"{len(_pools)} pool row(s) were read out of test/bpa_vectors.h "
+            f"and it declares {_m.group(1)}: this check's parse is wrong, not "
+            f"the vectors")
+    else:
+        # min(), because a pool whose public side is larger than its private
+        # one runs out of subscribers before it runs out of capacity, and the
+        # generator enumerates subscribers.
+        _want = sum(min(_cap, _ins) for _, _cap, _ins in _pools)
+        _got = int(_f.group(1))
+        _one_by_one = "every mapping in the pool one by one" in README
+        if _got != _want:
+            bad(f"the vectors carry {_got} forward mapping(s) where the {len(_pools)} "
+                f"pool(s) hold {_want}, so test/test_bpa_pool.c compares a "
+                f"SAMPLE against ref/bpa_model.py. README.md's state table "
+                f"says every mapping in the pool, one by one, and that is the "
+                f"strength of the only row a reader has for the mapping core")
+        elif not _one_by_one:
+            bad(f"the vectors enumerate all {_got} mapping(s) of the "
+                f"{len(_pools)} pool(s) and README.md's state table no longer "
+                f"says so: the row describes a weaker product than the one "
+                f"this repository has")
+        else:
+            ok(f"{_got} forward mapping(s), which is every mapping the "
+               f"{len(_pools)} pool(s) hold, one by one")
+
+print("\n=== the filesystem the connection records are promised ===")
+# "On their own filesystem, so a full log cannot stop the box working" is a
+# claim about a box an operator installs, and the installer is what makes it
+# true or false. appliance/selftest reports the arrangement on a running box
+# and test/test_selftest.sh drives both of its arms, so what an INSTALLED box
+# does is held; what the installer WRITES is not, and that is the half the
+# README row rests on.
+#
+# ONE OWNER: the fstab appliance/hexarouting-install writes. Two mount points
+# with two different UUID variables is the whole of the claim - one variable
+# for both, or no line for the records at all, and the records are on the root
+# filesystem with the README still promising otherwise.
+_install = read("appliance/hexarouting-install")
+# The variable and not its value: the value is a UUID blkid answers with at
+# install time, and there is nothing in the tree to compare it against.
+_mounts = {}
+for _var, _at in re.findall(r'echo "UUID=\$(\w+) (\S+) ', _install):
+    _mounts.setdefault(_at, _var)
+_root_var = _mounts.get("/")
+_rec_var = _mounts.get("/var/log/hexarouting")
+_separate = bool(_root_var and _rec_var and _root_var != _rec_var)
+_says_own = "own filesystem, so a full log cannot stop the box working" in README
+if not _root_var:
+    bad("no fstab line mounting / was found in appliance/hexarouting-install, "
+        "so this check cannot tell a records volume from the root filesystem "
+        "and is comparing nothing")
+elif _separate and not _says_own:
+    bad("the installer gives the connection records a filesystem of their own "
+        "and README.md's state table no longer says so: that row is where a "
+        "reader learns a full log cannot stop this box")
+elif not _separate and _says_own:
+    bad(f"README.md says the connection records are on their own filesystem, "
+        f"and appliance/hexarouting-install mounts /var/log/hexarouting from "
+        f"{_rec_var or 'nothing'} against / from {_root_var}: a log that fills "
+        f"would take the box's own configuration with it")
+else:
+    ok(f"the installer mounts / from ${_root_var} and "
+       f"/var/log/hexarouting from ${_rec_var}, which is the row's claim")
+
+# tools/run-all-labs.sh holds, as data, which labs the release suite does NOT
+# run and why. test/test_run_all_labs.sh already reads it, so it is a list
+# something has to keep true; the two checks below read the reasons, because
+# two rows of the state table are claims about a feature that does not exist
+# and that list is where its absence is recorded as machinery.
+_RAL = read("tools/run-all-labs.sh")
+_nl = re.search(r'NOT_LABS="\n(.*?)\n"', _RAL, re.S)
+_excluded = dict(_l.split(":", 1) for _l in _nl.group(1).split("\n") if ":" in _l) \
+    if _nl else {}
+
+print("\n=== the feature the state table says this product has not got ===")
+# The HA row says NOT implemented, and the acceptance test for HA is written
+# and sits outside the release suite for exactly that reason: lab/ha-failover.sh
+# is red because the feature is MISSING. The day somebody implements #9 that
+# lab joins the suite, and the row a reader consults to decide whether to trust
+# this product would still say the feature is absent - which is the way a
+# README goes stale in this project, by describing a smaller product than the
+# one that now exists (CONTRIBUTING.md section 1).
+#
+# ONE OWNER: the exclusion, which is machinery rather than a second sentence.
+# docs/ha.md says the same thing in prose and is the row's link, but a document
+# and a document are two copies with nothing between them.
+_ha = _excluded.get("ha-failover", "")
+_ha_missing = "MISSING" in _ha
+_says_not_impl = "**HA / failover** | **NOT implemented**" in README
+if not _excluded:
+    bad("no exclusions were read out of tools/run-all-labs.sh's NOT_LABS, so "
+        "the two checks below are comparing the README against an empty list")
+elif _ha_missing and not _says_not_impl:
+    bad("the release suite still excludes lab/ha-failover.sh because the "
+        "feature is missing, and README.md's state table no longer says HA is "
+        "NOT implemented")
+elif _says_not_impl and not _ha_missing:
+    bad(f"README.md says HA is NOT implemented and tools/run-all-labs.sh no "
+        f"longer excludes lab/ha-failover.sh for a missing feature "
+        f"({_ha or 'it is not excluded at all'}): either the acceptance test "
+        f"passes now and the row is stale, or the suite is running a lab that "
+        f"cannot go green")
+else:
+    ok("the acceptance test for HA is outside the suite because the feature is "
+       "missing, and the state table says so")
+
+print("\n=== the performance figure the state table says nobody has taken ===")
+# The Throughput row said "NOT measured - every performance figure is
+# untested". The first half is true of bits per second and #28 stays open for
+# it. The second half was false for 66 releases: lab/throughput.sh has measured
+# what a packet costs the translation nodes in CPU clocks since v0.8.0, it is
+# in the release suite - it is not in NOT_LABS - and docs/roadmap.md section
+# 3.5 states the number it produced. A reader deciding whether this design can
+# reach a target at all was being told the one measurement that answers them
+# does not exist.
+#
+# ONE OWNER: the lab. Not the roadmap's figure, which is a number somebody
+# typed, and not the README's own wording. While a lab the release suite runs
+# asserts that a performance figure was taken, the state table may not say
+# every performance figure is untested.
+_thr = os.path.exists(os.path.join(REPO, "lab", "throughput.sh"))
+_thr_run = _thr and "throughput" not in _excluded
+_thr_asserts = _thr and bool(
+    re.search(r'expect "[^"]*was measured', read("lab/throughput.sh")))
+_says_none = "every performance figure is untested" in README
+if _thr_run and _thr_asserts and _says_none:
+    bad("README.md's state table says every performance figure is untested, "
+        "and lab/throughput.sh is in the release suite asserting that it "
+        "measured the CGNAT's cost per packet. docs/roadmap.md section 3.5 "
+        "carries the number. Bits per second is what #28 is open for, and the "
+        "row claims far more than that")
+elif not _thr_run or not _thr_asserts:
+    bad("lab/throughput.sh no longer measures a performance figure in the "
+        "release suite, so the one measurement this product has is gone and "
+        "README.md's Throughput row needs reading again")
+else:
+    ok("the per-packet cost is measured by a lab the release suite runs, and "
+       "the state table does not claim every performance figure is untested")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")
