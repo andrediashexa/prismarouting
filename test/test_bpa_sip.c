@@ -227,6 +227,27 @@ main (void)
 	   "\"10.0.0.1.example.com\" was read as the address 10.0.0.1");
   }
 
+  /*
+   * The top of the port range, which nothing else here reaches.
+   *
+   * bpa_sip_num() refuses a value above the ceiling its caller names, and
+   * every port in this file is five digits below it - so the ceiling was
+   * probed from neither side. Measured: with the test cut to `v >= max` all
+   * 74 checks passed, and 65535 is a port a UA may really be listening on.
+   * The refusal above it is in the table further down.
+   */
+  {
+    static const char *top = "REGISTER sip:8.8.8.8 SIP/2.0\r\n"
+			     "Via: SIP/2.0/UDP 100.64.0.5:65535;branch=z1\r\n"
+			     "Content-Length: 0\r\n"
+			     "\r\n";
+
+    CHECK (run (top, &m) == BPA_SIP_PARSED, "the highest port did not parse");
+    it = item_of (&m, BPA_SIP_VIA, 0);
+    CHECK (it && it->addr == PRIV && it->port == 65535,
+	   "a sent-by on port 65535 came back as %u", it ? it->port : 0);
+  }
+
   {
     static const char *v6 = "REGISTER sip:8.8.8.8 SIP/2.0\r\n"
 			    "Via: SIP/2.0/UDP [2001:db8::1]:5060;branch=z1\r\n"
@@ -615,6 +636,31 @@ main (void)
 	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
 	"Via: SIP/2.0/UDP 100.64.0.5:5060;branch=z1\r\n"
 	"Content-Length: none\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /* bpa_sip_num, through a sent-by port: one above the ceiling. Read
+       * without the ceiling it truncates to zero, and the ALG maps a port
+       * nobody asked for. The acceptance of 65535 is above. */
+      { "a Via sent-by whose port is one above the range",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5:65536;branch=z1\r\n"
+	"Content-Length: 0\r\n"
+	"\r\n",
+	BPA_SIP_UNPARSED },
+      /*
+       * bpa_sip_via: a sent-by the host parse does not reach the end of.
+       *
+       * The address stops at the "x" and the delimiter is the semicolon, so
+       * the span bpa_sip_hostport() returns is shorter than the sent-by. That
+       * is the one shape where a rewrite lands inside a host rather than over
+       * it: without the `i + span != e` test the Via is recorded as ten bytes
+       * and the replacement leaves "200.150.0.17x:5060" behind. Measured:
+       * with that test deleted, all 74 checks of this file passed.
+       */
+      { "a Via sent-by with bytes after the address the host parse stopped at",
+	"INVITE sip:a@8.8.8.8 SIP/2.0\r\n"
+	"Via: SIP/2.0/UDP 100.64.0.5x:5060;branch=z1\r\n"
+	"Content-Length: 0\r\n"
 	"\r\n",
 	BPA_SIP_UNPARSED },
       { "a body that claims to be SDP and is not",

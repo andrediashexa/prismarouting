@@ -143,12 +143,25 @@ main (void)
 
   /* ---- nothing to do, and nothing wrong ---- */
 
+  /*
+   * Both of these carry a well-formed Transport header, for the reason the
+   * four start-line cases further down carry one: a message with no
+   * client_port in it is BPA_RTSP_NONE whatever the start line says, so
+   * without the header the verdict is answered by the absence rather than by
+   * the method or the status. Measured - with "SETUP " deleted from the
+   * request test, and again with the "200" test deleted from the reply, both
+   * of these stayed green in their older shape.
+   */
   expect ("a request that is not SETUP",
-	  "OPTIONS rtsp://cam RTSP/1.0\r\nCSeq: 1\r\n\r\n", 0, BPA_RTSP_NONE,
-	  "");
+	  "OPTIONS rtsp://cam RTSP/1.0\r\nCSeq: 1\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-6971\r\n"
+	  "\r\n",
+	  0, BPA_RTSP_NONE, "");
   expect ("a reply that is not 200",
-	  "RTSP/1.0 454 Session Not Found\r\nCSeq: 3\r\n\r\n", 1,
-	  BPA_RTSP_NONE, "");
+	  "RTSP/1.0 454 Session Not Found\r\nCSeq: 3\r\n"
+	  "Transport: RTP/AVP;unicast;client_port=6970-6971\r\n"
+	  "\r\n",
+	  1, BPA_RTSP_NONE, "");
   expect ("media interleaved on the control connection",
 	  "SETUP rtsp://cam/track1 RTSP/1.0\r\n"
 	  "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n"

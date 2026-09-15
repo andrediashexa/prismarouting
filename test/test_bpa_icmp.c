@@ -247,6 +247,28 @@ main (void)
 	   "an outer header with options is followed, not assumed");
   }
 
+  /*
+   * The EMBEDDED header with options, which the case above cannot ask.
+   *
+   * The port is located at `inner + inner_hlen + port_off`, and every other
+   * fixture in this file quotes an embedded header of exactly 20 bytes - so
+   * `inner_hlen` there is 20 whatever the parse does with it. Measured: with
+   * that term replaced by sizeof (ip4_header_t), all 43 checks of this file
+   * passed, and the port a reverse lookup is built from would be two bytes
+   * of somebody's options on every error quoting a router that sets them.
+   */
+  {
+    u8 opt[PKT_LEN + 4];
+    mk (pkt);
+    memcpy (opt, pkt, O_INNER_L4);
+    memset (opt + O_INNER_L4, 1, 4); /* four NOPs inside the embedded header */
+    memcpy (opt + O_INNER_L4 + 4, pkt + O_INNER_L4, PKT_LEN - O_INNER_L4);
+    opt[O_INNER_IHL] = 0x46; /* 24-byte embedded header */
+    CHECK (parse (opt, PKT_LEN + 4, &e) == 0 && e.pub_port == 1536,
+	   "and so is an embedded one, which is where the port is measured "
+	   "from");
+  }
+
   printf ("\nbpa_icmp_err_parse: what it refuses, without reading past the end\n");
 
   mk (pkt);

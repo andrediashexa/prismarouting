@@ -2096,7 +2096,73 @@ and two findings from 2026-09-15 are open on exactly that distinction:
   operator never typed - here it names the number they did type, and still
   arrives one step too late, after a candidate is built.
 
-The dataplane plugin's C suites are the last body unswept.
+The dataplane plugin's C suites were swept on 2026-09-15, and the sweep is now
+complete over every body of assertions this repository has. Ten harnesses,
+7,577 lines, **570 `CHECK (...)` sites, 108 anchored product mutations, seven
+defects**. A static pass over the same files flagged exactly one candidate -
+`bpa_dyn_block_of` on both sides of a comparison in `test_bpa_dyn.c`, which is
+three calls each compared against zero and not a defect - so the number a
+static reading produces here is 1 and the number anchored mutation produces is
+7. Every mutation compiled under `-Wall -Wextra -Werror`; a build failure is
+not a red check and none is counted among the 108.
+
+Six of the seven are one shape: **a fixture that answers for a second reason**.
+`test_bpa_rtsp.c` asked a non-SETUP request and a non-200 reply to be refused
+with messages carrying no Transport header at all, so both were refused by the
+absence and stayed green with the method test and the status test each deleted.
+`test_bpa_rewrite.c` asserted that GRE's Call ID travelled untouched and the
+Call ID sits at offset 26, where the delta for a GRE session folds to zero - so
+the early return could be deleted, the packet fall into the UDP branch, the
+flags word at offset 20 be overwritten, and all 41 checks pass.
+`test_bpa_icmp.c` measured the embedded port from the embedded header's length
+and every fixture quoted a 20-byte embedded header. `test_bpa_sip.c` had the
+sent-by span guard and the port ceiling unprobed from either side.
+`test_bpa_dyn.c` never quietened a subscriber holding an extension, so the walk
+over `d->extras` in `bpa_dyn_idle()` ran over an empty list, and never asked a
+subscriber holding two blocks for an ordinary flow, so `by_sub` naming the
+primary was a claim nothing could contradict.
+
+The seventh is not in a harness at all. **Five of the ten recipes did not name
+`src/plugins/bpa/bpa_seq.h`**, which they reach through `test/bpa_tcp_shim.h` -
+so the serial-number arithmetic the FTP ALG rests on could be changed and
+`make test_bpa_ftp` would answer "is up to date". Measured: the signed
+comparison in `bpa_seq_delta_at()` cut to a plain `>` and all five suites
+green. That is `TESTING.md`'s *a mutation that does not reach the compiler* as
+a standing property of the build rather than as an accident of one campaign,
+and it is the only finding here that was invisible to every assertion in the
+tree by construction.
+
+**Vector provenance.** Only `test_bpa_pool.c` reads `test/bpa_vectors.h`, and
+its 21,072 lines come from `ref/gen_vectors.py` over `ref/bpa_model.py` - pure
+Python, no `ctypes`, no `subprocess`, nothing that calls into the C. The other
+nine harnesses generate their own inputs and check them against arithmetic
+written out a second time inside the harness: a full one's-complement
+recomputation in `test_bpa_mss.c`, `test_bpa_ftp.c` and `test_bpa_rewrite.c`, a
+whole-array walk in `test_bpa_auto_mss.c`, and a simulation of the mechanism
+rather than a restatement of the closed form in `test_bpa_pool.c`'s capacity
+section. `test/bpa_vec_shim.h` is VPP's `vec_*` API and not test data.
+
+**What could not be anchored, stated as limits rather than dropped.**
+Sixteen product behaviours survived a mutation with every check green, and each
+is a cost or a shortcut rather than an answer: the `opt_end < opt` and
+`len < 2` guards in `bpa_mss.h` (the harness says so itself, and deleting the
+second one hangs the suite instead of giving a wrong answer); the two `nd == 0`
+refusals and the `len < 12` bound in `bpa_rtsp.h`; the `n_free == 0` and
+`n_free < 2` shortcuts and the rotating cursor in `bpa_ports.h`, where the scan
+reproduces the shortcut's answer and the cursor changes which free port comes
+back rather than whether one does; the rescan's `n_at_min` in
+`bpa_auto_mss.h`, which is only ever consumed by a later rescan;
+`bpa_sip_eol()`'s insistence on a CR before the LF, which no fixture carries;
+`bpa_owner_worker()`, which no C harness calls; and five in `bpa_dyn.c` - the
+hold-down's exact duration, which the fixtures separate by a factor of ten
+rather than by one second; the alternation of the paired walk's two directions,
+where the third arm and the second walk find the same blocks in a different
+order; the unconditional removal from `extras` in `bpa_dyn_pin()`, which needs
+a subscriber holding an extension and no primary at all; `n_exhausted` on the
+primary acquire path, counted only on the reserve path; and the stride's
+worker-slice arm, which both stride sections run at one worker on purpose. The
+last two are gaps a fixture could close and are worth an issue; the other
+fourteen are properties no input can name.
 
 #### Phase 8 - the rename to Prisma Routing
 
