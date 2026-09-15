@@ -228,7 +228,7 @@ echo
 # Not every lab, either: one that asserts what the VTY prints, or what a
 # counter says about a refusal, exercises the same code whatever the thread
 # count, and a second run of it would double the suite to re-prove what cannot
-# differ. These fourteen touch the packet.
+# differ. Every lab in the list touches the packet.
 #
 # handoff, dynamic-workers and pool-del are absent because they ask for workers
 # THEMSELVES - a "+workers" run of those would be the same run twice.
@@ -256,8 +256,24 @@ echo
 # main-thread state in one exporter, so a worker run exercises the same code
 # with the same inputs. That is an argument and not a measurement; if somebody
 # takes the measurement and it says otherwise, this is the line to change.
-BOTH_WAYS="bypass dynamic esp extblocks forward frag ftp-alg hairpin
-           icmp-tcp ipfix-stop mss nat-behaviour pptp rtsp sip
+#
+# detreserve joined for #370, and the absence it ends was never a decision:
+# the file carried no `# NOT-BOTH-WAYS:` marker and this list simply did not
+# name it, so whether a lab whose every assertion is about WHICH block a
+# subscriber gets survives a sharded free list had not been asked. It does,
+# and for a reason rather than by luck - the subscribers it picks and the
+# reserve blocks they want land on the same worker by the same modulo at any
+# worker count, which its header sets out. Measured before the entry was
+# added: LAB_WORKERS=1 on 2026-09-15, LAB PASSED with all fourteen checks
+# green in 1m47s including the plugin build.
+#
+# That run is not the same run twice, either. A reserve is sharded like every
+# other block, so a reserve smaller than the worker count leaves whole workers
+# unable to extend anybody - and this is the only run in the suite where the
+# box says so at creation, which is the screen #370 found had never been
+# printed by anything in this repository.
+BOTH_WAYS="bypass detreserve dynamic esp extblocks forward frag ftp-alg
+           hairpin icmp-tcp ipfix-stop mss nat-behaviour pptp rtsp sip
            two-pools"
 
 # Labs that are run a THIRD time with the feature they test switched OFF.
