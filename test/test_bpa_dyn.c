@@ -429,34 +429,93 @@ main (void)
      * green with bpa_pair_step() returning 1, which is the whole defect.
      *
      * So what is asserted is what a wrong step actually produces: a
-     * subscriber on two public addresses, at every worker count above one.
-     * The arithmetic half - that the step really is congruent - is asserted
-     * against the model in test/test_bpa_pool.c, where it belongs.
+     * subscriber on two public addresses. The arithmetic half - that the step
+     * really is congruent - is asserted against the model in
+     * test/test_bpa_pool.c, where it belongs.
+     *
+     * TWO things have to hold of a worker count before this row says anything
+     * about the allocator, and 24 arrivals over 4 addresses had neither at six
+     * of the eight. Both were found by deleting the preference and watching
+     * only 5 and 7 workers turn red.
+     *
+     * The SLICE has to span more than one public address. Under `policy
+     * interleaved` block b is on address b % 4, and worker w holds the blocks
+     * b = local * nw + w, so its slice reaches 4 / gcd (nw, 4) addresses -
+     * exactly ONE at 4 and at 8 workers. There "the extension is on the
+     * holder's own address" is the one-address pool this file's header warns
+     * about, met from the other direction: the allocator cannot get it wrong
+     * because there is nowhere else to put it.
+     *
+     * The ARRIVALS must not align the free stack. With 24 subscribers the
+     * stack handed out block 24 next, and 24 % 4 == 0 landed every extension
+     * back on its holder's own address by accident - the same alignment luck
+     * the scenario above avoids by arriving six and extending four. 26 is not
+     * a multiple of 4, and that is all that is wanted of it.
+     *
+     * So the guard is the one that scenario uses, applied per worker count and
+     * read off the allocator rather than worked out here: at the moment of
+     * each extension, did this worker's free stack still hold a block on a
+     * DIFFERENT public address. Where it did for all sixteen, the pairing was
+     * a choice and is asserted. Where it never did, the row is reported and
+     * not asserted, and how many counts fall each way is itself checked - so a
+     * pool or a worker range that quietly stops leaving anywhere else to land
+     * is a red check rather than a silently emptier suite.
      */
-    u32 total = 0, split = 0;
+    u32 total = 0, split = 0, measured = 0;
 
     for (nw = 1; nw <= 8; nw++)
       {
 	drv_t v;
-	u32 s;
+	u32 s, other = 0;
 
-	drv_init (&v, &p64, nw, 24);
-	for (s = 0; s < 24; s++)
+	drv_init (&v, &p64, nw, 26);
+	for (s = 0; s < 26; s++)
 	  drv_arrive (&v, s);
 	for (s = 0; s < 16; s++)
-	  drv_extend (&v, s, 1);
+	  {
+	    u32 w = s % nw, k;
+
+	    for (k = 0; k < vec_len (v.d[w].free_list); k++)
+	      {
+		bpa_block_t b;
+
+		/* free_list holds LOCAL indices; the block is local * nw + w. */
+		bpa_dyn_block_addr (&p64, v.d[w].free_list[k] * nw + w, &b);
+		if (b.pub_idx != v.primary[s].pub_idx)
+		  {
+		    other++;
+		    break;
+		  }
+	      }
+	    drv_extend (&v, s, 1);
+	  }
 	CHECK (v.seen_ext == 16, "%u of 16 extensions placed at %u workers",
 	       v.seen_ext, nw);
-	CHECK (v.seen_paired == v.seen_ext,
-	       "%u of %u extensions at %u workers left their holder on two "
-	       "public addresses",
-	       v.seen_ext - v.seen_paired, v.seen_ext, nw);
+	if (other == 16)
+	  {
+	    measured++;
+	    CHECK (v.seen_paired == v.seen_ext,
+		   "%u of %u extensions at %u workers left their holder on two "
+		   "public addresses",
+		   v.seen_ext - v.seen_paired, v.seen_ext, nw);
+	  }
+	else
+	  CHECK (other == 0,
+		 "at %u workers only %u of 16 extensions had a block on "
+		 "another public address free, so the row is neither a choice "
+		 "nor an arithmetic certainty",
+		 nw, other);
 	total += v.seen_ext;
 	split += v.seen_ext - v.seen_paired;
 	drv_free (&v);
       }
+    CHECK (measured == 6,
+	   "%u of the 8 worker counts had somewhere else to put every "
+	   "extension, not the 6 whose slice spans more than one address",
+	   measured);
     printf ("  %u extensions over 1 to 8 workers, %u of them on a second "
-	    "public address\n", total, split);
+	    "public address, and %u of the 8 counts had a slice able to say "
+	    "so\n", total, split, measured);
   }
 
   printf ("\n=== the free stack and its index stay one fact ===\n");

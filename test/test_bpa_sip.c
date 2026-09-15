@@ -599,6 +599,23 @@ main (void)
     memset (wide, 'x', sizeof (wide));
     CHECK (bpa_sip_edit_add (e, &ne, 0, 1, wide, BPA_SIP_TXT_MAX + 1) == -1,
 	   "an over-wide replacement was accepted");
+
+    /*
+     * And the widest one that FITS is accepted, which is the other side of the
+     * same bound and the side that costs a customer something.
+     *
+     * BPA_SIP_TXT_MAX is sized for "255.255.255.255:65535" - 21 bytes, the
+     * exact string bpa_sip_fmt_addr_port produces at its widest and the one
+     * the check above at the formatter asserts. Only the over-wide side was
+     * ever driven here, so `tlen > BPA_SIP_TXT_MAX` written as `>=` refuses
+     * the widest legal replacement and the ALG silently leaves those messages
+     * alone: measured, all 107 checks of this file passed with that edit in
+     * place. A bound probed from one side is half a bound.
+     */
+    ne = 0;
+    CHECK (bpa_sip_edit_add (e, &ne, 0, 1, wide, BPA_SIP_TXT_MAX) == 0,
+	   "the widest replacement that fits was refused");
+    ne = 0;
     for (i = 0; i < BPA_SIP_MAX_ITEMS; i++)
       CHECK (bpa_sip_edit_add (e, &ne, i, 1, (const u8 *) "y", 1) == 0,
 	     "edit %u of a full list was refused early", i);

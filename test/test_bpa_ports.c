@@ -238,7 +238,15 @@ main (void)
     off = bpa_portmap_alloc_pair (&pm, 1 /* port_lo odd */);
     CHECK (off == 1, "odd-based block gave offset %d, expected 1", off);
 
-    /* A single free port between two used ones is not a pair. */
+    /*
+     * A single free port between two used ones is not a pair.
+     *
+     * Answered by "n_free < 2" and never by the scan, so it says nothing
+     * about which offsets the scan is willing to pair. The two cases under it
+     * are the ones that do, and both were added after a sweep found that this
+     * whole section stayed green - all 4905 checks of it - with the scan
+     * stepping by one and again with the partner test deleted.
+     */
     bpa_portmap_init (&pm, 64, storage);
     for (i = 0; i < 64; i++)
       (void) bpa_portmap_alloc (&pm, (int) i);
@@ -248,6 +256,45 @@ main (void)
     bpa_portmap_free (&pm, 11);
     CHECK (bpa_portmap_alloc_pair (&pm, 0) == 10,
 	   "did not reuse the freed pair at 10");
+
+    /*
+     * The PARITY, on a map where an odd-starting pair is the only one free.
+     *
+     * "bad_parity == 0" above cannot ask this. It drains an EMPTY map, where
+     * the scan starts at `parity & 1` and steps by two, so every offset it
+     * returns is even by the loop header rather than by any decision the
+     * allocator makes - it is the fixture answering, not the product. Here
+     * offsets 1 and 2 are the only free ports, so a scan that steps by one
+     * finds the consecutive pair at 1 and hands out an ODD RTP port, which is
+     * the "no video" failure the section comment is about.
+     */
+    bpa_portmap_init (&pm, 64, storage);
+    for (i = 0; i < 64; i++)
+      (void) bpa_portmap_alloc (&pm, (int) i);
+    bpa_portmap_free (&pm, 1);
+    bpa_portmap_free (&pm, 2);
+    CHECK (bpa_portmap_alloc_pair (&pm, 0) == -1,
+	   "handed out the odd-starting pair at 1 to an even-parity request");
+
+    /*
+     * The PARTNER, on a map where the low port of the scanned pair is free
+     * and the high one is not.
+     *
+     * Two free ports, so "n_free < 2" lets the scan run; they are not
+     * adjacent, so no pair exists. Without the second bpa_portmap_is_used()
+     * the scan returns 10 and marks 11 a second time - a port already owned
+     * by another flow, handed out again, with n_free dropping by two for one
+     * port actually taken.
+     */
+    bpa_portmap_init (&pm, 64, storage);
+    for (i = 0; i < 64; i++)
+      (void) bpa_portmap_alloc (&pm, (int) i);
+    bpa_portmap_free (&pm, 10);
+    bpa_portmap_free (&pm, 13);
+    CHECK (bpa_portmap_alloc_pair (&pm, 0) == -1,
+	   "paired offset 10 with 11, which another flow holds");
+    CHECK (pm.n_free == 2, "n_free is %u after a refused pair, expected 2",
+	   pm.n_free);
     printf ("  pairs are consecutive, even-aligned and accounted for\n");
   }
 
