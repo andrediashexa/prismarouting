@@ -1186,7 +1186,20 @@ class Config:
             out.append(f"snmp community {c}")
         for name in sorted(self.snmp_users):
             out += self.snmp_users[name].lines()
-        out += ordered_globals(self.globals)
+        # THE SAME PREFIX THE POOLS AND THE ATTACHMENTS GET. The hierarchy is
+        # `nat` (#193), and this renderer put `nat ` in front of two of the
+        # three groups of CGNAT statements and not the third - so one
+        # configuration came back in two spellings, in `show running-config`,
+        # in `show configuration` and in the file `save` writes, which are all
+        # this one function (#356). An operator reading their own file found
+        # `nat cgnat pool` above `cgnat timeout udp`.
+        #
+        # Safe in both directions because the parser normalises: it has
+        # accepted `nat cgnat ...` and the bare form for every global since
+        # the hierarchy moved, and stores the bare form either way. So a file
+        # written here loads on this box, and a file written by an older one
+        # still loads too - which is what lab/upgrade.sh puts through it.
+        out += [f"{NAT_HIERARCHY} {g}" for g in ordered_globals(self.globals)]
         out.append(ROUTING_HEADER)
         out += group_static(self.routing)
         return "\n".join(out) + "\n"

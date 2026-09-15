@@ -541,21 +541,49 @@ cfg = config.Config()
 cfg.globals = ["cgnat logging enable",
                "cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739",
                "cgnat block-holddown 11"]
-written = [l for l in cfg.text().splitlines() if l.startswith("cgnat logging")]
-check(written == ["cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739",
-                  "cgnat logging enable"],
+# The prefix is the hierarchy's, and it is on every CGNAT statement this
+# renderer writes since #356 - pools, attachments and these. The needle
+# carries it rather than being loosened to match either spelling: a file with
+# one group prefixed and another not is exactly what that issue was.
+written = [l for l in cfg.text().splitlines()
+           if l.startswith("nat cgnat logging")]
+check(written == ["nat cgnat logging udp 10.0.0.2 src 10.0.0.1 port 4739",
+                  "nat cgnat logging enable"],
       f"the exporter comes first however the statements were typed: {written}")
 
 # The rest stays alphabetical, so two boxes holding the same configuration
 # write the same file and a diff of two saved files is a diff of the settings.
-allg = [l for l in cfg.text().splitlines() if l.startswith("cgnat ")]
-check(allg[0] == "cgnat block-holddown 11",
+allg = [l for l in cfg.text().splitlines() if l.startswith("nat cgnat ")]
+# Indexed only after it is known to have something in it. `allg[0]` on an
+# empty list is an IndexError, which kills the suite where a red check would
+# have named the defect and let the rest run - and the rest is where the
+# spelling this file is about is measured.
+check(allg, f"the renderer wrote no CGNAT statement at all, so the order "
+            f"below is measured on nothing: {cfg.text()!r}")
+check(allg and allg[0] == "nat cgnat block-holddown 11",
       f"and everything else keeps its order: {allg}")
+# ONE SPELLING IN THE FILE (#356). The pools and the interface attachments
+# have carried `nat ` since the hierarchy moved and the globals did not, so a
+# saved configuration came back in two spellings and an operator reading their
+# own file found `nat cgnat pool` above `cgnat timeout udp`.
+cfg2 = config.Config()
+cfg2.globals = ["cgnat timeout udp 300"]
+cfg2.pools["P"] = config.Pool("P")
+_lines = [l for l in cfg2.text().splitlines() if "cgnat" in l]
+check(all(l.startswith("nat cgnat") or l.startswith(" ") or
+          l.startswith("!") for l in _lines),
+      f"the file writes CGNAT statements in two spellings: {_lines}")
+# And a file written this way still reads back, because the parser has taken
+# both spellings since the hierarchy moved and stores the bare one.
+check(config.Config.parse(cfg2.text()).globals == ["cgnat timeout udp 300"],
+      f"a file this box wrote does not load on this box: "
+      f"{config.Config.parse(cfg2.text()).globals} "
+      f"{config.Config.parse(cfg2.text()).unknown}")
 
 # Read back and written again: a file the box wrote must survive the trip,
 # because that is what `rollback` replays and what the boot applies.
 again = [l for l in config.Config.parse(cfg.text()).text().splitlines()
-         if l.startswith("cgnat logging")]
+         if l.startswith("nat cgnat logging")]
 check(again == written, f"and the order survives a round trip: {again}")
 
 # `enable` and `disable` are ONE setting and two values. Keyed on the value,
