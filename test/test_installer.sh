@@ -382,7 +382,37 @@ mkdir -p "$netsys/ens18/device" "$netsys/ens19/device" "$netsys/lo"
 echo up > "$netsys/ens18/operstate"
 echo down > "$netsys/ens19/operstate"
 
-NOK="HEXA_DISK=$DISK HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo"
+# THE ROUTING TABLE, answered from the fake box. HEXA_NET_SYS stands in for
+# /sys/class/net, and nothing stood in for `ip` - so the addresses the
+# installer printed for these two cards, and the card it takes as the default,
+# came from the machine running the suite.
+#
+# That is not theoretical. This suite asserts that an unattended install takes
+# ens18, and it passed because the developer box these fixtures were written
+# on routes out of a card of that name. On a machine whose default route is on
+# eno1 the installer picks eno1, finds no such card under HEXA_NET_SYS, and
+# refuses the install - so the suite goes red over a product nobody changed.
+# And on every machine that has a default route, which is every machine, the
+# fallback at hexarouting-install:1170 - "no default route, so take the first
+# card", which is the one-NIC box #303 is about - had never run at all.
+netbin=$(mktemp -d)
+cat > "$netbin/ip" <<'IPSTUB'
+#!/bin/sh
+# Only the two questions the installer asks. Everything else is silence, which
+# is what a card with nothing on it answers.
+case "$*" in
+  *"route list default"*) cat "$netbin/default_route" 2>/dev/null ;;
+  *"addr show dev"*)      for a in "$@"; do _n=$a; done
+                          cat "$netbin/addr.$_n" 2>/dev/null ;;
+  *) : ;;
+esac
+exit 0
+IPSTUB
+chmod +x "$netbin/ip"
+: > "$netbin/default_route"
+
+NOK="HEXA_DISK=$DISK HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
+PATH=$netbin:$PATH netbin=$netbin"
 # shellcheck disable=SC2086
 run 0 "a static address, its gateway and a resolver are accepted" $NOK \
     HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
@@ -505,6 +535,48 @@ case "$LAST_OUT" in
   *) bad "the unattended default was taken in silence, or not at all:
 $LAST_OUT" ;;
 esac
+# THE DEFAULT IS THE CARD THE MEDIUM IS REACHING THE NETWORK THROUGH, when
+# there is one - a PXE boot, or somebody who gave the medium an address by
+# hand to install over the network. It is the card they are using right now,
+# and taking a different one takes the box off the network they are on.
+#
+# The case above is the box with no default route, which the script's own
+# comment calls the usual one: an ordinary live boot has no management
+# configuration either, so the fallback to the first card is what runs. Both
+# arms, because until the stub above existed the answer came from the machine
+# and only ever one of them ran - whichever that machine happened to be.
+printf 'default via 10.0.0.1 dev ens19 proto dhcp metric 100\n' \
+  > "$netbin/default_route"
+# shellcheck disable=SC2086
+run 0 "and on a medium that IS on the network, the card it is on" \
+    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" HEXA_INSTALL_YES=1
+case "$LAST_OUT" in
+  *"management network: ens19 by DHCP (unattended)"*)
+    ok "the default is the card the medium is reaching the network through" ;;
+  *) bad "an unattended install ignored the card the medium is on and took \
+another one, which is the box off the network the operator is installing it \
+over:
+$LAST_OUT" ;;
+esac
+: > "$netbin/default_route"
+# And the card list the installer prints carries what each card HAS, read from
+# the box rather than from the machine running the suite. Until the stub
+# existed this column was the developer's own address, printed against a card
+# that only exists in a fixture.
+printf '2: ens18    inet 192.0.2.77/24 brd 192.0.2.255 scope global ens18\n' \
+  > "$netbin/addr.ens18"
+# shellcheck disable=SC2086
+run 1 "a card this machine has not got, with the cards it has beside it" \
+    $NOK HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens99 HEXA_MGMT_ADDRESS=dhcp
+case "$LAST_OUT" in
+  *"192.0.2.77/24"*)
+    ok "and the list says what each card already carries" ;;
+  *) bad "the card list gave no address for a card that has one, so an \
+operator choosing between them is choosing between two names:
+$LAST_OUT" ;;
+esac
+rm -f "$netbin/addr.ens18"
 
 # Every line of that screen on the console it is read at. The installer prints
 # to a serial console on a racked machine, and a question folded by the
