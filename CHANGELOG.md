@@ -120,6 +120,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Two defects the stride work uncovered, recorded rather than fixed**
+  ([#375](https://github.com/andrediashexa/hexarouting/issues/375),
+  [#376](https://github.com/andrediashexa/hexarouting/issues/376)). Both were
+  measured while driving the VTY for
+  [#373](https://github.com/andrediashexa/hexarouting/issues/373), and both are
+  the shape this project puts above everything else: something the product
+  offers and does not do.
+
+  `block-stride` is accepted on a **deterministic** pool and never applied -
+  the only read of it is guarded on the dynamic allocator - while
+  `show bpa pool` prints the layout promise and the counters that would show it
+  doing nothing print only for dynamic pools. The product already refuses the
+  mirror image and says why beside it.
+
+  A `hexash -c` batch whose statement is refused **keeps going and commits what
+  it could**, printing `commit complete`. `Shell.load()` answers the same
+  question the other way for a saved configuration file, and its comment is the
+  argument.
+
+  Neither is fixed here. They are in `docs/roadmap.md` with the measurements,
+  because `tools/roadmap-state.sh` refuses an open issue the file never
+  mentions - correctly: the roadmap is what somebody reads to decide what to do
+  next, and an issue it never names is work hidden from that reader.
+
 * **Two defects that existed only once the branches were together, and one of
   them was a reader that died instead of going red.** Neither was in any
   branch: both appeared when six of them met in `master`, which is the case no

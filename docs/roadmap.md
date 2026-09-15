@@ -2258,6 +2258,37 @@ not a setting that can be edited in place; hexash reads it back from
 the prompt. The wiki page needed no correction: it described what the product
 intended, and the box now does it.
 
+**And two the stride work uncovered, both open**
+([#375](https://github.com/andrediashexa/hexarouting/issues/375),
+[#376](https://github.com/andrediashexa/hexarouting/issues/376)).
+
+#375: `block-stride` is accepted on a **deterministic** pool, `show bpa pool`
+prints the layout promise it makes, and the allocator never applies it.
+`bpa_dyn.c:235` is the only read of the setting and it is guarded on
+`!d->reserve`; `bpa.c:1622` sets `reserve = p->mode != BPA_MODE_DYNAMIC`, so
+the guard is false for every deterministic pool at every worker count. The
+counters that would show it doing nothing print only for dynamic pools
+(`bpa_cli.c:2560`), so there is no screen an operator could discover it from.
+The product already refuses the mirror image, a reserve on a dynamic pool, and
+`bpa_pool.c:175` says why: *"Refused rather than accepted and inert, so that a
+pool moved from deterministic to dynamic says what it is losing."* Since #373
+the box will also warn about such a stride naming the wrong reason, worker
+sharding, and name a nearest stride that no worker count makes work. The
+warning uncovered this rather than caused it.
+
+#376: a `hexash -c` batch whose statement is refused keeps going and commits
+what it could, printing `commit complete`. `main()` runs the batch as
+`for c in cmds: sh.feed(c)` and discards feed's return value, which the REPL
+thirty lines above honours, and nothing on the commit path reads `self.failed`.
+Observed: `error: invalid argument: block-size 16: expected 64-32768` followed
+by `commit complete`, with the pool created carrying the default block size.
+The exit status is 1, so a script that checks it is not misled; a script that
+logs the output, or a person reading it afterwards, is. `Shell.load()` answers
+the same question the other way for a saved configuration file and writes down
+why: it refuses rather than trimming, because the difference between the file
+and the running configuration would be discovered later by somebody reading
+both. What has to be decided first is whether `-c` is one command or a script.
+
 **The same shape one statement over, and wider**
 ([#373](https://github.com/andrediashexa/hexarouting/issues/373)). The wiki
 says the box warns at pool creation when a `block-stride` cannot be honoured
