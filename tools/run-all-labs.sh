@@ -534,6 +534,20 @@ report_off() {
     fi
     if [ -n "$_floor" ]; then
       printf '  %-18s pass (%s check(s) red, floor %s)\n' "$_n" "$_red" "$_floor"
+      # A floor BELOW what the off run measures is not a failure - the lab
+      # grew, which is the good direction - but it is silent, and silence is
+      # how floors go stale. lab/ipfix-outbuf.sh sat at 8 for two days while
+      # every run measured 9, because the run that repaired the ninth
+      # assertion wrote "the floor is unchanged by this" into the header and
+      # nothing ever asked the off run whether that was still true. Until the
+      # floor is raised, losing that ninth assertion again costs nothing.
+      if [ "$_red" -gt "$_floor" ]; then
+        printf '     %s more than its header floor, so the floor is behind the\n' \
+          "$(( _red - _floor ))"
+        printf '     lab. Raising it to %s is what keeps those from being lost\n' \
+          "$_red"
+        printf '     quietly later.\n'
+      fi
     else
       # No floor declared, so nothing was compared and the line says only what
       # was seen.

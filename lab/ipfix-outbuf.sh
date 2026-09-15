@@ -64,11 +64,12 @@
 # not reading, a spill file written at a stop, and a second boot that replays
 # it. What they needed was for somebody to look at what came back.
 #
-# OFF-RED-AT-LEAST: 8
+# OFF-RED-AT-LEAST: 9
 #
 # A FLOOR, not a target, and the number is measured rather than chosen: it is
-# what this lab's off run went red on, measured on 2026-09-13. It was 1 before
-# the three checks below were added; the other seven are the spill-failure
+# what this lab's off run went red on, measured on 2026-09-13 at 8 and again
+# on 2026-09-15 at 9. It was 1 before the three checks below were added; the
+# other seven are the spill-failure
 # phase, which "no-stall" cannot produce because it cannot stall the collector,
 # so its preconditions and its verdicts all go red together.
 # tools/run-all-labs.sh refuses an off run that goes red on fewer, because a
@@ -772,9 +773,24 @@ expect "and not counted as spilled either (${SPILLED_E:-none} -> ${SPILLED_F:-no
 # below, and bpa_stop_drain() prints that sentence only under `if (lost)`
 # (bpa.c:1993), so the phrase IS the number being non-zero.
 #
-# The OFF-RED-AT-LEAST floor is unchanged by this and was not re-measured: an
-# assertion true for every value was green in the off run too, so it was never
-# one of the eight.
+# The OFF-RED-AT-LEAST floor WAS changed by this, and the note that said it
+# was not is why floors go stale. An assertion true for every value is green
+# in the off run too, so this one was never among the eight; repairing it made
+# it the ninth. Two off runs since have gone red on nine:
+#
+#   the exporter still had bytes of its own to send at the stop
+#   the box wrote more than a megabyte with the path writable
+#   and they were counted as spilled
+#   the box wrote more than a megabyte with the path unopenable
+#   a spill that cannot be opened is counted
+#   the box wrote more than a megabyte with no room on the filesystem
+#   the spill file was created there, so this is the write() and not the open()
+#   a spill that cannot be written is counted
+#   and the process said how many were lost, where it can still be read
+#
+# The last of those is this check. A floor left at eight would let it be lost
+# again without the suite saying anything, which is the whole point of having
+# one.
 expect_in "and the process said how many were lost, where it can still be read" \
   "could NOT be written" "${EXIT_SAID:-}"
 

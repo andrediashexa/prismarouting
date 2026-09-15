@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A floor below what the off run measures was silent, which is how floors go
+  stale** ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
+  `lab/ipfix-outbuf.sh` declared `OFF-RED-AT-LEAST: 8` and its off run went
+  red on nine, on 2026-09-14 and again on 2026-09-15. The ninth is the check
+  repaired on 2026-09-13: it had been true for every value, so it was green in
+  the off run too and was never among the eight, and the commit that repaired
+  it wrote "the floor is unchanged by this and was not re-measured" into the
+  header. Nothing ever asked the off run whether that was still true, so for
+  two days deleting that assertion again would have cost nothing. The floor is
+  now 9 and its header names all nine by their words. The suite says so from
+  now on: a pass whose red count is above its floor prints how far behind the
+  floor is and what raising it would buy - not a failure, because a lab that
+  grew is the good direction, but not silence either.
+
+  The case that was supposed to hold the ordinary reading of that line - a lab
+  red on exactly its floor - could not fail. It was written on `urpf+off`,
+  whose stub capture opens with `VPP did not start`, so the report classifies
+  it NO VPP three branches before any floor is read, and the stub lab was
+  given no floor to read either. The case accepted `NO VPP` as a second answer
+  and said in its own words that this was what a case forty lines above
+  already asserted. Put back on its own, without that escape, it is red: it
+  never matched anything. A lab landing exactly on its floor now has a stub of
+  its own.
+
 * **The only assertion in the tree about the `match` pipe filter was the
   filter's own guard quoted back at it** (`test/test_hexash_complete.py:2582`).
   `apply_pipe()` in `src/hexash/hexash.py` routes both spellings through one
