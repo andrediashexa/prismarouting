@@ -34,7 +34,7 @@ Ele é publicado ao lado da mídia, na mesma página da versão, com o mesmo nú
 ```
 tar xzf hexarouting-<versão>-upgrade.tar.gz
 cd hexarouting-<versão>-upgrade
-sudo sh appliance/upgrade
+sudo sh upgrade
 ```
 
 O pacote confere a plataforma da caixa, troca os arquivos do produto e diz, arquivo por arquivo, o que escreveu. Se a plataforma não bater, ele para aí mesmo e **nada foi escrito**: a caixa continua exatamente a que era antes do comando.
