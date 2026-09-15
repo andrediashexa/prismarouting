@@ -498,9 +498,14 @@ with tempfile.TemporaryDirectory() as root:
     _alone = os.path.join(root, "bin")
     os.makedirs(_alone, exist_ok=True)
     shutil.copy(TUNE, os.path.join(_alone, "hexarouting-tune"))
+    # The one tuner run in this file that does not go through run(), so it
+    # carries the netlink seam itself: without it the card named here is asked
+    # about on the machine underneath, which is the last of the 48 such reads
+    # this sweep found.
     _p = subprocess.run([sys.executable, os.path.join(_alone, "hexarouting-tune"),
                          "--sysfs-root", root, "--interface", "eth0",
-                         "--config", conf], capture_output=True, text=True)
+                         "--config", conf], capture_output=True, text=True,
+                        env=dict(os.environ, HEXA_IP="/nonexistent-ip"))
     _o = _p.stdout
     check("parser is not installed" in _o,
           f"the box could not reach hexash's parser and reported its "

@@ -49,6 +49,20 @@ case "\$*" in
 esac
 FINDMNT
 chmod +x "$GLOBALBIN/findmnt"
+
+# AND THE ROUTING TABLE, for the same reason and everywhere rather than in one
+# section. The installer asks `ip` what each card carries and which one the
+# medium is reaching the network through; with nothing standing in, 68 of
+# those reads in one run were answered by the machine, about cards that only
+# exist in a fixture. Silence is a card with nothing on it and a box with no
+# default route, which is what every fake box here is unless it says
+# otherwise - the management section below puts its own `ip` earlier on PATH
+# and arranges both answers.
+cat > "$GLOBALBIN/ip" <<'IPSTUB'
+#!/bin/sh
+exit 0
+IPSTUB
+chmod +x "$GLOBALBIN/ip"
 export PATH="$GLOBALBIN:$PATH"
 
 run() {  # <expected exit 0|1> <description> <env assignments...>
