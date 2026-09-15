@@ -120,6 +120,55 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A hole in a wiki-screen template absorbed a word the box had stopped
+  printing, and 199 templates open with one**
+  ([#365](https://github.com/andrediashexa/hexarouting/issues/365)).
+  `test/test_wiki_screens.py` had four defences against a matcher that cannot
+  fail and all four are about a template being MOSTLY hole. `{peer} does not
+  keep what it received` is 33 literal characters and 60% literal on an IPv4
+  address, so it passed every one of them correctly - and it opens with a
+  hole, so the page's leftover `neighbour ` went into the hole whole and the
+  reader was green on both sides of the change above. The question the four
+  never asked is what a hole is allowed to CONTAIN.
+
+  The reader already parses each f-string from the AST, so it knows the slot
+  behind every hole. A slot that is a name, an attribute or a subscript holds
+  ONE VALUE - an address, an interface, a count - and one value is one token:
+  **a hole whose slot is a single value may not contain whitespace.** 1383 of
+  the corpus's holes are held to that; 199 templates open with a hole and 101
+  of those open on one the rule reads.
+
+  **Measured before it was written, over the 59 screens the reader attributed
+  that day:** 48 holes filled, 6 holding whitespace, and not one of the 6 a
+  slot that legitimately holds a phrase. Two are a `${...}` in a shell script,
+  whose slots this reader does not parse and therefore asks nothing of - they
+  are named on every run under a ceiling of 2 that may only go down. Three
+  were the rule's own evidence: the hole was swallowing the `error: ` marker
+  or the first clause of a row built by concatenation, and with the rule on
+  all three are read again tighter. The sixth is the prefix-range refusal,
+  which this product builds in four goes and where the last hole was
+  swallowing `8, ge 24, le 16)` whole; no two strings account for that row, so
+  it moved to the printed skip list. **That is the whole cost: one screen,
+  and it had never really been attributed.**
+
+  The loud half of the rule - naming a page rather than declining to attribute
+  it - runs on the VERDICT ROW ONLY. Both widths are green on the wiki as it
+  stands, so the wiki does not choose between them; an `err` headline is one
+  clause whose slots are an address or a count, while the paragraphs under it
+  are exactly where a slot holds a sentence (`r.reason` is whatever the
+  dataplane said). Failing to match is cheap, because the screen lands on the
+  printed skip list; calling a correct page wrong is not. For the same reason
+  the rule is NOT taken over the halves of `concat_match`: measured, five
+  screens the box really prints are called wrong there.
+
+  The four slots exempt by the word their author wrote - `reason`, `why`,
+  `what`, `msg` - are a reading of this product's own vocabulary and not a
+  list of sites: each was found by reading the code that composes the
+  sentence, a new `f"{reason} ..."` anywhere in the tree is exempt the moment
+  it is written, and how many holes each word exempts is printed on every run.
+  Pointed at the wiki as it stood before the page above was corrected, the
+  reader names both stale screens, the slot, and what the hole swallowed.
+
 * **The BGP page quoted a verdict the fix to
   [#363](https://github.com/andrediashexa/hexarouting/issues/363) had just
   changed, and the wiki reader did not catch it.** Both
