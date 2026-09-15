@@ -1871,9 +1871,43 @@ Brazilian-Portuguese wiki's titles. Three sections of `docs/routing.md` were in
 Portuguese. 33 lines, translated; the one file excused by name instead of the
 directory being excused for it.
 
-**Still not swept:** `docs/appliance.md`, `docs/bng.md`, `CONTRIBUTING.md`,
-`docs/ha.md`, `docs/context.md`, `docs/pool-resize.md` and `README.md` - 4,094
-lines. Named here for the same reason the three above were.
+**Then four of those seven were swept too**, and this paragraph said otherwise
+for a day. `docs/appliance.md` and `docs/context.md` were read against the box,
+and `CONTRIBUTING.md` and `README.md` fell out of the English rule's own scope
+question. Six statements did not hold, and they are release 0.74.2:
+
+* [#321](https://github.com/andrediashexa/hexarouting/issues/321) -
+  `docs/appliance.md` says two refusals fire at the prompt, over a table of
+  three. The third is the one #303 added.
+* [#322](https://github.com/andrediashexa/hexarouting/issues/322) - the two
+  unattended-install tables on that page list **seven** answer keys where the
+  installer accepts **eleven**, and the four missing ones are exactly
+  `mgmt-interface`, `mgmt-address`, `mgmt-gateway` and `mgmt-dns`. An
+  unattended install written from those tables answers nothing about the
+  network and takes the DHCP default, which is #303's box reached by reading
+  the documentation instead of by the installer being wrong.
+* [#323](https://github.com/andrediashexa/hexarouting/issues/323) - the English
+  rule binds every `*.md` and the check read **11 of 54**. `CONTRIBUTING.md`,
+  `README.md` and `TESTING.md` sat outside every one of them.
+* [#324](https://github.com/andrediashexa/hexarouting/issues/324) -
+  `docs/context.md` invariant 1.8 says every merge into master is a release,
+  and **222 of 300 merges were not**.
+* [#325](https://github.com/andrediashexa/hexarouting/issues/325) - the same
+  file justifies publishing no throughput figure with a 3% bench resolution
+  that is measured nowhere.
+* [#326](https://github.com/andrediashexa/hexarouting/issues/326) -
+  `docs/appliance.md` quotes a tuner report line that #290 rewrote three hours
+  later.
+
+**Still not read end to end:** `docs/bng.md`, `docs/ha.md` and
+`docs/pool-resize.md` - 1,140 lines. Both of the first two describe something
+that does not exist yet (HA is
+[#6](https://github.com/andrediashexa/hexarouting/issues/6) to
+[#9](https://github.com/andrediashexa/hexarouting/issues/9), BNG is
+[#170](https://github.com/andrediashexa/hexarouting/issues/170)), so the shape
+to expect there is a page written in the present tense about a feature nobody
+has built: a sentence true of a box somebody imagined and false of every box
+that exists.
 
 
 #### A box in a VM, which is where most of these will run
