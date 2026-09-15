@@ -75,6 +75,11 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+## 0.74.2 - what the documents said about installing, and a check that could not fail
+
+[#226](https://github.com/andrediashexa/hexarouting/issues/226), [#321](https://github.com/andrediashexa/hexarouting/issues/321), [#322](https://github.com/andrediashexa/hexarouting/issues/322), [#323](https://github.com/andrediashexa/hexarouting/issues/323), [#324](https://github.com/andrediashexa/hexarouting/issues/324), [#325](https://github.com/andrediashexa/hexarouting/issues/325), [#326](https://github.com/andrediashexa/hexarouting/issues/326).
+
+
 ### Fixed
 
 * **The English rule binds every `*.md` and the check read 11 of 54**
