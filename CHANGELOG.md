@@ -266,6 +266,46 @@ version has a chance of seeing it.
   `appliance/bind-dataplane-nic`); and a kernel with no 1G hugepage support,
   and a box with no `update-grub` on it, in `appliance/apply-tuning`.
 
+* **`lab/crossaddr.sh` asserted the opposite of what the box does, and was kept
+  out of the suite for it.** It was written to record the defect in
+  [#226](https://github.com/andrediashexa/hexarouting/issues/226) - a dynamic
+  extension taken off the free stack, which under `policy interleaved` puts one
+  subscriber on two public addresses - and #226 then changed the allocator to
+  prefer a free block on the subscriber's own address. Every `expect` in the
+  file was therefore red by construction, and `tools/run-all-labs.sh` listed it
+  in `NOT_LABS` with that as the reason.
+
+  It is rewritten against a running box, and **every number in it is one the
+  box was seen to produce**: 4 of 4 extensions paired in each of four pools,
+  16 of 16 over all of them, two retention records naming one address with
+  adjacent port ranges, and no SIP media pair refused. Writing the new
+  assertions from the allocator's own arithmetic - pairing needs a gap that is
+  a multiple of the address count - would have been the fourth way a mutation
+  lies in `TESTING.md`, an expected value computed by the thing under test.
+
+  **The assertions are floors on a rate, not a guarantee, because the product
+  does not make one.** The allocator PREFERS the subscriber's address and falls
+  back to the free stack rather than refusing an extension, which was
+  deliberate: refusing costs a customer their traffic instead of costing them a
+  second address. A check demanding 100% would go red the first time a pool ran
+  tight, on a box doing exactly what it was designed to do. Each arrival
+  pattern must pair at least 3 of its 4, and the run as a whole may lose at
+  most one of sixteen.
+
+  **One of its own pools could not fail, and the mutation found it.** With four
+  subscribers arriving over four public addresses the gap is four, four is a
+  multiple of the address count, and every extension realigns onto its own
+  address by accident - so the parallel pool paired 4 of 4 with the preference
+  deleted from `bpa_dyn_acquire_extra()`. This is the third time that trap has
+  been found in this repository on the same mechanism. Six subscribers now
+  arrive and four extend, and with the preference removed the file reports
+  0 of 4 in every pool and 14 checks red.
+
+  The lab leaves `NOT_LABS` and joins the suite: 28 checks, 162 seconds. It
+  keeps its `# NOT-BOTH-WAYS:` marker and the paragraph arguing it, because the
+  free list is still sharded per worker and every gap it counts would otherwise
+  be about a different arrangement.
+
 * **The BGP page quoted a verdict the fix to
   [#363](https://github.com/andrediashexa/hexarouting/issues/363) had just
   changed, and the wiki reader did not catch it.** Both

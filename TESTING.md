@@ -337,13 +337,21 @@ rather than batches suggests. That timing has not been re-taken at twenty.
 
 **Some lab files are deliberately not in the suite**, and `NOT_LABS` in
 `tools/run-all-labs.sh` holds each one's reason as data rather than as a
-comment, so the run prints what it skipped before its first result. Two of them
-are red on purpose and for opposite reasons: `crossaddr` pins what
-[#226](https://github.com/andrediashexa/hexarouting/issues/226) does **today**,
-so it would go red on the fix; `ha-failover` is the acceptance test for high
+comment, so the run prints what it skipped before its first result. One of them
+is red on purpose: `ha-failover` is the acceptance test for high
 availability ([#9](https://github.com/andrediashexa/hexarouting/issues/9)),
 written before the feature exists, so it is red because the feature is
-**missing**. Run it with `sh tools/lab.sh ha-failover` - it stands up two
+**missing**.
+
+`crossaddr` used to be the second, and what happened to it is the argument for
+holding these reasons as data. It pinned what the allocator did **today**, so
+it went red the day
+[#226](https://github.com/andrediashexa/hexarouting/issues/226) fixed the
+behaviour it pinned - which is what such a lab is for - and it then sat outside
+the suite asserting the opposite of the box until somebody with a container
+rewrote it against a running one. A lab that pins a defect buys a red on the
+day of the fix and owes a rewrite on the same day; the reason in `NOT_LABS` is
+what stopped that debt from being invisible. Run it with `sh tools/lab.sh ha-failover` - it stands up two
 dataplanes, breaks the active one three ways, and its six `FIXTURE` checks are
 green so that a broken topology can be told apart from a missing feature.
 
