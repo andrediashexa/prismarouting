@@ -126,6 +126,41 @@ version has a chance of seeing it.
   dataplane interface says nothing about queues, because a queue count is not a
   fact about a machine that has no card to count them on.
 
+* **A box aborted between 7,000 and 8,000 interfaces, because nothing sized the
+  statistics segment** ([#288](https://github.com/andrediashexa/hexarouting/issues/288)).
+  `appliance/hexarouting-tune` wrote no `statseg` stanza, so an installed box
+  ran on VPP's built-in 32 MB. It is the only resource on the box whose limit is
+  an abort rather than a refusal: the run measured for #170 printed `after 7000:
+  7000 live` and then died creating the next batch, in `os_panic` and `SIGABRT`,
+  taking the whole dataplane. The tuner now counts the interfaces
+  `/etc/hexarouting/hexarouting.conf` configures the box for - the file
+  `hexarouting.service` hands to `hexash --load` at every boot - and writes a
+  stanza sized at **4,793 bytes each**. That figure is the measurement divided
+  rather than a constant: 32 MiB over the 7,000 interfaces that segment was
+  measured surviving. It is deliberately not the 2.9 kB of counter content
+  measured at 40,000 interfaces, which predicts 12,000 on the default and would
+  abort at two thirds of what it promised, because the counter directory is one
+  contiguous vector that holds two copies while it grows. The count comes from
+  **hexash's own parser**, not a grep for `^interface `: the routing half of
+  that file names interfaces too, and a second reader of the grammar answers
+  the same only until the VTY learns another way to name one. Nothing is
+  written below 7,000 interfaces, where the arithmetic asks for less than VPP
+  already gives away; nothing is written when a `statseg` is already in
+  `/etc/hexarouting/vpp-base.conf`, which is concatenated ahead of the
+  generated stanzas and is therefore the operator's last word; and a box with
+  no interfaces to size for is told no size at all - no saved configuration, a
+  configuration that could not be read, and an install this program cannot
+  reach hexash's parser from are three different sentences, none of them a
+  number. The stanza is written in the conservative first-boot profile too,
+  because `hexash --load` creates those interfaces on the first boot as well.
+  **What no configuration file holds is an interface created while the box
+  runs** - a PPPoE session, a pair made from the VTY - so a BNG still has to set
+  the size itself, and the boot self-test still reads the dataplane's own heap.
+  That check gained a third answer for where the size came from: a stanza in
+  the base file is the operator's, one that reached `startup.conf` without
+  being in the base is the tuner's, and reading only `startup.conf` would have
+  told a box the tuner sized that its operator had sized it.
+
 ## 0.74.2 - what the documents said about installing, and a check that could not fail
 
 [#226](https://github.com/andrediashexa/hexarouting/issues/226), [#321](https://github.com/andrediashexa/hexarouting/issues/321), [#322](https://github.com/andrediashexa/hexarouting/issues/322), [#323](https://github.com/andrediashexa/hexarouting/issues/323), [#324](https://github.com/andrediashexa/hexarouting/issues/324), [#325](https://github.com/andrediashexa/hexarouting/issues/325), [#326](https://github.com/andrediashexa/hexarouting/issues/326).

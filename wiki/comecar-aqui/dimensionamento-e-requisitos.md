@@ -160,25 +160,33 @@ O dataplane publica todos os contadores dele num segmento de memória de tamanho
 
 Quando ele enche, o dataplane **não recusa a interface seguinte: ele aborta**. A caixa perde o encaminhamento inteiro, de uma vez, e não escreve nenhuma explicação antes de cair.
 
-O tamanho de fábrica é o do próprio dataplane: **32 MB**. Medido, duas vezes e no mesmo ponto: uma caixa nesse tamanho abortou entre **7.000 e 8.000 interfaces**. Com o segmento em 1 GB, a mesma caixa chegou a 40.000 interfaces, que foi onde a medição parou e não onde ela encontrou um limite.
+O tamanho de fábrica é o do próprio dataplane: **32 MB**. Medido, duas vezes e no mesmo ponto: uma caixa nesse tamanho chegou a **7.000 interfaces** e abortou antes de 8.000. Com o segmento em 1 GB, a mesma caixa chegou a 40.000 interfaces, que foi onde a medição parou e não onde ela encontrou um limite.
 
 **Uma caixa de CGNAT comum não chega perto disso.** Assinante não é interface: 200 mil assinantes atrás de um pool dividem um punhado de portas. Quem chega perto é quem cria **uma interface por cliente** - uma subinterface QinQ por assinante, por exemplo.
 
 
 :::info
-**O equipamento não escolhe esse número, e é por isso que ele te mostra onde você está.** Nada do que ele lê no boot prevê quantas interfaces a caixa vai ter: a quantidade de assinantes não prevê, e o hardware muito menos. Então ele não inventa um valor e não reserva memória por precaução; ele reporta o segmento a cada boot, para você ver a parede chegando em vez de encontrá-la.
+**A caixa dimensiona esse segmento sozinha, a partir das interfaces que a configuração dela tem.** No boot ela conta as interfaces do arquivo de configuração e reserva **4,8 kB para cada uma** - que é o limite medido acima dividido pelas 7.000 interfaces que a caixa suportou, e não os 2,9 kB de conteúdo: a tabela de contadores é um bloco só de memória e precisa caber duas vezes enquanto cresce.
+
+Se essas interfaces couberem nos 32 MB de fábrica, ela **não escreve nada** - reservar menos do que o dataplane já dá de graça só tiraria contadores da sua caixa.
 
 :::
-O self-test de boot imprime quanto do segmento está gasto e sobre quantas interfaces:
+O que nenhum arquivo de configuração tem é a interface criada **enquanto a caixa roda**. Se a sua topologia cria interface em tempo de execução, o número é seu e está na seção seguinte.
+
+**O tamanho novo só vale no próximo start do dataplane.** O segmento é lido quando ele sobe e nunca cresce depois: se você criar milhares de subinterfaces numa caixa que já está ligada, elas gastam o segmento com que aquela caixa subiu. O cálculo entra no arquivo de configuração do dataplane no boot seguinte, e vale a partir dali.
+
+O self-test de boot imprime quanto do segmento está gasto, sobre quantas interfaces, e **quem escolheu o tamanho**:
 
 ```
   [ ok ] statistics segment: 4.20M of 31.99M used, 3 interface(s)
         size: VPP's own default, which this product does not set
 ```
 
+São três respostas possíveis nessa última linha: o padrão do dataplane, `chosen by hexarouting-tune from this box's configuration` quando foi a caixa que calculou, e `set in /etc/hexarouting/vpp-base.conf` quando foi você.
+
 Passando da metade isso vira um aviso. Passando de três quartos vira uma **falha**, com o que acontece quando enche e com o que fazer a respeito. Três quartos, e não noventa por cento, porque o último pedaço não é aproveitável: a tabela de contadores é um bloco só de memória, e crescer significa copiá-la inteira, o que exige a cópia velha e a nova ao mesmo tempo.
 
-## Como aumentar
+## Como escolher o tamanho você mesmo
 
 Em `/etc/hexarouting/vpp-base.conf`, que é o arquivo base que você edita:
 
@@ -188,7 +196,7 @@ statseg {
 }
 ```
 
-Reinicie a caixa depois. O ajuste automático de boot **nunca sobrescreve** esse trecho: ele acrescenta os blocos que calcula **depois** do que está nesse arquivo, e não escreve nenhum `statseg` por conta própria.
+Reinicie a caixa depois. O ajuste automático de boot **nunca sobrescreve** esse trecho: ele acrescenta os blocos que calcula **depois** do que está nesse arquivo, e quando existe um `statseg` seu ele não escreve nenhum - o número passa a ser inteiramente seu, inclusive se for menor do que a conta dele pediria.
 
 
 :::warning

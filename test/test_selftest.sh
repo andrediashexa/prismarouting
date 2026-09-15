@@ -724,10 +724,12 @@ fi
 rm -f "$FAKE/vppctl_ok" "$FAKE/show_interface" "$FAKE/show_lcp"
 
 echo "=== the statistics segment, which the dataplane ABORTS on (#288) ==="
-# The one resource the tuner does not size, and the only one with a hard abort
-# behind it: a full statistics segment is not a refused interface, it is
-# os_panic and SIGABRT taking the whole dataplane. A shipped box runs on VPP's
-# built-in 32 MB and was measured aborting between 7,000 and 8,000 interfaces.
+# The one resource with a hard abort behind it: a full statistics segment is
+# not a refused interface, it is os_panic and SIGABRT taking the whole
+# dataplane. A box on VPP's built-in 32 MB was measured aborting between 7,000
+# and 8,000 interfaces, and the tuner sizes the segment above that from the
+# interfaces a box is configured for - which leaves the ones it makes at
+# runtime, and this reading, as the only thing between the two.
 #
 # Nothing on an installed box ever looked at it, so the operator's first
 # knowledge of the limit was the box being gone. These cases are the three
@@ -769,16 +771,37 @@ if said_across "size: VPP's own default, which this product does not set"; then
 else
   bad "it did not say where the size came from"
 fi
-echo "--- the same box, sized by somebody, on the same numbers ---"
+echo "--- the same box, sized by the tuner, on the same numbers ---"
 # Proves the provenance line is read off the box and is not a constant: only
 # the startup.conf changed.
+#
+# AND IT IS THE TUNER'S, not somebody's. hexarouting-tune writes a statseg
+# stanza for a box whose configuration names more interfaces than VPP's
+# default was measured holding (#288), so a stanza in startup.conf is no
+# longer proof that an operator chose the number - and telling one from the
+# other is the whole of what this line is for.
 printf 'statseg {\n  size 1G\n}\n' >> "$FAKE/root/etc/vpp/startup.conf"
 run
-if said_across 'size: set in /etc/hexarouting/vpp-base.conf'; then
-  ok "a box carrying a statseg stanza is not reported as running on the default"
+if said_across "size: chosen by hexarouting-tune from this box's configuration"; then
+  ok "a box the tuner sized is not reported as running on the default"
 else
   bad "the provenance did not follow the box: $(printf '%s\n' "$OUTPUT" | grep -i 'size:' || echo '<nothing>')"
 fi
+
+echo "--- and the same box, sized by its operator ---"
+# The stanza in the BASE file, which is where an operator's own goes and the
+# one place the tuner steps aside for. Same startup.conf as the case above -
+# the tuner concatenates the base into it - so the only thing that tells the
+# two boxes apart is which file the number came from.
+mkdir -p "$FAKE/root/etc/hexarouting"
+printf 'statseg {\n  size 1G\n}\n' > "$FAKE/root/etc/hexarouting/vpp-base.conf"
+run
+if said_across 'size: set in /etc/hexarouting/vpp-base.conf'; then
+  ok "an operator's own stanza is reported as the operator's"
+else
+  bad "a box whose operator chose the size was told something else: $(printf '%s\n' "$OUTPUT" | grep -i 'size:' || echo '<nothing>')"
+fi
+rm -f "$FAKE/root/etc/hexarouting/vpp-base.conf"
 mkcpus "" "0-3" "" 0
 
 echo "--- half spent, which is the last moment a warning is any use ---"

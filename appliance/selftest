@@ -31,6 +31,10 @@ noforward=
 # nothing holding them.
 ROOT=${HEXA_SELFTEST_ROOT:-}
 STARTUP="$ROOT/etc/vpp/startup.conf"
+# The operator-editable base, read apart from the generated file because the
+# two carry different decisions: a statseg stanza HERE is somebody's own, and
+# one that reached startup.conf without being here was written by the tuner.
+VPPBASE="$ROOT/etc/hexarouting/vpp-base.conf"
 
 say()  { echo "$*" > "$OUT" 2>/dev/null || echo "$*"; }
 ok()   { say "  [ ok ] $*"; }
@@ -909,14 +913,14 @@ fi
 # built-in 32 MB and creating subscriber interfaces aborted it between 7,000
 # and 8,000, twice, at the same step.
 #
-# hexarouting-tune does not size the segment, and that is a decision rather
-# than an omission: nothing it reads predicts how many INTERFACES a box will
-# carry. HEXA_SUBSCRIBERS counts subscribers behind a CGNAT pool, and those
-# share a handful of interfaces. Sizing from it would buy 200,000 interfaces
-# that never appear, on a box whose floor is 4 GB of RAM.
+# hexarouting-tune sizes the segment from the interfaces the box is CONFIGURED
+# for, at 4793 bytes each - 32 MB divided by the 7,000 that default was
+# measured holding - and writes nothing when they fit in what VPP gives away.
+# What no configuration file holds is an interface created while the box runs:
+# a PPPoE session, a pair made from the VTY.
 #
-# This line is what pays for that decision. An operator stacking a
-# sub-interface per customer can see the wall approaching instead of meeting
+# This line is what covers that gap. It reads the segment the dataplane
+# ACTUALLY has, so an operator can see the wall approaching instead of meeting
 # it as a SIGABRT with no sentence in front of it.
 #
 # Read and never written (#184): what is reported is what the dataplane says
@@ -970,15 +974,21 @@ if vppctl show version >/dev/null 2>&1; then
       say "         with a 'statseg { size 256M }' stanza in"
       say "         /etc/hexarouting/vpp-base.conf, then restart vpp.service."
     else
-      # Where the size came from, which is the sentence nobody was ever told:
-      # a box carrying a statseg stanza was sized by somebody, and a box
-      # without one is running on a number nobody on this project chose.
+      # Where the size came from, which is the sentence nobody was ever told.
+      # THREE ANSWERS AND NOT TWO, because the tuner now sizes the segment
+      # from the interfaces the box is configured for (#288): a stanza in the
+      # base file is the operator's own and is never overridden, a stanza that
+      # reached startup.conf without being in the base was written by the
+      # tuner, and neither means VPP's own default. Reading only startup.conf
+      # would tell a box the tuner sized that its operator had sized it.
       #
       # A STANZA, not the word. The base file ships a comment block explaining
       # where statseg goes and that comment is copied into startup.conf, so a
       # plain grep would report every shipped box as one somebody had sized.
-      if grep -qE '^[[:space:]]*statseg' "$STARTUP" 2>/dev/null; then
+      if grep -qE '^[[:space:]]*statseg' "$VPPBASE" 2>/dev/null; then
         segsrc="set in /etc/hexarouting/vpp-base.conf"
+      elif grep -qE '^[[:space:]]*statseg' "$STARTUP" 2>/dev/null; then
+        segsrc="chosen by hexarouting-tune from this box's configuration"
       else
         segsrc="VPP's own default, which this product does not set"
       fi
