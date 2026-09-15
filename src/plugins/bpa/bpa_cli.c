@@ -2436,6 +2436,7 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
       u32 pi = p - bm->pools;
       u64 total = 0, alloc = 0, allocs = 0, rels = 0, exh = 0, exts = 0;
       u64 pinned = 0, placed = 0, missed = 0;
+      u64 paired = 0, unpaired = 0;
 
       /*
        * Both kinds of allocator, because both hand out blocks that have to be
@@ -2489,6 +2490,8 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 	  pinned += d->n_pinned;
 	  placed += d->n_stride_placed;
 	  missed += d->n_stride_missed;
+	  paired += d->n_paired_placed;
+	  unpaired += d->n_paired_missed;
 	}
       /*
        * Pinned is counted apart from "in use" and is a subset of it. An
@@ -2518,6 +2521,31 @@ bpa_show_blocks_command_fn (vlib_main_t *vm, unformat_input_t *input,
 			 "  stride %u: %Lu extensions placed where it says, "
 			 "%Lu fell back to the free list",
 			 p->block_stride, placed, missed);
+      /*
+       * Paired address pooling, as a count rather than as a claim.
+       *
+       * RFC 6888 REQ-2 makes Paired the required DEFAULT for a CGN, and this
+       * box states it in its documentation - so an operator sizing or selling
+       * against that statement needs the number their own pool produced, not
+       * the sentence. The allocator PREFERS the subscriber's own public
+       * address for an extension and falls back rather than refusing, so the
+       * property is whatever these two say it is.
+       *
+       * Both allocators, because both prefer and both fall back: a
+       * deterministic pool's extension comes from its reserve, and the reserve
+       * is sharded by index, so the blocks on the subscriber's own address are
+       * not all in its worker's slice. One number for one property.
+       *
+       * Only where an extension is possible at all. A pool at max-blocks 1
+       * never extends, and a deterministic pool with no reserve has nothing to
+       * extend from; either would print two zeros that read like a failure.
+       */
+      if (p->max_blocks > 1
+	  && (p->mode == BPA_MODE_DYNAMIC || p->block_reserve))
+	vlib_cli_output (
+	  vm, "  RFC 4787 REQ-2 paired: %Lu of %Lu extension(s) on the "
+	      "holder's own address",
+	  paired, paired + unpaired);
       /*
        * The refusals above, named for what they mean on this pool and kept
        * apart from the OTHER way a subscriber is refused an extension:

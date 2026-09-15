@@ -7,6 +7,41 @@
  * addresses when the policy is interleaved. Ver bpa_dyn_block_addr(). */
 
 static void bpa_dyn_unfree (bpa_dyn_t *d, u32 local);
+static void bpa_dyn_push (bpa_dyn_t *d, u32 local);
+static u32 bpa_dyn_pop (bpa_dyn_t *d);
+
+/*
+ * Block `blk` of public address `pub_idx`, taken for the caller when it is
+ * free. *local is left alone when it is not, so a walk is a sequence of these
+ * and the caller's stopping test is the same one as its loop condition.
+ *
+ * No worker test, and that is an invariant rather than an omission: the only
+ * caller steps by bpa_pair_step() from a block this worker already holds, and
+ * that step is the smallest one whose block-index distance is a multiple of
+ * the worker count. Every candidate is therefore congruent to the primary,
+ * which is congruent to this worker.
+ *
+ * Worth saying what a broken caller would produce, because it is not what the
+ * shape of this function suggests. The division TRUNCATES, so a candidate that
+ * is not congruent resolves to a block that IS in this worker's slice and is
+ * simply not the one asked for - on another public address. Nothing here can
+ * see that, and a check written as "the block is in my slice" cannot either:
+ * local * n_workers + worker is congruent to worker for every local there is.
+ * The step is asserted against ref/bpa_model.py in test/test_bpa_pool.c, and
+ * what a wrong one produces - a subscriber on two addresses - in
+ * test/test_bpa_dyn.c.
+ */
+static_always_inline void
+bpa_dyn_take_free (bpa_dyn_t *d, const bpa_pool_t *p, u32 pub_idx, u32 blk,
+		   u32 n_workers, u32 *local)
+{
+  u32 cand = bpa_join (p, pub_idx, blk) / n_workers;
+
+  if (cand >= d->n_local || d->owner[cand] != BPA_NO_BLOCK)
+    return;
+  bpa_dyn_unfree (d, cand);
+  *local = cand;
+}
 
 clib_error_t *
 bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers,
@@ -62,8 +97,12 @@ bpa_dyn_init (bpa_dyn_t *d, const bpa_pool_t *p, u32 worker, u32 n_workers,
 
   /* pushed high to low so popping hands out increasing block indices */
   vec_validate (d->free_list, n - 1);
+  vec_validate (d->free_pos, n - 1);
   for (i = 0; i < n; i++)
-    d->free_list[i] = n - 1 - i;
+    {
+      d->free_list[i] = n - 1 - i;
+      d->free_pos[n - 1 - i] = i;
+    }
   vec_set_len (d->free_list, n);
 
   d->by_sub = hash_create (0, sizeof (uword));
@@ -78,6 +117,7 @@ bpa_dyn_free (bpa_dyn_t *d)
   vec_free (d->idle_since);
   vec_free (d->pinned);
   vec_free (d->free_list);
+  vec_free (d->free_pos);
   vec_free (d->extras);
   hash_free (d->by_sub);
   clib_memset (d, 0, sizeof (*d));
@@ -105,7 +145,7 @@ bpa_dyn_acquire (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx, u32 worker,
       return -1;
     }
 
-  local = vec_pop (d->free_list);
+  local = bpa_dyn_pop (d);
   d->owner[local] = sub_idx;
   d->idle_since[local] = 0;
   hash_set (d->by_sub, sub_idx, (uword) local + 1);
@@ -177,6 +217,13 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
 	  local = cand;
 	  break;
 	}
+      /* Counted here as well as on the dynamic walk below, because it is the
+       * same question about the same property and an operator reading one
+       * number should not have to know which allocator answered it. */
+      if (local == BPA_NO_BLOCK)
+	d->n_paired_missed++;
+      else
+	d->n_paired_placed++;
     }
 
   /*
@@ -221,8 +268,125 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
 	d->n_stride_missed++;
     }
 
+  /*
+   * A free block on the subscriber's OWN public address, when nothing above
+   * has already chosen one.
+   *
+   * RFC 6888 REQ-2 makes paired address pooling the required DEFAULT for a
+   * CGN, and this is the path that decides whether this box has it. Without
+   * it an extension is whatever comes off the free stack, and under
+   * `policy interleaved` the next block index is the next public address - so
+   * the ordinary case, a subscriber that fills its block and is given another,
+   * puts one customer on two public addresses at once. It is not a corner:
+   * measured at 0 of 8 extensions paired over four public addresses, 0 of 40000
+   * over sixteen, and it gets WORSE as the pool grows, because alignment needs
+   * the gap between two blocks to be a multiple of the address count (#226).
+   *
+   * What it costs the customer is not cosmetic. bpa_alg_reserve_pair() will
+   * only take a media pair from a block on the SAME public address as the
+   * signalling session, because the header carries only ports and the peer
+   * takes the address from the connection it answers - so a split subscriber's
+   * SIP and RTSP get BPA_ALG_NO_PORTS with ports free, the SDP leaves carrying
+   * the private address, the call connects and there is no audio.
+   *
+   * Not the stride, and after it. A stride is the operator saying WHERE the
+   * second block goes; this says only WHICH ADDRESS it goes on, which is the
+   * conformance statement rather than a layout. Where both apply the
+   * operator's number wins, and this catches the strides bpa_stride_block()
+   * could not place, which is why the two pairs of counters stay meaningful
+   * side by side.
+   *
+   * TWO WALKS, because they find different blocks and the measurements say
+   * both are needed. Candidates are blk_idx +/- m*bpa_pair_step(), which is
+   * every block of this address that lands in this worker's slice.
+   *
+   *   - outwards from the subscriber's own block. Cheap, and the block just
+   *     above the primary is the one whose ports ABUT it, which is the range
+   *     an investigator reads as one holding rather than as two rows that look
+   *     like a duplicate.
+   *   - upwards from wherever the free stack is about to hand blocks out.
+   *     A pool that filled from the bottom has no free block anywhere near the
+   *     primary, and the first walk would have to cross the whole allocated
+   *     region to find that out. The top of the stack says where the free ones
+   *     start, and the arithmetic jumps there.
+   *
+   * BOUNDED, at BPA_PAIR_WALK candidates each, and the bound is where the
+   * honesty is. Measured over three arrival patterns - one subscriber at a
+   * time, everybody-then-everybody, and a steady state with three quarters of
+   * the subscribers reaped - across 1 to 256 public addresses and 1 to 8
+   * workers: 100%, 99.6% and 99.2% of extensions paired at the worst cell of
+   * each, against 0.0%, 0.0% and 0.2% on the allocator this replaces.
+   * test/test_bpa_dyn.c is where those numbers are asserted.
+   *
+   * A PREFERENCE and not a rule, for the reason the reserve above gives:
+   * refusing the extension rather than taking a block elsewhere would turn a
+   * property about layout into a customer losing traffic. n_paired_placed and
+   * n_paired_missed are what an operator reads instead of the claim.
+   */
+  if (PREDICT_FALSE (local == BPA_NO_BLOCK && !d->reserve
+		     && primary != BPA_NO_BLOCK))
+    {
+      u32 pub_idx, blk_idx, step = bpa_pair_step (p, n_workers);
+      u32 tries, up, dn, j;
+
+      bpa_split (p, primary, &pub_idx, &blk_idx);
+      up = blk_idx;
+      dn = blk_idx;
+      for (tries = 0; tries < BPA_PAIR_WALK && local == BPA_NO_BLOCK; tries++)
+	{
+	  j = BPA_NO_BLOCK;
+	  if ((tries & 1) == 0 && up + step < p->blocks_mapped)
+	    j = (up += step);
+	  else if (dn >= step)
+	    j = (dn -= step);
+	  else if (up + step < p->blocks_mapped)
+	    j = (up += step);
+	  if (j == BPA_NO_BLOCK)
+	    break; /* the address has no candidate left in either direction */
+	  bpa_dyn_take_free (d, p, pub_idx, j, n_workers, &local);
+	}
+
+      /*
+       * The second walk, from the stack rather than from the subscriber.
+       *
+       * `top` is the block the next bpa_dyn_pop() would hand out. The first
+       * candidate at or above it is primary + m*step*unit for the smallest m
+       * that reaches it, and from there the walk steps along the address as
+       * before. Guarded on the stack being non-empty because the walk above
+       * may have taken the last free block.
+       */
+      if (local == BPA_NO_BLOCK && vec_len (d->free_list) != 0)
+	{
+	  u64 span = (u64) step * bpa_stride_unit (p);
+	  u32 top = d->free_list[vec_len (d->free_list) - 1] * n_workers
+		    + worker;
+
+	  /* u64 because the span is a worker count times the whole public set,
+	   * which a pool of one block per address can take past 2^32 - and a
+	   * wrapped span would name a j the walk below would then discard,
+	   * turning a cheap jump into a wasted one for no visible reason. */
+	  j = blk_idx + step;
+	  if (top > primary)
+	    {
+	      u64 m = ((u64) (top - primary) + span - 1) / span;
+
+	      if (m > 1 && m * step < p->blocks_mapped)
+		j = blk_idx + (u32) m * step;
+	    }
+	  for (tries = 0; tries < BPA_PAIR_WALK && local == BPA_NO_BLOCK
+			  && j < p->blocks_mapped;
+	       tries++, j += step)
+	    bpa_dyn_take_free (d, p, pub_idx, j, n_workers, &local);
+	}
+
+      if (local == BPA_NO_BLOCK)
+	d->n_paired_missed++;
+      else
+	d->n_paired_placed++;
+    }
+
   if (local == BPA_NO_BLOCK)
-    local = vec_pop (d->free_list);
+    local = bpa_dyn_pop (d);
   d->owner[local] = sub_idx;
   d->idle_since[local] = 0;
   /* by_sub is deliberately NOT touched: it names the subscriber's first
@@ -242,43 +406,60 @@ bpa_dyn_acquire_extra (bpa_dyn_t *d, const bpa_pool_t *p, u32 sub_idx,
   return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* the free stack                                                      */
+
 /*
- * Takes one named block off the free list. The list is a stack, so the entry
- * has to be found rather than popped.
+ * Three operations, and free_pos[] is what makes all three constant time.
+ * It is the inverse of free_list[]: every write to one writes the other, and
+ * what a reader can check is that free_list[free_pos[x]] == x for every free
+ * x, and that free_pos[x] is BPA_NO_BLOCK for every held one.
  *
- * Guessed at before it is searched for. bpa_dyn_init() fills the stack with
- * n-1 down to 0, so block `local` starts at index n-1-local, and vec_del1()
- * displaces exactly one entry per removal - the one that was last. The guess
- * is therefore right for every block nothing has displaced, which on the path
- * that pins many blocks at once - a pool coming back with the forwards its
- * configuration carries - is all of them.
- *
- * The guess is worth its two lines because the search is not free and is paid
- * under the worker barrier. Measured, 64 forwards one at a time: with the
- * search alone, 202 ms on a 258048-block slice against 149 ms on a 4032-block
- * one and 158 ms on a deterministic pool, which pins nothing - about 0.8 ms
- * per pin, all of it the walk, and a pool created with a few hundred forwards
- * pays every one of them inside ONE barrier acquisition. With the guess the
- * same three read 161, 166 and 162 ms: the cost no longer follows the size of
- * the slice.
+ * bpa_dyn_unfree() used to search, with a guess in front of it derived from
+ * how bpa_dyn_init() fills the stack and from vec_del1() displacing exactly
+ * one entry. The guess was right for every block nothing had displaced, which
+ * made it right on the path that pins many blocks at once and wrong on any
+ * path that names blocks in an order of its own. Measured at 72684 free-list
+ * entries examined for ONE extension on a 16-address pool at 3 workers, once
+ * the paired-address preference below started naming blocks - and, before
+ * that, at about 0.8 ms per pin on a 258048-block slice against 0.16 ms on a
+ * small one, all of the difference being the walk (#226). An inverse index
+ * costs four bytes a block and has no bad order.
+ */
+
+static void
+bpa_dyn_push (bpa_dyn_t *d, u32 local)
+{
+  d->free_pos[local] = vec_len (d->free_list);
+  vec_add1 (d->free_list, local);
+}
+
+static u32
+bpa_dyn_pop (bpa_dyn_t *d)
+{
+  u32 local = vec_pop (d->free_list);
+
+  d->free_pos[local] = BPA_NO_BLOCK;
+  return local;
+}
+
+/*
+ * Takes one NAMED block off the stack. vec_del1() moves the last entry into
+ * the hole, so exactly one other block changes position and it is the one
+ * that was on top - which is the whole of the bookkeeping.
  */
 static void
 bpa_dyn_unfree (bpa_dyn_t *d, u32 local)
 {
-  u32 i = d->n_local - 1 - local;
+  u32 i = d->free_pos[local], last;
 
-  if (i < vec_len (d->free_list) && d->free_list[i] == local)
-    {
-      vec_del1 (d->free_list, i);
-      return;
-    }
-
-  for (i = 0; i < vec_len (d->free_list); i++)
-    if (d->free_list[i] == local)
-      {
-	vec_del1 (d->free_list, i);
-	return;
-      }
+  if (i >= vec_len (d->free_list))
+    return;
+  last = vec_len (d->free_list) - 1;
+  d->free_pos[local] = BPA_NO_BLOCK;
+  if (i < last)
+    d->free_pos[d->free_list[last]] = i;
+  vec_del1 (d->free_list, i);
 }
 
 int
@@ -397,7 +578,7 @@ bpa_dyn_unpin (bpa_dyn_t *d, u32 block_idx, u32 n_workers, int *released)
     }
   d->owner[local] = BPA_NO_BLOCK;
   d->idle_since[local] = 0;
-  vec_add1 (d->free_list, local);
+  bpa_dyn_push (d, local);
   d->n_alloc--;
   d->n_releases++;
   *released = 1;
@@ -465,7 +646,7 @@ bpa_dyn_reap (bpa_dyn_t *d, f64 now, u32 holddown, u32 worker, u32 n_workers,
 	}
       d->owner[i] = BPA_NO_BLOCK;
       d->idle_since[i] = 0;
-      vec_add1 (d->free_list, i);
+      bpa_dyn_push (d, i);
       d->n_alloc--;
       d->n_releases++;
       freed++;
