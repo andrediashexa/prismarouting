@@ -268,11 +268,18 @@ check(len(CAND) >= 5,
       f"\"{CAND_H}\" ({len(CAND)} rows found). Nothing below this is "
       f"comparing anything")
 
-cand_params, cand_paths = set(), set()
+cand_params, cand_paths = {}, set()
 for cells in CAND:
     for tok in CODE.findall(cells[0]):
-        (cand_paths if tok.startswith("/") else cand_params).add(
-            tok.split("=", 1)[0])
+        if tok.startswith("/"):
+            cand_paths.add(tok.split("=", 1)[0])
+        else:
+            # `audit=0` and `nosoftlockup` are both rows of this table, and
+            # the difference between them is the whole of what the sweep below
+            # can look for: one is a parameter that carries a value, the other
+            # is a bare flag. The document already states which is which, so
+            # the shape is read off the row instead of listed here by hand.
+            cand_params[tok.split("=", 1)[0]] = "=" in tok
 
 # EVERY FILE THE APPLIANCE SHIPS, not three of them.
 #
@@ -333,22 +340,120 @@ if check(not absent,
     ok(f"{len(SHIPPED)} files under appliance/ swept, including all "
        f"{len(MUST_SWEEP)} this suite is about")
 
-WHERE_SET = [("the generated kernel command line",
-              (line_on or "") + " " + (line_off or ""))] + SHIPPED
+# A PARAMETER IS A PLACE, NOT A WORD.
+#
+# This sweep used to look for the bare NAME anywhere in a swept file, and
+# `audit` went red inside an ordinary English sentence in a comment that had
+# nothing to do with the `audit=` kernel parameter (#333). The comment was
+# reworded to get past the check, which is the direction that ends with the
+# check deleted: one that can go red on correct work is one that whoever is
+# holding the branch reroutes around, by rewording, by an exception, and
+# eventually by deletion. `audit`, `tsc` and `clocksource` are all ordinary
+# English, so the same red was waiting inside every comment anybody writes
+# about logging or about timekeeping. The word is not the claim. A kernel
+# parameter appears on a kernel command line or in an assignment that carries
+# one, and that is a place.
+#
+# So three places are read, each the way that place is actually written:
+#
+#   - the generated command line IS a command line, so it is PARSED, with the
+#     same params() the applied table above is compared against. A token is a
+#     parameter there or it is not, and nothing has to be guessed from text;
+#   - in a shipped file, a valued parameter is `name=` - the `=` is what turns
+#     a word into a parameter - or a sysctl assignment at the head of a line.
+#     `kernel.nmi_watchdog = 0` in appliance/etc/sysctl.conf sets the same
+#     knob the table is about, and the old word match could not see it at all:
+#     its lookbehind refused a `.` in front of the name, so the one file the
+#     check was originally written to read was the one shape it missed;
+#   - a bare flag carries no value anywhere, so the whole token is the
+#     parameter and a token match is exactly right for it. `nosoftlockup` is
+#     also not an English word, which is why the word match was tolerable for
+#     that row and wrong for `audit`.
+#
+# Nothing here names a candidate. There is no list of excused words, on
+# purpose: an allowlist is the thing the next person grows, and it turns "the
+# check does not know what it is asserting" into a maintained file of proof
+# that it does not.
+
+
+def uncommented(text):
+    """`text` with `#` comments cut, one line in for one line out.
+
+    A comment is prose ABOUT a parameter and never a parameter: a `#` line
+    boots nothing, in a shell script, in a systemd unit, in sysctl.conf, or in
+    the grub.cfg build-iso.sh writes into the medium. Dropping it is the rule
+    the reworded comment should have got instead of new wording.
+
+    Quote-aware, because the tuner builds /etc/default/grub out of string
+    literals whose first line is a `#` banner - cutting there would blind this
+    sweep to the command line assembled on the lines right after it.
+
+    Every way this scanner can be wrong keeps text rather than dropping it: an
+    apostrophe in prose leaves the rest of that line "inside a quote", so a
+    later `#` survives and is swept. That can make the sweep noisier than it
+    needs to be. It cannot make it miss a parameter.
+    """
+    out = []
+    for line in text.splitlines():
+        quote, cut, i = None, len(line), 0
+        while i < len(line):
+            c = line[i]
+            if quote:
+                if c == "\\":
+                    i += 2
+                    continue
+                if c == quote:
+                    quote = None
+            elif c in "'\"":
+                quote = c
+            elif c == "#":
+                cut = i
+                break
+            i += 1
+        out.append(line[:cut])
+    return "\n".join(out)
+
+
+def needle(name, valued):
+    """What `name` being SET looks like, as opposed to being mentioned."""
+    n = re.escape(name)
+    if not valued:
+        return re.compile(r"(?<![\w.\-/])" + n + r"(?![\w-])")
+    return re.compile(
+        # on a command line: `audit=0`, never with a space, because a kernel
+        # command line has none
+        r"(?<![\w.\-/])" + n + r"="
+        # in sysctl.conf: `kernel.nmi_watchdog = 0`, at the head of a line
+        r"|^[ \t]*(?:[\w.]+\.)?" + n + r"[ \t]*=", re.M)
+
+
+SWEPT_CODE = [(where, uncommented(text)) for where, text in SHIPPED]
+emitted_names = set(params(line_on) if line_on else ())
+emitted_names |= set(params(line_off) if line_off else ())
+
+WHY = ("Either it was measured under #28 and the document must move it into "
+       "the applied table, or it was switched on without a measurement")
 
 clean = True
 for name in sorted(cand_params):
-    for where, text in WHERE_SET:
+    clean &= check(
+        name not in emitted_names,
+        f"`{name}` is listed in docs/appliance.md as tuning NOT applied, and "
+        f"the generated kernel command line sets it. {WHY}")
+    rx = needle(name, cand_params[name])
+    for where, text in SWEPT_CODE:
+        m = rx.search(text)
+        if not m:
+            continue
         clean &= check(
-            not re.search(r"(?<![\w.-])" + re.escape(name) + r"(?![\w-])", text),
+            False,
             f"`{name}` is listed in docs/appliance.md as tuning NOT applied, "
-            f"and {where} sets it. Either it was measured under #28 and the "
-            f"document must move it into the applied table, or it was "
-            f"switched on without a measurement")
+            f"and {where}:{text[:m.start()].count(chr(10)) + 1} sets it "
+            f"({m.group(0).strip()!r}, outside any comment). {WHY}")
 if clean and cand_params:
-    ok(f"none of the {len(cand_params)} candidate parameters appears in the "
-       f"kernel command line or in any of the {len(SHIPPED)} files under "
-       f"appliance/: " + ", ".join(sorted(cand_params)))
+    ok(f"none of the {len(cand_params)} candidate parameters is set by the "
+       f"kernel command line, nor by code in any of the {len(SHIPPED)} files "
+       f"under appliance/: " + ", ".join(sorted(cand_params)))
 
 # The runtime-state candidates are sysfs paths rather than parameters. The
 # governor is the precedent for how one would ship - written by apply-tuning
@@ -361,7 +466,7 @@ if check(not written,
     ok(f"and neither of the {len(cand_paths)} runtime-state candidates is "
        f"touched by any of them")
 
-overlap = cand_params & set(documented)
+overlap = set(cand_params) & set(documented)
 check(not overlap,
       f"the same parameter is in both tables - applied and not applied: "
       f"{sorted(overlap)}. One of the two rows is a lie")

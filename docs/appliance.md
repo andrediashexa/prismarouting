@@ -2026,6 +2026,16 @@ topology the suite renders never takes — and none of those was being read. The
 tuner's own source is swept for exactly that last reason: rendering one
 topology proves what **that topology** emits, not what the tuner can emit.
 
+It looks for the parameter where a parameter lives, not for the word. The
+generated line is parsed rather than searched, a valued candidate has to
+appear as `name=` or as a `sysctl.conf` assignment, a bare flag has to appear
+as a whole token, and `#` comments are dropped before any of that. The check
+used to match the bare name anywhere in a swept file, which sent it red on an
+ordinary English sentence containing the word "audit" in a comment that set
+nothing
+([#333](https://github.com/andrediashexa/hexarouting/issues/333)). There is no
+list of excused words and there is not meant to be one.
+
 | Candidate | Hypothesis | Cost if wrong | Status, from the readings below |
 |---|---|---|---|
 | `nmi_watchdog=0` | The NMI watchdog fires on every core, isolated ones included; removing it removes a periodic interruption of a worker | Loses hard-lockup detection, which is a real diagnostic on a box nobody can walk to | **Not measurable here**: already `0` on this KVM guest, so there is nothing to remove and no effect to see. `CONFIG_HARDLOCKUP_DETECTOR=y`, so on hardware with a real PMU it is on and the knob does have something to do |
