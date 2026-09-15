@@ -120,6 +120,33 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A permission check whose fixture was a directory no box has.**
+  `test/test_hexash_perms.py` held
+  [#188](https://github.com/andrediashexa/hexarouting/issues/188)'s fix - that
+  `save` must not narrow the configuration store out from under a non-root
+  operator - by building a store at `0770`, saving into it, and asserting it
+  came back `0770`. Its own comment said *"what appliance/install.sh states:
+  0770 on the directory"*.
+
+  The installer sets **2770**, and has since the setgid bit went in. The bit is
+  not decoration: `install.sh` says in the comment above its own two
+  `install -d -m 2770` lines that without it a revision root writes at boot is
+  group root, and the next operator cannot read it - so `rollback 1` becomes a
+  command that works only for whoever made the revision.
+
+  So the case was asserting that a mode survives a save, about a mode no
+  installed box carries, and it could not see the bit going missing because its
+  fixture never had one. Measured, rather than argued: a one-line mutation
+  making the rollback store's `push` clear the setgid bit takes the new case
+  red twice and leaves the old one **entirely green**.
+
+  The two modes are read out of `appliance/install.sh` now, by two small
+  readers, so the fixture is the directory the installer makes rather than one
+  this file invented. A reader that stops finding its line fails rather than
+  comparing `None` with `None`, and the setgid bit is asserted **by name**
+  beside the equality, because an equality against a mode read from the same
+  place would go quiet the day somebody changed both.
+
 * **Three wiki screens the new reader caught, two of them made stale an hour
   earlier by this same release.** `test/test_wiki_screens.py` went in green and
   then went red on its first real test: the split of the `nat: a hierarchy, not
