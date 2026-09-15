@@ -443,6 +443,58 @@ case "$out" in
   *) ok "and it is not reported as a failure" ;;
 esac
 
+echo "=== the machine's load is read, not only advised about ==="
+# This suite has twice reported a product defect that was not one, both times
+# because the machine was carrying something else: a release run at load 12 to
+# 15 on 8 cores with three agents running labs beside it, and a run on
+# 2026-09-15 where detreserve, extblocks and extblocks+workers went red on
+# "the record arrived at the collector" while an agent ran the whole test
+# suite under gcov three times over. All of them passed alone afterwards.
+#
+# The advice to "look at the machine's load" was already in the NO VPP block.
+# What was missing is the suite looking.
+case "$out" in
+  *"machine: "*" cpu(s)"*"load "*" at the start, "*" at the highest batch "*)
+    ok "the summary carries the cpu count and the load at both ends" ;;
+  *) bad "the run says nothing about the machine it ran on; got:
+$(printf '%s' "$out" | grep -i 'machine\|load' | head -3)" ;;
+esac
+# And the sentence that tells a reader what to do with it, only where there is
+# something to explain. This stub repository always has failures in it, which
+# is what the cases above are about.
+case "$out" in
+  *"a lab that went red on a busy machine is a lab to run again alone"*)
+    ok "and a run with red in it says to try the lab on its own" ;;
+  *) bad "a run carrying failures did not say the machine is the first thing \
+to check, which is the one sentence that separates a defect from a busy box" ;;
+esac
+
+# AND THE PEAK IS ARITHMETIC, not alphabetical. These are decimals, and `[ ]`
+# compares integers only - so the shell's string comparison reads 10.50 as
+# smaller than 9.20 and the peak becomes whichever reading happened to have
+# the largest first digit. That is the reading this whole section exists for:
+# a machine at 10 and up is the one whose red labs are suspect.
+#
+# The product's own line is cut out and run, rather than the arithmetic being
+# written again here - a copy would agree with itself whatever the suite does.
+# THE WHOLE FUNCTION, not the one line inside it. A cut anchored on the awk
+# would go red when somebody replaced it with the shell's `[ a \> b ]` - but
+# red for "the anchor is gone" rather than for the wrong answer, which is a
+# check that only works while the defect it is about cannot happen.
+_PEAKFN=$(awk '/^_load_note\(\) \{/,/^\}/' "$REPO/tools/run-all-labs.sh")
+case "$_PEAKFN" in
+  "") bad "_load_note() was not found in tools/run-all-labs.sh, so the case \
+below would measure an empty script" ;;
+  *)  _peak=$(sh -c "_load_now() { echo 10.50; }; LOAD_PEAK=9.20
+                     $_PEAKFN
+                     _load_note; echo \$LOAD_PEAK")
+      [ "$_peak" = "10.50" ] \
+        && ok "the highest load is kept by value: 10.50 beats 9.20" \
+        || bad "the peak of 9.20 and 10.50 came out as '$_peak', which is the \
+string comparison - and it reports a quiet machine on exactly the busy one \
+this reading is for" ;;
+esac
+
 echo "=== the summary counts them apart, and the suite still exits non-zero ==="
 case "$out" in
   *"pass=9  fail=4  notmeasured=1  novpp=5  ran=1"*) ok "the five states are counted apart" ;;
