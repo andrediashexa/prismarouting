@@ -49,11 +49,30 @@ O pacote confere a plataforma da caixa, troca os arquivos do produto e diz, arqu
 
 Este é o passo que custa alguma coisa, e é seu.
 
-O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo reinício do VPP, a caixa continua traduzindo com o dataplane antigo, que já estava carregado na memória. `show version` mostra as duas linhas e diz quando elas divergem:
+O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo reinício do VPP, a caixa continua traduzindo com o dataplane antigo, que já estava carregado na memória.
+
+Quem conta essa história é a linha `plugin` do `show version`, e **não** a
+linha `dataplane`:
 
 ```
 hexarouting> show version
+HexaRouting 0.74.2
+  dataplane: vpp v24.10-release built by root on box at 2026-01-01
+  plugin:    0.40.0
+  routing:   FRRouting 10.7.1 (hexarouting).
+  daemons:   running  bgpd mgmtd ospfd staticd zebra
 ```
+
+A linha `dataplane` é a versão do próprio VPP e não se mexe numa troca de
+versão do HexaRouting. A que fica para trás é `plugin`: é a build com que o
+dataplane foi carregado no último boot. Compare-a com o número da **primeira**
+linha - e quando as duas discordam a caixa diz isso em voz alta, com um
+parágrafo embaixo da linha `plugin` explicando que só um reinício do dataplane
+as iguala. Quando concordam ela não diz nada, que é o estado normal.
+
+A linha `plugin` responde de quatro jeitos, e três deles não são divergência:
+que a build é tal, que o dataplane não está respondendo, que o dataplane
+respondeu e não informa build nenhuma, ou que não há com o que comparar.
 
 
 :::warning
@@ -63,7 +82,7 @@ Um reboot da caixa faz a mesma coisa e leva junto qualquer mudança de tuning.
 
 :::
 
-Enquanto as duas linhas estiverem diferentes, a caixa está rodando um produto novo com um dataplane antigo. É um estado válido e previsto, mas não é onde a caixa deve passar a semana.
+Enquanto a linha `plugin` estiver atrás da primeira, a caixa está rodando um produto novo com um dataplane antigo. É um estado válido e previsto, mas não é onde a caixa deve passar a semana.
 
 # Quando o pacote recusa
 
@@ -169,15 +188,15 @@ As contas e suas senhas, e as comunidades SNMP. Nada disso veio na cópia do pas
 
 **Depois do pacote de atualização:**
 
-* `show version` traz a versão nova na linha do que está instalado. A linha do dataplane carregado só acompanha depois que o VPP for reiniciado, e até lá ela fica na versão antiga de propósito.
-* Depois do reinício do dataplane as duas linhas ficam **iguais**.
+* `show version` traz a versão nova na primeira linha, a do HexaRouting instalado. A linha `plugin` só acompanha depois que o VPP for reiniciado, e até lá ela fica na build antiga de propósito.
+* Depois do reinício do dataplane a linha `plugin` passa a bater com a primeira, e o parágrafo de divergência some.
 * A configuração continua lá: `show running-config` traz de volta o que já estava em vigor, sem ninguém digitar nada.
 * Um assinante real navega, e `show cgnat subscriber` com o IP dele responde com o endereço público e a faixa de portas.
 
 **Depois da reinstalação:**
 
 * O autoteste do primeiro boot sai **sem nenhuma linha** `**[FAIL]**`.
-* `show version` responde com a versão nova, e as duas linhas de versão são **iguais** desde o primeiro boot: a caixa inteira subiu nova, então não há dataplane antigo carregado.
+* `show version` responde com a versão nova, e a linha `plugin` bate com ela desde o primeiro boot: a caixa inteira subiu nova, então não há build antiga carregada.
 * `show running-config` traz de volta o que você digitou, comparável linha a linha com a cópia do passo 2, menos os valores mascarados.
 * Um assinante real navega, e `show cgnat subscriber` com o IP dele responde com o endereço público e a faixa de portas.
 

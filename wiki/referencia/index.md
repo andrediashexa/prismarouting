@@ -8,7 +8,7 @@ O que existe e o que cada coisa faz. Consulta, não leitura corrida — venha pa
 | [Multi-tenant com VRF](/doc/multi-tenant-com-vrf-3PDsWxfy6D) | Dois clientes usando a mesma faixa privada na mesma caixa |
 | [Timeouts e os pisos das RFCs](/doc/timeouts-e-os-pisos-das-rfcs-GvPsvW3hLf) | Quanto vive cada sessão, e o que quebra abaixo do piso |
 
-A referência da VTY é subdividida por assunto: comandos `show`, configuração de CGNAT, configuração de pool, o ciclo de `commit`, e a parte de roteamento e sistema.
+A referência da VTY é subdividida por assunto: comandos `show`, configuração de CGNAT, configuração de pool, configuração de interface, configuração de BGP, o ciclo de `commit`, e a parte de roteamento e sistema.
 
 
 :::info

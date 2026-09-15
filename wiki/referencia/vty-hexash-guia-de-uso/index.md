@@ -56,9 +56,10 @@ E onde a árvore espera um **nome**, os dois completam com o que a caixa realmen
 
 ```
 hexarouting# [edit] interface ?
-  host-veth-vpp             interface (up)
-  pg0                       interface (up)
-  tap4096                   interface (up)
+  host-veth-vpp  interface (up)
+  pg0            interface (up)
+  tap4096        interface (up)
+  <interface>
 ```
 
 Interfaces vêm do dataplane, com o estado. Pools, contas e usuários SNMP vêm da **candidata** — então completam o que você está editando, não só o que já foi commitado.
@@ -151,7 +152,7 @@ error: interface Ten0: this box has no such interface
 
 `interface Ten0` — um erro de digitação de `TenGigabitEthernet0/8/0` — commitava limpo, aparecia na configuração em vigor e não fazia nada. A recusa **lista o que a caixa tem**, porque ela já sabe: é a mesma fonte de onde vem a completação, e quem recebe só um "não" tem de ir procurar.
 
-Vale para as quatro formas de nomear uma interface: o bloco do FRR, o `nat cgnat interface`, e as declarações `mtu` e `urpf`.
+Vale para **todas** as formas de nomear uma interface, e são sete: o bloco do FRR, o `nat cgnat interface`, e as declarações `mtu`, `urpf`, `ipv4 address`/`ipv6 address`, `description` e `shutdown`. Qualquer uma delas sozinha basta para a recusa aparecer - não é preciso que a interface tenha um bloco inteiro.
 
 A exceção é o **loopback**: `interface loop<n>` num nome que a caixa ainda não tem é o que **cria** o loopback, porque não há mais nada de onde criá-lo. Está na página de configuração de interface.
 
@@ -188,10 +189,21 @@ Dentro de um bloco, apenas o que vale ali:
 
 ```
 hexarouting# [edit interface GigabitEthernet0/12/0] ?
-  exit   leave the interface
-  mtu    MTU, on both the dataplane interface and its TAP
-  show   display information
-  urpf   drop packets whose source does not route back this way
+  description  what this interface is for
+  exit         leave the interface
+  ip           routing-protocol settings FRR owns on this interface
+  ipv4         IPv4 addressing
+  ipv6         IPv6 addressing
+  isis         IS-IS settings on this interface
+  linux-name   the name FRR and 'ip' see this interface by; without one the routing daemons cannot see it at all
+  mac-address  the MAC this interface answers to
+  mtu          MTU, on both the dataplane interface and its TAP
+  no           remove a statement from this interface
+  show         display information
+  shutdown     take the interface administratively down
+  urpf         drop packets whose source does not route back this way
+  vlan         VLAN tag, on a sub-interface
+  vrf          the routing table this interface's addresses live in
 ```
 
 Um bloco do FRR oferece `exit` e `show` e nada mais — este VTY não modela as declarações do FRR, e oferecer algumas seria um palpite apresentado como gramática. Depois disso, vale a sintaxe do FRR.
