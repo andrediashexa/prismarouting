@@ -33,6 +33,14 @@
 #      subscriber one block further along its address, which is where the
 #      worker sharding starts to answer differently; that number is read from
 #      issue #226 and the section says why it is not a check.
+#   7. And what the box SAYS at creation when the reserve is too small for
+#      the workers this box has, which is a capacity problem none of the six
+#      above can see. The reserve is sharded by index like every other block,
+#      so a reserve of one block on a box with two workers leaves one worker
+#      with nothing to give: the subscribers that hash to it fill their block
+#      and are refused a second one every time, on a box whose "show bpa pool"
+#      reports a reserve. Only reachable WITH WORKERS - see the note below -
+#      and the section says so and skips itself where it cannot arise.
 #
 # AND IT RUNS WITH THE FEATURE OFF. `sh tools/lab.sh detreserve off` builds
 # the same pool with `reserve 0`, which is what every configuration written
@@ -72,6 +80,39 @@
 # lab that used to fail nine checks and now fails one has lost eight
 # assertions without losing its verdict. Gaining assertions needs no edit
 # here; losing them has to be deliberate.
+#
+# AND IT RUNS WITH WORKERS, which is the run item 7 needs and the reason this
+# file is in BOTH_WAYS since #370.
+#
+# THE ABSENCE HAD NEVER BEEN ARGUED. This file carried no `# NOT-BOTH-WAYS:`
+# marker and tools/run-all-labs.sh simply did not name it, so whether its
+# arithmetic survives sharding was a question nobody had asked - and it is a
+# fair question, because every assertion here is about WHICH block a
+# subscriber is given and the free list is sharded per worker. lab/crossaddr.sh
+# is the lab where the answer is no, and it says so in a marker.
+#
+# MEASURED BEFORE THE ENTRY WAS ADDED, not argued into place:
+# `LAB_WORKERS=1 sh tools/lab.sh detreserve` on 2026-09-15 was LAB PASSED with
+# all fourteen checks green, in 1m47s including the plugin build.
+#
+# And it holds for a REASON rather than by luck, which is what makes it safe at
+# a worker count this machine never ran. Worker w owns the block indices
+# congruent to w, a subscriber is handed to sub_idx % n_workers, and under
+# `policy interleaved` a subscriber's public address is its index modulo the
+# address count. The subscribers this file picks are 100.64.0.0 - index 0,
+# whose reserve block is index 0 - and 100.64.8.0 to .3 - indices 0 to 3, on
+# addresses 0 to 3, whose reserve blocks are indices 0 to 3. In both cases the
+# subscriber and the reserve block it wants land on the same worker by the same
+# modulo, at ANY worker count, which is why the extension assertions do not
+# depend on the number of workers the box was given.
+#
+# ONE SENTENCE MEANS SOMETHING ELSE WITH WORKERS, and it is left standing on
+# purpose. "The second subscriber found the reserve empty and stayed on one
+# block" is true single-threaded because the pool's one reserve block had been
+# taken; at two workers it is true because 100.64.0.1 is on the other worker,
+# which never held a reserve block at all. Same verdict, different reason - and
+# that difference is precisely what item 7's warning exists to tell an operator
+# about, in the same run.
 
 set -u
 . /src/lab/lib.sh   # startup_conf, use_binary_api
@@ -124,11 +165,26 @@ vppctl ip route add 100.64.0.0/22 via 100.64.3.253 pg0
 PORTS=1024-1039
 BSZ=4
 OUT=200.150.0.16/32
+# The size of that outside set, which is the third number the creation warning
+# prints: "each reserve block per address is %u more" is what one more reserve
+# block costs, and a reserve block is held on EVERY public address. A /32 is
+# one address, so the number here is 1, and it is written beside the set it
+# describes rather than recomputed from the prefix - a lab that parsed a
+# netmask would be a second implementation of an address set.
+OUT_N=1
 RESLINE=""
 [ "$RESERVE" -gt 0 ] && RESLINE="reserve $RESERVE"
 
-vppctl bpa pool det inside 100.64.0.0/22 outside $OUT \
-    ports $PORTS block $BSZ mode deterministic max-blocks 2 $RESLINE
+# CAPTURED AND NOT ONLY PRINTED. The box says something at CREATION that no
+# later "show" repeats - whether this reserve reaches every worker this box has
+# - and a lab that lets that scroll past has read the pool and not the warning.
+# It is still printed, whole, so the transcript is what it was.
+DET_SAY=$(vppctl bpa pool det inside 100.64.0.0/22 outside $OUT \
+    ports $PORTS block $BSZ mode deterministic max-blocks 2 $RESLINE 2>&1)
+printf '%s\n' "$DET_SAY" | sed 's/^/  /'
+# Read off the box rather than assumed from LAB_WORKERS: the arithmetic below
+# is about the workers the DATAPLANE came up with.
+WK=$(box_workers)
 vppctl set interface bpa in2out pg0
 vppctl set interface bpa out2in pg1
 vppctl bpa timeouts udp 600 >/dev/null
@@ -313,8 +369,14 @@ echo "=========== the preference, on a pool where it can be seen ==========="
 # depends on the worker count as well as on the pool. The section after this
 # one reports that half rather than asserting it, and says why.
 vppctl bpa timeouts udp 600 >/dev/null   # the section above shortened it to 2
-vppctl bpa pool pair inside 100.64.8.0/28 outside 200.150.4.16/30 \
-    ports $PORTS block $BSZ mode deterministic max-blocks 2 $RESLINE
+# A /30 is FOUR public addresses, so this pool holds one reserve block on each
+# of four - four in all, where `det` above holds one. Captured for the same
+# reason `det` is, and it is the CONTROL for item 7: at the worker counts this
+# number covers the box must say nothing at all about this pool's reserve.
+PAIR_ADDRS=4
+PAIR_SAY=$(vppctl bpa pool pair inside 100.64.8.0/28 outside 200.150.4.16/30 \
+    ports $PORTS block $BSZ mode deterministic max-blocks 2 $RESLINE 2>&1)
+printf '%s\n' "$PAIR_SAY" | sed 's/^/  /'
 vppctl show bpa pool | sed 's/^/  /'
 
 PAIR_OWN=0; PAIR_N=0; PAIR_PRIM=""
@@ -378,6 +440,40 @@ for i in 7 6 5 4; do
 done
 echo "  one block further along: $FAR_OWN of $FAR_N on the holder's own address,"
 echo "  $FAR_EXT of $FAR_N got an extension at all, at $(box_workers) worker(s)"
+
+echo
+echo "=========== the reserve against this box's workers ==========="
+# WHAT THE BOX SAID WHEN THE POOL WAS CREATED, read back here where its three
+# numbers can be compared with the box this run is on.
+#
+# The reserve is sharded by index - worker w hands out the reserve indices
+# congruent to w, because out2in resolves the thread from the index it reads
+# off the packet - so a reserve smaller than the worker count leaves whole
+# workers holding nothing. Their subscribers fill their block and are refused
+# a second one EVERY time, and from outside that is indistinguishable from a
+# reserve that is merely busy: the customer stays full while "show bpa pool"
+# reports a reserve. That is a support call whose cause is invisible without
+# this warning, which is why the numbers in it are asserted below and not just
+# its presence.
+#
+# COLLAPSED FIRST, the way expect_said does it: these are sentences, and a
+# needle that depends on where one folded is a needle that stops matching the
+# next time the message is re-wrapped (#271).
+DET_FLAT=$(printf '%s' "$DET_SAY" | tr '\n' ' ' | tr -s ' ')
+NOHOLD=$(printf '%s' "$DET_FLAT" \
+  | sed -n 's/.*workers: \([0-9][0-9]*\) of them hold no reserve.*/\1/p')
+RAISE=$(printf '%s' "$DET_FLAT" \
+  | sed -n 's/.*raise the reserve to at least \([0-9][0-9]*\).*/\1/p')
+PERADDR=$(printf '%s' "$DET_FLAT" \
+  | sed -n 's/.*each reserve block per address is \([0-9][0-9]*\) more.*/\1/p')
+# The blocks this pool holds out of the formula: one per public address, times
+# the addresses. The same product bpa_pool_init() forms, and it is the
+# arrangement THIS FILE MADE rather than a number read back off the box - the
+# whole point is to compare what the box says with what was asked for.
+RES_BLOCKS=$((OUT_N * RESERVE))
+echo "  this box has ${WK:-0} worker(s); pool det holds $RES_BLOCKS reserve block(s)"
+echo "  the box said: ${NOHOLD:--} worker(s) hold none, raise to ${RAISE:--},"
+echo "                one more reserve block per address costs ${PERADDR:--}"
 
 echo
 echo "=========== VERDICT ==========="
@@ -445,6 +541,67 @@ expect "the four holders really are on four different public addresses" \
   test "${PAIR_DISTINCT:-0}" -eq 4
 expect "and every reserve block landed on its holder's own address" \
   test "${PAIR_N:-0}" -eq 4 -a "${PAIR_OWN:-0}" -eq "${PAIR_N:-0}"
+
+# 7. THE WARNING AN OPERATOR GETS WHEN THE RESERVE DOES NOT REACH EVERY
+#    WORKER, and every number in it.
+#
+# WHY IT IS GUARDED, and guarded on the box rather than on LAB_WORKERS. The
+# warning is said only while the reserve holds FEWER blocks than the box has
+# workers, and bpa_reserve_warn() reads `n_workers ? n_workers : 1`, so a
+# worker-less box compares one against one and says nothing at all. On the off
+# run there is no reserve either. In both of those "the warning did not appear"
+# is true for a reason that has nothing to do with the product, and asserting
+# it there would be the shape lab/commit.sh guards against: a check that
+# measured nothing and reported a pass. So the condition below is the guard in
+# the plugin, written in the arrangement's own terms, and the else branch says
+# which run this was.
+#
+# NOT THE PRODUCT'S STEP. Nothing here works out where a reserve block goes -
+# that is item 2, and it is measured by sending packets. This reads three
+# numbers off a sentence the box printed at creation and compares them with the
+# pool that was asked for and the worker count `show threads` reports.
+if [ "$RES_BLOCKS" -lt "${WK:-0}" ]; then
+  # The two ways the section could be green having measured nothing: a box
+  # that never created the pool, and a box with no workers to shard it over.
+  # Both are asserted rather than assumed, because the three checks after them
+  # read a message that would simply be absent in either case.
+  expect_in "the pool the warning is about was created" "pool det" \
+    "$(vppctl show bpa pool)"
+  expect "and the box has the workers the numbers are about" \
+    test "${WK:-0}" -ge 2
+  expect_said "a reserve that does not reach every worker is called out" \
+    "the reserve on pool det is $RES_BLOCKS block(s) and this box has $WK workers" \
+    "$DET_SAY"
+  expect_said "and it says what those subscribers lose" \
+    "can never be given a second block" "$DET_SAY"
+  # The three numbers, which are what an operator acts on. A check for the
+  # sentence alone goes green on a warning whose arithmetic is wrong.
+  expect "the workers holding no reserve at all are the ones the reserve does not reach" \
+    test "${NOHOLD:-x}" -eq "$((WK - RES_BLOCKS))"
+  expect "and the reserve it says to raise to reaches every worker" \
+    test "${RAISE:-x}" -eq "${WK:-0}"
+  expect "and one more reserve block per address costs one per public address" \
+    test "${PERADDR:-x}" -eq "$OUT_N"
+  expect_said "and the pool is created anyway, because the worker count is a startup setting" \
+    "this is a warning, not a refusal" "$DET_SAY"
+  # THE CONTROL, and it is a pool this file already builds rather than one
+  # arranged to be quiet. `pair` carries the same reserve of one block per
+  # address over four addresses, so its reserve reaches four workers - and
+  # while this box has no more than that, the box must say nothing about it.
+  # Without this the checks above pass on a build that warns about every
+  # reserve there is, which is a caution nobody reads.
+  if [ "$((PAIR_ADDRS * RESERVE))" -ge "${WK:-0}" ]; then
+    expect_not_said "and a reserve that does reach every worker draws no warning" \
+      "hold no reserve at all" "$PAIR_SAY"
+  else
+    echo "  (no control: pair's $((PAIR_ADDRS * RESERVE)) reserve blocks do not"
+    echo "   reach $WK workers either, so silence is not what it would mean)"
+  fi
+else
+  echo "  [ -- ] the reserve warning cannot arise on this run: $RES_BLOCKS"
+  echo "         reserve block(s) against ${WK:-0} worker(s), and it is said"
+  echo "         only while the reserve reaches fewer workers than the box has"
+fi
 
 # And what the box does INSTEAD with no reserve, which the assertions above
 # cannot say: it must do what it did before this feature existed rather than

@@ -120,6 +120,65 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The warning that a pool's reserve is too small for this box's workers had
+  never been printed by anything, and the lab that owns reserves had never been
+  run with workers**
+  ([#370](https://github.com/andrediashexa/hexarouting/issues/370)).
+  `bpa_reserve_warn()` tells an operator that some of this box's workers hold
+  no reserve at all, so the subscribers those workers own **can never be given
+  a second block**: they fill their block and stay full, on a box whose
+  `show bpa pool` reports a reserve. `tools/plugin-says.sh` over the 89-box
+  corpus found its three rows unprinted, together with the `no stride fits this
+  pool at %u workers` branch beside them - four messages, absent by `grep` and
+  not merely unattributed.
+
+  **Nothing produced them because no run had both halves.** The guard needs a
+  reserve smaller than the worker count, a reserve is refused on a dynamic
+  pool, and `lab/detreserve.sh` - the only lab that sets one - was not in
+  `BOTH_WAYS`, so it had only ever run on a box where `n_workers ? n_workers :
+  1` compares one with one.
+
+  **That absence was never a decision, and the measurement says the lab holds
+  under sharding.** `detreserve` carried no `# NOT-BOTH-WAYS:` marker, the way
+  `lab/crossaddr.sh` does for counts the free list's sharding would change;
+  the list simply did not name it. Run with workers it was `LAB PASSED` with
+  all fourteen checks green, and it holds for a reason rather than by luck: the
+  subscribers it picks and the reserve blocks they want land on the same worker
+  by the same modulo at any worker count, which its header now sets out. It is
+  in `BOTH_WAYS`, and that run is where the warning is now produced - by the
+  pool the lab already builds, not by one arranged to make the box talk.
+
+  **The three numbers are asserted, not the sentence.** How many workers hold
+  no reserve must be the box's own worker count less the blocks the pool holds
+  out of the formula, read off `show threads` rather than written down; the
+  reserve to raise to must be that worker count; and what one more reserve
+  block per address costs must be the outside set's size. A case asserting only
+  that the warning appeared would go green on a warning whose arithmetic is
+  wrong, and the arithmetic is what an operator acts on. The control is the
+  lab's own second pool, whose reserve of four blocks does reach every worker
+  and which must draw no warning at all. All of it is guarded on the pool
+  having been created and the box having workers, because on a box with neither
+  "the warning did not appear" is true for a reason that is not about the
+  product.
+
+  **Shown failing.** `bpa_reserve_warn()`'s guard made unreachable - a
+  condition that can no longer be true, not a deleted line - and rebuilt: six
+  checks red, each naming what it did not see, and the control still green
+  because a control that moves with the mutation is not one. Restored and
+  re-run: green again. The off run still goes red on exactly its floor of ten,
+  and the worker-less run says in the transcript why it measured nothing.
+
+  **`no stride fits this pool at %u workers` needed a different pool, and says
+  why.** A stride is inert over a reserve - `bpa_dyn.c` skips it, because a
+  reserve index is a different space - so one pool carrying both would be an
+  arrangement the product itself ignores. `lab/dynamic-workers.sh` already
+  drives the other branch of that same advice line on a pool with 126 mappable
+  blocks, where an even stride is in reach; the case added beside it is a pool
+  whose public address holds two, where the only stride that fits inside the
+  address is the unreachable one and the box has nothing to name. Both branches
+  are now driven in one run, and each asserts that the other's sentence is
+  absent.
+
 * **The appliance printed rows of 83 to 141 columns to a boot console that
   cannot reflow, and 2,143 real rows had never been measured**
   ([#367](https://github.com/andrediashexa/hexarouting/issues/367)).

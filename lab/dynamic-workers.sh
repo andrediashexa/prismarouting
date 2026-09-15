@@ -6,6 +6,13 @@
 # block_idx % n_workers == w. Since in2out already sends the subscriber to
 # sub_idx % n_workers, the two agree, and out2in (which resolves by
 # block_idx % n_workers) lands on the same worker.
+#
+# That partition also BOUNDS what an operator may ask for, and the section at
+# the end is the box saying so at configuration time: a stride whose step
+# leaves the slice cannot be honoured for anybody, and on a pool small enough
+# there is no honourable stride to name instead either. Both sentences carry
+# the worker count, so neither can be produced by a lab that has no workers -
+# which is why they are here rather than beside the allocator's own labs.
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
 mkdir -p /run/vpp /vpp_plugins
@@ -103,6 +110,32 @@ STRIDE_OK=$(vppctl bpa pool stridden inside 10.20.0.0/24 \
 printf '%s\n' "$STRIDE_OK" | sed 's/^/  /'
 
 echo
+echo "  and a pool where there is no stride to name at all:"
+# THE OTHER BRANCH OF THAT ADVICE LINE, and it needs a different pool rather
+# than a different stride. Above, the box could name a stride that works,
+# because a public address there holds 126 mappable blocks and every second
+# one of them is back in the subscriber's own slice at two workers. A pool
+# whose public address holds only TWO mappable blocks has no such candidate:
+# the only stride that fits inside the address is 1, and 1 is exactly the
+# unreachable one. The box then has nothing to offer, and it has to say so
+# rather than name a number the operator would be refused for typing -
+# bpa_pool_init() refuses a stride at or past the mappable blocks.
+#
+# 2048 ports in blocks of 1024 is two blocks per address, and that is the
+# shape of a box given a handful of public addresses and large blocks per
+# subscriber, not a corner invented here.
+#
+# The worker count is read OFF THE BOX and not written down: the sentence
+# names it, and a lab that hardcoded 2 would stop measuring the day this lab
+# is run with LAB_WORKER_COUNT set to anything else.
+WK=$(box_workers)
+NOFIT_WARN=$(vppctl bpa pool nofit inside 10.20.2.0/29 \
+    outside 45.170.18.0/30 ports 1024-3071 block 1024 policy blocked \
+    mode dynamic max-blocks 2 block-stride 1 check 2>&1)
+printf '%s\n' "$NOFIT_WARN" | sed 's/^/  /'
+echo "  workers on this box: $WK"
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 ERR=$(vppctl show errors)
@@ -128,4 +161,22 @@ expect_in "and the pool is still valid" "is valid" "$STRIDE_WARN"
 # every stride, which is a caution nobody reads rather than a measurement.
 expect_not_in "the stride it recommended draws no warning at all" \
   "cannot be honoured" "$STRIDE_OK"
+# And the pool where the advice line has nothing to advise. Guarded first on
+# the box having workers at all: with none, bpa_stride_warn() reads
+# `n_workers ? n_workers : 1`, every stride is reachable at one worker and the
+# whole screen is absent - so "it did not say so" would be true for a reason
+# that is not about the product. This lab starts its own workers, which is
+# what makes the guard an assertion rather than a skip.
+expect "the box has the workers every sentence above is about" \
+  test "${WK:-0}" -ge 2
+expect_in "a pool with no honourable stride at all is told exactly that" \
+  "no stride fits this pool at $WK workers" "$NOFIT_WARN"
+# The half that keeps the line above from being decoration: this pool must NOT
+# get the advice the first one got. The two branches are exclusive in
+# bpa_stride_warn(), so a build that always named a nearest stride would fail
+# here and nowhere else.
+expect_not_in "and it is not given a nearest stride it does not have" \
+  "the nearest stride that can be" "$NOFIT_WARN"
+expect_in "and that pool is valid too, so this is a warning and not a refusal" \
+  "is valid" "$NOFIT_WARN"
 verdict
