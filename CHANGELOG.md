@@ -77,6 +77,262 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The 86 lines of the BPA plugin no docker-free check had ever executed, and
+  the measurement that could not see them.** `tools/plugin-coverage.sh` reports
+  which lines of `src/plugins/bpa/` the ten C harnesses reach. On master it said
+  108 of 4807 executable lines were never executed. Both numbers were wrong, in
+  opposite directions, and for two reasons in the tool rather than in the
+  plugin:
+
+  * **It reads one harness's counters per file and reports them as the whole.**
+    `gcov -o .build <gcda>` writes `bpa_pool.h.gcov` into the repository root,
+    and the loop runs it once per object - so for every source built into more
+    than one harness the last object's file overwrites all the others.
+    `bpa_pool.c` is compiled into `test_bpa` AND `test_bpa_dyn`, and
+    `test_bpa_dyn` sorts last, so the reported coverage of `bpa_pool.c` was
+    `test_bpa_dyn`'s alone. It listed all fourteen of `bpa_addr_set_build()`
+    and `bpa_pool_init()`'s refusals as never executed. Ten of them are driven
+    by `test_bpa_pool.c`, and have been for as long as that file has existed.
+  * **It counts gcov ROWS, not source lines.** gcov emits one row per inlined
+    instance of a line in a header, and suffixes a count with `*` when some
+    instance did not run it. `grep -cE '^ *#####:'` counts a line as never
+    executed when ANY instance did not, and `grep -cE '^ *[0-9#-]+:'` counts
+    the same source line once per instance. A plugin whose headers are almost
+    entirely `static_always_inline` is nothing but such lines, which is why
+    `bpa_pool.h` was reported with 1251 executable lines in a 1248-line file.
+
+  Merged across every object, with each line counted once and `*` read as
+  "executed", the honest baseline was **1101 of 1187 executable lines reached,
+  86 never**. It is now **1184 of 1194, 10 never**, and all ten are named
+  below. The denominator moves because an unused `static_always_inline` is not
+  emitted at `-O0` at all, so its lines are in no counter: a function nothing
+  calls does not appear as uncovered, it does not appear. The baseline
+  therefore understated the gap as well as misplacing it.
+
+  The subject, counted by reading rather than by grepping: **590 refusal sites
+  across `src/plugins/bpa/`**, of which **172 are in the fourteen files
+  `make test` compiles**:
+
+      bpa_sip.h  41   bpa_dyn.c  25   bpa_pool.c 14   bpa_ports.h  8
+      bpa_pool.h 28   bpa_rtsp.h 21   bpa_icmp.h 10   bpa_dyn.h    6
+      bpa_mss.h   6   bpa_rewrite.h 4 bpa_seq.h   4   bpa_auto_mss.h 3
+      bpa_gre.h   1   bpa_ftp.h   1
+
+  and **418 in the thirteen files it does not**:
+
+      bpa_cli.c  111  bpa.c      80   bpa_ftp.c  40   bpa_session.c 27
+      bpa_in2out.c 26 bpa_log_tcp.c 24 bpa_out2in.c 23 bpa_pptp.c   23
+      bpa_audit.c 20  bpa_api.c  19   bpa_log.c  17   bpa_handoff.c 8
+      bpa_ra.c    0
+
+  `bpa_ra.c` holds zero, and structurally: it re-registers ICMPv6 type 134 with
+  `ip6-punt` as its only next node, which is what makes "no refusal" a property
+  of the registration rather than an omission.
+
+  **The allocator, which is where a refusal costs a subscriber something.**
+
+  `bpa_dyn_acquire()` had been called 864,834 times by this repository's C
+  harnesses and had NEVER found the subscriber already holding a block: every
+  scenario acquired once per subscriber and then extended, so the three lines
+  behind `q != 0` - the path every packet after a subscriber's first takes -
+  were never executed. Wrong, they hand a second block to the second flow,
+  which is one customer on two public port ranges and a pool that empties at
+  the rate flows arrive; and they emit a second RFC 8158 natEvent 16 with no
+  17 between them, which is the gap `docs/logging.md` exists to close. Shown
+  red by looking the subscriber up under `sub_idx + 1`:
+
+  > *"FAIL: the second flow left on public address index 1 and the first on 0:
+  > one subscriber, two public addresses"*
+
+  and the hold-down half, shown red by deleting `d->idle_since[local] = 0`:
+
+  > *"FAIL: the subscriber came back and its block is still counting down from
+  > 100.0"*
+  > *"FAIL: the block of a subscriber that came back 900 seconds ago was reaped
+  > anyway"*
+
+  **What the reap will not take.** Two of its three skips had never been
+  executed. A pinned block is the operator's static forward, and the state it
+  is in every morning is "idle for longer than the hold-down"; a block still
+  inside its hold-down belongs to a subscriber that may come back. The three
+  are driven in one pass with a block that MUST be released beside them, so a
+  reap that refused everything is as red as one that refused nothing:
+
+  > *"FAIL: the pinned block was reaped 990 seconds into a 120 second
+  > hold-down, so the operator's forward now points at whoever takes it next"*
+  > *"FAIL: the block of a subscriber 100 seconds into a 120 second hold-down
+  > was released"*
+
+  **The whole of `bpa_dyn_pin()`'s allocate arm and `bpa_dyn_unpin()`'s release
+  arm** - eighteen lines - had never been executed. `*is_new` and `*released`
+  are what become natEvent 16 and 17:
+
+  > *"FAIL: the block came off the free stack and the caller was not told to
+  > emit a natEvent 16, so nothing records that it left the pool"*
+  > *"FAIL: re-applying the same forward reported a second allocation, which is
+  > a natEvent 16 with no release between it and the first"*
+  > *"FAIL: the pin was the only thing holding the block and the caller was not
+  > told to emit a natEvent 17, so the audit trail still says subscriber 7 has
+  > it"*
+  > *"FAIL: 1 entries are left on the extras list naming a block that is back
+  > in the pool, so the next subscriber to be given it has its block stamped
+  > idle by somebody else"*
+
+  **And the refusals around them**: a pin aimed at a block outside this
+  worker's slice (`-2`, distinct from `-1` and going to a different place), a
+  dynamic slice the capacity does not reach, a reserve slice that comes up
+  EMPTY rather than refusing - both arms of the one `if` in `bpa_dyn_init()`,
+  so a test of the dynamic half alone stays green with the reserve half
+  deleted - and the three lines where the reserve's paired-address walk gives
+  up. That last one needed three workers over four public addresses and the
+  subscribers of one address arriving together: driven in index order every
+  address runs out of reserve blocks at the moment the whole slice does, and a
+  worker whose free stack is empty refuses before the walk is entered at all.
+  10 of 32 reserve extensions pair there, 22 cannot, and none of the 22 is
+  refused for it.
+
+  **The mapping, where a refusal decides which subscriber a packet belongs
+  to.** `bpa_reverse_sub()` answers for a mapped port and
+  `bpa_reserve_index_of()` for a reserve one, and between them they must
+  partition the port range on every public address; three of the four refusals
+  that make that partition had never been executed. Walked block by block over
+  a whole address rather than sampled, with both answers counted:
+
+  > *"FAIL: 123 ports were claimed by both directions and 0 by neither"*
+  > *"FAIL: a public address outside the pool resolved to reserve index 0"*
+  > *"FAIL: reserve index 21 was resolved on a reserve of 21 blocks"*
+
+  **The parsers.** `bpa_sip.h`'s 23 never-executed lines are now zero: the
+  refusals of `bpa_sip_hostport()`, `bpa_sip_via()` and `bpa_sip_contact()`,
+  the bound on how many spans one message may contribute, and two ACCEPTING
+  paths that fail silently - a `sips:` Contact and an SDP `c=` line written
+  with the whitespace RFC 4566 allows. Both of those leave a subscriber
+  translated and unreachable:
+
+  > *"FAIL: a sips: Contact and a spaced-out c= line refused the message"*
+  > *"FAIL: the media port was not governed by the spaced c= line: 8000 at
+  > 00000000"*
+  > *"FAIL: a message whose an SDP m= span is the 15th was not refused whole"*
+
+  `bpa_icmp.h`'s `default:` arm - an embedded protocol this box has no key for
+  - is the refusal #203 is a record of, and nothing had driven it. Four
+  protocols, chosen for what they would be mistaken for: SCTP and DCCP carry
+  ports where TCP does, AH sits beside ESP, and IPv4-in-IPv4 quotes a version
+  and a length. The verdict structure is compared as a whole against a poisoned
+  copy, so a branch that filled in a key before deciding it could not use one
+  is red too:
+
+  > *"FAIL an ICMP error about embedded IP protocol 132 was accepted, and there
+  > is nothing in it this box keys a session on"*
+  > *"FAIL the refusal of protocol 132 left a key behind: address 3365273617
+  > port 1536 call id 0 protocol 132"*
+
+  `bpa_rtsp.h`: the reply start line, where the parser decides whether the
+  bytes in front of it are RTSP at all, and the whitespace an encoder may put
+  between a header name and its colon. Every reply fixture carries a
+  well-formed `Transport` header so the START LINE is the only thing deciding
+  the verdict.
+
+  **The ten lines still never executed, each with the argument that they
+  cannot be**, rather than left as a number:
+
+  * `bpa_dyn.c:160` and `:405` - `bpa_dyn_addr()` failing inside acquire.
+    `block_idx` is `local * n_workers + worker` with `local < n_local`, and
+    `n_local` counts the indices congruent to this worker below the total, so
+    `block_idx` is always below `reserve_count`.
+  * `bpa_dyn.c:457` - `bpa_dyn_unfree()` on a block not on the stack.
+    Unreachable while `free_pos[]` and `free_list[]` agree, which
+    `index_disagreements()` asserts after every path that moves them.
+  * `bpa_dyn.c:610` - `bpa_dyn_reap()` on an inactive slice. `bpa_dyn_free()`
+    memsets, so an inactive slice has `n_local` 0 and the loop body never runs:
+    the function returns 0 with the guard and without it, and no assertion can
+    separate them.
+  * `bpa_pool.c:229` - "divisor is zero". Stands behind "address sets must be
+    built first" under `policy interleaved` and is unreachable under `policy
+    blocked`, where the reserve refusal guarantees `blocks_mapped >= 1`.
+  * `bpa_pool.h:763`, `:774` - the multi-range search in `bpa_set_addr_of()`
+    running out. `bpa_addr_set_build()` assigns `first_idx` cumulatively from
+    zero, so every index below `count` is inside exactly one range.
+  * `bpa_pool.h:990` and `:1178` - `bpa_set_addr_of()` failing inside
+    `bpa_reserve_addr()` and `bpa_forward()`. Both callers have already bounded
+    the index they pass.
+  * `bpa_ports.h:106` - "n_free disagreed with the bitmap", which is the
+    invariant being broken rather than an input.
+
+  **Two refusals whose evidence is a mutation nobody can write**, recorded
+  because a check that cannot go red is worse than no check:
+
+  * `bpa_pool.c:155`, a block wider than the port range it is cut from. Such a
+    pool also has `block_reserve >= blocks_per_ip` - zero is not less than zero
+    - so the reserve refusal three lines below refuses the same configuration.
+    The difference between them is the MESSAGE, and `test/bpa_shim.h` keeps
+    none: VPP's `%v` is not a printf specifier, so the shim cannot hand the
+    caller's format to vsnprintf and every `clib_error_return` under
+    `BPA_STANDALONE` is one object. The configuration is pinned; the wording
+    that says which field is wrong is asserted nowhere docker-free.
+  * `bpa_reserve_index_of()`'s port-range test. Below `port_min` the unsigned
+    subtraction wraps to a block index of about 2^26 and above `port_max` it
+    lands exactly on `blocks_per_ip`, so the reserve-block test below refuses
+    both on its own. It is a bound that keeps the shift well defined rather
+    than a behaviour, and it is stated as such.
+
+  Three more are backstopped the same way and are noted where they sit:
+  `bpa_rtsp.h`'s "the second port has no digits" (the consecutive-pair test
+  refuses it anyway), and `bpa_sip.h`'s unterminated IPv6 reference and its
+  comma-in-a-display-name (the span-exactness test refuses both).
+
+  **`bpa_rtsp.h`'s `len < 12` bound has no falsifiable case in that harness at
+  all**: no eleven-byte prefix gets past the version and status checks below
+  it, so there is no payload for which removing the bound changes an answer. It
+  is a memory-safety bound, and showing one takes the guard page
+  `test/test_bpa_icmp.c` builds. Named rather than tested.
+
+  **A mutation that hangs is a third outcome.** Weakening `bpa_set_addr_of()`'s
+  `idx >= s->count` to `idx > s->count` does not fail `test_bpa`, it hangs it:
+  the search below opens with `hi = s->n_ranges - 1`, so on a set nothing was
+  built into that subtraction wraps to `0xffffffff` and the binary search walks
+  two billion entries past the end of a 256-entry array. The bound is therefore
+  load-bearing for memory safety and not only for the answer, and the mutation
+  that shows the check neutralises the ANSWER instead. No input can reach it
+  through the product - `bpa_pool_init()` refuses an empty set - but
+  `bpa_set_addr_of()` is `static_always_inline` and takes the set it is handed.
+
+  **What the 418 need, and what they do not.** A census of all thirteen says
+  **171 of them could be driven with no container at all** - they are
+  arithmetic over `bpa_pool_t`, `bpa_static_t`, a `u8 *` payload or a socket,
+  with no `vlib_main_t`, no `vlib_buffer_t` and no feature arc - and none of
+  the thirteen files is compiled by `make test` today. That is a count from
+  reading, not from a run, and the three worth naming:
+
+  * **`bpa_ftp.c`: 31 of its 40**, the whole of `bpa_ftp_dec`,
+    `bpa_ftp_starts`, `bpa_ftp_parse_hostport`, `bpa_ftp_parse_dotted` and
+    `bpa_ftp_parse`, which take `(const u8 *, u32, ...)` and nothing else. The
+    RFC 2428 delimiter rules, the "port zero is not a data connection" refusal
+    and the CRLF-not-bare-LF rule are all in there. `test/test_bpa_ftp.c`
+    already exists and covers `bpa_ftp.h`'s one standalone function and
+    `bpa_seq.h`; reaching the parser needs the file split the way `bpa_ftp.h`
+    already is, at `bpa_ftp_in2out`, which is the only part that touches a
+    buffer.
+  * **`bpa_log_tcp.c`: 23 of its 24.** No `vlib_main_t`, no buffer, no
+    unformat, no vnet anywhere in 568 lines - the clock arrives as an `f64`
+    parameter. The spill file, the framing walk and the reconnect timer are
+    all drivable with a temporary directory and a loopback listener. The one
+    exception is `bpa_log_tcp_enable`, which calls `bpa_log_pins_replay()` and
+    so takes the worker barrier.
+  * **`bpa_session.c`: all 27**, including every refusal of
+    `bpa_alg_reserve_pair` - the even-aligned media pair an RTSP or SIP call
+    needs, which is the one whose failure is a connected call with no audio.
+    They take `bpa_per_thread_t *`, `bpa_pool_t *` and an `f64`, and need
+    clib's pools, vectors and bihash rather than the graph.
+
+  `bpa_api.c`'s 19 and `bpa_cli.c`'s 95 of 111 genuinely need the runtime, and
+  for different reasons: the API handlers all end in `REPLY_MACRO`, which needs
+  a client registration; the CLI's parse refusals DECIDE over vppinfra and
+  speak through `vlib_cli_output`, so what needs VPP is the sentence and not
+  the judgement.
+
+  `make test`: 65 suites, 65 passed.
+
 * **The bind failure's advice is false of both boxes that can reach it**, in
   opposite directions
   ([#346](https://github.com/andrediashexa/hexarouting/issues/346) for the

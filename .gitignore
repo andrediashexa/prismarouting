@@ -30,6 +30,10 @@ core.*
 vpp-core*
 
 # The coverage run leaves these; tools/plugin-coverage.sh reads and reports
-# them, and nothing else does.
+# them, and nothing else does. One .gcov directory per object, because gcov
+# names its output after the SOURCE and would otherwise have the last object
+# stand for every one before it.
 *.gcov
+*.never
+.coverage-gcov/
 .coverage-run.log

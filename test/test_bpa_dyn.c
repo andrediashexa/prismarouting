@@ -161,7 +161,7 @@ drv_arrive (drv_t *v, u32 s)
 static void
 drv_extend (drv_t *v, u32 s, u32 nth)
 {
-  u32 w = s % v->nw, pblk, blk_idx;
+  u32 w = s % v->nw, pblk = BPA_NO_BLOCK, blk_idx;
   bpa_dyn_t *d = &v->d[w];
   bpa_block_t ext;
   int is_new, had_free;
@@ -841,6 +841,838 @@ main (void)
 	  }
 	drv_free (&v);
       }
+  }
+
+  printf ("\n=== a second flow gets the block the subscriber already holds "
+	  "===\n");
+  {
+    /*
+     * THE PATH EVERY PACKET AFTER THE FIRST TAKES, and nothing here had ever
+     * entered it. Measured with gcov over all ten C harnesses: 864,834 calls
+     * to bpa_dyn_acquire() and not one of them found the subscriber already in
+     * by_sub, because every scenario above acquires once per subscriber and
+     * then extends. The three lines behind `q != 0` - the ones that hand back
+     * the block the subscriber is holding and stop its hold-down - were never
+     * executed by any of the checks this repository runs without a container.
+     *
+     * Two things go wrong when they go wrong, and a counter shows neither:
+     *
+     *   the subscriber is handed a SECOND block for its second flow, which is
+     *   one customer on two public port ranges - the RFC 4787 REQ-2 failure
+     *   the whole file above is about, arriving through the ordinary path
+     *   rather than through an extension - and a pool that empties at the rate
+     *   FLOWS arrive rather than at the rate subscribers do;
+     *
+     *   and the allocation is logged again. RFC 8158 natEvent 16 with no 17
+     *   between it and the last one is the gap docs/logging.md exists to
+     *   close, and it would be emitted once per flow.
+     *
+     * What the block must be is read from bpa_dyn_block_of() and turned into a
+     * port range by the pool's own arithmetic, NOT compared against what the
+     * first call to bpa_dyn_acquire() returned: two calls to one function
+     * agreeing about a wrong answer is not evidence.
+     */
+    drv_t v;
+    bpa_dyn_t *d;
+    bpa_block_t again;
+    u32 blk = 0, pub_idx = 0, blk_idx = 0, want_lo, free_before;
+    u64 allocs_before;
+    int is_new = -1;
+
+    drv_init (&v, &p4, 1, 3);
+    drv_arrive (&v, 0);
+    drv_arrive (&v, 1);
+    d = &v.d[0];
+    CHECK (v.held[0], "subscriber 0 holds no block, so nothing below is about "
+		      "a second flow");
+    CHECK (bpa_dyn_block_of (d, 0, 0, 1, &blk) == 0,
+	   "the allocator will not say which block subscriber 0 holds");
+
+    /* One worker, so the local index and the block index are the same number,
+     * and the port range is the pool's arithmetic rather than the allocator's
+     * answer. */
+    bpa_split (&p4, blk, &pub_idx, &blk_idx);
+    want_lo = p4.port_min + blk_idx * p4.block_size;
+
+    allocs_before = d->n_allocations;
+    free_before = vec_len (d->free_list);
+    memset (&again, 0, sizeof (again));
+    CHECK (bpa_dyn_acquire (d, &p4, 0, 0, 1, &again, &is_new) == 0,
+	   "a second flow from a subscriber that already holds a block was "
+	   "refused");
+    CHECK (again.port_lo == want_lo,
+	   "the second flow is translated out of ports %u-%u, where the block "
+	   "subscriber 0 holds starts at %u",
+	   again.port_lo, again.port_hi, want_lo);
+    CHECK (again.pub_idx == pub_idx,
+	   "the second flow left on public address index %u and the first on "
+	   "%u: one subscriber, two public addresses",
+	   again.pub_idx, pub_idx);
+    CHECK (is_new == 0,
+	   "the second flow was reported as a fresh allocation, which is a "
+	   "natEvent 16 with no release between it and the last one");
+    CHECK (d->n_allocations == allocs_before,
+	   "%llu lifetime allocations after a flow that allocated nothing, "
+	   "against %llu before it",
+	   (unsigned long long) d->n_allocations,
+	   (unsigned long long) allocs_before);
+    CHECK (vec_len (d->free_list) == free_before,
+	   "the free stack went from %u blocks to %u on a flow that needed "
+	   "none", free_before, (u32) vec_len (d->free_list));
+
+    /*
+     * And the stamp. bpa_dyn_idle() starts the hold-down when a subscriber's
+     * LAST session ends, so a flow arriving before it expires has to stop it -
+     * otherwise the reap takes the block out from under a subscriber that is
+     * using it, and the customer loses every established flow at once.
+     *
+     * This is what bpa_dyn.h's note about the deleted bpa_dyn_active() rests
+     * on: clearing the stamp on the PRIMARY alone is deliberate, and it only
+     * happens here.
+     */
+    bpa_dyn_idle (d, 0, 100.0);
+    CHECK (d->idle_since[blk] == 100.0,
+	   "the subscriber going quiet did not start a hold-down, so the "
+	   "check below has nothing to stop");
+    CHECK (bpa_dyn_acquire (d, &p4, 0, 0, 1, &again, &is_new) == 0,
+	   "the subscriber coming back before its hold-down expired was "
+	   "refused");
+    CHECK (d->idle_since[blk] == 0,
+	   "the subscriber came back and its block is still counting down "
+	   "from %.1f", d->idle_since[blk]);
+    {
+      bpa_dyn_release_t out[8];
+      u32 n = bpa_dyn_reap (d, 1000.0, 120, 0, 1, out, 8);
+      u32 owner_sub = ~0u;
+
+      CHECK (n == 0, "the reap released %u blocks where every holder is live",
+	     n);
+      CHECK (bpa_dyn_owner (d, blk, 1, &owner_sub) == 0 && owner_sub == 0,
+	     "the block of a subscriber that came back 900 seconds ago was "
+	     "reaped anyway");
+    }
+    printf ("  the same block, the same public address, no second allocation "
+	    "record, and the hold-down stopped\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== what the reap will not take ===\n");
+  {
+    /*
+     * Three blocks, each idle, each held for a different reason, and the reap
+     * has to tell them apart. Two of those three refusals had never been
+     * executed by anything docker-free.
+     *
+     * A PINNED block is the operator's static forward. Reaping it gives the
+     * block to the next subscriber that asks and leaves the forward pointing
+     * at them - inbound traffic for one customer delivered to another, which
+     * is the failure that kept forwards off dynamic pools until the pin
+     * existed. The hold-down is minutes and a forwarded port has to survive a
+     * night with no traffic, so "idle for longer than the hold-down" is
+     * exactly the state it is in every morning.
+     *
+     * A block still INSIDE its hold-down belongs to a subscriber that may come
+     * back. Taking it early is the churn the hold-down exists to remove, and
+     * every one of those is an RFC 8158 natEvent 17 followed by a 16.
+     *
+     * The three are driven together because what makes the check able to fail
+     * is the block beside it: the reap must release the one whose hold-down
+     * HAS expired in the same pass, so a reap that refused everything would go
+     * red too.
+     */
+    drv_t v;
+    bpa_dyn_t *d;
+    bpa_dyn_release_t out[8];
+    u32 pinned_blk = 0, fresh_blk = 0, expired_blk = 0;
+    u32 owner_sub = ~0u, n;
+    int is_new = 0, released = 0;
+
+    drv_init (&v, &p4, 1, 3);
+    drv_arrive (&v, 0);
+    drv_arrive (&v, 1);
+    drv_arrive (&v, 2);
+    d = &v.d[0];
+    CHECK (bpa_dyn_block_of (d, 0, 0, 1, &pinned_blk) == 0
+	     && bpa_dyn_block_of (d, 1, 0, 1, &expired_blk) == 0
+	     && bpa_dyn_block_of (d, 2, 0, 1, &fresh_blk) == 0,
+	   "the three subscribers did not all take a block, so the reap below "
+	   "has nothing to tell apart");
+
+    CHECK (bpa_dyn_pin (d, pinned_blk, 0, 1, 10.0, &owner_sub, &is_new) == 0,
+	   "the block of subscriber 0 could not be pinned");
+
+    /* All three go quiet at the same instant, so the only thing separating
+     * them at the reap is how long ago that was and whether one is pinned. */
+    bpa_dyn_idle (d, 0, 10.0);
+    bpa_dyn_idle (d, 1, 10.0);
+    bpa_dyn_idle (d, 2, 900.0);
+
+    n = bpa_dyn_reap (d, 1000.0, 120, 0, 1, out, 8);
+    CHECK (n == 1,
+	   "the reap released %u blocks of the three: one hold-down had "
+	   "expired, one had not, and one is pinned", n);
+    CHECK (n == 1 && out[0].block_idx == expired_blk && out[0].sub_idx == 1,
+	   "the reap released block %u of subscriber %u where the only "
+	   "expired holder is subscriber 1 on block %u",
+	   n ? out[0].block_idx : ~0u, n ? out[0].sub_idx : ~0u, expired_blk);
+
+    owner_sub = ~0u;
+    CHECK (bpa_dyn_owner (d, pinned_blk, 1, &owner_sub) == 0 && owner_sub == 0,
+	   "the pinned block was reaped 990 seconds into a 120 second "
+	   "hold-down, so the operator's forward now points at whoever takes "
+	   "it next");
+    owner_sub = ~0u;
+    CHECK (bpa_dyn_owner (d, fresh_blk, 1, &owner_sub) == 0 && owner_sub == 2,
+	   "the block of a subscriber 100 seconds into a 120 second "
+	   "hold-down was released");
+    CHECK (d->n_releases == 1,
+	   "the box counted %llu releases where one block went back",
+	   (unsigned long long) d->n_releases);
+    CHECK (index_disagreements (d) == 0,
+	   "the free stack and its index disagree after a partial reap");
+
+    /* And the pin is not a permanent hold: once the forward goes, the
+     * ordinary lifetime applies with no special case to remember, which is
+     * what makes the refusal above a statement about the PIN rather than
+     * about this block. */
+    bpa_dyn_unpin (d, pinned_blk, 1, &released);
+    owner_sub = ~0u;
+    CHECK (bpa_dyn_owner (d, pinned_blk, 1, &owner_sub) != 0,
+	   "the block is still held by subscriber %u after the forward it was "
+	   "holding for was removed", owner_sub);
+    printf ("  the pinned one kept, the one still counting down kept, the "
+	    "expired one released, and the pin is not forever\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== a pin this worker cannot honour is refused, and says which "
+	  "kind ===\n");
+  {
+    /*
+     * bpa_dyn_pin() has two refusals and they go to different places. -1 is
+     * "another subscriber is holding it right now", which an operator can act
+     * on and which names whose sessions the pin would have broken; -2 is "the
+     * block is not in this worker's slice", which is a caller that resolved
+     * the wrong worker and nothing an operator can do anything about.
+     *
+     * The -2 had never been executed. It is the guard that stands between a
+     * mistaken block index and a write past the end of owner[], and it is the
+     * only thing between a pin aimed at the wrong worker and a pin silently
+     * landing on whatever block that worker holds at the truncated index.
+     */
+    drv_t v;
+    bpa_dyn_t *d, idle;
+    u32 held_by = ~0u, blk = 0;
+    int is_new = 1;
+
+    /* Subscribers 0 and 2, because both map to worker 0 - bpa_owner_worker is
+     * sub_idx % n_workers - so the counts below are about one slice. */
+    drv_init (&v, &p4, 2, 4);
+    drv_arrive (&v, 0);
+    drv_arrive (&v, 2);
+    d = &v.d[0];
+    CHECK (d->n_local > 0 && d->n_local < p4.capacity,
+	   "worker 0 holds %u of the pool's %u blocks, so a block index past "
+	   "its slice is not a thing this pool has",
+	   d->n_local, p4.capacity);
+
+    /* A block index whose local index is one past the end of this slice. The
+     * arithmetic is the allocator's own: local = block_idx / n_workers. */
+    CHECK (bpa_dyn_pin (d, d->n_local * 2, 3, 2, 1.0, &held_by, &is_new) == -2,
+	   "a pin of local block %u, one past the %u this worker's slice "
+	   "holds, was not refused as the wrong worker",
+	   d->n_local, d->n_local);
+    CHECK (is_new == 0,
+	   "a refused pin reported an allocation, which is a natEvent 16 for "
+	   "a block nobody was given");
+    CHECK (d->n_pinned == 0 && d->n_alloc == 2,
+	   "the refused pin left %u pins and %u blocks held, against 0 and 2 "
+	   "before it", d->n_pinned, d->n_alloc);
+
+    /* And the same refusal for a slice that never came up. A zeroed
+     * bpa_dyn_t is what bpa_dyn_free() leaves behind and what a pool that
+     * failed to initialise has. */
+    memset (&idle, 0, sizeof (idle));
+    held_by = ~0u;
+    is_new = 1;
+    CHECK (bpa_dyn_pin (&idle, 0, 0, 1, 1.0, &held_by, &is_new) == -2,
+	   "a pin against a slice that never came up was not refused");
+
+    /* The other refusal, for contrast: it is the one an operator is told
+     * about, and it carries whose block it is. */
+    CHECK (bpa_dyn_block_of (d, 0, 0, 2, &blk) == 0,
+	   "subscriber 0 holds no block on worker 0");
+    held_by = ~0u;
+    CHECK (bpa_dyn_pin (d, blk, 99, 2, 1.0, &held_by, &is_new) == -1,
+	   "pinning a block another subscriber is holding was not refused");
+    CHECK (held_by == 0,
+	   "the refusal named subscriber %u as the holder where subscriber 0 "
+	   "holds it, so an operator is told the wrong sessions would break",
+	   held_by);
+    printf ("  the wrong worker and the wrong holder are two refusals and the "
+	    "box tells them apart\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== a pin that takes a free block is an allocation, once ===\n");
+  {
+    /*
+     * The other half of bpa_dyn_pin(), and none of it had been executed: the
+     * branch that takes a block off the FREE STACK because the operator
+     * configured a forward on a block nobody is holding.
+     *
+     * *is_new is what becomes RFC 8158 natEvent 16, and it has to be set
+     * exactly once. Set on a pin of a block the subscriber already holds, the
+     * box emits a second allocation record with no release between them -
+     * which is the gap docs/logging.md exists to close, and a forward
+     * re-applied at every configuration reload would emit one per reload.
+     * Not set when the block really did come off the free stack, the block is
+     * held for the life of the forward and no record says it ever left the
+     * pool.
+     */
+    drv_t v;
+    bpa_dyn_t *d;
+    u32 held_by = ~0u, free_blk, owner_sub = ~0u, free_before;
+    u64 allocs_before;
+    int is_new = 0;
+
+    drv_init (&v, &p4, 1, 2);
+    drv_arrive (&v, 0);
+    d = &v.d[0];
+    CHECK (vec_len (d->free_list) > 0,
+	   "the slice has no free block, so there is nothing for a pin to "
+	   "take");
+    /* The block the next allocation would have been given, so this really is
+     * the free stack being taken from and not a block nobody wanted. */
+    free_blk = d->free_list[vec_len (d->free_list) - 1];
+    free_before = vec_len (d->free_list);
+    allocs_before = d->n_allocations;
+
+    CHECK (bpa_dyn_pin (d, free_blk, 7, 1, 50.0, &held_by, &is_new) == 0,
+	   "a pin of a block nobody holds was refused");
+    CHECK (is_new == 1,
+	   "the block came off the free stack and the caller was not told to "
+	   "emit a natEvent 16, so nothing records that it left the pool");
+    CHECK (bpa_dyn_owner (d, free_blk, 1, &owner_sub) == 0 && owner_sub == 7,
+	   "the pinned block is held by subscriber %u, not by the one the "
+	   "forward names", owner_sub);
+    CHECK (vec_len (d->free_list) == free_before - 1,
+	   "the free stack went from %u to %u blocks on a pin that took one",
+	   free_before, (u32) vec_len (d->free_list));
+    CHECK (d->n_allocations == allocs_before + 1 && d->n_alloc == 2,
+	   "%llu lifetime allocations and %u blocks held after a pin that "
+	   "allocated one, against %llu and 1 before",
+	   (unsigned long long) d->n_allocations, d->n_alloc,
+	   (unsigned long long) allocs_before);
+    CHECK (d->n_pinned == 1, "%u blocks are pinned, not the one that is",
+	   d->n_pinned);
+    CHECK (d->idle_since[free_blk] == 50.0,
+	   "the pinned block is not idle from the instant it was pinned, so "
+	   "the ordinary lifetime does not apply to it when the pin goes");
+    CHECK (index_disagreements (d) == 0,
+	   "the free stack and its index disagree after a pin took a block "
+	   "off it");
+
+    /* The same pin again, which is what a configuration reload does. */
+    is_new = 1;
+    CHECK (bpa_dyn_pin (d, free_blk, 7, 1, 60.0, &held_by, &is_new) == 0,
+	   "re-pinning a block the subscriber already holds was refused");
+    CHECK (is_new == 0,
+	   "re-applying the same forward reported a second allocation, which "
+	   "is a natEvent 16 with no release between it and the first");
+    CHECK (d->n_allocations == allocs_before + 1,
+	   "%llu lifetime allocations after a pin that allocated nothing",
+	   (unsigned long long) d->n_allocations);
+    CHECK (d->n_pinned == 1, "%u pins after pinning one block twice",
+	   d->n_pinned);
+    printf ("  taken off the free stack, one allocation record, and a second "
+	    "pin of it is not another\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== unpinning a block nothing is using gives it straight back "
+	  "===\n");
+  {
+    /*
+     * The whole release arm of bpa_dyn_unpin() - eighteen lines - had never
+     * been executed by anything docker-free.
+     *
+     * A pin holds a block against the hold-down. When the last forward in it
+     * goes and nothing is using it, the pin was the only thing holding it, so
+     * it goes back NOW rather than sitting out a hold-down that is measuring
+     * nothing. *released is what tells the caller to emit RFC 8158
+     * natEvent 17; without it the block is back in the pool, handed to the
+     * next subscriber that asks, and the audit trail still says the first one
+     * has it - which is the record an operator answers a subpoena from.
+     *
+     * The mirror is asserted beside it, because a release that fired
+     * unconditionally would be the worse bug: a block with live sessions on it
+     * would be handed away underneath them.
+     */
+    drv_t v;
+    bpa_dyn_t *d;
+    u32 held_by = ~0u, free_blk, busy_blk = 0, owner_sub = ~0u, free_before;
+    u64 releases_before;
+    int is_new = 0, released = 1;
+
+    drv_init (&v, &p4, 1, 2);
+    drv_arrive (&v, 0);
+    d = &v.d[0];
+    free_blk = d->free_list[vec_len (d->free_list) - 1];
+    CHECK (bpa_dyn_pin (d, free_blk, 7, 1, 50.0, &held_by, &is_new) == 0,
+	   "a pin of a block nobody holds was refused");
+    free_before = vec_len (d->free_list);
+    releases_before = d->n_releases;
+
+    released = 0;
+    bpa_dyn_unpin (d, free_blk, 1, &released);
+    CHECK (released == 1,
+	   "the pin was the only thing holding the block and the caller was "
+	   "not told to emit a natEvent 17, so the audit trail still says "
+	   "subscriber 7 has it");
+    CHECK (bpa_dyn_owner (d, free_blk, 1, &owner_sub) != 0,
+	   "the block is still held by subscriber %u after the only reason to "
+	   "hold it went away", owner_sub);
+    CHECK (vec_len (d->free_list) == free_before + 1,
+	   "the free stack went from %u to %u blocks on a release that "
+	   "returned one", free_before, (u32) vec_len (d->free_list));
+    CHECK (d->n_releases == releases_before + 1 && d->n_alloc == 1,
+	   "%llu lifetime releases and %u blocks held, against %llu and 2 "
+	   "before the block went back",
+	   (unsigned long long) d->n_releases, d->n_alloc,
+	   (unsigned long long) releases_before);
+    CHECK (d->n_pinned == 0, "%u blocks are still pinned", d->n_pinned);
+    CHECK (bpa_dyn_block_of (d, 7, 0, 1, &busy_blk) != 0,
+	   "the allocator still says subscriber 7 holds block %u, so the next "
+	   "pop hands one block to two subscribers", busy_blk);
+    CHECK (index_disagreements (d) == 0,
+	   "the free stack and its index disagree after an unpin released a "
+	   "block");
+
+    /* The mirror: a block a subscriber is USING leaves by the hold-down like
+     * any other, and the unpin releases nothing. */
+    CHECK (bpa_dyn_block_of (d, 0, 0, 1, &busy_blk) == 0,
+	   "subscriber 0 holds no block");
+    CHECK (bpa_dyn_pin (d, busy_blk, 0, 1, 70.0, &held_by, &is_new) == 0,
+	   "pinning the block its own subscriber is using was refused");
+    released = 1;
+    bpa_dyn_unpin (d, busy_blk, 1, &released);
+    CHECK (released == 0,
+	   "unpinning a block with live sessions on it emitted a natEvent 17 "
+	   "for a block that did not go back");
+    owner_sub = ~0u;
+    CHECK (bpa_dyn_owner (d, busy_blk, 1, &owner_sub) == 0 && owner_sub == 0,
+	   "the block of a subscriber with live sessions was handed back to "
+	   "the pool when its forward was removed");
+    printf ("  back to the stack with a release record, and the one in use "
+	    "kept with none\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== a slice with no blocks in it: refused, or empty on purpose "
+	  "===\n");
+  {
+    /*
+     * The two arms of the one condition in bpa_dyn_init(), and neither had
+     * been executed.
+     *
+     * A DYNAMIC pool whose capacity does not reach a worker cannot translate
+     * for the subscribers that hash to it at all, so it is refused at
+     * configuration time rather than at the first packet.
+     *
+     * A RESERVE slice that does not reach a worker is created EMPTY instead,
+     * and bpa_dyn.c says why at length: the worker count is a startup setting
+     * and not part of the pool, so refusing here would mean a configuration
+     * accepted on a single-threaded box stops the pool coming up after the
+     * same box is given four workers - every subscriber on it losing traffic,
+     * to enforce a property about extensions. What the empty slice does
+     * instead is refuse every extension and count it.
+     *
+     * Both arms of one `if`, so a test of the dynamic half alone would stay
+     * green with the reserve half deleted.
+     */
+    bpa_pool_t pn;
+    bpa_dyn_t d;
+    clib_error_t *e2;
+    bpa_block_t ext;
+    int is_new = 0;
+
+    e2 = mkpool (&pn, "narrow", 1, 1039, 4, BPA_POLICY_INTERLEAVED);
+    CHECK (e2 == 0, "pool 'narrow' rejected");
+    CHECK (pn.capacity == 4,
+	   "pool 'narrow' holds %u blocks, and the worker counts below are "
+	   "chosen against 4", pn.capacity);
+
+    /* Four blocks over five workers: worker 4 gets none of them. */
+    CHECK (bpa_dyn_init (&d, &pn, 3, 5, 0) == 0,
+	   "worker 3, which the 4 blocks do reach, was refused");
+    bpa_dyn_free (&d);
+    CHECK (bpa_dyn_init (&d, &pn, 4, 5, 0) != 0,
+	   "worker 4 was given a slice of a 4-block pool it holds no block "
+	   "of, so every subscriber that hashes to it is refused at the "
+	   "first packet with nothing said at configuration time");
+
+    /* The same shape on a reserve, which comes up empty rather than refusing.
+     * One reserve block per public address and one public address, so worker 1
+     * of two owns nothing. */
+    {
+      bpa_pool_t pr2;
+
+      e2 = mkpool (&pr2, "narrow-reserve", 1, 1039, 4, BPA_POLICY_INTERLEAVED);
+      CHECK (e2 == 0, "pool 'narrow-reserve' rejected");
+      pr2.mode = BPA_MODE_DETERMINISTIC;
+      pr2.block_reserve = 1;
+      CHECK (bpa_pool_init (&pr2) == 0, "the reserve was not carved out");
+      CHECK (pr2.reserve_count == 1,
+	     "the reserve holds %u blocks, and the worker count below is "
+	     "chosen against 1", pr2.reserve_count);
+
+      memset (&d, 0, sizeof (d));
+      CHECK (bpa_dyn_init (&d, &pr2, 1, 2, 1) == 0,
+	     "a reserve slice holding no block refused to come up, so a pool "
+	     "that worked on one worker stops coming up on two");
+      CHECK (d.active == 1 && d.n_local == 0,
+	     "the empty reserve slice came up with %u blocks and active=%u",
+	     d.n_local, d.active);
+      CHECK (bpa_dyn_acquire_extra (&d, &pr2, 1, 1, 2, BPA_NO_BLOCK, 1, &ext,
+				    &is_new) != 0,
+	     "an empty reserve slice handed out a block it does not have");
+      CHECK (d.n_exhausted == 1,
+	     "the refusal was not counted: %llu exhaustions, so "
+	     "'show bpa blocks' reports nothing where every extension on this "
+	     "worker is refused",
+	     (unsigned long long) d.n_exhausted);
+      bpa_dyn_free (&d);
+    }
+    printf ("  the dynamic slice refused at configuration time, the reserve "
+	    "slice empty and counting what it cannot do\n");
+  }
+
+  printf ("\n=== which block a subscriber holds, when it holds none ===\n");
+  {
+    /*
+     * bpa_dyn_block_of() is what "show bpa subscriber" asks, because the
+     * per-subscriber session record cannot answer it: that record dies with
+     * the subscriber's last session while the block stays reserved here for
+     * the whole hold-down. Both of its refusals were never executed.
+     *
+     * A wrong answer here is not a blank line in a command. *block_idx is left
+     * alone on a refusal, so a caller that read the return value wrongly
+     * prints whatever was on its stack as a block index - and every reader of
+     * this function turns a block index into a public address and a port
+     * range.
+     */
+    drv_t v;
+    bpa_dyn_t *d, never;
+    u32 blk = 0xdeadbeef;
+
+    drv_init (&v, &p4, 1, 2);
+    drv_arrive (&v, 0);
+    d = &v.d[0];
+    CHECK (bpa_dyn_block_of (d, 0, 0, 1, &blk) == 0,
+	   "a subscriber that holds a block was reported as holding none");
+    blk = 0xdeadbeef;
+    CHECK (bpa_dyn_block_of (d, 55, 0, 1, &blk) != 0,
+	   "a subscriber that has never sent a packet was reported as holding "
+	   "block %u", blk);
+    CHECK (blk == 0xdeadbeef,
+	   "the refusal wrote %u into the caller's block index", blk);
+
+    memset (&never, 0, sizeof (never));
+    blk = 0xdeadbeef;
+    CHECK (bpa_dyn_block_of (&never, 0, 0, 1, &blk) != 0,
+	   "a slice that never came up reported a subscriber holding block %u",
+	   blk);
+
+    /*
+     * And the other direction. bpa_dyn_owner() is what the RETURN path asks:
+     * a packet arrived at a public port, the arithmetic turned it into a block
+     * index, and this says whose block that is. A block index outside the
+     * slice has to come back as "nobody" - the index is derived from an
+     * address and a port a remote host chose, so it is an attacker's number
+     * until this says otherwise, and owner[] is a vector of exactly n_local
+     * entries.
+     */
+    {
+      u32 sub = 0xdeadbeef;
+
+      CHECK (bpa_dyn_owner (d, 0, 1, &sub) == 0 && sub == 0,
+	     "the block subscriber 0 is holding is reported as held by %u",
+	     sub);
+      sub = 0xdeadbeef;
+      CHECK (bpa_dyn_owner (d, d->n_local, 1, &sub) != 0,
+	     "block %u, one past the %u this slice holds, was reported as "
+	     "subscriber %u's", d->n_local, d->n_local, sub);
+      CHECK (sub == 0xdeadbeef,
+	     "the refusal wrote subscriber %u into the caller's index", sub);
+      sub = 0xdeadbeef;
+      CHECK (bpa_dyn_owner (&never, 0, 1, &sub) != 0,
+	     "a slice that never came up reported block 0 as subscriber %u's",
+	     sub);
+    }
+    printf ("  a subscriber with no block, a block outside the slice, and a "
+	    "slice with no blocks, and none of them writes an index\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== a subscriber's second forward moves its first block to the "
+	  "extras ===\n");
+  {
+    /*
+     * The other arm of bpa_dyn_unpin(), which had never been executed: the
+     * block going back is an EXTENSION rather than the subscriber's primary,
+     * so it has to come off the extras list instead of out of by_sub.
+     *
+     * An operator with two forwards for one subscriber on two blocks is what
+     * produces it. The second pin makes its block the subscriber's primary -
+     * bpa_dyn_acquire() answers with the primary, and the forwarded socket has
+     * to be in it - and pushes the first one onto the extras. Unpinning the
+     * first then finds by_sub naming the OTHER block.
+     *
+     * An entry left behind on that list is not cosmetic: it names a local
+     * index that is handed to somebody else later, so the old subscriber going
+     * idle would stamp THEIR block as idle and the reap would take a block
+     * with live sessions on it.
+     */
+    drv_t v;
+    bpa_dyn_t *d;
+    u32 held_by = ~0u, first, second, owner_sub = ~0u;
+    int is_new = 0, released = 0;
+
+    drv_init (&v, &p4, 1, 2);
+    d = &v.d[0];
+    first = d->free_list[vec_len (d->free_list) - 1];
+    CHECK (bpa_dyn_pin (d, first, 5, 1, 10.0, &held_by, &is_new) == 0,
+	   "the first forward's block could not be pinned");
+    second = d->free_list[vec_len (d->free_list) - 1];
+    CHECK (second != first,
+	   "both forwards would land on block %u, so there is no first block "
+	   "to displace", first);
+    CHECK (bpa_dyn_pin (d, second, 5, 1, 10.0, &held_by, &is_new) == 0,
+	   "the second forward's block could not be pinned");
+
+    {
+      u32 primary = ~0u;
+
+      CHECK (bpa_dyn_block_of (d, 5, 0, 1, &primary) == 0 && primary == second,
+	     "the subscriber's primary is block %u after a forward was put on "
+	     "block %u, so its own outbound traffic leaves from a block the "
+	     "forward is not in", primary, second);
+      CHECK (vec_len (d->extras) == 1 && d->extras[0].local == first
+	       && d->extras[0].sub_idx == 5,
+	     "%u blocks are on the extras list after the first one was "
+	     "displaced", (u32) vec_len (d->extras));
+    }
+
+    bpa_dyn_unpin (d, first, 1, &released);
+    CHECK (released == 1,
+	   "the displaced block was the only thing the first forward held and "
+	   "the caller was not told to emit a natEvent 17");
+    CHECK (bpa_dyn_owner (d, first, 1, &owner_sub) != 0,
+	   "the displaced block is still held by subscriber %u", owner_sub);
+    CHECK (vec_len (d->extras) == 0,
+	   "%u entries are left on the extras list naming a block that is back "
+	   "in the pool, so the next subscriber to be given it has its block "
+	   "stamped idle by somebody else", (u32) vec_len (d->extras));
+    {
+      u32 primary = ~0u;
+
+      CHECK (bpa_dyn_block_of (d, 5, 0, 1, &primary) == 0 && primary == second,
+	     "releasing the displaced block took the subscriber's primary "
+	     "with it: it now holds block %u", primary);
+    }
+    CHECK (index_disagreements (d) == 0,
+	   "the free stack and its index disagree after a displaced block went "
+	   "back");
+    printf ("  the first forward's block off the extras and back in the pool, "
+	    "the second still the subscriber's own\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== the reserve walk, where it has to give up ===\n");
+  {
+    /*
+     * The deterministic reserve's preference is BOUNDED by the sharding, and
+     * the three lines where it gives up had never been executed: the candidate
+     * that belongs to another worker, the candidate that is already held, and
+     * the walk that ends having found neither.
+     *
+     * A reserve block's index decides which worker may hand it out
+     * (bpa_reserve_worker), and a subscriber may only draw from its own
+     * worker's slice - both directions of a flow have to meet on one thread.
+     * So the blocks on a subscriber's own public address are not all reachable
+     * from it, and the ones that are may be somebody else's. That is why the
+     * pairing is a PREFERENCE: refusing the extension rather than taking a
+     * block elsewhere would turn a property about layout into a customer
+     * losing traffic.
+     *
+     * Three workers over four public addresses on purpose. At one or two
+     * workers every reserve index on an address is congruent to the same
+     * worker as the subscriber and the give-up lines cannot be reached at all,
+     * which is the shape the section above uses and the reason this one is
+     * separate.
+     */
+    bpa_pool_t pr3;
+    bpa_dyn_t d3[3];
+    u32 s, w, pub, placed = 0, paired = 0, refused = 0;
+    u64 box_placed = 0, box_missed = 0;
+    u8 taken[32];
+
+    memset (taken, 0, sizeof (taken));
+
+    CHECK (mkpool (&pr3, "reserve-shard", 4, 1151, 4,
+		   BPA_POLICY_INTERLEAVED) == 0,
+	   "pool 'reserve-shard' rejected");
+    pr3.mode = BPA_MODE_DETERMINISTIC;
+    pr3.block_reserve = 8;
+    CHECK (bpa_pool_init (&pr3) == 0,
+	   "pool 'reserve-shard' rejected after the reserve was carved out");
+    CHECK (pr3.reserve_count == 32 && pr3.capacity == 96,
+	   "the reserve holds %u blocks over a capacity of %u, and the "
+	   "arithmetic below is chosen against 32 and 96",
+	   pr3.reserve_count, pr3.capacity);
+
+    for (w = 0; w < 3; w++)
+      CHECK (bpa_dyn_init (&d3[w], &pr3, w, 3, 1) == 0,
+	     "reserve slice %u refused", w);
+
+    /*
+     * The subscribers of one public address arrive together, and that is what
+     * makes this section say anything. Driven in index order the four
+     * addresses take turns, so each one runs out of reserve blocks at about
+     * the moment the whole slice does - and a worker whose free stack is empty
+     * refuses before the walk is entered at all. Driven by address, an address
+     * runs out while the slice still holds blocks on the OTHER three, which is
+     * exactly the state the give-up path exists for. Neither order is more
+     * real than the other: which subscribers wake up together is not something
+     * a pool has any say in.
+     */
+    for (pub = 0; pub < 4; pub++)
+      for (s = pub; s < pr3.capacity; s += 4)
+	{
+	  bpa_block_t ext;
+	  u32 pub_idx, blk_idx;
+	  int is_new;
+
+	  w = s % 3;
+	  bpa_split (&pr3, s, &pub_idx, &blk_idx);
+	  if (bpa_dyn_acquire_extra (&d3[w], &pr3, s, w, 3, BPA_NO_BLOCK, 1,
+				     &ext, &is_new))
+	    {
+	      refused++;
+	      continue;
+	    }
+	  placed++;
+	  taken[bpa_reserve_index (&pr3, ext.pub_idx, ext.blk_idx)]++;
+	  if (ext.pub_idx == pub_idx)
+	    paired++;
+	}
+    for (w = 0; w < 3; w++)
+      {
+	box_placed += d3[w].n_paired_placed;
+	box_missed += d3[w].n_paired_missed;
+      }
+
+    CHECK (placed == pr3.reserve_count,
+	   "%u of the reserve's %u blocks were handed out, so the walk stopped "
+	   "before the reserve did", placed, pr3.reserve_count);
+    CHECK (refused == pr3.capacity - pr3.reserve_count,
+	   "%u extensions were refused where %u subscribers asked for one past "
+	   "the %u blocks there are",
+	   refused, pr3.capacity, pr3.reserve_count);
+    CHECK (paired < placed,
+	   "every one of the %u reserve extensions landed on its holder's own "
+	   "public address, so the give-up path this section is about was "
+	   "never taken", placed);
+    CHECK (paired > 0,
+	   "none of the %u reserve extensions paired, so the preference is "
+	   "doing nothing at all rather than being bounded", placed);
+    CHECK (box_placed == paired,
+	   "the box counted %llu paired reserve extensions where %u landed on "
+	   "their holder's own address",
+	   (unsigned long long) box_placed, paired);
+    CHECK (box_missed == placed - paired,
+	   "the box counted %llu unpaired reserve extensions where %u were",
+	   (unsigned long long) box_missed, placed - paired);
+
+    /*
+     * And no reserve block went to two subscribers. The walk chooses a block
+     * by NAME rather than taking whatever is on top of the stack, so the test
+     * that it is free is the only thing between a preference about layout and
+     * one subscriber's inbound traffic arriving on another's mapping.
+     */
+    for (s = 0; s < 32; s++)
+      CHECK (taken[s] <= 1,
+	     "reserve block %u was handed to %u subscribers", s, taken[s]);
+    for (w = 0; w < 3; w++)
+      CHECK (index_disagreements (&d3[w]) == 0,
+	     "reserve slice %u: the free stack and its index disagree after "
+	     "the walk", w);
+    printf ("  %u of %u reserve extensions paired at 3 workers over 4 "
+	    "addresses, %u could not be, and none of them was refused for it\n",
+	    paired, placed, placed - paired);
+    for (w = 0; w < 3; w++)
+      bpa_dyn_free (&d3[w]);
+  }
+
+  printf ("\n=== a stride the allocator cannot place is counted, not "
+	  "refused ===\n");
+  {
+    /*
+     * n_stride_missed had never been incremented by anything docker-free. The
+     * section above drives a stride that lands; this one drives one that
+     * cannot, because the two counters only mean anything as a pair: a stride
+     * that is configured and never honoured looks from outside exactly like no
+     * stride at all - the subscriber still gets a block and still translates -
+     * and the operator would be reading a setting the box is not applying.
+     *
+     * The miss here is the one bpa_stride_block() refuses: the step runs off
+     * the end of the subscriber's own public address, and the block after that
+     * one belongs to a different address whose blocks this worker may not own.
+     * What must NOT happen is a refusal: a preference about layout must not
+     * cost the customer the block.
+     */
+    bpa_pool_t ps2;
+    drv_t v;
+    u32 pblk = 0, ppub = 0, pblk_i = 0, nth;
+
+    CHECK (mkpool_stride (&ps2, "stride-off-end", 4, 1279, 4,
+			  BPA_POLICY_INTERLEAVED, 2) == 0,
+	   "the strided pool did not build");
+    CHECK (ps2.blocks_mapped == 64,
+	   "a public address holds %u mappable blocks, and the nth below is "
+	   "chosen against 64", ps2.blocks_mapped);
+
+    drv_init (&v, &ps2, 1, 1);
+    drv_arrive (&v, 0);
+    CHECK (v.held[0], "the subscriber took no primary");
+    CHECK (bpa_dyn_block_of (&v.d[0], 0, 0, 1, &pblk) == 0,
+	   "the subscriber holds no block to measure a stride from");
+    bpa_split (&ps2, pblk, &ppub, &pblk_i);
+
+    /* The first nth whose stride of 2 steps past the end of this address. */
+    nth = (ps2.blocks_mapped - pblk_i + 1) / 2;
+    CHECK (pblk_i + nth * 2 >= ps2.blocks_mapped,
+	   "block %u plus %u strides of 2 is still inside the %u this address "
+	   "holds, so the stride below can be placed and this section says "
+	   "nothing", pblk_i, nth, ps2.blocks_mapped);
+
+    drv_extend (&v, 0, nth);
+    CHECK (v.seen_ext == 1,
+	   "the extension was refused because its stride could not be placed, "
+	   "which turns a preference about layout into a customer losing "
+	   "traffic");
+    CHECK (v.d[0].n_stride_missed == 1,
+	   "the box counted %llu missed strides where one stride ran off the "
+	   "end of the subscriber's address, so an operator reading "
+	   "'show bpa blocks' sees a stride being honoured that is not",
+	   (unsigned long long) v.d[0].n_stride_missed);
+    CHECK (v.d[0].n_stride_placed == 0,
+	   "the box counted %llu placed strides on an extension no stride "
+	   "could place", (unsigned long long) v.d[0].n_stride_placed);
+    printf ("  the stride ran off the end of the address, the subscriber got "
+	    "a block anyway, and the box counted the miss\n");
+    drv_free (&v);
   }
 
   (void) i;

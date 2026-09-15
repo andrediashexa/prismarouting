@@ -1122,5 +1122,436 @@ main (void)
 	    swept, tight);
   }
 
+  printf ("\n=== the configurations a pool refuses to be built from ===\n");
+  {
+    /*
+     * Four refusals in bpa_pool.c that nothing docker-free had ever driven.
+     * They all guard the same thing: a pool that comes up with a mapping
+     * nobody can read. A pool refused at configuration time is an error
+     * message; a pool that comes up wrong is a subscriber translated onto
+     * somebody else's public port, which reaches support as two customers
+     * whose connections interfere and is attributed to neither.
+     *
+     * The wording cannot be asserted here - test/bpa_shim.h's
+     * clib_error_return() keeps no message, because VPP's %v is not a printf
+     * specifier and the shim must not hand the caller's format to vsnprintf.
+     * What is asserted is that an error comes back at all, and beside each one
+     * the nearest configuration that must NOT be refused, so a guard that
+     * refuses everything is as red as one that refuses nothing.
+     */
+    bpa_addr_set_t s;
+    bpa_pool_t p;
+    u32 bases[BPA_MAX_RANGES + 1], counts[BPA_MAX_RANGES + 1];
+    u32 k;
+
+    /*
+     * More separate prefixes than the pool can inline. The ranges live in the
+     * pool rather than behind a pointer so that no allocation sits on the
+     * datapath, so this is a real bound and not a policy: past it the writes
+     * below would run off the end of a fixed array.
+     */
+    for (k = 0; k <= BPA_MAX_RANGES; k++)
+      {
+	bases[k] = 0x0A000000u + k * 512; /* 512 apart, so none is adjacent */
+	counts[k] = 256;
+      }
+    CHECK (bpa_addr_set_build (&s, bases, counts, BPA_MAX_RANGES) == 0,
+	   "%u prefixes, which is exactly what a pool holds, were refused",
+	   BPA_MAX_RANGES);
+    CHECK (s.n_ranges == BPA_MAX_RANGES,
+	   "%u prefixes merged into %u ranges, so the bound below is not being "
+	   "tested at the boundary", BPA_MAX_RANGES, s.n_ranges);
+    CHECK (bpa_addr_set_build (&s, bases, counts, BPA_MAX_RANGES + 1) != 0,
+	   "%u prefixes were accepted into a set that holds %u",
+	   BPA_MAX_RANGES + 1, BPA_MAX_RANGES);
+
+    /*
+     * A prefix of no addresses. It would carry a first_idx and occupy a range
+     * slot while owning nothing, so every binary search over the set would
+     * step through a range that can never contain the address it is looking
+     * for - and bpa_set_addr_of() would have an index space with a hole in it.
+     */
+    bases[0] = 0x0A000000u; counts[0] = 256;
+    bases[1] = 0x0A010000u; counts[1] = 0;
+    CHECK (bpa_addr_set_build (&s, bases, counts, 2) != 0,
+	   "a prefix of zero addresses was accepted");
+    counts[1] = 1;
+    CHECK (bpa_addr_set_build (&s, bases, counts, 2) == 0,
+	   "a prefix of a single address was refused, so the check above is "
+	   "about emptiness rather than about smallness");
+
+    /*
+     * A pool whose address sets were never built. Everything bpa_pool_init()
+     * derives - blocks per address, the capacity, the divisor - is the two
+     * counts multiplied and divided, so a pool built from empty sets comes up
+     * with a capacity of zero: configured, reported, and translating nobody.
+     *
+     * Under `policy blocked` on purpose. The divisor is blocks_mapped there
+     * and outside.count under `policy interleaved`, so on an interleaved pool
+     * the "divisor is zero" refusal at the bottom of bpa_pool_init() stands
+     * behind this one and refuses the same configuration for another reason -
+     * which would leave this check green with the guard it is about removed.
+     * Measured that way round first.
+     */
+    memset (&p, 0, sizeof (p));
+    p.name = (u8 *) "never-built";
+    p.port_min = 1024;
+    p.port_max = 2047;
+    p.block_size = 64;
+    p.policy = BPA_POLICY_BLOCKED;
+    CHECK (bpa_pool_init (&p) != 0,
+	   "a pool whose address sets were never built came up");
+    {
+      u32 b = 0x0A000000u, c = 4;
+
+      CHECK (bpa_addr_set_build (&p.inside, &b, &c, 1) == 0, "inside refused");
+      CHECK (bpa_pool_init (&p) != 0,
+	     "a pool with an inside set and no outside set came up, so the "
+	     "check above passes on the inside half alone");
+      b = 0xC8960010u;
+      CHECK (bpa_addr_set_build (&p.outside, &b, &c, 1) == 0,
+	     "outside refused");
+      CHECK (bpa_pool_init (&p) == 0,
+	     "the same pool was refused once both sets were built, so the "
+	     "checks above are about the sets rather than about the ports");
+    }
+
+    /*
+     * A block larger than the port range it is cut from. blocks_per_ip is
+     * port_count / block_size, so this comes up with ZERO blocks per public
+     * address - a pool that translates nobody while reporting itself
+     * configured. Refused rather than accepted as a capacity of zero, for the
+     * reason the reserve that takes every block is.
+     *
+     * NOT independently falsifiable here, and saying so is the honest half:
+     * a pool with no block on an address also has block_reserve >= 
+     * blocks_per_ip - zero is not less than zero - so the reserve refusal
+     * three lines below refuses the same configuration. The difference
+     * between the two is the MESSAGE, and test/bpa_shim.h keeps none: VPP's
+     * %v is not a printf specifier, so the shim cannot pass the caller's
+     * format to vsnprintf and every clib_error_return here is the same
+     * object. What this pins is the operator-visible behaviour - the
+     * configuration is refused - and the wording that says which field is
+     * wrong is asserted nowhere docker-free.
+     */
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.port_min = 1024;
+    p.port_max = 1024 + 15; /* 16 usable ports */
+    p.block_size = 16;
+    CHECK (bpa_pool_init (&p) == 0,
+	   "a block of exactly the usable port range was refused, and that is "
+	   "one block per address rather than none");
+    CHECK (p.blocks_per_ip == 1,
+	   "a public address holds %u blocks where the range holds exactly "
+	   "one", p.blocks_per_ip);
+    load_pool (&p, &bpa_vec_pools[0]);
+    p.port_min = 1024;
+    p.port_max = 1024 + 15;
+    p.block_size = 32;
+    CHECK (bpa_pool_init (&p) != 0,
+	   "a block of 32 ports was accepted on a range of 16, which is a pool "
+	   "with no block on any address");
+    printf ("  too many prefixes, an empty prefix, sets that were never "
+	    "built, and a block wider than the range, each refused with the "
+	    "configuration next to it accepted\n");
+  }
+
+  printf ("\n=== an address set with no answer says so ===\n");
+  {
+    /*
+     * The two bounds on the dense index space, and neither had ever been
+     * executed. bpa_set_addr_of()'s is more than an answer about range: the
+     * search below it opens with `hi = s->n_ranges - 1`, so on a set nothing
+     * was built into that subtraction wraps and the binary search walks two
+     * billion entries past the end of a 256-entry array. A mutation that
+     * removes the bound does not fail this file, it hangs it, which is why
+     * the one below neutralises the ANSWER rather than the test.
+     *
+     * Both are read on the datapath from numbers a REMOTE chose -
+     * bpa_reverse() turns a public address off an arriving packet into an
+     * index and bpa_set_addr_of() turns that index back into a subscriber's
+     * address - so a wrong answer here is one subscriber's inbound traffic
+     * delivered to another.
+     *
+     * Both are asserted to leave the caller's output alone as well as to
+     * refuse. A refusal that writes an answer anyway is a refusal every
+     * caller has to remember not to trust, and the datapath callers pass a
+     * pointer into a structure they go on to use.
+     */
+    bpa_addr_set_t s;
+    u32 idx = 0xdeadbeef, addr = 0xdeadbeef;
+    u32 b = 0x0A000000u, c = 4;
+
+    /* A set nothing was ever built into. This is what a bpa_pool_t's sets
+     * look like before bpa_addr_set_build() has run on them. */
+    memset (&s, 0, sizeof (s));
+    CHECK (bpa_set_index_of (&s, 0x0A000001u, &idx) != 0,
+	   "an empty address set answered with index %u", idx);
+    CHECK (idx == 0xdeadbeef,
+	   "the refusal wrote index %u into the caller's variable", idx);
+    CHECK (bpa_set_addr_of (&s, 0, &addr) != 0,
+	   "an empty address set answered index 0 with address %u", addr);
+    CHECK (addr == 0xdeadbeef,
+	   "the refusal wrote address %u into the caller's variable", addr);
+
+    CHECK (bpa_addr_set_build (&s, &b, &c, 1) == 0, "a 4 address set refused");
+    CHECK (s.count == 4, "the set holds %u addresses, not 4", s.count);
+    addr = 0xdeadbeef;
+    CHECK (bpa_set_addr_of (&s, 3, &addr) == 0 && addr == b + 3,
+	   "the last index of a 4 address set resolved to %u, not %u", addr,
+	   b + 3);
+    addr = 0xdeadbeef;
+    CHECK (bpa_set_addr_of (&s, 4, &addr) != 0,
+	   "index 4 of a 4 address set resolved to address %u", addr);
+    CHECK (addr == 0xdeadbeef,
+	   "the refusal wrote address %u into the caller's variable", addr);
+    printf ("  an empty set and an index past the end, both refused and "
+	    "neither writing an answer\n");
+  }
+
+  printf ("\n=== every public port is exactly one of the two directions' "
+	  "===\n");
+  {
+    /*
+     * bpa_reverse_sub() answers for a MAPPED port and bpa_reserve_index_of()
+     * for a RESERVE one, and between them they have to partition the pool's
+     * port range on every public address. Three of the four refusals that make
+     * that partition had never been executed.
+     *
+     * It is not tidiness. A reserve port resolved by the formula is handed to
+     * whichever subscriber bpa_join() produces, which under the blocked policy
+     * is a real and different subscriber - the reserve block is somebody's,
+     * but only the allocator knows whose. And a MAPPED port resolved as a
+     * reserve index is worse in the other direction: the offset is
+     * blk_idx - blocks_mapped on unsigned words, so a mapped block wraps to an
+     * enormous index and the packet is looked up against a reserve nobody
+     * owns.
+     *
+     * Walked block by block over the whole range rather than sampled, and the
+     * two answers counted, so a guard that refused everything would leave the
+     * mapped count at zero and one that refused nothing would have both
+     * answering.
+     */
+    bpa_pool_t *p = &pools[6]; /* reserved-interleaved: 3 reserve blocks/IP */
+    u32 ip_pub = 0, blk, n_mapped = 0, n_reserve = 0, both = 0, neither = 0;
+
+    CHECK (p->block_reserve > 0 && p->blocks_mapped > 0,
+	   "pool '%s' holds %u reserve blocks of %u per address, so there is "
+	   "no partition here to walk",
+	   bpa_vec_pools[6].name, p->block_reserve, p->blocks_per_ip);
+    CHECK (bpa_set_addr_of (&p->outside, 0, &ip_pub) == 0,
+	   "the pool's first public address could not be resolved");
+
+    for (blk = 0; blk < p->blocks_per_ip; blk++)
+      {
+	u16 port = (u16) (p->port_min + blk * p->block_size);
+	u32 sub_idx = 0xdeadbeef, res_idx = 0xdeadbeef;
+	int mapped = bpa_reverse_sub (p, ip_pub, port, &sub_idx) == 0;
+	int reserve = bpa_reserve_index_of (p, ip_pub, port, &res_idx) == 0;
+
+	if (mapped && reserve)
+	  both++;
+	else if (!mapped && !reserve)
+	  neither++;
+	else if (mapped)
+	  {
+	    n_mapped++;
+	    CHECK (res_idx == 0xdeadbeef,
+		   "the reserve refused port %u and wrote index %u anyway",
+		   port, res_idx);
+	  }
+	else
+	  {
+	    n_reserve++;
+	    CHECK (sub_idx == 0xdeadbeef,
+		   "the formula refused port %u and wrote subscriber %u "
+		   "anyway", port, sub_idx);
+	  }
+      }
+    CHECK (both == 0 && neither == 0,
+	   "%u ports were claimed by both directions and %u by neither", both,
+	   neither);
+    CHECK (n_mapped == p->blocks_mapped,
+	   "%u of the %u mapped blocks on this address were resolved by the "
+	   "formula", n_mapped, p->blocks_mapped);
+    CHECK (n_reserve == p->block_reserve,
+	   "%u of the %u reserve blocks on this address were resolved as "
+	   "reserve", n_reserve, p->block_reserve);
+
+    /*
+     * And the ports that are outside the pool altogether, which is a remote
+     * scanning the public address rather than anything this box handed out.
+     *
+     * On a pool of its own, because every vector pool runs to port 65535 and
+     * there is no port above that one to ask about - which is how the "above
+     * the range" half of that guard stays unmeasured on the pools this file
+     * already has.
+     */
+    {
+      bpa_pool_t q;
+      u32 res_idx = 0xdeadbeef, base, cnt, q_ip = 0;
+
+      memset (&q, 0, sizeof (q));
+      q.name = (u8 *) "bounded-ports";
+      q.port_min = 1024;
+      q.port_max = 2047;
+      q.block_size = 64;
+      q.policy = BPA_POLICY_INTERLEAVED;
+      q.mode = BPA_MODE_DETERMINISTIC;
+      q.block_reserve = 2;
+      base = 0x64400000u; cnt = 1024;
+      CHECK (bpa_addr_set_build (&q.inside, &base, &cnt, 1) == 0,
+	     "inside refused");
+      base = 0xC8960010u; cnt = 2;
+      CHECK (bpa_addr_set_build (&q.outside, &base, &cnt, 1) == 0,
+	     "outside refused");
+      CHECK (bpa_pool_init (&q) == 0, "pool 'bounded-ports' refused");
+      CHECK (q.port_max < 65535 && q.block_reserve > 0,
+	     "pool 'bounded-ports' runs to port %u with %u reserve blocks, and "
+	     "the checks below need a port above its range and a reserve to "
+	     "refuse from", q.port_max, q.block_reserve);
+      CHECK (bpa_set_addr_of (&q.outside, 0, &q_ip) == 0,
+	     "its first public address could not be resolved");
+
+      CHECK (bpa_reserve_index_of (&q, q_ip, (u16) (q.port_min - 1),
+				   &res_idx) != 0,
+	     "a port below the pool's range resolved to reserve index %u",
+	     res_idx);
+      CHECK (bpa_reserve_index_of (&q, q_ip, (u16) (q.port_max + 1),
+				   &res_idx) != 0,
+	     "a port above the pool's range resolved to reserve index %u",
+	     res_idx);
+
+      /*
+       * And an address this pool does not own, asked about one of its RESERVE
+       * ports. A packet arrives at whatever address the box holds, not only
+       * at this pool's.
+       *
+       * A reserve port and not port_min, because a mapped port is refused by
+       * the reserve-block test further down whatever the address was - so the
+       * obvious version of this check is green with the address test removed,
+       * and the reserve index it would then compute comes from a pub_idx the
+       * refusal never wrote.
+       */
+      CHECK (bpa_reserve_index_of (
+	       &q, 0x0A000001u,
+	       (u16) (q.port_min + q.blocks_mapped * q.block_size),
+	       &res_idx) != 0,
+	     "a public address outside the pool resolved to reserve index %u",
+	     res_idx);
+      CHECK (res_idx == 0xdeadbeef,
+	     "a refusal wrote reserve index %u into the caller's variable",
+	     res_idx);
+      /* The control: on this same pool a reserve port does resolve, so the
+       * three refusals above are about what was asked rather than about a
+       * pool that answers nothing. */
+      CHECK (bpa_reserve_index_of (
+	       &q, q_ip, (u16) (q.port_min + q.blocks_mapped * q.block_size),
+	       &res_idx) == 0,
+	     "the first reserve port of the pool was refused too");
+    }
+
+    /*
+     * The reserve index space has its own end. bpa_reserve_addr() turns an
+     * index into a public address and a port range, and the index reaching it
+     * is derived from a block a worker was handed - so an index past the
+     * reserve is a caller that resolved the wrong slice, and answering it
+     * would name a port range on whatever address the arithmetic produced.
+     */
+    {
+      bpa_block_t b;
+
+      memset (&b, 0, sizeof (b));
+      CHECK (bpa_reserve_addr (p, p->reserve_count - 1, &b) == 0,
+	     "the last reserve index was refused");
+      CHECK (b.port_lo >= p->port_min + p->blocks_mapped * p->block_size,
+	     "reserve index %u resolved to port %u, which is inside the "
+	     "mapped range that ends at %u",
+	     p->reserve_count - 1, b.port_lo,
+	     p->port_min + p->blocks_mapped * p->block_size);
+      memset (&b, 0, sizeof (b));
+      CHECK (bpa_reserve_addr (p, p->reserve_count, &b) != 0,
+	     "reserve index %u was resolved on a reserve of %u blocks",
+	     p->reserve_count, p->reserve_count);
+      CHECK (b.port_lo == 0 && b.ip_pub == 0,
+	     "the refusal filled in address %u ports %u-%u", b.ip_pub,
+	     b.port_lo, b.port_hi);
+    }
+    printf ("  %u mapped blocks and %u reserve blocks on one address, no port "
+	    "in both and none in neither, and the ports outside the pool "
+	    "refused by both\n", n_mapped, n_reserve);
+  }
+
+  printf ("\n=== a stride nobody configured, and one nobody can have ===\n");
+  {
+    /*
+     * bpa_stride_block()'s first refusal - the pool has no stride at all -
+     * and bpa_stride_next_ok()'s answer when there is no honourable stride to
+     * advise. Neither had been executed.
+     *
+     * The first is the default configuration of every pool ever written, and
+     * it is guarded at the call site by `p->block_stride != 0` - which is
+     * exactly why it is worth pinning here. A caller that stops checking gets
+     * a block index out of `*out` if this ever starts answering, and a block
+     * index is what decides which worker owns a subscriber's replies.
+     *
+     * The second is the advice a refusal carries. bpa_stride_reachable() says
+     * no; this says what to type instead, and zero means there is nothing to
+     * type - which the caller must print as "no stride is honourable on this
+     * pool at this worker count" rather than as "try 0".
+     */
+    bpa_pool_t p;
+    u32 out = 0xdeadbeef;
+    u32 base, cnt;
+
+    load_pool (&p, &bpa_vec_pools[0]);
+    CHECK (p.block_stride == 0,
+	   "the pool carries a stride of %u, so the refusal below is not "
+	   "about the absence of one", p.block_stride);
+    CHECK (bpa_stride_block (&p, 0, 1, &out) != 0,
+	   "a pool with no stride placed the second block at %u", out);
+    CHECK (out == 0xdeadbeef,
+	   "the refusal wrote block %u into the caller's variable", out);
+    p.block_stride = 1;
+    CHECK (bpa_stride_block (&p, 0, 1, &out) == 0,
+	   "the same pool with a stride of 1 placed nothing, so the check "
+	   "above is not about the stride being zero");
+
+    /*
+     * Three public addresses holding four blocks each: under `policy
+     * interleaved` one step along an address is three block indices, so a
+     * stride of s moves 3s - and at five workers no s below four makes 3s a
+     * multiple of 5. Odd on purpose: with a power of two public set some
+     * stride always works and this can never return zero.
+     */
+    memset (&p, 0, sizeof (p));
+    p.name = (u8 *) "no-honourable-stride";
+    p.port_min = 1024;
+    p.port_max = 1039;
+    p.block_size = 4;
+    p.policy = BPA_POLICY_INTERLEAVED;
+    p.mode = BPA_MODE_DYNAMIC;
+    base = 0x64400000u; cnt = 1024;
+    CHECK (bpa_addr_set_build (&p.inside, &base, &cnt, 1) == 0,
+	   "inside refused");
+    base = 0xC8960010u; cnt = 3;
+    CHECK (bpa_addr_set_build (&p.outside, &base, &cnt, 1) == 0,
+	   "outside refused");
+    CHECK (bpa_pool_init (&p) == 0, "pool 'no-honourable-stride' refused");
+    CHECK (bpa_stride_unit (&p) == 3 && p.blocks_mapped == 4,
+	   "one step along an address is %u block indices and an address "
+	   "holds %u mappable blocks, and the arithmetic below is chosen "
+	   "against 3 and 4", bpa_stride_unit (&p), p.blocks_mapped);
+    CHECK (bpa_stride_next_ok (&p, 1, 5) == 0,
+	   "a stride of %u was advised at 5 workers, where 3s is a multiple "
+	   "of 5 for no s below 4", bpa_stride_next_ok (&p, 1, 5));
+    CHECK (bpa_stride_next_ok (&p, 1, 3) == 1,
+	   "the same pool at 3 workers advised %u where a stride of 1 is "
+	   "already honourable, so the zero above is about the worker count "
+	   "rather than about the pool", bpa_stride_next_ok (&p, 1, 3));
+    printf ("  no stride configured places nothing, and a pool with no "
+	    "honourable stride is advised none\n");
+  }
+
   return bpa_test_verdict (checks, failures);
 }

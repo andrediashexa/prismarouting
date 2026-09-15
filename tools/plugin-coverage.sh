@@ -24,36 +24,86 @@
 # names `.build/test_bpa` literally, so the instrumented binaries were never
 # the ones that ran and the counters came back empty. An isolation that cannot
 # be had is worse than none: it measured nothing and said so as a number.
+#
+# ONE GCOV RUN PER OBJECT, MERGED, and both halves of that had to be repaired
+# before the number above meant anything.
+#
+#   gcov writes `bpa_pool.h.gcov` into the directory it runs in, so running it
+#   once per .gcda in one directory leaves the LAST object's counters standing
+#   for every source built into more than one harness. bpa_pool.c is compiled
+#   into test_bpa and into test_bpa_dyn, test_bpa_dyn sorts last, and this
+#   reported bpa_pool.c's coverage as test_bpa_dyn's alone - listing all
+#   fourteen of bpa_addr_set_build() and bpa_pool_init()'s refusals as never
+#   executed. Ten of them are driven by test/test_bpa_pool.c and have been for
+#   as long as that file has existed. Each object's output now goes to a
+#   directory of its own and a line is "never" only when NO object ran it.
+#
+#   And gcov emits one ROW PER INLINED INSTANCE of a line in a header, marking
+#   a count with `*` when some instance did not run it. Counting rows made a
+#   1248-line header report 1251 executable lines, and counting a `*` row as
+#   never-executed made lines that ran in nine harnesses and not the tenth look
+#   dead. Lines are counted once, by number, and a `*` count is a count.
+#
+#   gcov RUNS FROM THE REPOSITORY ROOT, and must. The .gcno records the source
+#   path as it was given to the compiler, which is relative, so gcov started
+#   anywhere else cannot find the source and writes a four-line stub with no
+#   counters in it - which reads exactly like a file nothing executed.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$REPO/.build
 LOG=${1:-$REPO/.coverage-run.log}
 
 echo "==> building the C harnesses with coverage, into .build"
-rm -f "$OUT"/*.gcda "$OUT"/*.gcno "$REPO"/*.gcov
+rm -f "$OUT"/*.gcda "$OUT"/*.gcno "$REPO"/*.gcov "$REPO"/*.never
 ( cd "$REPO" && rm -rf "$OUT" && \
   make CFLAGS="-O0 -g --coverage -Wall -Wextra -DBPA_STANDALONE" \
   test >"$LOG" 2>&1 ) || {
     echo "the instrumented run did not pass; see $LOG" >&2; exit 1; }
 
 echo "==> reading the counters"
-( cd "$REPO" && for g in "$OUT"/*.gcda; do
-    [ -e "$g" ] || continue
-    gcov -o "$OUT" "$g" >/dev/null 2>&1 || true
-  done )
+GCOV=$REPO/.coverage-gcov
+rm -rf "$GCOV"; mkdir -p "$GCOV"
+i=0
+for g in "$OUT"/*.gcda; do
+  [ -e "$g" ] || continue
+  i=$((i + 1))
+  mkdir -p "$GCOV/$i"
+  ( cd "$REPO" && gcov -o "$OUT" "$g" >/dev/null 2>&1 || true )
+  mv "$REPO"/*.gcov "$GCOV/$i"/ 2>/dev/null || true
+done
 
 echo
 printf '%-18s %10s %10s\n' "file" "executed" "never"
 total=0; never=0
 for f in "$REPO"/src/plugins/bpa/*.c "$REPO"/src/plugins/bpa/*.h; do
   b=$(basename "$f")
-  g="$REPO/$b.gcov"
-  [ -f "$g" ] || continue
-  t=$(grep -cE '^ *[0-9#-]+:' "$g" || true)
-  n=$(grep -cE '^ *#####:' "$g" || true)
-  [ "$t" -gt 0 ] || continue
-  printf '%-18s %10d %10d\n' "$b" "$((t - n))" "$n"
-  total=$((total + t)); never=$((never + n))
+  set -- "$GCOV"/*/"$b.gcov"
+  [ -f "$1" ] || continue
+  # One line per source line, across every object that compiled it: `seen` is
+  # the union, `hit` the lines some object ran. The per-file list of the rest
+  # goes beside the counts, because the number is only the way in.
+  read -r e n <<EOF
+$(awk -F: -v out="$REPO/$b.never" '
+    { ln = $2 + 0; if (ln <= 0) next
+      c = $1; gsub(/[ \t]/, "", c)
+      sub(/\*$/, "", c)          # a partially-inlined line still ran
+      if (c == "-") next
+      if (c !~ /^([0-9]+[kMG]?|#####|=====|\$\$\$\$\$)$/) next
+      seen[ln] = 1
+      if (c ~ /^[0-9]/) hit[ln] = 1 }
+    END {
+      k = 0
+      for (l in seen) if (!(l in hit)) a[k++] = l + 0
+      for (x = 0; x < k; x++)
+        for (y = x + 1; y < k; y++)
+          if (a[y] < a[x]) { t = a[x]; a[x] = a[y]; a[y] = t }
+      for (x = 0; x < k; x++) print a[x] > out
+      m = 0; for (l in seen) m++
+      print m - k, k }' "$@")
+EOF
+  [ "$((e + n))" -gt 0 ] || continue
+  printf '%-18s %10d %10d\n' "$b" "$e" "$n"
+  total=$((total + e + n)); never=$((never + n))
 done
 if [ "$total" -eq 0 ]; then
   echo
@@ -68,7 +118,8 @@ echo "  $((total - never)) of $total executable lines reached, $never never exec
 echo "  A line nobody executes is a question, not a verdict: it may be"
 echo "  measured by a lab, unreachable outside VPP, or a gap. Read them."
 echo
-echo "  the lines themselves are in $REPO/*.gcov"
+echo "  the line NUMBERS are in $REPO/<file>.never, one per line, and the"
+echo "  annotated sources in $GCOV/<n>/, one directory per object."
 echo
 echo "==> rebuilding .build without coverage"
 # Left instrumented, the next `make test` is slower and writes .gcda over

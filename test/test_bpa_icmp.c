@@ -460,5 +460,60 @@ main (void)
   CHECK (parse (pkt, O_INNER_L4 + 6, &e) == 0,
 	 "and is accepted once the identifier is there");
 
+  /*
+   * An embedded protocol this box has no key for.
+   *
+   * The refusal nothing had ever driven, and the one #203 is a record of: the
+   * five cases above are the protocols with something to look a session up
+   * by, and everything else has to be refused rather than keyed on whatever
+   * the bytes at that offset happen to be. GRE was keyed on offset 0 - the
+   * flags and version word, a constant - for the life of the project, which
+   * is a reverse lookup that matched nothing on every box and said so
+   * nowhere.
+   *
+   * What is asserted beside the refusal is that NOTHING was written. The
+   * verdict is poisoned with 0xaa before every parse, so a branch that filled
+   * in an address and a port before deciding it could not key them would leave
+   * them here - and the caller of this function passes a structure it goes on
+   * to read. A refusal that fills in a plausible-looking key is the failure
+   * this arm exists to prevent, arriving from inside the guard rather than
+   * around it.
+   *
+   * Four protocols, chosen for what they would be mistaken for: SCTP and DCCP
+   * carry ports in the first four bytes exactly where TCP does, so a `default`
+   * that fell through to the port path would key them and be wrong only in the
+   * protocol number; AH sits beside ESP in every table; and IPv4-in-IPv4
+   * quotes another IP header, whose first bytes are a version and a length
+   * rather than anything this box handed out.
+   */
+  {
+    static const u8 unkeyable[] = { 132, 33, 51, 4 };
+    bpa_icmp_err_t untouched;
+
+    for (i = 0; i < sizeof (unkeyable); i++)
+      {
+	mk (pkt);
+	pkt[O_INNER_PROTO] = unkeyable[i];
+	CHECK (parse (pkt, PKT_LEN, &e) != 0,
+	       "an ICMP error about embedded IP protocol %u was accepted, and "
+	       "there is nothing in it this box keys a session on",
+	       unkeyable[i]);
+	/* Compared as a whole rather than field by field, so a field added
+	 * later is covered without anybody remembering to add it here. */
+	poison (&untouched);
+	CHECK (memcmp (&e, &untouched, sizeof (e)) == 0,
+	       "the refusal of protocol %u left a key behind: address %u port "
+	       "%u call id %u protocol %u",
+	       unkeyable[i], e.pub_addr, e.pub_port, e.call_id, e.ip_proto);
+      }
+    /* The control, so the loop above is about the protocol rather than about
+     * a packet these four share and the accepted ones do not. */
+    mk (pkt);
+    pkt[O_INNER_PROTO] = IP_PROTOCOL_UDP;
+    CHECK (parse (pkt, PKT_LEN, &e) == 0,
+	   "the same packet with an embedded protocol this box keys on was "
+	   "refused too");
+  }
+
   return bpa_test_verdict (checks, failures);
 }
