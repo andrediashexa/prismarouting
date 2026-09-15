@@ -230,6 +230,42 @@ version has a chance of seeing it.
   Pointed at the wiki as it stood before the page above was corrected, the
   reader names both stale screens, the slot, and what the hole swallowed.
 
+* **97% of what the interactive installer can say had been produced by nothing
+  in this repository, and one of its refusals could not be produced at all.**
+  `appliance/selftest` has had a reader since #302 that refuses a message no
+  box prints; `appliance/hexarouting-install` had none, and the four suites
+  that drive it all drive its ANSWER FILE, which is the non-interactive path
+  ([#364](https://github.com/andrediashexa/hexarouting/issues/364)). What went
+  unrun was the half an operator meets first: the disk list, both "there is no
+  disk" refusals after a mistyped letter, the management-network paragraph,
+  `EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED`, and every screen after the
+  partitioner - "cannot mount", "unsquashfs failed", "no kernel in /boot",
+  "grub-install (BIOS) failed", and the closing sentence an operator reads
+  before they walk away from the machine.
+
+  `test/say-coverage.sh` is that reader, as a holder rather than a third copy
+  of it: the printers are derived from the program, the needle is the message
+  with every `$var`, `${var}`, `$(...)` and backtick cut out, and a message
+  added without a box goes red on the next run. `test/test_installer.sh`,
+  `test/test_bind_nic.sh` and `test/test_apply_tuning.sh` each hand it their
+  boxes and read the verdict at the end - 181, 37 and 30 messages, every one
+  with a box that produced it.
+
+  **`[ -n "$DISK" ] || die "no disk given"` could not fire on any input at
+  all**, and is removed. Every path out of `choose_disk()` either returns
+  non-zero - the empty menu, which exits above it - or prints a path, and the
+  branch is only taken when `$DISK` was empty to begin with. The reader found
+  it by asking for a box and there being none to arrange. What an operator on a
+  machine with nothing to install onto meets is the menu's own refusal, which
+  says that and what to do about it; "no disk given" would have told them they
+  gave no answer, about the only answer they could give.
+
+  Five more branches nothing had executed came out of the same sweep and now
+  have boxes: `--which-driver` says which driver on either kind of box, and
+  `bind-dataplane-nic` reporting a device that DID move (both in
+  `appliance/bind-dataplane-nic`); and a kernel with no 1G hugepage support,
+  and a box with no `update-grub` on it, in `appliance/apply-tuning`.
+
 * **The BGP page quoted a verdict the fix to
   [#363](https://github.com/andrediashexa/hexarouting/issues/363) had just
   changed, and the wiki reader did not catch it.** Both

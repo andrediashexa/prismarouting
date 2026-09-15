@@ -997,10 +997,21 @@ echo "Nothing is written until every question below is answered."
 echo
 
 # ------------------------------------------------------------------ 1. disk
+#
+# NO EMPTINESS CHECK HERE, and the reason is worth keeping so that nobody puts
+# one back. There used to be `[ -n "$DISK" ] || die "no disk given"` on the
+# next line, and it could not fire on any input at all: every path out of
+# choose_disk() either returns non-zero - an empty menu, which exits above -
+# or prints a path, and the branch is only taken when $DISK was empty to begin
+# with. The reader in test/test_installer.sh found it by asking for a box that
+# makes this program print each of its messages, and there was no box to
+# arrange (#364). What an operator meets on a machine with nothing to install
+# onto is the menu's own refusal, which says that and what to do about it;
+# "no disk given" would have told them they gave no answer, about a machine
+# they gave the only possible one for.
 if [ -z "$DISK" ]; then
   DISK=$(choose_disk) || exit 1
 fi
-[ -n "$DISK" ] || die "no disk given"
 [ -b "$DISK" ] || { echo "Available:" >&2; list_disks >&2; \
                     die "$DISK is not a block device"; }
 

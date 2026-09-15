@@ -29,6 +29,15 @@ bad() { echo "  FAIL: $*"; fail=$((fail+1)); }
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 BIN=$REPO/appliance/bind-dataplane-nic
 
+# The pair of readers at the bottom of this file: no message of this program
+# printed by no box, and no line printed by every box. #364 measured the same
+# gap here as in the installer - the boxes were already arranged and nothing
+# was reading what they made the program say. The reader itself is in
+# test/say-coverage.sh, so that it has one spelling rather than one per
+# component.
+. "$(cd "$(dirname "$0")" && pwd)/say-coverage.sh"
+say_init "$BIN"
+
 # <addr> <default-route-if> <iommu|noiommu> [drivers available...]
 mkbox() {
   _a=$1; _d=$2; _i=$3; shift 3
@@ -50,7 +59,8 @@ on_driver() {  # <root> <driver> <addr>
   ln -sf "../../drivers/$2" "$1/sys/bus/pci/devices/$3/driver"
 }
 
-runbind() { OUT=$(HEXA_ROOT="$1" sh "$BIN" 2>&1); RC=$?; }
+runbind() { OUT=$(HEXA_ROOT="$1" sh "$BIN" 2>&1); RC=$?
+             printf '%s\n' "$OUT" | say_box; }
 
 said() { printf '%s\n' "$OUT" | grep -q "$1"; }
 
@@ -355,6 +365,62 @@ for _shape in iommu noiommu; do
     || bad "on a $_shape box the screen would promise '$_promised' and the \
 bind asked for '$_wrote'"
 done
+# AND THE SENTENCE IT PRINTS, on both boxes, which is what an operator reads
+# off `show hardware`. The loop above takes the first word of it and compares
+# that; the rest of the line is the half that says WHY - and on a box with no
+# IOMMU groups it is the difference between a card the kernel protects and one
+# it does not. Neither sentence had been produced by anything (#364).
+for _shape in iommu noiommu; do
+  R=$(mkbox 0000:03:00.0 eth0 "$_shape" vfio-pci uio_pci_generic)
+  _w=$(HEXA_ROOT="$R" sh "$BIN" --which-driver 2>&1)
+  printf '%s\n' "$_w" | say_box
+  case "$_shape:$_w" in
+    "iommu:vfio-pci through the IOMMU"*)
+      ok "a box with IOMMU groups is told the card goes through the IOMMU" ;;
+    "noiommu:uio_pci_generic without IOMMU protection"*)
+      ok "and a box without them is told the protection is not there" ;;
+    *) bad "--which-driver on a $_shape box said: $_w" ;;
+  esac
+done
+
+# THE BIND THAT WORKS, which is the one answer of the two that had never been
+# produced. The tree here has no kernel in it, so a device does not move
+# because something was written to sysfs - and every case above reads the
+# refusal that follows from that.
+#
+# ARRANGED WITH A FIFO WHERE drivers_probe IS. Writing to one blocks until
+# something opens it for reading, so a reader that makes the driver symlink
+# BEFORE it opens the fifo is a kernel that has bound the device by the time
+# the write returns. That is the ordering the real bus gives and nothing else
+# here can: a background process racing the binder would pass or fail on
+# timing, which is the one thing a test may not do.
+R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+rm -f "$R/sys/bus/pci/drivers_probe"
+mkfifo "$R/sys/bus/pci/drivers_probe"
+( # NOT AT ONCE: the binder reads which driver holds the device BEFORE it
+  # writes driver_override, and a symlink moved ahead of that read is a
+  # device that was already bound - which is a different branch and the one
+  # this box is not about. driver_override appearing is the signal that the
+  # read has happened.
+  _n=0
+  while [ ! -s "$R/sys/bus/pci/devices/0000:03:00.0/driver_override" ] \
+        && [ "$_n" -lt 200 ]; do sleep 0.05; _n=$((_n + 1)); done
+  ln -sfn "../../drivers/vfio-pci" \
+       "$R/sys/bus/pci/devices/0000:03:00.0/driver"
+  cat < "$R/sys/bus/pci/drivers_probe" >/dev/null 2>&1 ) &
+_probe=$!
+# A bound on the wait, because a fifo nobody reads is a suite that hangs
+# rather than one that fails.
+OUT=$(HEXA_ROOT="$R" timeout 20 sh "$BIN" 2>&1); RC=$?
+printf '%s\n' "$OUT" | say_box
+wait "$_probe" 2>/dev/null || true
+[ "$RC" = 0 ] && said "is now on vfio-pci" \
+  && ok "a device that DID move is reported as bound, and the run succeeds" \
+  || bad "a device the bus bound was not reported as bound: rc=$RC
+$OUT"
+said "did NOT bind" && bad "it said both that the device moved and that it \
+did not: $OUT"
+
 # And the mode binds nothing: it is called from a VTY that an operator may be
 # typing into while the box is forwarding.
 R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
@@ -363,6 +429,9 @@ HEXA_ROOT="$R" sh "$BIN" --which-driver >/dev/null 2>&1
   && bad "--which-driver wrote driver_override: it is not supposed to touch \
 the box at all" \
   || ok "and it touched nothing while answering"
+
+say_report appliance/bind-dataplane-nic
+rm -rf "$SAY_DIR"
 
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

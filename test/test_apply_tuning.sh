@@ -38,6 +38,15 @@ bad() { echo "  FAIL: $*"; fail=$((fail+1)); }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 BIN=$REPO/appliance/apply-tuning
+
+# The pair of readers at the bottom of this file: no message of this program
+# printed by no box, and no line printed by every box. #364 measured the same
+# gap here as in the installer - the boxes were already arranged and nothing
+# was reading what they made the program say. The reader itself is in
+# test/say-coverage.sh, so that it has one spelling rather than one per
+# component.
+. "$(cd "$(dirname "$0")" && pwd)/say-coverage.sh"
+say_init "$BIN"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -110,6 +119,7 @@ mkbox() {  # [governor] [available governors]
 run() {  # VAR=value ... ; the box must already exist
   OUT=$(env PATH="$STUB:$PATH" REC="$REC" HEXA_ROOT="$R" "$@" sh "$BIN" 2>&1)
   RC=$?
+  printf '%s\n' "$OUT" | say_box
 }
 
 argv()  { cat "$REC/argv"; }
@@ -443,6 +453,58 @@ esac
 said "live system: skipping update-grub" \
   && ok "and it says why, rather than skipping in silence" \
   || bad "a live system skipped update-grub without saying why: $OUT"
+
+echo
+echo "=== the two things this box may not have: 1G pages, and update-grub ==="
+#
+# Both are branches nothing had ever executed (#364), and both are read by an
+# operator on a console after a boot that did not do what they expected.
+
+# A KERNEL WITH NO 1G HUGEPAGE SUPPORT. The line that reports what was
+# reserved reads the count out of sysfs, and on a box where that file does not
+# exist it has to say so - a blank after "reserved 1G pages now:" reads as
+# zero pages reserved, which is a box that tuned itself and a box that cannot
+# be tuned looking identical.
+mkbox
+rm -rf "$R/sys/kernel/mm/hugepages"
+run HEXA_LOW_LATENCY=1
+said "(no 1G support)" \
+  && ok "a kernel with no 1G pages is named as such, not reported as zero" \
+  || bad "the reserved-pages line said nothing about a box that cannot \
+reserve any: $OUT"
+
+# AND A BOX WITH NO update-grub, which is every box this product runs on that
+# is not Debian's own bootloader - and the one case where the tuning is
+# written and cannot be applied. It must say where the file is, because the
+# operator has to carry it into their own bootloader by hand.
+#
+# ARRANGED BY TAKING THE STUB AWAY AND LEAVING PATH ALONE, which is what
+# test/test_installer.sh does for the same shape of question: `command -v`
+# searches PATH, so a tool cannot be hidden by putting something in front of
+# it. A machine that carries a real update-grub cannot run this case and says
+# so rather than measuring something else.
+if command -v update-grub >/dev/null 2>&1; then
+  echo "  SKIP: this machine carries update-grub, so it cannot be taken off"
+  echo "        a PATH it is already on"
+else
+  mv "$STUB/update-grub" "$WORK/update-grub.away"
+  mkbox
+  run HEXA_LOW_LATENCY=1
+  mv "$WORK/update-grub.away" "$STUB/update-grub"
+  [ "$RC" != 0 ] \
+    && ok "a box with no update-grub fails rather than reporting success" \
+    || bad "the tuning was reported as applied on a box that cannot apply it"
+  said "update-grub missing" \
+    && ok "and says which command is missing" \
+    || bad "it failed without naming what is missing: $OUT"
+  said "hexarouting.cfg" \
+    && ok "and names the file to carry into the bootloader by hand" \
+    || bad "it refused without saying where the command line it wrote is: \
+$OUT"
+fi
+
+say_report appliance/apply-tuning
+rm -rf "$SAY_DIR"
 
 if [ "$fail" -eq 0 ]; then
   echo
