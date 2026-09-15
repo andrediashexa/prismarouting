@@ -36,8 +36,23 @@
 # are counted and named as unreadable rather than passed over in silence.
 SAY_MIN=${SAY_MIN:-8}
 
-say_init() {   # <program source>
+# WHICH LANGUAGE THE SOURCE IS IN, because the syntax a value is written in
+# differs and the rule about it does not. `say_messages` reads shell;
+# `say_messages_c` reads C. Both hand back the same rows, both cut rather than
+# glob, and everything below this line - the floor, the most-specific-message
+# walk, both halves and the report - is the same code for either. A second
+# reader for C would have been a second spelling of the needle rule, which is
+# the thing this file exists to stop.
+say_init() {   # <program source> [sh|c] [printers, for c]
   SAY_SRC=$1
+  SAY_LANG=${2:-sh}
+  SAY_PRINTERS=${3:-}
+  # WHAT A BOX IS MADE OF. "run" means every line in it came out of the
+  # program; "transcript" means the program's output is a few lines among
+  # somebody else's. It decides what the second half below can honestly ask,
+  # and the argument is there. A suite that boxes transcripts sets it after
+  # this call.
+  SAY_BOX_IS=run
   SAY_DIR=$(mktemp -d)
   : > "$SAY_DIR/every-line"
   : > "$SAY_DIR/per-box-lines"
@@ -65,6 +80,10 @@ say_box() {
   # at zero would take the floor below down with it and report the whole
   # reader as having asked nothing.
   echo box >> "$SAY_DIR/boxes"
+  # AND KEPT WHOLE, ONE FILE PER BOX, for the half below that asks what EVERY
+  # box has in common. Numbered off the file just written, for the same reason
+  # the count is in a file: a counter in a variable dies with the pipeline.
+  printf '%s\n' "$_sb" > "$SAY_DIR/box-$(grep -c . "$SAY_DIR/boxes")"
 }
 
 # Every printer this program has, DERIVED from it rather than listed here.
@@ -216,6 +235,290 @@ say_messages() {   # <printers>
   ' "$SAY_SRC"
 }
 
+# The same rows, read out of C instead of out of shell.
+#
+# WHY A SECOND EXTRACTION AND NOT A SECOND READER. Everything that makes the
+# rule a rule is above and below this function: the needle is cut and not
+# globbed, every literal fragment is kept in order, the floor is SAY_MIN, and
+# the report walks each printed line onto the most specific message it
+# carries. None of that is repeated here. What differs is only what a VALUE
+# looks like - `$nbad` in a shell script and `%u` in a format string - and a
+# file that knew one syntax would have had the whole rule written twice to
+# learn the other, which is #311's defect and the reason this holder exists.
+#
+# THE PRINTERS ARE NAMED BY THE CALLER, not derived as say_printers() derives
+# them. The shell derivation works because a shell function that hands `$1` to
+# echo is visibly a printer; C has no such shape - `vlib_cli_output` is
+# declared in a VPP header this repository does not own, and a derivation over
+# the plugin alone would find nothing at all. So the caller states it and the
+# floor in say_report catches a name that finds nothing, which is the failure
+# that matters.
+#
+# WHAT IT READS, exactly: the FORMAT STRING of each call, which is the first
+# argument that is a string literal, with adjacent literals concatenated -
+# clang-format splits one sentence over four source lines and each piece on
+# its own is not a message anybody printed.
+#
+# WHAT IT DOES NOT READ, said out loud because the count below is only honest
+# against it:
+#
+#   - a literal passed as a VALUE rather than as the format. `"   BELOW the
+#     floor " rfc " asks for"` is a whole sentence handed to a `%s`, and so is
+#     `" - PINNED by a forward, so no hold-down will take it"`. They reach the
+#     screen and they are not needles, because the needle rule is written on
+#     the format string and a value is what the rule cuts out;
+#   - a message built with format() into a vector that some later call prints
+#     with "%U" or "%v". `show bpa pool` and `show bpa config` are written
+#     that way in their entirety. Those are a separate body of text and giving
+#     them a box is a separate measurement - naming them here would move the
+#     denominator without moving the evidence.
+#
+# A comment is not a call site, and a string inside one is not a message: the
+# whole file is blanked of comments and character constants first, in place,
+# so that every line number below is still the line number in the source.
+#
+# NOT THE SAME RULE AS test/test_wiki_screens.py, which also reads this C, and
+# deliberately not. That one takes every adjacent-literal run in the file,
+# whatever printed it, and GLOBS each conversion into a hole, because it is
+# matching a published wiki page against a template and the page carries a
+# value where the hole is. This hunts a needle inside a captured run, where
+# the value is whatever that box happened to produce - so it cuts, for the
+# reason test_selftest.sh gives about "$nbad file(s)". Two questions, two
+# rules; what must not happen is a third spelling of either.
+say_messages_c() {   # <printer name(s)>
+  awk -v printers="$1" -v sq="'" '
+    BEGIN { NP = split(printers, P, " "); SQ = sq }
+    { SRC[FNR] = $0 }
+    END {
+      N = FNR
+      strip()
+      for (l = 1; l <= N; l++) {
+        s = SRC[l]; off = 0
+        while (1) {
+          hit = 0
+          for (k = 1; k <= NP; k++) {
+            p = index(substr(s, off + 1), P[k])
+            if (p == 0) continue
+            if (hit == 0 || off + p < at) { at = off + p; ln = length(P[k]); hit = 1 }
+          }
+          if (!hit) break
+          off = at
+          c = (at == 1) ? " " : substr(s, at - 1, 1)
+          if (c ~ /[A-Za-z0-9_]/) continue
+          c = substr(s, at + ln, 1)
+          if (c ~ /[A-Za-z0-9_]/) continue
+          site(l, at + ln)
+        }
+      }
+    }
+    # Comments and character constants blanked, byte for byte, so the call
+    # sites keep the line numbers a reader will go and look at.
+    function strip(   l, s, o, i, L, c, d) {
+      INC = 0
+      for (l = 1; l <= N; l++) {
+        s = SRC[l]; o = ""; i = 1; L = length(s)
+        while (i <= L) {
+          c = substr(s, i, 1)
+          if (INC) {
+            if (c == "*" && substr(s, i + 1, 1) == "/") { INC = 0; o = o "  "; i += 2 }
+            else { o = o " "; i++ }
+            continue
+          }
+          if (c == "/" && substr(s, i + 1, 1) == "*") { INC = 1; o = o "  "; i += 2; continue }
+          if (c == "/" && substr(s, i + 1, 1) == "/") { while (i <= L) { o = o " "; i++ }; continue }
+          if (c == "\"") {
+            o = o c; i++
+            while (i <= L) {
+              d = substr(s, i, 1)
+              if (d == "\\") { o = o substr(s, i, 2); i += 2; continue }
+              o = o d; i++
+              if (d == "\"") break
+            }
+            continue
+          }
+          if (c == SQ) {
+            o = o " "; i++
+            while (i <= L) {
+              d = substr(s, i, 1)
+              if (d == "\\") { o = o "  "; i += 2; continue }
+              o = o " "; i++
+              if (d == SQ) break
+            }
+            continue
+          }
+          o = o c; i++
+        }
+        SRC[l] = o
+      }
+    }
+    # One call, from the open paren to the one that closes it, however many
+    # lines that takes. Parentheses inside a string do not count, which is why
+    # this walks characters rather than matching a regexp per line.
+    function site(l, i,   depth, started, cl, ci, cs, CL, c, d, txt) {
+      depth = 0; started = 0; cl = l; ci = i; txt = ""
+      while (cl <= N) {
+        cs = SRC[cl]; CL = length(cs)
+        while (ci <= CL) {
+          c = substr(cs, ci, 1)
+          if (c == "\"") {
+            txt = txt c; ci++
+            while (ci <= CL) {
+              d = substr(cs, ci, 1)
+              if (d == "\\") { txt = txt substr(cs, ci, 2); ci += 2; continue }
+              txt = txt d; ci++
+              if (d == "\"") break
+            }
+            continue
+          }
+          if (c == "(") { depth++; started = 1 }
+          else if (c == ")") depth--
+          txt = txt c; ci++
+          if (started && depth == 0) { emit(l, txt); return }
+        }
+        txt = txt " "
+        cl++; ci = 1
+      }
+    }
+    function emit(line, call,   i, L, c, e, d, na, cur, args, fmt, res) {
+      sub(/^[ \t]*\(/, "", call)
+      sub(/\)[ \t]*$/, "", call)
+      na = 0; cur = ""; d = 0; L = length(call); i = 1
+      while (i <= L) {
+        c = substr(call, i, 1)
+        if (c == "\"") {
+          cur = cur c; i++
+          while (i <= L) {
+            e = substr(call, i, 1)
+            if (e == "\\") { cur = cur substr(call, i, 2); i += 2; continue }
+            cur = cur e; i++
+            if (e == "\"") break
+          }
+          continue
+        }
+        if (c == "(" || c == "[") d++
+        else if (c == ")" || c == "]") d--
+        else if (c == "," && d == 0) { args[++na] = cur; cur = ""; i++; continue }
+        cur = cur c; i++
+      }
+      args[++na] = cur
+      fmt = (na >= 2) ? args[2] : ""
+      sub(/^[ \t]+/, "", fmt); sub(/[ \t]+$/, "", fmt)
+      # A call whose format is a variable is STILL A ROW, with an empty
+      # needle, so it is counted and named as unreadable rather than
+      # disappearing from the denominator. A site that vanished would be a
+      # branch this reader reported as covered by never having looked at it.
+      if (substr(fmt, 1, 1) != "\"") { printf "%d\t\n", line; return }
+      res = ""; i = 1; L = length(fmt)
+      while (i <= L) {
+        c = substr(fmt, i, 1)
+        if (c == "\"") {
+          i++
+          while (i <= L) {
+            e = substr(fmt, i, 1)
+            if (e == "\\") { res = res substr(fmt, i, 2); i += 2; continue }
+            i++
+            if (e == "\"") break
+            res = res e
+          }
+          continue
+        }
+        i++
+      }
+      printf "%d\t%s\n", line, needle(res)
+    }
+    # THE VALUES PUNCHED OUT, exactly as the shell pass above punches out
+    # $var and $(...): a conversion is a value and the box prints whatever it
+    # was handed, so hunting for one under its own spelling would hunt for a
+    # string no box prints.
+    #
+    # The length modifier goes with the conversion and not before it. VPP
+    # writes "%Lu" for a u64 and "%llu" beside it; cutting "%L" alone leaves a
+    # stray "u" glued to the front of the sentence after it, and "u extensions
+    # placed where it says" is a needle no run will ever contain.
+    #
+    # An ESCAPE cuts too. "\n" is a line break, so a needle that spanned one
+    # would be looked for on a line that cannot hold it.
+    function needle(s,   out, i, L, c, j, m, k, np, parts, res) {
+      out = ""; i = 1; L = length(s)
+      while (i <= L) {
+        c = substr(s, i, 1)
+        if (c == "\\") { out = out "\001"; i += 2; continue }
+        if (c == "%") {
+          j = i + 1
+          while (j <= L && substr(s, j, 1) ~ /[-+ #0-9.*]/) j++
+          m = substr(s, j, 2)
+          if (m == "hh" || m == "ll") j += 2
+          else if (substr(s, j, 1) ~ /[hlLqjzt]/) j++
+          if (j <= L) j++
+          out = out "\001"; i = j; continue
+        }
+        out = out c; i++
+      }
+      np = split(out, parts, "\001"); res = ""
+      for (k = 1; k <= np; k++) if (length(parts[k]) > 0)
+        res = (res == "" ? parts[k] : res "\001" parts[k])
+      return res
+    }
+  ' "$SAY_SRC"
+}
+
+# Which messages a body of captured output carries, one per line printed.
+#
+# PULLED OUT SO THAT BOTH HALVES USE IT. The half that asks "did any box print
+# this" runs it over every box's output at once; the half that asks "did EVERY
+# box print this" runs it over one box at a time. Written twice they would be
+# two spellings of the same walk, and the walk is the delicate part.
+say_match() {   # <messages file> <captured output file>
+awk -F'\t' '
+  function literal(frags,   i, m, tot) {
+    tot = 0; m = split(frags, f, "\001")
+    for (i = 1; i <= m; i++) tot += length(f[i])
+    return tot
+  }
+  # In ORDER, and all of them. A line carrying the fragments of the more
+  # specific message carries the less specific one as well, so the order
+  # walk is what separates them and the total literal length is what decides
+  # which message the line is spent on.
+  function ordered(line, frags,   i, m, at, p, first) {
+    m = split(frags, f, "\001"); at = 1; first = 0
+    for (i = 1; i <= m; i++) {
+      p = index(substr(line, at), f[i])
+      if (p == 0) return 0
+      if (first == 0) first = at + p - 1
+      at = at + p + length(f[i]) - 1
+    }
+    SPAN_A = first; SPAN_B = at - 1
+    return 1
+  }
+  NR == FNR { if (literal($2) >= min) need[$2] = 1 ; next }
+  # ONE LINE CAN CARRY MORE THAN ONE MESSAGE, and wherever a program asks a
+  # question it does: a prompt is a printf with no newline, so what an
+  # operator sees on one row of the console is
+  #
+  #   Type 'yes' to install: error: not confirmed (got 'no')
+  #
+  # - the question and the refusal together. Spending the line on its single
+  # most specific message loses the other, and "not confirmed" then reads as
+  # a branch nothing has run while the suite that arranged it is asserting
+  # on the very same output. So the best match is taken, its span is CUT
+  # OUT, and what is left is read again. The loop ends because the line only
+  # ever gets shorter.
+  {
+    line = $0
+    while (1) {
+      bestlen = 0; best = ""
+      for (nd in need)
+        if (ordered(line, nd) && literal(nd) > bestlen) {
+          bestlen = literal(nd); best = nd; ba = SPAN_A; bb = SPAN_B
+        }
+      if (best == "") break
+      print best
+      line = substr(line, 1, ba - 1) substr(line, bb + 1)
+    }
+  }
+' min="$SAY_MIN" "$1" "$2"
+}
+
 # The two halves, and the floor under both of them.
 say_report() {   # <what to call the program in the report>
   _what=${1:-$SAY_SRC}
@@ -229,8 +532,10 @@ say_report() {   # <what to call the program in the report>
     bad "no box's output was kept, so the message readers asked nothing"
     return
   fi
-  _printers=$(say_printers)
-  say_messages "$_printers" > "$SAY_DIR/messages"
+  case ${SAY_LANG:-sh} in
+    c) say_messages_c "$SAY_PRINTERS" > "$SAY_DIR/messages" ;;
+    *) say_messages "$(say_printers)" > "$SAY_DIR/messages" ;;
+  esac
   if [ ! -s "$SAY_DIR/messages" ]; then
     bad "no message could be read out of $_what, so this reader would report \
 every branch of it as covered"
@@ -251,54 +556,7 @@ every branch of it as covered"
   # has run one of them. Keyed by line instead, two of the three could never
   # go green and the rule would have to carry an exception - which is the one
   # thing test_selftest.sh says three times it must not.
-  awk -F'\t' '
-    function literal(frags,   i, m, tot) {
-      tot = 0; m = split(frags, f, "\001")
-      for (i = 1; i <= m; i++) tot += length(f[i])
-      return tot
-    }
-    # In ORDER, and all of them. A line carrying the fragments of the more
-    # specific message carries the less specific one as well, so the order
-    # walk is what separates them and the total literal length is what decides
-    # which message the line is spent on.
-    function ordered(line, frags,   i, m, at, p, first) {
-      m = split(frags, f, "\001"); at = 1; first = 0
-      for (i = 1; i <= m; i++) {
-        p = index(substr(line, at), f[i])
-        if (p == 0) return 0
-        if (first == 0) first = at + p - 1
-        at = at + p + length(f[i]) - 1
-      }
-      SPAN_A = first; SPAN_B = at - 1
-      return 1
-    }
-    NR == FNR { if (literal($2) >= min) need[$2] = 1 ; next }
-    # ONE LINE CAN CARRY MORE THAN ONE MESSAGE, and wherever a program asks a
-    # question it does: a prompt is a printf with no newline, so what an
-    # operator sees on one row of the console is
-    #
-    #   Type 'yes' to install: error: not confirmed (got 'no')
-    #
-    # - the question and the refusal together. Spending the line on its single
-    # most specific message loses the other, and "not confirmed" then reads as
-    # a branch nothing has run while the suite that arranged it is asserting
-    # on the very same output. So the best match is taken, its span is CUT
-    # OUT, and what is left is read again. The loop ends because the line only
-    # ever gets shorter.
-    {
-      line = $0
-      while (1) {
-        bestlen = 0; best = ""
-        for (nd in need)
-          if (ordered(line, nd) && literal(nd) > bestlen) {
-            bestlen = literal(nd); best = nd; ba = SPAN_A; bb = SPAN_B
-          }
-        if (best == "") break
-        print best
-        line = substr(line, 1, ba - 1) substr(line, bb + 1)
-      }
-    }
-  ' min="$SAY_MIN" "$SAY_DIR/messages" "$SAY_DIR/every-line" \
+  say_match "$SAY_DIR/messages" "$SAY_DIR/every-line" \
     | sort -u > "$SAY_DIR/seen"
 
   # One row per distinct message: "<line>[,<line>...]<tab><needle>", and the
@@ -340,6 +598,50 @@ for every one"
 characters: those are values, not messages, and no run can recognise them"
 
   echo
+  # WHAT A BOX IS MADE OF, which decides what this half can honestly ask.
+  #
+  #   run        every line in the box came out of the program, because the
+  #              box IS the program run once. A line on every box is then a
+  #              branch of the program whose other form nothing has seen, and
+  #              that is what found the three stubs in test_selftest.sh.
+  #
+  #   transcript the program's output is a few lines among somebody else's.
+  #              A lab transcript is eight hundred lines of container build,
+  #              vppctl and packet counts with a dozen `show bpa` screens in
+  #              it, and "a line every box printed" there is "LAB PASSED" and
+  #              the verdict banner - true, and a statement about the lab
+  #              harness rather than about the program. Asked of the program
+  #              the question is the same one a word later: is there a MESSAGE
+  #              every box printed, which is a branch whose absence nothing
+  #              has seen.
+  #
+  # Not a weakening: the transcript form is stricter about what it looks at
+  # and identical in what it refuses. A rule that went red on every all-green
+  # lab suite would be a rule people run around, which is #333.
+  case ${SAY_BOX_IS:-run} in
+  transcript)
+    : > "$SAY_DIR/per-box-msgs"
+    _b=1
+    while [ "$_b" -le "$SAY_BOXES" ]; do
+      say_match "$SAY_DIR/messages" "$SAY_DIR/box-$_b" | sort -u \
+        >> "$SAY_DIR/per-box-msgs"
+      _b=$((_b + 1))
+    done
+    echo "=== and no message of $_what may have been printed by every box ==="
+    _always=$(sort "$SAY_DIR/per-box-msgs" | uniq -c \
+              | awk -v n="$SAY_BOXES" '$1 == n' | sed 's/^ *[0-9]*  *//' \
+              | tr '\001' '~' | grep . || true)
+    if [ -n "$_always" ]; then
+      bad "these message(s) were printed by all $SAY_BOXES boxes, so nothing \
+here has ever seen the program not print them:"
+      printf '%s\n' "$_always" | sed 's/^/    /'
+    else
+      ok "$SAY_BOXES boxes, and every message has a box that does not print it"
+    fi
+    return
+    ;;
+  esac
+
   echo "=== and no line of $_what may have been printed by every box ==="
   # THE OTHER HALF, and they are not the same thing. The half above refuses a
   # message printed by NO box, which is a branch nothing has run. This one
