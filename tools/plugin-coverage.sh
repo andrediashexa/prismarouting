@@ -3,13 +3,17 @@
 #
 #   sh tools/plugin-coverage.sh
 #
-# Nothing measured this. The ten C harnesses run 65,376 checks and their
-# verdict is a count of checks, not of product reached - so a guard nobody
-# enters looks exactly like one everybody enters, and the first measurement
-# found twelve such lines in bpa_dyn.c alone: the whole stride placement arm,
-# with both of its counters, behind `p->block_stride != 0`. Every pool those
-# harnesses built had stride 0, because the one function that makes them
-# memsets and never sets one.
+# Nothing measured this. The ten C harnesses each print their own check count,
+# and that verdict is a count of checks rather than of product reached - so a
+# guard nobody enters looks exactly like one everybody enters, and the first
+# measurement found twelve such lines in bpa_dyn.c alone: the whole stride
+# placement arm, with both of its counters, behind `p->block_stride != 0`.
+# Every pool those harnesses built had stride 0, because the one function that
+# makes them memsets and never sets one.
+#
+# The total used to be written here, as "run 65,376 checks". It is larger every
+# time a case is added and was 65,767 within the week, so the sentence names
+# where the number comes from instead of carrying a copy of it.
 #
 # IT IS NOT A PASS OR A FAIL. A line nobody executes is a question - is it
 # measured somewhere more expensive, is it reachable at all, is it dead - and

@@ -82,8 +82,10 @@ mkpool (bpa_pool_t *p, const char *name, u32 n_out, u16 port_max, u16 bsz,
  * block_stride 0 - and the whole stride arm of bpa_dyn_acquire_extra() is
  * behind `p->block_stride != 0 && !d->reserve`. Measured with gcov over all
  * ten C harnesses: those twelve lines, and the n_stride_placed and
- * n_stride_missed counters with them, were never executed by any of the
- * 65,376 checks this repository runs without a container.
+ * n_stride_missed counters with them, were never executed by a single one of
+ * the checks this repository runs without a container. The count is what
+ * `make test` prints; it was 65,376 when this was written and is larger every
+ * time a case is added, which is why it is not written here.
  *
  * lab/extblocks.sh and lab/dynamic-workers.sh do reach it, so the path is not
  * unmeasured - it is measured only where measuring is expensive. A regression

@@ -401,9 +401,15 @@ chmod +x "$GHBIN/gh"
 
 echo
 echo "=== and this suite reaches only the half that needs no image ==="
-# Said as a number rather than left to be assumed. The gate refuses eighteen
-# times; everything after RELEASE_GATE_CHECK_ONLY needs a 321 MB image built,
-# booted and installed, and is measured by running a real release.
+# Said as a number rather than left to be assumed, and the number is COUNTED
+# three lines down rather than written here: it was "the gate refuses eighteen
+# times" sitting directly above the code that computes it, and the gate has
+# refused twenty-four times since. A count in prose beside a count in code is
+# the second copy this repository keeps paying for, and this one had the two
+# touching.
+#
+# Everything after RELEASE_GATE_CHECK_ONLY needs a 321 MB image built, booted
+# and installed, and is measured by running a real release.
 REFUSALS=$(grep -c 'echo "error:' "$REPO/tools/release-gate.sh")
 BEFORE=$(awk '/RELEASE_GATE_CHECK_ONLY:-0/ {exit} /echo "error:/ {n++} END {print n+0}' \
          "$REPO/tools/release-gate.sh")
