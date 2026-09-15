@@ -191,6 +191,14 @@ BADC=$($HX -c "configure" -c "cgnat pool doomed" -c "inside 100.64.32.0/22" \
 echo "$BADC" | tail -3 | sed 's/^/  /'
 expect_in "a refused commit says so" "error" "$BADC"
 expect_in "and names the pool" "doomed" "$BADC"
+# THE CAUSE, and not only that something was refused. `error` is green for any
+# refusal at all, and `doomed` is green for any refusal about this pool - which
+# is how this case stayed green for four months while the device was refusing
+# something the comment above did not mention. A case about a device refusal
+# has to name the refusal, or the next change that moves the cause leaves it
+# passing about the wrong thing again.
+expect_in "and says WHICH refusal, so a cause that moves is seen" \
+  "overlapping" "$BADC"
 expect_not_in "and does not claim success" "commit complete" "$BADC"
 expect_not_in "and the pool is not in the dataplane" "pool doomed" "$(vppctl show bpa pool)"
 

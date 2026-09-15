@@ -143,6 +143,12 @@ version has a chance of seeing it.
   driving all four statements through a `Shell` and seeing nothing refused at
   the prompt, which is the property the case needs and the old one had lost.
 
+  And the case names the refusal now. `error` is green for any refusal at all
+  and `doomed` is green for any refusal about that pool, which is exactly how
+  it stayed green while the device refused something else: a sweep of every
+  `expect_in` in `lab/` finds only two needles that generic, and this was one
+  of them. The other is an `expect_not_in` where generic is the right answer.
+
 * **Three wiki screens the new reader caught, two of them made stale an hour
   earlier by this same release.** `test/test_wiki_screens.py` went in green and
   then went red on its first real test: the split of the `nat: a hierarchy, not
