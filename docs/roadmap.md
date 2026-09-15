@@ -2072,8 +2072,30 @@ in the last of those, 108 anchored product mutations, one defect**: the only
 check in the tree about the `match` pipe filter compared one product-backed
 call with itself.
 
-An instrument is only worth the next defect it refuses, not the one it found,
-and two findings from 2026-09-15 are open on exactly that distinction:
+An instrument is only worth the next defect it refuses, not the one it found.
+Four findings on 2026-09-15 came out of that distinction, and #359, #360, #361
+and #362 are closed: the console rule is on the file now rather than on the
+screens each earlier fix had measured, the shape `?` promised for `block-size`
+is enforced where the request is made, `ports` has the three refusals it never
+had, and seven verdict rows fit the console. What each of them measured is
+below; what two of them explicitly did NOT cover is
+[#363](https://github.com/andrediashexa/hexarouting/issues/363), which is open.
+
+**The console rule holds 131 rows and not the 296 that carry a value**
+([#363](https://github.com/andrediashexa/hexarouting/issues/363)). That is the
+majority, and it cannot be closed by reading the source: the width of those
+rows is not a property of it. `error: neighbour {peer} does not keep what it
+received` is 48 columns plus the peer, which fits an IPv4 address and does not
+fit a full-length IPv6 one - and that is not hypothetical, because #349
+shortened two headlines for exactly that, measured on an IPv6 peer. The method
+is the one #276 used for `say_finding`: drive each site with the widest value
+that can actually reach it, taking the widest MEMBER of a closed set where the
+value comes from one, and where the value is genuinely unbounded - an
+operator's route-map name - put it on a row of its own so a fold costs nothing,
+which is what `say_finding` and #362's pool refusal already do. What is wanted
+is not 296 fixes but the reader that refuses the 297th site.
+
+The two that are closed, and what they measured:
 
 * [#359](https://github.com/andrediashexa/hexarouting/issues/359) - the console
   width was fixed three times, on the screens each fix had measured, and never
@@ -2095,6 +2117,21 @@ and two findings from 2026-09-15 are open on exactly that distinction:
   the mirror of #352's expensive half, where the refusal named a number the
   operator never typed - here it names the number they did type, and still
   arrives one step too late, after a candidate is built.
+* [#361](https://github.com/andrediashexa/hexarouting/issues/361) - and the
+  statement beside it, `ports`, was enforced by **nothing at all**: a max below
+  the min, both ends above 65535, and a negative one were taken at the prompt
+  and staged, on a field the dataplane carries as a u16. Three refusals, not
+  one, because they are three different mistakes - and the third, a range too
+  narrow to hold one block, is asked of the finished pool at the commit rather
+  than at either line, because `block-size` and `ports` can be typed in either
+  order and a guard at either would refuse the first half of a correct pool.
+* [#362](https://github.com/andrediashexa/hexarouting/issues/362) - seven
+  refusal VERDICTS at 83 to 217 columns, which is the row `err` must never
+  fold. The 217-column one was the `nat cgnat logging` usage line, and it did
+  not take a reflow: it is built from `CGNAT_CONFIG` now, and deriving it
+  showed the hand-written copy had already drifted from `?` in two spellings.
+  The same commit found the FRR-silent sentence written out twice, character
+  for character, at two call sites.
 
 The dataplane plugin's C suites are the last body unswept.
 
