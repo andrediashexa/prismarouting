@@ -2357,6 +2357,43 @@ check("1000Mb/s" in _out,
 # printed as a number is a number somebody reads past.
 check("-1Mb/s" not in _out,
       f"and one that does not is not shown a negative speed: {_out}")
+
+# AND THE COLUMNS DO NOT RUN TOGETHER, on every state the kernel can write.
+#
+# The Link column was seven wide and `unknown` is seven characters, so a card
+# in that state printed `unknown-` and `unknown1000Mb/s` with no space at all
+# (#347). It is not an odd value: host_nics() falls back to it when operstate
+# cannot be read, and the kernel writes it for any netdev whose driver sets no
+# carrier - every card on a box nobody has tuned yet.
+#
+# Driven over the whole closed set RFC 2863 defines rather than over the
+# states this fixture happens to carry, because the box that meets
+# `lowerlayerdown` is somebody else's. What is asserted is the SPEED's column,
+# not the width of the state: a row whose speed starts at a different offset
+# from the header's is a table nobody can read down.
+_STATES = ("up", "down", "unknown", "testing", "dormant", "notpresent",
+           "lowerlayerdown")
+_cols = set()
+for _st in _STATES:
+    _o = show_hw([("eno1", "0000:03:00.0", "ixgbe", _st, "3c:ec:ef:1a:2b:3c",
+                   1000)], default="eno1")
+    _row = [l for l in _o.splitlines() if l.startswith("  eno1 ")]
+    check(len(_row) == 1,
+          f"the row for a card in state {_st!r} was not printed, so nothing "
+          f"below measures it: {_o!r}")
+    if _row:
+        check(f"{_st}1000Mb/s" not in _row[0],
+              f"the state and the speed run together for {_st!r}, with no "
+              f"space between the two columns: {_row[0]!r}")
+        _cols.add(_row[0].index("1000Mb/s"))
+_hdr = [l for l in show_hw(_TWO, default="eno1").splitlines()
+        if "Speed" in l]
+check(len(_cols) == 1,
+      f"the speed starts in a different column depending on the state: "
+      f"{sorted(_cols)}")
+check(_hdr and _hdr[0].index("Speed") in _cols,
+      f"the header's Speed is at {_hdr[0].index('Speed') if _hdr else None} "
+      f"and the rows put theirs at {sorted(_cols)}")
 check("\n  lo " not in _out and "00:00:00:00:00:00" not in _out,
       f"the loopback has no PCI address and is not a candidate: {_out}")
 check("up" in _out and "down" in _out,
@@ -6512,7 +6549,11 @@ def _nic_hints(names, default):
 _h = _nic_hints(["ens18"], "ens18")
 check("refused" not in _h["ens18"],
       f"the only card is not marked refused, because it is not: {_h}")
-check("goes with it" in _h["ens18"],
+# The needle is what the row PROMISES, not the words it promises it in: the
+# hint was reworded to fit the 79-column console (#346) and this went red on
+# correct work. What has to be there is that the card goes and its address
+# goes with it.
+check("handed over" in _h["ens18"] and "address" in _h["ens18"],
       f"and the mark says what does happen to it: {_h}")
 
 _h = _nic_hints(["ens18", "ens19"], "ens18")

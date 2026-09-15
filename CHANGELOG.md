@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`show hardware`'s Link and Speed columns ran together**
+  ([#347](https://github.com/andrediashexa/hexarouting/issues/347)). The Link
+  column was seven wide and `unknown` is seven characters, so a card in that
+  state printed `unknown-` and `unknown1000Mb/s` with no space at all, on the
+  screen an operator picks a card from. `unknown` is not an odd value:
+  `host_nics()` falls back to it when `operstate` cannot be read, and the
+  kernel writes it for any netdev whose driver sets no carrier - which is every
+  card on a box nobody has tuned yet. The column is 15 now, which is
+  `lowerlayerdown` plus a space, sized from the closed set RFC 2863 defines
+  rather than from the states this box happens to have: `notpresent` is ten and
+  would have pushed Speed out again. The width is one name used by the header
+  and the rows, so the two cannot drift.
+
+  Driven over all seven states, and what is asserted is where the **speed**
+  starts rather than how wide the state is - a row whose speed begins at a
+  different offset from the header's is a table nobody can read down. At the
+  old width three states run together; at eight, which is enough for
+  `unknown`, two still do and the speed starts in three different columns.
+
 * **The one-card handover printed two lines wider than the console it is read
   on** ([#346](https://github.com/andrediashexa/hexarouting/issues/346)). It is
   the path a VM operator meets first, and `config.CONSOLE_COLUMNS` is 79. The
