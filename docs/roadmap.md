@@ -2240,6 +2240,22 @@ records, holding an interface name, an address and a MAC. The method is
 rather than to wrap the verdict, because `say_list` and `say_prose` already
 fold and the scripts choose between them on purpose.
 
+**And a reader that names a branch as never run can be wrong about that**
+([#369](https://github.com/andrediashexa/hexarouting/issues/369)).
+`tools/plugin-says.sh` found its first product-facing defect within a day of
+landing - `bpa_audit.c`'s plural tamper branch, the half of *"N entries were
+removed from the middle"* that no lab had ever produced, on the screen
+somebody reads when they are asking whether the configuration trail was
+altered. `lab/audit.sh` removes two adjacent entries now and produces both
+halves. **And the reader went on naming it.** Reproduced at four indentations:
+the same row is attributed at nought and two spaces and reported unseen at
+four and six, and the labs indent a screen by two with `sed 's/^/  /'` as a
+matter of house style. So the corpus is the LAB'S RENDERING of the box's
+output rather than the box's output, and a lab being tidy may be
+indistinguishable from a branch never running. The 38 and the 48 those readers
+name are an upper bound until that is fixed, and the re-measurement afterwards
+is the real worklist.
+
 **And a reader can be right about most screens and blind to one word**
 ([#365](https://github.com/andrediashexa/hexarouting/issues/365)).
 `test/test_wiki_screens.py` compares every screen the public wiki quotes
