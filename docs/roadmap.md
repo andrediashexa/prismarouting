@@ -2247,7 +2247,8 @@ is the `vppctl` handler**. The binary API path hexash uses calls the other two
 warn functions and not this one, so an operator who configures `reserve` from
 the VTY - which is every operator, since the VTY exists so nobody has to drop
 to `vppctl` - sees it neither on the terminal nor in the log. And
-`configuracao-de-pool.md` tells them *"A caixa avisa na criação do pool"*. The
+the pool page of the operator wiki tells them the box warns at pool
+creation. The
 cost is concrete: workers holding no reserve at all, whose subscribers can
 never be given a second block, so a customer who fills their block stays full
 on a box that reports a reserve. This is the highest-priority open defect by

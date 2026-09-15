@@ -120,6 +120,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A check that compared two trees, and the day the wiki was published is
+  the day it broke.** `test/test_wiki_roundtrip.sh` drives the release gate and
+  requires it to agree with `tools/wiki-status.sh` rather than asserting a
+  verdict - and its comment says exactly why: *"'The gate refuses' would be a
+  check that breaks the day the wiki is published, which is the day the product
+  gets better"*.
+
+  It got that right and then asked the two of them about **different trees**.
+  The holder was run against the working tree; the gate clones the repository
+  and checks out a tag. Those agreed only for as long as nothing had been
+  published since the newest tag. When the 28 pages went out, the working tree
+  went clean, the tag stayed behind, and the check reported *"the gate is
+  deciding this for itself"* about a gate that was reading the holder
+  correctly.
+
+  One question, one tree: the holder is asked about the gate's own clone now,
+  and so is the page list in the check beside it, which had the same fault for
+  the same reason. Shown failing with the gate made to decide for itself, which
+  is what the check is for and what it still catches.
+
 * **The plugin message reader named a branch unseen that two labs were
   printing, so the 38 and the 48 it published were an upper bound**
   ([#369](https://github.com/andrediashexa/hexarouting/issues/369)).

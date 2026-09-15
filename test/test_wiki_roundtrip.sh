@@ -765,11 +765,6 @@ GATE_TAG=$(git -C "$REPO" tag --sort=-v:refname 2>/dev/null | head -1)
 if [ -z "$GATE_TAG" ]; then
   bad "this repository has no tag, so the gate cannot be driven at all"
 else
-  if sh "$REPO/tools/wiki-status.sh" >/dev/null 2>&1; then
-    HOLDER=clean
-  else
-    HOLDER=drafts
-  fi
   GHBIN=$WORK/ghbin
   mkdir -p "$GHBIN"
   # `auth status` succeeds so the gate takes its asking path, and the issue
@@ -793,6 +788,26 @@ GHSTUB
   # proves it reached the wiki step is one of the wiki step's own two lines,
   # and a run that shows neither proves nothing either way - so it is a
   # failure here rather than a silent pass.
+  # THE HOLDER, ASKED ABOUT THE TREE THE GATE IS LOOKING AT, which is the
+  # gate's own clone at $GATE_TAG and not this working tree. Those are two
+  # different trees and they agreed only for as long as nothing had been
+  # published since the newest tag. The day the wiki was published (#277) the
+  # working tree went clean, the tag stayed behind, and this check reported
+  # "the gate is deciding this for itself" about a gate that was reading the
+  # holder correctly - which is the failure the paragraph above set out to
+  # avoid and got wrong by one tree.
+  #
+  # One question, one tree. If the clone is not there the gate never got far
+  # enough to have an opinion, and that is the `unreached` case below.
+  if [ -x "$WORK/gate/tools/wiki-status.sh" ] || [ -f "$WORK/gate/tools/wiki-status.sh" ]; then
+    if sh "$WORK/gate/tools/wiki-status.sh" >/dev/null 2>&1; then
+      HOLDER=clean
+    else
+      HOLDER=drafts
+    fi
+  else
+    HOLDER=unreached
+  fi
   if grep -q "the published wiki matches this tree" "$WORK/gate.log"; then
     GATE=clean
   elif grep -q "would ship with the published wiki behind it" "$WORK/gate.log"; then
@@ -865,7 +880,10 @@ says '$RM_GATE', so the gate is not asking it"
   # A second list is a second thing to keep true, and this one would be read
   # by somebody about to publish.
   if [ "$HOLDER" = drafts ] && [ "$GATE" = drafts ]; then
-    FIRSTPAGE=$(sh "$REPO/tools/wiki-status.sh" 2>&1 |
+    # FROM THE CLONE, for the reason the holder above is read from it: the
+    # gate's refusal lists the pages of the tree it cloned, and this working
+    # tree is a different one the moment anything is published.
+    FIRSTPAGE=$(sh "$WORK/gate/tools/wiki-status.sh" 2>&1 |
                 sed -n 's/^  \(wiki\/.*\.md\)$/\1/p' | head -1)
     if [ -n "$FIRSTPAGE" ] && grep -q "$FIRSTPAGE" "$WORK/gate.log"; then
       ok "and the refusal names the pages the holder named"
