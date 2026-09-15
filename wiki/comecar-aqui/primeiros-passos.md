@@ -77,9 +77,19 @@ Não precisa decorar o nome. **TAB** e `?` listam as placas que a caixa tem e ma
 
 ```
 hexarouting# [edit] dataplane interface ?
-  enp1s0    carries the default route: refused
-  enp2s0    card
-  lo        card
+
+  enp1s0  carries the default route: refused
+  enp2s0  card
+  <nic>
+```
+
+Só entram na lista as placas que **têm endereço PCI** — as únicas que o dataplane pode receber. `lo`, uma ponte, um *bond* e um *veth* não aparecem: oferecer um nome que a caixa recusaria em seguida é o contrário do que essa lista serve para fazer.
+
+Numa caixa de uma placa só a mesma lista marca a mesma placa com outra frase, porque ali a entrega é permitida:
+
+```
+  ens18  carries the default route: the only card, so it is handed over and its address goes with it
+  <nic>
 ```
 
 ### O commit guarda e recalcula, mas não entrega a placa
@@ -133,7 +143,7 @@ error: dataplane interface enp1s0: it carries the default route
 ```
 hexarouting# [edit] dataplane interface eth9
 error: dataplane interface eth9: this box has no such interface
-    it has: enp1s0, enp2s0, lo
+    the cards it has: enp1s0, enp2s0
     this is the name LINUX gives the card, which is what the dataplane is
     handed; 'show interface' lists what the dataplane already has, and on a box
     with no card that is nothing
@@ -152,11 +162,10 @@ Você digita uma linha só. O resto a caixa lê sozinha da configuração que o 
 ```
 hexarouting> configure
 hexarouting# [edit] dataplane interface ens18
-dataplane interface ens18: this box has no other card, so it keeps its
-management
+dataplane interface ens18: this box has no other card, so it keeps its management
     10.95.200.198/24 moves onto the linux_cp pair the dataplane keeps for
-    ens18, and the box is then reached through the dataplane rather than
-    beside it
+    ens18, and the box is then reached through the dataplane rather than beside
+    it
     the card keeps its MAC across the handover, so nothing upstream has to
     learn a new one
     'ip route 0.0.0.0/0 10.95.200.1' is added, because the default route this
@@ -204,10 +213,18 @@ Se você **não** conseguir entrar, não faça nada: no fim da janela a caixa p�
 ```
 commit confirmed 30: nobody confirmed it within 30 minute(s), so this box has
 put the previous configuration back
+dataplane interface: none
+    stored, and the boot tuning was recomputed for it
+    the card this box has now is given up at the next start of the dataplane,
+    not at this commit
 restarting the box: the card goes back to Linux at the next start
+    the dataplane holds it until then, so this is the only way back onto the
+    network without a reboot by hand
 ```
 
 Depois desse reinício a caixa está de volta como estava antes: sem dataplane, alcançável pela placa como sempre foi.
+
+**O reinício só acontece se a placa tiver mesmo saído.** A janela conta a partir do `commit`, e o `commit` não move a placa — o reinício seguinte é que move. Se o prazo vencer antes de você reiniciar, a caixa apenas desfaz a configuração: ela pergunta ao dataplane se ele está com aquele MAC antes de reiniciar qualquer coisa, e uma caixa que nunca perdeu a placa continuou alcançável o tempo todo.
 
 :::tip
 Se a caixa **não** conseguir ler o endereço da placa (placa sem endereço, sem rota default, ou com dois endereços e nenhum jeito de escolher) ela recusa a entrega e diz o que está faltando. Um endereço que ela não consegue ler é um endereço que ela não consegue devolver, e aí a entrega não teria volta.
@@ -333,6 +350,7 @@ configure
 Antes de considerar a máquina pronta:
 
 - [ ] `dataplane interface` está definido, com `commit`, e a caixa foi reiniciada depois disso
+- [ ] numa caixa de uma placa só: você entrou de novo depois do reinício e digitou `commit` para confirmar a entrega
 - [ ] A interface de gerência **não** está no CGNAT
 - [ ] `show cgnat pool` lista o pool
 - [ ] `show cgnat subscriber <ip-de-teste>` devolve endereço público e faixa de portas

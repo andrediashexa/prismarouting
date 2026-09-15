@@ -4,7 +4,7 @@ Os comandos `show` funcionam nos modos operacional **e** de configuração.
 
 ## `show cgnat`
 
-As quatro primeiras respondem a pergunta de um operador em vez de reportar um contador. Todas tiram a resposta do **dataplane**, então funcionam pela VTY tão bem quanto pelo `vppctl` — um operador que precisa descer para a CLI do dataplane para diagnosticar é um operador para quem esta VTY é decoração.
+As quatro primeiras respondem a pergunta de um operador em vez de reportar um contador. Todas tiram a resposta do **dataplane**, e todas são respondidas aqui: um operador que precisasse descer até a linha de comando do dataplane para diagnosticar seria um operador para quem esta VTY é decoração.
 
 | Comando | Argumento | Responde |
 |---------|-----------|----------|
@@ -190,9 +190,11 @@ O que vale saber para ler o gráfico:
 hexarouting> show hardware
   the dataplane has no interface to forward on: no interface was named, so VPP
   was given no NIC.
-  Set HEXA_DATAPLANE_IF in /etc/hexarouting/tune.env to the interface carrying
-  subscriber traffic,
-  then restart hexarouting-tune and vpp.
+  Name it here: 'configure', then 'dataplane interface <name>',
+  then 'commit'. A name this box has not got is refused, and the
+  refusal says which ones it has.
+  'show hardware' is where the names come from: it lists this box's cards as
+  Linux has them, and marks the one carrying the default route.
 
   Interface     PCI            Driver           Link   Speed
   eno1          0000:03:00.0   ixgbe            up     1000Mb/s

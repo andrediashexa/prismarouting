@@ -167,6 +167,29 @@ this commit can cut off the session you are using
     applying it as 'commit confirmed 10' rather than as a plain commit
 ```
 
+Há um quarto caso, e ele tem prazo próprio: **entregar ao dataplane a placa por onde esta caixa é alcançada**, o que só acontece numa caixa que tem uma placa só. Vira `commit confirmed 30`, e o trinta tem razão de ser — a janela precisa caber um reinício e um login, não uma reconexão:
+
+```
+this commit hands over the card this box is reached on
+    the box keeps its address, on the dataplane's side of it, and nothing
+    proves that until it has been restarted and answered
+    applying it as 'commit confirmed 30' rather than as a plain commit: restart
+    the box, log in again and type 'commit' to keep it
+```
+
+Esse caso tem duas particularidades em relação aos outros três.
+
+* **A sessão não cai no `commit`; cai no reinício seguinte.** É por isso que a janela não pode ser a de sempre, e por isso a confirmação vem depois de você entrar de novo na caixa.
+* **O desfazer reinicia a máquina.** Devolver a placa ao Linux só acontece num novo start do dataplane, então pôr o arquivo de volta sem reiniciar deixaria a caixa desfeita e ainda inalcançável. A caixa avisa no console antes:
+
+```
+restarting the box: the card goes back to Linux at the next start
+    the dataplane holds it until then, so this is the only way back onto the
+    network without a reboot by hand
+```
+
+O reinício só acontece quando a placa **saiu mesmo**: a janela conta a partir do `commit`, e ela pode vencer com a caixa ainda no caminho antigo. Antes de reiniciar qualquer coisa a caixa pergunta ao dataplane se ele está com o MAC que ela anotou — um desfazer que não devolve placa nenhuma não reinicia nada.
+
 #### Quando a promessa não pode ser feita
 
 Se o equipamento não conseguir gravar o prazo — disco cheio, permissão negada em `/etc/hexarouting` —, ele **não** finge:
