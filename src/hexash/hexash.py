@@ -7060,53 +7060,44 @@ class Shell:
                 if "BELOW" in line:
                     print(f"warning:{line.rstrip()}")
 
-        # A reserve that does not reach every worker this box has is applied
-        # and warned about, and that warning has to reach the person who
-        # committed the pool - who is at the far end of an API call and sees
-        # none of the dataplane's log, exactly like the timeout above.
+        # Two facts about a pool that are not properties of the pool, applied
+        # and warned about by the dataplane, and both have to reach the person
+        # who committed it - who is at the far end of an API call and sees none
+        # of the dataplane's log, exactly like the timeout above. A reserve
+        # that does not reach every worker this box has, and a block-stride the
+        # worker sharding cannot honour.
         #
-        # ON CREATION AND ON EVERY CHANGE, which is one condition rather than
-        # two. `reserve` is not on bpa_pool_settings_set at all: it is taken
-        # out of capacity, capacity is the divisor under the blocked policy,
-        # so changing it re-maps subscribers and Pool.lines() keeps it outside
-        # `in_place`. An operator who LOWERS a reserve on a live pool
-        # therefore lands in pool_replace, not in settings_set - which is why
-        # looking at the pools this commit created or recreated covers the day
-        # the number is lowered as well as the day it is first set.
+        # ONE SET AND ONE READER, which is what relay_pool_warnings() is for
+        # and what its docstring asks of the next warning to land on that
+        # screen. It takes EVERY warning row under a named pool, so a second
+        # loop over the same output would print both of these twice for any
+        # pool both sets name. #372 and #373 were written a day apart against
+        # the same screen and each arrived with its own loop; they are one
+        # reader here.
         #
-        # Read back from the device rather than worked out here, for the
-        # reason the timeout warning is: the worker count, the arithmetic and
-        # the sentence live in the plugin, and a second copy in Python would
-        # be a second thing to keep in step. `show bpa pool` prints the
-        # warning under the pool it is about.
+        # THE TWO ARRIVE BY DIFFERENT ROUTES, which is why the set is built in
+        # two steps. `reserve` is not on bpa_pool_settings_set at all - it is
+        # taken out of capacity, capacity is the divisor under the blocked
+        # policy, so changing it re-maps subscribers and Pool.lines() keeps it
+        # outside `in_place` - so lowering one on a live pool lands in
+        # pool_replace. A stride goes both ways: a pool being created carries
+        # it on the creation message and never reaches settings_set, and a pool
+        # already carrying traffic takes a change in place, because the stride
+        # only decides where the NEXT extension goes.
         #
-        # ONLY THE POOLS THIS COMMIT TOUCHED, and the difference is the whole
-        # value of the warning. The device warns about every pool whose
-        # reserve is short, because a `show` answers about the box; a commit
-        # answers about what was just committed. Relaying all of them would
-        # print the same paragraph about a pool nobody changed on every commit
-        # that went near a reserve, and a warning that fires whatever the
-        # operator did is one they learn to scroll past - which costs them the
-        # one commit where it was about their change.
+        # ONLY THE POOLS THIS COMMIT TOUCHED. The device warns about every pool
+        # that is short whenever it is asked, because a `show` answers about
+        # the box; a commit answers about what was just committed. Relaying all
+        # of them would print the same paragraph about a pool nobody changed,
+        # and a warning that fires whatever the operator did is one they learn
+        # to scroll past - which costs them the one commit where it was about
+        # their change.
         touched = {p.name for p in d["pool_add"] + d["pool_replace"]
-                   if p.block_reserve}
+                   if p.block_reserve or p.block_stride}
+        touched |= {name for name, p in d["settings_set"].items()
+                    if p.block_stride}
         if touched:
-            rc, out = self.dp.run("show bpa pool")
-            # The warning is several rows and only the first of them carries a
-            # word to look for, so which pool it is about and where it ends
-            # both come from the SHOW'S OWN structure rather than from how the
-            # sentence happens to fold: every pool opens a line with "pool
-            # <name>", and everything printed about that pool follows it. A
-            # re-wrap of the message cannot lose a row here (#271).
-            here, relay = None, False
-            for line in (out or "").splitlines():
-                if line.startswith("pool "):
-                    here = line.split()[1]
-                    relay = False
-                elif line.startswith("warning:"):
-                    relay = here in touched
-                if relay:
-                    print(line.rstrip())
+            self.relay_pool_warnings(touched)
 
         # The card the dataplane is to be given, before SSH and for a reason
         # that is not ordering: nothing here takes effect until the dataplane
@@ -7400,6 +7391,41 @@ class Shell:
             # Otherwise there is nothing here for FRR: interface stanzas whose
             # contents this VTY applies to the dataplane itself.
         return True
+
+    def relay_pool_warnings(self, pools):
+        """
+        Print what `show bpa pool` warns about, for these pools only.
+
+        THE ONE READER OF THAT SCREEN, and it is one on purpose. A warning
+        under a pool is several rows and only the first of them carries a word
+        to look for, so which pool it is about and where it ends both come from
+        the SHOW'S OWN structure rather than from how the sentence happens to
+        fold: every pool opens a line with "pool <name>", and everything
+        printed about that pool follows it. A re-wrap of the message cannot
+        lose a row here (#271).
+
+        That also means this takes EVERY warning row under a named pool,
+        whatever it was about. A second loop over the same screen, added for
+        the next warning that lands on it, would print both of them twice for
+        any pool both sets name - so another warning relayed from `show bpa
+        pool` belongs in the set handed to this function, not in a reader of
+        its own.
+
+        The dataplane's rows are printed as they came, because they are the
+        dataplane's sentence: the worker count, the arithmetic and the words
+        live in the plugin, and a copy of any of them here would be a second
+        thing to keep in step.
+        """
+        rc, out = self.dp.run("show bpa pool")
+        here, relay = None, False
+        for line in (out or "").splitlines():
+            if line.startswith("pool "):
+                here = line.split()[1]
+                relay = False
+            elif line.startswith("warning:"):
+                relay = here in pools
+            if relay:
+                print(line.rstrip())
 
     def ospf_mtu_mismatch(self, routing, mtus):
         """

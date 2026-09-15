@@ -1211,8 +1211,8 @@ bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
 }
 
 /*
- * A stride the worker sharding cannot honour, said once where the operator
- * can act on it.
+ * A stride the worker sharding cannot honour, said where the operator can act
+ * on it: at the prompt that applied it, and on every screen that reports it.
  *
  * A WARNING and not a refusal, and the difference matters more than it looks.
  * Whether a stride is reachable depends on the worker count, which is a
@@ -1223,40 +1223,94 @@ bpa_timeouts_warn (vlib_main_t *vm, const bpa_timeouts_t *t, u8 *pool)
  * a preference about layout that the counters in "show bpa blocks" report.
  * The first is not an acceptable price for the second.
  *
+ * THREE FUNCTIONS AND NOT ONE, because three different occasions ask for this
+ * and they want different halves. The guard below owns the arithmetic, the say
+ * owns the words, and the warn is the say plus the record.
+ */
+
+/*
+ * Whether this box's sharding can honour the pool's stride, and what to
+ * suggest when it cannot: 0 when there is nothing to warn about, 1 when there
+ * is. `nwp` takes the worker count the sentence quotes, `okp` the nearest
+ * honourable stride, which is 0 when this pool has none.
+ *
+ * THE ONE OWNER OF THE ARITHMETIC. Three occasions ask this question now - a
+ * pool is created, its settings are changed, and somebody types "show bpa
+ * pool" - and a second copy of the reachability test written for any of them
+ * would be a second thing to keep in step with this one. A worker-less box is never
+ * short: bpa_stride_reachable() answers yes at one worker, which is why `nw`
+ * is floored here and not at each caller.
+ */
+static int
+bpa_stride_short (const bpa_pool_t *p, u32 *nwp, u32 *okp)
+{
+  bpa_main_t *bm = &bpa_main;
+  u32 nw = bm->n_workers ? bm->n_workers : 1;
+
+  *nwp = nw;
+  *okp = 0;
+  if (p->block_stride == 0 || bpa_stride_reachable (p, nw))
+    return 0;
+  *okp = bpa_stride_next_ok (p, p->block_stride, nw);
+  return 1;
+}
+
+/*
+ * The three rows an operator reads, and nothing else.
+ *
+ * SEPARATE FROM THE RECORD, because the two have different occasions. The
+ * record belongs to the event - a stride was applied that this box cannot
+ * honour, once - and the rows belong to whoever is looking. "show bpa pool" is
+ * the readback hexash uses to put this in front of an operator who applied the
+ * pool over the API and has no terminal on the box, and a show that wrote a
+ * log line every time somebody ran it would fill the log with one event
+ * repeated by its own reader.
+ *
+ * Same words for every occasion, on purpose: the sentence an operator is told
+ * at the prompt and the sentence they are told at the console are the same
+ * sentence, so neither can drift into being the friendlier one.
+ */
+void
+bpa_stride_say (vlib_main_t *vm, const bpa_pool_t *p)
+{
+  u32 nw, ok;
+
+  if (!vm || !bpa_stride_short (p, &nw, &ok))
+    return;
+
+  vlib_cli_output (vm,
+		   "warning: block-stride %u on pool %v cannot be honoured: "
+		   "blocks are sharded %u ways and a stride step moves by "
+		   "%u, so every block the stride names belongs to another "
+		   "worker",
+		   p->block_stride, p->name, nw, bpa_stride_unit (p));
+  if (ok)
+    vlib_cli_output (vm, "         the nearest stride that can be: %u", ok);
+  else
+    vlib_cli_output (vm, "         no stride fits this pool at %u workers",
+		     nw);
+  vlib_cli_output (vm, "         the setting is applied and extensions fall "
+		       "back to the free list; this is a warning, not a "
+		       "refusal");
+}
+
+/*
+ * The rows plus the record.
+ *
  * `vm` may be null, and then only the log hears about it - the API path has an
- * operator at the other end of a message rather than a terminal.
+ * operator at the other end of a message rather than a terminal, and hexash
+ * relays the rows from "show bpa pool" instead.
  */
 void
 bpa_stride_warn (vlib_main_t *vm, const bpa_pool_t *p)
 {
   bpa_main_t *bm = &bpa_main;
-  u32 nw = bm->n_workers ? bm->n_workers : 1;
-  u32 ok;
+  u32 nw, ok;
 
-  if (p->block_stride == 0 || bpa_stride_reachable (p, nw))
+  if (!bpa_stride_short (p, &nw, &ok))
     return;
 
-  ok = bpa_stride_next_ok (p, p->block_stride, nw);
-
-  if (vm)
-    {
-      vlib_cli_output (vm,
-		       "warning: block-stride %u on pool %v cannot be honoured: "
-		       "blocks are sharded %u ways and a stride step moves by "
-		       "%u, so every block the stride names belongs to another "
-		       "worker",
-		       p->block_stride, p->name, nw, bpa_stride_unit (p));
-      if (ok)
-	vlib_cli_output (vm, "         the nearest stride that can be: %u",
-			 ok);
-      else
-	vlib_cli_output (vm, "         no stride fits this pool at %u workers",
-			 nw);
-      vlib_cli_output (vm,
-		       "         the setting is applied and extensions fall "
-		       "back to the free list; this is a warning, not a "
-		       "refusal");
-    }
+  bpa_stride_say (vm, p);
   vlib_log_warn (bm->log_class,
 		 "pool %v: block-stride %u unreachable at %u workers "
 		 "(a step moves by %u)%s%u",
@@ -1418,6 +1472,11 @@ bpa_pool_settings_set (u8 *name, bpa_filter_t filter, u8 max_blocks, u32 alg,
    * warned about. No vlib_main_t: the operator is at the other end of an API
    * call, and hexash relays it from "show bpa timeouts". */
   bpa_timeouts_warn (0, timeouts, p->name);
+  /* And the stride, which reaches a live pool through this call and a new one
+   * through bpa_pool_add(). Both are needed and neither covers the other: a
+   * pool being created carries its stride on the creation message and never
+   * comes through here at all. hexash relays the rows from "show bpa pool"
+   * after either. */
   bpa_stride_warn (0, p);
 
   bpa_audit ("settings", p, 0);
@@ -1624,6 +1683,29 @@ bpa_pool_add (bpa_pool_t *cfg, u32 *pool_index)
    * computed in there: warning before it would read a zero the pool never has.
    */
   bpa_reserve_warn (0, p);
+
+  /*
+   * A stride this box's workers cannot honour is warned about HERE, and this
+   * is the call site an operator actually reaches.
+   *
+   * `block-stride` rides on the creation message as well as on
+   * bpa_pool_settings_set, so a pool created with a stride arrives here and
+   * nowhere else: the VTY sends the whole pool in one bpa_pool_add_del and
+   * skips the settings call entirely, because a pool being created already
+   * carries what that call would set. Warning only in settings_set therefore
+   * left creation - which is where the operator types the number for the
+   * first time - saying nothing at all, not even to the log.
+   *
+   * No vlib_main_t, for the reason bpa_pool_settings_set() gives above: the
+   * operator is at the other end of an API call rather than at a terminal, so
+   * this goes to the log, and hexash relays the rows from "show bpa pool" -
+   * which says the same sentence through the same function.
+   *
+   * After the barrier and after bpa_pool_init(), because the arithmetic reads
+   * blocks_mapped and the policy's stride unit: warning before it would
+   * measure a pool whose derived values are all still zero.
+   */
+  bpa_stride_warn (0, p);
 
   bpa_audit ("add", p, 0);
 

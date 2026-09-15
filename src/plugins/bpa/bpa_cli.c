@@ -875,11 +875,13 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       bpa_timeouts_warn (vm, &cfg.timeouts, name);
       if (!bpa_pool_init (&probe))
 	{
-	  bpa_stride_warn (vm, &probe);
-	  /* The rows only. When this command CREATED the pool, bpa_pool_add()
-	   * has already written the record for it - warning again here would
-	   * log the same sentence about the same pool twice - and when it was
-	   * `check`, there is no pool for a record to be about. */
+	  /* The rows only, for BOTH of them. When this command CREATED the
+	   * pool, bpa_pool_add() has already written the record - warning
+	   * again here would log the same sentence about the same pool twice
+	   * - and when it was `check`, there is no pool for a record to be
+	   * about. #372 and #373 arrived at this separately, one warning
+	   * each, and the argument is the same one. */
+	  bpa_stride_say (vm, &probe);
 	  bpa_reserve_say (vm, &probe);
 	}
     }
@@ -946,22 +948,31 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
     {
       vlib_cli_output (vm, "%U", format_bpa_pool, p);
       /*
-       * And whether that reserve reaches this box's workers, which the lines
-       * above cannot say: they report the pool, and this is a fact about the
-       * pool AND the thread count the box happened to start with.
+      /*
+       * And the two facts the rows above cannot carry, because neither is a
+       * property of the pool alone.
        *
-       * Said HERE because it is the only readback there is. A pool created
-       * over the binary API has no terminal to print to - bpa_pool_add()
-       * warns with a null vm, so only the log hears it - and hexash reads
-       * this command back after a commit to put it in front of the operator
-       * who typed the pool. Through the SAME function that says it at
-       * creation: a second sentence here, worded differently or computed
-       * differently, would be a second thing to keep in step with the first.
+       * The stride first. format_bpa_pool() prints "stride 4 (2048 ports
+       * between a subscriber's blocks, on its own public address)", which is
+       * a promise about layout, and whether it holds depends on the thread
+       * count the box happened to start with - which the pool does not carry
+       * and the formatter cannot read. Left unsaid, this screen states a
+       * layout the box is not producing. The reserve is the same kind of
+       * fact, about the same thread count.
        *
-       * It costs nothing on every other pool: bpa_reserve_say() prints
-       * nothing at all unless the reserve really does leave a worker empty.
+       * Said HERE because it is the only readback there is. A pool applied
+       * over the binary API has no terminal to print to - bpa_pool_add() and
+       * bpa_pool_settings_set() warn with a null vm, so only the log hears
+       * them - and hexash reads this command back after a commit to put both
+       * in front of the operator who typed the pool. Through the SAME
+       * functions that say them there: a second sentence here, worded or
+       * computed differently, would be a second thing to keep in step.
        *
-       * KEEP IT LAST IN THIS LOOP BODY. hexash relays this warning by taking
+       * They cost nothing on every other pool: each say prints nothing at all
+       * unless its own arithmetic really does come up short.
+       *
+       * KEEP THESE LAST IN THIS LOOP BODY, and keep any other warning said
+       * here BESIDE them rather than after them. hexash relays these by taking
        * everything between a `warning:` row and the next row opening with
        * `pool `, because the message folds and only its first row carries a
        * word to look for (#271). Anything printed about a pool AFTER this
@@ -969,6 +980,7 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
        * constraint is written here, where somebody adding a row would be
        * looking, and not only in hexash, where they would not.
        */
+      bpa_stride_say (vm, p);
       bpa_reserve_say (vm, p);
     }
   return 0;
