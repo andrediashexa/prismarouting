@@ -77,6 +77,49 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The self-test asked only half of "who needs this pair", and the half it
+  asked is false on the box that most needs the answer**
+  ([#334](https://github.com/andrediashexa/hexarouting/issues/334)). A
+  dataplane interface with no `linux_cp` pair was reported loudly or quietly
+  depending on one question put to FRR: does `show running-config` carry a
+  `^router ` stanza. The premise is sound as far as it goes - a pair is what
+  FRR sees, so a box running no protocol is not obviously broken without one -
+  but it stopped being the whole question when the pair became the thing that
+  carries the **management address** after a handover. A box that gives its
+  only card to the dataplane takes a static default route and has no `router`
+  stanza at all, so the one box where a missing pair means nobody can reach it
+  was told so as `[warn] no linux_cp pair on:` - the tone used for a missing
+  nicety, on a box reachable at a console somebody has to walk to. Found while
+  fixing [#332](https://github.com/andrediashexa/hexarouting/issues/332): the
+  qemu guest in [#329](https://github.com/andrediashexa/hexarouting/issues/329)
+  printed the hard form only because something else in that lab's session had
+  left a `router` stanza behind.
+
+  The check asks both questions now. The handover record the tuner holds -
+  `HEXA_DATAPLANE_MGMT` in `/etc/hexarouting/tune.env`, written by the VTY
+  beside the card's name and read back here the way `bind-dataplane-nic` reads
+  it - says this box handed its management card over and therefore needs the
+  pair whatever FRR is doing; the `^router ` stanza says FRR needs it. Both are
+  facts the box has. A failing box leads with the worse of the two reasons,
+  because a box nobody can log in to is not a box whose adjacencies are down,
+  and it prints the management path the record holds so that the operator at
+  that console has the address to put back by hand. A box with **neither** - no
+  pair, no handover record, no routing protocol - stays a warning, which is the
+  point of asking two questions rather than failing every unpaired interface: a
+  box that forwards CGNAT and runs no protocol is a supported configuration of
+  this product, and a check that goes red on it is one people learn to run
+  around.
+
+  All three states are measured, and each assertion was shown red on a mutation
+  that runs and gets it wrong rather than one that crashes: the check asking
+  only `^router ` again (the defect as it shipped - the handover box falls back
+  to the warning, with no address in it), asking only the handover record (the
+  routing box falls back to the warning), failing every unpaired box (the
+  correct box goes red, and is told routing is configured on a box that has
+  none), the adjacency prose said unconditionally, the routing half swallowed
+  by the handover branch, and the headline given to the lesser reason on a box
+  that has both.
+
 * **A self-test check that no box had ever seen fail, and the reader that
   refuses the next one**
   ([#335](https://github.com/andrediashexa/hexarouting/issues/335)). Measured

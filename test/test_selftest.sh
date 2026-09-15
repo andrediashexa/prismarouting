@@ -628,7 +628,11 @@ echo "=== a dataplane interface with no linux_cp pair (#182) ==="
 printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
 printf '\n' > "$FAKE/groups"
 : > "$FAKE/vppctl_ok"
-rm -f "$FAKE/frr_running"
+# NEITHER of the two things that make a pair mandatory: no routing protocol
+# configured, and no handover record in the tuner's file. Both are arranged as
+# absences on purpose - this is the box that must STAY a warning, and it is the
+# third state of #334, the one a fix can quietly turn into a new defect.
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env"
 
 # The header is indented, the counter continuation lines are indented, and a
 # name is the only thing in column one. Copied from a real `show interface`
@@ -657,9 +661,9 @@ fi
 # configuration of this product. Failing it over a pair it does not need is
 # how a self-test's failures stop being read.
 if said '\[FAIL\].*pair'; then
-  bad "a box with no routing configured was FAILED over a missing pair"
+  bad "a box with nothing depending on the pair was FAILED over it: $(printf '%s\n' "$OUTPUT" | grep -E '\[FAIL\].*pair')"
 else
-  ok "and with no routing configured it is not a failed check"
+  ok "and with neither routing nor a handover record it stays a warning"
 fi
 # local0 is on every box and is never paired. Reporting it would put a
 # permanent warning on every appliance, which is a warning nobody reads.
@@ -686,6 +690,75 @@ else
   bad "the failure does not say which interface has no pair"
 fi
 rm -f "$FAKE/frr_running"
+
+echo "=== the box the handover was written for: no pair, no router stanza (#334) ==="
+# The state the check could not see. A box that hands its ONLY card to the
+# dataplane takes a static default route, so `show running-config` has no
+# `^router ` line in it and the old check took the softer branch - on the one
+# box where a missing pair means nobody can reach it at all.
+#
+# The handover record is arranged in the tuner's file and read from there by
+# the self-test. It is where the VTY wrote it and the only place the answer
+# exists: between the commit that names the card and this boot there is
+# nothing on the box to read back, which is why this is a file and not a
+# question put to the dataplane.
+mkdir -p "$FAKE/root/etc/hexarouting"
+printf 'HEXA_DATAPLANE_IF=ens18\nHEXA_DATAPLANE_MGMT="ens18 10.95.200.198/24 52:54:00:00:00:01"\n' \
+  > "$FAKE/root/etc/hexarouting/tune.env"
+run
+if said '\[FAIL\] this box handed its only card over and NO pair carries'; then
+  ok "a handover box with no pair is a failed check, with no routing anywhere"
+else
+  bad "the box that cannot be reached was not FAILED: $(printf '%s\n' "$OUTPUT" | grep -iE 'pair' || echo '<nothing about it>')"
+fi
+if said '\[warn\] no linux_cp pair'; then
+  bad "and it was warned about instead: $(printf '%s\n' "$OUTPUT" | grep 'no linux_cp pair')"
+else
+  ok "and it is not ALSO reported as a warning"
+fi
+# The record, not a wording: the address is the operator's only way back onto
+# a box whose card is in the dataplane, and it comes out of the fixture above
+# rather than out of any sentence this product writes.
+if said_across '10\.95\.200\.198/24'; then
+  ok "and it prints the management path the box recorded, to put back by hand"
+else
+  bad "the failure does not carry the address the box is reached on: $(printf '%s\n' "$OUTPUT" | grep -iE 'management path|recorded' || echo '<nothing>')"
+fi
+# The whole failure as it reaches the console, printed once so that what an
+# operator is told can be read in this file rather than reconstructed from
+# six needles. Not an assertion - the assertions above are.
+printf '%s\n' "$OUTPUT" | grep -A9 'handed its only card over' | sed 's/^/    | /'
+if said_across 'without a pair:.*host-veth-vpp'; then
+  ok "and it names the interface that has no pair"
+else
+  bad "the handover failure does not say which interface has no pair"
+fi
+# The FRR half must not be spoken on a box that has no routing at all: a
+# failure that lists a reason the box does not have is a failure an operator
+# stops reading.
+if said 'BGP, OSPF and IS-IS'; then
+  bad "a box running no routing protocol was told its adjacencies are down"
+else
+  ok "and it says nothing about adjacencies on a box running no protocol"
+fi
+
+echo "=== a box that did both: handed its card over AND runs a protocol ==="
+# Two reasons, one failure. The headline is the handover, because a box
+# nobody can log in to is worse than one whose adjacencies are down - but the
+# adjacencies are down too, and the operator is owed both facts.
+printf 'router bgp 65000\n bgp router-id 10.0.0.1\n' > "$FAKE/frr_running"
+run
+if said '\[FAIL\] this box handed its only card over and NO pair carries'; then
+  ok "the headline is the reason that takes the box off the network"
+else
+  bad "a box that handed its card over led with something else: $(printf '%s\n' "$OUTPUT" | grep -E '\[FAIL\].*pair' || echo '<no failure about the pair at all>')"
+fi
+if said 'BGP, OSPF and IS-IS'; then
+  ok "and the routing half is still said, under it"
+else
+  bad "the second reason went unsaid on a box that has both"
+fi
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env"
 
 echo "=== the pair exists, which is the state the product produces ==="
 # `linux-name vppwan0` under `interface host-veth-vpp`, committed. The TAP is
