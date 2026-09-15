@@ -22,6 +22,35 @@ if [ ! -b "$DISK" ]; then
   exit 0
 fi
 
+# THE MEDIUM THIS MACHINE BOOTED FROM, answered from a fixture rather than
+# from the machine.
+#
+# The installer asks `findmnt -no SOURCE /run/live/medium` twice, and nothing
+# stubbed it: 49 of those in one run went to the machine underneath. Every
+# case here names that machine's own first block device as its target, so on a
+# machine that IS live-booted - which is the ISO this product ships, and the
+# box an operator is most likely to run this on - findmnt answers with the
+# target and the installer refuses every single case as "the medium this
+# system booted from". Measured with a findmnt answering the way such a box
+# does: 34 FAILURES, over a product nobody changed.
+#
+# Empty is a machine that is not live-booted, which is what every case here
+# but the one about the medium means. The section that arranges a medium of
+# its own writes it here now; the disk menus further down put a findmnt of
+# their own earlier on PATH and still win.
+GLOBALBIN=$(mktemp -d)
+BOOT_MEDIUM=$GLOBALBIN/medium
+: > "$BOOT_MEDIUM"
+cat > "$GLOBALBIN/findmnt" <<FINDMNT
+#!/bin/sh
+case "\$*" in
+  *"/run/live/medium"*) cat "$BOOT_MEDIUM" ;;
+  *) exec /usr/bin/findmnt "\$@" ;;
+esac
+FINDMNT
+chmod +x "$GLOBALBIN/findmnt"
+export PATH="$GLOBALBIN:$PATH"
+
 run() {  # <expected exit 0|1> <description> <env assignments...>
   _want=$1; _desc=$2; shift 2
   out=$(env HEXA_INSTALL_CHECK=1 "$@" sh "$INSTALLER" </dev/null 2>&1)
@@ -250,14 +279,16 @@ echo "=== the boot medium is still refused when it is named outright ==="
 # the medium (above), but a device path typed by hand or given by a script
 # bypasses the menu entirely - and overwriting the medium being read fails
 # halfway through and leaves neither system usable.
-med=$(mktemp -d)
-cat > "$med/findmnt" <<FINDMNT
-#!/bin/sh
-# /run/live/medium is on the disk this test names as the target.
-printf '%s\n' "$DISK"
-FINDMNT
-chmod +x "$med/findmnt"
-out=$(env PATH="$med:$PATH" HEXA_INSTALL_CHECK=1 HEXA_DISK="$DISK" \
+# The fixture at the top of this file, set to say that /run/live/medium is on
+# the disk every case here names as its target - which is the arrangement the
+# machine underneath used to make for itself, at random, depending on how that
+# machine happened to be booted.
+#
+# A PARTITION of it, not the disk, because that is what findmnt answers for a
+# stick: the refusal matches on the prefix, and a check narrowed to the whole
+# disk would let the medium through.
+printf '%s1\n' "$DISK" > "$BOOT_MEDIUM"
+out=$(env HEXA_INSTALL_CHECK=1 HEXA_DISK="$DISK" \
       HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
       HEXA_ROOT_PASSWORD=s3cr3t sh "$INSTALLER" </dev/null 2>&1)
 if [ $? = 0 ]; then
@@ -268,7 +299,13 @@ else
     *) bad "refused, but not for being the boot medium: $out" ;;
   esac
 fi
-rm -rf "$med"
+# And the same disk accepted again the moment nothing says it is the medium.
+# Both arms off one fixture, because until it existed only one of them was
+# ever arranged and which one depended on the machine.
+: > "$BOOT_MEDIUM"
+# shellcheck disable=SC2086
+run 0 "and the same disk is accepted on a box that is not live-booted" $OK \
+    HEXA_ROOT_PASSWORD=s3cr3t
 
 echo
 echo "=== answers from a file: the unattended path that publishes nothing ==="
