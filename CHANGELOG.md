@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Three numbers stated in the present tense inside the product, in comments
+  beside the code that computes them.** `test/test_release_gate.sh` said *"the
+  gate refuses eighteen times"* on the line directly above
+  `REFUSALS=$(grep -c 'echo "error:' ...)`, and the gate refuses **24** now. The
+  header of `tools/plugin-coverage.sh` and the comment at
+  `test/test_bpa_dyn.c:86` both said the C harnesses *"run 65,376 checks"*;
+  summing what those ten harnesses print gives **65,767**, and it grows every
+  time a case is added. Found while sweeping `## Unreleased` for the same shape
+  - a sentence true when it was written and false now - which turned up eleven
+  there and these three in the code beside it.
+
+  None of the three is replaced with a fresher number. The gate's comment
+  points at the count three lines below it, and the other two say where the
+  number comes from and record what it was, because a count in prose beside a
+  count in code is the second copy this repository keeps paying for and a
+  bigger number would only reset the clock on it.
+
 * **The two screens that refuse a soft re-read printed eight lines wider than
   the console** ([#349](https://github.com/andrediashexa/hexarouting/issues/349)).
   `err()` wraps nothing and the rows under those refusals were bare
