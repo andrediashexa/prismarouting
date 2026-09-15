@@ -2,7 +2,8 @@
 CFLAGS ?= -O2 -Wall -Wextra -Werror -DBPA_STANDALONE
 BUILD  := .build
 
-.PHONY: test test-appliance test-iso test-install test-mirror iso release-gate \
+.PHONY: test test-appliance test-iso test-install test-mirror iso \
+        upgrade-artifact release-gate \
         hw-up hw-lab hw-vpp hw-down \
         model vectors clean
 
@@ -188,6 +189,24 @@ test-iso:
 	@$(call ISO_RUN,set -e; apt-get update -qq >/dev/null 2>&1; \
 	    apt-get install -y -qq qemu-system-x86 >/dev/null 2>&1; \
 	    BOOT_SECS=$${BOOT_SECS:-240} sh /src/lab/boot-iso.sh)
+
+# The upgrade artifact: what an operator who already has a box installs a new
+# version from. No root, no container, no debootstrap - it is the tree plus the
+# plugins in a tarball, and appliance/build-upgrade.sh proves it by installing
+# it into a throwaway directory before it will hand it over.
+#
+# NOT a prerequisite of anything and not dependent on `iso`. The medium and the
+# artifact are two builds of one tree that must agree about which tree, and
+# tools/version-stamp.sh is what makes them: the artifact's name is the ISO's
+# with the extension swapped, so a build that may not be called a release
+# cannot produce an artifact that may.
+#
+# The plugin is NOT built here, for the same reason `iso` does not build it:
+# tools/release-gate.sh builds it once and both read what is there. On a
+# developer's machine with no build, build-upgrade.sh refuses and says which
+# command makes one.
+upgrade-artifact:
+	@sh appliance/build-upgrade.sh
 
 # The release medium, built from the TAG and booted. CONTRIBUTING.md section 5
 # requires both; this is that procedure as one command, because as a sequence

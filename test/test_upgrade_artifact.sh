@@ -1,0 +1,362 @@
+#!/bin/sh
+# The upgrade an operator can actually perform, driven end to end.
+#
+# THE MEASUREMENT THIS EXISTS FOR. On a real appliance installed from a
+# published medium (#295):
+#
+#   # ls /usr/lib/hexarouting/
+#   apply-tuning  bind-dataplane-nic  config.py  hexash.py  ...
+#   # find / -name install.sh -path '*hexarouting*'
+#   (nothing)
+#   # command -v cmake ninja gcc
+#   (nothing)
+#
+# appliance/install.sh's own line 4 calls itself the path "for updating a box
+# in production without reinstalling it", and it copies every file out of
+# $REPO. There was no $REPO on that box and no toolchain to make one, so the
+# path served tools/release-gate.sh and lab/upgrade.sh - which have a build
+# tree - and nobody who bought the product. Their route to a new version was a
+# reinstall, which erases the disk and takes a year of connection records with
+# it.
+#
+# appliance/build-upgrade.sh packs that $REPO with the build already in it and
+# appliance/upgrade runs install.sh out of it. This drives both.
+#
+# WHY A SUITE AND NOT A LAB. There is no lab here at all, and that is
+# deliberate: an upgrade is thirty file copies and two refusals, none of which
+# needs a dataplane, and every one of them is reachable in a directory. What
+# DOES need a booted box is the question of whether the upgraded box still
+# forwards, and lab/upgrade.sh has asked that since it was written - by running
+# install.sh out of a source tree, because until now that was the only place it
+# could run.
+#
+# WHY A STAND-IN TREE. build-upgrade.sh wants a compiled bpa_plugin.so that
+# exists only after a build, and it copies four directories, so it cannot be
+# pointed at a symlink farm the way test/test_manifest.sh points install.sh.
+# The tree here is a real copy of this repository's four payload directories
+# plus two stand-in plugin files. Nothing is written into the source tree or
+# onto this machine.
+set -u
+fail=0
+ok()  { echo "  [ ok ] $*"; }
+bad() { echo "  FAIL: $*"; fail=$((fail+1)); }
+
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+TREE=$WORK/tree
+STAMP="0.75.0 (beefcaf)"
+
+# The stamp is PASSED IN rather than computed, and this is the supported
+# override that build-iso.sh and tools/release-gate.sh both use. A copied tree
+# has no .git, so version-stamp.sh would answer "0.74.2 (not a git tree)" here
+# - which is a real answer for a real situation and not the one this suite is
+# about. What it is about is whether the stamp reaches the box at all.
+
+fresh_tree() {
+  rm -rf "$TREE"
+  mkdir -p "$TREE/.build-vpp/lib/vpp_plugins" "$TREE/.build-vpp/lib/vat2_plugins"
+  cp -a "$REPO/src" "$REPO/appliance" "$REPO/tools" "$REPO/docs" "$TREE/"
+  cat "$REPO/VERSION" > "$TREE/VERSION"
+  # Sized like the real ones, so the artifact this suite weighs is the weight
+  # of the thing an operator downloads. bpa_plugin.so measured 1085448 bytes
+  # and the vat2 plugin 50160 on the appliance #295 was written from.
+  head -c 1085448 /dev/zero > "$TREE/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
+  head -c 50160  /dev/zero > "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+}
+
+build() {  # -> $ART, the unpacked artifact directory; $BUILD_OUT, what it said
+  _tar=$WORK/artifact.tar.gz
+  rm -rf "$WORK/unpacked"; mkdir -p "$WORK/unpacked"
+  BUILD_OUT=$(OUT="$_tar" HEXA_VERSION_STAMP="$STAMP" \
+              sh "$TREE/appliance/build-upgrade.sh" 2>&1)
+  BUILD_RC=$?
+  [ "$BUILD_RC" = 0 ] || return 1
+  tar xzf "$_tar" -C "$WORK/unpacked" || return 1
+  ART=$WORK/unpacked/$(ls "$WORK/unpacked")
+  return 0
+}
+
+# A BOX, and it is a directory with a package database in it.
+#
+# appliance/upgrade asks dpkg which VPP and FRR are installed, because dpkg is
+# what installed them and its database is what says so. Standing a box up
+# therefore means writing that database, which is cheap and is the real file
+# format rather than a stub of it - a stub would let this suite agree with
+# itself about a question the product asks the system.
+#
+# /etc/frr is the frr package's directory. install.sh edits the file in it in
+# place and cannot create the directory, so a box without it is an incomplete
+# fixture rather than a defect.
+fresh_box() {  # <vpp version> <frr version>
+  rm -rf "$BOX"
+  mkdir -p "$BOX/etc/frr" "$BOX/var/lib/dpkg"
+  for p in "vpp $1" "frr $2"; do
+    set -- $p
+    cat >> "$BOX/var/lib/dpkg/status" <<EOF
+Package: $1
+Status: install ok installed
+Priority: optional
+Section: net
+Architecture: amd64
+Version: $2
+Maintainer: HexaRouting test fixture <nobody@example.invalid>
+Description: stand-in for the $1 the medium installs
+
+EOF
+  done
+  printf 'bgpd=no\nospfd=no\nospf6d=no\nisisd=no\n' > "$BOX/etc/frr/daemons"
+  printf 'bgpd_options="  -A 127.0.0.1"\n' >> "$BOX/etc/frr/daemons"
+}
+BOX=$WORK/box
+
+upgrade() {  # -> $OUTPUT and $RC; runs the artifact against $BOX
+  OUTPUT=$(DESTDIR="$BOX" sh "$ART/appliance/upgrade" 2>&1)
+  RC=$?
+}
+
+# The versions the medium pins, read here with a different expression from the
+# one build-upgrade.sh uses. Two readings of one line is the only way this can
+# say anything: a check that extracted the value the same way the product does
+# would agree with the product about a value neither of them had read.
+iso_pin() {  # <variable>
+  sed -n "s/^$1=\${$1:-\(.*\)}\$/\1/p" "$REPO/appliance/build-iso.sh" | head -1
+}
+
+fresh_tree
+
+echo "=== the artifact is built from a tree, with no root and no container ==="
+if build; then
+  ok "appliance/build-upgrade.sh produced $(basename "$ART").tar.gz"
+else
+  bad "the build failed, so nothing below was measured:"
+  printf '%s\n' "$BUILD_OUT" | sed 's/^/        /'
+  echo
+  echo "1 FAILURES"
+  exit 1
+fi
+
+# The size, because the number is the argument. An operator who wants a new
+# version is told to download a 325 MB medium and erase the disk under a year
+# of connection records; what actually changes is this.
+SZ=$(wc -c < "$WORK/artifact.tar.gz")
+if [ "$SZ" -gt 100000 ] && [ "$SZ" -lt 20000000 ]; then
+  ok "$((SZ / 1024)) KB against a 325 MB medium"
+else
+  bad "the artifact is $SZ bytes, which is not the size of this product"
+fi
+
+echo
+echo "=== and a box takes it ==="
+fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+upgrade
+if [ "$RC" = 0 ]; then
+  ok "appliance/upgrade ran on a box with no repository and no toolchain"
+else
+  bad "the upgrade failed on a box whose platform matches:"
+  printf '%s\n' "$OUTPUT" | sed 's/^/        /'
+fi
+# The dataplane plugin is the file the whole exercise is about: #295's own
+# words are that the box says an upgrade "replaces bpa_plugin.so on disk", and
+# it described a state no operator could reach.
+if [ -f "$BOX/usr/lib/x86_64-linux-gnu/vpp_plugins/bpa_plugin.so" ]; then
+  ok "the new bpa_plugin.so is on the box"
+else
+  bad "no bpa_plugin.so reached the box, so nothing was upgraded"
+fi
+if [ -f "$BOX/usr/lib/x86_64-linux-gnu/vat2_plugins/bpa_test_plugin_bpa_plugin.so" ]; then
+  ok "and the vat2 plugin beside it, so the binary API is registered (#119)"
+else
+  bad "the vat2 plugin did not reach the box: hexash could not configure a pool"
+fi
+if [ -x "$BOX/usr/bin/hexash" ] && [ -f "$BOX/usr/lib/hexarouting/config.py" ]; then
+  ok "the VTY and the module it imports both travelled"
+else
+  bad "the VTY did not reach the box whole, which is #119's shape on the other \
+component: hexash would raise ModuleNotFoundError on every start"
+fi
+
+echo
+echo "=== the box is stamped what the artifact says, not what git said ==="
+# WHY THIS IS A CHECK OF ITS OWN. install.sh asks tools/version-stamp.sh for
+# the line it writes into /usr/share/hexarouting/VERSION, and that calculation
+# reads git. There is no .git inside a tarball and there never can be. Left to
+# itself install.sh stamps the box "0.75.0 (not a git tree)", and that line is
+# what `show version` prints, what the boot self-test puts at the top of its
+# report and the first thing anybody is asked on the telephone - so the box
+# would be unable to name the build it is running, which is the whole of #302,
+# put there by the thing that upgraded it.
+GOT=$(cat "$BOX/usr/share/hexarouting/VERSION" 2>/dev/null || echo "")
+if [ "$GOT" = "$STAMP" ]; then
+  ok "/usr/share/hexarouting/VERSION says $GOT"
+else
+  bad "the box is stamped '$GOT' and the artifact is '$STAMP'"
+fi
+case $GOT in
+  *git*|*unverified*|*unknown*)
+    bad "the stamp on the box is git's failure to read a tree that is not \
+there: '$GOT'" ;;
+  *) ok "and it is a version, not a note about a missing repository" ;;
+esac
+
+echo
+echo "=== a box on another platform is refused, and nothing is written ==="
+# WHY THIS REFUSAL EXISTS. The artifact carries product files and nothing else.
+# `grep -nE "^[[:space:]]*(apt|apt-get|dpkg)\b" appliance/install.sh` returns
+# nothing, so it installs no packages, needs no network and no toolchain - and
+# cannot move the VPP or FRR under the box. The plugin in it was compiled
+# against the versions appliance/build-iso.sh pins, so a box running others has
+# to be sent back to the medium.
+#
+# BEFORE ANYTHING IS WRITTEN is half the check and the more important half. An
+# upgrade that stops in the middle leaves a box that is part one version and
+# part another, and the half that would be wrong is the one nothing on the box
+# reads - the shape #301 and #293 are both about. A refusal is only worth
+# taking while it still costs nothing.
+fresh_box 25.02-release "$(iso_pin FRR_VERSION)"
+upgrade
+if [ "$RC" != 0 ]; then
+  ok "a box on vpp 25.02-release is refused"
+else
+  bad "a box on vpp 25.02-release took an artifact built against \
+$(iso_pin VPP_VERSION)"
+fi
+case "$OUTPUT" in
+  *25.02-release*"$(iso_pin VPP_VERSION)"*)
+    ok "and the refusal names both versions, so the operator knows which" ;;
+  *) bad "the refusal does not name the version the box has against the one \
+this release wants: $OUTPUT" ;;
+esac
+WROTE=$(find "$BOX/usr" "$BOX/lib" -type f 2>/dev/null | head -3)
+if [ -z "$WROTE" ]; then
+  ok "nothing was written: the box is still whatever it was this morning"
+else
+  bad "the refusal came after the box had already been changed:"
+  printf '  %s\n' $WROTE
+fi
+
+fresh_box "$(iso_pin VPP_VERSION)" 9.1-0
+upgrade
+if [ "$RC" != 0 ]; then
+  ok "and so is a box on another FRR"
+else
+  bad "a box on frr 9.1-0 took an artifact built against $(iso_pin FRR_VERSION)"
+fi
+
+echo
+echo "=== a box that is not this product at all is refused ==="
+# Distinguished from the mismatch above on purpose: "no vpp package" is a
+# machine that is not an appliance, and telling its owner that their version is
+# wrong would send them looking for an upgrade of something they do not have.
+rm -rf "$BOX"; mkdir -p "$BOX/etc/frr" "$BOX/var/lib/dpkg"
+: > "$BOX/var/lib/dpkg/status"
+upgrade
+case "$OUTPUT" in
+  *"no vpp package"*) ok "a box with no VPP installed is told that, and not \
+that its version is wrong" ;;
+  *) bad "a box with no VPP installed was answered with: $OUTPUT" ;;
+esac
+[ "$RC" != 0 ] || bad "and it was not refused at all"
+
+echo
+echo "=== an artifact with no RELEASE is refused rather than guessed at ==="
+# RELEASE is what makes an unpacked directory an artifact. Without it there is
+# no stamp to write and no platform to compare, and carrying on would install a
+# box stamped from a git tree that is not there.
+mv "$ART/RELEASE" "$WORK/RELEASE.aside"
+fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
+upgrade
+if [ "$RC" != 0 ]; then
+  ok "refused"
+else
+  bad "an artifact with no RELEASE installed anyway, stamping the box \
+'$(cat "$BOX/usr/share/hexarouting/VERSION" 2>/dev/null)'"
+fi
+case "$OUTPUT" in
+  *install.sh*) ok "and it says what to run in a source tree instead" ;;
+  *) bad "the refusal does not tell a reader in a source tree what to run: \
+$OUTPUT" ;;
+esac
+# Moved aside rather than deleted, because the section below reads it. An
+# artifact this suite has damaged on purpose has to be whole again before
+# anything else is asked of it.
+mv "$WORK/RELEASE.aside" "$ART/RELEASE"
+
+echo
+echo "=== the payload is what the medium installs from ==="
+# ONE RULE ABOUT WHAT THE INSTALL PATH IS MADE OF. build-iso.sh copies four
+# directories into its chroot and runs install.sh there; build-upgrade.sh packs
+# the same four and runs install.sh there. Two lists that have to agree and
+# never meet are two lists that drift, and the drift here is an artifact that
+# is missing whatever the new install line reads - discovered on an operator's
+# box, halfway through.
+ISO_DIRS=$(grep -m1 '^cp -a "\$REPO/src"' "$REPO/appliance/build-iso.sh" \
+           | tr ' ' '\n' | sed -n 's|^"\$REPO/\([a-z]*\)"$|\1|p' | sort)
+ART_DIRS=$(cd "$ART" && find . -maxdepth 1 -mindepth 1 -type d \
+           ! -name .build-vpp | sed 's|^\./||' | sort)
+if [ -n "$ISO_DIRS" ] && [ "$ISO_DIRS" = "$ART_DIRS" ]; then
+  ok "both carry $(echo "$ISO_DIRS" | tr '\n' ' ')"
+else
+  bad "the medium installs from [$(echo "$ISO_DIRS" | tr '\n' ' ')] and the \
+artifact carries [$(echo "$ART_DIRS" | tr '\n' ' ')]"
+fi
+
+echo
+echo "=== the platform pins have one owner ==="
+# build-upgrade.sh reads them out of build-iso.sh. Two copies of a number whose
+# only job is to be compared would eventually disagree, and the disagreement
+# would read as an operator's box being wrong rather than as this repository
+# being inconsistent with itself.
+REL_VPP=$(sed -n 's/^vpp=//p' "$ART/RELEASE" 2>/dev/null)
+REL_FRR=$(sed -n 's/^frr=//p' "$ART/RELEASE" 2>/dev/null)
+if [ "$REL_VPP" = "$(iso_pin VPP_VERSION)" ] && \
+   [ "$REL_FRR" = "$(iso_pin FRR_VERSION)" ]; then
+  ok "vpp $REL_VPP and frr $REL_FRR, the versions the medium installs"
+else
+  bad "the artifact says vpp '$REL_VPP' frr '$REL_FRR'; the medium installs \
+vpp '$(iso_pin VPP_VERSION)' frr '$(iso_pin FRR_VERSION)'"
+fi
+
+# And a rename of those variables has to fail HERE, where whoever renamed them
+# is standing. An extraction that quietly came back empty would write a RELEASE
+# nothing can compare against, and appliance/upgrade would then refuse every
+# box or accept every box depending on which half broke.
+sed -i 's/^VPP_VERSION=/VPP_PKG_VERSION=/' "$TREE/appliance/build-iso.sh"
+if build; then
+  bad "build-upgrade.sh packed an artifact after the pin it reads was renamed \
+out from under it"
+else
+  case "$BUILD_OUT" in
+    *"could not read the VPP and FRR versions"*)
+      ok "renaming VPP_VERSION in build-iso.sh is refused, by name" ;;
+    *) bad "the build failed for some other reason: $BUILD_OUT" ;;
+  esac
+fi
+fresh_tree
+
+echo
+echo "=== half a build is refused, the way install.sh and build-iso.sh do ==="
+# The two plugins are ONE build product: tools/build.sh compiles them in one
+# ninja run, so a tree with one of them is a build that did not finish. #119 is
+# what a medium without the vat2 plugin cost - the binary API unregistered on
+# every box, and no CGNAT pool configurable on the one thing the appliance
+# exists to do - and an artifact without it would do that to a box that was
+# working this morning.
+rm -f "$TREE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
+if build; then
+  bad "an artifact was packed with no vat2 plugin in it"
+else
+  case "$BUILD_OUT" in
+    *bpa_test_plugin_bpa_plugin.so*)
+      ok "refused, naming the file that is missing" ;;
+    *) bad "the build failed without saying which half is missing: $BUILD_OUT" ;;
+  esac
+fi
+
+echo
+if [ "$fail" -gt 0 ]; then
+  echo "$fail FAILURES"
+  exit 1
+fi
+echo "ALL TESTS PASSED"
