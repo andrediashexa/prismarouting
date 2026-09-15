@@ -29,12 +29,23 @@ widest value each site can hold, which is a separate and harder problem -
 #276 did it for `say_finding` by DRIVING the sites with real input, which is
 the only honest way. #359 says so explicitly and leaves that half open.
 
-The second thing it cannot see is a refusal's VERDICT row. `err` prints
-`f"error: {msg}"`, so the row on the console is seven characters wider than
-the string the source shows, and `msg` is interpolated at most call sites.
-Driven rather than read - `configure` on a box whose dataplane is silent -
-that verdict is 84 columns while every prose row under it now wraps. Same
-problem as the interpolated rows, same open half; the count is printed too.
+A refusal's VERDICT row is measured here too, and it is measured SEPARATELY
+because it is seven characters wider than it looks. `err` prints
+`f"error: {msg}"`, so a 75-column string in the source is an 82-column row on
+the console - and `err` folds nothing, on purpose (#252): the first row of a
+refusal is the verdict and an operator reads it whole. That is exactly why a
+verdict row that does not fit is worse than a prose row that does not fit.
+Seven of them were at 83 to 217 columns when #362 measured (#359 had counted
+them and claimed nothing about them). The prefix is read out of `Shell.err`
+rather than written here, for the same reason the budget is read out of
+config: a second copy of "error: " is a second thing to keep in step, and the
+day the product reworded its prefix this check would be measuring a row the
+box does not print.
+
+What stays open, and is still only a count, is the verdict whose headline
+INTERPOLATES a value - `error: neighbour <peer> does not keep what it
+received` is 48 columns plus whatever the peer turns out to be. That is the
+same problem as the interpolated `print()` rows above and belongs with them.
 
 Rows that already go through `print_prose` are measured here too and cost
 nothing: `console_prose` wraps to the same budget, so a row it produced is
@@ -142,28 +153,101 @@ print("  ones that have been bounded are bounded by driving them "
       "(#276, #349, #355).")
 print(f"  ({blank} bare print() call(s), which are blank rows.)")
 
-# The other half this rule does not claim, and the reason it is a number here
-# rather than an assertion. A refusal's verdict goes through `err`, which
-# prints `f"error: {msg}"` - so the row on the console is seven characters
-# wider than the string in the source, and `msg` is itself interpolated at
-# most call sites. Measured by DRIVING `configure` on a box whose dataplane is
-# silent, that verdict reaches the console at 84 columns while every prose row
-# under it now wraps. Bounding these is the same problem as the interpolated
-# rows above and belongs with them, not smuggled in here.
-verdicts = 0
+# ------------------------------------------------------------ the verdict
+#
+# A refusal's first row, which is the one `err` will not fold.
+
+
+def err_prefix():
+    """
+    What `err` puts in front of a verdict, read out of the product.
+
+    Not the literal "error: " written here. The budget above is read from
+    `config` for the reason this is read from `Shell.err`: the check and the
+    box must move together, and a second copy of the prefix is a second thing
+    to keep in step - one that fails SILENTLY, by measuring seven characters
+    the box may have stopped printing.
+    """
+    path = os.path.join(REPO, "src", "hexash", "hexash.py")
+    tree = ast.parse(open(path, encoding="utf-8").read(), filename=path)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "err":
+            continue
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call) or not call.args:
+                continue
+            if getattr(call.func, "id", None) != "print":
+                continue
+            arg = call.args[0]
+            if (isinstance(arg, ast.JoinedStr) and arg.values
+                    and isinstance(arg.values[0], ast.Constant)):
+                return arg.values[0].value
+    return None
+
+
+print()
+print("=== every literal refusal VERDICT fits the console (#362) ===")
+
+PREFIX = err_prefix()
+if PREFIX is None:
+    # Loud, not skipped. A walk that cannot find the prefix would measure
+    # every verdict seven characters short and pass, which is the shape of
+    # failure this whole file exists to refuse.
+    bad("cannot read the verdict prefix out of Shell.err in hexash.py; "
+        "the walk below would be measuring rows the box does not print")
+    PREFIX = ""
+else:
+    ok(f"the prefix is {PREFIX!r}, read out of Shell.err")
+
+#: `err_dataplane` is in here because it IS `err` - it calls it and then adds
+#: a paragraph - so its verdict reaches the console with the same prefix.
+#: Every one of its call sites interpolates the dataplane's reason today, so
+#: it contributes nothing to the measured count and everything to the honest
+#: one.
+VERDICTS = ("err", "err_prose", "err_dataplane")
+
+verdicts = interpolated = 0
 for name in SOURCES:
     path = os.path.join(REPO, "src", "hexash", name)
     tree = ast.parse(open(path, encoding="utf-8").read(), filename=path)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
             continue
-        if getattr(node.func, "attr", None) in ("err", "err_prose",
-                                                "err_dataplane"):
+        if getattr(node.func, "attr", None) not in VERDICTS:
+            continue
+        text = literal(node.args[0])
+        if text is None:
+            interpolated += 1
+            continue
+        for row in text.split("\n"):
             verdicts += 1
-print(f"  NOT MEASURED HERE EITHER: {verdicts} refusal verdict row(s), which "
-      f"reach")
-print("  the console seven characters wider than the source shows, through "
-      "err().")
+            width = len(PREFIX + row)
+            if width > config.CONSOLE_COLUMNS:
+                bad(f"src/hexash/{name}:{node.lineno}: {width} columns on a "
+                    f"console of {config.CONSOLE_COLUMNS} - "
+                    f"{(PREFIX + row).strip()!r}")
+
+# Same idiom as the floor above, and the same reason: a walk that matched
+# nothing would go green on the day somebody renamed `err`. It was 67 when
+# this was written.
+VERDICT_FLOOR = 50
+if verdicts < VERDICT_FLOOR:
+    bad(f"only {verdicts} literal verdict(s) found in {len(SOURCES)} "
+        f"module(s); the walk has stopped seeing what it is supposed to "
+        f"measure")
+elif fail == 0:
+    ok(f"{verdicts} literal verdict row(s), all inside "
+       f"{config.CONSOLE_COLUMNS} columns once prefixed")
+
+print(f"  NOT MEASURED HERE: {interpolated} verdict(s) whose headline "
+      f"interpolates")
+print("  a value. 'error: neighbour <peer> does not keep what it received' "
+      "is 48")
+print("  columns plus the peer, which fits an IPv4 address and does not fit a "
+      "full")
+print("  IPv6 one - the same open half as the interpolated print() rows "
+      "above, and")
+print("  honest only when driven (#276, #349, #355).")
 
 if fail == 0:
     print()

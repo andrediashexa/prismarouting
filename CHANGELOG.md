@@ -77,6 +77,69 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Seven refusal verdicts did not fit the console, and the verdict is the one
+  row `err` must never fold**
+  ([#362](https://github.com/andrediashexa/hexarouting/issues/362)).
+  `err` prints `error: <msg>` and **wraps nothing**, on purpose
+  ([#252](https://github.com/andrediashexa/hexarouting/issues/252)): the first
+  row of a refusal is the verdict and an operator reads it whole. Those seven
+  characters are also seven the source does not show, so a 75-column string is
+  an 82-column row. Measured over the `err`/`err_prose` sites whose message is
+  fully literal, seven reached the console at **83 to 217 columns** against
+  `config.CONSOLE_COLUMNS`, which is 79 - and a verdict row that folds is worse
+  than a prose row that folds, because the one sentence the reader was meant to
+  take in at a glance is the one the terminal breaks.
+
+  Six shorten the way
+  [#349](https://github.com/andrediashexa/hexarouting/issues/349) and
+  [#355](https://github.com/andrediashexa/hexarouting/issues/355) shortened
+  theirs: the verdict keeps only the refusal and the rest goes under it through
+  `print_prose`. `configure` on a silent dataplane now says *the dataplane is
+  not answering* at 37 columns with its consequence on the row below, which
+  makes that screen consistent with itself - the three rows under it were
+  already wrapped by #359. *This box is not running from the installation
+  medium*, *nat: a hierarchy, not a block* and the SNMPv3 credential refusal
+  split the same way, the last one putting `auth <protocol> <passphrase>` and
+  `priv <protocol> <passphrase>` on a row each, because a shape the operator is
+  meant to retype must not be handed to `err` inside a sentence.
+
+  **The FRR-silent refusal had two owners**, written out at both the commit
+  check and the commit itself, and a sentence with two owners is a sentence
+  that becomes two sentences the first time one of them is reworded. It is one
+  object now, `FRR_SILENT_REFUSED`, and both sites print it.
+
+  **The seventh is not a reflow and was not treated as one.** `nat cgnat
+  logging`'s usage line listed five alternative spellings in one sentence
+  separated by pipes, at 217 columns; folded to 79 that is four rows of
+  pipe-separated fragments, which is harder to read than the unfolded row and
+  not easier. It is now one spelling per row, **built from `CGNAT_CONFIG`** -
+  the table `?` and TAB answer from, and the same move the `cgnat <word>`
+  refusal already makes. A usage line typed out by hand is a second copy of the
+  grammar, and this one had already drifted: it offered `nat cgnat logging udp
+  disable` and `nat cgnat logging tcp disable`, which `?` offered neither of.
+  `?` now carries `| disable` on both hints, so the refusal and the completion
+  cannot disagree. The verdict names no word on purpose - the branch is reached
+  by `cgnat logging sideways` and by `cgnat logging udp` with nothing after it,
+  and `udp` **is** a spelling.
+
+  **The rule is on the file.** `test/test_console_width.py` gained the same
+  `ast` walk over the same five modules for `err`, `err_prose` and
+  `err_dataplane` calls whose message is fully literal, measured with the
+  prefix **read out of `Shell.err`** rather than written into the check, for
+  the reason the budget is read out of `config`: a second copy of `error: ` is
+  a second thing to keep in step, and one that fails silently. 67 verdict rows
+  are measured. What stays open is the **118 verdicts whose headline
+  interpolates a value**, still printed as a count on every run and still the
+  half #359 left open.
+
+  Shown green, then red with one verdict put back as a single row - the check
+  names it at 91 columns - then green again; and, separately, the extended
+  check run against `chore/console-width-sweep`'s `src/hexash` in a scratch
+  tree, where it names all seven and nothing else. Needles moved in `test/test_hexash_refusals.py`, which now asserts
+  the verdict row rather than the whole sentence, and asserts the logging
+  shapes against `CGNAT_CONFIG` rather than against a list of its own; the
+  `nat` transcript in `docs/routing.md` shows the two rows the box prints now.
+
 * **Fifteen more refusal and report rows were wider than the console, and
   nothing swept the file**
   ([#359](https://github.com/andrediashexa/hexarouting/issues/359)).

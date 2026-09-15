@@ -1272,12 +1272,20 @@ CGNAT_CONFIG = {
     }),
     "block-holddown": ("seconds a block stays reserved once idle",
                        ARG_SECONDS),
+    # The argument hints carry `| disable` because the box takes it and this
+    # table is the only place that says what the box takes. It was missing
+    # from both: `?` offered `<collector> src <source> [port <n>]` and the
+    # usage line in apply_logging offered `nat cgnat logging udp disable`, so
+    # the two disagreed about the grammar - which is what a second copy of it
+    # always ends up doing (#362). apply_logging now builds its refusal from
+    # here, and `show cgnat logging` and docs/logging.md have documented the
+    # spelling all along.
     "logging": ("IPFIX export of block events", {
         "enable": ("enable UDP export", None),
         "disable": ("disable UDP export", None),
         "udp": ("where UDP export goes; required before 'enable'",
-                "<collector> src <source> [port <n>]"),
-        "tcp": ("export over TCP", "<collector> [port <n>]"),
+                "<collector> src <source> [port <n>] | disable"),
+        "tcp": ("export over TCP", "<collector> [port <n>] | disable"),
     }),
     "session-table": ("session table sizing", "buckets <n> memory <MB>"),
 }
@@ -4363,6 +4371,25 @@ def prefix_range_error(line):
     return None
 
 
+# The refusal for a box that has routing in its configuration and no daemon to
+# take it. ONE OWNER, and that is the whole reason it is up here: the sentence
+# was written out at both of the call sites that need it - `apply` validating
+# the routing half, and `apply` applying it - and a sentence with two owners is
+# a sentence that becomes two sentences the first time one of them is reworded.
+# This file has had to unify a spelling for that reason more than once.
+#
+# Split, because `err` never folds a verdict (#252) and the one row was 83
+# columns on a console of 79 (#362). What is left in the verdict is the
+# refusal; the command the operator has to run is a row of its own, which is
+# where it survives a fold rather than being the tail that the terminal breaks.
+FRR_SILENT_REFUSED = (
+    "routing is configured and FRR is not answering",
+    "'systemctl status frr' and its journal say why; blaming the "
+    "configuration for a daemon that is not running sends somebody to debug "
+    "the wrong thing",
+)
+
+
 class Frr:
     """Talks to FRR through vtysh, and reloads whole configurations."""
 
@@ -6871,11 +6898,11 @@ class Shell:
                         ok = False
                 elif self.real_routing(target.routing):
                     # Routing the operator actually wrote, and nothing to
-                    # check it with. Refused, and named: blaming the
-                    # configuration for a daemon that is not running sends
-                    # somebody to debug the wrong thing.
-                    self.err("routing is configured and FRR is not answering; "
-                             "check 'systemctl status frr'")
+                    # check it with. Refused, and named, out of the one place
+                    # the sentence lives: see FRR_SILENT_REFUSED for why it is
+                    # not written here, and why the verdict stops where it
+                    # does.
+                    self.err_prose(*FRR_SILENT_REFUSED)
                     ok = False
             return ok
 
@@ -7254,8 +7281,9 @@ class Shell:
                 for line in self.frr.diagnostics(out):
                     print(f"  frr: {line}")
             elif self.real_routing(target.routing):
-                self.err("routing is configured and FRR is not answering; "
-                         "check 'systemctl status frr'")
+                # The same refusal as the check half above, and the same
+                # object: FRR_SILENT_REFUSED is where it is written.
+                self.err_prose(*FRR_SILENT_REFUSED)
                 return False
             # Otherwise there is nothing here for FRR: interface stanzas whose
             # contents this VTY applies to the dataplane itself.
@@ -7493,11 +7521,34 @@ class Shell:
                     # here would be a second opinion about it.
                     args["port"] = int(w[5])
         else:
-            self.err("usage: nat cgnat logging enable|disable | "
-                     "nat cgnat logging udp <collector> src <source> "
-                     "[port <n>] | nat cgnat logging udp disable | "
-                     "nat cgnat logging tcp <collector> [port <n>] | "
-                     "nat cgnat logging tcp disable")
+            # NOT A REFLOW, and that is the decision rather than an omission.
+            # The five spellings were written out here in one sentence
+            # separated by pipes, and that row reached the console at 217
+            # columns (#362). Folded to 79 it becomes four rows of
+            # pipe-separated fragments with the alternatives broken across
+            # them, which is harder to read than the unfolded row and not
+            # easier - so this one needed a SHAPE and not a wrap.
+            #
+            # The shape is the one the rest of this VTY already uses for
+            # alternatives: one spelling per row. And the rows are built from
+            # CGNAT_CONFIG, which is the table `?` and TAB answer from and the
+            # same move `cgnat <word>` makes in do_config - because a usage
+            # line typed out by hand is a second copy of the grammar, and this
+            # one had already drifted. It offered `nat cgnat logging udp
+            # disable` and `nat cgnat logging tcp disable`; `?` offered
+            # neither. One owner now, so the refusal cannot disagree with the
+            # completion.
+            #
+            # The verdict names no word, deliberately. This branch is reached
+            # by `cgnat logging sideways` AND by `cgnat logging udp` with
+            # nothing after it, and `udp` IS a spelling - a verdict saying
+            # otherwise would be wrong on half the boxes that meet it.
+            shapes = CGNAT_CONFIG["logging"][1]
+            self.err_prose(
+                "cgnat logging: not a shape this box takes",
+                *[f"{NAT_HIERARCHY} cgnat logging {word}"
+                  + (f" {hint}" if hint else "")
+                  for word, (_what, hint) in shapes.items()])
             return
         r = self.api_call("bpa_logging_set", args)
         if r.state != vppapi.OK:
@@ -8416,8 +8467,15 @@ class Shell:
         operator abandons returns to the VTY rather than logging them out.
         """
         if not running_from_live_medium():
-            self.err("this box is not running from the installation medium; "
-                     "'install' only exists there")
+            # Verdict, then the consequence. The one sentence reached the
+            # console at 88 columns on a console of 79 and `err` folds nothing
+            # (#362); what an operator has to take from this screen is that
+            # they are on an installed box, and where the command they typed
+            # does exist is the row under it.
+            self.err_prose("this box is not running from the installation "
+                           "medium",
+                           "'install' only exists there, on the live medium "
+                           "this box was installed from")
             return
         if not self.require(CAP_ALL, "install"):
             return
@@ -8470,9 +8528,14 @@ class Shell:
             #
             # So neither - refuse, and say what to wait for (#211).
             if not self.dp.reachable():
+                # The verdict is that the dataplane is not answering; what
+                # follows from it is prose. As one row it was 84 columns on a
+                # console of 79 (#362), which left this screen with three
+                # tidy rows under one that did not fit - and the split is the
+                # one the FRR-silent refusal already makes.
                 self.err_prose(
-                    "the dataplane is not answering, so there is nothing to "
-                    "build a candidate from",
+                    "the dataplane is not answering",
+                    "so there is nothing to build a candidate from",
                     "a candidate built now would be missing the CGNAT half, "
                     "and committing it would remove every pool",
                     "the box is probably still starting: 'show version' says "
@@ -8533,8 +8596,14 @@ class Shell:
             # was never a block either - what is entered is `cgnat pool NAME` -
             # and inventing one level of block here would make `exit` mean
             # something different depending on which word opened it.
-            self.err("nat: a hierarchy, not a block - "
-                     "'nat cgnat pool <name>' or 'nat cgnat interface ...'")
+            # The verdict is that `nat` is not a block; what to type
+            # instead is a row of its own. One sentence was 91 columns on a
+            # console of 79 and `err` folds nothing (#362), and the statement
+            # the operator has to retype was the tail of it, which is where
+            # the terminal's fold lands.
+            self.err_prose("nat: a hierarchy, not a block",
+                           "what is entered is 'nat cgnat pool <name>' or "
+                           "'nat cgnat interface ...'")
             return ""
         line = strip_nat(line) if not self.frr_ctx else line
         w = line.split()
@@ -9107,8 +9176,14 @@ class Shell:
         elif w[0] in ("auth", "priv") and len(w) > 2:
             setattr(u, w[0], " ".join(w[1:]))
         else:
-            self.err("a v3 user takes 'auth <protocol> <passphrase>' and "
-                     "'priv <protocol> <passphrase>'")
+            # Two spellings on two rows rather than one sentence of 88
+            # columns on a console of 79 (#362). `err` folds nothing, so a
+            # shape an operator is meant to retype must not be handed to it
+            # inside a sentence: the verdict says which words this block
+            # takes, and each shape is a row.
+            self.err_prose("a v3 user takes 'auth' or 'priv'",
+                           "auth <protocol> <passphrase>",
+                           "priv <protocol> <passphrase>")
         return True
 
     def do_user(self, line):
