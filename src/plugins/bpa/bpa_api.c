@@ -491,6 +491,12 @@ send_pool_details (bpa_pool_t *p, vl_api_registration_t *reg, u32 context)
   mp->capacity = clib_host_to_net_u32 (p->capacity);
   mp->inside_count = clib_host_to_net_u32 (p->inside.count);
   mp->outside_count = clib_host_to_net_u32 (p->outside.count);
+  /* The floor, not recomputed here: bpa_pool_guaranteed() is what the CLI
+   * prints, and two copies of a capacity figure is how one of them ends up
+   * promising subscribers the other knows are refused. */
+  mp->n_workers = clib_host_to_net_u32 (bpa_main.n_workers);
+  mp->guaranteed =
+    clib_host_to_net_u32 (bpa_pool_guaranteed (p, bpa_main.n_workers));
 
   vl_api_send_msg (reg, (u8 *) mp);
 }

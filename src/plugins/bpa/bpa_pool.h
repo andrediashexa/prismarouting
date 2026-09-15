@@ -584,6 +584,113 @@ clib_error_t *bpa_addr_set_build (bpa_addr_set_t *s, const u32 *bases,
 				  const u32 *counts, u32 n);
 
 /* ------------------------------------------------------------------ */
+/* capacity                                                            */
+
+/*
+ * The number an operator sizes a pool against, in one place.
+ *
+ * Three readers now: "show bpa pool" prints it, bpa_pool_details reports it
+ * over the binary API, and bpa_pool_remap_count() walks it. A number that has
+ * to agree in three files is a number with one holder, not three copies kept
+ * in step by hand - and the arithmetic below had two of those already.
+ *
+ * Here rather than beside the command that prints it because here it builds
+ * standalone. Until this moved, the central capacity claim of the product was
+ * asserted by nothing that runs without a container: `make test` could not
+ * reach it, and a regression in it would have shipped green.
+ */
+
+/*
+ * Subscribers the pool has a block for at all.
+ *
+ * Capacity counts blocks and the inside set counts addresses, and neither
+ * bounds the other: a pool can hold more blocks than it has subscribers to
+ * give them to, and an inside range can be far larger than the public
+ * addresses behind it.
+ */
+static_always_inline u32
+bpa_pool_usable (const bpa_pool_t *p)
+{
+  return p->capacity < p->inside.count ? p->capacity : p->inside.count;
+}
+
+/*
+ * How many subscribers a pool serves whatever addresses they have.
+ *
+ * A worst case and deliberately not a mean. The operator sizing a pool has no
+ * say over which of their inside addresses are switched on at any moment, so
+ * a figure that only holds on the average leaves a box refusing subscribers
+ * below the number it printed - the same false promise this exists to remove,
+ * arriving one step quieter. What is returned is the largest n for which
+ * EVERY set of n subscribers is served.
+ *
+ * In dynamic mode with workers the pool's blocks are sharded so allocation
+ * needs no lock: worker w owns every block whose index is congruent to w, and
+ * a subscriber may only draw from the worker its own index maps to. Both
+ * halves are right on their own - one keeps allocation worker-local, the
+ * other keeps a flow's two directions on one worker - and neither was
+ * designed against the other. A subscriber index is the offset of its address
+ * within the inside set, not a counter, so on any real address plan the two
+ * do not balance.
+ *
+ * A worker refuses only when more inside addresses map to it than it has
+ * blocks, and the adversary then puts one subscriber more than that worker's
+ * slice on it. So the answer is the smallest slice among the workers that can
+ * be crowded, and the whole usable set when none of them can be.
+ *
+ * That second case is why this is not simply capacity/n_workers. A pool of 12
+ * blocks in front of 8 inside addresses serves all 8 on any worker count,
+ * because no worker can be handed more subscribers than it has blocks for;
+ * calling it 4 would send an operator to buy addresses they already own.
+ *
+ * The number does not depend on WHICH addresses are in use, only on how many
+ * the inside set holds - that is what makes it safe to print.
+ *
+ * Deterministic mode and a single worker have nothing to lose to the shard.
+ * There a block is derived rather than allocated, or there is one slice and
+ * it is the whole pool, so the answer is the ceiling and the caller prints no
+ * caveat. That test lives here and not at each reader: a caveat shown where
+ * it does not apply is one people learn to skip, and then they skip the one
+ * that matters, so the three readers must not each decide it for themselves.
+ *
+ * Only the MODE half of that guard changes the answer; measured by removing
+ * it, and the deterministic pools then promise a floor they cannot lose. The
+ * worker half does not - at one worker the loop finds one slice holding
+ * everything, and at zero, which is what bpa_main.n_workers reads on a
+ * single-threaded box and what the API handler passes, it does not run at
+ * all. It is kept because a reader asking "what about a box with no workers"
+ * should find the answer here rather than derive it from an empty loop.
+ */
+static_always_inline u32
+bpa_pool_guaranteed (const bpa_pool_t *p, u32 n_workers)
+{
+  u32 w, worst = ~0u;
+
+  if (p->mode != BPA_MODE_DYNAMIC || n_workers <= 1)
+    return bpa_pool_usable (p);
+
+  for (w = 0; w < n_workers; w++)
+    {
+      /* Worker w owns the block indices congruent to w (bpa_dyn_init), and
+       * the subscriber indices congruent to w may only draw from them
+       * (bpa_owner_worker). */
+      u32 nb = p->capacity, ns = p->inside.count;
+      u32 blocks = nb / n_workers + (w < nb % n_workers ? 1 : 0);
+      u32 subs = ns / n_workers + (w < ns % n_workers ? 1 : 0);
+
+      if (subs > blocks && blocks < worst)
+	worst = blocks;
+    }
+
+  /* No worker can be crowded, so every usable subscriber is served. Said as
+   * the ceiling rather than as inside.count - the two are equal here, since
+   * a pool nobody can crowd has a block per inside address - because that
+   * makes "the floor never exceeds the ceiling" true by construction instead
+   * of by an argument a later edit can break. */
+  return worst == ~0u ? bpa_pool_usable (p) : worst;
+}
+
+/* ------------------------------------------------------------------ */
 /* address set lookups                                                */
 
 /* Dense index of `addr`, or -1 when it is not in the set. */
