@@ -173,9 +173,14 @@ echo
 echo "=== a value tune.env should not carry is refused, and says what is ==="
 # The regression this suite was written for. A refusal that only says no is
 # read on a serial console by somebody who then has to guess the spelling.
+#
+# TWO ROWS, asserted as two: the name and the file are on the first and the
+# value is the whole of the second (#367). A value an operator typed has no
+# widest, so on one row it pushed the path to the file off an 80-column
+# console - and the path is the only thing on that screen anybody can act on.
 mkbox powersave
 run HEXA_LOW_LATENCY=true
-said "REFUSED HEXA_LOW_LATENCY='true'" \
+said "REFUSED HEXA_LOW_LATENCY in " && said "  'true'" \
   && ok "HEXA_LOW_LATENCY=true is refused, and the refusal quotes the value" \
   || bad "HEXA_LOW_LATENCY=true passed silently. Output: $OUT"
 if said "deep C-states off" && said "leave all three alone"; then
@@ -201,7 +206,7 @@ echo
 echo "=== HEXA_SUBSCRIBERS, which used to fail the whole unit ==="
 mkbox
 run HEXA_SUBSCRIBERS=200k
-said "REFUSED HEXA_SUBSCRIBERS='200k'" \
+said "REFUSED HEXA_SUBSCRIBERS in " && said "  '200k'" \
   && ok "HEXA_SUBSCRIBERS=200k is refused by name, with the value quoted" \
   || bad "HEXA_SUBSCRIBERS=200k was not refused by this script. Output: $OUT"
 said "digits only: 200000, not 200k" \
@@ -234,7 +239,7 @@ esac
 
 mkbox
 run HEXA_MAX_WORKERS=four
-said "REFUSED HEXA_MAX_WORKERS='four'" \
+said "REFUSED HEXA_MAX_WORKERS in " && said "  'four'" \
   && ok "a cap that is not a number is refused by name" \
   || bad "HEXA_MAX_WORKERS=four was not refused. Output: $OUT"
 said "empty, which is the shipped value and means no cap" \
@@ -503,6 +508,11 @@ else
 $OUT"
 fi
 
+# WHAT THE WIDTH READER MAY STILL FIND. It is zero on both counts, which is
+# the state to keep: the next row added to this program that does not fit, or
+# that puts an operator value in front of the words of the program, goes red
+# here with nothing to subtract from.
+SAY_UNSAFE_AT_MOST=0
 say_report appliance/apply-tuning
 rm -rf "$SAY_DIR"
 

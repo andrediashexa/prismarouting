@@ -149,6 +149,38 @@ echo
 ok()  { echo "  [ ok ] $*"; }
 bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
 
+echo "=== the two questions an answer file always answers ==="
+#
+# HEXA_HOSTNAME and HEXA_TIMEZONE are set by every other case in this file, by
+# lab/install-iso.sh and by every unattended install, because an answer file is
+# how this program is driven when nobody is watching. The consequence was that
+# the two PROMPTS behind them had been printed by nothing here: #367 found them
+# by measuring what reached the console rather than by reading the source, and
+# they are the first two questions an operator meets at an interactive install.
+# A prompt that is missing, or that offers the wrong default, is read by
+# somebody who is about to type an answer to it.
+idout=$(printf 'cgnat02\nAmerica/Sao_Paulo\ns3cr3t\ns3cr3t\n' \
+        | env HEXA_INSTALL_CHECK=1 HEXA_INSTALL_YES=1 HEXA_DISK="$DISK" \
+              HEXA_LOG_GB=1 sh "$INSTALLER" 2>&1)
+printf '%s\n' "$idout" | say_box
+case "$idout" in
+  *"Hostname [hexarouting]"*)
+    ok "the hostname is asked at the console, with the shipped default" ;;
+  *) bad "the hostname question was never printed:
+$idout" ;;
+esac
+case "$idout" in
+  *"Timezone [America/Sao_Paulo]"*) ok "and the timezone, with its own" ;;
+  *) bad "the timezone question was never printed:
+$idout" ;;
+esac
+case "$idout" in
+  *cgnat02*) ok "and an answer typed at the prompt reaches the summary" ;;
+  *) bad "the hostname typed at the prompt did not reach the summary:
+$idout" ;;
+esac
+
+echo
 echo "=== the password is asked twice, and BOTH answers can run out ==="
 #
 # The case above closes stdin before the first question, so the first
@@ -801,8 +833,14 @@ run 1 "a gateway that is not on the address's subnet: refused" $NOK \
     HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
     HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
     HEXA_MGMT_GATEWAY=198.51.100.1
+# BOTH ANSWERS, on the row of their own they were moved to (#367): an address
+# is fifteen columns and a prefix eighteen, and on the verdict row the two of
+# them made it 88 on an 80-column console. What is asserted is unchanged - that
+# the refusal names the pair that disagrees, because a refusal that says only
+# "the gateway is wrong" leaves an operator at a console comparing two numbers
+# they cannot see.
 case "$LAST_OUT" in
-  *"is not on 192.0.2.10/24's subnet"*)
+  *"gateway 198.51.100.1, address 192.0.2.10/24"*)
     ok "and says which two answers disagree" ;;
   *) bad "refused without naming the address it disagrees with: $LAST_OUT" ;;
 esac
@@ -2412,8 +2450,12 @@ partitioner ran $RRSFDISK time(s)"
     # "$rgone and nothing after it" is also the proof that the other nine were
     # on the PATH this case ran with - a rig that had lost a second stub would
     # print two names here and be measuring a different machine.
-    case "$RROUT" in
-      *"missing tools: $rgone - "*)
+    # The list is a row of its own now, folded and indented by two (#367), so
+    # the proof that the other nine were on the PATH is that ROW: it is the
+    # last thing printed and it holds one name. A rig that had lost a second
+    # stub would put two on it.
+    case "$(printf '%s\n' "$RROUT" | tail -1)" in
+      "  $rgone")
         ok "and it names the one tool that is gone, and only that one" ;;
       *) bad "the refusal does not name $rgone by itself, so either the tool \
 list or this case's rig is not what it says it is: $RROUT" ;;
@@ -2435,8 +2477,11 @@ list or this case's rig is not what it says it is: $RROUT" ;;
     && ok "a run with no live filesystem to unpack refuses, disk untouched" \
     || bad "the install carried on with nothing to unpack: rc=$RRRC, the \
 partitioner ran $RRSFDISK time(s)"
+  # The path is on its own row now (#367), indented by two, which is where a
+  # 41-column path stops pushing the question off the console.
   case "$RROUT" in
-    *"live filesystem not found at $rwork/there-is-no-medium-here.squashfs"*)
+    *"live filesystem not found"*"
+  $rwork/there-is-no-medium-here.squashfs"*)
       ok "and names the path it looked at, which is the whole of the answer" ;;
     *) bad "the refusal does not name the path it went looking for: $RROUT" ;;
   esac
@@ -3161,6 +3206,20 @@ could not write anything: $nrout" ;;
   esac
 fi
 
+# WHAT THE WIDTH READER MAY STILL FIND, and it may only go down.
+#
+# 49 rows of this program carry a value with no widest - a disk somebody
+# named, a card name, an answer somebody typed - with the words of the program
+# behind it, so the row grows past the console exactly when the value is long.
+# They are NAMED on every run, with the line and the columns before the value,
+# because an allowlist is read once and grown forever. Every one that gains a
+# fix lowers this number.
+#
+# It is not zero, and the ones still counted are the work #367 leaves behind it
+# rather than a clean bill: what is fixed here is the 7 rows that do not fit at
+# the widest value that can reach them, which no reading of the source could
+# have found.
+SAY_UNSAFE_AT_MOST=49
 say_report appliance/hexarouting-install
 rm -rf "$SAY_DIR" "$GLOBALBIN"
 

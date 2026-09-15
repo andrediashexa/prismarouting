@@ -52,7 +52,15 @@ LIVEDIR=$ROOT/run/live
 # for and a value that pushes the sentence off the edge takes the reason with
 # it.
 say_refused() {  # <variable> <value>
-  echo "REFUSED $1='$2' in /etc/hexarouting/tune.env." >&2
+  # THE VALUE ON A ROW OF ITS OWN, which is what the paragraph above says and
+  # what this did not do: written as one sentence, the file an operator has to
+  # open came AFTER the value, so a long typo pushed the path off an
+  # 80-column console and took the only actionable thing on the screen with it
+  # (#367). The first row now fits whatever is in the file - it holds a
+  # variable name and nothing else that varies - and the value is the whole of
+  # the second, quoted, where a fold costs a closing quote and no words.
+  echo "REFUSED $1 in /etc/hexarouting/tune.env. The value there is:" >&2
+  echo "  '$2'" >&2
 }
 say_using() {    # <what is used instead>
   echo "  Using $1." >&2
@@ -236,7 +244,13 @@ if command -v update-grub >/dev/null 2>&1; then
   echo "kernel command line changed (isolcpus/hugepages);" \
        "reboot for it to take effect" >&2
 else
-  echo "update-grub missing: apply the command line from $GRUBFILE" \
-       "in your bootloader and reboot" >&2
+  # THE FILE ON A ROW OF ITS OWN. `echo` joins its arguments with a space onto
+  # ONE row, so the continuation in the source was not a break in the output
+  # and this was 114 columns on an 80-column console (#367) - on the one
+  # message an operator gets when the tuning cannot be applied, and with the
+  # path they have to type broken across the fold. The path is last on its row
+  # now, which is where a fold costs nothing.
+  echo "update-grub missing: apply the kernel command line by hand and" >&2
+  echo "reboot. It is in $GRUBFILE" >&2
   exit 1
 fi

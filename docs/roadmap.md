@@ -2190,8 +2190,13 @@ had the same gap.
 
 **Closed, and the count went up rather than down.** All three have the reader
 now, over a shared `test/say-coverage.sh` rather than a third per-component
-copy: **181 messages over 128 boxes** for the installer, 37 over 17 for the
-bind, 30 over 22 for the tuner, both halves, no allowlist and no remainders.
+copy: **193 messages over 129 boxes** for the installer, 39 over 17 for the
+bind, 31 over 22 for the tuner, both halves, no allowlist and no remainders.
+(181, 37 and 30 when #364 closed. The extraction now also takes a printer
+called inside a `$(...)`, which is how every question in the installer is
+asked, and the two prompts that then had no box - `Hostname` and `Timezone` -
+have one: #367 needed the questions to be messages before it could tell a
+prompt row from the refusal captured beside it.)
 181 and not 117 because the extraction is a strict superset of the scan that
 produced that number - it takes `die` and `fatal` refusals and printers called
 as the body of a `case` arm or after `||`, and drops what is not a screen. Six
