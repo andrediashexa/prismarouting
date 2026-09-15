@@ -67,6 +67,8 @@ directory listed twice is a claim about the tree, and README.md listed
 `docs/context.md` twice for long enough that nobody saw it.
 """
 import collections
+import contextlib
+import io
 import os
 import re
 import sys
@@ -790,6 +792,198 @@ if _checked >= 2:
 else:
     bad(f"only {_checked} volume row(s) were read, so this check is asserting "
         f"almost nothing")
+
+
+print("\n=== a '?' listing a document prints, against the tree that answers it ===")
+# THE DEFECT. docs/routing.md quotes `show cgnat ?` with eleven sub-commands.
+# The tree offers twelve: `show cgnat ha` has been there since HA comparison
+# was built, and the transcript was never touched. An operator reading that
+# page to find out what the box has is being handed a list the box would not
+# print, on the screen whose whole job is to say what is there. The `vrf`
+# description inside an interface block had drifted the same way, in both of
+# the two places routing.md prints that listing.
+#
+# NOT COVERED BY test_doc_commands.py, and the boundary is worth being exact
+# about: that file walks the COMMAND on the prompt line - `show cgnat ?` - and
+# stops at the placeholder. What follows the prompt is OUTPUT, and no check
+# read it. A transcript of `?` is the one piece of output in these pages that
+# is not prose: it is the tree's own option set, rendered.
+#
+# ONE HOLDER AND A READER. The holder is `Shell._options()`, which is what `?`
+# and TAB both answer from; the document is the second copy. This compares a
+# set of names against a set of names, so it is sound where this file's header
+# rejects comparing prose against the source that prints it.
+_sys_path_added = os.path.join(REPO, "src", "hexash")
+if _sys_path_added not in sys.path:
+    sys.path.insert(0, _sys_path_added)
+import hexash                                                    # noqa: E402
+
+#: The box behind the walk. Interfaces come from the dataplane, so a listing
+#: taken inside `interface <name>` needs one to enter - and the names here are
+#: the ones the documentation's own transcripts use.
+_IFACES = """              Name               Idx    State  MTU (L3/IP4/IP6/MPLS)
+GigabitEthernet0/12/0             1      up          9000/0/0/0
+TenGigabitEthernet0/8/0           4      up          9000/0/0/0
+host-veth-vpp                     5      up          9000/0/0/0
+local0                            0     down            0/0/0/0
+"""
+
+
+def _shell(mode, enter=()):
+    """A Shell parked where a transcript's prompt says it is."""
+    sh = hexash.Shell()
+    # Wide on purpose: a page documents the product, not one account (#35).
+    sh.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    sh.dp = type("D", (), {
+        "TRACE": False,
+        "run": lambda _s, c: (0, _IFACES) if c.startswith("show interface")
+        else (0, ""),
+        "reachable": lambda _s: True})()
+    # The developer's own cards are a property of the MACHINE running this
+    # suite, not of the product: left reachable, `dataplane interface` would
+    # enumerate them and this check would pass or fail on whose laptop it ran.
+    sh.SYS_CLASS_NET = "/nonexistent/sys/class/net"
+    sh.frr = type("F", (hexash.Frr,), {"available": lambda s: False,
+                                       "running": lambda s: [],
+                                       "show": lambda s, c: (1, "")})()
+    _quiet = io.StringIO()
+    with contextlib.redirect_stdout(_quiet):
+        if mode == "configuration":
+            sh.feed("configure")
+        for _line in enter:
+            sh.feed(_line)
+    return sh
+
+
+#: Each entry is a transcript this file knows how to stand in front of: the
+#: prompt line as the page prints it, and what to type to get there. A prompt
+#: shape nobody lists is reported rather than skipped, because a transcript
+#: added later and silently unread is this check going quiet.
+_LISTINGS = {
+    "hexarouting> show cgnat ?": ("operational", (), "show cgnat "),
+    "hexarouting# [edit interface GigabitEthernet0/12/0] ?":
+        ("configuration", ("interface GigabitEthernet0/12/0",), ""),
+}
+
+_seen = set()
+for _path in ("docs/routing.md",):
+    _lines = read(_path).split("\n")
+    for _i, _line in enumerate(_lines):
+        _where = _LISTINGS.get(_line.strip())
+        if _where is None:
+            continue
+        _mode, _enter, _prefix = _where
+        # The listing is the indented rows under the prompt, up to the first
+        # line that is not one. `?` prints "  <name>  <description>".
+        _rows = {}
+        for _row in _lines[_i + 1:]:
+            _m = re.match(r"^  (\S+)  +(\S.*?)\s*$", _row)
+            if not _m:
+                break
+            _rows[_m.group(1)] = _m.group(2)
+        if not _rows:
+            bad(f"{_path}: '{_line.strip()}' is followed by no option rows, "
+                f"so this check is reading nothing")
+            continue
+        _seen.add(_line.strip())
+        _opts, _hint, _ = _shell(_mode, _enter)._options(_prefix, False)
+        _missing = sorted(set(_opts) - set(_rows))
+        _extra = sorted(set(_rows) - set(_opts))
+        if _missing:
+            bad(f"{_path}: '{_line.strip()}' does not list {_missing}, and "
+                f"the box offers them: the page is a screen this VTY would "
+                f"not print, on the one screen whose job is saying what is "
+                f"there")
+        if _extra:
+            bad(f"{_path}: '{_line.strip()}' lists {_extra}, and the box "
+                f"offers no such option: a reader is told to type something "
+                f"that is refused")
+        _drifted = [n for n in sorted(set(_rows) & set(_opts))
+                    if _rows[n] != _opts[n]]
+        for _n in _drifted:
+            bad(f"{_path}: '{_line.strip()}' describes {_n!r} as "
+                f"{_rows[_n]!r} and the box says {_opts[_n]!r}")
+        if not (_missing or _extra or _drifted):
+            ok(f"{_path}: '{_line.strip()}' - all {len(_rows)} option(s), "
+               f"name and description")
+_lost = sorted(set(_LISTINGS) - _seen)
+if _lost:
+    bad(f"the '?' transcript(s) {_lost} are in no document this check reads: "
+        f"a prompt has been reworded or moved and this went quiet")
+
+print("\n=== the reserve's cost, against the model that is its definition ===")
+# architecture.md states what a reserve of one block costs under each policy,
+# and names ref/validate.py as where it was measured. The blocked row said
+# "738 of 882 subscribers moved ... plus the 21 the truncation dropped". The
+# model says 750 and 7. The 7 is also what the interleaved row beside it
+# derives from the pool's own definition - `outside.count x reserve`, 7 x 1 -
+# so the document contradicted itself and the wrong half was the one an
+# operator sizes a maintenance window against.
+#
+# ONE HOLDER AND A READER. ref/bpa_model.py is the specification; the table is
+# a copy of four numbers out of it. This RUNS the model rather than grepping
+# validate.py's output, because the number has to be what the arithmetic says
+# and not what a print statement last said it was.
+_ref = os.path.join(REPO, "ref")
+if _ref not in sys.path:
+    sys.path.insert(0, _ref)
+from bpa_model import MapPolicy, PoolConfig                       # noqa: E402
+
+#: The model's own fragmented pool, which is the one the document names. Its
+#: outside set is three separate ranges - 4 + 2 + 1 - so `outside.count` is 7
+#: and not a power of two, which is the whole reason it is the pool quoted.
+_INSIDE = ["100.64.0.0/22"]
+_OUTSIDE = ["200.150.0.8/30", "45.170.16.64/31", "203.0.113.200/32"]
+
+
+def _reserve_cost(policy):
+    """(capacity, moved, dropped) when that pool is given a reserve of one."""
+    p = PoolConfig("fragmented", _INSIDE, _OUTSIDE, block_size=512,
+                   policy=policy)
+    q = PoolConfig("fragmented", _INSIDE, _OUTSIDE, block_size=512,
+                   policy=policy, block_reserve=1)
+    moved = dropped = 0
+    for sub in range(min(p.capacity, p.inside.count)):
+        was = p.forward(p.inside.addr_of(sub))
+        if sub >= q.capacity:
+            dropped += 1
+        elif q.forward(q.inside.addr_of(sub)) != was:
+            moved += 1
+    return p.capacity, moved, dropped
+
+
+_cap, _moved, _dropped = _reserve_cost(MapPolicy.BLOCKED)
+_row = re.search(
+    r"\|\s*`blocked`\s*\|(?P<text>[^|]*)\|", read("docs/architecture.md"))
+if not _row:
+    bad("docs/architecture.md no longer has a `blocked` row in the reserve "
+        "cost table, so this check is comparing against nothing")
+else:
+    _nums = [int(n) for n in re.findall(r"\b(\d+)\b", _row.group("text"))]
+    _want = [_moved, _cap, _dropped]
+    if _nums != _want:
+        bad(f"docs/architecture.md's blocked reserve row states {_nums} where "
+            f"the model gives moved={_moved}, of={_cap}, dropped={_dropped}: "
+            f"this is the number an operator sizes a remap window against")
+    else:
+        ok(f"blocked: {_moved} of {_cap} moved and {_dropped} dropped, "
+           f"recomputed from ref/bpa_model.py")
+    # The row beside it derives its own count from the pool definition, and
+    # the two have to agree about the truncation: a reserve of one takes one
+    # block off every public address, so `outside.count` subscribers lose
+    # theirs whichever policy is in force.
+    _icap, _imoved, _idropped = _reserve_cost(MapPolicy.INTERLEAVED)
+    if _idropped != _dropped:
+        bad(f"the model drops {_idropped} under interleaved and {_dropped} "
+            f"under blocked for one pool and one reserve: the table presents "
+            f"them as the same truncation and they are not")
+    elif _imoved:
+        bad(f"interleaved moved {_imoved} subscriber(s), and the table beside "
+            f"this says it moves nobody")
+    else:
+        ok(f"interleaved: nobody moves and the same {_idropped} are dropped, "
+           f"which is the outside set's {_idropped} addresses times a "
+           f"reserve of 1")
 
 if fail == 0:
     print()
