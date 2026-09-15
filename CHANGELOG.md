@@ -526,6 +526,13 @@ version has a chance of seeing it.
 
   `make test`: 65 suites, 65 passed.
 
+  Four entries in this section end on a line like that one, at 59, 61, 63 and
+  65, and none of them disagrees with another: each is the run that cleared
+  its own merge, and the count is what `test/suites.list` named that hour.
+  `test/suites.list` names **69** today. A reader who takes any of the four
+  for the size of this repository's offline suite is reading a timestamp as a
+  measurement.
+
 * **The bind failure's advice is false of both boxes that can reach it**, in
   opposite directions
   ([#346](https://github.com/andrediashexa/hexarouting/issues/346) for the
@@ -1087,9 +1094,12 @@ version has a chance of seeing it.
 
   It is 115 and `hexarouting-install` 81 now. The #339 entry above this one is
   what added the two: `git diff` over those eight files since this sweep shows
-  nothing else moved, and what it added are the two `die`s that read
-  `release_disk_until_free`'s refusal at `appliance/hexarouting-install:1450`
-  and `:1512`.
+  no other refusal added or removed, and what it added are the two `die`s at
+  the call sites of `release_disk_until_free`, one for the disk and one for
+  the mirror. They are named by their function and not by a line, because
+  `appliance/hexarouting-install` has moved every line past 1081 twice since
+  this entry was written and a number here goes stale faster than the sentence
+  around it.
 
   **The one at the top of the list had no test on either arm.** `Type 'yes' to
   install:` is the last thing between an operator and a destroyed disk, and
@@ -1168,12 +1178,12 @@ version has a chance of seeing it.
   **Four things found and not fixed, because none of them is a test.** Two of
   the four were fixed later the same day, by the
   [#339](https://github.com/andrediashexa/hexarouting/issues/339) entry above:
-  `release_disk()`'s two early exits return **2** now, at
-  `appliance/hexarouting-install:1380` and `:1381`, and
-  `release_disk_until_free`'s `return 1` is at `:1447` and is read by both call
-  sites, which `die` at `:1450` and `:1512`. The paragraph below is what was
-  true when it was written, and the two line numbers it gives for those exits
-  no longer point at them. The other two stand.
+  `release_disk()`'s two early exits return **2** rather than 0, and
+  `release_disk_until_free`'s `return 1` is read by both of its call sites,
+  which `die`. The paragraph below is what was true when it was written, and
+  the line numbers in it no longer point at what they name - every line past
+  1081 of `appliance/hexarouting-install` has moved twice since. The other two
+  of the four stand.
 
   `release_disk()` returns 0 from both of its early exits
   (`appliance/hexarouting-install:1379` and `:1380`) and its caller reads
@@ -2565,8 +2575,10 @@ version has a chance of seeing it.
   to look. It is the second of the two readers at the end of
   `test/test_selftest.sh`, carried from shell to Python's AST: the call sites
   are parsed out of the product, the 18 suites that drive the VTY are derived
-  from `test/suites.list` rather than listed, and coverage is spent on the
-  **line** that refused rather than on the message. That last part is the
+  from `test/suites.list` rather than listed - it is **19** on this tree, and
+  that it moved without anybody editing this reader is the point of deriving
+  it - and coverage is spent on the **line** that refused rather than on the
+  message. That last part is the
   whole difference - nine call sites print "the dataplane does not have it"
   word for word, so a reader keyed on the text can neither tell them apart nor
   survive a mutation to it. There is no list to keep in step: a refusal added
