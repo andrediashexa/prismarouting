@@ -75,6 +75,22 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **Six of the release gate's refusals now have assertions, and it had two.**
+  `tools/release-gate.sh` carries 22 refusals and its own header calls it "the
+  only thing in this project that has ever caught a release mistake". Until
+  tonight the only two anything had watched fire were the two added tonight;
+  the rest had been seen only when a real release went wrong. A refusal nobody
+  has watched fire is a refusal that may not fire, which is #335's finding in
+  the place it would cost the most. `test/test_release_gate.sh` clones the
+  newest tag, **breaks exactly one thing**, re-tags and requires that one
+  refusal - starting from a tree that passes is what makes each case about its
+  own break rather than about the scaffolding. It also says, as a number, that
+  it reaches 14 of the 22: everything after `RELEASE_GATE_CHECK_ONLY` needs a
+  321 MB image built, booted and installed, and is still measured only by
+  running a real release.
+
 ### Fixed
 
 * **`docs/appliance.md` still said the commit binds the NIC**
