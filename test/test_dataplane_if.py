@@ -727,7 +727,11 @@ def one_card_box(tmp, frr=True, **kw):
     running (#184). An FRR-less stub here would make every case below fail for
     that and say nothing about #303.
     """
-    sh = shell_on(tmp, route=ONE_ROUTE, cards=ONE_CARD, **kw)
+    # The defaults are the one-card box; a caller may name another, which is
+    # what the width case does to reach the longest name Linux can carry.
+    kw.setdefault("route", ONE_ROUTE)
+    kw.setdefault("cards", ONE_CARD)
+    sh = shell_on(tmp, **kw)
     if frr:
         # It KEEPS what it is given, because the commit reads FRR back
         # afterwards and reports any statement FRR did not keep (#184). A stub
@@ -792,6 +796,54 @@ with tempfile.TemporaryDirectory() as tmp:
           f"it does not say the card moves at a restart and not at this "
           f"commit: {said!r}")
     print("  accepted, with the address, the MAC and the route written down")
+
+print("\n=== and this box's lines fit the console too (#346) ===")
+# THE WIDTH SWEEP ABOVE COLLECTS FROM THE TWO-CARD BOX ONLY, because
+# one_card_box() is defined three hundred lines below it. So the path a VM
+# operator meets first - the one where the box hands over the card the session
+# is on - was the one path nobody measured, and it printed an 81-column
+# headline and a 100-column completion row on a 79-column console.
+#
+# Both halves: what the box says when the name is typed, and what the
+# completion offers BEFORE it is typed. The second is the row that tells the
+# operator what handing this card over means, so it is the one that must not
+# be broken by the terminal in the middle of a word.
+#
+# With the longest name Linux can carry, not with `ens18`, because the name is
+# interpolated into the headline and IFNAMSIZ is 16 with the terminator.
+# IFNAMSIZ is 16 with the terminator, so fifteen characters is the longest
+# name that can reach here at all, and the headline interpolates it.
+_LONG = "e" * 15
+_LONG_ROUTE = ONE_ROUTE.replace("ens18", _LONG)
+_LONG_ADDRS = dict(IP_ADDRS)
+_LONG_ADDRS[_LONG] = IP_ADDRS["ens18"].replace("ens18", _LONG)
+_one_wide = []
+for _name, _cards, _route, _addrs in (
+        ("ens18", ONE_CARD, ONE_ROUTE, None),
+        (_LONG, (_LONG, "lo"), _LONG_ROUTE, _LONG_ADDRS)):
+    with tempfile.TemporaryDirectory() as tmp:
+        sh = one_card_box(tmp, cards=_cards, route=_route, addrs=_addrs)
+        _said = drive(sh, ["configure", f"dataplane interface {_name}"])
+        # The box has to have ACCEPTED it, or the widest line measured is a
+        # refusal and this case is about a path it never took.
+        check("error:" not in _said,
+              f"the one-card box refused {_name!r}, so the width below is of "
+              f"a refusal and not of the handover: {_said!r}")
+        _one_wide += [l for l in _said.splitlines()
+                      if len(l) > CONSOLE_COLUMNS]
+# And the completion rows, rendered the way the VTY renders them.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = one_card_box(tmp)
+    _rows = sh.dynamic_options(hexash.ARG_HOST_NIC, "")
+    for _n, _hint in _rows.items():
+        _row = f"  {_n}  {_hint}"
+        if len(_row) > CONSOLE_COLUMNS:
+            _one_wide.append(_row)
+check(not _one_wide,
+      f"the one-card handover wraps on a serial console: "
+      f"{[(len(l), l) for l in _one_wide]}")
+print(f"  the one-card path and its completion rows fit "
+      f"{CONSOLE_COLUMNS} columns")
 
 print("\n=== the documented procedure is the procedure THIS box needs ===")
 # WHY THIS IS HERE AND NOT IN test_doc_copies.py. The claim is about two
