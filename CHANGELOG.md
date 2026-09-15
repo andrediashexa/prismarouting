@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The tuner report `docs/appliance.md` quotes is from a box the page never
+  names, and one of its numbers does not follow from the property it does
+  name.** The page prints that block under "A box configured for 20,000
+  sub-interfaces". The statistics segment does follow from that: 20,000 x
+  4,793 bytes is 92M and moves with nothing else. **The hugepage figure does
+  not.** It is the session table for the subscriber target plus one gigabyte
+  per four workers, so the worker count is the box: the same 200,000
+  subscribers ask for **6 GB** on the one-socket eight-core machine the page
+  quotes and **12 GB** on a 32-core one, measured by running the tuner on
+  both. An operator who ran it on their own hardware and read a different
+  number had nothing on the page to reconcile it with. The page names the box
+  now and says which of the two numbers moves with what.
+
+  `appliance/test_tune.py` already builds exactly that box, so it now requires
+  **every line of the quoted report to be a line that run printed** - the
+  [#326](https://github.com/andrediashexa/hexarouting/issues/326) rule one step
+  further, where a page quoted a tuner line the tuner had stopped printing and
+  nothing compared them. One substitution is made before comparing and it is
+  not a loosening: the report names the file it counted interfaces in, which is
+  `/etc/hexarouting/hexarouting.conf` on a real box and a temporary directory
+  in the fixture. Comparing without it reported the page wrong about a line
+  that is right, which is a check going red on correct work.
+
 * **The lab suite needs the network and nothing said so.** `TESTING.md`'s
   three levels read as no network, then a container, then real Internet, and
   level 3 is the one whose heading says so - which leaves level 2 reading as

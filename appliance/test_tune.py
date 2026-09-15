@@ -347,6 +347,44 @@ with tempfile.TemporaryDirectory() as root:
           f"the tuner and hexash do not agree about how many interfaces that "
           f"file configures: hexash says {_theirs} and the report says "
           f"{[l for l in out.splitlines() if 'interface(s)' in l]}")
+    # AND docs/appliance.md QUOTES THIS RUN. The page prints the report and
+    # the stanza under "A box configured for 20,000 sub-interfaces", and the
+    # box that produces them is this one: one socket, eight cores, 64 GB. Two
+    # of the three numbers in that block do not follow from the interface
+    # count at all - the hugepage figure is worker_count driven, so the same
+    # 200,000 subscribers ask for 6 GB here and 12 GB on a 32-core machine -
+    # and a reader who runs the tuner on their own box and gets a different
+    # number has nothing on the page to reconcile it with.
+    #
+    # Held against THIS run rather than re-derived, which is the #326 rule one
+    # step further: that page quoted a tuner line the tuner had stopped
+    # printing, and nothing compared them. Every line of the two quoted blocks
+    # has to be a line this run produced.
+    _doc = open(os.path.join(HERE, "..", "docs", "appliance.md"),
+                encoding="utf-8").read()
+    _blocks = re.findall(r"```\n(# 1G hugepages:.*?)```", _doc, re.S)
+    check(len(_blocks) == 1,
+          f"docs/appliance.md has {len(_blocks)} quoted tuner reports opening "
+          f"with '# 1G hugepages:', so this check is measuring the wrong one "
+          f"or none at all")
+    if len(_blocks) == 1:
+        # The one substitution, and it is not a loosening: the report names
+        # the file it counted interfaces in, and on a real box that is
+        # /etc/hexarouting/hexarouting.conf while here it is a temporary
+        # directory. Comparing without it would report the page wrong about a
+        # line that is right, which is a check going red on correct work.
+        _said = out.replace(conf, "/etc/hexarouting/hexarouting.conf")
+        _missing = [l for l in _blocks[0].splitlines()
+                    if l.strip() and l not in _said.splitlines()]
+        check(not _missing,
+              f"docs/appliance.md quotes the tuner as printing lines this box "
+              f"does not print, so the page shows an operator a screen no box "
+              f"produces: {_missing}")
+    # The box itself, named on the page, because the numbers depend on it.
+    check("one socket, eight cores" in _doc,
+          "docs/appliance.md quotes that report without saying which box it "
+          "came from, and the hugepage figure in it is a function of the "
+          "worker count rather than of the interface count the page names")
     print(f"  20,000 interfaces -> "
           f"{[l.strip() for l in stanzas.splitlines() if l.strip().startswith('size ')]}")
 
