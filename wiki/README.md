@@ -3,7 +3,7 @@
 A read-only copy of <https://hexarouting.hexanetworks.com.br>, so the pages can
 be read, searched and diffed from inside the repository.
 
-Snapshot taken 2026-09-10T00:23Z, 31 pages.
+Snapshot taken 2026-09-10T00:23Z, 32 published pages (this file is not one of them).
 
 Refresh it with `WIKI_TOKEN=... sh tools/wiki-pull.sh`. No address or
 credential is kept here — `PADRAO-DOCUMENTACAO.md` says those never go into the
@@ -53,4 +53,4 @@ first, and nobody can tell which one is stale.
 | `comecar-aqui/` | a machine to put into service |
 | `operar/` | a machine already in production |
 | `referencia/` | a specific command to look up |
-| `entender-e-desenvolver/` | the question *why is it like this* |
+| `entender-o-produto/` | the question *why is it like this* |

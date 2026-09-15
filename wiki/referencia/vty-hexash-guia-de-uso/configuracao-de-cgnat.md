@@ -21,7 +21,19 @@ O bloco em que se entra continua sendo o pool: `nat cgnat pool <nome>`.
 :::info
 **A grafia antiga continua aceita.** Uma configuração salva antes desta mudança — e as revisões de rollback dela — está escrita como `cgnat pool ...`, sem o `nat` na frente, e é isso que a caixa relê a cada boot. Essas linhas continuam valendo, digitadas ou lidas de arquivo, e nada precisa ser convertido à mão.
 
-O que mudou é o que a caixa **oferece** e o que ela **escreve**: TAB e `?` oferecem só `nat cgnat ...`, e `show running-config`, `show configuration` e o arquivo que o `save` grava saem na grafia nova. Um `save` depois desta versão já reescreve o arquivo na hierarquia nova.
+O que mudou é o que a caixa **oferece**: TAB e `?` oferecem só `nat cgnat ...`.
+
+O que ela **escreve** mudou pela metade, e vale saber qual metade. Em
+`show running-config`, `show configuration` e no arquivo que o `save` grava:
+
+| Sai como | O quê |
+|---|---|
+| `nat cgnat ...` | os pools (`nat cgnat pool <nome>`) e as interfaces (`nat cgnat interface ...`) |
+| `cgnat ...`, sem o `nat` | os ajustes globais: `cgnat timeout ...`, `cgnat logging ...`, `cgnat block-holddown ...` e `cgnat session-table ...` |
+
+As duas grafias são lidas de volta sem diferença, então um arquivo salvo assim
+volta inteiro no próximo boot. O que muda é o que você vê na tela: se procurar
+um timeout por `nat cgnat timeout`, não acha - procure por `cgnat timeout`.
 
 :::
 

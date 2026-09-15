@@ -349,9 +349,13 @@ Tirar um timeout, um ALG ou um limite **não é o mesmo que ajustá-lo para o va
 Digitar `no block-size 512` dentro do pool é recusado, e a recusa diz o que fazer no lugar:
 
 ```
-error: block-size cannot be removed: every pool has one, so there is no state
-without it. Set the value you want instead: block-size <64-65536>
+error: block-size cannot be removed: every pool has one, so there is no state without it. Set the value you want instead: block-size <64-65536>
 ```
+
+Sai numa **linha só**, mais larga que o console - quem quebra é o terminal.
+`policy` e `mode` respondem com a mesma frase, trocando o nome do campo e o
+que digitar no lugar: `policy interleaved|blocked` e `mode
+deterministic|dynamic`.
 
 Para mudar qualquer um dos três, digite o valor que você quer. São campos de mapeamento: a mudança reconstrói o pool e exige `commit remap`.
 

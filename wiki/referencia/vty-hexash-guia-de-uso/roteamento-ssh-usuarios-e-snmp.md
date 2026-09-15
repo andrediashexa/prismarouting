@@ -62,13 +62,17 @@ Dentro do bloco:
 
 ```
 error: this next hop is on no connected network: 172.31.99.1
-    ip route 10.55.0.0/16 172.31.99.1
+    router static / route 10.55.0.0/16 172.31.99.1
     the route would be accepted and never reach the forwarding table
 ```
 
 Aceita, essa rota ficaria no FRR e nunca chegaria à tabela de encaminhamento.
 
-Repare que a recusa nomeia a rota como `ip route ...`, e não como você a digitou: quem guarda rota estática é o roteamento, nessa grafia, e a mensagem mostra a linha que iria para ele. Procure a rota pelo prefixo, não pela primeira palavra.
+Repare que a recusa nomeia a rota **no bloco em que ela está** - `router
+static / route ...` - e não como uma linha solta. É assim mesmo quando você
+digitou na grafia antiga, `ip route ...`: a caixa mostra onde a rota mora na
+configuração, que é onde você vai editá-la. Uma estática dentro de uma VRF não
+tem grafia de topo nenhuma para procurar, e é por isso que o bloco aparece.
 
 ## Ver a tabela: `show route`, não `show ip route`
 
@@ -304,9 +308,16 @@ O `commit` recusa nesse caso e diz qual daemon falta e qual arquivo editar:
 ```
 error: 2 policy statement(s) need mgmtd, which is not running
     first one: ip prefix-list PL-CLIENTES seq 10 permit 200.150.0.0/24
-    they would commit and store nothing. Enable mgmtd in /etc/frr/daemons and
-    restart frr
+    they would commit and store nothing. mgmtd is started by frr itself, not
+    listed in /etc/frr/daemons - so frr did not finish starting. 'systemctl
+    restart frr' and read its journal
 ```
+
+O conselho é **diferente** do que sai para `bgpd`, e de propósito: `zebra`,
+`mgmtd` e `staticd` não estão em `/etc/frr/daemons`, quem os sobe é o próprio
+`frr`. Se um deles não está de pé, não há linha para habilitar - o que houve
+foi o `frr` não terminar de subir, e a resposta está no journal dele. As
+estáticas respondem com a mesma frase, trocando `staticd` por `mgmtd`.
 
 Uma estrofe `router bgp` que não vai a lugar nenhum se percebe: nenhuma sessão sobe. Uma prefix-list que não vai a lugar nenhum é invisível até o tráfego que devia ser filtrado não ser.
 
@@ -465,12 +476,16 @@ A marca é só da exibição: ela não vai para a configuração salva, nem para
 Numa entrada de prefix-list com `ge` e `le`, vale `comprimento da máscara ≤ ge ≤ le ≤ 32` (ou `≤ 128`, em IPv6). Quando não vale, a linha é recusada no `commit` e no `commit check`, com o nome da sentença:
 
 ```
-error: ip prefix-list PL-CLIENTES seq 10 permit 10.12.0.0/8 ge 24 le 16: prefix
-range refused for 10.0.0.0/8: mask length <= ge <= le <= 32 does not hold
-(length 8, ge 24, le 16)
+error: prefix range refused for 10.0.0.0/8: mask length <= ge <= le <= 32 does
+    not hold (length 8, ge 24, le 16)
+    ip prefix-list PL-CLIENTES seq 10 permit 10.12.0.0/8 ge 24 le 16
 ```
 
-Repare que o prefixo aparece normalizado — `10.12.0.0/8` vira `10.0.0.0/8`, porque `/8` só olha o primeiro octeto. Procure a sentença pelo nome da lista, não pelo prefixo impresso.
+A sentença que foi recusada vai numa **linha própria**, inteira, embaixo do
+motivo - é assim que ela continua procurável na tela do `show configuration`,
+que é onde você vai corrigi-la.
+
+Repare que no motivo o prefixo aparece normalizado - `10.12.0.0/8` vira `10.0.0.0/8`, porque `/8` só olha o primeiro octeto. A linha de baixo traz a sentença como você a escreveu, e é por ela que se procura.
 
 
 :::info
@@ -482,9 +497,13 @@ Essa recusa acontece **antes** de a linha chegar ao roteamento. É de propósito
 
 ```
 warning: pool 'clientes': nothing here announces 200.150.0.16/28
-    subscribers behind it would be translated to an address the internet
-    cannot route back to
+    subscribers behind it would be translated to an address the internet cannot route back to
+    announce it from another box, or originate it here with
+    'ip route 200.150.0.16/28 blackhole' and 'network 200.150.0.16/28' under the BGP address family
 ```
+
+As duas últimas linhas são a parte acionável: o aviso não só diz que falta
+anúncio, diz as duas linhas que resolvem quando é aqui que se quer anunciar.
 
 Esta é a única verificação que cruza as duas metades do equipamento. Configure o CGNAT certo, configure o BGP certo, e o serviço pode estar morto assim mesmo: se nada anuncia um prefixo que **cobre** o lado público do pool, todo assinante atrás dele é traduzido para um endereço que a internet não sabe devolver. O tráfego sai e nada volta.
 
