@@ -2254,6 +2254,37 @@ on a box that reports a reserve. This is the highest-priority open defect by
 this file's own rule - what the product claims and does not do comes above
 everything - and the wiki page is wrong until it closes.
 
+**The same shape one statement over, and wider**
+([#373](https://github.com/andrediashexa/hexarouting/issues/373)). The wiki
+says the box warns at pool creation when a `block-stride` cannot be honoured
+on this box's worker count, and quotes the three rows. `bpa_stride_warn()` has
+two call sites: the `vppctl` handler, and `bpa_pool_settings_set()` with
+`vm = 0`, which reaches the log alone. `bpa_pool_add()` never calls it.
+`block-stride` sits behind the `in_place` guard in `Config.Pool.lines()`, so
+the VTY path goes through `settings_set`, and nothing in hexash reads it back:
+no `show` in the plugin prints that sentence, so there is nothing to relay.
+An operator who creates that pool from the VTY sees **nothing at all** - the
+reserve at least reached the log on its path, and this does not. The stride is
+what keeps a subscriber's extra blocks near their first one, so an investigator
+reads one holding instead of two unrelated ranges; when it cannot be honoured
+that property silently stops applying, and the warning names the stride that
+would work.
+
+**Three of `README.md`'s ten state-table rows had nothing holding them, and one
+was false** ([#374](https://github.com/andrediashexa/hexarouting/issues/374)) -
+*done*. That table is what a reader consults to decide whether to trust this
+product, and two of its rows had already been found wrong by reading, in this
+same cycle. The Throughput row said *"NOT measured - every performance figure
+is untested"*, and had said it for 66 releases: `lab/throughput.sh` has measured
+what a packet costs the translation nodes since v0.8.0, the release suite runs
+it, and section 3.5 of this file states the **346 clocks** it produced. Bits per
+second really are unmeasured and [#28](https://github.com/andrediashexa/hexarouting/issues/28)
+stays open for them. Four rows are held now, each with the owner of the truth
+and the reader of it in different files. Rows 2 to 5 are verified by labs that
+need a running VPP and are deliberately left unheld, because `make test` runs
+offline and anything written there would assert that a lab file exists rather
+than that a route reached a FIB.
+
 **And `appliance/install.sh` has no message reader, unlike the four that got
 one** ([#371](https://github.com/andrediashexa/hexarouting/issues/371)). It is
 the program that puts files on the box, on a first install and on every
