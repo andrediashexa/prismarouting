@@ -91,9 +91,9 @@ Se aparecer `[FAIL]`, os papéis não estão valendo naquela caixa: todo mundo q
 
 ```
 [FAIL] netadm has role administrator and is in none of: vpp frr frrvty
-       the role cannot be exercised: VPP's sockets are group vpp
-       and /etc/frr is group frr. Re-apply the role from the VTY:
-       configure / user netadm / role administrator / commit
+      the role cannot be exercised: VPP's sockets are group vpp
+      and /etc/frr is group frr. Re-apply the role from the VTY:
+      configure / user netadm / role administrator / commit
 ```
 
 A conta tem posto e não tem alcance: ela recebeu o papel e ficou de fora dos grupos que abrem os sockets do dataplane e do roteamento, então **todo comando que ela der falha por permissão** — inclusive os de leitura, e a mensagem parece recusa de autorização sem ser. Reaplicar o papel pela VTY, como a própria linha diz, refaz as participações.

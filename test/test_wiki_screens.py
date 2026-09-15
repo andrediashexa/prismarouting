@@ -34,7 +34,11 @@ worth its runtime:
   1. DRIVING BEATS MATCHING. A screen that can be produced by running the
      product is produced and compared character for character, no wildcard
      involved. The run is reported separately from the matched one so the
-     proportion is visible on the screen.
+     proportion is visible on the screen. It is also the ONLY way to reach a
+     refusal whose headline is mostly interpolated: `error: router bgp 65001:
+     bgpd is not running` is sixteen literal characters out of thirty-seven
+     and no template may ever account for it. Two of these need a box under
+     the VTY and get one that answers "I am here" and nothing else.
   2. ANCHORED. A template must account for the WHOLE row. Matching a piece of
      a row would let one short template attribute every long line on the page.
      A row this product builds in two goes may be accounted for by two strings
@@ -100,6 +104,7 @@ REPO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(REPO, "src", "hexash"))
 import hexash                                                    # noqa: E402
 import config as _config                                         # noqa: E402
+import vppapi as _vppapi                                         # noqa: E402
 
 # The tree to read. `HEXA_WIKI` exists for one reason and it is the reason
 # this file is trusted: pointed at the pages as they were before the sweep of
@@ -526,14 +531,27 @@ for rel in SHELL_SOURCES:
     n = 0
     while n < len(lines):
         line, first = lines[n], n
-        # A message wider than the source line is written across several of
-        # them, so the call is read until its quotes close.
-        while line.count('"') % 2 and n + 1 < len(lines):
-            n += 1
-            line += "\n" + lines[n]
-        n += 1
         m = re.match(r"^\s*(ok|bad|warn|say|say_list|_vok|_vbad)\s+(\S.*)$",
                      line, re.S)
+        # A message wider than the source line is written across several of
+        # them, so the call is read until its quotes close - but only a CALL
+        # is read that way. An odd number of quotes in a comment is not an
+        # unclosed string: `# "in effect" must not collapse into "in effect"`
+        # is a comment in appliance/selftest and reading on from it swallowed
+        # the 247 lines under it, the account checks and the statistics
+        # segment among them, so four screens this file could account for
+        # were reported as screens it could not see. Quoting inside a
+        # substitution - `tr -d '"'` - does the same thing from the other
+        # side. Neither line is one this loop wants, so neither is read on
+        # from.
+        if m:
+            while line.count('"') % 2 and n + 1 < len(lines):
+                n += 1
+                line += "\n" + lines[n]
+            m = re.match(
+                r"^\s*(ok|bad|warn|say|say_list|_vok|_vbad)\s+(\S.*)$",
+                line, re.S)
+        n += 1
         if not m:
             continue
         verb, rest = m.group(1), m.group(2)
@@ -617,6 +635,15 @@ SCENARIOS = [
     ("the card this box is reached on",
      {"nics": ["enp1s0", "enp2s0"], "route": "enp1s0"},
      ["dataplane interface enp1s0"]),
+    # The two `commit check` refuses on. `daemons` is what FRR answers `show
+    # daemons` with, and it is the whole of what either box is stubbed to say.
+    ("a port range with no room for one block", {"daemons": ""},
+     ["nat cgnat pool residencial", "inside 100.64.0.0/22",
+      "outside 200.150.0.16/28", "block-size 512", "ports 1024 1200",
+      "exit", "commit check"]),
+    ("a router stanza for a daemon that is not running",
+     {"daemons": "zebra staticd mgmtd"},
+     ["router bgp 65001", "exit", "commit check"]),
 ]
 
 # The findings are the other half of the VTY's voice and they are not printed
@@ -644,10 +671,41 @@ def say_announce(sh, findings):
             print("    " + line)
 
 
+def say_cutoff(sh, findings):
+    """The refusal `commit` prints for the prefix carrying this session.
+
+    `session_cut_findings` decides it and do_commit renders it, in the shape
+    `say_announce` already has: `err` for the headline, which wraps nothing,
+    and the advice whole underneath. Both rows run past the console on real
+    input and they are the box's rows, which is why the wiki quotes them long.
+    """
+    for pfx, why, advice in findings:
+        sh.err(f"{pfx}: {why}")
+        for line in advice:
+            print("    " + line)
+
+
 BGP_RM = ["router bgp 65001", " address-family ipv4 unicast",
           "  neighbor 200.150.0.2 route-map RM-TRANSITO-IN in"]
 POOL = _config.Pool("clientes")
 POOL.outside = ["200.150.0.16/28"]
+
+_AS_BAD = "bgp as-path access-list AS-BAD permit ^65001("
+
+# What this box announces now, and the two changes that take the prefix
+# carrying the session away: one stops originating it, the other keeps the
+# origination and denies it to the only neighbour that would have carried it.
+_CUT_RUNNING = ["router bgp 65001",
+                " neighbor 200.150.0.2 remote-as 65002",
+                " address-family ipv4 unicast",
+                "  network 200.150.0.0/24",
+                "  neighbor 200.150.0.2 activate",
+                " exit-address-family"]
+_CUT_GONE = [l for l in _CUT_RUNNING if l.strip() != "network 200.150.0.0/24"]
+_CUT_DENIED = _CUT_RUNNING[:5] + [
+    "  neighbor 200.150.0.2 route-map RM-NADA out",
+    " exit-address-family",
+    "route-map RM-NADA deny 10"]
 
 FINDINGS = [
     ("a route-map that is not defined", lambda sh: say_findings(
@@ -670,7 +728,81 @@ FINDINGS = [
         sh, hexash.pool_announce_findings(
             ["router bgp 65001", " address-family ipv4 unicast"],
             {"clientes": POOL}))),
+    # A neighbour written with the name the DATAPLANE reports rather than the
+    # one FRR can act on. The sentence is built in three goes - a literal, the
+    # joined Linux-side names, and an f-string - so no pair of strings accounts
+    # for the row and the template side cannot reach it. Driving can.
+    ("a neighbour named by the dataplane's own name", lambda sh: say_findings(
+        sh, hexash.bgp_errors(
+            ["router bgp 65001",
+             " neighbor host-veth-vpp interface remote-as external"],
+            have_interfaces={"host-veth-vpp", "vppwan0"},
+            lcp_pairs={"host-veth-vpp": ["vppwan0"]},
+            device_interfaces={"host-veth-vpp"}))),
+    # An AS-path regex FRR would refuse. The reason is whatever `re` says, and
+    # on this one it is longer than the product's own sentence - 48 characters
+    # against 40 - so the row is under LITERAL_SHARE and no template may have
+    # it. The statement is the operator's, as everywhere here.
+    ("an AS-path regex that does not compile", lambda sh: say_findings(
+        sh, [("error", _AS_BAD, hexash.as_path_regex_error(_AS_BAD))])),
+    # The two boxes of an HA pair mapping subscribers differently. Two
+    # statements under one reason, which is why it has a printer of its own.
+    ("a peer that maps subscribers differently", lambda sh: sh.say_divergence(
+        "warning", [("residencial", "block-size 2048", "block-size 1024")])),
+    # The prefix that carries this session, in both shapes: the box stops
+    # originating it, and the box still originates it and no neighbour is sent
+    # it. The headline is `f"{pfx}: {why}"`, two literal characters, so the
+    # corpus refuses it entry and only driving reaches these.
+    ("this change stops originating the session's prefix",
+     lambda sh: say_cutoff(sh, hexash.session_cut_findings(
+         _CUT_RUNNING, _CUT_GONE, "200.150.0.7"))),
+    ("no neighbour would be sent the session's prefix",
+     lambda sh: say_cutoff(sh, hexash.session_cut_findings(
+         _CUT_RUNNING, _CUT_DENIED, "200.150.0.7"))),
 ]
+
+
+# A box under the VTY, for the two screens `commit check` refuses on and
+# nothing else. Both of those are decided by the product before anything is
+# sent - the port range is measured against the block size, and the daemon
+# list is read from FRR - so what is stubbed here answers "yes, I am here" and
+# nothing more: no message is answered with a sentence, and none of the text
+# on either screen comes from this.
+#
+# WHY IT IS HERE AT ALL, when the rest of this file drives a Shell with no box
+# under it. `error: router bgp 65001: bgpd is not running` is sixteen literal
+# characters out of thirty-seven and `pool '{name}': {why}` is two. Neither
+# will ever be reached by a template - `diverges` says why - so either they
+# are driven or they stay on the wiki with nothing reading them.
+# test_hexash_apply.py owns what a refusal at APPLY time does; this is the
+# check that runs before it, and it sends nothing.
+class _Api:
+    def available(self):
+        return (_vppapi.OK, "stub")
+
+    def call(self, message, args):
+        return _vppapi.Reply(_vppapi.OK)
+
+    def dump(self, message, args):
+        return _vppapi.Reply(_vppapi.OK, fields={"rows": []})
+
+
+def _a_box(sh, daemons):
+    sh.api = _Api()
+    sh.dp = type("Dp", (hexash.Vpp,), {
+        "TRACE": False,
+        "__init__": lambda self: None,
+        "run": lambda self, cmd: (0, ""),
+        "running": lambda self: (0, "")})()
+    # Derived from the real Frr so that `daemons()` is the product's own
+    # parser over the product's own `show daemons` answer, which is the half
+    # of that screen this file is reading.
+    sh.frr = type("Frr", (hexash.Frr,), {
+        "available": lambda self: daemons is not None,
+        "show": lambda self, cmd: ((0, daemons) if "daemons" in cmd
+                                   else (1, "")),
+        "reload": lambda self, lines, check_only=False: (0, "")})()
+    sh.running_config = lambda: _config.Config()
 
 
 def a_shell(setup):
@@ -682,6 +814,8 @@ def a_shell(setup):
     if "nics" in setup:
         sh.host_nics = lambda: [{"name": n} for n in setup["nics"]]
         sh.default_route_nic = lambda: setup.get("route")
+    if "daemons" in setup:
+        _a_box(sh, setup["daemons"])
     return sh
 
 
@@ -717,6 +851,26 @@ def driven_match(rows):
             if out[i:i + len(rows)] == rows:
                 return name
     return None
+
+
+DRIVEN_ROWS = {row for _name, out in DRIVEN for row in out if row.strip()}
+
+
+def driven_row(row):
+    """Whether this exact row came out of one of the runs above.
+
+    The other way a verdict row is known to be this box's, and it is the one
+    that matters for the screens only DRIVING can attribute. `error: router
+    bgp 65001: bgpd is not running` is sixteen literal characters out of
+    thirty-seven, so no template will ever account for it - and without this,
+    a word edited in the PARAGRAPH under it could not be a finding either,
+    because `diverges` would not read past the verdict. Measured over one
+    word edited in each of seven driven screens: reported once with the
+    verdict recognised by template alone, three times with this. The rest
+    still land on the printed skip list, which is where a screen nothing can
+    account for belongs.
+    """
+    return row in DRIVEN_ROWS
 
 
 # ---------------------------------------------------------------------------
@@ -984,12 +1138,21 @@ def diverges(rows):
     heads = [rows[0], rows[0][rows[0].index(mark) + len(mark):].lstrip()]
     # The rows UNDER a verdict are compared only when the verdict itself has
     # been recognised as this box's. Without that there is no reason to think
-    # the paragraph was ever meant to be the message it half agrees with, and
-    # a refusal whose headline is mostly interpolated - `router bgp 65001:
-    # bgpd is not running` is sixteen literal characters out of thirty-seven -
-    # is one this file cannot attribute either way. That is a skip, and a skip
-    # must not turn into a finding about the wrong message.
-    if verdict_template(rows[0]) is None:
+    # the paragraph was ever meant to be the message it half agrees with, and a
+    # screen nothing can account for must stay a skip rather than become a
+    # finding about the wrong message.
+    #
+    # TWO WAYS OF RECOGNISING IT, because a template is only one of them. A
+    # refusal whose headline is mostly interpolated - `router bgp 65001: bgpd
+    # is not running` is sixteen literal characters out of thirty-seven - will
+    # never have a template, so with the template alone a word edited in the
+    # PARAGRAPH under it could not be a finding either: the screen dropped off
+    # the driven list and onto the skip list, and the run stayed green.
+    # Measured over seven such screens, one word edited in each: reported
+    # once before and three times after. A row this file has just watched the
+    # product print is the product's row on better evidence than any template
+    # gives.
+    if verdict_template(rows[0]) is None and not driven_row(rows[0]):
         rows = rows[:1]
     i = 1
     while i < len(rows):

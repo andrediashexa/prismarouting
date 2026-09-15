@@ -120,6 +120,81 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The 22 screens the wiki reader could not see, gone through one at a time -
+  and 13 of them it can account for now**
+  ([#362](https://github.com/andrediashexa/hexarouting/issues/362)).
+  `test/test_wiki_screens.py` printed its SKIP list on every run because that
+  list is the honest edge of the rule. Read out loud, most of it was not an
+  edge: **six screens were invisible to a defect in the reader's own corpus.**
+  It joined a shell call's source lines until the double quotes closed, and a
+  COMMENT with an odd number of quotes in it - `# effect" must not collapse
+  into "in effect"` - is not an unclosed string. Reading on from that one
+  comment swallowed 247 lines of `appliance/selftest`, the account checks and
+  the whole tuning report among them, and 92 lines of
+  `appliance/bind-dataplane-nic`. Only a call is read on from now, and the
+  self-test's three account screens and three tuning screens are attributed
+  against the script that prints them.
+
+  **Six more were reachable by driving**, which beats matching: the BGP
+  `linux_cp` naming warning (built in three goes, so no pair of strings
+  accounts for the row), the AS-path regex FRR would refuse, the HA mapping
+  divergence, both shapes of the `commit cutoff` refusal, and the `router bgp`
+  whose daemon is not running. That last one, and the port range this branch
+  adds to the pool page, are the first screens here driven with anything under
+  the VTY at all: both are decided before a message is sent, and what is
+  stubbed answers "I am here" and nothing else, so no word on either screen
+  comes from the stub. **22 skips became 9; driven matches went 18 to 25 and
+  template matches 23 to 34.**
+
+  **The nine that remain are a limit and are named as one.** Every one was
+  driven or rendered by hand and is what the box prints today: the self-test's
+  statistics segment, the handover failure and the manifest failure, the
+  account failure's headline, the RFC timeout floor, the remap refusal on two
+  pages, the revert that could not be armed, and the file `--load` refuses.
+  They fail the same way for the same reason - the interpolated value is more
+  than half the row, or the row IS the value (a file name, a path, a pair of
+  addresses) - and loosening `LITERAL_SHARE` to take them is loosening the one
+  bound the whole file rests on.
+
+* **Two wiki screens that were not what the box prints.**
+  `acesso-login-e-papeis.md` quoted the self-test's unusable-role failure with
+  its three continuation rows one space too far right: the page drops the two
+  columns the marker carries, and that screen dropped one. Driven against
+  `appliance/selftest` with a fake root, the reason sits at six columns under a
+  marker at zero, not seven.
+
+  `configuracao-de-pool.md`'s block-stride warning was hand-folded into six
+  rows of about 74 columns. **The dataplane writes three** - 177, 42 and 107
+  columns - and folds none of them, so the screen on the page had never been on
+  a screen. That is the failure this reader exists for, arriving from the other
+  side: the sweep of 2026-09-15 found eight pages quoting a refusal the product
+  had SPLIT as one long sentence, and this is a page splitting rows the product
+  writes whole. Corrected, the reader attributes it to the plugin.
+
+* **`ports` was documented with an argument it does not have, and with none of
+  its refusals.** The statement table in `configuracao-de-pool.md` showed
+  `ports <min> <max>` with an empty argument column. The VTY offers
+  `<1-65535> <1-65535>` and refuses on four counts, each driven and quoted:
+  either end outside the range, naming WHICH end; a value that is not a number
+  at all, answered by asking for one; two legal ports in the wrong order, which
+  is a different refusal because the range is not what is wrong there; and at
+  `commit`, a range too narrow to hold one block, which needs `block-size` as
+  well and so cannot be answered on the line. The last one is now driven by the
+  reader too, so the page cannot go stale unnoticed.
+
+* **A word edited inside a screen only DRIVING can attribute went unreported.**
+  `diverges()` reads the paragraphs under a verdict only once the verdict has
+  been recognised as the box's, and it recognised one by template alone. The
+  refusals whose headline is mostly interpolated - `error: router bgp 65001:
+  bgpd is not running` is sixteen literal characters out of thirty-seven - have
+  no template and never will, so an edited word in the reason under them
+  dropped the screen quietly onto the skip list instead of failing. A verdict
+  row that came out of one of the runs is now also the box's row. Measured:
+  one word edited in each of the seven screens newly driven here was reported
+  once before and is reported three times now, and the other four still land
+  on the skip list - the edit is in a fold continuation, or in a sentence the
+  box opens with a value.
+
 * **Three wiki screens the new reader caught, two of them made stale an hour
   earlier by this same release.** `test/test_wiki_screens.py` went in green and
   then went red on its first real test: the split of the `nat: a hierarchy, not
