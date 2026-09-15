@@ -1979,6 +1979,81 @@ RLSBLK
     RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
   }
 
+  echo
+  echo "=== a box that cannot be asked whether an array holds the disk ==="
+  # release_disk() returned 0 when it meant "I could not look", and the caller
+  # reads non-zero as "free". So four rounds later the installer said the disk
+  # was still held by an array and dumped /proc/mdstat, about a box with no
+  # arrays at all, and partitioned it anyway (#339).
+  #
+  # The stub set above includes mdadm, so it is taken away for this case
+  # alone: with it there the box can be asked, and the case would have
+  # measured the ordinary path while saying it measured this one.
+  mv "$rbin/mdadm" "$rwork/mdadm.away"
+  real yes 0
+  mv "$rwork/mdadm.away" "$rbin/mdadm"
+  case "$RROUT" in
+    *"still held by an array"*)
+      bad "a box with no mdadm was told an array holds its disk:
+$RROUT" ;;
+    *"cannot tell whether an array holds"*)
+      ok "it says it cannot tell, rather than claiming the disk is held" ;;
+    *) bad "it said nothing either way about arrays, so a box that cannot be
+asked reads exactly like one that answered: $RROUT" ;;
+  esac
+  [ "$RRSFDISK" -ge 1 ] \
+    && ok "and the install goes on, because nothing here could hold it" \
+    || bad "the install stopped over an array question nobody could answer"
+
+  echo
+  echo "=== and a disk an array will not let go of is not partitioned ==="
+  # release_disk_until_free ended in `return 1` and BOTH call sites discarded
+  # it, so the refusal its own comment describes was a message only.
+  #
+  # Arranged with an mdadm that always succeeds and an /proc/mdstat naming the
+  # target: release_disk keeps finding something to stop, four times, and then
+  # gives up.
+  cat > "$rbin/mdadm" <<'RMDADM'
+#!/bin/sh
+exit 0
+RMDADM
+  chmod +x "$rbin/mdadm"
+  printf 'Personalities : [raid1]
+md0 : active raid1 loop0p1[0]
+      1 blocks
+' \
+    > "$rwork/mdstat"
+  : > "$rwork/sfdisk.ran"
+  echo 0 > "$rwork/sfdisk.rc"
+  RROUT=$(printf 'yes
+' | unshare -rm sh -c '
+      mount --bind "$1" /tmp || exit 99
+      mount --bind "$2" /proc/mdstat || exit 98
+      shift 2
+      exec env "$@"' _ "$rwork/tmp" "$rwork/mdstat" \
+      PATH="$rbin:$PATH" \
+      HEXA_INSTALL_SRC="$rwork/filesystem.squashfs" \
+      HEXA_DISK=/dev/loop0 HEXA_HOSTNAME=cgnat01 \
+      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+      HEXA_LOG_GB=1 HEXA_NET_SYS="$rwork/net" HEXA_MGMT_ADDRESS=none \
+      sh "$INSTALLER" 2>&1)
+  RRRC=$?
+  RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
+  rm -f "$rbin/mdadm"
+  if [ "$RRRC" = 0 ]; then
+    bad "a disk an array would not release was installed onto anyway:
+$RROUT"
+  else
+    case "$RROUT" in
+      *"held by an array that will not release"*)
+        ok "refused, and it says partitioning would write over a member" ;;
+      *) bad "it stopped, but not over the array: $RROUT" ;;
+    esac
+  fi
+  [ "$RRSFDISK" = 0 ] \
+    && ok "and the partitioner never ran" \
+    || bad "it refused and the disk was partitioned $RRSFDISK time(s) anyway"
+
   # THE REFUSAL. "no" is the answer somebody gives when they have just read
   # the size and the model back and it is not the disk they meant.
   real no 0
