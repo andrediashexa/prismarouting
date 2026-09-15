@@ -160,6 +160,17 @@ _RANGES = [
      lambda c: None),
     ("pool max-blocks", ["nat cgnat pool P"], "max-blocks {v}", 1, 255,
      lambda c: None),
+    # TWO ROWS FOR ONE STATEMENT, because `ports` carries two numbers and
+    # each is its own end of the same range. The other half of each template
+    # is held at a value that is legal and in order, so what the row measures
+    # is the bound on the half that moves and not the ordering check beside
+    # it. Both ends were enforced by nothing at all before #361: `ports 70000
+    # 80000` was taken at the prompt and cast into a u16 on the way to the
+    # dataplane, where it became 4464-14464.
+    ("pool ports min", ["nat cgnat pool P"], "ports {v} 65535", 1, 65535,
+     lambda c: None),
+    ("pool ports max", ["nat cgnat pool P"], "ports 1 {v}", 1, 65535,
+     lambda c: None),
     ("pool block-stride", ["nat cgnat pool P"], "block-stride {v}", 0, 65535,
      lambda c: None),
     ("pool reserve", ["nat cgnat pool P"], "reserve {v}", 0, 65535,
@@ -7309,6 +7320,152 @@ for _bs in ("4", "100"):
           f"{getattr(_read.pools.get('det'), 'block_size', None)!r}")
 print("  64, 512 and 32768 staged; 65, 100, 1000 and 32767 refused with both "
       "neighbours named; the reader still models what the box has")
+
+print("\n=== `ports` was enforced by nothing at all, and now by three "
+      "things (#361) ===")
+# Every other numeric statement in this block got a bound with #350 to #354.
+# `ports` got none, and it is the one carrying TWO numbers and a cast: both
+# ends are u16 in bpa.api and in bpa_pool_t, so `ports 70000 80000` was taken
+# at the prompt, staged, saved, and arrived at the dataplane as 4464-14464.
+# The pool that commits is not the pool that was typed, and nothing on the
+# far side can name 70000 because by then 70000 is not the number any more.
+#
+# DRIVEN THROUGH THE VTY and read back out of the candidate, not called as a
+# predicate. What is under test is the path - the statement reaching do_pool,
+# the guard firing there, and the numbers not being staged - and a case that
+# calls Pool.check_range() or Pool.check_order() directly is green whatever
+# do_pool does with them. That is how #357's first two test attempts could
+# not fail.
+#
+# THREE REASONS AND THREE SENTENCES, because they are three different
+# mistakes: a value outside the field, two values in the wrong order, and
+# (asked at commit, not here) a range too narrow for one block. One message
+# for all of them would tell an operator the wrong thing about two.
+_PORTS_REFUSED = [
+    # (statement, the words the refusal owes the operator, why it is wrong)
+    ("ports 9000 100", "the max is below the min", "max below min"),
+    ("ports 70000 80000", "1-65535", "both ends above the u16 field"),
+    ("ports 0 65535", "1-65535", "port 0 is not one to hand out"),
+    ("ports 4294967296 4294967297", "1-65535", "above a u32"),
+    ("ports -1 100", "1-65535", "negative"),
+]
+for _stmt, _owed, _why in _PORTS_REFUSED:
+    _s, _refused, _said = _typed(["nat cgnat pool P"], _stmt)
+    check(_refused,
+          f"{_stmt!r} ({_why}) was taken at the prompt, and the prompt is "
+          f"where a number can still be argued with: {_said.strip()!r}")
+    # The NUMBER absent and not the statement: a pool that has never been
+    # given a port range renders none at all, so the thing to look for is the
+    # line the operator typed.
+    _staged = [l.strip() for l in _s.candidate.text().splitlines()
+               if l.strip().startswith("ports ")]
+    check(not _staged,
+          f"{_stmt!r} was refused and staged anyway, so `save` would write a "
+          f"port range the dataplane cannot carry: {_staged}")
+    check(_owed in _said,
+          f"{_stmt!r} was refused without saying {_owed!r}, which is the one "
+          f"thing that tells this refusal from the other two on the same "
+          f"statement: {_said.strip()!r}")
+    _over = [(len(l), l) for l in _said.splitlines() if len(l) > CONSOLE_COLUMNS]
+    check(not _over,
+          f"{_stmt!r}: the refusal wraps on a serial console: {_over}")
+# The control, and it is what keeps the four above from being satisfied by a
+# box that refuses every port range: a legal one is accepted and is IN the
+# candidate afterwards.
+for _stmt in ("ports 1 65535", "ports 1024 65535", "ports 2000 2999"):
+    _s, _refused, _said = _typed(["nat cgnat pool P"], _stmt)
+    check(not _refused,
+          f"{_stmt!r} is inside 1-65535 at both ends and in order, and the "
+          f"box refused it: {_said.strip()!r}")
+    check(_stmt in _s.candidate.text(),
+          f"{_stmt!r} was accepted and is not in the candidate, so the pool "
+          f"the operator asked for is not the pool that would commit")
+
+# THE ORDERING SAID AS AN ORDERING. `ports 9000 100` breaks neither end's
+# bound, so a refusal quoting 1-65535 would send the operator off to check
+# two numbers that are both fine.
+_s, _refused, _said = _typed(["nat cgnat pool P"], "ports 9000 100")
+check("1-65535" not in _said,
+      f"the ordering refusal quotes the range, which is the one thing wrong "
+      f"with neither of those two numbers: {_said.strip()!r}")
+
+# `?` QUOTES THE BOUND NOW. It said `<min> <max>` while nothing enforced
+# anything, which was at least honest; a bound that the hint does not carry
+# is the gap #350 to #354 were about, and the operator reads the hint before
+# typing.
+check(hexash.CGNAT_POOL["ports"][1] == "<1-65535> <1-65535>",
+      f"`?` does not quote the bound it now enforces: "
+      f"{hexash.CGNAT_POOL['ports'][1]!r}")
+
+# THE #357 TRAP, ASSERTED HERE rather than taken on trust. The guards above
+# are at the typed-statement site; had they gone into Config._pool_line() -
+# which is where the statement is modelled, and where the next person adding
+# a constraint will reach first - then a box whose dataplane reports a pool
+# with an odd port range would become a box the VTY cannot model, and
+# `commit` would refuse EVERY change on it. The reader must keep taking what
+# the box already has, whatever the prompt would say about it.
+for _range in ("1 65535", "0 65535", "9000 100", "70000 80000"):
+    _text = ("! cgnat\n"
+             "cgnat pool det\n"
+             " inside 100.64.0.0/22\n"
+             " outside 200.150.0.16/32\n"
+             f" ports {_range}\n"
+             " exit\n")
+    _read = _config.Config.parse(_text)
+    check(not _read.unknown,
+          f"a configuration carrying `ports {_range}` no longer parses, so a "
+          f"box whose dataplane reports one cannot be committed at all "
+          f"(#357): {_read.unknown}")
+    check(getattr(_read.pools.get("det"), "ports", None) == _range,
+          f"`ports {_range}` was read as something else, so a commit would "
+          f"write a different range over the one the box has: "
+          f"{getattr(_read.pools.get('det'), 'ports', None)!r}")
+print("  five values refused for three reasons, three accepted and staged, "
+      "and the reader still models what the box has")
+
+print("\n=== a port range too narrow for one block is asked at COMMIT ===")
+# The third check, and the one with a design question in it: it needs
+# `block-size` as well as `ports`, and the two can be typed in either order.
+# `ports 1000 1100` followed by `block-size 64` is a correct pool built in a
+# correct order, and a guard at the `ports` line would have refused its first
+# half. So the line takes it and the commit check refuses it - asserted from
+# both sides here, because "the line takes it" is the half that would rot
+# first if somebody moved the check.
+_s, _refused, _said = _typed(["nat cgnat pool P", "block-size 512"],
+                             "ports 1000 1100")
+check(not _refused,
+      f"`ports 1000 1100` was refused at the line under block-size 512, "
+      f"which refuses a legal editing order: the operator's next statement "
+      f"may be `block-size 64`: {_said.strip()!r}")
+check("ports 1000 1100" in _s.candidate.text(),
+      "and it is not in the candidate either")
+# The predicate on the finished pool, which is where both numbers are. The
+# commit check that calls it is driven in test_hexash_apply.py, which has the
+# dataplane stub this file does not.
+_p = _config.Pool("P")
+_p.block_size = "512"
+_p.ports = "1000 1100"
+check(_p.block_fits() == "block-size 512 exceeds the 101 usable ports",
+      f"a 101-port range holding a 512-port block was not reported, or not "
+      f"in the dataplane's own words: {_p.block_fits()!r}")
+_p.block_size = "64"
+check(_p.block_fits() is None,
+      f"a 101-port range was refused a 64-port block: {_p.block_fits()!r}")
+_p.block_size = "512"
+_p.ports = ""
+check(_p.block_fits() is None,
+      f"a pool with no `ports` statement was measured against a range it "
+      f"does not have: {_p.block_fits()!r}")
+# Whatever the box already has, the predicate declines rather than raises:
+# the numbers may have come out of a file somebody edited by hand, and a
+# check that raised on them is #357 through another door.
+for _odd in ("9000 100", "abc def", "1024"):
+    _p.ports = _odd
+    check(_p.block_fits() is None,
+          f"`ports {_odd}` made the block check judge a range it cannot "
+          f"read: {_p.block_fits()!r}")
+print("  taken at the line, refused at the commit, and silent on a range it "
+      "cannot read")
 
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")

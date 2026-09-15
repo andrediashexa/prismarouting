@@ -166,6 +166,74 @@ version has a chance of seeing it.
   the apply, BGP and dataplane suites already do: what is asserted is the
   sentence the operator reads, not the row the terminal breaks it on.
 
+* **`ports` in a pool was enforced by nothing at all**
+  ([#361](https://github.com/andrediashexa/hexarouting/issues/361)). Every
+  other numeric statement in the pool block got a bound with
+  [#350](https://github.com/andrediashexa/hexarouting/issues/350) to #354.
+  `ports` got none, and it is the one carrying two numbers and a cast: a max
+  below the min, both ends above 65535, port 0, a value above a u32 and a
+  negative one were all taken at the prompt and staged into the candidate.
+
+  ```
+  ports 9000 100                 TAKEN
+  ports 70000 80000              TAKEN
+  ports 0 65535                  TAKEN
+  ports 4294967296 4294967297    TAKEN
+  ports -1 100                   TAKEN
+  ```
+
+  `port_min` and `port_max` are `u16` in `bpa.api` and in `bpa_pool_t`, so
+  `ports 70000 80000` was saved and arrived at the dataplane as `4464-14464`:
+  the pool that commits is not the pool that was typed, and nothing on the far
+  side can name 70000 because by then 70000 is not the number any more. That is
+  [#352](https://github.com/andrediashexa/hexarouting/issues/352)'s cast defect
+  in a second statement. The ordering half was caught only by `bpa_pool.c:148`,
+  on the far side of `commit`, with the candidate already built.
+
+  Three refusals, because they are three different mistakes and one message
+  for all three would tell an operator the wrong thing about two of them:
+
+  ```
+  error: invalid argument: ports min 70000: expected 1-65535
+  error: invalid argument: ports 9000 100: the max is below the min
+  error: pool 'narrow': block-size 512 exceeds the 101 usable ports
+  ```
+
+  The ordering is said as an ordering and not as a range, because `ports 9000
+  100` breaks neither end's bound and a refusal quoting `1-65535` would send
+  the operator off to check two numbers that are both fine. The widest is 67
+  columns, inside the 79 a serial console has.
+
+  The third one is asked at `commit` and **not** at the line, and that is the
+  one decision in this change rather than a consequence of it. It needs
+  `block-size` as well as `ports`, and the two can be typed in either order:
+  `ports 1000 1100` followed by `block-size 64` is a correct pool built in a
+  correct order, and a guard at either line would have refused its first half.
+  `Pool.block_fits()` is therefore asked once, of the finished pool, by the
+  commit check - of the pools the candidate DEFINES and not of every pool in
+  it, because a pool the box already has is a fact and refusing a commit over
+  one this change does not touch is how a box stops being configurable.
+
+  The two line-level guards are at the typed-statement site in `do_pool` and
+  **not** in `Config._pool_line()`, for the reason
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357) and #360
+  wrote down beside `block-size`: that function is also the reader for the
+  configuration read back out of the running dataplane, and a port range the
+  box already has is a fact rather than a request. The check asserts that a
+  configuration carrying `ports 9000 100`, or `ports 70000 80000`, still
+  parses with nothing in `unknown`.
+
+  `?` quotes `<1-65535> <1-65535>` now. It said `<min> <max>`, which was at
+  least honest while nothing was enforced, and is the gap #350 to #354 were
+  about once something is.
+
+  Driven through the VTY and read back out of the candidate, which is the
+  shape #350 to #354 established - a case that calls the predicate directly
+  proves the predicate and not the path. Taken red by removing the guards at
+  their call sites, which leaves the messages they are cut from untouched:
+  27 failures in the VTY suite and 3 in the commit-check suite, with all five
+  values staged where the dataplane will not build them.
+
 * **`?` promised a power of two and nothing in the VTY kept it**
   ([#360](https://github.com/andrediashexa/hexarouting/issues/360)). The hint
   on a pool's `block-size` says *"ports per block, power of two"* and quotes

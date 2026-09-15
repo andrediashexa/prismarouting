@@ -402,6 +402,16 @@ class Pool:
     #: as "leave this one alone".
     RANGES = {
         "block-size": (64, 32768),
+        # BOTH ends of `ports`, and the one row that is read twice - once for
+        # the min and once for the max. 65535 is the dataplane's field:
+        # port_min and port_max are u16 in bpa.api and in bpa_pool_t, and
+        # nothing bounded either of them, so `ports 70000 80000` was staged,
+        # saved, cast on the way in and arrived as 4464-14464 - the pool that
+        # commits is not the pool that was typed, and no refusal downstream
+        # can name 70000 because by then 70000 is not the number any more.
+        # 1 and not 0 because a source port of 0 is not one a translation can
+        # hand out, which is bpa_pool.c's own first clause (#361).
+        "ports": (1, 65535),
         "utilisation-alarm": (1, 100),
         "max-blocks": (1, 255),
         "block-stride": (0, 65535),
@@ -478,6 +488,42 @@ class Pool:
         lo = 1 << (n.bit_length() - 1)
         return (f"{name} {v} is not a power of two: "
                 f"the nearest are {lo} and {lo << 1}")
+
+    #: The statements carrying TWO numbers whose order is part of the
+    #: statement, and a third table for the same reason POW2 is a second one:
+    #: a range asks where one number lies and this asks how two of them stand
+    #: to each other. `ports 9000 100` is two perfectly legal port numbers
+    #: written the wrong way round, so RANGES has nothing to say about it and
+    #: a refusal borrowed from RANGES would send the operator to check two
+    #: numbers that are both fine.
+    ORDERED = frozenset(("ports",))
+
+    @staticmethod
+    def check_order(name: str, first: str, second: str,
+                    lo_word="min", hi_word="max"):
+        """
+        None if `first` <= `second`, otherwise why not, said as an ordering.
+
+        Named after the STATEMENT like check_range and check_pow2, and for the
+        same reason: the constraint belongs to the statement, and a caller
+        that passes its own predicate is a second copy of a rule the help text
+        already quotes.
+
+        The words for the two halves come from the hint the operator has just
+        read - `<min> <max>` - because "9000 is greater than 100" names
+        arithmetic and not the mistake, which is that the two were typed in
+        the wrong order.
+        """
+        if name not in Pool.ORDERED:
+            # As loud as check_range's KeyError on an unknown statement.
+            raise KeyError(name)
+        if not first.isdigit() or not second.isdigit():
+            # check_range owns that refusal and runs first; saying it twice in
+            # two spellings is how the two drift apart.
+            return None
+        if int(first) <= int(second):
+            return None
+        return f"{name} {first} {second}: the {hi_word} is below the {lo_word}"
 
     # Mirrors foreach_bpa_alg in bpa_pool.h, in the same order and with the
     # same bits. A pool a VTY cannot express is a pool an operator cannot
@@ -805,6 +851,45 @@ class Pool:
             "n_prefixes": len(self.inside) + len(self.outside),
             "prefixes": list(self.inside) + list(self.outside),
         }
+
+    def block_fits(self):
+        """
+        Why this pool has no room for a single block, or None if it has.
+
+        THE CHECK THAT NEEDS TWO STATEMENTS, and the reason it is a method on
+        the finished pool rather than a guard beside either of them: an
+        operator may type `block-size` after `ports`, or `ports` after
+        `block-size`, and both are legal editing orders. A guard at either
+        line would read the other statement in whatever state the pool
+        happens to be halfway through being written, and would refuse a pool
+        that is about to be correct. So it is asked once, of the whole pool,
+        by the commit check - which is where the pool is finished.
+
+        A pool with no `ports` statement is skipped rather than measured
+        against the device default: 1024-65535 is 64512 ports and holds every
+        block size `?` offers, so there is nothing there to refuse.
+
+        A range this cannot read is skipped too, and that is the #357 rule
+        applied to a check rather than to a reader: the numbers may have come
+        out of a file somebody edited by hand, and a check that raised on them
+        would turn a pool the VTY merely disagrees with into a box that cannot
+        commit at all. The dataplane refuses those, and names them.
+        """
+        parts = self.ports.replace("-", " ").split()
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            return None
+        lo, hi = int(parts[0]), int(parts[1])
+        if lo > hi:
+            # check_order owns that one and says it in the operator's words.
+            return None
+        count = hi - lo + 1
+        size = int(self.block_size)
+        if size <= count:
+            return None
+        # bpa_pool.c's own clause, near enough to recognise: "block size %u
+        # exceeds the %u usable ports". An operator who meets this from the
+        # VTY on one box and from the plugin on the next reads one sentence.
+        return f"block-size {size} exceeds the {count} usable ports"
 
     def __eq__(self, other):
         return isinstance(other, Pool) and self.lines() == other.lines()

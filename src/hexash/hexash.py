@@ -1036,7 +1036,12 @@ CGNAT_POOL = {
     # being a number on a screen that the dataplane would have taken 32 past
     # (#352).
     "block-size": ("ports per block, power of two", "<64-32768>"),
-    "ports": ("usable port range", "<min> <max>"),
+    # <min> <max> quoted no numbers, and there were none to quote: `ports`
+    # was enforced by nothing at all, so a max below the min, a port above
+    # 65535 and a negative one were all taken at the prompt and staged (#361).
+    # Both ends come from Pool.RANGES now, like every other numeric statement
+    # in this block, and the hint says the same two numbers the parser does.
+    "ports": ("usable port range", "<1-65535> <1-65535>"),
     "policy": ("how subscribers spread across public addresses", {
         "interleaved": ("neighbours on distinct public addresses", None),
         "blocked": ("neighbours on the same public address", None),
@@ -6779,6 +6784,42 @@ class Shell:
                     self.err(f"pool '{pool.name}': inside and outside required")
                     ok = False
                     continue
+                # A PORT RANGE TOO NARROW TO HOLD ONE BLOCK, asked HERE and
+                # not at the `ports` line, which is where the operator types
+                # it (#361). It is the one check on this statement that needs
+                # a second statement to answer, and the two can be typed in
+                # either order: `ports 1000 1100` followed by `block-size 64`
+                # is a correct pool built in a correct order, and a guard at
+                # the line would have refused its first half. The commit is
+                # where the pool is finished, so it is where the question can
+                # be asked without inventing an order for the operator.
+                #
+                # The pools this candidate DEFINES, and not every pool in it,
+                # which is the #357 rule at commit level: a pool already on
+                # the box is a fact, and refusing a commit over a pool this
+                # change does not touch is how a box stops being
+                # configurable. bpa_pool_init() would not have built one
+                # anyway.
+                #
+                # Refused rather than reported, unlike pool_announce_findings
+                # below, and the difference is that this one is not a proxy
+                # for anything: bpa_pool_init() refuses it too, a few
+                # lines past the ordering clause, so a commit allowed through
+                # here fails at the write instead - later, and with the
+                # candidate already half applied.
+                why = pool.block_fits()
+                if why:
+                    self.err(f"pool '{pool.name}': {why}")
+                    # The two statements whole and on their own rows: the
+                    # operator's next move is to go and edit one of them, and
+                    # both carry numbers they will compare (#252).
+                    print(f"    ports {pool.ports}")
+                    print(f"    block-size {pool.block_size}")
+                    print_prose("a pool whose port range is smaller than its "
+                                "block has no block to give anyone: widen "
+                                "the range, or make the block smaller")
+                    ok = False
+                    continue
                 # The device validates for real: block size, prefix overlap,
                 # capacity, and whether the public range collides with a local
                 # address. It creates nothing, and it MUST NOT be made to
@@ -9231,6 +9272,48 @@ class Shell:
                     return True
                 p.block_size = str(int(w[1]))
             elif w[0] == "ports":
+                # NOTHING bounded either end before this, and the cast is the
+                # expensive half: port_min and port_max are u16 in bpa.api and
+                # in bpa_pool_t, so `ports 70000 80000` was staged, saved and
+                # arrived at the dataplane as 4464-14464. The pool that
+                # commits is not the pool that was typed, and no refusal on
+                # the far side can name 70000 because by then it is not the
+                # number any more - which is #352's defect in a second
+                # statement (#361).
+                #
+                # HERE and not in Config._pool_line(), for the reason written
+                # beside block-size above: that function is also the reader
+                # for the configuration read back out of the RUNNING
+                # dataplane, and a port range the box already has is a fact
+                # rather than a request. A bound put there turns a box whose
+                # pool carries an odd range into a box that cannot be
+                # committed at all, which is exactly what #357 was.
+                #
+                # Each end on its own, with `what` naming which one, because
+                # "ports 70000 80000: expected 1-65535" would leave the
+                # operator to work out which of the two is being refused.
+                self.pool_range("ports", w[1], "min")
+                self.pool_range("ports", w[2], "max")
+                # A SECOND refusal and not a second spelling of the first,
+                # because `ports 9000 100` breaks neither end's bound: it is
+                # two legal port numbers in the wrong order, and the range is
+                # the wrong thing to tell somebody about it. bpa_pool.c:148
+                # catches it on the far side of commit, which is one step too
+                # late - the candidate is already built.
+                #
+                # Raised like the two above, and not said with err: behind
+                # "invalid argument: " the whole row measures 67 columns at
+                # its widest pair, inside the 79 a serial console has, so it
+                # needs neither err_prose nor a second door out of this chain.
+                why = Pool.check_order("ports", w[1], w[2])
+                if why:
+                    raise ValueError(why)
+                # The third thing that can be wrong with a port range - that
+                # it is too narrow to hold one block - is NOT here. It needs
+                # `block-size` as well, and block-size may be typed after
+                # ports, so a check at this line would fire on a half-built
+                # pool and refuse a legal editing order. Pool.block_fits()
+                # answers it once, of the finished pool, in the commit check.
                 p.ports = f"{int(w[1])} {int(w[2])}"
             elif w[0] == "policy":
                 if w[1] not in ("interleaved", "blocked"):
