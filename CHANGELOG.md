@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The installer said a disk was held by an array on a box that has no
+  arrays, and then partitioned it**
+  ([#339](https://github.com/andrediashexa/hexarouting/issues/339)).
+  `release_disk()`'s two early returns - no `mdadm`, no readable
+  `/proc/mdstat` - returned 0, and the caller reads non-zero as "the disk is
+  free". So "I could not look" arrived as "still held, try again": four rounds
+  later the installer printed `<disk> is still held by an array after 4
+  attempts`, dumped `/proc/mdstat` to the console, and partitioned a disk
+  nothing was holding. And the refusal under it was a message only -
+  `release_disk_until_free()` ends in `return 1` and **both** call sites
+  discarded it, so a disk an array genuinely will not release was partitioned
+  too, which is the one outcome that function's own comment says it exists to
+  prevent. Three answers now - released, free, nobody here can be asked - and
+  the refusal is read. Found by the sweep of `appliance/`'s 113 refusal sites,
+  of which 51 had ever been rendered by anything.
+
 * **A whole arm of the dynamic allocator had never been executed by any C
   harness, and nothing could have said so.** The ten harnesses under `test/`
   run 65,376 checks and their verdict is a count of checks, not of product

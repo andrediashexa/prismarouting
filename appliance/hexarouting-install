@@ -1375,9 +1375,10 @@ EFI=0
 # It reports what it found. A disk that will not be released is a refusal
 # somebody has to diagnose from the console they are standing at, and
 # "sfdisk failed" on its own sends them to the partitioner.
+# 0 released something, 1 nothing holds it, 2 nobody here can be asked.
 release_disk() {   # <disk>; stop and erase what would hold it open
-  command -v mdadm >/dev/null 2>&1 || return 0
-  [ -r /proc/mdstat ] || return 0
+  command -v mdadm >/dev/null 2>&1 || return 2
+  [ -r /proc/mdstat ] || return 2
   _rd=$1
   _rb=$(basename "$_rd")
   for _a in $(awk -v b="$_rb" '
@@ -1427,7 +1428,18 @@ release_disk_until_free() {   # <disk>
   _rdu=$1
   _n=1
   while [ "$_n" -le 4 ]; do
-    release_disk "$_rdu" || return 0
+    release_disk "$_rdu"
+    case $? in
+      1) return 0 ;;
+      2) # SAID, NOT ASSUMED EITHER WAY. Without mdadm or /proc/mdstat this
+         # box cannot be asked whether an array holds the disk, and the
+         # install goes on - there is nothing here that could stop it. What it
+         # must not do is claim the disk is held, which is what four rounds of
+         # this used to produce.
+         say "  cannot tell whether an array holds $_rdu: this box has no"
+         say "  mdadm or no /proc/mdstat. Nothing here can release one."
+         return 0 ;;
+    esac
     _n=$((_n + 1))
   done
   say "  $_rdu is still held by an array after 4 attempts:"
@@ -1435,7 +1447,9 @@ release_disk_until_free() {   # <disk>
   return 1
 }
 
-release_disk_until_free "$DISK"
+release_disk_until_free "$DISK" || die "$DISK is held by an array that will not release. Partitioning it
+     now would write over a member of that array: stop it by hand, or
+     choose another disk."
 
 say "partitioning $DISK (UEFI=$EFI)"
 # udev opens a freshly attached disk to probe it, and sfdisk wants an exclusive
@@ -1495,7 +1509,9 @@ if [ -n "$MIRROR" ]; then
   # that only did this once got the system disk partitioned and was then
   # refused on this one: the gap between the two sfdisks is long enough for
   # udev to assemble something out of what is still on the second disk.
-  release_disk_until_free "$MIRROR"
+  release_disk_until_free "$MIRROR" || die "$MIRROR is held by an array that will not release. Partitioning it
+     now would write over a member of that array: stop it by hand, or
+     choose another disk."
   # One partition over the whole disk rather than a sized one. The array is as
   # big as its smallest member either way, and a whole-disk leg is what makes a
   # replacement disk of a different size usable without re-doing arithmetic
