@@ -85,7 +85,10 @@ cat > "$GHBIN/gh" <<'GHSTUB'
 case "$*" in
   *"auth status"*)  exit 0 ;;
   *"issue list"*)   : ;;
-  *"release view"*) exit 1 ;;   # no published release for a fixture tag
+  # What real gh prints for a tag with no release. The gate tells that
+  # apart from an API that could not answer by reading this line, so a
+  # stub that exits 1 in silence makes it report the wrong one.
+  *"release view"*) echo "release not found" >&2; exit 1 ;;
   *)                exit 0 ;;
 esac
 GHSTUB
@@ -341,6 +344,131 @@ document comparison sits behind two that have been red since September" ;;
 esac
 
 echo
+echo "=== the published title, answered by a gh that has one ==="
+# NOT undrivable after all. The comment above said no fixture can publish a
+# release for its own tag, and that is true of GitHub and irrelevant here: the
+# suite already replaces gh, so the answer a published release would give is
+# one the stub can give. The comparison - the thing the check is FOR - was
+# being measured only by running the gate against real releases by hand, which
+# is a measurement that stops happening.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+HEADLINE=$(grep -m1 "^## $V " "$FIX/CHANGELOG.md" | sed "s/^## $V *- *//")
+[ -n "$HEADLINE" ] || bad "the fixture's CHANGELOG heading has no sentence, \
+so the three cases below would measure the fixture rather than the gate"
+# Answering out of a file rather than out of the stub's own text, so each case
+# below changes the title without rewriting the stub - and so the stub cannot
+# quietly stop being the thing under test.
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*)  exit 0 ;;
+  *"issue list"*)   : ;;
+  *"release view"*) cat "$(dirname "$0")/title" ;;
+  *)                exit 0 ;;
+esac
+GHSTUB
+chmod +x "$GHBIN/gh"
+# The em dash and the version in front of it are what GitHub actually carries:
+# this is also the assertion that the normalising on both sides works, because
+# the CHANGELOG heading has neither.
+printf '%s \342\200\224 %s\n' "$V" "$HEADLINE" > "$GHBIN/title"
+retag "v$V"
+run_gate "v$V"
+printf '%s\n' "$OUT" | grep -q "the published release title is the CHANGELOG heading" \
+  && ok "a title that is the heading is accepted, dash and version and all" \
+  || bad "the gate refused a published title that IS its CHANGELOG heading, \
+so the normalising is about punctuation rather than about the sentence: $OUT"
+
+echo
+echo "=== a published title that stops at the comma ==="
+# The defect this check was written for: four of the eight titles measured on
+# #340 dropped everything after the comma, which is where the second defect
+# that release fixed is named.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+printf '%s \342\200\224 %s\n' "$V" "${HEADLINE%%,*}" > "$GHBIN/title"
+retag "v$V"
+run_gate "v$V"
+[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "does not carry the" \
+  && printf '%s\n' "$OUT" | grep -q "gh release edit v$V --title" \
+  && ok "refused, and it says which release and what to type to fix it" \
+  || bad "a published title that drops half its heading was accepted, or was \
+refused without saying what to do about it (rc=$RC): $OUT"
+
+echo
+echo "=== a heading that is a version and nothing else ==="
+# This passed. The comparison was guarded on the heading being non-empty, so a
+# heading with no sentence left nothing to compare and the gate printed the
+# green line having compared nothing - the same defect the '## VER' section
+# extraction refuses in words further up, in the same file.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+sed -i "s/^## $V .*/## $V/" "$FIX/CHANGELOG.md"
+printf '%s \342\200\224 %s\n' "$V" "$HEADLINE" > "$GHBIN/title"
+retag "v$V"
+run_gate "v$V"
+[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "carries no" \
+  && ok "refused, and it says the heading has no sentence to compare against" \
+  || bad "a heading with no sentence at all was accepted, so the check passed \
+having compared nothing (rc=$RC): $OUT"
+
+echo
+echo "=== gh cannot answer, and gh answering an error, are not the same ==="
+# Both used to arrive as the empty string, because the call ended in `|| true`.
+# One of them was then ANNOUNCED as "no published release yet", which is a
+# false statement about a release that exists, made at the moment somebody is
+# deciding whether to publish. The other printed nothing at all.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+retag "v$V"
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+exit 1
+GHSTUB
+chmod +x "$GHBIN/gh"
+run_gate "v$V"
+printf '%s\n' "$OUT" | grep -q "release title was NOT checked: gh cannot answer" \
+  && ok "gh that will not authenticate is said out loud, not passed in silence" \
+  || bad "with gh unable to answer the title check printed nothing, so its \
+verdict cannot be told from the run where it passed: $OUT"
+
+reset_fixture
+V=$(cat "$FIX/VERSION")
+retag "v$V"
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*)  exit 0 ;;
+  *"issue list"*)   : ;;
+  *"release view"*) echo "error connecting to api.github.com" >&2; exit 1 ;;
+  *)                exit 0 ;;
+esac
+GHSTUB
+chmod +x "$GHBIN/gh"
+run_gate "v$V"
+printf '%s\n' "$OUT" | grep -q "could not read v$V" \
+  && ! printf '%s\n' "$OUT" | grep -q "has no published release yet" \
+  && ok "an API that could not answer is not reported as nothing published" \
+  || bad "an API failure was announced as 'no published release yet', which \
+is false about a release that exists: $OUT"
+
+# Back to the stub the rest of the file runs under. "release not found" on
+# stderr is what real gh prints for a tag with no release, and it is what
+# tells that apart from an API that could not answer - a stub that exits 1
+# saying nothing makes the gate report the wrong one of the two.
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*)  exit 0 ;;
+  *"issue list"*)   : ;;
+  *"release view"*) echo "release not found" >&2; exit 1 ;;
+  *)                exit 0 ;;
+esac
+GHSTUB
+chmod +x "$GHBIN/gh"
+
+echo
 echo "=== a refused release says it was refused, and by how many ==="
 # The three document checks print their refusals on stderr and their passes on
 # stdout, so a refused run read through its stdout alone - a log, a pipe, a
@@ -359,7 +487,7 @@ cat > "$GHBIN/gh" <<'GHSTUB'
 case "$*" in
   *"auth status"*)  exit 0 ;;
   *"issue list"*)   echo "9999 OPEN" ;;   # a roadmap that never names it
-  *"release view"*) exit 1 ;;
+  *"release view"*) echo "release not found" >&2; exit 1 ;;
   *)                exit 0 ;;
 esac
 GHSTUB
@@ -393,7 +521,7 @@ cat > "$GHBIN/gh" <<'GHSTUB'
 case "$*" in
   *"auth status"*)  exit 0 ;;
   *"issue list"*)   : ;;
-  *"release view"*) exit 1 ;;
+  *"release view"*) echo "release not found" >&2; exit 1 ;;
   *)                exit 0 ;;
 esac
 GHSTUB
@@ -415,7 +543,7 @@ BEFORE=$(awk '/RELEASE_GATE_CHECK_ONLY:-0/ {exit} /echo "error:/ {n++} END {prin
          "$REPO/tools/release-gate.sh")
 [ "$BEFORE" -ge 6 ] \
   && ok "$BEFORE of the gate's $REFUSALS refusals are reachable without an \
-image, and this file drives 11 of them" \
+image, and this file drives 13 of them" \
   || bad "the gate's checks moved: only $BEFORE refusals now come before the \
 check-only seam, so this suite is measuring less than it says"
 

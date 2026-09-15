@@ -120,6 +120,46 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release-title check passed three ways without comparing anything**
+  ([#340](https://github.com/andrediashexa/hexarouting/issues/340)). The check
+  that issue added does compare, and that was measured first: with the
+  `## 0.74.2` heading extended by a second clause and the tag moved onto it in
+  a throwaway clone, the gate refuses and quotes both halves. Three other
+  inputs reached its green line having compared nothing, each driven rather
+  than argued:
+
+  | input | what it said | what it says now |
+  |---|---|---|
+  | `gh` missing, or not authenticated | nothing at all | `the release title was NOT checked: gh cannot answer` |
+  | `gh` authenticated, the API failing | `v0.74.2 has no published release yet` | `the release title was NOT checked: gh could not read v0.74.2`, with gh's own error under it |
+  | a heading carrying the version and no sentence | `the published release title is the CHANGELOG heading` | refused, saying the heading has no sentence to compare against |
+
+  The first two are one cause. The call ended in `|| true`, so a tag with no
+  release, an API that could not answer and a gh that is not installed all
+  arrived as the same empty string. The middle row is the one that matters:
+  it is not silence but a false statement, made at the moment somebody is
+  deciding whether to publish, about a release that has existed since
+  2026-09-15T01:30:53Z. The third row is the guard `[ -n "$head_title" ]`,
+  and it is the same defect the `## VER` section extraction refuses in words
+  150 lines above it in the same file - an extraction that found nothing has
+  quietly stopped checking.
+
+  **Not a defect, and stated so it is not rediscovered:** the check runs
+  BEFORE `gh release create`, so the release being cut has no title yet and
+  the gate says so and passes. Measured by cutting a v0.74.3 in a throwaway
+  clone. It catches drift on a later run over that tag and it cannot gate the
+  publication itself; what it can do instead is hand over the repair, so the
+  refusal now ends with `gh release edit <tag> --title "<version> - <heading>"`
+  filled in, which is what was typed by hand four times.
+
+  `test/test_release_gate.sh` gains five assertions and drives the comparison
+  for the first time. Its own note said no fixture can publish a release for
+  its own tag, which is true of GitHub and irrelevant: the suite already
+  replaces `gh`, so the stub can answer what a published release would. Four
+  of the five are red against the gate as it was, and the stub now prints
+  `release not found` on stderr the way real `gh` does, because that line is
+  what tells a missing release apart from an API that could not answer.
+
 * **A check that compared two trees, and the day the wiki was published is
   the day it broke.** `test/test_wiki_roundtrip.sh` drives the release gate and
   requires it to agree with `tools/wiki-status.sh` rather than asserting a
