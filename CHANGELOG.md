@@ -77,6 +77,36 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The soak's collector stopped before the box did, and the records it missed
+  read as a leak**
+  ([#342](https://github.com/andrediashexa/hexarouting/issues/342), follows
+  [#30](https://github.com/andrediashexa/hexarouting/issues/30)). The
+  eight-hour run of 2026-09-15 ended `LAB FAILED: 2 check(s)`, both about the
+  far side of the log, and both caused by the lab. The box's own counters read
+  **104,227 allocations against 104,227 releases with zero blocks in use**, and
+  `stop-drain` reported no record dropped; the collector read 104,227 against
+  **104,181**, with 46 open. Those 46 are release records that arrived after it
+  had stopped listening. It was given `CHURN + 40` seconds fixed before the
+  run, and 822 cycles of packet-generator and `vppctl` calls drift about 80
+  seconds past 822 x 35s, so the budget expired inside the final cycle: it
+  heard that cycle's allocations and none of its releases. The 46 carry two
+  timestamps between them, one burst, and the exporter's boot marker sits
+  exactly eight hours and nineteen seconds earlier.
+
+  A collector outlived by its exporter reports what it did not wait for as
+  allocations nobody ever released, which in the log an operator is obliged to
+  keep is indistinguishable from a leak. The assertions were right; what was
+  missing was anybody saying the far side had been given the chance to hear
+  the end. `tools/ipfix_collector.py` now takes a stop file on the UDP path as
+  the TCP path already does for its stall, drains what is already in the
+  receive buffer before leaving, and prints **`STOPPED BY:`** - the caller, or
+  its own budget. `lab/soak.sh` keeps a budget only as a ceiling, scaled with
+  the run because the drift is, and closes the far side itself once the box's
+  own blocks in use reach zero. Two checks now come before the two that were
+  red, because they are what makes those mean anything: that the box had given
+  every block back, and that the collector was stopped by the lab rather than
+  by its own budget.
+
 * **A floor below what the off run measures was silent, which is how floors go
   stale** ([#151](https://github.com/andrediashexa/hexarouting/issues/151)).
   `lab/ipfix-outbuf.sh` declared `OFF-RED-AT-LEAST: 8` and its off run went

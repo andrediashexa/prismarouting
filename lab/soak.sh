@@ -168,7 +168,21 @@ HEAP_MARGIN=100        # hundredths of a megabyte: 1.00 MB
 RSS_MARGIN=8192        # kB: 8 MB
 
 # The collector has to outlive the whole run and the verdict that reads it.
-COL_SECS=$(( CHURN + 40 ))
+#
+# It was given CHURN + 40 seconds, and that is not a number anything can know
+# before the run: 822 cycles of vppctl and packet-generator calls drift about
+# 80 seconds past the arithmetic of 822 x 35s, so the budget expired INSIDE
+# the final cycle. It had heard every allocation and none of that cycle's
+# releases, and reported 46 allocations nobody ever released - which is what a
+# leak looks like, on a box whose own counters read 104227 allocations against
+# 104227 releases and zero blocks in use (#30).
+#
+# So this is a CEILING and not the intended end. The lab stops the collector
+# itself, once the box has given every block back, through COL_STOP. The
+# ceiling still scales with the run, because the drift does.
+COL_SECS=$(( CHURN + CHURN / 20 + 120 ))
+COL_STOP=/tmp/collector.stop
+rm -f "$COL_STOP"
 
 mkdir -p /run/vpp /vpp_plugins /var/log/vpp /var/log/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
@@ -238,7 +252,7 @@ $HX -c "configure" \
     -c "cgnat logging enable" \
     -c "commit" 2>&1 | sed 's/^/  /'
 ip netns exec peer python3 /src/tools/ipfix_collector.py 4739 $COL_SECS \
-  > /tmp/collector.out 2>&1 &
+  "$COL_STOP" > /tmp/collector.out 2>&1 &
 COL_PID=$!
 sleep 2
 
@@ -351,6 +365,29 @@ while [ "$c" -lt "$NCYCLES" ]; do
   c=$(( c + 1 ))
 done
 
+# --- the box finishes, and only then is the far side closed ---------------
+#
+# WAITING FOR THE BOX, not doing anything on its behalf: what is read here is
+# the box's own count of blocks in use, and the lab does nothing but let the
+# hold-down and the UDP timer run out. A collector closed while the box is
+# still releasing hears the allocations and not the releases, and that is the
+# defect this whole section exists to stop (#30).
+SETTLE_WAITED=0
+SETTLE_LIMIT=$(( UDP_TIMEOUT + HOLDDOWN + 30 ))
+while [ "$(blocks_used)" -gt 0 ] && [ "$SETTLE_WAITED" -lt "$SETTLE_LIMIT" ]; do
+  sleep 1
+  SETTLE_WAITED=$(( SETTLE_WAITED + 1 ))
+done
+SETTLE_BLOCKS=$(blocks_used)
+# And a moment for the records of those last releases to cross the wire. The
+# collector drains what is already queued when it sees the file, so this only
+# has to cover flight time.
+sleep 5
+: > "$COL_STOP"
+echo
+echo "  the box settled in ${SETTLE_WAITED}s with $SETTLE_BLOCKS block(s) still"
+echo "  in use, and the collector was then told to stop"
+
 echo
 echo "=========== what the box ended holding ==========="
 vc show bpa session | sed 's/^/  /'
@@ -423,6 +460,11 @@ printf '%s\n' "$COL" | sed -n '/^OPEN ALLOCATIONS/,$p' | head -6 | sed 's/^/  /'
 COL_ALLOC=$(printf '%s\n' "$COL" | sed -n 's/^SUMMARY: .* (\([0-9]*\) allocations.*/\1/p')
 COL_REL=$(printf '%s\n' "$COL" | sed -n 's/^SUMMARY: .*, \([0-9]*\) deallocations.*/\1/p')
 COL_OPEN=$(printf '%s\n' "$COL" | sed -n '/^OPEN ALLOCATIONS/,$p' | sed -n 2p)
+# Which of the two ended the collector. The two checks about its books are
+# only about the box if the box finished first, and a collector that ran out
+# of budget reports the releases it did not wait for as allocations nobody
+# ever released.
+COL_STOPPED_BY=$(printf '%s\n' "$COL" | sed -n 's/^STOPPED BY: //p')
 
 echo
 echo "=========== VERDICT ==========="
@@ -482,6 +524,23 @@ expect "nor did resident memory, which is what the OOM killer reads" \
 # The log, at a real collector on the far side of a wire. An allocation with
 # no release names a subscriber who still holds those ports for as long as the
 # log is kept, which is as long as the retention obligation lasts.
+#
+# THE TWO CHECKS BELOW ARE ONLY ABOUT THE BOX IF THE BOX FINISHED FIRST, and
+# for eight hours on 2026-09-15 they were not. The collector had a budget of
+# CHURN + 40 seconds fixed before the run; 822 cycles drift about 80 seconds
+# past 822 x 35s, so it stopped listening inside the final cycle, having heard
+# that cycle's allocations and none of its releases. It reported 104227
+# allocations against 104181 deallocations and 46 open, and both checks went
+# red - on a box whose own counters read 104227 against 104227 with zero
+# blocks in use. The assertions were right. What was missing was anybody
+# saying the far side had been given the chance to hear the end.
+#
+# These two say it, and they come first because they are what makes the other
+# two mean anything.
+expect "the box had given every block back before the far side was closed" \
+  test "${SETTLE_BLOCKS:-1}" -eq 0
+expect_in "and the collector was stopped by this lab, not by its own budget" \
+  "the caller, through" "${COL_STOPPED_BY:-}"
 expect "the collector counted one natEvent 17 for every natEvent 16" \
   test "${COL_ALLOC:-0}" -eq "${COL_REL:-1}"
 # Counts alone would let a box release a block it never allocated and balance
