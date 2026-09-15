@@ -69,16 +69,17 @@ run() {  # <expected exit 0|1> <description> <env assignments...>
   _want=$1; _desc=$2; shift 2
   out=$(env HEXA_INSTALL_CHECK=1 "$@" sh "$INSTALLER" </dev/null 2>&1)
   rc=$?
+  LAST_OUT=$out
   if [ "$_want" = 0 ] && [ "$rc" != 0 ]; then
     echo "  FAIL: $_desc (expected acceptance, got $rc)"; echo "$out" | sed 's/^/        /'
     fail=$((fail + 1)); return
   fi
   if [ "$_want" != 0 ] && [ "$rc" = 0 ]; then
     echo "  FAIL: $_desc (expected refusal, it was accepted)"
+    echo "$out" | sed 's/^/        /'
     fail=$((fail + 1)); return
   fi
   echo "  [ ok ] $_desc"
-  LAST_OUT=$out
 }
 
 OK="HEXA_DISK=$DISK HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo"
