@@ -182,10 +182,18 @@ class Api:
     a plain refusal.
     """
 
-    def __init__(self, have=None, refuse=(), state=vppapi.REFUSED):
+    def __init__(self, have=None, refuse=(), state=vppapi.REFUSED,
+                 rows=None, refuse_dump=()):
         self.have = dict(have or {})
         self.refuse = set(refuse)
         self.state = state
+        # A DUMP IS REFUSED BY ITS OWN SET, not by `refuse`. The IPFIX export
+        # reads the exporter back before it writes one, so that path has a
+        # dump and a call in it and a single set would not say which of the
+        # two is being refused - and the two refusals it produces are
+        # different sentences on purpose.
+        self.rows = dict(rows or {})
+        self.refuse_dump = set(refuse_dump)
         self.calls = []
 
     def available(self):
@@ -201,7 +209,10 @@ class Api:
         return vppapi.Reply(vppapi.OK)
 
     def dump(self, message, args):
-        return vppapi.Reply(vppapi.OK, fields={"rows": []})
+        if message in self.refuse_dump:
+            return vppapi.Reply(self.state, retval=-7, reason=REASON)
+        return vppapi.Reply(vppapi.OK, fields={"rows": self.rows.get(message,
+                                                                    [])})
 
 
 class Dp(hexash.Vpp):
@@ -233,10 +244,22 @@ class Dp(hexash.Vpp):
         return 0, ""
 
 
-def frr_stub(available=False, reload_rc=0, reload_out=""):
+def frr_stub(available=False, reload_rc=0, reload_out="", shows=None):
+    # `shows` answers one command and leaves every other one refused, which is
+    # what a daemon that is down looks like: vtysh exits non-zero with nothing
+    # on stdout. A stub that answered everything would make "not answering"
+    # unreachable, and that is half the boxes below.
+    answers = dict(shows or {})
+
+    def show(self, cmd):
+        for prefix, answer in answers.items():
+            if cmd.startswith(prefix):
+                return answer
+        return (1, "")
+
     return type("F", (hexash.Frr,), {
         "available": lambda self: available,
-        "show": lambda self, c: (1, ""),
+        "show": show,
         "reload": lambda self, lines, check_only=False: (reload_rc,
                                                          reload_out),
     })()
@@ -653,6 +676,582 @@ check(any(hexash.GROUP_ADMIN in l for l in _text.splitlines()),
       f"and it must name the group that would allow it: {_text!r}")
 print("  refused, and told which membership allows everything")
 
+print("\n=== the CGNAT globals, sent one setting at a time ===")
+# NOT REACHED BY TYPING. `do_config` stages a global into the candidate and
+# `apply_global` is what sends it, so `--load`, `rollback` and
+# hexarouting.service reach these without anybody at the prompt. A global that
+# applies nothing must never do it quietly, which is #273 - and the commit
+# before it said "commit complete" for a setting the box does not have.
+_globals = [
+    ("a timeout this box has no field for", Api(),
+     "cgnat timeout nosuch 30",
+     "error: cgnat timeout nosuch: no such timeout"),
+    ("a timeout the dataplane refused", Api(refuse={"bpa_global_set"}),
+     "cgnat timeout udp 300",
+     f"error: cgnat timeout udp 300: {REASON}"),
+    ("a block hold-down the dataplane refused",
+     Api(refuse={"bpa_global_set"}), "cgnat block-holddown 4",
+     f"error: cgnat block-holddown 4: {REASON}"),
+    # Half a session-table statement. The two numbers are allocated together
+    # and the message carries both, so one of them is not a smaller change -
+    # it is a table sized against a number nobody gave.
+    ("a session table with one of its two numbers", Api(),
+     "cgnat session-table buckets 64",
+     "error: usage: nat cgnat session-table buckets <n> memory <MB>"),
+    ("a session table the dataplane refused",
+     Api(refuse={"bpa_global_set"}), "cgnat session-table buckets 64 memory 8",
+     f"error: cgnat session-table: {REASON}"),
+]
+for _label, _api, _line, _want in _globals:
+    _rv, _text = driven(shell(_api).apply_global, _line)
+    says(_label, _text, _want)
+print(f"  {len(_globals)} globals, each refused rather than applied to "
+      f"nothing")
+
+print("\n=== the IPFIX export, which in dynamic mode IS the connection "
+      "record ===")
+# WHY THESE ARE WORTH BOXES AT ALL. `bpa logging enable` over vppctl exited 0
+# whether or not the dataplane took it, and on every shipped box UDP export
+# was refused because nothing had ever configured VPP's exporter (#209). What
+# the operator saw was "commit complete" and a box exporting nothing, which in
+# dynamic mode is the Marco Civil record missing. Every refusal here is one of
+# the ways that silence was broken up.
+#
+# The exporter row is the one the dataplane would report: `apply_logging_udp`
+# sends back everything the statement does not name, so a row has to be there
+# for the branches past the read-back to be reached at all.
+_EXPORTER = {"src_address": "10.0.0.1", "collector_port": 4739, "vrf_id": 0,
+             "path_mtu": 1400, "template_interval": 300, "udp_checksum": False}
+_logging = [
+    ("a TCP collector port that is not one", Api(), "apply_logging",
+     "cgnat logging tcp 10.0.0.5 port 99999",
+     "error: cgnat logging tcp: port 99999 is not one"),
+    ("a logging statement in none of the shapes", Api(), "apply_logging",
+     "cgnat logging sideways",
+     "error: usage: nat cgnat logging enable|disable | nat cgnat logging udp "
+     "<collector> src <source> [port <n>] | nat cgnat logging udp disable | "
+     "nat cgnat logging tcp <collector> [port <n>] | nat cgnat logging tcp "
+     "disable"),
+    ("the export turned on and refused", Api(refuse={"bpa_logging_set"}),
+     "apply_logging", "cgnat logging enable",
+     f"error: cgnat logging enable: {REASON}"),
+    # The read-back refused, which is not the same as the write refused: this
+    # one changed nothing at all, and saying "refused" without saying which
+    # half would send somebody to look at the collector.
+    ("the exporter that could not be read",
+     Api(refuse_dump={"ipfix_exporter_dump"}), "apply_logging_udp",
+     "cgnat logging udp 10.0.0.5 src 10.0.0.1",
+     f"error: cgnat logging udp 10.0.0.5 src 10.0.0.1: cannot read the IPFIX "
+     f"exporter: {REASON}"),
+    ("a UDP collector port that is not one",
+     Api(rows={"ipfix_exporter_dump": [_EXPORTER]}), "apply_logging_udp",
+     "cgnat logging udp 10.0.0.5 src 10.0.0.1 port 99999",
+     "error: cgnat logging udp: port 99999 is not one"),
+    ("the exporter the dataplane would not take",
+     Api(refuse={"set_ipfix_exporter"},
+         rows={"ipfix_exporter_dump": [_EXPORTER]}), "apply_logging_udp",
+     "cgnat logging udp 10.0.0.5 src 10.0.0.1",
+     f"error: cgnat logging udp 10.0.0.5 src 10.0.0.1: {REASON}"),
+]
+for _label, _api, _method, _line, _want in _logging:
+    _rv, _text = driven(getattr(shell(_api), _method), _line.split())
+    says(_label, _text, _want)
+print(f"  {len(_logging)} ways the export does not arrive, each said out loud")
+
+
+def cfg_shell(**kw):
+    """
+    A Shell already in configuration mode, with an empty candidate.
+
+    The grammar refusals below are reached by typing at the prompt, and the
+    prompt they are typed at has a candidate to edit. A Shell left alone has
+    `candidate` None, and every one of them would be refused for that instead
+    of for the words - which is the wrong box, passing.
+    """
+    sh = shell(**kw)
+    sh.candidate = config.Config()
+    sh.mode = "config"
+    return sh
+
+
+def pooled(name, **fields):
+    p = config.Pool(name)
+    p.inside = ["100.64.0.0/22"]
+    p.outside = ["200.150.0.16/30"]
+    for k, v in fields.items():
+        setattr(p, k, v)
+    return p
+
+
+print("\n=== a commit that would move subscribers, and the ones that cannot "
+      "run at all ===")
+# THE REMAP REFUSAL IS THE ONE WITH SUBSCRIBERS BEHIND IT. Changing a pool's
+# block size re-computes which public address and port block every subscriber
+# on it gets, and the dataplane says how many - so `commit` stops and makes
+# the operator type the word. A commit that went ahead would land the change
+# and disconnect them, at whatever hour it was typed.
+_running = cfg(pooled("subs"))
+_sh = shell(dp=Dp({"bpa pool": (0, "remap: 1200 subscribers get a "
+                                   "different public address\n")}))
+_sh.running_config = lambda: _running
+_sh.candidate = cfg(pooled("subs", block_size="1024"))
+_rv, _text = driven(_sh.do_commit, [])
+says("re-mapping", _text,
+     "error: this change re-maps subscribers that already have mappings")
+check(any("commit remap" in l for l in _text.splitlines()),
+      f"and it must say the word that would allow it: {_text!r}")
+
+# `commit confirmed <minutes>` with something that is not minutes. The window
+# is what gives the operator a way back from a change that costs them the
+# session, so a malformed one must not arm silently at the default - the box
+# would roll back ten minutes later for a reason nobody typed.
+_sh = shell(Api(have={"pg0": 1}))
+_sh.running_config = lambda: config.Config()
+_sh.candidate = config.Config()
+_sh.candidate.descriptions["pg0"] = "uplink"
+_rv, _text = driven(_sh.do_commit, ["confirmed", "soon"])
+says("confirmed window", _text, "error: usage: commit confirmed <minutes>")
+
+# And the two that are about where the operator is standing rather than about
+# the configuration: `commit` with nothing built, and `commit` typed before
+# `configure`. Separate call sites because they are separate situations - one
+# is a candidate that was discarded, the other a mode that was never entered.
+# Typed at the prompt rather than called, because the prompt is the only way
+# to reach it: `commit` after the candidate was discarded by an `exit` that
+# left the operator in configuration mode is what produces it on a real box.
+_sh = shell()
+_sh.mode = "config"
+_sh.candidate = None
+_rv, _text = driven(_sh.do_config, "commit")
+says("no candidate", _text, "error: no candidate configuration", _rv,
+     expect=True)
+
+_rv, _text = driven(shell().do_operational, "commit")
+says("not in config mode", _text, "error: enter configuration mode first",
+     _rv, expect=True)
+print("  a re-mapping commit, a window that is not a number, and two commits "
+      "with nothing to apply")
+
+print("\n=== the rollback store, and the revert that runs unattended ===")
+# THE UNATTENDED HALF IS THE POINT. `commit confirmed` arms a revert that
+# fires with nobody at the prompt, and a revert that applied part of a
+# configuration would leave the box in neither the one the operator made nor
+# the one they were promised back. So it validates first and refuses whole,
+# and the refusal has to reach the console of a box nobody is watching.
+_sh = shell()
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.revert_confirm,
+                    {"config": "cgnat pool subs\n inside 100.64.0.0/22\n"},
+                    "commit was not confirmed: rolling back")
+says("revert does not validate", _text,
+     "error: the configuration to roll back to does not validate on this box",
+     _rv)
+
+# The restart after a revert that took the management card back. It is the
+# only way back onto the network without a reboot by hand, so a systemctl that
+# refuses has to say so rather than leave the operator believing the box is
+# coming back (#303).
+_sh = shell()
+_sh.sys = type("S", (), {
+    "_run": lambda self, c: (1, "Failed to reboot: unit not found"),
+})()
+_rv, _text = driven(_sh.restart_for_management_card)
+says("restart refused", _text,
+     "error: the box could not be restarted: Failed to reboot: unit not found")
+
+# And the store's own grammar. A revision that is not a number and a revision
+# that is not there are different answers: one is a typo, the other is a box
+# that has not been committed to that many times.
+_rv, _text = driven(shell().do_rollback, ["seven"])
+says("rollback grammar", _text,
+     f"error: usage: rollback <0-{hexash.ROLLBACK_KEEP - 1}>")
+
+_sh = shell()
+_sh.rb = type("R", (), {"load": lambda self, n: None})()
+_rv, _text = driven(_sh.do_rollback, ["3"])
+says("revision absent", _text, "error: revision 3 does not exist")
+print("  a revert that does not validate, a restart that failed, and two "
+      "revisions that cannot be loaded")
+
+print("\n=== a pool statement, typed ===")
+# THE STATEMENT THAT IS SILENTLY ACCEPTED IS THE EXPENSIVE ONE. #224 is a pool
+# block that took every word it did not recognise and did nothing with it, so
+# `show this` still showed the old value and the operator walked away
+# believing they had changed it. These two are what is left at the bottom of
+# that block: a word this box has no setting for, and a value it cannot read.
+_sh = cfg_shell()
+_sh.do_config("cgnat pool subs")
+_rv, _text = driven(_sh.do_pool, "gibberish 1")
+says("unknown pool statement", _text,
+     "error: unknown statement in pool mode: gibberish", _rv, expect=True)
+
+_sh = cfg_shell()
+_sh.do_config("cgnat pool subs")
+_rv, _text = driven(_sh.do_pool, "policy sideways")
+says("unreadable pool value", _text,
+     "error: invalid argument: policy must be interleaved or blocked", _rv,
+     expect=True)
+print("  a word with no setting behind it and a value with no meaning")
+
+print("\n=== the accounts block, where a refusal that does not fire locks "
+      "somebody out ===")
+# WHAT IS BEHIND THESE. An account statement that is accepted and does
+# nothing produces a box whose configuration says an operator can log in and
+# whose /etc/shadow says otherwise - and the first person to find out is the
+# one holding the console cable. The plaintext-password refusal is the
+# sharpest of them: a plaintext string in /etc/shadow does not fail loudly, it
+# produces a password that simply never matches.
+_users = [
+    ("root removed", "user noc", "config", "no user root",
+     "error: root cannot be removed; restrict it with 'ssh permit-root-login' "
+     "instead"),
+    ("a plaintext password", "user noc", "user", "password hunter2",
+     "error: expected a crypt hash (openssl passwd -6), not a plaintext "
+     "password"),
+    ("a role this box has not got", "user noc", "user", "role wizard",
+     "error: role 'wizard': expected one of administrator, cgnat-operator"),
+    ("root's memberships", "user root", "user", "no role",
+     "error: root's rights come from being root, not from a group: this VTY "
+     "does not manage root's memberships"),
+    ("`no` with nothing after it", "user noc", "user", "no",
+     "error: no <statement>: say which statement to remove ('no ?' lists "
+     "them)"),
+    # `no ssh-key` with no key. The block has three negations and this one
+    # takes an argument, so the refusal names the statement rather than `no` -
+    # which is the half of #224 that was about being sent to look for a `no`
+    # this block has three of.
+    ("`no ssh-key` with no key", "user noc", "user", "no ssh-key",
+     "error: usage: no ssh-key <key>"),
+    ("a word the block has no statement for", "user noc", "user",
+     "gibberish here",
+     "error: unknown statement in user mode: gibberish"),
+    # The SNMPv3 block next door, which has one shape and refuses everything
+    # else: an auth line with no passphrase is a user snmpd will not
+    # authenticate, and the box would carry it looking configured.
+    ("half an SNMPv3 credential", "snmp-user bob", "snmp-user", "auth sha",
+     "error: a v3 user takes 'auth <protocol> <passphrase>' and 'priv "
+     "<protocol> <passphrase>'"),
+]
+for _label, _enter, _mode, _line, _want in _users:
+    _sh = cfg_shell()
+    _sh.do_config(_enter)
+    _handler = {"config": _sh.do_config, "user": _sh.do_user,
+                "snmp-user": _sh.do_snmp_user}[_mode]
+    _rv, _text = driven(_handler, _line)
+    says(_label, _text, _want, _rv, expect=True)
+print(f"  {len(_users)} account statements, each refused at the prompt")
+
+print("\n=== the box's own settings, refused while the operator is still "
+      "typing ===")
+# BOTH ENDS, and neither is redundant: `apply` refuses these again for
+# `rollback` and `--load`, and this is the copy that reaches somebody who can
+# fix it in the next keystroke rather than hours after committing (#123). The
+# management card is the one with a site visit behind it - a name that is not
+# a card, or a management record the parser cannot read, is a box that hands
+# away the wrong NIC at its next start.
+_settings = [
+    ("snmp with no value", "snmp location",
+     "error: usage: snmp <setting> <value>"),
+    ("an snmp setting this box has not got", "snmp nonsense rack4",
+     "error: 'nonsense' is not an snmp setting"),
+    ("a management record the parser cannot read",
+     "dataplane management name ens18 nonsense",
+     "error: expected: dataplane management <name> address <a.b.c.d/len> mac "
+     "<xx:xx:...>"),
+    ("dataplane with no card named", "dataplane interface",
+     "error: usage: dataplane interface <name>"),
+    ("ssh with no value", "ssh port",
+     "error: usage: ssh <setting> <value>"),
+    ("an ssh value sshd would not take", "ssh permit-root-login maybe",
+     "error: ssh permit-root-login 'maybe': expected one of yes, no, "
+     "prohibit-password, forced-commands-only"),
+]
+for _label, _line, _want in _settings:
+    _rv, _text = driven(cfg_shell().do_config, _line)
+    says(_label, _text, _want, _rv, expect=True)
+print(f"  {len(_settings)} settings, each refused before it reaches the "
+      f"candidate")
+
+print("\n=== an interface statement, typed ===")
+# EVERY ONE OF THESE IS A LINE THAT WOULD OTHERWISE BE STAGED AS FRR'S. The
+# comment above these branches in the product records what that cost: FRR
+# accepts `description` and `shutdown` inside an interface stanza, so a
+# statement that never reached the dataplane errored nowhere, read back
+# correctly from `show running-config`, and made three lab assertions vacuous.
+# A usage refusal that stops firing here does not print a usage line - it
+# hands the words to FRR.
+_iface = [
+    ("a MAC that is not six octets", "pg0", "mac-address 0200",
+     "error: usage: mac-address <xx:xx:xx:xx:xx:xx>"),
+    ("linux-name with no name", "pg0", "linux-name",
+     "error: usage: linux-name <name>"),
+    ("a Linux name Linux would not take", "pg0", "linux-name a/b",
+     "error: linux-name: 'a/b' cannot be a Linux interface name "
+     "(15 characters, no '/')"),
+    ("vrf with no table", "pg0", "vrf",
+     "error: usage: vrf <table>"),
+    ("a VLAN tag with no number", "pg0.7", "vlan",
+     "error: usage: vlan <1-4094> [inner <1-4094>]"),
+    # The second `usage: vlan` line, and a different branch from the first:
+    # the outer tag is right and what follows it is not a complete `inner`.
+    # Same sentence, different site - which is why this file spends refusals
+    # on lines rather than on text.
+    ("an inner tag with no number", "pg0.7", "vlan 7 inner",
+     "error: usage: vlan <1-4094> [inner <1-4094>]"),
+    ("an address statement with no prefix", "pg0.7", "ipv4 address",
+     "error: usage: ipv4 address <prefix>"),
+    ("an address with no prefix length", "pg0.7", "ipv4 address 999",
+     "error: '999' has no prefix length"),
+    ("`no ipv4 address` with no prefix", "pg0.7", "no ipv4 address",
+     "error: usage: no ipv4 address <prefix>"),
+    ("description with no text", "pg0", "description",
+     "error: usage: description <text>"),
+    ("a uRPF mode the dataplane has not got", "pg0", "urpf sideways",
+     "error: usage: urpf <" + "|".join(hexash.URPF_MODES) + ">"),
+]
+for _label, _on, _line, _want in _iface:
+    _sh = cfg_shell()
+    # SET PER ROW, not once. `frr_ctx` is what says which interface block the
+    # line is inside, and a context left over from the previous row would put
+    # a statement on an interface this row never named.
+    _sh.frr_ctx = [f"interface {_on}"]
+    _rv, _text = driven(_sh.do_config, _line)
+    says(_label, _text, _want, _rv, expect=True)
+print(f"  {len(_iface)} interface statements, each kept off FRR's pile")
+
+print("\n=== and the two interface statements that are refused outside a "
+      "block ===")
+# CGNAT's attachment and `no interface`, which are typed at the top level.
+# `no interface Gi0/1` on a physical port is the one worth its own sentence:
+# the configuration did not create the port and the commit cannot remove it,
+# so accepting the words would promise something nothing carries out.
+_rv, _text = driven(cfg_shell().do_config, "nat cgnat interface pg0 sideways")
+says("cgnat attachment", _text,
+     "error: usage: nat cgnat interface <interface> <inside|outside>", _rv,
+     expect=True)
+
+_rv, _text = driven(cfg_shell().do_config, "no interface eth9")
+says("removing a physical port", _text,
+     "error: eth9: only a sub-interface or a loopback can be removed; a "
+     "physical port is not created by this configuration", _rv, expect=True)
+print("  an attachment with no direction and a port a configuration cannot "
+      "remove")
+
+print("\n=== a sub-interface whose parent is not on the box, at commit ===")
+# THE SAME SENTENCE AS `create_subif` PRINTS AND A DIFFERENT CALL SITE. That
+# one is reached by typing; this one is reached by `rollback`, by `--load` and
+# by hexarouting.service replaying the file at boot, where nobody is typing
+# and the card in question may have been renamed by a firmware upgrade.
+_target = config.Config()
+_target.vlans["pg9.10"] = {"outer": 10, "inner": None}
+_sh = shell(Api(have={"pg0": 1}),
+            dp=Dp({"show interface": (0, "Name  Idx State MTU\n"
+                                         "pg0   1   up    9000/0/0/0\n")}))
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("parent at commit", _text,
+     "error: interface pg9.10: its parent pg9 is not on this box", _rv)
+print("  a tag that is fine on a port that is not there")
+
+print("\n=== a policy that would commit and store nothing ===")
+# A route-map is many lines and has no `router` statement of its own, so
+# nothing checked it: on a box whose FRR has not finished starting the whole
+# policy commits, reports success and is held by nobody. Reported once per
+# missing daemon rather than once per statement - the operator has one thing
+# to fix.
+_target = config.Config()
+_target.routing = ["route-map RM permit 10", " set local-preference 200",
+                   "exit"]
+_frr = frr_stub(available=True)
+# ON THE INSTANCE and not in `frr_stub`, on purpose. Every other box here
+# leaves `daemons()` as FRR's own, which answers None on a box with no FRR and
+# makes this check skip; moving it into the factory would change what those
+# boxes are arranging as well as this one.
+_frr.daemons = lambda: {"bgpd"}
+_sh = shell(frr=_frr)
+_sh.running_config = lambda: config.Config()
+_rv, _text = driven(_sh.apply, _target, check_only=True)
+says("policy with no daemon", _text,
+     "error: 1 policy statement(s) need mgmtd, which is not running", _rv)
+print("  a route-map refused because nothing is running to hold it")
+
+print("\n=== IS-IS frames that would never reach the kernel ===")
+# MEASURED ON A SHIPPED BOX: IS-IS configured, commit succeeded, isisd up, the
+# running configuration read correctly, and no adjacency ever formed - with
+# the only evidence in a VPP error counter nothing surfaced (#168). The punt
+# is what makes the adjacency possible, and a dataplane that refuses it has to
+# say so at the commit rather than leave that counter as the only sign.
+_sh = shell(Api(refuse={"lcp_osi_proto_enable"}))
+_rv, _text = driven(_sh.enable_osi_isis)
+says("osi punt", _text,
+     "error: IS-IS is configured but its frames cannot be punted to the "
+     "kernel", _rv)
+print("  the punt refused, and said at the commit rather than in a counter")
+
+print("\n=== a routing daemon that is not answering, protocol by protocol ===")
+# NOT "NO NEIGHBOURS". A daemon that is down and a protocol with nothing
+# configured are different situations with different first questions, and
+# collapsing them is how an operator spends ten minutes looking at a protocol
+# that was never started - which is the argument `frr_json` makes in its own
+# docstring. Each of these is that argument at one call site.
+_silent = [
+    ("BGP", lambda sh: sh.show_bgp(["summary"]), frr_stub(available=True),
+     "error: BGP is not answering"),
+    ("OSPF", lambda sh: sh.show_ospf_interfaces(), frr_stub(available=True),
+     "error: OSPF is not answering"),
+    ("IS-IS", lambda sh: sh.show_isis_interfaces(), frr_stub(available=True),
+     "error: IS-IS is not answering"),
+    # A daemon that ANSWERS and says something this VTY cannot parse. Distinct
+    # from silence: bgpd is up, so "bgpd may not be running" would send
+    # somebody to start a daemon that is already started.
+    ("BGP answering nonsense", lambda sh: sh.show_bgp(["summary"]),
+     frr_stub(available=True,
+              shows={"show bgp ipv4 unicast summary json": (0, "{not json")}),
+     "error: BGP answered something this VTY could not read"),
+]
+for _label, _verb, _frr, _want in _silent:
+    _rv, _text = driven(_verb, shell(frr=_frr))
+    says(_label, _text, _want)
+
+# And the dataplane's own table, which is not FRR's: `show route` reads VPP's
+# FIB because FRR's answer says nothing about whether a route ever got there.
+# An empty table from a dataplane that is not answering would read as a box
+# with no routes at all.
+_rv, _text = driven(shell(dp=Dp({"show ip fib": (1, "")})).show_route, [])
+says("the FIB", _text,
+     "error: cannot read the forwarding table: the dataplane is not answering")
+print("  four daemons asked and not answering, and the FIB behind them")
+
+print("\n=== clear and show, when the words are wrong ===")
+# `clear` is what an operator reaches for at 2am, and `show` is what they read
+# before they touch anything. A verb that takes the wrong words and does
+# something anyway is worse here than anywhere else in this VTY: the first is
+# a session bounced that nobody asked to bounce, the second an answer to a
+# question that was not asked.
+_words = [
+    ("clear with no neighbour", lambda sh: sh.do_operational("clear bgp"),
+     "error: usage: clear bgp <neighbour> [soft [in|out]]"),
+    ("clear isis, wrong noun",
+     lambda sh: sh.do_operational("clear isis sideways"),
+     "error: usage: clear isis adjacency [<system-id>]"),
+    # The second `clear isis` usage line: the noun is right and there are too
+    # many words after it. One sentence, two sites, and the reader tells them
+    # apart because it spends a refusal on the line.
+    ("clear isis, too many words",
+     lambda sh: sh.do_operational("clear isis adjacency one two"),
+     "error: usage: clear isis adjacency [<system-id>]"),
+    ("show hardware with arguments", lambda sh: sh.show_hardware(["extra"]),
+     "error: show hardware: takes no arguments"),
+    ("show cgnat ha with the wrong noun", lambda sh: sh.show_ha(["nonsense"]),
+     "error: show cgnat ha: takes nothing, or 'peer <file>'"),
+]
+for _label, _verb, _want in _words:
+    _rv, _text = driven(_verb, shell())
+    says(_label, _text, _want)
+
+# `show this` outside configuration mode. It answers about the CANDIDATE, and
+# there is no candidate to answer about - so it says which command does show
+# what is in effect rather than printing an empty screen.
+_sh = shell()
+_sh.candidate = None
+_rv, _text = driven(_sh.show_this)
+says("show this", _text, "error: show this: not in configuration mode")
+print(f"  {len(_words) + 1} commands refused for the words they were given")
+
+print("\n=== the interface sampler, which takes seconds to answer ===")
+# A RATE IS A DIFFERENCE BETWEEN TWO COUNTERS, and every refusal here is about
+# not printing one when there is nothing to subtract. The elapsed time is
+# measured rather than assumed, so a sample that stopped part-way has no
+# denominator - and a number printed anyway would be wrong in exactly the
+# conditions this command gets asked in.
+
+
+class Interrupted(Dp):
+    """A dataplane whose first counter read is the one Ctrl-C lands on."""
+
+    def run(self, cmd):
+        if cmd == "show interface":
+            raise KeyboardInterrupt
+        return 0, ""
+
+
+_sampler = [
+    ("interval with no number", Dp(), ["interval"],
+     "error: interval needs a number after it"),
+    ("an interval outside the range", Dp(), ["interval", "0.05"],
+     "error: interval must be between 0.1 and 60 seconds"),
+    ("the dataplane stopping part-way", Dp({"show interface": (1, "")}), [],
+     "error: the dataplane stopped answering part-way through the sample"),
+    ("stopped before the second sample", Interrupted(), [],
+     "error: stopped before two samples, so no rate could be measured"),
+]
+for _label, _dp, _args, _want in _sampler:
+    _rv, _text = driven(shell(dp=_dp).show_interface_utilisation, _args)
+    says(_label, _text, _want)
+print(f"  {len(_sampler)} ways to have no rate, and none of them prints one")
+
+print("\n=== the shell escape and the installer ===")
+# TWO COMMANDS THAT HAND THE CONSOLE AWAY. Each spawns a child rather than
+# exec'ing, so that leaving it comes back to the VTY - and each has to say so
+# when the child never started, because a prompt that came straight back with
+# nothing on the screen reads as a command that did nothing.
+#
+# `install` is refused on an installed box by this check AND by not being in
+# the tree. Two answers to two questions - whether the operator can find it,
+# and whether it can run - and a box with only the first would be one stale
+# TREE away from offering to overwrite itself.
+_notaprogram = os.path.join(_tmp, "not-a-program")
+open(_notaprogram, "w").close()
+os.environ["HEXA_SHELL"] = _notaprogram
+_rv, _text = driven(shell().start_shell)
+del os.environ["HEXA_SHELL"]
+# The errno text is the operating system's and not this product's, so the row
+# is asserted by its start: what has to reach the operator is which program
+# did not start, and that the VTY is still here.
+check(any(l.startswith(f"error: cannot start {_notaprogram}: ")
+          for l in _text.splitlines()),
+      f"a shell that cannot be started must be named: {_text!r}")
+
+_rv, _text = driven(shell().do_install)
+says("not the live medium", _text,
+     "error: this box is not running from the installation medium; 'install' "
+     "only exists there")
+
+# The other half, on a box that IS the live medium and whose installer is not
+# where it should be. Both the predicate and the path are replaced, and put
+# back straight afterwards: a module-level name left changed would follow
+# every box below this one.
+_live, _installer = hexash.running_from_live_medium, hexash.INSTALLER
+hexash.running_from_live_medium = lambda: True
+hexash.INSTALLER = os.path.join(_tmp, "no-such-installer")
+try:
+    _rv, _text = driven(shell().do_install)
+finally:
+    hexash.running_from_live_medium, hexash.INSTALLER = _live, _installer
+check(any(l.startswith(f"error: cannot start {hexash.INSTALLER}: ") or
+          l.startswith("error: cannot start ") and "no-such-installer" in l
+          for l in _text.splitlines()),
+      f"an installer that cannot be started must be named: {_text!r}")
+check(hexash.running_from_live_medium is _live,
+      "the live-medium predicate was left replaced, and every box after this "
+      "one is now on a box that thinks it is the installation medium")
+print("  a shell that will not start, an installer that is not there, and an "
+      "installer that must not run")
+
+print("\n=== a filter this box has not got ===")
+# A pipe filters a `show` and nothing else, and an unknown filter is REFUSED
+# rather than ignored. Ignoring it would answer the question the operator did
+# not ask, with nothing on the screen to say it had - and `show running-config
+# | inclde password` reading as a box with no passwords is the shape of that.
+_sh = shell()
+_sh.mode = "operational"
+_rv, _text = driven(_sh.feed, "show hardware | sideways rubbish")
+says("unknown filter", _text,
+     "error: 'sideways' is not a filter; this box has: count, exclude, first, "
+     "include, last, match, section", _rv, expect=True)
+print("  a filter nobody has refuses the answer rather than reshaping it")
+
+
 
 # --------------------------------------------------------------- the reader
 #
@@ -760,7 +1359,14 @@ print("\n=== every refusal the VTY can print, against the ones a box has "
 # read once and grown forever, and the whole failure this file exists for is a
 # refusal nobody re-examines. Every refusal that gains a box lowers this
 # number, and it may only go down.
-UNRENDERED_AT_MOST = 70
+#
+# IT IS ZERO, which is the first time it has been. Every refusal the VTY can
+# print has been watched printing, so the next one added to hexash.py goes red
+# here with nothing to subtract from - which is the state this file was
+# written to reach rather than a milestone to celebrate. The lower branch
+# below is now unreachable and stays where it is: the day somebody deletes a
+# refusal without deleting its box, it is what says so.
+UNRENDERED_AT_MOST = 0
 
 SITES = refusal_sites(VTY)
 rendered = set()
