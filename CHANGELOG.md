@@ -75,6 +75,38 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **A lab performs the bind, on a real guest, for the first time**
+  ([#329](https://github.com/andrediashexa/hexarouting/issues/329)). Handing a
+  card to the dataplane means unbinding it from its kernel driver and binding
+  it to `vfio-pci` or `uio_pci_generic`. Nothing in this repository had ever
+  performed that bind. `lab/one-nic.sh` models it and says so in its own
+  header, because a container has no PCI device to hand DPDK; `lab/install-iso.sh`
+  booted a real qemu guest with a real virtio card and never asked the box to
+  take it. What was proven was the decision and the boot-time replay - the
+  driver change itself was unmeasured, on the path most deployments will
+  actually run: a virtual machine with one virtio card and no IOMMU. Two new
+  phases ask the box, through the VTY, with the one statement an operator has
+  on a single-card machine, and then assert the four things that have to be
+  true together afterwards: the card is on a driver DPDK can use and not the
+  kernel driver it started on, Linux no longer has the netdev, the management
+  address moved off the card, and the dataplane holds an interface that is not
+  `local0`. The network reading is taken before this phase logs in at all,
+  because a box that takes its card and stops answering has eaten its own
+  management port, and on a single-card machine that means somebody walks to
+  it.
+
+  It went red on its first run, against the published 0.74.2 medium, and what
+  it found is [#332](https://github.com/andrediashexa/hexarouting/issues/332):
+  the box binds the card, Linux releases it, the dataplane holds it, and the
+  box comes back with no address on any interface and nobody can reach it. The
+  boot self-test on that same console says so - no interface is paired into
+  the kernel - so the diagnosis was already right and only the doing was
+  missing. That is what an unmeasured claim costs: the sentence was on the
+  public page a virtual-machine operator reads, and the release gate now
+  refuses a release until it is true.
+
 ### Fixed
 
 * **A box installed from a medium that carried SSH host keys said so only to
@@ -122,6 +154,61 @@ version has a chance of seeing it.
   a reader that spells it, and the self-test now fails rather than going quiet
   when that file cannot be run, because a check that could not run reads
   exactly like a check that agreed.
+
+* **The tuner told a box with no dataplane card that its card is "(not a PCI
+  device)"** ([#331](https://github.com/andrediashexa/hexarouting/issues/331)).
+  One line covered two states that are nothing alike: no card named at all,
+  which is every fresh install, and a named card whose PCI address could not
+  be read. The sentence written for the second was printed for the first, two
+  lines under a line saying no NIC had been given - so the report contradicted
+  itself on one screen, and the reasonable reading sent an operator looking for
+  why their card was not PCI. That is the dead end
+  [#286](https://github.com/andrediashexa/hexarouting/issues/286) was about,
+  reached by a different road. Three states now get three sentences, and the
+  one the old wording was right for keeps its answer.
+
+### Fixed
+
+* **The documented upgrade path did not exist on a box anybody had**
+  ([#295](https://github.com/andrediashexa/hexarouting/issues/295)).
+  `appliance/install.sh` has called itself the path "for updating a box in
+  production without reinstalling it" since the first release, and it copies
+  every file out of `$REPO`. Measured on a real appliance installed from a
+  published medium: there is no `install.sh` on it, no repository and no
+  toolchain. So the path served `tools/release-gate.sh` and `lab/upgrade.sh`,
+  which have a build tree, and nobody who bought the product - while five
+  sentences in the repository and two on the box itself told an operator it was
+  theirs. Their only route to a new version was a reinstall, which erases the
+  disk and takes `/var/log/hexarouting` with it: a year of connection records
+  they remain answerable for, and the configuration trail that makes an answer
+  about a past instant defensible. The earlier half of this work corrected
+  those five sentences and wrote the operator page; this is the half that makes
+  them true again. `appliance/build-upgrade.sh` packs the four directories
+  `appliance/build-iso.sh` already installs the medium from, with the two
+  compiled plugins laid where `install.sh` looks for them, and
+  `appliance/upgrade` runs **that same `install.sh`** out of the unpacked
+  result. There is no second implementation of the upgrade: an operator's
+  upgrade is byte for byte the one the release gate and `lab/upgrade.sh` have
+  been driving all along, which is the only reason it can be believed. Two
+  things travel that a tarball cannot work out for itself. The version stamp is
+  written into the artifact at build time, because there is no `.git` inside a
+  tarball and `install.sh` would otherwise stamp the box "not a git tree" - the
+  line `show version` prints and the first thing anybody is asked on the
+  telephone. And the VPP and FRR versions `build-iso.sh` pins travel with it,
+  read out of that file so there is one owner of them: the artifact carries
+  product files and installs no packages, so a release that moves the platform
+  is **refused** on the box, naming both versions, before a single byte is
+  written. `tools/release-gate.sh` builds the artifact for every release and
+  publishes its `sha256` beside the medium's, and `build-upgrade.sh` installs
+  what it has just packed into a throwaway root before it will hand it over -
+  an artifact nobody installs in the gate is one whose first installation is
+  somebody's production box. `test/test_upgrade_artifact.sh` drives the whole
+  of it in about a second, against a box that is a directory with a real dpkg
+  database in it. What this does **not** do is take a booted box from one
+  release to the next: that is `lab/upgrade.sh`'s question and it still runs
+  out of a source tree.
+
+* **And the command an operator types is not a path into this product's source tree** ([#295](https://github.com/andrediashexa/hexarouting/issues/295)). The artifact carries `upgrade` at its root, as a symlink to `appliance/upgrade`, so the page an operator reads says `sudo sh upgrade` and nothing on it asks them to know a directory name inside the product. A symlink and not a copy: `appliance/upgrade` resolves the artifact by finding `RELEASE` rather than by counting directories up from itself, so both spellings reach one implementation.
 
 * **`show hardware` told an operator their card was unusable and stopped
   there** ([#328](https://github.com/andrediashexa/hexarouting/issues/328)).

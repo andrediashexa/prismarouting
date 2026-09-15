@@ -1,6 +1,77 @@
 # Levar a caixa para uma versão nova
 
-Como colocar uma versão nova do HexaRouting numa caixa que já está em produção. Hoje existe um caminho só, e ele é uma **reinstalação** a partir da mídia da versão nova: o disco inteiro é apagado no processo. Esta página diz o que isso custa, o que precisa estar fora da caixa antes de começar, e em que ordem fazer.
+Como colocar uma versão nova do HexaRouting numa caixa que já está em produção. Existem dois caminhos e eles custam coisas muito diferentes: o **pacote de atualização**, que troca os arquivos do produto e não encosta no disco, e a **reinstalação pela mídia**, que apaga o disco inteiro. Esta página diz qual dos dois é o seu, o que cada um custa e em que ordem fazer.
+
+# Qual dos dois é o seu
+
+| | O pacote de atualização | A reinstalação pela mídia |
+|---|---|---|
+| Quando | Sempre que o pacote aceitar a caixa | Quando o pacote recusa, ou quando a máquina é nova |
+| O disco | Intocado | **Apagado** |
+| Configuração, contas, comunidades SNMP | Ficam | Somem |
+| Registros de conexão e trilha de configuração | Ficam | Somem |
+| Parada | Só o reinício do dataplane, e no horário que você escolher | A janela inteira, com boot pela mídia |
+| Tamanho do download | Alguns megabytes | Centenas de megabytes |
+
+**O pacote é o caminho normal.** A reinstalação existe para a máquina nova e para o caso em que a versão nova muda a plataforma por baixo do produto. Você não precisa adivinhar qual é: o pacote confere isso sozinho e **recusa antes de escrever qualquer coisa**, dizendo o que a caixa tem e o que a versão nova precisa.
+
+# O pacote de atualização
+
+## 1. Anote a versão que está rodando
+
+```
+hexarouting> show version
+```
+
+Guarde a saída inteira no chamado de mudança. Ela é o que diz de onde a caixa veio, e é com ela que você compara no fim.
+
+## 2. Baixe o pacote da versão nova
+
+Ele é publicado ao lado da mídia, na mesma página da versão, com o mesmo número de versão no nome. Confira o `sha256` publicado antes de continuar.
+
+## 3. Descompacte e rode
+
+```
+tar xzf hexarouting-<versão>-upgrade.tar.gz
+cd hexarouting-<versão>-upgrade
+sudo sh upgrade
+```
+
+O pacote confere a plataforma da caixa, troca os arquivos do produto e diz, arquivo por arquivo, o que escreveu. Se a plataforma não bater, ele para aí mesmo e **nada foi escrito**: a caixa continua exatamente a que era antes do comando.
+
+
+:::info
+**A configuração não é tocada.** `/etc/hexarouting/hexarouting.conf`, as revisões de rollback e o ajuste de tuning que você editou continuam onde estavam. O pacote reescreve os arquivos do produto, não os seus.
+
+:::
+
+## 4. Escolha quando reiniciar o dataplane
+
+Este é o passo que custa alguma coisa, e é seu.
+
+O pacote troca o dataplane **em disco** e não reinicia nada. Até o próximo reinício do VPP, a caixa continua traduzindo com o dataplane antigo, que já estava carregado na memória. `show version` mostra as duas linhas e diz quando elas divergem:
+
+```
+hexarouting> show version
+```
+
+
+:::warning
+**Reiniciar o VPP derruba todas as sessões e todos os blocos de portas.** Cada assinante atrás da caixa volta a ser traduzido do zero. É rápido, mas não é de graça, e é por isso que o pacote não faz isso por conta própria.
+
+Um reboot da caixa faz a mesma coisa e leva junto qualquer mudança de tuning.
+
+:::
+
+Enquanto as duas linhas estiverem diferentes, a caixa está rodando um produto novo com um dataplane antigo. É um estado válido e previsto, mas não é onde a caixa deve passar a semana.
+
+# Quando o pacote recusa
+
+A recusa vem com as duas versões da plataforma escritas, a que a caixa tem e a que a versão nova precisa. Ela acontece quando a versão nova traz também uma plataforma nova por baixo, e o pacote carrega só os arquivos do produto: ele não instala pacote de sistema nenhum e não acessa a rede.
+
+Nesse caso o caminho é a mídia, e ele apaga o disco. **Leia a seção abaixo inteira antes de começar.**
+
+# A reinstalação pela mídia
 
 
 :::warning
@@ -12,13 +83,7 @@ Os dois morrem na reinstalação e **nenhum comando deste produto os traz de vol
 
 :::
 
-# Por que é uma reinstalação
-
-Não existe hoje comando, pacote ou arquivo de atualização que troque a versão de uma caixa já instalada. A mídia publicada é o único artefato que carrega uma versão, e ela **instala**: ela não atualiza.
-
-Por isso trocar de versão é uma janela de manutenção planejada, com a mesma preparação de uma instalação nova, e não uma tarefa de rotina.
-
-# O que não sobrevive
+## O que não sobrevive
 
 | O que | Sobrevive à reinstalação? |
 |-------|---------------------------|
@@ -34,7 +99,10 @@ As duas últimas linhas são a razão da ordem dos passos abaixo: o que sobreviv
 
 ```mermaid
 flowchart TD
-    V["1 · anotar a versão atual"] --> C["2 · tirar a configuração da caixa"]
+    V["1 · anotar a versão atual"] --> T{"o pacote de atualização<br/>aceita esta caixa?"}
+    T -->|sim| U["rodar o pacote.<br/><i>o disco não é tocado</i>"]
+    U --> W["escolher o horário e<br/>reiniciar o dataplane"]
+    T -->|não| C["2 · tirar a configuração da caixa"]
     C --> R["3 · conferir que os registros<br/>já estão fora"]
     R --> Q{"registros e trilha<br/>estão fora?"}
     Q -->|não| STOP["parar.<br/>nada aqui se reconstrói depois"]
@@ -42,16 +110,6 @@ flowchart TD
     I --> P["5 · digitar a configuração de volta,<br/>commit, save"]
     P --> S["6 · definir de novo senhas<br/>e comunidades SNMP"]
 ```
-
-# O procedimento
-
-## 1. Anote a versão que está rodando
-
-```
-hexarouting> show version
-```
-
-Guarde a saída inteira no chamado de mudança. Depois da reinstalação ela é a única coisa que diz de onde a caixa veio.
 
 ## 2. Leve a configuração para fora da caixa
 
@@ -109,8 +167,17 @@ As contas e suas senhas, e as comunidades SNMP. Nada disso veio na cópia do pas
 
 # Como conferir
 
+**Depois do pacote de atualização:**
+
+* `show version` traz a versão nova na linha do que está instalado. A linha do dataplane carregado só acompanha depois que o VPP for reiniciado, e até lá ela fica na versão antiga de propósito.
+* Depois do reinício do dataplane as duas linhas ficam **iguais**.
+* A configuração continua lá: `show running-config` traz de volta o que já estava em vigor, sem ninguém digitar nada.
+* Um assinante real navega, e `show cgnat subscriber` com o IP dele responde com o endereço público e a faixa de portas.
+
+**Depois da reinstalação:**
+
 * O autoteste do primeiro boot sai **sem nenhuma linha** `**[FAIL]**`.
-* `show version` responde com a versão nova, e as duas linhas de versão - a do que está instalado e a do dataplane carregado - são **iguais**. Elas só se separam quando o dataplane em disco é trocado sem reiniciar, e não foi isso que aconteceu: a caixa inteira subiu nova.
+* `show version` responde com a versão nova, e as duas linhas de versão são **iguais** desde o primeiro boot: a caixa inteira subiu nova, então não há dataplane antigo carregado.
 * `show running-config` traz de volta o que você digitou, comparável linha a linha com a cópia do passo 2, menos os valores mascarados.
 * Um assinante real navega, e `show cgnat subscriber` com o IP dele responde com o endereço público e a faixa de portas.
 
@@ -118,7 +185,7 @@ As contas e suas senhas, e as comunidades SNMP. Nada disso veio na cópia do pas
 :::success
 Autoteste sem `**[FAIL]**`, `show version` na versão nova e um assinante traduzindo: a troca terminou.
 
-O que **não** volta é o que não saiu da caixa antes. É por isso que os passos 2 e 3 vêm antes do 4, e não depois.
+Se o caminho foi a reinstalação, o que **não** volta é o que não saiu da caixa antes. É por isso que os passos 2 e 3 vêm antes do 4, e não depois.
 
 :::
 

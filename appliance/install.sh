@@ -4,21 +4,31 @@
 # Does not build an ISO: for a fresh install see build-iso.sh. This path is
 # for updating a box in production without reinstalling it.
 #
-# WHO HAS THAT PATH: somebody with this source tree and a build of it. Every
-# install line below copies out of $REPO, and the plugin comes from .build-vpp
-# or from a build container's /vpp_plugins, so this script cannot run where
-# those are not. A box installed from a published medium has none of them -
-# measured on one: /usr/lib/hexarouting holds the runtime files and no
-# install.sh, there is no repository and there is no toolchain (#295). The
-# callers this really serves are the release gate and lab/upgrade.sh, which is
-# where the path is measured rather than asserted.
+# WHAT THIS SCRIPT NEEDS AND WHERE AN OPERATOR GETS IT. Every install line
+# below copies out of $REPO, and the plugin comes from .build-vpp or from a
+# build container's /vpp_plugins, so this script cannot run where those are
+# not. A box installed from a published medium has none of them - measured on
+# one: /usr/lib/hexarouting holds the runtime files and no install.sh, there is
+# no repository and there is no toolchain (#295). For most of this project's
+# life that meant this path served the release gate and lab/upgrade.sh, which
+# have a build tree, while five sentences in the product told an operator
+# holding a medium that it was theirs.
 #
-# So an operator holding an ISO does not have it. Their only route to a new
-# version today is a reinstall from the new medium, which erases the disk and
-# takes /var/log/hexarouting with it - a year of connection records and the
-# configuration trail that makes a past answer defensible. The wiki page on
-# taking a new version states that procedure and what it costs. Nothing here
-# closes the gap; #295 is where the choice of what would is being made.
+# It is theirs now, and this file is still the only implementation of it.
+# appliance/build-upgrade.sh packs the four directories the ISO installs from
+# with the compiled plugins already inside, and appliance/upgrade runs THIS
+# SCRIPT out of the unpacked result. So the upgrade an operator performs is
+# byte for byte the one the release gate and lab/upgrade.sh have always
+# driven, rather than a second implementation that nothing exercises - which
+# is the only reason it can be believed.
+#
+# WHAT THE ARTIFACT CANNOT DO, because it bounds what this path is: it carries
+# product files and no packages, so it cannot move the VPP or FRR that
+# appliance/build-iso.sh pins. A release that changes either is refused by
+# appliance/upgrade, naming both versions, and the operator reinstalls from the
+# medium - which erases the disk and takes /var/log/hexarouting with it, a year
+# of connection records. The wiki page on taking a new version states both
+# routes and what each costs.
 set -eu
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -85,11 +95,12 @@ PREV_STAMP=$(cat "$DESTDIR/usr/share/hexarouting/VERSION" 2>/dev/null || true)
 # of the BUILD TREE and not of the root being written. A $DESTDIR fakeroot gets
 # no old vat2 plugin left behind - it gets none at all - but the medium
 # assembled from that tree carries the missing half to every box installed from
-# it, permanently, and #295 says those boxes have no install.sh to re-run.
-# appliance/build-iso.sh already refuses both plugins before it spends ten
-# minutes on a debootstrap, and asserts afterwards that the vat2 plugin reached
-# the image. This is the third of those guards and the first one inside the
-# script the other two are watching.
+# it, permanently, and the box's own route out of it is an upgrade artifact
+# that would have to be built from the same broken tree. appliance/build-iso.sh
+# already refuses both plugins before it spends ten minutes on a debootstrap,
+# and asserts afterwards that the vat2 plugin reached the image;
+# appliance/build-upgrade.sh refuses the same pair before it packs anything.
+# This is the guard inside the script all three of those are watching.
 if [ -f "$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so" ]; then
   SO="$REPO/.build-vpp/lib/vpp_plugins/bpa_plugin.so"
 elif [ -f /vpp_plugins/bpa_plugin.so ]; then
@@ -109,7 +120,9 @@ else
   # Named in full, and it names the OTHER plugin too: the reader is standing
   # in front of a tree that has one and not the other, and the single most
   # useful thing to tell them is that the build is half done rather than
-  # absent. Whoever reads this has a source tree by definition (#295).
+  # absent. Whoever reads this has a build tree by definition: an operator's
+  # upgrade artifact is packed from one, and appliance/build-upgrade.sh
+  # refuses a half-finished build before it can become one.
   echo "bpa_test_plugin_bpa_plugin.so not found; run tools/build.sh plugin" >&2
   echo "first. This tree HAS bpa_plugin.so and the two are built" >&2
   echo "together, so this build did not finish." >&2

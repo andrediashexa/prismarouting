@@ -982,5 +982,31 @@ check("NIC queues" not in _nout,
       f"a box with no dataplane interface was told something about its NIC "
       f"queues: {[l for l in _nout.splitlines() if 'NIC' in l]}")
 
+# AND IT IS NOT TOLD ITS CARD IS NOT A PCI DEVICE (#331). None covered two
+# states that are nothing alike - no card named, and a named card whose
+# address could not be read - and the sentence written for the second was
+# printed for the first, which is every fresh install. Two lines above it the
+# same report says no NIC was given, so the box contradicted itself on one
+# screen, and the reasonable reading sent an operator looking for why their
+# card was not PCI: the #286 dead end again.
+check("not a PCI device" not in _nout,
+      f"a box with no dataplane card was told its card is not a PCI device: "
+      f"{[l for l in _nout.splitlines() if 'PCI' in l]}")
+check(any("no card has been given" in l for l in _nout.splitlines()),
+      f"and it is not told why there is no address either: "
+      f"{[l for l in _nout.splitlines() if 'PCI' in l]}")
+
+# The state the old sentence WAS written for, which must keep its answer: a
+# card was named and the walk up to its PCI parent found nothing. Deleting the
+# sentence for the box it was wrong on would take it from the box it was right
+# on, and that box is the one that cannot forward.
+_nopci = tempfile.mkdtemp()
+build(_nopci, 1, 8, 1, hugepages_gb=4, isolated="1-7", ram_gb=8)
+_ppout = run(_nopci, "--interface", "eth0", "--subscribers", "200000")
+check("was named and no PCI address could be read" in _ppout,
+      f"a named card with no PCI address is no longer reported, so a box that "
+      f"cannot give DPDK a device is not told why: "
+      f"{[l for l in _ppout.splitlines() if 'PCI' in l]}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

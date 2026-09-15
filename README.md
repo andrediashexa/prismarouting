@@ -105,6 +105,7 @@ sh tools/build.sh plugin    # compile the plugin
 make test                   # core tests
 sh tools/lab.sh datapath    # packet-level translation
 make iso                    # the installation medium
+make upgrade-artifact       # what a box already in service takes
 ```
 
 The ISO is an installation medium, not an appliance: it boots with no
