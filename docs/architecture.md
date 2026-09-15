@@ -161,6 +161,42 @@ mode `block_idx == sub_idx`, so one line of code serves both modes.
   apart from blocks in use, because an operator reading a pool that looks full
   needs to know how much of it no hold-down will ever give back.
 
+### The capacity such a pool can promise
+
+`capacity = outside.count × blocks_mapped` counts blocks, and with workers
+those blocks are in slices a subscriber cannot cross. A subscriber's slice is
+fixed by `bpa_owner_worker()`, which is arithmetic on the offset of its own
+address within the inside set - not a counter - so nothing balances the two,
+and a subscriber can be refused with blocks standing free next door
+([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
+
+`bpa_pool_guaranteed()` in `src/plugins/bpa/bpa_pool.h` is the number an
+operator sizes against: the largest *n* for which **every** set of *n*
+subscribers is served. A worker refuses only when more inside addresses map to
+it than it has blocks, so that is the smallest slice among the workers that can
+be crowded, and the whole usable set when none of them can be - a pool of 12
+blocks in front of 8 inside addresses serves all 8 at any worker count, and
+`capacity / n_workers` would understate it by half. It is one holder with three
+readers: `show bpa pool` prints it below the ceiling, `bpa_pool_details`
+reports it beside `capacity`, and `test/test_bpa_pool.c` asserts it against a
+simulation of the slices rather than against the formula written twice.
+
+* Reporting it is **not** a fix for the refusal, and does not pretend to be.
+  The two that are - assign a subscriber to the worker holding a free block,
+  or let a worker borrow from its neighbour's slice - both need state shared
+  across workers, which is what this partition exists to avoid, and remain
+  open on #210.
+* Re-partitioning is not a third option. Measured over 2800 combinations of
+  blocks, inside addresses and worker count, **no** split of the blocks among
+  the workers guarantees more than the even split already does: with a
+  subscriber's worker fixed by arithmetic, the adversary crowds whichever
+  slice is thinnest.
+* The loss is **zero** when inside addresses are handed out contiguously from
+  the bottom of the range, which is a DHCP pool filling upward, because
+  `sub_idx mod n_workers` then cycles perfectly. It is severe only for small
+  pools on many workers - which is dynamic mode's own deployment, since
+  dynamic mode is chosen to save IPv4.
+
 ## Extended blocks
 
 A subscriber that fills its block is dropped, and `natEvent 12` says so. That is

@@ -959,6 +959,146 @@ with tempfile.TemporaryDirectory() as tmp:
           f"{out.getvalue()!r}")
     print("  the card is not there, so there is nothing to do and nothing said")
 
+# ------------------------------------------- the boot after the handover, #332
+#
+# MEASURED ON A BOOTED GUEST FIRST. lab/install-iso.sh asked a real box for its
+# only card, the bind worked - virtio-pci to uio_pci_generic, the netdev gone,
+# the dataplane holding GigabitEthernet0/9/0 - and the box came back with no
+# address on any interface and nobody could reach it. What the box replays at
+# boot is /etc/hexarouting/hexarouting.conf, and `commit` does not write that
+# file: only `save` does. `commit` writes the card AND the path it carries into
+# the tuner's file, which is what performs the handover at the next boot. So
+# the two halves of one decision had two lifetimes, and the half that keeps the
+# box reachable was the one that did not survive.
+#
+# Driven through `load()` against a file on disk rather than by calling
+# apply_management_path() directly, because "never called" is the defect: a
+# case that calls it cannot see it.
+
+#: The tuner's file as the handover commit leaves it.
+TUNE_HANDED_OVER = TUNE_ENV_SHIPPED.replace(
+    "HEXA_DATAPLANE_IF=\n",
+    "HEXA_DATAPLANE_IF=ens18\n"
+    "HEXA_DATAPLANE_MGMT=ens18 10.95.200.198/24 52:54:00:00:00:01\n")
+#: /proc/net/route on the boot after it: the card is gone and so is the route
+#: that lived on it.
+NO_ROUTE = ("Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
+            "\t\tMTU\tWindow\tIRTT\n")
+#: The configuration file every fresh appliance boots with, from
+#: appliance/etc/hexarouting.conf. Three comments and no statement.
+SHIPPED_CONF = "!\n! HexaRouting\n!\n"
+#: And a dataplane that took nothing, for the case where the card is on
+#: neither side.
+DP_NOTHING = """\
+              Name                Idx   Link  Hardware
+local0                             0    down  local0
+  local
+"""
+
+
+def booted_after_handover(tmp, conf, dp=None, api=None):
+    """
+    The box on the boot after the handover: Linux has no card at all, the
+    tuner still names the one it gave away, and `conf` is what
+    hexarouting.service replays.
+    """
+    sh = shell_on(tmp, route=NO_ROUTE, cards=("lo",), tune=TUNE_HANDED_OVER,
+                  api=api or FakeApi(have=("GigabitEthernet0/3/0",)),
+                  dp=dp or FakeVpp({"show hardware-interfaces": DP_HARDWARE}))
+    path = os.path.join(tmp, "etc/hexarouting/hexarouting.conf")
+    with open(path, "w") as f:
+        f.write(conf)
+    return sh, path
+
+
+print("\n=== the boot after the handover makes the pair with nothing saved ===")
+with tempfile.TemporaryDirectory() as tmp:
+    api = FakeApi(have=("GigabitEthernet0/3/0",))
+    sh, path = booted_after_handover(tmp, SHIPPED_CONF, api=api)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.load(path)
+    made = [a for m, a in api.calls if m == "lcp_itf_pair_add_del"]
+    addrs = [a for m, a in api.calls if m == "sw_interface_add_del_address"]
+    check(made and made[0]["host_if_name"] == "ens18",
+          f"the boot that hands the card over made no pair, so the box comes "
+          f"up forwarding with no way in: {api.calls!r} {out.getvalue()!r}")
+    check(addrs and addrs[0]["prefix"] == "10.95.200.198/24"
+          and addrs[0]["is_add"],
+          f"the pair was made and the management address did not go on it: "
+          f"{api.calls!r}")
+    print("  the record is in tune.env, and the file being replayed needs none")
+
+print("\n=== and on a box that HAD saved, before the card was named ===")
+# The other file this boot can find: a configuration saved before the handover,
+# which has statements and says nothing about a dataplane card. Read as a
+# configuration that removes one, it used to take the card's own name out of
+# the tuner's file as well - so the box lost the address on this boot and the
+# card at the next one.
+with tempfile.TemporaryDirectory() as tmp:
+    api = FakeApi(have=("GigabitEthernet0/3/0",))
+    sh, path = booted_after_handover(tmp, "ssh port 22\n", api=api)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sh.load(path)
+    made = [a for m, a in api.calls if m == "lcp_itf_pair_add_del"]
+    check(made and made[0]["host_if_name"] == "ens18",
+          f"a file saved before the handover was read as a file that undoes "
+          f"it: {api.calls!r} {out.getvalue()!r}")
+    check(sh.read_dataplane_if() == "ens18",
+          f"and the boot replay un-named the card the box is holding, so the "
+          f"next boot gives it back: {sh.read_dataplane_if()!r}")
+    check(sh.read_dataplane_mgmt().get("mac") == "52:54:00:00:00:01",
+          f"and the record went with it: {sh.read_dataplane_mgmt()!r}")
+    print("  the card keeps its name, and the address goes on the pair")
+
+print("\n=== a card on neither side is SAID, not returned as success ===")
+# The boot this early return was hiding. The tuner unbound the card and the
+# dataplane did not take it, so the card is on neither side, the address has
+# nowhere to go, and the box is off the network - which is the one state where
+# the console is the only place left that can be told.
+with tempfile.TemporaryDirectory() as tmp:
+    api = FakeApi()
+    sh, path = booted_after_handover(
+        tmp, SHIPPED_CONF, api=api,
+        dp=FakeVpp({"show hardware-interfaces": DP_NOTHING}))
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        ok = sh.apply_management_path(sh.read_dataplane_mgmt())
+    said = out.getvalue()
+    check(not ok, "a box with its only card on neither side reported success")
+    check(said.startswith("error:"),
+          f"and it said nothing an operator at the console would read: "
+          f"{said!r}")
+    # The three facts that make the sentence about THIS box rather than about
+    # boxes in general: which card, which MAC it was looked for under, and the
+    # address that has nowhere to go.
+    for fact in ("ens18", "52:54:00:00:00:01", "10.95.200.198/24"):
+        check(fact in said, f"the refusal does not name {fact}: {said!r}")
+    _wide = [l for l in said.splitlines() if len(l) > CONSOLE_COLUMNS]
+    check(not _wide, f"the refusal does not fit the console: {_wide!r}")
+    # Not indexed blind: a run where the box said nothing is the failure this
+    # case exists for, and a progress line that raises there loses every
+    # reading after it.
+    print("  " + (said.splitlines()[0] if said else "<nothing at all>"))
+
+print("\n=== and 'cannot look' is not 'the card is gone' ===")
+# On anything that is not Linux - a developer's tree, most of this suite - the
+# directory is not there at all. Reading that as a handover would turn every
+# apply on such a box into the refusal above.
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp, dp=FakeVpp({"show hardware-interfaces": DP_NOTHING}))
+    sh.SYS_CLASS_NET = os.path.join(tmp, "no-such-directory")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        ok = sh.apply_management_path({"name": "ens18",
+                                       "address": "10.95.200.198/24",
+                                       "mac": "52:54:00:00:00:01"})
+    check(ok and out.getvalue() == "",
+          f"a box whose /sys/class/net cannot be read was told its card had "
+          f"been handed over and lost: {ok!r} {out.getvalue()!r}")
+    print("  a tree with no /sys/class/net in it is not a box that lost a card")
+
 print("\n=== an unconfirmed handover gives the card back and restarts ===")
 # The rest of a revert is a configuration. This one is not: the card was
 # unbound from its kernel driver at boot and the dataplane holds it, so

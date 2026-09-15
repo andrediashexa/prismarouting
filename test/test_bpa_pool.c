@@ -33,6 +33,85 @@ static unsigned checks = 0;
     }                                                                         \
   while (0)
 
+/*
+ * The capacity arithmetic, simulated rather than restated.
+ *
+ * bpa_pool_guaranteed() answers with a closed form, and a test that wrote the
+ * same closed form a second time would agree with itself. What is modelled
+ * here instead is the MECHANISM: bpa_dyn_init() cuts the blocks into slices,
+ * bpa_owner_worker() decides which slice a subscriber may draw from, and
+ * bpa_dyn_acquire() hands a slice out first-come until it is empty. From
+ * those three, by walking every way n subscribers can fall across the
+ * workers, comes the largest n that is always served.
+ */
+
+/* One worker's slice of the blocks, the way bpa_dyn_init() cuts it. */
+static u32
+slice_of (u32 capacity, u32 nw, u32 w)
+{
+  return capacity / nw + (w < capacity % nw ? 1 : 0);
+}
+
+/* Inside addresses that can only draw from that slice, via bpa_owner_worker. */
+static u32
+subs_of (u32 inside, u32 nw, u32 w)
+{
+  return inside / nw + (w < inside % nw ? 1 : 0);
+}
+
+/*
+ * Is there a choice of subscribers, `left` of them still to place from worker
+ * `w` on, that leaves one of them without a block? `over` carries whether some
+ * worker already visited was handed more than its slice holds.
+ *
+ * Whole distributions only: a branch that runs out of workers with subscribers
+ * still to place is not a set of that size at all, and counting it would let
+ * the test refuse a pool for a crowd it cannot assemble.
+ */
+static int
+refusable (u32 capacity, u32 inside, u32 nw, u32 w, u32 left, int over)
+{
+  u32 here, max;
+
+  if (w == nw)
+    return left == 0 && over;
+
+  max = subs_of (inside, nw, w);
+  if (left < max)
+    max = left;
+  for (here = 0; here <= max; here++)
+    if (refusable (capacity, inside, nw, w + 1, left - here,
+		   over || here > slice_of (capacity, nw, w)))
+      return 1;
+  return 0;
+}
+
+/* The largest n the mechanism serves whatever addresses the n subscribers
+ * have: one below the smallest crowd it can be made to refuse. */
+static u32
+simulated_floor (u32 capacity, u32 inside, u32 nw)
+{
+  u32 usable = capacity < inside ? capacity : inside, n;
+
+  for (n = 1; n <= usable; n++)
+    if (refusable (capacity, inside, nw, 0, n, 0))
+      return n - 1;
+  return usable;
+}
+
+/* A pool with nothing set but the three fields the capacity figures read. */
+static u32
+floor_of (u32 capacity, u32 inside, u32 nw)
+{
+  bpa_pool_t p;
+
+  memset (&p, 0, sizeof (p));
+  p.mode = BPA_MODE_DYNAMIC;
+  p.capacity = capacity;
+  p.inside.count = inside;
+  return bpa_pool_guaranteed (&p, nw);
+}
+
 static clib_error_t *
 load_pool (bpa_pool_t *p, const bpa_vec_pool_t *v)
 {
@@ -882,6 +961,165 @@ main (void)
     CHECK (bpa_pool_init (&p) != 0, "a reserve on a dynamic pool was accepted");
     printf ("  a reserve that leaves no mapped block, and one on a dynamic "
 	    "pool, are both refused\n");
+  }
+
+  /*
+   * The number an operator buys addresses against.
+   *
+   * Measured, and this is the defect it comes from: a three-block pool in
+   * front of a /22, two workers. Subscribers at offsets 5, 6 and 9 land on
+   * workers 1, 0 and 1; the slices hold two blocks and one; the third
+   * subscriber is refused with a block standing free on the other worker -
+   * and "show bpa pool" said "capacity 3 subscribers (usable 3)".
+   *
+   * Asserted here rather than only in lab/dynamic.sh because that lab needs a
+   * container. Until this section existed, the central capacity claim of the
+   * product was reachable by no check that runs without docker, so a
+   * regression in it would have shipped with the suite green.
+   */
+  printf ("\n=== the capacity a pool can promise ===\n");
+  {
+    static const struct
+    {
+      u32 capacity, inside, nw, expect;
+      const char *why;
+    } cases[] = {
+      /* the measured pool, at the worker counts it was measured at */
+      { 3, 1024, 1, 3, "one slice, and it is the whole pool" },
+      { 3, 1024, 2, 1, "two of three subscribers, with a block free next door" },
+      { 3, 1024, 3, 1, "two of four subscribers refused" },
+      /* more blocks than inside addresses: the shard costs nothing, and
+       * capacity/workers would send an operator to buy what they own */
+      { 12, 8, 2, 8, "no worker can be handed more subscribers than it has "
+		     "blocks for" },
+      { 12, 8, 3, 8, "the same at three" },
+      { 12, 8, 8, 8, "and at one worker per block and a half" },
+      /* the sizing table in the operator documentation */
+      { 12, 1048576, 2, 6, "wiki: 12 blocks, 2 workers" },
+      { 48, 1048576, 4, 12, "wiki: 48 blocks, 4 workers" },
+      { 192, 1048576, 4, 48, "wiki: 192 blocks, 4 workers" },
+      { 768, 1048576, 8, 96, "wiki: 768 blocks, 8 workers" },
+      { 7936, 1048576, 8, 992, "wiki: 7936 blocks, 8 workers" },
+      { 12, 1048576, 8, 1, "wiki: a small pool on many workers guarantees one" },
+    };
+    unsigned c;
+
+    for (c = 0; c < sizeof (cases) / sizeof (cases[0]); c++)
+      {
+	u32 got = floor_of (cases[c].capacity, cases[c].inside, cases[c].nw);
+
+	CHECK (got == cases[c].expect,
+	       "%u blocks, %u inside addresses, %u worker(s): promised %u, "
+	       "should be %u - %s",
+	       cases[c].capacity, cases[c].inside, cases[c].nw, got,
+	       cases[c].expect, cases[c].why);
+      }
+    printf ("  %u sized cases, the measured pool and the documented table "
+	    "among them\n",
+	    (unsigned) (sizeof (cases) / sizeof (cases[0])));
+  }
+
+  /*
+   * Where it must NOT appear. A block is derived rather than allocated in
+   * deterministic mode, so there is no slice to run out of, and a single
+   * worker owns every block. A caveat printed where it does not apply is a
+   * caveat people learn to skip - which is how the one that matters gets
+   * skipped too - so the two modes that lose nothing must come back equal to
+   * the ceiling, which is what makes every reader print nothing.
+   */
+  printf ("\n=== and nothing to say where there is no shard ===\n");
+  for (i = 0; i < BPA_VEC_N_POOLS; i++)
+    {
+      bpa_pool_t *p = &pools[i];
+      u32 usable = p->capacity < p->inside.count ? p->capacity
+						 : p->inside.count;
+      u32 nw;
+
+      CHECK (bpa_pool_usable (p) == usable, "'%s': usable %u, expected %u",
+	     (char *) p->name, bpa_pool_usable (p), usable);
+
+      p->mode = BPA_MODE_DYNAMIC;
+      CHECK (bpa_pool_guaranteed (p, 1) == usable,
+	     "'%s': one worker promised %u of %u; there is one slice and it "
+	     "is the whole pool",
+	     (char *) p->name, bpa_pool_guaranteed (p, 1), usable);
+      /* Zero is what bpa_main.n_workers reads on a single-threaded box, and
+       * it reaches here from the API handler on every such box. */
+      CHECK (bpa_pool_guaranteed (p, 0) == usable,
+	     "'%s': a box with no worker threads promised %u of %u",
+	     (char *) p->name, bpa_pool_guaranteed (p, 0), usable);
+
+      p->mode = BPA_MODE_DETERMINISTIC;
+      for (nw = 1; nw <= 8; nw++)
+	CHECK (bpa_pool_guaranteed (p, nw) == usable,
+	       "'%s': deterministic at %u worker(s) promised %u of %u; "
+	       "its blocks are a formula and cannot run out",
+	       (char *) p->name, nw, bpa_pool_guaranteed (p, nw), usable);
+      p->mode = BPA_MODE_DYNAMIC;
+      for (nw = 2; nw <= 8; nw++)
+	{
+	  /* The floor is a floor. A figure above the ceiling is the #210
+	   * over-claim wearing the other number's clothes, and on a pool with
+	   * far more blocks than inside addresses - which is what a pool bought
+	   * for growth looks like on the day it goes in - capacity/workers is
+	   * above it. */
+	  CHECK (bpa_pool_guaranteed (p, nw) <= usable,
+		 "'%s': %u worker(s) promised %u of a ceiling of %u",
+		 (char *) p->name, nw, bpa_pool_guaranteed (p, nw), usable);
+	}
+      printf ("  %-18s cap=%-6u usable=%-6u dynamic floor at 2/4/8 workers: "
+	      "%u / %u / %u\n",
+	      (char *) p->name, p->capacity, usable,
+	      bpa_pool_guaranteed (p, 2), bpa_pool_guaranteed (p, 4),
+	      bpa_pool_guaranteed (p, 8));
+      p->mode = BPA_MODE_DETERMINISTIC;
+    }
+
+  /*
+   * And the claim against the mechanism, which is what #210 asks for: every
+   * subscriber the pool claims capacity for gets a block, and one more than
+   * that can be refused. Swept over every small pool rather than argued,
+   * because a floor that is merely never exceeded is not a floor - it also
+   * has to be the LARGEST one, or the box is understating and the operator
+   * buys addresses they already own.
+   */
+  printf ("\n=== the promise holds against the shard, and is not loose ===\n");
+  {
+    u32 capacity, inside, nw;
+    u32 swept = 0, tight = 0;
+
+    for (nw = 1; nw <= 4; nw++)
+      for (capacity = 1; capacity <= 12; capacity++)
+	for (inside = 1; inside <= 14; inside++)
+	  {
+	    u32 usable = capacity < inside ? capacity : inside;
+	    u32 g = floor_of (capacity, inside, nw);
+
+	    swept++;
+	    CHECK (g == simulated_floor (capacity, inside, nw),
+		   "%u blocks, %u inside, %u worker(s): promised %u, the "
+		   "shard serves %u whatever the addresses are",
+		   capacity, inside, nw, g,
+		   simulated_floor (capacity, inside, nw));
+	    CHECK (g <= usable,
+		   "%u blocks, %u inside, %u worker(s): promised %u of a "
+		   "ceiling of %u",
+		   capacity, inside, nw, g, usable);
+	    CHECK (!refusable (capacity, inside, nw, 0, g, 0),
+		   "%u blocks, %u inside, %u worker(s): %u were claimed and "
+		   "one of them can be refused",
+		   capacity, inside, nw, g);
+	    if (g < usable)
+	      {
+		tight++;
+		CHECK (refusable (capacity, inside, nw, 0, g + 1, 0),
+		       "%u blocks, %u inside, %u worker(s): %u claimed, yet "
+		       "%u are always served - the claim is understated",
+		       capacity, inside, nw, g, g + 1);
+	      }
+	  }
+    printf ("  %u pools swept, %u of them losing something to the shard\n",
+	    swept, tight);
   }
 
   return bpa_test_verdict (checks, failures);

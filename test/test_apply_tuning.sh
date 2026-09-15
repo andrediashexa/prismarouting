@@ -69,6 +69,23 @@ cat > "$STUB/hexarouting-bind-nic" <<'EOF'
 echo "bind" >> "$REC/order"
 exit "${STUB_BIND_RC:-0}"
 EOF
+# systemd, answered FROM THE FAKE BOX. apply-tuning asks whether the dataplane
+# is already running before it takes the card, and without this the answer
+# would come from the machine running the suite: a developer box with a
+# vpp.service would measure something different from the build runner, and a
+# constant here would make one of the three branches unreachable, which is
+# what test/test_selftest.sh has had to repair three times (#335).
+#
+# vpp_absent is how the case with no systemd at all opts out: apply-tuning
+# treats "nobody can be asked" as its own answer, not as "not running".
+cat > "$STUB/systemctl" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *"is-active"*"vpp.service"*)
+    [ "$(cat "$REC/vpp_active" 2>/dev/null || echo no)" = yes ] ;;
+  *) : ;;
+esac
+EOF
 chmod +x "$STUB"/*
 
 n=0
@@ -266,6 +283,58 @@ case "$(order)" in
   "tune bind"*) ok "the order is: $(order)" ;;
   *) bad "expected the tuner before the binder, got: $(order)" ;;
 esac
+
+echo
+echo "=== and NOT while the dataplane is already running (#336) ==="
+# THE COMMIT, not the boot. A `commit` that names the card restarts this unit
+# too, and there the same two lines mean something else: the card comes off
+# its kernel driver with VPP already up and not about to be restarted, so it
+# belongs to neither stack. On a box whose only card carries the management
+# address that is the operator losing the box - while the VTY prints, in the
+# same breath, "NOT IN EFFECT YET: the dataplane claims its card when it
+# starts, and this commit does not restart it".
+#
+# Measured on a booted guest before this existed: uio_pci_generic, netdev
+# gone, three lines under that sentence.
+mkbox
+echo yes > "$REC/vpp_active"
+run HEXA_LOW_LATENCY=1
+case "$(order)" in
+  *bind*) bad "the card was taken while the dataplane was already running, \
+so it is on neither stack: $(order)" ;;
+  *) ok "the card is left alone while the dataplane holds the box" ;;
+esac
+said "the dataplane is already running" \
+  && ok "and it says why, rather than skipping in silence" \
+  || bad "it skipped the bind and said nothing, which reads the same as a \
+box that has no card to take: $OUT"
+# The tuning still happens. A commit that changes the subscriber target has to
+# regenerate startup.conf whatever the card is doing, and a skip that took the
+# rest with it would make the card the price of every other setting.
+case "$(order)" in
+  tune*) ok "and the tuning still runs, which is what the commit asked for" ;;
+  *) bad "skipping the bind took the tuning with it: $(order)" ;;
+esac
+
+echo
+echo "=== and not where nothing can be asked, which is not a box booting ==="
+# Three answers, not two. Without systemd this is a chroot during the install
+# or a container, and a bind there takes a card off whichever machine is
+# really running. Skipping one that should have happened leaves a box that
+# forwards nothing and is reachable; performing one that should not leaves a
+# box nobody can reach. This file already carries that trade, in #123's
+# refusal, and it points the same way.
+mkbox
+run HEXA_SYSTEMCTL=/nonexistent-systemctl
+case "$(order)" in
+  *bind*) bad "a box where nothing could be asked bound the card anyway: \
+$(order)" ;;
+  *) ok "the card is left alone where the question cannot be put" ;;
+esac
+said "nothing here can say whether the dataplane is running" \
+  && ok "and that is said too, because it is not the same box" \
+  || bad "it skipped in silence, so 'not running' and 'cannot ask' read \
+alike: $OUT"
 
 mkbox
 run STUB_BIND_RC=1

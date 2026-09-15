@@ -5657,6 +5657,40 @@ class Shell:
                     return current
         return None
 
+    def linux_still_has_card(self, mac):
+        """
+        True while LINUX still holds the card with this MAC.
+
+        The question that tells apply_management_path() which boot it is on. A
+        card DPDK has taken is not under /sys/class/net at all - the device is
+        off the kernel - so its absence there is the signal that the handover
+        has happened, and `show hardware` already leans on the same reading in
+        the other direction.
+
+        Matched on the MAC and not on the name, for the reason the record
+        carries a MAC at all: the Linux name is the one thing that does not
+        survive the handover (#303).
+
+        CANNOT LOOK IS NOT "IT IS GONE". On anything that is not Linux - a
+        developer's tree, this VTY's own suites - the directory is absent, and
+        reading that as a handover would turn every apply on such a box into
+        the refusal apply_management_path() prints. A directory that IS there
+        and holds no card is a different answer and is not covered by this: a
+        box whose only card has moved lists `lo` and nothing else, which is
+        exactly the state being reported.
+        """
+        try:
+            names = os.listdir(self.SYS_CLASS_NET)
+        except OSError:
+            return True
+        want = (mac or "").lower()
+        for name in names:
+            have = self._sysfs(os.path.join(self.SYS_CLASS_NET, name,
+                                            "address"))
+            if have and have.lower() == want:
+                return True
+        return False
+
     def apply_management_path(self, mgmt):
         """
         Put the management address back, on the pair of the card that moved.
@@ -5667,15 +5701,48 @@ class Shell:
         does have it, and this is the only thing standing between a box that
         forwards and a box nobody can reach.
 
-        NOT AN ERROR WHEN THE CARD IS NOT THERE. `hexash --load` runs on every
-        boot, including the ones before the operator reboots into the handover
-        and the ones after it has been rolled back, and a commit that failed
-        because a card had not moved yet would be a box that cannot be
+        NOT AN ERROR WHEN THE CARD HAS NOT MOVED YET. `hexash --load` runs on
+        every boot, including the ones before the operator reboots into the
+        handover and the ones after it has been rolled back, and a commit that
+        failed because a card had not moved yet would be a box that cannot be
         configured at all.
+
+        BUT "NOT MOVED YET" AND "GONE" ARE NOT THE SAME BOOT, and returning
+        success for both is what let a box come back from its own handover
+        with no address on any interface and say nothing about it (#332). The
+        box can tell them apart, from the card Linux either still has or does
+        not, so it is asked rather than assumed.
         """
         ifname = self.dataplane_if_with_mac(mgmt["mac"])
         if not ifname:
-            return True
+            if self.linux_still_has_card(mgmt["mac"]):
+                # The ordinary boot this early return was written for: the
+                # card is still Linux's, nothing has been handed over, and
+                # there is nothing to do and nothing worth saying.
+                return True
+            # The other boot. The tuner unbound the card and the dataplane did
+            # not take it, so the card is on neither side and the address has
+            # nowhere to go. This box is off the network and the console is
+            # the only place left that can be told.
+            #
+            # The verdict on the headline and the rest below it: `err` wraps
+            # nothing, and with the card and its MAC on that row this measured
+            # 98 columns (#276).
+            self.err("the card this box is reached on was handed over and "
+                     "nothing took it")
+            print_prose(f"Linux no longer has {mgmt['name']} and no interface "
+                        f"the dataplane holds has {mgmt['mac']}, so there is "
+                        f"no pair for {mgmt['address']} to go on")
+            print_prose("this box has no address and cannot be reached over "
+                        "the network until that is repaired from here")
+            print_prose("'show hardware' says what the dataplane holds; 'no "
+                        "dataplane interface' gives the card back at the next "
+                        "start")
+            # The path on a row of its own: it is what the operator goes and
+            # reads, and a path that wraps is one they cannot copy (#276).
+            print_prose("the card is named in this file:")
+            print(f"    {self.TUNE_ENV}")
+            return False
         if not self.set_admin(ifname, True):
             return False
         # Idempotent on purpose: the same file is replayed at every boot, and
@@ -12351,6 +12418,25 @@ class Shell:
                  if _is_lcp_tap(n) and self.api.interface_index(n) is None}
         if stale:
             target.drop_lcp_taps(stale)
+
+        # THE TWO STATEMENTS THIS FILE IS NOT THE HOLDER OF, and the whole of
+        # #332. `commit` writes the card and the management path it carries
+        # into the tuner's file, which is what hands the card over at the next
+        # boot; only `save` writes THIS file. So a box that committed the
+        # handover and rebooted - which is exactly what the VTY tells the
+        # operator to do - replays a file that has never heard of the card. On
+        # a fresh appliance that is the three comments the installer ships,
+        # which `is_empty()` below returns on, so apply_management_path() was
+        # not reached at all: the card was in the dataplane, no `linux_cp`
+        # pair was made, the address had nowhere to go, and the box came back
+        # with no address on any interface and nobody could reach it.
+        #
+        # Taken from the holder only where this file is silent. A file that
+        # names a card is the operator's own answer and stays it, which is
+        # what keeps `no dataplane interface`, `save` and a reboot working.
+        if not target.dataplane_if and not target.dataplane_mgmt:
+            target.dataplane_if = self.read_dataplane_if()
+            target.dataplane_mgmt = self.read_dataplane_mgmt()
         if target.unknown:
             # Read at BOOT, on a box that is refusing its own saved
             # configuration, which is the worst moment to be handed a broken
@@ -12378,7 +12464,18 @@ class Shell:
         # first thing an operator saw on a new appliance was a failed unit
         # (#121). Returning here rather than weakening the lockout check: the
         # check is right, the input was not a change.
+        #
+        # The management path is the one exception, and it is not a change
+        # either: the box is putting back what its own tuner recorded before
+        # it gave the card away. An empty file is what every fresh appliance
+        # boots with, so without this the boot after the handover is the boot
+        # that does nothing at all (#332).
         if target.is_empty():
+            # The answer is not checked because there is nothing here to
+            # abandon: `err` has already counted the failure, which is what
+            # hexarouting.service and the exit status read.
+            if target.dataplane_mgmt:
+                self.apply_management_path(target.dataplane_mgmt)
             return
 
         # Checked before it is applied, and refused whole if the check refuses.

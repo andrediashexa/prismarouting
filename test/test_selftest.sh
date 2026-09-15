@@ -70,9 +70,19 @@ cat > "$BIN/df" <<'EOF'
 echo "Filesystem Size Used Avail Use% Mounted"
 echo "/dev/vdb1 40G 1G 37G 3% /var/log/hexarouting"
 EOF
+# From the fake box, not a constant, and for the third time in this file:
+# `echo bpa_pool_add_del` here made "binary API NOT registered: no CGNAT pool
+# can be configured here" unreachable by every box this suite arranges. That is
+# the check written for #119 - the medium shipped without the vat2 plugin for
+# the life of the project, and such a box routes, answers, and fails every
+# pool commit - so it is the one you most want to be able to go red.
+#
+# The systemctl stub below carries the same repair twice already (#222). Fixing
+# these one at a time is what produced a third, which is why this commit also
+# adds the reader that refuses a check no box has seen fail (#335).
 cat > "$BIN/vat2" <<'EOF'
 #!/bin/sh
-echo bpa_pool_add_del
+cat "$FAKE/dump_apis" 2>/dev/null || echo bpa_pool_add_del
 EOF
 # systemd, answered from the fake box rather than from this one. Stubbed whole
 # rather than passed through: the machine running these tests may itself have a
@@ -308,6 +318,8 @@ run() {  # -> $OUTPUT
   # kept for the 80-column check at the end. A line only goes over when a
   # value is interpolated into it, so reading the source cannot find one.
   printf '%s\n' "$OUTPUT" >> "$FAKE/every-line"
+  printf '%s\n' "$OUTPUT" | sed 's/^ *//' | sort -u \
+    >> "$FAKE/per-box-lines"
   runs=$((runs + 1))
   printf '%s\n' "$OUTPUT" | grep -q '\[FAIL\]' && runs_with_fail=$((runs_with_fail + 1))
   if [ "$rc" -ne 0 ]; then
@@ -616,7 +628,11 @@ echo "=== a dataplane interface with no linux_cp pair (#182) ==="
 printf 'root:x:0:0::/root:/usr/bin/hexash-login\n' > "$FAKE/passwd"
 printf '\n' > "$FAKE/groups"
 : > "$FAKE/vppctl_ok"
-rm -f "$FAKE/frr_running"
+# NEITHER of the two things that make a pair mandatory: no routing protocol
+# configured, and no handover record in the tuner's file. Both are arranged as
+# absences on purpose - this is the box that must STAY a warning, and it is the
+# third state of #334, the one a fix can quietly turn into a new defect.
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env"
 
 # The header is indented, the counter continuation lines are indented, and a
 # name is the only thing in column one. Copied from a real `show interface`
@@ -645,9 +661,9 @@ fi
 # configuration of this product. Failing it over a pair it does not need is
 # how a self-test's failures stop being read.
 if said '\[FAIL\].*pair'; then
-  bad "a box with no routing configured was FAILED over a missing pair"
+  bad "a box with nothing depending on the pair was FAILED over it: $(printf '%s\n' "$OUTPUT" | grep -E '\[FAIL\].*pair')"
 else
-  ok "and with no routing configured it is not a failed check"
+  ok "and with neither routing nor a handover record it stays a warning"
 fi
 # local0 is on every box and is never paired. Reporting it would put a
 # permanent warning on every appliance, which is a warning nobody reads.
@@ -674,6 +690,75 @@ else
   bad "the failure does not say which interface has no pair"
 fi
 rm -f "$FAKE/frr_running"
+
+echo "=== the box the handover was written for: no pair, no router stanza (#334) ==="
+# The state the check could not see. A box that hands its ONLY card to the
+# dataplane takes a static default route, so `show running-config` has no
+# `^router ` line in it and the old check took the softer branch - on the one
+# box where a missing pair means nobody can reach it at all.
+#
+# The handover record is arranged in the tuner's file and read from there by
+# the self-test. It is where the VTY wrote it and the only place the answer
+# exists: between the commit that names the card and this boot there is
+# nothing on the box to read back, which is why this is a file and not a
+# question put to the dataplane.
+mkdir -p "$FAKE/root/etc/hexarouting"
+printf 'HEXA_DATAPLANE_IF=ens18\nHEXA_DATAPLANE_MGMT="ens18 10.95.200.198/24 52:54:00:00:00:01"\n' \
+  > "$FAKE/root/etc/hexarouting/tune.env"
+run
+if said '\[FAIL\] this box handed its only card over and NO pair carries'; then
+  ok "a handover box with no pair is a failed check, with no routing anywhere"
+else
+  bad "the box that cannot be reached was not FAILED: $(printf '%s\n' "$OUTPUT" | grep -iE 'pair' || echo '<nothing about it>')"
+fi
+if said '\[warn\] no linux_cp pair'; then
+  bad "and it was warned about instead: $(printf '%s\n' "$OUTPUT" | grep 'no linux_cp pair')"
+else
+  ok "and it is not ALSO reported as a warning"
+fi
+# The record, not a wording: the address is the operator's only way back onto
+# a box whose card is in the dataplane, and it comes out of the fixture above
+# rather than out of any sentence this product writes.
+if said_across '10\.95\.200\.198/24'; then
+  ok "and it prints the management path the box recorded, to put back by hand"
+else
+  bad "the failure does not carry the address the box is reached on: $(printf '%s\n' "$OUTPUT" | grep -iE 'management path|recorded' || echo '<nothing>')"
+fi
+# The whole failure as it reaches the console, printed once so that what an
+# operator is told can be read in this file rather than reconstructed from
+# six needles. Not an assertion - the assertions above are.
+printf '%s\n' "$OUTPUT" | grep -A9 'handed its only card over' | sed 's/^/    | /'
+if said_across 'without a pair:.*host-veth-vpp'; then
+  ok "and it names the interface that has no pair"
+else
+  bad "the handover failure does not say which interface has no pair"
+fi
+# The FRR half must not be spoken on a box that has no routing at all: a
+# failure that lists a reason the box does not have is a failure an operator
+# stops reading.
+if said 'BGP, OSPF and IS-IS'; then
+  bad "a box running no routing protocol was told its adjacencies are down"
+else
+  ok "and it says nothing about adjacencies on a box running no protocol"
+fi
+
+echo "=== a box that did both: handed its card over AND runs a protocol ==="
+# Two reasons, one failure. The headline is the handover, because a box
+# nobody can log in to is worse than one whose adjacencies are down - but the
+# adjacencies are down too, and the operator is owed both facts.
+printf 'router bgp 65000\n bgp router-id 10.0.0.1\n' > "$FAKE/frr_running"
+run
+if said '\[FAIL\] this box handed its only card over and NO pair carries'; then
+  ok "the headline is the reason that takes the box off the network"
+else
+  bad "a box that handed its card over led with something else: $(printf '%s\n' "$OUTPUT" | grep -E '\[FAIL\].*pair' || echo '<no failure about the pair at all>')"
+fi
+if said 'BGP, OSPF and IS-IS'; then
+  ok "and the routing half is still said, under it"
+else
+  bad "the second reason went unsaid on a box that has both"
+fi
+rm -f "$FAKE/frr_running" "$FAKE/root/etc/hexarouting/tune.env"
 
 echo "=== the pair exists, which is the state the product produces ==="
 # `linux-name vppwan0` under `interface host-veth-vpp`, committed. The TAP is
@@ -3022,6 +3107,59 @@ fi
 rm -f "$FAKE/mgmt.keep"
 rm -rf "$FAKE/root/run/live"
 
+echo "=== a box whose binary API is not registered (#119) ==="
+# THE CHECK THIS WAS ALL FOR. The medium shipped without the vat2 plugin for
+# the life of the project: such a box boots, routes, answers ssh, and fails
+# every single pool commit, which is the one thing it exists to do. Until now
+# the stub answered a constant, so no box this suite arranges had ever seen
+# that branch run (#335).
+#
+# The API list is not empty here: a box whose vat2 answers nothing is a
+# different fault, and a fixture that could not tell "no plugin" from "no
+# vat2" would pass the day the check started matching the wrong one.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
+printf 'show_version\nip_route_add_del\n' > "$FAKE/dump_apis"
+run
+rm -f "$FAKE/dump_apis"
+if said '\[ ok \] binary API registered'; then
+  bad "a box with no bpa_pool_add_del in its API list was reported as one \
+that can be configured"
+else
+  ok "it does not read as a box whose pools can be configured"
+fi
+if said '\[FAIL\] binary API NOT registered'; then
+  ok "and it is a failed check, not a warning"
+else
+  bad "a box that cannot be configured at all was not reported: $(printf '%s\n' "$OUTPUT" | grep -i "binary api" || echo '<nothing about the binary api>')"
+fi
+if said 'the vat2 plugin is missing from this install'; then
+  ok "and it names what is missing, so somebody can fix it"
+else
+  bad "the refusal does not say which plugin: an operator is told the box \
+cannot be configured and not why"
+fi
+
+echo "=== and a box carrying a file the build did not ship ==="
+# Arranged HERE as well as in test/test_manifest.sh, and deliberately so. What
+# the manifest MEANS is that suite's question, against a root a real install.sh
+# wrote. What this one needs is simply for the line not to be the same on every
+# box, because a reader below refuses a check no box has seen fail - and the
+# honest way to satisfy a rule is to make the data right, not to write an
+# exception into the rule.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/usr/share/hexarouting"
+echo "a file of the build this box says it is running" \
+  > "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
+( cd "$FAKE/root" && sha256sum usr/share/hexarouting/a-file-of-that-build ) \
+  > "$FAKE/root/usr/share/hexarouting/MANIFEST"
+echo "and something else wrote to it" \
+  >> "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
+run
+if said '\[ ok \] all .* files of that build are the ones it shipped'; then
+  bad "a box carrying a file the build did not ship was reported as shipped"
+else
+  ok "a changed file is not reported as the one that shipped"
+fi
+
 echo "=== the exit status, over every box the cases above arranged ==="
 # The rule this holds: docs/appliance.md, "always exits zero: the diagnostic
 # MUST NOT bring down the boot". It is a diagnostic, and a diagnostic reports
@@ -3319,6 +3457,45 @@ else
   else
     bad "lines wider than the 79-column console:
 $WIDE"
+  fi
+fi
+
+echo "=== no check may have gone green on every box this suite arranges ==="
+# THE CLASS, not the instance. An [ ok ] line that appears on EVERY box here is
+# a check whose failure nobody has ever seen: whatever it reads answered the
+# same way every time, so the branch that reports a broken box has never run.
+#
+# It has happened three times in this file, and the first two were each found
+# and repaired alone. The systemctl stub carries both in its comments - it was
+# `echo 0` for NRestarts, so "it is looping" was unreachable, and the constant
+# `inactive` for is-failed, so the branch reporting the CGNAT configuration as
+# not applied had never run (#222). The third was `echo bpa_pool_add_del` in
+# the vat2 stub, which made "binary API NOT registered" unreachable - the check
+# written for #119, on a box that routes and answers and cannot be configured
+# at all (#335). Repairing them one at a time is what produced the third.
+#
+# MEASURED FROM THE RUNS, not from the source. A stub that answers a constant
+# looks like any other stub; what gives it away is a hundred and twenty boxes
+# all being told the same thing. Duplicated lines within one run are collapsed
+# first, so a line printed twice on one box does not read as two boxes.
+#
+# The rule has no exceptions in it, deliberately. When it went red on the
+# manifest line - whose red form IS measured, next door in
+# test/test_manifest.sh - the repair was to arrange that box here too, so the
+# line stops being universal. An excused line is one nobody re-examines, and
+# this whole check exists because three of those accumulated.
+if [ ! -s "$FAKE/per-box-lines" ]; then
+  bad "no box's lines were kept, so this asked nothing"
+else
+  _always=$(sort "$FAKE/per-box-lines" | uniq -c \
+            | awk -v n="$runs" '$1 == n' | sed 's/^ *[0-9]*  *//' \
+            | grep '^\[ ok \]' || true)
+  if [ -n "$_always" ]; then
+    bad "these check(s) went green on all $runs boxes, so nothing here has \
+ever seen them fail - which is how a stub that answers a constant hides:"
+    printf '%s\n' "$_always" | sed 's/^/    /'
+  else
+    ok "$runs boxes, and every [ ok ] line has a box that does not print it"
   fi
 fi
 

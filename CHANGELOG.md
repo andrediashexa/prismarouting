@@ -75,6 +75,133 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The lab's console driver could only wait for success, and had never been
+  tested** ([#332](https://github.com/andrediashexa/hexarouting/issues/332)).
+  `lab/install-iso.sh` types at a serial console and waits for strings the box
+  prints, and every one of those waits had only ever been exercised by booting
+  a machine - which costs minutes and cannot arrange the case where the box
+  answers something else. It cost exactly that: PHASE 4 spent its full 600
+  seconds waiting for `commit complete` on a commit that had printed `commit
+  failed` seconds in, and what diagnosed it was the console dump the timeout
+  prints rather than the wait. Ten minutes per run, and a verdict reading "the
+  box never answered" about a box that answered immediately. `wait_for_either`
+  takes both strings and reports which arrived: 0 for the first, 2 for the
+  second, 1 for neither, so a caller that ignores the distinction still reads a
+  refusal as a failure rather than as a pass. `test/test_console_driver.sh`
+  measures those waits **without qemu**, reading the functions out of the lab
+  rather than copying them, because a second copy of a wait would pass while
+  the real one did whatever it does.
+
+### Fixed
+
+* **`commit` bound the card immediately while telling the operator it had
+  not** ([#336](https://github.com/andrediashexa/hexarouting/issues/336)).
+  Naming the dataplane card restarts `hexarouting-tune`, that unit runs
+  `appliance/apply-tuning`, and `apply-tuning` performs the bind. At boot that
+  is right: the tuner has chosen the device and VPP is ordered after it, so the
+  card goes straight to the process about to take it. Restarted from a commit
+  it is not - VPP is already running and is not restarted, so the card comes
+  off its kernel driver with nothing to pick it up and belongs to neither
+  stack. On a box whose only card carries the management address that is the
+  operator losing the box, while the VTY prints in the same breath *"NOT IN
+  EFFECT YET: the dataplane claims its card when it starts, and this commit
+  does not restart it"*. Measured on a booted guest: the driver read
+  `uio_pci_generic` and the netdev was gone three lines under that sentence.
+  The bind now runs only when the dataplane is positively known **not** to be
+  up, and the three boxes are three answers: running, not running, and nobody
+  here can be asked - which is a chroot during an install or a container, not
+  an appliance starting, and where a bind takes a card off whichever machine is
+  really running. Skipping one that should have happened leaves a box that
+  forwards nothing and is reachable; performing one that should not leaves a
+  box nobody can reach, and this file already carries that trade in
+  [#123](https://github.com/andrediashexa/hexarouting/issues/123)'s refusal.
+
+### Fixed
+
+* **The self-test asked only half of "who needs this pair", and the half it
+  asked is false on the box that most needs the answer**
+  ([#334](https://github.com/andrediashexa/hexarouting/issues/334)). A
+  dataplane interface with no `linux_cp` pair was reported loudly or quietly
+  depending on one question put to FRR: does `show running-config` carry a
+  `^router ` stanza. The premise is sound as far as it goes - a pair is what
+  FRR sees, so a box running no protocol is not obviously broken without one -
+  but it stopped being the whole question when the pair became the thing that
+  carries the **management address** after a handover. A box that gives its
+  only card to the dataplane takes a static default route and has no `router`
+  stanza at all, so the one box where a missing pair means nobody can reach it
+  was told so as `[warn] no linux_cp pair on:` - the tone used for a missing
+  nicety, on a box reachable at a console somebody has to walk to. Found while
+  fixing [#332](https://github.com/andrediashexa/hexarouting/issues/332): the
+  qemu guest in [#329](https://github.com/andrediashexa/hexarouting/issues/329)
+  printed the hard form only because something else in that lab's session had
+  left a `router` stanza behind.
+
+  The check asks both questions now. The handover record the tuner holds -
+  `HEXA_DATAPLANE_MGMT` in `/etc/hexarouting/tune.env`, written by the VTY
+  beside the card's name and read back here the way `bind-dataplane-nic` reads
+  it - says this box handed its management card over and therefore needs the
+  pair whatever FRR is doing; the `^router ` stanza says FRR needs it. Both are
+  facts the box has. A failing box leads with the worse of the two reasons,
+  because a box nobody can log in to is not a box whose adjacencies are down,
+  and it prints the management path the record holds so that the operator at
+  that console has the address to put back by hand. A box with **neither** - no
+  pair, no handover record, no routing protocol - stays a warning, which is the
+  point of asking two questions rather than failing every unpaired interface: a
+  box that forwards CGNAT and runs no protocol is a supported configuration of
+  this product, and a check that goes red on it is one people learn to run
+  around.
+
+  All three states are measured, and each assertion was shown red on a mutation
+  that runs and gets it wrong rather than one that crashes: the check asking
+  only `^router ` again (the defect as it shipped - the handover box falls back
+  to the warning, with no address in it), asking only the handover record (the
+  routing box falls back to the warning), failing every unpaired box (the
+  correct box goes red, and is told routing is configured on a box that has
+  none), the adjacency prose said unconditionally, the routing half swallowed
+  by the handover branch, and the headline given to the lesser reason on a box
+  that has both.
+
+* **A self-test check that no box had ever seen fail, and the reader that
+  refuses the next one**
+  ([#335](https://github.com/andrediashexa/hexarouting/issues/335)). Measured
+  over the 122 boxes `test/test_selftest.sh` arranges: the `vat2` stub answered
+  the constant `bpa_pool_add_del`, so `binary API NOT registered: no CGNAT pool
+  can be configured here` had never run anywhere. That is the check written for
+  [#119](https://github.com/andrediashexa/hexarouting/issues/119) - the medium
+  shipped without the vat2 plugin for the life of the project, and such a box
+  boots, routes, answers ssh and fails every pool commit, which is the one
+  thing it exists to do. It is the check you most want to be able to go red.
+  The stub now answers from the fake box, the way `systemctl` already does -
+  and the comments on that stub record the same repair being made twice before
+  ([#222](https://github.com/andrediashexa/hexarouting/issues/222)), one
+  constant at a time, which is how a third came to be sitting three lines
+  below them. So the class is closed as well as the instance: **no `[ ok ]`
+  line may be identical across every box the suite arranges**, measured from
+  the runs rather than from the source, because a stub that answers a constant
+  looks like any other stub and what gives it away is a hundred boxes all being
+  told the same thing. The rule carries no exceptions. When it went red on the
+  manifest line - whose red form is measured next door in
+  `test/test_manifest.sh` - the repair was to arrange that box here too, not to
+  excuse the line, because an excused line is one nobody re-examines.
+
+### Fixed
+
+* **The cores table an operator sizes hardware from had no reader**
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). The public
+  page somebody reads before choosing a processor carries a table of how many
+  cores forward and how many are left for everything else, and that is a claim
+  about what `appliance/hexarouting-tune` does. Nothing compared the two, so the
+  day the split changed the page would have gone on selling the old one - to a
+  reader who finds out after the box is racked. The tuner is now the holder and
+  the page the reader: every row is driven against the tuner on a synthetic
+  machine of that shape, and a row that has left the page in a shape the check
+  can read is a failure rather than a silent pass. Shown red from both sides -
+  a tuner that leaves two cores to the control plane on large boxes only, which
+  the existing worker checks do not see, and a page promising 30 forwarding
+  cores on a 32-core processor.
+
 ### Added
 
 * **The release gate refuses a release that would ship past a stale wiki**
@@ -227,6 +354,56 @@ version has a chance of seeing it.
   `tools/run-all-labs.sh` says so where it lists what it is not running, and
   re-running it against a box is the work left on the issue.
 
+* **The capacity a subscriber can actually reach was printed on one interface
+  and not on the other, and no check outside a container could see the number
+  at all**
+  ([#210](https://github.com/andrediashexa/hexarouting/issues/210)).
+  `show bpa pool` stopped claiming a ceiling it cannot deliver when a dynamic
+  pool's blocks are sharded per worker. `bpa_pool_details`, which is the
+  interface a provisioning system reads, went on reporting `capacity` alone -
+  the same false promise, on the mouth that answers a machine rather than
+  somebody who might notice the second line. It now carries `guaranteed` and
+  the `n_workers` it was computed on, because the floor is not a property of
+  the pool: the same configuration guarantees a different number on a box with
+  four workers, and a caller that stored the figure without it could not tell
+  a re-sized box from a changed pool.
+
+  The arithmetic moved to `bpa_pool_guaranteed()` in
+  `src/plugins/bpa/bpa_pool.h`, with `bpa_pool_usable()` beside it, and it is
+  now one holder with three readers instead of a copy per reader - there were
+  already two of `usable`, in `bpa_cli.c` and in `bpa_pool_remap_count()`.
+  Moving it is what makes it reachable: it was `static` inside `bpa_cli.c`,
+  which builds only against a VPP tree, so the central capacity claim of this
+  product was asserted by `lab/dynamic.sh` and by nothing else. `make test`
+  could not see it, and a regression in it would have shipped with 56 suites
+  green.
+
+  `test/test_bpa_pool.c` now checks it three ways, and the third is what #210
+  asked a lab for. Twelve sized cases, the measured pool among them - three
+  blocks in front of a `/22` at two workers promises **1**, not the 3 the box
+  used to print - and the five rows of the sizing table the wiki shows an
+  operator. Then the nine pool definitions the vectors carry, where the floor
+  must equal the ceiling in deterministic mode and at one worker, since a
+  caveat shown where it does not apply is one people learn to skip. Then 672
+  pools swept, 270 of them losing something to the shard, each one checked
+  against a **simulation of the mechanism** rather than against the formula
+  written a second time: `bpa_dyn_init()` cuts the slices, `bpa_owner_worker()`
+  decides which slice a subscriber may draw from, and every way n subscribers
+  can fall across the workers is walked. Every subscriber the pool claims
+  capacity for gets a block, and one more than that can be refused - the
+  second half matters as much, because a floor that is merely never exceeded
+  sends an operator to buy addresses they already own.
+
+  **Measured, and it settles half of what #210 left open.** Over 2800
+  combinations of blocks, inside addresses and worker count, there is **no**
+  way of splitting the blocks among the workers that guarantees more than the
+  even split already does. Re-partitioning is not a cheap fix hiding behind
+  the expensive ones: with a subscriber's worker fixed by arithmetic on its
+  own address, the adversary crowds whichever slice is thinnest, so the floor
+  is `capacity / workers` for any static partition. The two options that do
+  recover the loss both need shared state, which is what the partition exists
+  to avoid, and remain the maintainer's decision.
+
 * **A check that asserted about a word in prose went red on work that was
   right** ([#333](https://github.com/andrediashexa/hexarouting/issues/333)).
   `test/test_kernel_tuning.py` asserts that none of the kernel parameters
@@ -266,6 +443,70 @@ version has a chance of seeing it.
   to it, because its lookbehind refused a `.` in front of the name, so the one
   file the check was first written to read was the one shape it missed. The
   same comment that produced three false FAILs before produces none now.
+
+* **A box that handed its only card to the dataplane came back with no address
+  on any interface and nobody could reach it**
+  ([#332](https://github.com/andrediashexa/hexarouting/issues/332)). Measured
+  on a booted qemu guest by the new phases above, against the published 0.74.2
+  medium. The box did everything the VTY promised except the last clause: the
+  bind worked - `virtio-pci` to `uio_pci_generic` - Linux released the netdev,
+  the dataplane held `GigabitEthernet0/9/0`, and the box answered nowhere. Its
+  own boot self-test printed the reason on the same console: routing is
+  configured and no interface is paired into the kernel. So the diagnosis was
+  right and the doing was missing. On a single-card machine that means
+  somebody walks to it, which is the outcome the handover exists to prevent.
+
+  **The two halves of one decision had two lifetimes.** `commit` writes the
+  card and the management path it carries into the tuner's file, and that file
+  is what performs the handover at the next boot. The pair the address goes
+  on is made by `hexash --load`, out of `/etc/hexarouting/hexarouting.conf` -
+  and `commit` does not write that file. Only `save` does. So the boot after
+  the handover replayed a file that had never heard of the card: on a fresh
+  appliance the three comments the installer ships, which `Config.is_empty()`
+  returns on before `apply()` is reached, so `apply_management_path()` was
+  never called at all. The half that hands the card over survived the reboot;
+  the half that keeps the box reachable did not. `load()` now takes the card
+  and its record from the tuner's file - their holder, and the reason the
+  record is kept there at all - when the file being replayed carries neither,
+  and puts the management path back even on an empty file, because a file with
+  no statements in it is not a box that gave its card away. A box that HAD
+  saved before the handover was worse off still: its file said nothing about a
+  dataplane card, so the boot replay read that as a card being taken away and
+  un-named the card the box was holding, and the next boot gave it back.
+
+  **And a card the dataplane has not got is now two answers instead of one.**
+  `apply_management_path()` returned success, silently, whenever the recorded
+  MAC was not among the dataplane's interfaces. That is right on the boots it
+  was written for - `hexash --load` runs before the operator reboots into the
+  handover, and after a rollback has given the card back, and a commit that
+  failed because a card had not moved yet would be a box that cannot be
+  configured at all - and it is wrong on the boot where the card is gone from
+  Linux too. There the card is on neither side, the address has nowhere to go,
+  and the box is off the network, which is the one state where the console is
+  the only place left that can be told. The box now asks which boot it is on,
+  by looking for the MAC under `/sys/class/net` - a device DPDK has taken is
+  not there at all, and the Linux name is the one thing that does not survive
+  the handover - and says so rather than returning success:
+
+  ```
+  error: the card this box is reached on was handed over and nothing took it
+      Linux no longer has ens18 and no interface the dataplane holds has
+      52:54:00:00:00:01, so there is no pair for 10.95.200.198/24 to go on
+  ```
+
+  "Cannot look" is not "the card is gone": a tree with no `/sys/class/net` in
+  it - a developer's box, this VTY's own suites - answers that the card is
+  still Linux's, the same posture `dataplane_if_refusal()` already takes about
+  a card list it could not read. Each of the five assertions in
+  `test/test_dataplane_if.py` was shown red on its own mutation of the
+  product, and the boot cases are driven through `load()` against a file on
+  disk rather than by calling the function directly, because "never called"
+  is the defect and a case that calls it cannot see that.
+
+  **What this does not prove.** The guest itself. Everything here is measured
+  against the product's own seams in a tempdir; that the box comes back and
+  answers on the network needs `lab/install-iso.sh` PHASE 4/5 on a booted
+  guest, and nothing in this entry claims it has been run again.
 
 * **A box installed from a medium that carried SSH host keys said so only to
   its console, at boot**

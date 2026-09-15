@@ -134,56 +134,12 @@ format_bpa_addr_set (u8 *s, va_list *args)
   return s;
 }
 
-/*
- * How many subscribers a dynamic pool serves whatever addresses they have.
- *
- * A worst case and deliberately not a mean. The operator sizing a pool has no
- * say over which of their inside addresses are switched on at any moment, so
- * a figure that only holds on the average leaves a box refusing subscribers
- * below the number it printed - the same false promise this whole line exists
- * to remove, arriving one step quieter. What is returned is therefore the
- * largest n for which EVERY set of n subscribers is served.
- *
- * A worker refuses only when more inside addresses map to it than it has
- * blocks, and the adversary then puts one subscriber more than that worker's
- * slice on it. So the answer is the smallest slice among the workers that can
- * be crowded, and the whole inside set when none of them can be.
- *
- * That second case is why this is not simply capacity/n_workers. A pool of 12
- * blocks in front of 8 inside addresses serves all 8 on any worker count,
- * because no worker can be handed more subscribers than it has blocks for;
- * calling it 4 would send an operator to buy addresses they already own.
- *
- * The number does not depend on which addresses are in use, only on how many
- * the inside set holds - that is what makes it safe to print. What it costs
- * is the gap to `usable` above it, which is what an even spread would buy and
- * is the subject of #210.
- */
-static u32
-bpa_pool_guaranteed (const bpa_pool_t *p, u32 nw)
-{
-  u32 w, worst = ~0u;
-
-  for (w = 0; w < nw; w++)
-    {
-      /* Worker w owns the block indices congruent to w, and the subscriber
-       * indices congruent to w may only draw from them. */
-      u32 blocks = p->capacity / nw + (w < p->capacity % nw ? 1 : 0);
-      u32 subs = p->inside.count / nw + (w < p->inside.count % nw ? 1 : 0);
-
-      if (subs > blocks && blocks < worst)
-	worst = blocks;
-    }
-
-  return worst == ~0u ? p->inside.count : worst;
-}
-
 u8 *
 format_bpa_pool (u8 *s, va_list *args)
 {
   bpa_pool_t *p = va_arg (*args, bpa_pool_t *);
   u32 indent = format_get_indent (s);
-  u32 usable = p->capacity < p->inside.count ? p->capacity : p->inside.count;
+  u32 usable = bpa_pool_usable (p);
 
   s = format (s, "pool %v [%U / %U]", p->name, format_bpa_mode, p->mode,
 	      format_bpa_policy, p->policy);
@@ -246,31 +202,25 @@ format_bpa_pool (u8 *s, va_list *args)
   s = format (s, "\n%Ucapacity     %u subscribers (usable %u)",
 	      format_white_space, indent + 2, p->capacity, usable);
   /*
-   * In dynamic mode with workers that figure is a ceiling nobody is promised.
-   *
-   * Block allocation is sharded so it needs no lock: worker w owns every
-   * block whose index is congruent to w, and a subscriber may only draw from
-   * the worker its own index maps to. Both halves are right on their own -
-   * one keeps allocation worker-local, the other keeps a flow's two
-   * directions on one worker - and neither was designed against the other.
-   * A subscriber index is the offset of its address within the inside set,
-   * not a counter, so on any real address plan the two do not balance.
+   * In dynamic mode with workers that figure is a ceiling nobody is promised,
+   * and the floor goes beside it. Why the two differ is with the arithmetic,
+   * in bpa_pool_guaranteed().
    *
    * Measured on a three-block pool with two workers: subscribers at offsets
    * 5, 6 and 9 land on workers 1, 0 and 1, the slices hold two blocks and
    * one, and the third subscriber is refused with a block standing free on
-   * the other worker - while this line said "usable 3".
+   * the other worker - while this line said "usable 3". The floor is the
+   * number to size against; the difference between the two is what an even
+   * spread would buy. Fixing the mechanism is a design decision with a cost
+   * either way and is #210 - this is the half that stops the box claiming
+   * what it cannot do.
    *
-   * So what the pool can serve whatever the addresses happen to be is printed
-   * beside it, and that is the number to size against; the difference between
-   * the two is what an even spread would buy. Fixing the mechanism is a design
-   * decision with a cost either way and is #210 - this is the half that stops
-   * the box claiming what it cannot do.
-   *
-   * Printed only when it is BELOW the ceiling. A pool with more blocks than
-   * inside addresses on every worker loses nothing to the sharding, and a
-   * caveat that repeats the number above it is a caveat people learn to skip
-   * - which is how the one that matters gets skipped too.
+   * Printed only when it is BELOW the ceiling, which is also how the modes
+   * with no shard to lose anything to - deterministic, and a single worker -
+   * print nothing: the floor comes back equal to the ceiling there, so this
+   * reader does not have to know which modes those are. A caveat that repeats
+   * the number above it is a caveat people learn to skip, which is how the one
+   * that matters gets skipped too.
    */
   /*
    * And the other reason that figure can be a number nobody will see (#299).
@@ -310,17 +260,16 @@ format_bpa_pool (u8 *s, va_list *args)
 		     "on the outside, so a translated packet has no way back",
 		  format_white_space, indent + 2);
   }
-  if (p->mode == BPA_MODE_DYNAMIC && bpa_main.n_workers > 1)
-    {
-      u32 nw = bpa_main.n_workers;
-      u32 guaranteed = bpa_pool_guaranteed (p, nw);
+  {
+    u32 nw = bpa_main.n_workers;
+    u32 guaranteed = bpa_pool_guaranteed (p, nw);
 
-      if (guaranteed < usable)
-	s = format (s, "\n%U             %u whatever the addresses are: blocks "
-		       "are sharded %u ways and a subscriber draws only from "
-		       "its own worker's slice",
-		    format_white_space, indent + 2, guaranteed, nw);
-    }
+    if (guaranteed < usable)
+      s = format (s, "\n%U             %u whatever the addresses are: blocks "
+		     "are sharded %u ways and a subscriber draws only from "
+		     "its own worker's slice",
+		  format_white_space, indent + 2, guaranteed, nw);
+  }
   s = format (s, "\n%Udivisor      %u (%s)", format_white_space, indent + 2,
 	      p->div.d, p->div.is_pow2 ? "shift" : "reciprocal");
   /* Printed whichever way each one is set. "The ALG is off" and "the ALG saw

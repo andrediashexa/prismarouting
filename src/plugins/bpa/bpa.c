@@ -831,8 +831,7 @@ bpa_pool_remap_count (const bpa_pool_t *now, const bpa_pool_t *cfg,
 		      u32 *n_total, u32 *example, u32 max_examples)
 {
   u32 moved = 0, seen = 0, i;
-  u32 usable = now->inside.count < now->capacity ? now->inside.count
-						 : now->capacity;
+  u32 usable = bpa_pool_usable (now);
 
   *n_total = usable;
   for (i = 0; i < usable; i++)

@@ -873,21 +873,72 @@ if vppctl show version >/dev/null 2>&1; then
       unpaired="$unpaired $iface"
     fi
   done
-  # Configured routing turns this from something worth knowing into a box that
-  # cannot do what it has been told to do. `router bgp`, `router ospf` and
-  # `router isis` are all top level in FRR's running configuration.
+  # WHO NEEDS THIS PAIR, and there are TWO answers rather than one. Asking
+  # only the first is what #334 is: a box that hands its only card over takes
+  # a static default route and has no `router` stanza at all, so the box the
+  # handover was written for took the softer branch - the one box where a
+  # missing pair means nobody can reach it was told so as a nicety.
+  #
+  # FIRST: configured routing turns this from something worth knowing into a
+  # box that cannot do what it has been told to do. `router bgp`, `router
+  # ospf` and `router isis` are all top level in FRR's running configuration.
   routing_configured=no
   if vtysh -c "show running-config" 2>/dev/null | grep -q "^router "; then
     routing_configured=yes
   fi
+  # SECOND: did this box give away the card it is reached on. The record the
+  # VTY wrote beside the card's name is the holder of that answer and the only
+  # one there is - between the commit that names the card and this boot there
+  # is nothing on the box to read back, because Linux no longer has the netdev
+  # and the dataplane never had the address. bind-dataplane-nic reads the same
+  # key from the same file for the same reason (#303), and apply-tuning acts
+  # on its mere presence; nothing here parses the value, which is the VTY's.
+  #
+  # Read with sed and never sourced, for the reason HEXA_LOW_LATENCY is above:
+  # tune.env is a file an operator edits by hand, and sourcing it would run
+  # whatever is in it as root inside the boot self-test. The quotes come off
+  # and the spaces do NOT - the value is three fields, name address and MAC.
+  handed_over=$(sed -n \
+      's/^[[:space:]]*HEXA_DATAPLANE_MGMT[[:space:]]*=[[:space:]]*//p' \
+      "$TUNEENV" 2>/dev/null | tail -1 | tr -d '"'"'"'')
   if [ -z "$unpaired" ] && [ "$npaired" -eq 0 ]; then
     # Nothing but local0. The DPDK block above already said why, in the
     # operator's terms, so this does not say it a second time as a warning.
     say "  [info] the dataplane has no interface that could be paired yet"
-  elif [ "$npaired" -eq 0 ] && [ "$routing_configured" = yes ]; then
-    bad "routing is configured and NO interface is paired into the kernel"
-    say "        FRR has no interface for the port that carries traffic, so"
-    say "        BGP, OSPF and IS-IS will never form an adjacency."
+  # A box with NEITHER answer stays a warning, which is the point of asking
+  # two questions instead of failing every unpaired interface. A box that
+  # forwards CGNAT, runs no protocol and was never handed its own card is a
+  # supported configuration of this product, and a check that goes red on it
+  # is one people learn to run around.
+  #
+  # The count and not the names: the record holds the card's LINUX name, which
+  # is the one thing the handover destroys, so there is no honest way to say
+  # which of several dataplane interfaces was meant to carry it back. On the
+  # single-card box this is about, one pair anywhere is the pair.
+  elif [ "$npaired" -eq 0 ] && \
+       { [ -n "$handed_over" ] || [ "$routing_configured" = yes ]; }; then
+    # The headline is the WORSE of the two reasons. Adjacencies that will not
+    # form are a box somebody can still log in to and fix; a box whose only
+    # card went to the dataplane with no pair behind it is a box reachable at
+    # a console somebody has to walk to.
+    if [ -n "$handed_over" ]; then
+      bad "this box handed its only card over and NO pair carries the address"
+      say_list "        " "The card named in /etc/hexarouting/tune.env was" \
+        "given to the dataplane, and the linux_cp pair is where the address" \
+        "the box answers on goes back. Without one it comes up forwarding" \
+        "and unreachable from anywhere but its console."
+      # The record itself, because the operator at that console has to put the
+      # address back by hand and it is the only place the old one is written.
+      say_list "        " "the management path it recorded: $handed_over"
+    else
+      bad "routing is configured and NO interface is paired into the kernel"
+    fi
+    # Said whichever headline was chosen. A box that did both is a box whose
+    # adjacencies are down as well, and the operator is owed both facts.
+    if [ "$routing_configured" = yes ]; then
+      say "        FRR has no interface for the port that carries traffic, so"
+      say "        BGP, OSPF and IS-IS will never form an adjacency."
+    fi
     say "        without a pair:$unpaired"
     say "        give each one a 'linux-name <name>' under 'interface' in"
     say "        hexash, and commit."

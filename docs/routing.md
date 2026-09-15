@@ -465,6 +465,42 @@ refuses outright when the record is absent. A hand-edited `tune.env` naming the
 management card with no way back is still a box nobody can reach, and all three
 places say so.
 
+**And the boot replay reads it from there too, which is
+[#332](https://github.com/andrediashexa/hexarouting/issues/332).** The pair is
+made by `hexash --load`, out of the configuration file
+`hexarouting.service` replays - and `commit` does not write that file. Only
+`save` does. So a box that did what the VTY tells it to do, commit and reboot,
+came up replaying a file that had never heard of the card: on a fresh appliance
+the three comments the installer ships, which `Config.is_empty()` returns on
+before `apply()` is reached at all. Measured on a booted guest by
+`lab/install-iso.sh`: the bind worked, `virtio-pci` to `uio_pci_generic`, the
+netdev gone, the dataplane holding `GigabitEthernet0/9/0` - and no pair, no
+address on any interface, and nobody able to reach it. `load()` now takes the
+card and the record from their holder when the file being replayed carries
+neither, and puts the management path back even on the empty file, because a
+file with no statements in it is not a box that gave its card away.
+
+**A card the dataplane has not got means two different boots, and they are
+told apart by asking Linux.** While Linux still has the card the handover has
+not happened yet - the boot before the operator reboots into it, the one after
+a rollback gave the card back - and there is nothing to do and nothing to say,
+which is what `hexash --load` running on every boot requires. Once Linux has
+given the card up and the dataplane has not got it, the card is on neither side
+and the address has nowhere to go, and the box says so on the console rather
+than returning success:
+
+```
+error: the card this box is reached on was handed over and nothing took it
+    Linux no longer has ens18 and no interface the dataplane holds has
+    52:54:00:00:00:01, so there is no pair for 10.95.200.198/24 to go on
+```
+
+Read from `/sys/class/net` by MAC, because the Linux name is the one thing that
+does not survive the handover and a device DPDK has taken is not under that
+directory at all. A tree with no `/sys/class/net` in it - a developer's box,
+this VTY's own suites - is "cannot look" and not "the card is gone", the same
+posture `dataplane_if_refusal()` takes about an empty card list.
+
 ### The handover is a confirmed commit, asked for or not
 
 The box does not lose the session at the commit. It loses it at the restart

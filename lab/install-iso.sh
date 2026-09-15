@@ -901,6 +901,42 @@ wait_said() {  # <sentence> <seconds> <what the driver was doing>
   done
 }
 
+# TWO OUTCOMES, because a driver that can only wait for success spends its
+# whole timeout on a box that already answered. PHASE 4 waited the full 600
+# seconds for "commit complete" on a commit that had printed "commit failed"
+# seconds in, and what diagnosed it was the console dump the timeout prints,
+# not the wait (#332). Ten minutes per run, and a verdict that says "the box
+# never answered" about a box that answered immediately.
+#
+# 0 for the first string, 2 for the second, 1 for neither - so a caller that
+# ignores the distinction still reads a refusal as a failure rather than as a
+# pass. The console position advances the same way wait_for's does, and for
+# the same reason: without it a line printed once satisfies every later wait.
+wait_for_either() {  # <string-a> <string-b> <seconds> <what it was doing>
+  _a=$1; _b=$2; _t=$3; _why=$4; _n=0
+  while :; do
+    _seen=$(console_since)
+    if printf '%s\n' "$_seen" | grep -qF "$_a"; then
+      CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+      return 0
+    fi
+    if printf '%s\n' "$_seen" | grep -qF "$_b"; then
+      CONSOLE_POS=$(( $(wc -c < "$CONSOLE_LOG") + 1 ))
+      return 2
+    fi
+    if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+      console_gave_up "$_a or $_b" "$_why" "${_n}s, and then the machine exited"
+      return 1
+    fi
+    if [ "$_n" -ge "$_t" ]; then
+      console_gave_up "$_a or $_b" "$_why" "${_t}s"
+      return 1
+    fi
+    sleep 1
+    _n=$((_n + 1))
+  done
+}
+
 wait_for() {  # <string> <seconds> <what the driver was doing>
   _s=$1; _t=$2; _why=$3; _n=0
   while :; do
@@ -2878,14 +2914,21 @@ then
     # point where the box may stop answering on the network - the card is
     # being taken off the kernel - which is why every reading from here on is
     # taken at the CONSOLE and not over ssh.
-    if wait_for "commit complete" 600 "the handover commit to apply"; then
-      echo "  [ ok ] the VTY accepted the handover and the commit completed"
-    else
-      echo "  [FAIL] the handover commit did not complete. On a box with one"
-      echo "         card this is the whole product: there is no second card"
-      echo "         to give the dataplane instead"
-      fail=1
-    fi
+    wait_for_either "commit complete" "commit failed" 600 \
+      "the handover commit to apply"
+    case $? in
+      0) echo "  [ ok ] the VTY accepted the handover and the commit completed" ;;
+      2) echo "  [FAIL] the box refused the handover and rolled the commit"
+         echo "         back. It is still reachable, which is the right way"
+         echo "         to fail, and it did not take its card - so a box with"
+         echo "         one NIC cannot be given a dataplane at all. What it"
+         echo "         said is on the console above"
+         fail=1 ;;
+      *) echo "  [FAIL] the handover commit neither completed nor was refused."
+         echo "         On a box with one card this is the whole product:"
+         echo "         there is no second card to give the dataplane instead"
+         fail=1 ;;
+    esac
     send "exit"
     wait_for "hexarouting> " 120 "the VTY to leave configuration mode" || fail=1
 
