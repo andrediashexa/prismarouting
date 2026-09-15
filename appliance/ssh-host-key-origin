@@ -1,0 +1,140 @@
+#!/bin/sh
+# Were this box's ssh host keys made on it, or handed to it inside the image?
+# The ONE holder of that answer, and of the commands that repair it (#248).
+#
+# Every ISO this project published up to and including 0.66.0 carried the host
+# keys openssh-server's postinst generated inside the build container, private
+# halves included. hexarouting-install unpacks that squashfs onto the disk and
+# then enables sshd with PermitRootLogin yes, so every box installed from one
+# medium answers with the SAME key, and its private half is in the download.
+# build-iso.sh removes them from the image and the installer generates a set
+# per box (#245), which fixes every box installed FROM NOW ON and does nothing
+# for the ones already racked.
+#
+# WHY THIS IS A FILE AND NOT ELEVEN LINES INSIDE appliance/selftest, which is
+# where the rule lived when the boot report first learned to say it. Two
+# readers need the same answer, at two different moments:
+#
+#   * the boot self-test. Its report goes to OUT, and OUT is /dev/console: its
+#     say() falls back to stdout only when the write to the console FAILS, so
+#     on a racked box the report reaches a serial port once, at boot, and does
+#     NOT reach the journal - `journalctl -u hexarouting-selftest` cannot
+#     bring it back afterwards.
+#   * the VTY banner, which is the only one of the two an operator who reached
+#     this box over ssh ever sees.
+#
+# The second reader is why #248 stayed open with the first one merged: the box
+# was saying "this ssh session can be impersonated" to a screen nobody is
+# attached to, while the operator it is about was logged in over the very
+# session being described.
+#
+# Two readers of one answer is the shape tools/selftest-verdict.sh exists to
+# end, and its header counts what a second copy cost this project four times
+# over. So the decision, the key names and the three commands that repair it
+# are written here and nowhere else, and test/test_ssh_host_key_origin.py
+# refuses a reader that spells the commands itself.
+#
+# THE SIGNAL IS THE TIMESTAMP, and not the key's comment, which was the
+# obvious candidate and is wrong. `ssh-keygen -A` writes "<user>@<hostname>"
+# into the comment, and the hostname it uses is the one gethostname() answers,
+# which chroot does not change: the installer runs `chroot "$MNT" ssh-keygen
+# -A`, so a box's own freshly generated key is stamped with the LIVE MEDIUM's
+# hostname - measured as "root@hexarouting" - whatever the operator named the
+# box. Comparing the comment against the hostname would therefore report every
+# correctly installed box with a name of its own. The comment cannot separate
+# the two cases and is not read here.
+#
+# What does separate them is that a key generated on this box cannot be older
+# than the moment its file was created on this filesystem, and a key that
+# arrived inside the image is: `unsquashfs` restores the mtime the build
+# container wrote, onto an inode the installer creates at install time. The
+# published 0.37.0 medium carries keys stamped 2026-09-08 13:43, three minutes
+# before its squashfs was made, and unpacking it today gives files whose mtime
+# is that and whose birth time is now. So mtime EARLIER than birth time means
+# the contents are older than the file, which nothing that was written here
+# can be.
+#
+# It costs nothing kept in the tree. A list of the fingerprints every release
+# shipped would be the other way to recognise them, and it is the opposite of
+# what #245 just did - key material back in the repository, covering only the
+# releases somebody remembered to add.
+#
+# A restore of /etc/ssh from a backup made with `tar -p` or `cp -p` lands here
+# too, and reads as a key that was not made on this box, which is what it is.
+#
+# WHAT IT PRINTS, and it always prints every kind of row so that a reader can
+# tell "no keys are handed" from "the rule never ran":
+#
+#   handed <name>...        keys whose contents are older than their inode
+#   unreadable <name>...    keys the two timestamps could not be had for
+#   own <count>             keys that were made here
+#   fix <command>           the repair for a box holding handed-down keys
+#   generate <command>      the repair for a box holding none at all
+#
+# The row for an empty set is still printed, with nothing after the word.
+#
+# It never opens a key. Metadata only: this recognises a shape, and a program
+# that reads private keys to decide something is a program somebody then has
+# to read line by line to find out where it put them.
+set -u
+
+# The filesystem to ask about. An argument rather than an environment
+# variable because both readers pass it explicitly - the self-test hands on
+# the root it was itself pointed at, and test fixtures are roots like any
+# other. Empty, which is every real box, means /.
+ROOT=${1:-}
+
+handed=""
+unreadable=""
+own=0
+
+for k in "$ROOT/etc/ssh"/ssh_host_*_key; do
+  [ -f "$k" ] || continue
+  t=$(stat -c '%Y %W' "$k" 2>/dev/null)
+  m=${t%% *}; b=${t##* }
+  # %W is 0 when the filesystem does not record a birth time, and stat says
+  # nothing at all when it could not read the file. Without both numbers there
+  # is nothing to compare, and silence would read as a pass.
+  case "$m $b" in
+    *[!0-9\ ]*|""|" "*|*" ") unreadable="$unreadable ${k##*/}" ;;
+    *) if [ "$b" -le 0 ]; then
+         unreadable="$unreadable ${k##*/}"
+       elif [ "$m" -lt "$b" ]; then
+         handed="$handed ${k##*/}"
+       else
+         own=$((own + 1))
+       fi ;;
+  esac
+done
+
+echo "handed${handed}"
+echo "unreadable${unreadable}"
+echo "own $own"
+
+# THE REPAIR, written down once for every reader there is or will be. Both
+# halves of every key: `ssh-keygen -A` rewrites the .pub of each key it
+# generates, so the ones it can leave behind are the types it does NOT
+# generate - measured, OpenSSH_9.2p1 Debian-2+deb12u10 writes RSA, ECDSA and
+# ED25519 and nothing else - and a ssh_host_dsa_key.pub from a build container
+# would otherwise sit on the disk for the life of the box naming a fingerprint
+# the box does not have.
+#
+# No backslash and no escape in these rows, deliberately: a reader may print
+# them with echo, /bin/sh here is dash, and dash's echo expands a backslash
+# escape in what it is handed. A "\n" written into an instruction somebody is
+# meant to TYPE would reach the console as a line break, and the operator
+# would copy a command that is missing half of itself.
+echo "fix rm /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub"
+echo "fix ssh-keygen -A"
+echo "fix systemctl restart ssh"
+
+# AND THE OTHER REPAIR, which is a shorter version of the same one and is here
+# for that reason rather than in spite of it. A box with no host keys at all
+# has an sshd that will not start, so it is reachable at its console and
+# nowhere else; there is nothing to remove and the removal must not be offered,
+# because an operator at that console is typing what is on the screen into a
+# box they cannot get back into if they get it wrong. Two situations, one
+# answer to "how does this box come by keys of its own", and a second file
+# writing out half of it is a second file that can be corrected and missed.
+echo "generate ssh-keygen -A"
+echo "generate systemctl restart ssh"

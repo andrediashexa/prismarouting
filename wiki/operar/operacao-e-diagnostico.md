@@ -114,6 +114,30 @@ Quando as chaves são da própria caixa, a linha é outra e não pede nada:
   [ ok ] the ssh host keys were generated on this box, not handed to it
 ```
 
+### A mesma coisa aparece ao entrar na caixa
+
+O relatório do autoteste é escrito no console, no boot. Uma caixa em rack é alcançada por SSH, e ninguém está olhando para aquele console - então a caixa repete o aviso no banner, toda vez que alguém entra na VTY, exatamente nas caixas em que ele é verdade:
+
+```
+This box's ssh host keys were not generated on it:
+    ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key
+    they came in with the system image, so every box installed from that
+    medium answers with this same key and the private half of it is in the
+    published download. This ssh session can be impersonated and your client
+    will not object, because the fingerprint it pinned is the fingerprint it
+    was handed.
+regenerate them, in a shell on this box ('start shell'):
+    rm /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub
+    ssh-keygen -A
+    systemctl restart ssh
+
+    every client that pinned the old fingerprint will then refuse to connect
+    and report that the host key changed. That is this being fixed, not an
+    attack, and it is the cost of fixing it.
+```
+
+Numa caixa que gerou as próprias chaves o banner não diz nada sobre isso. E a resposta é medida a cada login, não lembrada do último boot: depois de regenerar, o aviso some no login seguinte, sem precisar reiniciar a caixa.
+
 Há mais duas linhas vizinhas, que não querem dizer a mesma coisa:
 
 * `[FAIL] no ssh host keys in /etc/ssh: sshd cannot start` — não existe chave nenhuma. O SSH não sobe e a caixa só é alcançável pelo console; `ssh-keygen -A` seguido de `systemctl restart ssh` resolve.
