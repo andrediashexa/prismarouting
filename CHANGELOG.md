@@ -97,6 +97,16 @@ version has a chance of seeing it.
   management port, and on a single-card machine that means somebody walks to
   it.
 
+  It went red on its first run, against the published 0.74.2 medium, and what
+  it found is [#332](https://github.com/andrediashexa/hexarouting/issues/332):
+  the box binds the card, Linux releases it, the dataplane holds it, and the
+  box comes back with no address on any interface and nobody can reach it. The
+  boot self-test on that same console says so - no interface is paired into
+  the kernel - so the diagnosis was already right and only the doing was
+  missing. That is what an unmeasured claim costs: the sentence was on the
+  public page a virtual-machine operator reads, and the release gate now
+  refuses a release until it is true.
+
 ### Fixed
 
 * **`show hardware` told an operator their card was unusable and stopped

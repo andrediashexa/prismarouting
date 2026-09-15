@@ -2839,7 +2839,7 @@ then
     send 'D=$(readlink -f /sys/class/net/$M/device); case "$(basename $D)" in *:*:*.*) P=$(basename $D);; *) P=$(basename $(dirname $D));; esac; echo "HX""LAB ho-pci=$P"'
     wait_for "HXLAB ho-pci=" 30 "the box to give the card's PCI address" \
       || fail=1
-    send 'echo "HX""LAB ho-drv0=$(basename $(readlink -f /sys/bus/pci/devices/$P/driver) 2>/dev/null)"'
+    send 'echo "HX""LAB ho-drv0=$([ -e /sys/bus/pci/devices/$P/driver ] && basename $(readlink -f /sys/bus/pci/devices/$P/driver) || echo none)"'
     wait_for "HXLAB ho-drv0=" 30 "the box to name the card's driver" || fail=1
     send 'echo "HX""LAB ho-addr0=$(ip -o -4 addr show dev $M | awk "{print \$4}")"'
     wait_for "HXLAB ho-addr0=" 30 "the box to say what address it is on" \
@@ -2900,10 +2900,17 @@ then
     # where both designs are supposed to end up.
     send "start shell"
     wait_for "entering /bin" 60 "the shell to open after the commit" || fail=1
-    send 'echo "HX""LAB ho-drv1=$(basename $(readlink -f /sys/bus/pci/devices/$P/driver) 2>/dev/null || echo none)"'
+    # NAMED BY THE HOST, not by a variable in the guest. $P and $M were set in
+    # the shell that `exit` closed, and `start shell` opens a new one, so with
+    # them empty the box was asked about /sys/bus/pci/devices//driver and
+    # /sys/class/net/ - and answered "driver" and "present", about neither. A
+    # reading whose subject is empty does not fail; it answers about something
+    # else, which is the worse of the two.
+    _p=$(live_field ho-pci); _m=$(live_field ho-if)
+    send 'echo "HX""LAB ho-drv1=$([ -e /sys/bus/pci/devices/'"$_p"'/driver ] && basename $(readlink -f /sys/bus/pci/devices/'"$_p"'/driver) || echo none)"'
     wait_for "HXLAB ho-drv1=" 60 \
       "the box to say which driver holds the card after the commit" || fail=1
-    send 'echo "HX""LAB ho-netdev1=$([ -e /sys/class/net/$M ] && echo present || echo gone)"'
+    send 'echo "HX""LAB ho-netdev1=$([ -e /sys/class/net/'"$_m"' ] && echo present || echo gone)"'
     wait_for "HXLAB ho-netdev1=" 30 \
       "the box to say whether Linux still has the netdev" || fail=1
     send "sync"
@@ -2974,7 +2981,7 @@ if [ "${HO_DRIVEN:-0}" = 1 ]; then
   fi
 
   if login_root "the box to come back holding its card"; then
-    send 'echo "HX""LAB ho-drv2=$(basename $(readlink -f /sys/bus/pci/devices/'"$HO_PCI"'/driver) 2>/dev/null || echo none)"'
+    send 'echo "HX""LAB ho-drv2=$([ -e /sys/bus/pci/devices/'"$HO_PCI"'/driver ] && basename $(readlink -f /sys/bus/pci/devices/'"$HO_PCI"'/driver) || echo none)"'
     wait_for "HXLAB ho-drv2=" 60 \
       "the box to say which driver holds the card now" || fail=1
     send 'echo "HX""LAB ho-netdev2=$([ -e /sys/class/net/'"$HO_IF"' ] && echo present || echo gone)"'
