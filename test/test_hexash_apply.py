@@ -1294,5 +1294,76 @@ check("control-plane traffic" not in _out.getvalue(),
       f"and it said so anyway: {_out.getvalue()!r}")
 print("  a non-colliding pool and an IPv6 address alongside it: accepted")
 
+print("\n=== a pool whose port range holds no block is refused at check (#361) ===")
+# THE THIRD OF #361'S THREE CHECKS, and the only one that is not at the
+# `ports` line. It needs `block-size` as well, and the two can be typed in
+# either order - `ports 1000 1100` then `block-size 64` is a correct pool
+# built in a correct order - so a guard at either line would refuse a pool
+# that is about to be right. The commit check is where the pool is finished.
+#
+# Driven through apply(check_only=True), which is what `commit`, `commit
+# check`, `rollback` and `--load` all reach, and NOT by calling
+# Pool.block_fits(): the predicate is proved in test_hexash_complete.py and
+# what is proved here is that the commit asks it.
+_cfg = target_with("narrow", "100.64.0.0/22", "200.150.9.0/28")
+_cfg.pools["narrow"].ports = "1000 1100"
+_out = io.StringIO()
+_sh = shell_with(FakeApi())
+with contextlib.redirect_stdout(_out):
+    _ok = _sh.apply(_cfg, check_only=True)
+_said = _out.getvalue()
+check(_ok is False,
+      f"a 512-port block in a 101-port range passed the commit check: "
+      f"bpa_pool_init refuses it at the write, with the candidate already "
+      f"half applied: {_said!r}")
+check("101 usable ports" in _said and "512" in _said,
+      f"the refusal does not name both numbers the operator has to reconcile: "
+      f"{_said!r}")
+# Both statements whole and on their own rows: the next move is to go and
+# edit one of them out of `show configuration` (#252).
+check("    ports 1000 1100" in _said and "    block-size 512" in _said,
+      f"the two statements are not quoted whole, so neither is greppable: "
+      f"{_said!r}")
+_wide = [(len(l), l) for l in _said.splitlines() if len(l) > config.CONSOLE_COLUMNS]
+check(not _wide,
+      f"the refusal wraps on a serial console: {_wide}")
+
+print("\n=== and the same range with a block that fits goes through ===")
+# The control, without which the check above is satisfied by a box that
+# refuses every narrow pool. 101 ports and a 64-port block is a legal pool.
+_cfg = target_with("fits", "100.64.0.0/22", "200.150.9.0/28", block="64")
+_cfg.pools["fits"].ports = "1000 1100"
+_out = io.StringIO()
+_sh = shell_with(FakeApi())
+with contextlib.redirect_stdout(_out):
+    _ok = _sh.apply(_cfg, check_only=True)
+check(_ok is True,
+      f"a 64-port block in a 101-port range was refused: {_out.getvalue()!r}")
+check("usable ports" not in _out.getvalue(),
+      f"and it said so anyway: {_out.getvalue()!r}")
+
+print("\n=== a pool the box ALREADY has is not re-judged by it (#357) ===")
+# The #357 rule at commit level. A pool that is not in this candidate's
+# pool_add or pool_replace is a fact rather than a request, and a check that
+# swept every pool in the target would make one standing pool cost the
+# operator every commit on the box. bpa_pool_init would not have built such a
+# pool, so this is a guard against the check growing rather than against a
+# shape seen in the field - which is why it is asserted rather than assumed.
+_run = ("cgnat pool old\n inside 100.64.0.0/22\n"
+        " outside 200.150.9.0/28\n block-size 512\n ports 1000 1100\n exit\n")
+_out = io.StringIO()
+_sh = shell_with(FakeApi(), running_text=_run)
+_cand = config.Config.parse(_run + "interface pg1\n mtu 9000\n")
+check(list(_cand.pools) == ["old"] and _cand.pools["old"].ports == "1000 1100",
+      f"the fixture does not carry the standing pool: {list(_cand.pools)}")
+with contextlib.redirect_stdout(_out):
+    _ok = _sh.apply(_cand, check_only=True)
+check(_ok is True,
+      f"an unrelated change was refused over a pool the box already has, "
+      f"which is how a box stops being configurable (#357): "
+      f"{_out.getvalue()!r}")
+print("  refused where it is asked for, and silent about what the box holds")
+
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)
