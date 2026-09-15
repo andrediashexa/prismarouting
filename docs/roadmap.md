@@ -2185,8 +2185,34 @@ which is the one sentence standing between an operator and somebody else's
 data. The four suites drive that program through an answer file, which is the
 non-interactive path and is not what a first install uses.
 `appliance/bind-dataplane-nic` (39 lines) and `appliance/apply-tuning` (24)
-have the same gap and are smaller; a reader written for the installer alone
-would be the third one this repository wrote per component.
+had the same gap.
+
+**Closed, and the count went up rather than down.** All three have the reader
+now, over a shared `test/say-coverage.sh` rather than a third per-component
+copy: **181 messages over 128 boxes** for the installer, 37 over 17 for the
+bind, 30 over 22 for the tuner, both halves, no allowlist and no remainders.
+181 and not 117 because the extraction is a strict superset of the scan that
+produced that number - it takes `die` and `fatal` refusals and printers called
+as the body of a `case` arm or after `||`, and drops what is not a screen. Six
+branches had never run anywhere; five have a box, one of them the bind that
+SUCCEEDS, which no box could reach before because a static fake sysfs cannot
+move a device. The sixth had no box to arrange and could not fire on any input,
+and is gone.
+
+**The last output body with no reader is the dataplane's own CLI**
+([#366](https://github.com/andrediashexa/hexarouting/issues/366)).
+`src/plugins/bpa/bpa_cli.c` is what `show bpa ...` prints, which is what an
+operator types when a customer calls, and **36 of its 58 messages carrying a
+usable needle are named by no lab, no suite, no wiki page and no document.**
+Named by nothing is weaker than printed by nothing and the difference is
+stated on the issue - but the 36 include `BEYOND CAPACITY: the pool has no
+block for`, `this answers for NOW ONLY. The block belonged to somebody else`
+and `port refusals are not a box fault`, which are the sentences that stop an
+operator attributing traffic to the wrong subscriber and stop a support ticket
+becoming a hardware RMA. The stronger measurement cannot be taken today at
+all: `tools/run-all-labs.sh` writes each lab's output to a `mktemp -d` and
+deletes it on exit, so the corpus that would answer the question does not
+survive the run that makes it. That is the first half of #366.
 
 **And a reader can be right about most screens and blind to one word**
 ([#365](https://github.com/andrediashexa/hexarouting/issues/365)).
