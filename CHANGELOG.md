@@ -77,6 +77,23 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The self-test's rx-queues line was the request, and read like a
+  measurement** ([#345](https://github.com/andrediashexa/hexarouting/issues/345)).
+  `[ ok ] rx queues: num-rx-queues 7` comes from `/etc/vpp/startup.conf`, which
+  is what the tuner asked the dataplane for. A card with fewer queues gets what
+  it has, and
+  [#330](https://github.com/andrediashexa/hexarouting/issues/330) is the box
+  where VPP refused the interface outright over it: seven asked for on a virtio
+  NIC with one, the box booted with no dataplane at all, and this line printed
+  green about seven queues. It says `rx queues requested:` now. The cores three
+  sections below are read back off the running process and say so; this one
+  cannot be yet, and the reason is in #345: `show hardware-interfaces` prints
+  `rx: queues N (max M)` only for a DPDK interface, and prints nothing of the
+  kind for the packet-generator interfaces every lab here uses - measured in
+  the dev container, where `pg0` gives a name, a link state and a MAC. A reader
+  written against a format nobody on this box has seen, tested against a
+  fixture that fabricates it, would prove nothing.
+
 * **The soak's collector stopped before the box did, and the records it missed
   read as a leak**
   ([#342](https://github.com/andrediashexa/hexarouting/issues/342), follows
