@@ -409,6 +409,57 @@ elif ! rm_out=$(sh "$WORK/tools/roadmap-state.sh" 2>&1); then
 else
   echo "==> the roadmap and the tracker agree"
 fi
+
+# AND THE TITLE THIS RELEASE WILL CARRY WHERE PEOPLE ACTUALLY READ IT.
+#
+# The note on the tag is checked above, with the argument that it is what an
+# operator who does not clone this repository reads. The release page is the
+# same audience with a wider reach: it is what somebody lands on from a search,
+# from a link in a ticket, or from the repository's own releases list, and the
+# title is the first thing they read when deciding whether a release fixes the
+# thing biting them.
+#
+# Measured on 2026-09-15 over all 74 published releases: 66 titles are the
+# CHANGELOG heading and 8 are not. Four of those are TRUNCATIONS - 0.69.0,
+# 0.70.0, 0.71.0 and 0.46.0 each drop the second half of their heading, which
+# is where the second defect that release fixed is named (#340).
+#
+# Only the release being cut can be checked here, and only when it has already
+# been published - which is the normal shape for a re-run of the gate over a
+# tag that went out. A tag with no release yet is the ordinary case and says so
+# rather than refusing: the publishing has not happened.
+# NOT behind docs_bad. Guarding this on the two checks above having passed puts
+# it behind a check that has been red since 2026-09-09, which is the defect the
+# wiki and roadmap pair had and which was fixed two hours before this was
+# written. All three verdicts are taken, then one refusal.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  rel_title=$(gh release view "$TAG" --json name -q .name 2>/dev/null || true)
+  if [ -z "$rel_title" ]; then
+    echo "==> $TAG has no published release yet, so its title is not checked"
+  else
+    # The heading, read out of the tagged tree rather than out of the working
+    # one: the release is about what the tag carries.
+    head_title=$(awk -v v="## $VER" '
+      index($0, v) == 1 { sub(/^## [0-9.]+[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*/, ""); print; exit }
+    ' "$WORK/CHANGELOG.md")
+    # Both sides normalised for an optional "HexaRouting ", an optional "v",
+    # the version and the dash, so this is about the sentence and not about
+    # punctuation somebody typed into a web form.
+    norm_title=$(printf '%s' "$rel_title"       | sed -e 's/^HexaRouting[[:space:]]*//'             -e "s/^v\{0,1\}$VER[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*//")
+    if [ -n "$head_title" ] && [ "$norm_title" != "$head_title" ]; then
+      echo "error: the published release for $TAG does not carry the" >&2
+      echo "       CHANGELOG heading as its title." >&2
+      echo "         heading:   $head_title" >&2
+      echo "         published: $norm_title" >&2
+      echo "       That page is what somebody who does not clone this" >&2
+      echo "       repository reads, and the title is what they decide on." >&2
+      echo "       A shorter one announces less than the release fixed." >&2
+      docs_bad=1
+    else
+      echo "==> the published release title is the CHANGELOG heading"
+    fi
+  fi
+fi
 [ "$docs_bad" = 0 ] || exit 1
 
 # The same seam the installer has, and for the same reason: the checks above

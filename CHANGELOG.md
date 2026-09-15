@@ -204,6 +204,18 @@ version has a chance of seeing it.
   `test/test_installer.sh`, which is where somebody adding the messages would
   look to see what there is to say.
 
+* **A failing installer case reported the previous case's output.**
+  `test/test_installer.sh`'s `run()` set `LAST_OUT` only where the case passed,
+  and both failure paths returned before it - so the 63 `case "$LAST_OUT" in`
+  assertions that follow every run in that file described the box before the
+  one that had just failed. The first failure in a run made every message after
+  it about the wrong machine, at the one moment somebody is reading them.
+  Driven side by side over the same three cases, the third failing: the old
+  helper leaves the follow-up reading `output of case B`, the new one `output
+  of case C`. The refusal path also prints what the installer said, which it
+  did not - `expected refusal, it was accepted` on its own sends a reader to
+  re-run it by hand to find out what happened instead.
+
 * **The installer said a disk was held by an array on a box that has no
   arrays, and then partitioned it**
   ([#339](https://github.com/andrediashexa/hexarouting/issues/339)).
@@ -1537,6 +1549,83 @@ version has a chance of seeing it.
   told a box the tuner sized that its operator had sized it.
 
 ### Added
+
+* **The release gate compares the published release's title with the CHANGELOG
+  heading** ([#340](https://github.com/andrediashexa/hexarouting/issues/340)).
+  Nothing read the published releases at all. Measured over all 74: 66 titles
+  are the heading and 8 are not, and four of those are **truncations** - 0.69.0,
+  0.70.0, 0.71.0 and 0.46.0 each drop the second half, which is where the second
+  defect that release fixed is named. The gate already argues this about the
+  tag's note, that it is what an operator who does not clone the repository
+  reads; the release page is the same audience with a wider reach, and the title
+  is what somebody decides on when they are looking for the release that fixes
+  what is biting them. It is placed beside the wiki and roadmap comparisons and
+  **not behind them**: those have been red since 2026-09-09, so a check behind
+  them would never have run once - the defect that pair already had, committed
+  again while writing this and caught by running it. The eight already published
+  are a repair by hand and the issue records them.
+
+* **The VTY refuses 180 times, and 114 of those refusals had never been
+  printed by anything.** `src/hexash/hexash.py` says no to the operator 180
+  times, through `self.err()` and `self.err_dataplane()`. Measured by wrapping
+  `err` and reading the VTY's own frames off the stack while every suite that
+  drives it ran: 66 of those call sites had been printed by something, and 114
+  had not. A refusal nobody has watched fire is one this repository cannot
+  tell from a refusal that does not fire, and what it lets through is the
+  configuration the refusal was written to stop - a pool the dataplane would
+  reject, an MTU the driver never took, a uRPF the operator believes is
+  dropping spoofed sources while the box translates them. Three refusals of
+  exactly that shape were found and closed by hand in the last two days, each
+  because somebody thought to look.
+
+  `test/test_hexash_refusals.py` is what this project does instead of thinking
+  to look. It is the second of the two readers at the end of
+  `test/test_selftest.sh`, carried from shell to Python's AST: the call sites
+  are parsed out of the product, the 18 suites that drive the VTY are derived
+  from `test/suites.list` rather than listed, and coverage is spent on the
+  **line** that refused rather than on the message. That last part is the
+  whole difference - nine call sites print "the dataplane does not have it"
+  word for word, so a reader keyed on the text can neither tell them apart nor
+  survive a mutation to it. There is no list to keep in step: a refusal added
+  to the VTY with no box added anywhere goes red on the next run.
+
+  46 boxes were arranged with it, in the order the refusals matter rather than
+  the order they are easy: 23 for the interface verbs that talk to the
+  dataplane (a name the dataplane has not got, told apart from a name it
+  refused, on each of nine verbs; every one of those refusals coming back from
+  the dataplane itself; a sub-interface whose parent is not on the box), 9 for
+  a pool's data (half a mapping, the device's own check, a forward on a pool
+  that is not being rebuilt, and each of the six pool writes a commit can fail
+  at), 8 for the management path (ssh, snmp, the accounts, the tuner's file,
+  a routing reload that failed, FRR silent at commit and at check, and a
+  read-only account reaching for configuration mode) and 6 for the read-backs
+  that catch a dataplane which accepted a message and applied nothing. Each
+  was shown red on its own mutation of the product - the guard that reaches
+  the refusal made false, never the message edited, because a reader keyed on
+  the line is unmoved by the text and a test that takes its needle from the
+  string it checks agrees with any change to that string.
+
+  That takes the unrendered count from 114 to 70, and the 70 are **named by
+  the reader and held as a floor that may only go down**, the idiom
+  `test/test_off_run_coverage.sh` already uses for labs with no off run. No
+  allowlist: an allowlist is read once and grown forever, and the failure this
+  file exists for is a refusal nobody re-examines. What the reader cannot see
+  is written in its header rather than left to be discovered - a suite that
+  drove the VTY as a program rather than as a module, the labs, and the two
+  call sites (`require()` and `say_dataplane_if_refusal()`) that print many
+  different refusals from one line.
+
+* **Eleven of the release gate's fourteen reachable refusals are driven now,
+  up from six.** The five added protect what an operator reads about their own
+  version: a commit that is not a tag; a release tag whose `## Unreleased`
+  section still carries entries, so the release contains work it does not
+  claim; a shipped release's section edited after the fact, which changes what
+  a box somebody is running is said to do; the guard for a section that
+  extracts to nothing, without which the duplicate-heading check passes over
+  anything; and a CHANGELOG carrying one entry twice, where an operator cannot
+  tell which release carried the fix. Everything after
+  `RELEASE_GATE_CHECK_ONLY` still needs a 321 MB image built, booted and
+  installed, and the suite says so as a number rather than leaving it assumed.
 
 * **Every lab is now accounted for on whether its checks have ever been seen
   to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third

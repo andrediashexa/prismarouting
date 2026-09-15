@@ -74,3 +74,4 @@ python3 test/test_lab_negative.py
 sh test/test_console_driver.sh
 sh test/test_release_gate.sh
 sh test/test_off_run_coverage.sh
+python3 test/test_hexash_refusals.py
