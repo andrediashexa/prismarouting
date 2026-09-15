@@ -588,7 +588,7 @@ compute, so the one resource it does not size is not the one resource it is
 silent about:
 
 ```
-# 1G hugepages: 6 requested (sized for 200000 subscribers), 6 reserved right now
+# 1G hugepages: 6 GB requested (sized for 200000 subscribers), 6 reserved right now
 # statistics segment: NOT sized here, so VPP's built-in 32 MB applies.
 #          Measured: a box on that default aborted between 7,000 and 8,000
 #          interfaces. It is per INTERFACE, not per subscriber, which is why
@@ -760,12 +760,15 @@ The running configuration is **read back** from `tune.env`, not remembered, so
 a box set up the old way shows its own card in `show running-config` and a
 second commit of the same value is `no changes to commit`.
 
-Two refusals fire at the prompt, before anything is stored:
+These fire at the prompt, before anything is stored. The count is not stated
+here on purpose: the table is the list, and a number in the sentence above a
+table is a number that outlives the table it describes - this one said **two**
+over three rows from the moment #303 added the third.
 
 | typed | refused because |
 |---|---|
 | the card carrying the default route, **on a box that has another card** | it is how the box is reached, and there is one to name instead; the refusal names it |
-| the card carrying the default route, when its address cannot be read back | an address the box cannot see is one it cannot put back |
+| the card carrying the default route, when its management state cannot be carried over: no single global IPv4 address on it, **or** no gateway on the default route, **or** no MAC | an address the box cannot see is one it cannot put back, and a handover with no way back is the walk to the console the first refusal exists to prevent |
 | a name this box has not got | with the list of names it does have |
 
 The first already existed in `hexarouting-tune` and in `bind-dataplane-nic`.
@@ -1591,6 +1594,10 @@ command line:
 | `hexarouting.password=<pw>` | answer the root password question |
 | `hexarouting.log-gb=<n>` | gigabytes for the connection records |
 | `hexarouting.mirror=<disk>` | the second disk the records are mirrored onto |
+| `hexarouting.mgmt-interface=<card>` | the card this box is managed on |
+| `hexarouting.mgmt-address=<a>` | `dhcp`, `a.b.c.d/nn`, or `none` |
+| `hexarouting.mgmt-gateway=<ip>` | with a static address only |
+| `hexarouting.mgmt-dns=<ip>[,<ip>]` | with a static address only |
 | `hexarouting.answers[=<file>]` | read the answers from a file instead |
 | `hexarouting.yes` | skip the confirmations, then **power off** |
 
@@ -1630,6 +1637,10 @@ whoever boots it do not have to agree on a path from memory.
 | `log-gb` | gigabytes for the connection records |
 | `mirror` | the second disk the records are mirrored onto |
 | `password` | the root password |
+| `mgmt-interface` | the card this box is managed on |
+| `mgmt-address` | `dhcp`, `a.b.c.d/nn`, or `none` |
+| `mgmt-gateway` | with a static address only |
+| `mgmt-dns` | with a static address only |
 | `yes` | skip the confirmations, then power off |
 
 What each answer costs to get wrong is the same as at the prompt — `disk` is

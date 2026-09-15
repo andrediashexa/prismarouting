@@ -133,12 +133,24 @@ disconnects a subscriber base to turn one ALG off.
 `src/hexash/config.py`; `test/test_hexash_config.py` pins it, including an
 assertion that every field a pool has is classified.
 
-### 1.8 Every merge into `master` is a release
+### 1.8 A release is a version bump, an annotated tag, a CHANGELOG entry and a published Release
 
-Version bump, annotated tag, CHANGELOG entry, published GitHub Release. One
-issue per feature, one branch per issue, sub-issues cut from the parent's
-branch. The project stays on `0.x.x`, so breaking changes are permitted and are
-called out rather than discovered.
+All four, every time, or none of them. One issue per feature, one branch per
+issue, sub-issues cut from the parent's branch. The project stays on `0.x.x`,
+so breaking changes are permitted and are called out rather than discovered.
+
+**This used to read "every merge into `master` is a release", and that is not
+what happens** ([#324](https://github.com/andrediashexa/hexarouting/issues/324)).
+`CONTRIBUTING.md`, which this section cites as authoritative, excepts a whole
+class in as many words: a fix merged under the standing exception *"does not
+cut a release. It rides in the next tagged one"* - because a version number
+that moves for a corrected typo tells an operator nothing about whether they
+should upgrade. Measured on this repository: **300 first-parent merges, 78
+tags**, and the last released window is six merges to one release.
+
+What is invariant is the other direction: a release has all four parts. An
+invariant stated one step too wide is one a reader checks once, finds false,
+and stops checking.
 
 *Authoritative:* [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -146,8 +158,16 @@ called out rather than discovered.
 
 `docs/`, `README.md` and `TESTING.md` are authoritative about the product. The
 wiki at `hexarouting.hexanetworks.com.br` says how somebody *uses* it, and
-`wiki/` here is a read-only mirror so it can be read and diffed without leaving
-the repository — editing that mirror changes nothing.
+`wiki/` here is its mirror, so it can be read and diffed without leaving the
+repository.
+
+**Editing that mirror used to change nothing, and since
+[#277](https://github.com/andrediashexa/hexarouting/issues/277) it is how a
+page is changed**: a correction is written here, `sh tools/wiki-status.sh`
+lists what is drafted and unpublished, and `sh tools/wiki-push.sh <file>`
+publishes one page. What is still true is that the edit reaches nobody until it
+is pushed - which is the whole of what that issue was about, since the mirror
+stood twenty-eight pages ahead of what an operator could open.
 
 The wiki is a **draft**: still being written, and still being corrected against
 this repository page by page. The conceptual error it was known for — the
@@ -233,10 +253,19 @@ Not what it contains — what question it is the answer to.
   exists - `lab/ha-failover.sh` - and is **red on purpose**: it is excluded from
   `tools/run-all-labs.sh` because the feature is missing, not because anything
   is broken.
-* **Throughput figures.** Nothing is claimed. The bench resolves differences
-  above roughly 3%, which is enough to catch a regression and not enough to
-  publish a number
-  ([#28](https://github.com/andrediashexa/hexarouting/issues/28)).
+* **Throughput figures.** Nothing is claimed, and the reason is stronger than
+  the one that used to be here. `lab/throughput.sh` runs once, keeps no
+  repeats and reports no spread, so **how small a change it could tell from
+  run-to-run variation has never been measured** - the lab says as much itself,
+  that there is no target to compare against yet. This section used to justify
+  the silence with "the bench resolves differences above roughly 3%", a figure
+  that appears nowhere else: not in the lab, not in
+  [#28](https://github.com/andrediashexa/hexarouting/issues/28), not in the
+  changelog ([#325](https://github.com/andrediashexa/hexarouting/issues/325)).
+  Publishing no number was right; supporting it with an unmeasured one was the
+  same mistake in miniature.
+  [#28](https://github.com/andrediashexa/hexarouting/issues/28) is the harness
+  that would settle it, and it needs real NICs.
 * **Per-flow logging.** Refused. It is the thing BPA exists to avoid.
 * **NPTv6, and DPI beyond what an ALG must rewrite.** Out of scope by decision;
   [roadmap.md](roadmap.md) section 4.
