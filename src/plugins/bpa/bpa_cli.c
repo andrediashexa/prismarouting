@@ -960,6 +960,14 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
        *
        * It costs nothing on every other pool: bpa_reserve_say() prints
        * nothing at all unless the reserve really does leave a worker empty.
+       *
+       * KEEP IT LAST IN THIS LOOP BODY. hexash relays this warning by taking
+       * everything between a `warning:` row and the next row opening with
+       * `pool `, because the message folds and only its first row carries a
+       * word to look for (#271). Anything printed about a pool AFTER this
+       * call would be relayed to the operator as part of the warning. The
+       * constraint is written here, where somebody adding a row would be
+       * looking, and not only in hexash, where they would not.
        */
       bpa_reserve_say (vm, p);
     }
