@@ -953,6 +953,36 @@ main (void)
 	     "the block of a subscriber that came back 900 seconds ago was "
 	     "reaped anyway");
     }
+    /*
+     * And with an EXTENSION held. bpa_dyn_acquire_extra() deliberately leaves
+     * by_sub alone, because by_sub names the subscriber's FIRST block and this
+     * path has to keep handing that one back. Every case above reaches the
+     * `q != 0` branch on a subscriber holding exactly one block, so the
+     * extension is not there to be returned by mistake. Measured: with
+     * `hash_set (d->by_sub, sub_idx, local + 1)` added beside the extras
+     * entry, all 143 checks of this file passed and a subscriber's ordinary
+     * flows would move to its second port range.
+     */
+    {
+      u32 ext_blk;
+
+      drv_extend (&v, 0, 1);
+      CHECK (v.seen_ext == 1, "the extension was refused, so nothing below is "
+			      "about a subscriber holding two blocks");
+      ext_blk = d->extras[vec_len (d->extras) - 1].local * 1 + 0;
+      CHECK (ext_blk != blk,
+	     "the extension landed on block %u, the same one the primary "
+	     "holds, so the two cannot be told apart below", ext_blk);
+      memset (&again, 0, sizeof (again));
+      CHECK (bpa_dyn_acquire (d, &p4, 0, 0, 1, &again, &is_new) == 0,
+	     "a flow from a subscriber holding a primary and an extension was "
+	     "refused");
+      CHECK (again.port_lo == want_lo,
+	     "the flow was translated out of ports %u-%u, where the "
+	     "subscriber's FIRST block starts at %u: an ordinary flow moved "
+	     "onto the extension", again.port_lo, again.port_hi, want_lo);
+    }
+
     printf ("  the same block, the same public address, no second allocation "
 	    "record, and the hold-down stopped\n");
     drv_free (&v);
@@ -1044,6 +1074,53 @@ main (void)
 	   "holding for was removed", owner_sub);
     printf ("  the pinned one kept, the one still counting down kept, the "
 	    "expired one released, and the pin is not forever\n");
+    drv_free (&v);
+  }
+
+  printf ("\n=== an extension goes quiet with the subscriber holding it ===\n");
+  {
+    /*
+     * bpa_dyn_idle() stamps the primary out of by_sub and then walks extras
+     * for the same subscriber. Without that walk the extension is owned
+     * forever: its idle_since stays zero, the reap skips it for the same
+     * reason it skips a live block, and the pool is a slice that slowly stops
+     * having free blocks with nothing in any counter saying why.
+     *
+     * Nothing above reaches it. drv_churn() idles and reaps, but every
+     * subscriber it quietens holds one block at that point, so the walk runs
+     * over an empty list. Measured: with the vec_foreach over extras deleted,
+     * all 143 checks of this file passed.
+     *
+     * Both blocks in one reap, so a reap that released nothing would go red
+     * on the primary as well and the count below is about the extension.
+     */
+    drv_t v;
+    bpa_dyn_t *d;
+    bpa_dyn_release_t out[8];
+    u32 free_before, n;
+
+    drv_init (&v, &p4, 1, 3);
+    drv_arrive (&v, 0);
+    d = &v.d[0];
+    CHECK (v.held[0], "subscriber 0 took no primary");
+    drv_extend (&v, 0, 1);
+    CHECK (v.seen_ext == 1, "the extension was refused, so there is no second "
+			    "block to go quiet");
+    free_before = vec_len (d->free_list);
+
+    bpa_dyn_idle (d, 0, 10.0);
+    n = bpa_dyn_reap (d, 1000.0, 120, 0, 1, out, 8);
+    CHECK (n == 2,
+	   "the subscriber went quiet holding two blocks and the reap "
+	   "released %u: an extension whose hold-down never started is owned "
+	   "for the life of the process", n);
+    CHECK (vec_len (d->free_list) == free_before + 2,
+	   "the free stack went from %u blocks to %u where two were released",
+	   free_before, (u32) vec_len (d->free_list));
+    CHECK (index_disagreements (d) == 0,
+	   "the free stack and its index disagree after both blocks went "
+	   "back");
+    printf ("  the primary and the extension both released\n");
     drv_free (&v);
   }
 

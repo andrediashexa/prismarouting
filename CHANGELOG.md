@@ -120,6 +120,47 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Seven C assertions that could not fail, and the five build recipes that
+  hid a mutation from the compiler.** The dataplane plugin's ten harnesses -
+  7,577 lines, 570 `CHECK (...)` sites - were the last body this repository had
+  not swept for assertions that cannot fail. 108 product mutations were
+  anchored to settle it, each compiling under `-Wall -Wextra -Werror`, because
+  a build the compiler refuses is not a check that noticed. A static pass over
+  the same files flagged one candidate and it was a false positive.
+
+  Six findings are one shape: a fixture that answers for a second reason.
+  `test_bpa_rtsp.c` asked a non-SETUP request and a non-200 reply to be refused
+  with messages that carry no Transport header, so both were refused by the
+  absence - green with the method test deleted, and green again with the status
+  test deleted. `test_bpa_rewrite.c` asserted GRE's Call ID untouched at offset
+  26, where a GRE session's delta folds to zero, so the early return could go,
+  the packet fall into the UDP branch, the flags word at offset 20 be
+  overwritten, and all 41 checks pass. `test_bpa_icmp.c` measured the embedded
+  port from the embedded header's length with every fixture quoting a 20-byte
+  one. `test_bpa_sip.c` probed the sent-by span guard from neither side and the
+  port ceiling from neither side; a sent-by of `100.64.0.5x:5060` would have
+  been rewritten ten bytes in, leaving `200.150.0.17x:5060`. `test_bpa_dyn.c`
+  never quietened a subscriber holding an extension, so the walk over
+  `d->extras` in `bpa_dyn_idle()` ran over an empty list - a block owned for
+  the life of the process, visible only as a slice that stops having free ones
+  - and never asked a subscriber holding two blocks for an ordinary flow, so
+  `by_sub` naming the primary was a claim nothing could contradict.
+
+  The seventh is not in a harness. Five of the ten recipes named
+  `test/bpa_tcp_shim.h` and not `src/plugins/bpa/bpa_seq.h`, which they reach
+  through it - so the serial-number arithmetic the FTP ALG rests on could be
+  changed and `make test_bpa_ftp` would answer *is up to date*. Measured: the
+  signed comparison in `bpa_seq_delta_at()` cut to a plain `>`, all five suites
+  green, the 2^32 boundary cases among them. `TESTING.md` already names this as
+  *a mutation that does not reach the compiler*; here it was a standing
+  property of the build rather than an accident of one campaign.
+
+  Sixteen behaviours survived a mutation with every check green and are
+  recorded in `docs/roadmap.md` as limits rather than dropped: fourteen are
+  cost shortcuts or guards no input can name, and two - `n_exhausted` on the
+  primary acquire path, and the stride's worker-slice arm, which both stride
+  sections run at one worker on purpose - are gaps a fixture could close.
+
 * **Three wiki screens the new reader caught, two of them made stale an hour
   earlier by this same release.** `test/test_wiki_screens.py` went in green and
   then went red on its first real test: the split of the `nat: a hierarchy, not

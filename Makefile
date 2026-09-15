@@ -50,12 +50,21 @@ $(BUILD)/test_bpa_rtsp: test/test_bpa_rtsp.c src/plugins/bpa/bpa_rtsp.h \
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rtsp.c
 
+# src/plugins/bpa/bpa_seq.h is named by the five recipes that reach it, and
+# it is reached through test/bpa_tcp_shim.h rather than directly - so naming
+# only the shim left `make test` reporting green on a binary built before the
+# change. Measured: the signed comparison in bpa_seq_delta_at cut to a plain
+# `>` and `make test_bpa_ftp` answering "is up to date", all five suites green
+# with the boundary arithmetic broken. That is TESTING.md's "a mutation that
+# does not reach the compiler" as a standing property of the build rather
+# than as an accident of one campaign.
 # The MSS clamp and the FTP sequence shift: arithmetic on a TCP header whose
 # failure mode is silent - the peer drops the segment and the connection hangs
 # exactly as it did before, with a counter claiming the fix was applied. Built
 # standalone for the same reason the RTSP parser is.
 $(BUILD)/test_bpa_mss: test/test_bpa_mss.c src/plugins/bpa/bpa_mss.h \
-                       test/bpa_shim.h test/bpa_tcp_shim.h
+                       test/bpa_shim.h test/bpa_tcp_shim.h \
+                       src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_mss.c
 
@@ -67,7 +76,8 @@ $(BUILD)/test_bpa_mss: test/test_bpa_mss.c src/plugins/bpa/bpa_mss.h \
 # checksum this cheap to check does not belong behind a container.
 $(BUILD)/test_bpa_rewrite: test/test_bpa_rewrite.c \
                            src/plugins/bpa/bpa_rewrite.h \
-                           test/bpa_shim.h test/bpa_tcp_shim.h
+                           test/bpa_shim.h test/bpa_tcp_shim.h \
+                           src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_rewrite.c
 
@@ -81,13 +91,15 @@ $(BUILD)/test_bpa_rewrite: test/test_bpa_rewrite.c \
 $(BUILD)/test_bpa_auto_mss: test/test_bpa_auto_mss.c \
                             src/plugins/bpa/bpa_auto_mss.h \
                             src/plugins/bpa/bpa_mss.h \
-                            test/bpa_shim.h test/bpa_tcp_shim.h
+                            test/bpa_shim.h test/bpa_tcp_shim.h \
+                            src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_auto_mss.c
 
 $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
-                       test/bpa_shim.h test/bpa_tcp_shim.h
+                       test/bpa_shim.h test/bpa_tcp_shim.h \
+                       src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_ftp.c
 
@@ -99,7 +111,8 @@ $(BUILD)/test_bpa_ftp: test/test_bpa_ftp.c src/plugins/bpa/bpa_ftp.h \
 # is a crash instead of a judgement call.
 $(BUILD)/test_bpa_icmp: test/test_bpa_icmp.c src/plugins/bpa/bpa_icmp.h \
               src/plugins/bpa/bpa_gre.h \
-                        test/bpa_shim.h test/bpa_tcp_shim.h
+                        test/bpa_shim.h test/bpa_tcp_shim.h \
+                        src/plugins/bpa/bpa_seq.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ test/test_bpa_icmp.c
 # The SIP parser and the edit list it feeds. Standalone for the reason the RTSP

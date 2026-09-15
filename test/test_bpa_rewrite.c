@@ -557,10 +557,24 @@ main (void)
      * bit clear), so there is nothing below the IP header to repair.
      */
     pkt_t p = build (IP_PROTOCOL_GRE, PRIV, 0x1234, PEER, 0, 12);
+    u8 gre_before[12];
+
+    memcpy (gre_before, p.b + 20, sizeof (gre_before));
     translate (&p, PRIV, 0x1234, PUB, 0x5678, 1);
     CHECK (ip_verifies (&p), "a translated GRE packet's IP checksum verifies");
     CHECK (sport_of (&p) == 0x1234,
 	   "and the server's Call ID travelled untouched");
+    /*
+     * The whole GRE header and not only the Call ID, the way the fragment
+     * case below says it. Without the early return this packet falls into
+     * the UDP branch, which writes the new port over the flags and version
+     * at offset 20 and corrects a checksum field GRE does not have - and the
+     * Call ID sits at 26 where the delta for a GRE session folds to zero, so
+     * it survives byte for byte and the line above stays green. Measured:
+     * the early return deleted, all 41 checks of this file passed.
+     */
+    CHECK (!memcmp (p.b + 20, gre_before, sizeof (gre_before)),
+	   "and so did every other byte below the IP header");
   }
 
   printf ("\n--- no L4 header: ESP, and a non-first fragment ---\n");

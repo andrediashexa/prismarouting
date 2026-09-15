@@ -211,6 +211,15 @@ Two of the six are a truth living in two places with nothing comparing them, so
   those pages state (`forward` 26, `esp` 25, `pptp` 17, `ftp-alg` 13,
   `rtsp` 11, `sip` 7) were checked against the `OFF-RED-AT-LEAST` floors the
   labs declare, which is a number against a number and not a run.
+
+  Half of that reach closed on **2026-09-15**, when the C suites were built and
+  swept - see `docs/roadmap.md`. The paired-address rates are measured rather
+  than read: `test_bpa_dyn.c` prints 100% for serial arrivals, 99% for parallel
+  and 99% for churn at their worst cells, which are the floors it asserts, and
+  `bpa_pool_guaranteed()` is compared against the simulation in
+  `test_bpa_pool.c` over every shape it enumerates. The labs are still out of
+  reach and for the same reason, so the `lab/*.sh` totals above stand as
+  written.
 * **"Measured over 2800 combinations of blocks, inside addresses and worker
   count"** in `architecture.md`'s re-partitioning bullet is a measurement whose
   code is in no file in this repository. It is a candidate and was **not
