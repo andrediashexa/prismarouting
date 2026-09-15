@@ -101,6 +101,18 @@ CONFIRM_ATTEMPTS = 5
 # that must never slip - no world access to a file carrying every password
 # hash on the box.
 CONFIG_UMASK = 0o007
+# The program that answers whether this box's ssh host keys were made on it.
+#
+# NOT a rule written out again here. appliance/ssh-host-key-origin holds the
+# decision, the key names and the three commands that repair it, and its
+# header carries the whole argument. This VTY is its second reader, and the
+# reason there is a second one: the first is the boot self-test, whose report
+# goes to /dev/console once at boot and not to the journal, so an operator who
+# reached a racked box over ssh has no way to see it at all - and that
+# operator's session is the one the answer is about (#248).
+SSH_HOST_KEY_ORIGIN = os.environ.get("HEXA_SSH_HOST_KEY_ORIGIN",
+                                     "/usr/lib/hexarouting/"
+                                     "ssh-host-key-origin")
 VPPCTL = os.environ.get("VPPCTL", "vppctl")
 VTYSH = os.environ.get("VTYSH", "vtysh")
 FRR_RELOAD = os.environ.get("FRR_RELOAD", "/usr/lib/frr/frr-reload.py")
@@ -2160,6 +2172,49 @@ def print_prose(text, indent="    "):
     """`console_prose`, printed. The refusals say a paragraph at a time."""
     for line in console_prose(text, indent):
         print(line)
+
+
+def ssh_host_keys_handed_to_this_box(origin=None):
+    """
+    The host keys this box was handed inside its system image, and the repair.
+
+    `(names, commands)`, both empty when the box made its own keys - and both
+    empty when the answer could not be had, which is the one thing this
+    function decides for itself and the reason it is worth a docstring.
+
+    THE DECISION IS NOT HERE. It is in appliance/ssh-host-key-origin, run as a
+    program, because appliance/selftest reaches the same answer on the same
+    box at boot and a rule implemented twice is a rule that can disagree with
+    itself about whether an operator is being impersonated. That file's header
+    is where the timestamp signal, the rejected alternatives and the three
+    commands live.
+
+    SILENT WHEN IT CANNOT RUN, which is the opposite of what the boot
+    self-test does with the same failure, and the difference is deliberate.
+    The self-test's job is to report on the box, so a check it could not run
+    is a finding and it says so. This is a banner: it speaks only when it has
+    something to say, like the 'commit confirmed' notice beside it, and it
+    never tells an operator their keys are fine. A line drawn on every login
+    of every healthy box is a line read once and skipped for ever, including
+    on the box where it means something - the argument `unchecked_note` and
+    `show_plugin_build` both make for the same decision.
+    """
+    try:
+        r = subprocess.run([origin or SSH_HOST_KEY_ORIGIN],
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           universal_newlines=True)
+    except OSError:
+        return [], []
+    if r.returncode != 0:
+        return [], []
+    handed, fixes = [], []
+    for line in r.stdout.splitlines():
+        word, _, rest = line.partition(" ")
+        if word == "handed":
+            handed = rest.split()
+        elif word == "fix" and rest:
+            fixes.append(rest)
+    return handed, fixes
 
 
 def unchecked_note(n):
@@ -12401,6 +12456,55 @@ class Shell:
                     "before that commit")
         return 1
 
+    def say_handed_ssh_host_keys(self):
+        """
+        Tell whoever just logged in that this box did not make its own ssh
+        host keys, when that is true of THIS box, and nothing when it is not.
+
+        WHY THE VTY SAYS IT AT ALL. The claim is about the ssh session it is
+        printed into: an operator on a box installed from a medium that
+        carried host keys is talking to a key whose private half anybody who
+        downloaded that medium holds, so the session can be sat in the middle
+        of and the client will not object - the fingerprint it pinned is the
+        fingerprint it was handed. The boot self-test makes the same finding,
+        and writes it to /dev/console, once, at boot: on a racked appliance
+        that is a serial port nobody is watching, and it does not reach the
+        journal either, so it could not be looked up afterwards by an operator
+        who had been told to go and look.
+
+        WHY IT IS NOT A HEALTH LINE. Nothing is printed when the keys are the
+        box's own. A remediated box must stop being warned the moment it is
+        remediated, and it does, because the answer is measured per login and
+        not remembered from the boot that preceded it.
+        """
+        handed, fixes = ssh_host_keys_handed_to_this_box()
+        if not handed:
+            return
+        print()
+        print("This box's ssh host keys were not generated on it:")
+        # The names on rows of their own, folded at the spaces between them: a
+        # box with three key types runs past a serial console's 80 columns when
+        # they are hung off the end of the sentence, and each name stays whole
+        # because console_prose never splits a word.
+        print_prose(" ".join(handed))
+        print_prose("they came in with the system image, so every box "
+                    "installed from that medium answers with this same key "
+                    "and the private half of it is in the published "
+                    "download. This ssh session can be impersonated and your "
+                    "client will not object, because the fingerprint it "
+                    "pinned is the fingerprint it was handed.")
+        print("regenerate them, in a shell on this box ('start shell'):")
+        # From the holder, never spelled here: the command an operator copies
+        # off this screen has to be the command the boot report gave them and
+        # the command the repair was measured with.
+        for c in fixes:
+            print("    " + c)
+        print()
+        print_prose("every client that pinned the old fingerprint will then "
+                    "refuse to connect and report that the host key changed. "
+                    "That is this being fixed, not an attack, and it is the "
+                    "cost of fixing it.")
+
     def repl(self):
         global readline
         try:
@@ -12449,6 +12553,16 @@ class Shell:
                 print(f"A 'commit confirmed' is waiting: this box rolls the "
                       f"last change back at {when}")
                 print("unless you type 'commit' to confirm it.")
+            # THE SESSION THIS IS BEING READ IN is the one the warning is
+            # about, which is why it is on the banner and not only in the boot
+            # report (#248). A box installed from a medium that carried host
+            # keys answers with a key every other box from that medium also
+            # answers with, and whose private half is in the published
+            # download. The boot self-test says so on /dev/console, once, at
+            # boot; a racked appliance is reached over ssh and nobody is
+            # attached to that console, so until this line the operator being
+            # impersonated had no way to find out.
+            self.say_handed_ssh_host_keys()
             print()
         while True:
             try:

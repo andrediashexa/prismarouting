@@ -258,6 +258,10 @@ install -D -m 0755 "$REPO/appliance/wait-for-vpp"     "$DESTDIR/usr/lib/hexarout
 install -D -m 0755 "$REPO/appliance/apply-tuning"     "$DESTDIR/usr/lib/hexarouting/apply-tuning"
 install -D -m 0755 "$REPO/appliance/bind-dataplane-nic" "$DESTDIR/usr/lib/hexarouting/bind-dataplane-nic"
 install -D -m 0755 "$REPO/appliance/selftest"         "$DESTDIR/usr/lib/hexarouting/selftest"
+# Beside the self-test, which finds it with `dirname "$0"`, and named by the
+# VTY banner by absolute path. Two readers of one answer (#248).
+install -D -m 0755 "$REPO/appliance/ssh-host-key-origin" \
+    "$DESTDIR/usr/lib/hexarouting/ssh-host-key-origin"
 install -D -m 0755 "$REPO/appliance/hexarouting-install" "$DESTDIR/usr/sbin/hexarouting-install"
 install -D -m 0755 "$REPO/appliance/install-from-cmdline" "$DESTDIR/usr/lib/hexarouting/install-from-cmdline"
 install -D -m 0755 "$REPO/tools/ipfix_collector.py"   "$DESTDIR/usr/lib/hexarouting/ipfix-collector"

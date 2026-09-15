@@ -109,6 +109,52 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A box installed from a medium that carried SSH host keys said so only to
+  its console, at boot**
+  ([#248](https://github.com/andrediashexa/hexarouting/issues/248)). Every
+  medium published up to and including 0.66.0 carried the host keys its build
+  container generated, private halves included, so every box installed from
+  one of them answers with the same key and the private half of it is in the
+  published download: an SSH session to such a box can be impersonated by
+  anybody holding the medium, and the operator's client does not object,
+  because the fingerprint it pinned is the fingerprint it was handed.
+  [#245](https://github.com/andrediashexa/hexarouting/issues/245) fixed the
+  image and the installer, which fixes boxes installed from then on and
+  nothing already racked; the boot self-test learned to recognise a
+  handed-down key and say so. That report is written to `/dev/console`. A
+  racked appliance is reached over SSH, so nobody is attached to that console,
+  and the report is not recoverable afterwards either - the self-test falls
+  back to stdout only when the write to the console fails, so on a box whose
+  console write succeeds `journalctl -u hexarouting-selftest` has nothing. The
+  operator whose session can be sat in the middle of is the one logged in over
+  it, and that operator had no way to be told.
+
+  The VTY banner now says it, at every login, on a box that is affected and on
+  no other: it names the key files, says the private half is in the published
+  download and that this session can be impersonated with nothing to notice,
+  gives the three commands that regenerate a set, and warns that every client
+  pinning the old fingerprint will refuse the next connection - which is the
+  repair happening rather than an attack.
+
+  **A box that is not affected is told nothing.** The answer is measured per
+  login rather than remembered from the boot before it, so a box remediated by
+  hand stops being warned at the next login with no reboot, and a box whose
+  keys are its own never sees the line at all. The signal is that a file
+  cannot have contents older than itself: `unsquashfs` restores the build
+  container's mtime onto an inode the installer creates, and a key generated
+  here cannot predate its own file. Neither the key's comment nor a list of
+  published fingerprints is read - the first names the live medium's hostname
+  on a correctly installed box, and the second would be key material back in
+  the tree, which is what #245 removed.
+
+  The rule, the key names and the commands live in one new file,
+  `appliance/ssh-host-key-origin`, which both the boot report and the banner
+  render. A repair printed on two screens out of two files is a repair that
+  can be corrected in one of them; `test/test_ssh_host_key_origin.py` refuses
+  a reader that spells it, and the self-test now fails rather than going quiet
+  when that file cannot be run, because a check that could not run reads
+  exactly like a check that agreed.
+
 * **The tuner told a box with no dataplane card that its card is "(not a PCI
   device)"** ([#331](https://github.com/andrediashexa/hexarouting/issues/331)).
   One line covered two states that are nothing alike: no card named at all,
