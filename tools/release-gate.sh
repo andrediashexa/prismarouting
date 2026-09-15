@@ -338,6 +338,38 @@ if [ -n "$dups" ]; then
   exit 1
 fi
 
+# WHAT THE OPERATORS CAN READ, against what this release says.
+#
+# A page on the published wiki that disagrees with the product is the product
+# lying to somebody who is holding a screen and deciding what state their box
+# is in. One of the pages sitting uncorrected told an operator that a refused
+# `commit` applies nothing, which stopped being true when the FRR read-back
+# check became a refusal that leaves the box half-configured - and it stayed
+# up for days because nothing asked.
+#
+# ASKED HERE because this is the moment somebody with the token is standing in
+# front of the release. `make test` would go red on every run and be learned
+# around; the gate goes red once, at the act it belongs to, and the person who
+# can fix it is the person who typed the command.
+#
+# tools/wiki-status.sh is the holder: it reads the git history, compares every
+# page against the commit that last wrote wiki/.pulled, and splits pages that
+# need a push from pages that do not exist on the wiki at all and have to be
+# created first. Nothing is re-derived here and no page content is parsed -
+# this reads its exit status and prints what it said.
+#
+# Before RELEASE_GATE_CHECK_ONLY on purpose, so it can be exercised without
+# building a 321 MB image.
+if ! wiki_out=$(sh "$WORK/tools/wiki-status.sh" 2>&1); then
+  echo "error: this release would ship with the published wiki behind it." >&2
+  printf '%s\n' "$wiki_out" | sed 's/^/       /' >&2
+  echo "       A page that disagrees with the product is read by somebody" >&2
+  echo "       deciding what state their box is in, so it is a defect and" >&2
+  echo "       not a chore. Publish them, then run this again." >&2
+  exit 1
+fi
+echo "==> the published wiki matches this tree"
+
 # The same seam the installer has, and for the same reason: the checks above
 # are what make this a gate, and a check that can only be exercised by building
 # a 321 MB image is a check nobody exercises.

@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The release gate refuses a release that would ship past a stale wiki**
+  ([#277](https://github.com/andrediashexa/hexarouting/issues/277)). Twenty
+  seven pages have been corrected in this repository and are still showing
+  operators the text from the pull on 2026-09-09, and a twenty eighth was
+  written here and does not exist on the wiki at all. One of those corrections
+  is [#254](https://github.com/andrediashexa/hexarouting/issues/254): the
+  published page tells an operator that a refused `commit` applies nothing,
+  which stopped being true when the FRR read-back check became a refusal that
+  leaves the box half-configured, and it is read by somebody looking at that
+  refusal on their screen deciding what state their box is in. A correction
+  sitting in a mirror nobody can read is not a correction yet.
+  `tools/wiki-status.sh` has been able to say this for a while and nothing
+  asked it. The gate asks now, before it builds anything, and repeats what
+  that script said rather than listing pages of its own. It is the gate and
+  not `make test` on purpose: a check that goes red on every run is one people
+  learn to run around, and the person who can publish a page is the one
+  holding the token at the moment a release is cut.
+
+### Added
+
 * **A lab performs the bind, on a real guest, for the first time**
   ([#329](https://github.com/andrediashexa/hexarouting/issues/329)). Handing a
   card to the dataplane means unbinding it from its kernel driver and binding
