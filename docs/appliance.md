@@ -1196,6 +1196,18 @@ After installing, name the dataplane NIC from the VTY (`configure`, then
 `/etc/hexarouting/tune.env`, and reboot: `isolcpus` and hugepages only apply
 on the next boot, and so does the handover of the card.
 
+**On a box whose only card is the one being named there is a step after the
+reboot, and the three statements above are not the whole procedure there.**
+That commit is the one that takes the management path with it, so the VTY
+applies it as `commit confirmed 30` whether or not it was asked for - and
+rebooting does not confirm anything, which the box says at the prompt in as
+many words. Log in again on the address the box came back on and type
+`commit`. Nobody typing it is the answer that window exists to give: thirty
+minutes after the commit the box puts `HEXA_DATAPLANE_IF` back, gives the card
+to Linux and restarts itself, which is the only way back onto the network for
+an operator whose session never returned. A box with a second card arms no
+window, because the session is on the card Linux keeps.
+
 ## What the console shows on a first boot
 
 The order is fixed and is part of the design: the **self-test finishes, then

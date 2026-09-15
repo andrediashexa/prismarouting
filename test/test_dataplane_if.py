@@ -793,6 +793,88 @@ with tempfile.TemporaryDirectory() as tmp:
           f"commit: {said!r}")
     print("  accepted, with the address, the MAC and the route written down")
 
+print("\n=== the documented procedure is the procedure THIS box needs ===")
+# WHY THIS IS HERE AND NOT IN test_doc_copies.py. The claim is about two
+# documents, but its premise is a measurement: that the same three statements
+# an operator types produce a plain commit on one box and a thirty-minute
+# window on another. A check that read the pages for the word "confirm"
+# without having watched a box arm one is a check about prose, and it would
+# stay green on the day the VTY stops arming the window - which is the day the
+# pages become right by accident and the check stops meaning anything.
+#
+# So the box is driven first and the pages are held against what it did. The
+# fixture is here; a second copy of it elsewhere is a second box to keep true.
+APPLIANCE = os.path.join(os.path.dirname(__file__), "..", "docs",
+                         "appliance.md")
+CONTEXT = os.path.join(os.path.dirname(__file__), "..", "docs", "context.md")
+
+
+def section(path, start, stop):
+    """
+    The text between two headings, on one line.
+
+    Flattened, because these documents are wrapped by hand at 79 columns and a
+    check that matched across the wrap would pass or fail on where the wrap
+    happened to fall. What is being held is the sentence, not the line.
+
+    A heading that moved answers "" and not the rest of the file. #322's first
+    version searched a whole document and passed with the key deleted from
+    both tables, because the page discusses the same subject in prose
+    elsewhere; a section reader that runs to the end of the file on a missing
+    anchor is that defect with one more step.
+    """
+    with open(path) as fh:
+        text = fh.read()
+    i = text.find(start)
+    j = text.find(stop, i + len(start)) if i >= 0 else -1
+    if i < 0 or j < 0:
+        return ""
+    return " ".join(text[i:j].split())
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    sh = one_card_box(tmp)
+    said = drive(sh, ["configure", "dataplane interface ens18", "commit"])
+    one_card_armed = sh.confirm.read()
+    check(one_card_armed is not None,
+          f"the box whose only card carries the management address applied "
+          f"the page's three statements as a plain commit, so there is no "
+          f"window for the page to name: {said!r}")
+
+with tempfile.TemporaryDirectory() as tmp:
+    sh = shell_on(tmp)
+    drive(sh, ["configure", "dataplane interface enp2s0", "commit"])
+    check(sh.confirm.read() is None,
+          "a box with a second card armed a confirmed commit for a handover "
+          "that never touches the session it was typed in, which would make "
+          "the page's plain procedure wrong on the ordinary box too")
+
+if one_card_armed:
+    # The number the page quotes comes from the box rather than from the page,
+    # so raising the window in do_commit and leaving the page at thirty is a
+    # failure here rather than a sentence that stopped being true quietly.
+    minutes = str(one_card_armed["minutes"])
+    proc = section(APPLIANCE, "After installing, name the dataplane NIC",
+                   "## What the console shows")
+    check("commit confirmed " + minutes in proc,
+          f"docs/appliance.md tells an operator to name the card, commit and "
+          f"reboot, and does not say that on a one-card box that commit is "
+          f"applied as 'commit confirmed {minutes}' - so the procedure as "
+          f"printed loses the card {minutes} minutes later")
+    check("type `commit`" in proc or "type 'commit'" in proc,
+          "the page names the window and never says to come back and confirm "
+          "it, which is the one step between following the page and the box "
+          "undoing the handover on its own")
+    inv = section(CONTEXT, "### 1.5 ", "### 1.6")
+    check("one card" in inv,
+          "docs/context.md invariant 1.5 states the refusal with no "
+          "exception, and the box above accepted its only card: an invariant "
+          "stated one step too wide is one a reader checks once, finds false, "
+          "and stops checking (#324)")
+    print(f"  the one-card box arms 'commit confirmed {minutes}', and both "
+          f"pages say so")
+
+
 print("\n=== and the refusal stands wherever the advice can be followed ===")
 # The two-card box is refused exactly as before - see the refusal section
 # above, which is unchanged - and now it names the card to use instead rather
