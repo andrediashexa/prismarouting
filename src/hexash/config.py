@@ -1752,16 +1752,23 @@ class Config:
         elif w[0] == "outside" and len(w) > 1:
             pool.outside.append(w[1])
         elif w[0] == "block-size" and len(w) > 1:
-            # Bounded here, and the power-of-two rule deliberately left to the
-            # dataplane. The device is the authority on whether a pool can be
-            # built and says so well - "block size 96 must be a power of two"
-            # - but it cannot say anything useful about 65536, because the
-            # field it reads into is a u16 and 65536 reaches it as 0 (#352).
-            # So the one thing checked here is the thing the device cannot
-            # see: the number the operator actually typed.
-            why = Pool.check_range("block-size", w[1])
-            if why:
-                return why
+            # NOT BOUNDED HERE, and that is the whole of #357. This function
+            # is the reader for THREE things: a statement typed at the prompt,
+            # a saved file, and the configuration read back out of the running
+            # dataplane by `show bpa config`. The first is a request and the
+            # last two are facts.
+            #
+            # The bound was added here with #352 and it broke the third: a
+            # pool built with `block-size 4` - which the dataplane accepts and
+            # builds, and lab/detreserve.sh uses to keep a block cheap - came
+            # back unmodellable, so `running_config()` said "committing would
+            # REMOVE it" and `commit` then refused every change on that box.
+            # An operator with a small block could no longer configure
+            # anything at all.
+            #
+            # The request is bounded where the request is made:
+            # Shell.pool_range() in do_pool, which is what an operator types
+            # at and the only place a number can still be argued with.
             pool.block_size = w[1]
         elif w[0] == "ports" and len(w) > 2:
             pool.ports = f"{w[1]} {w[2]}"
@@ -1770,9 +1777,6 @@ class Config:
                 return f"policy '{w[1]}': expected interleaved or blocked"
             pool.policy = w[1]
         elif w[0] in ("vrf", "outside-vrf") and len(w) > 1:
-            why = Pool.check_range(w[0], w[1])
-            if why:
-                return why
             if w[0] == "vrf":
                 pool.vrf = w[1]
             else:
@@ -1785,27 +1789,15 @@ class Config:
             if w[1] not in Pool.TIMEOUTS:
                 return (f"timeout '{w[1]}': expected one of "
                         + ", ".join(Pool.TIMEOUTS))
-            why = Pool.check_range("timeout", w[2], w[1])
-            if why:
-                return why
             pool.timeouts[w[1]] = int(w[2])
         elif w[0] == "max-blocks" and len(w) > 1:
             # The TOP as well as the bottom, and the top is where this was
             # wrong: `max-blocks 256` was taken here, written to the file,
             # sent to a u8 field and arrived as 1 (#351).
-            why = Pool.check_range("max-blocks", w[1])
-            if why:
-                return why
             pool.max_blocks = int(w[1])
         elif w[0] == "block-stride" and len(w) > 1:
-            why = Pool.check_range("block-stride", w[1])
-            if why:
-                return why
             pool.block_stride = int(w[1])
         elif w[0] == "reserve" and len(w) > 1:
-            why = Pool.check_range("reserve", w[1])
-            if why:
-                return why
             pool.block_reserve = int(w[1])
         elif w[0] == "bypass" and len(w) > 2:
             if w[1] not in ("source", "destination"):
@@ -1821,14 +1813,8 @@ class Config:
             # quotes as `<1-100>`, so an operator comparing the screen to the
             # hint was comparing two spellings of one range - and nothing
             # could compare them either (#351).
-            why = Pool.check_range("utilisation-alarm", w[1])
-            if why:
-                return why
             pool.util_alarm = int(w[1])
         elif w[0] in ("max-sessions", "max-session-rate") and len(w) > 1:
-            why = Pool.check_range(w[0], w[1])
-            if why:
-                return why
             if w[0] == "max-sessions":
                 pool.max_sessions = int(w[1])
             else:
