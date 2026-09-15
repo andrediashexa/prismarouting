@@ -137,8 +137,42 @@ _load_note() {
   LOAD_PEAK=$(awk -v a="$LOAD_PEAK" -v b="$_l" \
                   'BEGIN{print (b+0 > a+0) ? b : a}')
 }
-OUT=$(mktemp -d)
-trap 'rm -rf "$OUT"' EXIT
+# WHERE EACH LAB'S OWN OUTPUT GOES, and why it is thrown away.
+#
+# The summary below keeps the verdicts and, under a failure, the red lines.
+# Everything else a lab said - every `show bpa` screen, every vppctl answer,
+# every packet counted - lives in $OUT/<name>.out for as long as the run and
+# is deleted with it. That is right for the ordinary case and the trap stays:
+# 87 labs times three passes is a run's worth of transcripts, tens of
+# megabytes of them, and a directory that grows by that on every release is a
+# directory nobody empties. A suite that quietly fills a disk is a suite
+# people stop running.
+#
+# What it is NOT right for is a question ABOUT the corpus rather than about
+# one lab. "Which of the plugin CLI's messages did any box in this repository
+# ever print" is such a question, and it could not be asked here: the evidence
+# that would answer it did not survive the run that produced it (#366). The
+# first attempt at that measurement read the SUMMARY logs instead and reported
+# every message as unseen - an artefact of the corpus, stated as a fact about
+# the product.
+#
+# So the corpus is kept when it is asked for, by name, and not otherwise:
+#
+#   LAB_OUTPUT=/tmp/labs sh tools/run-all-labs.sh
+#   sh tools/plugin-says.sh src/plugins/bpa/bpa_cli.c /tmp/labs
+#
+# Named rather than a flag, because whoever wants it wants to say where it
+# goes - and because a directory the suite chose would be one more thing the
+# next run has to decide whether to empty.
+if [ -n "${LAB_OUTPUT:-}" ]; then
+  OUT=$LAB_OUTPUT
+  mkdir -p "$OUT"
+  echo "LAB_OUTPUT is set: each lab's own output is kept in $OUT"
+  echo
+else
+  OUT=$(mktemp -d)
+  trap 'rm -rf "$OUT"' EXIT
+fi
 
 # WHICH TREE THIS RUN IS ABOUT, recorded before the first lab reads it.
 #
@@ -773,6 +807,17 @@ if [ "$nomeasure" -gt 0 ]; then
   echo "  them: the machine could not keep the timing those checks need. Run"
   echo "  those labs one at a time before reading anything into it."
 fi
+# The corpus, if one was asked for, and what it is good for. Said here rather
+# than only at the top because the run is over and the directory is now full:
+# whoever reads this line has the evidence in front of them and forty minutes
+# between them and another chance to make it (#366).
+if [ -n "${LAB_OUTPUT:-}" ]; then
+  echo
+  echo "  each lab's own output is in $LAB_OUTPUT, one file per lab. Which of"
+  echo "  the plugin CLI's messages any of them printed:"
+  echo "    sh tools/plugin-says.sh src/plugins/bpa/bpa_cli.c $LAB_OUTPUT"
+fi
+
 # And whether this run is about one tree at all. Last, because it is the only
 # line here that can invalidate every line above it.
 TREE_AT_END=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)

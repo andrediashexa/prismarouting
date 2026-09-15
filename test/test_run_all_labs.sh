@@ -1063,5 +1063,50 @@ esac
   || bad "every lab passed and the suite exited 0 over two different trees"
 rm -rf "$w"
 
+echo
+echo "=== the run keeps each lab's own output when it is asked to, and not otherwise ==="
+# WHY THIS IS A CHECK. The suite wrote every lab's transcript to a temporary
+# directory and deleted it with the run, so the corpus that answers "which of
+# the plugin CLI's messages did any lab ever print" did not survive the run
+# that made it (#366). The first attempt at that measurement read the SUMMARY
+# logs instead and reported every message as unseen, which is an artefact of
+# the corpus stated as a fact about the product.
+#
+# BOTH HALVES, because either alone is the wrong change. Keeping it always
+# accumulates 87 transcripts per release in a directory nobody empties;
+# keeping it never leaves the measurement unaskable. So the default is
+# asserted here as well as the option - a change that quietly started keeping
+# it would pass a check written only on LAB_OUTPUT.
+k=$(mktemp -d)
+mkdir -p "$k/tools" "$k/lab"
+cp "$REPO/tools/run-all-labs.sh" "$k/tools/"
+cp "$d/tools/build.sh" "$d/tools/lab.sh" "$k/tools/"
+printf '#!/bin/sh\n' > "$k/lab/aa-good.sh"
+printf '#!/bin/sh\n' > "$k/lab/verdict.sh"
+
+KEPT=$k/kept
+kout=$(cd "$k" && env LAB_OUTPUT="$KEPT" sh tools/run-all-labs.sh 2>&1) || true
+if [ -s "$KEPT/aa-good.out" ] \
+   && grep -q "something was measured" "$KEPT/aa-good.out"; then
+  ok "LAB_OUTPUT keeps each lab's own output, under the lab's own name"
+else
+  bad "LAB_OUTPUT was set and the lab's output is not in it, so the corpus \
+still does not survive the run that makes it:
+$(ls -la "$KEPT" 2>&1 | sed 's/^/    /')"
+fi
+printf '%s\n' "$kout" | grep -q "$KEPT" \
+  && ok "and the run says where it left it, at the end as well as the start" \
+  || bad "the run kept the corpus and never named the directory, so whoever \
+wanted it has to read the source to find it"
+
+rm -rf "$KEPT"
+(cd "$k" && sh tools/run-all-labs.sh >/dev/null 2>&1) || true
+[ ! -d "$KEPT" ] \
+  && ok "and with LAB_OUTPUT unset nothing is kept: the default is still a \
+temporary directory the trap removes" \
+  || bad "the suite kept a corpus nobody asked for, which is 87 transcripts \
+a release in a directory nobody empties"
+rm -rf "$k"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

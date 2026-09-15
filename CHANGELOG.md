@@ -3424,6 +3424,44 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The 87 messages `show bpa` can print had no reader, and the suite deleted
+  the evidence that would have given them one.**
+  `appliance/selftest`, `hexarouting-install`, `bind-dataplane-nic` and
+  `apply-tuning` each have a pair of readers that refuse a message no box
+  printed and a line every box printed. `src/plugins/bpa/bpa_cli.c` is what an
+  operator reads when a customer calls - `this answers for NOW ONLY. The block
+  belonged to somebody else` is the sentence that stops traffic being
+  attributed to the wrong subscriber - and nothing in this repository asserted
+  about it.
+
+  `tools/plugin-says.sh` is that reader for C, and the rule it uses is
+  `test/say-coverage.sh`'s, not a second copy of it: the needle is still cut
+  rather than globbed, still every literal fragment in order, still floored at
+  `SAY_MIN`, and both halves and the report are the same code that reads the
+  shell programs. What is new is one extraction, `say_messages_c`, because a
+  value is spelt `%u` in C and `$nbad` in shell.
+
+  **The boxes are a dataplane state, not a prompt**, which is why this reader
+  is a tool and not a suite in `make test`: reaching "no subscriber holds a
+  block right now" needs a pool with nobody on it, and `make test` runs with
+  no root, no VPP and no network. So the corpus is the lab suite's own output,
+  kept with `LAB_OUTPUT=<dir> sh tools/run-all-labs.sh`. It could not be
+  before: `tools/run-all-labs.sh` deleted each lab's output with the run that
+  made it, and the first attempt at this measurement read the SUMMARY logs
+  instead and reported every message as unseen, which is an artefact of the
+  corpus stated as a fact about the product. The default is unchanged and the
+  `trap` stays - 87 labs times three passes is not something to accumulate on
+  every release.
+
+  `test/test_plugin_says.sh` drives the reader against a stub source and
+  corpora it writes itself, so both halves and both floors have a green box
+  and a red one: a corpus missing exactly one message is not something a real
+  run hands you on request. It also pins the extraction against the real
+  plugin - the count of call sites, the count with a needle to hunt for, and
+  four of the sentences an operator reads during an incident, whole, because
+  an extraction that truncated at the first source line break would still find
+  87 sites and would hunt for half of every message.
+
 * **The wiki quotes screens the box prints, and now something compares them.**
   `wiki/` is 32 published pages on the open internet and 61 of its fenced
   blocks quote a verdict the box says: `error:`, `warning:`, `[ ok ]`,
