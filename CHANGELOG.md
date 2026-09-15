@@ -77,6 +77,141 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Six lab assertions that could not fail, and the suite that refuses the
+  next one.** `lab/` holds 62 shell files, 60 of them labs and two of them the
+  helpers the rest source, and between them 1381 `expect*` call sites. They are
+  the only thing that measures this product against a real dataplane. Nobody had
+  ever swept them for checks whose red branch nothing renders. This is that
+  sweep. It could run no lab - an eight hour soak held the container, and a lab
+  run beside it returns a false verdict - so every finding below was established
+  by reading and then DRIVEN, either as arithmetic or by feeding the assertion
+  the text a box would have given it. Nothing here rests on a suspicion; where
+  one could not be settled it is listed at the end as unsettled.
+
+  What the sweep found first was that most of this ground is already held.
+  `tools/run-all-labs.sh` runs 20 of the 60 labs a second time with the feature
+  under test switched off and requires each to go red, against a floor written
+  into the lab itself; 20 labs declare an `OFF-RED-AT-LEAST` and 20 are given an
+  off run, with `lab/upgrade.sh` explaining in a comment why it has neither. So
+  425 of the 1381 assertions have had their red branch rendered on every release
+  run. The five below are among the 956 that have not.
+
+  **`lab/extblocks.sh` asserted that its own arithmetic held.**
+  `expect "and one this worker count can honour" test "$((STRIDE % NW))" -eq 0`
+  sat twenty lines under `STRIDE=$((2 * NW))`. Driven under dash over worker
+  counts 1 to 64, it is `[ ok ]` on every one. It was added as the guard on an
+  anti-vacuity fixture, and when the fixture was made to derive its numbers from
+  the worker count the guard became a statement about the derivation rather than
+  about the box. Deleted, with what it was for recorded where it stood: the
+  version with content reads the box's own `cannot be honoured`, which
+  `lab/dynamic-workers.sh` already asserts, and writing it needs a container to
+  show it red.
+
+  **`lab/ipfix-outbuf.sh` asserted that a byte count was not negative.**
+  `test "${DROPPED_STOP:-0}" -ge 0`, described as *"the stop had bytes it could
+  not write"*. Driven under dash over `''`, `0`, `1` and `999999`: `[ ok ]` on
+  all four. Deleted rather than repaired, because both halves of its subject are
+  already held - that bytes were still buffered is the precondition above it,
+  which is the one the `no-stall` off run takes red, and `bpa_stop_drain()`
+  prints *"could NOT be written"* only under `if (lost)`, so the phrase the line
+  below asserts IS the count being non-zero. The `OFF-RED-AT-LEAST: 8` floor is
+  unchanged and was not re-measured: an assertion true for every value was green
+  in the off run too, so it was never one of the eight.
+
+  **`lab/boot-iso.sh` read the login banner instead of the answer.** The check
+  for [#305](https://github.com/andrediashexa/hexarouting/issues/305) greps the
+  whole console capture for `installation medium|'install'` after typing `show
+  interface`. The medium's own login banner says both of those things, several
+  lines before the command is typed, and the writer waits for the prompt the
+  banner precedes - so the needle is in the log by construction on every run.
+  Driven over two transcripts: a medium answering with the advice, and the same
+  medium with `why_no_dataplane_interface()` returning nothing at all, so the
+  screen carries an empty table and no advice. Both read `[ ok ]`, and on the
+  second it was the banner that said it. The needle now reads only what the
+  command answered. The negative half is unaffected and was already sound:
+  *"Reboot once the tuning"* has exactly one printer in the tree.
+
+  **`lab/routing.sh` asked about an interface it does not have.**
+  `expect_not_in "and not on the other one" "shutdown" "$(block_of
+  host-veth2-vpp)"`. `host-veth2-vpp` belongs to `lab/bgp-policy.sh`; it appears
+  nowhere else in `routing.sh`, so `block_of` found no such stanza, printed
+  nothing, and *"shutdown is not in this empty string"* was green on every box
+  the lab has run on. Driven with `block_of` lifted out verbatim and `$HX`
+  replaced by a file: with the shutdown on both interfaces, which is the failure
+  the line exists to catch, the old name reads `[ ok ]` and the right one reads
+  `[FAIL] and not on the other one (unexpected: shutdown)`. The block is now
+  pinned non-empty first, so a rename makes this red rather than vacuous.
+
+  **`lab/routing.sh` carried a needle with a newline in it.** *"does not claim
+  the whole configuration checks out"* searched for `configuration check
+  succeeds\n`, the newline arriving because the needle was written across two
+  source lines. `CHECKOUT=$(...)` strips trailing newlines, so the bare
+  sentence, which is the last thing that branch prints, loses the byte the
+  needle needed; and the other branch continues the line with *"for CGNAT and
+  the box's own configuration"*, so no newline follows there either. Neither
+  sentence could ever match. Driven over three commit-check outputs - a refusal
+  alone, a refusal plus the bare sentence, a refusal plus the narrowed one -
+  the old needle is `[ ok ]` on all three and the new one is red on the last
+  two. It cannot go red on a correct box: both prints sit inside `if
+  self.apply(self.candidate, check_only=True)` and a candidate with a bad prefix
+  range never reaches them.
+
+  **`lab/ftp-alg.sh` matched a row label, not a state.** *"and show bpa pool
+  reports the switch either way"* looked for `alg          ftp`, which is the
+  row label and the first ALG's name. `format_bpa_alg()` emits every ALG's name
+  with its state and the row is printed unconditionally, under a comment saying
+  so, so that needle is in `show bpa pool` for every pool on every box.
+  `lab/pptp.sh` and `lab/esp.sh` each record having fixed this in their own
+  file; this was the copy left. The repair had to be scoped as well as
+  corrected, and that was measured rather than assumed: driven over two
+  renderings of `show bpa pool`, a bare `ftp off` over the whole output is
+  `[ ok ]` on a box where the switch never reached the pool, because the second
+  pool a few lines down supplies it. Only the needle scoped to the pool that was
+  switched goes red.
+
+* **`test/test_lab_vacuous.py`** refuses the shape the first two of those are.
+  Every numeric `expect` in `lab/` is expanded through the lab's own arithmetic
+  definitions and driven over the values a box can supply; one true for all of
+  them cannot fail, and one false for all of them cannot pass. It is a check on
+  the SOURCE, like `test/test_lab_crlf.py`, and for the same reason: an
+  assertion that cannot fail is invisible on a green box by construction. 216
+  assertions are in scope and the floor refuses a run that reads fewer than 150,
+  because a suite that reads nothing passes, which is the defect it is about.
+
+  It folds only definitions that are real arithmetic, never a bare copy, and
+  that distinction was measured rather than chosen. `lab/pool-del.sh` writes
+  `SMALL=$BEST` after timing the small table and `BIG=$BEST` after timing the
+  large one; folding both into `$BEST` reports that lab's central measurement as
+  comparing a value with itself. With bare copies folded the suite flags
+  `pool-del.sh:263` and nothing else, and that one hit is the false positive;
+  with them left alone it flags none. Writing it also cost one bug of its own:
+  the two sides of a comparison were joined without a separator, so
+  `V_DROPPED_STOP` against `0` read as the single name `V_DROPPED_STOP0`, eval
+  raised, and twenty-odd assertions were skipped instead of judged. That is what
+  had been hiding `lab/ipfix-outbuf.sh`.
+
+  Shown failing four ways: on each of the two real findings before they were
+  fixed, on a tautology and an impossibility planted in `lab/two-pools.sh`, and
+  on a matcher deliberately broken, which reports *"only 0 arithmetic assertions
+  were read ... this suite is passing by reading nothing"*.
+
+  `make test`: 59 suites, 59 passed.
+
+* **What the sweep could not settle, said rather than left implied.** Two
+  candidates were refuted on inspection and are recorded so nobody re-opens
+  them: `lab/pool-del.sh:263` is the false positive above, and
+  `lab/records-full.sh:208`, which reads only the file's last byte, is right to
+  do so - `bpa_audit_verify()`'s own comment states that a fragment IS the end
+  of the file, because a write that stopped half way closed no newline. Several
+  more need a dataplane and were left: whether `lab/one-nic.sh`'s *"named after
+  the card"* can distinguish the Linux name from the VPP one, which it cannot
+  today because `box0` is a substring of `host-box0-bound`, but whose repair
+  needs the name a real replay chooses; whether `lab/ipfix-tcp.sh:162`'s
+  negative over `show lcp` is pinned by anything; and whether
+  `lab/install-iso.sh` turns a redrawn `[edit]` prompt into a verdict. None of
+  those were changed, because a lab whose green nobody has seen is the failure
+  this project keeps paying for.
+
 * **The self-test coverage reader could be satisfied by the wrong message.** It
   took each call site's longest literal chunk as a needle and asked whether any
   printed line contained it. Measured on this tree: 7 of 113 needles are

@@ -307,6 +307,23 @@ expect_in "the running configuration records the pool's ALG being off" \
   "alg ftp off" "$CFG"
 expect_in "an ALG turned off on the pool line is really off" \
   "ftp off" "$POOLLINE"
-expect_in "and show bpa pool reports the switch either way" "alg          ftp" \
-  "$SHOWPOOL"
+# THE STATE, on THE POOL THAT WAS SWITCHED. This asserted the needle
+# "alg          ftp", which is the row label and the first ALG's name:
+# format_bpa_alg() walks foreach_bpa_alg and emits every ALG's name with its
+# state (bpa_cli.c:49-62), and the row itself is printed unconditionally
+# (bpa_cli.c:278), under a comment saying so in as many words. FTP is first in
+# the list (bpa_pool.h:219), so that needle is in `show bpa pool` for every
+# pool on every box, on or off. lab/pptp.sh:249-252 and lab/esp.sh:230-232
+# each record having fixed this in their own file; this was the copy left.
+#
+# SCOPED TO THE POOL, and that is not tidiness. Driven on 2026-09-15 over two
+# renderings of `show bpa pool`, one with the switch landed and one with pool
+# `lab` still reading `ftp on`: the old needle is [ ok ] on both, and so is a
+# bare "ftp off" over the whole output - because pool `algline` a few lines
+# down has ftp off too and supplies it. Only the scoped needle goes
+# "[FAIL] ... (missing: ftp off)" on the second.
+LABALG=$(printf '%s\n' "$SHOWPOOL" \
+  | awk '/^pool lab /{p=1;next} /^pool /{p=0} p && /alg/{print; exit}')
+expect_in "and show bpa pool reports it off on the pool that was switched" \
+  "ftp off" "$LABALG"
 verdict
