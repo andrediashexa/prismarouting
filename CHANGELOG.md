@@ -75,6 +75,21 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The lab suite could lose a lab and still pass.** `tools/run-all-labs.sh`
+  ends with four counters - `pass`, `fail`, `notmeasured`, `novpp`, plus `ran`
+  - and exits green when three of them are zero. Those counters are internally
+  consistent with each other **whatever happens**: a lab that never reaches
+  `judge_batch`, because a batch lost its file or a name produced none, simply
+  makes the totals smaller, and the suite reports that everything it ran
+  passed. That is a verdict about fewer labs than the repository has, and
+  nothing anywhere said so - which is the same defect as a release cut on a
+  suite that never measured the thing it cleared. It now counts what it set out
+  to run, before anything runs, and refuses when the accounting is short. The
+  rule is the one `test/test_doc_copies.py` already applies to documents: a
+  counted list says how many it has.
+
 ### Added
 
 * **Every lab is now accounted for on whether its checks have ever been seen
