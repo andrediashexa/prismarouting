@@ -84,6 +84,28 @@ cat > "$BIN/vat2" <<'EOF'
 #!/bin/sh
 cat "$FAKE/dump_apis" 2>/dev/null || echo bpa_pool_add_del
 EOF
+# The journal, answered from the fake box for the same reason systemctl below
+# is. This was NOT stubbed, and it is the one command the self-test reaches for
+# that still came from the machine running these tests: swept for with a PATH
+# of loggers, `journalctl -u vpp.service --no-pager -n 20` and `journalctl -u
+# hexarouting.service -n 6 --no-pager -o cat` both went to this box's own
+# systemd. On a developer box that really does run vpp.service, that box's
+# journal is spliced into the report - under a [FAIL] this suite arranged, and
+# into the same text the 80-column check at the bottom reads. A journal line is
+# arbitrarily long, so the suite is green on a build runner with no such unit
+# and red on the appliance itself, over a product nobody changed.
+#
+# Empty by default, because that is what a box with no journal for the unit
+# answers, and every box here but the two that arrange one is that box.
+cat > "$BIN/journalctl" <<'EOF'
+#!/bin/sh
+case "$*" in
+  *vpp.service*)          cat "$FAKE/journal_vpp" 2>/dev/null ;;
+  *hexarouting.service*)  cat "$FAKE/journal_hexarouting" 2>/dev/null ;;
+  *) : ;;
+esac
+exit 0
+EOF
 # systemd, answered from the fake box rather than from this one. Stubbed whole
 # rather than passed through: the machine running these tests may itself have a
 # vpp.service, and a test whose answer depends on that is a test that reads
@@ -280,7 +302,13 @@ run() {  # -> $OUTPUT
   # What the manifest MEANS is measured in test/test_manifest.sh, which
   # installs a real root with appliance/install.sh and reads it back with this
   # same self-test. This is a fixture, not an assertion.
-  if [ ! -f "$FAKE/root/usr/share/hexarouting/MANIFEST" ]; then
+  #
+  # manifest.keep is how the three cases that ARE about the manifest opt out,
+  # including the one that needs no file at all - the same arrangement
+  # group.keep and mgmt.keep already make, and for the same reason: a fixture
+  # the harness overwrites is a fixture that measures the harness (#222).
+  if [ ! -f "$FAKE/manifest.keep" ] && \
+     [ ! -f "$FAKE/root/usr/share/hexarouting/MANIFEST" ]; then
     mkdir -p "$FAKE/root/usr/share/hexarouting"
     echo "a file of the build this box says it is running" \
       > "$FAKE/root/usr/share/hexarouting/a-file-of-that-build"
@@ -311,7 +339,13 @@ run() {  # -> $OUTPUT
   # this machine, and a developer box that really does run VPP would otherwise
   # give these tests a different /etc/vpp/startup.conf than the build runner.
   # Same reason systemctl is stubbed whole rather than passed through.
-  OUTPUT=$(PATH="$BIN:$PATH" HEXA_SELFTEST_OUT=/dev/stdout \
+  # RUN_PATH is what a box MISSING one of the commands the self-test reaches
+  # for is arranged with. Everything else here stubs a command to answer
+  # differently; this is the only way to arrange one that is not there at all,
+  # and the check that says "nothing here could look" is a different branch
+  # from the one that says "I looked and it was wrong". Empty is this
+  # machine's own PATH, which is every other box in this file.
+  OUTPUT=$(PATH="$BIN:${RUN_PATH:-$PATH}" HEXA_SELFTEST_OUT=/dev/stdout \
            HEXA_SELFTEST_ROOT="$FAKE/root" sh "$ST" 2>/dev/null)
   rc=$?
   # Every line the self-test has printed, over every box this suite arranges,
@@ -1219,13 +1253,24 @@ else
   ok "and two restarts is not a failed check"
 fi
 echo 7 > "$FAKE/nrestarts"
+# The journal the failure prints under itself. Whoever is standing at that
+# console cannot reach the box any other way yet, so the reason has to come
+# with the finding - and it has to be THIS box's reason: until this stub
+# existed the lines came from the systemd of whatever machine ran the suite.
+printf 'vpp[811]: dpdk: EAL init failed, no hugepages\n' > "$FAKE/journal_vpp"
 run
 if said '\[FAIL\] vpp.service has restarted 7 times: it is looping'; then
   ok "a loop is a FAILED check, and names the count"
 else
   bad "a looping vpp.service passed: $(printf '%s\n' "$OUTPUT" | grep -i restart || echo '<nothing>')"
 fi
-rm -f "$FAKE/nrestarts"
+if said 'EAL init failed, no hugepages'; then
+  ok "and the journal under it is this box's, not the one running the suite"
+else
+  bad "the looping box's own journal did not reach the console, so the \
+operator is told the dataplane is looping and not why: $(printf '%s\n' "$OUTPUT" | grep -A3 -i 'journal' | tr '\n' ' ')"
+fi
+rm -f "$FAKE/nrestarts" "$FAKE/journal_vpp"
 
 echo "=== IS-IS frames punted to the kernel (#222, #168) ==="
 # The reason this line exists: a box with an IS-IS instance and no OSI punt
@@ -1950,13 +1995,24 @@ echo "=== the service that applies the configuration (#222) ==="
 # to forward, while VPP, FRR and the VTY all answer perfectly. The stub
 # answered `inactive` for every run, so this branch had never executed.
 echo failed > "$FAKE/is_failed"
+printf 'bpa_pool_add_del: pool overlaps an existing one\n' \
+  > "$FAKE/journal_hexarouting"
 run
 if said '\[FAIL\] hexarouting.service FAILED: the CGNAT configuration was not applied'; then
   ok "a failed configuration service is a FAILED check"
 else
   bad "hexarouting.service failed and nothing said so: $(printf '%s\n' "$OUTPUT" | grep -i hexarouting.service || echo '<nothing>')"
 fi
-rm -f "$FAKE/is_failed"
+# "Failed" without a reason sends whoever is standing there to a journal they
+# may not be able to reach yet, which is why the check prints the last six
+# lines of it. They have to be this box's.
+if said 'pool overlaps an existing one'; then
+  ok "and the last thing it said is on the screen with it"
+else
+  bad "the unit failed and the reason was not printed, so the console says \
+the configuration was not applied and not what refused it: $(printf '%s\n' "$OUTPUT" | grep -A3 -i 'the last thing it said' | tr '\n' ' ')"
+fi
+rm -f "$FAKE/is_failed" "$FAKE/journal_hexarouting"
 run
 if said '\[FAIL\] hexarouting.service FAILED'; then
   bad "a box whose configuration service is fine was reported as failed"
@@ -3160,6 +3216,188 @@ else
   ok "a changed file is not reported as the one that shipped"
 fi
 
+echo "=== a box whose VTY is installed and dies at start ==="
+# 0.2.0 shipped a hexash that died for want of config.py, and that is the
+# defect this check was written for. Every box above that had a VTY at all was
+# answered by a stub printing one constant line, so the arm that reports a VTY
+# which does NOT start had never run - and the fall-through arm it would have
+# gone to prints "[ ok ] VTY starts: Traceback (most recent call last):",
+# which is a green tick on a box nobody can configure.
+#
+# Three lines and not one, because what reaches the console is the LAST line:
+# a traceback whose last line is the module it could not find is the only form
+# of this an operator can act on.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
+cat > "$BIN/hexash" <<'EOF'
+#!/bin/sh
+echo "Traceback (most recent call last):"
+echo "  File \"/usr/bin/hexash\", line 12, in <module>"
+echo "ModuleNotFoundError: No module named 'config'"
+exit 1
+EOF
+chmod +x "$BIN/hexash"
+run
+rm -f "$BIN/hexash"
+if said '\[ ok \] VTY starts'; then
+  bad "a VTY that dies at start was reported as one that starts, which is the \
+box 0.2.0 shipped"
+else
+  ok "a VTY that dies at start does not read as one that started"
+fi
+if said '\[FAIL\] hexash does not start'; then
+  ok "and it is a failed check, not a warning"
+else
+  bad "a box whose VTY cannot start was not reported: $(printf '%s\n' "$OUTPUT" | grep -iE 'hexash|VTY' || echo '<nothing about the VTY>')"
+fi
+if said "No module named 'config'"; then
+  ok "and it carries the last line, which is the reason somebody can act on"
+else
+  bad "the failure does not say why the VTY died: an operator is told the \
+front door is shut and not what is holding it"
+fi
+
+echo "=== a box that booted before its tuning did (FIRST BOOT mode) ==="
+# The first boot after an install runs with no pinning and no hugepages: the
+# kernel command line the tuner wrote does not apply until the reboot after
+# it. Such a box forwards at a fraction of what it will, and the one line
+# saying so had never been printed by anything here - so the branch beside it,
+# "full tuning active", was the only one any box had seen.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/etc/vpp"
+printf '# GENERATED by hexarouting-tune\n# FIRST BOOT MODE\nunix {\n}\n' \
+  > "$FAKE/root/etc/vpp/startup.conf"
+run
+if said '\[ ok \] full tuning active'; then
+  bad "a box running unpinned with no hugepages was reported as fully tuned"
+else
+  ok "a first boot does not read as a box whose tuning is in effect"
+fi
+if said '\[warn\] running in FIRST BOOT mode'; then
+  ok "and it says which mode it is in"
+else
+  bad "a first boot said nothing about being one: $(printf '%s\n' "$OUTPUT" | grep -iE 'tuning|FIRST BOOT' || echo '<nothing about the tuning>')"
+fi
+if said_across 'reboot for isolcpus and hugepages to take effect'; then
+  ok "and what to do about it, which is the whole of the operator's next step"
+else
+  bad "it named the mode and not the way out of it"
+fi
+
+echo "=== a box whose records name an array the kernel has no record of ==="
+# The mirror the year of connection records lives on (#83). fstab mounts it
+# nofail, so a box whose array never assembled comes up forwarding with the
+# volume missing - and every arm of the mirror check but this one is reading a
+# /proc/mdstat block that exists. This is the arm for a source that names an
+# array and a kernel that does not have it, and nothing had ever run it.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/var/log/hexarouting" "$FAKE/root/proc"
+echo /dev/vda2 > "$FAKE/mnt_root"
+echo /dev/md9  > "$FAKE/mnt_records"
+cat > "$FAKE/root/proc/mdstat" <<'MD'
+Personalities : [raid1]
+md0 : active raid1 vdb1[1] vda3[0]
+      2094080 blocks super 1.2 [2/2] [UU]
+
+unused devices: <none>
+MD
+run
+rm -f "$FAKE/mnt_root" "$FAKE/mnt_records"
+if said 'records mirrored on'; then
+  bad "a box whose array is not in /proc/mdstat was reported as mirrored, off \
+a block belonging to a different array"
+else
+  ok "it does not count disks out of an array that is not there"
+fi
+if said '\[FAIL\] the records are mounted from /dev/md9 and the kernel has no such array'; then
+  ok "and it names the array it cannot find"
+else
+  bad "a records volume the kernel has no array for was not reported: $(printf '%s\n' "$OUTPUT" | grep -iE 'record|mirror|md9' | tr '\n' ' ')"
+fi
+
+echo "=== the three boxes whose manifest cannot answer for itself (#302) ==="
+# Arranged HERE as well as in test/test_manifest.sh, for the reason the
+# changed-file box above is: what the manifest MEANS is that suite's question,
+# against a root a real install.sh wrote. What this one needs is for every
+# branch the self-test can take about it to have a box, because the reader at
+# the bottom of this file refuses a message no box has ever printed - and the
+# honest way to satisfy a rule is to make the data right, not to write an
+# exception into the rule (#335).
+#
+# All three are WARNINGS and not failures, and that distinction is the point:
+# a check that could not look has not agreed with anything, and a box that
+# reads as checked when nothing checked it is the quiet half of #302.
+
+# A box with no manifest at all, which is every box installed before #302.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
+: > "$FAKE/manifest.keep"
+run
+if said '\[warn\] no /usr/share/hexarouting/MANIFEST'; then
+  ok "a box with no manifest says so rather than saying nothing"
+else
+  bad "a box with no manifest was silent about it: $(printf '%s\n' "$OUTPUT" | grep -iE 'manifest|that build' | tr '\n' ' ')"
+fi
+if said 'files of that build are the ones it shipped'; then
+  bad "a box with no manifest reported its files as the ones that build shipped"
+fi
+
+# A manifest that is nothing but comments. `grep -c` prints its count AND
+# exits 1 when the count is zero, so this used to fall through to the
+# comparison and the box read as failing a check nothing had run.
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root/usr/share/hexarouting"
+printf '# yours: etc/hexarouting/tune.env\n' \
+  > "$FAKE/root/usr/share/hexarouting/MANIFEST"
+run
+if said '\[warn\] /usr/share/hexarouting/MANIFEST names no files'; then
+  ok "a manifest of nothing but comments is reported as checking nothing"
+else
+  bad "a manifest naming no files did not say so: $(printf '%s\n' "$OUTPUT" | grep -iE 'manifest|that build' | tr '\n' ' ')"
+fi
+
+# A box whose checker says no in words nothing here recognises. The verdict
+# comes off the EXIT STATUS, which is defined behaviour; the text only decides
+# how much detail the console gets. A box that cannot be read must still be
+# reported, or a broken box becomes a silent one.
+rm -f "$FAKE/manifest.keep"
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
+printf '#!/bin/sh\necho "everything here is wrong"\nexit 1\n' > "$BIN/sha256sum"
+chmod +x "$BIN/sha256sum"
+run
+rm -f "$BIN/sha256sum"
+if said '\[FAIL\] this box does not match its own manifest'; then
+  ok "a checker that failed in an unfamiliar wording still reports the box"
+else
+  bad "a box that does not match its manifest read as healthy because the \
+checker phrased its refusal differently: $(printf '%s\n' "$OUTPUT" | grep -iE 'manifest|that build' | tr '\n' ' ')"
+fi
+
+# And the box that has nothing to check WITH. Defensive and driven rather than
+# argued: coreutils is on every box this product runs on, and an assertion
+# nothing can make red is an assertion nobody should believe. The PATH is a
+# farm of symlinks to the real commands with that one taken out, so the box is
+# ordinary in every other respect.
+echo "=== and a box with no sha256sum to check the manifest with ==="
+FARM=$FAKE/no-sha256sum
+rm -rf "$FARM"
+cp -as /usr/bin "$FARM" 2>/dev/null || true
+rm -f "$FARM/sha256sum"
+rm -rf "$FAKE/root"; mkdir -p "$FAKE/root"
+if [ ! -x "$FARM/grep" ]; then
+  bad "the PATH farm could not be built, so the box with no sha256sum was \
+never arranged and the branch that reports it is still unmeasured"
+else
+  RUN_PATH=$FARM
+  run
+  RUN_PATH=
+  if said '\[warn\] no sha256sum here'; then
+    ok "it says nothing checked, rather than passing a box it did not look at"
+  else
+    bad "a box with no sha256sum did not say so: $(printf '%s\n' "$OUTPUT" | grep -iE 'sha256|manifest|that build' | tr '\n' ' ')"
+  fi
+  if said 'files of that build are the ones it shipped'; then
+    bad "a box with nothing to check with reported its files as checked"
+  fi
+fi
+rm -rf "$FARM"
+rm -f "$FAKE/manifest.keep"
+
 echo "=== the exit status, over every box the cases above arranged ==="
 # The rule this holds: docs/appliance.md, "always exits zero: the diagnostic
 # MUST NOT bring down the boot". It is a diagnostic, and a diagnostic reports
@@ -3496,6 +3734,94 @@ ever seen them fail - which is how a stub that answers a constant hides:"
     printf '%s\n' "$_always" | sed 's/^/    /'
   else
     ok "$runs boxes, and every [ ok ] line has a box that does not print it"
+  fi
+fi
+
+echo
+echo "=== and no check may have gone unseen: every message has a box ==="
+# THE OTHER HALF OF THE READER ABOVE, and the half that would have caught the
+# three repairs before they were made. That one refuses an [ ok ] line printed
+# by EVERY box, which is a check whose red form nothing has seen. This one
+# refuses a message printed by NO box, which is a whole branch nothing has
+# run - and the two are not the same thing. The vat2 constant showed up as
+# both; the hexash stub showed up only as this, because the line it hid
+# behind was printed by a handful of boxes and not by all of them.
+#
+# Swept by hand once, over 126 boxes, and seven branches of appliance/selftest
+# had never been executed by anything in the repository: a VTY that is
+# installed and dies at start (the defect of 0.2.0), a box running in FIRST
+# BOOT mode, a records volume naming an array the kernel has no record of, and
+# four ways a manifest can fail to answer for itself (#302). Each is now a box
+# above. This is here so the eighth does not need somebody to think of looking.
+#
+# READ FROM THE PRODUCT'S SOURCE, against the runs. There is no list here to
+# keep up to date: the call sites are found in appliance/selftest itself, so a
+# message added there without a box added here goes red on the next run. That
+# is the same bargain the healthy() box makes, one level up.
+#
+# THE NEEDLE IS THE LONGEST RUN OF THE MESSAGE THAT CARRIES NO VALUE. A
+# message is mostly literal text with values interpolated into it, and the
+# values differ from box to box - so every $var, ${var}, $(...) and `...` is
+# cut out first and the longest surviving run is what is looked for. Cutting
+# them out rather than globbing over them matters: "$nbad file(s) ..." would
+# otherwise be hunted for under the variable's NAME, which no box ever prints,
+# and the rule would go red on correct work. A check that goes red on correct
+# work is one people learn to run around, which is #333.
+#
+# NO EXCEPTIONS IN THE RULE, deliberately, and for the third time in this
+# file: four of the seven are also measured next door in test/test_manifest.sh
+# against a root a real install.sh wrote, and the repair was still to arrange
+# them here rather than to excuse them. An excused line is one nobody
+# re-examines, and this whole pair of readers exists because those accumulate.
+if [ ! -s "$FAKE/every-line" ]; then
+  bad "no box's output was kept, so this asked nothing"
+else
+  _sites=0
+  _unseen=""
+  _unreadable=""
+  # <source line><tab><needle>, one row per ok/bad/warn call site, including
+  # the ones that are the body of a `case` arm rather than a line of their own.
+  awk '
+    {
+      s = $0
+      if (!sub(/^[ \t]*(ok|bad|warn)[ \t]+"/, "", s)) {
+        if (!sub(/^.*[);|&][ \t]*(ok|bad|warn)[ \t]+"/, "", s)) next
+      }
+      gsub(/\$\([^)]*\)/, "\001", s)
+      gsub(/`[^`]*`/,     "\001", s)
+      gsub(/\$\{[^}]*\}/, "\001", s)
+      gsub(/\$[A-Za-z_][A-Za-z0-9_]*/, "\001", s)
+      gsub(/\$[0-9@*?#]/, "\001", s)
+      gsub(/\\./, "\001", s)
+      gsub(/"/,   "\001", s)
+      best = ""
+      n = split(s, part, "\001")
+      for (i = 1; i <= n; i++) if (length(part[i]) > length(best)) best = part[i]
+      printf "%d\t%s\n", FNR, best
+    }' "$ST" > "$FAKE/messages"
+  while IFS="$(printf '\t')" read -r _ln _needle; do
+    _sites=$((_sites + 1))
+    # A message made almost entirely of values cannot be recognised in a run,
+    # and saying so is the honest answer: passing it would be this reader
+    # reporting a branch as covered because it could not look.
+    if [ "${#_needle}" -lt 8 ]; then
+      _unreadable="$_unreadable
+    selftest:$_ln"
+    elif ! grep -qF -- "$_needle" "$FAKE/every-line"; then
+      _unseen="$_unseen
+    selftest:$_ln  $_needle"
+    fi
+  done < "$FAKE/messages"
+  if [ -n "$_unseen" ]; then
+    bad "appliance/selftest can print these and no box here ever made it do \
+so, which is a branch that has never run anywhere - add a box, do not add an \
+exception:$_unseen"
+  elif [ -n "$_unreadable" ]; then
+    bad "these messages are almost all interpolated value, so this reader \
+cannot tell whether a box printed them - give the message some words of its \
+own:$_unreadable"
+  else
+    ok "$_sites messages appliance/selftest can print, and a box for every one"
   fi
 fi
 
