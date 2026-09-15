@@ -312,6 +312,186 @@ $(printf '%s\n' "$out" | sed 's/^/    /')"
 fi
 
 echo
+echo "=== a branch printed INSIDE the row its own format string printed ==="
+# #369, and it is the defect that made this reader name a branch two labs were
+# printing. bpa_audit.c prints
+#
+#   vlib_cli_output (vm, "    the sequence jumps from %llu to %llu: %llu "
+#                        "entr%s removed from the middle", ...,
+#                    n == 1 ? "y was" : "ies were");
+#
+# so the branch reaches the screen in the MIDDLE of the row its own format
+# string printed. The format is the more specific message and wins the row;
+# what it used to take with it was its SPAN, which runs from the first literal
+# fragment to the last and swallows every value poured in between - the branch
+# among them. `ies were` is eight characters, exactly at SAY_MIN, and
+# bpa_audit.c:560 and :647 were both named as branches nothing had ever run
+# while lab/audit.sh was printing them into the corpus.
+#
+# FOUR INDENTATIONS, because the corpus is the lab's rendering of the output
+# and not the output: `printf '%s\n' "$X" | sed 's/^/  /'` is the house idiom
+# for showing a screen inside a lab and a good many of them use it. The four
+# are EXTRA columns in front of the row the box prints, and the four spaces
+# the format string itself carries stay on it - those are part of the message,
+# and a row stripped of them is not a row any box ever printed. Zero extra is
+# the plugin as it runs; two, four and six are three labs being tidy.
+cat > "$WORK/plural.c" <<'PLURAL'
+static void
+tamper (vlib_main_t *vm)
+{
+  vlib_cli_output (vm, "    the sequence jumps from %llu to %llu: %llu "
+		       "entr%s removed from the middle",
+		   a, b, c, n == 1 ? "y was" : "ies were");
+  vlib_cli_output (vm, "the audit trail verifies from end to end");
+}
+PLURAL
+ROW='    the sequence jumps from 2 to 5: 2 entries were removed from the middle'
+OTHER='the audit trail verifies from end to end'
+mkdir -p "$WORK/plural"
+for extra in 0 2 4 6; do
+  pad=""; pn=$extra
+  while [ "$pn" -gt 0 ]; do pad="$pad "; pn=$((pn - 1)); done
+  printf '%s%s\n' "$pad" "$ROW" > "$WORK/plural/one.out"
+  printf '%s\n' "$OTHER" > "$WORK/plural/two.out"
+  run "$WORK/plural.c" "$WORK/plural"
+  if [ "$RC" -eq 0 ]; then
+    ok "the branch in the middle of its own row has a box, with the lab \
+indenting the screen by $extra extra column(s)"
+  else
+    bad "with the screen indented by $extra extra column(s) the reader named a \
+message the corpus holds - a branch interpolated into the row its own format \
+printed is lost when the format is spent on the row:
+$(printf '%s\n' "$out" | sed 's/^/    /')"
+  fi
+done
+
+echo
+echo "=== and a row the box did not print is still attributed to nothing ==="
+# THE OTHER FAILURE, and it is the expensive one. A matcher that ignores more
+# is a matcher that matches more, and the whole argument for this reader is
+# that it refuses to call a branch covered when nothing ran it. So: a real
+# message, with the corpus row altered, and the reader must still name it.
+cat > "$WORK/guard.c" <<'GUARD'
+static void
+guard (vlib_main_t *vm)
+{
+  vlib_cli_output (vm, "    the sequence jumps from %llu to %llu: %llu "
+		       "entr%s removed from the middle",
+		   a, b, c, n == 1 ? "y was" : "ies were");
+  vlib_cli_output (vm, "verify: nothing follows the tamper report");
+  vlib_cli_output (vm, "the audit trail verifies from end to end");
+}
+GUARD
+mkdir -p "$WORK/altered"
+printf '%s\n' "$OTHER" > "$WORK/altered/two.out"
+# One word changed in the middle of the row, `removed` for `deleted`. The
+# branch is genuinely on this row and must still be attributed; the format
+# string is not, and no amount of the rest of it lining up may buy it a box.
+printf '%s\n' \
+  '    the sequence jumps from 2 to 5: 2 entries were deleted from the middle' \
+  > "$WORK/altered/one.out"
+run "$WORK/guard.c" "$WORK/altered"
+if [ "$RC" -ne 0 ] \
+   && printf '%s\n' "$out" | grep -q "the sequence jumps from" \
+   && ! printf '%s\n' "$out" | grep -q "ies were"; then
+  ok "a word altered in the middle of a row leaves the message unattributed, \
+and the branch that IS on that row is still found"
+else
+  bad "a row the box never printed bought a message a box, or the branch that \
+was on it lost one - the first is this reader clearing a branch nothing ran:
+$(printf '%s\n' "$out" | sed 's/^/    /')"
+fi
+
+# AND THE SEAM, which is what the span cut used to open. Striking out a
+# message leaves the row the length it was; CUTTING it glued what stood in
+# front of the message to what stood behind it, and a needle could then match
+# across the join - a sentence assembled out of two pieces the console never
+# showed side by side. This row carries the tamper report with a word in front
+# of it and a word behind, and the message made of those two words alone was
+# printed by nothing.
+mkdir -p "$WORK/seam"
+printf '%s\n' "$OTHER" > "$WORK/seam/two.out"
+printf '%s%s%s\n' 'verify: nothing ' "$ROW" ' follows the tamper report' \
+  > "$WORK/seam/one.out"
+run "$WORK/guard.c" "$WORK/seam"
+if [ "$RC" -ne 0 ] \
+   && printf '%s\n' "$out" | grep -q "verify: nothing follows the tamper report" \
+   && ! printf '%s\n' "$out" | grep -q "ies were" \
+   && ! printf '%s\n' "$out" | grep -q "the sequence jumps from"; then
+  ok "a sentence that exists on the row only once another message is taken out \
+of the middle of it is attributed to nothing"
+else
+  bad "the words in front of a message were joined to the words behind it and \
+the sentence that made was read as printed, which is this reader inventing a \
+box:
+$(printf '%s\n' "$out" | sed 's/^/    /')"
+fi
+
+echo
+echo "=== a ceiling that is holding rows names them on the green run ==="
+# NOT THE MESSAGE READER but the width half beside it (#367), and it is here
+# because this is the file that drives the reader with stub sources and
+# corpora it writes itself - the three appliance suites bring real boxes and
+# cannot arrange a ceiling to look at.
+#
+# SAY_UNSAFE_AT_MOST=49 is what test_installer.sh holds, and until now the
+# forty-nine rows under it could only be seen by lowering the variable to
+# provoke a red run. Nobody lowers a variable whose contents they cannot see,
+# and a ceiling nobody reads is an allowlist with a number in front of it.
+#
+# In a SUBSHELL with its own ok/bad, because say_report states its verdict
+# through the caller's pair and this case is about what it PRINTS. A red run
+# in there would be lost, so the absence of FAIL is asserted as well.
+cat > "$WORK/ceiling.sh" <<'CEIL'
+#!/bin/sh
+say() { printf '%s\n' "$*"; }
+count () {
+  say "the pool has $1 blocks free on this box right now"
+}
+refuse_disk () {
+  say "the disk $1 carries no partition table that this program can read"
+}
+refuse_card () {
+  say "the card $1 is already bound to a driver and will not be taken"
+}
+CEIL
+cout=$(
+  ok()  { echo "  [ ok ] $*"; }
+  bad() { echo "  FAIL: $*"; }
+  say_init "$WORK/ceiling.sh" sh
+  printf '%s\n' "the pool has 4096 blocks free on this box right now" | say_box
+  printf '%s\n' "the disk wobble carries no partition table that this program \
+can read" | say_box
+  printf '%s\n' "the card wobbly is already bound to a driver and will not be \
+taken" | say_box
+  SAY_UNSAFE_AT_MOST=2 say_report ceiling.sh
+)
+if ! printf '%s\n' "$cout" | grep -q "FAIL" \
+   && printf '%s\n' "$cout" | grep -q "2 row(s) carry a value with no widest" \
+   && printf '%s\n' "$cout" | grep -q "^    ceiling.sh:7  up to .* columns before the value" \
+   && printf '%s\n' "$cout" | grep -q "^    ceiling.sh:10  up to .* columns before the value"; then
+  ok "a ceiling that is holding two rows names both of them on a green run, \
+with the line and the columns before the value"
+else
+  bad "a green ceiling printed its count and not its rows, so the only way to \
+read what it is holding is to lower it and provoke a red run:
+$(printf '%s\n' "$cout" | sed 's/^/    /')"
+fi
+# AND NOTHING UNDER A CEILING OF ZERO. An empty heading reads as a listing
+# that failed to print, which is the opposite of the point.
+zout=$(
+  ok()  { echo "  [ ok ] $*"; }
+  bad() { echo "  FAIL: $*"; }
+  say_ceiling 0 0 "row(s) of nothing" ""
+)
+printf '%s\n' "$zout" | grep -q "^  \[ ok \] 0 row(s) of nothing, at the ceiling of 0$" \
+  && [ "$(printf '%s\n' "$zout" | grep -c "row(s) of nothing")" = 1 ] \
+  && ok "a ceiling of zero states its count and lists nothing under it" \
+  || bad "a ceiling with nothing to hold printed a heading with no rows under \
+it:
+$(printf '%s\n' "$zout" | sed 's/^/    /')"
+
+echo
 echo "=== and it still reads the plugin itself ==="
 # THE STUB PROVES THE READER, THE PRODUCT PROVES IT STILL READS THE PRODUCT.
 # These numbers are a floor and not an equality: a message added to bpa_cli.c

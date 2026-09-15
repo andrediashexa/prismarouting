@@ -120,6 +120,80 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The plugin message reader named a branch unseen that two labs were
+  printing, so the 38 and the 48 it published were an upper bound**
+  ([#369](https://github.com/andrediashexa/hexarouting/issues/369)).
+  `tools/plugin-says.sh` found a real defect the day it landed - `bpa_audit.c`
+  had a plural tamper branch nothing had ever run, and `lab/audit.sh` produces
+  it now. It went on naming it after the corpus was refreshed with the phrase
+  provably in it, and a branch that ran and is reported as never run is the
+  failure that makes a list people learn to ignore.
+
+  **It was the most-specific-message walk, not the indentation.** The reader
+  spends a row on the message with the most literal characters, takes that
+  message out and reads what is left. What it took out was the message's
+  **span** - first literal fragment to last - and a format string's span
+  swallows every value interpolated between its fragments:
+
+  ```c
+  vlib_cli_output (vm, "    the sequence jumps from %llu to %llu: %llu "
+                       "entr%s removed from the middle", ...,
+                   this_seq - expect == 1 ? "y was" : "ies were");
+  ```
+
+  `ies were` is eight characters, exactly at `SAY_MIN`, and it reaches the
+  screen in the middle of the row its own format printed. The format won the
+  row and the branch went out with it. It now strikes out the winner's
+  **fragments** and leaves the values alone: a message owns the words it
+  wrote, not what it was handed.
+
+  **The lab indentation was a coincidence and is measured as one.**
+  `printf '%s\n' "$X" | sed 's/^/  /'` is the house idiom for showing a screen
+  inside a lab, and the reproduction changed behaviour at exactly the column
+  where the format's own four spaces stop fitting - which looked like the
+  cause. It is not: the matcher finds every fragment with `index()` and
+  anchors nowhere, so columns added in front of a row can never remove a
+  match. Indenting **every line of all 89 lab transcripts** by two more
+  columns leaves the unseen list byte for byte identical; stripping the
+  leading whitespace instead takes it from 38 to 64, because the four spaces
+  are part of the message. Nothing was changed in the labs, and nothing in the
+  matcher ignores whitespace.
+
+  **It cannot attribute a row the box did not print, and it is stricter than
+  what it replaces.** Striking out leaves the row the length it was, so every
+  position the walk reports is a position on the row as printed and every
+  fragment found after a strike is found in text the box really wrote there.
+  The cut it replaces glued the text in front of a match to the text behind
+  it, and a needle could match across that seam - a sentence assembled from
+  two pieces the console never showed side by side. `test/test_plugin_says.sh`
+  drives both: a corpus at four indentations where the branch must be found,
+  and two where it must not - one row with a word altered in the middle of it,
+  one carrying the words that only the old seam could have joined. The second
+  goes green on the old code, which is the false attribution it was making.
+
+  **The re-measured worklist is 37 over `bpa_cli.c` and 46 over the plugin**,
+  against 38 and 48 published on
+  [#366](https://github.com/andrediashexa/hexarouting/issues/366) and
+  [#368](https://github.com/andrediashexa/hexarouting/issues/368). Two messages
+  moved and both were really printed: `bpa_audit.c:560,647  ies were`, on lines
+  111 and 116 of `audit.out`, and `bpa_cli.c:273  reciprocal`, the divisor
+  `show bpa pool` prints on four transcripts. Everything else on that list is
+  still a screen no box in this repository has ever reached.
+
+* **A ceiling printed what it was holding only when it broke.**
+  `say_ceiling` in `test/say-coverage.sh` named its rows under `bad` and only
+  the count under `ok`, so the installer's 49 unsafe rows and the binder's 6
+  could be read only by lowering the variable to provoke a red run - and
+  nobody lowers a variable whose contents they cannot see. They are printed on
+  the green run now, with the line, the columns before the value and what
+  bounds each slot, which is what the `NOT MEASURED HERE` block beside them
+  and the unseen list in `tools/plugin-says.sh` already do: a check says out
+  loud what it deliberately does not hold, where the next person is standing.
+  A ceiling of zero still prints nothing under it, and
+  `test/test_plugin_says.sh` holds both - it drives the width reader with a
+  stub program of its own and requires a non-zero ceiling to name its rows.
+  The three appliance suites are unchanged at 0/0/0 over and 49/6/0 unsafe.
+
 * **The appliance printed rows of 83 to 141 columns to a boot console that
   cannot reflow, and 2,143 real rows had never been measured**
   ([#367](https://github.com/andrediashexa/hexarouting/issues/367)).

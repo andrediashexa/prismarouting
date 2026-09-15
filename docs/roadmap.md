@@ -2256,6 +2256,20 @@ indistinguishable from a branch never running. The 38 and the 48 those readers
 name are an upper bound until that is fixed, and the re-measurement afterwards
 is the real worklist.
 
+**It was not the indentation, and the labs were never the problem.** The
+matcher finds every fragment of a message with `index()` and anchors nowhere,
+so columns added in front of a row cannot remove a match: indenting every line
+of all 89 transcripts by two more leaves the unseen list byte for byte
+identical, and stripping the leading whitespace instead takes it from 38 to 64.
+What defeated it was the walk that spends a row on its most specific message -
+it cut out that message's SPAN, and a format string's span swallows every
+value interpolated between its fragments, `entr%s` among them. It strikes out
+the winner's fragments now and leaves the values, which is also stricter than
+what it replaced: the cut glued the text in front of a match to the text behind
+it and could match a needle across that seam. Re-measured over the same corpus,
+**37 over `bpa_cli.c` and 46 over the plugin**, and both messages that moved
+were really printed.
+
 **And a reader can be right about most screens and blind to one word**
 ([#365](https://github.com/andrediashexa/hexarouting/issues/365)).
 `test/test_wiki_screens.py` compares every screen the public wiki quotes
