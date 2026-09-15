@@ -10241,12 +10241,27 @@ class Shell:
             return
 
         mgmt = self.default_route_nic()
+        # The Link column is as wide as the widest thing it can hold, and the
+        # width is ONE NAME used by the header and the rows so the two cannot
+        # drift. It was 7, and `unknown` is seven characters: on a card whose
+        # operstate is unknown the state and the speed ran together with no
+        # space at all, `unknown-` and `unknown1000Mb/s` (#347). That is not
+        # an odd value - host_nics() falls back to it when operstate cannot be
+        # read, and the kernel writes it for any netdev whose driver sets no
+        # carrier, which is every card on a box nobody has tuned yet.
+        #
+        # 15 is `lowerlayerdown` plus a space, and that is the longest of the
+        # states RFC 2863 defines; `notpresent` is ten. Sized from the closed
+        # set rather than from the values this box happens to have, because
+        # the box that meets the long one is somebody else's.
+        link_w = 15
         print(f"  {'Interface':<14}{'PCI':<15}{'Driver':<17}"
-              f"{'Link':<7}Speed")
+              f"{'Link':<{link_w}}Speed")
         for n in nics:
             speed = f"{n['speed']}Mb/s" if n["speed"] else "-"
             print(f"  {n['name']:<14}{n['pci']:<15}"
-                  f"{n['driver'] or '(none)':<17}{n['state']:<7}{speed}")
+                  f"{n['driver'] or '(none)':<17}"
+                  f"{n['state']:<{link_w}}{speed}")
             # The MAC is printed whole and on its own line with the driver's
             # verdict: it is what an operator matches against a label on the
             # port or a lease in the DHCP server, so it has to stay one
