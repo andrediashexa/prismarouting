@@ -50,7 +50,7 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 | `inside <prefixo>` | `<A.B.C.D/M>` | prefixo interno; pode repetir |
 | `outside <prefixo>` | `<A.B.C.D/M>` | prefixo público; pode repetir |
 | `block-size <n>` | `<64-32768>` | portas por bloco, potência de dois |
-| `ports <min> <max>` |           | faixa de portas utilizável |
+| `ports <min> <max>` | `<1-65535> <1-65535>` | faixa de portas utilizável |
 | `policy interleaved` |           | vizinhos em endereços públicos distintos |
 | `policy blocked` |           | vizinhos no mesmo endereço público |
 | `mode deterministic` |           | por fórmula, sem log de alocação |
@@ -60,6 +60,52 @@ Errar essa classificação é ruim nos dois sentidos: um campo de mapeamento tra
 | `reserve <n>` | `<0-65535>` | blocos de **cada** endereço público guardados fora da fórmula, para dar a quem encher o seu; `0` = nenhum |
 
 `**policy interleaved**` **vs** `**blocked**` — `interleaved` espalha vizinhos por endereços públicos distintos, o que dilui o impacto de um bloqueio de reputação em um IP. `blocked` mantém vizinhos no mesmo endereço público.
+
+## As duas pontas de `ports` são conferidas na hora, e a faixa no `commit`
+
+Uma porta é um número de 16 bits dos dois lados: se `ports 70000 80000` fosse
+aceito, o que chegaria ao dataplane seria `4464-14464`, e a partir daí
+nenhuma recusa conseguiria nomear os 70000 - o número já não existiria. Então
+cada ponta é recusada onde você a digita, e a recusa diz **qual das duas**:
+
+```
+error: invalid argument: ports min 70000: expected 1-65535
+```
+
+```
+error: invalid argument: ports max 70000: expected 1-65535
+```
+
+Algo que não é número responde por extenso, porque a ação é outra - não é
+escolher outro valor, é escrever um número:
+
+```
+error: invalid argument: ports min 'x': expected a number 1-65535
+```
+
+Duas portas legítimas na ordem errada são uma recusa diferente, e de propósito:
+a faixa não é o que está errado ali.
+
+```
+error: invalid argument: ports 9000 100: the max is below the min
+```
+
+A terceira coisa que pode estar errada só aparece no `commit`, e não na linha:
+uma faixa estreita demais para caber **um bloco**. Ela depende do `block-size`,
+que você pode digitar depois do `ports` - conferir na linha recusaria uma ordem
+de edição legítima. Então a pergunta é feita uma vez, do pool pronto:
+
+```
+error: pool 'residencial': block-size 512 exceeds the 177 usable ports
+    ports 1024 1200
+    block-size 512
+    a pool whose port range is smaller than its block has no block to give
+    anyone: widen the range, or make the block smaller
+```
+
+As duas sentenças saem inteiras, cada uma na sua linha, pelo mesmo motivo de
+sempre: é uma delas que você vai editar, e as duas carregam números que você
+vai comparar.
 
 # Timeouts do pool
 
@@ -244,13 +290,15 @@ receber blocos da fatia do seu próprio worker. A caixa avisa no momento em que
 o pool é criado e diz qual distância serve:
 
 ```
-warning: block-stride 1 on pool residencial cannot be honoured: blocks are
-         sharded 4 ways and a stride step moves by 2, so every block the
-         stride names belongs to another worker
+warning: block-stride 1 on pool residencial cannot be honoured: blocks are sharded 4 ways and a stride step moves by 2, so every block the stride names belongs to another worker
          the nearest stride that can be: 2
-         the setting is applied and extensions fall back to the free list;
-         this is a warning, not a refusal
+         the setting is applied and extensions fall back to the free list; this is a warning, not a refusal
 ```
+
+São **três** linhas, e o dataplane as escreve inteiras: a primeira passa
+de 170 colunas e a última de 100, então num console de 80 o terminal é que
+dobra. Quem procurar a frase inteira na tela procura o começo dela, não uma
+linha que termina onde a sua janela termina.
 
 É um aviso e não uma recusa de propósito: o número de workers é ajuste de
 inicialização, e uma configuração recusada por causa dele deixaria o pool
