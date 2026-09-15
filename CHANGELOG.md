@@ -77,6 +77,121 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The rest of `tools/`, measured refusal by refusal, and the one that could
+  never have fired.** `tools/release-gate.sh` was swept yesterday; this is
+  every other script in that directory. Read rather than grepped, the thirteen
+  that carry refusals hold **72 sites, of which 33 had ever been rendered by
+  anything**. **70 are now.** The two that are not are in
+  `tools/test-install.sh`, need a booted installation medium, and are named
+  below instead.
+
+  | tool | refusals | rendered before | now |
+  |---|---|---|---|
+  | `wiki-push.sh` | 10 | 3 | 10 |
+  | `wiki-pull.sh` | 5 | 2 | 5 |
+  | `wiki-status.sh` | 5 | 2 | 5 |
+  | `roadmap-state.sh` | 14 | 0 | 14 |
+  | `run-all-labs.sh` | 20 | 17 | 20 |
+  | `run-tests.sh` | 6 | 6 | 6 |
+  | `plugin-version-h.sh` | 3 | 1 | 3 |
+  | `plugin-coverage.sh` | 2 | 0 | 2 |
+  | `iso-ready.sh` | 2 | 2 | 2 |
+  | `vty.sh`, `lab.sh`, `build.sh` | 1 each | 0 | 1 each |
+  | `test-install.sh` | 2 | 0 | 0 |
+
+  `version-stamp.sh` carries none: every path it has prints a stamp and exits
+  0, which is the point of it. `selftest-verdict.sh` is a sourced list of
+  strings.
+
+  **`wiki-pull.sh`'s "nothing came back" was dead code.** The guard was `[ -s
+  "$TMP/docs.json" ]`, and the reader above it prints `[]` for an answer
+  holding no published documents, which is two bytes and passes a size test.
+  Measured against a stub answering `{"data":[],"pagination":{...,"total":0}}`:
+  the rewrite ran, **every page in the mirror was deleted**, `wiki/.ids` came
+  back empty, `wiki/.pulled` was written EMPTY, and the script exited 0 saying
+  `0 pages`. A mirror stamped as freshly pulled and holding nothing, out of
+  the script whose entire first half exists to stop `wiki/` being emptied. The
+  guard is now the document count, which is the number it was always about,
+  and it is driven in both directions.
+
+  **`wiki-push.sh`'s staleness check had never run in either direction.** It
+  is the reason that script exists: the wiki is written by people, the push
+  goes over what they wrote, so the live document is read first and compared
+  against `wiki/.pulled`. Its own header records the near miss - four pages
+  updated through the API, a mirror never refreshed, a later edit built from
+  the stale copy while a category was being renamed, and nothing lost only
+  because the stale text failed to match. Six more of its ten went the same
+  way: a mirror that was never pulled, a live document that cannot be read, a
+  wiki that takes the request and refuses it, and the three argument checks
+  before any of it.
+
+  Every assertion below was shown red on a mutation ANCHORED TO ITS OWN LINE,
+  and each one reddened its own case and no other. Two of them are worth
+  quoting because the red is the defect in one line:
+
+  ```
+  push-stale     if updated > pulled:  ->  if False:
+      FAIL: a document edited after the pull was published over anyway
+      FAIL: it refused and published the page anyway
+
+  pull-empty     the document count guard  ->  :
+      FAIL: an answer with no documents in it rewrote the mirror
+      FAIL: the pull refused and emptied wiki/ anyway
+  ```
+
+  **No wiki was reached and there is no `WIKI_TOKEN` in this work.** `curl`,
+  `gh` and `docker` are stubs on `PATH` answering from fixtures, the way
+  `test/test_wiki_roundtrip.sh` already stubbed `curl`. `PATH` is prepended
+  and not replaced, except in the one case that needs `gh` to be absent - and
+  that case's first run went red with `sh: not found`, over a `PATH` so short
+  that nothing started, which is why it asserts the script's own sentence and
+  links `sh` and `dirname` in beside the absence.
+
+  **`tools/roadmap-state.sh` had nothing driving it at all.** Only
+  `release-gate.sh` runs it, and it runs it where `gh` usually cannot answer,
+  so the one branch ever executed under a test was the one saying the
+  comparison did not happen. All fourteen are driven now against a stub
+  tracker, including the four findings themselves and the check that refuses
+  when the `What is blocked on somebody else` section it reads has been
+  renamed away. Two of the fourteen - `STATES=$(mktemp) || exit 2` and the
+  same for `ERRS` - **print nothing at all**, which is the only pair in that
+  file that does not say `NOTHING WAS COMPARED`. They are asserted as they
+  stand rather than as they ought to be, and the silence is recorded here.
+
+  **`tools/test-install.sh`'s two refusals cannot be arranged here.** Both
+  read the log of `lab/install-iso.sh` after it has booted a medium and been
+  refused a login, so driving them means a privileged container, an ISO and a
+  QEMU boot - which is a release gate phase and not a `make test` suite. They
+  are the control that keeps the install driver honest: `the control PASSED`
+  and `the control failed, but NOT at the login`. Named, not closed.
+
+  **`tools/run-all-labs.sh`'s last three.** Seventeen of its twenty were
+  already driven against stub labs. The three that were not: the plugin build
+  failing, which is the guard that stops the suite before a single lab is run
+  against a plugin that was never built; `report_off()`'s third state, an off
+  run that printed no verdict either way and so has shown nothing about
+  whether its assertions can fail - the defect the off runs exist to catch,
+  sitting inside the machinery built to catch it; and the WORKING TREE half of
+  the mid-run check, which is the likelier half on this machine, because an
+  agent saving a file under `lab/` moves HEAD not at all and the labs either
+  side of the save still measure two different products.
+
+  `tools/plugin-version-h.sh`'s two `${N:?usage}` guards needed three calls
+  and not two: with no arguments BOTH fire, so a case that only passed none
+  would have stayed green with the first deleted. An EMPTY first argument is
+  the call only `${1:?}` refuses, and it is the realistic one - a caller
+  expanding a variable that is not set. The backslash half of its quote check
+  had never run either: a lone backslash does not close the string literal, it
+  escapes the quote that ends it, so the compiler swallows the next line and
+  reports a token further down a file nobody wrote.
+
+  `tools/lab.sh`'s and `tools/build.sh`'s refusals sit ABOVE their docker
+  socket test, so they are driven with a `docker` stub that records every verb
+  rather than answering one - and the cases assert that no container was asked
+  for. That is not decoration: with `lab.sh`'s check deleted, the mutation run
+  went red on `it refused and started a container anyway` with the whole
+  `docker run --rm --privileged` line under it.
+
 * **The nine refusals the `appliance/` sweep named as renderable here, and
   left.** That sweep read 113 refusal sites in the scripts that put this
   product on somebody's disk, found 51 had ever been rendered by anything,

@@ -65,7 +65,14 @@ case "$url" in
       @*) cp "${data#@}" "$WIKI_STUB/sent.json" ;;
       *)  printf '%s' "$data" > "$WIKI_STUB/sent.json" ;;
     esac
-    printf '{"ok":true,"data":{"title":"stub"}}' ;;
+    # A wiki that takes the request and says no. A FILE and not a variable,
+    # because this stub is a fresh process on every call and carries nothing
+    # across one; the case that wants it creates the file and removes it again.
+    if [ -f "$WIKI_STUB/update-refuses" ]; then
+      printf '{"ok":false,"error":"editing this document is not permitted"}'
+    else
+      printf '{"ok":true,"data":{"title":"stub"}}'
+    fi ;;
   *)
     printf '{"ok":false,"error":"the stub was asked for %s"}' "$url" ;;
 esac
@@ -279,6 +286,230 @@ fi
 mv "$WORK/ids.saved" "$INDEX"
 rm -f "$WORK/repo/wiki/operar/pagina-nova.md"
 
+echo "=== a document edited after the pull stops the push (the whole point) ==="
+# THE refusal of wiki-push.sh, and nothing had ever driven it in either
+# direction. The wiki is written by people and this publishes over what they
+# wrote, so the live document is read first and compared against the moment
+# the mirror was pulled. The near miss is in the script's own header: four
+# pages updated through the API, a mirror never refreshed, and a later edit
+# built from the stale copy at the same time the maintainer was renaming a
+# category - nothing was lost, and only because the stale text failed to match.
+#
+# The mirror above was pulled at 2026-09-01T00:00Z. Somebody else edits the
+# page nine days later.
+cp "$STUB/documents.info.json" "$WORK/info.good"
+python3 - "$STUB" <<'PYEOF'
+import json, sys
+path = sys.argv[1] + "/documents.info.json"
+info = json.load(open(path))
+info["data"]["updatedAt"] = "2026-09-10T12:00Z"
+json.dump(info, open(path, "w"))
+PYEOF
+rm -f "$STUB/sent.json"
+if sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$MIRROR" \
+     > "$WORK/stale.log" 2>&1; then
+  bad "a document edited after the pull was published over anyway"
+else
+  grep -q "changed on the wiki at 2026-09-10T12:00Z, after this mirror was pulled" \
+    "$WORK/stale.log" \
+    && ok "refused: $(grep -o "'.*' changed on the wiki.*" "$WORK/stale.log")" \
+    || { bad "it failed, but not on the staleness check:"
+         sed 's/^/    /' "$WORK/stale.log"; }
+  # A refusal that says only "no" is one somebody works around by hand, and
+  # the way round this one is to push the stale text again with the id.
+  grep -q "Pull again and rebuild the edit on what is there now" \
+    "$WORK/stale.log" \
+    && ok "and it says what to do instead, which is not 'push harder'" \
+    || bad "it refused without saying what to do next"
+fi
+[ -f "$STUB/sent.json" ] && bad "it refused and published the page anyway"
+# Restored HERE and not at the end of the file: every case below reads this
+# document, and a stub left nine days ahead would refuse all of them for a
+# reason none of them is about.
+cp "$WORK/info.good" "$STUB/documents.info.json"
+# And the other direction, on the same site: the timestamps above were equal
+# on every push before this case and each one went out, so the comparison is
+# not simply refusing everything.
+
+echo "=== a mirror that was never pulled stops the push ==="
+# The worse half of the same question. With no wiki/.pulled there is no moment
+# to compare the live document against, so "has this page moved since?" has no
+# answer at all - and a push that guessed would overwrite somebody's work
+# silently, which is the defect the comparison above exists to prevent.
+mv "$WORK/repo/wiki/.pulled" "$WORK/pulled.saved"
+rm -f "$STUB/sent.json"
+if sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$MIRROR" \
+     > "$WORK/nostamp.log" 2>&1; then
+  bad "a push from a mirror of unknown age was published"
+else
+  grep -q "wiki/ has never been pulled" "$WORK/nostamp.log" \
+    && ok "refused: $(grep -o 'wiki/ has never been pulled.*' "$WORK/nostamp.log")" \
+    || { bad "it failed, but not because the mirror carries no pull stamp:"
+         sed 's/^/    /' "$WORK/nostamp.log"; }
+fi
+[ -f "$STUB/sent.json" ] && bad "it refused and published the page anyway"
+mv "$WORK/pulled.saved" "$WORK/repo/wiki/.pulled"
+
+echo "=== a live document that cannot be read stops the push ==="
+# An expired, wrong or revoked token answers with an error object and no
+# "data", and every comparison in the block below it depends on that document.
+# Reading the absence as "nothing changed since the pull" would publish over
+# whatever is really on the page, so this stops at the READ and not at the
+# write.
+cp "$STUB/documents.info.json" "$WORK/info.good"
+printf '{"ok":false,"error":"authentication required"}' \
+  > "$STUB/documents.info.json"
+rm -f "$STUB/sent.json"
+if sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$MIRROR" \
+     > "$WORK/badtoken.log" 2>&1; then
+  bad "a push went out without the live document having been read at all"
+else
+  grep -q "could not read the live document; is the token valid?" \
+    "$WORK/badtoken.log" \
+    && ok "refused, and it names the likely cause" \
+    || { bad "it failed without saying the live document could not be read:"
+         sed 's/^/    /' "$WORK/badtoken.log"; }
+fi
+[ -f "$STUB/sent.json" ] && bad "it refused and published the page anyway"
+cp "$WORK/info.good" "$STUB/documents.info.json"
+
+echo "=== a wiki that refuses the update is not reported as published ==="
+# The last refusal in the file and the one an operator would otherwise take
+# for a success: the request went out, the wiki said no, and the exit status
+# of a pipeline is its LAST command - so without this the script would end
+# quietly and the correction would sit there with nobody looking for it again.
+: > "$STUB/update-refuses"
+rm -f "$STUB/sent.json"
+if sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$MIRROR" \
+     > "$WORK/norefuse.log" 2>&1; then
+  bad "the wiki refused the update and the push reported success"
+else
+  grep -q "the wiki refused the update" "$WORK/norefuse.log" \
+    && ok "refused, and it repeats what the wiki said back" \
+    || { bad "it failed without saying the wiki had refused:"
+         sed 's/^/    /' "$WORK/norefuse.log"; }
+fi
+grep -q "published:" "$WORK/norefuse.log" \
+  && bad "it printed 'published:' over an update the wiki refused"
+rm -f "$STUB/update-refuses"
+
+echo "=== no token, no file, no arguments: the three checks before any curl ==="
+# Cheap, and each of them is the alternative to a request against the live
+# wiki with a guess in it. The token one is not cosmetic either: with
+# WIKI_TOKEN unset the Authorization header would go out reading "Bearer ",
+# and what came back would be read as a document.
+rm -f "$STUB/sent.json"
+if (unset WIKI_TOKEN; sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$MIRROR") \
+     > "$WORK/notoken.log" 2>&1; then
+  bad "wiki-push.sh ran with no token at all"
+else
+  grep -q "error: set WIKI_TOKEN" "$WORK/notoken.log" \
+    && ok "no token: $(head -1 "$WORK/notoken.log")" \
+    || { bad "it failed for some reason other than the missing token:"
+         sed 's/^/    /' "$WORK/notoken.log"; }
+fi
+if sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$WORK/no-such-page.md" \
+     > "$WORK/nofile.log" 2>&1; then
+  bad "wiki-push.sh accepted a file that is not there"
+else
+  grep -q "no-such-page.md does not exist" "$WORK/nofile.log" \
+    && ok "no file: $(head -1 "$WORK/nofile.log")" \
+    || { bad "it failed without naming the file it could not find:"
+         sed 's/^/    /' "$WORK/nofile.log"; }
+fi
+if sh "$WORK/repo/tools/wiki-push.sh" > "$WORK/noargs.log" 2>&1; then
+  bad "wiki-push.sh ran with no arguments"
+else
+  grep -q "^usage: " "$WORK/noargs.log" \
+    && ok "no arguments: $(head -1 "$WORK/noargs.log")" \
+    || { bad "it failed without printing a usage line:"
+         sed 's/^/    /' "$WORK/noargs.log"; }
+fi
+# Three arguments and not two is the same site read the other way: an id, a
+# file and something else is somebody passing a flag this script has not got.
+if sh "$WORK/repo/tools/wiki-push.sh" "$DOCID" "$MIRROR" --force \
+     > "$WORK/threeargs.log" 2>&1; then
+  bad "wiki-push.sh ran with three arguments and published something"
+else
+  grep -q "^usage: " "$WORK/threeargs.log" \
+    && ok "three arguments: the same usage, and no push" \
+    || { bad "three arguments failed without printing a usage line:"
+         sed 's/^/    /' "$WORK/threeargs.log"; }
+fi
+[ -f "$STUB/sent.json" ] && bad "one of those four sent a document"
+
+echo "=== the pull needs a token, and refuses BEFORE it deletes anything ==="
+# No credential is kept in this repository on purpose, so the refusal carries
+# the sentence that says so - otherwise the next person goes looking for the
+# file it is missing. What is asserted second is the half that costs work:
+# this script rewrites wiki/ from the live wiki, so a refusal that arrived
+# after the rmtree would take the mirror with it.
+pullbefore=$(cat "$MIRROR")
+if (unset WIKI_TOKEN; sh "$WORK/repo/tools/wiki-pull.sh") \
+     > "$WORK/pullnotoken.log" 2>&1; then
+  bad "wiki-pull.sh rewrote the mirror with no token at all"
+else
+  grep -q "set WIKI_TOKEN to an Outline API token" "$WORK/pullnotoken.log" \
+    && ok "refused: $(head -1 "$WORK/pullnotoken.log")" \
+    || { bad "it failed for some reason other than the missing token:"
+         sed 's/^/    /' "$WORK/pullnotoken.log"; }
+fi
+[ -f "$MIRROR" ] && [ "$(cat "$MIRROR")" = "$pullbefore" ] \
+  && ok "and the mirror is untouched" \
+  || bad "the pull refused and rewrote wiki/ anyway"
+
+echo "=== a wiki that answers with no documents does not empty the mirror ==="
+# This guard was `[ -s "$TMP/docs.json" ]` and could never fire: an answer
+# holding no published documents reads out as "[]", which is two bytes and
+# passes a size test. Measured against this stub before the change - the
+# rewrite ran, every page in the mirror was deleted, wiki/.ids came back
+# empty and wiki/.pulled was written EMPTY, and the script exited 0 saying
+# "0 pages". A mirror stamped as freshly pulled and holding nothing is the
+# state the whole first half of that script exists to prevent.
+cp "$STUB/documents.list.json" "$WORK/list.good"
+printf '{"data":[],"pagination":{"offset":0,"limit":100,"total":0}}' \
+  > "$STUB/documents.list.json"
+emptybefore=$(cat "$MIRROR")
+if sh "$WORK/repo/tools/wiki-pull.sh" > "$WORK/empty.log" 2>&1; then
+  bad "an answer with no documents in it rewrote the mirror"
+else
+  grep -q "no published documents at all" "$WORK/empty.log" \
+    && ok "refused: $(grep -o 'error: the wiki answered.*' "$WORK/empty.log")" \
+    || { bad "it failed, but not on the empty answer:"
+         sed 's/^/    /' "$WORK/empty.log"; }
+fi
+[ -f "$MIRROR" ] && [ "$(cat "$MIRROR")" = "$emptybefore" ] \
+  && ok "and every page in the mirror is still there" \
+  || bad "the pull refused and emptied wiki/ anyway"
+cp "$WORK/list.good" "$STUB/documents.list.json"
+
+echo "=== a mirror it cannot ask about is a warning, not a silent pull ==="
+# tools/wiki-status.sh exits 2 when it cannot answer - not a git checkout, or
+# a checkout whose history never recorded a pull - and this copy of the
+# repository is exactly the first of those. The question "is there unpublished
+# work here?" then has no answer, and answering it wrongly either way is worse
+# than saying so: a silent pull deletes corrections nobody can see, and a
+# refusal stops a pull in a tree that never had any. So it pulls, and it says.
+#
+# LAST of the pull cases on purpose. This one really does rewrite
+# "$WORK/repo/wiki", so anything above it that compares the mirror against
+# itself has already run.
+sh "$WORK/repo/tools/wiki-pull.sh" > "$WORK/unknown.log" 2>&1 \
+  && ok "the pull ran in a tree whose history cannot be read" \
+  || { bad "the pull failed in a tree with no history:"
+       sed 's/^/    /' "$WORK/unknown.log"; }
+grep -q "could not tell whether wiki/ holds unpublished edits" \
+  "$WORK/unknown.log" \
+  && ok "and it said it could not tell, rather than pulling in silence" \
+  || { bad "it pulled without warning that it had not checked for drafts:"
+       sed 's/^/    /' "$WORK/unknown.log"; }
+# The holder's own words are kept. "not a git repository" and "no commit ever
+# wrote wiki/.pulled" are different things to go and do, and a warning that
+# flattened both into one sentence would send the reader to the wrong one.
+grep -q "not a git repository" "$WORK/unknown.log" \
+  && ok "and it repeats the holder's reason rather than inventing one" \
+  || bad "the warning does not carry why the holder could not answer"
+
 echo "=== the pull refuses to throw away work nobody published (#277) ==="
 # The whole of #277 in one case. The advice an operator was given was "pull
 # first, then push"; the pull deletes wiki/ and rewrites it from the live
@@ -380,6 +611,84 @@ else
   bad "WIKI_PULL_DISCARD=1 could not pull:"
   sed 's/^/    /' "$WORK/discard.log"
 fi
+
+echo "=== the holder's two ways of having no answer, and a page removed ==="
+# tools/wiki-status.sh is the only thing that says whether work is waiting
+# here, and tools/wiki-pull.sh reads it before deleting wiki/. Both of the
+# states below exit 2 rather than 0 or 1, and the difference is not academic:
+# a "clean" it invented would have the pull destroy corrections, and a
+# "drafts" it invented would stop a pull in a tree that never had any.
+#
+# A FIXTURE OF ITS OWN, and that is not tidiness. The repository above has had
+# wiki/.pulled rewritten by the discard pull, so the last commit that wrote
+# that file is now the last commit outright and every comparison against it is
+# empty - which reports clean, for a reason that has nothing to do with what
+# is being asserted.
+SREPO="$WORK/statusrepo"
+mkdir -p "$SREPO/tools" "$SREPO/wiki"
+cp "$REPO/tools/wiki-status.sh" "$SREPO/tools/"
+cp "$REPO/wiki/README.md" "$SREPO/wiki/"
+printf '# %s\n\n%s' "$TITLE" "$BODY" > "$SREPO/wiki/primeiros-passos.md"
+printf '# Outra pagina\n\ncorpo\n' > "$SREPO/wiki/outra-pagina.md"
+
+sh "$SREPO/tools/wiki-status.sh" > "$WORK/nogit.log" 2>&1; rc=$?
+[ "$rc" = 2 ] \
+  && ok "a directory that is not a checkout exits 2, not 0 and not 1" \
+  || bad "wiki-status.sh exited $rc over a directory with no git history"
+grep -q "not a git repository, so there is no history to read" \
+  "$WORK/nogit.log" \
+  && ok "and it says the history is what it reads" \
+  || { bad "it refused without saying what it could not read:"
+       sed 's/^/    /' "$WORK/nogit.log"; }
+
+# A checkout whose history has no pull in it. The distinction matters because
+# the thing this compares against is not a file, it is the last COMMIT that
+# wrote wiki/.pulled, and a tree can have the file without any commit having
+# written it - a fresh clone of the mirror with the stamp still unstaged.
+git -C "$SREPO" init -q
+git -C "$SREPO" -c user.email=t@t -c user.name=t add -A
+git -C "$SREPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "a mirror nobody recorded a pull for"
+sh "$SREPO/tools/wiki-status.sh" > "$WORK/nopull.log" 2>&1; rc=$?
+[ "$rc" = 2 ] \
+  && ok "a history with no pull in it exits 2 as well" \
+  || bad "wiki-status.sh exited $rc over a history that never pulled"
+grep -q "no last pull to compare against" "$WORK/nopull.log" \
+  && ok "and it says there is no moment to compare against" \
+  || { bad "it refused without saying why it could not compare:"
+       sed 's/^/    /' "$WORK/nopull.log"; }
+
+# A page DELETED here and still published. Three groups and three different
+# jobs: a correction is pushed, a page that exists only here has to be created
+# on the wiki before it can be, and a page removed here is still on the wiki
+# and wiki-push.sh cannot take it down. Reported as one number, whoever holds
+# the token does the wrong thing twice.
+printf '2026-09-01T00:00Z\n' > "$SREPO/wiki/.pulled"
+git -C "$SREPO" -c user.email=t@t -c user.name=t add -A
+git -C "$SREPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "the mirror as pulled"
+rm -f "$SREPO/wiki/outra-pagina.md"
+git -C "$SREPO" -c user.email=t@t -c user.name=t add -A
+git -C "$SREPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "a page removed here and nobody told the wiki"
+sh "$SREPO/tools/wiki-status.sh" > "$WORK/gone.log" 2>&1; rc=$?
+[ "$rc" = 1 ] \
+  && ok "a removal is an outstanding difference, so exit 1" \
+  || { bad "wiki-status.sh exited $rc over a page deleted since the pull:"
+       sed 's/^/    /' "$WORK/gone.log"; }
+if grep -q "deleted here and still published" "$WORK/gone.log" &&
+   grep -q "outra-pagina.md" "$WORK/gone.log"; then
+  ok "$(grep 'deleted here and still published' "$WORK/gone.log")"
+else
+  bad "it reported the removal without a group and a name of its own:"
+  sed 's/^/    /' "$WORK/gone.log"
+fi
+# And not into the corrected group, which is the mistake the split exists to
+# stop: that group's line is what an operator reads as "push these".
+grep -q "^0 page(s) corrected here" "$WORK/gone.log" \
+  && ok "and it is not counted as a page to push" \
+  || { bad "the removal was counted among the pages to push:"
+       sed 's/^/    /' "$WORK/gone.log"; }
 
 echo "=== and the mirror itself keeps to that format (#225) ==="
 # Everything above drives the two scripts against a stub and asserts they agree

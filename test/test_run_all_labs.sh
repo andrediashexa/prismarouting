@@ -791,5 +791,125 @@ esac
 over something nobody measured"
 rm -rf "$l"
 
+echo
+echo "=== the plugin build failing stops the suite before any lab runs ==="
+# The suite builds the plugin ONCE, before anything starts, so that no lab is
+# the one that happens to build it - that shared build directory is the only
+# writable state the forty of them have between them. If that build fails
+# there is nothing to run the labs against, and every one of them would go red
+# against a plugin from the last run or no plugin at all. Nothing had ever
+# driven it.
+b=$(mktemp -d)
+mkdir -p "$b/tools" "$b/lab"
+cp "$REPO/tools/run-all-labs.sh" "$b/tools/"
+cp "$d/tools/lab.sh" "$b/tools/"
+printf '#!/bin/sh\necho "ninja: build stopped: subcommand failed" >&2\nexit 1\n' \
+  > "$b/tools/build.sh"
+chmod +x "$b/tools/build.sh"
+printf '#!/bin/sh\n' > "$b/lab/aa-good.sh"
+bout=$(sh "$b/tools/run-all-labs.sh" 2>&1); brc=$?
+[ "$brc" != 0 ] \
+  && ok "a suite with no plugin to test does not exit 0" \
+  || bad "the plugin build failed and the suite exited 0"
+case "$bout" in
+  *"ninja: build stopped"*)
+    ok "and it prints what the build said, not just that it failed" ;;
+  *) bad "the build's own output was thrown away, so nothing says why; got:
+$bout" ;;
+esac
+case "$bout" in
+  *"aa-good"*)
+    bad "it ran a lab against a plugin that was never built" ;;
+  *) ok "and not one lab was run against it" ;;
+esac
+rm -rf "$b"
+
+echo
+echo "=== an off run with no verdict at all is not an off run that went red ==="
+# report_off() reads the verdict BACKWARDS - "LAB FAILED" is what a pass looks
+# like - so the state that has to be got right is the third one: a lab that
+# printed neither. It has shown nothing about whether its assertions can fail,
+# and calling that a pass is the defect the off runs exist to catch, sitting
+# inside the machinery built to catch it.
+#
+# The plain run of the same lab PASSES here, so the line being asserted can
+# only have come from report_off().
+o=$(mktemp -d)
+mkdir -p "$o/tools" "$o/lab"
+cp "$REPO/tools/run-all-labs.sh" "$o/tools/"
+cp "$d/tools/build.sh" "$o/tools/"
+cat > "$o/tools/lab.sh" <<'LABEOF'
+#!/bin/sh
+# in-place is in the suite's OFF_MODES table, so it is run twice: once plain
+# and once with "off". The off run here ends without a verdict of any kind.
+case "$1 ${2:-}" in
+  "in-place off") exit 0 ;;
+  "in-place ")    echo "  [ ok ] something was measured"
+                  echo "LAB PASSED"; exit 0 ;;
+esac
+echo "the stub was asked for: $*" >&2; exit 2
+LABEOF
+chmod +x "$o/tools/lab.sh"
+printf '#!/bin/sh\n' > "$o/lab/in-place.sh"
+oout=$(sh "$o/tools/run-all-labs.sh" 2>&1); orc=$?
+case "$oout" in
+  *"in-place+off       ran (no verdict yet)"*)
+    ok "an off run that said nothing is counted as having said nothing" ;;
+  *) bad "an off run with no verdict was not reported as one; got:
+$oout" ;;
+esac
+case "$oout" in
+  *"pass=1  fail=0  notmeasured=0  novpp=0  ran=1"*)
+    ok "and it is counted apart from the plain run that did pass" ;;
+  *) bad "the two runs of the same lab were not counted apart; got:
+$(printf '%s' "$oout" | tail -6)" ;;
+esac
+[ "$orc" != 0 ] \
+  && ok "and the suite does not pass over it" \
+  || bad "an off run that proved nothing was cleared with exit 0"
+rm -rf "$o"
+
+echo
+echo "=== HEAD standing still is not the same as the tree standing still ==="
+# The other half of the mid-run check, and the likelier half on this machine:
+# an agent saves a file under lab/ or src/ while the suite is reading it. HEAD
+# never moves, so the commit comparison says nothing, and the labs before the
+# save measured one product and the labs after it measured another exactly as
+# if a merge had landed.
+w=$(mktemp -d)
+mkdir -p "$w/tools" "$w/lab"
+cp "$REPO/tools/run-all-labs.sh" "$w/tools/"
+cp "$d/tools/build.sh" "$w/tools/"
+cat > "$w/tools/lab.sh" <<'LABEOF'
+#!/bin/sh
+# One lab leaves an edit in the working tree and commits nothing.
+if [ "$1" = "zz-editor" ]; then
+  R=$(cd "$(dirname "$0")/.." && pwd)
+  date > "$R/lab/edited-mid-run.sh"
+fi
+echo "  [ ok ] something was measured"
+echo "LAB PASSED"
+exit 0
+LABEOF
+chmod +x "$w/tools/lab.sh"
+for n in aa-good zz-editor; do printf '#!/bin/sh\n' > "$w/lab/$n.sh"; done
+git -C "$w" init -q
+git -C "$w" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  add -A >/dev/null 2>&1
+git -C "$w" -c user.email=t@t -c user.name=t -c commit.gpgsign=false \
+  commit -q -m "the tree the suite starts on"
+wout=$(sh "$w/tools/run-all-labs.sh" 2>&1); wrc=$?
+case "$wout" in
+  *"HEAD did not move, but the working"*)
+    ok "an uncommitted edit under the labs voids the run too" ;;
+  *) bad "the working tree moved and the suite reported a verdict about it;
+got:
+$wout" ;;
+esac
+[ "$wrc" != 0 ] \
+  && ok "and it does not pass" \
+  || bad "every lab passed and the suite exited 0 over two different trees"
+rm -rf "$w"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
