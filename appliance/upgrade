@@ -36,7 +36,23 @@
 # out once the tree has left the repository, and both of them are refusals.
 set -eu
 
-ART=$(cd "$(dirname "$0")/.." && pwd)
+# THE ARTIFACT IS THE DIRECTORY HOLDING `RELEASE`, looked for rather than
+# assumed from this file's own position.
+#
+# It used to be "one above me", which forced the operator to type a path into
+# the product's source layout - `sudo sh appliance/upgrade` - to upgrade their
+# own box. The wiki is written for people who operate this product and have
+# never seen its tree, and nothing else on that page asks them to know a
+# directory name inside it. Resolving by RELEASE lets the artifact carry
+# `upgrade` at its root as a symlink to this file, so both spellings work and
+# there is still ONE implementation: a second copy at the root would be a
+# second thing to keep true.
+_d=$(cd "$(dirname "$0")" && pwd)
+if [ -f "$_d/RELEASE" ]; then
+  ART=$_d
+else
+  ART=$(cd "$_d/.." && pwd)
+fi
 DESTDIR=${DESTDIR:-}
 
 # DESTDIR IS HONOURED, and it is a seam rather than an operator's option.

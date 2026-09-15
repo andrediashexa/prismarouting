@@ -116,6 +116,8 @@ version has a chance of seeing it.
   release to the next: that is `lab/upgrade.sh`'s question and it still runs
   out of a source tree.
 
+* **And the command an operator types is not a path into this product's source tree** ([#295](https://github.com/andrediashexa/hexarouting/issues/295)). The artifact carries `upgrade` at its root, as a symlink to `appliance/upgrade`, so the page an operator reads says `sudo sh upgrade` and nothing on it asks them to know a directory name inside the product. A symlink and not a copy: `appliance/upgrade` resolves the artifact by finding `RELEASE` rather than by counting directories up from itself, so both spellings reach one implementation.
+
 * **`show hardware` told an operator their card was unusable and stopped
   there** ([#328](https://github.com/andrediashexa/hexarouting/issues/328)).
   The driver line read `kernel driver: DPDK cannot take a NIC through it`. It

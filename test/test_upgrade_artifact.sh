@@ -111,8 +111,11 @@ EOF
 }
 BOX=$WORK/box
 
+# THROUGH THE NAME AN OPERATOR TYPES, which is the one at the root of the
+# artifact. Driving appliance/upgrade here instead would leave the root entry
+# point - the only one the wiki names - with no check on it at all.
 upgrade() {  # -> $OUTPUT and $RC; runs the artifact against $BOX
-  OUTPUT=$(DESTDIR="$BOX" sh "$ART/appliance/upgrade" 2>&1)
+  OUTPUT=$(DESTDIR="$BOX" sh "$ART/upgrade" 2>&1)
   RC=$?
 }
 
@@ -148,6 +151,33 @@ else
 fi
 
 echo
+echo "=== the entry point is at the root, where somebody who unpacked looks ==="
+# AND IT IS ONE FILE, not two. The wiki tells an operator to unpack and run
+# `sudo sh upgrade`; before this, it had to tell them `sudo sh
+# appliance/upgrade`, which is a path into this product's source layout and
+# the only thing on that page asking them to know one. A copy at the root
+# would be a second implementation to keep true, so it is a symlink and
+# appliance/upgrade resolves the artifact by finding RELEASE rather than by
+# counting directories up from itself.
+[ -L "$ART/upgrade" ] \
+  && ok "the artifact carries 'upgrade' at its root, as a symlink" \
+  || bad "the artifact has no 'upgrade' at its root, so the wiki's own command \
+does not exist: $(ls -a "$ART" | tr "\n" " ")"
+[ "$(readlink "$ART/upgrade" 2>/dev/null)" = appliance/upgrade ] \
+  && ok "and it points at the one implementation" \
+  || bad "the root entry point is not the same file as appliance/upgrade, so \
+there are two: $(readlink -f "$ART/upgrade" 2>/dev/null)"
+# And the page does not teach a source path anyway. Read here rather than in
+# the English-only or documentation suites because it is this artifact's
+# layout that decides whether the page can avoid one.
+grep -q "sudo sh upgrade" "$REPO/wiki/operar/levar-a-caixa-para-uma-versao-nova.md" \
+  && ok "and the page an operator reads names that command" \
+  || bad "the wiki does not tell an operator to run the root entry point"
+grep -q "appliance/" "$REPO/wiki/operar/levar-a-caixa-para-uma-versao-nova.md" \
+  && bad "the wiki page names a path inside this product's source tree, which \
+is the one thing on it that asks an operator to know the layout" \
+  || ok "and it names no path inside the source tree"
+
 echo "=== and a box takes it ==="
 fresh_box "$(iso_pin VPP_VERSION)" "$(iso_pin FRR_VERSION)"
 upgrade

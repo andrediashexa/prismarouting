@@ -145,6 +145,14 @@ cp "$VSO" "$STAGE/.build-vpp/lib/vat2_plugins/bpa_test_plugin_bpa_plugin.so"
   printf 'vpp=%s\n'   "$VPP_PIN"
   printf 'frr=%s\n'   "$FRR_PIN"; } > "$STAGE/RELEASE"
 
+# AND THE ENTRY POINT AT THE ROOT, where somebody who has just unpacked a
+# tarball will look for it. A symlink and not a copy: the implementation stays
+# in one file, and appliance/upgrade resolves the artifact by finding RELEASE
+# rather than by counting directories up from itself, so it works through
+# either name. Without this the wiki had to tell an operator to type a path
+# into this product's source layout in order to upgrade their own box.
+ln -s appliance/upgrade "$STAGE/upgrade"
+
 # THE PROOF THAT THIS ARTIFACT IS COMPLETE, and it is an install and not a
 # list. A list of what a tarball should contain is the two-lists problem again;
 # running the real install.sh out of the real staged tree asks the only
@@ -200,4 +208,4 @@ say "ready: $OUT ($(du -h "$OUT" | cut -f1))"
 echo "    sha256 $(sha256sum "$OUT" | cut -d' ' -f1)"
 echo
 echo "On the box:"
-echo "    tar xzf $NAME && cd $DIR && sudo sh appliance/upgrade"
+echo "    tar xzf $NAME && cd $DIR && sudo sh upgrade"
