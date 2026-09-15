@@ -1209,12 +1209,25 @@ echo "=== the rx-queues line says a number, or says what the default costs ==="
 # is the common case rather than an odd one.
 mkcpus "1-3" "0-3" "1-3" 0 1 2 3
 run
-if said '\[ ok \] rx queues: *$'; then
+if said '\[ ok \] rx queues requested: *$'; then
   bad "the rx-queues line printed a label and no value at all"
-elif said '\[ ok \] rx queues: default'; then
+elif said '\[ ok \] rx queues requested: default'; then
   ok "a box whose profile names no rx queues says so, and says what it means"
 else
   bad "nothing reported rx queues: $(printf '%s\n' "$OUTPUT" | grep -i 'rx queue' || echo '<nothing>')"
+fi
+# AND IT SAYS THAT IT IS A REQUEST. The number comes from
+# /etc/vpp/startup.conf, so it is what the tuner asked the dataplane for and
+# not what the dataplane got - a card with fewer queues gets what it has, and
+# #330 is the box where seven were asked for on a NIC with one. The cores two
+# sections down are read back off the running process and say so; this one
+# cannot be, so the word is what keeps the line honest.
+if said '\[ ok \] rx queues requested:'; then
+  ok "and the line says the number is a request, not a reading"
+else
+  bad "the rx-queues line no longer says it is a request, so a number the \
+dataplane may have refused reads as one it took: $(printf '%s\n' "$OUTPUT" \
+| grep -i 'rx queue' || echo '<nothing>')"
 fi
 rm -rf "$FAKE/root"
 
