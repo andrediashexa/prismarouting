@@ -9,7 +9,7 @@ checked here.
 import ast
 import contextlib
 import io
-import os, re, sys
+import os, re, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "hexash"))
 import hexash
 
@@ -2289,8 +2289,17 @@ def flat(text):
 
 
 def show_hw(nics, default=None, dp_text=_HW_EMPTY_DP, dp_rc=0,
-            conf="dpdk {\n  no-pci\n}\n", env="HEXA_DATAPLANE_IF=\n"):
-    """What `show hardware` prints for a box with those NICs."""
+            conf="dpdk {\n  no-pci\n}\n", env="HEXA_DATAPLANE_IF=\n",
+            binder=None):
+    """
+    What `show hardware` prints for a box with those NICs.
+
+    `binder` installs a stub on `Shell.BIND_NIC`: a string is what it prints
+    for `--which-driver`, and None leaves the path missing, which is the box
+    where the VTY cannot ask. Without this seam the only sentence these checks
+    ever saw was the one that says it could not ask - the answer, which is the
+    whole of #328, was never rendered.
+    """
     root = tempfile.mkdtemp()
     net, route = hw_tree(root, nics, default)
     sh = hexash.Shell()
@@ -2311,6 +2320,15 @@ def show_hw(nics, default=None, dp_text=_HW_EMPTY_DP, dp_rc=0,
     open(c, "w").write(conf)
     open(e, "w").write(env)
     sh.STARTUP_CONF, sh.TUNE_ENV = c, e
+    if binder is None:
+        sh.BIND_NIC = os.path.join(root, "no-such-binder")
+    else:
+        b = os.path.join(root, "bind-dataplane-nic")
+        with open(b, "w") as f:
+            f.write(f'#!/bin/sh\n[ "$1" = "--which-driver" ] || exit 1\n'
+                    f'echo {binder!r}\n')
+        os.chmod(b, 0o755)
+        sh.BIND_NIC = b
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         sh.feed("show hardware")
@@ -2349,11 +2367,15 @@ check("up" in _out and "down" in _out,
 # network, and the tuner refuses it - after the operator has chosen.
 check("DEFAULT ROUTE" in _out,
       f"the NIC carrying the default route is marked: {_out}")
-_marked = [l for l in _out.splitlines() if "DEFAULT ROUTE" in l]
 _lines = _out.splitlines()
+_marked = [i for i, l in enumerate(_lines) if "DEFAULT ROUTE" in l]
+_rows = {i: l.split()[0] for i, l in enumerate(_lines)
+         if l.startswith("  ") and not l.startswith("   ")
+         and l.split() and l.split()[0] in ("eno1", "ens1f0")}
 check(len(_marked) == 1 and
-      "eno1" in _lines[_lines.index(_marked[0]) - 2],
-      f"and it is marked under the right NIC, not the other one: {_out}")
+      max([i for i in _rows if i < _marked[0]], default=None) is not None and
+      _rows[max(i for i in _rows if i < _marked[0])] == "eno1",
+      f"and it belongs to eno1's block, not the other NIC's: {_out}")
 check("'eno1' carries the default route" in flat(_out) and
       "off the network" in flat(_out),
       f"and the screen says what that costs, because the refusal that "
@@ -2400,6 +2422,53 @@ check("no PCI NIC is visible" in flat(_none),
       f"a box where Linux has no PCI NIC says so: {_none}")
 check("Interface" not in _none and "DEFAULT ROUTE" not in _none,
       f"and prints no table, which would read as a box that is fine: {_none}")
+
+# AND THE SENTENCE IS TRUE. This one told the operator that a virtio guest is
+# what "no PCI address" looks like, which #286 made false: pci_address_of()
+# walks up to the PCI parent, so a virtio card in a VM resolves and is
+# eligible. The audience most likely to reach this screen is somebody trying
+# the product in a VM, and it was telling exactly them that their box had
+# nothing to offer. A wrong sentence on an empty table ends the search, which
+# is worse than the empty table.
+check("eligible" in flat(_none) and "does resolve" in flat(_none),
+      f"the empty-table sentence no longer says a virtio card in a VM is "
+      f"eligible, so a VM operator is back to reading that their hardware is "
+      f"unusable: {_none}")
+check("nothing here to choose from" not in flat(_none),
+      f"the empty table still ends with 'nothing here to choose from', which "
+      f"is the dead end #328 is about: {_none}")
+
+# THE ANSWER, not just the apology for not having one (#328). The screen names
+# the driver the box will move the card to, and it names it by ASKING
+# appliance/bind-dataplane-nic, which is where that rule already lives. Until
+# this seam existed every check here rendered the "could not ask" sentence,
+# so the sentence that matters had no assertion at all.
+_VIRTIO = [("ens18", "0000:00:12.0", "virtio_net", "up", "bc:24:11:aa:bb:cc",
+            None),
+           ("lo", None, None, "unknown", "00:00:00:00:00:00", None)]
+_iommu = flat(show_hw(_VIRTIO, default="ens18",
+                      binder="vfio-pci through the IOMMU"))
+check("vfio-pci through the IOMMU" in _iommu,
+      f"a card on a kernel driver is not told which driver the box will move "
+      f"it to, so the screen still ends where #328 said it ended: {_iommu}")
+
+# And the OTHER answer, because a box without IOMMU groups gets a different
+# driver and being told vfio-pci there is worse than being told nothing: the
+# operator goes looking for an IOMMU that the binder already decided to do
+# without.
+_nommu = flat(show_hw(_VIRTIO, default="ens18",
+                      binder="uio_pci_generic without IOMMU protection"))
+check("uio_pci_generic without IOMMU protection" in _nommu
+      and "vfio-pci" not in _nommu,
+      f"the screen does not repeat what the binder answered, so it is "
+      f"deriving the driver from a second copy of the rule: {_nommu}")
+
+# And a box where the binder cannot be reached says so rather than guessing.
+# A named driver that turns out wrong costs more than an admitted unknown.
+_noask = flat(show_hw(_VIRTIO, default="ens18"))
+check("could not ask" in _noask and "vfio-pci" not in _noask
+      and "uio_pci_generic" not in _noask,
+      f"with no binder to ask, the screen named a driver anyway: {_noask}")
 
 # A box with NICs and no default route at all. Saying nothing here would leave
 # the operator to conclude the mark was simply missed.
@@ -6355,8 +6424,15 @@ check("confirmed" in _t and "puts the card back" in _t,
 _r = _nic_box(["ens18", "ens19"], "ens18", _FIRST).why_no_dataplane_interface()
 check(not any("This box has one NIC" in l for l in _r),
       f"a box with a spare NIC was told it has one: {_r}")
-check(len(_r) == 2,
-      f"a box with a spare NIC got more than the first-boot explanation: {_r}")
+# WHAT THIS MEANS, rather than how many lines it takes to say it. The check
+# was `len(_r) == 2`, and a length is the wrong holder: it went red when #327
+# added a line that every branch gets - a pointer to `show hardware` - which
+# is not the handover advice this is guarding against. The thing that must not
+# appear on a box with another card is the one-NIC note, and the line above
+# already names it.
+check(not any("goes with it" in l or "confirmed one" in l for l in _r),
+      f"a box with a spare NIC was given the handover advice, which is for a "
+      f"box that has no other card: {_r}")
 
 # A box Linux shows no PCI NIC at all is its own answer, and must not read as
 # the one-NIC case.
@@ -6439,6 +6515,63 @@ check("reboot the box" in _disk,
       f"{_disk!r}")
 check("install" not in _disk,
       f"and is not told to install over itself: {_disk!r}")
+
+print("\n=== every 'no interface' branch says where the cards are (#327) ===")
+# THE DEFECT, reported by the maintainer with the sequence on screen. On the
+# installation medium `show interface` explained what was absent and told them
+# to install, and they typed `start shell` and `ip l` to find out whether the
+# box could see their NIC at all - which is the question that decides whether
+# to install, and the shell is the tool this VTY exists to keep them out of.
+#
+# `show hardware` was written for exactly that moment: its own docstring says
+# "that is exactly the moment an operator needs to see what NICs the box has
+# in order to choose one. The only way to that list was to leave the VTY"
+# (#283). Every mention of it in this file was a COMMENT. No message named it.
+#
+# EVERY BRANCH, not the one that was reported. #305 was fixed in one message
+# and survived in a second as #310, and that is the same function.
+def _why_branch(conf_text, medium):
+    _d = tempfile.mkdtemp()
+    _conf = os.path.join(_d, "startup.conf")
+    open(_conf, "w").write(conf_text)
+    _keep = (hexash.LIVE_SQUASHFS, hexash.INSTALLER)
+    if medium:
+        _live = os.path.join(_d, "fs")
+        _inst = os.path.join(_d, "i")
+        open(_live, "w").write("")
+        open(_inst, "w").write("#!/bin/sh\n")
+        os.chmod(_inst, 0o755)
+        hexash.LIVE_SQUASHFS, hexash.INSTALLER = _live, _inst
+    else:
+        hexash.LIVE_SQUASHFS = os.path.join(_d, "none")
+    _sh = hexash.Shell()
+    _sh.STARTUP_CONF = _conf
+    _sh.TUNE_ENV = os.path.join(_d, "tune.env")
+    _sh.host_nics = lambda: [{"name": "ens18"}]
+    _sh.default_route_nic = lambda: None
+    try:
+        return _sh.why_no_dataplane_interface()
+    finally:
+        hexash.LIVE_SQUASHFS, hexash.INSTALLER = _keep
+
+
+_BRANCHES = [("the installation medium", "plugin dpdk_plugin.so { disable }\n",
+              True),
+             ("the first-boot profile", "plugin dpdk_plugin.so { disable }\n",
+              False),
+             ("no interface named", "dpdk {\n  no-pci\n}\n", False)]
+_silent = []
+for _name, _conf, _med in _BRANCHES:
+    _said = _why_branch(_conf, _med)
+    check(bool(_said), f"{_name}: the diagnosis said nothing at all, so this "
+                       f"check is reading an empty list rather than a branch")
+    if _said and not any("show hardware" in _l for _l in _said):
+        _silent.append((_name, _said))
+for _name, _said in _silent:
+    check(False, f"{_name} tells the operator what is absent and never says "
+                 f"where to see the cards the box has: {_said}")
+if not _silent:
+    print(f"  [ ok ] all {len(_BRANCHES)} of them")
 
 print("\n=== the block docs/routing.md shows IS what the box prints (#318) ===")
 # THE DEFECT. Under "A route-map referenced and not defined", the page shows

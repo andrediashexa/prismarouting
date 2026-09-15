@@ -238,5 +238,33 @@ runbind "$R"
   && bad "it wrote driver_override with no driver to bind to" \
   || ok "and it did not tear the device off its working driver first"
 
+echo
+echo "=== --which-driver promises what the bind actually writes ==="
+# Compared against THE OTHER PLACE THE ANSWER IS WRITTEN, not against a needle
+# this test carries. `show hardware` prints whatever this mode says, so if the
+# mode and the bind ever disagree the screen promises an operator a driver
+# their box will not use, and nothing anywhere would notice. The rule now
+# lives in dpdk_driver(); this is the check that keeps it living there (#328).
+for _shape in iommu noiommu; do
+  R=$(mkbox 0000:03:00.0 eth0 "$_shape" vfio-pci uio_pci_generic)
+  on_driver "$R" ixgbe 0000:03:00.0
+  _promised=$(HEXA_ROOT="$R" sh "$BIN" --which-driver 2>&1 | awk '{print $1}')
+  runbind "$R"
+  _wrote=$(cat "$R/sys/bus/pci/devices/0000:03:00.0/driver_override" \
+           2>/dev/null)
+  [ -n "$_promised" ] && [ "$_promised" = "$_wrote" ] \
+    && ok "on a $_shape box both say $_wrote" \
+    || bad "on a $_shape box the screen would promise '$_promised' and the \
+bind asked for '$_wrote'"
+done
+# And the mode binds nothing: it is called from a VTY that an operator may be
+# typing into while the box is forwarding.
+R=$(mkbox 0000:03:00.0 eth0 iommu vfio-pci); on_driver "$R" ixgbe 0000:03:00.0
+HEXA_ROOT="$R" sh "$BIN" --which-driver >/dev/null 2>&1
+[ -e "$R/sys/bus/pci/devices/0000:03:00.0/driver_override" ] \
+  && bad "--which-driver wrote driver_override: it is not supposed to touch \
+the box at all" \
+  || ok "and it touched nothing while answering"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

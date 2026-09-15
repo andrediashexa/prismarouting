@@ -39,6 +39,39 @@ say() { echo "$@" >&2; }
 # and is the fallback for a box whose firmware has no IOMMU at all.
 DPDK_DRIVERS="vfio-pci uio_pci_generic"
 
+# ANSWERING THE QUESTION WITHOUT DOING THE WORK.
+#
+# `show hardware` tells an operator what will happen to each NIC when the box
+# claims it, and the honest way to know is to ask the thing that decides. The
+# alternative was a third copy of the IOMMU rule inside the VTY, and there are
+# already two copies of the driver list - this file's and hexash.py's - which
+# is how a screen comes to promise vfio-pci on a box that will fall back
+# (#328).
+#
+# Binds nothing, needs no device named, and exits 0 so a caller can read the
+# answer off stdout.
+# ONE HOLDER of the IOMMU rule. Written twice, this file would answer the VTY
+# from one copy and bind from the other, so the screen could promise vfio-pci
+# on a box that binds uio_pci_generic - which is the exact thing the paragraph
+# above says this mode exists to prevent. The bind below calls this too.
+dpdk_driver() {
+  if [ -d "$IOMMU" ] && [ -n "$(ls -A "$IOMMU" 2>/dev/null)" ]; then
+    echo vfio-pci
+  else
+    echo uio_pci_generic
+  fi
+}
+
+if [ "${1:-}" = "--which-driver" ]; then
+  if [ "$(dpdk_driver)" = "vfio-pci" ]; then
+    echo "vfio-pci through the IOMMU"
+  else
+    echo "uio_pci_generic without IOMMU protection, because this box has no"\
+         "IOMMU groups"
+  fi
+  exit 0
+fi
+
 ADDR=$(sed -n 's/.*dev \(0000:[0-9a-fA-F:.]*\).*/\1/p' "$VPPCONF" 2>/dev/null \
        | head -1)
 if [ -z "$ADDR" ]; then
@@ -158,11 +191,8 @@ done
 # vfio-pci needs an IOMMU. Without one it loads and then refuses every device,
 # which reads on the console as the bind failing for no reason - so the choice
 # is made here, where it can be explained, rather than discovered there.
-want=""
-if [ -d "$IOMMU" ] && [ -n "$(ls -A "$IOMMU" 2>/dev/null)" ]; then
-  want=vfio-pci
-else
-  want=uio_pci_generic
+want=$(dpdk_driver)
+if [ "$want" != "vfio-pci" ]; then
   say "bind: no IOMMU groups on this box, so vfio-pci cannot take a device;" \
       "using $want, which has no IOMMU protection"
 fi
