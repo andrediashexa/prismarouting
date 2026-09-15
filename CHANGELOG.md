@@ -77,6 +77,18 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A failing installer case reported the previous case's output.**
+  `test/test_installer.sh`'s `run()` set `LAST_OUT` only where the case passed,
+  and both failure paths returned before it - so the 63 `case "$LAST_OUT" in`
+  assertions that follow every run in that file described the box before the
+  one that had just failed. The first failure in a run made every message after
+  it about the wrong machine, at the one moment somebody is reading them.
+  Driven side by side over the same three cases, the third failing: the old
+  helper leaves the follow-up reading `output of case B`, the new one `output
+  of case C`. The refusal path also prints what the installer said, which it
+  did not - `expected refusal, it was accepted` on its own sends a reader to
+  re-run it by hand to find out what happened instead.
+
 * **The installer said a disk was held by an array on a box that has no
   arrays, and then partitioned it**
   ([#339](https://github.com/andrediashexa/hexarouting/issues/339)).
