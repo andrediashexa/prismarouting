@@ -75,6 +75,31 @@ mkpool (bpa_pool_t *p, const char *name, u32 n_out, u16 port_max, u16 bsz,
   return bpa_pool_init (p);
 }
 
+/*
+ * The same pool with an operator's block stride on it.
+ *
+ * mkpool() memsets and never sets one, so every pool in this file had
+ * block_stride 0 - and the whole stride arm of bpa_dyn_acquire_extra() is
+ * behind `p->block_stride != 0 && !d->reserve`. Measured with gcov over all
+ * ten C harnesses: those twelve lines, and the n_stride_placed and
+ * n_stride_missed counters with them, were never executed by any of the
+ * 65,376 checks this repository runs without a container.
+ *
+ * lab/extblocks.sh and lab/dynamic-workers.sh do reach it, so the path is not
+ * unmeasured - it is measured only where measuring is expensive. A regression
+ * in it goes green through every docker-free suite and is found at a release.
+ */
+static clib_error_t *
+mkpool_stride (bpa_pool_t *p, const char *name, u32 n_out, u16 port_max,
+	       u16 bsz, bpa_policy_t policy, u16 stride)
+{
+  clib_error_t *e = mkpool (p, name, n_out, port_max, bsz, policy);
+  if (e)
+    return e;
+  p->block_stride = stride;
+  return bpa_pool_init (p);
+}
+
 /* ------------------------------------------------------------------ */
 /* a driver for a slice, so a scenario reads as a sequence               */
 
@@ -750,6 +775,72 @@ main (void)
 	    "deleted, which is why it is not the check above\n",
 	    v.seen_paired, v.seen_ext);
     drv_free (&v);
+  }
+
+  printf ("\n=== an operator's block stride is honoured in dynamic mode ===\n");
+  {
+    /*
+     * THE ARM NOTHING HERE HAD EVER ENTERED. Every pool above has
+     * block_stride 0, and bpa_dyn_acquire_extra()'s stride placement is behind
+     * `p->block_stride != 0 && !d->reserve`. gcov over all ten C harnesses:
+     * those lines and both of their counters, never executed.
+     *
+     * One worker, so the "another worker's slice" fall-back cannot be what
+     * answers this - with nw 1 every block is in the slice, and a wrong step
+     * lands on a block that is free and simply not the one the stride names.
+     */
+    bpa_pool_t ps;
+    clib_error_t *e;
+    drv_t v;
+    u32 pblk = 0, want = 0, got = 0, w = 0;
+
+    e = mkpool_stride (&ps, "stride", 4, 1279, 4, BPA_POLICY_INTERLEAVED, 2);
+    CHECK (e == 0, "the strided pool did not build");
+    if (e == 0)
+      {
+	drv_init (&v, &ps, 1, 1);
+	drv_arrive (&v, 0);
+	CHECK (v.held[0], "the subscriber took no primary, so nothing below "
+			  "is about a stride");
+	if (v.held[0] && bpa_dyn_block_of (&v.d[w], 0, w, 1, &pblk) == 0)
+	  {
+	    drv_extend (&v, 0, 1);
+	    CHECK (v.seen_ext == 1, "the first extension was refused");
+	    got = v.d[w].extras[vec_len (v.d[w].extras) - 1].local * 1 + w;
+	    {
+	      u32 ppub, pblk_i, gpub, gblk_i;
+	      bpa_split (&ps, pblk, &ppub, &pblk_i);
+	      bpa_split (&ps, got, &gpub, &gblk_i);
+	      want = pblk_i + 2;
+	      CHECK (gpub == ppub,
+		     "the extension left the subscriber's public address, so "
+		     "a stride along it cannot be what placed it: %u then %u",
+		     ppub, gpub);
+	      CHECK (gblk_i == want,
+		     "the extension is block %u along that address and the "
+		     "operator's stride of 2 from %u names %u: the number "
+		     "they typed decided nothing",
+		     gblk_i, pblk_i, want);
+	    }
+	    /*
+	     * AND THE BOX SAYS IT DID IT. The counters are what an operator
+	     * reads to know whether their stride is being honoured, and a
+	     * placement that happens without being counted reports a pool as
+	     * ignoring a number it is obeying.
+	     */
+	    CHECK (v.d[w].n_stride_placed == 1,
+		   "the block went where the stride named and the box counted "
+		   "%llu placements",
+		   (unsigned long long) v.d[w].n_stride_placed);
+	    CHECK (v.d[w].n_stride_missed == 0,
+		   "the box counted %llu missed strides on a placement that "
+		   "hit",
+		   (unsigned long long) v.d[w].n_stride_missed);
+	    printf ("  block %u, which is the stride of 2 from %u, and the "
+		    "box counted it\n", got, pblk);
+	  }
+	drv_free (&v);
+      }
   }
 
   (void) i;

@@ -28,3 +28,8 @@ install-console.log
 core
 core.*
 vpp-core*
+
+# The coverage run leaves these; tools/plugin-coverage.sh reads and reports
+# them, and nothing else does.
+*.gcov
+.coverage-run.log

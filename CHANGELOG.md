@@ -77,6 +77,156 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A failing installer case reported the previous case's output.**
+  `test/test_installer.sh`'s `run()` set `LAST_OUT` only where the case passed,
+  and both failure paths returned before it - so the 63 `case "$LAST_OUT" in`
+  assertions that follow every run in that file described the box before the
+  one that had just failed. The first failure in a run made every message after
+  it about the wrong machine, at the one moment somebody is reading them.
+  Driven side by side over the same three cases, the third failing: the old
+  helper leaves the follow-up reading `output of case B`, the new one `output
+  of case C`. The refusal path also prints what the installer said, which it
+  did not - `expected refusal, it was accepted` on its own sends a reader to
+  re-run it by hand to find out what happened instead.
+
+* **The installer said a disk was held by an array on a box that has no
+  arrays, and then partitioned it**
+  ([#339](https://github.com/andrediashexa/hexarouting/issues/339)).
+  `release_disk()`'s two early returns - no `mdadm`, no readable
+  `/proc/mdstat` - returned 0, and the caller reads non-zero as "the disk is
+  free". So "I could not look" arrived as "still held, try again": four rounds
+  later the installer printed `<disk> is still held by an array after 4
+  attempts`, dumped `/proc/mdstat` to the console, and partitioned a disk
+  nothing was holding. And the refusal under it was a message only -
+  `release_disk_until_free()` ends in `return 1` and **both** call sites
+  discarded it, so a disk an array genuinely will not release was partitioned
+  too, which is the one outcome that function's own comment says it exists to
+  prevent. Three answers now - released, free, nobody here can be asked - and
+  the refusal is read. Found by the sweep of `appliance/`'s 113 refusal sites,
+  of which 51 had ever been rendered by anything.
+
+* **A whole arm of the dynamic allocator had never been executed by any C
+  harness, and nothing could have said so.** The ten harnesses under `test/`
+  run 65,376 checks and their verdict is a count of checks, not of product
+  reached - so a guard nobody enters looks exactly like one everybody enters.
+  Measured with `gcov` for the first time: 108 of the plugin's 4,807
+  executable lines are never touched by any of them, and twelve of those were
+  the block-stride placement in `bpa_dyn_acquire_extra()`, with both of its
+  counters, behind `p->block_stride != 0`. Every pool those harnesses build has
+  stride 0, because the one function that makes them memsets and never sets
+  one. `lab/extblocks.sh` and `lab/dynamic-workers.sh` do reach it, so the path
+  was not unmeasured - it was measured only where measuring costs a container
+  and a release run, and a regression in it went green through every
+  docker-free suite. `tools/plugin-coverage.sh` makes the measurement
+  repeatable, prints a count and no verdict - a line nobody executes is a
+  question, not a sentence - and refuses when it read no counters at all.
+
+* **The refusals in `appliance/`, swept, and 26 of them had never run.** The
+  scripts that put this product on somebody's disk and bring it up refuse in
+  113 places across eight files, counted by reading each one rather than by
+  grepping for `exit 1`: `hexarouting-install` 79, `build-iso.sh` 8, `upgrade`
+  7, `bind-dataplane-nic` 6, `build-upgrade.sh` 6, `apply-tuning` 5,
+  `install.sh` 2, and `ssh-host-key-origin` 0 - that last one never refuses
+  anything, it classifies, and saying so is part of the measurement. 51 of the
+  113 were rendered by something. 26 more are now, and the rest are named
+  below with what each would take.
+
+  **The one at the top of the list had no test on either arm.** `Type 'yes' to
+  install:` is the last thing between an operator and a destroyed disk, and
+  every case in `test/test_installer.sh` ran under `HEXA_INSTALL_CHECK=1`,
+  which exits at the summary forty lines above that prompt. `lab/install-iso.sh`
+  cannot reach it either: it installs unattended with `HEXA_INSTALL_YES=1`,
+  which skips the question by design, and a passing install cannot demonstrate
+  a refusal. So `no`, a bare Enter and `y` were all unmeasured, and so was
+  everything after the prompt - `sfdisk failed`, `sfdisk timed out`,
+  `partitioning did not produce`, the messages an operator reads with the disk
+  already open for writing.
+
+  They are driven now, by a real run arranged so that three separate things
+  have to fail before it can reach a disk: `unshare -r` for the uid, because
+  `id -u` is the installer's own check and a seam past it would be the check
+  removed; an unbound `/dev/loop0`, which is a real block device backed by
+  nothing and reporting zero bytes, skipped unless `/sys/block/loop0/size` is
+  0; and every tool the installer names stubbed on PATH ahead of the real one,
+  `sfdisk` first, so that a run which got past a refusal reaches a shell script
+  that appends to a file. The assertion is that file. Measured with the
+  confirmation replaced by `|| true`: *"FAIL: the disk was partitioned after
+  the operator said no"*, and `y` and the return key erased a disk in the same
+  run. `unshare -m` gives it a `/tmp` of its own, so the `/tmp/sfdisk.log` the
+  installer quotes to the console is this suite's file and not the machine's.
+
+  **Thirteen more in `hexarouting-install`.** The mirror named as the boot
+  medium (the target has been refused for it since it was written and the
+  second disk never was - it is destroyed by the same `yes`, and refusing it
+  late leaves an operator with neither the old box nor the new one and no
+  medium to install from); a gateway that is not an address at all, where what
+  is asserted is the DIAGNOSIS and not the refusal, because measured with the
+  shape check bypassed the subnet arithmetic still says no and says *"is not on
+  192.0.2.10/24's subnet"* about a value that is not a subnet; an unreadable
+  answer file, a line with no `=` in it, and `yes = maybe`; the library seam
+  RETURNING rather than exiting, which is what `install-from-cmdline` depends
+  on to say what happened instead of leaving a machine at a prompt; a machine
+  with nothing in it but the medium; an `/etc/fstab` that was never written, as
+  distinct from the empty one already covered; the password prompt that runs
+  out of input at the repeat; and a real non-root run, which refuses before the
+  banner.
+
+  **And in the rest of `appliance/`.** `build-iso.sh` had been executed by
+  nothing at all - every reader of it in this repository reads it as text - so
+  its four preflight refusals are now driven by `test/test_build_iso_preflight.sh`
+  against a stand-in tree, with `$WORK` handed a directory carrying a file: `rm
+  -rf "$WORK"` is the first destructive line and it is below all four, so the
+  file surviving is the evidence the refusals came first. `install.sh` refused
+  a tree with no `bpa_plugin.so` at all and nothing had ever run it; with that
+  refusal removed the run *"moved the version stamp from 0.72.0 (beefcaf) to
+  0.73.0 (dddddd)"* over a plugin it did not have. `bind-dataplane-nic` gets
+  its two sysfs writes, and the second one matters more than it looks: a
+  refused unbind leaves the device on its old driver either way, so the exit
+  status cannot tell that case from a driver that declined the device and the
+  message is the only thing that can. `upgrade` gets a damaged `RELEASE` (all
+  three lines, and without the check a missing `stamp=` stamps the box
+  *"unknown (not a git tree)"*, which is #302 arriving through the artifact),
+  a root with no package database, and its own non-root refusal.
+  `build-upgrade.sh` gets the other half of the plugin pair and the install
+  proof it calls its own. `apply-tuning` gets the last one it had: a box with
+  no `update-grub`, where the kernel command line has already been written and
+  nothing can apply it.
+
+  **What still needs a real machine, named.** 16 of `hexarouting-install`'s
+  refusals sit past line 1485, where the install has stopped being about
+  answers and started being about a partitioned device: `mount`, `unsquashfs`,
+  `grub-install`, `update-grub`, `chpasswd`, the ssh host keys on the target,
+  the records array unit, and the final `did not verify`. Reaching them needs
+  partitions that really appear, which means a losetup-backed image and real
+  root. The four refusals in `build-iso.sh` below its preflight want a
+  debootstrapped chroot for the same reason. Eight more are renderable here and
+  are not done yet - `write_network_config`'s four write failures against a
+  read-only root, `missing tools:` and `live filesystem not found` on the real
+  run, the empty disk menu through `main` rather than at the seam, and `this
+  medium has no mdadm`; `upgrade`'s `There is no dpkg-query here` is a ninth.
+
+  **Four things found and not fixed, because none of them is a test.**
+  `release_disk()` returns 0 from both of its early exits
+  (`appliance/hexarouting-install:1379` and `:1380`) and its caller reads
+  non-zero as *"the disk is free"*, so on a box with no `mdadm` or no readable
+  `/proc/mdstat` the installer prints *"is still held by an array after 4
+  attempts"* and a copy of `/proc/mdstat` before partitioning a disk nothing
+  holds. It does not bite a real medium, because `build-iso.sh` asserts `mdadm`
+  reached the image. `release_disk_until_free`'s `return 1` (`:1435`) is
+  discarded by both of its call sites (`:1438`, `:1498`), so the refusal its
+  comment describes is a message. `:1264`'s `die` cannot be told apart from
+  `:1257`'s from outside the program - with it replaced by `|| true` the retry
+  loop refuses the same input with the same words, so what it is worth is the
+  diagnosis, and that is what is asserted. And `build-upgrade.sh`'s comment
+  offers `src/hexash/config.py` as the file its install proof catches:
+  `install.sh:251` installs `src/hexash/*.py` through a glob, deliberately, so
+  a missing `config.py` installs one file fewer and exits 0 - measured, *"31
+  file(s) installed"*, and the artifact was packed. The case uses
+  `appliance/wait-for-vpp`, which is installed by name, and says why.
+
+  Every assertion above was shown red on its own mutation of the product and
+  the product was restored each time; `make test` is 63 suites green.
+
 * **Six C assertions that could not fail, and the suite that refuses the next
   one.** `test/` holds 10 C harnesses that compile against the BPA plugin's
   headers with `-DBPA_STANDALONE`, 382 `CHECK` sites between them, 65,376
@@ -1322,6 +1472,18 @@ version has a chance of seeing it.
   drove the VTY as a program rather than as a module, the labs, and the two
   call sites (`require()` and `say_dataplane_if_refusal()`) that print many
   different refusals from one line.
+
+* **Eleven of the release gate's fourteen reachable refusals are driven now,
+  up from six.** The five added protect what an operator reads about their own
+  version: a commit that is not a tag; a release tag whose `## Unreleased`
+  section still carries entries, so the release contains work it does not
+  claim; a shipped release's section edited after the fact, which changes what
+  a box somebody is running is said to do; the guard for a section that
+  extracts to nothing, without which the duplicate-heading check passes over
+  anything; and a CHANGELOG carrying one entry twice, where an operator cannot
+  tell which release carried the fix. Everything after
+  `RELEASE_GATE_CHECK_ONLY` still needs a 321 MB image built, booted and
+  installed, and the suite says so as a number rather than leaving it assumed.
 
 * **Every lab is now accounted for on whether its checks have ever been seen
   to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third
