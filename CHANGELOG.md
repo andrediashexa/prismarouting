@@ -75,6 +75,24 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The self-test coverage reader could be satisfied by the wrong message.** It
+  took each call site's longest literal chunk as a needle and asked whether any
+  printed line contained it. Measured on this tree: 7 of 113 needles are
+  substrings of another message's, and two pairs of call sites have needles
+  that are byte-identical - `statistics segment ` belongs to both the
+  75%-full refusal and the healthy report, and `records mirrored on ` to both
+  mirror lines. A reader keyed on the longest chunk alone cannot tell those
+  apart, so it either misses a branch that never ran or accuses one that did.
+  It now matches **every** literal fragment of a message, in order, and spends
+  each printed line on the most specific message it satisfies. Getting there
+  cost two wrong versions, both caught by running it: cutting the message at
+  the first quote before punching out the values truncates any message
+  containing a `$(...)`, and cutting it afterwards is required because a `case`
+  arm is `ok "..." ;;` and the trailing `;;` otherwise becomes a fragment the
+  reader demands of a printed line.
+
 ### Added
 
 * **Six of the release gate's refusals now have assertions, and it had two.**
