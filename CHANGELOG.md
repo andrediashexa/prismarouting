@@ -204,6 +204,43 @@ version has a chance of seeing it.
 
   `make test`: 61 suites, 61 passed.
 
+* **The lab suite could lose a lab and still pass.** `tools/run-all-labs.sh`
+  ends with four counters - `pass`, `fail`, `notmeasured`, `novpp`, plus `ran`
+  - and exits green when three of them are zero. Those counters are internally
+  consistent with each other **whatever happens**: a lab that never reaches
+  `judge_batch`, because a batch lost its file or a name produced none, simply
+  makes the totals smaller, and the suite reports that everything it ran
+  passed. That is a verdict about fewer labs than the repository has, and
+  nothing anywhere said so - which is the same defect as a release cut on a
+  suite that never measured the thing it cleared. It now counts what it set out
+  to run, before anything runs, and refuses when the accounting is short. The
+  rule is the one `test/test_doc_copies.py` already applies to documents: a
+  counted list says how many it has.
+
+### Added
+
+* **Every lab is now accounted for on whether its checks have ever been seen
+  to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third
+  time with the feature they test switched off and requires each to go red
+  against a floor the lab declares - and that is the only mechanism in this
+  repository that renders a lab assertion's **red** branch. Measured while
+  sweeping them: 425 of the 1381 assertions under `lab/` have their failure
+  shown on every release run, and 956 do not. There were three ways a lab could
+  be accounted for - an off mode plus a floor, a `NOT_LABS` entry saying why it
+  is not run at all, or nothing - and 32 labs were in the third, with no file
+  anywhere recording whether that was a decision. `test/test_off_run_coverage.sh`
+  makes that a fourth, explicit way (`NO-OFF-RUN:` with a reason, which has to
+  be a sentence rather than a stamp) and holds the unaccounted count as a
+  **floor that may only go down**, in the same idiom as `OFF-RED-AT-LEAST`.
+  Writing 32 reasons tonight would have meant inventing most of them, and a
+  rubber stamp is worse than the silence it replaces. It also refuses the two
+  halves coming apart: an off mode with no floor accepts whatever that run
+  returns, and a floor with no off mode is a number nobody reads. `lab/upgrade.sh`
+  already carried its reason in prose and now carries it in the form the check
+  can find.
+
+### Fixed
+
 * **Six lab assertions that could not fail, and the suite that refuses the
   next one.** `lab/` holds 62 shell files, 60 of them labs and two of them the
   helpers the rest source, and between them 1381 `expect*` call sites. They are
@@ -372,6 +409,59 @@ version has a chance of seeing it.
   running a real release.
 
 ### Fixed
+
+* **`make test` counted 59 suites over a tree holding 61 harnesses, and named
+  neither of the two it was not reading**
+  ([#338](https://github.com/andrediashexa/hexarouting/issues/338)).
+  `appliance/test_startup_conf.sh` and `appliance/test_tuned_conf.sh` are not
+  in `test/suites.list`. They run only from `make test-appliance`, which is a
+  docker target, so `make test` never read them - and `59 suites: 59 passed` is
+  the count of what the list names while a reader reasonably takes it for the
+  count of what this repository measures. That is the shape behind
+  [#335](https://github.com/andrediashexa/hexarouting/issues/335) with a bigger
+  radius: not one branch unmeasured, but everything two whole files assert
+  about the installed tuner, the generated `startup.conf` and the VPP that has
+  to come up with it.
+
+  `tools/run-tests.sh` now ends every run by saying how many harness files are
+  in the tree, how many of them it read, and which ones it did not. Discovered,
+  not listed: a harness is a file whose name begins with `test_`, which is the
+  convention the repository already follows, so a third one added tomorrow is
+  named on the next run by nobody's decision. A hand-kept roster of excused
+  files would be a second thing to keep true and the next person does not
+  update it, which is how these two stayed invisible. The one indirection is
+  the compiled suites - `.build/test_bpa` carries nothing of the name
+  `test/test_bpa_pool.c` - so the Makefile is asked which sources build a
+  target the list names rather than assuming the two names agree.
+
+  **Neither harness can join the list, and this is what each needs a container
+  for.** `appliance/test_tuned_conf.sh` stops at its line 17, which requires
+  `/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages` to be writable: on
+  an unprivileged box it prints `SKIP:` and exits 0 with no verdict line at
+  all, so in the list it would be NO VERDICT on every run rather than a
+  measurement. Its line 64 then starts a real `vpp` with the tuned file, which
+  is the only reason the file exists at all: `appliance/test_tune.py` already
+  asserts the same rendered profile against synthetic roots, so what is left
+  once VPP is taken away is already measured next door.
+  `appliance/test_startup_conf.sh` produced 15 FAILURES when run on this box,
+  every one of them for the absent product rather than for a defect: its line
+  13 rebuilds VPP in `/src/.build-vpp`, its line 14 installs into the real
+  `/usr/lib/hexarouting` and runs the binaries from there, and its line 111
+  starts `vpp -c /etc/vpp/startup.conf`. Weakening either one to make it
+  countable would be a check that stopped checking in order to be counted.
+
+  `test/test_run_tests.sh` holds eight assertions on the new report. Six are
+  driven against an arranged tree, where the answer is known because that file
+  wrote it: a harness the list does not name is named, one it does name is not
+  accused, the source of a binary the list names is not accused, a leftover
+  binary in `.build` is not mistaken for a harness, the two numbers are the two
+  numbers, and a run that read every harness says so rather than going silent.
+  Two are against the real tree: whatever the report names must exist and must
+  really not be in `suites.list`, because a report that accuses a green suite
+  is one people learn to skip; and the discovery must find at least the
+  harnesses `suites.list` itself names, because a `find` with a bad prune
+  returns nothing and "0 harness files in the tree" reads exactly like a
+  repository with none.
 
 * **`docs/appliance.md` still said the commit binds the NIC**
   ([#336](https://github.com/andrediashexa/hexarouting/issues/336)). That

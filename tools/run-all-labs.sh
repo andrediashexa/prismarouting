@@ -317,6 +317,18 @@ for f in "$REPO"/lab/*.sh; do
   off_arg "$n" >/dev/null && LABS="$LABS $n+off"
 done
 
+# HOW MANY THIS RUN IS ABOUT, counted before anything runs. The four counters
+# below are internally consistent with each other whatever happens: if a lab
+# never reaches judge_batch - dropped from a batch, its output file missing,
+# a name that produced no file - the totals simply come out smaller and the
+# suite still says everything it ran passed. That is a verdict about fewer
+# labs than exist, and nothing anywhere would say so.
+#
+# This is the rule test/test_doc_copies.py already applies to documents: a
+# counted list says how many it has. It is cheaper here, because the list is
+# built ten lines up and cannot be argued with.
+EXPECTED=$(printf '%s\n' $LABS | grep -c .)
+
 # Run them, at most $JOBS at a time, each into its own file.
 #
 # Judged BATCH BY BATCH rather than all at the end. Judging everything after
@@ -611,6 +623,15 @@ judge_batch
 
 echo
 echo "  pass=$pass  fail=$fail  notmeasured=$nomeasure  novpp=$novpp  ran=$ran"
+_accounted=$((pass + fail + nomeasure + novpp + ran))
+if [ "$_accounted" -ne "$EXPECTED" ]; then
+  echo
+  echo "  THE SUITE LOST A LAB. It set out to run $EXPECTED and accounted for"
+  echo "  $_accounted. The counts above are consistent with each other and"
+  echo "  they are about fewer labs than this repository has, so a green"
+  echo "  verdict here would have cleared something nobody measured."
+  lost=1
+fi
 if [ "$novpp" -gt 0 ]; then
   echo
   echo "  $novpp lab(s) could not be run: vppctl never reached a dataplane"
@@ -665,5 +686,6 @@ elif [ "$DIRTY_AT_START" != "$DIRTY_AT_END" ]; then
   echo "  tree did: an edit landed under the labs while they were reading it."
   echo "  Run it again on a tree that stays still."
 fi
-[ "$fail" -eq 0 ] && [ "$ran" -eq 0 ] && [ "$novpp" -eq 0 ] \
+[ "${lost:-0}" -eq 0 ] && [ "$fail" -eq 0 ] && [ "$ran" -eq 0 ] \
+  && [ "$novpp" -eq 0 ] \
   && [ "$nomeasure" -eq 0 ] && [ "$MOVED" -eq 0 ]
