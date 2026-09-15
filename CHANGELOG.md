@@ -77,6 +77,24 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The handover lab asserted a design this product does not have**
+  ([#332](https://github.com/andrediashexa/hexarouting/issues/332)). PHASE 5
+  required that Linux no longer had the card's name after the handover, and
+  that the management address had moved to some other interface. Both are
+  wrong. The promise is that the **name survives**: the dataplane takes the PCI
+  device, `linux_cp` makes a TAP carrying the same name, and the address goes
+  back onto it, so nothing across the cable re-learns anything. Measured on a
+  booted guest with the fixes in: the card bound to `uio_pci_generic`, the
+  dataplane holding `GigabitEthernet0/9/0` **and** `tap4096`, and `ens9`
+  present with `10.0.2.15/24` on it - which the lab called a failure twice.
+  What actually distinguishes a successful handover from one that never
+  happened is what that name resolves to: a TAP has no PCI parent and the card
+  did. The checks read that instead, and the address check is now conditioned
+  on it, because "the address is on `ens9`" means opposite things depending on
+  what `ens9` is.
+
+### Fixed
+
 * **The lab's console driver could only wait for success, and had never been
   tested** ([#332](https://github.com/andrediashexa/hexarouting/issues/332)).
   `lab/install-iso.sh` types at a serial console and waits for strings the box
