@@ -120,6 +120,36 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A document check whose verdict depended on whether somebody had built.**
+  `test/test_doc_commands.py` refuses a document that sends a reader to a path
+  the tree does not have - a file renamed or removed with the document left
+  behind. `docs/roadmap.md` gained a mention of `test/bpa_vectors.h` with the
+  C sweep, and that file is **generated**: 21,072 lines from
+  `ref/gen_vectors.py`, listed in `.gitignore`, removed by `make clean`,
+  remade by `make test`'s own `vectors` prerequisite.
+
+  So the check was green in a working tree where a build had left the file
+  behind and red in a clone made the same minute:
+
+  ```
+  $ git clone --no-local . /tmp/fresh && cd /tmp/fresh
+  FAIL: docs/roadmap.md sends a reader to 'test/bpa_vectors.h' and the tree
+        does not have it
+  ```
+
+  **A clone is what `tools/release-gate.sh` builds a release from.** It
+  survived only because `make test` runs `vectors` first, so the one path that
+  matters made the file before the check looked for it - which is a check
+  passing by accident of ordering.
+
+  A build product is not a file that is gone, and the rule's whole subject is a
+  document left behind. The accepted paths are **read out of `.gitignore`**
+  rather than listed here, because a second list of build products is the same
+  truth in two places with nothing comparing them; only literal entries count,
+  not globs, so `hexarouting*.iso` cannot excuse a name near it. Every path
+  accepted that way is **printed** on every run, so the list growing a name
+  nobody recognises is on the screen rather than inside the check's logic.
+
 * **The BGP page quoted a verdict the fix to
   [#363](https://github.com/andrediashexa/hexarouting/issues/363) had just
   changed, and the wiki reader did not catch it.** Both

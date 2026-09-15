@@ -123,15 +123,28 @@ if not _UNREL:
                  "it are not being checked at all")
 else:
     _body = _UNREL.group(1)
-    _named, _missing = set(), []
+    _named, _missing, _build = set(), [], set()
     for _rel in doc_paths.repo_paths(_body):
         _named.add(_rel)
-        if not os.path.exists(os.path.join(REPO, _rel)):
+        if os.path.exists(os.path.join(REPO, _rel)):
+            continue
+        # A build product is not a file that is gone, and the holder answers
+        # which is which so this reader and test_doc_commands.py cannot come
+        # apart about it. See doc_paths.built: the verdict used to depend on
+        # whether somebody had built, and a clone is what the release gate
+        # makes.
+        if doc_paths.built(_rel):
+            _build.add(_rel)
+        else:
             _missing.append(_rel)
     for _r in sorted(set(_missing)):
         check(False, f"an unreleased entry names {_r!r} and the tree does not "
                      f"have it: a reader sent to that path finds nothing, and "
                      f"a tagged section cannot be corrected afterwards")
+    for _r in sorted(_build):
+        print(f"  [info] an unreleased entry names {_r}, which .gitignore "
+              f"lists: the build makes it, so it is absent in a clone and "
+              f"that is not a stale entry")
     if not _missing:
         if len(_named) >= 3:
             ok(f"all {len(_named)} of them")
