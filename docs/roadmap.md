@@ -2240,6 +2240,21 @@ records, holding an interface name, an address and a MAC. The method is
 rather than to wrap the verdict, because `say_list` and `say_prose` already
 fold and the scripts choose between them on purpose.
 
+**The first two things those readers found are warnings an operator would
+act on, and neither had ever been printed**
+([#370](https://github.com/andrediashexa/hexarouting/issues/370)).
+`bpa_audit.c`'s plural tamper branch was one and is fixed. The other is
+`bpa_reserve_warn()`: three rows telling an operator that some of this box's
+workers hold no reserve at all, so **the subscribers those workers own can
+never be given a second block** - a customer who fills their block stays full,
+on a box that reports a reserve. Nothing produces it, and the reason is
+measurable rather than mysterious: the guard needs a reserve pool on a box
+with more workers than reserve blocks, `lab/detreserve.sh` is the only lab
+that sets a reserve, and it is not in `BOTH_WAYS` so it never runs with
+workers. Whether that absence is deliberate is the first thing to establish -
+its arithmetic may depend on single-threading the way `lab/crossaddr.sh`'s
+does, in which case what is missing is the marker and not the entry.
+
 **And a reader that names a branch as never run can be wrong about that**
 ([#369](https://github.com/andrediashexa/hexarouting/issues/369)).
 `tools/plugin-says.sh` found its first product-facing defect within a day of
