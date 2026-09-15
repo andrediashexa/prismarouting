@@ -7060,6 +7060,41 @@ class Shell:
                 if "BELOW" in line:
                     print(f"warning:{line.rstrip()}")
 
+        # A block-stride this box's worker sharding cannot honour is applied
+        # and warned about, and that warning has to reach the person who
+        # committed it - who is at the far end of an API call and sees none of
+        # the dataplane's log, exactly like the timeout above.
+        #
+        # BOTH WAYS IN, which is two delta keys rather than one. A pool being
+        # created carries its stride on the creation message, so it never goes
+        # through bpa_pool_settings_set at all; a pool already carrying traffic
+        # takes a stride change in place, through settings_set, because the
+        # stride only decides where the NEXT extension goes and nothing already
+        # handed out moves. The device warns at both, so both are read back.
+        #
+        # Read back from the device rather than worked out here, for the reason
+        # the timeout warning is: the worker count, the arithmetic and the
+        # sentence live in the plugin, and a second copy in Python would be a
+        # second thing to keep in step. "show bpa pool" prints the warning
+        # under the pool it is about, on the same screen as the `stride` row
+        # whose promise it corrects.
+        #
+        # ONLY THE POOLS THIS COMMIT SENT A STRIDE TO, which is exactly the set
+        # the device itself warns about for this commit. The device warns about
+        # every pool whose stride is unreachable whenever it is asked, because
+        # a `show` answers about the box; a commit answers about what was just
+        # committed. Relaying all of them would print the same paragraph about
+        # a pool nobody changed on every commit that went near a stride, and a
+        # warning that fires whatever the operator did is one they learn to
+        # scroll past - which costs them the one commit where it was about
+        # their change.
+        strided = {p.name for p in d["pool_add"] + d["pool_replace"]
+                   if p.block_stride}
+        strided |= {name for name, p in d["settings_set"].items()
+                    if p.block_stride}
+        if strided:
+            self.relay_pool_warnings(strided)
+
         # The card the dataplane is to be given, before SSH and for a reason
         # that is not ordering: nothing here takes effect until the dataplane
         # starts again, so it cannot leave the box half-changed. It goes with
@@ -7352,6 +7387,41 @@ class Shell:
             # Otherwise there is nothing here for FRR: interface stanzas whose
             # contents this VTY applies to the dataplane itself.
         return True
+
+    def relay_pool_warnings(self, pools):
+        """
+        Print what `show bpa pool` warns about, for these pools only.
+
+        THE ONE READER OF THAT SCREEN, and it is one on purpose. A warning
+        under a pool is several rows and only the first of them carries a word
+        to look for, so which pool it is about and where it ends both come from
+        the SHOW'S OWN structure rather than from how the sentence happens to
+        fold: every pool opens a line with "pool <name>", and everything
+        printed about that pool follows it. A re-wrap of the message cannot
+        lose a row here (#271).
+
+        That also means this takes EVERY warning row under a named pool,
+        whatever it was about. A second loop over the same screen, added for
+        the next warning that lands on it, would print both of them twice for
+        any pool both sets name - so another warning relayed from `show bpa
+        pool` belongs in the set handed to this function, not in a reader of
+        its own.
+
+        The dataplane's rows are printed as they came, because they are the
+        dataplane's sentence: the worker count, the arithmetic and the words
+        live in the plugin, and a copy of any of them here would be a second
+        thing to keep in step.
+        """
+        rc, out = self.dp.run("show bpa pool")
+        here, relay = None, False
+        for line in (out or "").splitlines():
+            if line.startswith("pool "):
+                here = line.split()[1]
+                relay = False
+            elif line.startswith("warning:"):
+                relay = here in pools
+            if relay:
+                print(line.rstrip())
 
     def ospf_mtu_mismatch(self, routing, mtus):
         """

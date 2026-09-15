@@ -120,6 +120,80 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The block-stride warning was on the `vppctl` path only, and on the path an
+  operator takes to create a pool it did not even reach the log**
+  ([#373](https://github.com/andrediashexa/hexarouting/issues/373)).
+  `bpa_stride_warn()` had two callers: the dataplane's own console handler, and
+  `bpa_pool_settings_set()` with a null `vlib_main_t`, which only writes the
+  record. `bpa_pool_add()` called neither. An operator who configured a
+  `block-stride` from the VTY - which is every operator, since the VTY exists
+  so nobody has to drop to the dataplane console - was told nothing at the
+  prompt,
+  and on creation nothing anywhere: `block-stride` rides on the creation
+  message, so a new pool never goes through `settings_set` at all. Meanwhile
+  the pool configuration page on the public wiki told them the box warns at
+  pool creation and quoted the three rows it prints.
+
+  **What they lost.** The stride is what keeps a subscriber's extra blocks near
+  its first one, so an investigator reading a log sees one contiguous holding
+  instead of two unrelated ranges. A stride the worker sharding cannot honour
+  is not honoured for anybody - every block it names belongs to another
+  worker - and extensions fall back to the free list, silently: the subscriber
+  still
+  gets a block and still translates, so from outside a stride that never
+  applies is indistinguishable from one that does. The warning names the
+  nearest stride that WOULD work, which is the difference between a five-second
+  correction at the prompt and finding out months later from a log that does
+  not read the way the operator expects.
+
+  **Both ways in, because a stride reaches the dataplane by two messages and
+  neither covers the other.** A pool created with a stride carries it on
+  `bpa_pool_add_del`, so the warning is now said in `bpa_pool_add()`, after
+  `bpa_pool_init()` because the arithmetic reads values it computes. A stride
+  changed on a pool that is already carrying traffic is an in-place setting -
+  the stride decides where the NEXT extension goes and moves nothing already
+  handed out - and that call warned to the log already.
+
+  **And hexash relays it, the way it relays a timeout under its floor.** The
+  device owns the sentence, the arithmetic and the worker count; `show bpa
+  pool` says it under the pool it is about, and a commit that sent a stride to
+  a pool reads that back and prints it at the prompt. Only for those pools: the
+  device answers about the whole box, and a warning that fires whatever the
+  operator did is one they learn to scroll past. The show does not write a log
+  record - a screen that logged every time somebody looked at it would fill the
+  log with one event repeated by its own reader - so `bpa_stride_warn()` was
+  split into a guard that owns the arithmetic, a `say` that owns the rows and a
+  `warn` that is the say plus the record, exactly as
+  [#372](https://github.com/andrediashexa/hexarouting/issues/372) split the
+  reserve.
+
+  **`show bpa pool` is the right screen for it, and not merely the convenient
+  one.** That screen already prints `stride 4 (2048 ports between a
+  subscriber's blocks, on its own public address)` - a promise about layout -
+  and whether that promise holds is not a property of the pool at all: it
+  depends on the thread count the box happened to start with, which the pool
+  does not carry and the formatter cannot read. So the warning is not a second
+  unrelated sentence on that screen; it is the correction of a row the same
+  screen printed a few lines above it, and leaving it off means the screen
+  states a layout the box is not producing. `show bpa blocks` was the
+  alternative and was rejected: its `stride N: X placed, Y fell back` counters
+  are the honest reading AFTER traffic, but at the moment of a commit they are
+  two zeros, they are printed only for a dynamic pool, and on a box whose
+  pools are all deterministic that screen does not exist - a readback that
+  reports nothing on a correct box and nothing on a broken one is not a
+  readback.
+
+  `lab/dynamic-workers.sh` carries the case, beside the two `vppctl` ones it
+  already had: same box, same two workers, same run, and the only difference
+  is which way in was used. It asserts the numbers rather than the appearance -
+  the ways the blocks are sharded, what one stride step moves by, the nearest
+  honourable stride - and guards on the pool having been created and the box
+  having workers, because otherwise "the warning did not appear" is true for
+  the wrong reason. It drives the in-place path too, and carries the control a
+  relay needs: a second pool with a stride this box CAN honour, committed while
+  the first pool is still on the box saying it cannot, so a relay that
+  forwarded everything it read would be caught.
+
 * **A check that compared two trees, and the day the wiki was published is
   the day it broke.** `test/test_wiki_roundtrip.sh` drives the release gate and
   requires it to agree with `tools/wiki-status.sh` rather than asserting a

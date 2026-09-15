@@ -875,7 +875,11 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       bpa_timeouts_warn (vm, &cfg.timeouts, name);
       if (!bpa_pool_init (&probe))
 	{
-	  bpa_stride_warn (vm, &probe);
+	  /* The rows only. When this command CREATED the pool, bpa_pool_add()
+	   * has already written the record for it - warning again here would
+	   * log the same sentence about the same pool twice - and when it was
+	   * `check`, there is no pool for a record to be about. */
+	  bpa_stride_say (vm, &probe);
 	  bpa_reserve_warn (vm, &probe);
 	}
     }
@@ -941,6 +945,36 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
   pool_foreach (p, bm->pools)
     {
       vlib_cli_output (vm, "%U", format_bpa_pool, p);
+      /*
+       * And whether this box can honour the stride the rows above just
+       * quoted. format_bpa_pool() prints "stride 4 (2048 ports between a
+       * subscriber's blocks, on its own public address)" - a promise about
+       * layout - and whether that promise holds is not a property of the pool
+       * at all: it depends on the thread count the box happened to start
+       * with, which the pool does not carry and the formatter cannot read.
+       * Left unsaid, this screen states a layout the box is not producing.
+       *
+       * Said HERE because it is the only readback there is. A pool applied
+       * over the binary API has no terminal to print to - bpa_pool_add() and
+       * bpa_pool_settings_set() warn with a null vm, so only the log hears
+       * them - and hexash reads this command back after a commit to put it in
+       * front of the operator who typed the stride. Through the SAME function
+       * that says it there: a second sentence here, worded differently or
+       * computed differently, would be a second thing to keep in step.
+       *
+       * It costs nothing on every other pool: bpa_stride_say() prints nothing
+       * at all unless the sharding really does defeat the stride.
+       *
+       * KEEP IT LAST IN THIS LOOP BODY, and keep any other warning said here
+       * beside it rather than after it. hexash relays this warning by taking
+       * everything between a `warning:` row and the next row opening with
+       * `pool `, because the message folds and only its first row carries a
+       * word to look for (#271). Anything printed about a pool AFTER this
+       * call would be relayed to the operator as part of the warning. The
+       * constraint is written here, where somebody adding a row would be
+       * looking, and not only in hexash, where they would not.
+       */
+      bpa_stride_say (vm, p);
     }
   return 0;
 }

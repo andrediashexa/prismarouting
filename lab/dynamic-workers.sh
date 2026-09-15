@@ -13,13 +13,22 @@
 # there is no honourable stride to name instead either. Both sentences carry
 # the worker count, so neither can be produced by a lab that has no workers -
 # which is why they are here rather than beside the allocator's own labs.
+#
+# AND THE LAST SECTION ASKS THE SAME BOX THE SAME QUESTION THROUGH THE VTY,
+# which is the only way in an operator has. The two sections above are typed at
+# `vppctl`, the dataplane's own console; a warning printed there and nowhere
+# else has reached nobody the product ships for (#373). Same box, same two
+# workers, same run: the only thing that differs is which way in was used.
 set -u
 . /src/lab/lib.sh   # startup_conf, start_frr, use_binary_api
-mkdir -p /run/vpp /vpp_plugins
+mkdir -p /run/vpp /vpp_plugins /etc/hexarouting /var/log/hexarouting
 (cd /src/.build-vpp && ninja >/dev/null 2>&1) || {
   mkdir -p /src/.build-vpp && cd /src/.build-vpp && cmake -G Ninja /src >/dev/null && ninja
 }
 cd /src
+# The last section commits a pool through the VTY, which reaches the dataplane
+# over the binary API and not over vppctl.
+use_binary_api
 
 vpp -c "$(startup_conf test workers)" > /tmp/vpp.log 2>&1 &
 wait_vpp
@@ -136,6 +145,104 @@ printf '%s\n' "$NOFIT_WARN" | sed 's/^/  /'
 echo "  workers on this box: $WK"
 
 echo
+echo "=========== the same stride, applied through the VTY ==========="
+# THE PATH AN OPERATOR ACTUALLY TAKES, and the reason this section exists
+# beside the two above rather than instead of them.
+#
+# Everything above is typed at `vppctl`, which is the dataplane's own console
+# and not the interface this product ships. An operator configures a pool in
+# the VTY, the VTY applies it over the binary API, and the warning has to
+# arrive THERE - at the prompt, in the commit that applied the stride - or it
+# has not arrived at all. The box above and the box here are the same box with
+# the same workers in the same run, so the only thing that differs between the
+# sections is which way in was used.
+#
+# BOTH WAYS IN, because a stride reaches the dataplane by two different
+# messages and neither covers the other. A pool created with a stride carries
+# it on the creation message; a stride changed on a pool that is already
+# carrying traffic is an in-place setting and goes on its own message, because
+# the stride only decides where the NEXT extension goes. So this section
+# creates one and changes another.
+#
+# NOT `block 512` OUT OF NOWHERE: the shape is the one the `check` above uses,
+# a public address holding 126 mappable blocks under `policy blocked`, where a
+# stride step is one block index and a stride of 1 is exactly the unreachable
+# case at two workers. The VTY also refuses a block smaller than 64 ports, so
+# the 4-port blocks other labs use cannot be typed at the prompt at all.
+HX="python3 /src/src/hexash/hexash.py"
+VTY_STRIDE=1
+VTY_SAY=$($HX -c "configure" \
+    -c "cgnat pool vtystride" \
+    -c "inside 10.30.0.0/24" \
+    -c "outside 45.170.20.0/30" \
+    -c "block-size 512" \
+    -c "ports 1024 65535" \
+    -c "policy blocked" \
+    -c "mode dynamic" \
+    -c "max-blocks 2" \
+    -c "block-stride $VTY_STRIDE" \
+    -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$VTY_SAY" | sed 's/^/  /'
+
+echo
+echo "  and a stride this box CAN honour, committed the same way:"
+# THE CONTROL, and it goes through the VTY too. Without it the checks below
+# pass on a box that warns about every stride there is, and a warning that
+# fires whatever the operator did is one they learn to scroll past.
+#
+# It is also the control for the OTHER half. `vtystride` is still on this box
+# with a stride it cannot honour, and the device says so every time it is
+# asked - so a relay that simply forwarded what it read would print that
+# paragraph here, on a commit that had nothing to do with it.
+VTY_QUIET=$($HX -c "configure" \
+    -c "cgnat pool vtyokstride" \
+    -c "inside 10.30.1.0/24" \
+    -c "outside 45.170.21.0/30" \
+    -c "block-size 512" \
+    -c "ports 1024 65535" \
+    -c "policy blocked" \
+    -c "mode dynamic" \
+    -c "max-blocks 2" \
+    -c "block-stride 2" \
+    -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$VTY_QUIET" | sed 's/^/  | /'
+
+echo
+echo "  and the same stride lowered on the pool that was already running:"
+# THE IN-PLACE PATH, which is the one the operator reaches on the day they
+# change their mind rather than the day they build the pool. Nothing here is
+# recreated: the stride decides where the next extension goes, so the device
+# takes it on a live pool and no subscriber moves.
+VTY_CHANGE=$($HX -c "configure" \
+    -c "cgnat pool vtyokstride" \
+    -c "block-stride 1" \
+    -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$VTY_CHANGE" | sed 's/^/  /'
+
+# Collapsed before anything is cut out of it: these are sentences, and a needle
+# that depends on where one folded stops matching the next time the message is
+# re-wrapped (#271).
+VTY_FLAT=$(printf '%s' "$VTY_SAY" | tr '\n' ' ' | tr -s ' ')
+VTY_WAYS=$(printf '%s' "$VTY_FLAT" \
+  | sed -n 's/.*blocks are sharded \([0-9][0-9]*\) ways.*/\1/p')
+VTY_STEP=$(printf '%s' "$VTY_FLAT" \
+  | sed -n 's/.*a stride step moves by \([0-9][0-9]*\).*/\1/p')
+VTY_NEAR=$(printf '%s' "$VTY_FLAT" \
+  | sed -n 's/.*the nearest stride that can be: \([0-9][0-9]*\).*/\1/p')
+# AND WHAT THE BOX WROTE DOWN, which is the other half of the same fix and the
+# half nobody is watching at the time. A pool applied over the API is created
+# with no terminal on the far end, so the dataplane keeps the record itself -
+# and it is the only trace left for whoever reads the box hours later, after
+# the layout they expected turned out not to be the layout they got.
+VTY_LOG=$(vppctl show logging 2>/dev/null)
+echo "  workers on this box: $WK"
+echo "  the prompt said: sharded ${VTY_WAYS:--} ways, a step moves by"
+echo "                   ${VTY_STEP:--}, nearest honourable stride ${VTY_NEAR:--}"
+
+echo
 echo "=========== VERDICT ==========="
 . /src/lab/verdict.sh
 ERR=$(vppctl show errors)
@@ -179,4 +286,64 @@ expect_not_in "and it is not given a nearest stride it does not have" \
   "the nearest stride that can be" "$NOFIT_WARN"
 expect_in "and that pool is valid too, so this is a warning and not a refusal" \
   "is valid" "$NOFIT_WARN"
+
+# AND THE SAME WARNING AT THE VTY PROMPT, which is where an operator is.
+#
+# The checks above assert what the dataplane's own console printed. These
+# assert what the PRODUCT printed, on the path hexash uses - and the two are
+# different claims about different code, which is the whole reason both are
+# here. A box that tells the person at `vppctl` and says nothing to the person
+# at the prompt has told nobody: the VTY exists so that nobody has to drop to
+# the dataplane console, and every operator is on this path.
+#
+# The two ways these could be green having measured nothing: a commit that
+# never created the pool - which is every way a commit can fail, and it fails
+# silently as far as a grep for an absent warning is concerned - and a box with
+# no workers to shard the blocks over. Both are guarded, and the second is an
+# assertion rather than a skip because this lab starts its own workers.
+expect_in "the pool the warning is about was created through the VTY" \
+  "pool vtystride" "$(vppctl show bpa pool)"
+expect "and the box has the workers every sentence here is about" \
+  test "${WK:-0}" -ge 2
+expect_said "the prompt says a stride this box cannot honour" \
+  "block-stride $VTY_STRIDE on pool vtystride cannot be honoured" "$VTY_SAY"
+expect_said "and says what the subscriber loses by it" \
+  "extensions fall back to the free list" "$VTY_SAY"
+# The three numbers, because they are what an operator acts on and a relay
+# that carried the sentence with somebody else's arithmetic in it would be
+# worse than none.
+expect "the sharding the prompt names is the sharding this box has" \
+  test "${VTY_WAYS:-x}" -eq "$WK"
+expect "and a stride step moves by one block index under policy blocked" \
+  test "${VTY_STEP:-x}" -eq 1
+# Two readings of one fact, taken from different places: the stride the plugin
+# arrived at by walking candidates, and the worker count read off the box. With
+# a step of one block index the first honourable stride IS the worker count,
+# and a build that named any other number has nothing to do with the sharding
+# it just quoted.
+expect "and the nearest honourable stride it names is this box's worker count" \
+  test "${VTY_NEAR:-x}" -eq "$WK"
+expect_said "and the commit went through, because this is a warning and not a refusal" \
+  "commit complete" "$VTY_SAY"
+expect_said "and the box wrote the record itself, for whoever reads it later" \
+  "pool vtystride: block-stride $VTY_STRIDE unreachable at $WK workers" \
+  "$VTY_LOG"
+# THE CONTROL, both halves of it. A stride the box can honour must draw
+# nothing at all, and a commit must say nothing about a pool it did not touch -
+# `vtystride` is still on this box with a stride it cannot honour, and the
+# device repeats that whenever it is asked.
+expect_in "the control pool was created too" "pool vtyokstride" \
+  "$(vppctl show bpa pool)"
+expect_not_said "a stride this box can honour draws no warning at the prompt" \
+  "cannot be honoured" "$VTY_QUIET"
+expect_not_said "and a commit says nothing about a pool it did not touch" \
+  "on pool vtystride" "$VTY_QUIET"
+# AND THE STRIDE CHANGED ON A LIVE POOL, which is a different message to the
+# dataplane and was the only path that reached the log at all before this.
+expect_said "lowering a stride on a running pool warns at the prompt too" \
+  "block-stride 1 on pool vtyokstride cannot be honoured" "$VTY_CHANGE"
+expect_said "and names the nearest stride that can be, so there is something to type" \
+  "the nearest stride that can be" "$VTY_CHANGE"
+expect_not_said "and that commit says nothing about the other pool either" \
+  "on pool vtystride" "$VTY_CHANGE"
 verdict
