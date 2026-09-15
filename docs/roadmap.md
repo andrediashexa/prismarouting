@@ -1330,7 +1330,6 @@ actually start.
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
 | [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough | the mechanism is in: the allocator prefers a free block on the subscriber's own public address, measured at 100%, 99.6% and 99.2% over three arrival patterns against 0.0%, 0.0% and 0.2% before. **The container work is done**: `lab/crossaddr.sh` has been rewritten against a running box, is in the suite at 28 checks, and states the property as floors on a rate rather than as a guarantee - each arrival pattern pairing at least 3 of its 4, and the run losing at most one of sixteen. It measured 16 of 16, and 0 of 16 with the preference removed. What is left is the judgement alone: a preference cannot be a guarantee without refusing extensions, which costs a customer traffic rather than an address |
 | [#337](https://github.com/andrediashexa/hexarouting/issues/337) the disclosure for boxes already in the field | the repair is done ([#248](https://github.com/andrediashexa/hexarouting/issues/248)): a box tells whoever logs in that its host keys were not made on it, names them, says the private half is in the published download and that the session being read can be impersonated, and gives the three commands that fix it. What is left is not code. Nothing here names which releases shipped those keys, and a box that is never taken to a new version never runs the code that would tell it, so where the disclosure is said and whether it names the releases is the maintainer's |
-| [#277](https://github.com/andrediashexa/hexarouting/issues/277) publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. `sh tools/wiki-status.sh` measures the gap: **27 pages corrected here and still showing operators the old text, plus one page the wiki does not have at all**. One is wrong rather than merely stale: the published page says a refused `commit` applies nothing, which stopped being true when the read-back check became a refusal and is read by somebody deciding what state their box is in. The mirror also carries pages for #67, #182, #210, #213, #217, the block stride (#55), what `commit` refuses, and the four IGP `show` commands. `test/test_wiki_roundtrip.sh` checks the mirror keeps the format the two scripts agree on, after five pages were found opening with their own title up to four times (#225). The tooling no longer stands in the way: `tools/wiki-push.sh <file>` reads the document id from `wiki/.ids`, so nobody has to find 28 ids by hand, and `tools/wiki-pull.sh` refuses to rewrite the mirror while those pages are unpublished - it deletes `wiki/`, so pulling first would have lost all 28. What is left is the token |
 | [#340](https://github.com/andrediashexa/hexarouting/issues/340) the eight release titles that are not their heading | the gate refuses a new one now, and it can only check the release being cut. Measured over all 74 published: 66 titles are the CHANGELOG heading and 8 are not. Four are truncations - 0.46.0, 0.69.0, 0.70.0 and 0.71.0 each drop the second half, which is where the second defect that release fixed is named - and rewriting those four costs a moment. The other four are a judgement: 0.2.0's extra clause is a fact the CHANGELOG does not carry and should stay, and 0.3.0, 0.38.1 and 0.61.2 are old enough that changing a published note changes what somebody may have linked to |
 | [#345](https://github.com/andrediashexa/hexarouting/issues/345) reading back the rx queues the dataplane really opened | needs a card bound to DPDK. `show hardware-interfaces` prints `rx: queues N (max M)` for one and nothing of the kind for the packet-generator interfaces every lab here uses, measured in the dev container - so the reader would be written against a format nobody on this box has seen. [#329](https://github.com/andrediashexa/hexarouting/issues/329)'s guest is where it can be captured and asserted |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
@@ -2363,6 +2362,26 @@ primary acquire path, counted only on the reserve path; and the stride's
 worker-slice arm, which both stride sections run at one worker on purpose. The
 last two are gaps a fixture could close and are worth an issue; the other
 fourteen are properties no input can name.
+
+#### The wiki an operator reads is the wiki this repository holds
+
+[#277](https://github.com/andrediashexa/hexarouting/issues/277) - *delivered*.
+The token arrived and the backlog went out: **32 pages published**, one of them
+a page the wiki did not have at all, created and moved under its parent. The
+one that was wrong rather than merely stale is corrected - the published page
+said a refused `commit` applies nothing, which stopped being true when the
+read-back check became a refusal, and is read by somebody deciding what state
+their box is in.
+
+The interlock was **checked and not assumed**. `wiki/.pulled` exists so that a
+page edited on the wiki by a human is not overwritten by a push from here, and
+the backlog was old enough that somebody could have. Every page's `updatedAt`
+was read before anything was written, the one human edit found that way was
+fetched, and it was proved carried forward into the text that went out. Only
+then was `.pulled` advanced. All 32 were verified afterwards by a needle from
+their own content and not by a checksum: the wiki normalises markdown on the
+way in, so a digest comparison answers about the normalisation and not about
+the page.
 
 #### Phase 8 - the rename to Prisma Routing
 
