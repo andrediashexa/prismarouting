@@ -462,21 +462,67 @@ fi
 # it behind a check that has been red since 2026-09-09, which is the defect the
 # wiki and roadmap pair had and which was fixed two hours before this was
 # written. All three verdicts are taken, then one refusal.
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  rel_title=$(gh release view "$TAG" --json name -q .name 2>/dev/null || true)
-  if [ -z "$rel_title" ]; then
-    echo "==> $TAG has no published release yet, so its title is not checked"
+#
+# THREE ANSWERS, NOT TWO. `gh release view` failing meant "not published
+# yet" here, because the call ended in `|| true` and every failure arrived
+# as the same empty string. Driven with a gh that authenticates and cannot
+# reach the API: the gate printed "v0.74.2 has no published release yet"
+# about a release published on 2026-09-15T01:30:53Z, and passed. A
+# gate that states something false at the moment somebody is deciding
+# whether to publish is worse than one that says it could not look.
+if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+  # LOUDLY, for the reason the roadmap check above is loud about the same
+  # condition. Driven with a gh that exits 1: this block printed nothing at
+  # all, so its verdict was indistinguishable from the run where it passed.
+  echo "==> the release title was NOT checked: gh cannot answer"
+else
+  gh_err=/tmp/hexa-release-title-err
+  if rel_title=$(gh release view "$TAG" --json name -q .name 2>"$gh_err"); then
+    rel_state=ok
+  elif grep -qi "release not found" "$gh_err"; then
+    rel_state=none
   else
+    rel_state=unreadable
+  fi
+  case "$rel_state" in
+  none)
+    echo "==> $TAG has no published release yet, so its title is not checked"
+    ;;
+  unreadable)
+    echo "==> the release title was NOT checked: gh could not read $TAG"
+    sed 's/^/    /' "$gh_err"
+    ;;
+  ok)
     # The heading, read out of the tagged tree rather than out of the working
     # one: the release is about what the tag carries.
     head_title=$(awk -v v="## $VER" '
-      index($0, v) == 1 { sub(/^## [0-9.]+[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*/, ""); print; exit }
+      index($0, v) == 1 {
+        sub(/^## [0-9.]+[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*/, "")
+        print; exit
+      }
     ' "$WORK/CHANGELOG.md")
     # Both sides normalised for an optional "HexaRouting ", an optional "v",
     # the version and the dash, so this is about the sentence and not about
     # punctuation somebody typed into a web form.
-    norm_title=$(printf '%s' "$rel_title"       | sed -e 's/^HexaRouting[[:space:]]*//'             -e "s/^v\{0,1\}$VER[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*//")
-    if [ -n "$head_title" ] && [ "$norm_title" != "$head_title" ]; then
+    norm_title=$(printf '%s' "$rel_title" \
+      | sed -e 's/^HexaRouting[[:space:]]*//' \
+            -e "s/^v\{0,1\}$VER[[:space:]]*[-\xe2\x80\x94]*[[:space:]]*//")
+    if [ -z "$head_title" ]; then
+      # An empty heading used to satisfy this check rather than fail it: the
+      # comparison was guarded on `[ -n "$head_title" ]`, so nothing was
+      # compared and the green line was printed anyway. That is the same
+      # defect the '## VER' section extraction 150 lines above refuses in
+      # words - an extraction that found nothing has quietly stopped
+      # checking. Driven: with the heading cut to a bare "## 0.74.2" the
+      # gate announced the published title was the heading while the two
+      # shared not one word.
+      echo "error: the '## $VER' heading in CHANGELOG.md carries no" >&2
+      echo "       sentence, so the published release title was compared" >&2
+      echo "       against nothing and this check passed having checked" >&2
+      echo "       nothing. Give the heading the sentence the release" >&2
+      echo "       note carries: '## $VER - what changed'." >&2
+      docs_bad=$((docs_bad + 1))
+    elif [ "$norm_title" != "$head_title" ]; then
       echo "error: the published release for $TAG does not carry the" >&2
       echo "       CHANGELOG heading as its title." >&2
       echo "         heading:   $head_title" >&2
@@ -484,11 +530,15 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
       echo "       That page is what somebody who does not clone this" >&2
       echo "       repository reads, and the title is what they decide on." >&2
       echo "       A shorter one announces less than the release fixed." >&2
+      echo "       To fix it:" >&2
+      echo "         gh release edit $TAG --title \"$VER - $head_title\"" >&2
       docs_bad=$((docs_bad + 1))
     else
       echo "==> the published release title is the CHANGELOG heading"
     fi
-  fi
+    ;;
+  esac
+  rm -f "$gh_err"
 fi
 # AND IT SAYS SO ON THE WAY OUT.
 #
