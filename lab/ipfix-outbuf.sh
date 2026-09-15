@@ -760,8 +760,21 @@ expect "and not counted as spilled either (${SPILLED_E:-none} -> ${SPILLED_F:-no
 # reads the count back. This one increments a counter in a process that is
 # ending, so the only thing that survives is what it SAID. docs/logging.md
 # calls the discard MUST-be-counted; on this path counted is not enough (#270).
-expect "the stop had bytes it could not write" \
-  test "${DROPPED_STOP:-0}" -ge 0
+# "the stop had bytes it could not write" used to be asserted here as
+# `test "${DROPPED_STOP:-0}" -ge 0`, and a byte count is never negative, so it
+# was true of every number the box can hold and of the empty string as well.
+# Driven under dash over '', 0, 1 and 999999: [ ok ] on all four.
+#
+# It is DELETED rather than repaired, because its subject is already held twice
+# over and neither of those can be written a third time without saying less.
+# That the exporter had bytes left at the stop is the precondition above, which
+# is the one "no-stall" takes red; that they could not be written is the line
+# below, and bpa_stop_drain() prints that sentence only under `if (lost)`
+# (bpa.c:1993), so the phrase IS the number being non-zero.
+#
+# The OFF-RED-AT-LEAST floor is unchanged by this and was not re-measured: an
+# assertion true for every value was green in the off run too, so it was never
+# one of the eight.
 expect_in "and the process said how many were lost, where it can still be read" \
   "could NOT be written" "${EXIT_SAID:-}"
 
