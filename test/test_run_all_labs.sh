@@ -755,5 +755,41 @@ case "$mout" in
 esac
 rm -rf "$g"
 
+echo
+echo "=== a suite that lost a lab does not report on the ones it kept ==="
+# The four counters are internally consistent with each other whatever
+# happens. A lab that never reaches judge_batch just makes the totals smaller,
+# and the suite still says everything it ran passed - a verdict about fewer
+# labs than the repository has, and nothing anywhere saying so.
+#
+# Arranged by making the RUN LOOP skip one that is already in the list, which
+# is the shape of the real fault: a batch that lost a file, a name that
+# produced none. The counters are what this is about and are not touched -
+# editing them would arrange the symptom rather than the cause.
+l=$(mktemp -d)
+mkdir -p "$l/tools" "$l/lab"
+cp "$REPO/tools/run-all-labs.sh" "$l/tools/"
+cp "$d/tools/build.sh" "$d/tools/lab.sh" "$l/tools/"
+cp "$d/lab/aa-good.sh" "$l/lab/" 2>/dev/null || printf '#!/bin/sh\n' > "$l/lab/aa-good.sh"
+printf '#!/bin/sh\n' > "$l/lab/zz-dropped.sh"
+sed -i 's|^for n in \$LABS; do$|for n in $LABS; do\n  [ "$n" = zz-dropped ] \&\& continue|' \
+  "$l/tools/run-all-labs.sh"
+grep -q 'zz-dropped.*continue' "$l/tools/run-all-labs.sh" \
+  || bad "the run loop could not be arranged to drop a lab, so the case below
+is not about what it says"
+lout=$(cd "$l" && sh tools/run-all-labs.sh 2>&1); lrc=$?
+case "$lout" in
+  *"THE SUITE LOST A LAB"*)
+    ok "it says so, rather than reporting on the ones it kept" ;;
+  *) bad "a suite that accounted for fewer labs than it set out to run said
+nothing about it; got:
+$lout" ;;
+esac
+[ "$lrc" != 0 ] \
+  && ok "and the run does not pass" \
+  || bad "the suite lost a lab and still exited 0, which is a green verdict
+over something nobody measured"
+rm -rf "$l"
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1
