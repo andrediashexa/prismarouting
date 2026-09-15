@@ -818,17 +818,42 @@ dataplane interface: enp2s0
     stored, and the boot tuning was recomputed for it
     NOT IN EFFECT YET: the dataplane claims its card when it starts, and this
     commit does not restart it
-    restarting it hands the card over and ends every session on this box,
-    including this one, so it is not done for you
+    restarting it hands the card over and ends whatever is reaching this box
+    through enp2s0. The path this box is routed out of is 'enp1s0', which Linux
+    keeps, so this session is not what it costs
+    it is not done for you all the same: nothing here has measured what
+    stopping the dataplane costs a box carrying traffic
     reboot the box in a window you have chosen, and it comes up forwarding on
     that card
 commit complete
 ```
 
+That last paragraph is the box this transcript was taken on and not a constant.
+This screen used to say "ends every session on this box, including this one"
+on every box that reached it, which is true of the single-card box below -
+where the card being handed over carries the management address - and false
+here, where the session arrives on `enp1s0` and a dataplane restart never
+touches it. It now reads `/proc/net/route` and the card list, the same pair
+`show hardware` marks the management card from, and answers four ways: this
+card is the path the box is reached on; the path is another card Linux keeps;
+the path is on something that is not one of this box's cards at all, which on
+a box that has already handed one over is the `linux_cp` pair the dataplane
+itself holds; and nothing carries a default route, so it cannot be read. The
+last two take the loud side, for the reason #123 gives: a box warned about a
+session it was never going to lose spends a maintenance window it did not
+need, and a box told the session was safe and losing it is a box nobody can
+reach.
+
 `commit` writes `HEXA_DATAPLANE_IF` into `tune.env` and restarts
-`hexarouting-tune`, which regenerates `startup.conf` and binds the NIC. **It
-does not restart VPP.** Handing a card to the dataplane takes it away from
-Linux and ends every session on the box, the operator's included — the same
+`hexarouting-tune`, which regenerates `startup.conf`. **It does not bind the
+NIC and it does not restart VPP.** The bind used to happen there, and that was
+the defect in #336: `apply-tuning` performs it, `commit` restarts the unit that
+runs `apply-tuning`, and nothing restarts VPP afterwards - so the card came off
+its kernel driver with neither stack owning it, while this same commit printed
+that the card had not moved yet. It is taken at the next start of the
+dataplane, which is what the VTY has always said. Handing a card to the dataplane takes it away from
+Linux and ends everything reaching the box through that card - on a box whose
+only card carries the management address, the operator's own session - the same
 class of consequence as `commit remap`, which this VTY refuses until it is
 asked for by name. No verb has been invented for it here, because nothing in
 this repository has measured what that restart costs on a box carrying

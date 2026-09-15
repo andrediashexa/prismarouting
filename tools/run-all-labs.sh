@@ -273,7 +273,7 @@ hw-lab:needs a real NIC bound to vfio-pci
 hw-vpp:needs a real NIC, and uses host networking
 boot-iso:the release gate runs this, against a tag
 install-iso:the release gate runs this, against a tag
-crossaddr:pins what #226 does TODAY, so it would go red on the fix
+crossaddr:it pinned what the allocator did BEFORE #226 and is now red by construction: the box prefers the subscriber's own public address for an extension, and every check in this file asserts that it does not. It has not been re-run since that landed, because doing so needs a container - so it is neither a regression test nor a record of the box, and rewriting it against a running box is the open work on #226
 ha-failover:the acceptance test for HA, written before HA exists (#9), so it is red because the feature is MISSING and not because anything is broken
 soak:hours of churn is the point of it (#30), and four minutes is its SHORTEST run. The longest lab here is about two minutes, and a suite that waited on this one would stop being run - which is how a suite loses the assertion instead of the lab losing it. Run it deliberately: sh tools/lab.sh soak, or sh tools/lab.sh soak 28800 for the eight hours it is for
 "

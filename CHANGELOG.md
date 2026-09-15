@@ -75,6 +75,171 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **Six of the release gate's refusals now have assertions, and it had two.**
+  `tools/release-gate.sh` carries 22 refusals and its own header calls it "the
+  only thing in this project that has ever caught a release mistake". Until
+  tonight the only two anything had watched fire were the two added tonight;
+  the rest had been seen only when a real release went wrong. A refusal nobody
+  has watched fire is a refusal that may not fire, which is #335's finding in
+  the place it would cost the most. `test/test_release_gate.sh` clones the
+  newest tag, **breaks exactly one thing**, re-tags and requires that one
+  refusal - starting from a tree that passes is what makes each case about its
+  own break rather than about the scaffolding. It also says, as a number, that
+  it reaches 14 of the 22: everything after `RELEASE_GATE_CHECK_ONLY` needs a
+  321 MB image built, booted and installed, and is still measured only by
+  running a real release.
+
+### Fixed
+
+* **`docs/appliance.md` still said the commit binds the NIC**
+  ([#336](https://github.com/andrediashexa/hexarouting/issues/336)). That
+  sentence described the defect, accurately, right up until the defect was
+  fixed - and then it was the document claiming something the box no longer
+  does. Found by the sweep of `src/hexash/hexash.py` for sentences printed by a
+  path that never asked which box it was on, which noticed it in the
+  documentation rather than in the code and left it alone as another branch's
+  territory. It was.
+
+### Fixed
+
+* **Two more screens stated a consequence without asking which box they were
+  on.** Both found by sweeping `src/hexash/hexash.py` for the shape behind
+  [#328](https://github.com/andrediashexa/hexarouting/issues/328),
+  [#330](https://github.com/andrediashexa/hexarouting/issues/330),
+  [#331](https://github.com/andrediashexa/hexarouting/issues/331) and
+  [#336](https://github.com/andrediashexa/hexarouting/issues/336): a sentence
+  true of one box and false of another, printed by a path that never asked.
+
+  **`commit` told a box with a spare card that handing it over would end the
+  session typing the command.** *"restarting it hands the card over and ends
+  every session on this box, including this one, so it is not done for you"*
+  was printed on every box that named a card. It is true of the box the whole
+  handover path was written for - the one whose only card carries the
+  management address - and false of the two-card box that is the worked
+  example in `docs/appliance.md` and in the operator guide, where the session
+  arrives on a card Linux keeps and a dataplane restart never touches it. An
+  operator with a card to spare was told the safe change was the dangerous
+  one. The product already answers that question correctly in three other
+  places - the refusal offers the other card, the management record is written
+  only for the card carrying the route, and `commit` arms a confirmed commit
+  only when the card carries the session - and this was the fourth, which did
+  not ask. It now reads the same pair `show hardware` marks the management
+  card from, and answers four ways: this card is the path the box is reached
+  on, which keeps the old sentence unchanged; the path is another card Linux
+  keeps, and is named; the path is on something that is not one of this box's
+  cards, which on a box that has already handed one over is the `linux_cp`
+  pair the dataplane itself holds, so the session may go with it; and nothing
+  carries a default route, so it cannot be read. The last two take the loud
+  side, for the reason #123 gives: a box warned about a session it was never
+  going to lose spends a maintenance window it did not need, and a box told
+  the session was safe and losing it is a box nobody can reach.
+
+  **`show hardware` pointed at lines saying the opposite of what it claimed
+  they said.** With no PCI NIC in Linux the screen offered the reader a
+  choice - *"Either the dataplane already owns every one of them, which the
+  lines above say, or this box genuinely has no card Linux can see"* - and
+  three different boxes reach it. On one the lines above do say that. On the
+  second they have just said the dataplane holds nothing, and on the third
+  that it could not be asked at all, so the screen contradicted itself six
+  lines apart and then asked the operator to settle a question it had already
+  answered. That is #331's shape exactly, where the PCI-address line read
+  `(not a PCI device)` two lines under a line saying no card had been named.
+  Three boxes, three sentences, and the one the old wording was right for
+  keeps its answer. The virtio sentence #328 added is true of all three and is
+  printed on all three.
+
+  Shown red on four mutations of the product, not on a reworded check: the
+  empty-table sentence made one sentence again (three red, one per box), the
+  virtio sentence confined to one branch (three red), the restart sentence
+  made unconditional again (five red, which is the defect as it stood), and
+  the same sentence made unconditionally quiet, which takes it from the box it
+  was written for (one red).
+
+  `wiki/comecar-aqui/primeiros-passos.md` and `docs/appliance.md` both quoted
+  the old transcript for the two-card box, which is the box it was wrong on,
+  and carry the new one.
+
+* **A box whose FRR was silent was told what its BGP neighbour keeps.**
+  `show bgp neighbor <n> received-routes` and `clear bgp <n> soft in` both need
+  the neighbour to be holding what it sent, and both refuse when it is not.
+  What decided that was `Frr.running()`, which reports a control plane that is
+  **down** as a configuration with nothing in it - the exact collapse
+  `Frr.daemons()` forbids forty lines above it in the same class: *"None is not
+  the empty set and the two MUST NOT be collapsed."* So a box whose vtysh was
+  not answering got a refusal about its neighbour's configuration, read off
+  nothing, with three pieces of advice none of which it could follow: add a
+  statement the box may already carry, through a daemon that is not there to
+  take it; then `show bgp neighbor <n> routes`, which answers from the same
+  silent FRR; then `clear bgp <n>`, an outage offered on a premise nothing
+  read, on a box where it would reset nothing. The reading answers three ways
+  now, and the two screens say which. Neither path had a single assertion
+  before this - the same gap #328 found in `which_dpdk_driver()` - and both
+  have one on each of the three boxes, shown red on the collapse being put back
+  (five red) and on "cannot ask" being read as "it keeps everything", which
+  silently drops the refusal the box with no soft-reconfiguration needs (two
+  red).
+
+* **The roadmap disagreed with the tracker, and the tool that measures that had
+  no caller.** `docs/roadmap.md` is what somebody reads to decide what to do
+  next, and it presented a closed issue as work that remains while never
+  mentioning two open ones. `tools/roadmap-state.sh` has been able to say so
+  since it was written and nothing ran it: it needs the network to know an
+  issue's state, so it cannot live in `make test`, and a reader nobody calls is
+  a rule that has quietly stopped applying - which is exactly what
+  `test/test_selftest.sh` refuses of the verdict holder's readers. The release
+  gate asks it now, beside the wiki check, at the moment somebody is deciding
+  the tree is worth a version number. It degrades loudly when `gh` cannot
+  answer, because a release refused because GitHub was unreachable is a gate
+  people learn to argue with.
+
+* **A document check sat behind one that had been red since September.** The
+  wiki comparison refused on the spot, so the roadmap comparison placed after it
+  would never have executed once - the wiki has been behind since 2026-09-09.
+  Both verdicts are taken before either refusal now, so a maintainer learns
+  everything that is wrong in one run rather than fixing the wiki, running
+  again, and discovering the roadmap. The assertion requires the gate to have
+  **asked**: a gate that stopped calling the holder would still print "the
+  roadmap and the tracker agree", and that reads as a pass.
+
+### Fixed
+
+* **The handover lab asserted a design this product does not have**
+  ([#332](https://github.com/andrediashexa/hexarouting/issues/332)). PHASE 5
+  required that Linux no longer had the card's name after the handover, and
+  that the management address had moved to some other interface. Both are
+  wrong. The promise is that the **name survives**: the dataplane takes the PCI
+  device, `linux_cp` makes a TAP carrying the same name, and the address goes
+  back onto it, so nothing across the cable re-learns anything. Measured on a
+  booted guest with the fixes in: the card bound to `uio_pci_generic`, the
+  dataplane holding `GigabitEthernet0/9/0` **and** `tap4096`, and `ens9`
+  present with `10.0.2.15/24` on it - which the lab called a failure twice.
+  What actually distinguishes a successful handover from one that never
+  happened is what that name resolves to: a TAP has no PCI parent and the card
+  did. The checks read that instead, and the address check is now conditioned
+  on it, because "the address is on `ens9`" means opposite things depending on
+  what `ens9` is.
+
+### Fixed
+
+* **The lab's console driver could only wait for success, and had never been
+  tested** ([#332](https://github.com/andrediashexa/hexarouting/issues/332)).
+  `lab/install-iso.sh` types at a serial console and waits for strings the box
+  prints, and every one of those waits had only ever been exercised by booting
+  a machine - which costs minutes and cannot arrange the case where the box
+  answers something else. It cost exactly that: PHASE 4 spent its full 600
+  seconds waiting for `commit complete` on a commit that had printed `commit
+  failed` seconds in, and what diagnosed it was the console dump the timeout
+  prints rather than the wait. Ten minutes per run, and a verdict reading "the
+  box never answered" about a box that answered immediately. `wait_for_either`
+  takes both strings and reports which arrived: 0 for the first, 2 for the
+  second, 1 for neither, so a caller that ignores the distinction still reads a
+  refusal as a failure rather than as a pass. `test/test_console_driver.sh`
+  measures those waits **without qemu**, reading the functions out of the lab
+  rather than copying them, because a second copy of a wait would pass while
+  the real one did whatever it does.
+
 ### Fixed
 
 * **Swept every harness for the stub that answers a constant, and found seven
@@ -307,6 +472,104 @@ version has a chance of seeing it.
   refuses a release until it is true.
 
 ### Fixed
+
+* **A dynamic pool put one subscriber on two public addresses, while the box
+  documented paired address pooling in four places**
+  ([#226](https://github.com/andrediashexa/hexarouting/issues/226)). RFC 6888
+  REQ-2 makes "Paired" (RFC 4787 REQ-2) the required **default** for a CGN.
+  This box stated it in `docs/roadmap.md`'s conformance table, in
+  `docs/architecture.md`, on `bpa_pool.h`'s static-forward comment and on the
+  public wiki page about port forwarding, and the forward path REFUSES an
+  operator-chosen public address because of it. It was true of deterministic
+  mode and false of dynamic mode: an extension was whatever came off the free
+  stack, and under `policy interleaved` the next block index is the next public
+  address, so a subscriber that filled its block and was given another normally
+  ended up sending from two addresses at once - more often the larger the pool,
+  because alignment needs the gap to be a multiple of the address count. The
+  claim was narrowed in an earlier release. The mechanism is what changes here.
+
+  **The allocator now prefers a free block on the subscriber's own public
+  address.** Two bounded walks along that address, in steps of
+  `n_workers / gcd(unit, n_workers)` - outwards from the subscriber's own
+  block, whose neighbour is the range an investigator reads as one holding,
+  and upwards from wherever the free stack is about to hand blocks out, which
+  is where a pool that filled from the bottom keeps its free ones. A
+  **preference and not a rule**: it falls back to the free stack rather than
+  refusing, because refusing would turn a property about layout into a
+  customer losing traffic.
+
+  So the honest statement is a rate, not a guarantee, and both the box and the
+  documentation now state it as one. Measured over three arrival patterns -
+  one subscriber at a time, everybody-arrives-then-everybody-extends, and a
+  steady state with three quarters of the subscribers reaped - across 1 to 256
+  public addresses and 1 to 8 workers:
+
+  | arrivals | before | after |
+  |---|---|---|
+  | one at a time | 0.0% | **100%** |
+  | everybody, then everybody | 0.0% | **99.6%** |
+  | steady state with churn | 0.2% | **99.2%** |
+
+  Those are the lowest cell of each grid, not the mean. `show bpa blocks`
+  prints each pool's own count, because an operator sizing or selling against
+  a conformance statement needs their number rather than the sentence:
+
+  ```
+  RFC 4787 REQ-2 paired: 412 of 419 extension(s) on the holder's own address
+  ```
+
+  **One correction to what this issue recorded about the cost.** Pairing does
+  **not** inherit the block stride's reachability limit
+  ([#55](https://github.com/andrediashexa/hexarouting/issues/55)). A stride has
+  to honour the one number the operator typed, so `stride x unit` must be a
+  multiple of the worker count; pairing may take **any** multiple of `unit` and
+  needs only the smallest that lands in the slice, which always exists. The
+  vectors say how far apart those are: of the 72 (pool, worker count) shapes
+  `ref/gen_vectors.py` now generates, **53 are shapes where a stride of 1 is
+  unreachable and pairing still has a step**. A box that cannot be strided can
+  still be paired.
+
+  **The free-list removal is now constant time**, which is what made the
+  preference affordable. Taking a NAMED block off the free stack used to be a
+  search with a guess in front of it, and the guess only held while nothing had
+  displaced the stack - true on the path that pins many blocks at once, false
+  on any path that names blocks in an order of its own. Measured on a
+  16-address pool at 3 workers with the preference on: **72684 free-list
+  entries examined for one extension**, 30 on average. `free_pos[]` is the
+  inverse index, four bytes a block - a 258048-block slice grows from about
+  4.4 MB to 5.4 MB - and it removes the walk from the pin path too, which the
+  old comment measured at about 0.8 ms per pin.
+
+  **`test/test_bpa_dyn.c` is new, and is the first suite in `make test` that
+  drives this allocator at all.** Until now the dynamic half of REQ-2 was
+  asserted only behind docker, and by `lab/crossaddr.sh`, which was written to
+  pin what the box did WRONG. `test/bpa_vec_shim.h` reproduces the VPP vector
+  and hash operations the allocator's behaviour depends on - `vec_del1` swaps
+  with the last entry, `vec_pop` is a stack - so the real `bpa_dyn.c` runs with
+  no VPP and no container. Two things it found while being written, both of
+  them checks that could not fail: a four-subscriber scenario on four public
+  addresses stays green with the preference deleted, because `4 % 4 == 0` puts
+  every extension back by accident, and "the block is in this worker's slice"
+  is true of `local * n_workers + worker` whatever the allocator computed. Both
+  are rewritten to assert what a wrong answer actually produces, and each check
+  carries the guard that makes it able to go red.
+
+  **A deterministic pool's reserve is counted the same way, and is now
+  asserted without a container.** Its extensions come out of the reserve, which
+  has the same preference and the same fall-back, so one counter answers the
+  property for both allocators. The only assertion on it was
+  `lab/detreserve.sh`, and the scenario there runs four subscribers over four
+  public addresses in descending order against an ascending free stack, which
+  is what stops the answer being true by accident - the same scenario now runs
+  in `make test`.
+
+  **`lab/crossaddr.sh` is now red by construction and is left that way.** Every
+  `expect` in it asserts the behaviour this change replaced - which is what its
+  header said would happen. Its assertions are numbers measured off a running
+  box and nobody has run it since, so they are not rewritten from arithmetic:
+  doing that would put a lab in the tree whose green nobody has seen.
+  `tools/run-all-labs.sh` says so where it lists what it is not running, and
+  re-running it against a box is the work left on the issue.
 
 * **The capacity a subscriber can actually reach was printed on one interface
   and not on the other, and no check outside a container could see the number
