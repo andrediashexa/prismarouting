@@ -1423,6 +1423,21 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The release gate compares the published release's title with the CHANGELOG
+  heading** ([#340](https://github.com/andrediashexa/hexarouting/issues/340)).
+  Nothing read the published releases at all. Measured over all 74: 66 titles
+  are the heading and 8 are not, and four of those are **truncations** - 0.69.0,
+  0.70.0, 0.71.0 and 0.46.0 each drop the second half, which is where the second
+  defect that release fixed is named. The gate already argues this about the
+  tag's note, that it is what an operator who does not clone the repository
+  reads; the release page is the same audience with a wider reach, and the title
+  is what somebody decides on when they are looking for the release that fixes
+  what is biting them. It is placed beside the wiki and roadmap comparisons and
+  **not behind them**: those have been red since 2026-09-09, so a check behind
+  them would never have run once - the defect that pair already had, committed
+  again while writing this and caught by running it. The eight already published
+  are a repair by hand and the issue records them.
+
 * **The VTY refuses 180 times, and 114 of those refusals had never been
   printed by anything.** `src/hexash/hexash.py` says no to the operator 180
   times, through `self.err()` and `self.err_dataplane()`. Measured by wrapping
