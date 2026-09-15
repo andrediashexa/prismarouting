@@ -254,24 +254,59 @@ say_messages() {   # <printers>
 # floor in say_report catches a name that finds nothing, which is the failure
 # that matters.
 #
-# WHAT IT READS, exactly: the FORMAT STRING of each call, which is the first
-# argument that is a string literal, with adjacent literals concatenated -
-# clang-format splits one sentence over four source lines and each piece on
-# its own is not a message anybody printed.
+# WHAT IT READS, exactly, and it is TWO POSITIONS in a call and not one:
 #
-# WHAT IT DOES NOT READ, said out loud because the count below is only honest
+#   - the FORMAT STRING of each call, which is the argument after the sink,
+#     with adjacent literals concatenated - clang-format splits one sentence
+#     over four source lines and each piece on its own is not a message
+#     anybody printed;
+#   - every literal passed as an ARGUMENT to that call, one message per
+#     branch of a conditional. `cond ? " - PINNED by a forward, so no
+#     hold-down will take it" : ""` is a whole sentence handed to a `%s`, and
+#     so is `"   BELOW the floor " rfc " asks for"` - the RFC-floor warning
+#     that exists to stop somebody setting a timeout that breaks the protocol.
+#     They reach the screen. #366 could not see them because the needle rule
+#     was written on the format string alone and a value is what that rule
+#     cuts out, so every one of them was a branch reported as covered by
+#     nothing ever having looked at it.
+#
+# WHICH ARGUMENTS ARE SENTENCES, and the rule is the FLOOR and not a second
+# predicate beside it. An argument branch is kept when its literals, run
+# through the same cut the format string gets, carry SAY_MIN characters of
+# their own. That is already what the floor says - text that is nearly all
+# interpolated value cannot be recognised in a run - and a format fragment is
+# only the limiting case of it: `"%s%s"` cuts to nothing, `" "` to one
+# character, `", "` to two, and none of the three can be hunted for. Writing a
+# separate "is this a format fragment" test would have been a second spelling
+# of the floor, and two spellings of one rule is what this whole file exists
+# to stop. They are not passed over in silence either: a branch that carries a
+# literal and falls under the floor is still a row, counted and named as
+# unreadable exactly as an under-floor format string is.
+#
+# ONE MESSAGE PER BRANCH, because a conditional is where the sentences are.
+# `a ? "  (pinned by a forward)" : (i ? "  (extension)" : "")` puts three
+# different answers on one line of source and no run ever carries two of them
+# at once; joined into one needle they would be a string no box prints, which
+# is the defect test_selftest.sh records about hunting a value under its own
+# name. The CONDITION is walked as a branch too. That over-reads - a literal
+# inside a condition is compared, not printed - and it is the same deliberate
+# direction say_printers() takes below: over-reading names something extra,
+# under-reading clears a screen nobody looked at.
+#
+# WHAT IT STILL DOES NOT READ, said out loud because the count is only honest
 # against it:
 #
-#   - a literal passed as a VALUE rather than as the format. `"   BELOW the
-#     floor " rfc " asks for"` is a whole sentence handed to a `%s`, and so is
-#     `" - PINNED by a forward, so no hold-down will take it"`. They reach the
-#     screen and they are not needles, because the needle rule is written on
-#     the format string and a value is what the rule cuts out;
+#   - a literal assigned to a VARIABLE and printed later. `mode = "strict"` in
+#     show bpa urpf, and the node names handed to bpa_show_drops_node(), are
+#     sentences this reader cannot reach: the shell pass below derives a
+#     printer from a function that hands `$1` to echo, and C has no such shape
+#     to derive from;
 #   - a message built with format() into a vector that some later call prints
-#     with "%U" or "%v". `show bpa pool` and `show bpa config` are written
-#     that way in their entirety. Those are a separate body of text and giving
-#     them a box is a separate measurement - naming them here would move the
-#     denominator without moving the evidence.
+#     with "%U" or "%v", unless `format` is among the printers the caller
+#     names. `show bpa pool` and `show bpa config` are written that way in
+#     their entirety, and tools/plugin-says.sh names it - with the corpus that
+#     pays for it, because a denominator that moved without the evidence
+#     moving is how a measurement stops meaning anything.
 #
 # A comment is not a call site, and a string inside one is not a message: the
 # whole file is blanked of comments and character constants first, in place,
@@ -379,7 +414,7 @@ say_messages_c() {   # <printer name(s)>
         cl++; ci = 1
       }
     }
-    function emit(line, call,   i, L, c, e, d, na, cur, args, fmt, res) {
+    function emit(line, call,   i, L, c, e, d, na, cur, args, fmt) {
       sub(/^[ \t]*\(/, "", call)
       sub(/\)[ \t]*$/, "", call)
       na = 0; cur = ""; d = 0; L = length(call); i = 1
@@ -407,24 +442,85 @@ say_messages_c() {   # <printer name(s)>
       # needle, so it is counted and named as unreadable rather than
       # disappearing from the denominator. A site that vanished would be a
       # branch this reader reported as covered by never having looked at it.
-      if (substr(fmt, 1, 1) != "\"") { printf "%d\t\n", line; return }
-      res = ""; i = 1; L = length(fmt)
+      #
+      # Its ARGUMENTS are still walked. `vlib_cli_output (vm, fmt, s)` with a
+      # sentence in `s` is exactly the shape this half exists to read, and
+      # returning here would lose it to the one call whose format nobody can
+      # hunt for.
+      if (substr(fmt, 1, 1) != "\"") printf "%d\t\n", line
+      else printf "%d\t%s\n", line, needle(literals(fmt))
+      # THE SECOND BODY. Argument 1 is the sink - `vm`, or the vector format()
+      # is appending to - and argument 2 is the format, read above; everything
+      # from the third on is a value, and a value that is a literal is a
+      # sentence somebody reads off the screen.
+      for (i = 3; i <= na; i++) branches(line, args[i])
+    }
+    # Every conditional branch of one argument, each as its own row. Split at
+    # the "?" and ":" that are not inside a nested call, a subscript or a
+    # string, because those are the only ones that choose between sentences.
+    function branches(line, a,   i, L, c, d, d2, cur) {
+      d = 0; cur = ""; i = 1; L = length(a)
       while (i <= L) {
-        c = substr(fmt, i, 1)
+        c = substr(a, i, 1)
         if (c == "\"") {
-          i++
+          cur = cur c; i++
           while (i <= L) {
-            e = substr(fmt, i, 1)
-            if (e == "\\") { res = res substr(fmt, i, 2); i += 2; continue }
-            i++
-            if (e == "\"") break
-            res = res e
+            d2 = substr(a, i, 1)
+            if (d2 == "\\") { cur = cur substr(a, i, 2); i += 2; continue }
+            cur = cur d2; i++
+            if (d2 == "\"") break
           }
           continue
         }
+        if (c == "(" || c == "[") d++
+        else if (c == ")" || c == "]") d--
+        else if (d == 0 && (c == "?" || c == ":")) {
+          branch(line, cur); cur = ""; i++; continue
+        }
+        cur = cur c; i++
+      }
+      branch(line, cur)
+    }
+    # One branch. It is a message only if it has a literal in it at all: an
+    # argument that is `p->name` or `sub->n_refused` is a value with no words
+    # of its own, and emitting a row for it would put every variable in the
+    # plugin into the denominator as something nobody could ever find a box
+    # for. An EMPTY literal is not text either - `cond ? "" : "..."` prints
+    # nothing down one side, and nothing is not a branch anybody can see.
+    function branch(line, b,   res) {
+      res = literals(b)
+      if (res == "") return
+      printf "%d\t%s\n", line, needle(res)
+    }
+    # The string literals of an expression, in order, with a value marker
+    # wherever something that is not a literal sits between two of them.
+    #
+    # ADJACENT literals join with nothing between them, which is the C rule
+    # and the reason a sentence clang-format broke over four lines comes back
+    # whole. Anything else between them is a value: `"   BELOW the floor " rfc
+    # " asks for"` reaches the screen with the name of the RFC interpolated in
+    # the middle, and a needle that ran straight through the gap would be
+    # hunted for under a string no box prints.
+    function literals(e,   i, L, c, d, res, seen, gap) {
+      res = ""; seen = 0; gap = 0; i = 1; L = length(e)
+      while (i <= L) {
+        c = substr(e, i, 1)
+        if (c == "\"") {
+          if (seen && gap) res = res "\002"
+          gap = 0; seen = 1; i++
+          while (i <= L) {
+            d = substr(e, i, 1)
+            if (d == "\\") { res = res substr(e, i, 2); i += 2; continue }
+            i++
+            if (d == "\"") break
+            res = res d
+          }
+          continue
+        }
+        if (c != " " && c != "\t") gap = 1
         i++
       }
-      printf "%d\t%s\n", line, needle(res)
+      return res
     }
     # THE VALUES PUNCHED OUT, exactly as the shell pass above punches out
     # $var and $(...): a conversion is a value and the box prints whatever it
@@ -438,10 +534,15 @@ say_messages_c() {   # <printer name(s)>
     #
     # An ESCAPE cuts too. "\n" is a line break, so a needle that spanned one
     # would be looked for on a line that cannot hold it.
+    #
+    # And so does the marker literals() leaves where two literals of one
+    # argument had an interpolated value between them, which is the same thing
+    # a conversion is and is cut the same way.
     function needle(s,   out, i, L, c, j, m, k, np, parts, res) {
       out = ""; i = 1; L = length(s)
       while (i <= L) {
         c = substr(s, i, 1)
+        if (c == "\002") { out = out "\001"; i++; continue }
         if (c == "\\") { out = out "\001"; i += 2; continue }
         if (c == "%") {
           j = i + 1
@@ -588,13 +689,14 @@ $_unseen"
     ok "$_msgs message(s) $_what can print, over $SAY_BOXES boxes, and a box \
 for every one"
   fi
-  # SAID OUT LOUD ON THE GREEN RUN TOO. These are the call sites whose text is
-  # so nearly all interpolated value that nothing could recognise them in a
-  # run - menu rows, and `printf '%s\n' "$_a"`. They are not excused messages;
-  # they are lines with no words of their own, and the count is here so that a
-  # message quietly losing its words shows up as this number moving.
+  # SAID OUT LOUD ON THE GREEN RUN TOO. These are the pieces of text so nearly
+  # all interpolated value that nothing could recognise them in a run - menu
+  # rows, `printf '%s\n' "$_a"`, and since #368 the separators and the on/off
+  # words handed to a conversion as an argument. They are not excused
+  # messages; they are text with no words of its own, and the count is here so
+  # that a message quietly losing its words shows up as this number moving.
   [ "$_unreadable" = 0 ] || \
-    ok "and $_unreadable call site(s) carry fewer than $SAY_MIN literal \
+    ok "and $_unreadable piece(s) of text carry fewer than $SAY_MIN literal \
 characters: those are values, not messages, and no run can recognise them"
 
   echo

@@ -35,21 +35,52 @@
 # arranging one needs hardware nobody has, that is a finding to take to the
 # issue, not an exception to add here.
 #
-# WHICH PRINTER, and the half of the plugin this does not read.
+# WHICH PRINTERS, and the THREE BODIES of text the plugin prints from.
 #
-# PLUGIN_PRINTERS names them and defaults to `vlib_cli_output`, which is the
-# body #366 measured: 87 call sites in bpa_cli.c, 67 of them with a needle to
-# hunt for. There is a second body the same size beside it - 88 `format()`
-# sites, 67 readable - because `show bpa pool` and `show bpa config` are built
-# into a vector and printed by one call with "%U" or "%v" at the end. Those
-# are screens too, and
+# #366 read one of them, and the other two together are bigger. Measured on
+# bpa_cli.c:
 #
-#   PLUGIN_PRINTERS="vlib_cli_output format" sh tools/plugin-says.sh ...
+#   vlib_cli_output format strings      87 call sites, 67 readable, 66 distinct
+#   literals passed as an ARGUMENT      45 branches with a literal, 22 readable
+#   format() format strings             88 call sites, 67 readable
 #
-# reads them. It is not the default because the number then answers a
-# different question from the one the issue asked, and a denominator that
-# moved without the evidence moving is how a measurement stops meaning
-# anything. Widening it is a decision, not a flag nobody chose.
+# The second is the one with the branches in it. `cond ? " - PINNED by a
+# forward, so no hold-down will take it" : ""` says why a block an operator
+# expected back has not come back, and `"   BELOW the floor " rfc " asks for"`
+# is the warning that stops somebody setting a timeout that breaks the
+# protocol. Both reach the screen as a value handed to a "%s", so #366's rule
+# - which is written on the format string, and cuts values out - could not see
+# either of them. test/say-coverage.sh reads them now, for whichever printers
+# are named here, and argues the rule where the code is.
+#
+# PLUGIN_PRINTERS names the printers and defaults to all three bodies:
+# `vlib_cli_output format`. `format` is in the default since #368 because
+# `show bpa pool` and `show bpa config` are built into a vector and printed by
+# one call with "%U" or "%v" at the end - the two screens an operator looks at
+# first are written entirely that way, and a reader that left them out was
+# clearing them by never having gone to look.
+#
+#   PLUGIN_PRINTERS=vlib_cli_output sh tools/plugin-says.sh ...
+#
+# narrows it back to #366's body alone.
+#
+# WHY BOTH HALVES MOVED AT ONCE, which is the decision and not a flag nobody
+# chose. #366 left `format` out with a reason that still holds: a denominator
+# that moved without the evidence moving is how a measurement stops meaning
+# anything, and `36 of 66` becoming `36 of 200` tells the truth about a bigger
+# thing while ceasing to be a number anybody can act on. So the evidence moved
+# in the same change: #366's corpus was 13 labs, and the one this was measured
+# against is the WHOLE suite. That is the largest body of `show bpa` output
+# this repository can produce, and what is left unaccounted for after it is a
+# list of screens that need a lab rather than an estimate of one.
+#
+# Doing it in two steps would have moved the denominator twice for one
+# decision, with the same corpus behind both moves: the argument-literal rule
+# is a single rule and it applies to whichever printers are named, so reading
+# it at `vlib_cli_output` sites and not at `format()` ones would have been the
+# same rule run over half the file - and the half skipped is where eighteen of
+# the forty-five branches are: twelve in the formatters `show bpa pool` is
+# built out of, six in the configuration `show bpa config` emits.
 set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -69,7 +100,7 @@ bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
 # The reader itself is test/say-coverage.sh, once, for the reason that file
 # gives at the top of itself.
 . "$REPO/test/say-coverage.sh"
-say_init "$SRC" c "${PLUGIN_PRINTERS:-vlib_cli_output}"
+say_init "$SRC" c "${PLUGIN_PRINTERS:-vlib_cli_output format}"
 # A BOX HERE IS A TRANSCRIPT, not a run of the program. One lab is eight
 # hundred lines of container build, vppctl and packet counts with a dozen
 # `show bpa` screens in it, so the "printed by every box" half is asked of the
