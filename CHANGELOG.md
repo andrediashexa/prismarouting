@@ -99,6 +99,87 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Six C assertions that could not fail, and the suite that refuses the next
+  one.** `test/` holds 10 C harnesses that compile against the BPA plugin's
+  headers with `-DBPA_STANDALONE`, 382 `CHECK` sites between them, 65,376
+  checks on a run. They are the only thing in this repository that measures
+  the dataplane's arithmetic without a container, and nobody had ever swept
+  them. This is that sweep, and it is the same sweep as the lab one above,
+  one layer down.
+
+  Sixteen product mutations were driven to settle it, each one an edit to
+  `src/plugins/bpa/*` that still compiles under `-Wall -Wextra -Werror`, runs,
+  and gets a real answer wrong. A mutation the compiler rejects proves a branch
+  exists and nothing else, so none is counted here. Every repair below is
+  recorded with the mutation that turns it red.
+
+  Two of the findings are whole behaviours no assertion could see.
+  `bpa_portmap_alloc_pair()` is what lands an RTP port on an even number, and
+  all 4905 checks of `test/test_bpa_ports.c` stayed green with its scan stepping
+  by one instead of two, and green again with the test that the PARTNER port is
+  free deleted. The first hands out an odd RTP port, which fails as "no video";
+  the second hands a subscriber a port another flow already holds and drops
+  `n_free` by two for one port taken. Both survived because every fixture fed
+  the pair scan an empty map, where the offsets come back even by the loop
+  header rather than by any decision, and because the one case written for a
+  refusal was answered by the `n_free < 2` guard before the scan ever ran. Two
+  fixtures now leave exactly one non-conforming pair free.
+
+  `test/test_bpa_icmp.c` reuses one `bpa_icmp_err_t` for every parse, and every
+  fixture quotes the same two addresses, so the ESP block's four expected values
+  were already in the struct before the call. All 40 checks passed with the ESP
+  branch cut down to two fields, and again with the GRE branch's two address
+  writes deleted - both of them the #203 failure, a lookup built from whatever
+  the bytes happen to be. Each parse now starts from a poisoned verdict.
+
+  The other four are assertions whose subject was elsewhere.
+  `test/test_bpa_rtsp.c` asserted `cp.hi == cp.lo + 1`, which is the parser's own
+  `if (hi != lo + 1) return BPA_RTSP_UNPARSED` said a second time: shifting both
+  parsed ports by 100 left all seven matching cases green, and only the single
+  round-trip case at the foot of the file noticed. It now asserts the ports
+  against the digits in the message. In `test/test_bpa_dyn.c`, six of the eight
+  worker counts in "the step holds the address at every worker count" were
+  answered by the fixture rather than by the allocator: 24 arrivals over 4
+  public addresses made `24 % 4 == 0` realign every extension by accident, and
+  at 4 and at 8 workers a slice spans one address, where "it landed on its own"
+  is arithmetic and not a choice. It now arrives 26, and checks per worker count
+  that the free stack really held a block elsewhere. `test/test_bpa_auto_mss.c`
+  gave its second interface the same MTU as the first, so a repeated attach
+  counted twice reached 1460 whatever `n_at_min` held; the second interface is
+  now wider. `test/test_bpa_ftp.c` never reached the second term of
+  `if (rev->off_after || rev->off_before)`, so an acknowledgement before the
+  correction point of a session whose drift returned to zero went back
+  uncorrected with all 58 checks green.
+
+  One coverage hole found on the way, in the same shape: `bpa_sip_edit_add()`'s
+  width bound was probed only from above, so `tlen > BPA_SIP_TXT_MAX` written as
+  `>=` refuses the widest legal replacement - the 21 bytes of
+  `255.255.255.255:65535` that the constant is sized for - and leaves those
+  messages untouched, with all 107 checks of `test/test_bpa_sip.c` green. A
+  bound probed from one side is half a bound.
+
+  Refuted, and recorded so nobody redoes it: the pair-step congruence at
+  `test/test_bpa_pool.c:620` reads as a tautology and is not one. It is blind to
+  a wrong `bpa_stride_unit()`, because both of its operands move together, and
+  it does catch a wrong `bpa_pair_step()` - 0 reds against the first mutation, 5
+  against the second. It is one-sided rather than vacuous and is left alone. So
+  is the one-address control at the foot of `test/test_bpa_dyn.c`, which cannot
+  fail by construction, says so in its own comment, and exists to show what the
+  check above it needs four addresses to avoid.
+
+  `test/test_c_restates_product.py` refuses the next assertion that quotes the
+  product's own refusal back at it. It pairs each harness with the files it
+  includes, reduces every `CHECK` and every `if (...) return/break/continue` to
+  one comparison, and reports a `CHECK` that is a guard's negation. It reads 294
+  of the 382 sites against 74 guards and flags none today; against the RTSP
+  harness as it stood this morning it names line 60 and the guard. It is the
+  sister of `test/test_lab_vacuous.py`, which asks the same question of the
+  shell labs, and between them both of this repository's assertion idioms are
+  swept. What neither can see is stated in its header rather than left to be
+  discovered: a guard reached through a helper or expressed as a loop bound is
+  out of reach of a source check, and the answer for those is still to delete
+  the product behaviour and watch the assertion stay green.
+
 * **Six lab assertions that could not fail, and the suite that refuses the
   next one.** `lab/` holds 62 shell files, 60 of them labs and two of them the
   helpers the rest source, and between them 1381 `expect*` call sites. They are

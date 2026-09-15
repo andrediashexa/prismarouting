@@ -220,9 +220,23 @@ the_named_cases (void)
 	   "re-attaching the only interface read %llu slots, not 1",
 	   (unsigned long long) (t.n_slots_read - before));
   }
-  set_and_compare (&t, 1, 1500, "a second interface at the same MTU");
-  set_and_compare (&t, 0, 0, "the first leaves");
-  CHECK (bpa_auto_mss_value (&t) == 1460,
+  /*
+   * The second interface is WIDER, and the width is the whole point of the
+   * number. With both at 1500 the answer is 1460 for every value n_at_min can
+   * hold - one, two or three - because the rescan a wrong count suppresses
+   * would only rebuild the same 1500 the stale count still names. This case
+   * was written that way, and it stayed green with a repeated attach counted
+   * twice at the minimum; the only thing that turned red was the 20000-step
+   * differential at the bottom of this file, at step 6678, which is the
+   * general oracle and not the check written for the defect.
+   *
+   * At 1600 the count is observable: once 1500 leaves, the rescan is the only
+   * thing that can find 1600, and a count that did not reach zero does not
+   * run it.
+   */
+  set_and_compare (&t, 1, 1600, "a second, wider interface");
+  set_and_compare (&t, 0, 0, "the narrowest one leaves");
+  CHECK (bpa_auto_mss_value (&t) == 1560,
 	 "a repeated attach must not have been counted twice, got %u",
 	 (unsigned) bpa_auto_mss_value (&t));
 

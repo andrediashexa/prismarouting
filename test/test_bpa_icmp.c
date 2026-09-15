@@ -124,10 +124,35 @@ place (const u8 *pkt, u32 len)
   return (ip4_header_t *) p;
 }
 
+/*
+ * Every parse starts from a POISONED verdict, and that is what makes the
+ * fields below assertions rather than echoes.
+ *
+ * One bpa_icmp_err_t is reused for every case in this file, and a branch that
+ * fills fewer fields than it should leaves the previous packet's values in
+ * place. Every fixture here quotes the same two addresses, so "the embedded
+ * source is our public address" and "the embedded destination is the peer"
+ * were already true of `e` before the call - and the ESP block's four
+ * expected values are byte-identical to what the GRE block leaves behind.
+ * Measured: with the ESP branch cut down to `e->inner` and `e->ip_proto`, and
+ * again with the GRE branch's two address writes deleted, all 40 checks in
+ * this file passed. Both are the #203 failure - a lookup built from whatever
+ * the bytes happen to be - and neither was visible.
+ *
+ * 0xaa rather than 0: zero is a value three of these fields legitimately
+ * take, so it cannot tell "written" from "left alone".
+ */
+static void
+poison (bpa_icmp_err_t *e)
+{
+  memset (e, 0xaa, sizeof (*e));
+}
+
 static int
 parse (const u8 *pkt, u32 len, bpa_icmp_err_t *e)
 {
   ip4_header_t *ip = place (pkt, len);
+  poison (e);
   return bpa_icmp_err_parse (ip, guard_end, e);
 }
 
@@ -149,6 +174,7 @@ static int
 parse_to (const u8 *pkt, u32 len, u32 readable, bpa_icmp_err_t *e)
 {
   ip4_header_t *ip = place (pkt, len);
+  poison (e);
   return bpa_icmp_err_parse (ip, (const u8 *) ip + readable, e);
 }
 
