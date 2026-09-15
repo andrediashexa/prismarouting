@@ -1031,6 +1031,42 @@ else:
     ok(f"the gate starts at {_vers[0]}, which is the first tag containing "
        f"the commit that added it")
 
+print("\n=== what the README claims the trail can answer, against the trail ===")
+# The state table said "every entry names the operator". The product has a
+# shape where there is no operator to name and it says so instead:
+#
+#   by unattributed via cli   typed at the VPP CLI, where there is no session
+#                             to ask
+#
+# bpa_audit.c's own comment calls that third shape "the one that matters":
+# leaving the field off would make such an entry indistinguishable from one
+# written before attribution existed, and from one where nobody was
+# accountable. So the product's property is STRONGER than the old sentence and
+# a different shape - every entry says who asked, and an entry that cannot be
+# attributed says so - and the row claiming the weaker-sounding absolute was
+# the one thing a reader would rely on when deciding whether the trail can
+# answer "who".
+#
+# HELD FROM THE C, not from a second sentence: if the unattributed path exists
+# in the product, the README may not say every entry names the operator. When
+# that path goes, this goes red and somebody reads both again.
+_audit = open(os.path.join(REPO, "src", "plugins", "bpa", "bpa_audit.c"),
+              encoding="utf-8").read()
+_readme = open(os.path.join(REPO, "README.md"), encoding="utf-8").read()
+_has_unattributed = "by unattributed" in _audit
+_claims_every = re.search(r"every entry names the operator", _readme)
+if _has_unattributed and _claims_every:
+    bad("README.md says the trail's every entry names the operator, and "
+        "bpa_audit.c writes 'by unattributed' for a change with no session "
+        "to ask: a reader deciding whether the trail can answer 'who' is "
+        "told it always can")
+elif not _has_unattributed:
+    bad("bpa_audit.c no longer writes 'by unattributed', so the shape this "
+        "check is about is gone and the README's wording needs reading again")
+else:
+    ok("the trail has an unattributed shape and the README does not claim "
+       "otherwise")
+
 if fail == 0:
     print()
     print("ALL TESTS PASSED")

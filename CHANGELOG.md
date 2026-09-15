@@ -120,6 +120,27 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The README said the configuration trail's every entry names the operator,
+  and the product has a shape where there is nobody to name.** A change typed
+  at the dataplane's own CLI is recorded `by unattributed via cli`, and
+  `bpa_audit.c`'s own comment calls that the shape *"that matters"*: leaving
+  the field off instead would make such an entry indistinguishable from one
+  written before attribution existed, and from one where nobody was
+  accountable.
+
+  So the product's property is a **different and stronger** one than the row
+  claimed - every entry says who asked, and an entry that cannot be attributed
+  says so - and the absolute was the one thing a reader would rely on when
+  deciding whether the trail can answer *who*. It cannot, for the change
+  somebody makes to go around the VTY, and now it says that where they will
+  see it. `docs/logging.md` already documented all three shapes correctly;
+  only the README overstated them.
+
+  Held from the C rather than from a second sentence: if `bpa_audit.c` writes
+  `by unattributed`, the README may not claim every entry names the operator,
+  and if that path ever goes the check goes red so somebody reads both again.
+  Shown failing both ways.
+
 * **The README told a reader that every release was built from its tag and
   booted before publishing, and that is false about a third of what is
   published.** It is the state table somebody reads to decide whether to trust
