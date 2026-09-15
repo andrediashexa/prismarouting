@@ -1902,6 +1902,30 @@ version has a chance of seeing it.
 
 ### Added
 
+* **`tools/wiki-publish.sh`: the whole backlog in one command**
+  ([#277](https://github.com/andrediashexa/hexarouting/issues/277)).
+  `tools/wiki-push.sh` takes one file, and that is the right granularity: each
+  push checks that one document and refuses if somebody edited it after the
+  last pull. What it is not is a thing anybody does twenty-seven times by
+  hand, and #277 is the measurement of that - the mirror stood 28 pages ahead
+  of the live wiki from 2026-09-09, one of them telling an operator something
+  about their box that had stopped being true, and the reason recorded on the
+  issue is **"nobody did"**. A chore nobody does is a defect with a slower
+  fuse.
+
+  It **stops at the first refusal**, and that is the whole safety argument: a
+  refusal means the live document changed after the mirror was pulled, so
+  somebody is editing the wiki, and carrying on would publish the rest of the
+  list over the top of whatever they are doing. It says how many went out
+  before it stopped. `-n` says what would go and needs no token.
+
+  The list comes from `tools/wiki-status.sh --updatable`, which is the same
+  computation that prints the human report with a different rendering, so
+  there is no second reader of git's status letters to keep true. It is the M
+  list only: a page that exists here and not on the wiki has to be created by
+  hand first, and feeding it to `wiki-push.sh` would stop the run on a refusal
+  that is nobody editing anything.
+
 * **The self-test says what tuning is IN EFFECT, not what was requested**
   ([#163](https://github.com/andrediashexa/hexarouting/issues/163)). Every
   tuning line this appliance printed read one side or the other: the generated
