@@ -2169,6 +2169,25 @@ a standing property of the build rather than as an accident of one campaign,
 and it is the only finding here that was invisible to every assertion in the
 tree by construction.
 
+**And the sweep is over ASSERTIONS, which is not the same as over what a
+program can SAY** ([#364](https://github.com/andrediashexa/hexarouting/issues/364)).
+`appliance/selftest` has a reader that refuses a message no box prints - 118
+messages, a box for every one, read out of the product's own source - and it
+was written after a hand sweep found seven branches nothing in this repository
+had ever executed. `appliance/hexarouting-install` has 139 printed lines and no
+such reader, and measured on 2026-09-15 against a full run of all four suites
+that touch it: **113 of its 117 lines carrying a needle of twelve or more
+literal characters are printed by no run of anything here.** That is 97%, and
+the 113 are the interactive half - the disk list, the two *"there is no disk"*
+refusals an operator meets after mistyping a letter, the management-network
+paragraph #303 added, and `EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED`,
+which is the one sentence standing between an operator and somebody else's
+data. The four suites drive that program through an answer file, which is the
+non-interactive path and is not what a first install uses.
+`appliance/bind-dataplane-nic` (39 lines) and `appliance/apply-tuning` (24)
+have the same gap and are smaller; a reader written for the installer alone
+would be the third one this repository wrote per component.
+
 **Vector provenance.** Only `test_bpa_pool.c` reads `test/bpa_vectors.h`, and
 its 21,072 lines come from `ref/gen_vectors.py` over `ref/bpa_model.py` - pure
 Python, no `ctypes`, no `subprocess`, nothing that calls into the C. The other
