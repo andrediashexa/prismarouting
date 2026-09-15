@@ -75,6 +75,28 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **Every lab is now accounted for on whether its checks have ever been seen
+  to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third
+  time with the feature they test switched off and requires each to go red
+  against a floor the lab declares - and that is the only mechanism in this
+  repository that renders a lab assertion's **red** branch. Measured while
+  sweeping them: 425 of the 1381 assertions under `lab/` have their failure
+  shown on every release run, and 956 do not. There were three ways a lab could
+  be accounted for - an off mode plus a floor, a `NOT_LABS` entry saying why it
+  is not run at all, or nothing - and 32 labs were in the third, with no file
+  anywhere recording whether that was a decision. `test/test_off_run_coverage.sh`
+  makes that a fourth, explicit way (`NO-OFF-RUN:` with a reason, which has to
+  be a sentence rather than a stamp) and holds the unaccounted count as a
+  **floor that may only go down**, in the same idiom as `OFF-RED-AT-LEAST`.
+  Writing 32 reasons tonight would have meant inventing most of them, and a
+  rubber stamp is worse than the silence it replaces. It also refuses the two
+  halves coming apart: an off mode with no floor accepts whatever that run
+  returns, and a floor with no off mode is a number nobody reads. `lab/upgrade.sh`
+  already carried its reason in prose and now carries it in the form the check
+  can find.
+
 ### Fixed
 
 * **Six lab assertions that could not fail, and the suite that refuses the
