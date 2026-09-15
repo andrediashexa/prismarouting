@@ -3220,6 +3220,18 @@ fi
 # the widest value that can reach them, which no reading of the source could
 # have found.
 SAY_UNSAFE_AT_MOST=49
+# TWO printers this pass's boundary rule cannot see, and both are ask()'s own
+# prompt: `if [ -n "$_d" ]; then printf ... else printf ... fi` at 180 and 181.
+# `then` and `else` are words rather than the punctuation the rule matches on.
+#
+# Neither hides a screen, and the reason is worth keeping: say_row_enders
+# scans the function BODY for a printf, regardless of this rule, which is how
+# the prompt tails #367 folds rows on were derived in the first place. Two
+# scans, two rules, and the one that matters here already sees them.
+#
+# Held at two rather than excused, because a third appearing somewhere that
+# say_row_enders does not scan would be a screen nothing counts at all.
+SAY_UNSEEN_AT_MOST=2
 say_report appliance/hexarouting-install
 rm -rf "$SAY_DIR" "$GLOBALBIN"
 

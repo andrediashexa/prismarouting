@@ -354,7 +354,8 @@ say_row_enders() {   # <printers>; the ones that do NOT end a row
 #     every verify line contains and no line is spent on, so it could never go
 #     green. The printers are derived above, so this cuts exactly them.
 say_messages() {   # <printers> <printers that do not end a row>
-  awk -v printers="$1" -v noend="$2" -v sq="'" '
+  awk -v printers="$1" -v noend="$2" -v sq="'" \
+      -v unseen_out="${SAY_DIR:-}/unseen-printers" '
     BEGIN { split(printers, p, " ")
             for (i in p) if (p[i] != "") {
               pr = (pr == "" ? p[i] : pr "|" p[i]); isp[p[i]] = 1 }
@@ -396,7 +397,33 @@ say_messages() {   # <printers> <printers that do not end a row>
       } else if (match($0, "^[ \t]*(" pr ")[ \t]")) {
         cmd = $0; sub(/^[ \t]*/, "", cmd); sub(/[ \t].*$/, "", cmd)
         sub("^[ \t]*(" pr ")[ \t]+", "", s)
-      } else next
+      } else {
+        # A PRINTER THIS RULE CANNOT SEE, counted rather than passed over in
+        # silence. The two arms above take a printer at the start of a line or
+        # after one of `( ) ; | & {`. A shell has other places to put one:
+        #
+        #   for f in $FILES; do echo "# yours: $f"; done
+        #   if [ -n "$d" ]; then printf "%s [%s]: " "$1" "$d"; fi
+        #
+        # `do`, `then` and `else` are words, not punctuation, so neither arm
+        # matches and the message is not looked for at all.
+        #
+        # Measured over the five programs these readers cover: FOUR such
+        # sites, and not one of them hides a screen today. Two are inside
+        # ask(), which say_row_enders finds by scanning the function body for
+        # a printf regardless of this rule; one is a printer DEFINITION, which
+        # this pass excludes deliberately; and one is inside a brace group
+        # redirected into a file, which is not a console row either.
+        #
+        # So it is a limit and not a defect, and the number is printed for the
+        # same reason the skip lists are: the day a fifth appears somewhere
+        # that does print, somebody sees it rather than the reader quietly
+        # reporting full coverage of a program with a screen it never looked
+        # for.
+        if (match($0, "(^|[ \t])(do|then|else)[ \t]+(" pr ")[ \t]+[\"'"'"']"))
+          SAY_UNSEEN_PRINTER[FILENAME ":" FNR] = $0
+        next
+      }
       # The message is a QUOTED argument. Anything else is a value, or a call
       # to a function this pass over-derived as a printer.
       q = substr(s, 1, 1)
@@ -446,7 +473,16 @@ say_messages() {   # <printers> <printers that do not end a row>
       row = FNR "\t" out "\t" s "\t" ends
       if (grp) { gbuf[++gn] = row } else print row
     }
-    END { for (i = 1; i <= gn; i++) print gbuf[i] }
+    END {
+      for (i = 1; i <= gn; i++) print gbuf[i]
+      # To a file and not to stdout, so a caller reading the message rows is
+      # not handed a line that is not one, and not to stderr either: say_report
+      # holds this to a ceiling, and a notice nothing asserts on is a notice
+      # that grows.
+      if (unseen_out != "")
+        for (k in SAY_UNSEEN_PRINTER)
+          print k "\t" SAY_UNSEEN_PRINTER[k] > unseen_out
+    }
   ' "$SAY_SRC"
 }
 
@@ -1188,6 +1224,15 @@ has ever seen the program not print them:"
 # cannot bound and appliance/apply-tuning has one, and a single number here
 # would be the loosest of the three for all of them.
 SAY_OVER_AT_MOST=${SAY_OVER_AT_MOST:-0}
+
+#: Printers this pass's boundary rule cannot see - one after `do`, `then` or
+#: `else`, which are words rather than the punctuation the rule matches on. A
+#: ceiling and not a refusal, because the four that exist today hide nothing:
+#: two are found by say_row_enders scanning the function body, one is a printer
+#: definition, and one is inside a brace group redirected to a file. What must
+#: not happen is a FIFTH appearing somewhere that does print, with the reader
+#: going on reporting full coverage of a program it never looked at properly.
+SAY_UNSEEN_AT_MOST=${SAY_UNSEEN_AT_MOST:-0}
 SAY_UNSAFE_AT_MOST=${SAY_UNSAFE_AT_MOST:-0}
 
 # Every row these boxes made the program print, measured against the widest
@@ -1681,6 +1726,14 @@ ceilings below are agreeing with an empty file: the rows stopped reaching this \
 reader, which is the recorder being broken and not the widths"
   fi
 
+  _unseen_pr=$(awk 'END { print NR + 0 }' "$SAY_DIR/unseen-printers" 2>/dev/null)
+  say_ceiling "${_unseen_pr:-0}" "$SAY_UNSEEN_AT_MOST" \
+    "printer(s) this pass cannot see, after a do/then/else" \
+    "$(sed 's/^/    /' "$SAY_DIR/unseen-printers" 2>/dev/null)" \
+    "A printer this pass does not look for is a screen nothing here counts, \
+and the coverage above reads as complete while it is not - move the call \
+somewhere the rule sees, or widen the rule and say why"
+
   _over=$(awk 'END { print NR }' "$SAY_DIR/over")
   _unsafe=$(awk 'END { print NR }' "$SAY_DIR/unsafe")
   say_ceiling "$_over" "$SAY_OVER_AT_MOST" \
@@ -1710,12 +1763,21 @@ reader, which is the recorder being broken and not the widths"
 # Guarded on the detail being there at all, because a ceiling of zero has
 # nothing to list and an empty heading under it reads as a listing that failed
 # to print.
-say_ceiling() {  # <found> <allowed> <what> <detail>
+# <found> <allowed> <what> <detail> [advice]
+#
+# THE ADVICE BELONGS TO THE CALLER. It used to be the width one, written into
+# this function: "a row that does not fit is broken mid-word by a console that
+# cannot reflow". True of the two width ceilings and false of every other one
+# - and a refusal that gives advice about the wrong thing sends somebody to
+# fix something that is not the problem. The default is still the width
+# sentence, because that is what two of the three callers want and repeating
+# it at both would be the same words in two places.
+say_ceiling() {
+  _advice=${5:-"A row that does not fit is broken mid-word by a console that \
+cannot reflow and cannot be scrolled back, in front of somebody deciding what \
+to type - move the value off the row, do not raise the number"}
   if [ "$1" -gt "$2" ]; then
-    bad "$1 $3, above the ceiling of $2. A row that does not fit is broken \
-mid-word by a console that cannot reflow and cannot be scrolled back, in \
-front of somebody deciding what to type - move the value off the row, do not \
-raise the number:
+    bad "$1 $3, above the ceiling of $2. $_advice:
 $4"
   elif [ "$1" -lt "$2" ]; then
     bad "the ceiling says $2 and only $1 $3: lower it, or it stops holding \

@@ -763,6 +763,13 @@ fi
 # after it.
 SAY_OVER_AT_MOST=0
 SAY_UNSAFE_AT_MOST=1
+# ONE printer this pass's boundary rule cannot see, and it hides nothing:
+# `for _f in $YOUR_FILES; do echo "# yours: $_f"; done` at install.sh:579,
+# inside the brace group that writes the MANIFEST to a file. It is not a
+# console row, so nothing is missing from the count above - but it is exactly
+# the shape that WOULD hide one somewhere else, so it is held at one rather
+# than excused.
+SAY_UNSEEN_AT_MOST=1
 say_report appliance/install.sh
 rm -rf "$SAY_DIR"
 

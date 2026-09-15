@@ -120,6 +120,44 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The coverage reader reported full coverage of screens it never looked
+  for.** `say_messages` in `test/say-coverage.sh` finds a printer at the start
+  of a line or after one of `( ) ; | & {`. A shell has other places to put
+  one, and the commonest is after a word:
+
+      for f in $FILES; do echo "# yours: $f"; done
+
+  `do`, `then` and `else` are words, not punctuation, so neither arm matched
+  and the message was not looked for at all - it fell to the reader's `else
+  next`, which is the arm for a line that is not a printer call. The reader
+  then went on to report every message of that program accounted for.
+
+  Measured before deciding what it was: **four such sites across the five
+  programs these readers cover, and not one of them hides a screen today.**
+  Two are inside `ask()` at `appliance/hexarouting-install:180-181`, which
+  `say_row_enders` finds anyway by scanning the function body for a `printf`
+  regardless of this rule; one is a printer definition, which this pass
+  excludes deliberately; and one is `install.sh:579`, inside a brace group
+  redirected into a file, which is not a console row either. So it is a limit
+  of the rule and not a screen going unmeasured, and widening the rule would
+  buy nothing and cost the false positives #369 was about.
+
+  What was wrong was the silence. The sites are now recorded and held to
+  `SAY_UNSEEN_AT_MOST`, printed with file and line like every other skip list
+  here, so the day a fifth appears somewhere that does print, somebody sees it
+  instead of the reader reporting complete coverage of a program it never read
+  properly. `test_install_says.sh` sets the ceiling to 1 and
+  `test_installer.sh` to 2, each with the reason written next to the number.
+
+* **A refusal that gave advice about the wrong thing.** `say_ceiling` is used
+  by every ceiling in `test/say-coverage.sh`, and it wrote the width sentence
+  into all of them: *"a row that does not fit is broken mid-word by a console
+  that cannot reflow ... move the value off the row"*. True of the two width
+  ceilings and false of the rest. A check that fails and then sends the reader
+  to shorten a row that has nothing to do with the failure costs more than a
+  refusal with no advice at all. The advice is now the caller's, defaulting to
+  the width sentence because two of the three callers want it.
+
 * **A check that compared two trees, and the day the wiki was published is
   the day it broke.** `test/test_wiki_roundtrip.sh` drives the release gate and
   requires it to agree with `tools/wiki-status.sh` rather than asserting a
