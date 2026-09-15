@@ -500,14 +500,60 @@ chmod +x "$GHBIN/gh"
 run_gate "v$V"
 BASE_SAID=$OUT
 case "$OUT" in
-  *"2 of the three document checks above refused this"*)
-    ok "it says how many refused it, and which three they are" ;;
+  *"2 of the four document checks above refused this"*)
+    ok "it says how many refused it, and which four they are" ;;
   *) bad "the gate refused and never said so; it ended on:
 $(printf '%s' "$OUT" | grep -A1 'document checks above' | head -2)" ;;
 esac
 [ "$RC" != 0 ] \
   && ok "and the refusal is the exit status too" \
   || bad "the gate exited 0 with a document check red (rc=$RC)"
+
+echo
+echo "=== a tracker that answered nothing is a SKIP, not a refusal ==="
+# THE DIFFERENCE BETWEEN 1 AND 2, which this gate read as the same thing until
+# a second holder was added beside the first. Both holders exit 1 for findings
+# and 2 for "nothing was compared", and both say in their own headers that a
+# document nobody compared reads exactly like one that agreed - which is why
+# neither may exit 0 without an answer. The gate read any non-zero as
+# disagreement, so a tracker that answered with an empty list REFUSED THE
+# RELEASE: the outcome the gate's own comment argues against, three lines from
+# where it is argued.
+#
+# Driven with a stub that answers `issue list` with nothing at all. That is
+# not a contrived state: it is what an expired token, a repository rename and
+# a rate limit answered through a wrapper all look like from here.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+retag "v$V"
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*)  exit 0 ;;
+  *"issue list"*)   : ;;                  # authenticated, and answers nothing
+  *"release view"*) echo "release not found" >&2; exit 1 ;;
+  *)                exit 0 ;;
+esac
+GHSTUB
+chmod +x "$GHBIN/gh"
+run_gate "v$V"
+printf '%s\n' "$OUT" | grep -q "the roadmap was NOT checked against the tracker, and it says why" \
+  && ok "the roadmap check says it did not happen" \
+  || { bad "an empty tracker answer was not reported as a comparison that \
+did not happen:"
+     printf '%s\n' "$OUT" | sed 's/^/    /' | head -12; }
+printf '%s\n' "$OUT" | grep -q "the CHANGELOG was NOT checked against the tracker, and it says why" \
+  && ok "and so does the CHANGELOG check" \
+  || bad "the CHANGELOG check did not say the comparison did not happen"
+# The count is the assertion that neither skip was counted as a refusal. The
+# wiki check is red in this fixture whatever else happens, so ONE is the
+# fixture's own state and anything above it is a skip that was counted.
+case "$OUT" in
+  *"1 of the four document checks above refused this"*)
+    ok "and neither skip is counted among the refusals" ;;
+  *) bad "a skip was counted as a refusal; the gate said:
+$(printf '%s' "$OUT" | grep 'document checks above' | head -1)" ;;
+esac
 # TWO, and the number is the point. This replaced a flag that each of three
 # checks set to 1, so a run with all three red and a run with one red exited
 # identically. Two is what this fixture produces - its history records no wiki

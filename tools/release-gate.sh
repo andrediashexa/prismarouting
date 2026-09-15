@@ -396,9 +396,25 @@ fi
 # Skipped, loudly, when gh cannot answer. A release refused because GitHub was
 # unreachable is a gate somebody learns to argue with, and this check is about
 # a document rather than about the medium.
+#
+# TWO DIFFERENT FAILURES, and this told them apart only by accident of exit
+# status until it did not. Both holders exit 1 for FINDINGS and 2 for "nothing
+# was compared", and their headers say so - a roadmap nobody compared reads
+# exactly like a roadmap that agreed, so neither may exit 0 without an answer.
+# This read any non-zero as disagreement, which turns a tracker that answered
+# with nothing into a refused release: the exact outcome the paragraph above
+# argues against, three lines from where it is argued. Found when a second
+# holder was added beside this one and the gate refused a release over a stub
+# that answered an empty list.
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   echo "==> the roadmap was NOT checked against the tracker: gh cannot answer"
-elif ! rm_out=$(sh "$WORK/tools/roadmap-state.sh" 2>&1); then
+else
+  rm_out=$(sh "$WORK/tools/roadmap-state.sh" 2>&1) && rm_rc=0 || rm_rc=$?
+fi
+if [ "${rm_rc:-0}" = 2 ]; then
+  echo "==> the roadmap was NOT checked against the tracker, and it says why:"
+  printf '%s\n' "$rm_out" | sed -n '1,3p' | sed 's/^/    /'
+elif [ "${rm_rc:-0}" != 0 ]; then
   echo "error: docs/roadmap.md and the tracker disagree." >&2
   printf '%s\n' "$rm_out" | sed -n '/^==> closed issues/,$p' | sed 's/^/       /' >&2
   echo "       That file is what somebody reads to decide what to do next," >&2
@@ -426,9 +442,20 @@ fi
 # Skipped loudly when gh cannot answer, on the same argument as above: a
 # release refused because GitHub was unreachable is a gate somebody learns to
 # argue with.
+# Exit 2 is a loud skip and not a refusal, for the reason written against the
+# roadmap check above: this holder cannot tell an unreachable tracker from a
+# clean one except by refusing to answer, and a release stopped because GitHub
+# was down is a gate somebody learns to argue with.
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
   echo "==> the CHANGELOG was NOT checked against the tracker: gh cannot answer"
-elif ! cl_out=$(sh "$WORK/tools/changelog-state.sh" "$WORK/CHANGELOG.md" 2>&1); then
+else
+  cl_out=$(sh "$WORK/tools/changelog-state.sh" "$WORK/CHANGELOG.md" 2>&1) \
+    && cl_rc=0 || cl_rc=$?
+fi
+if [ "${cl_rc:-0}" = 2 ]; then
+  echo "==> the CHANGELOG was NOT checked against the tracker, and it says why:"
+  printf '%s\n' "$cl_out" | sed -n '1,3p' | sed 's/^/    /'
+elif [ "${cl_rc:-0}" != 0 ]; then
   echo "error: work has shipped that CHANGELOG.md does not record." >&2
   printf '%s\n' "$cl_out" | sed -n '/^==> completed issues/,$p' | sed 's/^/       /' >&2
   echo "       The CHANGELOG is what an operator who does not clone this" >&2
@@ -554,10 +581,11 @@ fi
 # was set to 1 by each of three checks, so a run that failed all three and a
 # run that failed one exited identically.
 if [ "$docs_bad" != 0 ]; then
-  echo "error: $docs_bad of the three document checks above refused this" >&2
+  echo "error: $docs_bad of the four document checks above refused this" >&2
   echo "       release: what the published wiki says, what docs/roadmap.md" >&2
-  echo "       says, and what the published release is titled. Nothing was" >&2
-  echo "       built and nothing was published." >&2
+  echo "       says, what CHANGELOG.md records of the work that closed, and" >&2
+  echo "       what the published release is titled. Nothing was built and" >&2
+  echo "       nothing was published." >&2
   exit 1
 fi
 

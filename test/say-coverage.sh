@@ -1726,7 +1726,20 @@ ceilings below are agreeing with an empty file: the rows stopped reaching this \
 reader, which is the recorder being broken and not the widths"
   fi
 
-  _unseen_pr=$(awk 'END { print NR + 0 }' "$SAY_DIR/unseen-printers" 2>/dev/null)
+  # TESTED FOR RATHER THAN REDIRECTED. This was
+  # `awk ... "$SAY_DIR/unseen-printers" 2>/dev/null`, and the file is written
+  # only when there IS a missed printer: awk exits 2 on a file that is not
+  # there, `2>/dev/null` hides the message and not the status, and a caller
+  # with `set -e` dies inside the assignment. test/test_plugin_says.sh does
+  # set -e, so it stopped mid-run with NO VERDICT at all - which the suite
+  # counter (#338) reported as a suite that crashed rather than one that
+  # failed, correctly, and is how this was found. A reader that dies is worse
+  # than a reader that is red: the red says something about the product.
+  if [ -f "$SAY_DIR/unseen-printers" ]; then
+    _unseen_pr=$(awk 'END { print NR + 0 }' "$SAY_DIR/unseen-printers")
+  else
+    _unseen_pr=0
+  fi
   say_ceiling "${_unseen_pr:-0}" "$SAY_UNSEEN_AT_MOST" \
     "printer(s) this pass cannot see, after a do/then/else" \
     "$(sed 's/^/    /' "$SAY_DIR/unseen-printers" 2>/dev/null)" \

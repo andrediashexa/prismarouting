@@ -120,6 +120,45 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Two defects that existed only once the branches were together, and one of
+  them was a reader that died instead of going red.** Neither was in any
+  branch: both appeared when six of them met in `master`, which is the case no
+  branch can test for itself.
+
+  **A reader with no verdict.** The new `SAY_UNSEEN_AT_MOST` ceiling read its
+  count with `awk ... "$SAY_DIR/unseen-printers" 2>/dev/null`, and that file is
+  written only when there IS a printer the boundary rule missed. awk exits 2 on
+  a file that is not there; `2>/dev/null` hides the message and not the status;
+  and a caller with `set -e` dies inside the assignment. `test_plugin_says.sh`
+  does `set -eu`, so it stopped mid-run having printed no verdict at all.
+
+  It was reported as a suite that **crashed** rather than one that failed, by
+  the counter [#338](https://github.com/andrediashexa/hexarouting/issues/338)
+  added for exactly this: *"a suite with NO VERDICT never printed one of the
+  three lines it ends with, so it did not fail a check - it stopped before
+  reaching one"*. That distinction is the only reason this was recognised in
+  seconds rather than hunted. A reader that dies is worse than a reader that is
+  red, because the red says something about the product.
+
+  **A skip counted as a refusal.** `tools/release-gate.sh` ran the roadmap
+  holder as `if ! rm_out=$(...)`, which reads **any** non-zero as disagreement.
+  Both holders exit 1 for findings and 2 for *nothing was compared*, and say so
+  in their own headers, because a document nobody compared reads exactly like
+  one that agreed. So a tracker that answered with an empty list - an expired
+  token, a renamed repository, a rate limit behind a wrapper - **refused the
+  release**, which is the outcome the gate's own comment argues against three
+  lines from where it is argued.
+
+  It had been latent since the roadmap check was wired in and became visible
+  the moment a second holder was added beside it. Both now branch on the exit
+  status, and `test/test_release_gate.sh` drives it: a stub answering nothing
+  makes both checks say the comparison did not happen, and the count stays at
+  the one refusal the fixture's own state produces. Shown red by making the
+  gate stop recognising exit 2.
+
+  The summary line said *"of the three document checks"* where there are now
+  four, which the suite caught by needle. It names all four.
+
 * **The coverage reader reported full coverage of screens it never looked
   for.** `say_messages` in `test/say-coverage.sh` finds a printer at the start
   of a line or after one of `( ) ; | & {`. A shell has other places to put
