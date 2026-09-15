@@ -207,6 +207,23 @@ one is a check nobody reaches.
 
 ## 2. Dataplane labs — minutes, inside the container
 
+**One of these needs the network.** The three levels here read as no network,
+then a container, then real Internet - and level 3 is the one whose heading
+says so, which makes this level read as not needing it. `lab/bng.sh` does: it
+installs five `-dev` packages with `apt-get` and clones `accel-ppp-ng` from
+GitHub, on **every** run, because the container is `--rm` and nothing caches.
+On a box with no route out that lab goes red and takes the suite with it, and
+a release is then refused over a file
+[#170](https://github.com/andrediashexa/hexarouting/issues/170) calls a spike.
+The suite says so before it starts, from a list beside the one that names the
+labs it is not running at all:
+
+```
+this run needs the network, for these and nothing else:
+  bng: apt-get for five -dev packages, and a git clone of accel-ppp-ng from GitHub, on every run
+```
+
+
 The whole suite runs several labs at a time:
 
 ```sh

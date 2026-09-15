@@ -306,6 +306,51 @@ if [ -n "$_skipped" ] && [ -z "$ONLY" ]; then
   echo
 fi
 
+# AND WHAT THIS RUN NEEDS BEYOND THE CONTAINER.
+#
+# TESTING.md's levels read as no network, container, real Internet - level 3 is
+# the one whose heading says "real Internet", and the contrast makes level 2
+# read as not needing it. lab/bng.sh does: it apt-gets five -dev packages and
+# clones accel-ppp-ng from GitHub, every run, because the container is --rm and
+# nothing caches. On a box with no route out it takes the suite red, and a
+# release is refused over a lab that was never about the product - #170 calls
+# that whole file a spike.
+#
+# Said here rather than only in TESTING.md because this is the artefact a
+# release decision is read from, and because the reason belongs beside the run
+# that pays for it. A LIST, in the same shape as NOT_LABS, so a second lab that
+# grows a network dependency is named by adding one line and not by somebody
+# remembering this paragraph.
+NEEDS_NETWORK="
+bng:apt-get for five -dev packages, and a git clone of accel-ppp-ng from GitHub, on every run
+"
+# No pipe into `while`: that runs in a subshell and the list would come back
+# empty, which is this section saying nothing on a run that needs the network.
+# The same trap the `_skipped` loop above avoids by not having one.
+_netlabs=""
+_oifs=$IFS
+IFS='
+'
+for _e in $NEEDS_NETWORK; do
+  IFS=$_oifs
+  _n=${_e%%:*}
+  [ -f "$REPO/lab/$_n.sh" ] || { IFS='
+'; continue; }
+  if not_lab_reason "$_n" >/dev/null; then IFS='
+'; continue; fi
+  if [ -n "$ONLY" ] && [ "$ONLY" != "$_n" ]; then IFS='
+'; continue; fi
+  _netlabs="$_netlabs
+  $_n: ${_e#*:}"
+  IFS='
+'
+done
+IFS=$_oifs
+if [ -n "$_netlabs" ] && [ -z "$ONLY" ]; then
+  echo "this run needs the network, for these and nothing else:$_netlabs"
+  echo
+fi
+
 # The list, in the order the summary will print.
 LABS=""
 for f in "$REPO"/lab/*.sh; do

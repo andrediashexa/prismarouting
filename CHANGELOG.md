@@ -77,6 +77,19 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The lab suite needs the network and nothing said so.** `TESTING.md`'s
+  three levels read as no network, then a container, then real Internet, and
+  level 3 is the one whose heading says so - which leaves level 2 reading as
+  not needing it. `lab/bng.sh` installs five `-dev` packages with `apt-get` and
+  clones `accel-ppp-ng` from GitHub on **every** run, because the container is
+  `--rm` and nothing caches. On a box with no route out it goes red and takes
+  the whole suite with it, and a release is then refused over a file
+  [#170](https://github.com/andrediashexa/hexarouting/issues/170) calls a
+  spike. The suite now says it before it starts, from a list held beside the
+  one that names the labs it is not running at all, so a second lab that grows
+  a network dependency is named by adding a line rather than by somebody
+  remembering. Found while sweeping the last documents nobody had read.
+
 * **Two documents describe the one-card box as the box that does not exist**
   ([#343](https://github.com/andrediashexa/hexarouting/issues/343),
   [#344](https://github.com/andrediashexa/hexarouting/issues/344), both from

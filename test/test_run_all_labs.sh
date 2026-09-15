@@ -191,6 +191,51 @@ printf '#!/bin/sh\n# OFF-RED-AT-LEAST: 2\n' > "$d/lab/sip.sh"
 
 out=$(sh "$d/tools/run-all-labs.sh" 2>&1); rc=$?
 
+echo "=== the run says what it needs beyond the container ==="
+# TESTING.md's levels read as no network, container, real Internet, and level
+# 3 is the one whose heading says "real Internet" - so level 2 reads as not
+# needing it. lab/bng.sh does: five -dev packages from apt and a git clone of
+# accel-ppp-ng, on every run, because the container is --rm and nothing
+# caches. On a box with no route out that takes the whole suite red, and a
+# release is refused over a lab #170 calls a spike.
+#
+# The stub repository here has no lab/bng.sh, so the line must NOT appear:
+# a suite that announces a dependency it is not about to incur is a second
+# thing to keep true. The real tree's is asserted by the case under it.
+case "$out" in
+  *"this run needs the network"*)
+    bad "the run announced a network dependency for a lab this repository \
+does not have; got:
+$(printf '%s' "$out" | grep -A3 'needs the network')" ;;
+  *) ok "a run with no such lab in it says nothing about the network" ;;
+esac
+# And the other side of it, which the case above cannot show: a repository that
+# DOES have that lab says so. Its own copy, because adding a lab to $d would
+# change every count the cases below assert.
+dn=$(mktemp -d)
+cp -r "$d/." "$dn/"
+printf '#!/bin/sh\n' > "$dn/lab/bng.sh"
+outn=$(sh "$dn/tools/run-all-labs.sh" 2>&1)
+rm -rf "$dn"
+case "$outn" in
+  *"this run needs the network, for these and nothing else:"*"bng: apt-get"*)
+    ok "and a repository that has it says so, and says what for" ;;
+  *) bad "a run carrying lab/bng.sh said nothing about needing the network; \
+got:
+$(printf '%s' "$outn" | head -8)" ;;
+esac
+
+# And the real tree: bng is in the list, and it is in neither NOT_LABS nor the
+# stub set above, so nothing else here would notice if the entry were dropped.
+if grep -q '^bng:' "$REPO/tools/run-all-labs.sh" \
+   && [ -f "$REPO/lab/bng.sh" ]; then
+  ok "and in this repository bng is named as the lab that needs it"
+else
+  bad "lab/bng.sh clones accel-ppp-ng from GitHub on every run and \
+NEEDS_NETWORK does not name it, so the suite claims nothing about a \
+dependency it has"
+fi
+
 echo "=== a lab whose dataplane never came up is NO VPP, not FAIL ==="
 case "$out" in
   *"cc-panic           NO VPP"*) ok "a startup backtrace is reported as NO VPP" ;;
