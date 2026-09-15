@@ -525,6 +525,194 @@ printf '%s\n' "$out" | grep -q "reads exactly like a plugin with no code in it" 
   && ok "and it says why a zero here cannot be read" \
   || bad "it refused without saying what a zero would have meant"
 
+# ---------------------------------------------------------------------------
+# tools/changelog-state.sh
+#
+# The same contract as roadmap-state.sh above and for the same reason: exit 2
+# means the comparison did not happen, exit 1 means findings, and nothing that
+# could not reach the tracker may exit 0. A CHANGELOG nobody compared reads
+# exactly like a CHANGELOG that agreed.
+#
+# Its own stub, and not a second case on the one above, because the two tools
+# read DIFFERENT gh queries - `--json number,state` against
+# `--json number,stateReason` - and a shared stub would answer both from one
+# file, which is how a fixture stops being the thing under test.
+# ---------------------------------------------------------------------------
+echo
+CS="$WORK/cs"
+mkdir -p "$CS/tools" "$CS/bin" "$CS/gh" "$CS/nogh"
+cp "$REPO/tools/changelog-state.sh" "$CS/tools/"
+
+# `gh issue list --state closed --json number,stateReason --jq` prints
+# "<number> <REASON>" a line at a time, and `gh issue view N --json title -q`
+# prints one title. Those two are the whole surface the script uses.
+cat > "$CS/bin/gh" <<'STUB'
+#!/bin/sh
+case "$1 ${2:-}" in
+  "auth status")
+    [ -f "$GH_STUB/unauth" ] && exit 1
+    echo "github.com: logged in"; exit 0 ;;
+  "issue list")
+    if [ -f "$GH_STUB/unreachable" ]; then
+      echo "could not resolve host: api.github.com" >&2
+      exit 1
+    fi
+    cat "$GH_STUB/closed.txt"; exit 0 ;;
+  "issue view")
+    echo "the title of #$3" ; exit 0 ;;
+esac
+echo "the stub was asked for: $*" >&2
+exit 1
+STUB
+chmod +x "$CS/bin/gh"
+
+# A CHANGELOG that RECORDS everything closed, and every case below is one edit
+# away from it. A function and not a copied fixture, for the reason the roadmap
+# rig gives above.
+write_changelog() {  # <path>
+  cat > "$1" <<'DOC'
+# Changelog
+
+## Unreleased
+
+### Fixed
+
+* **The pool rework**
+  ([#10](https://github.com/andrediashexa/hexarouting/issues/10)). What it did.
+DOC
+}
+write_changelog "$CS/CHANGELOG.md"
+# #11 is NOT_PLANNED, so a file that never names it is correct. It is in the
+# control on purpose: without it, a script that required nothing at all would
+# pass this section, and the exemption would be asserted by no case.
+printf '10 COMPLETED\n11 NOT_PLANNED\n' > "$CS/gh/closed.txt"
+
+run_cs() {  # [args...] -> $OUT and $RC
+  OUT=$(GH_STUB="$CS/gh" PATH="$CS/bin:$PATH" \
+        sh "$CS/tools/changelog-state.sh" "$@" 2>&1) && RC=0 || RC=$?
+}
+
+echo "=== a CHANGELOG that records every completed issue is the control ==="
+# FIRST, and not a formality: without a run in which no refusal fires, a script
+# that refused unconditionally would pass every case below it.
+run_cs "$CS/CHANGELOG.md"
+[ "$RC" = 0 ] \
+  && ok "exit 0: $(printf '%s\n' "$OUT" | tail -1)" \
+  || { bad "the control CHANGELOG was not clean (rc=$RC):"
+       printf '%s\n' "$OUT" | sed 's/^/    /'; }
+printf '%s\n' "$OUT" | grep -q "exempt: 1" \
+  && ok "and the NOT_PLANNED issue is counted as exempt, not as a finding" \
+  || { bad "the exemption was not reported, so nothing says it applied:"
+       printf '%s\n' "$OUT" | sed 's/^/    /'; }
+
+echo
+echo "=== a completed issue the file names nowhere is a finding ==="
+printf '10 COMPLETED\n11 NOT_PLANNED\n12 COMPLETED\n' > "$CS/gh/closed.txt"
+run_cs "$CS/CHANGELOG.md"
+[ "$RC" = 1 ] \
+  && ok "exit 1, which is 'findings'" \
+  || bad "an unrecorded completed issue exited $RC"
+printf '%s\n' "$OUT" | grep -q "#12" \
+  && ok "and it names the issue: $(printf '%s\n' "$OUT" | grep '#12' | head -1)" \
+  || { bad "it refused without naming which issue is missing:"
+       printf '%s\n' "$OUT" | sed 's/^/    /'; }
+printf '10 COMPLETED\n11 NOT_PLANNED\n' > "$CS/gh/closed.txt"
+
+echo
+echo "=== a bare #10 in prose is not a record, and the link is ==="
+# The tool reads links only, and says so. Asserted rather than left in a
+# comment, because a reader who trusts the sentence would file entries that
+# satisfy nothing.
+write_changelog "$CS/CHANGELOG.md"
+sed -i 's|\[#10\](https://github.com/andrediashexa/hexarouting/issues/10)|#10|' \
+  "$CS/CHANGELOG.md"
+run_cs "$CS/CHANGELOG.md"
+[ "$RC" = 1 ] \
+  && ok "exit 1 with the link demoted to prose" \
+  || bad "a bare number was accepted as a record (rc=$RC)"
+write_changelog "$CS/CHANGELOG.md"
+
+echo
+echo "=== a file that is not there is not a CHANGELOG that agreed ==="
+run_cs "$CS/no-such-changelog.md"
+[ "$RC" = 2 ] \
+  && ok "exit 2, which is 'nothing was compared'" \
+  || bad "a missing file exited $RC"
+printf '%s\n' "$OUT" | grep -q "no such file" \
+  && ok "and it names the file: $(printf '%s\n' "$OUT" | head -1)" \
+  || bad "it refused without naming the file"
+
+echo
+echo "=== no gh at all: NOTHING WAS COMPARED, and not a clean run ==="
+# The only case that replaces PATH. Everything the script calls is linked in
+# beside the absence, so a PATH so short that nothing ran cannot read as a
+# pass - the failure this exact case had on the roadmap tool above.
+for b in sh dirname mktemp awk sed wc tr rm cat grep cut sort chmod; do
+  p=$(command -v "$b") && ln -sf "$p" "$CS/nogh/$b"
+done
+OUT=$(PATH="$CS/nogh" sh "$CS/tools/changelog-state.sh" \
+        "$CS/CHANGELOG.md" 2>&1) && RC=0 || RC=$?
+[ "$RC" = 2 ] \
+  && ok "exit 2 with no gh on PATH" \
+  || bad "a missing gh exited $RC"
+printf '%s\n' "$OUT" | grep -q "gh is not installed, so NOTHING WAS COMPARED" \
+  && ok "and it says so in those words" \
+  || { bad "it failed without saying nothing was compared:"
+       printf '%s\n' "$OUT" | sed 's/^/    /'; }
+
+echo
+echo "=== gh that cannot log in is not a CHANGELOG that agreed ==="
+: > "$CS/gh/unauth"
+run_cs "$CS/CHANGELOG.md"
+rm -f "$CS/gh/unauth"
+[ "$RC" = 2 ] \
+  && ok "exit 2 when gh is not authenticated" \
+  || bad "an unauthenticated gh exited $RC"
+printf '%s\n' "$OUT" | grep -q "never asked" \
+  && ok "and it says the tracker was never asked" \
+  || bad "it refused without saying the comparison did not happen"
+
+echo
+echo "=== a tracker that cannot be reached keeps gh's own words ==="
+: > "$CS/gh/unreachable"
+run_cs "$CS/CHANGELOG.md"
+rm -f "$CS/gh/unreachable"
+[ "$RC" = 2 ] \
+  && ok "exit 2 when the tracker is unreachable" \
+  || bad "an unreachable tracker exited $RC"
+printf '%s\n' "$OUT" | grep -q "could not resolve host" \
+  && ok "and gh's own text survives: a DNS failure and a rate limit need \
+different work and both look like an empty answer from here" \
+  || { bad "gh's text was swallowed, so the reader cannot tell which it was:"
+       printf '%s\n' "$OUT" | sed 's/^/    /'; }
+
+echo
+echo "=== an empty answer is not a tracker with no closed issues ==="
+: > "$CS/gh/closed.txt"
+run_cs "$CS/CHANGELOG.md"
+printf '10 COMPLETED\n11 NOT_PLANNED\n' > "$CS/gh/closed.txt"
+[ "$RC" = 2 ] \
+  && ok "exit 2 on an answer holding nothing" \
+  || bad "an empty tracker answer exited $RC, which would report agreement \
+over a list nobody read"
+
+echo
+echo "=== a truncated answer is the one that reports agreement falsely ==="
+# The dangerous direction, and the reason the count is compared to the limit
+# rather than trusted: gh cuts at --limit in silence, and every issue past the
+# cut is never looked for at all.
+sed 's/^LIMIT=5000$/LIMIT=2/' "$REPO/tools/changelog-state.sh" \
+  > "$CS/tools/truncating.sh"
+OUT=$(GH_STUB="$CS/gh" PATH="$CS/bin:$PATH" \
+      sh "$CS/tools/truncating.sh" "$CS/CHANGELOG.md" 2>&1) && RC=0 || RC=$?
+[ "$RC" = 2 ] \
+  && ok "exit 2 when the answer is exactly the limit" \
+  || bad "a truncated answer exited $RC"
+printf '%s\n' "$OUT" | grep -q "never" \
+  && ok "and it says what was not looked for: \
+$(printf '%s\n' "$OUT" | sed -n '2p' | sed 's/^ *//')" \
+  || bad "it refused without saying the rest was never read"
+
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
 echo "$fail FAILURES"
