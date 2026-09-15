@@ -71,6 +71,7 @@ import contextlib
 import io
 import os
 import re
+import subprocess
 import sys
 
 fail = 0
@@ -984,6 +985,87 @@ else:
         ok(f"interleaved: nobody moves and the same {_idropped} are dropped, "
            f"which is the outside set's {_idropped} addresses times a "
            f"reserve of 1")
+
+print("\n=== the release the gate starts at, against the git history ===")
+# README.md's state table is what a reader consults to decide whether to trust
+# this product, and that row said "every release is built from its tag and
+# booted before publishing". It was false about a third of what is published:
+# tools/release-gate.sh was added by #100, and 26 of the 74 published releases
+# are older than it - v0.2.0 through v0.27.0, every one still downloadable.
+#
+# The row names the version the gate starts at now, and this reads that
+# version back out of the HISTORY. The holder is
+# `git tag --contains <the commit that added the gate>`: a boundary somebody
+# writes down is a boundary that drifts, and this one already had.
+#
+# NOT a count of published releases, deliberately: that needs the network and
+# `make test` runs offline (#317). What is held is the boundary the sentence
+# states against the tags in this repository, which is the half that goes
+# wrong by editing a document.
+_added = subprocess.run(
+    ["git", "log", "--format=%H", "--diff-filter=A", "-1", "--",
+     "tools/release-gate.sh"],
+    cwd=REPO, capture_output=True, text=True).stdout.strip()
+_tags = subprocess.run(["git", "tag", "--contains", _added], cwd=REPO,
+                       capture_output=True, text=True).stdout.split() \
+    if _added else []
+_vers = sorted((t for t in _tags if re.fullmatch(r"v\d+\.\d+\.\d+", t)),
+               key=lambda t: [int(p) for p in t[1:].split(".")])
+_said = re.search(r"since (v\d+\.\d+\.\d+)\*\* every release is built",
+                  open(os.path.join(REPO, "README.md"), encoding="utf-8").read())
+if not _added:
+    bad("tools/release-gate.sh has no commit that added it, so the version "
+        "README.md names cannot be read back from anything")
+elif not _vers:
+    bad("no tag contains the commit that added tools/release-gate.sh, so "
+        "either the history was rewritten or the gate is on no release")
+elif not _said:
+    bad("README.md no longer says which version the release gate starts at. "
+        "It said 'every release' until that was measured and found false "
+        "about 26 of the 74 published")
+elif _said.group(1) != _vers[0]:
+    bad(f"README.md says the gate starts at {_said.group(1)} and the first "
+        f"tag containing it is {_vers[0]}: a reader deciding whether to "
+        f"trust a downloaded medium is told the wrong boundary")
+else:
+    ok(f"the gate starts at {_vers[0]}, which is the first tag containing "
+       f"the commit that added it")
+
+print("\n=== what the README claims the trail can answer, against the trail ===")
+# The state table said "every entry names the operator". The product has a
+# shape where there is no operator to name and it says so instead:
+#
+#   by unattributed via cli   typed at the VPP CLI, where there is no session
+#                             to ask
+#
+# bpa_audit.c's own comment calls that third shape "the one that matters":
+# leaving the field off would make such an entry indistinguishable from one
+# written before attribution existed, and from one where nobody was
+# accountable. So the product's property is STRONGER than the old sentence and
+# a different shape - every entry says who asked, and an entry that cannot be
+# attributed says so - and the row claiming the weaker-sounding absolute was
+# the one thing a reader would rely on when deciding whether the trail can
+# answer "who".
+#
+# HELD FROM THE C, not from a second sentence: if the unattributed path exists
+# in the product, the README may not say every entry names the operator. When
+# that path goes, this goes red and somebody reads both again.
+_audit = open(os.path.join(REPO, "src", "plugins", "bpa", "bpa_audit.c"),
+              encoding="utf-8").read()
+_readme = open(os.path.join(REPO, "README.md"), encoding="utf-8").read()
+_has_unattributed = "by unattributed" in _audit
+_claims_every = re.search(r"every entry names the operator", _readme)
+if _has_unattributed and _claims_every:
+    bad("README.md says the trail's every entry names the operator, and "
+        "bpa_audit.c writes 'by unattributed' for a change with no session "
+        "to ask: a reader deciding whether the trail can answer 'who' is "
+        "told it always can")
+elif not _has_unattributed:
+    bad("bpa_audit.c no longer writes 'by unattributed', so the shape this "
+        "check is about is gone and the README's wording needs reading again")
+else:
+    ok("the trail has an unattributed shape and the README does not claim "
+       "otherwise")
 
 if fail == 0:
     print()

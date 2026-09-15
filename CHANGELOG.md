@@ -120,6 +120,50 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The README said the configuration trail's every entry names the operator,
+  and the product has a shape where there is nobody to name.** A change typed
+  at the dataplane's own CLI is recorded `by unattributed via cli`, and
+  `bpa_audit.c`'s own comment calls that the shape *"that matters"*: leaving
+  the field off instead would make such an entry indistinguishable from one
+  written before attribution existed, and from one where nobody was
+  accountable.
+
+  So the product's property is a **different and stronger** one than the row
+  claimed - every entry says who asked, and an entry that cannot be attributed
+  says so - and the absolute was the one thing a reader would rely on when
+  deciding whether the trail can answer *who*. It cannot, for the change
+  somebody makes to go around the VTY, and now it says that where they will
+  see it. `docs/logging.md` already documented all three shapes correctly;
+  only the README overstated them.
+
+  Held from the C rather than from a second sentence: if `bpa_audit.c` writes
+  `by unattributed`, the README may not claim every entry names the operator,
+  and if that path ever goes the check goes red so somebody reads both again.
+  Shown failing both ways.
+
+* **The README told a reader that every release was built from its tag and
+  booted before publishing, and that is false about a third of what is
+  published.** It is the state table somebody reads to decide whether to trust
+  this product, and that row was in the present tense about all of it.
+
+  Measured: `tools/release-gate.sh` was added by
+  [#100](https://github.com/andrediashexa/hexarouting/issues/100), and
+  `git tag --contains` puts the first release carrying it at **v0.28.0**. Of
+  the 74 published releases, **26 are older** - v0.2.0 through v0.27.0, every
+  one of them still downloadable, and 20 of those 26 publish an ISO.
+
+  The row names the boundary now, and says what the gate actually does, which
+  is more than the old sentence claimed: built from the tag, booted, installed
+  to a disk and booted again from that disk.
+
+  And `test/test_doc_copies.py` reads that version back **out of the git
+  history** rather than trusting the sentence, because a boundary somebody
+  writes down is a boundary that drifts and this one already had. Not a count
+  of published releases: that needs the network and `make test` runs offline
+  ([#317](https://github.com/andrediashexa/hexarouting/issues/317)). What is
+  held is the half that goes wrong by editing a document. Shown failing both
+  ways - the wrong version named, and the version taken out again.
+
 * **A document check whose verdict depended on whether somebody had built.**
   `test/test_doc_commands.py` refuses a document that sends a reader to a path
   the tree does not have - a file renamed or removed with the document left
