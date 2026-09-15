@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Seven refusals printed a paragraph on one row**
+  ([#355](https://github.com/andrediashexa/hexarouting/issues/355)). `err()`
+  wraps nothing, which is right for a verdict and wrong for a paragraph, and
+  these were composed as one long sentence: **185, 163, 144, 143, 142, 133 and
+  104 columns** against a console of 79. The terminal folded them at whatever
+  width the window happened to be, and **in every one of them the move the
+  operator has to make is the last clause** - `Remove the sub-interface itself:
+  no interface <name>`, `name the subscriber: no forward ...`, `Set the value
+  you want instead: ...` - which is exactly where that fold lands.
+
+  `err_prose()` is the split, and it is the one `say_finding` has had since
+  [#271](https://github.com/andrediashexa/hexarouting/issues/271) and the
+  soft-reconfiguration refusals since
+  [#349](https://github.com/andrediashexa/hexarouting/issues/349): the verdict
+  through `err`, the rest through `print_prose`, and `failed` raised once
+  because it is one refusal however many rows it takes. The `no forward`
+  headline also stopped interpolating the subscriber list, which grew without
+  bound - the addresses are a prose row of their own now.
+
+  Driven, not read: the case feeds the statements the issue names and measures
+  the rows the box printed, and refuses a run that printed nothing or refused
+  nothing, because an empty screen fits any console.
+
 * **One configuration came back in two spellings**
   ([#356](https://github.com/andrediashexa/hexarouting/issues/356)). CGNAT has
   lived under `nat` since

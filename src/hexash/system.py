@@ -138,16 +138,26 @@ def role_from_groups(names) -> str:
 
 
 def validate_role(name, role):
-    """Why this account cannot be given this role, or None."""
+    """
+    Why this account cannot be given this role, or None.
+
+    A TUPLE of rows, always, even where there is one: the caller at the prompt
+    prints the first through `err` and the rest as prose, because as one
+    sentence the root refusal reaches the console at 104 columns (#355). The
+    caller in the configuration parser joins them, because an entry in
+    `unknown` is one line of prose by construction.
+    """
     if name == "root":
         # root has every capability by being root - capabilities() returns
         # both for euid 0 and never looks at a group. Writing a role here
         # would be a line the box could not read back, so every commit
         # afterwards would see a difference and try to apply it again.
-        return ("root's rights come from being root, not from a group: this "
-                "VTY does not manage root's memberships")
+        # A pair, and the caller prints the second row as prose: as one
+        # sentence it reaches the console at 104 columns (#355).
+        return ("root's rights come from being root, not from a group",
+                "this VTY does not manage root's memberships")
     if role and role not in ROLES:
-        return f"role '{role}': expected one of " + ", ".join(ROLES)
+        return (f"role '{role}': expected one of " + ", ".join(ROLES),)
     return None
 
 

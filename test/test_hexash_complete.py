@@ -7105,5 +7105,51 @@ for _peer in ("10.0.0.2", "2001:db8:aaaa:bbbb::2", "fd00:1234:5678:9abc::42"):
               f"{_line!r} wraps on a serial console: {_over}")
 print("  three answers: keeping, not keeping, and nobody to ask")
 
+print("\n=== the refusals that were a paragraph on one row (#355) ===")
+# `err` wraps nothing, which is right for a verdict and wrong for a paragraph.
+# Seven refusals were composed as one long sentence and reached the console at
+# 104 to 185 columns against a budget of 79, folded by the terminal at
+# whatever width the window happened to be - and in every one of them the move
+# the operator has to make is the LAST clause, which is where that fold lands.
+#
+# Driven rather than read, because what is measured is the rows the box
+# printed and not the strings the source holds. Each case also refuses a run
+# that printed nothing and a run that refused nothing: an empty screen fits
+# any console, and a case measuring some other output is not about this.
+_WIDE_CASES = [
+    ("no vlan on a sub-interface",
+     ["interface Gi0/12/0.700", "vlan 700", "no vlan 700"]),
+    ("no policy in a pool", ["nat cgnat pool P", "no policy interleaved"]),
+    ("no block-size in a pool", ["nat cgnat pool P", "no block-size 512"]),
+    ("no mode in a pool", ["nat cgnat pool P", "no mode deterministic"]),
+    ("no forward with two subscribers",
+     ["nat cgnat pool P", "inside 10.0.0.0/24", "outside 200.150.0.0/28",
+      "forward tcp 6200 to 10.0.0.4 6200", "forward tcp 6200 to 10.0.0.5 6200",
+      "no forward tcp 6200"]),
+    ("a role for root", ["user root", "role administrator"]),
+    ("no role for root", ["user root", "no role"]),
+]
+for _label, _lines in _WIDE_CASES:
+    _s = hexash.Shell()
+    _s.caps = {hexash.CAP_ALL, hexash.CAP_CGNAT}
+    _s.mode = "config"
+    _s.candidate = _config.Config()
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        for _l in _lines:
+            _s.feed(_l)
+    _said = _buf.getvalue()
+    check(_said.strip(),
+          f"{_label}: the box printed nothing, so the width below is of an "
+          f"empty screen")
+    check(_s.failed,
+          f"{_label}: nothing was refused, so what is measured is not the "
+          f"refusal this case is about: {_said!r}")
+    _over = [(len(l), l) for l in _said.splitlines()
+             if len(l) > CONSOLE_COLUMNS]
+    check(not _over, f"{_label}: wraps on a serial console: {_over}")
+print(f"  {len(_WIDE_CASES)} refusals, every row inside {CONSOLE_COLUMNS} "
+      f"columns")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

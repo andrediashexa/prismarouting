@@ -910,9 +910,11 @@ _users = [
      "password"),
     ("a role this box has not got", "user noc", "user", "role wizard",
      "error: role 'wizard': expected one of administrator, cgnat-operator"),
+    # The verdict row only: the rest is prose under it since #355, because as
+    # one sentence this reached the console at 104 columns. The row the table
+    # holds is the one an operator reads first and greps for.
     ("root's memberships", "user root", "user", "no role",
-     "error: root's rights come from being root, not from a group: this VTY "
-     "does not manage root's memberships"),
+     "error: root's rights come from being root, not from a group"),
     ("`no` with nothing after it", "user noc", "user", "no",
      "error: no <statement>: say which statement to remove ('no ?' lists "
      "them)"),
@@ -1046,8 +1048,8 @@ says("cgnat attachment", _text,
 
 _rv, _text = driven(cfg_shell().do_config, "no interface eth9")
 says("removing a physical port", _text,
-     "error: eth9: only a sub-interface or a loopback can be removed; a "
-     "physical port is not created by this configuration", _rv, expect=True)
+     "error: eth9: only a sub-interface or a loopback can be removed",
+     _rv, expect=True)
 print("  an attachment with no direction and a port a configuration cannot "
       "remove")
 

@@ -1723,7 +1723,9 @@ class Config:
             role = w[1].strip()
             why = validate_role(user.name, role)
             if why:
-                return why
+                # Joined, because an `unknown` entry is one line of prose. The
+                # rows exist for the prompt, where they are wrapped (#355).
+                return ": ".join(why)
             user.role = role
         elif w[0] == "exit":
             pass

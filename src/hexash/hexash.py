@@ -790,10 +790,14 @@ INTERFACE_DATAPLANE = (
 # sub-interface after its sub_id - so "this sub-interface with no VLAN" is not
 # a thing that can exist on the box. What the operator wants is the
 # sub-interface gone, and that statement already exists.
+# A tuple: the verdict, then the prose under it. One long sentence handed to
+# `err` reaches the console at 185 columns (#355), and the move the operator
+# needs is the last clause of it.
 INTERFACE_NO_REFUSED = {
-    "vlan": ("vlan cannot be removed: a sub-interface is named after its tag, "
-             "so one without a tag is not something the dataplane can hold. "
-             "Remove the sub-interface itself: no interface <name>"),
+    "vlan": ("vlan cannot be removed",
+             "a sub-interface is named after its tag, so one without a tag is "
+             "not something the dataplane can hold",
+             "remove the sub-interface itself: no interface <name>"),
 }
 
 # `no` inside an interface, derived. Every statement the block offers can be
@@ -1190,10 +1194,15 @@ def _pool_no_forward(p, w):
     hit = [f for f in p.forwards
            if f[0] == w[2] and str(f[1]) == w[3] and (ip is None or f[2] == ip)]
     if len(hit) > 1:
-        return (f"forward {w[2]} {w[3]} is configured for "
-                + ", ".join(f[2] for f in hit)
-                + " on different public addresses; name the subscriber: "
-                f"no forward {w[2]} {w[3]} to <private-ip> <private-port>")
+        # A pair: the caller prints the second row as prose. As one sentence
+        # this reaches the console at 163 columns, and the statement the
+        # operator has to type back is the last clause of it (#355).
+        return (f"forward {w[2]} {w[3]} is configured for more than one "
+                f"subscriber",
+                "on different public addresses: "
+                + ", ".join(f[2] for f in hit),
+                f"name the subscriber: no forward {w[2]} {w[3]} to "
+                f"<private-ip> <private-port>")
     if not hit:
         return f"the pool has no forward {w[2]} {w[3]}"
     p.forwards = [f for f in p.forwards if f not in hit]
@@ -5009,6 +5018,27 @@ class Shell:
         print(f"error: {msg}")
         self.failed += 1
 
+    def err_prose(self, headline, *rest):
+        """
+        A refusal whose reason is a paragraph: the verdict, then the prose.
+
+        `err` wraps nothing, which is right - a refusal's first row is the
+        verdict and an operator reads it whole. What is not right is handing
+        it a paragraph: seven refusals were composed as one long sentence and
+        reached the terminal at 104 to 185 columns on a console of 79, folded
+        by the terminal at whatever width the window happened to be (#355).
+        The advice in every one of them is at the END of the sentence, which
+        is where that fold lands.
+
+        So the verdict goes to `err` and the rest through `print_prose`, which
+        is the split #271 made for `say_finding` and #349 made for the
+        soft-reconfiguration refusals. Only `failed` is raised once, because
+        it is one refusal however many rows it takes.
+        """
+        self.err(headline)
+        for line in rest:
+            print_prose(line)
+
     def err_dataplane(self, msg):
         """
         `err`, for a refusal the DATAPLANE produced rather than this VTY.
@@ -8677,9 +8707,11 @@ class Shell:
         if line.startswith("no interface "):
             gone = w[2] if len(w) > 2 else ""
             if "." not in gone and not _is_loopback(gone):
-                self.err(f"{gone or '<name>'}: only a sub-interface or a "
-                         "loopback can be removed; a physical port is not "
-                         "created by this configuration")
+                self.err_prose(
+                    f"{gone or '<name>'}: only a sub-interface or a loopback "
+                    f"can be removed",
+                    "a physical port is not created by this configuration, so "
+                    "there is nothing here to remove")
                 return True
             self.candidate.vlans.pop(gone, None)
             self.candidate.loopbacks.discard(gone)
@@ -8967,11 +8999,11 @@ class Shell:
         # statement added later without deciding what `no` means for it: the
         # answer is a refusal that says so, never a silent trip to FRR.
         if iface and neg and dp:
-            self.err(INTERFACE_NO_REFUSED.get(
-                dp, f"no {dp}: this VTY has no way to remove it, and it is "
-                    f"not FRR's to remove. Set the value you want with "
-                    f"'{dp} ...', or remove the interface with "
-                    f"'no interface {iface}'"))
+            self.err_prose(*INTERFACE_NO_REFUSED.get(
+                dp, (f"no {dp}: this VTY has no way to remove it",
+                     "it is not FRR's to remove either",
+                     f"set the value you want with '{dp} ...', or remove the "
+                     f"interface with 'no interface {iface}'")))
             return True
 
         # `no` on its own is not a command anywhere - not at `[edit]`, not in
@@ -9084,7 +9116,7 @@ class Shell:
         elif w[0] == "role" and len(w) > 1:
             why = validate_role(u.name, w[1])
             if why:
-                self.err(why)
+                self.err_prose(*why)
             else:
                 u.role = w[1]
         elif w[:2] == ["no", "ssh-key"] and len(w) > 2:
@@ -9093,7 +9125,7 @@ class Shell:
         elif w[:2] == ["no", "role"]:
             why = validate_role(u.name, "")
             if why:
-                self.err(why)
+                self.err_prose(*why)
             else:
                 u.role = ""
         elif w[:2] == ["no", "password"]:
@@ -9244,7 +9276,9 @@ class Shell:
                 h = POOL_NEGATE.get(w[1])
                 if h:
                     why = h[2](p, w)
-                    if why:
+                    if isinstance(why, tuple):
+                        self.err_prose(*why)
+                    elif why:
                         self.err(why)
                 elif w[1] in CGNAT_POOL:
                     # In the grammar, and cannot be absent: see the rule above
@@ -9254,9 +9288,11 @@ class Shell:
                     hint = CGNAT_POOL[w[1]][1]
                     if isinstance(hint, dict):
                         hint = "|".join(hint)
-                    self.err(f"{w[1]} cannot be removed: every pool has one, "
-                             f"so there is no state without it. Set the value "
-                             f"you want instead: {w[1]} {hint or ''}".rstrip())
+                    self.err_prose(
+                        f"{w[1]} cannot be removed",
+                        "every pool has one, so there is no state without it",
+                        f"set the value you want instead: "
+                        f"{w[1]} {hint or ''}".rstrip())
                 else:
                     self.err(f"unknown statement in pool mode: {w[1]}")
             else:
