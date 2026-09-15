@@ -190,6 +190,24 @@ echo "=== the verification after the write, both answers ==="
   && ok "a device that did not move is reported as not moved" \
   || bad "it reported success over a device still on its old driver: $OUT"
 said "no driver at all" && bad "it said 'no driver at all' about a device on ixgbe: $OUT"
+# AND THE ADVICE UNDER IT ASKS WHICH BOX IT IS ON.
+#
+# It was one sentence for both drivers: "on a box with an IOMMU the usual
+# cause is intel_iommu=on or amd_iommu=on missing from the kernel command
+# line". False of each of the two boxes that can reach it, in opposite
+# directions. This box has IOMMU groups - which is the only way the binder
+# chose vfio-pci at all - so the kernel command line cannot be what is
+# missing, and an operator whose appliance came up not forwarding was sent to
+# check something already right, on the one message they get.
+said "intel_iommu=on or amd_iommu=on missing" \
+  && bad "the box with IOMMU groups was told its kernel command line is \
+missing the parameter that put those groups there: $OUT"
+said "the kernel command line is not the" \
+  && ok "a box with IOMMU groups is told the command line is not the cause" \
+  || bad "the advice does not say what this box's failure cannot be: $OUT"
+said "iommu_group" \
+  && ok "and is pointed at the file that decides whether the device may go" \
+  || bad "it named no place to look on a box whose command line is right: $OUT"
 said "it is on ixgbe now" \
   && ok "and names the driver it is on instead, which is the state to act on" \
   || bad "it did not say where the device ended up: $OUT"
@@ -222,10 +240,34 @@ said "no IOMMU groups" \
 said "no IOMMU protection" \
   && ok "and what is given up is said in the same breath" \
   || bad "the cost of the fallback is not stated: $OUT"
+# AND IT FITS THE CONSOLE IT IS PRINTED ON (#346). `say` joins its arguments
+# with a space onto ONE line, so a continuation in the source is not a line
+# break in the output: the fallback announcement was 121 columns on an
+# 80-column console, which is the widest thing this appliance prints and it
+# is on the path a one-card VM takes.
+WIDE=$(printf '%s\n' "$OUT" | awk 'length > 79 {print length": "$0}')
+[ -z "$WIDE" ] \
+  && ok "every line of the fallback fits the 79-column console" \
+  || bad "lines wider than the console an operator reads this on:
+$WIDE"
 [ "$(cat "$R/sys/bus/pci/devices/0000:03:00.0/driver_override" 2>/dev/null)" \
   = "uio_pci_generic" ] \
   && ok "and it is uio_pci_generic that is asked for" \
   || bad "it still asked for vfio-pci on a box with no IOMMU"
+# THE OTHER HALF OF THE ADVICE, and the fake tree cannot move a device, so
+# this run also reaches the failure message. A box with no IOMMU groups used
+# to be handed a sentence opening "on a box with an IOMMU" - about a
+# different machine - naming a kernel parameter that would not have helped,
+# because uio_pci_generic does not use an IOMMU at all.
+said "on a box with an IOMMU" \
+  && bad "a box with no IOMMU groups was given advice about a box that has \
+one: $OUT"
+said "needs a legacy INTx interrupt" \
+  && ok "it is told what uio_pci_generic actually refuses a device for" \
+  || bad "the fallback's failure names no cause this box could have: $OUT"
+said "makes vfio-pci" \
+  && ok "and what would make the protected driver available instead" \
+  || bad "nothing said how this box could get an IOMMU: $OUT"
 
 echo
 echo "=== no driver DPDK can use, anywhere on the box ==="

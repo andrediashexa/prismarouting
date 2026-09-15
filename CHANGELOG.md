@@ -77,6 +77,30 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The bind failure's advice is false of both boxes that can reach it**, in
+  opposite directions
+  ([#346](https://github.com/andrediashexa/hexarouting/issues/346) for the
+  width half). `appliance/bind-dataplane-nic` ended every failed bind with one
+  sentence for both drivers: *"on a box with an IOMMU the usual cause is
+  `intel_iommu=on` or `amd_iommu=on` missing from the kernel command line"*.
+  With `vfio-pci` the box **has** IOMMU groups - that is the only way
+  `dpdk_driver()` returns it - so the parameter cannot be what is missing, and
+  an operator whose appliance came up not forwarding was sent to check a
+  kernel command line that is already right, on the one message they get. With
+  `uio_pci_generic` the box has **no** IOMMU, so a sentence opening "on a box
+  with an IOMMU" is about a different machine and names a parameter that would
+  not have helped, because that driver does not use an IOMMU at all. Each box
+  is now told something true of itself: the one with groups is pointed at
+  `/sys/bus/pci/devices/<addr>/iommu_group`, and the one without is told that
+  `uio_pci_generic` needs a legacy INTx interrupt and what would make
+  `vfio-pci` available instead.
+
+  The fallback announcement was also **121 columns** on an 80-column console,
+  which is the widest line this appliance prints and it is on the path a
+  one-card VM takes. `say` joins its arguments with a space onto one line, so
+  a continuation in the source is not a line break in the output. Folded, and
+  the whole of that run's output is now held under 79.
+
 * **The release gate refused without saying so, and its last word was a green
   check.** The three document comparisons - what the published wiki says, what
   `docs/roadmap.md` says, and what the published release is titled - print

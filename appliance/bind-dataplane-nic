@@ -193,8 +193,12 @@ done
 # is made here, where it can be explained, rather than discovered there.
 want=$(dpdk_driver)
 if [ "$want" != "vfio-pci" ]; then
-  say "bind: no IOMMU groups on this box, so vfio-pci cannot take a device;" \
-      "using $want, which has no IOMMU protection"
+  # Two lines, because one was 121 columns on the console this is printed to
+  # (#346). `say` takes each argument and prints them space-joined on ONE
+  # line, so a continuation in the source is not a line break in the output -
+  # which is how this came to be the widest line the appliance prints.
+  say "bind: no IOMMU groups on this box, so vfio-pci cannot take a device."
+  say "      Using $want, which has no IOMMU protection."
 fi
 
 if [ ! -d "$SYSBUS/drivers/$want" ]; then
@@ -232,6 +236,33 @@ fi
 # the kernel no longer has the NIC and neither does the dataplane.
 say "bind: $ADDR did NOT bind to $want; it is on ${now:-no driver at all} now."
 say "      The dataplane will start without it. 'dmesg' says why $want"
-say "      refused the device; on a box with an IOMMU the usual cause is"
-say "      intel_iommu=on or amd_iommu=on missing from the kernel command line."
+say "      refused the device."
+#
+# AND THE ADVICE ASKS WHICH BOX IT IS ON. This was one sentence for both
+# drivers: "on a box with an IOMMU the usual cause is intel_iommu=on or
+# amd_iommu=on missing from the kernel command line". It is false of each of
+# the two boxes that can reach it, in opposite directions.
+#
+# With vfio-pci the box HAS IOMMU groups - that is the only way dpdk_driver()
+# returns it - so the parameter cannot be the missing thing. The operator is
+# sent to check a kernel command line that is already right, on the one
+# message they get when the appliance comes up not forwarding.
+#
+# With uio_pci_generic the box has NO IOMMU, so a sentence opening "on a box
+# with an IOMMU" is about a different machine, and the parameter it names
+# would not have helped: that driver does not use an IOMMU at all.
+if [ "$want" = "vfio-pci" ]; then
+  say "      This box has IOMMU groups, so the kernel command line is not the"
+  say "      cause: vfio-pci is being offered a device it will not take."
+  say "      Read this, on the box:"
+  say "        $SYSBUS/devices/$ADDR/iommu_group"
+  say "      A device with no group of its own cannot go, and a group whose"
+  say "      other members are still held by host drivers cannot either."
+else
+  say "      This box has no IOMMU groups, which is why vfio-pci was not"
+  say "      tried. uio_pci_generic needs a legacy INTx interrupt, and a"
+  say "      device that has only MSI-X is refused. Enabling an IOMMU in the"
+  say "      firmware and on the kernel command line is what makes vfio-pci"
+  say "      available instead."
+fi
 exit 1
