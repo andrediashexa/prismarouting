@@ -77,6 +77,21 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The release gate refused without saying so, and its last word was a green
+  check.** The three document comparisons - what the published wiki says, what
+  `docs/roadmap.md` says, and what the published release is titled - print
+  their refusals on stderr and their passes on stdout, and the gate then ran
+  `[ "$docs_bad" = 0 ] || exit 1`. A refused run read through its stdout alone,
+  which is a log or a pipe or `| tail -1`, ended on **`==> the published
+  release title is the CHANGELOG heading`**: a green line under a release that
+  was refused. Every other verdict in this repository says how many and what it
+  means, and this one said nothing at all.
+
+  It is a **count** now rather than a flag, because the flag could not tell one
+  red check from three: each of the three set `docs_bad=1`, so a run that
+  failed all of them and a run that failed one exited identically. The closing
+  line names the number and the three checks it is about.
+
 * **The tuner report `docs/appliance.md` quotes is from a box the page never
   names, and one of its numbers does not follow from the property it does
   name.** The page prints that block under "A box configured for 20,000

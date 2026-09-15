@@ -341,6 +341,65 @@ document comparison sits behind two that have been red since September" ;;
 esac
 
 echo
+echo "=== a refused release says it was refused, and by how many ==="
+# The three document checks print their refusals on stderr and their passes on
+# stdout, so a refused run read through its stdout alone - a log, a pipe, a
+# tail - used to end on "==> the published release title is the CHANGELOG
+# heading". A green line under a release that was refused.
+#
+# Driven through the tracker rather than the wiki, because an open issue the
+# roadmap never mentions is one line of stub output, and because it exercises
+# the count: the flag this replaced was set to 1 by each of three checks, so a
+# run that failed all three and a run that failed one exited identically.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+retag "v$V"
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*)  exit 0 ;;
+  *"issue list"*)   echo "9999 OPEN" ;;   # a roadmap that never names it
+  *"release view"*) exit 1 ;;
+  *)                exit 0 ;;
+esac
+GHSTUB
+chmod +x "$GHBIN/gh"
+# BOTH NUMBERS, which is what makes this a count and not a flag. This fixture
+# is not a git checkout whose history records a wiki pull, so the wiki check
+# is red here whatever else happens - that is why the case above exists at
+# all, to show the title check is reached from behind it. One refusal is the
+# fixture's own state; two is that plus the tracker.
+run_gate "v$V"
+BASE_SAID=$OUT
+case "$OUT" in
+  *"2 of the three document checks above refused this"*)
+    ok "it says how many refused it, and which three they are" ;;
+  *) bad "the gate refused and never said so; it ended on:
+$(printf '%s' "$OUT" | grep -A1 'document checks above' | head -2)" ;;
+esac
+[ "$RC" != 0 ] \
+  && ok "and the refusal is the exit status too" \
+  || bad "the gate exited 0 with a document check red (rc=$RC)"
+# TWO, and the number is the point. This replaced a flag that each of three
+# checks set to 1, so a run with all three red and a run with one red exited
+# identically. Two is what this fixture produces - its history records no wiki
+# pull, and its roadmap does not name the open issue the stub invents - and a
+# `docs_bad=1` in place of the increment takes this case red while leaving
+# every other case in this file green.
+#
+# Back to the stub the rest of the file runs under.
+cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*)  exit 0 ;;
+  *"issue list"*)   : ;;
+  *"release view"*) exit 1 ;;
+  *)                exit 0 ;;
+esac
+GHSTUB
+chmod +x "$GHBIN/gh"
+
+echo
 echo "=== and this suite reaches only the half that needs no image ==="
 # Said as a number rather than left to be assumed. The gate refuses eighteen
 # times; everything after RELEASE_GATE_CHECK_ONLY needs a 321 MB image built,

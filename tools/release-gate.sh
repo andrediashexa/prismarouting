@@ -373,7 +373,7 @@ if ! wiki_out=$(sh "$WORK/tools/wiki-status.sh" 2>&1); then
   echo "       A page that disagrees with the product is read by somebody" >&2
   echo "       deciding what state their box is in, so it is a defect and" >&2
   echo "       not a chore. Publish them, then run this again." >&2
-  docs_bad=1
+  docs_bad=$((docs_bad + 1))
 else
   echo "==> the published wiki matches this tree"
 fi
@@ -405,7 +405,7 @@ elif ! rm_out=$(sh "$WORK/tools/roadmap-state.sh" 2>&1); then
   echo "       so a closed issue presented as pending sends them to do work" >&2
   echo "       that is done, and an open issue it never names hides work" >&2
   echo "       that is not. Fix the file, then run this again." >&2
-  docs_bad=1
+  docs_bad=$((docs_bad + 1))
 else
   echo "==> the roadmap and the tracker agree"
 fi
@@ -454,13 +454,32 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
       echo "       That page is what somebody who does not clone this" >&2
       echo "       repository reads, and the title is what they decide on." >&2
       echo "       A shorter one announces less than the release fixed." >&2
-      docs_bad=1
+      docs_bad=$((docs_bad + 1))
     else
       echo "==> the published release title is the CHANGELOG heading"
     fi
   fi
 fi
-[ "$docs_bad" = 0 ] || exit 1
+# AND IT SAYS SO ON THE WAY OUT.
+#
+# This was a bare `exit 1`. The three checks above print their refusals on
+# stderr and their passes on stdout, so a refused run whose stdout is read on
+# its own - a log, a pipe, `| tail -1` - ended on "==> the published release
+# title is the CHANGELOG heading", which is a green line under a release that
+# was refused. Every other verdict in this repository says how many and what
+# it means; this one said nothing at all.
+#
+# A COUNT rather than a flag, because two of these being red is a different
+# morning from one, and because the flag could not tell them apart: docs_bad
+# was set to 1 by each of three checks, so a run that failed all three and a
+# run that failed one exited identically.
+if [ "$docs_bad" != 0 ]; then
+  echo "error: $docs_bad of the three document checks above refused this" >&2
+  echo "       release: what the published wiki says, what docs/roadmap.md" >&2
+  echo "       says, and what the published release is titled. Nothing was" >&2
+  echo "       built and nothing was published." >&2
+  exit 1
+fi
 
 # The same seam the installer has, and for the same reason: the checks above
 # are what make this a gate, and a check that can only be exercised by building
