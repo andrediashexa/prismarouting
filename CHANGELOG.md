@@ -157,6 +157,27 @@ version has a chance of seeing it.
   to shorten a row that has nothing to do with the failure costs more than a
   refusal with no advice at all. The advice is now the caller's, defaulting to
   the width sentence because two of the three callers want it.
+* **The roadmap still presented the published wiki as work blocked on the
+  maintainer** ([#277](https://github.com/andrediashexa/hexarouting/issues/277)).
+  The wiki went out this cycle - 32 pages, one of them created because the wiki
+  did not have it at all - and `docs/roadmap.md` went on listing it under *what
+  is blocked on somebody else*, saying `what is left is the token`. The token
+  arrived and the pages are live.
+
+  This is the shape `tools/roadmap-state.sh` exists to catch, and it caught it:
+  *"closed issues the file still presents as work that remains"*, naming #277
+  and the line. It is also a release blocker, because `tools/release-gate.sh`
+  runs that holder, so the correction is not tidiness - the next release cannot
+  be cut past it.
+
+  The row is gone and the delivery is recorded in the past tense, including the
+  part that was not obvious: the `wiki/.pulled` interlock was **checked and not
+  assumed**. Every page's `updatedAt` was read before anything was written, the
+  one human edit found that way was fetched and proved carried forward, and only
+  then was `.pulled` advanced. The 32 were verified afterwards by a needle from
+  their own content rather than by a digest, because the wiki normalises
+  markdown on the way in and a checksum would have answered about the
+  normalisation instead of about the page.
 
 * **A check that compared two trees, and the day the wiki was published is
   the day it broke.** `test/test_wiki_roundtrip.sh` drives the release gate and
