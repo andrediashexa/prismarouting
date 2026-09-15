@@ -376,10 +376,22 @@ expect_not_in "and it never went quiet again while we were watching" \
 # it.
 expect "the stride under test is one the allocator would not have done anyway" \
   test "${EXP_STRIDE:-0}" -ne "${EXP_PLAIN:-0}"
-# And one it can honour at all: a stride whose step is not a multiple of the
-# worker count names a block in nobody's own slice.
-expect "and one this worker count can honour" \
-  test "$((STRIDE % NW))" -eq 0
+# A stride whose step is not a multiple of the worker count names a block in
+# nobody's own slice, so the fixture has to pick one that is. That used to be
+# asserted here, as `test "$((STRIDE % NW))" -eq 0`, and it was a check that
+# could not fail: STRIDE is set to 2 * NW twenty lines up, so the remainder is
+# zero for every worker count a box can have. Driven under dash over NW 1 to
+# 64, it is [ ok ] on all of them. Deleting the whole stride feature would not
+# have turned it red, because nothing it compared had been near the box.
+#
+# The guarantee did not go away with the assertion - it moved into the
+# derivation, which is where the anti-vacuity work above put it and is why the
+# check stopped being able to say anything. What is NOT held here is the box's
+# own opinion of the stride: it prints "cannot be honoured" for one it cannot
+# place, which lab/dynamic-workers.sh asserts. Reading that back here is the
+# version with content, and writing it needs a container to show it red, which
+# the sweep that removed this did not have. test/test_lab_vacuous.py refuses
+# the shape so the next one cannot arrive in silence.
 # The precondition for everything below: two blocks on each pool. Without it
 # the gaps are empty strings and every comparison below is comparing nothing.
 expect "the subscriber on the plain pool holds two blocks" \

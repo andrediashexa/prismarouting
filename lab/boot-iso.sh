@@ -102,14 +102,35 @@ sed -n '/boot self-test/,/=====$/p' /tmp/clean.log | head -40
 # Read from the console rather than from the source, because the defect was
 # that the product decided from a startup file that is identical on a medium
 # and on an installed box's first boot. Only a medium can answer this.
+# WHAT THE COMMAND ANSWERED, and not the whole session. The needle below is
+# "installation medium|'install'", and the medium's LOGIN BANNER says both of
+# those things - "This is the installation medium: nothing here survives a
+# reboot." and "Type 'install' to install HexaRouting onto a disk." - several
+# lines before this command is typed. The writer above waits for the prompt,
+# and the prompt comes after the banner, so the banner is in the log by
+# construction on every run.
+#
+# So the positive check below was green whatever `show interface` answered.
+# Driven over two console transcripts on 2026-09-15: a medium answering with
+# the advice, and the same medium with why_no_dataplane_interface() returning
+# nothing at all, so the screen carries the empty table and no advice. Both
+# read "[ ok ] the medium says a reboot is not the answer there, and what is",
+# and on the second it was lines 4 and 5 - the banner - that said it.
+#
+# That is the half #305 is about. The negative below could still fail, because
+# "Reboot once the tuning" has exactly one printer in the tree
+# (hexash.py:9756, the INSTALLED-box branch of the same function) and the
+# banner never says it; but "the medium says what does work there" was being
+# answered by the banner rather than by the box.
+ANSWER=$(awk '/show interface/ {seen = 1; next} seen' /tmp/clean.log)
 if grep -q "show interface" /tmp/clean.log; then
-  if grep -qiE "Reboot once the tuning" /tmp/clean.log; then
+  if printf '%s\n' "$ANSWER" | grep -qiE "Reboot once the tuning"; then
     echo "  [FAIL] the medium tells the operator to reboot, and nothing here"
     echo "         survives one: the reboot comes back to this same screen"
     grep -A 3 "no interface to forward on" /tmp/clean.log | head -4 | sed 's/^/         /'
     exit 1
   fi
-  if grep -qiE "installation medium|'install'" /tmp/clean.log; then
+  if printf '%s\n' "$ANSWER" | grep -qiE "installation medium|'install'"; then
     echo "  [ ok ] the medium says a reboot is not the answer there, and what is"
   else
     echo "  [FAIL] the medium says nothing about what does work there"

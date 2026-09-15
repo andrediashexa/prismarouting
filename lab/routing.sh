@@ -730,8 +730,27 @@ block_of() {   # block_of <interface name>
 }
 expect_in "shutdown is in the running configuration, for THIS interface" \
   "shutdown" "$(block_of host-veth-vpp)"
+# host-veth9-vpp, which is the other interface this lab has. It named
+# host-veth2-vpp, which belongs to lab/bgp-policy.sh's topology and appears
+# nowhere else in this file - so block_of found no `interface host-veth2-vpp`
+# line, awk printed nothing, and "shutdown is not in this empty string" was
+# green on every box this lab has ever run on.
+#
+# Driven over two running-configurations on 2026-09-15, with block_of copied
+# out verbatim and $HX replaced by a file: one with the shutdown on
+# host-veth-vpp alone, one with it on BOTH interfaces, which is the failure
+# this line exists to catch. With host-veth2-vpp both read "[ ok ]". With the
+# name below the second reads "[FAIL] and not on the other one (unexpected:
+# shutdown)".
+#
+# The block is pinned non-empty first, because that is what stopped this being
+# noticed: an assertion about what is NOT in a block says nothing until
+# something says the block is there. A rename of this interface makes the line
+# below red rather than vacuous.
+expect_in "the other interface has a block to look in at all" \
+  "linux-name vppwan9" "$(block_of host-veth9-vpp)"
 expect_not_in "and not on the other one" \
-  "shutdown" "$(block_of host-veth2-vpp)"
+  "shutdown" "$(block_of host-veth9-vpp)"
 
 $HX -c "configure" -c "interface host-veth-vpp" -c "no shutdown" -c "exit" \
     -c "commit" > /tmp/noshut.log 2>&1 || true
@@ -928,9 +947,29 @@ echo "$CHECKOUT" | tail -3 | sed 's/^/  check: /'
 # maintenance window acts on.
 expect_in "commit check now refuses the bad range itself" \
   "prefix range refused" "$CHECKOUT"
+# The needle here carried a trailing NEWLINE - it was written across two source
+# lines, with the closing quote in column 1 - and that made it unmatchable
+# against either sentence the product can print. `CHECKOUT=$(...)` strips
+# trailing newlines, so the bare sentence, which hexash.py:7611 prints as the
+# last thing before it returns, loses the very byte the needle needed; and the
+# other branch (hexash.py:7583) continues the line with " for CGNAT and the
+# box's own configuration", so no newline follows "succeeds" there either. The
+# same sentence is spelled correctly, without the newline, at line 280 of this
+# file.
+#
+# Without the newline it now matches EITHER sentence, and that is right rather
+# than merely simpler: both are success claims, and neither may be printed
+# beside a refusal. It cannot go red on a correct box, because both prints sit
+# inside `if self.apply(self.candidate, check_only=True):` (hexash.py:7563) and
+# a candidate carrying a bad prefix range sets ok = False (hexash.py:6269-6272),
+# so a box that refuses prints neither.
+#
+# Driven on 2026-09-15 over three commit-check outputs: a refusal alone, a
+# refusal followed by the bare sentence, and a refusal followed by the narrowed
+# one. With the newline all three read "[ ok ]"; without it the second and
+# third read "[FAIL] ... (unexpected: configuration check succeeds)".
 expect_not_in "and does not claim the whole configuration checks out" \
-  "configuration check succeeds
-" "$CHECKOUT"
+  "configuration check succeeds" "$CHECKOUT"
 
 # The caveat is still true, and still has to be said - just not about the line
 # above, which the VTY now catches on its own. It is about every routing
