@@ -9190,6 +9190,11 @@ class Shell:
                     raise ValueError("policy must be interleaved or blocked")
                 p.policy = w[1]
             elif w[0] in ("vrf", "outside-vrf"):
+                # The bound is HERE and not in _pool_line, because that
+                # function also reads the configuration back out of the
+                # running dataplane and a value the box already has is a fact
+                # rather than a request (#357).
+                self.pool_range(w[0], w[1])
                 why = Config._pool_line(p, " ".join(w))
                 if why:
                     raise ValueError(why)
@@ -9222,6 +9227,7 @@ class Shell:
                 if why:
                     raise ValueError(why)
             elif w[0] == "utilisation-alarm":
+                self.pool_range("utilisation-alarm", w[1])
                 why = Config._pool_line(p, " ".join(w))
                 if why:
                     raise ValueError(why)

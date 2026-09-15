@@ -4181,8 +4181,14 @@ LAB = (
                "router bgp 65000", "address-family ipv4 unicast",
                "exit-address-family", "exit"], True),
 )
-for _name, _typed, _warns in LAB:
-    _f = pool_announce_findings(LAB_BASE + _typed, LAB_POOL)
+# `_stmts` and not `_typed`: a loop variable at module level outlives its
+# loop, and `_typed` is the helper that drives the VTY, defined four thousand
+# lines above. Every case after this point that called it got "'list' object
+# is not callable" - which is a crash rather than a red check, so the rest of
+# the file stops running and whoever is looking sees a traceback instead of a
+# verdict.
+for _name, _stmts, _warns in LAB:
+    _f = pool_announce_findings(LAB_BASE + _stmts, LAB_POOL)
     check(bool(_f) == _warns,
           f"lab case {_name}: expected {'a warning' if _warns else 'silence'}"
           f", got {_f}")
@@ -7104,6 +7110,48 @@ for _peer in ("10.0.0.2", "2001:db8:aaaa:bbbb::2", "fd00:1234:5678:9abc::42"):
         check(not _over,
               f"{_line!r} wraps on a serial console: {_over}")
 print("  three answers: keeping, not keeping, and nobody to ask")
+
+print("\n=== a value the BOX already has is a fact, not a request (#357) ===")
+# Config._pool_line() is the reader for three things: a statement typed at the
+# prompt, a saved file, and the configuration read back out of the running
+# dataplane by `show bpa config`. The first is a request; the last two are
+# facts.
+#
+# #352 put the block-size bound inside it, and that broke the third. The
+# dataplane accepts and builds a pool with `block-size 4` - lab/detreserve.sh
+# uses one to keep a block cheap - and on such a box the VTY could no longer
+# model its own running configuration: `running_config()` said "committing
+# would REMOVE it" and `commit` then refused EVERY change. An operator with a
+# small block was locked out of configuration entirely.
+#
+# Driven from both ends: the box's own words are modelled, and the operator's
+# are still refused with the range named.
+_DEVICE = ("! cgnat\n"
+           "cgnat pool det\n"
+           " inside 100.64.0.0/22\n"
+           " outside 200.150.0.16/32\n"
+           " block-size 4\n"
+           " utilisation-alarm 0\n"
+           " exit\n")
+_read = _config.Config.parse(_DEVICE)
+check(not _read.unknown,
+      f"the VTY cannot model a pool the dataplane built, so every commit on "
+      f"that box is refused: {_read.unknown}")
+check("det" in _read.pools and _read.pools["det"].block_size == "4",
+      f"the block size the box reported was not kept, so a commit would "
+      f"write a different one over it: "
+      f"{getattr(_read.pools.get('det'), 'block_size', None)!r}")
+for _stmt, _range in (("block-size 4", "64-32768"),
+                      ("block-size 65536", "64-32768"),
+                      ("utilisation-alarm 0", "1-100")):
+    _s, _refused, _said = _typed(["nat cgnat pool P"], _stmt)
+    check(_refused,
+          f"{_stmt!r} typed at the prompt was taken, and the prompt is where "
+          f"a number can still be argued with: {_said.strip()!r}")
+    check(_range in _said,
+          f"{_stmt!r} was refused without naming {_range}: {_said.strip()!r}")
+print("  the box's own configuration is modelled, and the operator's is "
+      "bounded")
 
 print("\n=== the refusals that were a paragraph on one row (#355) ===")
 # `err` wraps nothing, which is right for a verdict and wrong for a paragraph.

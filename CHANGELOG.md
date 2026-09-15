@@ -77,6 +77,35 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A bound in the reader that also reads the box**
+  ([#357](https://github.com/andrediashexa/hexarouting/issues/357)).
+  `Config._pool_line()` is the reader for three things: a statement typed at
+  the prompt, a saved file, and the configuration read back out of the running
+  dataplane. The first is a **request**; the last two are **facts**. #352 put
+  the `block-size` bound inside it, and on a box whose pool has a block size
+  below 64 - which the dataplane accepts and builds - the VTY could no longer
+  model its own running configuration, so `running_config()` said *"committing
+  would REMOVE it"* and **`commit` refused every change**. An operator with a
+  small block was locked out of configuration on a box that was forwarding
+  correctly.
+
+  The bounds are at the prompt now, in `Shell.pool_range()`, which is the only
+  place a number can still be argued with. `utilisation-alarm`, `vrf` and
+  `outside-vrf` had their only check inside the parser and gain one there; the
+  rest were being checked twice. The documented floor of 64 is not the
+  dataplane's floor, and the device is the authority on what it has.
+
+  Found by `lab/detreserve.sh`, which builds a four-port block to keep a block
+  cheap to fill, and confirmed by running that lab alone - which is what
+  separates a defect from a machine that was busy.
+
+  One more thing surfaced while driving it red: `for _name, _typed, _warns in
+  LAB:` at module level in `test/test_hexash_complete.py` shadowed `_typed()`,
+  the helper that drives the VTY, defined four thousand lines above. Every
+  case after that loop which called it got `'list' object is not callable` - a
+  crash rather than a red check, so the rest of the file stops and the reader
+  gets a traceback instead of a verdict.
+
 * **Seven refusals printed a paragraph on one row**
   ([#355](https://github.com/andrediashexa/hexarouting/issues/355)). `err()`
   wraps nothing, which is right for a verdict and wrong for a paragraph, and
@@ -194,20 +223,15 @@ version has a chance of seeing it.
   `deny` clause carrying a `set` - a policy that looks right and does nothing
   is what that function is for.
 
-  **What this changes on a box being upgraded, and it is worth reading before
-  the upgrade.** `hexash --load` runs at boot and refuses a file whole rather
-  than applying it minus a line it cannot hold - the reasoning is in its own
-  docstring, and it is the right trade for a box nobody is watching. So a
-  saved configuration carrying `max-blocks 256` or above, or a `block-size`
-  outside 64 to 32768, will now **refuse at boot and name the line**, where
-  before it loaded. Neither value was doing what it said: `max-blocks 300`
-  reached the dataplane as 1 and `block-size 65536` reached it as 0. A box in
-  that state comes up saying which line to fix, rather than coming up with a
-  pool whose block size is not the one in its own file - which would re-map
-  every subscriber on it, silently, and is the hazard
-  [#23](https://github.com/andrediashexa/hexarouting/issues/23) exists for.
-  Measured on both paths: the saved file, and `show bpa config` read back from
-  a running dataplane.
+  **What this does NOT change, corrected.** An earlier draft of this entry said
+  a saved configuration carrying `max-blocks 256` would refuse at boot. It
+  does not, and it should not: `hexash --load` reads a FILE, and a value
+  already written down is a fact rather than a request. Bounding the reader
+  broke a box whose dataplane reported a block size the documented range does
+  not cover, and that is
+  [#357](https://github.com/andrediashexa/hexarouting/issues/357). The bound
+  is at the prompt, where the number can still be argued with; a value that
+  reached the device before still reaches it.
 
   The remaining 18 ranges were driven and hold at both ends. Two that look
   wrong and are not are written down in
