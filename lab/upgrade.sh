@@ -154,6 +154,10 @@
 # ---------------------------------------------------------------------------
 # THERE IS NO `off` MODE, AND THAT IS DELIBERATE
 #
+# NO-OFF-RUN: the feature here is that a released configuration survives an
+# upgrade, and its opposite is a new tree that lost a statement - an edit to
+# src/hexash/config.py, not an argument to a shell script.
+#
 # Every other lab's off run switches off the FEATURE the lab is about, and the
 # feature here is "a released configuration survives an upgrade". Its opposite
 # is not a mode of this file: it is a NEW TREE THAT LOST A STATEMENT, which is
