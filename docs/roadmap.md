@@ -1667,10 +1667,11 @@ acting on it. There were three and not the two anybody would guess:
 Measured and printed by the suite on every run rather than left as a number in
 a commit message, which is what makes the drift readable: this said **18 ms at
 every boot over 31 files and 2.5 MB**, and `sh test/test_manifest.sh` now
-prints *"32 files, 2739361 bytes, 26 ms per run (mean of 10)"*. The file count
-and the bytes are the tree and they moved; the milliseconds are the machine
-the suite happened to run on and are not comparable between two of them, which
-is why the line prints the CPU beside them.
+prints 32 files and about 2.7 MB. The exact byte count is left to the suite
+rather than written here, because it moves with every commit and a number that
+rots on the next merge is the thing this sweep is about. The milliseconds are
+the machine the suite happened to run on and are not comparable between two of
+them, which is why the line prints the CPU beside them.
 
 #### A box installed from the medium could not be reached, and a box with one card could not forward
 
