@@ -25,6 +25,10 @@ Rules applied:
     default, and either a worker has no queue or a queue piles up flows.
   - system IRQs are banned from the isolated cores. Isolating from the
     scheduler while still taking interrupts isolates nothing.
+  - the statistics segment is sized from the interfaces the box is CONFIGURED
+    for, read from its own saved configuration. VPP's built-in 32 MB was
+    measured holding 7,000 and aborting before 8,000, and an abort is the
+    whole dataplane rather than a refused interface.
 """
 
 import argparse
@@ -366,8 +370,145 @@ class Topology:
         return out
 
 
+# VPP's own STAT_SEGMENT_DEFAULT_SIZE, in MB: the segment a box gets when no
+# statseg stanza names one. Kept as a constant rather than read from the
+# running dataplane because the tuner runs before VPP does, and the image pins
+# the VPP version on purpose.
+STATSEG_DEFAULT_MB = 32
+
+#: The interface count that default was MEASURED holding, and the abort is the
+#: whole dataplane rather than a refused interface. docs/bng.md 2.1 created
+#: subscriber interfaces in batches of a thousand against a VPP booted with no
+#: statseg stanza - `total: 32.00M` - and printed
+#:
+#:     after 7000: 7000 live, RSS 429916 kB
+#:     VPP DIED while creating sessions 7000..8000
+#:     os_panic() called, aborting.
+#:
+#: with _vec_realloc_internal under vlib_stats_create_counter on the stack.
+#: Reproduced twice, at the same step.
+STATSEG_MEASURED_INTERFACES = 7000
+
+#: What one interface may therefore claim: 4793 bytes, which is the segment
+#: that box had divided by the interfaces it carried on it.
+#:
+#: NOT the 2.9 kB of counter content measured at 40,000 interfaces on a 1 GB
+#: segment (docs/appliance.md). That figure is what the entries WEIGH; this one
+#: is what they COST, and the 1.65x between them is the counter directory:
+#: ONE contiguous vector, grown by copying, so a growth needs the old vector
+#: and the new one inside the segment at the same time. Sizing on 2.9 kB
+#: predicts about 12,000 interfaces on a segment that aborted below 8,000 -
+#: the arithmetic issue #288 itself noticed does not add up - and a segment
+#: sized from it would abort at two thirds of the interfaces it promised.
+#:
+#: The box's own interfaces are inside this figure rather than added on top of
+#: it: the 4.2 MB that segment holds with no subscriber on it at all is part
+#: of the 32 MB being divided, amortised over the 7,000. That makes the budget
+#: conservative for every box big enough to be given a stanza, which is the
+#: direction to be wrong in when the alternative is SIGABRT.
+STATSEG_BYTES_PER_INTERFACE = ((STATSEG_DEFAULT_MB << 20)
+                               // STATSEG_MEASURED_INTERFACES)
+
+
+def statseg_mb_for(count):
+    """
+    MB of statistics segment for `count` interfaces, or None for "nothing".
+
+    None where VPP's own default already holds that many, which is the answer
+    on every CGNAT box this product ships to: a segment stanza sized for three
+    interfaces would be SMALLER than what VPP gives away, and a box that does
+    not need this does not want a number in its startup.conf about it.
+    """
+    mb = -(-(count * STATSEG_BYTES_PER_INTERFACE) // (1 << 20))   # whole MB, up
+    return mb if mb > STATSEG_DEFAULT_MB else None
+
+
+#: Where hexash's own configuration parser lives, installed first: the box
+#: keeps the modules in /usr/lib/hexarouting and this script in /usr/bin, and
+#: the source tree keeps them in src/hexash beside appliance/.
+HEXASH_DIRS = ("/usr/lib/hexarouting",
+               os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                            "..", "src", "hexash"))
+
+
+def configured_interfaces(path):
+    """
+    (interfaces this box is configured for, why not) from its saved config.
+
+    THE COUNT IS READ FROM THE BOX, like the queue count and the maximum MTU
+    beside it (#330), and for the same reason: everything else in the
+    generated configuration comes from something measured, and an interface
+    count inferred from the subscriber target would be a fact about a CGNAT
+    translation rather than about an interface. The saved configuration is what
+    hexarouting.service hands to `hexash --load` at every boot, so the
+    interfaces named in it are the interfaces this box will create - before
+    VPP starts, which is the only moment this program runs.
+
+    hexash's OWN parser does the counting. A second reader of that grammar -
+    a grep for `^interface ` here - would answer the same today and stop
+    answering the same the first time the VTY learns another way to name one,
+    and the box that would find out is the box with twenty thousand of them.
+    The routing half of the file names interfaces too, in FRR's own blocks,
+    and `Config.interface_names()` already returns the union by name rather
+    than a line count.
+
+    What it does NOT count is an interface created while the box runs: a PPPoE
+    session, a linux_cp pair made from the VTY. Said out loud in the report
+    rather than guessed at with a multiplier.
+
+    Never raises. This runs as root before VPP on every boot, and a
+    configuration this program could not read is a reason to leave the segment
+    at VPP's default and SAY so - not a reason to fail the unit and leave the
+    kernel command line disagreeing with the startup.conf beside it.
+    """
+    if not os.path.exists(path):
+        return None, "missing"
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None, "unreadable"
+    found = False
+    for d in HEXASH_DIRS:
+        if os.path.exists(os.path.join(d, "config.py")):
+            if d not in sys.path:
+                sys.path.insert(0, d)
+            found = True
+            break
+    # ITS OWN ANSWER, not "this file is broken". A box whose install put the
+    # VTY's modules somewhere this program cannot see has a perfectly good
+    # configuration and no way to count it, and telling the operator their
+    # file could not be parsed would send them to edit the one thing that is
+    # right.
+    if not found:
+        return None, "noparser"
+    try:
+        import config as hexash_config
+        return len(hexash_config.Config.parse(text).interface_names()), None
+    except Exception:            # noqa: BLE001 - see the docstring
+        return None, "unparsed"
+
+
+def operator_statseg(path):
+    """
+    Has somebody already put a statseg stanza in the base file?
+
+    The base is concatenated AHEAD of the generated stanzas, so a generated
+    one would be the last word on every boot and would silently replace a
+    number an operator chose. This is the same `^\\s*statseg` the boot
+    self-test greps for, and a STANZA and not the word: the shipped base file
+    explains where a statseg goes in a comment block, and a box that reads its
+    own documentation as somebody's decision would never size anything.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            return any(re.match(r"\s*statseg", line) for line in f)
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
-         keep_management=False):
+         keep_management=False, config_path=None, vpp_base=None):
     # Never the management path, even when it was named on purpose.
     #
     # Handing VPP the interface carrying the default route does not degrade
@@ -488,6 +629,16 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
     tuned_now = (hugepages_gb >= 1 and reserved >= 1
                  and set(isolated) <= set(isolated_active) and bool(isolated))
 
+    # The statistics segment, sized from the interfaces this box is
+    # CONFIGURED for and from nothing else. A box whose configuration names
+    # more interfaces than VPP's default segment was measured holding meets
+    # that limit as SIGABRT, and it is the only resource on the box whose
+    # limit is an abort rather than a refusal (#288).
+    n_ifaces, why_not = configured_interfaces(config_path) if config_path \
+        else (None, "missing")
+    operator_sized = operator_statseg(vpp_base) if vpp_base else False
+    statseg_mb = statseg_mb_for(n_ifaces) if n_ifaces else None
+
     return {
         "total_gb": total_gb,
         "hugepages_wanted": want_gb,
@@ -519,6 +670,19 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "hugepages_gb": hugepages_gb,
         "subscribers": subscribers,
         "total_cpus": len(topo.cpus),
+        # Read off the box's own configuration, not derived from the
+        # subscriber target (#288). None means there was no count to be had,
+        # and `statseg_why` says which of the three reasons it was, because
+        # "this box is configured for nothing yet" and "this box has a
+        # configuration I could not read" must not look the same.
+        "configured_interfaces": n_ifaces,
+        "statseg_why": why_not,
+        "config_path": config_path,
+        # The size to write, or None for "VPP's own default holds this box".
+        "statseg_mb": statseg_mb,
+        # Somebody's own stanza in the base file, which is never overridden.
+        "statseg_operator": operator_sized,
+        "vpp_base": vpp_base,
     }
 
 
@@ -529,15 +693,6 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
 # in the background, and compaction stalls whichever CPU holds the page.
 LOW_LATENCY_CMDLINE = ("intel_idle.max_cstate=0 processor.max_cstate=1 "
                        "transparent_hugepage=never")
-
-
-# VPP's own STAT_SEGMENT_DEFAULT_SIZE, in MB, and the only figure in this file
-# that this product neither chooses nor writes.
-#
-# It is here so the report below can name it. Kept as a constant rather than
-# read from the running dataplane because the tuner runs before VPP does, and
-# the image pins the VPP version on purpose.
-STATSEG_DEFAULT_MB = 32
 
 
 def render_grub(p):
@@ -595,7 +750,30 @@ PLUGINS_FIRSTBOOT = """plugins {
 """
 
 
+def render_statseg(p):
+    """
+    The statseg stanza, or "" on a box that is not the one that needs it.
+
+    WRITTEN IN BOTH PROFILES below, conservative and tuned, because unlike
+    every other stanza this one has nothing to do with the kernel: the
+    hugepages and the pinning wait for a reboot, and `hexash --load` creates
+    the interfaces in the saved configuration on the FIRST boot too. A box
+    that aborts on its configuration aborts on it the first time.
+    """
+    if not p["statseg_mb"] or p["statseg_operator"]:
+        return ""
+    return ("statseg {\n"
+            f"  # sized for the {p['configured_interfaces']} interface(s) in "
+            f"{p['config_path']}, at\n"
+            f"  # {STATSEG_BYTES_PER_INTERFACE} bytes each. Put your own "
+            f"statseg in {p['vpp_base']}\n"
+            "  # to choose the size yourself: this one steps aside for it.\n"
+            f"  size {p['statseg_mb']}M\n"
+            "}\n")
+
+
 def render_vpp(p):
+    statseg = render_statseg(p)
     if not p["tuned_now"]:
         # First boot: the kernel has not reserved hugepages or isolated CPUs yet.
         return (
@@ -623,6 +801,7 @@ def render_vpp(p):
             "  main-heap-size 256M\n"
             "  main-heap-page-size 4k\n"
             "}\n"
+            + ("\n" + statseg if statseg else "")
         )
 
     if not p["workers"]:
@@ -713,6 +892,7 @@ def render_vpp(p):
         f"  main-heap-size {heap_gb}G\n"
         "  main-heap-page-size default-hugepage\n"
         "}\n"
+        + ("\n" + statseg if statseg else "")
     )
 
 
@@ -780,36 +960,94 @@ def render_report(p, vpp_base):
         else:
             out.append(f"#          Capped at {p['hugepages_gb']} GB. Expect fewer "
                   "subscribers than configured, or add RAM.")
-    # The statistics segment, said out loud precisely because it is the one
-    # memory resource above that is NOT sized here - and the only one with a
-    # hard abort behind it. VPP exports every counter through a segment of
-    # fixed size; each dataplane interface adds entries to it; filling it
-    # reaches os_panic and SIGABRT rather than refusing the interface. So the
-    # box loses its whole dataplane and says nothing about why.
+    # The statistics segment, and it is the only resource on this box whose
+    # limit is an ABORT rather than a refusal. VPP exports every counter
+    # through a segment of fixed size; each interface adds entries to it;
+    # filling it reaches os_panic and SIGABRT instead of refusing the
+    # interface, so the box loses its whole dataplane and says nothing about
+    # why. It is sized from the interfaces the box is CONFIGURED for, read
+    # from the file that creates them, exactly as the queue count above is
+    # read from the card that has to carry it (#330).
     #
-    # It is not sized because nothing this program reads predicts how many
-    # INTERFACES a box will carry. Every other figure above comes either from
-    # ground truth - the topology, the RAM, the pages the kernel really
-    # reserved - or from a subscriber target the operator set. A CGNAT
-    # subscriber is not an interface: HEXA_SUBSCRIBERS=200000 describes
-    # 200,000 translations sharing a handful of ports, so sizing the segment
-    # from it would reserve hundreds of MB, on a box whose RAM floor is 4 GB,
-    # for interfaces that never appear. A constant instead would be a number
-    # nobody can justify, which is what main-heap-size stopped being when it
-    # started reading the pages the kernel had actually reserved.
-    #
-    # What is left is to say where the box stands, here and at every boot in
-    # the self-test, so the limit is met as a sentence rather than as a signal.
-    out.append(f"# statistics segment: NOT sized here, so VPP's built-in "
-          f"{STATSEG_DEFAULT_MB} MB applies.")
-    out.append("#          Measured: a box on that default aborted between 7,000 "
-          "and 8,000")
-    out.append("#          interfaces. It is per INTERFACE, not per subscriber, "
-          "which is why")
-    out.append("#          nothing here sizes it. To raise it, put a statseg "
-          "stanza in the")
-    out.append(f"#          base file ({vpp_base}):")
-    out.append("#          it is concatenated ahead of these stanzas.")
+    # FOUR BOXES, four different true sentences. A box nobody has configured
+    # yet must not be told about a size it does not need, and a box carrying
+    # somebody's own stanza must not be told this one chose anything: a line
+    # true of one box and false of another, printed by a path that never
+    # asked which box it was on, is the defect this file keeps having.
+    _n = p["configured_interfaces"]
+    if p["statseg_operator"]:
+        out.append("# statistics segment: left to the stanza somebody already "
+                   "put in")
+        out.append(f"#          {vpp_base},")
+        out.append("#          which is never overridden: the base is "
+                   "concatenated ahead of")
+        out.append("#          these stanzas, so anything written here would "
+                   "be the last word.")
+        if _n:
+            out.append(f"#          For the record: {_n} interface(s) "
+                       f"configured, which need")
+            out.append(f"#          {statseg_mb_for(_n) or STATSEG_DEFAULT_MB}"
+                       f" MB at {STATSEG_BYTES_PER_INTERFACE} bytes each.")
+    elif p["statseg_mb"]:
+        out.append(f"# statistics segment: {p['statseg_mb']}M, for the {_n} "
+                   f"interface(s) configured in")
+        out.append(f"#          {p['config_path']}, at "
+                   f"{STATSEG_BYTES_PER_INTERFACE} bytes each.")
+        out.append(f"#          That is the density a box on VPP's "
+                   f"{STATSEG_DEFAULT_MB} MB default was measured")
+        out.append(f"#          surviving: {STATSEG_MEASURED_INTERFACES:,} "
+                   f"interfaces live, aborting before 8,000.")
+        out.append("#          Interfaces created while the box runs - a PPPoE "
+                   "session, a pair")
+        out.append("#          made from the VTY - are not in that file nor in "
+                   "this number.")
+        out.append(f"#          Put your own statseg in {vpp_base}")
+        out.append("#          to choose the size instead.")
+    elif _n:
+        out.append(f"# statistics segment: VPP's built-in "
+                   f"{STATSEG_DEFAULT_MB} MB, which was measured holding")
+        out.append(f"#          {STATSEG_MEASURED_INTERFACES:,} interfaces. "
+                   f"This box is configured for {_n}, in")
+        out.append(f"#          {p['config_path']}: nothing is written, "
+                   f"because a")
+        out.append("#          stanza smaller than what VPP gives away would "
+                   "buy the box")
+        out.append("#          nothing and cost it the counters.")
+    else:
+        # No count to size from, and the two reasons are not the same
+        # sentence. "Nothing configured yet" is every fresh box; "there is a
+        # configuration and I could not read it" is the state where a box with
+        # twenty thousand interfaces in a file keeps the segment that was
+        # measured aborting at seven thousand - which is #288 itself, still
+        # happening, and it must not read like a healthy box.
+        _why = {"unreadable": "could not be read",
+                "unparsed": "could not be parsed"}.get(p["statseg_why"])
+        if p["statseg_why"] == "noparser":
+            out.append("# statistics segment: no interface count to size it "
+                       "from: hexash's")
+            out.append("#          configuration parser is not installed "
+                       "beside this program.")
+            out.append(f"#          VPP's built-in {STATSEG_DEFAULT_MB} MB "
+                       f"applies.")
+        elif _why:
+            out.append("# statistics segment: no interface count to size it "
+                       "from, because")
+            out.append(f"#          {p['config_path']} {_why}.")
+            out.append(f"#          VPP's built-in {STATSEG_DEFAULT_MB} MB "
+                       f"applies.")
+        else:
+            out.append(f"# statistics segment: NOT sized, because this box has "
+                       f"no configured")
+            out.append(f"#          interface yet, so VPP's built-in "
+                       f"{STATSEG_DEFAULT_MB} MB applies.")
+        out.append("#          Measured: a box on that default aborted between "
+                   "7,000 and 8,000")
+        out.append("#          interfaces. It is per INTERFACE, not per "
+                   "subscriber.")
+        out.append("#          To set it by hand, put a statseg stanza in "
+                   "the base file")
+        out.append(f"#          ({vpp_base}):")
+        out.append("#          it is concatenated ahead of these stanzas.")
     # THREE STATES, not two. `nic_pci` is None both when no card was named
     # and when a named card's address could not be resolved, and those are
     # nothing alike: the first is every fresh install, where there is no
@@ -846,6 +1084,9 @@ def main():
     ap.add_argument("--sysfs-root", default="/")
     ap.add_argument("--vpp-base", default="/etc/hexarouting/vpp-base.conf",
                     help="startup.conf base, concatenated with the tuning")
+    ap.add_argument("--config", default="/etc/hexarouting/hexarouting.conf",
+                    help="the box's saved configuration, read for the number "
+                         "of interfaces the statistics segment has to hold")
     ap.add_argument("--write", action="store_true",
                     help="write to /etc/default/grub.d and /etc/vpp")
     a = ap.parse_args()
@@ -853,7 +1094,8 @@ def main():
     topo = Topology(a.sysfs_root)
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
              low_latency=not a.no_low_latency,
-             keep_management=a.keep_management)
+             keep_management=a.keep_management,
+             config_path=a.config, vpp_base=a.vpp_base)
 
     grub = render_grub(p)
     vpp = render_vpp(p)

@@ -52,12 +52,16 @@ it did claim:
   VPP: `bpa_auto_mss_update()` walks every interface on the box on every
   attach, so N attaches cost O(N²). The same operation for a policer costs
   42 µs. That defect is worth its own issue and it is not a BNG question.
-* **A shipped box aborts between 7,000 and 8,000 PPPoE sessions.**
-  `appliance/hexarouting-tune` emits no `statseg` stanza, so an installed
-  appliance runs on VPP's default 32 MB stats segment (measured). Each session
-  calls `vnet_register_interface`, each interface adds stats symlinks, and the
-  stats heap runs out: `os_panic` → `SIGABRT`, the whole dataplane, not one
-  subscriber. Reproduced twice at the same step.
+* **A shipped box aborts between 7,000 and 8,000 PPPoE sessions.** At the time
+  this was measured `appliance/hexarouting-tune` emitted no `statseg` stanza,
+  so an installed appliance ran on VPP's default 32 MB stats segment
+  (measured). Each session calls `vnet_register_interface`, each interface adds
+  stats symlinks, and the stats heap runs out: `os_panic` → `SIGABRT`, the
+  whole dataplane, not one subscriber. Reproduced twice at the same step. The
+  tuner now sizes the segment from the interfaces a box is **configured** for,
+  at 4,793 bytes each, which is this measurement divided by the 7,000 it
+  survived - and **a PPPoE session is in no configuration file**, so a BNG is
+  exactly the box that still has to set the size itself.
 * **Per-subscriber speed, which is what a BNG is sold on, does not exist in
   VPP 26.06.** There is a policer and there is no shaper: `configure policer`
   is the entire rate-control surface, `vppctl help` matches nothing for
@@ -235,8 +239,10 @@ vpp[21]: received signal SIGABRT
   #9 vnet_register_interface
 ```
 
-`appliance/hexarouting-tune` emits no `statseg` stanza. The default, measured
-from a VPP booted on a config with none, is `total: 32.00M`. Every
+`appliance/hexarouting-tune` emitted no `statseg` stanza when this was
+measured, and now writes one only for interfaces a box is configured for, which
+a PPPoE session never is. The default, measured from a VPP booted on a config
+with none, is `total: 32.00M`. Every
 `vnet_register_interface` adds per-interface counter symlinks to that heap, and
 at somewhere between 7,000 and 8,000 subscriber interfaces it is exhausted and
 **the dataplane aborts**. Reproduced twice, at the same step.
@@ -493,7 +499,7 @@ It is a different product that happens to share a dataplane.
 | A control-plane supervisor that owns `accel-ppp`'s lifecycle, its configuration file and its failures, inside `hexash`'s commit/rollback/audit model | `accel-ppp` brings a second configuration file that `hexash` does not model at all |
 | Product code that enables per-interface features on an interface that appears at runtime, and removes them when it goes | Does not exist anywhere in this repository today (3.4) |
 | A fix for `bpa_auto_mss_update()`'s walk over every interface on every attach | O(N²) attach, measured (3.4). Worth doing regardless of any BNG |
-| A statistics segment sized for one interface per subscriber | Without it the box aborts at ~7,500 sessions (2.1). [#288](https://github.com/andrediashexa/hexarouting/issues/288) settled where that number comes from and it is **not** the tuner: nothing the tuner reads predicts an interface count, so the segment is set by the operator in `/etc/hexarouting/vpp-base.conf` and the boot self-test reports how much of it is spent. A BNG would have to set it, and would have to know its own subscriber ceiling to do so |
+| A statistics segment sized for one interface per subscriber | Without it the box aborts at ~7,500 sessions (2.1). [#288](https://github.com/andrediashexa/hexarouting/issues/288) sized it from the interfaces a box is **configured** for, at 4,793 bytes each, and a session interface is in no configuration file - so a BNG gets nothing from that and must set the size in `/etc/hexarouting/vpp-base.conf`, which means knowing its own subscriber ceiling. The boot self-test reports how much of the segment is spent either way |
 | A RADIUS client with accounting and CoA/DM, and an append-only retained store for what it records, to `logging.md`'s standard | This is [#21](https://github.com/andrediashexa/hexarouting/issues/21)'s work plus a retention obligation |
 | Per-subscriber shaping | VPP 26.06 has no shaper (2.2). This is not integration work; it is a queueing discipline that is not there |
 | A VTY model for operational, non-configuration state | `show interfaces` returning 40,007 lines is the symptom (2.1) |
@@ -663,7 +669,8 @@ To take them again, in the build image with `--privileged`:
    subscriber, fed through `vppctl exec` so the measurement is not dominated by
    process startup.
 4. For the abort in 2.1, boot with **no** `statseg` stanza, which is what
-   `hexarouting-tune` generates, and create sessions in batches of 1,000 until
+   `hexarouting-tune` generated then and still generates for a box whose
+   configuration names no interfaces, and create sessions in batches of 1,000 until
    `vppctl show version` stops answering. Read the reason from VPP's stdout.
 5. For 3.4, create N sessions, then time `set interface bpa in2out` over them
    in batches, and time `set interface mtu`, `policer add` and `policer input`
