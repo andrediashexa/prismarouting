@@ -1326,7 +1326,6 @@ actually start.
 
 | | |
 |---|---|
-| [#202](https://github.com/andrediashexa/hexarouting/issues/202) the rename to PrismaRouting | the maintainer's, and one question is open: `hexash` is the recorded login shell of existing accounts, so whether it renames with the product changes the migration |
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
 | [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough, and what `lab/crossaddr.sh` becomes | the mechanism is in: the allocator prefers a free block on the subscriber's own public address, measured at 100%, 99.6% and 99.2% over three arrival patterns against 0.0%, 0.0% and 0.2% before. What is left is a judgement - a preference cannot be a guarantee without refusing extensions, which costs a customer traffic rather than an address - and one piece of work needing a container: `lab/crossaddr.sh` asserted the old behaviour and now measures the opposite, so it has to be re-run and rewritten on a box with docker |
 | [#337](https://github.com/andrediashexa/hexarouting/issues/337) the disclosure for boxes already in the field | the repair is done ([#248](https://github.com/andrediashexa/hexarouting/issues/248)): a box tells whoever logs in that its host keys were not made on it, names them, says the private half is in the published download and that the session being read can be impersonated, and gives the three commands that fix it. What is left is not code. Nothing here names which releases shipped those keys, and a box that is never taken to a new version never runs the code that would tell it, so where the disclosure is said and whether it names the releases is the maintainer's |
@@ -2071,21 +2070,63 @@ The sweep for assertions that cannot fail is complete over `appliance/`,
 `tools/`, the VTY, the labs and the 34 Python suites - **1,744 assertion sites
 in the last of those, 108 anchored product mutations, one defect**: the only
 check in the tree about the `match` pipe filter compared one product-backed
-call with itself. The dataplane plugin's C suites are the last body unswept.
+call with itself.
 
-#### The rename to PrismaRouting
+An instrument is only worth the next defect it refuses, not the one it found,
+and two findings from 2026-09-15 are open on exactly that distinction:
 
-[#202](https://github.com/andrediashexa/hexarouting/issues/202) — the maintainer
-is renaming the product **HexaRouting → PrismaRouting**. Recorded here with its
-measured size rather than an impression of it, **and the measurement has to be
-re-taken rather than quoted**. On 2026-09-11 it was 905 lines across 101 files
-carrying `hexarouting`, 372 across 73 carrying `hexash` and 87 carrying the
-role group names. Re-taken on 2026-09-15 with `git grep`: **2,543 lines across
-157 files** carry `hexarouting`, **1,006 across 116** carry `hexash`, and
-**104** carry `hexa-admin` or `hexa-cgnat`. The `hexarouting` figure nearly
+* [#359](https://github.com/andrediashexa/hexarouting/issues/359) - the console
+  width was fixed three times, on the screens each fix had measured, and never
+  on the file. #252, #271, #349 and #355 split thirty-odd rows between them; a
+  static sweep of `src/hexash/hexash.py` for `print()` calls whose argument is
+  FULLY literal finds **fourteen more at 82 to 135 columns** on a console of
+  79, and reports the 177 carrying an interpolated value that it cannot bound
+  that way. Two of the fourteen are the `configure` refusal on a box whose
+  dataplane has not answered yet, where the advice - `show version` says which
+  daemons are up, and this clears within a minute of boot - sits at the end of
+  a 129-column row. That is the screen a VM meets while it is still starting.
+  The fix is mechanical; the rule belongs on the file, because a check that
+  drives fourteen screens is a check the fifteenth walks past.
+* [#360](https://github.com/andrediashexa/hexarouting/issues/360) - `?` says
+  `block-size` is a **power of two** and nothing in the VTY enforces it.
+  #350 through #354 swept all 23 numeric ranges at 45 sites and stopped at the
+  ranges: `block-size 100` is inside `<64-32768>`, is taken at the prompt,
+  staged, written to the file, and refused by the dataplane at commit. It is
+  the mirror of #352's expensive half, where the refusal named a number the
+  operator never typed - here it names the number they did type, and still
+  arrives one step too late, after a candidate is built.
+
+The dataplane plugin's C suites are the last body unswept.
+
+#### Phase 8 - the rename to Prisma Routing
+
+[#202](https://github.com/andrediashexa/hexarouting/issues/202). **The
+maintainer has decided the name and scheduled the work**, so this is no longer
+an open question in the blocked table above: the product is renamed
+**HexaRouting -> Prisma Routing**, two words, and it is a phase of this plan
+like any other.
+
+It is the last phase on purpose. The two ordering rules below are the reason,
+and neither is about the difficulty of the work.
+
+Recorded here with its measured size rather than an impression of it, **and the
+measurement has to be re-taken rather than quoted**. On 2026-09-11 it was 905
+lines across 101 files carrying `hexarouting`, 372 across 73 carrying `hexash`
+and 87 carrying the role group names. Re-taken on 2026-09-15 with `git grep`:
+**2,809 lines across 166 files** carry `hexarouting`, **1,033 across 117**
+carry `hexash`, **105 across 17** carry `hexa-admin` or `hexa-cgnat`, **622
+across 61** carry a `HEXA_` environment variable, and **13 across 10** carry
+`Hexanetworks`, which is the company and stays. The `hexarouting` figure
 tripled in four days, because every release writes the name into the CHANGELOG
 and every sweep writes it into a document. A number this file states about its
 own tree is a number with a date on it, and this one had none.
+
+**The name is two words.** This file and the issue both carried it as
+`PrismaRouting` for four days, which is a different name, and a product whose
+own roadmap cannot spell it is a product whose banner, whose ISO filename and
+whose release note will not agree either. Where the name has to be one token -
+a package name, a unit name, a path, a group - it is `prismarouting`, and that
+is a spelling of the two-word name rather than a second name.
 
 The rename is not the hard part. **A box already in service carries the old name
 in the path of its saved configuration, in its unit names, in its group names
@@ -2111,13 +2152,54 @@ boot, and assert the configuration is still in effect. **That is what makes this
 issue closeable**, and it is worth having whatever the box is called, which is
 why it is written up in its own section above.
 
-Two ordering rules, both for the reader of the release note rather than for the
-work. It **MUST** ship alone: a note that says "renamed, and also fixed the
-forwarding path" is one whose reader cannot tell which change broke their box. And
-it **SHOULD** wait until the worker-path defects are closed
+##### The five decisions the work makes, rather than waits for
+
+Scheduling the rename means these stop being open questions and become the
+first five things the work decides. Four are recommended here with a reason; one
+is still the maintainer's and is marked as such, because getting it wrong is
+measured in somebody else's outage rather than in rework.
+
+| Decision | Recommended | Why |
+|---|---|---|
+| **Do boxes in service upgrade, or is it new installs only?** | **The maintainer's.** Not recommended here | Everything below follows from it. A clean break is defensible and cheap; it MUST then say so in the release note in as many words, because an operator who upgrades and reboots gets a box that forwards nothing and a saved configuration the new name cannot see |
+| **Does `hexash` rename?** | **No.** It keeps its name | It is the recorded login shell in `/etc/passwd` for every account the product created, it is in every operator's fingers, and it is in all 33 wiki pages. A renamed shell does not exist until the package makes it exist, and an account whose shell does not exist cannot log in. The product and its command disagreeing about their names is a smaller cost than that, and it is a cost paid once and visibly |
+| **Do the role groups rename?** | **Yes, but by GID and never by recreation** | An account's membership is by GID. `groupmod -n` keeps it; `groupadd` of a new name and a `groupdel` of the old one silently takes every operator's role away, on a box where the only account left with rights is `root` over the console. `appliance/install.sh:353` is where both groups are created and is the one place this has to be right |
+| **Does `/var/log/hexarouting` move?** | **No.** The mountpoint stays | It is a separate filesystem ([#83](https://github.com/andrediashexa/hexarouting/issues/83)) holding, in dynamic mode, the connection record the Marco Civil requires to be kept for a year. Moving a mountpoint under a live retention obligation is a data migration and not a rename, and it buys nothing an operator can see |
+| **Does the repository and its remote rename?** | **Yes, and the old URLs MUST keep resolving** | Cheap and independent of the product. But every `Claude-Session` line and every issue URL already written into 74 release notes and this file points at the old remote, and a rename that breaks them costs this project the record it keeps of why anything was done |
+
+##### Two ordering rules, and they are why this is Phase 8
+
+Both are for the reader of the release note rather than for the work.
+
+It **MUST** ship alone. A note that says "renamed, and also fixed the
+forwarding path" is one whose reader cannot tell which change broke their box.
+
+It **SHOULD** wait until the worker-path defects are closed
 ([#201](https://github.com/andrediashexa/hexarouting/issues/201)), because a
-rename touching 900 lines makes every later `git blame` on those files answer with
-the rename.
+rename touching 2,809 lines makes every later `git blame` on those files answer
+with the rename - and those are the files where the next defect will be
+diagnosed by reading history.
+
+##### What it is NOT allowed to do
+
+A sweep. The name appears in four kinds of place and only one of them is safe
+to `sed`:
+
+* **strings a human reads** - the banner, the prompt, the self-test, the wiki.
+  Mechanical, and the one place a sweep is safe;
+* **paths and unit names** - need the migration above, and the installer needs
+  a test that proves an upgraded box still finds its configuration;
+* **identifiers in code** - the 622 `HEXA_` lines are read by the VTY, by
+  `apply-tuning` and by the labs. The labs SET them; a rename that misses one
+  leaves a lab configuring a box that is not the one under test, and the lab
+  still says `LAB PASSED`;
+* **the ISO filename** - [#91](https://github.com/andrediashexa/hexarouting/issues/91)'s
+  rule is that the medium's name carries its identity, because a file loses its
+  context the moment it is copied to a USB stick. `tools/version-stamp.sh` is
+  the only place that calculation lives.
+
+`Hexanetworks` stays: it is the company and not the product, and its 13
+occurrences MUST be checked one at a time rather than swept.
 
 #### If only three were possible
 
