@@ -323,13 +323,41 @@ def main():
         return
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 4739
     secs = float(sys.argv[2]) if len(sys.argv) > 2 else 25
+    # A file whose appearance ends the run, so the CALLER decides when there
+    # is nothing more to hear rather than a number guessed before the run
+    # started. A collector outlived by its exporter reports the records it did
+    # not wait for as allocations nobody ever released, and that reads exactly
+    # like a leak (#30).
+    stop_file = sys.argv[3] if len(sys.argv) > 3 else None
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(("0.0.0.0", port))
     s.settimeout(1.0)
     print(f"IPFIX collector listening on udp/{port} for {secs:.0f}s")
+    if stop_file:
+        print(f"  and until {stop_file} appears, whichever comes first")
     end = time.time() + secs
     n = 0
+    # WHICH of the two ended it, because the answer changes what the numbers
+    # below mean. Told out of order on purpose: the budget is the ceiling and
+    # the stop file is the intended end, so a run that hit the ceiling has to
+    # say so even if the file arrived in the same second.
+    ended = "its own budget of %.0fs" % secs
     while time.time() < end:
+        if stop_file and os.path.exists(stop_file):
+            ended = "the caller, through %s" % stop_file
+            # DRAIN BEFORE LEAVING. Datagrams already in the receive buffer
+            # when the file appears are records the exporter did send, and
+            # walking away from them would lose exactly what the stop file
+            # exists to stop losing.
+            s.settimeout(0.5)
+            while True:
+                try:
+                    data, _ = s.recvfrom(65535)
+                except socket.timeout:
+                    break
+                n += 1
+                handle(data)
+            break
         try:
             data, _ = s.recvfrom(65535)
         except socket.timeout:
@@ -339,7 +367,8 @@ def main():
     allocs = sum(1 for r in records if r.get("natEvent") == 16)
     deallocs = sum(1 for r in records if r.get("natEvent") == 17)
     exh = sum(1 for r in records if r.get("natEvent") == 12)
-    print(f"\nSUMMARY: {n} packets, {len(records)} records "
+    print(f"\nSTOPPED BY: {ended}")
+    print(f"SUMMARY: {n} packets, {len(records)} records "
           f"({allocs} allocations, {deallocs} deallocations, {exh} exhaustions)")
     if allocs and deallocs and allocs == deallocs:
         print("Every allocation had its matching deallocation.")
