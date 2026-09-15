@@ -1797,6 +1797,40 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The self-test says what tuning is IN EFFECT, not what was requested**
+  ([#163](https://github.com/andrediashexa/hexarouting/issues/163)). Every
+  tuning line this appliance printed read one side or the other: the generated
+  GRUB file, or `/proc/cmdline`. Both are the **request**. A parameter can be
+  lost at three separate steps - `update-grub` never ran, the box has not
+  rebooted since, or the kernel saw it and refused it - and
+  [#290](https://github.com/andrediashexa/hexarouting/issues/290) is the box
+  where it was lost at the last one: a command line carrying `hugepagesz=1G
+  hugepages=5` on a CPU with no 1 G page, for the life of that machine, while
+  every reader went on reporting a tuned box. An appliance that says it is
+  tuned when the kernel did not take the parameter is worse than one that says
+  nothing.
+
+  `hexarouting-tune --report-effective` reads each rule back off the running
+  box and `appliance/selftest` renders it. **Sixteen rules** are covered - 11
+  kernel command line parameters, 4 sysctls and the irqbalance CPU list - on
+  top of the governor and the worker pinning, which already had readers. The
+  readback table lives beside `render_grub()`, which is the component that
+  writes those parameters, so the two lists cannot drift; `appliance/test_tune.py`
+  takes the GRUB line the tuner really generates and requires every parameter
+  on it to come back `in-effect` on a box that took it.
+
+  **Four answers and not two.** "Requested and not in effect" does not collapse
+  into "in effect", which would be the appliance claiming tuning it has not
+  got, nor into "not requested", which would make a broken box look like a
+  deliberate one; and a parameter this box exposes no way to read back is a
+  fourth answer rather than a guess in either direction. Two rules land there
+  on real hardware and are named: `rcu_nocbs` has no sysfs readback on 6.1
+  outside root-only debugfs, and `irqbalance`'s CPU list is in the daemon's
+  environ, which is root-only. One command line that missed the boot is
+  reported once, not once per parameter on it, and the message says `Run
+  update-grub and reboot` rather than leaving the operator a verdict and no
+  move.
+
 * **The other 70 VTY refusals, and the floor is zero.** The sweep below left
   70 of the VTY's 180 refusal sites unrendered and held them as a floor.
   Every one of them now has a box in `test/test_hexash_refusals.py`, so all

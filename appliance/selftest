@@ -543,6 +543,88 @@ else
   warn "cpufreq governor is '$gov', not performance"
 fi
 
+# --- and did the KERNEL take the tuning, or only receive it? ---
+#
+# Every line above reads one side or the other. This reads both against each
+# other, for every rule the tuner writes: the generated GRUB file is the
+# request, /proc/cmdline is what THIS boot was given, and /sys and /proc/sys
+# are what the kernel is actually doing. A request can be lost at each step -
+# update-grub never ran, the box has not rebooted since, or the kernel saw the
+# parameter and refused it - and #290 is the box where it was lost at the
+# last one: a command line carrying `hugepagesz=1G hugepages=5` on a cpu with
+# no 1G page, for the life of that machine, while every reader of that command
+# line went on reporting a tuned box.
+#
+# THE READING IS THE TUNER'S, and not a second copy kept here. It writes those
+# parameters, so it is the one component that knows what they are; a list of
+# them in this file would be the same truth in two places with nothing
+# comparing them, which is what the IPFIX record, docs/context.md and the VTY
+# transcripts each cost before they got a reader. `--report-effective` prints
+# one rule per line in a fixed shape, and this renders it.
+#
+# FOUR ANSWERS AND NOT TWO, which is the whole of #163: "requested and NOT in
+# effect" must not collapse into "in effect" - that is an appliance claiming
+# tuning it does not have - nor into "not requested", which makes a broken box
+# look like a deliberate one. And a parameter this box exposes no way to read
+# is a fourth answer, not a guess in either direction.
+#
+# HEXA_TUNE is the same seam as HEXA_SYSTEMCTL in appliance/apply-tuning: the
+# one external command whose answer decides what gets printed, named so that
+# test/test_selftest.sh can arrange a box whose tuning went each of those four
+# ways - and a box with no tuner on it at all, which is a different line from
+# a box whose tuning did not take.
+TUNER=${HEXA_TUNE:-hexarouting-tune}
+if ! command -v "$TUNER" >/dev/null 2>&1; then
+  warn "hexarouting-tune is not on this box, so what the kernel did"
+  say "         with the tuning cannot be read here at all"
+else
+  eff=$("$TUNER" --report-effective --sysfs-root "${ROOT:-/}" 2>/dev/null)
+  if [ -z "$eff" ]; then
+    warn "hexarouting-tune could not say what tuning is in effect, so"
+    say "         this box is unmeasured rather than confirmed"
+  else
+    ntaken=0
+    nrefused=0
+    # No pipe: a `while read` behind one runs in a subshell and the counts
+    # would come back to nothing, which is the summary line saying "0" on a
+    # box with sixteen rules in effect.
+    _oifs=$IFS
+    IFS='
+'
+    for _l in $eff; do
+      IFS=$_oifs
+      _state=${_l%% *}; _rest=${_l#* }
+      _rule=${_rest%%: *}; _why=${_rest#*: }
+      case "$_state" in
+        in-effect) ntaken=$((ntaken + 1)) ;;
+        not-in-effect)
+          nrefused=$((nrefused + 1))
+          warn "requested and NOT in effect: $_rule"
+          say_list "         " "$_why" ;;
+        cannot-tell)
+          say "  [info] cannot be read on this box: $_rule"
+          say_list "         " "$_why" ;;
+        not-requested)
+          say "  [info] not requested on this box: $_rule"
+          say_list "         " "$_why" ;;
+        # A parameter the tuner writes and has no readback for. It cannot
+        # reach a shipped box - appliance/test_tune.py compares the readbacks
+        # against the command line the tuner really generates - so this is
+        # here for the build where somebody adds a knob and not its reader.
+        no-reader)
+          warn "no way to read back a parameter this box sets: $_rule"
+          say_list "         " "$_why" ;;
+      esac
+      IFS='
+'
+    done
+    IFS=$_oifs
+    if [ "$nrefused" = 0 ] && [ "$ntaken" -gt 0 ]; then
+      ok "every tuning rule this box can read back is in effect ($ntaken)"
+    fi
+  fi
+fi
+
 # --- does the VTY open? ---
 # 0.2.0 shipped a hexash that died at start for want of config.py, and this
 # self-test went green: it measured the dataplane, the routing and the tuning,

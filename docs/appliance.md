@@ -1012,6 +1012,81 @@ The restart counter matters more than it looks. A service flapping in a loop
 can be "active" at the instant one looks, and `systemctl status` will say so.
 Only `NRestarts` tells the story.
 
+### It also reports the tuning **in effect**, not the tuning requested
+
+An appliance that says it is tuned when the kernel did not take the parameter
+is worse than one that says nothing
+([#163](https://github.com/andrediashexa/hexarouting/issues/163)). Everything
+this product does about tuning until the reboot is a **request**, written into
+`/etc/default/grub.d/hexarouting.cfg`, `/etc/default/irqbalance` and
+`/etc/sysctl.d/99-hexarouting.conf`, and a file is not a machine. Four things
+stand between them:
+
+* `update-grub` was never run, so the bootloader never saw the request;
+* the box has not rebooted since, so **this** kernel never saw it;
+* the kernel saw it and **refused** it, because the hardware cannot do it;
+* the knob is runtime state and something set it back.
+
+The third is not a hypothesis. It is the customer VM of
+[#290](https://github.com/andrediashexa/hexarouting/issues/290): the command
+line carried `hugepagesz=1G hugepages=5`, the CPU does not advertise
+`pdpe1gb`, `/sys/kernel/mm/hugepages/` held only the 2048kB pool - and
+`/proc/cmdline` went on carrying that parameter for the life of the box, with
+every reader of it reporting a tuned machine.
+
+So `hexarouting-tune --report-effective` reads each rule back off the running
+box, and the self-test prints the answer. **The reading is the tuner's**: it
+writes those parameters, so it is the one component that knows what they are,
+and a second list of them in the self-test would be the same truth in two
+places with nothing comparing them.
+
+| Rule | Requested in | Read back from |
+|---|---|---|
+| `isolcpus` | `grub.d/hexarouting.cfg` | `/sys/devices/system/cpu/isolated` |
+| `nohz_full` | `grub.d/hexarouting.cfg` | `/sys/devices/system/cpu/nohz_full` |
+| `rcu_nocbs` | `grub.d/hexarouting.cfg` | the `rcuop/<cpu>` offload threads in `/proc` - nothing in `/sys` answers for it |
+| `default_hugepagesz` | `grub.d/hexarouting.cfg` | `Hugepagesize:` in `/proc/meminfo` |
+| `hugepagesz`, `hugepages` | `grub.d/hexarouting.cfg` | `/sys/kernel/mm/hugepages/hugepages-<size>/nr_hugepages`, and whether that directory exists at all |
+| `intel_iommu` | `grub.d/hexarouting.cfg` | `/sys/class/iommu` |
+| `iommu=pt` | `grub.d/hexarouting.cfg` | `type` of every group in `/sys/kernel/iommu_groups` |
+| `intel_idle.max_cstate` | `grub.d/hexarouting.cfg` | `/sys/devices/system/cpu/cpuidle/current_driver` |
+| `processor.max_cstate` | `grub.d/hexarouting.cfg` | how many `state*` cpu0 exposes under `cpuidle` |
+| `transparent_hugepage` | `grub.d/hexarouting.cfg` | `/sys/kernel/mm/transparent_hugepage/enabled` |
+| the sysctls | `/etc/sysctl.d/99-hexarouting.conf` | `/proc/sys/...` |
+| `IRQBALANCE_BANNED_CPULIST` | `/etc/default/irqbalance` | the environment of the **running** `irqbalance` |
+
+**Four answers, and not two.** "Requested and **not** in effect" is a state of
+its own, and losing it into either of its neighbours is the defect repeating
+itself: reported as *in effect* it is the appliance claiming tuning it has
+not got, reported as *not requested* it is a broken box that reads as a
+deliberately plain one, and the operator's next move differs in each case.
+
+| What the console says | What it means |
+|---|---|
+| `[ ok ] every tuning rule this box can read back is in effect (n)` | the request reached the kernel and the kernel is doing it |
+| `[warn] requested and NOT in effect: <rule>` | the box asked and the machine is not doing it, with what to do about it on the next line |
+| `[info] cannot be read on this box: <rule>` | nothing here can answer either way |
+| `[info] not requested on this box: <rule>` | never asked for, so there is nothing to have taken |
+
+The third line is the fourth state, and it is deliberate. `rcu_nocbs` on a
+kernel that names no offload thread, C-states on a virtual machine with no
+idle driver, `iommu=pt` where there are no IOMMU groups to carry a type - a
+parameter whose effect cannot be read is neither taken nor refused, and
+printing either is a guess. A guess on a console is indistinguishable from a
+measurement.
+
+The `cpufreq` governor and the worker pinning are **not** in that list,
+because they are already read back: the governor out of `scaling_governor` and
+the workers out of `/proc/<vpp pid>/task/*/status` against
+`/sys/devices/system/cpu/isolated`, both above. A second answer to a question
+that already has one is two components disagreeing about one box.
+
+Driven in `appliance/test_tune.py` - the reader, against synthetic boxes whose
+kernel took the tuning and boxes whose kernel refused it, including the #290
+shape - and in `test/test_selftest.sh` for what reaches the console, over a
+box in each of the four states plus a box with no tuner on it and a tuner that
+answers nothing.
+
 ### It also checks that the dataplane port reaches FRR
 
 FRR only ever sees a `linux_cp` pair. VPP owns the NIC outright, so a port

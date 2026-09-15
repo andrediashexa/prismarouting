@@ -1069,6 +1069,500 @@ def render_report(p, vpp_base):
     return "\n".join(out)
 
 
+# --------------------------------------------------------------------------
+# What the kernel DID with what it was asked for.
+#
+# Everything above this line decides what to REQUEST, and writes the request
+# into three files: /etc/default/grub.d/hexarouting.cfg, /etc/default/
+# irqbalance and (through appliance/install.sh) /etc/sysctl.d/99-hexarouting.
+# conf. A file is not a machine, and between the two sit four ways for the
+# request to stop:
+#
+#   update-grub was never run, so the bootloader never saw it
+#   the box has not rebooted since, so THIS kernel never saw it
+#   the kernel saw it and refused it, because the hardware cannot do it
+#   the knob is runtime state and something else set it back
+#
+# The third is not a hypothesis. It is the customer VM of #290: the command
+# line carried `hugepagesz=1G hugepages=5`, the CPU does not advertise
+# `pdpe1gb`, /sys held only the 2048kB pool, and /proc/cmdline went on
+# carrying the parameter for the life of the box.
+#
+# So a report on the tuning that reads the request and stops is a sentence
+# true of one box and false of another, printed by a path that never asked
+# which box it was on. These functions ask.
+#
+# FOUR ANSWERS AND NOT TWO. "in effect" and "never requested" are the two a
+# reader expects. "requested, and NOT in effect" has to stay distinct from
+# both: collapsed into the first it is an appliance claiming tuning it does
+# not have, collapsed into the second it is a box that looks deliberately
+# untuned when it is broken, and the operator's next move differs. And a
+# parameter whose effect THIS box exposes no way to read is a fourth -
+# rcu_nocbs on a kernel that names no offload thread, C-states on a virtual
+# machine with no idle driver. Reporting that as either taken or refused is a
+# guess, and a guess printed on a console is indistinguishable from a
+# measurement.
+#
+# WHAT IS NOT HERE, because something already reads it back: the cpufreq
+# governor and the worker pinning. appliance/selftest reads the governor out
+# of scaling_governor and compares the dataplane's own threads against
+# /sys/devices/system/cpu/isolated. A second answer to a question that
+# already has one is two components disagreeing about one box, which is worse
+# than either being wrong.
+# --------------------------------------------------------------------------
+
+#: The request reached the kernel and the kernel is doing it.
+EFFECT_TAKEN = "in-effect"
+#: The request was made and the machine is not doing it. The third state.
+EFFECT_REFUSED = "not-in-effect"
+#: Nothing on this box can say either way. The fourth state.
+EFFECT_UNREADABLE = "cannot-tell"
+#: Never asked for, so there is nothing to have taken.
+EFFECT_UNASKED = "not-requested"
+#: A parameter the tuner emits with no entry in READBACK below. On a box it
+#: is an honest fourth-state answer and a useless one; appliance/test_tune.py
+#: refuses it against the line the tuner really generates, so the only way to
+#: see one is to add a knob and forget its reader.
+EFFECT_NOREADER = "no-reader"
+
+
+def cpuset(spec):
+    """'1-3,8' -> {1,2,3,8}, and anything that is not a cpu list -> set().
+
+    Not parse_list() above, which raises: /sys/devices/system/cpu/nohz_full
+    reads the six characters `(null)` padded with spaces when the mask is
+    empty - measured on the Debian 6.1 kernel this appliance ships - and a
+    readback that raises is a readback that reports nothing at all.
+    """
+    out = set()
+    for part in (spec or "").replace(",", " ").split():
+        if "-" in part:
+            a, _, b = part.partition("-")
+            if a.isdigit() and b.isdigit():
+                out.update(range(int(a), int(b) + 1))
+        elif part.isdigit():
+            out.add(int(part))
+    return out
+
+
+def cmdline_params(text):
+    """{name: value} for a kernel command line; a bare flag maps to ''."""
+    out = {}
+    for tok in (text or "").split():
+        # Shell in the GRUB file, not a kernel parameter.
+        if tok.startswith("$"):
+            continue
+        k, sep, v = tok.partition("=")
+        out[k] = v if sep else ""
+    return out
+
+
+def requested_params(root):
+    """What the generated GRUB file asks the NEXT boot for."""
+    txt = read(os.path.join(root, "etc/default/grub.d/hexarouting.cfg"), "")
+    for line in (txt or "").splitlines():
+        if line.startswith("GRUB_CMDLINE_LINUX_DEFAULT="):
+            return cmdline_params(line.split("=", 1)[1].strip().strip('"'))
+    return {}
+
+
+def _rb_cpu_mask(sysfile, doing):
+    """The readback for a parameter whose effect is a cpu mask in /sys."""
+    def rb(root, want, booted):
+        path = os.path.join(root, sysfile)
+        if not os.path.exists(path):
+            return EFFECT_UNREADABLE, (
+                f"/{sysfile} is not there, so this kernel says nothing about "
+                f"which cpus it is {doing}")
+        missing = cpuset(want) - cpuset(read(path, ""))
+        if not missing:
+            return EFFECT_TAKEN, f"the kernel is {doing} cpu(s) {want}"
+        return EFFECT_REFUSED, (
+            f"cpu(s) {fmt_list(sorted(missing))} were asked for and the "
+            f"kernel is not {doing} them")
+    return rb
+
+
+def _rb_rcu_nocbs(root, want, booted):
+    """The offload threads, because nothing in /sys answers for rcu_nocbs.
+
+    Measured on the Debian 6.1 kernel this appliance ships: there is no
+    /sys/kernel/rcu_nocbs, and nothing under /sys/devices/system/cpu names the
+    offload mask. The only readback outside debugfs - which is root-only and
+    often not mounted - is that the kernel starts one callback thread per
+    offloaded cpu, named `rcuop/<cpu>`. That kernel has CONFIG_RCU_NOCB_CPU=y,
+    so their absence means the parameter did not take rather than that the
+    feature was compiled out.
+
+    A machine with no kernel thread visible at all is a container or a
+    synthetic tree, not a box that booted: there the answer is that nothing
+    here can look, which is not the same as the threads being absent.
+    """
+    procdir = os.path.join(root, "proc")
+    try:
+        pids = [p for p in os.listdir(procdir) if p.isdigit()]
+    except OSError:
+        pids = []
+    offloaded, saw_rcu = set(), False
+    for pid in pids:
+        comm = read(os.path.join(procdir, pid, "comm"), "") or ""
+        if comm.startswith(("rcu_gp", "rcu_preempt", "rcu_sched")):
+            saw_rcu = True
+        if comm.startswith(("rcuop/", "rcuos/")):
+            n = comm.split("/", 1)[1]
+            if n.isdigit():
+                offloaded.add(int(n))
+    if not saw_rcu:
+        return EFFECT_UNREADABLE, (
+            "no kernel thread is visible here, so the offload threads that "
+            "are the only readback for this cannot be counted")
+    missing = cpuset(want) - offloaded
+    if not missing:
+        return EFFECT_TAKEN, f"the kernel offloads callbacks off cpu(s) {want}"
+    return EFFECT_REFUSED, (
+        f"cpu(s) {fmt_list(sorted(missing))} were asked for and the kernel "
+        f"runs no offload thread for them, so RCU callbacks still land there")
+
+
+def _hugepage_kb(name):
+    """'1G' -> 1048576, '2M' -> 2048, anything else -> None."""
+    return {"1G": 1048576, "2M": 2048}.get(name)
+
+
+def _rb_hugepagesz(root, want, booted):
+    kb = _hugepage_kb(want)
+    if kb is None:
+        return EFFECT_UNREADABLE, f"'{want}' is not a page size this reads"
+    if hugepage_supported(root, kb):
+        return EFFECT_TAKEN, f"the kernel has a {want} pool"
+    return EFFECT_REFUSED, (
+        f"the kernel has no {want} pool at all, so this parameter was "
+        f"ignored: the cpu does not do that page size (#290)")
+
+
+def _rb_default_hugepagesz(root, want, booted):
+    have = None
+    _mem = read(os.path.join(root, "proc/meminfo"), "") or ""
+    for line in _mem.splitlines():
+        if line.startswith("Hugepagesize:"):
+            f = line.split()
+            if len(f) >= 2 and f[1].isdigit():
+                have = int(f[1])
+    if have is None:
+        return EFFECT_UNREADABLE, "/proc/meminfo names no Hugepagesize"
+    if have == _hugepage_kb(want):
+        return EFFECT_TAKEN, f"the default hugepage is {want}"
+    return EFFECT_REFUSED, (
+        f"{want} was asked for and /proc/meminfo reports a default hugepage "
+        f"of {have} kB")
+
+
+def _rb_hugepages(root, want, booted):
+    """How many pages of the size asked for on the SAME line are reserved.
+
+    The count means nothing without the size beside it, so this reads the
+    request rather than assuming 1G: a box that fell back to 2M asks for 512
+    times as many pages, and comparing that count against the 1G pool would
+    call a correctly tuned box broken.
+    """
+    size = booted.get("hugepagesz") or booted.get("default_hugepagesz") or "1G"
+    kb = _hugepage_kb(size)
+    if not want.isdigit():
+        return EFFECT_UNREADABLE, f"'{want}' is not a page count this reads"
+    if kb is None or not hugepage_supported(root, kb):
+        return EFFECT_REFUSED, (
+            f"{want} page(s) of {size} were asked for and this kernel has no "
+            f"{size} pool to put them in")
+    have = hugepages_reserved_for(root, kb)
+    if have >= int(want):
+        return EFFECT_TAKEN, f"{have} page(s) of {size} reserved"
+    return EFFECT_REFUSED, (
+        f"{want} page(s) of {size} were asked for and the kernel reserved "
+        f"{have}: without them the dataplane stays on the first-boot profile")
+
+
+def _rb_intel_iommu(root, want, booted):
+    try:
+        names = sorted(os.listdir(os.path.join(root, "sys/class/iommu")))
+    except OSError:
+        names = []
+    if names:
+        return EFFECT_TAKEN, f"the kernel exposes {', '.join(names)}"
+    return EFFECT_REFUSED, (
+        "the kernel exposes no IOMMU, so either this platform has none or "
+        "VT-d is off in firmware: the card can then only be bound through "
+        "uio_pci_generic, with no DMA protection behind it")
+
+
+def _rb_iommu_pt(root, want, booted):
+    """`iommu=pt` is the groups' type, and only groups can answer for it."""
+    d = os.path.join(root, "sys/kernel/iommu_groups")
+    try:
+        groups = sorted(os.listdir(d))
+    except OSError:
+        groups = []
+    types = set()
+    for g in groups:
+        t = read(os.path.join(d, g, "type"), "")
+        if t:
+            types.add(t)
+    if not types:
+        return EFFECT_UNREADABLE, (
+            "there is no IOMMU group here to carry a type, which the line "
+            "for intel_iommu has already said and this must not say twice")
+    if want != "pt":
+        return EFFECT_UNREADABLE, f"'{want}' is not a mode this reads back"
+    if types == {"identity"}:
+        return EFFECT_TAKEN, "every IOMMU group is in passthrough"
+    return EFFECT_REFUSED, (
+        f"passthrough was asked for and the groups are "
+        f"{', '.join(sorted(types))}: translation is still on the DMA path")
+
+
+def _rb_intel_idle(root, want, booted):
+    drv = read(os.path.join(
+        root, "sys/devices/system/cpu/cpuidle/current_driver"), "")
+    if not drv or drv == "none":
+        return EFFECT_UNREADABLE, (
+            "this kernel drives no idle state at all, so nothing here sleeps "
+            "and the parameter has nothing to act on. Usual on a VM")
+    if drv == "intel_idle":
+        return EFFECT_REFUSED, (
+            "intel_idle is still the idle driver, so the deep states it owns "
+            "are still reachable and a wake costs tens of microseconds")
+    return EFFECT_TAKEN, f"the idle driver is {drv}, not intel_idle"
+
+
+def _rb_max_cstate(root, want, booted):
+    """How many idle states cpu0 is left with.
+
+    state0 is POLL and is not a C-state, so `processor.max_cstate=N` leaves
+    N+1 directories. Counting them is the readback: the parameter caps what
+    the driver registers, and what it registered is what is there.
+    """
+    d = os.path.join(root, "sys/devices/system/cpu/cpu0/cpuidle")
+    try:
+        states = sorted(n for n in os.listdir(d) if n.startswith("state"))
+    except OSError:
+        return EFFECT_UNREADABLE, (
+            "cpu0 exposes no idle states, so there is nothing here to count")
+    names = ", ".join(read(os.path.join(d, s, "name"), "?") for s in states)
+    if want.isdigit() and len(states) <= int(want) + 1:
+        return EFFECT_TAKEN, f"cpu0 exposes {names} and nothing deeper"
+    return EFFECT_REFUSED, (
+        f"max_cstate={want} was asked for and cpu0 still exposes "
+        f"{len(states)} idle states: {names}")
+
+
+def _rb_thp(root, want, booted):
+    v = read(os.path.join(
+        root, "sys/kernel/mm/transparent_hugepage/enabled"), None)
+    if v is None:
+        return EFFECT_UNREADABLE, (
+            "this kernel exposes no transparent-hugepage control, so there "
+            "is nothing here to read the setting off")
+    m = re.search(r"\[(\w+)\]", v)
+    have = m.group(1) if m else v.strip()
+    if have == want:
+        return EFFECT_TAKEN, f"transparent hugepages are '{have}'"
+    return EFFECT_REFUSED, (
+        f"'{want}' was asked for and transparent hugepages are '{have}': "
+        f"khugepaged compacts in the background and stalls whichever cpu "
+        f"holds the page. It is runtime state, so something may have set it")
+
+
+#: How each parameter the tuner can put on the kernel command line is read
+#: back off a running box. Keyed on the parameter name exactly as render_grub
+#: above emits it, so that renaming one there and not here goes red rather
+#: than quiet.
+READBACK = {
+    "isolcpus": _rb_cpu_mask("sys/devices/system/cpu/isolated", "isolating"),
+    "nohz_full": _rb_cpu_mask("sys/devices/system/cpu/nohz_full",
+                              "running tickless on"),
+    "rcu_nocbs": _rb_rcu_nocbs,
+    "default_hugepagesz": _rb_default_hugepagesz,
+    "hugepagesz": _rb_hugepagesz,
+    "hugepages": _rb_hugepages,
+    "intel_iommu": _rb_intel_iommu,
+    "iommu": _rb_iommu_pt,
+    "intel_idle.max_cstate": _rb_intel_idle,
+    "processor.max_cstate": _rb_max_cstate,
+    "transparent_hugepage": _rb_thp,
+}
+
+#: The knobs that are not boot parameters, under the name install.sh gives
+#: appliance/etc/sysctl.conf on the box.
+SYSCTL_FILE = "etc/sysctl.d/99-hexarouting.conf"
+
+
+def sysctl_rules(root):
+    """The sysctls, as requested by the shipped file and as /proc/sys has them.
+
+    THE FILE IS NOT THE KNOB, twice over: it is applied once at boot and
+    anything may write /proc/sys afterwards, and a file in /etc/sysctl.d that
+    sorts after 99-hexarouting.conf overrides every line in it silently. The
+    only place either shows is /proc/sys.
+    """
+    txt = read(os.path.join(root, SYSCTL_FILE), None)
+    if txt is None:
+        return [(SYSCTL_FILE.rsplit("/", 1)[-1], EFFECT_UNASKED,
+                 f"/{SYSCTL_FILE} is not on this box, so none of the knobs "
+                 f"it carries was ever asked for")]
+    out = []
+    for line in txt.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "=" not in line:
+            continue
+        key, _, want = line.partition("=")
+        key, want = key.strip(), want.strip()
+        knob = os.path.join(root, "proc/sys", key.replace(".", "/"))
+        have = read(knob, None)
+        if have is None:
+            out.append((key, EFFECT_UNREADABLE,
+                        f"/proc/sys/{key.replace('.', '/')} is not there, so "
+                        f"this kernel has no such knob to answer for"))
+        elif have.split() == want.split():
+            out.append((key, EFFECT_TAKEN, f"the kernel reports {have}"))
+        else:
+            out.append((key, EFFECT_REFUSED,
+                        f"the file asks for {want} and the kernel reports "
+                        f"{have}: a file in /etc/sysctl.d sorts after it, or "
+                        f"sysctl has not been re-read since it changed"))
+    return out
+
+
+def irqbalance_rule(root):
+    """The IRQ ban, which is a file until a daemon has read it.
+
+    render_irqbalance() above writes /etc/default/irqbalance on every boot,
+    on the argument that the ban is then already there if irqbalance is
+    installed later. That is right, and it is also exactly the shape this
+    section is about: the ban does nothing until a RUNNING irqbalance has read
+    it, and the one that is running read whatever the file said when it
+    started. A daemon started before the tuner first wrote that file is
+    balancing interrupts onto the worker cores while the file beside it says
+    it is not.
+    """
+    txt = read(os.path.join(root, "etc/default/irqbalance"), None)
+    want = ""
+    for line in (txt or "").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line.startswith("IRQBALANCE_BANNED_CPULIST="):
+            want = line.split("=", 1)[1].strip().strip('"')
+    if not want:
+        return ("IRQBALANCE_BANNED_CPULIST", EFFECT_UNASKED,
+                "/etc/default/irqbalance bans no cpu, which is what a box "
+                "with no core to isolate is meant to look like")
+    procdir = os.path.join(root, "proc")
+    try:
+        pids = [p for p in os.listdir(procdir) if p.isdigit()]
+    except OSError:
+        pids = []
+    pid = None
+    for p in pids:
+        if (read(os.path.join(procdir, p, "comm"), "") or "") == "irqbalance":
+            pid = p
+            break
+    if pid is None:
+        return ("IRQBALANCE_BANNED_CPULIST", EFFECT_UNREADABLE,
+                "no irqbalance is running here, so the ban has nothing to act "
+                "on - and nothing is moving interrupts onto those cores "
+                "either. The file is there for the day one is installed")
+    # Binary, and not through read() above: an environment is NUL-separated
+    # and carries whatever the service manager put in it, so a byte that is
+    # not valid in this locale would raise out of a text-mode read and take
+    # the whole report with it.
+    try:
+        with open(os.path.join(procdir, pid, "environ"), "rb") as f:
+            env = f.read().decode("utf-8", "replace")
+    except OSError:
+        env = None
+    if env is None:
+        return ("IRQBALANCE_BANNED_CPULIST", EFFECT_UNREADABLE,
+                f"the environment of irqbalance (pid {pid}) cannot be read "
+                f"here, and it is the only place the ban it took can be seen")
+    got = ""
+    for entry in env.replace("\0", "\n").splitlines():
+        if entry.startswith("IRQBALANCE_BANNED_CPULIST="):
+            got = entry.split("=", 1)[1]
+    missing = cpuset(want) - cpuset(got)
+    if not missing:
+        return ("IRQBALANCE_BANNED_CPULIST", EFFECT_TAKEN,
+                f"the running irqbalance is banned from cpu(s) {want}")
+    return ("IRQBALANCE_BANNED_CPULIST", EFFECT_REFUSED,
+            f"the file bans cpu(s) {want} and the running irqbalance took "
+            f"'{got}': it started before that file was written, so restart "
+            f"irqbalance.service")
+
+
+def effective_tuning(root="/"):
+    """[(rule, state, detail)] for every rule this box has asked for.
+
+    Ordered as the tuner writes them - the kernel command line, then the
+    sysctls, then the IRQ ban - because that is the order an operator undoes
+    them in, and reading a console means reading a list top to bottom.
+    """
+    cmdline = read(os.path.join(root, "proc/cmdline"), None)
+    if cmdline is None:
+        return [("the kernel command line", EFFECT_UNREADABLE,
+                 "/proc/cmdline cannot be read here, so what this boot was "
+                 "given is unknown and nothing could be compared against it")]
+    want = requested_params(root)
+    booted = cmdline_params(cmdline)
+    rules = []
+    # ONE LINE AND NOT ELEVEN when the whole command line missed this boot.
+    # update-grub not having run, and the box not having rebooted since, are
+    # one fact about the box rather than one fact per parameter - and eleven
+    # copies of the same sentence on an 80-column console is twenty-two lines
+    # that push everything else off the screen, which is how a console stops
+    # being read.
+    if want and not any(n in booted for n in want):
+        return ([("the kernel command line", EFFECT_REFUSED,
+                  f"the generated file asks this boot for {len(want)} "
+                  f"parameter(s) and it carries none of them: update-grub "
+                  f"has not run since that file was written, or the box has "
+                  f"not rebooted since. Run update-grub and reboot")]
+                + sysctl_rules(root) + [irqbalance_rule(root)])
+    if not want:
+        rules.append((
+            "the kernel command line", EFFECT_UNASKED,
+            "/etc/default/grub.d/hexarouting.cfg asks the bootloader for "
+            "nothing, so no boot parameter of this product's is in effect. "
+            "It is written by hexarouting-tune.service on every boot"))
+    for name in sorted(want):
+        value = want[name]
+        if name not in booted:
+            rules.append((name, EFFECT_REFUSED,
+                          "the generated file asks for it and THIS boot's "
+                          "command line does not carry it: run update-grub "
+                          "and reboot"))
+        elif booted[name] != value:
+            rules.append((name, EFFECT_REFUSED,
+                          f"the generated file asks for {value} and this "
+                          f"boot got {booted[name]}: the box booted a "
+                          f"command line older than that file. Reboot"))
+        elif name not in READBACK:
+            rules.append((name, EFFECT_NOREADER,
+                          "this build has no way to read back what the "
+                          "kernel did with it, so whether it took cannot be "
+                          "said here"))
+        else:
+            state, detail = READBACK[name](root, value, booted)
+            rules.append((name, state, detail))
+    rules.extend(sysctl_rules(root))
+    rules.append(irqbalance_rule(root))
+    return rules
+
+
+def render_effective(rules):
+    """One rule per line, `<state> <rule>: <detail>`.
+
+    A FORMAT rather than prose, because appliance/selftest renders it onto an
+    80-column console and has to fold the detail without folding the verdict.
+    """
+    return "\n".join(f"{s} {name}: {d}" for name, s, d in rules)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1089,7 +1583,23 @@ def main():
                          "of interfaces the statistics segment has to hold")
     ap.add_argument("--write", action="store_true",
                     help="write to /etc/default/grub.d and /etc/vpp")
+    # The other direction entirely: everything else here computes what to
+    # ASK the box for, and this reports what the box DID with what it was
+    # asked. appliance/selftest runs it on every boot and renders it onto the
+    # console, because an appliance that says it is tuned when the kernel
+    # refused the parameter is worse than one that says nothing (#163).
+    ap.add_argument("--report-effective", action="store_true",
+                    help="report the tuning in effect on this box, rather "
+                         "than computing the tuning to request")
     a = ap.parse_args()
+
+    # BEFORE the topology is read. The report is about a box that has already
+    # booted, and a machine too small for a worker makes plan() produce
+    # nothing to report - while still having a command line, sysctls and an
+    # IRQ ban that either took or did not.
+    if a.report_effective:
+        print(render_effective(effective_tuning(a.sysfs_root)))
+        return 0
 
     topo = Topology(a.sysfs_root)
     p = plan(topo, a.interface, a.subscribers, a.max_workers,
