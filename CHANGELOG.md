@@ -77,6 +77,52 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Fifteen more refusal and report rows were wider than the console, and
+  nothing swept the file**
+  ([#359](https://github.com/andrediashexa/hexarouting/issues/359)).
+  [#355](https://github.com/andrediashexa/hexarouting/issues/355) split seven
+  refusals of this shape and fixed the seven it had measured. A static sweep of
+  `src/hexash/hexash.py` afterwards found **fourteen literal `print()` rows
+  still at 82 to 135 columns** against `config.CONSOLE_COLUMNS`, which is 79:
+  the two under `configure` on a silent dataplane, the one under `show
+  interface utilization` that says why a single sample is not a rate, both
+  utilisation footers, the RPKI "no cache connected" note, the forwarding-table
+  note, both OSPF Exchange rows, three of the IS-IS punt rows and both overload
+  rows. They now go through `print_prose`, each keeping the indent its site
+  already used.
+
+  A fifteenth was invisible to that sweep because it is an f-string: the
+  `configure` permission refusal printed *membership of hexa-cgnat allows CGNAT
+  configuration, hexa-admin allows everything* bare, at **85 columns**, while
+  `start shell` printed the same sentence through `print_prose` and wrapped it.
+  Two refusals about one fact disagreed about whether they fit the console.
+
+  Driven rather than read - `configure` on a box whose dataplane is not
+  answering is the screen a VM meets while it is still starting, and the advice
+  *'show version' says which daemons are up, and this usually clears within a
+  minute of boot* was at the END of the 129-column row, which is where an
+  80-column terminal folds it.
+
+  **The rule is on the file, not on fifteen screens.**
+  `test/test_console_width.py` parses every module of `src/hexash` with `ast`
+  and fails on any fully literal `print()` row wider than
+  `config.CONSOLE_COLUMNS`, read from the module rather than written into the
+  check. It prints what it does NOT claim on every run, because a rule read as
+  wider than it is, is how there came to be fourteen: **178 `print()` calls
+  carry an interpolated value** and **185 refusal verdict rows go through
+  `err()`**, which prefixes `error: ` and so reaches the console seven
+  characters wider than the source shows. Those depend on what is interpolated
+  - an IPv6 neighbour is 39 characters where an IPv4 one is 15 - and bounding
+  them needs the widest value each site can hold, which is a separate problem
+  that #359 leaves open and #276 solved for `say_finding` by driving it.
+
+  Shown red: the overload rows put back as bare `print()` calls, and the check
+  names both, at 93 and 135 columns. One needle moved. The IS-IS punt
+  assertion in `test/test_hexash_igp.py` was cut from a sentence that now folds
+  between `kernel` and `is unknown`, so it matches the flattened text the way
+  the apply, BGP and dataplane suites already do: what is asserted is the
+  sentence the operator reads, not the row the terminal breaks it on.
+
 * **Three more labs waited out a collector window chosen when they were
   written.** `tools/ipfix_collector.py` takes a number of seconds, and a lab
   that picks one and then waits it out has decided, at writing time, how long

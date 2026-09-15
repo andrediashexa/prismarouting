@@ -8437,10 +8437,14 @@ class Shell:
             return True
         if w[0] in ("configure", "conf"):
             if not self.caps:
-                self.err("configure: permission denied for a read-only "
-                         "account")
-                print(f"    membership of {GROUP_CGNAT} allows CGNAT "
-                      f"configuration, {GROUP_ADMIN} allows everything")
+                # The same sentence `start shell` refuses with, and it goes
+                # the same way now. Printed bare it reached the console at 85
+                # columns while the other one wrapped, so two refusals about
+                # one fact disagreed about whether they fit (#359).
+                self.err_prose(
+                    "configure: permission denied for a read-only account",
+                    f"membership of {GROUP_CGNAT} allows CGNAT configuration, "
+                    f"{GROUP_ADMIN} allows everything")
                 return True
             # Not while the dataplane is silent, and the reason is that BOTH
             # ways of proceeding are wrong.
@@ -8466,13 +8470,14 @@ class Shell:
             #
             # So neither - refuse, and say what to wait for (#211).
             if not self.dp.reachable():
-                self.err("the dataplane is not answering, so there is nothing "
-                         "to build a candidate from")
-                print("    a candidate built now would be missing the CGNAT "
-                      "half, and committing it would remove every pool")
-                print("    the box is probably still starting: 'show version' "
-                      "says which daemons are up, and this usually clears "
-                      "within a minute of boot")
+                self.err_prose(
+                    "the dataplane is not answering, so there is nothing to "
+                    "build a candidate from",
+                    "a candidate built now would be missing the CGNAT half, "
+                    "and committing it would remove every pool",
+                    "the box is probably still starting: 'show version' says "
+                    "which daemons are up, and this usually clears within a "
+                    "minute of boot")
                 return True
             self.candidate = self.running_config()
             self.mode = "config"
@@ -9768,10 +9773,10 @@ class Shell:
             print()
 
         if len(samples) < 2:
-            self.err("stopped before two samples, so no rate could be "
-                     "measured")
-            print("    a rate is a difference between two counters; one "
-                  "reading is a total since boot")
+            self.err_prose(
+                "stopped before two samples, so no rate could be measured",
+                "a rate is a difference between two counters; one reading is "
+                "a total since boot")
             return
 
         series, drops, reset = {}, {}, False
@@ -9851,16 +9856,18 @@ class Shell:
         elif peak:
             print(f"  bars are scaled to {self.rate(peak)}, the busiest "
                   "sample in this run -")
-            print("  the dataplane reports no link speed for these "
-                  "interfaces, so there is no line rate to be a share of")
+            print_prose("the dataplane reports no link speed for these "
+                        "interfaces, so there is no line rate to be a share "
+                        "of", indent="  ")
         else:
             print("  nothing passed any interface during the sample")
         for name in sorted(n for n in drops if n in series):
             print(f"  {name} dropped {drops[name]} packet(s) while this was "
                   "sampling")
         if reset:
-            print("  a counter went backwards - something cleared the "
-                  "interfaces mid-sample; that step reads as zero")
+            print_prose("a counter went backwards - something cleared the "
+                        "interfaces mid-sample; that step reads as zero",
+                        indent="  ")
 
     def show_one_interface(self, name, ifaces):
         """
@@ -11234,8 +11241,9 @@ class Shell:
             # does everything become notfound. Both halves matter: an operator
             # told "nothing is validated" would go looking for an outage that
             # has not started yet.
-            print("        validation is running on data the caches already "
-                  "sent, which expires; after that every route is notfound")
+            print_prose("validation is running on data the caches already "
+                        "sent, which expires; after that every route is "
+                        "notfound", indent=" " * 8)
 
     def bgp_prefixes(self):
         """Every prefix BGP holds, from FRR. Empty when there is no BGP."""
@@ -11280,8 +11288,8 @@ class Shell:
         in_fib = set(routes.parse_fib(out).get(0, {})) \
             if rc == 0 and out.strip() else set()
         if not in_fib:
-            print("  the dataplane is not answering, so what reached the "
-                  "forwarding table is unknown")
+            print_prose("the dataplane is not answering, so what reached "
+                        "the forwarding table is unknown", indent="  ")
         elif not prefixes:
             print(f"  no {what} prefixes to check against the forwarding "
                   "table")
@@ -11438,11 +11446,12 @@ class Shell:
             mtu = (ifaces.get(iface) or {}).get("mtuBytes", "?")
             print(f"  {rid} on {iface} is in {state}, which is where the two "
                   f"ends compare MTU; this end advertises {mtu}")
-            print("    an adjacency that stops here is the far end running a "
-                  "smaller one, and neither side logs a word about it")
-            print("    'show ospf interface' has both of this box's MTUs; "
-                  "'mtu <n>' sets them together, and 'ip ospf mtu-ignore' is "
-                  "the escape hatch")
+            print_prose("an adjacency that stops here is the far end "
+                        "running a smaller one, and neither side logs a word "
+                        "about it")
+            print_prose("'show ospf interface' has both of this box's MTUs; "
+                        "'mtu <n>' sets them together, and 'ip ospf "
+                        "mtu-ignore' is the escape hatch")
 
     def report_no_ospf_neighbour(self):
         """
@@ -11579,8 +11588,8 @@ class Shell:
         """
         punting, drops = self.isis_punt_state()
         if punting is None:
-            print("  the dataplane is not answering, so whether it is punting "
-                  "IS-IS to the kernel is unknown")
+            print_prose("the dataplane is not answering, so whether it is "
+                        "punting IS-IS to the kernel is unknown", indent="  ")
             return
         if punting:
             if silent_circuits:
@@ -11599,10 +11608,10 @@ class Shell:
                   "OSI protocol, which is the hellos arriving and being "
                   "dropped")
         else:
-            print("    and nothing has been counted in osi-input either, so "
-                  "the frames are not even arriving")
-        print("    committing an IS-IS instance through this VTY turns the "
-              "punt on; a box configured through vtysh never had it")
+            print_prose("and nothing has been counted in osi-input either, "
+                        "so the frames are not even arriving")
+        print_prose("committing an IS-IS instance through this VTY turns the "
+                    "punt on; a box configured through vtysh never had it")
 
     def show_isis_adjacency(self):
         data = self.frr_json("show isis neighbor json")
@@ -11655,11 +11664,11 @@ class Shell:
         rc, out = self.frr.show("show isis database")
         if rc != 0 or not isis_overload_set(out):
             return
-        print("  this box has the overload bit set: its neighbours will not "
-              "compute transit paths through it")
-        print("    traffic to anything behind this box drains away, which is "
-              "what 'set-overload-bit' is for and what it looks like when it "
-              "was left on")
+        print_prose("this box has the overload bit set: its neighbours will "
+                    "not compute transit paths through it", indent="  ")
+        print_prose("traffic to anything behind this box drains away, which "
+                    "is what 'set-overload-bit' is for and what it looks like "
+                    "when it was left on")
 
     def show_isis_interfaces(self):
         circuits = self.isis_circuits()

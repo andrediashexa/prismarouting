@@ -632,7 +632,13 @@ sh = shell({"show isis neighbor json": ISIS_NBR_NONE,
            dict(DP_STALLED, **{"show errors": VPP_ERRORS_OSI}))
 sh.osi_protos_enabled = lambda: None
 text = out_of(sh.show_isis_adjacency)
-check("whether it is punting IS-IS to the kernel is unknown" in text,
+# Flattened, because that sentence is now wrapped to the console and the
+# fold falls between "kernel" and "is unknown" (#359). What is asserted is
+# the sentence the operator reads, not the row the terminal happens to break
+# it on - the same reading `" ".join(said.split())` carries in the apply, BGP
+# and dataplane suites.
+check("whether it is punting IS-IS to the kernel is unknown"
+      in " ".join(text.split()),
       "'could not ask' is reported as not knowing, never as 'no'")
 check("NOT punting" not in text, "and no conclusion is drawn from it")
 
