@@ -1571,7 +1571,8 @@ Two consequences worth knowing, because both are visible on a screen:
 * `nat` on its own is **refused**, not entered:
 
   ```
-  error: nat: a hierarchy, not a block - 'nat cgnat pool <name>' or 'nat cgnat interface ...'
+  error: nat: a hierarchy, not a block
+      what is entered is 'nat cgnat pool <name>' or 'nat cgnat interface ...'
   ```
 
   `cgnat` was never a block either - what is entered is `cgnat pool NAME` - and

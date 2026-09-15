@@ -647,9 +647,12 @@ says("reload failed", _text, "error: routing reload failed", _rv)
 _sh = shell(frr=frr_stub(available=False))
 _sh.running_config = lambda: config.Config()
 _rv, _text = driven(_sh.apply, _target)
+# The VERDICT row, which is all of the refusal that `err` will not fold, and
+# the row an operator reads first and greps for. The advice under it is prose
+# now: FRR_SILENT_REFUSED is where both halves live, and this row is the one
+# whose width the product guarantees (#362).
 says("frr silent, applying", _text,
-     "error: routing is configured and FRR is not answering; check "
-     "'systemctl status frr'", _rv)
+     "error: routing is configured and FRR is not answering", _rv)
 
 # And the same box asked to CHECK rather than to apply. It is a separate call
 # site in the product and a separate box here: a commit that validates against
@@ -659,8 +662,7 @@ _sh = shell(frr=frr_stub(available=False))
 _sh.running_config = lambda: config.Config()
 _rv, _text = driven(_sh.apply, _target, check_only=True)
 says("frr silent, checking", _text,
-     "error: routing is configured and FRR is not answering; check "
-     "'systemctl status frr'", _rv)
+     "error: routing is configured and FRR is not answering", _rv)
 print("  FRR refusing, FRR absent at commit, and FRR absent at check")
 
 print("\n=== a read-only account reaching for configuration mode ===")
@@ -726,12 +728,16 @@ _logging = [
     ("a TCP collector port that is not one", Api(), "apply_logging",
      "cgnat logging tcp 10.0.0.5 port 99999",
      "error: cgnat logging tcp: port 99999 is not one"),
+    # The verdict names no word on purpose: this branch is reached both by a
+    # spelling the box does not have and by `cgnat logging udp` with nothing
+    # after it, where `udp` IS a spelling. The shapes under it are built from
+    # CGNAT_CONFIG and are asserted separately, below (#362).
     ("a logging statement in none of the shapes", Api(), "apply_logging",
      "cgnat logging sideways",
-     "error: usage: nat cgnat logging enable|disable | nat cgnat logging udp "
-     "<collector> src <source> [port <n>] | nat cgnat logging udp disable | "
-     "nat cgnat logging tcp <collector> [port <n>] | nat cgnat logging tcp "
-     "disable"),
+     "error: cgnat logging: not a shape this box takes"),
+    ("a logging statement that stops halfway", Api(), "apply_logging",
+     "cgnat logging udp",
+     "error: cgnat logging: not a shape this box takes"),
     ("the export turned on and refused", Api(refuse={"bpa_logging_set"}),
      "apply_logging", "cgnat logging enable",
      f"error: cgnat logging enable: {REASON}"),
@@ -757,6 +763,21 @@ for _label, _api, _method, _line, _want in _logging:
     _rv, _text = driven(getattr(shell(_api), _method), _line.split())
     says(_label, _text, _want)
 print(f"  {len(_logging)} ways the export does not arrive, each said out loud")
+
+# The shapes under that verdict, against the table they are built from. The
+# usage line they replaced was a second copy of the grammar and had drifted
+# from `?` - it offered `nat cgnat logging udp disable`, which `?` did not
+# (#362). Asserted against CGNAT_CONFIG rather than against a list here, so a
+# spelling added to the tree appears on this screen with nothing to keep in
+# step, and a list written out here would be the third copy.
+_rv, _text = driven(shell().apply_logging, "cgnat logging sideways".split())
+for _word, (_what, _hint) in hexash.CGNAT_CONFIG["logging"][1].items():
+    _row = (f"    {hexash.NAT_HIERARCHY} cgnat logging {_word}"
+            + (f" {_hint}" if _hint else ""))
+    check(_row in _text.splitlines(),
+          f"the refusal offers {_word!r} as the tree spells it: {_text!r}")
+print(f"  and the {len(hexash.CGNAT_CONFIG['logging'][1])} shapes it does "
+      f"take, each out of the table `?` answers from")
 
 
 def cfg_shell(**kw):
@@ -931,8 +952,7 @@ _users = [
     # else: an auth line with no passphrase is a user snmpd will not
     # authenticate, and the box would carry it looking configured.
     ("half an SNMPv3 credential", "snmp-user bob", "snmp-user", "auth sha",
-     "error: a v3 user takes 'auth <protocol> <passphrase>' and 'priv "
-     "<protocol> <passphrase>'"),
+     "error: a v3 user takes 'auth' or 'priv'"),
 ]
 for _label, _enter, _mode, _line, _want in _users:
     _sh = cfg_shell()
@@ -1230,8 +1250,7 @@ check(any(l.startswith(f"error: cannot start {_notaprogram}: ")
 
 _rv, _text = driven(shell().do_install)
 says("not the live medium", _text,
-     "error: this box is not running from the installation medium; 'install' "
-     "only exists there")
+     "error: this box is not running from the installation medium")
 
 # The other half, on a box that IS the live medium and whose installer is not
 # where it should be. Both the predicate and the path are replaced, and put
