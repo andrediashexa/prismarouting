@@ -770,7 +770,24 @@ else
   else
     HOLDER=drafts
   fi
+  GHBIN=$WORK/ghbin
+  mkdir -p "$GHBIN"
+  # `auth status` succeeds so the gate takes its asking path, and the issue
+  # list answers from a file so both readers see one tracker. The states the
+  # tool cares about are open and closed; the numbers are the ones the fixture
+  # roadmap names.
+  cat > "$GHBIN/gh" <<'GHSTUB'
+#!/bin/sh
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"issue list"*)  cat "$GH_ISSUES" 2>/dev/null ;;
+  *)               exit 0 ;;
+esac
+GHSTUB
+  chmod +x "$GHBIN/gh"
+  : > "$WORK/issues.json"
   RELEASE_WORK="$WORK/gate" RELEASE_GATE_CHECK_ONLY=1 \
+    PATH="$GHBIN:$PATH" GH_ISSUES="$WORK/issues.json" \
     sh "$REPO/tools/release-gate.sh" "$GATE_TAG" > "$WORK/gate.log" 2>&1 || true
   # The gate has checks before this one and any of them can refuse first. What
   # proves it reached the wiki step is one of the wiki step's own two lines,
@@ -827,7 +844,8 @@ has never run"
     bad "the gate left no clone to ask, so nothing here can tell 'asked and \
 agreed' from 'never asked'"
   else
-    if sh "$WORK/gate/tools/roadmap-state.sh" >/dev/null 2>&1; then
+    if PATH="$GHBIN:$PATH" GH_ISSUES="$WORK/issues.json" \
+       sh "$WORK/gate/tools/roadmap-state.sh" >/dev/null 2>&1; then
       RM_HOLDER=agree
     else
       RM_HOLDER=disagree

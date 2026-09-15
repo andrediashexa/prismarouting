@@ -77,6 +77,26 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`make test` reached the network, and `TESTING.md` said it did not.** The
+  assertion added earlier tonight that the release gate asks
+  `tools/roadmap-state.sh` drove the real gate, which runs `gh auth status` and
+  then queries the tracker - so every `make test` made two live GitHub calls,
+  on a suite whose own documentation says it "requires no root, no VPP and no
+  network". Flaky by construction, and false on a machine with no route out.
+  Measured with a recording `gh` on the path: **two calls before, none after.**
+  The tracker is a stub now, which does not weaken what is being measured: the
+  assertion is that the gate **asks** the holder and repeats its answer, and
+  both sides read the same stub, so a gate that stopped calling
+  `roadmap-state.sh` still diverges from it. The defect and the document
+  disagreeing is the shape this repository has spent the night closing;
+  whoever wrote that case committed it, and that was me.
+  The sibling suite `test/test_release_gate.sh` had it too, for the same
+  reason and with the same two calls, and `test/test_run_tests.sh` now refuses
+  it for good: a recording `gh` and `curl` on the path, over both suites, so a
+  tool that grows a call tomorrow is caught. It is a recording binary and not a
+  read of the source, because a suite that shells out through a helper is
+  invisible to a grep.
+
 * **The rest of `tools/`, measured refusal by refusal, and the one that could
   never have fired.** `tools/release-gate.sh` was swept yesterday; this is
   every other script in that directory. Read rather than grepped, the thirteen
