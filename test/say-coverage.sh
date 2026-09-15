@@ -737,16 +737,41 @@ awk -F'\t' '
   # specific message carries the less specific one as well, so the order
   # walk is what separates them and the total literal length is what decides
   # which message the line is spent on.
+  #
+  # AND WHERE EACH FRAGMENT LANDED, not only where the message started and
+  # stopped. Between two fragments of a message is a VALUE the message was
+  # handed, and the distinction is the whole of #369: the branch literal in
+  #
+  #   "    the sequence jumps from %llu to %llu: %llu entr%s removed from
+  #    the middle", ..., n == 1 ? "y was" : "ies were"
+  #
+  # reaches the screen inside the row its own format string printed. The
+  # format owns the words around the hole; it does not own what was poured
+  # into it, and a span that runs from the first fragment to the last owns
+  # both.
   function ordered(line, frags,   i, m, at, p, first) {
-    m = split(frags, f, "\001"); at = 1; first = 0
+    m = split(frags, f, "\001"); at = 1; first = 0; SPAN_N = 0
     for (i = 1; i <= m; i++) {
       p = index(substr(line, at), f[i])
       if (p == 0) return 0
       if (first == 0) first = at + p - 1
+      SPAN_N++
+      SPAN_FA[SPAN_N] = at + p - 1
+      SPAN_FB[SPAN_N] = at + p + length(f[i]) - 2
       at = at + p + length(f[i]) - 1
     }
     SPAN_A = first; SPAN_B = at - 1
     return 1
+  }
+  # A run of the one byte no needle can contain, to stand where the words of
+  # a message were. \001 is what the extraction joins fragments with, so
+  # split() has already made it impossible for a fragment to hold one: a
+  # fragment can never be found inside a struck-out region, and no match after
+  # the first can be manufactured out of the text of the message itself.
+  function struck(n,   s, i) {
+    s = ""
+    for (i = 1; i <= n; i++) s = s "\001"
+    return s
   }
   NR == FNR { if (literal($2) >= min) {
                 need[$2] = 1
@@ -771,36 +796,50 @@ awk -F'\t' '
   # - the question and the refusal together. Spending the line on its single
   # most specific message loses the other, and "not confirmed" then reads as
   # a branch nothing has run while the suite that arranged it is asserting
-  # on the very same output. So the best match is taken, its span is CUT
-  # OUT, and what is left is read again. The loop ends because the line only
-  # ever gets shorter.
+  # on the very same output. So the best match is taken, ITS OWN WORDS are
+  # struck out, and what is left is read again. The loop ends because every
+  # round strikes out at least `min` characters and nothing struck out can be
+  # matched again.
+  #
+  # ITS OWN WORDS AND NOT ITS SPAN, which is #369 and is the whole of it. The
+  # span of a format string runs from its first literal fragment to its last
+  # and swallows every value interpolated between them - and one of those
+  # values is `n == 1 ? "y was" : "ies were"`, a sentence of this program in
+  # its own right and the only place that branch can ever be seen. Struck out
+  # with the format that carried it, `ies were` was reported as a branch
+  # nothing had run while two labs were printing it. Both sites in
+  # bpa_audit.c, 560 and 647, were named unseen off a corpus that holds them.
+  #
+  # AND IT CANNOT MAKE A FALSE ATTRIBUTION, which is the property the whole
+  # reader rests on. Striking out leaves the row the length it was, so every
+  # position `ordered` reports is a position on the row the box printed, and
+  # a fragment found after a strike is found in text the box really wrote
+  # there. The cut this replaces did not have that property: it glued the
+  # text before a match to the text after it, and a needle could match across
+  # the seam - two halves of a word the console never showed side by side.
+  # Striking out is strictly the stricter of the two. What it ADMITS is only
+  # this: text the box printed and the winning message never claimed.
   {
     line = $0
-    # WHERE EACH MATCH WAS ON THE ROW AS PRINTED, carried through the cuts.
-    # The cut above is what lets the second message be found at all, and it
-    # moves everything after it left - so a position read off the cut line is
-    # not a position on the row the console showed. The map is rebuilt with
-    # the line, which is the same walk the cut already is. Kept only when
-    # somebody asked for the pieces; the two coverage callers pass no file and
-    # pay for none of it.
+    # No map from the read line back to the printed row, because they are the
+    # same row: a strike is length-preserving and a cut was not. #367 rebuilt
+    # the positions after every cut to measure a row where the console put it;
+    # there is nothing left to rebuild.
     nmatch = 0
-    if (seg != "") for (i = length(line); i >= 1; i--) orig[i] = i
     while (1) {
       bestlen = 0; best = ""
       for (nd in need)
         if (ordered(line, nd) && literal(nd) > bestlen) {
           bestlen = literal(nd); best = nd; ba = SPAN_A; bb = SPAN_B
+          bn = SPAN_N
+          for (i = 1; i <= bn; i++) { bfa[i] = SPAN_FA[i]; bfb[i] = SPAN_FB[i] }
         }
       if (best == "") break
       print best
-      if (seg != "") {
-        at[++nmatch] = orig[ba]; atend[nmatch] = orig[bb]; hit[nmatch] = best
-        j = 0
-        for (i = 1; i < ba; i++) keep[++j] = orig[i]
-        for (i = bb + 1; i <= length(line); i++) keep[++j] = orig[i]
-        for (i = 1; i <= j; i++) orig[i] = keep[i]
-      }
-      line = substr(line, 1, ba - 1) substr(line, bb + 1)
+      if (seg != "") { at[++nmatch] = ba; atend[nmatch] = bb; hit[nmatch] = best }
+      for (i = 1; i <= bn; i++)
+        line = substr(line, 1, bfa[i] - 1) struck(bfb[i] - bfa[i] + 1) \
+               substr(line, bfb[i] + 1)
     }
     if (seg == "") next
     # A ROW THIS READER COULD NOT KEY ON AT ALL, kept rather than dropped. A
@@ -1592,6 +1631,20 @@ reader, which is the recorder being broken and not the widths"
 }
 
 # One ceiling, which may only go down.
+#
+# AND IT NAMES WHAT IT IS HOLDING ON THE GREEN RUN, not only when it breaks.
+# A ceiling of 49 whose rows are printed only under `bad` is a number nobody
+# can act on: the one way to see the forty-nine is to lower the variable and
+# provoke a red run, and nobody lowers a variable whose contents they cannot
+# see. That is the opposite of what the rest of this file does - the NOT
+# MEASURED HERE block, the unattributed rows above it and the unseen list in
+# tools/plugin-says.sh all print what the check deliberately does not hold, on
+# every run, where the next person is standing. A ceiling is exactly that: the
+# rows this reader has looked at and is not holding.
+#
+# Guarded on the detail being there at all, because a ceiling of zero has
+# nothing to list and an empty heading under it reads as a listing that failed
+# to print.
 say_ceiling() {  # <found> <allowed> <what> <detail>
   if [ "$1" -gt "$2" ]; then
     bad "$1 $3, above the ceiling of $2. A row that does not fit is broken \
@@ -1604,5 +1657,6 @@ $4"
 anything"
   else
     ok "$1 $3, at the ceiling of $2"
+    [ -z "$4" ] || printf '%s\n' "$4"
   fi
 }
