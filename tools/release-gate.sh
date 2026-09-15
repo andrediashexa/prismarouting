@@ -414,6 +414,49 @@ echo "==> installing it to a disk and booting the disk"
   exit 1
 }
 
+# AND THE ARTIFACT THE BOXES ALREADY IN THE FIELD TAKE.
+#
+# A release that publishes only a medium publishes only a route that erases the
+# disk. Every box installed from a previous one has a year of connection
+# records on /var/log/hexarouting and no way to keep them across a version
+# change, which is #295: the in-place path existed for this script and for
+# lab/upgrade.sh, both of which have a build tree, and for nobody who bought
+# the product.
+#
+# BUILT HERE because an artifact nobody installs in the gate is an artifact
+# whose first installation is somebody's production box. build-upgrade.sh
+# unpacks what it has just packed and runs install.sh out of it into a
+# throwaway root, so reaching this line at all means this release's artifact
+# has been installed once, from its own tarball, on the machine that built it.
+#
+# WHAT THAT DOES NOT PROVE, said out loud: nothing here takes a BOOTED box from
+# the previous release to this one. That is lab/upgrade.sh's question and it
+# still asks it out of a source tree. The claim this gate can make about the
+# artifact is that it is complete and that it installs; the claim it cannot
+# make is that the box it upgraded still forwards.
+#
+# The name is derived rather than read back. It is the medium's with the
+# extension swapped, which is build-upgrade.sh's own rule, so this is an
+# assertion that the two builds of this tree still agree about which tree they
+# are - not a second calculation of the identity, which tools/version-stamp.sh
+# owns and this gate refuses "-dirty" and "-unverified" on above.
+echo "==> building the upgrade artifact"
+( cd "$WORK" && make upgrade-artifact ) > "$WORK/upgrade.log" 2>&1 || {
+  echo "error: the upgrade artifact for $TAG could not be built, or could not" >&2
+  echo "       be installed out of its own tarball. Publishing the medium" >&2
+  echo "       alone leaves every box already in the field with no route to" >&2
+  echo "       this version but a reinstall, which erases their records." >&2
+  tail -20 "$WORK/upgrade.log" >&2
+  exit 1
+}
+UPGRADE=${NAME%.iso}-upgrade.tar.gz
+[ -f "$WORK/$UPGRADE" ] || {
+  echo "error: the artifact build succeeded and $UPGRADE is not here, so the" >&2
+  echo "       medium and the artifact disagree about which tree they are." >&2
+  ls "$WORK"/*-upgrade.tar.gz 2>/dev/null | sed 's|^|       found: |' >&2
+  exit 1
+}
+
 now=$(sha256sum "$WORK/$NAME" | cut -d" " -f1)
 [ "$now" = "$MEDIUM_SHA" ] || {
   echo "error: the medium was rebuilt between the boot and now, so this gate" >&2
@@ -428,6 +471,10 @@ echo
 echo "==> $NAME is ready to publish"
 echo "    $WORK/$NAME"
 echo "    sha256 $(sha256sum "$WORK/$NAME" | cut -d' ' -f1)"
+# Beside it, and named in the same block, because a release page that carries
+# only the medium is a release that only people with an empty disk can take.
+echo "    $WORK/$UPGRADE"
+echo "    sha256 $(sha256sum "$WORK/$UPGRADE" | cut -d' ' -f1)"
 grep -E "^\s+\[ ok \] HexaRouting|$VERDICT_RE" "$WORK/boot.log" | sed 's/^/    /'
 grep -E "\[ ok \] the installed box can configure a pool" "$WORK/install.log" \
   | sed 's/^/    /'

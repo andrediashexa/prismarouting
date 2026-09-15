@@ -1610,18 +1610,29 @@ carries the medium's keys, which is the case the lab has no way to set up.
 
 An appliance already installed from a medium that carried them keeps that key
 until somebody regenerates it, and nothing above reaches it: the installer on
-such a medium is the one that shipped on it. The boot self-test is what reaches
-those boxes, on the console they are standing at. It compares each key's mtime
+such a medium is the one that shipped on it. So the box recognises the
+condition itself. `appliance/ssh-host-key-origin` compares each key's mtime
 with the moment its file was created on the filesystem, because `unsquashfs`
 restores the build container's mtime onto an inode made at install time and a
-key generated here cannot be older than its own file, and on mtime earlier than
-birth time it fails with the three commands that regenerate the set and the
-warning that every client pinning the old fingerprint will refuse to connect
-afterwards. Driving it against a root unpacked from
-`hexarouting-0.37.0-ab23bd7-dirty.iso` produces exactly that, naming
+key generated here cannot be older than its own file. Driving it against a root
+unpacked from `hexarouting-0.37.0-ab23bd7-dirty.iso` names
 `ssh_host_ecdsa_key ssh_host_ed25519_key ssh_host_rsa_key`. The reasoning for
 using the timestamp rather than the key comment or a list of published
-fingerprints is recorded at the check in `appliance/selftest`.
+fingerprints is recorded in that file, with the three commands that regenerate
+a set and the warning that every client pinning the old fingerprint will refuse
+to connect afterwards.
+
+It has two readers, and the second one is the point. The boot self-test renders
+it into the report it writes to `/dev/console`, which reaches whoever is at the
+console of a box that is booting. A racked appliance is reached over `ssh`, and
+that report is not in the journal either: the self-test's `say()` falls back to
+stdout only when the write to the console fails, so on a box whose console
+write succeeds `journalctl -u hexarouting-selftest` has nothing to show. The
+operator whose session can be sat in the middle of is the one logged in over
+it, so the VTY banner renders the same answer at every login, on a box that is
+affected and on no other. The commands are in neither reader: a repair printed
+on two screens from two files is a repair that can be corrected in one of them,
+and `test/test_ssh_host_key_origin.py` refuses a reader that spells it.
 
 ### The disk is verified before the install reports success
 

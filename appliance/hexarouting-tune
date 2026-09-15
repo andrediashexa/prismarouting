@@ -1048,7 +1048,22 @@ def render_report(p, vpp_base):
                    "the base file")
         out.append(f"#          ({vpp_base}):")
         out.append("#          it is concatenated ahead of these stanzas.")
-    out.append(f"# dataplane NIC PCI address: {p['nic_pci'] or '(not a PCI device)'}")
+    # THREE STATES, not two. `nic_pci` is None both when no card was named
+    # and when a named card's address could not be resolved, and those are
+    # nothing alike: the first is every fresh install, where there is no
+    # device for the sentence to be about. Printing "(not a PCI device)" there
+    # sent an operator looking for why their card was not PCI, which is the
+    # #286 dead end - and the line two above already says no NIC was given, so
+    # the report contradicted itself on the same screen (#331).
+    if p["nic_pci"]:
+        out.append(f"# dataplane NIC PCI address: {p['nic_pci']}")
+    elif p["nic_name"]:
+        out.append(f"# dataplane NIC PCI address: '{p['nic_name']}' was named "
+                   f"and no PCI address could be read for it, so DPDK has no "
+                   f"device to be given")
+    else:
+        out.append("# dataplane NIC PCI address: none, because no card has "
+                   "been given to the dataplane on this box")
     out.append(f"# low latency (C-states off, THP off): {'yes' if p['low_latency'] else 'no'}")
     out.append(f"# state: {'kernel tuned, full configuration' if p['tuned_now'] else 'FIRST BOOT, conservative configuration until reboot'}")
     return "\n".join(out)

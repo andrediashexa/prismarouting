@@ -697,6 +697,22 @@ mfield() {  # <clean console> <name>
   sed -n "s/^HXLAB $2=//p" "$1" | head -1 | tr -d '\r'
 }
 
+# The same marker, off the console of a machine that is STILL RUNNING.
+#
+# mfield reads the cleaned log, and that is only written when the machine
+# stops - so a value the driver needs in order to type its next line cannot
+# come from there. The cleaning is done here instead: \r goes because a serial
+# console ends every line with one, and the escape sequences go with it.
+#
+# Anchored at the start of a line, which is what makes the "HX""LAB" split in
+# every send() worth the ugliness: the console echoes what was typed, so the
+# typed line carries the two halves and only the box's own output carries the
+# marker joined up.
+live_field() {  # <name>
+  tr -d '\r' < "$CONSOLE_LOG" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' \
+    | sed -n "s/^HXLAB $1=//p" | head -1
+}
+
 login_root() {  # the first prompt the box offers, and root in the VTY
   wait_for "$NEW_HOST login:" 420 "$1" || return 1
   send "root"
@@ -2754,6 +2770,331 @@ if [ "$up" = 1 ] && [ "${CONSOLE_DRIVEN:-0}" = 1 ]; then
     echo "  [warn] the address changed over the power cycle:"
     echo "         before: ${MGMT_ADDR:-<unread>}"
     echo "         after:  ${RB_ADDR:-<unread>}"
+  fi
+fi
+
+
+# =========================================================================
+# PHASE 4: the box takes its own card, for real (#329)
+# =========================================================================
+#
+# Handing a card to the dataplane means unbinding it from its kernel driver
+# and binding it to vfio-pci or uio_pci_generic. NOTHING IN THIS REPOSITORY
+# HAS EVER PERFORMED THAT BIND. lab/one-nic.sh models it and says so in its
+# own header, because a container has no PCI device to hand DPDK. Every phase
+# above this one boots a real guest with a real virtio card and never asks the
+# box to take it - PHASE 2 asserts the opposite, that a box claims a NAMED
+# card or none at all, which is the check that stops a box swallowing its own
+# management port by accident. That check is right and it is not this one.
+#
+# So what was proven up to here is the DECISION and the boot-time replay. The
+# driver change itself was unmeasured, on the only path most deployments will
+# ever run: a virtual machine with one virtio card and no IOMMU, where
+# bind-dataplane-nic chooses uio_pci_generic.
+#
+# This phase asks the BOX to do it, through the VTY, with the one statement an
+# operator has: `dataplane interface <name>`. Nothing here unbinds anything,
+# writes driver_override, loads a module or creates a tap. A lab that
+# performed the step the product is missing would prove nothing at all - and
+# this is the step the product claims and had never been seen to make.
+#
+# The acceptance is two sentences, and the second is the one that matters:
+#   1. the card is off its kernel driver and on a driver DPDK can use
+#   2. THE BOX IS STILL REACHABLE FROM OUTSIDE, through the linux_cp pair the
+#      dataplane holds for it
+# A box that does (1) and not (2) has eaten its own management port, which on
+# a single-card machine means somebody walks to it.
+#
+# Runs only when PHASE 3 got the box back on the network. "It took its card"
+# about a machine that never arrived is a sentence with no subject, and a box
+# that was already unreachable cannot tell an unreachable handover from the
+# state it was in.
+if [ "$up" = 1 ] && [ "${CONSOLE_DRIVEN:-0}" = 1 ] && [ "${RB_REACHED:-1}" = 0 ]
+then
+  echo
+  echo "=========== PHASE 4: the box takes its own card ==========="
+  CONSOLE_LOG=/tmp/handover.log
+  CONSOLE_CLEAN=/tmp/handover-clean.log
+  # shellcheck disable=SC2086
+  boot_vm "${HANDOVER_SECS:-1200}" \
+    -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET
+
+  HO_DRIVEN=0
+  if login_root "the box to come up for the handover"; then
+    HO_DRIVEN=1
+    # ---------------------------------------------- what Linux holds, before
+    #
+    # READ OFF THE BOX rather than assumed from $MGMT_NET. The qemu line says
+    # which card is attached; it does not say what Linux named it, which slot
+    # it landed in or which driver claimed it, and every one of those is a
+    # thing this phase later asserts CHANGED. A before-value the lab wrote
+    # itself cannot show a change.
+    send 'M=$(ip -o -4 route list default | awk "{print \$5}"); echo "HX""LAB ho-if=$M"'
+    wait_for "HXLAB ho-if=" 60 "the box to name the card it is reached on" \
+      || fail=1
+    # The PCI address, by the same walk the product uses: /sys/class/net/<if>/
+    # device points at the device that OWNS the netdev, and on a virtio guest
+    # that is the virtio bus device whose PARENT is the PCI one. Stopping at
+    # the basename answers "not PCI" for every NIC in every VM, which is #286.
+    send 'D=$(readlink -f /sys/class/net/$M/device); case "$(basename $D)" in *:*:*.*) P=$(basename $D);; *) P=$(basename $(dirname $D));; esac; echo "HX""LAB ho-pci=$P"'
+    wait_for "HXLAB ho-pci=" 30 "the box to give the card's PCI address" \
+      || fail=1
+    send 'echo "HX""LAB ho-drv0=$([ -e /sys/bus/pci/devices/$P/driver ] && basename $(readlink -f /sys/bus/pci/devices/$P/driver) || echo none)"'
+    wait_for "HXLAB ho-drv0=" 30 "the box to name the card's driver" || fail=1
+    send 'echo "HX""LAB ho-addr0=$(ip -o -4 addr show dev $M | awk "{print \$4}")"'
+    wait_for "HXLAB ho-addr0=" 30 "the box to say what address it is on" \
+      || fail=1
+    send "exit"
+    wait_for "hexarouting> " 60 "the shell to close before the handover" \
+      || fail=1
+
+    # ------------------------------------------------------- the handover
+    #
+    # ONE STATEMENT, because that is all an operator has. On a box with one
+    # card there is no second card to name, the card has no dataplane name
+    # until the dataplane has claimed it, and there is no way to test a guess.
+    # If this refuses, the refusal is the finding: it is the product telling
+    # an operator with one card that they cannot use the product.
+    send "configure"
+    wait_for "entering configuration mode" 60 \
+      "the VTY to enter configuration mode for the handover" || fail=1
+    # live_field and not mfield: the clean console is only written when the
+    # machine stops, and this card has to be named while it is running.
+    send "dataplane interface $(live_field ho-if)"
+    HO_NAMED=0
+    if wait_for "[edit]" 60 "the VTY to answer the dataplane interface line"
+    then
+      HO_NAMED=1
+    fi
+    if [ "$HO_NAMED" = 0 ]; then
+      echo "  [FAIL] the VTY would not take 'dataplane interface' for the"
+      echo "         only card this box has, so a single-card box cannot be"
+      echo "         given a dataplane at all. What it said is in $LOG"
+      fail=1
+    fi
+    send "commit"
+    # The tuner is restarted by this commit and the tuning regenerates
+    # startup.conf, so this is slower than an ordinary commit. It is also the
+    # point where the box may stop answering on the network - the card is
+    # being taken off the kernel - which is why every reading from here on is
+    # taken at the CONSOLE and not over ssh.
+    if wait_for "commit complete" 600 "the handover commit to apply"; then
+      echo "  [ ok ] the VTY accepted the handover and the commit completed"
+    else
+      echo "  [FAIL] the handover commit did not complete. On a box with one"
+      echo "         card this is the whole product: there is no second card"
+      echo "         to give the dataplane instead"
+      fail=1
+    fi
+    send "exit"
+    wait_for "hexarouting> " 120 "the VTY to leave configuration mode" || fail=1
+
+    # --------------------------------- what the commit itself did to the card
+    #
+    # RECORDED, NOT ASSERTED. Whether the bind happens at the commit or at the
+    # next boot is the product's choice and it has changed: apply-tuning does
+    # the bind and the commit restarts the unit that runs it, while the VTY's
+    # own message tells the operator the card has not moved yet. One of those
+    # is wrong on this box and this is the reading that says which, so it is
+    # printed either way and the acceptance below is taken after the reboot,
+    # where both designs are supposed to end up.
+    send "start shell"
+    wait_for "entering /bin" 60 "the shell to open after the commit" || fail=1
+    # NAMED BY THE HOST, not by a variable in the guest. $P and $M were set in
+    # the shell that `exit` closed, and `start shell` opens a new one, so with
+    # them empty the box was asked about /sys/bus/pci/devices//driver and
+    # /sys/class/net/ - and answered "driver" and "present", about neither. A
+    # reading whose subject is empty does not fail; it answers about something
+    # else, which is the worse of the two.
+    _p=$(live_field ho-pci); _m=$(live_field ho-if)
+    send 'echo "HX""LAB ho-drv1=$([ -e /sys/bus/pci/devices/'"$_p"'/driver ] && basename $(readlink -f /sys/bus/pci/devices/'"$_p"'/driver) || echo none)"'
+    wait_for "HXLAB ho-drv1=" 60 \
+      "the box to say which driver holds the card after the commit" || fail=1
+    send 'echo "HX""LAB ho-netdev1=$([ -e /sys/class/net/'"$_m"' ] && echo present || echo gone)"'
+    wait_for "HXLAB ho-netdev1=" 30 \
+      "the box to say whether Linux still has the netdev" || fail=1
+    send "sync"
+    send "systemctl poweroff"
+  else
+    echo "  [FAIL] the box did not come up for the handover at all"
+    fail=1
+  fi
+  stop_vm 120
+
+  HO_IF=$(mfield "$CONSOLE_CLEAN" ho-if)
+  HO_PCI=$(mfield "$CONSOLE_CLEAN" ho-pci)
+  HO_DRV0=$(mfield "$CONSOLE_CLEAN" ho-drv0)
+  HO_ADDR0=$(mfield "$CONSOLE_CLEAN" ho-addr0)
+  HO_DRV1=$(mfield "$CONSOLE_CLEAN" ho-drv1)
+  HO_NETDEV1=$(mfield "$CONSOLE_CLEAN" ho-netdev1)
+  echo "  -- before: $HO_IF at $HO_PCI on $HO_DRV0, address $HO_ADDR0"
+  echo "  -- after the commit: driver ${HO_DRV1:-<unread>},"
+  echo "     kernel netdev ${HO_NETDEV1:-<unread>}"
+
+  # The one reading this phase exists for, and it is worth nothing unless the
+  # before-value was a kernel driver: a card that was already on uio_pci_generic
+  # proves no bind happened here.
+  case "$HO_DRV0" in
+    vfio-pci|uio_pci_generic|"")
+      echo "  [FAIL] the card was on '${HO_DRV0:-<unread>}' BEFORE the"
+      echo "         handover, so nothing below can show a bind. This phase"
+      echo "         is measuring a box that was already in the end state"
+      fail=1 ;;
+    *) echo "  [ ok ] the card started on a kernel driver ($HO_DRV0), so a"
+       echo "         change of driver below is a bind this box performed" ;;
+  esac
+fi
+
+# =========================================================================
+# PHASE 5: and it comes back with the card in the dataplane, still reachable
+# =========================================================================
+#
+# THE ACCEPTANCE. Everything above is preparation: what an operator gets is a
+# box that forwards on the card AND that they can still log into. The two have
+# to be true at the same time, on the same boot, with nothing typed at the
+# console before they are asked - which is why the network reading is taken
+# first, before this phase logs in at all.
+if [ "${HO_DRIVEN:-0}" = 1 ]; then
+  echo
+  echo "=========== PHASE 5: it comes back holding its card ==========="
+  CONSOLE_LOG=/tmp/handover2.log
+  CONSOLE_CLEAN=/tmp/handover2-clean.log
+  # shellcheck disable=SC2086
+  boot_vm "${HANDOVER_SECS:-1200}" \
+    -drive file="$DISK",format=qcow2,if=virtio $MGMT_NET
+
+  # FIRST, and before anything is typed. On this boot the card belongs to the
+  # dataplane and the address is on a linux_cp pair, so a connection completing
+  # here is the whole of what #303's handover promised: the box kept the path
+  # it is reached on while giving the card away.
+  HO_BANNER=$(reachable_over_the_network 480)
+  if [ $? = 0 ]; then
+    echo "  [ ok ] it answers from outside with the card in the dataplane:"
+    echo "         $HO_BANNER"
+  else
+    echo "  [FAIL] after the handover the box does not answer on the network:"
+    echo "         ${HO_BANNER:-<nothing at all>}"
+    echo "         The card moved and the management path did not come with"
+    echo "         it. On a box with one NIC that means somebody walks to it,"
+    echo "         which is the outcome the handover exists to prevent"
+    fail=1
+  fi
+
+  if login_root "the box to come back holding its card"; then
+    send 'echo "HX""LAB ho-drv2=$([ -e /sys/bus/pci/devices/'"$HO_PCI"'/driver ] && basename $(readlink -f /sys/bus/pci/devices/'"$HO_PCI"'/driver) || echo none)"'
+    wait_for "HXLAB ho-drv2=" 60 \
+      "the box to say which driver holds the card now" || fail=1
+    send 'echo "HX""LAB ho-netdev2=$([ -e /sys/class/net/'"$HO_IF"' ] && echo present || echo gone)"'
+    wait_for "HXLAB ho-netdev2=" 30 \
+      "the box to say whether Linux still has the card" || fail=1
+    # The address, wherever it now lives. NOT looked for on a named pair: the
+    # pair's name is the dataplane's business and a lab that knew it would be
+    # asserting against its own guess rather than against the box.
+    send 'echo "HX""LAB ho-addr2=$(ip -o -4 addr show | awk "\$4 ~ /^[0-9]/ {print \$2\"=\"\$4}" | grep -v "^lo=" | tr "\n" " ")"'
+    wait_for "HXLAB ho-addr2=" 30 \
+      "the box to say where its address is now" || fail=1
+    # WHAT THE DATAPLANE ITSELF SAYS IT HAS. The sysfs readings above prove
+    # Linux gave the card up; this proves somebody took it. A box where the
+    # card is unbound and VPP has nothing is WORSE than one that never
+    # started: it forwards nothing and the kernel cannot reach the wire
+    # either, and the two states are indistinguishable from outside.
+    #
+    # Asked of the dataplane rather than of a screen that reports it, because
+    # this is the one question where a message that has drifted would pass:
+    # every other reading here is a fact in sysfs.
+    send 'echo "HX""LAB ho-dpif=$(vppctl show interface 2>/dev/null | tr -d "\r" | awk "/^[^ ]/ {print \$1}" | grep -v "^Name$" | grep -v "^local0$" | tr "\n" " ")"'
+    wait_for "HXLAB ho-dpif=" 60 \
+      "the dataplane to list the interfaces it holds" || fail=1
+    send "exit"
+    wait_for "hexarouting> " 60 "the shell to close" || fail=1
+    # And in the operator's own words, on the console, so the log carries what
+    # they would see. The confirmed-commit half of this handover is measured
+    # in lab/one-nic.sh, against a real dataplane, including the revert when
+    # nobody confirms; it is not repeated here.
+    send "show interface"
+    wait_for "hexarouting> " 120 "the dataplane to list its interfaces" \
+      || fail=1
+    send "start shell"
+    wait_for "entering /bin" 60 "the shell to reopen" || fail=1
+    send "sync"
+    send "systemctl poweroff"
+  else
+    echo "  [FAIL] the box did not come back after the handover at all"
+    fail=1
+  fi
+  stop_vm 120
+
+  HO_DPIF=$(mfield "$CONSOLE_CLEAN" ho-dpif)
+  HO_DRV2=$(mfield "$CONSOLE_CLEAN" ho-drv2)
+  HO_NETDEV2=$(mfield "$CONSOLE_CLEAN" ho-netdev2)
+  HO_ADDR2=$(mfield "$CONSOLE_CLEAN" ho-addr2)
+
+  # 1. THE BIND. Compared against the driver the card started on, which was
+  # read off this same box before anything was typed, and against the list of
+  # drivers DPDK can use - not against a single name, because which of the two
+  # a box gets depends on whether it has an IOMMU and both are correct.
+  case "$HO_DRV2" in
+    vfio-pci|uio_pci_generic)
+      echo "  [ ok ] the card is bound to $HO_DRV2: the box took it off"
+      echo "         $HO_DRV0 and gave it to DPDK. This is the first time"
+      echo "         anything in this repository has performed that bind" ;;
+    "")
+      echo "  [FAIL] the card's driver could not be read at $HO_PCI, so"
+      echo "         nothing here knows whether the bind happened"
+      fail=1 ;;
+    *)
+      echo "  [FAIL] after the handover the card is still on '$HO_DRV2'."
+      echo "         It started on '$HO_DRV0'. The box was asked for the"
+      echo "         card, said the commit completed, and never bound it -"
+      echo "         so DPDK has no device and the box forwards nothing"
+      fail=1 ;;
+  esac
+
+  # 2. AND LINUX GAVE IT UP. A card bound for DPDK has no kernel netdev: if
+  # one is still there, something re-created it, and the kernel would go on
+  # answering ARP for an address off the wire beside a dataplane that thinks
+  # it owns the port. That is the state lab/one-nic.sh has to model around,
+  # and here it can be read.
+  case "$HO_NETDEV2" in
+    gone) echo "  [ ok ] and Linux no longer has $HO_IF, which is what a bind"
+          echo "         for DPDK leaves behind" ;;
+    present)
+      echo "  [FAIL] Linux still has the netdev $HO_IF after the handover."
+      echo "         Two stacks now believe they own the port"
+      fail=1 ;;
+    *) echo "  [FAIL] whether Linux still has $HO_IF was not read"; fail=1 ;;
+  esac
+
+  # 3. AND THE ADDRESS IS SOMEWHERE ELSE. The card it was on does not exist
+  # any more, so an address still on $HO_IF would mean the handover never
+  # happened, and no address at all would mean it happened and took the
+  # management path with it.
+  case "$HO_ADDR2" in
+    "")
+      echo "  [FAIL] the box came back with no address on any interface"
+      echo "         ('${HO_ADDR2:-<unread>}'). The card went to the"
+      echo "         dataplane and the management path did not follow"
+      fail=1 ;;
+    *"$HO_IF="*)
+      echo "  [FAIL] the address is still on $HO_IF, so the card never left"
+      echo "         the kernel: $HO_ADDR2"
+      fail=1 ;;
+    *) echo "  [ ok ] and the address moved off the card to $HO_ADDR2" ;;
+  esac
+
+  # 4. AND SOMEBODY TOOK IT. local0 is VPP's loopback and is there on a box
+  # that holds nothing, so it is excluded above: what is left is a real
+  # interface or an empty string, and an empty string here is the exact screen
+  # the handover was reported broken on - 'show interface' listing local0 and
+  # nothing else, on a box whose card Linux had already given up.
+  if [ -n "$HO_DPIF" ]; then
+    echo "  [ ok ] and the dataplane holds it: $HO_DPIF"
+  else
+    echo "  [FAIL] the dataplane has no interface but local0, on a box whose"
+    echo "         card the kernel has already released. Nothing owns the"
+    echo "         port: this is the state an operator sees as 'show"
+    echo "         interface' listing local0 and nothing else"
+    fail=1
   fi
 fi
 

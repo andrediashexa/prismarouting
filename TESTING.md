@@ -414,7 +414,17 @@ make iso                       # ~10 min, installs the image tools it needs
 make test-iso                  # builds, then boots and demands "HexaRouting ready"
 make test-appliance            # generates startup.conf and starts VPP with it
 make test-install              # installs onto a blank disk, boots that disk
+make upgrade-artifact          # seconds, no root and no container
 ```
+
+`make upgrade-artifact` is the other half of what a release publishes: the
+medium is the route for an empty disk, and the artifact is the route for a box
+already carrying subscribers, which installing the medium would erase along
+with a year of connection records (#295). It needs the plugin built and nothing
+else, and it proves itself by unpacking what it has just packed and installing
+it into a throwaway directory. `test/test_upgrade_artifact.sh` runs in `make
+test` and drives the whole path - the build, the install onto a box that is a
+directory, and the refusals - in about a second.
 
 `make test-install` - and `sh tools/lab.sh install-iso`, which is the same lab -
 does more than boot the disk it just installed: it **drives that box's serial

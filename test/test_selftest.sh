@@ -2250,6 +2250,48 @@ if said '\[FAIL\] no ssh host keys in /etc/ssh: sshd cannot start'; then
 else
   bad "a box with no host keys was not reported: $(printf '%s\n' "$OUTPUT" | grep -i "host key" || echo '<nothing about host keys>')"
 fi
+# And the repair for THAT box, which is not the other one: there is nothing to
+# remove, and an operator typing a removal at the console of a box whose sshd
+# will not start is deleting from the only way back in. Rendered from the
+# holder's own rows rather than written out here.
+if said '^ *ssh-keygen -A$' && said '^ *systemctl restart ssh$' \
+   && ! said 'rm /etc/ssh/ssh_host'; then
+  ok "and gives the two commands that make a set, without the removal"
+else
+  bad "the no-keys repair is not the holder's: $(printf '%s\n' "$OUTPUT" | grep -E 'ssh-keygen|systemctl restart ssh|rm /etc/ssh' | tr '\n' ' ')"
+fi
+
+echo "=== and a box where the holder cannot be asked at all ==="
+# A check that could not run reads exactly like a check that agreed, and what
+# this one is about is whether an ssh session to this box can be impersonated.
+# The self-test is not the banner: its job is to report on the box, so a
+# question it could not put is a finding and it says so.
+#
+# Arranged by running a copy of the self-test from a directory with no holder
+# beside it, which is how it would look on a box the installer reached with an
+# older manifest - the self-test finds the holder with `dirname "$0"`.
+mkdir -p "$FAKE/nohold"
+cp "$REPO/appliance/selftest" "$FAKE/nohold/selftest"
+ST="$FAKE/nohold/selftest"
+run
+ST="$REPO/appliance/selftest"
+if said '\[FAIL\] cannot tell where the ssh host keys were made'; then
+  ok "it is a failed check rather than silence"
+else
+  bad "a self-test that could not ask said nothing about it: $(printf '%s\n' "$OUTPUT" | grep -i "host key" || echo '<nothing about host keys>')"
+fi
+# The path, on a row of its own, because it is the one thing that turns this
+# into something somebody can act on rather than a fact about the box.
+if said "^ *$FAKE/nohold/ssh-host-key-origin$"; then
+  ok "and it names the program that did not answer, whole and on its own row"
+else
+  bad "it did not say which program it could not run: $(printf '%s\n' "$OUTPUT" | grep -A 6 -i 'cannot tell where the ssh host keys' | tail -2 || echo '<no such report>')"
+fi
+if said '\[ ok \] the ssh host keys were generated on this box'; then
+  bad "a box nothing could be measured on was passed"
+else
+  ok "and it does not read as a box whose keys are fine"
+fi
 
 echo "=== a live medium, which carries no host keys on purpose ==="
 # #245 removed them from the image and masked sshd there. Reporting that as a
@@ -2294,25 +2336,37 @@ else
   bad "it did not name the unreadable key"
 fi
 
-echo "=== and the comment is not what any of that is decided on ==="
-# The measurement behind the choice, kept as an assertion because the comment
-# is the obvious signal and reads as the right one. `chroot "$MNT" ssh-keygen
-# -A` stamps the live medium's hostname into a key it generates on the target,
-# because gethostname() is not a filesystem property: a correctly installed
-# box named "cgnat-rj-01" carries "root@hexarouting". Reading the comment
-# would report it, and hexarouting-install would be the thing making the
-# evidence.
-# Comments and printed text are dropped: the remediation the check PRINTS
-# names the .pub files, because an operator has to delete them too. What must
-# not appear is a .pub, a fingerprint or a hostname being READ to decide.
-READS=$(sed -n '/were these ssh host keys made on this box/,/A live system says so/p' \
-          "$REPO/appliance/selftest" \
-        | grep -vE '^ *(#|say |say_list |bad |ok |\"|\\\\)' \
-        | grep -nE '\.pub|ssh-keygen -l|/etc/hostname|gethostname' || true)
-if [ -z "$READS" ]; then
-  ok "no .pub, no fingerprint and no hostname is read to decide it"
+echo "=== and this file decides none of it: it renders what the holder says ==="
+# WHERE THE RULE WENT, and why this assertion replaced the one that used to be
+# here. The mtime-against-birth-time rule, the rejected alternatives and the
+# repair all live in appliance/ssh-host-key-origin now, because the VTY banner
+# has to reach the same answer for an operator who logged in over ssh - and
+# that operator is the one the answer is about (#248). Everything about the
+# signal itself, including the .pub and hostname reading that would accuse a
+# correctly installed box, is asserted against the holder in
+# test/test_ssh_host_key_origin.py.
+#
+# What is left for this file to hold is that it did not keep a copy. A rule
+# implemented twice is a rule that can disagree with itself about whether an
+# operator is being impersonated, and the copy would go on passing every
+# assertion above it.
+DECIDES=$(sed -n '/were these ssh host keys made on this box/,/A live system says so/p' \
+            "$REPO/appliance/selftest" \
+          | grep -vE '^ *(#|say |say_list |bad |ok |\"|\\\\)' \
+          | grep -nE 'stat |%W|%Y' || true)
+if [ -z "$DECIDES" ]; then
+  ok "it reads no timestamp of its own: the rule has one holder"
 else
-  bad "it decides on the key comment or the hostname, which a correctly installed box does not match: $READS"
+  bad "the self-test decides this itself as well as the holder, so the two can disagree: $DECIDES"
+fi
+# On a line that RUNS, not in the paragraph above it that explains where the
+# rule went: a comment naming the holder is what a copy of the rule would be
+# left sitting under.
+if sed -n '/were these ssh host keys made on this box/,/A live system says so/p' \
+     "$REPO/appliance/selftest" | grep -vE '^ *#' | grep -q 'ssh-host-key-origin'; then
+  ok "and it names the holder it renders"
+else
+  bad "the self-test reaches this answer without running appliance/ssh-host-key-origin"
 fi
 
 echo "=== a box with nothing wrong with it, which is every box in the field (#298) ==="

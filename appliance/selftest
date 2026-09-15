@@ -1519,72 +1519,39 @@ fi
 
 # --- were these ssh host keys made on this box, or handed to it? ---
 #
-# Every ISO this project published up to and including 0.66.0 carried the host
-# keys openssh-server's postinst generated inside the build container, private
-# halves included. hexarouting-install unpacks that squashfs onto the disk and
-# then enables sshd with PermitRootLogin yes, so every box installed from one
-# medium answers with the SAME key, and its private half is in the download.
-# build-iso.sh removes them from the image and the installer generates a set
-# per box (#245), which fixes every box installed FROM NOW ON and does nothing
-# for the ones already racked. Those boxes are still answering with it and
-# nothing told their operators (#248). This is what tells them.
+# THE RULE AND THE REPAIR ARE NOT IN THIS FILE. appliance/ssh-host-key-origin
+# holds both, because the VTY banner has to reach the same answer for an
+# operator who logged in over ssh - and that operator is the one the answer is
+# about (#248). Its header carries the argument whole: why the timestamp and
+# not the key's comment, why no list of published fingerprints, and why the
+# report this file writes was reaching nobody who was not at the console at
+# boot.
 #
-# THE SIGNAL IS THE TIMESTAMP, and not the key's comment, which was the
-# obvious candidate and is wrong. `ssh-keygen -A` writes "<user>@<hostname>"
-# into the comment, and the hostname it uses is the one gethostname() answers,
-# which chroot does not change: the installer runs `chroot "$MNT" ssh-keygen
-# -A`, so a box's own freshly generated key is stamped with the LIVE MEDIUM's
-# hostname - measured as "root@hexarouting" - whatever the operator named the
-# box. Comparing the comment against the hostname would therefore report every
-# correctly installed box with a name of its own. The comment cannot separate
-# the two cases and is not read here.
-#
-# What does separate them is that a key generated on this box cannot be older
-# than the moment its file was created on this filesystem, and a key that
-# arrived inside the image is: `unsquashfs` restores the mtime the build
-# container wrote, onto an inode the installer creates at install time. The
-# published 0.37.0 medium carries keys stamped 2026-09-08 13:43, three minutes
-# before its squashfs was made, and unpacking it today gives files whose mtime
-# is that and whose birth time is now. So mtime EARLIER than birth time means
-# the contents are older than the file, which nothing that was written here
-# can be.
-#
-# It costs nothing kept in the tree. A list of the fingerprints every release
-# shipped would be the other way to recognise them, and it is the opposite of
-# what #245 just did - key material back in the repository, covering only the
-# releases somebody remembered to add.
-#
-# A restore of /etc/ssh from a backup made with `tar -p` or `cp -p` lands here
-# too, and reads as a key that was not made on this box, which is what it is.
-KEYDIR="$ROOT/etc/ssh"
-handed_keys=""
-own_keys=0
-unread_keys=""
-for _k in "$KEYDIR"/ssh_host_*_key; do
-  [ -f "$_k" ] || continue
-  # Metadata only. The check recognises a shape and never reads a private key.
-  _t=$(stat -c '%Y %W' "$_k" 2>/dev/null)
-  _m=${_t%% *}; _b=${_t##* }
-  # %W is 0 when the filesystem does not record a birth time, and stat says
-  # nothing at all when it could not read the file. Without both numbers there
-  # is nothing to compare, and silence would read as a pass.
-  case "$_m $_b" in
-    *[!0-9\ ]*|""|" "*|*" ") unread_keys="$unread_keys ${_k##*/}" ;;
-    *) if [ "$_b" -le 0 ]; then
-         unread_keys="$unread_keys ${_k##*/}"
-       elif [ "$_m" -lt "$_b" ]; then
-         handed_keys="$handed_keys ${_k##*/}"
-       else
-         own_keys=$((own_keys + 1))
-       fi ;;
-  esac
-done
+# What is decided HERE is how that answer is rendered on a boot console, which
+# is this file's own job and no other reader's.
+ORIGIN=$(dirname "$0")/ssh-host-key-origin
+origin=$("$ORIGIN" "$ROOT" 2>/dev/null || true)
+handed_keys=$(printf '%s\n' "$origin" | sed -n 's/^handed *//p')
+unread_keys=$(printf '%s\n' "$origin" | sed -n 's/^unreadable *//p')
+own_keys=$(printf '%s\n' "$origin" | sed -n 's/^own //p')
 
 # The live image carries no host keys at all and masks sshd, which is #245's
 # half and is correct rather than a fault. Saying "no host keys" there would
 # fail a healthy medium on every boot.
 if [ -d "$ROOT/run/live/medium" ] || [ -f "$ROOT/run/live/overlay" ]; then
   :
+elif [ -z "$own_keys" ]; then
+  # The holder answered nothing, so this box knows nothing about its own keys.
+  # Not silence, and not a warning: a check that could not run reads exactly
+  # like a check that agreed, and what this one is about is whether an ssh
+  # session to this box can be impersonated.
+  bad "cannot tell where the ssh host keys were made"
+  say_list "        " "The program that answers it did not run, so nothing on" \
+    "this box knows whether its ssh host keys were generated here or came" \
+    "in with the system image - and a box installed from a medium that" \
+    "carried keys answers with a key whose private half is in the published" \
+    "download."
+  say_list "          " "$ORIGIN"
 elif [ -n "$handed_keys" ]; then
   bad "the ssh host keys were not generated on this box"
   say_list "        " "They are older than the filesystem they sit on, so they" \
@@ -1593,11 +1560,16 @@ elif [ -n "$handed_keys" ]; then
     "published download: an ssh session to this box can be impersonated," \
     "and the client will not object, because the fingerprint it pinned is" \
     "the fingerprint it was handed."
-  say_list "          " "${handed_keys# }"
+  say_list "          " "$handed_keys"
   say "        regenerate them, at the console:"
-  say "          rm /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub"
-  say "          ssh-keygen -A"
-  say "          systemctl restart ssh"
+  # Printed from the holder rather than spelled here. A command an operator
+  # copies off a console has to be the command the VTY banner gave them and
+  # the command the repair was measured with, and three files that each write
+  # it out are three files that can disagree about it.
+  printf '%s\n' "$origin" | sed -n 's/^fix /          /p' | \
+  while IFS= read -r _r; do
+    say "$_r"
+  done
   say_list "        " "Every client that pinned the old fingerprint will then" \
     "refuse to connect and report that the host key changed. That is this" \
     "being fixed, not an attack, and it is the cost of fixing it."
@@ -1607,12 +1579,14 @@ elif [ "$own_keys" = 0 ] && [ -z "$unread_keys" ]; then
   bad "no ssh host keys in /etc/ssh: sshd cannot start"
   say_list "        " "Until a set exists this box is reachable only at the" \
     "console. There:"
-  say "          ssh-keygen -A"
-  say "          systemctl restart ssh"
+  printf '%s\n' "$origin" | sed -n 's/^generate /          /p' | \
+  while IFS= read -r _r; do
+    say "$_r"
+  done
 elif [ -n "$unread_keys" ]; then
   # Also not a pass: a check that cannot see is not a check that agrees.
   warn "cannot tell where these ssh host keys were made:"
-  say_list "          " "${unread_keys# }"
+  say_list "          " "$unread_keys"
   say_list "         " "their birth time is not recorded, so there is nothing" \
     "to compare their contents against."
 else

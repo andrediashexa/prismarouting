@@ -465,8 +465,11 @@ said "$UP" "this is the build the dataplane was loaded with at the last boot" \
 prints. Two copies of one paragraph are two things to keep in step" \
   || ok "and does not repeat what that reading says"
 # #295: there is no install.sh on an installed box, no source tree and no
-# toolchain. A closing sentence that told the operator to run this again would
-# be sending them to a file that is not there.
+# toolchain. What an operator has is the unpacked upgrade artifact they ran
+# this from, which they may well have deleted by the time they read the screen,
+# and a box they may have reached this way after a reinstall - so a closing
+# sentence that told them to run this again would be sending them to a file
+# that is very likely not there.
 said "$UP" "run this installer again" \
   && bad "the closing words tell the operator to re-run an installer that is \
 not on their box (#295)" \

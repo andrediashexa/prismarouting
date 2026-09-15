@@ -186,13 +186,14 @@ release for the same subscriber and the same port range.
 ## Stopping the box closes them too, and a crash cannot
 
 A box that is stopped is the commonest of the three cases, not the rarest:
-every planned reboot goes through it, and taking a new version is a planned
-reboot on the only route an operator holding a published medium has - the
-reinstall begins by booting the new medium. `appliance/install.sh` over a
-running box does **not** reach this path at all: it replaces the plugin under a
-running VPP and restarts nothing, so the blocks that dataplane is holding are
-closed at the next reboot and not at the install. A pool, meanwhile, is
-deleted rarely
+every planned reboot goes through it. Taking a new version may or may not be
+one: the upgrade artifact runs `appliance/install.sh` over a running box, which
+replaces the plugin under a running VPP and restarts nothing, so it does
+**not** reach this path at all - the blocks that dataplane is holding are
+closed whenever it is next restarted, which is the operator's choice of hour
+and not the upgrade's. The reinstall an operator falls back to when the
+platform itself moves does reach it, because it begins by booting the new
+medium. A pool, meanwhile, is deleted rarely
 ([#217](https://github.com/andrediashexa/hexarouting/issues/217)).
 
 * A graceful stop **MUST** emit `natEvent` 17 for every block still held,
