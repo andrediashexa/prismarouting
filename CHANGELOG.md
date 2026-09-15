@@ -77,6 +77,22 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A whole arm of the dynamic allocator had never been executed by any C
+  harness, and nothing could have said so.** The ten harnesses under `test/`
+  run 65,376 checks and their verdict is a count of checks, not of product
+  reached - so a guard nobody enters looks exactly like one everybody enters.
+  Measured with `gcov` for the first time: 108 of the plugin's 4,807
+  executable lines are never touched by any of them, and twelve of those were
+  the block-stride placement in `bpa_dyn_acquire_extra()`, with both of its
+  counters, behind `p->block_stride != 0`. Every pool those harnesses build has
+  stride 0, because the one function that makes them memsets and never sets
+  one. `lab/extblocks.sh` and `lab/dynamic-workers.sh` do reach it, so the path
+  was not unmeasured - it was measured only where measuring costs a container
+  and a release run, and a regression in it went green through every
+  docker-free suite. `tools/plugin-coverage.sh` makes the measurement
+  repeatable, prints a count and no verdict - a line nobody executes is a
+  question, not a sentence - and refuses when it read no counters at all.
+
 * **Six C assertions that could not fail, and the suite that refuses the next
   one.** `test/` holds 10 C harnesses that compile against the BPA plugin's
   headers with `-DBPA_STANDALONE`, 382 `CHECK` sites between them, 65,376
