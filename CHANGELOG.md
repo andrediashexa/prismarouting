@@ -126,6 +126,21 @@ version has a chance of seeing it.
   `deny` clause carrying a `set` - a policy that looks right and does nothing
   is what that function is for.
 
+  **What this changes on a box being upgraded, and it is worth reading before
+  the upgrade.** `hexash --load` runs at boot and refuses a file whole rather
+  than applying it minus a line it cannot hold - the reasoning is in its own
+  docstring, and it is the right trade for a box nobody is watching. So a
+  saved configuration carrying `max-blocks 256` or above, or a `block-size`
+  outside 64 to 32768, will now **refuse at boot and name the line**, where
+  before it loaded. Neither value was doing what it said: `max-blocks 300`
+  reached the dataplane as 1 and `block-size 65536` reached it as 0. A box in
+  that state comes up saying which line to fix, rather than coming up with a
+  pool whose block size is not the one in its own file - which would re-map
+  every subscriber on it, silently, and is the hazard
+  [#23](https://github.com/andrediashexa/hexarouting/issues/23) exists for.
+  Measured on both paths: the saved file, and `show bpa config` read back from
+  a running dataplane.
+
   The remaining 18 ranges were driven and hold at both ends. Two that look
   wrong and are not are written down in
   [#353](https://github.com/andrediashexa/hexarouting/issues/353) so nobody
