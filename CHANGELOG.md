@@ -75,6 +75,49 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Changed
+
+* **The rebranding to Prisma Routing is on the roadmap as work, not as a
+  question.** The maintainer has decided the name and scheduled it, so
+  [#202](https://github.com/andrediashexa/hexarouting/issues/202) moves out of
+  `docs/roadmap.md`'s "what is blocked on somebody else" table and becomes
+  **Phase 8** of the delivery plan.
+
+  **The name is two words.** The file and the issue both carried it as
+  `PrismaRouting` for four days, which is a different name. Where it has to be
+  one token - a package, a unit, a path, a group - it is `prismarouting`, and
+  that is a spelling of the two-word name rather than a second name. A product
+  whose own roadmap cannot spell it is one whose banner, whose ISO filename and
+  whose release note will not agree either.
+
+  The size was re-taken rather than quoted, because the old figures were four
+  days old and the trend is the argument. On 2026-09-11: 905 lines across 101
+  files carrying `hexarouting`. On 2026-09-15: **2,809 across 166**, with
+  **1,033 across 117** carrying `hexash`, **622 across 61** carrying a `HEXA_`
+  variable, **105 across 17** carrying a role group name, and 13 carrying
+  `Hexanetworks`, which is the company and stays. It tripled in four days
+  because every release writes the name into this file and every sweep writes
+  it into a document, so the cost of this rename is a function of how long it
+  is deferred rather than of anything being built.
+
+  Five decisions were open on the issue and four now carry a recommendation
+  with its reason: `hexash` keeps its name, because it is the recorded login
+  shell of accounts that already exist and an account whose shell does not
+  exist cannot log in; the role groups rename by `groupmod -n` and never by
+  recreation, because membership is by GID and a recreated group silently takes
+  every operator's role away; `/var/log/hexarouting` does not move, because it
+  is a separate filesystem holding a record under a one-year retention
+  obligation and moving a mountpoint under that is a data migration; and the
+  remote renames with the old URLs still resolving, because 74 release notes
+  and this file point at it. The fifth - whether boxes in service upgrade at
+  all - is the maintainer's, is marked as such, and everything else follows
+  from it.
+
+  Two ordering rules are unchanged and are why it is Phase 8 rather than Phase
+  1: it MUST ship alone, and it SHOULD wait until the worker-path defects are
+  closed, because a rename touching 2,809 lines makes every later `git blame`
+  on those files answer with the rename.
+
 ### Fixed
 
 * **Fifteen more refusal and report rows were wider than the console, and
