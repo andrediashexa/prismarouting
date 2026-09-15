@@ -238,5 +238,160 @@ done
   || bad "these are in test/ and nothing runs them, so the checks in them "\
 "guard nothing while make test still says every suite passed:$unrun"
 
+echo
+echo "=== and the report says which harnesses it did NOT read ==="
+# The check above is a gate over test/ only, and appliance/ is where the two
+# harnesses were. appliance/test_startup_conf.sh and appliance/test_tuned_conf.sh
+# run only from `make test-appliance`, so everything they assert sat outside
+# "59 suites: 59 passed" and the reader of that line had no way to know they
+# existed (#338). They cannot join the list - both need a real VPP - so the
+# runner has to say so instead.
+#
+# ARRANGED, not read off the real tree. What is asserted is the rule, and a
+# rule is only shown to work on a tree where this file decided the answer: one
+# harness the list names, one it does not, one compiled suite the list names
+# only by its binary, and the binary itself.
+mkdir -p "$d/test" "$d/.build"
+cat > "$d/test/test_in_the_list.sh" <<'EOF'
+#!/bin/sh
+echo; echo "ALL TESTS PASSED"
+EOF
+: > "$d/test/test_nobody_runs.sh"
+: > "$d/test/test_compiled.c"
+cat > "$d/.build/test_widget" <<'EOF'
+#!/bin/sh
+echo; echo "ALL TESTS PASSED"
+EOF
+chmod +x "$d/.build/test_widget"
+# A build output the list does NOT name, which is what a renamed or deleted
+# suite leaves behind in .build. Without it the prune cannot be shown to do
+# anything: .build/test_widget is in the list, so a report that mistook it for
+# a harness would find it in the read set and stay quiet about it. This one is
+# the stale binary that would be reported as a harness nobody runs, sending
+# somebody to look for a suite that no longer exists.
+: > "$d/.build/test_stale"
+# The indirection the report has to follow: the list names a binary, and the
+# source it is built from carries none of that name.
+cat > "$d/Makefile" <<'EOF'
+$(BUILD)/test_widget: test/test_compiled.c src/widget.c \
+                      test/widget_shim.h
+	$(CC) -o $@ test/test_compiled.c
+EOF
+{ echo "sh test/test_in_the_list.sh"; echo ".build/test_widget"; } > "$d/harness.list"
+outh=$(sh "$d/tools/run-tests.sh" "$d/harness.list" 2>&1)
+
+# What the REPORT named, and not what the capture contains anywhere - for the
+# same reason verdict_for() exists sixty lines up. The runner streams each
+# suite's output and prints "=== [2/2] test_widget ===" of its own, so the
+# first draft of the build-output check below matched the runner announcing
+# the suite and called the report wrong while it was right.
+named_by() {  # <capture> -> the paths its report said were not read
+  printf '%s\n' "$1" | sed -n '/harness file(s) in the tree/,/^$/p' \
+    | sed -n 's/^    //p'
+}
+names_h=$(named_by "$outh")
+has() { printf '%s\n' "$2" | grep -qxF -- "$1"; }
+
+if has "test/test_nobody_runs.sh" "$names_h"; then
+  ok "a harness the list does not name is named by the report"
+else
+  bad "a harness nothing ran went unnamed, which is the whole defect; the \
+report named: ${names_h:-<nothing at all>}"
+fi
+if has "test/test_in_the_list.sh" "$names_h"; then
+  bad "it reported a suite the list DID run as unread. A report that accuses \
+a green suite is one people learn to skip"
+else
+  ok "and a harness the list does name is not accused of being unread"
+fi
+# The case that is not a name match. .build/test_bpa is what test_bpa_pool.c
+# becomes; guessing that the two names agree would put a compiled suite in
+# this report on every green run.
+if has "test/test_compiled.c" "$names_h"; then
+  bad "a compiled suite the list runs was reported unread, so the report did \
+not ask the Makefile which source builds the binary the list names"
+else
+  ok "and neither is the source of a binary the list names"
+fi
+if has ".build/test_stale" "$names_h"; then
+  bad "a leftover binary in .build was counted as a harness of its own, so \
+the report sends somebody looking for a suite that does not exist"
+else
+  ok "and a build output is not a harness"
+fi
+case "$outh" in
+  *"3 harness file(s) in the tree, and this run read 2."*)
+    ok "and the two numbers are the two numbers" ;;
+  *) bad "the count is not what the tree holds; got: $(printf '%s\n' "$outh" \
+       | grep 'harness file' || echo '<no count line at all>')" ;;
+esac
+
+# Nothing unread is a thing to SAY, not a thing to leave out. A report that
+# goes silent cannot be told apart from a report that stopped working, and
+# this one had no way of going red on its own.
+rm -f "$d/test/test_nobody_runs.sh"
+{ echo "sh test/test_in_the_list.sh"; echo ".build/test_widget"; } > "$d/harness.list"
+outg=$(sh "$d/tools/run-tests.sh" "$d/harness.list" 2>&1)
+case "$outg" in
+  *"2 harness file(s) in the tree, and this run read every one."*)
+    ok "a run that read every harness in its tree says that too" ;;
+  *) bad "a complete run said nothing about being complete; got: \
+$(printf '%s\n' "$outg" | grep 'harness file' || echo '<no count line at all>')" ;;
+esac
+
+echo
+echo "=== and over this repository, what it names is really not run ==="
+# The half above is arranged. This one is about the real tree, and it is the
+# half that cannot go stale: whatever the report names has to be a file that
+# exists and that test/suites.list really does not name.
+#
+# Deliberately NOT "these two files must be named". That would be a hand-kept
+# roster of the excused, which is the thing the report exists to replace - move
+# a harness into suites.list and this still passes, as it should. The price of
+# that is a check that can pass by having nothing to look at, and the floor
+# below is what stops "it named nothing" from being the whole answer.
+#
+# Driven over the REAL test/suites.list, with every command turned into `true`
+# followed by the path it would have run. The report is computed from the last
+# word of each line, so the read set is exactly the one `make test` produces,
+# while nothing is executed - running 59 real suites a second time to read six
+# lines of report is not a price worth paying. A list of one `true` would not
+# do: then every harness in the repository is honestly unread, and the check
+# below would be asserting that suites.list names none of them.
+sed 's/#.*//' "$REPO/test/suites.list" | sed '/^[[:space:]]*$/d' \
+  | sed 's/^/true /' > "$d/asif.list"
+real=$(sh "$REPO/tools/run-tests.sh" "$d/asif.list" 2>&1 || true)
+named=$(named_by "$real")
+bogus=""
+for f in $named; do
+  [ -f "$REPO/$f" ] || bogus="$bogus
+    $f  (no such file)"
+  grep -qF -- "$f" "$REPO/test/suites.list" \
+    && bogus="$bogus
+    $f  (test/suites.list names it, so make test does run it)"
+done
+[ -z "$bogus" ] \
+  && ok "the report named $(printf '%s\n' "$named" | grep -c . || true) \
+harness(es) here, and each is a real file suites.list does not run" \
+  || bad "the report is wrong about a file anyone can check, which is a false \
+alarm and a check people run around:$bogus"
+
+# The discovery itself, held to a floor. It is a find(1) with a prune in it,
+# and the first draft of that prune matched the starting directory and returned
+# nothing at all - a report that then says "0 harness files in the tree, and
+# this run read every one" over a repository holding sixty-one of them. The
+# list's own entries are the independent count: every file suites.list names
+# has to have been found.
+n_stated=$(printf '%s\n' "$real" | sed -n 's/^  \([0-9][0-9]*\) harness file.*/\1/p')
+n_listed=$(grep -oE '[a-z]+/test_[a-z_0-9]+\.(sh|py)' "$REPO/test/suites.list" \
+             | sort -u | wc -l)
+if [ "${n_stated:-0}" -ge "${n_listed:-0}" ] && [ "${n_listed:-0}" -ge 10 ]; then
+  ok "$n_stated harness file(s) found, and suites.list's own $n_listed are among them"
+else
+  bad "the discovery found ${n_stated:-<nothing>} harness file(s) while \
+suites.list alone names $n_listed. It is not looking where the harnesses are, \
+and a report that finds none reads exactly like a repository with none"
+fi
+
 if [ "$fail" -eq 0 ]; then echo; echo "ALL TESTS PASSED"; exit 0; fi
 echo; echo "$fail FAILURES"; exit 1

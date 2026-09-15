@@ -74,7 +74,7 @@ lab is going to notice it:
 | `test_bpa_ftp.c` | The FTP sequence shift: `bpa_seq_after` across the 2^32 boundary, a retransmission of data sent **before** a rewrite, and a control connection rewritten twice. No lab is going to send four gigabytes to reach the wrap. |
 | `test_context_map.py` | That every repository path named in `docs/context.md` exists, and that `README.md` still reaches it. A map naming files that are no longer there is worse than no map — it is confidently wrong, and this is the half of it that rots without anyone noticing. |
 | `test_run_all_labs.sh` | That the lab suite tells a defect apart from a machine that could not run it, **and that the verdict says why**. A VPP that never started, or a capture in which every `vppctl` call was refused and not one check went green, is reported `NO VPP` and counted apart - reporting it as `FAIL` sends whoever reads it to the product when the answer is the machine's load. Since [#253](https://github.com/andrediashexa/hexarouting/issues/253) it also pins what that verdict carries: which of "the wait expired" and "the dataplane went" it was, and VPP's own log under it. Driven with stub labs, because arranging a real VPP that fails to start is not something `make test` can do. |
-| `test_run_tests.sh` | That `make test` tells a failed assertion apart from a suite that never reached one. A killed suite, and one that could not start at all, are reported `NO VERDICT` with how far they got; a suite that prints a pass and then exits non-zero is not a pass. Driven with stub suites written to end in each of those ways. |
+| `test_run_tests.sh` | That `make test` tells a failed assertion apart from a suite that never reached one. A killed suite, and one that could not start at all, are reported `NO VERDICT` with how far they got; a suite that prints a pass and then exits non-zero is not a pass. Driven with stub suites written to end in each of those ways. Also that the run names the harness files it did **not** read: a harness the list does not name is named, one it does name is not accused, the source of a binary the list names is not accused, and the discovery finds at least the harnesses `suites.list` itself names. |
 | `test_boot_wait.sh` | The three outcomes of the boot wait, and - since #218 - the difference between the quiet period being too short and the machine being unable to time it. The check stimulates a two-second wait against a three-second quiet period and measures when the fake dataplane actually answered: on time and announced anyway is a defect, a margin late is `NOT MEASURED`. |
 | `test_stop_is_not_a_teardown.py` | What this appliance is allowed to do to itself on the way down. A stop-time command MAY ask a running process to flush state it is already holding and MUST NOT reach the configuration surface - so `vppctl bpa stop-drain` on `vpp.service` is allowed and an `ExecStop` that deletes a pool is not, wherever it is typed, including in the drop-in that already has one. The line is drawn on the command and not on the file name, because the file-name rule is silent on the mutation that matters most. Silent in the worst way: an `ExecStop` fires on every RESTART, so it would arrive during an ordinary upgrade on a box that had been working [#238](https://github.com/andrediashexa/hexarouting/issues/238). |
 | `test_hexash_config.py` | Which changes rebuild a pool and which apply in place. Classified as a table, with an assertion that the table **covers every field a pool has** — so a field added later is a failure rather than a silent default. |
@@ -109,6 +109,32 @@ exits without one is reported as interrupted rather than judged.
 A run is green only when all four counts but `passed` are zero. `NOT MEASURED`
 and `NO VERDICT` each fail the run on their own, for the reason `NO VPP` fails
 the lab suite on its own: a suite that was not run has cleared nothing.
+
+### The harnesses the run did NOT read
+
+The count in `N suites: N passed` is the count of what `test/suites.list`
+names, and a reader takes it for the count of what this repository measures.
+Those were different: `appliance/test_startup_conf.sh` and
+`appliance/test_tuned_conf.sh` run only from `make test-appliance`, so
+everything they assert sat outside the number with nothing saying so
+([#338](https://github.com/andrediashexa/hexarouting/issues/338)).
+
+Every run therefore ends by saying how many harness files are in the tree, how
+many of them it read, and naming the ones it did not:
+
+```
+  59 suites: 59 passed, 0 failed, 0 not measured, 0 with no verdict
+  61 harness file(s) in the tree, and this run read 59. NOT read:
+    appliance/test_startup_conf.sh
+    appliance/test_tuned_conf.sh
+```
+
+That is a statement, not a failure: both of those need a real VPP and cannot
+join the list. It is **discovered, not listed** - a harness is a file whose
+name begins with `test_`, which is the convention this repository already
+follows - so a third one added tomorrow is named on the next run by nobody's
+decision. There is no allowlist to keep true, because an allowlist is what the
+next person does not update.
 
 ## Cutting a release
 

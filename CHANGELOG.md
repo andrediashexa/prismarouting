@@ -93,6 +93,59 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`make test` counted 59 suites over a tree holding 61 harnesses, and named
+  neither of the two it was not reading**
+  ([#338](https://github.com/andrediashexa/hexarouting/issues/338)).
+  `appliance/test_startup_conf.sh` and `appliance/test_tuned_conf.sh` are not
+  in `test/suites.list`. They run only from `make test-appliance`, which is a
+  docker target, so `make test` never read them - and `59 suites: 59 passed` is
+  the count of what the list names while a reader reasonably takes it for the
+  count of what this repository measures. That is the shape behind
+  [#335](https://github.com/andrediashexa/hexarouting/issues/335) with a bigger
+  radius: not one branch unmeasured, but everything two whole files assert
+  about the installed tuner, the generated `startup.conf` and the VPP that has
+  to come up with it.
+
+  `tools/run-tests.sh` now ends every run by saying how many harness files are
+  in the tree, how many of them it read, and which ones it did not. Discovered,
+  not listed: a harness is a file whose name begins with `test_`, which is the
+  convention the repository already follows, so a third one added tomorrow is
+  named on the next run by nobody's decision. A hand-kept roster of excused
+  files would be a second thing to keep true and the next person does not
+  update it, which is how these two stayed invisible. The one indirection is
+  the compiled suites - `.build/test_bpa` carries nothing of the name
+  `test/test_bpa_pool.c` - so the Makefile is asked which sources build a
+  target the list names rather than assuming the two names agree.
+
+  **Neither harness can join the list, and this is what each needs a container
+  for.** `appliance/test_tuned_conf.sh` stops at its line 17, which requires
+  `/sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages` to be writable: on
+  an unprivileged box it prints `SKIP:` and exits 0 with no verdict line at
+  all, so in the list it would be NO VERDICT on every run rather than a
+  measurement. Its line 64 then starts a real `vpp` with the tuned file, which
+  is the only reason the file exists at all: `appliance/test_tune.py` already
+  asserts the same rendered profile against synthetic roots, so what is left
+  once VPP is taken away is already measured next door.
+  `appliance/test_startup_conf.sh` produced 15 FAILURES when run on this box,
+  every one of them for the absent product rather than for a defect: its line
+  13 rebuilds VPP in `/src/.build-vpp`, its line 14 installs into the real
+  `/usr/lib/hexarouting` and runs the binaries from there, and its line 111
+  starts `vpp -c /etc/vpp/startup.conf`. Weakening either one to make it
+  countable would be a check that stopped checking in order to be counted.
+
+  `test/test_run_tests.sh` holds eight assertions on the new report. Six are
+  driven against an arranged tree, where the answer is known because that file
+  wrote it: a harness the list does not name is named, one it does name is not
+  accused, the source of a binary the list names is not accused, a leftover
+  binary in `.build` is not mistaken for a harness, the two numbers are the two
+  numbers, and a run that read every harness says so rather than going silent.
+  Two are against the real tree: whatever the report names must exist and must
+  really not be in `suites.list`, because a report that accuses a green suite
+  is one people learn to skip; and the discovery must find at least the
+  harnesses `suites.list` itself names, because a `find` with a bad prune
+  returns nothing and "0 harness files in the tree" reads exactly like a
+  repository with none.
+
 * **`docs/appliance.md` still said the commit binds the NIC**
   ([#336](https://github.com/andrediashexa/hexarouting/issues/336)). That
   sentence described the defect, accurately, right up until the defect was
