@@ -10162,6 +10162,10 @@ class Shell:
         # NIC VPP owns is not under /sys/class/net and a list that quietly
         # omits it reads as a missing NIC.
         rc, out = self.dp.run("show interface")
+        # KEPT, because the empty-table sentence below is about this answer
+        # and used to assert one of its three values on all three boxes.
+        # None is "the dataplane could not be asked", which is not [].
+        held = None
         if rc != 0 or not out.strip():
             print_prose("the dataplane is not answering, so what it already "
                         "holds is not known: a NIC it owns would be missing "
@@ -10204,13 +10208,36 @@ class Shell:
             # likely to read it - somebody trying the product in a VM - that
             # their box had nothing to offer. A wrong sentence on an empty
             # table is worse than an empty table, because it ends the search.
-            print_prose("no PCI NIC is visible to Linux on this box. Either "
-                        "the dataplane already owns every one of them, which "
-                        "the lines above say, or this box genuinely has no "
-                        "card Linux can see. A virtio card in a virtual "
-                        "machine does resolve to a PCI address and is "
-                        "eligible, so a missing one here is missing from "
-                        "Linux too.", indent="  ")
+            #
+            # AND WHICH OF THE TWO, rather than offering the reader a choice
+            # the box has already made. This handed them "either the dataplane
+            # already owns every one of them, which the lines above say, or
+            # this box genuinely has no card Linux can see" - and the lines
+            # above say that on ONE of the three boxes that get here. On the
+            # other two they have just said the dataplane holds nothing, or
+            # that it could not be asked at all, so the sentence pointed at
+            # lines saying the opposite of what it claimed they said, and left
+            # the operator to settle it from a screen that had. Same shape as
+            # #331: one sentence over states that are nothing alike.
+            if held:
+                print_prose("no PCI NIC is visible to Linux on this box, and "
+                            "the line above says why: the dataplane owns "
+                            "them.", indent="  ")
+            elif held is None:
+                print_prose("no PCI NIC is visible to Linux on this box, and "
+                            "the dataplane could not be asked what it has. A "
+                            "card it had taken would be missing from this "
+                            "reading too, so a box that handed every card "
+                            "over and a box that never had one read alike "
+                            "here: 'systemctl status vpp' says which this "
+                            "is.", indent="  ")
+            else:
+                print_prose("no PCI NIC is visible to Linux on this box, and "
+                            "the dataplane has none either, so there is no "
+                            "card here to give it.", indent="  ")
+            print_prose("A virtio card in a virtual machine does resolve to a "
+                        "PCI address and is eligible, so a missing one here "
+                        "is missing from Linux too.", indent="  ")
             return
 
         mgmt = self.default_route_nic()
@@ -10562,10 +10589,13 @@ class Shell:
         Store the card, run the tuner, and say what is still outstanding.
 
         WHAT THIS DELIBERATELY DOES NOT DO IS RESTART VPP. Handing a card to
-        the dataplane takes it away from Linux, and every session on this box
-        ends the instant that happens - including the one the operator is
-        typing in. That is the same class of consequence as `commit remap`,
-        which this VTY refuses until it is asked for by name.
+        the dataplane takes it away from Linux, and everything reaching this
+        box through that card stops the instant it happens - on the box this
+        path was written for, whose only card carries the management address,
+        that is the operator's own session. Which of those two boxes is which
+        is asked in say_dataplane_if_pending, and stated nowhere. That is the
+        same class of consequence as `commit remap`, which this VTY refuses
+        until it is asked for by name.
 
         It is not given a word of its own here, and that is a limit rather
         than an oversight: nothing in this repository has measured what a VPP
@@ -10602,6 +10632,21 @@ class Shell:
         `note` replaces the line claiming the tuning was recomputed, rather
         than being printed beside it: on a machine with no tuner both would be
         on the screen at once and one of them would be false.
+
+        WHAT THE RESTART COSTS IS ASKED, not stated. "ends every session on
+        this box, including this one" is true of the box this whole path was
+        written for - the one whose only card carries the management address -
+        and false of the two-card box that is the worked example in the
+        operator guide, where the session arrives on a card Linux keeps and a
+        dataplane restart never touches it. The product decides that same
+        question correctly in three other places (dataplane_if_refusal offers
+        the other card, take_management_card records a handover only for this
+        one, do_commit arms a confirmed commit only when the card carries the
+        session), and this sentence was the one that did not ask.
+
+        What it does NOT claim on any of them is what the restart costs the
+        traffic. Nothing in this repository has measured that, which is the
+        argument apply_dataplane_if makes for there being no verb for it.
         """
         print(f"dataplane interface: {name or 'none'}")
         print_prose(note or "stored, and the boot tuning was recomputed for "
@@ -10609,9 +10654,59 @@ class Shell:
         if name:
             print_prose("NOT IN EFFECT YET: the dataplane claims its card "
                         "when it starts, and this commit does not restart it")
-            print_prose("restarting it hands the card over and ends every "
-                        "session on this box, including this one, so it is "
-                        "not done for you")
+            # FOUR ANSWERS, NOT ONE, and only the first of them is the
+            # sentence this used to print on all four.
+            #
+            # Read from the same pair `show hardware` marks the management
+            # card with - default_route_nic() and host_nics() - so the screen
+            # that tells the operator which card not to give away and the
+            # screen that says what giving one away costs cannot come to
+            # disagree. A third reader of "which card is this box reached on"
+            # is how they would.
+            #
+            # A default route on something that is NOT one of this box's cards
+            # is the third answer and it is not the second. It may be a
+            # bridge, a bond, or - on a box that has already handed its only
+            # card over - the linux_cp pair the dataplane itself keeps, which
+            # a dataplane restart takes away. Calling that box safe because
+            # the name differs from the card being named is the one shape
+            # where being wrong costs the walk to the console.
+            #
+            # And #123's trade decides which way to be wrong when nothing can
+            # be read: a box warned about a session it was never going to lose
+            # spends a maintenance window it did not need, a box told the
+            # session was safe and losing it is a box nobody can reach.
+            mgmt = self.default_route_nic()
+            cards = [n["name"] for n in self.host_nics()]
+            if mgmt and name == mgmt:
+                print_prose("restarting it hands the card over and ends every "
+                            "session on this box, including this one, so it "
+                            "is not done for you")
+            elif mgmt and mgmt in cards:
+                print_prose(f"restarting it hands the card over and ends "
+                            f"whatever is reaching this box through {name}. "
+                            f"The path this box is routed out of is "
+                            f"'{mgmt}', which Linux keeps, so this session is "
+                            f"not what it costs")
+                print_prose("it is not done for you all the same: nothing "
+                            "here has measured what stopping the dataplane "
+                            "costs a box carrying traffic")
+            elif mgmt:
+                print_prose(f"restarting it hands the card over and ends "
+                            f"whatever is reaching this box through it")
+                print_prose(f"the default route is on '{mgmt}', which is not "
+                            f"one of this box's cards - on a box that has "
+                            f"already handed one over it is the pair the "
+                            f"dataplane keeps, and a restart takes that with "
+                            f"it - so this session may go too, and it is not "
+                            f"done for you")
+            else:
+                print_prose("restarting it hands the card over and ends "
+                            "whatever is reaching this box through it")
+                print_prose("no interface here carries a default route, so "
+                            "which path this session arrived on cannot be "
+                            "read: take it that this one goes too, and it is "
+                            "not done for you")
             # AND NOT ON THE MEDIUM, where the reboot this sentence asks
             # for throws the commit away with everything else (#310). This is
             # #305 one message over: the advice is right on a box that has a

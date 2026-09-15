@@ -20,9 +20,11 @@ What is asserted here, and why each one is worth a suite rather than a lab:
     it is prose - the paragraph on why the field ships empty, the worker cap
     and the argument for leaving it uncapped. A commit that regenerated the
     file from the settings this VTY models would delete all of it.
-  * COMMIT DOES NOT RESTART VPP. Handing a card to the dataplane ends every
-    session on the box, including the operator's own. The commit stops at that
-    boundary and says where the boundary is.
+  * COMMIT DOES NOT RESTART VPP. Handing a card to the dataplane ends
+    everything reaching the box through that card, which on the box with one
+    card is the operator's own session. The commit stops at that boundary,
+    says where the boundary is, and ASKS which box it is on before saying what
+    crossing it costs.
 
 Every path the product reads is driven against a fake tree in a tempdir
 through the seams the product already has - SYS_CLASS_NET, PROC_NET_ROUTE,
@@ -420,10 +422,11 @@ with tempfile.TemporaryDirectory() as tmp:
           f"the tuner was never run, so startup.conf still names no device "
           f"and the operator would have to run it themselves: {sh.ran!r}")
     # THE assertion this whole design turns on. Handing a card to the
-    # dataplane ends every session on the box, the operator's included. That
-    # is the same class of consequence as `commit remap`, which this VTY
-    # refuses until it is asked for by name - and no word has been invented
-    # for this one, because nothing here has measured what it costs.
+    # dataplane ends everything reaching the box through that card, and on the
+    # box with one card that is the operator's own session. That is the same
+    # class of consequence as `commit remap`, which this VTY refuses until it
+    # is asked for by name - and no word has been invented for this one,
+    # because nothing here has measured what it costs.
     restarts = [c for c in sh.ran
                 if c[:2] == ["systemctl", "restart"] and "vpp" in c[-1]]
     check(restarts == [],
@@ -444,7 +447,7 @@ with tempfile.TemporaryDirectory() as tmp:
           f"diagnosis on: {said!r}")
     check("does not restart" in said,
           f"it does not say that the restart is outstanding: {said!r}")
-    check("ends every session" in said,
+    check("ends whatever is reaching this box" in said,
           f"it does not say what the restart costs, so an operator does it "
           f"at once and finds out: {said!r}")
     check("reboot" in said,
@@ -1170,6 +1173,88 @@ with tempfile.TemporaryDirectory() as tmp:
     check(["systemctl", "reboot"] not in sh.ran,
           f"an ordinary unconfirmed commit rebooted the box: {sh.ran!r}")
     print("  no card moved, so nothing is restarted")
+
+#: /proc/net/route on a box whose management has ALREADY moved: the default
+#: route is on the linux_cp pair the dataplane holds, which is not a card in
+#: /sys/class/net and never will be.
+PAIR_ROUTE = (
+    "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
+    "\t\tMTU\tWindow\tIRTT\n"
+    "enp2s0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n"
+    "ens18\t00000000\t01C85F0A\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
+)
+#: And one with cards and connected routes but nothing carrying a default: a
+#: box reached over a directly connected address, or from a console.
+NO_DEFAULT_ROUTE = (
+    "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask"
+    "\t\tMTU\tWindow\tIRTT\n"
+    "enp1s0\t0002A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n"
+)
+
+# AND IT COSTS DIFFERENT THINGS ON DIFFERENT BOXES, which this screen used to
+# state without asking. It said "ends every session on this box, including
+# this one" - true of the box the whole handover path was written for, whose
+# only card carries the management address, and false of the two-card box
+# above, which is the worked example in docs/appliance.md and in the operator
+# guide. There the session arrives on a card Linux keeps and a dataplane
+# restart never touches it, so the operator was told they would lose the box
+# for a change that cannot cost them the box.
+#
+# The product already answers this question correctly in three other places -
+# the refusal offers the other card, the management record is written only for
+# this one, and `commit` arms a confirmed commit only when the card carries
+# the session - so what is asserted here is that the fourth agrees with them.
+print("\n=== what the restart costs is asked, not stated ===")
+with tempfile.TemporaryDirectory() as tmp:
+    said = drive(shell_on(tmp),
+                 ["configure", "dataplane interface enp2s0", "commit"])
+    check("including this one" not in said,
+          f"a box reached on enp1s0 was told that handing enp2s0 over ends "
+          f"this session, which would make it a change nobody can make "
+          f"remotely: {said!r}")
+    check("'enp1s0', which Linux keeps" in " ".join(said.split()),
+          f"it does not name the path the box IS reached on, so 'not this "
+          f"session' is a claim the operator cannot check: {said!r}")
+    print("  two cards: named the path Linux keeps, and did not claim the "
+          "session")
+
+with tempfile.TemporaryDirectory() as tmp:
+    said = drive(one_card_box(tmp),
+                 ["configure", "dataplane interface ens18", "commit"])
+    check("ends every session on this box, including this one"
+          in " ".join(said.split()),
+          f"the box whose ONLY card carries the management address was not "
+          f"told the restart takes this session with it, which is the whole "
+          f"of what a confirmed commit is armed for here: {said!r}")
+    print("  one card: the sentence it was written for, unchanged")
+
+# The box that has ALREADY given its only card away. Its address lives on the
+# linux_cp pair the dataplane holds, so the default route is on that pair and
+# not on any card in /sys - and a reading that compared names alone would call
+# this box safe on the one shape where a dataplane restart takes the session
+# for certain.
+with tempfile.TemporaryDirectory() as tmp:
+    said = drive(shell_on(tmp, route=PAIR_ROUTE, tune=TUNE_HANDED_OVER,
+                          cards=("enp2s0", "lo")),
+                 ["configure", "dataplane interface enp2s0", "commit"])
+    _flat = " ".join(said.split())
+    check("which Linux keeps" not in _flat,
+          f"a box reached THROUGH the dataplane was told the path it is "
+          f"routed out of is one Linux keeps, because the route is on a pair "
+          f"whose name is not the card being named: {said!r}")
+    check("is not one of this box's cards" in _flat and "'ens18'" in _flat,
+          f"it does not say that the path it is routed out of is not a card "
+          f"of its own, which is the whole of why this session may go: "
+          f"{said!r}")
+    print("  reached through a pair: not claimed safe, and said why")
+
+with tempfile.TemporaryDirectory() as tmp:
+    said = drive(shell_on(tmp, route=NO_DEFAULT_ROUTE),
+                 ["configure", "dataplane interface enp2s0", "commit"])
+    check("cannot be read" in said and "which Linux keeps" not in said,
+          f"a box that carries no default route cannot say which path this "
+          f"session arrived on, and answered anyway: {said!r}")
+    print("  no default route: said it could not be read, and said which")
 
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

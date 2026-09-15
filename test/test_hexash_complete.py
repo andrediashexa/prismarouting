@@ -2438,6 +2438,49 @@ check("nothing here to choose from" not in flat(_none),
       f"the empty table still ends with 'nothing here to choose from', which "
       f"is the dead end #328 is about: {_none}")
 
+# AND IT IS TRUE OF THIS BOX, not of one of the three that reach it. The
+# sentence offered the reader a choice - "either the dataplane already owns
+# every one of them, WHICH THE LINES ABOVE SAY, or this box genuinely has no
+# card Linux can see" - and pointed at the block printed six lines earlier to
+# settle it. That block settles it on one box out of three. On the other two
+# it has just said the dataplane holds nothing, or that it could not be asked
+# at all, so the screen contradicted itself and then asked the operator to
+# decide between two answers it already had. Same shape as #331, where the
+# PCI-address line said "(not a PCI device)" two lines under a line saying no
+# card had been named.
+#
+# Three boxes, three sentences, and the one the old wording was right for
+# keeps its answer.
+_none_held = show_hw([], dp_text=_HW_HELD_DP)
+check("the dataplane owns them" in flat(_none_held),
+      f"a box whose dataplane holds every card is no longer told that is "
+      f"what an empty list means: {_none_held}")
+check("the dataplane has none either" in flat(_none),
+      f"a box where the dataplane answered and holds nothing is not told so "
+      f"under the empty list - it is offered 'the dataplane owns them' as a "
+      f"possibility the line above has already ruled out: {_none}")
+check("the dataplane owns them" not in flat(_none),
+      f"a box whose dataplane says it holds nothing is told the dataplane "
+      f"owns the cards, three lines under the line saying it holds none: "
+      f"{_none}")
+_none_deaf = show_hw([], dp_rc=1)
+check("could not be asked" in flat(_none_deaf)
+      and "read alike here" in flat(_none_deaf),
+      f"a box whose dataplane could not be asked is not told the two cases "
+      f"read alike, so the empty list reads as an answer: {_none_deaf}")
+check("the dataplane owns them" not in flat(_none_deaf)
+      and "has none either" not in flat(_none_deaf),
+      f"a box that could not ask the dataplane anything is told what it "
+      f"holds: {_none_deaf}")
+# The half of the sentence that is about Linux and not about the dataplane is
+# true on all three, so it is printed on all three.
+for _label, _screen in (("held", _none_held), ("empty", _none),
+                        ("deaf", _none_deaf)):
+    check("eligible" in flat(_screen) and "does resolve" in flat(_screen),
+          f"the virtio sentence #328 added is missing from the {_label} box, "
+          f"which is the one audience most likely to read this screen: "
+          f"{_screen}")
+
 # THE ANSWER, not just the apology for not having one (#328). The screen names
 # the driver the box will move the card to, and it names it by ASKING
 # appliance/bind-dataplane-nic, which is where that rule already lives. Until

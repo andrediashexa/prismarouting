@@ -77,6 +77,65 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Two more screens stated a consequence without asking which box they were
+  on.** Both found by sweeping `src/hexash/hexash.py` for the shape behind
+  [#328](https://github.com/andrediashexa/hexarouting/issues/328),
+  [#330](https://github.com/andrediashexa/hexarouting/issues/330),
+  [#331](https://github.com/andrediashexa/hexarouting/issues/331) and
+  [#336](https://github.com/andrediashexa/hexarouting/issues/336): a sentence
+  true of one box and false of another, printed by a path that never asked.
+
+  **`commit` told a box with a spare card that handing it over would end the
+  session typing the command.** *"restarting it hands the card over and ends
+  every session on this box, including this one, so it is not done for you"*
+  was printed on every box that named a card. It is true of the box the whole
+  handover path was written for - the one whose only card carries the
+  management address - and false of the two-card box that is the worked
+  example in `docs/appliance.md` and in the operator guide, where the session
+  arrives on a card Linux keeps and a dataplane restart never touches it. An
+  operator with a card to spare was told the safe change was the dangerous
+  one. The product already answers that question correctly in three other
+  places - the refusal offers the other card, the management record is written
+  only for the card carrying the route, and `commit` arms a confirmed commit
+  only when the card carries the session - and this was the fourth, which did
+  not ask. It now reads the same pair `show hardware` marks the management
+  card from, and answers four ways: this card is the path the box is reached
+  on, which keeps the old sentence unchanged; the path is another card Linux
+  keeps, and is named; the path is on something that is not one of this box's
+  cards, which on a box that has already handed one over is the `linux_cp`
+  pair the dataplane itself holds, so the session may go with it; and nothing
+  carries a default route, so it cannot be read. The last two take the loud
+  side, for the reason #123 gives: a box warned about a session it was never
+  going to lose spends a maintenance window it did not need, and a box told
+  the session was safe and losing it is a box nobody can reach.
+
+  **`show hardware` pointed at lines saying the opposite of what it claimed
+  they said.** With no PCI NIC in Linux the screen offered the reader a
+  choice - *"Either the dataplane already owns every one of them, which the
+  lines above say, or this box genuinely has no card Linux can see"* - and
+  three different boxes reach it. On one the lines above do say that. On the
+  second they have just said the dataplane holds nothing, and on the third
+  that it could not be asked at all, so the screen contradicted itself six
+  lines apart and then asked the operator to settle a question it had already
+  answered. That is #331's shape exactly, where the PCI-address line read
+  `(not a PCI device)` two lines under a line saying no card had been named.
+  Three boxes, three sentences, and the one the old wording was right for
+  keeps its answer. The virtio sentence #328 added is true of all three and is
+  printed on all three.
+
+  Shown red on four mutations of the product, not on a reworded check: the
+  empty-table sentence made one sentence again (three red, one per box), the
+  virtio sentence confined to one branch (three red), the restart sentence
+  made unconditional again (five red, which is the defect as it stood), and
+  the same sentence made unconditionally quiet, which takes it from the box it
+  was written for (one red).
+
+  `wiki/comecar-aqui/primeiros-passos.md` and `docs/appliance.md` both quoted
+  the old transcript for the two-card box, which is the box it was wrong on,
+  and carry the new one.
+
+### Fixed
+
 * **`commit` bound the card immediately while telling the operator it had
   not** ([#336](https://github.com/andrediashexa/hexarouting/issues/336)).
   Naming the dataplane card restarts `hexarouting-tune`, that unit runs
