@@ -1273,6 +1273,56 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The VTY refuses 180 times, and 114 of those refusals had never been
+  printed by anything.** `src/hexash/hexash.py` says no to the operator 180
+  times, through `self.err()` and `self.err_dataplane()`. Measured by wrapping
+  `err` and reading the VTY's own frames off the stack while every suite that
+  drives it ran: 66 of those call sites had been printed by something, and 114
+  had not. A refusal nobody has watched fire is one this repository cannot
+  tell from a refusal that does not fire, and what it lets through is the
+  configuration the refusal was written to stop - a pool the dataplane would
+  reject, an MTU the driver never took, a uRPF the operator believes is
+  dropping spoofed sources while the box translates them. Three refusals of
+  exactly that shape were found and closed by hand in the last two days, each
+  because somebody thought to look.
+
+  `test/test_hexash_refusals.py` is what this project does instead of thinking
+  to look. It is the second of the two readers at the end of
+  `test/test_selftest.sh`, carried from shell to Python's AST: the call sites
+  are parsed out of the product, the 18 suites that drive the VTY are derived
+  from `test/suites.list` rather than listed, and coverage is spent on the
+  **line** that refused rather than on the message. That last part is the
+  whole difference - nine call sites print "the dataplane does not have it"
+  word for word, so a reader keyed on the text can neither tell them apart nor
+  survive a mutation to it. There is no list to keep in step: a refusal added
+  to the VTY with no box added anywhere goes red on the next run.
+
+  46 boxes were arranged with it, in the order the refusals matter rather than
+  the order they are easy: 23 for the interface verbs that talk to the
+  dataplane (a name the dataplane has not got, told apart from a name it
+  refused, on each of nine verbs; every one of those refusals coming back from
+  the dataplane itself; a sub-interface whose parent is not on the box), 9 for
+  a pool's data (half a mapping, the device's own check, a forward on a pool
+  that is not being rebuilt, and each of the six pool writes a commit can fail
+  at), 8 for the management path (ssh, snmp, the accounts, the tuner's file,
+  a routing reload that failed, FRR silent at commit and at check, and a
+  read-only account reaching for configuration mode) and 6 for the read-backs
+  that catch a dataplane which accepted a message and applied nothing. Each
+  was shown red on its own mutation of the product - the guard that reaches
+  the refusal made false, never the message edited, because a reader keyed on
+  the line is unmoved by the text and a test that takes its needle from the
+  string it checks agrees with any change to that string.
+
+  That takes the unrendered count from 114 to 70, and the 70 are **named by
+  the reader and held as a floor that may only go down**, the idiom
+  `test/test_off_run_coverage.sh` already uses for labs with no off run. No
+  allowlist: an allowlist is read once and grown forever, and the failure this
+  file exists for is a refusal nobody re-examines. What the reader cannot see
+  is written in its header rather than left to be discovered - a suite that
+  drove the VTY as a program rather than as a module, the labs, and the two
+  call sites (`require()` and `say_dataplane_if_refusal()`) that print many
+  different refusals from one line.
+
 * **Every lab is now accounted for on whether its checks have ever been seen
   to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third
   time with the feature they test switched off and requires each to go red
