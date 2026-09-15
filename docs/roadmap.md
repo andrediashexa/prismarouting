@@ -2215,6 +2215,26 @@ all: `tools/run-all-labs.sh` writes each lab's output to a `mktemp -d` and
 deletes it on exit, so the corpus that would answer the question does not
 survive the run that makes it. That is the first half of #366.
 
+**And the 79-column budget is a rule about the VTY and about nothing else**
+([#367](https://github.com/andrediashexa/hexarouting/issues/367)). #359, #362
+and #363 put it on `src/hexash/` three ways - literal rows by a static sweep,
+verdict rows once the `error: ` prefix is counted, and the 296 interpolated
+ones by driving each site at its widest value. The appliance prints to a BOOT
+CONSOLE, which is a serial line or a VGA text screen: 80 columns hard, no
+reflow, no scrollback, and the installer's rows are read by somebody while
+they decide what to type. Nothing had measured any of it. #364's boxes made
+the corpus exist, so it could be measured for the first time: **2,143 real
+rows**, of which most that exceed 79 are an artefact of how the corpus is
+captured - `ask` prompts use `printf` with no newline, so a prompt and the
+message after it land on one captured row - and **five are genuine**, at 88,
+99, 120, 137 and 141 columns on a real box. The widest is `error: missing
+tools:` with all ten missing, which is what an operator meets on a medium
+built wrong, and the one at 137 is the management path `bind-dataplane-nic`
+records, holding an interface name, an address and a MAC. The method is
+#363's, one component over; the fix is usually to move the value off the row
+rather than to wrap the verdict, because `say_list` and `say_prose` already
+fold and the scripts choose between them on purpose.
+
 **And a reader can be right about most screens and blind to one word**
 ([#365](https://github.com/andrediashexa/hexarouting/issues/365)).
 `test/test_wiki_screens.py` compares every screen the public wiki quotes
