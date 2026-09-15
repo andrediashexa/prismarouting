@@ -136,6 +136,43 @@ follows - so a third one added tomorrow is named on the next run by nobody's
 decision. There is no allowlist to keep true, because an allowlist is what the
 next person does not update.
 
+### Showing a check fail: four ways the mutation lies
+
+Nothing here is trusted until it has been seen red. Breaking the product on
+purpose and watching a check notice is the only evidence that check is worth
+its line. The break itself can be the thing that fails, though, and then the
+red proves nothing and the green proves less. All four of these were measured
+in this repository, each after a stretch of work built on the wrong reading.
+
+**A mutation that does not reach the interpreter.** CPython keys
+`__pycache__` on the source's size and its mtime **in whole seconds**. A
+campaign that applies one three-character change, runs, restores, and applies
+the next one inside the same second leaves a file of the same size with the
+same mtime, and the second run silently executes the FIRST mutation's
+bytecode. Measured over 101 automated mutations of `src/hexash/*.py`: 40 sites
+reported blind, and re-run under `PYTHONDONTWRITEBYTECODE=1` the count fell to
+13 - every one of the 27 was the cache, not the test. Export it for any
+mutation run over Python.
+
+**A mutation that does not compile.** `tries < 0` on an unsigned counter is
+rejected by `-Werror=type-limits`, and a build that fails is not a check that
+noticed. The red has to come from the assertion, so read what the run actually
+said and not only its exit status.
+
+**A mutation of the working tree, measured against a clone.** Anything that
+clones the repository or checks out a tag measures the COMMITTED state.
+`tools/release-gate.sh`'s own suite did this: every mutation of the working
+tree came back green, because the gate under test was the one in the clone.
+Copy the mutated file into the fixture, or commit the mutation.
+
+**A mutation of the message the needle is cut from.** When the check greps for
+a phrase and the mutation edits that phrase, both sides move together and the
+check stays green no matter what the product does. The same shape in
+arithmetic: an assertion whose expected value is computed by the function
+under test. `bpa_stride_block()` was asserted against its own return value and
+survived `nth * p->block_stride` cut to `nth * 1`. Mutate the shared branch,
+or assert against what the operator's number is supposed to mean.
+
 ## Cutting a release
 
 ```sh
