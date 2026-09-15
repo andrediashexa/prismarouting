@@ -28,7 +28,7 @@ Most of these screens interpolate a value - a pool name, a neighbour, a count.
 `f"neighbour {w[2]} does not keep what it received"`, so the comparison is
 against a TEMPLATE. Turn `{...}` into `.*` and require nothing else and every
 wiki line matches something: the check goes green over any page anybody ever
-writes. Six things are done about that, and they are the reason this file is
+writes. Seven things are done about that, and they are the reason this file is
 worth its runtime:
 
   1. DRIVING BEATS MATCHING. A screen that can be produced by running the
@@ -65,10 +65,41 @@ worth its runtime:
      carried, what share of the row was literal, and which source line it came
      from, all go on the screen. A reader who sees "4 hole(s), 63% literal"
      knows what this file was worth that day without reading it.
+  7. A HOLE HOLDS WHAT ITS SLOT HOLDS. The five above are all about HOW MUCH
+     of a row is hole; none of them asks WHAT a hole may contain, and that is
+     the gap #363 fell through. `{args[1]} does not keep what it received`
+     is 33 literal characters and 60% literal on an address - it passes every
+     one of them, correctly - and it OPENS with a hole, so when #363 took the
+     noun out of that verdict the page's leftover `neighbour ` went into the
+     hole whole and this file stayed green on both sides of the change. 199
+     templates in this corpus open with a hole and 101 of those open on a
+     slot the source says holds ONE VALUE: a name, a subscript, an attribute.
+     One value is one token - an address, an interface, a path, a count - so
+     a hole whose slot is one value MAY NOT CONTAIN WHITESPACE. `py_slot`
+     reads that off the expression, and what it reads is printed.
+
+     MEASURED BEFORE IT WAS WRITTEN, over the 59 screens this file attributed
+     the day it went in: 48 holes filled, 6 holding whitespace, and not one
+     of the 6 a slot that legitimately holds a phrase. Two are a `${...}` in
+     a shell script, whose slots this file does not parse and therefore asks
+     nothing of - they are the ceiling below. Three were the rule's own
+     evidence: the hole was swallowing the `error: ` marker, or the first
+     clause of a row built by concatenation, and with the rule on all three
+     are read again TIGHTER - through the sentence after the marker, and
+     through `concat_match`'s pair. The sixth is `(length {length}` in
+     hexash.py's prefix-range refusal, a row this product builds in FOUR
+     goes, where the final hole was swallowing `8, ge 24, le 16)` whole;
+     no two strings account for that row, so it moved from the matched count
+     to the printed skip list. That is the whole cost: one screen, and it was
+     never really attributed - a hole was eating three clauses of it.
+
+     WHERE THE RULE STOPS is measured too: it is not taken over the halves of
+     `concat_match`, because held to it there five screens the box really
+     prints are called wrong. `concat_match` says why.
 
 ## What it refuses on
 
-Two shapes, and both are a page that half agrees with a message.
+Three shapes, and each is a page that half agrees with a message.
 
 A row that STARTS with a row the box prints AND GOES ON - the page's sentence
 carrying past the point where the product's line ends, with a comma or a colon
@@ -83,6 +114,24 @@ agreeing is a coincidence between unrelated messages and a whole opening
 clause is not; under a verdict row, this is only read once the verdict itself
 has been recognised as the box's, so a screen nothing can attribute stays a
 skip rather than becoming a finding about the wrong message.
+
+A VERDICT ROW A TEMPLATE ACCOUNTS FOR ONLY BECAUSE A HOLE SWALLOWED A WORD.
+Point 7's rule, said out loud instead of silently refusing the match: the
+template fits, most of the row is its literal text, and one hole the source
+says holds a single value came out holding two words. That is a page carrying
+a word the box does not print - or a value in a position that does not hold
+it - and `swallows` names the page, the line, the slot and what went into it.
+
+It is read on the VERDICT ROW ONLY, and that width was chosen rather than
+assumed. Both widths are green on the wiki as it stands, so the wiki does not
+choose between them; what does is that an `err` headline is one clause whose
+slots are an address, an interface, a count, while the paragraphs under it are
+exactly where a slot legitimately holds a sentence - `r.reason` is whatever
+the dataplane said. Failing to MATCH on a wide hole is cheap: the screen lands
+on the printed skip list, which is where a screen this file cannot account for
+belongs. Calling a page WRONG is not cheap, and a check that goes red on
+correct work is one people learn to run around. So the quiet half of the rule
+runs everywhere and the loud half runs where the evidence is strongest.
 
 ## What it cannot see, and says so
 
@@ -116,6 +165,26 @@ WIKI = os.environ.get("HEXA_WIKI") or os.path.join(REPO, "wiki")
 # with. One character so it can never be confused with the literal text around
 # it, and so literal share is a subtraction.
 HOLE = "\x00"
+
+
+class Slot:
+    """What the source says goes in one hole.
+
+    `one_value` is the whole of the judgement: this slot holds ONE thing, so
+    what comes out of it is one token. See `py_slot` for how that is read off
+    the expression, and point 7 of the docstring for what is done with it.
+    """
+
+    def __init__(self, expr, one_value, why=""):
+        self.expr = expr
+        self.one_value = one_value
+        self.why = why
+
+
+# The hole nobody could read: the shell's `$(...)`, the plugin's `%v`, a row
+# this file split out of a longer template. Not held to anything, because a
+# rule applied where the evidence was never gathered is a guess.
+UNREAD = Slot("?", False, "the language this came from was not parsed")
 
 # The numbers the vacuity argument rests on. LITERAL_FLOOR keeps a template
 # that is nearly all hole out of the corpus; LITERAL_SHARE is how much of the
@@ -241,17 +310,24 @@ check(len(SCREENS) >= 50,
 class Template:
     """One string the product builds, with a HOLE where a value goes."""
 
-    def __init__(self, text, origin):
+    def __init__(self, text, origin, slots=()):
         self.text = text
         self.origin = origin
         self.holes = text.count(HOLE)
         self.literal = len(text) - self.holes
+        # What the SOURCE says goes in each hole, in order. A reading this
+        # file can only get from a language it parses: the Python side hands
+        # over the slot expression per hole, everything else hands over
+        # nothing and `UNREAD` is what a hole nobody could read holds - it is
+        # never held to the whitespace rule below.
+        self.slots = list(slots) + [UNREAD] * max(0, self.holes - len(slots))
         # A hole matches within ONE row and never nothing: an interpolated
         # value that came out empty is a different screen from this one, and
         # letting a hole match the empty string is how `f"{a}{b}"` starts
-        # attributing every row on the page.
+        # attributing every row on the page. Captured, because what a hole
+        # SWALLOWED is the evidence `swallowed` reads.
         self.rx = re.compile("".join(
-            re.escape(part) if i % 2 == 0 else "[^\n]+?"
+            re.escape(part) if i % 2 == 0 else "([^\n]+?)"
             for i, part in enumerate(
                 re.split("(" + re.escape(HOLE) + ")", text))))
 
@@ -262,7 +338,20 @@ class Template:
             return None
         if self.literal < LITERAL_SHARE * len(row):
             return None
+        if self.swallowed(m):
+            return None
         return self
+
+    def swallowed(self, m):
+        """
+        The first hole this match filled with something no slot can hold.
+
+        Point 7 of the docstring. Returns (slot, text) or None.
+        """
+        for slot, got in zip(self.slots, m.groups()):
+            if slot.one_value and re.search(r"\s", got):
+                return (slot, got)
+        return None
 
     def prefix_of(self, row):
         """
@@ -294,13 +383,32 @@ class Template:
         return rest
 
 
+class Fill:
+    """One template and the exact text it was accepted against.
+
+    The templates alone say how loose the loosest accepted match was; what
+    its holes HELD is the other half of that answer, and it is the half
+    point 7 rests on. Carried together because a template and the text it
+    matched are one fact, and re-deriving the text afterwards reads a
+    different row from the one attribution actually leaned on.
+    """
+
+    def __init__(self, t, text):
+        self.t = t
+        self.text = text
+
+    def holes(self):
+        m = self.t.rx.fullmatch(self.text)
+        return list(zip(self.t.slots, m.groups())) if m else []
+
+
 # Printed whole, folded to the console, and said after `error: `.
 ROWS, PROSE, ERRS = [], [], []
 TOO_LOOSE = []                          # refused entry: nearly all hole
 LOOSE = []                              # the same, as templates
 
 
-def keep(bucket, text, origin):
+def keep(bucket, text, origin, slots=()):
     """
     A template enters the corpus only if it says something.
 
@@ -313,12 +421,27 @@ def keep(bucket, text, origin):
     row on its own can still be the TAIL of one, under the pair rule in
     `concat_match` and under that rule's own floor.
     """
-    t = Template(text.rstrip("\n"), origin)
+    t = Template(text.rstrip("\n"), origin, slots)
     if t.literal < LITERAL_FLOOR:
         TOO_LOOSE.append((origin, text.replace(HOLE, "{}")))
         LOOSE.append(t)
         return
     bucket.append(t)
+
+
+def keep_rows(buckets, text, origin, slots=()):
+    """The same, for a template written as several rows at once.
+
+    The slots are handed out row by row, because a hole belongs to the row it
+    is written on and a row that takes the wrong slot would be held to the
+    wrong rule.
+    """
+    used = 0
+    for row in text.split("\n"):
+        n = row.count(HOLE)
+        for bucket in buckets:
+            keep(bucket, row, origin, slots[used:used + n])
+        used += n
 
 
 # --- Python: the VTY -------------------------------------------------------
@@ -339,19 +462,90 @@ PY_SOURCES = [os.path.join(REPO, "src", "hexash", n)
 PY_SOURCES.append(os.path.join(REPO, "appliance", "hexarouting-tune"))
 
 
+def py_slot(node):
+    """What the source says goes in this hole - see point 7 of the docstring.
+
+    A NAME, an ATTRIBUTE or a SUBSCRIPT is one value: `args[1]` is the word
+    the operator typed, `pool.name` is a pool's name, `r.prefix` is a prefix.
+    One value is one token, and that is the whole of the rule.
+
+    Everything else is a phrase and is left alone, and each of these is a
+    reading of the expression rather than a decision about a site:
+
+      * a CALL - `"/".join(sorted(names))` is a list, `enable_daemon_advice()`
+        is a sentence a function composed. The name of the call says nothing
+        about how many words come back, so nothing is asked of it.
+      * another F-STRING, or a `+`, or a conditional: a phrase built here out
+        of pieces, and the pieces are matched by the holes they became.
+      * a slot NAMED FOR PROSE. `r.reason` is what the dataplane said and
+        `{why}` is a finding's own sentence. These are attributes and names
+        like any other, so the syntax cannot tell them apart - the identifier
+        the author chose can, and it is written at the site, in the source,
+        by the person who knew what goes in it. PROSE_WORDS is a list of
+        WORDS and not of sites: a new `err(f"{reason} ...")` anywhere in this
+        tree is exempt the moment it is written, nobody has to remember to
+        come back here, and how much each word exempts is printed.
+    """
+    expr = ast.unparse(node)
+    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
+        return Slot(expr, False, "a slice is a sequence")
+    if not isinstance(node, (ast.Name, ast.Attribute, ast.Subscript,
+                             ast.Constant)):
+        return Slot(expr, False, "composed here out of pieces")
+    last = re.findall(r"\w+", expr)
+    if last and last[-1].lower() in PROSE_WORDS:
+        return Slot(expr, False, f"named {last[-1]!r}, which is a sentence")
+    return Slot(expr, True)
+
+
+# The words this product names a sentence with. FOUR, and each one was put
+# here by finding the site that composes the sentence, not by imagining a
+# slot that might hold one:
+#
+#   reason   `vppapi.Reply.reason`, which the dataplane's own refusal is
+#            built into - `f"the dataplane refused it: {name}"` and a detail
+#            after it. 74 holes in the corpus end on one.
+#   why      `say_finding(mark, stmt, why)` and the four-field announce
+#            findings: `why` IS the sentence that names the fault.
+#   what     `require(cap, what)` is called with `start shell`, `clear bgp`,
+#            `commit` - the VTY's own name for a command, and two of those
+#            are two words. `print_prose(f"{what}; when this card...")` hands
+#            it a whole clause about DPDK drivers.
+#   msg      `cannot reach the dataplane: {msg}` - what the API layer said.
+#
+# How many holes each of these exempts is PRINTED on every run, which is the
+# difference between a reading of the source and a list of excuses: a word
+# that stops exempting anything, or one that starts exempting half the
+# corpus, is on the screen the next time anybody runs this.
+#
+# `stmt`, `advice` and `line` are NOT here, and that is measured rather than
+# forgotten: every template that interpolates one of them is under
+# LITERAL_FLOOR - `f"    {stmt}"`, `f"{sev}: {subject}: {why}"` - so none of
+# them is in the corpus at all, and the finding below reads only the verdict
+# row, which is not where any of the three is printed.
+PROSE_WORDS = {"reason", "why", "what", "msg"}
+
+
 def py_template(node):
-    """A literal or an f-string as a template, or None for anything else."""
+    """A literal or an f-string as (template, slots), or (None, ()).
+
+    The slots come back with the template because the hole and what the
+    source says goes in it are one fact, and splitting them across two passes
+    is how they stop agreeing.
+    """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
+        return node.value, []
     if isinstance(node, ast.JoinedStr):
-        out = ""
+        out, slots = "", []
         for part in node.values:
             if isinstance(part, ast.Constant) and isinstance(part.value, str):
                 out += part.value
             else:
                 out += HOLE
-        return out
-    return None
+                slots.append(py_slot(part.value if isinstance(
+                    part, ast.FormattedValue) else part))
+        return out, slots
+    return None, []
 
 
 def py_docstrings(tree):
@@ -369,7 +563,7 @@ def py_docstrings(tree):
 
 
 def py_strings(node):
-    """Every template inside a container the message tables are written as."""
+    """Every (template, slots) inside a container the tables are written as."""
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         return [py_template(e) for e in node.elts]
     return [py_template(node)]
@@ -389,11 +583,12 @@ for path in PY_SOURCES:
             for value in ast.walk(node.value):
                 if isinstance(value, ast.Tuple):
                     parts = [py_template(e) for e in value.elts]
-                    if len(parts) >= 2 and all(p is not None for p in parts):
+                    if len(parts) >= 2 and all(
+                            p is not None for p, _ in parts):
                         at = f"{where}:{value.lineno}"
-                        keep(ERRS, parts[0], at)
-                        for rest in parts[1:]:
-                            keep(PROSE, rest, at)
+                        keep(ERRS, parts[0][0], at, parts[0][1])
+                        for rest, slots in parts[1:]:
+                            keep(PROSE, rest, at, slots)
             continue
         if not isinstance(node, ast.Call):
             continue
@@ -401,30 +596,29 @@ for path in PY_SOURCES:
         args = [a for a in node.args if not isinstance(a, ast.Starred)]
         origin = f"{where}:{node.lineno}"
         if name in ("err", "err_dataplane") and args:
-            for text in py_strings(args[0]):
+            for text, slots in py_strings(args[0]):
                 if text is not None:
-                    keep(ERRS, text, origin)
+                    keep(ERRS, text, origin, slots)
         elif name == "err_prose" and args:
-            for text in py_strings(args[0]):
+            for text, slots in py_strings(args[0]):
                 if text is not None:
-                    keep(ERRS, text, origin)
+                    keep(ERRS, text, origin, slots)
             for arg in args[1:]:
-                for text in py_strings(arg):
+                for text, slots in py_strings(arg):
                     if text is not None:
-                        keep(PROSE, text, origin)
+                        keep(PROSE, text, origin, slots)
         elif name in ("print_prose", "console_prose") and args:
-            for text in py_strings(args[0]):
+            for text, slots in py_strings(args[0]):
                 if text is not None:
-                    keep(PROSE, text, origin)
+                    keep(PROSE, text, origin, slots)
         elif name == "say_finding" and len(args) >= 3:
-            for text in py_strings(args[2]):
+            for text, slots in py_strings(args[2]):
                 if text is not None:
-                    keep(PROSE, text, origin)
+                    keep(PROSE, text, origin, slots)
         elif name == "print" and args:
-            for text in py_strings(args[0]):
+            for text, slots in py_strings(args[0]):
                 if text is not None:
-                    for row in text.split("\n"):
-                        keep(ROWS, row, origin)
+                    keep_rows((ROWS,), text, origin, slots)
     # And every other string these sources build. The pass above follows the
     # call that PRINTS a message, and most of the VTY's findings are not
     # printed where they are written: `route_map_findings` and the eight
@@ -449,13 +643,11 @@ for path in PY_SOURCES:
     for node in ast.walk(tree):
         if id(node) in docs or id(node) in inner:
             continue
-        text = py_template(node) if isinstance(
-            node, (ast.Constant, ast.JoinedStr)) else None
+        text, slots = py_template(node) if isinstance(
+            node, (ast.Constant, ast.JoinedStr)) else (None, [])
         if text is None:
             continue
-        for row in text.split("\n"):
-            keep(PROSE, row, f"{where}:{node.lineno}")
-            keep(ROWS, row, f"{where}:{node.lineno}")
+        keep_rows((PROSE, ROWS), text, f"{where}:{node.lineno}", slots)
 
 
 # --- the shell: the boot self-test and the installer -----------------------
@@ -909,7 +1101,7 @@ def agreement(text):
 def row_template(row):
     for t in ROWS:
         if t.match(row):
-            return t
+            return Fill(t, row)
     return None
 
 
@@ -924,15 +1116,15 @@ def verdict_template(row):
     and printed in another - `system.py` returns this one and `hexash.py`
     prints it - is not an emitter call anything can follow.
     """
-    t = row_template(row)
-    if t:
-        return t
+    got = row_template(row)
+    if got:
+        return got
     m = MARKED.match(row)
     after = row[row.index(m.group(1)) + len(m.group(1)):].lstrip()
     for bucket in (ERRS, ROWS, PROSE):
         for t in bucket:
             if t.match(after):
-                return t
+                return Fill(t, after)
     # Last: a row this product builds in two goes - `line = f"note: ..."` and
     # then `line += f"; e.g. '{example}'"` under an `if`. Following that would
     # be following the dataflow; accounting for the row with both strings is
@@ -986,6 +1178,15 @@ def concat_match(text):
     because `f"{a} {b} {c}"` is two literal characters and it would otherwise
     account for the whole back half of any row at all - measured, it is what
     swallowed a refusal this file is supposed to refuse.
+
+    AND POINT 7 IS NOT TAKEN OVER EITHER HALF, which is the one place that
+    rule stops. Measured: held to it, five screens this box really prints are
+    called wrong - `error: invalid argument: ports min 70000: expected
+    1-65535` is `vppapi`'s two words and then a whole clause the caller
+    composed into the hole after them. A row assembled out of two strings is
+    a row whose halves were written apart, so what the join puts in a hole is
+    not one value any more, and a rule that goes red on five correct pages is
+    a rule people run around.
     """
     for t1, rest in heads_of(text):
         for bucket in (PROSE, ROWS, ERRS, LOOSE):
@@ -993,7 +1194,8 @@ def concat_match(text):
                 if (t2.rx.fullmatch(rest) and t2.literal >= TAIL_FLOOR
                         and t1.literal + t2.literal
                         >= LITERAL_SHARE * len(text)):
-                    return [t1, t2]
+                    return [Fill(t1, text[:len(text) - len(rest)]),
+                            Fill(t2, rest)]
     return None
 
 
@@ -1023,10 +1225,10 @@ def prose_group(rows, i):
             # - it is still the fold being checked and not waved past.
             if t.match(para) and want in (
                     hexash.console_prose(para, " " * ind), shell):
-                out.append((k - i + 1, t))
+                out.append((k - i + 1, Fill(t, para)))
         for sind, t in SPROSE:
             if sind == ind and t.match(para) and shell == want:
-                out.append((k - i + 1, t))
+                out.append((k - i + 1, Fill(t, para)))
         if want in (hexash.console_prose(para, " " * ind), shell):
             pair = concat_match(para)
             if pair:
@@ -1060,7 +1262,7 @@ def marked_prose(rows):
             for t in PROSE:
                 if not t.match(para):
                     continue
-                out.append((k + 1, t))
+                out.append((k + 1, Fill(t, para)))
                 # THE STATEMENT ROW, and the one place this file matches a
                 # row without attributing it. `say_finding` ends by printing
                 # the operator's own statement back whole and unwrapped -
@@ -1079,7 +1281,7 @@ def marked_prose(rows):
                 # condition was put here.
                 if (k + 1 < len(rows) and indent_of(rows[k + 1]) == 4
                         and agreement(rows[k + 1].strip()) is None):
-                    out.append((k + 2, t))
+                    out.append((k + 2, Fill(t, para)))
             break
     return out
 
@@ -1190,6 +1392,55 @@ def stale(rows):
     return best
 
 
+def swallows(rows):
+    """
+    The third finding: a hole took a word the box has stopped printing.
+
+    `{} does not keep what it received` opens with a hole, and a hole is
+    `[^\n]+?`, so the page's `neighbour 200.150.0.2` goes into it WHOLE and
+    the row matches. #363 took that noun out of the product and the page kept
+    it for a session, with this file green on both sides of the change. The
+    other four defences are all about how much of a row is hole and this row
+    is 33 literal characters - they were right to pass it. What was never
+    asked is what the hole is ALLOWED to hold.
+
+    So: the template accounts for the row, most of the row is its literal
+    text, and one hole the SOURCE says holds a single value came out holding
+    two words. That is a page carrying a word the box does not print, and it
+    is named rather than skipped.
+
+    Read on the VERDICT ROW ONLY, which is where the evidence is strongest
+    and the narrower of the two widths that were measured. An `err` headline
+    is one clause and its slots are an address, an interface, a count - the
+    paragraphs under it are where a slot legitimately holds a sentence, and a
+    finding there would be this file going red on a page nobody got wrong.
+    Failing to MATCH on a wide hole is cheap - the screen lands on the
+    printed skip list, which is where a screen this file cannot account for
+    belongs; calling a page WRONG is not, so the loud half is taken only on
+    the row this product writes shortest.
+
+    The longest template wins, and between two of the same length the one
+    whose hole swallowed least: both send the reader to the message the page
+    was actually quoting rather than to some other one that also fits.
+    """
+    mark = MARKED.match(rows[0]).group(1)
+    after = rows[0][rows[0].index(mark) + len(mark):].lstrip()
+    best = None
+    for text in (after, rows[0]):
+        for bucket in (ERRS, ROWS, PROSE):
+            for t in bucket:
+                m = t.rx.fullmatch(text)
+                if not m or t.literal < LITERAL_SHARE * len(text):
+                    continue
+                took = t.swallowed(m)
+                if not took:
+                    continue
+                key = (t.literal, -len(took[1]))
+                if best is None or key > best[0]:
+                    best = (key, t, took[0], took[1])
+    return best[1:] if best else None
+
+
 # ---------------------------------------------------------------------------
 # The report.
 
@@ -1202,10 +1453,46 @@ print(f"  {len(TOO_LOOSE)} template(s) refused entry: under {LITERAL_FLOOR} "
       f"literal characters, so they would match rows nobody wrote")
 print(f"  {len(SCENARIOS) + len(FINDINGS)} scenario(s) driven through the VTY")
 
+# What the whitespace rule actually reaches, printed for the same reason the
+# refused-entry count is: a rule whose reach is not on the screen is one
+# nobody can watch stop working. If a refactor turned every slot into
+# something this file reads as a phrase, every count below would still be
+# green and the first number here would be the only place it showed.
+SLOTS = [slot for bucket in (ERRS, ROWS, PROSE) for t in bucket
+         for slot in t.slots]
+ONE_VALUE = [s for s in SLOTS if s.one_value]
+BY_NAME = {}
+for slot in SLOTS:
+    if not slot.one_value and slot.expr != "?":
+        word = [w for w in re.findall(r"\w+", slot.expr)
+                if w.lower() in PROSE_WORDS]
+        if word:
+            BY_NAME[word[-1]] = BY_NAME.get(word[-1], 0) + 1
+OPENS = [t for bucket in (ERRS, ROWS, PROSE) for t in bucket
+         if t.text.startswith(HOLE)]
+print(f"  the corpus's holes: {len(ONE_VALUE)} the source says hold ONE "
+      f"VALUE and may not contain whitespace, "
+      f"{len(SLOTS) - len(ONE_VALUE)} a phrase - of those, "
+      f"{sum(BY_NAME.values())} by the word the author wrote "
+      f"({', '.join(f'{k} x{v}' for k, v in sorted(BY_NAME.items()))})")
+print(f"  {len(OPENS)} template(s) OPEN with a hole, "
+      f"{len([t for t in OPENS if t.slots[0].one_value])} of them on a hole "
+      f"that holds one value - the shape that swallowed `neighbour `")
+
 driven = matched = 0
 loosest = None
 skipped = []
 findings = []
+spaced = []                             # accepted holes holding whitespace
+
+# The ceiling, in the idiom test_hexash_refusals.py argues for: what is left
+# is NAMED on every run and the number it may not exceed is written down,
+# because an allowlist is read once and grown forever. These two are the
+# accepted matches that still lean on a hole holding more than one word, and
+# both are a `${...}` in a shell script - the one language here whose slots
+# this file cannot read, so it asks them for nothing. Reading them would take
+# this to zero; it may not go up.
+SPACED_AT_MOST = 2
 
 for rel, lineno, rows in SCREENS:
     # The self-test's markers carry two leading spaces of their own and some
@@ -1228,7 +1515,11 @@ for rel, lineno, rows in SCREENS:
             break
     if used:
         matched += 1
-        for t in used:
+        for f in used:
+            t = f.t
+            for slot, got in f.holes():
+                if re.search(r"\s", got):
+                    spaced.append((rel, lineno, t.origin, slot, got))
             share = t.literal / max(1, t.literal + 12 * t.holes)
             if loosest is None or (t.holes, -share) > loosest[0]:
                 loosest = ((t.holes, -share), t)
@@ -1240,6 +1531,10 @@ for rel, lineno, rows in SCREENS:
             found = ("goes on past it",) + goes_on
         elif stops:
             found = ("stops agreeing with it",) + stops
+        else:
+            took = swallows(shifted)
+            if took:
+                found = ("swallowed",) + took
         if found:
             break
     if found:
@@ -1265,11 +1560,41 @@ if skipped:
 
 if findings:
     print()
-for rel, lineno, row, (how, t, rest) in findings:
+for rel, lineno, row, (how, t, *rest) in findings:
+    if how == "swallowed":
+        slot, got = rest
+        check(False,
+              f"{rel}:{lineno} quotes a screen the box does not print. It "
+              f"matches {t.text.replace(HOLE, '{}')!r}, which {t.origin} "
+              f"builds, only because the hole for {slot.expr} - one value in "
+              f"the source - swallowed {got.strip()!r}. The page carries a "
+              f"word this box does not print, or the value is in the wrong "
+              f"place: read the row off the box")
+        continue
     check(False,
           f"{rel}:{lineno} quotes a screen the box does not print. It starts "
           f"as {t.text.replace(HOLE, '{}')!r}, which {t.origin} builds, and "
-          f"then {how}: {rest.strip()[:60]!r}")
+          f"then {how}: {rest[0].strip()[:60]!r}")
+
+
+# What is left of the loosening, named rather than counted. A hole that holds
+# two words is either a slot this file could not read or a page carrying a
+# word the box does not print, and the first is the only one allowed here.
+spaced.sort()
+print(f"\n  {len(spaced)} accepted match(es) lean on a hole holding more than "
+      f"one word, against a ceiling of {SPACED_AT_MOST}:")
+for rel, lineno, origin, slot, got in spaced:
+    print(f"    {rel}:{lineno}  {origin}  the hole for {slot.expr} "
+          f"({slot.why}) holds {got!r}")
+check(len(spaced) <= SPACED_AT_MOST,
+      f"{len(spaced)} accepted match(es) lean on a hole holding more than one "
+      f"word, above the ceiling of {SPACED_AT_MOST}. A hole that swallows a "
+      f"word is how a page keeps a word the box stopped printing - read the "
+      f"slot, or read the row off the box; do not raise the number")
+check(len(spaced) >= SPACED_AT_MOST,
+      f"the ceiling says {SPACED_AT_MOST} and only {len(spaced)} accepted "
+      f"match(es) lean on a wide hole: lower it, or it stops holding "
+      f"anything")
 
 
 # ---------------------------------------------------------------------------
@@ -1336,13 +1661,49 @@ check(fold_s(_para, 70) == _real,
       f"70`, so every screen it reads that way is measured against the wrong "
       f"shape: {fold_s(_para, 70)} vs {_real}")
 
+# A word the box stopped printing, put back into the row it was taken out of.
+# This is #363's own change to `{args[1]} does not keep what it received`, and
+# the wiki carried the old form for a session with this file green on both
+# sides of it: the template opens with a hole, and `neighbour 200.150.0.2`
+# went into the hole whole. Both halves are asserted, because the rule is
+# worth nothing if the corrected row stops being attributable.
+_KEPT = ["error: 200.150.0.2 does not keep what it received"]
+_WORD_BACK = ["error: neighbour 200.150.0.2 does not keep what it received"]
+check(attribute(_KEPT), "the verdict #363 left is no longer attributed to the "
+      "box that prints it, so the rule below is being read over nothing")
+check(not attribute(_WORD_BACK),
+      "a verdict carrying a word the product does not print is still "
+      "attributed: the hole swallowed it")
+_took = swallows(_WORD_BACK)
+check(_took and _took[2].strip() == "neighbour 200.150.0.2",
+      f"and nothing names what the hole swallowed: {_took and _took[2]!r}")
+
+# The other side of that rule, and the one that decides whether it can be
+# lived with: a slot the SOURCE says is a sentence is not asked for a single
+# token. Asserted on `py_slot`, which is where it is decided, over the two
+# expressions the measurement turned on - `args[1]` is the operator's word
+# and `r.reason` is whatever the dataplane said.
+check(py_slot(ast.parse("args[1]", mode="eval").body).one_value,
+      "a subscript is not read as one value, so the rule reads nothing")
+check(not py_slot(ast.parse("r.reason", mode="eval").body).one_value,
+      "the dataplane's own sentence is read as one value, and every screen "
+      "quoting a refusal it forwarded would be called wrong")
+check(not py_slot(ast.parse('"/".join(sorted(n))', mode="eval").body)
+      .one_value, "a joined list is read as one value")
+check(not py_slot(ast.parse('f"{a} and {b}"', mode="eval").body).one_value,
+      "a phrase composed out of pieces is read as one value")
+
 # And the corpus is not empty, which is the last way all of this reads green
 # over nothing at all.
 check(len(ERRS) > 100 and len(PROSE) > 100 and len(ROWS) > 100,
       f"the corpus is {len(ERRS)}/{len(PROSE)}/{len(ROWS)}, which is not a "
       f"reading of this product's sources")
+check(len(ONE_VALUE) > 1000,
+      f"only {len(ONE_VALUE)} hole(s) in the corpus are held to one token, "
+      f"so whatever the rule above is reading it is not this product")
 print("  a glued refusal, a glued pair, an invented one, an empty "
-      "template, a wrong fold and an empty corpus are each refused")
+      "template, a wrong fold, a swallowed word, a sentence asked for one "
+      "token and an empty corpus are each refused")
 
 print()
 if fail:
