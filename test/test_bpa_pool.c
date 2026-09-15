@@ -142,6 +142,69 @@ main (void)
   bpa_pool_t pools[BPA_VEC_N_POOLS];
   unsigned i;
 
+  /*
+   * THE VECTOR SET COVERS BOTH POLICIES AND BOTH DIVIDES, and this is asserted
+   * rather than assumed because the whole file below is only as good as what
+   * the table carries.
+   *
+   * bpa_split(), bpa_join() and bpa_reserve_index() each have an arm for the
+   * blocked policy that nothing else in this repository reaches without a
+   * container, and bpa_divide() has a branch for a divisor that is not a power
+   * of two. Measured on the table as it stands: three blocked pools -
+   * frag-blocked, adjacent and reserved-blocked - with divisors 126, 31 and
+   * 126, none of them a power of two, and every pool is walked by the loops
+   * below. So all four are executed offline today.
+   *
+   * What was missing is anything that would notice them going. A coverage
+   * report is read by whoever runs it; this goes red in `make test` the day
+   * somebody drops the last blocked pool from ref/gen_vectors.py, which would
+   * otherwise leave the reverse mapping that decides WHICH SUBSCRIBER an
+   * inbound packet belongs to measured on one policy only.
+   */
+  {
+    unsigned n_blocked = 0, n_interleaved = 0, n_pow2 = 0, n_not_pow2 = 0;
+
+    for (i = 0; i < BPA_VEC_N_POOLS; i++)
+      {
+	const bpa_vec_pool_t *v = &bpa_vec_pools[i];
+	/* The divisor is what bpa_split() divides by, and it is a different
+	   number under each policy: the public address count when the blocks
+	   of one subscriber are spread across addresses, and the blocks each
+	   address holds when they are grouped on one. Computed here from the
+	   vector's own expected values rather than from the loaded pool, so a
+	   pool that failed to load cannot make this section say nothing. */
+	u32 d = (v->policy == BPA_POLICY_INTERLEAVED) ? v->exp_outside_count
+						      : v->exp_blocks_per_ip;
+	if (v->policy == BPA_POLICY_BLOCKED)
+	  n_blocked++;
+	else
+	  n_interleaved++;
+	if (d && (d & (d - 1)) == 0)
+	  n_pow2++;
+	else
+	  n_not_pow2++;
+      }
+    CHECK (n_blocked > 0,
+	   "no vector pool uses the blocked policy, so bpa_split(), "
+	   "bpa_join() and bpa_reserve_index() are measured on one arm each "
+	   "and the reverse mapping that decides which subscriber an inbound "
+	   "packet belongs to is unmeasured under the other");
+    CHECK (n_interleaved > 0,
+	   "no vector pool uses the interleaved policy, which is the default "
+	   "and the one every deployment starts on");
+    CHECK (n_pow2 > 0,
+	   "no vector pool has a power-of-two divisor, so bpa_divide()'s "
+	   "shift is never taken - and that is the branch every packet on a "
+	   "typical pool goes through");
+    CHECK (n_not_pow2 > 0,
+	   "no vector pool has a divisor that is not a power of two, so "
+	   "bpa_divide()'s reciprocal multiply is never taken and "
+	   "ref/check_magic.py proves something nothing runs");
+    printf ("  %u blocked and %u interleaved pool(s); %u divisor(s) a power "
+	    "of two and %u not\n", n_blocked, n_interleaved, n_pow2,
+	    n_not_pow2);
+  }
+
   printf ("=== address sets and derived values ===\n");
   for (i = 0; i < BPA_VEC_N_POOLS; i++)
     {

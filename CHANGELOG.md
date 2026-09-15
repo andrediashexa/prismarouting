@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The vector table's coverage of both mapping policies rested on nobody
+  removing a pool.** `bpa_split()`, `bpa_join()` and `bpa_reserve_index()` each
+  have an arm for the blocked policy that nothing in this repository reaches
+  without a container, and `bpa_divide()` has a branch for a divisor that is
+  not a power of two. A coverage report suggested all four were unexecuted
+  offline. **They are not**: measured on the table as it stands, three pools
+  are blocked - `frag-blocked`, `adjacent` and `reserved-blocked`, with
+  divisors 126, 31 and 126 - and `test/test_bpa_pool.c` walks every pool, so
+  the harness now prints `3 blocked and 6 interleaved pool(s); 3 divisor(s) a
+  power of two and 6 not`.
+
+  What was missing is anything that would notice them going. A coverage report
+  is read by whoever runs it; this goes red in `make test` the day somebody
+  drops the last blocked pool from `ref/gen_vectors.py`, which would otherwise
+  leave the reverse mapping that decides **which subscriber an inbound packet
+  belongs to** measured under one policy only. Both halves of `bpa_divide()`
+  are held the same way, because `ref/check_magic.py` proves the reciprocal
+  multiply exact and that proof is about a branch nothing would be taking.
+
 * **Three numbers stated in the present tense inside the product, in comments
   beside the code that computes them.** `test/test_release_gate.sh` said *"the
   gate refuses eighteen times"* on the line directly above
