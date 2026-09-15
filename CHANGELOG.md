@@ -120,6 +120,37 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A suite that went red on correct work, depending on where the tree was
+  checked out.** `test/test_installer.sh` runs the installer inside a mount
+  namespace that replaces `/tmp` with a directory of its own, so the stubs on
+  `PATH` are the ones the case arranged. Its own comment says the rig was put
+  under `/var/tmp` for exactly that reason: *"a rig that lived under /tmp
+  would be hidden by its own mount"*.
+
+  The **program under test** is reached by its path too, and a checkout under
+  `/tmp` is hidden by the same mount:
+
+  ```
+  $ git clone --no-local . /tmp/gateprobe && cd /tmp/gateprobe
+  $ sh test/test_installer.sh
+  FAIL: the refusal does not name update-grub by itself ...
+        sh: 0: cannot open /tmp/gateprobe/appliance/hexarouting-install
+  17 FAILURES
+  ```
+
+  The same clone under `/home` is green. Seventeen failures that read as
+  product defects and are a property of where somebody put the tree.
+  `tools/release-gate.sh` clones to `/tmp/hexa-release`, so that is not a
+  hypothetical location - the gate does not run this suite today, and nothing
+  says it may not.
+
+  The hazard had been seen and half fixed: the rig moved off `/tmp`, the
+  installer's own path did not. Both invocations that run inside such a
+  namespace now run a **copy** under the rig, with `cmp` asserting it is the
+  program - a copy nobody compares is how a suite comes to measure a stale
+  binary. A copy rather than a third bind because the installer resolves
+  nothing from its own directory, measured: no `dirname "$0"` anywhere in it.
+
 * **The BGP page quoted a verdict the fix to
   [#363](https://github.com/andrediashexa/hexarouting/issues/363) had just
   changed, and the wiki reader did not catch it.** Both
