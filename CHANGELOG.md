@@ -120,6 +120,90 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The appliance printed rows of 83 to 141 columns to a boot console that
+  cannot reflow, and 2,143 real rows had never been measured**
+  ([#367](https://github.com/andrediashexa/hexarouting/issues/367)).
+  `appliance/hexarouting-install`, `appliance/bind-dataplane-nic` and
+  `appliance/apply-tuning` print at boot, to a serial line or a VGA text
+  screen: 80 columns, hard, no reflow and no scrollback, and the installer is
+  read by somebody **while they decide what to type**. #359, #362 and #363 put
+  the 79-column budget on the VTY; nothing had ever measured a row of the
+  appliance.
+
+  **The corpus can be kept now, and is off by default.** `test/say-coverage.sh`
+  already holds every line every box printed, in a `mktemp -d` that dies with
+  the suite - right for a check and useless for a measurement, so the figure
+  above could only be taken by patching `say_box` in a scratch tree.
+  `SAY_CORPUS=<dir>` writes the rows out, one file per program beside a `.src`
+  naming the tree they came from, and the report says how many were kept and
+  where. Nothing is written when nobody names a directory: a suite that writes
+  outside its own tempdir on every run is a suite that leaves litter in
+  somebody's repository. [#366](https://github.com/andrediashexa/hexarouting/issues/366)
+  wants the same of `tools/run-all-labs.sh` and this is the shape to copy.
+
+  **The reader is #363's method one component over.** Per message, driven
+  rather than read: either **bounded** - every value that can reach it comes
+  from somewhere with a widest member, so the row is rebuilt with that member
+  and measured - or **unbounded but safe**, where the value is last on its row
+  and a fold costs nothing, or **neither**, which is refused. The widest
+  members are read from the product: the paths the program itself names, the
+  drivers it declares, the ten tools it checks for, the three fields the VTY
+  writes into `HEXA_DATAPLANE_MGMT`. A `fold` over everything would have been
+  wrong: `say_list` folds a list and a verdict is one row, and the fix for a
+  row that does not fit is to move the VALUE off it.
+
+  **Most of what looked too wide was the rig, not the box.** `ask` prompts with
+  `printf` and no newline, so a prompt and the message after it arrive in one
+  captured line - `Gigabytes for connection records [30]: error: the mirror has
+  to be a SECOND disk` is two rows on a box and one row in the corpus. The
+  reader separates them by deriving which printers leave the cursor where it
+  was and what they write after the question, so the refusal is measured from
+  its own `error: ` rather than from the far side of somebody else's prompt.
+  Three more were long only because a suite points the program at a tempdir:
+  every one of these takes a root so a rig can hand it a tree shaped like
+  `/etc`, and at the widths a real box gives them the same rows are 20 to 30
+  columns narrower.
+
+  **Fourteen rows moved the value off the row.** At the widest value that can
+  reach them, before and after:
+
+  | row | was | now |
+  |---|---|---|
+  | `missing tools:` with all ten missing | 141 | 49, then the list folded |
+  | `update-grub missing: apply the command line from <file>` | 114 | 62 and 52 |
+  | `with the management path the box recorded: <record>` | 101 | 54 and 60 |
+  | `live filesystem not found at <path>` | 99 | 55 and 43 |
+  | `fstab: UUID=<uuid> is mounted at boot` | 97 | 63 and 50 |
+  | `network: <path> was not written` | 90 | 68, 53 and 46 |
+  | `bind: <addr> is named in <file>` | 88 | 52 and 53 |
+  | `the gateway <a> is not on <b>'s subnet` | 88 | 70 and 53 |
+  | `no kernel in <mnt>/boot` | 88 | 64 and 24 |
+  | `bind: <driver> is not available on this box` | 86 | 68 and 74 |
+  | `the installed system did not verify` | 84 | 70 and 10 |
+  | `setting the root password failed` | 83 | 69 and 17 |
+  | `this medium carries ssh host keys` | 81 | folded at 72 |
+  | `REFUSED <var>=<value> in tune.env` | unbounded | 77, value alone |
+
+  The last of those is the one the product had already argued for and not done:
+  `apply-tuning` says in its own comment that a refused value is *"quoted and
+  printed whole on a line of its own"* because *"a value that pushes the
+  sentence off the edge takes the reason with it"*, and it was printing the
+  value in the middle of the sentence with the path to the file behind it.
+
+  **What is left is named on every run.** 49 rows of the installer and 6 of the
+  binder carry a value with no widest - a disk somebody named, a card name, an
+  answer somebody typed - with the words of the program behind them. They are
+  printed with their line and the columns before the value, under a ceiling
+  that may only go down, because an allowlist is read once and grown forever.
+  `appliance/apply-tuning` is at zero on both counts.
+
+  **And two branches nobody had run.** Reaching the prompts meant taking
+  printers called inside a `$(...)`, which is how every question in the
+  installer is asked; the message reader then wanted a box for `Hostname` and
+  `Timezone`, and there was none - every case here, every lab and every
+  unattended install answers those from a file. They are the first two
+  questions an operator meets at an interactive install.
+
 * **The README said the configuration trail's every entry names the operator,
   and the product has a shape where there is nobody to name.** A change typed
   at the dataplane's own CLI is recorded `by unattributed via cli`, and
@@ -229,6 +313,7 @@ version has a chance of seeing it.
   the default is always an ALG switched **off**. The branch stays: it is what
   keeps the emitter correct on the day an ALG ships defaulting off, and
   deleting it would make the running configuration silently wrong then.
+
 
 * **A document check whose verdict depended on whether somebody had built.**
   `test/test_doc_commands.py` refuses a document that sends a reader to a path

@@ -82,8 +82,15 @@ if [ -z "$ADDR" ]; then
 fi
 
 DEV="$SYSBUS/devices/$ADDR"
-[ -d "$DEV" ] || { say "bind: $ADDR is named in $VPPCONF and this box has no" \
-                       "such PCI device"; exit 1; }
+# TWO ROWS, because one was 88 columns on the 80-column console this prints to
+# (#367). `say` joins its arguments with a space onto ONE row, so a
+# continuation in the source is not a break in the output - the same trap the
+# two-line message further down names. The address is twelve columns and the
+# file the tuner wrote is another twenty-one, and the verdict has to stay one
+# row: what moves off it is the path, onto the end of a row of its own where a
+# fold costs nothing.
+[ -d "$DEV" ] || { say "bind: no such PCI device as $ADDR on this box."
+                   say "      It is the device named in $VPPCONF"; exit 1; }
 
 current=$(basename "$(readlink -f "$DEV/driver" 2>/dev/null)" 2>/dev/null)
 [ "$current" = "." ] && current=""
@@ -164,8 +171,15 @@ if [ -n "$defif" ] && [ -e "$SYSNET/$defif/device" ]; then
       fi
       exit 1
     fi
-    say "bind: $ADDR is $defif, the only card this box has. Handing it over,"
-    say "      with the management path the box recorded: $keep"
+    # THE RECORD ON A ROW OF ITS OWN. It is a name, an address and a MAC -
+    # fifteen columns, eighteen and seventeen, which is what the VTY writes
+    # there and what read_dataplane_mgmt() will read back - so the sentence
+    # that carried it was 101 columns on an 80-column console (#367). The
+    # record is the one thing on this screen somebody may want to copy, and it
+    # is now the whole of the last row.
+    say "bind: $ADDR is $defif, the only card this box has. Handing it"
+    say "      over, with the management path the box recorded:"
+    say "        $keep"
   fi
 fi
 
@@ -205,8 +219,12 @@ if [ ! -d "$SYSBUS/drivers/$want" ]; then
   modprobe "$want" 2>/dev/null || true
 fi
 if [ ! -d "$SYSBUS/drivers/$want" ]; then
-  say "bind: $want is not available on this box, so $ADDR cannot be given to"
-  say "      the dataplane. The kernel has no such driver to load."
+  # The driver name comes first and uio_pci_generic is fifteen columns of it,
+  # which put the address on the far side of the margin at 86 (#367). Moving
+  # the address to the second row costs nothing: both are bounded, and the row
+  # an operator reads first is the one that names what is missing.
+  say "bind: $want is not available on this box, so the dataplane"
+  say "      cannot be given $ADDR. The kernel has no such driver to load."
   exit 1
 fi
 

@@ -808,7 +808,11 @@ verify_installed() {   # <mounted root>; non-zero if the disk is not usable
         if [ -n "$(blkid -U "$_u" 2>/dev/null)" ]; then
           _n=$((_n + 1))
         else
-          _vbad "fstab: UUID=$_u is mounted at boot and no device has it"
+          # THE UUID ON A ROW OF ITS OWN. It is 36 columns of the 97 this
+          # sentence measured on an 80-column console (#367), and it is the
+          # one thing here an operator copies out to go and look for.
+          _vbad "fstab: a UUID is mounted at boot and no device has it:
+         UUID=$_u"
         fi
       done
       [ "$_n" -gt 0 ] && _vok "fstab: $_n UUID(s), every one of them resolves"
@@ -831,8 +835,9 @@ verify_installed() {   # <mounted root>; non-zero if the disk is not usable
   # the failure this verification exists for: it is found while the operator
   # is still standing there with the medium in the drive.
   if [ ! -f "$_r$MGMT_CONF" ]; then
-    _vbad "network: $MGMT_CONF was not written, so this box would
-         boot with its card down and no address"
+    _vbad "network: the management stanza was not written, so this box
+         would boot with its card down and no address:
+         $MGMT_CONF"
   else
     _mif=$(awk '$1 == "iface" { print $2; exit }' "$_r$MGMT_CONF")
     _mmethod=$(awk '$1 == "iface" { print $4; exit }' "$_r$MGMT_CONF")
@@ -947,7 +952,14 @@ install_ssh_host_keys() {   # <mounted root>; non-zero if no keys could be made
   done
   if [ -n "$_handed" ]; then
     say "  this medium carries ssh host keys; they are not going on the disk:"
-    say "   $_handed"
+    # FOLDED, because the list grows with the kinds of key a medium was built
+    # with: three of them is 73 columns and four is 81, on an 80-column console
+    # (#367). `say` puts four columns in front and the indent is three, so 72
+    # is what is left. A list folds between its items and nothing is lost; the
+    # verdict above it is one row and does not fold.
+    printf '%s\n' "$_handed" | fold -s -w 72 | while IFS= read -r _r; do
+      say "   $_r"
+    done
     say "  every box installed from this medium answers with them"
   fi
   rm -f "$_r"/etc/ssh/ssh_host_*_key "$_r"/etc/ssh/ssh_host_*_key.pub
@@ -987,9 +999,19 @@ for t in sfdisk mkfs.ext4 mkfs.vfat unsquashfs blkid lsblk findmnt chpasswd \
          grub-install update-grub; do
   command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
 done
-[ -z "$missing" ] || fatal "missing tools:$missing - the ISO should carry them"
+# THE LIST ON ROWS OF ITS OWN, folded. All ten missing is the case an operator
+# meets on a medium that was built wrong - which is exactly when they read this
+# - and ten names is 92 columns of value: with the verdict in front of them the
+# row was 141 on an 80-column console that cannot reflow (#367). A verdict is
+# one row and must not fold; a LIST folds between its items and loses nothing,
+# which is the same trade appliance/selftest makes in say_list.
+[ -z "$missing" ] || fatal "missing tools - the ISO should carry them:
+$(printf '%s\n' "$missing" | fold -s -w 77 | sed 's/^ *//; s/^/  /')"
 
-[ -f "$SRC" ] || fatal "live filesystem not found at $SRC (are you on the ISO?)"
+# The path is 41 columns of the 99 this measured (#367), and it is the whole of
+# the answer: it says which file was looked for. It goes last, on its own row.
+[ -f "$SRC" ] || fatal "live filesystem not found (are you on the ISO?):
+  $SRC"
 
 echo
 echo "=============== HexaRouting: install to disk ==============="
@@ -1252,9 +1274,10 @@ else
     if [ -n "$MGMT_GW" ]; then
       ipv4_ok "$MGMT_GW" || die "the gateway '$MGMT_GW' is not an address"
       same_subnet "$MGMT_ADDR" "$MGMT_GW" || \
-        die "the gateway $MGMT_GW is not on $MGMT_ADDR's subnet: this box would
+        die "the gateway is not on the subnet of the address: this box would
   come up with an address, refuse the default route, and be reachable from its
-  own subnet only"
+  own subnet only. The two answers that disagree:
+  gateway $MGMT_GW, address $MGMT_ADDR"
     fi
     if [ -z "$MGMT_DNS" ] && [ "$ASSUME_YES" != 1 ]; then
       MGMT_DNS=$(ask "DNS servers, comma separated (empty: none)" "")
@@ -1596,7 +1619,8 @@ unsquashfs -f -d "$MNT" "$SRC" >/dev/null || die "unsquashfs failed"
 # prompt. Failing here says which step was wrong instead of leaving that to be
 # deduced from a bootloader prompt.
 [ -f "$MNT"/boot/vmlinuz-* ] 2>/dev/null || \
-  die "no kernel in $MNT/boot - the live filesystem was built without /boot"
+  die "the live filesystem was built without /boot: no kernel in
+  $MNT/boot"
 
 mkdir -p "$MNT/boot/efi"
 [ "$EFI" = 1 ] && mount "$P1" "$MNT/boot/efi"
@@ -1792,7 +1816,8 @@ fi
 # the process list.
 say "root password"
 printf 'root:%s\n' "$ROOTPW" | chroot "$MNT" chpasswd \
-  || die "setting the root password failed; the installed root account is still locked"
+  || die "setting the root password failed; the root account on the disk
+  is still locked"
 
 # The live image masks sshd and carries no sshd policy of its own; both
 # decisions belong to the installed system, so they are made here.
@@ -1843,8 +1868,12 @@ sync
 # and the operator is told to leave the medium where it is - a box that boots to
 # a "grub>" prompt with the medium already back in its box is a site visit.
 if [ "$VERIFY_BAD" != 0 ]; then
+  # The disk goes last. With the sentence around it this row was 84 columns on
+  # an 80-column console (#367), and it is the row that tells somebody standing
+  # at a machine with the medium still in the drive what to do next.
   die "the installed system did not verify - see the failed check(s) above.
-  $DISK is NOT usable as it stands. Leave the medium in place and install again."
+  Leave the medium in place and install again. Not usable as it stands:
+  $DISK"
 fi
 
 echo

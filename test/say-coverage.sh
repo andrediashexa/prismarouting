@@ -36,6 +36,43 @@
 # are counted and named as unreadable rather than passed over in silence.
 SAY_MIN=${SAY_MIN:-8}
 
+# THE CONSOLE THESE PROGRAMS PRINT TO, in columns, and it is 79 and not 80 for
+# the reason appliance/selftest's say_list already folds to 79: a terminal that
+# writes the 80th column of an 80-column line has nowhere to put the newline,
+# and a serial console then either wraps or swallows it depending on the
+# firmware. The same budget src/hexash/config.py declares for the VTY, because
+# it is the same screen an operator reads at.
+SAY_COLUMNS=${SAY_COLUMNS:-79}
+
+# KEEPING THE ROWS, and OFF unless somebody asks for them.
+#
+# say_box below already holds every line every box printed, in a mktemp -d that
+# dies with the suite. That is right for a check - a check states a verdict and
+# owes nobody its working - and it is no good at all for a MEASUREMENT: #367
+# was opened off a corpus of 2,143 rows that could only be taken by patching
+# say_box in a scratch tree, which is a measurement nobody else can repeat and
+# which stops being true the moment the scratch tree is thrown away.
+#
+# So the rows can be kept, by naming a directory, and nothing is kept when
+# nobody names one. Off by default is the whole point: a suite that writes a
+# file outside its own tempdir on every run is a suite that writes into
+# somebody's repository, and `make test` would start leaving litter behind it.
+#
+# ONE FILE PER PROGRAM, named after the program, beside a `.src` naming the
+# source those rows came out of - so a corpus taken against a scratch tree
+# says which tree it was, and two suites pointed at one directory do not
+# overwrite each other.
+#
+#   SAY_CORPUS=/var/tmp/rows sh test/test_installer.sh
+#
+# It is the same knob tools/run-all-labs.sh grew for #366 - `LAB_OUTPUT=<dir>`,
+# named rather than a flag because whoever wants the corpus wants to say where
+# it goes - and it keeps that rule: the absence of the variable is the off
+# switch, and a default path would be a switch that is always on. The two are
+# the same measurement one layer apart, and the C half of this file is read
+# from a corpus kept exactly that way.
+SAY_CORPUS=${SAY_CORPUS:-}
+
 # WHICH LANGUAGE THE SOURCE IS IN, because the syntax a value is written in
 # differs and the rule about it does not. `say_messages` reads shell;
 # `say_messages_c` reads C. Both hand back the same rows, both cut rather than
@@ -57,6 +94,19 @@ say_init() {   # <program source> [sh|c] [printers, for c]
   : > "$SAY_DIR/every-line"
   : > "$SAY_DIR/per-box-lines"
   : > "$SAY_DIR/boxes"
+  : > "$SAY_DIR/segments"
+  : > "$SAY_DIR/unattributed"
+  SAY_KEEP=
+  if [ -n "$SAY_CORPUS" ]; then
+    # Loud on failure rather than quiet: somebody who asked for the corpus and
+    # got no file would read the absence as "this suite prints nothing", which
+    # is the reading that starts a measurement off wrong.
+    mkdir -p "$SAY_CORPUS" || { echo "SAY_CORPUS=$SAY_CORPUS cannot be made" \
+                                     "- no rows will be kept" >&2; return 0; }
+    SAY_KEEP=$SAY_CORPUS/$(basename "$SAY_SRC").rows
+    : > "$SAY_KEEP"
+    printf '%s\n' "$SAY_SRC" > "$SAY_CORPUS/$(basename "$SAY_SRC").src"
+  fi
 }
 
 # One box's output, on stdin.
@@ -74,6 +124,10 @@ say_box() {
   [ -n "$_sb" ] || return 0
   printf '%s\n' "$_sb" >> "$SAY_DIR/every-line"
   printf '%s\n' "$_sb" | sed 's/^ *//' | sort -u >> "$SAY_DIR/per-box-lines"
+  # WHOLE AND UNSORTED, and not the collapsed copy: a corpus is what came out,
+  # in the order it came out, and a row that a hundred boxes printed is a fact
+  # about this rig that `sort -u` would throw away.
+  [ -z "${SAY_KEEP:-}" ] || printf '%s\n' "$_sb" >> "$SAY_KEEP"
   # COUNTED IN A FILE AND NOT IN A VARIABLE, because the natural way to call
   # this is `<run> | say_box`, and the right-hand side of a pipeline is a
   # subshell whose variables die with it. A box counter that silently stayed
@@ -136,6 +190,72 @@ say_printers() {
   printf '%s' "$_p"
 }
 
+# The printers that do NOT end the row, DERIVED the same way the printers
+# themselves are.
+#
+# WHY ANYTHING HERE CARES. A console row is what an operator reads across, and
+# what a box captures is not the same thing: `ask` writes its prompt with
+# printf and no newline, so the prompt and whatever is printed next arrive in
+# one captured line. `Type yes to install: error: not confirmed` is two rows on
+# the box and one row here, and a width measured on it is a width nothing ever
+# printed - which is most of what looked over budget when #367 was opened.
+#
+# A function that hands its argument to a printf whose format does not end in a
+# newline is such a printer: that is ask() and ask_secret() in the installer,
+# and an `ask_yes_no` added tomorrow is found by the same pass rather than by
+# somebody remembering to add it here. Everything else ends its row, because
+# echo does.
+#
+# SHELL ONLY. A C printer is named by its caller rather than derived (there is
+# no shape in C that says "this one prints"), and the plugin CLI has no
+# prompts: vlib_cli_output writes whole rows. say_report asks for this on the
+# shell path and nowhere else.
+say_row_enders() {   # <printers>; the ones that do NOT end a row
+  awk -v printers="$1" -v sq="'" '
+    BEGIN { split(printers, p, " "); for (i in p) is[p[i]] = 1 }
+    /^[ \t]*#/ { next }
+    match($0, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*\(\)/) {
+      name = substr($0, RSTART, RLENGTH)
+      sub(/^[ \t]*/, "", name); sub(/\(\)/, "", name)
+      if ($0 ~ /\{.*\}[ \t]*$/) { check(name, $0); next }
+      fn = name; body = $0; next
+    }
+    fn != "" {
+      body = body "\n" $0
+      if ($0 ~ /^\}/) { check(fn, body); fn = "" }
+    }
+    # A printf in the body that is handed one of the arguments and whose
+    # format does not end in a newline. The format is read off the source
+    # rather than off what was printed, because a prompt is recognised by what
+    # it does NOT write and there is nothing in the output to see.
+    function check(n, b,   i, m, parts, f, t, q) {
+      if (!is[n]) return
+      m = split(b, parts, "\n")
+      for (i = 1; i <= m; i++)
+        # The FIRST argument, and not any argument: a prompt is the thing a
+        # printer is handed to write before it waits. `$4` inside an embedded
+        # awk program is not one, and nic_table carries exactly that.
+        if (parts[i] ~ /printf/ && parts[i] ~ /\$\*|\$@|\$1([^0-9]|$)/ &&
+            parts[i] !~ ("\\\\n[\"" sq "]")) {
+          # AND WHAT IT WRITES AFTER THE QUESTION, which is where the row it
+          # left open actually ends. ask writes `%s [%s]: ` or `%s: `, so what
+          # follows the last value is `]: ` or `: `, and the message printed
+          # next begins after that - with its own prefix, which is the seven
+          # columns of `error: ` that #362 found the VTY measuring short.
+          # Read off the format rather than written here: an installer that
+          # ends its questions with `? ` tomorrow is read correctly then.
+          f = parts[i]
+          sub(/^.*printf[ \t]+/, "", f)
+          q = substr(f, 1, 1)
+          if (q != "\"" && q != sq) { print n; continue }
+          f = substr(f, 2); sub(q ".*$", "", f)
+          t = f; sub(/^.*%[-# +0-9.]*[a-zA-Z]/, "", t)
+          printf "%s\t%s\n", n, t
+        }
+    }
+  ' "$SAY_SRC"
+}
+
 # Every message the program can print, one row of "<source line><tab><needle>"
 # per call site.
 #
@@ -168,11 +288,13 @@ say_printers() {
 #     printer itself, and its nine literal characters would be a needle that
 #     every verify line contains and no line is spent on, so it could never go
 #     green. The printers are derived above, so this cuts exactly them.
-say_messages() {   # <printers>
-  awk -v printers="$1" -v sq="'" '
+say_messages() {   # <printers> <printers that do not end a row>
+  awk -v printers="$1" -v noend="$2" -v sq="'" '
     BEGIN { split(printers, p, " ")
             for (i in p) if (p[i] != "") {
-              pr = (pr == "" ? p[i] : pr "|" p[i]); isp[p[i]] = 1 } }
+              pr = (pr == "" ? p[i] : pr "|" p[i]); isp[p[i]] = 1 }
+            split(noend, ne, " ")
+            for (i in ne) if (ne[i] != "") isne[ne[i]] = 1 }
     /^[ \t]*#/ { next }
     hd != "" { if ($0 ~ ("^[ \t]*" hd "[ \t]*$")) hd = ""; next }
     match($0, "<<-?" sq "?[A-Za-z_][A-Za-z0-9_]*" sq "?") {
@@ -192,12 +314,23 @@ say_messages() {   # <printers>
     grp && /^[ \t]*\}/ { grp = 0; for (i = 1; i <= gn; i++) print gbuf[i]; gn = 0 }
     {
       s = $0
-      if (match($0, "^[ \t]*(" pr ")[ \t]")) {
+      # THE LAST PRINTER ON THE LINE, and the one at the start of it only when
+      # there is no other. `ipv4_ok "$_ns" || die "the DNS server ... is not an
+      # address"` opens with a printer and PRINTS from the second one: keyed on
+      # the first, the message this reader finds is a bare value, the refusal
+      # an operator reads is found nowhere, and the row it lands on is spent on
+      # whatever else was captured beside it.
+      #
+      # A PRINTER INSIDE A COMMAND SUBSTITUTION counts, which is how every
+      # question in the installer is asked: `_a=$(ask "Install onto which
+      # disk" "a")`. Without it a prompt is not a message, and #367 cannot
+      # tell the row an operator reads from the refusal captured beside it.
+      if (match($0, "[();|&{][ \t]*(" pr ")[ \t]")) {
+        cmd = substr($0, RSTART, RLENGTH); gsub(/[();|&{ \t]/, "", cmd)
+        sub(".*[();|&{][ \t]*(" pr ")[ \t]+", "", s)
+      } else if (match($0, "^[ \t]*(" pr ")[ \t]")) {
         cmd = $0; sub(/^[ \t]*/, "", cmd); sub(/[ \t].*$/, "", cmd)
         sub("^[ \t]*(" pr ")[ \t]+", "", s)
-      } else if (match($0, "[);|&{][ \t]*(" pr ")[ \t]")) {
-        cmd = substr($0, RSTART, RLENGTH); gsub(/[);|&{ \t]/, "", cmd)
-        sub(".*[);|&{][ \t]*(" pr ")[ \t]+", "", s)
       } else next
       # The message is a QUOTED argument. Anything else is a value, or a call
       # to a function this pass over-derived as a printer.
@@ -228,7 +361,24 @@ say_messages() {   # <printers>
       out = ""; n = split(s, part, "\001")
       for (i = 1; i <= n; i++) if (length(part[i]) > 0)
         out = (out == "" ? part[i] : out "\001" part[i])
-      row = FNR "\t" out
+      # THE SHAPE, third, and it is the same string with the empty fragments
+      # LEFT IN. The needle drops them because a needle is hunted for and an
+      # empty fragment matches everywhere; the width reader below needs them,
+      # because a message that opens with a value and one that opens with a
+      # word are different rows and the needle cannot tell them apart. One
+      # extraction, two readings of it: a second pass over the source for the
+      # sake of the shape would be a second answer to "what is a message
+      # here", and the day they disagreed the widths would be measured
+      # against words the box does not print.
+      #
+      # WHETHER THE ROW ENDS HERE, fourth. printf is asked of the line it is
+      # on, because one printf ends a row and the next does not and the
+      # difference is the two characters before the closing quote; every other
+      # printer is asked of its name.
+      ends = 1
+      if (cmd == "printf") ends = ($0 ~ ("\\\\n[\"" sq "]")) ? 1 : 0
+      else if (isne[cmd]) ends = 0
+      row = FNR "\t" out "\t" s "\t" ends
       if (grp) { gbuf[++gn] = row } else print row
     }
     END { for (i = 1; i <= gn; i++) print gbuf[i] }
@@ -569,7 +719,14 @@ say_messages_c() {   # <printer name(s)>
 # this" runs it over every box's output at once; the half that asks "did EVERY
 # box print this" runs it over one box at a time. Written twice they would be
 # two spellings of the same walk, and the walk is the delicate part.
-say_match() {   # <messages file> <captured output file>
+#
+# AND SO THAT THE WIDTH READER USES IT TOO (#367). Measuring a row needs the
+# same walk and one more answer from it: WHICH PIECE of the captured line each
+# message owns. Given a file to write them to it emits those pieces, and given
+# none it behaves exactly as it did - the width half is a second question of
+# one walk, not a second walk. A third spelling of `ordered` is how a rule ends
+# up with two of them wrong, which is the argument this whole file makes.
+say_match() {   # <messages> <captured> [segments] [unattributed] [prompt tails]
 awk -F'\t' '
   function literal(frags,   i, m, tot) {
     tot = 0; m = split(frags, f, "\001")
@@ -591,7 +748,20 @@ awk -F'\t' '
     SPAN_A = first; SPAN_B = at - 1
     return 1
   }
-  NR == FNR { if (literal($2) >= min) need[$2] = 1 ; next }
+  NR == FNR { if (literal($2) >= min) {
+                need[$2] = 1
+                # WHETHER THIS MESSAGE ENDS ITS ROW, defaulting to yes. The C
+                # extraction hands back two fields and every one of its rows
+                # ends: vlib_cli_output writes whole lines and the plugin CLI
+                # asks nothing. Only the shell extraction knows about a printf
+                # that leaves the cursor where it was, so an absent field is a
+                # row-ender rather than a gap - a default the other way would
+                # cut every C row at its first match.
+                e = ($4 == "") ? 1 : $4
+                # A needle printed from two call sites is one message, and it
+                # does not end its row if either of them does not.
+                if (e == 0 || !($2 in ends)) ends[$2] = e }
+              next }
   # ONE LINE CAN CARRY MORE THAN ONE MESSAGE, and wherever a program asks a
   # question it does: a prompt is a printf with no newline, so what an
   # operator sees on one row of the console is
@@ -606,6 +776,15 @@ awk -F'\t' '
   # ever gets shorter.
   {
     line = $0
+    # WHERE EACH MATCH WAS ON THE ROW AS PRINTED, carried through the cuts.
+    # The cut above is what lets the second message be found at all, and it
+    # moves everything after it left - so a position read off the cut line is
+    # not a position on the row the console showed. The map is rebuilt with
+    # the line, which is the same walk the cut already is. Kept only when
+    # somebody asked for the pieces; the two coverage callers pass no file and
+    # pay for none of it.
+    nmatch = 0
+    if (seg != "") for (i = length(line); i >= 1; i--) orig[i] = i
     while (1) {
       bestlen = 0; best = ""
       for (nd in need)
@@ -614,10 +793,85 @@ awk -F'\t' '
         }
       if (best == "") break
       print best
+      if (seg != "") {
+        at[++nmatch] = orig[ba]; atend[nmatch] = orig[bb]; hit[nmatch] = best
+        j = 0
+        for (i = 1; i < ba; i++) keep[++j] = orig[i]
+        for (i = bb + 1; i <= length(line); i++) keep[++j] = orig[i]
+        for (i = 1; i <= j; i++) orig[i] = keep[i]
+      }
       line = substr(line, 1, ba - 1) substr(line, bb + 1)
     }
+    if (seg == "") next
+    # A ROW THIS READER COULD NOT KEY ON AT ALL, kept rather than dropped. A
+    # message written across two source lines prints two rows and only the
+    # first carries words a needle is cut from; a menu row is all values; and
+    # the shell writes its own diagnostics into the same capture. None of
+    # those can be measured against a widest value, and a reader that simply
+    # did not mention them would be reporting a budget it holds over part of
+    # the screen as if it held over all of it.
+    if (nmatch == 0) { if (unatt != "") print $0 > unatt
+                       next }
+    # In the order they appear on the row.
+    for (i = 1; i <= nmatch; i++)
+      for (j = i + 1; j <= nmatch; j++)
+        if (at[j] < at[i]) {
+          t = at[i]; at[i] = at[j]; at[j] = t
+          t = atend[i]; atend[i] = atend[j]; atend[j] = t
+          u = hit[i]; hit[i] = hit[j]; hit[j] = u
+        }
+    #
+    # A CONSOLE ROW STARTS where a message follows one that did not end its
+    # row, and at column 1. Not at every match: two messages on one captured
+    # row are two rows only when the first of them left the cursor where it
+    # was, and a wrapper that interpolates a literal - `say_using "1, the
+    # shipped default"` prints "  Using 1, the shipped default." - is one row
+    # carrying two of these messages. Cutting there would measure two halves
+    # of a row the box prints whole.
+    #
+    # FROM COLUMN 1, because what stands in front of the first message on a
+    # row is that row as well: `die` writes "error: " in front of what it was
+    # handed, `note` writes "  - ", and a verdict measured without its prefix
+    # is measured seven columns short - which is the defect #362 found in the
+    # VTY by reading the prefix out of the product rather than writing it down.
+    ntail = split(tails, TL, "\001")
+    for (i = 1; i <= nmatch; i++) {
+      if (i == 1) { start[i] = 1; continue }
+      if (ends[hit[i - 1]] == 1) { start[i] = start[i - 1]; continue }
+      # WHERE THE PROMPT ENDED, and the new row begins after it. Between the
+      # last word of the question and the first word of the message there is
+      # what the prompt printer wrote - ` [dhcp]: ` - and what this printer
+      # wrote - `error: `. Splitting at the message would measure the refusal
+      # seven columns short; splitting at the question would give it the
+      # default the prompt offered. The prompt tail is read out of the
+      # printer, so the cut is where the box put it.
+      start[i] = at[i]
+      cut = 0
+      for (t = 1; t <= ntail; t++) {
+        # An empty tail is found at the first column of everything: some awks
+        # answer 1 to index(s, "") and the row would then be cut where the
+        # question ended rather than where the prompt did.
+        if (TL[t] == "") continue
+        p = index(substr($0, atend[i - 1] + 1), TL[t])
+        if (p > 0) {
+          p = atend[i - 1] + p + length(TL[t])
+          if (p <= at[i] && (cut == 0 || p < cut)) cut = p
+        }
+      }
+      if (cut > 0) start[i] = cut
+    }
+    # The whole row goes to the last message on it, trailing value and all: a
+    # message whose source line is continued - `say "..." \` and a second
+    # string under it - has words on the row that its own needle never
+    # carried, and cutting at the needle would measure the row short.
+    for (i = 1; i <= nmatch; i++) {
+      stop = length($0) + 1
+      for (j = i + 1; j <= nmatch; j++)
+        if (start[j] > start[i]) { stop = start[j]; break }
+      print hit[i] "\t" substr($0, start[i], stop - start[i]) > seg
+    }
   }
-' min="$SAY_MIN" "$1" "$2"
+' min="$SAY_MIN" seg="${3:-}" unatt="${4:-}" tails="${5:-}" "$1" "$2"
 }
 
 # The two halves, and the floor under both of them.
@@ -633,9 +887,21 @@ say_report() {   # <what to call the program in the report>
     bad "no box's output was kept, so the message readers asked nothing"
     return
   fi
+  _tails=
   case ${SAY_LANG:-sh} in
     c) say_messages_c "$SAY_PRINTERS" > "$SAY_DIR/messages" ;;
-    *) say_messages "$(say_printers)" > "$SAY_DIR/messages" ;;
+    *) _printers=$(say_printers)
+       # Which of them leave the cursor where it was, and what they write
+       # after the question. One walk of the source hands back both, joined so
+       # that one awk argument can carry a tail with spaces in it. The empty
+       # ones are dropped: a printer whose format is bare `%s` ends its row
+       # wherever the value ends, and an empty needle is found at every column
+       # of every row.
+       _enders=$(say_row_enders "$_printers" | sort -u)
+       _noend=$(printf '%s\n' "$_enders" | cut -f1 | sort -u | tr '\n' ' ')
+       _tails=$(printf '%s\n' "$_enders" | cut -f2- | grep . | sort -u \
+                | tr '\n' '\001')
+       say_messages "$_printers" "$_noend" > "$SAY_DIR/messages" ;;
   esac
   if [ ! -s "$SAY_DIR/messages" ]; then
     bad "no message could be read out of $_what, so this reader would report \
@@ -658,6 +924,7 @@ every branch of it as covered"
   # go green and the rule would have to carry an exception - which is the one
   # thing test_selftest.sh says three times it must not.
   say_match "$SAY_DIR/messages" "$SAY_DIR/every-line" \
+    "$SAY_DIR/segments" "$SAY_DIR/unattributed" "$_tails" \
     | sort -u > "$SAY_DIR/seen"
 
   # One row per distinct message: "<line>[,<line>...]<tab><needle>", and the
@@ -698,6 +965,21 @@ for every one"
   [ "$_unreadable" = 0 ] || \
     ok "and $_unreadable piece(s) of text carry fewer than $SAY_MIN literal \
 characters: those are values, not messages, and no run can recognise them"
+
+  # SAID ON EVERY RUN THAT ASKED FOR IT, with the count, because a corpus file
+  # that is there and empty and a corpus file that is there and whole look the
+  # same to whoever comes back to it an hour later. Here rather than at the end
+  # of this function so that a suite boxing transcripts, which returns below,
+  # says it too.
+  #
+  # The two derived files go beside it: what the program can say, and which
+  # message each captured row was spent on. A corpus of rows with no way to ask
+  # which site printed one is a pile of strings, and the answer is already
+  # computed here.
+  [ -z "${SAY_KEEP:-}" ] || {
+    ok "$(grep -c . "$SAY_KEEP") row(s) kept in $SAY_KEEP (SAY_CORPUS is set)"
+    cp "$SAY_DIR/messages" "$SAY_KEEP.messages"
+    cp "$SAY_DIR/segments" "$SAY_KEEP.segments"; }
 
   echo
   # WHAT A BOX IS MADE OF, which decides what this half can honestly ask.
@@ -772,5 +1054,555 @@ has ever seen the program not print them:"
     printf '%s\n' "$_always" | sed 's/^/    /'
   else
     ok "$SAY_BOXES boxes, and every line has a box that does not print it"
+  fi
+
+  # THE THIRD HALF, and it is the shell path only (#367).
+  #
+  # Not because a C program cannot print a row too wide, but because what
+  # bounds a value is read out of the source and the syntax is the source: the
+  # paths this program names, the collections of words it declares, the tools
+  # it checks for. A C reader would need its own, and inventing one over a
+  # language nothing here has measured widths in would be a rule that has never
+  # been red. The plugin CLI is also boxed as transcripts, which return above.
+  case ${SAY_LANG:-sh} in
+    sh) say_widths "$_what" ;;
+  esac
+}
+
+# THE CEILINGS, and the suite that brings the boxes sets them.
+#
+# Not an allowlist: an allowlist is read once and grown forever, and the whole
+# failure this file exists for is a row nobody re-examines. What is left over
+# is NAMED on every run, with the program, the line and the column count, and
+# the number it may not exceed is written down beside the boxes. Every row
+# that gains a fix lowers one of these, and they may only go down - which is
+# the idiom test/test_hexash_refusals.py uses for the same measurement on the
+# VTY, and test/test_off_run_coverage.sh before it.
+#
+# They live in the SUITE and not here because they are a statement about one
+# program: the installer has forty-odd rows carrying a disk path this reader
+# cannot bound and appliance/apply-tuning has one, and a single number here
+# would be the loosest of the three for all of them.
+SAY_OVER_AT_MOST=${SAY_OVER_AT_MOST:-0}
+SAY_UNSAFE_AT_MOST=${SAY_UNSAFE_AT_MOST:-0}
+
+# Every row these boxes made the program print, measured against the widest
+# value that can reach it.
+#
+# WHY THIS IS NOT A SWEEP OF THE SOURCE. A row of one of these programs is
+# literal words with values interpolated into it, and the width of one is not
+# a property of the source: `bind: $ADDR is named in $VPPCONF` is 25 columns
+# plus a PCI address plus a path. #359 and #362 put a static rule on the VTY
+# and both printed, on every run, the half they did not hold - the 296 rows
+# that carry a value. #363 closed that half by DRIVING each site with the
+# widest value that can reach it, and this is the same method one component
+# over, on programs that print to a boot console instead of a terminal.
+#
+# THE BOXES ARE ALREADY HERE, which is why this lives beside the coverage
+# reader rather than in a suite of its own. The three suites that source this
+# file run the installer 128 times, the binder 17 and the tuner 22, against
+# fake disk tables, fake roots and fake cards. A second harness would have to
+# build every one of those again to read them, and the day after it was
+# written the two rigs would differ.
+#
+# WHAT IT DECIDES, per message, and it is one of three things:
+#
+#   * BOUNDED. Every value that reaches it comes from somewhere with a widest
+#     member, so the row is rebuilt with that member in place of the value
+#     and measured. The widest members are READ FROM THE PRODUCT - the paths
+#     this program names, the drivers it declares, the tools it checks for -
+#     and never invented: a made-up 200-character path proves a fold nobody
+#     will ever see, and turns this into a check that fails for the wrong
+#     reason.
+#   * UNBOUNDED BUT SAFE. The value is a disk somebody named, a card name, an
+#     answer somebody typed, and NOTHING FOLLOWS IT on its row. A fold there
+#     costs nothing: every word the program wrote is already on the screen and
+#     the value is the last thing on it. That is what appliance/selftest has
+#     say_list for.
+#   * NEITHER, which is refused. An unbounded value with the program's own
+#     words behind it pushes those words off an 80-column console exactly when
+#     the value is long - and a boot console does not reflow, does not scroll
+#     back, and is being read by somebody deciding what to type next.
+#
+# WHAT IT CANNOT SEE is printed too, on every run, so nobody reads this as
+# covering more than it does.
+say_widths() {   # <what to call the program in the report>
+  _what=${1:-$SAY_SRC}
+  _prog=$(printf '%s' "$_what" | sed 's|.*/||')
+  echo
+  echo "=== no row $_what prints is wider than the console, at the widest ==="
+  echo "=== value that can reach it (#367) ==="
+
+  : > "$SAY_DIR/over"
+  : > "$SAY_DIR/unsafe"
+  awk -F'\t' -v cols="$SAY_COLUMNS" -v min="$SAY_MIN" -v prog="$_prog" \
+      -v src="$SAY_SRC" -v msgf="$SAY_DIR/messages" \
+      -v overf="$SAY_DIR/over" -v unsafef="$SAY_DIR/unsafe" \
+      -v stat="$SAY_DIR/wstat" '
+    function rstrip(s) { sub(/[ \t]+$/, "", s); return s }
+    function prefixwords(s, take,   a, i, out, m) {
+      m = split(s, a, " ")
+      if (take <= 0 || take >= m) return s
+      out = a[1]
+      for (i = 2; i <= take; i++) out = out " " a[i]
+      return out
+    }
+    # The values of one row, recovered from the literal parts around them.
+    # Fills V[1..slots]; 0 when the words did not line up, which happens when
+    # a message is wrapped by another one or assembled somewhere else.
+    function recover(sh, line,   m, i, p, at) {
+      m = split(sh, F2, "\001")
+      at = 1
+      for (i = 1; i <= m; i++) {
+        if (F2[i] == "") {
+          # A message that ENDS with its value takes the rest of the row,
+          # continuation arguments and all. Which is the right answer: it is
+          # the widest thing that reached this site, and the prefix walk below
+          # gives back the words that were never a value.
+          if (i == m) { if (i > 1) { V[i - 1] = substr(line, at); VP[i - 1] = at }
+                        return 1 }
+          p = at
+        } else {
+          p = index(substr(line, at), F2[i])
+          if (p == 0) return 0
+          p = at + p - 1
+        }
+        if (i > 1) { V[i - 1] = substr(line, at, p - at); VP[i - 1] = at }
+        at = p + length(F2[i])
+      }
+      return 1
+    }
+    function allre(re,   k) {
+      for (k = 1; k <= NVALS; k++) if (VALS[k] !~ re) return 0
+      return 1
+    }
+    # THE RECORD src/hexash/hexash.py WRITES BESIDE THE CARD, recognised by
+    # its shape because that is what the VTY itself recognises: three fields,
+    # and read_dataplane_mgmt() refuses anything that is not a name, a prefix
+    # and a MAC. The name is a LINUX one - it comes off /sys/class/net - and
+    # Linux carries fifteen characters, which is the limit config.py enforces
+    # on linux-name in as many words. The address is IPv4 because
+    # interface_address() asks `ip -4` and takes one global address or none.
+    function isrecord(   k, a, m) {
+      for (k = 1; k <= NVALS; k++) {
+        m = split(VALS[k], a, " ")
+        if (m != 3 || a[2] !~ RE_IPP || a[3] !~ RE_MAC) return 0
+      }
+      return 1
+    }
+    # A PATH THIS PROGRAM NAMES, and the widest of them that any value ends
+    # with. The suffix is the whole trick: every one of these programs takes a
+    # root - HEXA_ROOT, HEXA_INSTALL_SRC, a mount point - so that a suite can
+    # point it at a tree shaped like /etc, and what the rig prints is
+    # /tmp/tmp.XXXXXX in front of the path the box would print. Measuring what
+    # came out would report a width that depends on where mktemp put its
+    # directory, which is how three of the five rows #367 names looked twenty
+    # to thirty columns wider than a box ever prints them. On a box the root
+    # is empty and the literal in the source IS the path.
+    function pathwidest(   k, i, best, b, v, L) {
+      best = 0
+      for (k = 1; k <= NVALS; k++) {
+        v = VALS[k]
+        if (substr(v, 1, 1) != "/") return 0
+        b = 0
+        for (i = 1; i <= npath; i++) {
+          L = length(PATH[i])
+          if (L > b && substr(v, length(v) - L + 1) == PATH[i]) b = L
+        }
+        if (b > best) best = b
+      }
+      return best
+    }
+    # The TIGHTEST set that holds every value. A driver name is in one of
+    # these and a tool name in another, and the widest member of the widest
+    # set would be a bound on a different set.
+    function setmember(   s, k, good, best, bw) {
+      best = ""; bw = 0
+      for (s = 1; s <= nset; s++) {
+        good = 1
+        for (k = 1; k <= NVALS; k++)
+          if (!((s SUBSEP VALS[k]) in MEM)) { good = 0; break }
+        if (good && (best == "" || SETW[s] < bw)) {
+          best = SETNAME[s]; bw = SETW[s] }
+      }
+      return (best == "") ? "" : "one of " best "|" bw
+    }
+    # A value ACCUMULATED out of a set: `missing="$missing $t"` over the ten
+    # tools the installer checks for. Its widest is the whole set, which is
+    # the case an operator meets on a medium that was built wrong - exactly
+    # when they need to read it.
+    function setall(   s, k, a, m, i, good) {
+      for (s = 1; s <= nset; s++) {
+        good = 1
+        for (k = 1; k <= NVALS && good; k++) {
+          m = split(VALS[k], a, " ")
+          if (m == 0) { good = 0; break }
+          for (i = 1; i <= m; i++)
+            if (!((s SUBSEP a[i]) in MEM)) { good = 0; break }
+        }
+        if (good) return "every member of " SETNAME[s] "|" SETALLW[s]
+      }
+      return ""
+    }
+    function kindof(   k, e, got) {
+      if (NVALS == 0) return ""
+      e = 1
+      for (k = 1; k <= NVALS; k++) if (VALS[k] != "") e = 0
+      if (e) return "nothing at all|0"
+      if (allre(RE_PCI)) return "a PCI address|" W_PCI
+      if (allre(RE_MAC)) return "a MAC address|" W_MAC
+      if (allre(RE_IPP)) return "an IPv4 prefix|" W_IPP
+      if (allre(RE_IP))  return "an IPv4 address|" W_IP
+      if (allre(RE_UUID)) return "a UUID|" W_UUID
+      if (isrecord()) return "the management record|" W_REC
+      if (allre("^[0-9]+$")) return "a decimal|" W_DEC
+      k = pathwidest()
+      if (k > 0) return "a path this program names|" k
+      got = setmember(); if (got != "") return got
+      got = setall();    if (got != "") return got
+      # A LITERAL THIS PROGRAM HANDS IT, and the widest that has reached it.
+      #
+      # Widest-seen is a lower bound everywhere else in this reader and a
+      # BOUND here, and only because of the half above: no message of this
+      # program may have gone unseen, so every literal that can arrive at
+      # this slot has arrived at it. `say_using` is handed one of three
+      # sentences, each of them a message of this program in its own right,
+      # and the widest of the three is the widest row it can make. The day a
+      # fourth is added without a box, the coverage reader goes red first.
+      got = 1
+      for (k = 1; k <= NVALS; k++) if (!(VALS[k] in shape)) { got = 0; break }
+      if (got) {
+        e = 0
+        for (k = 1; k <= NVALS; k++) if (length(VALS[k]) > e) e = length(VALS[k])
+        return "a literal this program hands it|" e
+      }
+      # A NAME OUT OF THE FILE AN OPERATOR EDITS. The tuner refuses a setting
+      # by name, and the names are the ones this program itself reads - the
+      # widest of them is a bound, and one added tomorrow widens it here
+      # without being mentioned.
+      got = 1
+      for (k = 1; k <= NVALS; k++) if (!(VALS[k] in VARNAME)) { got = 0; break }
+      if (got) return "a variable name this program reads|" wvar
+      return ""
+    }
+    BEGIN {
+      H = "[0-9a-fA-F][0-9a-fA-F]"
+      D = "[0-9]+"
+      RE_PCI  = "^" H H ":" H ":" H "[.][0-9a-fA-F]$"
+      RE_MAC  = "^" H ":" H ":" H ":" H ":" H ":" H "$"
+      RE_IP   = "^" D "[.]" D "[.]" D "[.]" D "$"
+      RE_IPP  = "^" D "[.]" D "[.]" D "[.]" D "/" D "$"
+      RE_UUID = "^" H H H H "-" H H "-" H H "-" H H "-" H H H H H H "$"
+      # Computed or read off the kernel, never guessed. A PCI address is what
+      # /sys/bus/pci prints; a MAC is what /sys/class/net/<if>/address is; the
+      # widest IPv4 prefix is 255.255.255.255/32; a UUID is what blkid
+      # answers. A decimal is ten digits, which is where a count this box
+      # makes runs out - 4294967295 - and NOT a bound on what somebody can
+      # type at a prompt, which is said out loud below.
+      W_PCI = length("0000:00:00.0"); W_MAC = length("02:00:00:00:00:01")
+      W_IP = length("255.255.255.255"); W_IPP = length("255.255.255.255/32")
+      W_UUID = length("abcdef25-1111-2222-3333-444444444444")
+      W_DEC = length("4294967295"); W_IFNAME = 15
+      W_REC = W_IFNAME + 1 + W_IPP + 1 + W_MAC
+    }
+    # ---------------------------------------------------- the product itself
+    FILENAME == src {
+      if ($0 ~ /^[ \t]*#/) next
+      # A logical line, because the list of tools the installer checks for is
+      # written over two of them and a set read off the first half would be a
+      # bound five tools short.
+      if ($0 ~ /\\$/) { acc = acc substr($0, 1, length($0) - 1); next }
+      acc = acc $0
+      line = acc; acc = ""
+      s = line
+      while (match(s, "/[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_.+-]+)+")) {
+        p = substr(s, RSTART, RLENGTH)
+        if (!(p in SEENP)) { SEENP[p] = 1; PATH[++npath] = p }
+        s = substr(s, RSTART + RLENGTH)
+      }
+      # The variable names it reads, for a message that refuses one by name.
+      s = line
+      while (match(s, "[$][{]?[A-Z_][A-Z0-9_]*")) {
+        p = substr(s, RSTART, RLENGTH); sub(/^[$][{]?/, "", p)
+        VARNAME[p] = 1
+        if (length(p) > wvar) wvar = length(p)
+        s = substr(s, RSTART + RLENGTH)
+      }
+      # The collections of words this program declares, which is where its
+      # closed sets live: DPDK_DRIVERS, and the tools checked for before
+      # anything is written. Derived rather than listed, so a set added to the
+      # product bounds its own rows with nothing added here.
+      if (match(line, "^[A-Z_][A-Z0-9_]*=\"[A-Za-z0-9_.+ -]+\"[ \t]*$")) {
+        nm = line; sub(/=.*$/, "", nm)
+        vv = line; sub(/^[^=]*="/, "", vv); sub(/"[ \t]*$/, "", vv)
+        addset(nm, vv)
+      }
+      if (match(line, "for[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]+in[ \t]+[^;]+;[ \t]*do")) {
+        one = substr(line, RSTART, RLENGTH)
+        nm = one; sub(/^for[ \t]+/, "", nm); sub(/[ \t]+in.*$/, "", nm)
+        vv = one; sub(/^for[ \t]+[^ \t]+[ \t]+in[ \t]+/, "", vv)
+        sub(/;[ \t]*do$/, "", vv)
+        if (vv ~ /^[A-Za-z0-9_.+ \t-]+$/) addset("the list `for " nm "` at " prog ":" FNR, vv)
+      }
+      next
+    }
+    # ------------------------------------------------ what it can print
+    FILENAME == msgf {
+      lit = $2; gsub(/\001/, "", lit)
+      if (length(lit) < min) next
+      if (!($2 in shape)) { shape[$2] = $3; norder[++nmsg] = $2 }
+      ln[$2] = ln[$2] (ln[$2] == "" ? "" : ",") $1
+      next
+    }
+    # ------------------------------------------------ and what it printed
+    {
+      k = index($0, "\t")
+      if (k == 0) next
+      n = substr($0, 1, k - 1); s = rstrip(substr($0, k + 1))
+      c = ++cnt[n]; sg[n, c] = s
+    }
+    function addset(nm, words,   a, m, i, tot) {
+      m = split(words, a, " ")
+      if (m < 2) return
+      nset++
+      SETNAME[nset] = nm; SETW[nset] = 0; tot = 0
+      for (i = 1; i <= m; i++) {
+        MEM[nset, a[i]] = 1
+        if (length(a[i]) > SETW[nset]) SETW[nset] = length(a[i])
+        tot += length(a[i]) + 1
+      }
+      SETALLW[nset] = tot
+    }
+    # The row as a box would print it, with each value at the widest that can
+    # reach it. Right to left, so a substitution does not move the slot after
+    # it. Shown rather than the driven row, because a row named at 88 columns
+    # beside a driven row of 107 reads as arithmetic nobody can follow.
+    function rebuild(line, ns,   j, used, pad, i, out) {
+      out = line
+      for (j = ns; j >= 1; j--) {
+        if (KIND[j] == "" || VP[j] == 0) continue
+        used = (TRIM[j] > 0) ? prefixwords(V[j], TRIM[j]) : V[j]
+        pad = ""
+        for (i = 1; i <= KW[j]; i++) pad = pad "X"
+        out = substr(out, 1, VP[j] - 1) pad substr(out, VP[j] + length(used))
+      }
+      return out
+    }
+    function note(k) { tally[k]++; if (!(k in kseen)) { kseen[k] = 1; korder[++nk] = k } }
+    END {
+      for (mi = 1; mi <= nmsg; mi++) {
+        n = norder[mi]; sh = shape[n]
+        nf = split(sh, F, "\001"); ns = nf - 1
+        if (cnt[n] == 0) { unreached[++nun] = ln[n]; continue }
+        measured++
+        drv = 0; worstrow = ""
+        for (c = 1; c <= cnt[n]; c++)
+          if (length(sg[n, c]) > drv) { drv = length(sg[n, c]); worstrow = sg[n, c] }
+        if (ns == 0) {
+          note("no value in it")
+          if (drv > cols) print ln[n] "\t" drv "\tno value in it\t" worstrow > overf
+          continue
+        }
+        # Every value that reached every slot, over every row.
+        nok = 0
+        for (c = 1; c <= cnt[n]; c++) {
+          for (j = 1; j <= ns; j++) V[j] = ""
+          okc[c] = recover(sh, sg[n, c])
+          if (!okc[c]) continue
+          nok++
+          for (j = 1; j <= ns; j++) SEEN[n, j, ++nseen[n, j]] = V[j]
+        }
+        if (nok == 0) {
+          # The words did not line up with what came out, so the values
+          # cannot be told from them. Named rather than dropped, and measured
+          # as it was driven - which is a lower bound on the row and not a
+          # bound on it.
+          note("could not be taken apart")
+          if (drv > cols) print ln[n] "\t" drv "\tas driven\t" worstrow > overf
+          continue
+        }
+        # The kind of each slot, and how wide that kind can be.
+        # WHAT MAY FOLLOW AN UNBOUNDED VALUE and still cost nothing when the
+        # row folds: whitespace, and punctuation that closes what opened
+        # before the value - a quote, a bracket, a full stop. Not a WORD. The
+        # doctrine is that every word the program wrote is already on the
+        # screen and the value is the last thing on it; a closing quote pushed
+        # onto the next row takes no meaning with it, and `commit` does.
+        tailslot = (F[nf] !~ /[A-Za-z0-9]/) ? ns : 0
+        for (j = 1; j <= ns; j++) {
+          NVALS = nseen[n, j]
+          for (k = 1; k <= NVALS; k++) VALS[k] = SEEN[n, j, k]
+          TRIM[j] = 0
+          got = kindof()
+          if (got == "" && j == tailslot) {
+            # THE LONGEST PREFIX OF THE TAIL THAT IS A VALUE. A message whose
+            # last word is a value takes the rest of the row when it is
+            # recovered, and on a continued source line the rest of the row
+            # carries words the program wrote: `apply the command line from
+            # $GRUBFILE` is continued with `in your bootloader and reboot`.
+            # Longest first, so the management record is read whole and a
+            # path is not read as a path followed by a sentence.
+            mw = 0
+            for (k = 1; k <= NVALS; k++) {
+              t = split(SEEN[n, j, k], aa, " ")
+              if (t > mw) mw = t
+            }
+            for (take = mw - 1; take >= 1 && got == ""; take--) {
+              for (k = 1; k <= NVALS; k++) VALS[k] = prefixwords(SEEN[n, j, k], take)
+              got = kindof()
+              if (got != "") TRIM[j] = take
+            }
+            if (got == "") for (k = 1; k <= NVALS; k++) VALS[k] = SEEN[n, j, k]
+          }
+          if (got == "") { KIND[j] = ""; KW[j] = 0 }
+          else {
+            KIND[j] = got; sub(/\|[0-9]*$/, "", KIND[j])
+            KW[j] = got; sub(/^.*\|/, "", KW[j]); KW[j] += 0
+          }
+        }
+        nunb = 0; lastunb = 0
+        for (j = 1; j <= ns; j++) if (KIND[j] == "") { nunb++; lastunb = j }
+        # The row rebuilt with the widest value in every slot, measured over
+        # every row this site printed: what came out, plus what each value
+        # could have been, minus what it was.
+        wide = 0; widerow = ""; upto = 0
+        for (c = 1; c <= cnt[n]; c++) {
+          if (!okc[c]) continue
+          for (j = 1; j <= ns; j++) V[j] = ""
+          recover(sh, sg[n, c])
+          w = length(sg[n, c]); u = w
+          for (j = 1; j <= ns; j++) {
+            used = (TRIM[j] > 0) ? prefixwords(V[j], TRIM[j]) : V[j]
+            if (KIND[j] == "") { u -= length(V[j]) }
+            else { w += KW[j] - length(used); u += KW[j] - length(used) }
+          }
+          if (w > wide) { wide = w; widerow = rebuild(sg[n, c], ns) }
+          if (u > upto) upto = u
+        }
+        if (nunb == 0) {
+          if (wide > cols) {
+            note("bounded, and over at its widest")
+            why = ""
+            for (j = 1; j <= ns; j++)
+              if (KIND[j] != "" && KIND[j] != "nothing at all")
+                why = why (why == "" ? "" : " and ") KIND[j]
+            print ln[n] "\t" wide "\t" why "\t" widerow > overf
+          } else note("bounded, and fits at its widest")
+          if (wide > widestfit) { widestfit = wide; widestrow = widerow }
+          continue
+        }
+        # An unbounded value is safe only where nothing follows it.
+        safe = (nunb == 1 && lastunb == ns && tailslot == ns)
+        if (!safe) {
+          note("unbounded, with the words of the program behind it")
+          why = ""
+          for (j = 1; j <= ns; j++)
+            why = why (why == "" ? "" : " | ") (KIND[j] == "" ? "no widest" : KIND[j])
+          print ln[n] "\t" upto "\t" why "\t" sh > unsafef
+          continue
+        }
+        if (upto > cols) {
+          note("the words before the unbounded value are over")
+          print ln[n] "\t" upto "\tup to the unbounded value\t" widerow > overf
+        } else {
+          note("unbounded, and last on its row")
+          if (upto > widestfit) { widestfit = upto; widestrow = widerow }
+        }
+      }
+      printf "  %d of the %d message(s) this program can print were printed here\n", \
+             measured, nmsg
+      for (i = 1; i <= nk; i++) printf "    %4d  %s\n", tally[korder[i]], korder[i]
+      wp = 0; wpn = ""
+      for (i = 1; i <= npath; i++) if (length(PATH[i]) > wp) { wp = length(PATH[i]); wpn = PATH[i] }
+      # THE WIDEST ROW IT MEASURED, said on the green run. A reader that had
+      # stopped composing rows would pass with nothing to show for it, and a
+      # number that falls to nothing is what says so - the same argument the
+      # floors in test/test_console_width.py make.
+      printf "  the widest row measured here is %d column(s) of the %d:\n    %s\n", \
+             widestfit, cols, substr(widestrow, 1, 100)
+      printf "  the widest values, read from the product: a PCI address is %d columns,\n", W_PCI
+      printf "  a MAC %d, an IPv4 prefix %d, a UUID %d, a decimal %d; the widest of the\n", \
+             W_MAC, W_IPP, W_UUID, W_DEC
+      printf "  %d path(s) this program names is %d (%s); a closed set is its own\n", npath, wp, wpn
+      printf "  widest member, out of the %d this program declares", nset
+      for (i = 1; i <= nset; i++) printf "%s%s", (i == 1 ? " - " : ", "), SETNAME[i]
+      printf ".\n"
+      print "  NOT MEASURED HERE, and these are the whole of what is not:"
+      printf "  %d message(s) no box here printed, so there was no row to measure", nun
+      if (nun > 0) { printf ":\n"; for (i = 1; i <= nun; i++) printf "    %s:%s\n", prog, unreached[i] }
+      else printf ".\n"
+      print "  a decimal is measured at the widest number this box COUNTS, and not at"
+      print "  the widest an operator can type: an answer of fifty digits is quoted"
+      print "  back whole, and that row is not measured here."
+      print "  a prompt is measured as the question, and what somebody types at it is"
+      print "  on the same row of the box, and nothing here holds it."
+      # THE FLOOR, written where the shell can read it. Everything above this
+      # reads green on an empty corpus: no row measured is no row over, and
+      # the two ceilings below would both sit at zero and agree with
+      # themselves. It is the same floor test_console_width.py and
+      # test_hexash_refusals.py each put under their own walk, and for the
+      # same reason - the day the segments stop arriving, the recorder is
+      # what is broken and not the widths.
+      printf "%d %d\n", measured, widestfit > stat
+    }
+  ' "$SAY_SRC" "$SAY_DIR/messages" "$SAY_DIR/segments"
+
+  # THE ROWS THIS READER COULD NOT KEY ON, counted and the wide ones named.
+  #
+  # NOT a failure, and it cannot be: the capture holds whatever the box wrote
+  # on its stderr, and a rig that puts the program under a tempdir it cannot
+  # write to has the SHELL write the complaint - which is a row this program
+  # never printed. What it IS is the honest bottom of the measurement, and the
+  # second line of a message written across two source lines is in here: it
+  # reaches the console and carries no words of its own to key on.
+  # Counted with awk and not `grep -c`, which answers 0 and exits 1 on an
+  # empty file - so the `|| echo 0` beside it prints a second zero and the
+  # arithmetic below is handed two lines.
+  _un=$(awk 'END { print NR }' "$SAY_DIR/unattributed")
+  _unwide=$(awk -v c="$SAY_COLUMNS" 'length > c' "$SAY_DIR/unattributed" \
+            | sort -u)
+  echo "  $_un captured row(s) carry no message this reader could key on - the"
+  echo "  second line of a message written over two source lines, a menu row that"
+  echo "  is all values, a complaint the shell itself wrote into the capture."
+  if [ -n "$_unwide" ]; then
+    echo "  $(printf '%s\n' "$_unwide" | awk 'END { print NR }') of those are over \
+$SAY_COLUMNS columns:"
+    printf '%s\n' "$_unwide" | awk '{ printf "    %3d  %s\n", length, substr($0,1,100) }'
+  fi
+
+  read -r _measured _widest < "$SAY_DIR/wstat" || { _measured=0; _widest=0; }
+  if [ "${_measured:-0}" = 0 ] || [ "${_widest:-0}" = 0 ]; then
+    bad "no row of $_what was measured against a widest value, so the two \
+ceilings below are agreeing with an empty file: the rows stopped reaching this \
+reader, which is the recorder being broken and not the widths"
+  fi
+
+  _over=$(awk 'END { print NR }' "$SAY_DIR/over")
+  _unsafe=$(awk 'END { print NR }' "$SAY_DIR/unsafe")
+  say_ceiling "$_over" "$SAY_OVER_AT_MOST" \
+    "row(s) do not fit the $SAY_COLUMNS-column console at their widest" \
+    "$(sort -n "$SAY_DIR/over" | awk -F'\t' -v p="$_prog" \
+        '{ printf "    %s:%s  %d columns, %s\n      %s\n", p, $1, $2, $3, substr($4,1,110) }')"
+  say_ceiling "$_unsafe" "$SAY_UNSAFE_AT_MOST" \
+    "row(s) carry a value with no widest and the program's own words behind it" \
+    "$(sort -n "$SAY_DIR/unsafe" | awk -F'\t' -v p="$_prog" \
+        '{ w = $4; gsub(/\001/, "~", w)
+           printf "    %s:%s  up to %d columns before the value, %s\n      %s\n", \
+                  p, $1, $2, $3, substr(w,1,110) }')"
+}
+
+# One ceiling, which may only go down.
+say_ceiling() {  # <found> <allowed> <what> <detail>
+  if [ "$1" -gt "$2" ]; then
+    bad "$1 $3, above the ceiling of $2. A row that does not fit is broken \
+mid-word by a console that cannot reflow and cannot be scrolled back, in \
+front of somebody deciding what to type - move the value off the row, do not \
+raise the number:
+$4"
+  elif [ "$1" -lt "$2" ]; then
+    bad "the ceiling says $2 and only $1 $3: lower it, or it stops holding \
+anything"
+  else
+    ok "$1 $3, at the ceiling of $2"
   fi
 }

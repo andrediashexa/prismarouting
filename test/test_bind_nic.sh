@@ -430,6 +430,12 @@ HEXA_ROOT="$R" sh "$BIN" --which-driver >/dev/null 2>&1
 the box at all" \
   || ok "and it touched nothing while answering"
 
+# WHAT THE WIDTH READER MAY STILL FIND, and it may only go down.
+#
+# 6 rows here carry an interface name or a driver name the kernel handed back,
+# with the words of the program behind them. Named on every run rather than
+# excused: an allowlist is read once and grown forever.
+SAY_UNSAFE_AT_MOST=6
 say_report appliance/bind-dataplane-nic
 rm -rf "$SAY_DIR"
 
