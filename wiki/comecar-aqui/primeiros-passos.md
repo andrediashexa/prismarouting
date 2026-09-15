@@ -88,9 +88,20 @@ Só entram na lista as placas que **têm endereço PCI** — as únicas que o da
 Numa caixa de uma placa só a mesma lista marca a mesma placa com outra frase, porque ali a entrega é permitida:
 
 ```
-  ens18  carries the default route: the only card, so it is handed over and its address goes with it
+  ens18  the only card: handed over, address and all
   <nic>
 ```
+
+Essa linha é lida **antes** de você digitar o nome, e é para isso que ela
+serve. Por isso ela cabe no console: escrita por extenso ela passava de cem
+colunas numa tela de setenta e nove, e o terminal quebrava justamente a frase
+que dizia o que entregar aquela placa significa.
+
+Repare que ali a marca **não é** `refused`. Numa caixa de uma placa só a
+entrega é permitida, e dizer `refused` seria recusar na tela o que a caixa
+aceita em seguida. A condição é a mesma que a recusa usa - existe outra placa
+para nomear? -, lida da mesma lista, para que a dica e a resposta não possam
+discordar sobre o que a caixa tem.
 
 ### O commit guarda e recalcula, mas não entrega a placa
 
@@ -119,7 +130,38 @@ commit complete
     including this one, so it is not done for you
 ```
 
-E quando a caixa não consegue ler por onde é alcançada - nenhuma rota default, ou uma rota default que não está em nenhuma placa dela - ela diz isso em vez de escolher uma das duas respostas. Vale a leitura: é a diferença entre uma janela de manutenção que você não precisava e uma caixa que ninguém alcança.
+Há ainda um terceiro caso, e ele é o da caixa de uma placa só **depois** da
+primeira entrega: a rota default passa a estar num nome que não é placa nenhuma
+do Linux - é a interface que o dataplane mantém emparelhada com a porta. Um
+reinício do dataplane leva essa interface junto, então a caixa não diz que a
+sessão está a salvo:
+
+```
+    restarting it hands the card over and ends whatever is reaching this box
+    through it
+    the default route is on 'ens18', which is not one of this box's cards - on
+    a box that has already handed one over it is the pair the dataplane keeps,
+    and a restart takes that with it - so this session may go too, and it is
+    not done for you
+```
+
+E quando a caixa não consegue ler por onde é alcançada — nenhuma rota default em
+lugar nenhum — ela diz isso, em vez de escolher uma das outras respostas:
+
+```
+    restarting it hands the card over and ends whatever is reaching this box
+    through it
+    no interface here carries a default route, so which path this session
+    arrived on cannot be read: take it that this one goes too, and it is not
+    done for you
+```
+
+São quatro respostas para quatro caixas, e a caixa escolhe a sua lendo por onde
+é alcançada de **uma** fonte — a mesma que a recusa lê. Vale reparar para que
+lado ela erra quando não consegue ler: ela avisa. Uma caixa avisada de uma
+sessão que nunca ia cair gasta uma janela de manutenção que não precisava; uma
+caixa a quem se disse que a sessão estava a salvo, e não estava, é uma caixa que
+ninguém alcança.
 
 Ou seja: **reinicie a caixa numa janela escolhida por você**, e ela sobe encaminhando pela placa nomeada. Enquanto não reiniciar, `show interface` continua sem mostrar nada — e a própria caixa explica por quê, se você perguntar.
 

@@ -72,6 +72,47 @@ bind: no IOMMU groups on this box, so vfio-pci cannot take a device; using uio_p
 
 A escolha é feita onde dá para explicá-la, e não descoberta como um bind que falha sem motivo aparente. Ligue a IOMMU no firmware (`VT-d` na Intel, `AMD-Vi` na AMD) se a máquina tiver: é uma opção de firmware, não um ajuste do produto.
 
+### Quando a entrega da placa falha, o conselho é o da **sua** caixa
+
+Se a placa não aceitar o driver, a caixa diz em que estado ela ficou — e o
+estado pior de todos, placa sem driver nenhum, é dito por extenso:
+
+```
+bind: 0000:5e:00.0 did NOT bind to vfio-pci; it is on no driver at all now.
+      The dataplane will start without it. 'dmesg' says why vfio-pci
+      refused the device.
+```
+
+Depois disso vem o conselho, e ele é **diferente nas duas caixas**. Numa caixa
+com IOMMU:
+
+```
+      This box has IOMMU groups, so the kernel command line is not the
+      cause: vfio-pci is being offered a device it will not take.
+      Read this, on the box:
+        /sys/bus/pci/devices/0000:5e:00.0/iommu_group
+      A device with no group of its own cannot go, and a group whose
+      other members are still held by host drivers cannot either.
+```
+
+E numa caixa sem IOMMU:
+
+```
+      This box has no IOMMU groups, which is why vfio-pci was not
+      tried. uio_pci_generic needs a legacy INTx interrupt, and a
+      device that has only MSI-X is refused. Enabling an IOMMU in the
+      firmware and on the kernel command line is what makes vfio-pci
+      available instead.
+```
+
+Por um tempo as duas caixas recebiam a mesma frase — *"numa caixa com IOMMU a
+causa costuma ser `intel_iommu=on` faltando na linha de comando"* —, e ela era
+falsa nas duas, em direções opostas. Na caixa com IOMMU, o parâmetro **já
+estava** lá, e o operador era mandado conferir uma linha de comando que estava
+certa, na única mensagem que ele recebe quando a appliance sobe sem encaminhar.
+Na caixa sem IOMMU a frase falava de outra máquina, e o parâmetro que ela cita
+não teria ajudado: aquele driver não usa IOMMU nenhuma.
+
 # Se a caixa vai receber a tabela BGP completa
 
 4 GB é o piso de uma caixa que **não** carrega tabela cheia. Recebendo uma tabela IPv4 completa de um trânsito, o roteamento sozinho passa a ocupar cerca de **1,4 GB** de RAM. Medido com uma sessão e um milhão de prefixos: o `bgpd` ficou com \~840 MB e o `zebra` com \~550 MB, contra 37 MB somados numa caixa que só recebe rota padrão. Cada trânsito adicional com tabela cheia soma de novo, e IPv6 soma por cima.
