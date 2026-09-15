@@ -53,29 +53,90 @@ def save_as_vty(path):
 
 # --------------------------------------------------------------- #188
 #
-# What appliance/install.sh states: 0770 on the directory, 0660 on the file,
-# group hexa-cgnat. An account that may configure has to WRITE both, and both
-# hold every password hash on the box.
+# What appliance/install.sh states, READ OUT OF IT rather than written here a
+# second time: this file used to open with "0770 on the directory", and the
+# installer has set 2770 since the setgid bit went in. The comment and the
+# fixture had both drifted from their owner, which is the shape this
+# repository keeps meeting - a truth that agrees between two files has one
+# owner and a reader, never a copy.
+#
+# The setgid bit is not decoration and it is why the drift matters. Without
+# it, a revision root writes at boot is group root, and the next operator
+# cannot read it: "rollback 1" becomes a command that works only for whoever
+# made the revision. install.sh says exactly that, in the comment above the
+# two `install -d -m 2770` lines this reads.
+INSTALLER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "appliance", "install.sh")
+
+
+def installer_dir_mode():
+    """The mode install.sh gives /etc/hexarouting, read from install.sh."""
+    want = re.compile(r"^\s*install -d -m ([0-7]{3,4}) "
+                      r'"\$DESTDIR/etc/hexarouting"\s*$')
+    for line in open(INSTALLER, encoding="utf-8"):
+        m = want.match(line)
+        if m:
+            return int(m.group(1), 8)
+    return None
+
+
+def installer_file_mode():
+    """The mode install.sh gives hexarouting.conf, read from install.sh."""
+    want = re.compile(r"^\s*chmod ([0-7]{3,4}) "
+                      r'"\$DESTDIR/etc/hexarouting/hexarouting\.conf"\s*$')
+    for line in open(INSTALLER, encoding="utf-8"):
+        m = want.match(line)
+        if m:
+            return int(m.group(1), 8)
+    return None
+
 
 print("=== the installer's mode survives a save, whoever runs it ===")
+DIR_MODE = installer_dir_mode()
+FILE_MODE = installer_file_mode()
+# A reader that stopped finding its line would leave every case below
+# comparing None with None, which is a suite that passes by having gone
+# blind. Loud instead.
+check(DIR_MODE is not None,
+      "the store's mode is readable out of appliance/install.sh, so the "
+      "fixture below is the directory the installer makes and not one this "
+      "file invented")
+check(FILE_MODE is not None,
+      "and so is the file's, from the chmod line beside it")
+check(bool(DIR_MODE and DIR_MODE & stat.S_ISGID),
+      "and the installer still sets the setgid bit on the store, without "
+      "which a revision root writes at boot is group root and the next "
+      "operator cannot roll it back")
+print(f"  read from appliance/install.sh: directory {DIR_MODE:04o}, "
+      f"file {FILE_MODE:04o}")
+
 d = tempfile.mkdtemp()
 try:
     store = os.path.join(d, "hexarouting")
-    os.mkdir(store, 0o770)
-    os.chmod(store, 0o770)                 # mkdir is masked by the umask
+    os.mkdir(store)
+    os.chmod(store, DIR_MODE)              # mkdir is masked by the umask
     conf = os.path.join(store, "hexarouting.conf")
     open(conf, "w").close()
-    os.chmod(conf, 0o660)
+    os.chmod(conf, FILE_MODE)
 
     save_as_vty(conf)
 
     # The defect: save chmod'd these to 0700/0600, so the first save by
     # anybody - root at boot included - took the group's access away and every
     # later non-root save, commit and rollback failed (#188).
-    check(mode(store) == 0o770,
-          f"save leaves the directory as the installer set it: {mode(store):04o}")
-    check(mode(conf) == 0o660,
-          f"and the file: {mode(conf):04o}")
+    check(mode(store) == DIR_MODE,
+          f"save leaves the directory as the installer set it: "
+          f"{mode(store):04o}, installer {DIR_MODE:04o}")
+    check(mode(conf) == FILE_MODE,
+          f"and the file: {mode(conf):04o}, installer {FILE_MODE:04o}")
+    # NAMED, and not left to the equality above. A fixture set up as 0770 -
+    # which is what this case did until the mode was read from the installer -
+    # has no setgid bit to lose, so a save that cleared it would have been
+    # green here for as long as anybody looked. The bit is the whole reason
+    # the directory mode is four digits and not three.
+    check(mode(store) & stat.S_ISGID,
+          "and the setgid bit, which is what puts hexa-cgnat on every "
+          "revision written in here, whoever writes it")
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
@@ -101,13 +162,23 @@ finally:
 print("\n=== the rollback store, which a commit writes on the operator's behalf ===")
 d = tempfile.mkdtemp()
 try:
+    # The installer's mode again, for the reason the case above gives: this
+    # said 0770 and the installer has set 2770 since the setgid bit went in,
+    # so the store a revision was pushed into was not the store a box has.
+    # install.sh makes this directory with the SAME `install -d -m` mode as
+    # its parent, and a directory created inside a setgid directory inherits
+    # the bit anyway - which is the argument install.sh itself makes.
     store = os.path.join(d, "rollback")
-    os.mkdir(store, 0o770)
-    os.chmod(store, 0o770)
+    os.mkdir(store)
+    os.chmod(store, DIR_MODE)
     rb = hexash.Rollback(path=store, keep=3)
     rb.push("!\n", "first")
-    check(mode(store) == 0o770,
-          f"push leaves the store as the installer set it: {mode(store):04o}")
+    check(mode(store) == DIR_MODE,
+          f"push leaves the store as the installer set it: {mode(store):04o}, "
+          f"installer {DIR_MODE:04o}")
+    check(mode(store) & stat.S_ISGID,
+          "and the setgid bit with it, or the next operator's rollback reads "
+          "a revision written under the wrong group")
     rev = os.path.join(store, "0.conf")
     check(mode(rev) == 0o660, f"and writes the revision 0660: {mode(rev):04o}")
     check(not mode(rev) & 0o007, "with no world access to it either")
