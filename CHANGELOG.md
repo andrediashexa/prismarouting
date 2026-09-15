@@ -77,6 +77,28 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Why the range table is a table, measured rather than left as a note.** The
+  sweep that fixed the five range defects ended by saying that walking the
+  command tree instead of writing the nine rows out would be the obvious next
+  step and would need no allowlist. Counted over every upper-case dict the VTY
+  exports: **109 range occurrences across 24 help tables, naming 80 distinct
+  statements** - so finding them needs no allowlist, and that half is right.
+
+  The rule it would then apply does. `interface <name>` / `vrf` reads
+  `<1-4294967295>` in its argument and *"0 takes the interface back out of
+  one"* in its description; the box **accepts 0** and clears the statement, and
+  its refusal for anything else is `usage: vrf <1-4294967295>, or 0 to take it
+  back out`. Three places, one story, and 0 is in two of them. A walk that read
+  only the range would call that a defect and send somebody to refuse a value
+  the product deliberately takes. The generalisation therefore needs to read
+  the description beside the range, or a list of statements to excuse - and a
+  check that needs an allowlist is one this repository has already decided not
+  to ship.
+
+  Three assertions pin it so the naive repair goes red instead of landing:
+  `vrf 0` accepted, the statement actually cleared rather than stored as zero,
+  and the refusal above the top of the range still offering 0.
+
 * **The VTY quotes 23 distinct numeric ranges at the operator, and five of them
   were not the ranges the box takes**
   ([#350](https://github.com/andrediashexa/hexarouting/issues/350),

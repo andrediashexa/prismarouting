@@ -221,6 +221,46 @@ for _label, _block, _tpl, _a, _b, _read in _RANGES:
 print(f"  {len(_RANGES)} ranges, each accepting both ends and refusing both "
       f"outsiders by name")
 
+# WHY THIS IS A TABLE AND NOT A WALK OF THE TREE, which is the first thing
+# anybody reading it will want to change.
+#
+# Counted over every upper-case dict this module exports: 109 range
+# occurrences across 24 help tables, naming 80 distinct statements. Deriving
+# the list from those instead of writing it here would need no allowlist to
+# FIND them - and the rule it would then apply, "a-1 and b+1 must both be
+# refused", is false of at least one hint that is complete and honest.
+#
+# `interface <name>` / `vrf` is the one measured. Its argument reads
+# `<1-4294967295>` and its description reads "0 takes the interface back out
+# of one"; the box accepts 0 and clears the statement, and the refusal it
+# prints for anything else is `usage: vrf <1-4294967295>, or 0 to take it back
+# out`. Three places, one story, and 0 is in two of them. A walk that read
+# only the range would call that a defect and send somebody to refuse a value
+# the product deliberately takes.
+#
+# So the generalisation needs to read the description beside the range, or it
+# needs a list of statements to excuse - and a check that needs an allowlist
+# is one this repository has already decided not to ship. The table below
+# stays until somebody has the first of those.
+print("\n=== a range that ends at 1 and a value of 0 that is not an error ===")
+_s, _refused, _said = _typed(["interface ens19"], "vrf 7")
+check(not _refused and _s.candidate.vrfs.get("ens19") == 7,
+      f"an interface could not be put in a VRF at all, so what 0 does below "
+      f"is measured against nothing: {_said.strip()!r} {_s.candidate.vrfs}")
+_s, _refused, _said = _typed(["interface ens19", "vrf 7"], "vrf 0")
+check(not _refused,
+      f"'vrf 0' was refused on an interface, and the hint's own description "
+      f"says it takes the interface back out of a VRF: {_said.strip()!r}")
+check(_s.candidate.vrfs.get("ens19") is None,
+      f"'vrf 0' was taken and left the interface in a VRF, which is neither "
+      f"of the two things it could honestly do: {_s.candidate.vrfs}")
+_s, _refused, _said = _typed(["interface ens19"], "vrf 4294967296")
+check(_refused and "0 to take it back out" in _said,
+      f"the refusal above the top of the range does not offer 0, so the one "
+      f"place an operator meets that value is the description they have "
+      f"already scrolled past: {_said.strip()!r}")
+print("  'vrf 0' clears the statement, and the refusal says so")
+
 print("\n=== zero, where zero is outside the range ===")
 # THE VALUE #312 WAS ABOUT, driven on its own everywhere it is not in range.
 # Zero is falsy, so it is the one value that reaches a branch written for "the
