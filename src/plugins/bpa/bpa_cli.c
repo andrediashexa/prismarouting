@@ -876,7 +876,11 @@ bpa_pool_add_command_fn (vlib_main_t *vm, unformat_input_t *input,
       if (!bpa_pool_init (&probe))
 	{
 	  bpa_stride_warn (vm, &probe);
-	  bpa_reserve_warn (vm, &probe);
+	  /* The rows only. When this command CREATED the pool, bpa_pool_add()
+	   * has already written the record for it - warning again here would
+	   * log the same sentence about the same pool twice - and when it was
+	   * `check`, there is no pool for a record to be about. */
+	  bpa_reserve_say (vm, &probe);
 	}
     }
 
@@ -941,6 +945,31 @@ bpa_show_pool_command_fn (vlib_main_t *vm, unformat_input_t *input,
   pool_foreach (p, bm->pools)
     {
       vlib_cli_output (vm, "%U", format_bpa_pool, p);
+      /*
+       * And whether that reserve reaches this box's workers, which the lines
+       * above cannot say: they report the pool, and this is a fact about the
+       * pool AND the thread count the box happened to start with.
+       *
+       * Said HERE because it is the only readback there is. A pool created
+       * over the binary API has no terminal to print to - bpa_pool_add()
+       * warns with a null vm, so only the log hears it - and hexash reads
+       * this command back after a commit to put it in front of the operator
+       * who typed the pool. Through the SAME function that says it at
+       * creation: a second sentence here, worded differently or computed
+       * differently, would be a second thing to keep in step with the first.
+       *
+       * It costs nothing on every other pool: bpa_reserve_say() prints
+       * nothing at all unless the reserve really does leave a worker empty.
+       *
+       * KEEP IT LAST IN THIS LOOP BODY. hexash relays this warning by taking
+       * everything between a `warning:` row and the next row opening with
+       * `pool `, because the message folds and only its first row carries a
+       * word to look for (#271). Anything printed about a pool AFTER this
+       * call would be relayed to the operator as part of the warning. The
+       * constraint is written here, where somebody adding a row would be
+       * looking, and not only in hexash, where they would not.
+       */
+      bpa_reserve_say (vm, p);
     }
   return 0;
 }

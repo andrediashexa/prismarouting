@@ -293,6 +293,57 @@ version has a chance of seeing it.
   `test/test_manifest.sh`, in a section of its own. They are a file's contents
   and not a screen, and measuring them against a console would measure a
   64-character checksum against 79 columns.
+* **The reserve warning was on the `vppctl` path only, so no operator using
+  the VTY was ever told**
+  ([#372](https://github.com/andrediashexa/hexarouting/issues/372)).
+  `bpa_reserve_warn()` had one caller, the dataplane's own console handler.
+  hexash applies pools over `bpa_pool_add_del`, and that path called neither
+  it nor anything that would. An operator who configured a `reserve` from the
+  VTY - which is every operator, since the VTY exists so nobody has to drop to
+  the dataplane console - saw the warning neither at the prompt nor in the
+  log, while the wiki page they read told them the box warns at pool creation.
+
+  **What they lost.** The reserve is sharded by index like every other block,
+  so a reserve of one block on a box with two workers leaves one worker with
+  nothing to give: the subscribers that hash to it fill their block and are
+  refused a second one every time. From outside that is indistinguishable
+  from a reserve that is merely busy - the customer stays full while
+  `show cgnat pool` reports a reserve - and nothing said so at the one moment
+  the operator could have fixed it by raising the number or adding an address.
+
+  **One call site covers creation and every later change, and that was
+  established rather than assumed.** `reserve` is deliberately absent from
+  `bpa_pool_settings_set`, whose contract is "safe on a pool carrying
+  traffic": a reserve comes out of capacity, capacity is the divisor under the
+  blocked policy, so changing it re-maps subscribers. hexash classifies it
+  outside `in_place` for the same reason, which puts a change to it in
+  `pool_replace` - remove and add - rather than in `settings_set`.
+  `lab/commit.sh` already drives that: lowering a reserve at the VTY is
+  refused as a re-mapping change and needs `commit remap`. So creation and
+  every later change arrive at `bpa_pool_add()`, and that is where the warning
+  now is, with a null `vlib_main_t` exactly as `bpa_pool_settings_set()` warns
+  about timeouts and strides.
+
+  **And hexash relays it, the way it relays a timeout under its floor.** The
+  device is the only owner of the sentence, the arithmetic and the worker
+  count; `show bpa pool` says it under the pool it is about, and a commit that
+  created or recreated a pool with a reserve reads that back and prints it.
+  Only for the pools the commit touched: the device answers about the whole
+  box, and a warning that fires whatever the operator did is one they learn to
+  scroll past. The show does not write a log record - a screen that logged
+  every time somebody looked at it would fill the log with one event repeated
+  by its own reader - so the record for a pool that is created is written
+  once, by `bpa_pool_add()`.
+
+  `lab/detreserve.sh` carries the case, beside the `vppctl` one #370 added:
+  same box, same workers, same run, and the only difference is which way in
+  was used. It asserts the numbers rather than the appearance - the workers
+  holding no reserve, the reserve to raise to, what one more reserve block per
+  address costs - and guards on the pool having been created and the box
+  having workers, because otherwise "the warning did not appear" is true for
+  the wrong reason. It found one on the way: the first arrangement was refused
+  for a block size the VTY does not accept, and the guard reported a pool that
+  was never created instead of a missing warning.
 
 * **The plugin message reader named a branch unseen that two labs were
   printing, so the 38 and the 48 it published were an upper bound**

@@ -41,6 +41,12 @@
 #      and are refused a second one every time, on a box whose "show bpa pool"
 #      reports a reserve. Only reachable WITH WORKERS - see the note below -
 #      and the section says so and skips itself where it cannot arise.
+#   8. And that the SAME warning reaches an operator who never touches the
+#      dataplane console. Items 1 to 7 are typed at `vppctl`; a pool is
+#      configured in the VTY and applied over the binary API, and a warning
+#      that is printed on one path and not the other has reached nobody the
+#      product ships for (#372). Same box, same workers, same run: the only
+#      thing that differs between item 7 and item 8 is which way in was used.
 #
 # AND IT RUNS WITH THE FEATURE OFF. `sh tools/lab.sh detreserve off` builds
 # the same pool with `reserve 0`, which is what every configuration written
@@ -476,6 +482,96 @@ echo "  the box said: ${NOHOLD:--} worker(s) hold none, raise to ${RAISE:--},"
 echo "                one more reserve block per address costs ${PERADDR:--}"
 
 echo
+echo "=========== the same reserve, created through the VTY ==========="
+# THE PATH AN OPERATOR ACTUALLY TAKES, and the reason this section exists
+# beside the one above rather than instead of it.
+#
+# Everything above was typed at `vppctl`, which is the dataplane's own console
+# and not the interface this product ships. An operator configures a pool in
+# the VTY, the VTY applies it over the binary API, and the warning has to
+# arrive THERE - at the prompt, in the commit that created the pool - or it has
+# not arrived at all. The box above and the box here are the same box with the
+# same workers in the same run, so the only thing that differs between the two
+# sections is which way in was used.
+#
+# A POOL OF ITS OWN, not `det` re-committed. Committing a change to `det` would
+# make hexash rebuild a pool this file has already measured, and every
+# assertion above it would then be about a pool that had been taken down and
+# put back. This one is built at the end, carries nothing but its reserve, and
+# nothing else reads it.
+VTY_IN=100.64.12.0/28
+VTY_OUT=200.150.8.16/32
+# One public address, so one reserve block per `reserve` - the same arithmetic
+# OUT_N states for `det`, written beside the set it describes for the same
+# reason.
+VTY_OUT_N=1
+# NOT $BSZ, and the difference is the product's and not this file's. The VTY
+# refuses a block smaller than 64 ports, so the 4-port blocks every section
+# above uses cannot be typed at the prompt at all - the first attempt at this
+# section was refused for exactly that and the pool was never created, which
+# the guard below caught as "the pool was not created" rather than as a
+# missing warning. The shape is the same as `det`: a port range holding four
+# blocks, one of them held back.
+VTY_BSZ=64
+VTY_PORTS="1024 1279"
+VTY_RES_BLOCKS=$((VTY_OUT_N * RESERVE))
+VTY_RESLINE=""
+[ "$RESERVE" -gt 0 ] && VTY_RESLINE="reserve $RESERVE"
+VTY_SAY=$($HX -c "configure" \
+    -c "cgnat pool vtyres" \
+    -c "inside $VTY_IN" \
+    -c "outside $VTY_OUT" \
+    -c "block-size $VTY_BSZ" \
+    -c "ports $VTY_PORTS" \
+    -c "policy interleaved" \
+    -c "mode deterministic" \
+    -c "max-blocks 2" \
+    ${VTY_RESLINE:+-c "$VTY_RESLINE"} \
+    -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$VTY_SAY" | sed 's/^/  /'
+
+# THE CONTROL, and it goes through the VTY too. Four public addresses hold four
+# reserve blocks, which reaches every worker this box has, so the prompt must
+# say nothing at all about this one. Without it the checks below pass on a box
+# that warns about every reserve there is, and a warning that fires always is a
+# warning an operator learns to scroll past.
+VTY_PAIR_ADDRS=4
+VTY_QUIET=$($HX -c "configure" \
+    -c "cgnat pool vtyres4" \
+    -c "inside 100.64.13.0/28" \
+    -c "outside 200.150.9.16/30" \
+    -c "block-size $VTY_BSZ" \
+    -c "ports $VTY_PORTS" \
+    -c "policy interleaved" \
+    -c "mode deterministic" \
+    -c "max-blocks 2" \
+    ${VTY_RESLINE:+-c "$VTY_RESLINE"} \
+    -c "exit" \
+    -c "commit" 2>&1)
+printf '%s\n' "$VTY_QUIET" | sed 's/^/  | /'
+
+# Collapsed before anything is cut out of it, for the reason DET_FLAT is: these
+# are sentences, and a needle that depends on where one folded stops matching
+# the next time the message is re-wrapped (#271).
+VTY_FLAT=$(printf '%s' "$VTY_SAY" | tr '\n' ' ' | tr -s ' ')
+VTY_NOHOLD=$(printf '%s' "$VTY_FLAT" \
+  | sed -n 's/.*workers: \([0-9][0-9]*\) of them hold no reserve.*/\1/p')
+VTY_RAISE=$(printf '%s' "$VTY_FLAT" \
+  | sed -n 's/.*raise the reserve to at least \([0-9][0-9]*\).*/\1/p')
+VTY_PERADDR=$(printf '%s' "$VTY_FLAT" \
+  | sed -n 's/.*each reserve block per address is \([0-9][0-9]*\) more.*/\1/p')
+# AND WHAT THE BOX WROTE DOWN, which is the other half of the same fix and the
+# half nobody is watching at the time. A pool applied over the API is created
+# with no terminal on the far end, so the dataplane keeps the record itself -
+# and it is the only trace left for whoever reads the box hours later, after
+# the customer that stayed full has already called.
+VTY_LOG=$(vppctl show logging 2>/dev/null)
+echo "  pool vtyres holds $VTY_RES_BLOCKS reserve block(s) against ${WK:-0} worker(s)"
+echo "  the prompt said: ${VTY_NOHOLD:--} worker(s) hold none, raise to ${VTY_RAISE:--},"
+echo "                   one more reserve block per address costs ${VTY_PERADDR:--}"
+
+echo
 echo "=========== VERDICT ==========="
 echo "  run mode: $MODE (reserve $RESERVE)"
 
@@ -601,6 +697,68 @@ else
   echo "  [ -- ] the reserve warning cannot arise on this run: $RES_BLOCKS"
   echo "         reserve block(s) against ${WK:-0} worker(s), and it is said"
   echo "         only while the reserve reaches fewer workers than the box has"
+fi
+
+# 8. AND THE SAME WARNING AT THE VTY PROMPT, which is where an operator is.
+#
+# Item 7 asserts what the dataplane's own console printed. This asserts what
+# the product printed, on the path hexash uses - and the two are different
+# claims about different code, which is the whole reason both are here. A box
+# that tells the person at `vppctl` and says nothing to the person at the
+# prompt has told nobody: the VTY exists so that nobody has to drop to the
+# dataplane console, and every operator is on this path.
+#
+# GUARDED THE SAME WAY and on the same numbers. With no reserve, or with a
+# reserve that already reaches every worker, silence at the prompt is correct
+# and asserting against it would be a check that measured nothing.
+if [ "$VTY_RES_BLOCKS" -lt "${WK:-0}" ]; then
+  # The two ways this could be green having measured nothing: a commit that
+  # never created the pool - which is every way a commit can fail, and it
+  # fails silently as far as a grep for an absent warning is concerned - and a
+  # box with no workers to shard the reserve over.
+  expect_in "the pool the warning is about was created through the VTY" \
+    "pool vtyres" "$(vppctl show bpa pool)"
+  expect "and the box has the workers the numbers are about" \
+    test "${WK:-0}" -ge 2
+  expect_said "the prompt says a reserve that does not reach every worker" \
+    "the reserve on pool vtyres is $VTY_RES_BLOCKS block(s) and this box has $WK workers" \
+    "$VTY_SAY"
+  expect_said "and says what those subscribers lose" \
+    "can never be given a second block" "$VTY_SAY"
+  # The three numbers again, because they are what an operator acts on and a
+  # relay that carried the sentence with somebody else's arithmetic in it
+  # would be worse than none.
+  expect "the workers holding no reserve are the ones the reserve does not reach" \
+    test "${VTY_NOHOLD:-x}" -eq "$((WK - VTY_RES_BLOCKS))"
+  expect "and the reserve the prompt says to raise to reaches every worker" \
+    test "${VTY_RAISE:-x}" -eq "${WK:-0}"
+  expect "and one more reserve block per address costs one per public address" \
+    test "${VTY_PERADDR:-x}" -eq "$VTY_OUT_N"
+  expect_said "and the commit went through, because this is a warning and not a refusal" \
+    "commit complete" "$VTY_SAY"
+  # AND ONLY ABOUT THE POOL THAT WAS COMMITTED. `det` has a short reserve on
+  # this same box and the device says so whenever it is asked, so a relay that
+  # simply forwarded everything it read would print this paragraph about a pool
+  # nobody touched on every commit that went near a reserve. A warning that
+  # fires whatever the operator did is one they learn to scroll past, and then
+  # the commit where it IS about their change is scrolled past too.
+  expect_not_said "and says nothing about a pool this commit did not touch" \
+    "the reserve on pool det" "$VTY_SAY"
+  expect_said "and the box wrote the record itself, for whoever reads it later" \
+    "pool vtyres: reserve of $VTY_RES_BLOCKS blocks does not reach all $WK workers" \
+    "$VTY_LOG"
+  if [ "$((VTY_PAIR_ADDRS * RESERVE))" -ge "${WK:-0}" ]; then
+    expect_in "the control pool was created too" "pool vtyres4" \
+      "$(vppctl show bpa pool)"
+    expect_not_said "and a reserve that does reach every worker draws no warning at the prompt" \
+      "hold no reserve at all" "$VTY_QUIET"
+  else
+    echo "  (no control: vtyres4's $((VTY_PAIR_ADDRS * RESERVE)) reserve blocks do"
+    echo "   not reach $WK workers either, so silence is not what it would mean)"
+  fi
+else
+  echo "  [ -- ] the warning cannot arise at the prompt on this run either:"
+  echo "         $VTY_RES_BLOCKS reserve block(s) against ${WK:-0} worker(s)"
 fi
 
 # And what the box does INSTEAD with no reserve, which the assertions above
