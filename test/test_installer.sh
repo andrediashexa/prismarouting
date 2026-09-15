@@ -2010,6 +2010,34 @@ else
   rwork=$(mktemp -d -p /var/tmp hexa-install-rig.XXXXXX)
   rbin=$rwork/bin
   mkdir -p "$rbin" "$rwork/tmp" "$rwork/net/ens18/device"
+  # AND THE INSTALLER ITSELF, for the same reason one step further out. The
+  # paragraph above moved the RIG off /tmp because the mount would hide it.
+  # The program under test is reached by its path too, and a CHECKOUT under
+  # /tmp is hidden by exactly the same mount:
+  #
+  #     $ git clone --no-local . /tmp/gateprobe && cd /tmp/gateprobe
+  #     $ sh test/test_installer.sh
+  #     FAIL: the refusal does not name update-grub by itself ...
+  #           sh: 0: cannot open /tmp/gateprobe/appliance/hexarouting-install
+  #     17 FAILURES
+  #
+  # The same clone under /home is green. Seventeen failures that read as
+  # product defects and are a property of where somebody put the tree, and a
+  # check that goes red on correct work is one people learn to run around.
+  # tools/release-gate.sh clones to /tmp/hexa-release by default, so this is
+  # not a hypothetical location.
+  #
+  # A COPY and not a bind, because the copy is the same bytes and needs no
+  # second mount inside a namespace that already has two. The installer never
+  # resolves anything from its own directory - no `dirname "$0"`, measured -
+  # so it runs identically from here.
+  RINST=$rwork/hexarouting-install
+  cp "$INSTALLER" "$RINST"
+  # It must BE the program, or every case below measures a stale copy.
+  cmp -s "$INSTALLER" "$RINST" || {
+    echo "  FAIL: the installer copy under the rig is not the installer"
+    exit 1
+  }
   echo up > "$rwork/net/ens18/operstate"
   : > "$rwork/filesystem.squashfs"
   # Everything the installer's tool list names, plus the ones it calls without
@@ -2067,7 +2095,7 @@ RLSBLK
         HEXA_DISK=/dev/loop0 HEXA_HOSTNAME=cgnat01 \
         HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
         HEXA_LOG_GB=1 HEXA_NET_SYS="$rwork/net" HEXA_MGMT_ADDRESS=none \
-        "$@" sh "$INSTALLER" 2>&1)
+        "$@" sh "$RINST" 2>&1)
     RRRC=$?
     RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
   }
@@ -2299,7 +2327,7 @@ md0 : active raid1 loop0p1[0]
       HEXA_DISK=/dev/loop0 HEXA_HOSTNAME=cgnat01 \
       HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
       HEXA_LOG_GB=1 HEXA_NET_SYS="$rwork/net" HEXA_MGMT_ADDRESS=none \
-      sh "$INSTALLER" 2>&1)
+      sh "$RINST" 2>&1)
   RRRC=$?
   RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
   rm -f "$rbin/mdadm"
