@@ -3792,22 +3792,78 @@ else
       gsub(/\$\{[^}]*\}/, "\001", s)
       gsub(/\$[A-Za-z_][A-Za-z0-9_]*/, "\001", s)
       gsub(/\$[0-9@*?#]/, "\001", s)
+      # THE CLOSING QUOTE ENDS THE MESSAGE, and only here. Before the values
+      # are punched out the first quote on the line can be one inside a $(...),
+      # and cutting there truncates the message and leaves shell in it; after
+      # them, the first quote left is the closing one. A `case` arm is
+      # `ok "..." ;;`, and without this cut the trailing `;;` becomes a
+      # fragment the reader then demands of a printed line - it accused four
+      # branches that run on every box.
       gsub(/\\./, "\001", s)
-      gsub(/"/,   "\001", s)
-      best = ""
-      n = split(s, part, "\001")
-      for (i = 1; i <= n; i++) if (length(part[i]) > length(best)) best = part[i]
-      printf "%d\t%s\n", FNR, best
+      sub(/".*$/, "", s)
+      # EVERY literal fragment, in order, not just the longest one. Two call
+      # sites can share their longest chunk and differ only in what follows:
+      # measured here, "statistics segment " is the longest chunk of both the
+      # 75%-full refusal and the healthy report, and "records mirrored on "
+      # of both mirror lines. A reader keyed on the longest chunk alone cannot
+      # tell those apart, so it either misses the branch that never ran or
+      # accuses the one that did.
+      out = ""; n = split(s, part, "\001")
+      for (i = 1; i <= n; i++) if (length(part[i]) > 0)
+        out = (out == "" ? part[i] : out "\001" part[i])
+      printf "%d\t%s\n", FNR, out
     }' "$ST" > "$FAKE/messages"
+  # EACH LINE IS SPENT ON THE MESSAGE IT REALLY CAME FROM, which is the
+  # longest needle that line contains. A plain "does any line contain this"
+  # lets a short message be satisfied by a longer one printed somewhere else:
+  # measured on this tree, 7 of the 113 needles are substrings of another, and
+  # 2 of those were being reported as covered by lines belonging to their
+  # longer sibling - the statistics segment at 75% full, which is what warns
+  # an operator before VPP aborts on it, and a records mirror that is
+  # synchronising. Both had never been printed by any box.
+  #
+  # Assigning each line to its most specific message is the whole fix, and it
+  # is one awk pass rather than a rule with exceptions in it.
+  awk -F'\t' '
+    function literal(frags,   i, m, tot) {
+      tot = 0; m = split(frags, f, "\001")
+      for (i = 1; i <= m; i++) tot += length(f[i])
+      return tot
+    }
+    # In ORDER, and all of them. A line that carries the fragments of the
+    # more specific message carries the less specific one s as well, so the
+    # order walk is what separates them and the total literal length is what
+    # decides which one the line is spent on.
+    function ordered(line, frags,   i, m, at, p) {
+      m = split(frags, f, "\001"); at = 1
+      for (i = 1; i <= m; i++) {
+        p = index(substr(line, at), f[i])
+        if (p == 0) return 0
+        at = at + p + length(f[i]) - 1
+      }
+      return 1
+    }
+    NR == FNR { if (literal($2) >= 8) need[$1] = $2 ; next }
+    {
+      bestlen = 0; best = ""
+      for (ln in need)
+        if (ordered($0, need[ln]) && literal(need[ln]) > bestlen) {
+          bestlen = literal(need[ln]); best = ln
+        }
+      if (best != "") seen[best] = 1
+    }
+    END { for (ln in seen) print ln }
+  ' "$FAKE/messages" "$FAKE/every-line" | sort -n > "$FAKE/messages-seen"
   while IFS="$(printf '\t')" read -r _ln _needle; do
     _sites=$((_sites + 1))
     # A message made almost entirely of values cannot be recognised in a run,
     # and saying so is the honest answer: passing it would be this reader
     # reporting a branch as covered because it could not look.
-    if [ "${#_needle}" -lt 8 ]; then
+    _lit=$(printf '%s' "$_needle" | tr -d '\001')
+    if [ "${#_lit}" -lt 8 ]; then
       _unreadable="$_unreadable
     selftest:$_ln"
-    elif ! grep -qF -- "$_needle" "$FAKE/every-line"; then
+    elif ! grep -qx -- "$_ln" "$FAKE/messages-seen"; then
       _unseen="$_unseen
     selftest:$_ln  $_needle"
     fi
