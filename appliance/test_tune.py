@@ -1208,5 +1208,52 @@ check("was named and no PCI address could be read" in _ppout,
       f"cannot give DPDK a device is not told why: "
       f"{[l for l in _ppout.splitlines() if 'PCI' in l]}")
 
+print("\n=== the cores table an operator sizes hardware from is the tuner's ===")
+# A TRUTH WRITTEN IN TWO PLACES, and until now only one of them was ever
+# checked. The page an operator reads before buying a processor carries a
+# table of how many cores forward and how many are left for everything else,
+# and that is a claim about what THIS program does. Nothing compared them, so
+# the day the split changes the page goes on selling the old one - and it is
+# read by somebody choosing hardware, who finds out after the box is racked.
+#
+# The tuner is the holder and the page is the reader, which is the only way
+# round that works: the page cannot be the holder because the box does not
+# read it. Driven here rather than by a documentation suite because the answer
+# has to come from RUNNING the tuner on a machine of that shape; a check that
+# compared the table against the source code that computes it would be
+# agreeing with an expression rather than with an outcome.
+_WIKI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                     "wiki", "comecar-aqui", "dimensionamento-e-requisitos.md")
+try:
+    _page = open(_WIKI, encoding="utf-8").read()
+except OSError as _e:
+    _page = ""
+    check(False, f"the page carrying the cores table could not be read "
+                 f"({_e}), so nothing here compares it with anything")
+# | 32  | 31 | 1 |  - three integer columns, and only those rows.
+_rows = re.findall(r"^\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*$",
+                   _page, re.M)
+check(len(_rows) >= 3,
+      f"the cores table is no longer on the page in a shape this can read, so "
+      f"the comparison has quietly stopped happening: found {len(_rows)} row(s)")
+for _cores, _fwd, _rest in _rows:
+    _cores, _fwd, _rest = int(_cores), int(_fwd), int(_rest)
+    _r = tempfile.mkdtemp()
+    # One thread per core, because the table's first column says cores and a
+    # box with SMT would make "3" ambiguous between cores and CPUs.
+    build(_r, 1, _cores, 1, hugepages_gb=4, ram_gb=64)
+    _o = run(_r, "--subscribers", "200000")
+    _m = re.search(r"^# workers \((\d+)\):", _o, re.M)
+    _got = int(_m.group(1)) if _m else None
+    check(_got == _fwd,
+          f"the page tells somebody buying a {_cores}-core processor that "
+          f"{_fwd} of them forward, and this tuner makes {_got}: that page is "
+          f"read before the hardware is ordered")
+    # And the other column is the same fact said the other way round, so a
+    # page whose two columns do not add up is wrong about one of them.
+    check(_fwd + _rest == _cores,
+          f"the {_cores}-core row says {_fwd} forwarding and {_rest} for "
+          f"everything else, which is not {_cores}")
+
 print(f"\n{'ALL TESTS PASSED' if not fail else str(fail) + ' FAILURES'}")
 sys.exit(1 if fail else 0)

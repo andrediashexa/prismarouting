@@ -75,6 +75,22 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The cores table an operator sizes hardware from had no reader**
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). The public
+  page somebody reads before choosing a processor carries a table of how many
+  cores forward and how many are left for everything else, and that is a claim
+  about what `appliance/hexarouting-tune` does. Nothing compared the two, so the
+  day the split changed the page would have gone on selling the old one - to a
+  reader who finds out after the box is racked. The tuner is now the holder and
+  the page the reader: every row is driven against the tuner on a synthetic
+  machine of that shape, and a row that has left the page in a shape the check
+  can read is a failure rather than a silent pass. Shown red from both sides -
+  a tuner that leaves two cores to the control plane on large boxes only, which
+  the existing worker checks do not see, and a page promising 30 forwarding
+  cores on a 32-core processor.
+
 ### Added
 
 * **The release gate refuses a release that would ship past a stale wiki**
