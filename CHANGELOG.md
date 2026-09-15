@@ -77,6 +77,17 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **`docs/appliance.md` still said the commit binds the NIC**
+  ([#336](https://github.com/andrediashexa/hexarouting/issues/336)). That
+  sentence described the defect, accurately, right up until the defect was
+  fixed - and then it was the document claiming something the box no longer
+  does. Found by the sweep of `src/hexash/hexash.py` for sentences printed by a
+  path that never asked which box it was on, which noticed it in the
+  documentation rather than in the code and left it alone as another branch's
+  territory. It was.
+
+### Fixed
+
 * **Two more screens stated a consequence without asking which box they were
   on.** Both found by sweeping `src/hexash/hexash.py` for the shape behind
   [#328](https://github.com/andrediashexa/hexarouting/issues/328),
