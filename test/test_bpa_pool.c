@@ -512,6 +512,56 @@ main (void)
     printf ("  %u pool/stride combinations move 0 subscribers\n", tried);
   }
 
+  printf ("\n=== how far along an address a block stays in one slice ===\n");
+  {
+    /*
+     * bpa_pair_step() against the model, at every worker count the vectors
+     * carry. The pairing preference in bpa_dyn_acquire_extra() walks in these
+     * steps and does NOT test the worker of the block it lands on, because
+     * this step is what makes every candidate congruent to the primary. A
+     * step one too small hands a subscriber a block of another worker's
+     * slice: it translates outbound and loses every reply, which is the
+     * failure shape that has no counter anywhere.
+     *
+     * It is also the arithmetic that separates pairing from the stride. A
+     * stride must honour the one number the operator typed; pairing may take
+     * any multiple of this, so a pool where no stride is reachable can still
+     * be paired, and the two checks sit next to each other for that reason.
+     */
+    u32 k, unpaired = 0;
+
+    for (k = 0; k < BPA_VEC_N_PAIR; k++)
+      {
+	const bpa_vec_pair_t *v = &bpa_vec_pair[k];
+	u32 got = bpa_pair_step (&pools[v->pool], v->n_workers);
+
+	CHECK (got == v->step,
+	       "'%s' at %u workers: pair step C=%u ref=%u",
+	       bpa_vec_pools[v->pool].name, v->n_workers, got, v->step);
+	CHECK (((u64) got * bpa_stride_unit (&pools[v->pool])) % v->n_workers
+		 == 0,
+	       "'%s' at %u workers: step %u lands in another worker's slice",
+	       bpa_vec_pools[v->pool].name, v->n_workers, got);
+	pools[v->pool].block_stride = 1;
+	if (!bpa_stride_reachable (&pools[v->pool], v->n_workers))
+	  unpaired++;
+	pools[v->pool].block_stride = 0;
+      }
+    /*
+     * The guard that stops the two checks above being about nothing: some of
+     * these shapes MUST be ones where a stride of 1 is unreachable, because
+     * those are exactly the boxes the option table on #226 said could not be
+     * paired either. If every shape here were stride-reachable the pair step
+     * would always be 1 and neither check could tell the two apart.
+     */
+    CHECK (unpaired > 0,
+	   "no vector has a stride of 1 the sharding refuses, so nothing here "
+	   "distinguishes pairing from a stride");
+    printf ("  %u (pool, worker count) pairs, and %u of them are shapes where "
+	    "a stride of 1 is unreachable and pairing still has a step\n",
+	    BPA_VEC_N_PAIR, unpaired);
+  }
+
   printf ("\n=== a stride the sharding cannot honour ===\n");
   {
     bpa_pool_t *p = &pools[0]; /* interleaved, 2 public addresses */

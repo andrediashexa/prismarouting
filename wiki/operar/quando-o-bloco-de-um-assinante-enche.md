@@ -116,8 +116,23 @@ maioria dos assinantes dentro de **um**, e use `max-blocks` para a minoria.
 
 # Onde os blocos extras caem
 
-Por padrão, o bloco extra vai para onde o pool tiver um livre. `block-stride`
-decide a distância entre os blocos de um mesmo assinante:
+O bloco extra cai, sempre que der, **no mesmo endereço público** do assinante.
+Esse é o pareamento de endereço que a RFC 4787 REQ-2 descreve e que a RFC 6888
+REQ-2 exige como padrão de um CGNAT: um cliente que sai por dois endereços ao
+mesmo tempo aparece como dois computadores para quem está do outro lado, e é o
+que faz a chamada SIP conectar e ficar sem áudio - a mídia é anunciada num
+endereço e o sinal veio de outro.
+
+É **preferência, não regra**. Se não houver bloco livre naquele endereço, a
+caixa entrega outro qualquer em vez de deixar o cliente sem tráfego. Quanto
+disso valeu no seu pool está em `show cgnat blocks`:
+
+```
+  RFC 4787 REQ-2 paired: 412 of 419 extension(s) on the holder's own address
+```
+
+`block-stride` é outra pergunta, e decide a distância entre os blocos de um
+mesmo assinante **dentro** desse endereço:
 
 ```
 configure
@@ -129,7 +144,7 @@ configure
 
 | Valor | O que acontece |
 |-------|----------------|
-| `0` (padrão) | onde houver bloco livre - comportamento de sempre |
+| `0` (padrão) | o bloco livre mais próximo no endereço do assinante |
 | `1` | colados: o segundo bloco começa onde o primeiro termina |
 | `n` | `n × block-size` portas de distância, no mesmo endereço público |
 

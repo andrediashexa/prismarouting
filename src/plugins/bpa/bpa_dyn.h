@@ -25,7 +25,15 @@
 #ifndef __included_bpa_dyn_h__
 #define __included_bpa_dyn_h__
 
+/* Standalone for the reason bpa_pool.h is, and for one more: the containers
+ * ARE the behaviour here - which block comes off the free stack, and what a
+ * removal displaces. test/bpa_vec_shim.h reproduces those two, and
+ * test/test_bpa_dyn.c drives this allocator with no VPP and no container. */
+#ifdef BPA_STANDALONE
+#include "bpa_vec_shim.h"
+#else
 #include <vlib/vlib.h>
+#endif
 
 #include "bpa_pool.h"
 
@@ -39,6 +47,29 @@
 #define BPA_BLOCK_HOLDDOWN 120
 
 #define BPA_NO_BLOCK ((u32) ~0)
+
+/*
+ * Blocks of the subscriber's own public address an extension may look at,
+ * per walk, before it takes one from the free stack instead.
+ *
+ * A bound and not a search of the address, because a public address holds
+ * blocks_mapped blocks - 16128 with a /16 port range and 4-port blocks - and
+ * an extension that cannot be paired would cross all of them to find that out,
+ * on the packet that already found no free port anywhere.
+ *
+ * Thirty-two, measured rather than picked. Over three arrival patterns - one
+ * subscriber at a time, everybody-arrives-then-everybody-extends, and a steady
+ * state with three quarters of the subscribers reaped - across 1 to 256 public
+ * addresses and 1 to 8 workers, the two walks in bpa_dyn_acquire_extra() pair
+ * 100%, 99.6% and 99.2% of extensions at their worst cell. Sixteen gives up
+ * the third of those to 76.5%, on the worker counts that share no factor with
+ * the address count and therefore step along an address at their sparsest;
+ * sixty-four buys 100% back, at twice the walk.
+ *
+ * The worst case is therefore 2 * BPA_PAIR_WALK reads of owner[], once per
+ * block extension - not per packet, and not per session.
+ */
+#define BPA_PAIR_WALK 32
 
 /* A subscriber's extension block: which local block, and whose it is. */
 typedef struct
@@ -62,6 +93,24 @@ typedef struct
    */
   u8 *pinned;
   u32 *free_list;   /* stack of free local idx */
+  /*
+   * local idx -> where it sits in free_list, BPA_NO_BLOCK when it is held.
+   *
+   * The inverse of free_list, maintained by the three operations that move
+   * it, so taking a NAMED block out of the stack is an index rather than a
+   * search. Every path that places a block somewhere chosen - a pin, a
+   * stride, the paired-address preference - needs exactly that, and the
+   * search it replaces is over the whole slice: measured at 72684 entries
+   * examined for ONE extension on a 16-address pool at 3 workers, and at
+   * about 0.8 ms per pin on a 258048-block slice, all of it the walk (#226).
+   *
+   * Four bytes per block against owner[]'s four, idle_since[]'s eight and
+   * pinned[]'s one - a 258048-block slice grows from about 4.4 MB to 5.4 MB,
+   * once per worker per pool. That is the trade, and it is paid so that
+   * paired address pooling can be the default RFC 6888 REQ-2 requires
+   * without a walk on the packet that asks for the extension.
+   */
+  u32 *free_pos;
   uword *by_sub;    /* sub_idx -> local idx + 1, so 0 means "none" */
   u32 n_local;	    /* blocks in this worker's slice */
   u32 n_alloc;	    /* currently held */
@@ -81,6 +130,28 @@ typedef struct
    */
   u64 n_stride_placed;
   u64 n_stride_missed;
+  /*
+   * Extensions that landed on the subscriber's own public address, and
+   * extensions that could not.
+   *
+   * The RFC 4787 REQ-2 conformance number for this box, live. A subscriber's
+   * FIRST block is on its own address by arithmetic in both modes; every
+   * block after it is a preference the allocator applies and can fail to
+   * honour, so the property is whatever these two say it is. An operator
+   * quoting paired address pooling in a tender reads the fraction their own
+   * pool produced rather than the claim.
+   *
+   * Both allocators increment them, because both prefer and both fall back:
+   * a dynamic pool walks its own address, a deterministic one walks its
+   * reserve. One property, one pair of counters.
+   *
+   * Counted here and not derived from n_extensions, because the third case is
+   * real and is neither: an extension with no primary to measure from, which
+   * happens when the primary was reaped while an extension outlived it. That
+   * one is not a miss - there was no address to pair with.
+   */
+  u64 n_paired_placed;
+  u64 n_paired_missed;
   u64 n_releases;   /* lifetime; becomes natEvent 17 count */
   u64 n_exhausted;  /* allocation refused; becomes natEvent 12 */
   u8 active;

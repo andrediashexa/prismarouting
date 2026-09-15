@@ -428,7 +428,9 @@ typedef struct
    * held. Refusing the extension rather than taking a block elsewhere would
    * turn a property about layout into a customer losing traffic. This comment
    * used to say the extension "has to land" there, which is a guarantee the
-   * code deliberately does not make (#226).
+   * code deliberately does not make (#226). A DYNAMIC pool's extensions now
+   * carry the same preference, by the same argument and with the same
+   * fall-back; bpa_pair_step() below is the arithmetic both walk with.
    *
    * Zero is every configuration written before this existed, and leaves
    * blocks_mapped equal to blocks_per_ip and the mapping untouched.
@@ -1013,6 +1015,40 @@ bpa_stride_next_ok (const bpa_pool_t *p, u32 want, u32 n_workers)
     if (((u64) s * unit) % n_workers == 0)
       return s;
   return 0;
+}
+
+/*
+ * How far along a public address one has to step to land back in the same
+ * worker's slice: the smallest s with s*unit divisible by n_workers, which is
+ * n_workers / gcd(unit, n_workers).
+ *
+ * This is what separates keeping a subscriber on ONE public address from
+ * keeping its blocks at a fixed distance. A stride has to honour the one
+ * number the operator typed, so bpa_stride_reachable() is a yes or no about
+ * that number; pairing may take any multiple of the step below, so it needs
+ * only that a multiple exists - and one always does, because s = n_workers
+ * satisfies it for every unit. The two are therefore not the same
+ * reachability question, and a pool where no stride is honourable can still
+ * be paired.
+ *
+ * What it does NOT promise is that a candidate is in range: the step still has
+ * to fit inside blocks_mapped, which is why the caller walks rather than
+ * computing one answer.
+ */
+static_always_inline u32
+bpa_pair_step (const bpa_pool_t *p, u32 n_workers)
+{
+  u32 a = bpa_stride_unit (p), b = n_workers, t;
+
+  if (n_workers <= 1)
+    return 1;
+  while (b != 0)
+    {
+      t = a % b;
+      a = b;
+      b = t;
+    }
+  return n_workers / a;
 }
 
 /* ------------------------------------------------------------------ */

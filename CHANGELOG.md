@@ -129,6 +129,104 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **A dynamic pool put one subscriber on two public addresses, while the box
+  documented paired address pooling in four places**
+  ([#226](https://github.com/andrediashexa/hexarouting/issues/226)). RFC 6888
+  REQ-2 makes "Paired" (RFC 4787 REQ-2) the required **default** for a CGN.
+  This box stated it in `docs/roadmap.md`'s conformance table, in
+  `docs/architecture.md`, on `bpa_pool.h`'s static-forward comment and on the
+  public wiki page about port forwarding, and the forward path REFUSES an
+  operator-chosen public address because of it. It was true of deterministic
+  mode and false of dynamic mode: an extension was whatever came off the free
+  stack, and under `policy interleaved` the next block index is the next public
+  address, so a subscriber that filled its block and was given another normally
+  ended up sending from two addresses at once - more often the larger the pool,
+  because alignment needs the gap to be a multiple of the address count. The
+  claim was narrowed in an earlier release. The mechanism is what changes here.
+
+  **The allocator now prefers a free block on the subscriber's own public
+  address.** Two bounded walks along that address, in steps of
+  `n_workers / gcd(unit, n_workers)` - outwards from the subscriber's own
+  block, whose neighbour is the range an investigator reads as one holding,
+  and upwards from wherever the free stack is about to hand blocks out, which
+  is where a pool that filled from the bottom keeps its free ones. A
+  **preference and not a rule**: it falls back to the free stack rather than
+  refusing, because refusing would turn a property about layout into a
+  customer losing traffic.
+
+  So the honest statement is a rate, not a guarantee, and both the box and the
+  documentation now state it as one. Measured over three arrival patterns -
+  one subscriber at a time, everybody-arrives-then-everybody-extends, and a
+  steady state with three quarters of the subscribers reaped - across 1 to 256
+  public addresses and 1 to 8 workers:
+
+  | arrivals | before | after |
+  |---|---|---|
+  | one at a time | 0.0% | **100%** |
+  | everybody, then everybody | 0.0% | **99.6%** |
+  | steady state with churn | 0.2% | **99.2%** |
+
+  Those are the lowest cell of each grid, not the mean. `show bpa blocks`
+  prints each pool's own count, because an operator sizing or selling against
+  a conformance statement needs their number rather than the sentence:
+
+  ```
+  RFC 4787 REQ-2 paired: 412 of 419 extension(s) on the holder's own address
+  ```
+
+  **One correction to what this issue recorded about the cost.** Pairing does
+  **not** inherit the block stride's reachability limit
+  ([#55](https://github.com/andrediashexa/hexarouting/issues/55)). A stride has
+  to honour the one number the operator typed, so `stride x unit` must be a
+  multiple of the worker count; pairing may take **any** multiple of `unit` and
+  needs only the smallest that lands in the slice, which always exists. The
+  vectors say how far apart those are: of the 72 (pool, worker count) shapes
+  `ref/gen_vectors.py` now generates, **53 are shapes where a stride of 1 is
+  unreachable and pairing still has a step**. A box that cannot be strided can
+  still be paired.
+
+  **The free-list removal is now constant time**, which is what made the
+  preference affordable. Taking a NAMED block off the free stack used to be a
+  search with a guess in front of it, and the guess only held while nothing had
+  displaced the stack - true on the path that pins many blocks at once, false
+  on any path that names blocks in an order of its own. Measured on a
+  16-address pool at 3 workers with the preference on: **72684 free-list
+  entries examined for one extension**, 30 on average. `free_pos[]` is the
+  inverse index, four bytes a block - a 258048-block slice grows from about
+  4.4 MB to 5.4 MB - and it removes the walk from the pin path too, which the
+  old comment measured at about 0.8 ms per pin.
+
+  **`test/test_bpa_dyn.c` is new, and is the first suite in `make test` that
+  drives this allocator at all.** Until now the dynamic half of REQ-2 was
+  asserted only behind docker, and by `lab/crossaddr.sh`, which was written to
+  pin what the box did WRONG. `test/bpa_vec_shim.h` reproduces the VPP vector
+  and hash operations the allocator's behaviour depends on - `vec_del1` swaps
+  with the last entry, `vec_pop` is a stack - so the real `bpa_dyn.c` runs with
+  no VPP and no container. Two things it found while being written, both of
+  them checks that could not fail: a four-subscriber scenario on four public
+  addresses stays green with the preference deleted, because `4 % 4 == 0` puts
+  every extension back by accident, and "the block is in this worker's slice"
+  is true of `local * n_workers + worker` whatever the allocator computed. Both
+  are rewritten to assert what a wrong answer actually produces, and each check
+  carries the guard that makes it able to go red.
+
+  **A deterministic pool's reserve is counted the same way, and is now
+  asserted without a container.** Its extensions come out of the reserve, which
+  has the same preference and the same fall-back, so one counter answers the
+  property for both allocators. The only assertion on it was
+  `lab/detreserve.sh`, and the scenario there runs four subscribers over four
+  public addresses in descending order against an ascending free stack, which
+  is what stops the answer being true by accident - the same scenario now runs
+  in `make test`.
+
+  **`lab/crossaddr.sh` is now red by construction and is left that way.** Every
+  `expect` in it asserts the behaviour this change replaced - which is what its
+  header said would happen. Its assertions are numbers measured off a running
+  box and nobody has run it since, so they are not rewritten from arithmetic:
+  doing that would put a lab in the tree whose green nobody has seen.
+  `tools/run-all-labs.sh` says so where it lists what it is not running, and
+  re-running it against a box is the work left on the issue.
+
 * **A check that asserted about a word in prose went red on work that was
   right** ([#333](https://github.com/andrediashexa/hexarouting/issues/333)).
   `test/test_kernel_tuning.py` asserts that none of the kernel parameters

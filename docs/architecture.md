@@ -229,7 +229,10 @@ A preference and not a rule. The reserve is sharded by index, so the blocks on
 a subscriber's own address are not all in its worker's slice and the ones that
 are may be held by somebody else; refusing the extension rather than taking a
 block elsewhere would turn a property about layout into a customer losing
-traffic. This paragraph said "has to land" until
+traffic. The same preference, and the same reason for it being one, applies to a
+dynamic pool's extensions - see [the public address is not a
+choice](#the-public-address-is-not-a-choice). This paragraph said "has to
+land" until
 [#226](https://github.com/andrediashexa/hexarouting/issues/226) was read
 against the code, which states the opposite in as many words where the choice
 is made. The reverse direction
@@ -330,6 +333,19 @@ another subscriber, or the stride may step off the end of the subscriber's own
 public address; the allocator then falls back to the free list and counts it.
 `show bpa blocks` prints both numbers, because a stride that is configured and
 never honoured looks from outside exactly like no stride at all.
+
+**A stride the sharding cannot honour still leaves the pool paired.** Where no
+stride is configured, or where the one that is cannot be placed, the allocator
+still looks for a free block on the subscriber's **own public address** before
+falling back - which is paired address pooling and is the RFC 6888 REQ-2
+default, not a layout. The two are separate questions and the arithmetic says
+so: a stride has to honour the one number the operator typed, so
+`stride × unit` must be a multiple of the worker count, while pairing may take
+**any** multiple of `unit` and needs only the smallest one that lands in the
+slice - `n_workers / gcd(unit, n_workers)`, which always exists. A pool where
+no stride is reachable is therefore still paired, and
+[#55](https://github.com/andrediashexa/hexarouting/issues/55)'s table of
+unreachable strides is not a table of unpaired pools.
 
 **Worker sharding bounds which strides exist.** Blocks are partitioned by
 `block_idx % n_workers` and a subscriber may only draw from its own worker's
@@ -1190,15 +1206,26 @@ Two reasons, and both are properties the rest of the box already guarantees:
   that check where a reply came from would see two different peers.
 
   Said exactly: this box has that property unconditionally in **deterministic**
-  mode, and in **dynamic** mode until a subscriber fills its block. The
-  extension then comes from the free list, and under `policy interleaved` the
-  next block index is the next public address, so it normally lands on a
-  different one - more often as the pool grows, because alignment needs the
-  gap to be a multiple of the address count. That is measured rather than
-  argued, and it is
-  [#226](https://github.com/andrediashexa/hexarouting/issues/226); the sentence
-  above described the property this box was designed around and not the one it
-  currently has in every mode.
+  mode, where the formula gives it, and as a **preference** in dynamic mode,
+  where the allocator looks for a free block on the subscriber's own public
+  address before it takes one from the free stack. A preference and not a
+  rule - refusing the extension rather than taking a block elsewhere would
+  turn a property about layout into a customer losing traffic - so the honest
+  statement is a rate and not a guarantee, and `show bpa blocks` prints the
+  pool's own:
+
+  ```
+  RFC 4787 REQ-2 paired: 412 of 419 extension(s) on the holder's own address
+  ```
+
+  Measured over three arrival patterns, 1 to 256 public addresses and 1 to 8
+  workers: **100%, 99.6% and 99.2%** of extensions paired at the worst cell of
+  each pattern, asserted by `test/test_bpa_dyn.c`. Until
+  [#226](https://github.com/andrediashexa/hexarouting/issues/226) the same
+  three read **0.0%, 0.0% and 0.2%** - an extension was whatever came off the
+  free stack, and under `policy interleaved` the next block index is the next
+  public address, so a subscriber that filled its block normally ended up
+  sending from two addresses at once, more often the larger the pool.
 * **The reverse arithmetic**. `bpa_reverse()` recovers the subscriber from
   `(public address, port)` without a lookup, and that is what makes the return
   path shard cleanly and the deterministic mode auditable. A forward on some

@@ -9,6 +9,20 @@
 #
 # It changes no default. It is the reading behind issue #226.
 #
+# SUPERSEDED, AND RED BY CONSTRUCTION SINCE #226 LANDED. The allocator now
+# looks for a free block on the subscriber's own public address before it takes
+# one from the free stack, so every `expect` at the bottom of this file asserts
+# the opposite of what the box does. That is what it was written to do - "they
+# go red if the behaviour changes, which is the point" - and the behaviour
+# changed.
+#
+# The assertions are LEFT AS THEY ARE rather than flipped, deliberately. They
+# state numbers measured off a running box, and nobody has run this file since
+# the change: writing new ones from arithmetic would put a lab in the tree whose
+# green nobody has seen, which is the failure this project keeps paying for.
+# Rewriting it against a running box is the work that is left, and it is a
+# container away rather than a decision.
+#
 # SINGLE-THREADED BY CONSTRUCTION, and that is a limit rather than an
 # oversight. Every count here depends on which blocks the free list hands out
 # in what order, and with workers the free list is sharded: a subscriber draws
@@ -265,6 +279,8 @@ echo "=========== VERDICT ==========="
 # This lab exists to MEASURE a behaviour nobody chose, so its checks state what
 # was measured rather than what ought to be. They go red if the behaviour
 # changes, which is the point: the trade has to be decided, not drifted into.
+#
+# The behaviour changed (#226) and these are therefore red. See the header.
 expect "a subscriber filling its block right after taking it lands on a second address" \
   test "${A4_DIFF:-0}" -eq "${A4_N:-0}"
 expect "and so does one at sixteen public addresses" \
