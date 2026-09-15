@@ -320,15 +320,20 @@ Several labs take an argument that runs them with the feature switched off, so
 the assertions can be seen to fail without it — `sh tools/lab.sh pptp off`. An
 assertion that passes with the feature removed was never testing the feature.
 
-**`tools/run-all-labs.sh` runs all seventeen of those, with the verdict
+**`tools/run-all-labs.sh` runs all twenty of those, with the verdict
 inverted.** They are listed in `OFF_MODES` and reported as `<lab>+off`: a run
 that goes red is a pass, and one that comes back `LAB PASSED` is a failure of
-the suite rather than of the box. Until that list existed, nothing automatic
-ever performed an off run, so sixteen headers claimed the checks below them
-MUST fail and nobody was checking. Measured on this machine: the seventeen
-take 56 s to 125 s each, and at `LAB_JOBS=16` they add one batch to the four
-the suite already had - 1524 s to 1907 s on the same tree, about 25%, not the
-doubling that counting runs rather than batches suggests.
+the suite rather than of the box. This sentence said **seventeen** until the
+list was counted rather than remembered: `detreserve:off`, `ipfix-outbuf:no-stall`
+and `ipfix-stop:no-marker` all joined `OFF_MODES` after the number was written
+on 2026-09-12, and `test/test_doc_copies.py` has been reading twenty labs that
+declare a floor for their off run. Until that list existed,
+nothing automatic ever performed an off run, so sixteen headers claimed the
+checks below them MUST fail and nobody was checking. Measured on this machine
+when there were seventeen of them: they took 56 s to 125 s each, and at
+`LAB_JOBS=16` they added one batch to the four the suite already had - 1524 s
+to 1907 s on the same tree, about 25%, not the doubling that counting runs
+rather than batches suggests. That timing has not been re-taken at twenty.
 
 **Some lab files are deliberately not in the suite**, and `NOT_LABS` in
 `tools/run-all-labs.sh` holds each one's reason as data rather than as a
