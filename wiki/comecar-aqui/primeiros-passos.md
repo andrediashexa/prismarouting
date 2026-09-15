@@ -84,7 +84,7 @@ hexarouting# [edit] dataplane interface ?
 
 ### O commit guarda e recalcula, mas não entrega a placa
 
-A entrega tira a placa do Linux e derruba **todas** as sessões da caixa, inclusive a sua. Por isso o `commit` para exatamente antes disso e diz onde está o limite:
+A entrega tira a placa do Linux e derruba tudo que chega na caixa por ela. Por isso o `commit` para exatamente antes disso e diz onde está o limite:
 
 ```
 hexarouting# [edit] commit
@@ -92,12 +92,24 @@ dataplane interface: enp2s0
     stored, and the boot tuning was recomputed for it
     NOT IN EFFECT YET: the dataplane claims its card when it starts, and this
     commit does not restart it
-    restarting it hands the card over and ends every session on this box,
-    including this one, so it is not done for you
+    restarting it hands the card over and ends whatever is reaching this box
+    through enp2s0. The path this box is routed out of is 'enp1s0', which Linux
+    keeps, so this session is not what it costs
+    it is not done for you all the same: nothing here has measured what
+    stopping the dataplane costs a box carrying traffic
     reboot the box in a window you have chosen, and it comes up forwarding on
     that card
 commit complete
 ```
+
+**Esse último parágrafo é sobre a sua caixa, e muda com ela.** Nesta aqui a gerência está em `enp1s0`, que o Linux continua tendo, então derrubar o dataplane não derruba a sua sessão. Numa caixa de uma placa só - aquela em que a placa entregue é a que carrega a gerência - a mesma tela diz outra coisa, e o que ela diz é que a sessão cai junto:
+
+```
+    restarting it hands the card over and ends every session on this box,
+    including this one, so it is not done for you
+```
+
+E quando a caixa não consegue ler por onde é alcançada - nenhuma rota default, ou uma rota default que não está em nenhuma placa dela - ela diz isso em vez de escolher uma das duas respostas. Vale a leitura: é a diferença entre uma janela de manutenção que você não precisava e uma caixa que ninguém alcança.
 
 Ou seja: **reinicie a caixa numa janela escolhida por você**, e ela sobe encaminhando pela placa nomeada. Enquanto não reiniciar, `show interface` continua sem mostrar nada — e a própria caixa explica por quê, se você perguntar.
 
