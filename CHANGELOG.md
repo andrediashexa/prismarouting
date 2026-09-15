@@ -75,34 +75,6 @@ version has a chance of seeing it.
 
 ## Unreleased
 
-### Fixed
-
-* **Three wiki screens the new reader caught, two of them made stale an hour
-  earlier by this same release.** `test/test_wiki_screens.py` went in green and
-  then went red on its first real test: the split of the `nat: a hierarchy, not
-  a block` verdict
-  ([#362](https://github.com/andrediashexa/hexarouting/issues/362)) left
-  `configuracao-de-cgnat.md` quoting a row the box had stopped printing, and
-  the same commit's rewrite of the FRR-silent refusal left a section HEADING in
-  `commit-rollback-e-save.md` that was the old verdict, character for
-  character. A heading is the worst place for it, because a heading is what
-  somebody searches for after reading the verdict on their console.
-
-  That is the whole argument for the reader, and it arrived without being
-  looked for. Ten screens went stale over the last weeks and every one was
-  found by reading pages one at a time; these two were found by a suite, in the
-  same session that broke them, before anybody published them.
-
-  The third came out of the reader's SKIP list rather than out of a failure,
-  which is why that list is printed rather than counted: the `linux_cp` naming
-  warning in `configuracao-de-bgp.md` was quoted in the pre-#271 shape, the
-  statement and the reason glued into one sentence and hand-wrapped at column
-  0. Driven, `say_finding` prints the reason first and wrapped, with the
-  statement whole on its own last row - the statement is what an operator greps
-  for and types back, so it must not be folded, and the reason is what they
-  read, so it must be. Nothing could attribute the page's version to any
-  template, which is how it surfaced.
-
 ### Changed
 
 * **The rebranding to Prisma Routing is on the roadmap as work, not as a
@@ -147,6 +119,32 @@ version has a chance of seeing it.
   on those files answer with the rename.
 
 ### Fixed
+
+* **Three wiki screens the new reader caught, two of them made stale an hour
+  earlier by this same release.** `test/test_wiki_screens.py` went in green and
+  then went red on its first real test: the split of the `nat: a hierarchy, not
+  a block` verdict
+  ([#362](https://github.com/andrediashexa/hexarouting/issues/362)) left
+  `configuracao-de-cgnat.md` quoting a row the box had stopped printing, and
+  the same commit's rewrite of the FRR-silent refusal left a section HEADING in
+  `commit-rollback-e-save.md` that was the old verdict, character for
+  character. A heading is the worst place for it, because a heading is what
+  somebody searches for after reading the verdict on their console.
+
+  That is the whole argument for the reader, and it arrived without being
+  looked for. Ten screens went stale over the last weeks and every one was
+  found by reading pages one at a time; these two were found by a suite, in the
+  same session that broke them, before anybody published them.
+
+  The third came out of the reader's SKIP list rather than out of a failure,
+  which is why that list is printed rather than counted: the `linux_cp` naming
+  warning in `configuracao-de-bgp.md` was quoted in the pre-#271 shape, the
+  statement and the reason glued into one sentence and hand-wrapped at column
+  0. Driven, `say_finding` prints the reason first and wrapped, with the
+  statement whole on its own last row - the statement is what an operator greps
+  for and types back, so it must not be folded, and the reason is what they
+  read, so it must be. Nothing could attribute the page's version to any
+  template, which is how it surfaced.
 
 * **Seven refusal verdicts did not fit the console, and the verdict is the one
   row `err` must never fold**
