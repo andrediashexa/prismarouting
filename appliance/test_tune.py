@@ -101,14 +101,26 @@ def run(root, *args, maxmtu=None):
     had a check that could not fail because of it.
     """
     env = dict(os.environ)
-    if maxmtu is not None:
-        _bin = tempfile.mkdtemp()
-        with open(os.path.join(_bin, "ip"), "w") as _f:
+    # HEXA_IP is set on EVERY run, not only the ones that name a maximum.
+    # Without it the tuner asked the machine's own `ip` about a card named in
+    # a synthetic tree, and every fixture here that names an interface read
+    # whatever that machine's eth0 answered: 47 such reads in one run,
+    # measured. Nothing asserts on the difference today, so this was harmless
+    # - but "harmless" is a property of the checks that exist, and the mtu
+    # half of #330 is exactly the kind that gets one added.
+    #
+    # No maximum means a card that could not be read, which is a box whose
+    # `ip` has nothing to say about the device - one of the cases below.
+    _bin = tempfile.mkdtemp()
+    with open(os.path.join(_bin, "ip"), "w") as _f:
+        if maxmtu is None:
+            _f.write("#!/bin/sh\nexit 1\n")
+        else:
             _f.write("#!/bin/sh\n"
                      f"echo '2: eth0: <BROADCAST> mtu 1500 ... minmtu 68 "
                      f"maxmtu {maxmtu}'\n")
-        os.chmod(os.path.join(_bin, "ip"), 0o755)
-        env["HEXA_IP"] = os.path.join(_bin, "ip")
+    os.chmod(os.path.join(_bin, "ip"), 0o755)
+    env["HEXA_IP"] = os.path.join(_bin, "ip")
     p = subprocess.run([sys.executable, TUNE, "--sysfs-root", root] + list(args),
                        capture_output=True, text=True, env=env)
     return p.stdout
@@ -486,9 +498,14 @@ with tempfile.TemporaryDirectory() as root:
     _alone = os.path.join(root, "bin")
     os.makedirs(_alone, exist_ok=True)
     shutil.copy(TUNE, os.path.join(_alone, "hexarouting-tune"))
+    # The one tuner run in this file that does not go through run(), so it
+    # carries the netlink seam itself: without it the card named here is asked
+    # about on the machine underneath, which is the last of the 48 such reads
+    # this sweep found.
     _p = subprocess.run([sys.executable, os.path.join(_alone, "hexarouting-tune"),
                          "--sysfs-root", root, "--interface", "eth0",
-                         "--config", conf], capture_output=True, text=True)
+                         "--config", conf], capture_output=True, text=True,
+                        env=dict(os.environ, HEXA_IP="/nonexistent-ip"))
     _o = _p.stdout
     check("parser is not installed" in _o,
           f"the box could not reach hexash's parser and reported its "
@@ -662,7 +679,55 @@ print("\n=== apply-tuning must not stall the boot on a live system ===")
 import subprocess, os as _os, tempfile as _tf, shutil as _sh
 
 APPLY = os.path.join(HERE, "apply-tuning")
-fakebin = _tf.mkdtemp()
+
+
+def apply_box():
+    """
+    A box for apply-tuning to run against, and the two commands that decide
+    what it does to the machine.
+
+    Both were unstubbed. `systemctl is-active vpp.service` was answered by
+    whatever machine ran this suite, which is the three-way decision #336 is
+    about being taken from the wrong box - and `hexarouting-bind-nic` was
+    looked for on that machine's PATH and RUN when it was there. Measured
+    before this existed: with the product installed, this section took a card
+    off the machine running the tests five times in one run. That is the
+    warning in test/test_apply_tuning.sh, which stubbed both, and this file is
+    the other caller nobody swept.
+
+    HEXA_ROOT for the same reason: without it apply-tuning reads the machine's
+    own /etc/default/grub.d, /proc/cmdline and /sys, and writes the cpufreq
+    governor of any box whose suite runs as root.
+    """
+    b = _tf.mkdtemp()
+    r = os.path.join(b, "root")
+    for d in ("proc", "etc/default/grub.d", "etc/hexarouting",
+              "sys/kernel/mm/hugepages/hugepages-1048576kB"):
+        _os.makedirs(os.path.join(r, d), exist_ok=True)
+    with open(os.path.join(r, "proc/cmdline"), "w") as f:
+        f.write("BOOT_IMAGE=/vmlinuz ro quiet\n")
+    # Seven, which no machine has. It is what the "reserved 1G pages now"
+    # line reads back, and the one number in the report that can only have
+    # come from this tree - so the check below can tell a run that honoured
+    # HEXA_ROOT from one that read the machine's own /sys.
+    with open(os.path.join(
+            r, "sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages"),
+            "w") as f:
+        f.write("7\n")
+    # is-active answers no, which is the boot: the tuner has chosen the card
+    # and VPP is ordered after this unit. The other two answers are
+    # test/test_apply_tuning.sh's, which owns this script's decisions.
+    with open(os.path.join(b, "systemctl"), "w") as f:
+        f.write("#!/bin/sh\ncase \"$*\" in *is-active*) exit 3 ;; esac\nexit 0\n")
+    with open(os.path.join(b, "hexarouting-bind-nic"), "w") as f:
+        f.write(f"#!/bin/sh\necho bound >> {os.path.join(b, 'bindlog')}\n"
+                "exit 0\n")
+    for c in ("systemctl", "hexarouting-bind-nic"):
+        _os.chmod(os.path.join(b, c), 0o755)
+    return b, r
+
+
+fakebin, fakeroot = apply_box()
 # A slow fake update-grub: if it gets called, the test notices
 with open(os.path.join(fakebin, "update-grub"), "w") as f:
     f.write("#!/bin/sh\necho CALLED-UPDATE-GRUB\nsleep 5\n")
@@ -672,6 +737,7 @@ with open(os.path.join(fakebin, "hexarouting-tune"), "w") as f:
 _os.chmod(os.path.join(fakebin, "hexarouting-tune"), 0o755)
 
 env = dict(_os.environ, PATH=fakebin + ":" + _os.environ["PATH"],
+           HEXA_ROOT=fakeroot,
            HEXA_DATAPLANE_IF="", HEXA_SUBSCRIBERS="1000")
 r = subprocess.run(["sh", APPLY], capture_output=True, text=True, env=env,
                    timeout=30)
@@ -682,6 +748,21 @@ check("CALLED-UPDATE-GRUB" in out or "tuning unchanged" in out,
 # is no cpufreq, the rest of apply-tuning never happens.
 check("governor" in out, f"apply-tuning should report the governor; output was {out!r}")
 check(r.returncode == 0, f"apply-tuning must not fail here (rc={r.returncode})")
+# THE BOX IT RAN AGAINST, asserted rather than assumed, because for the whole
+# life of this section it was the machine running the suite. Seven reserved 1G
+# pages is this fixture's number and no machine's, so a run that reads back
+# anything else read somebody's real /sys - and a run that reads the real /sys
+# is a run that reached the real PATH, where an appliance keeps a binder that
+# takes its dataplane card off the kernel.
+check("reserved 1G pages now: 7" in out,
+      "apply-tuning did not run against the tree this file built, so it was "
+      f"reading the machine underneath it: {out!r}")
+# And the binder it found was this one. Measured before the stub existed: on a
+# machine with the product installed, this file ran the real
+# hexarouting-bind-nic five times in one run.
+check(os.path.exists(os.path.join(fakebin, "bindlog")),
+      "apply-tuning bound no card through this file's binder, so whichever "
+      "one it did reach is not the one this test put there")
 print("  normal system: behaviour preserved, governor reported")
 _sh.rmtree(fakebin, ignore_errors=True)
 
@@ -692,7 +773,7 @@ _sh.rmtree(fakebin, ignore_errors=True)
 # only by hand and every booted box ran uncapped. Testing the computation alone
 # is what let that stand: the calculation was right and nothing called it.
 print("\n=== the worker cap reaches the tuner from the environment ===")
-fakebin = _tf.mkdtemp()
+fakebin, fakeroot = apply_box()
 argvlog = os.path.join(fakebin, "argv")
 with open(os.path.join(fakebin, "hexarouting-tune"), "w") as f:
     f.write(f'#!/bin/sh\necho "$@" >> {argvlog}\nexit 0\n')
@@ -701,6 +782,7 @@ _os.chmod(os.path.join(fakebin, "hexarouting-tune"), 0o755)
 def apply_argv(**extra):
     open(argvlog, "w").close()
     env = dict(_os.environ, PATH=fakebin + ":" + _os.environ["PATH"],
+               HEXA_ROOT=fakeroot,
                HEXA_DATAPLANE_IF="", HEXA_SUBSCRIBERS="1000", **extra)
     r = subprocess.run(["sh", APPLY], capture_output=True, text=True, env=env,
                        timeout=30)
