@@ -336,6 +336,33 @@ class PoolConfig:
             return False
         return (nth * self.block_stride * self.stride_unit) % n_workers == 0
 
+    def pair_step(self, n_workers: int) -> int:
+        """
+        How far along one public address a block has to sit to land back in
+        the same worker's slice: the smallest s with s*stride_unit divisible
+        by n_workers, which is n_workers // gcd(stride_unit, n_workers).
+
+        This is what separates keeping a subscriber on ONE public address -
+        paired address pooling, RFC 4787 REQ-2, and the required default for a
+        CGN under RFC 6888 REQ-2 - from keeping its blocks a fixed distance
+        apart. A stride has to honour the one number the operator typed, so
+        stride_reachable() above is a yes or no about that number. Pairing may
+        take ANY multiple of this step, so it needs only that one exists, and
+        one always does: s = n_workers satisfies it for every unit. A pool
+        where no stride is reachable can therefore still be paired, which the
+        two functions being next to each other is meant to make hard to miss.
+
+        What it does not promise is that a candidate is in RANGE: the step
+        still has to fit inside blocks_mapped. That is why the allocator walks
+        rather than computing one answer, and why the property it delivers is
+        a measured rate rather than a guarantee.
+        """
+        import math
+
+        if n_workers <= 1:
+            return 1
+        return n_workers // math.gcd(self.stride_unit, n_workers)
+
     # ---------------- reverse mapping (outside -> inside) ----------------
 
     def reverse(self, ip_pub, port: int) -> str:

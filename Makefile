@@ -10,7 +10,7 @@ BUILD  := .build
 test: vectors $(BUILD)/test_bpa $(BUILD)/test_bpa_ports $(BUILD)/test_bpa_rtsp \
       $(BUILD)/test_bpa_mss $(BUILD)/test_bpa_ftp $(BUILD)/test_bpa_icmp \
       $(BUILD)/test_bpa_sip $(BUILD)/test_bpa_rewrite \
-      $(BUILD)/test_bpa_auto_mss
+      $(BUILD)/test_bpa_auto_mss $(BUILD)/test_bpa_dyn
 	@sh tools/run-tests.sh
 
 vectors:
@@ -21,6 +21,21 @@ $(BUILD)/test_bpa: test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c \
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
 	    test/test_bpa_pool.c src/plugins/bpa/bpa_pool.c
+
+# The dynamic block allocator, driven rather than evaluated. Standalone
+# because paired address pooling (RFC 4787 REQ-2, the required default under
+# RFC 6888 REQ-2) had its dynamic half measured only by a docker lab, and by
+# one written to pin what the box did WRONG - so the conformance statement in
+# four documents had nothing in `make test` behind it. test/bpa_vec_shim.h is
+# what makes it buildable: this file's behaviour IS what its VPP vectors do.
+$(BUILD)/test_bpa_dyn: test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
+                       src/plugins/bpa/bpa_dyn.h src/plugins/bpa/bpa_pool.c \
+                       src/plugins/bpa/bpa_pool.h test/bpa_shim.h \
+                       test/bpa_vec_shim.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -I test -I src/plugins/bpa -o $@ \
+	    test/test_bpa_dyn.c src/plugins/bpa/bpa_dyn.c \
+	    src/plugins/bpa/bpa_pool.c
 
 $(BUILD)/test_bpa_ports: test/test_bpa_ports.c src/plugins/bpa/bpa_ports.h \
                          test/bpa_shim.h

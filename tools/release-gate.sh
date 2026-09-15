@@ -360,15 +360,56 @@ fi
 #
 # Before RELEASE_GATE_CHECK_ONLY on purpose, so it can be exercised without
 # building a 321 MB image.
+# BOTH VERDICTS BEFORE EITHER REFUSAL. Refusing on the first one found means
+# the maintainer fixes the wiki, runs the gate again, and only then learns the
+# roadmap disagrees too - and a check that lives behind a check which is red
+# today is a check nobody has seen run. Measured: the wiki has been behind
+# since 2026-09-09, so the roadmap check placed after it would never have
+# executed once.
+docs_bad=0
 if ! wiki_out=$(sh "$WORK/tools/wiki-status.sh" 2>&1); then
   echo "error: this release would ship with the published wiki behind it." >&2
   printf '%s\n' "$wiki_out" | sed 's/^/       /' >&2
   echo "       A page that disagrees with the product is read by somebody" >&2
   echo "       deciding what state their box is in, so it is a defect and" >&2
   echo "       not a chore. Publish them, then run this again." >&2
-  exit 1
+  docs_bad=1
+else
+  echo "==> the published wiki matches this tree"
 fi
-echo "==> the published wiki matches this tree"
+
+# AND THE FILE SOMEBODY READS TO DECIDE WHAT TO DO NEXT.
+#
+# tools/roadmap-state.sh compares docs/roadmap.md against the tracker: a closed
+# issue the file still presents as work that remains, and an open issue the
+# file never mentions. Both mislead the same reader in opposite directions -
+# one sends somebody to do work that is done, the other hides work that is not.
+#
+# It has never had a caller. It needs the network to know an issue's state, so
+# it cannot live in `make test`, which runs offline and on every commit - and a
+# reader nobody calls is a rule that has quietly stopped applying, which is
+# what test/test_selftest.sh refuses of the verdict holder's readers for the
+# same reason. The gate is where it belongs: this is the moment somebody is
+# deciding that the tree is worth a version number, and it is the one command
+# that already has a network.
+#
+# Skipped, loudly, when gh cannot answer. A release refused because GitHub was
+# unreachable is a gate somebody learns to argue with, and this check is about
+# a document rather than about the medium.
+if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+  echo "==> the roadmap was NOT checked against the tracker: gh cannot answer"
+elif ! rm_out=$(sh "$WORK/tools/roadmap-state.sh" 2>&1); then
+  echo "error: docs/roadmap.md and the tracker disagree." >&2
+  printf '%s\n' "$rm_out" | sed -n '/^==> closed issues/,$p' | sed 's/^/       /' >&2
+  echo "       That file is what somebody reads to decide what to do next," >&2
+  echo "       so a closed issue presented as pending sends them to do work" >&2
+  echo "       that is done, and an open issue it never names hides work" >&2
+  echo "       that is not. Fix the file, then run this again." >&2
+  docs_bad=1
+else
+  echo "==> the roadmap and the tracker agree"
+fi
+[ "$docs_bad" = 0 ] || exit 1
 
 # The same seam the installer has, and for the same reason: the checks above
 # are what make this a gate, and a check that can only be exercised by building

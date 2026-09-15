@@ -19,6 +19,7 @@
 .build/test_bpa_sip
 .build/test_bpa_rewrite
 .build/test_bpa_auto_mss
+.build/test_bpa_dyn
 python3 appliance/test_tune.py
 python3 test/test_hexash_complete.py
 python3 test/test_hexash_config.py
@@ -66,3 +67,4 @@ sh test/test_lab_workers.sh
 python3 test/test_doc_copies.py
 python3 test/test_english_only.py
 python3 test/test_lab_crlf.py
+sh test/test_console_driver.sh

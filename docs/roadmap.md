@@ -95,17 +95,19 @@ claim about current behaviour is worth nothing without the code that shows it.
 against a running dataplane, with the evidence column saying by which lab and in
 what words, because an evidence column that points only at the code it came from
 is a map to the intention rather than to the proof. Paired address pooling is
-the partial one. Its deterministic half is asserted on a running box by
-`lab/detreserve.sh`, which is in the suite and has an off mode; the rest rests
-on the code and the model, because the lab that pins the dynamic case,
-`lab/crossaddr.sh`, records what #226 does TODAY and is excluded from the suite
-for that reason.
+the one stated as a rate rather than as a yes. Its deterministic half is
+asserted on a running box by `lab/detreserve.sh`, which is in the suite and has
+an off mode; its dynamic half is a preference the allocator applies and cannot
+guarantee, so what is asserted is the rate, in `make test` and without a
+container (`test/test_bpa_dyn.c`). `lab/crossaddr.sh` pinned what the box did
+before #226 and is excluded from the suite for that reason; it now measures the
+opposite of what it asserts and has not been re-run.
 
 | Behaviour | Why it already holds | Evidence |
 |---|---|---|
 | **Endpoint-Independent Mapping** (RFC 4787 REQ-1) | The `in2out` session key is `(private ip, private port, protocol)`. The remote address is not part of it, so one internal socket always maps to the same external port regardless of destination. | Measured: one socket reaching 8.8.8.8 then 1.1.1.1 keeps one public port (`lab/nat-behaviour.sh`) |
 | **Endpoint-Independent Filtering** (RFC 4787 REQ-8, full-cone) | The `out2in` key is `(public ip, public port, protocol)`. Any external host may reach an open mapping. | Measured: *"endpoint-independent filtering lets an uninvited remote through"* and *"it arrives at the subscriber's own address and port"* (`lab/nat-behaviour.sh`); the key function is `bpa_out2in.c` |
-| **Paired address pooling** (RFC 4787 REQ-2) | A subscriber's FIRST public address comes from `bpa_forward()`, a function of the subscriber index alone, and cannot vary between sessions. In **dynamic** mode a subscriber that fills its block gets an extension from the free list, and under `policy interleaved` that block is normally on a **different** public address - measured, and it gets more likely as the pool grows ([#226](https://github.com/andrediashexa/hexarouting/issues/226)). So the property holds unconditionally in deterministic mode and until the first extension in dynamic mode. | `bpa_pool.h`, `ref/bpa_model.py`, and for the deterministic extension it is measured: *"on the subscriber's own public address, so it is still one host"* (`lab/detreserve.sh`) |
+| **Paired address pooling** (RFC 4787 REQ-2, the required default under RFC 6888 REQ-2) | A subscriber's FIRST public address comes from `bpa_forward()`, a function of the subscriber index alone, and cannot vary between sessions. In **dynamic** mode a subscriber that fills its block is given an extension, and the allocator **prefers** a free block on that subscriber's own public address before it takes one from the free stack. A preference and not a rule, so the honest statement is a rate: measured **100%, 99.6% and 99.2%** at the worst cell of three arrival patterns over 1 to 256 public addresses and 1 to 8 workers. Before [#226](https://github.com/andrediashexa/hexarouting/issues/226) the same three read **0.0%, 0.0% and 0.2%**. Each pool reports its own number under `show bpa blocks`. | Measured, without a container: *"4 of 4 extensions on the holder's own public address, with a block elsewhere free every time"* and the three floors (`test/test_bpa_dyn.c`); for the deterministic extension, *"on the subscriber's own public address, so it is still one host"* (`lab/detreserve.sh`) |
 | **Port preservation where possible** | The allocator honours the original port when it is inside the block and free. | Measured: *"port 1600 was available before the forward existed"* asserts `100.64.0.5:1600 -> 200.150.0.17:1600` off a running box (`lab/forward.sh`), where it is the precondition of the reservation test; the arithmetic is `bpa_ports.h` and `test/test_bpa_ports.c` |
 
 EIF is **not** universally desirable: it means unsolicited inbound traffic
@@ -307,7 +309,7 @@ of the logging obligation. If the scope ever changes, that is where to start.
 |---|---|---|
 | **Throughput measurement on real NICs** | The per-packet CPU cost is measured now (`lab/throughput.sh`, v0.8.0) and it is the number that matters most: **346 clocks** in `bpa-in2out`, about 22 cores for 100 Gbps of 64-byte frames, down from 470 when [#63](https://github.com/andrediashexa/hexarouting/issues/63) was taken. Bits per second still needs an E810 or CX6 - [#28](https://github.com/andrediashexa/hexarouting/issues/28) stays open for it. | M |
 | **Symmetric RSS** | The handoff works, but symmetric hashing would put both directions on the right worker before the handoff, saving the extra enqueue. | M |
-| **RFC 4787, 5382 and 5508: the requirements this box states** - *delivered, under a narrower title than it had* | This row used to read "RFC 4787 / 5382 conformance suite", which promises the whole of both documents. Measured over the tree rather than judged: the requirement numbers named anywhere in this repository are **RFC 4787 REQ-1, REQ-2, REQ-5, REQ-8 and REQ-9**, **RFC 5382 REQ-5** and **RFC 5508 REQ-2**. That is five of RFC 4787's fourteen, one of RFC 5382's ten, and one from an RFC the old title did not admit to. Nothing else is claimed, so nothing else is asserted falsely, but a reader judging the product against that title was being told otherwise, which is the direction this file cares about. What stands behind each claim, so the next reader does not measure it again: **REQ-1** mapping and **REQ-8** filtering in `lab/nat-behaviour.sh`, whose `address-dependent` run is the control because the full-cone assertions **MUST** fail in it, and whose own header says the evidence before it was a reading of a hash key; **REQ-9** hairpinning in `lab/hairpin.sh`; **port preservation** off a running box in `lab/forward.sh`; **REQ-2** paired address pooling in `lab/detreserve.sh` for the deterministic reserve, and in `lab/crossaddr.sh` for where the property stops, the second being outside the suite on purpose because it pins what [#226](https://github.com/andrediashexa/hexarouting/issues/226) does today and would go red on the fix; and the four **timeout floors** in `bpa_pool.h`, which `show bpa timeouts` marks a value below rather than refusing it ([#54](https://github.com/andrediashexa/hexarouting/issues/54), v0.16.0). | **not an effort.** Every requirement this box states is asserted, so there is no suite left to write. What is not asserted is what is not claimed, and a requirement arrives as an implementation and its assertion together, on an issue of its own. |
+| **RFC 4787, 5382 and 5508: the requirements this box states** - *delivered, under a narrower title than it had* | This row used to read "RFC 4787 / 5382 conformance suite", which promises the whole of both documents. Measured over the tree rather than judged: the requirement numbers named anywhere in this repository are **RFC 4787 REQ-1, REQ-2, REQ-5, REQ-8 and REQ-9**, **RFC 5382 REQ-5** and **RFC 5508 REQ-2**. That is five of RFC 4787's fourteen, one of RFC 5382's ten, and one from an RFC the old title did not admit to. Nothing else is claimed, so nothing else is asserted falsely, but a reader judging the product against that title was being told otherwise, which is the direction this file cares about. What stands behind each claim, so the next reader does not measure it again: **REQ-1** mapping and **REQ-8** filtering in `lab/nat-behaviour.sh`, whose `address-dependent` run is the control because the full-cone assertions **MUST** fail in it, and whose own header says the evidence before it was a reading of a hash key; **REQ-9** hairpinning in `lab/hairpin.sh`; **port preservation** off a running box in `lab/forward.sh`; **REQ-2** paired address pooling in `test/test_bpa_dyn.c`, which asserts it for a dynamic pool as the rate it is and states the floor for three arrival patterns, and in `lab/detreserve.sh` for the deterministic reserve; `lab/crossaddr.sh` pinned the behaviour [#226](https://github.com/andrediashexa/hexarouting/issues/226) replaced and is outside the suite on purpose, which is why it went red on the fix rather than in it; and the four **timeout floors** in `bpa_pool.h`, which `show bpa timeouts` marks a value below rather than refusing it ([#54](https://github.com/andrediashexa/hexarouting/issues/54), v0.16.0). | **not an effort.** Every requirement this box states is asserted, so there is no suite left to write. What is not asserted is what is not claimed, and a requirement arrives as an implementation and its assertion together, on an issue of its own. |
 | **Sustained-load soak test** — *delivered* | `lab/soak.sh` ([#30](https://github.com/andrediashexa/hexarouting/issues/30)), for as many seconds as its one argument says. Every cycle fills the session table and every cycle empties it — fifteen seconds of traffic at a rate that fills the burst, then twenty seconds of nothing, which outlasts the UDP timeout and the block hold-down together — and the box is read at the end of each half. **Every trough is the same state of the box**, so two troughs are directly comparable and anything a later one holds is memory the box did not give back: no working set to subtract and no settling to wait out. Asserts the table back at its baseline at every trough, every session created also expired, every block back in the pool, the box's own allocation and release counters equal, the heap and the resident size unmoved between two empty tables, and a real collector's `natEvent` 17 count equal to its 16 count with no allocation left open. Outside `tools/run-all-labs.sh` (`NOT_LABS`) and outside `make test`: four minutes is its shortest run. | M |
 
 ### 3.6 BNG, asked for and not scoped - [#170](https://github.com/andrediashexa/hexarouting/issues/170)
@@ -1290,8 +1292,8 @@ actually start.
 |---|---|
 | [#202](https://github.com/andrediashexa/hexarouting/issues/202) the rename to PrismaRouting | the maintainer's, and one question is open: `hexash` is the recorded login shell of existing accounts, so whether it renames with the product changes the migration |
 | [#210](https://github.com/andrediashexa/hexarouting/issues/210) options (1) and (2) | a design decision with the evidence now on the issue: a shared table costs 16 to 21 clocks against the node's 346, and borrowing a block **loses every reply** unless the return path gains a shared map or a second handoff hop |
-| [#226](https://github.com/andrediashexa/hexarouting/issues/226) which mechanism restores paired address pooling | the **claim** is already corrected in all four places it was made, because a conformance statement the box cannot honour is worse than the absent property. The mechanism is the decision: it changes where every extension in every dynamic pool lands, and two of the four options inherit #55's reachability limit, so they would apply on a two-worker box and not on a four-worker one |
-| [#248](https://github.com/andrediashexa/hexarouting/issues/248) every box installed from a released ISO shares one SSH host key | the maintainer's, and it is a disclosure rather than a repair. An appliance installed from any release up to 0.66.0 carries the host key its build container generated, and the private half of it is inside the published artefact, so an operator's SSH session can be impersonated by anybody holding the ISO and the client will not object. #245 generates a set per box at install time and does nothing for a box already in the field. What those operators are told, and whether the public wiki or the release note carries it, is the decision |
+| [#226](https://github.com/andrediashexa/hexarouting/issues/226) whether a dynamic pool's pairing rate is high enough, and what `lab/crossaddr.sh` becomes | the mechanism is in: the allocator prefers a free block on the subscriber's own public address, measured at 100%, 99.6% and 99.2% over three arrival patterns against 0.0%, 0.0% and 0.2% before. What is left is a judgement - a preference cannot be a guarantee without refusing extensions, which costs a customer traffic rather than an address - and one piece of work needing a container: `lab/crossaddr.sh` asserted the old behaviour and now measures the opposite, so it has to be re-run and rewritten on a box with docker |
+| [#337](https://github.com/andrediashexa/hexarouting/issues/337) the disclosure for boxes already in the field | the repair is done ([#248](https://github.com/andrediashexa/hexarouting/issues/248)): a box tells whoever logs in that its host keys were not made on it, names them, says the private half is in the published download and that the session being read can be impersonated, and gives the three commands that fix it. What is left is not code. Nothing here names which releases shipped those keys, and a box that is never taken to a new version never runs the code that would tell it, so where the disclosure is said and whether it names the releases is the maintainer's |
 | [#277](https://github.com/andrediashexa/hexarouting/issues/277) publishing the wiki | needs `WIKI_TOKEN`, which is the maintainer's. `sh tools/wiki-status.sh` measures the gap: **27 pages corrected here and still showing operators the old text, plus one page the wiki does not have at all**. One is wrong rather than merely stale: the published page says a refused `commit` applies nothing, which stopped being true when the read-back check became a refusal and is read by somebody deciding what state their box is in. The mirror also carries pages for #67, #182, #210, #213, #217, the block stride (#55), what `commit` refuses, and the four IGP `show` commands. `test/test_wiki_roundtrip.sh` checks the mirror keeps the format the two scripts agree on, after five pages were found opening with their own title up to four times (#225). The tooling no longer stands in the way: `tools/wiki-push.sh <file>` reads the document id from `wiki/.ids`, so nobody has to find 28 ids by hand, and `tools/wiki-pull.sh` refuses to rewrite the mirror while those pages are unpublished - it deletes `wiki/`, so pulling first would have lost all 28. What is left is the token |
 | [#28](https://github.com/andrediashexa/hexarouting/issues/28), [#29](https://github.com/andrediashexa/hexarouting/issues/29), HA [#6](https://github.com/andrediashexa/hexarouting/issues/6)-[#9](https://github.com/andrediashexa/hexarouting/issues/9) | hardware this box does not have: real NICs, a second machine, a load generator |
 | [#36](https://github.com/andrediashexa/hexarouting/issues/36) Debian 13 | blocked upstream, with the evidence on the issue |
@@ -1646,6 +1648,51 @@ box has one NIC, it never contacts the box over the network, and it never asks
 the box to accept a dataplane interface. `lab/install-iso.sh` now power-cycles
 the machine and reaches it from outside, and `lab/one-nic.sh` carries the
 handover against a real dataplane.
+
+**And nothing had ever performed the bind.** Handing a card over means
+unbinding it from its kernel driver and binding it to `vfio-pci` or
+`uio_pci_generic`. `lab/one-nic.sh` models that step and says so in its own
+header, because a container has no PCI device to give DPDK; `lab/install-iso.sh`
+booted a real guest with a real virtio card and never asked the box to take it.
+So what was proven was the decision and the boot-time replay, and the driver
+change itself was unmeasured - on the path most smaller deployments will run.
+Its PHASE 4 and 5 ask the box, through the VTY, with the one statement an
+operator has on a single-card machine, and then require four things to be true
+together: the card is on a driver DPDK can use and not the one it started on,
+the name it was reached on is now the pair rather than the card, the management
+address is back on that name, and the dataplane holds an interface that is not
+`local0`. The network reading is taken before the phase logs in at all, because
+a box that takes its card and stops answering has eaten its own management port
+([#329](https://github.com/andrediashexa/hexarouting/issues/329)).
+
+It went red on its first run and found two defects that no unit test could have.
+
+[#332](https://github.com/andrediashexa/hexarouting/issues/332) - *fixed*. The
+boot after the handover made no pair at all, so the box came back holding its
+card with no address on anything and nobody could reach it. `commit` writes the
+card and its management path into the tuner's file, and that file is what
+performs the handover; the pair is made by `hexash --load` out of
+`/etc/hexarouting/hexarouting.conf`, which **`commit` does not write - only
+`save` does**. So the boot replayed a file that had never heard of the card.
+The record has a second home now, and a boot where the card is on neither side
+refuses, naming the card, the MAC and the address, instead of returning success
+in silence.
+
+[#336](https://github.com/andrediashexa/hexarouting/issues/336) - *fixed*. And
+the reason that state existed: `commit` bound the card **immediately**, while
+printing "NOT IN EFFECT YET: the dataplane claims its card when it starts, and
+this commit does not restart it". Naming the card restarts `hexarouting-tune`,
+that unit runs `apply-tuning`, and `apply-tuning` performs the bind - which is
+right at boot, where VPP is ordered after it, and wrong from a commit, where
+nothing starts VPP afterwards. Measured on a booted guest: the driver read
+`uio_pci_generic` and the netdev was gone three lines under that sentence. The
+bind now runs only when the dataplane is positively known not to be up, and
+"nobody here can be asked" is its own third answer, because that is a chroot or
+a container rather than a box starting.
+
+With both in, a guest hands its only card over and comes back reachable, with
+the dataplane holding the port and the pair, and the address back on the name
+it was always reached on.
 
 The wiki was the third half. The requirements page listed RAM and an
 instruction set and said nothing about network cards - the one resource the
