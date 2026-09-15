@@ -123,6 +123,80 @@ echo
 ok()  { echo "  [ ok ] $*"; }
 bad() { echo "  FAIL: $*"; fail=$((fail + 1)); }
 
+echo "=== the password is asked twice, and BOTH answers can run out ==="
+#
+# The case above closes stdin before the first question, so the first
+# ask_secret is the one that ends at end of input. The SECOND one has its own
+# call and its own refusal, and it is the one a half-finished unattended
+# install reaches: a driver that types a password and then loses the console,
+# a heredoc with one line in it, an answer file whose password key was
+# misspelt so the prompt appears with one line of input left behind it.
+#
+# Both of them return non-zero at end of input for the same reason - the retry
+# loop below rejects an empty password and asks again, so a stdin that has
+# gone away would spin on "may not be empty" for ever instead of failing - and
+# only one of them had ever been run.
+#
+# HEXA_INSTALL_YES=1 so that the password prompt is the ONLY prompt: it takes
+# the defaults for the log volume, the mirror and the management network,
+# which would otherwise eat the lines typed here and make this measure the
+# question they were eaten by. The password loop does not look at it.
+pwrun() {  # <what is typed at the prompts> -> $PWOUT, $PWRC
+  PWRC=0
+  PWOUT=$(printf '%s' "$1" | env HEXA_INSTALL_CHECK=1 HEXA_INSTALL_YES=1 \
+      HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
+      HEXA_TIMEZONE=America/Sao_Paulo HEXA_LOG_GB=1 \
+      sh "$INSTALLER" 2>&1) || PWRC=$?
+}
+
+pwrun 'onlyonce
+'
+if [ "$PWRC" = 0 ]; then
+  bad "a password typed once and never repeated was accepted: an install that
+lost its console between the two prompts would have partitioned the disk
+$PWOUT"
+else
+  case "$PWOUT" in
+    *"no root password given"*)
+      ok "one answer and then end of input: refused, and says the box would
+         be one nobody can log into" ;;
+    *) bad "refused, but not for the password running out: $PWOUT" ;;
+  esac
+fi
+# AND IT STOPS AT THE PROMPT THAT RAN OUT, which is the only part of this the
+# second ask_secret's own refusal can be seen to own. Measured with that
+# refusal replaced by `|| true`: the empty SECRET then falls into the
+# comparison, the two "differ", and the operator is told
+#
+#   the two do not match
+#
+# before the loop asks again and the FIRST prompt refuses the same input. The
+# install stops either way - so what the second refusal is worth is the
+# diagnosis. An operator whose console went away is sent to re-type a password
+# they got right, instead of to the thing that went away.
+case "$PWOUT" in
+  *"the two do not match"*)
+    bad "an input that ran out at the repeat was reported as two passwords
+that differ, which is a mistake the operator did not make: $PWOUT" ;;
+  *) ok "and it does not accuse them of mistyping a repeat they never gave" ;;
+esac
+
+# And the two not matching, which is the path that sends the loop round again.
+# It must come back to the SAME refusal and not to a third state: this is a
+# console, the operator has mistyped, and what they get is another pair of
+# prompts until the input runs out.
+pwrun 'first
+second
+'
+case "$PWOUT" in
+  *"the two do not match"*) ok "two answers that differ are not accepted" ;;
+  *) bad "a mistyped repeat was taken as agreement: $PWOUT" ;;
+esac
+[ "$PWRC" != 0 ] \
+  && ok "and the install still stops rather than looping on a dead console" \
+  || bad "the installer accepted a password it was never given twice"
+
+echo
 echo "=== the log volume: sizes the installer must refuse ==="
 # The one question whose wrong answer is not destructive but is permanent: a
 # box installed with the records on a 1 GB volume fills it in twelve days at
@@ -265,6 +339,48 @@ case "$out" in
   *) bad "'z' then 'b' must end up at the second disk, got '$out'" ;;
 esac
 
+# A MACHINE WITH NOTHING TO INSTALL ONTO, which is a live medium booted on a
+# diskless box or one whose controller the live kernel has no driver for. The
+# menu has no lines, and the question then has no answer: ask() substitutes
+# the default "a" for a bare Enter, "a" selects line one, and line one does
+# not exist. A menu that kept asking would be a console the operator cannot
+# leave; one that took the empty answer would hand the install an empty $DISK.
+#
+# It has to be an EMPTY table and not an empty machine: the disk this fake
+# offers is TYPE=disk and is the medium, so the one thing it has is the one
+# thing that may never be the target. That is the shape of the real case.
+cat > "$fake/lsblk" <<'NONE'
+#!/bin/sh
+for a in "$@"; do case "$a" in -dnbo) MODE=table ;; -ndo) MODE=pkname ;; esac; done
+case "${MODE:-human}" in
+  table) printf 'sdc 8589934592 disk SanDisk Cruzer\n' ;;
+  pkname) printf '\n' ;;
+  human) echo '  8G' ;;
+esac
+NONE
+chmod +x "$fake/lsblk"
+nodisk=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1
+                        export HEXA_INSTALL_LIB; . "$INST"
+                        choose_disk 2>&1 >/dev/null); echo "rc=$?")
+case "$nodisk" in
+  *"rc=0") bad "a machine with no disk but the medium was given one anyway:
+$nodisk" ;;
+  *"No disk to install onto."*)
+    ok "a machine with nothing but the medium in it is told so, and the menu
+         does not ask a question with no answer" ;;
+  *) bad "choose_disk refused an empty machine without saying why:
+$nodisk" ;;
+esac
+# And what to DO about it, which on a diskless box is the only actionable
+# half: the operator is standing in front of a machine, and "attach a disk"
+# is the sentence that gets them to the next step rather than to a reinstall
+# of the medium.
+case "$nodisk" in
+  *"Attach a disk"*) ok "and it says what would make the install possible" ;;
+  *) bad "it refused without telling the operator what to do next:
+$nodisk" ;;
+esac
+
 rm -rf "$fake"
 
 echo "=== 'install' exists only on the installation medium ==="
@@ -390,6 +506,65 @@ case "$LAST_OUT" in
   *) bad "refused without naming the file: $LAST_OUT" ;;
 esac
 
+# A file that is THERE and cannot be read. Distinguished from the absent one
+# on purpose: a medium mounted with the wrong permissions, or an answer file
+# written 0600 by root and read by an installer that is not root yet, is a
+# file the operator can see in a listing - so "no answer file at" would send
+# them looking for a file that is in front of them.
+#
+# Only where this suite is not root, because root reads anything and the check
+# would then measure the runner rather than the product.
+if [ "$(id -u)" = 0 ]; then
+  echo "  SKIP: running as root, which can read a 0000 answer file"
+else
+  printf 'hostname = cgnat01\n' > "$adir/unreadable"
+  chmod 000 "$adir/unreadable"
+  run 1 "an answer file that cannot be read: refused" \
+      HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
+      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+      HEXA_ANSWERS="$adir/unreadable"
+  case "$LAST_OUT" in
+    *"cannot be read"*) ok "and says it was found and not readable, which is"\
+" a different thing to go and look at than a file that is not there" ;;
+    *) bad "an unreadable answer file was refused as an absent one: $LAST_OUT" ;;
+  esac
+  chmod 600 "$adir/unreadable"
+fi
+
+# A line that is not "key = value" at all. It is refused rather than skipped
+# for the reason the unknown key is: an install that arrives at a question
+# with no answer, on a machine with no console to answer from, presents as a
+# hang hours later and not as the typo it is.
+printf 'hostname cgnat01\n' > "$adir/noequals"
+run 1 "a line with no '=' in it: refused, not skipped" \
+    HEXA_DISK="$DISK" HEXA_TIMEZONE=America/Sao_Paulo \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_ANSWERS="$adir/noequals"
+case "$LAST_OUT" in
+  *"expected 'key = value'"*) ok "and says what a line looks like" ;;
+  *) bad "refused without saying what was wrong with the line: $LAST_OUT" ;;
+esac
+# And the LINE NUMBER, because the file is not echoed back: the one thing this
+# parser may tell the operator about a line it could not read is where it is.
+case "$LAST_OUT" in
+  *"line 1:"*) ok "and which line it was" ;;
+  *) bad "the refusal does not say which line: $LAST_OUT" ;;
+esac
+
+# "yes" is the one key with a vocabulary of its own, and it is the key that
+# decides whether the install stops at a prompt. A value it does not know
+# must not fall through to either answer: taken as yes it installs a box
+# nobody confirmed, taken as no it hangs the unattended install that asked
+# for it.
+printf 'hostname = cgnat01\nyes = maybe\n' > "$adir/maybe"
+run 1 "'yes = maybe': refused rather than read as one of the two" \
+    HEXA_DISK="$DISK" HEXA_TIMEZONE=America/Sao_Paulo \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_ANSWERS="$adir/maybe"
+case "$LAST_OUT" in
+  *"'yes' takes yes or no, got 'maybe'"*)
+    ok "and names the value it would not take" ;;
+  *) bad "refused without saying what 'yes' accepts: $LAST_OUT" ;;
+esac
+
 # The mechanism install-from-cmdline depends on: it sources this installer at
 # its library seam to learn whether the install is unattended, because
 # "unattended" is one of the answers in the file. A second parser over there
@@ -408,6 +583,29 @@ got=$(HEXA_ANSWERS="$adir/unattended" sh "$adir/source-lib" "$INSTALLER" 2>/dev/
 case "$got" in
   "cgnat-file|1|") ok "sourcing the installer hands the answers to the caller" ;;
   *) bad "install-from-cmdline would not learn the answers: got '$got'" ;;
+esac
+
+# AND THE OTHER HALF OF THAT SEAM, which is the half that only runs when
+# something is wrong. A file the parser refuses must come back to the caller
+# as a RETURN and not as an exit: install-from-cmdline sources this script to
+# learn whether the install is unattended, and an exit taken inside its own
+# shell takes that script down before it can say what happened or power the
+# machine off - which is how an unattended install becomes a machine sitting
+# at a prompt until a harness kills it.
+#
+# The caller prints a word AFTER the source. An exit never reaches it.
+cat > "$adir/source-bad" <<'LIB'
+HEXA_INSTALL_LIB=1 . "$1" || echo "returned"
+echo "still here"
+LIB
+printf 'passwrod = x\n' > "$adir/badkey"
+got=$(HEXA_ANSWERS="$adir/badkey" sh "$adir/source-bad" "$INSTALLER" 2>/dev/null)
+case "$got" in
+  *returned*"still here"*)
+    ok "and a file it refuses RETURNS to the caller instead of exiting" ;;
+  *) bad "sourcing the installer over a bad answer file took the caller down"\
+" with it: install-from-cmdline would never reach the line that says what"\
+" happened, and an unattended install would sit at a prompt. Got: '$got'" ;;
 esac
 rm -rf "$adir"
 
@@ -523,6 +721,30 @@ run 0 "and a gateway that IS on it is accepted" $NOK \
     HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
     HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
     HEXA_MGMT_GATEWAY=192.0.2.254
+
+# And a gateway that is not an address AT ALL, which is a different mistake
+# and reaches a different line. What is asserted is the DIAGNOSIS and not the
+# refusal: measured with the shape check bypassed, "gw.example.net" is still
+# refused, by the subnet arithmetic below it -
+#
+#   error: the gateway gw.example.net is not on 192.0.2.10/24's subnet: this
+#   box would come up with an address, refuse the default route, and be
+#   reachable from its own subnet only
+#
+# because same_subnet() splits on "." and reads every field it cannot parse as
+# zero. That message tells an operator at a console to go and check which of
+# two subnets is wrong, about a value that is not a subnet and not an address.
+# The check that runs first is what names the thing they actually typed.
+# shellcheck disable=SC2086
+run 1 "a gateway that is not an address at all: refused" $NOK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$netsys" \
+    HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=192.0.2.10/24 \
+    HEXA_MGMT_GATEWAY=gw.example.net
+case "$LAST_OUT" in
+  *"the gateway 'gw.example.net' is not an address"*)
+    ok "and quotes back what was given for it" ;;
+  *) bad "refused, but not for the gateway being unreadable: $LAST_OUT" ;;
+esac
 
 # shellcheck disable=SC2086
 run 1 "a card this machine has not got: refused" $NOK \
@@ -909,6 +1131,14 @@ vcase "fstab mounts a UUID no device has" \
 # agreeing with itself, on the one fstab that is certainly wrong.
 vcase "fstab identifies nothing" \
       "names no UUID at all" ': > etc/fstab'
+# And NO fstab at all, which is a different branch and a different box: the
+# empty one above is a file the install wrote and filled with nothing, this is
+# the redirection never having run. The disk boots into an initramfs prompt
+# either way, and the report has to say which of the two it found - a check
+# that read an absent file as an empty one would report "names no UUID" about
+# a file nobody can go and look at.
+vcase "no fstab was written at all" \
+      "/etc/fstab was not written" 'rm -f etc/fstab'
 vcase "the root account is still the live image's locked one" \
       "still LOCKED" 'printf "root:!:19000:0:99999:7:::\n" > etc/shadow'
 vcase "there is no root account" \
@@ -987,6 +1217,27 @@ case "$LAST_OUT" in
 esac
 run 1 "a mirror that is not a block device: refused" $OK \
     HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR=/tmp/not-a-disk
+
+# THE MEDIUM, OFFERED AS THE MIRROR. The menu already leaves it out (further
+# down), and a device path typed by hand or given on the kernel command line
+# never goes near the menu - which is the same argument the target makes about
+# the same disk, and here it had never been run on either arm. Overwriting
+# what is being read fails halfway through, and this one fails AFTER the
+# system disk has been partitioned: the operator is left with neither the old
+# box nor the new one and no medium to install from.
+#
+# The fixture at the top of this file, set to a PARTITION of the disk named as
+# the mirror, because that is what findmnt answers for a stick. The refusal
+# matches on the prefix.
+printf '/dev/loop0p1\n' > "$BOOT_MEDIUM"
+run 1 "the medium this system booted from, named as the mirror: refused" $OK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR=/dev/loop0
+case "$LAST_OUT" in
+  *"/dev/loop0 is the medium this system booted from"*)
+    ok "and says it is the medium, not that it is the wrong size or shape" ;;
+  *) bad "refused, but not for being the medium being read: $LAST_OUT" ;;
+esac
+: > "$BOOT_MEDIUM"
 if [ -n "$PART" ]; then
   run 1 "a mirror that is a partition rather than a whole disk: refused" $OK \
       HEXA_ROOT_PASSWORD=s3cr3t HEXA_MIRROR="/dev/$PART"
@@ -1612,6 +1863,278 @@ $KOUT2" ;;
     || bad "install_ssh_host_keys accepted an empty root"
 
   rm -rf "$kwork"
+fi
+
+echo
+echo "=== the confirmation, on a run that would really write (#83) ==="
+#
+# THE ONE ANSWER BETWEEN AN OPERATOR AND A DESTROYED DISK, and nothing had
+# ever run it on either arm. Every case above this line is
+# HEXA_INSTALL_CHECK=1, and check mode exits at the summary - forty lines
+# before the prompt. The prompt is reached only by a run that means it: root,
+# the tools present, a live filesystem to unpack. So the one question in this
+# program whose wrong answer cannot be undone had no test at all, and neither
+# did anything after it: "sfdisk failed", "sfdisk timed out", "partitioning
+# did not produce" are the messages an operator reads with the disk already
+# half written, and every one of them was unrun.
+#
+# lab/install-iso.sh cannot reach them either. It drives an install that
+# SUCCEEDS, unattended, with HEXA_INSTALL_YES=1 - which skips this prompt by
+# design - and a passing install cannot demonstrate a refusal.
+#
+# HOW THIS RUN IS ARRANGED, in full, because it is a test that drives a disk
+# installer. THREE things have to be true at once for it to reach a real disk,
+# and each one alone is enough to stop it:
+#
+#   1. /dev/loop0, UNBOUND. The installer wants a real block device and check
+#      mode deliberately does not relax that, so a path under /tmp will not
+#      do. An unbound loop device is a block device backed by NOTHING and
+#      reporting zero bytes - there is no disk behind it to lose. The case is
+#      skipped where /sys/block/loop0/size is not 0, because a loop device
+#      that is bound is somebody's file.
+#   2. every tool STUBBED on PATH ahead of the real one, sfdisk first. The
+#      partitioner this run can reach is a shell script that appends a line to
+#      a file and exits with a status this suite chooses. If one of these
+#      refusals is ever removed the run carries on into THAT, and the
+#      assertion is that the file is still empty.
+#   3. `unshare -r` for the uid, which gives this process no privilege over
+#      anything outside its own namespace. /dev/loop0 is root:disk 0660 and
+#      the namespace's root is not that root, so even the write the stubs are
+#      standing in for would be refused by the kernel.
+#
+# `unshare -m` and a /tmp of its own come with it: the installer writes
+# /tmp/sfdisk.log and unpacks into /tmp/hexa-install, and both belong in this
+# suite's directory rather than on the machine running it. It also means the
+# log can be READ BACK, which the sfdisk case below does - the installer
+# quotes that file to the console, and a refusal that names a log it did not
+# write is a refusal that sends the operator to an empty file.
+if ! unshare -r true 2>/dev/null; then
+  echo "  SKIP: no unprivileged user namespaces on this machine, so the"
+  echo "        installer's own 'must run as root' cannot be satisfied"
+elif [ ! -b /dev/loop0 ] \
+     || [ "$(cat /sys/block/loop0/size 2>/dev/null || echo 1)" != 0 ]; then
+  echo "  SKIP: /dev/loop0 is not an unbound (zero-byte) loop device, and"
+  echo "        nothing else on this machine is safe to name as a target"
+else
+  # UNDER /var/tmp AND NOT /tmp, which is not fussiness. The run below replaces
+  # /tmp with a directory of its own, and a rig that lived under /tmp would be
+  # hidden by its own mount: the stubs would be gone from PATH the moment the
+  # namespace started, and the installer would refuse for "missing tools"
+  # while every case here read as a refusal that fired.
+  rwork=$(mktemp -d -p /var/tmp hexa-install-rig.XXXXXX)
+  rbin=$rwork/bin
+  mkdir -p "$rbin" "$rwork/tmp" "$rwork/net/ens18/device"
+  echo up > "$rwork/net/ens18/operstate"
+  : > "$rwork/filesystem.squashfs"
+  # Everything the installer's tool list names, plus the ones it calls without
+  # checking first. They do nothing and exit 0: what is measured is which of
+  # them RUNS, and in the two refusals below the answer is none of them.
+  #
+  # mdadm is here although this box has no mirror. Without it release_disk()
+  # takes its "no mdadm" early return, and that return says the disk is still
+  # held - so the installer prints four attempts and a copy of /proc/mdstat
+  # before every case here. With the stub present the real path runs and finds
+  # no array on loop0, which is the answer a box gives.
+  for t in mkfs.ext4 mkfs.vfat unsquashfs blkid chpasswd grub-install \
+           update-grub partprobe findmnt udevadm mdadm; do
+    printf '#!/bin/sh\nexit 0\n' > "$rbin/$t"
+    chmod +x "$rbin/$t"
+  done
+  # The partitioner. It records that it ran, writes something for the log to
+  # carry, and exits with whatever this suite asked for.
+  cat > "$rbin/sfdisk" <<SFDISK
+#!/bin/sh
+echo ran >> "$rwork/sfdisk.ran"
+echo "the disk is in use by something this stub invented"
+exit \$(cat "$rwork/sfdisk.rc" 2>/dev/null || echo 0)
+SFDISK
+  chmod +x "$rbin/sfdisk"
+  # A machine with one disk and nothing else, so the mirror question is not
+  # asked and no answer here is eaten by it.
+  cat > "$rbin/lsblk" <<'RLSBLK'
+#!/bin/sh
+for a in "$@"; do case "$a" in -dnbo) MODE=table ;; -ndo) MODE=pkname ;; esac; done
+case "${MODE:-human}" in
+  table|pkname) : ;;
+  human) echo '0B' ;;
+esac
+RLSBLK
+  chmod +x "$rbin/lsblk"
+
+  real() {  # <what is typed> <sfdisk exit status> [extra env...]
+    : > "$rwork/sfdisk.ran"
+    echo "$2" > "$rwork/sfdisk.rc"
+    _typed=$1; shift 2
+    RROUT=$(printf '%s\n' "$_typed" | unshare -rm sh -c '
+        mount --bind "$1" /tmp || exit 99
+        shift
+        exec env "$@"' _ "$rwork/tmp" \
+        PATH="$rbin:$PATH" \
+        HEXA_INSTALL_SRC="$rwork/filesystem.squashfs" \
+        HEXA_DISK=/dev/loop0 HEXA_HOSTNAME=cgnat01 \
+        HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+        HEXA_LOG_GB=1 HEXA_NET_SYS="$rwork/net" HEXA_MGMT_ADDRESS=none \
+        "$@" sh "$INSTALLER" 2>&1)
+    RRRC=$?
+    RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
+  }
+
+  # THE REFUSAL. "no" is the answer somebody gives when they have just read
+  # the size and the model back and it is not the disk they meant.
+  real no 0
+  if [ "$RRRC" = 0 ]; then
+    bad "the installer went ahead after 'no':
+$RROUT"
+  else
+    case "$RROUT" in
+      *"not confirmed (got 'no')"*)
+        ok "'no' at the confirmation refuses, and repeats back what was typed" ;;
+      *) bad "it stopped, but not at the confirmation: $RROUT" ;;
+    esac
+  fi
+  # AND THE DISK WAS NOT TOUCHED, which is the whole claim. The message is the
+  # easy half; a refusal that still ran the partitioner would be this defect
+  # with an apology printed over it.
+  [ "$RRSFDISK" = 0 ] \
+    && ok "and the partitioner never ran" \
+    || bad "the disk was partitioned after the operator said no"
+
+  # A BARE ENTER IS NOT AN ANSWER. This is the property the old prompt bought
+  # by making the operator re-type the device path, and it is the one that has
+  # to survive the shorter question: a disk must not be destroyed by holding
+  # down the return key, which is what a console does when somebody leans on
+  # it or a driver sends one newline too many.
+  real "" 0
+  [ "$RRRC" != 0 ] && [ "$RRSFDISK" = 0 ] \
+    && ok "a bare Enter is not an answer either, and nothing was partitioned" \
+    || bad "the return key alone was enough to erase a disk: rc=$RRRC, the \
+partitioner ran $RRSFDISK time(s)"
+  case "$RROUT" in
+    *"not confirmed (got '')"*)
+      ok "and it says the answer it got was nothing at all" ;;
+    *) bad "an empty answer was refused without saying so: $RROUT" ;;
+  esac
+  # And "y", which is what a yes/no prompt teaches people to type and what
+  # this one must not take.
+  real y 0
+  [ "$RRRC" != 0 ] && [ "$RRSFDISK" = 0 ] \
+    && ok "and neither is 'y': the word is 'yes'" \
+    || bad "'y' erased a disk: rc=$RRRC, the partitioner ran $RRSFDISK time(s)"
+
+  # THE CONTROL. Every case above is satisfied by an installer that refuses
+  # everything, which would be a product that cannot install a box. "yes" has
+  # to get past this prompt and reach the partitioner.
+  real yes 0
+  [ "$RRSFDISK" = 1 ] \
+    && ok "'yes' is taken, and the partitioner is reached" \
+    || bad "the word 'yes' did not get past the confirmation, so nothing \
+above this line means anything: $RROUT"
+  # And what the run does when the partition table is written and the
+  # partitions are not there. The stub sfdisk exits 0 having created nothing,
+  # which is the shape of a partitioner that succeeded on a device the kernel
+  # then did not re-read: everything after this point would still run, and the
+  # box would be built on a partition that is not there.
+  case "$RROUT" in
+    *"partitioning did not produce /dev/loop02"*)
+      ok "and a table that produced no partitions stops the install by name" ;;
+    *) bad "sfdisk exited 0 having made no partitions and the install carried \
+on: $RROUT" ;;
+  esac
+
+  # THE PARTITIONER FAILING, which is the refusal an operator reads with the
+  # disk already opened for writing. It has to name the disk and hand over
+  # what sfdisk said, because "sfdisk failed" on its own sends them to the
+  # partitioner instead of to the thing holding the device.
+  real yes 1
+  [ "$RRRC" != 0 ] \
+    && ok "an sfdisk that fails fails the install" \
+    || bad "the install carried on after the partitioner failed"
+  case "$RROUT" in
+    *"sfdisk failed on /dev/loop0"*) ok "and names the disk it failed on" ;;
+    *) bad "the refusal does not name the disk: $RROUT" ;;
+  esac
+  # The LOG, quoted onto the console. It is written to /tmp/sfdisk.log, which
+  # on a box that is about to be rebooted is a file nobody will read again.
+  case "$RROUT" in
+    *"the disk is in use by something this stub invented"*)
+      ok "and hands over what the partitioner itself said" ;;
+    *) bad "the refusal quoted none of /tmp/sfdisk.log, so the operator is \
+told the install failed and not what stopped it: $RROUT" ;;
+  esac
+
+  # AND THE PARTITIONER HANGING, which is the worse of the two: sfdisk waiting
+  # on a lock prints nothing, so the install looks hung rather than blocked
+  # and nobody knows whether the disk was touched. 124 is what `timeout`
+  # exits with when it kills the command.
+  real yes 124
+  [ "$RRRC" != 0 ] \
+    && ok "an sfdisk that times out fails the install too" \
+    || bad "the install carried on after the partitioner was killed"
+  case "$RROUT" in
+    *"timed out on /dev/loop0 after 90s"*)
+      ok "and says which disk, and how long it waited" ;;
+    *) bad "the timeout was not reported as one: $RROUT" ;;
+  esac
+  # THE SENTENCE THAT DECIDES WHAT THE OPERATOR DOES NEXT. A disk that may be
+  # half written is not a disk to boot; one that was never touched is. The
+  # refusal has to say which it is looking at, and it cannot know, so it says
+  # that.
+  case "$RROUT" in
+    *"may be"*"partially written"*)
+      ok "and that the disk may be half written, which is what decides \
+whether it can be booted" ;;
+    *) bad "a timeout mid-partition said nothing about the state of the \
+disk: $RROUT" ;;
+  esac
+
+  # THE UNATTENDED PATH, which is how the release gate and lab/install-iso.sh
+  # install a box: HEXA_INSTALL_YES=1 skips this prompt, and it is the only
+  # thing that may. Without this the refusals above are satisfied by an
+  # installer that has stopped being able to install unattended at all.
+  real "" 0 HEXA_INSTALL_YES=1
+  [ "$RRSFDISK" = 1 ] \
+    && ok "and an unattended install is not asked, so it does not hang on a \
+console that is not there" \
+    || bad "HEXA_INSTALL_YES=1 stopped at the confirmation: an unattended \
+install would sit at a prompt with nobody to answer it: $RROUT"
+
+  rm -rf "$rwork"
+fi
+
+echo
+echo "=== a real run that is not root refuses before it asks anything ==="
+# `id -u` is the installer's first check and it is a `fatal`: a note in check
+# mode, a refusal in a real one. Every other case in this file is check mode,
+# so the refusing half had never run - and it is the half that matters, because
+# an install that gets some way in as an ordinary user and then stops on a
+# permission error has already answered the questions and may have written.
+#
+# It refuses before the banner, so nothing is asked and nothing is read.
+if [ "$(id -u)" = 0 ]; then
+  echo "  SKIP: this suite is running as root"
+else
+  nrout=$(env HEXA_DISK=/tmp/not-a-disk HEXA_HOSTNAME=cgnat01 \
+      HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+      sh "$INSTALLER" </dev/null 2>&1)
+  nrrc=$?
+  [ "$nrrc" != 0 ] \
+    && ok "a real run as an ordinary user is refused" \
+    || bad "the installer ran as an ordinary user"
+  case "$nrout" in
+    *"must run as root"*) ok "and says why" ;;
+    *) bad "refused for some other reason: $nrout" ;;
+  esac
+  # BEFORE THE FIRST QUESTION. The banner is printed after the tool checks, so
+  # its absence is the evidence that nothing was collected and nothing was
+  # read - and the target named above is deliberately one the installer would
+  # also refuse, so an installer that checked root LAST would still refuse and
+  # this case would pass on it.
+  case "$nrout" in
+    *"install to disk"*)
+      bad "it printed the banner and asked its questions before noticing it \
+could not write anything: $nrout" ;;
+    *) ok "and it stops before the banner, so no question was asked" ;;
+  esac
 fi
 
 echo
