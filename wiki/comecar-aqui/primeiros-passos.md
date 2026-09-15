@@ -175,6 +175,18 @@ O prazo fica gravado na caixa e **não é cancelado por reiniciar**: é justamen
 2. Reinicie a caixa. Ela sobe com a placa no dataplane e o endereço no par do lado do Linux.
 3. Entre de novo, no mesmo endereço de sempre, e digite `commit`. Pronto.
 
+Essa decisão é a única que a caixa anota nela mesma no `commit`, sem depender do `save` mais adiante nesta página: a placa e o endereço que vai com ela ficam gravados no momento em que você confirma, porque é disso que ela precisa para voltar. Salve o resto normalmente.
+
+Se a caixa subir com a placa entregue e **nada** do outro lado tiver ficado com ela, ela avisa no console em vez de subir calada, e diz o que fazer:
+
+```
+error: the card this box is reached on was handed over and nothing took it
+    this box has no address and cannot be reached over the network until that
+    is repaired from here
+    'show hardware' says what the dataplane holds; 'no dataplane interface'
+    gives the card back at the next start
+```
+
 Se você **não** conseguir entrar, não faça nada: no fim da janela a caixa põe a configuração anterior de volta e **se reinicia sozinha**, porque devolver a placa ao Linux só acontece num novo start. Ela avisa isso no console:
 
 ```

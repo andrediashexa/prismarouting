@@ -75,6 +75,90 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Fixed
+
+* **The self-test asked only half of "who needs this pair", and the half it
+  asked is false on the box that most needs the answer**
+  ([#334](https://github.com/andrediashexa/hexarouting/issues/334)). A
+  dataplane interface with no `linux_cp` pair was reported loudly or quietly
+  depending on one question put to FRR: does `show running-config` carry a
+  `^router ` stanza. The premise is sound as far as it goes - a pair is what
+  FRR sees, so a box running no protocol is not obviously broken without one -
+  but it stopped being the whole question when the pair became the thing that
+  carries the **management address** after a handover. A box that gives its
+  only card to the dataplane takes a static default route and has no `router`
+  stanza at all, so the one box where a missing pair means nobody can reach it
+  was told so as `[warn] no linux_cp pair on:` - the tone used for a missing
+  nicety, on a box reachable at a console somebody has to walk to. Found while
+  fixing [#332](https://github.com/andrediashexa/hexarouting/issues/332): the
+  qemu guest in [#329](https://github.com/andrediashexa/hexarouting/issues/329)
+  printed the hard form only because something else in that lab's session had
+  left a `router` stanza behind.
+
+  The check asks both questions now. The handover record the tuner holds -
+  `HEXA_DATAPLANE_MGMT` in `/etc/hexarouting/tune.env`, written by the VTY
+  beside the card's name and read back here the way `bind-dataplane-nic` reads
+  it - says this box handed its management card over and therefore needs the
+  pair whatever FRR is doing; the `^router ` stanza says FRR needs it. Both are
+  facts the box has. A failing box leads with the worse of the two reasons,
+  because a box nobody can log in to is not a box whose adjacencies are down,
+  and it prints the management path the record holds so that the operator at
+  that console has the address to put back by hand. A box with **neither** - no
+  pair, no handover record, no routing protocol - stays a warning, which is the
+  point of asking two questions rather than failing every unpaired interface: a
+  box that forwards CGNAT and runs no protocol is a supported configuration of
+  this product, and a check that goes red on it is one people learn to run
+  around.
+
+  All three states are measured, and each assertion was shown red on a mutation
+  that runs and gets it wrong rather than one that crashes: the check asking
+  only `^router ` again (the defect as it shipped - the handover box falls back
+  to the warning, with no address in it), asking only the handover record (the
+  routing box falls back to the warning), failing every unpaired box (the
+  correct box goes red, and is told routing is configured on a box that has
+  none), the adjacency prose said unconditionally, the routing half swallowed
+  by the handover branch, and the headline given to the lesser reason on a box
+  that has both.
+
+* **A self-test check that no box had ever seen fail, and the reader that
+  refuses the next one**
+  ([#335](https://github.com/andrediashexa/hexarouting/issues/335)). Measured
+  over the 122 boxes `test/test_selftest.sh` arranges: the `vat2` stub answered
+  the constant `bpa_pool_add_del`, so `binary API NOT registered: no CGNAT pool
+  can be configured here` had never run anywhere. That is the check written for
+  [#119](https://github.com/andrediashexa/hexarouting/issues/119) - the medium
+  shipped without the vat2 plugin for the life of the project, and such a box
+  boots, routes, answers ssh and fails every pool commit, which is the one
+  thing it exists to do. It is the check you most want to be able to go red.
+  The stub now answers from the fake box, the way `systemctl` already does -
+  and the comments on that stub record the same repair being made twice before
+  ([#222](https://github.com/andrediashexa/hexarouting/issues/222)), one
+  constant at a time, which is how a third came to be sitting three lines
+  below them. So the class is closed as well as the instance: **no `[ ok ]`
+  line may be identical across every box the suite arranges**, measured from
+  the runs rather than from the source, because a stub that answers a constant
+  looks like any other stub and what gives it away is a hundred boxes all being
+  told the same thing. The rule carries no exceptions. When it went red on the
+  manifest line - whose red form is measured next door in
+  `test/test_manifest.sh` - the repair was to arrange that box here too, not to
+  excuse the line, because an excused line is one nobody re-examines.
+
+### Fixed
+
+* **The cores table an operator sizes hardware from had no reader**
+  ([#172](https://github.com/andrediashexa/hexarouting/issues/172)). The public
+  page somebody reads before choosing a processor carries a table of how many
+  cores forward and how many are left for everything else, and that is a claim
+  about what `appliance/hexarouting-tune` does. Nothing compared the two, so the
+  day the split changed the page would have gone on selling the old one - to a
+  reader who finds out after the box is racked. The tuner is now the holder and
+  the page the reader: every row is driven against the tuner on a synthetic
+  machine of that shape, and a row that has left the page in a shape the check
+  can read is a failure rather than a silent pass. Shown red from both sides -
+  a tuner that leaves two cores to the control plane on large boxes only, which
+  the existing worker checks do not see, and a page promising 30 forwarding
+  cores on a 32-core processor.
+
 ### Added
 
 * **The release gate refuses a release that would ship past a stale wiki**
@@ -218,6 +302,70 @@ version has a chance of seeing it.
   to it, because its lookbehind refused a `.` in front of the name, so the one
   file the check was first written to read was the one shape it missed. The
   same comment that produced three false FAILs before produces none now.
+
+* **A box that handed its only card to the dataplane came back with no address
+  on any interface and nobody could reach it**
+  ([#332](https://github.com/andrediashexa/hexarouting/issues/332)). Measured
+  on a booted qemu guest by the new phases above, against the published 0.74.2
+  medium. The box did everything the VTY promised except the last clause: the
+  bind worked - `virtio-pci` to `uio_pci_generic` - Linux released the netdev,
+  the dataplane held `GigabitEthernet0/9/0`, and the box answered nowhere. Its
+  own boot self-test printed the reason on the same console: routing is
+  configured and no interface is paired into the kernel. So the diagnosis was
+  right and the doing was missing. On a single-card machine that means
+  somebody walks to it, which is the outcome the handover exists to prevent.
+
+  **The two halves of one decision had two lifetimes.** `commit` writes the
+  card and the management path it carries into the tuner's file, and that file
+  is what performs the handover at the next boot. The pair the address goes
+  on is made by `hexash --load`, out of `/etc/hexarouting/hexarouting.conf` -
+  and `commit` does not write that file. Only `save` does. So the boot after
+  the handover replayed a file that had never heard of the card: on a fresh
+  appliance the three comments the installer ships, which `Config.is_empty()`
+  returns on before `apply()` is reached, so `apply_management_path()` was
+  never called at all. The half that hands the card over survived the reboot;
+  the half that keeps the box reachable did not. `load()` now takes the card
+  and its record from the tuner's file - their holder, and the reason the
+  record is kept there at all - when the file being replayed carries neither,
+  and puts the management path back even on an empty file, because a file with
+  no statements in it is not a box that gave its card away. A box that HAD
+  saved before the handover was worse off still: its file said nothing about a
+  dataplane card, so the boot replay read that as a card being taken away and
+  un-named the card the box was holding, and the next boot gave it back.
+
+  **And a card the dataplane has not got is now two answers instead of one.**
+  `apply_management_path()` returned success, silently, whenever the recorded
+  MAC was not among the dataplane's interfaces. That is right on the boots it
+  was written for - `hexash --load` runs before the operator reboots into the
+  handover, and after a rollback has given the card back, and a commit that
+  failed because a card had not moved yet would be a box that cannot be
+  configured at all - and it is wrong on the boot where the card is gone from
+  Linux too. There the card is on neither side, the address has nowhere to go,
+  and the box is off the network, which is the one state where the console is
+  the only place left that can be told. The box now asks which boot it is on,
+  by looking for the MAC under `/sys/class/net` - a device DPDK has taken is
+  not there at all, and the Linux name is the one thing that does not survive
+  the handover - and says so rather than returning success:
+
+  ```
+  error: the card this box is reached on was handed over and nothing took it
+      Linux no longer has ens18 and no interface the dataplane holds has
+      52:54:00:00:00:01, so there is no pair for 10.95.200.198/24 to go on
+  ```
+
+  "Cannot look" is not "the card is gone": a tree with no `/sys/class/net` in
+  it - a developer's box, this VTY's own suites - answers that the card is
+  still Linux's, the same posture `dataplane_if_refusal()` already takes about
+  a card list it could not read. Each of the five assertions in
+  `test/test_dataplane_if.py` was shown red on its own mutation of the
+  product, and the boot cases are driven through `load()` against a file on
+  disk rather than by calling the function directly, because "never called"
+  is the defect and a case that calls it cannot see that.
+
+  **What this does not prove.** The guest itself. Everything here is measured
+  against the product's own seams in a tempdir; that the box comes back and
+  answers on the network needs `lab/install-iso.sh` PHASE 4/5 on a booted
+  guest, and nothing in this entry claims it has been run again.
 
 * **A box installed from a medium that carried SSH host keys said so only to
   its console, at boot**
