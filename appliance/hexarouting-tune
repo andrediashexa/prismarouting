@@ -29,6 +29,8 @@ Rules applied:
 
 import argparse
 import os
+import re
+import subprocess
 import sys
 
 
@@ -285,6 +287,63 @@ class Topology:
             pass
         return None
 
+    def nic_tx_queues(self, ifname):
+        """
+        How many transmit queues this card has, or None if it cannot be read.
+
+        THE CARD IS GROUND TRUTH AND THIS PROGRAM WAS NOT READING IT (#330).
+        Every other figure in the generated configuration comes from something
+        measured - the CPUs, the NUMA node, the pages the kernel actually
+        reserved - and the queue count came from the worker count, which is a
+        fact about the processor and not about the card. On a virtio guest,
+        which is how most smaller deployments run, that asked for seven queues
+        on a card with one, and DPDK refused the device with -22: the box
+        owned the NIC and forwarded nothing.
+
+        /sys/class/net/<if>/queues/ is what the kernel driver exposes, and it
+        is readable BEFORE the card is handed over, which is the only moment
+        this program runs.
+        """
+        try:
+            qs = os.listdir(self.p("sys/class/net", ifname, "queues"))
+        except OSError:
+            return None
+        n = len([q for q in qs if q.startswith("tx-")])
+        return n or None
+
+    def nic_max_mtu(self, ifname):
+        """
+        The largest MTU this card accepts, or None if it cannot be read.
+
+        VPP defaults a DPDK interface to 9000 and a virtio card's maxmtu is
+        1500, so `rte_eth_dev_set_mtu failed (mtu 8996)` and the device never
+        came up (#330). Same shape as the queues above: a number true of the
+        hardware this was developed on and never asked of the hardware in
+        front of it.
+
+        NOT in sysfs. `/sys/class/net/<if>/mtu` is the CURRENT one; the
+        maximum is IFLA_MAX_MTU, a netlink attribute, and `ip -d link` is what
+        reads it. So this shells out, which nothing else in this file does.
+        The alternative was to assume, and assuming is what produced the
+        defect.
+
+        HEXA_IP is why there is a seam here at all. Everything else this class
+        reads comes from `self.root`, so a test builds a directory and drives
+        the real code; netlink has no root to point at, and the first version
+        of this could only ever return None under a synthetic root - which
+        means the MTU half of the fix shipped with a check that could not
+        fail. Same reason HEXA_MEMINFO exists two functions down.
+        """
+        try:
+            out = subprocess.run([os.environ.get("HEXA_IP", "ip"),
+                                  "-d", "link", "show", ifname],
+                                 capture_output=True, text=True,
+                                 timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        m = re.search(r"\bmaxmtu (\d+)", out)
+        return int(m.group(1)) if m else None
+
     def nic_node(self, ifname):
         v = read(self.p("sys/class/net", ifname, "device/numa_node"))
         try:
@@ -434,7 +493,13 @@ def plan(topo, ifname, subscribers, max_workers=None, low_latency=True,
         "hugepages_wanted": want_gb,
         "hugepages_capped": capped,
         "low_latency": low_latency,
+        # The name, carried so the report can ask whether there is a card at
+        # all before it says anything about one.
+        "nic_name": ifname,
         "nic_pci": topo.nic_pci(ifname) if ifname else None,
+        # Read off the card, not derived from the processor (#330).
+        "nic_tx_queues": topo.nic_tx_queues(ifname) if ifname else None,
+        "nic_max_mtu": topo.nic_max_mtu(ifname) if ifname else None,
         "tuned_now": tuned_now,
         "hugepages_reserved": reserved,
         # The page size in kB, the name the kernel command line uses for it,
@@ -578,12 +643,36 @@ def render_vpp(p):
     pool_gb = p["hugepages_reserved"] or p["hugepages_gb"]
     heap_gb = max(1, min(2, pool_gb - max(1, (len(p["workers"]) + 3) // 4)))
 
-    nq = max(1, len(p["workers"]))
+    # ONE QUEUE PER WORKER, OR AS MANY AS THE CARD HAS - whichever is fewer.
+    #
+    # This asked for one per worker and never read the card (#330). A virtio
+    # guest has ONE transmit queue; an eight-CPU box gives seven workers; DPDK
+    # answered `Configured number of TX queues (7) is bigger than maximum
+    # supported (1)`, refused the device with -22, and the box owned the NIC
+    # and forwarded nothing. Every other number in this stanza is measured and
+    # this one was inferred from the processor.
+    #
+    # CAPPED AND SAID OUT LOUD, not capped quietly. With fewer queues than
+    # workers only that many workers receive packets, which is a capacity fact
+    # an operator has to be told - the same reason the hugepage cap above
+    # announces itself instead of just applying.
+    want_q = max(1, len(p["workers"]))
+    have_q = p["nic_tx_queues"]
+    nq = min(want_q, have_q) if have_q else want_q
     if p["nic_pci"]:
+        # AND AN MTU THE CARD ACCEPTS. VPP defaults a DPDK interface to 9000,
+        # a virtio card's maxmtu is 1500, and the mismatch is the other half
+        # of the same -22: `rte_eth_dev_set_mtu failed (mtu 8996)`. Written
+        # only when the card reports a maximum below VPP's default, so a
+        # jumbo-capable NIC keeps the behaviour it has always had.
+        mtu_line = ""
+        if p["nic_max_mtu"] and p["nic_max_mtu"] < 9000:
+            mtu_line = f"    mtu {p['nic_max_mtu']}\n"
         dpdk = ("dpdk {\n"
                 f"  dev {p['nic_pci']} {{\n"
                 f"    num-rx-queues {nq}\n"
                 f"    num-tx-queues {nq}\n"
+                f"{mtu_line}"
                 "  }\n"
                 f"  dev default {{\n    num-rx-queues {nq}\n  }}\n"
                 "}\n\n")
@@ -647,6 +736,35 @@ def render_report(p, vpp_base):
     out.append(f"# operating system and VPP main: {fmt_list(p['os_cpus'])}")
     out.append(f"# workers ({len(p['workers'])}): {fmt_list(p['workers'])}")
     out.append(f"# isolated: {fmt_list(p['isolated']) or '(none)'}")
+    # The card's own limits, beside the figures read off the machine, because
+    # they are the same kind of fact and one of them silently disagreeing with
+    # the hardware is what #330 was.
+    _w = max(1, len(p["workers"]))
+    if not p["nic_name"]:
+        # Nothing: there is no card, and nic_note above already said so. A
+        # sentence about queues here would be true of one box and false of
+        # this one, which is the shape of every defect in this file's history.
+        pass
+    elif not p["nic_tx_queues"]:
+        # SAYING SO, because this is the state the defect lives in. Unread
+        # falls back to one queue per worker, which is exactly what asked a
+        # one-queue card for seven and left the box owning a NIC it could not
+        # start (#330). "Could not read the card" and "read it and it is fine"
+        # must not look the same on this screen.
+        out.append(f"# NIC queues: could not be read, so this asks for "
+                   f"{_w}, one per worker. A card with fewer will refuse the "
+                   f"device: 'show hardware' says what the box can see.")
+    elif p["nic_tx_queues"] < _w:
+        out.append(f"# NIC queues: {p['nic_tx_queues']}, and this box has "
+                   f"{_w} worker(s). Capped at {p['nic_tx_queues']}: only "
+                   f"that many workers receive packets, so expect a "
+                   f"fraction of the forwarding this CPU could do.")
+    else:
+        out.append(f"# NIC queues: {p['nic_tx_queues']}, enough for "
+                   f"{_w} worker(s)")
+    if p["nic_max_mtu"] and p["nic_max_mtu"] < 9000:
+        out.append(f"# NIC max MTU: {p['nic_max_mtu']}, below VPP's default "
+                   f"of 9000, so the interface is set to {p['nic_max_mtu']}")
     out.append(f"# {p['hugepage_name']} hugepages: {p['hugepages_gb']} GB requested "
           f"(sized for {p['subscribers']} subscribers), "
           f"{p['hugepages_reserved']} reserved right now")
