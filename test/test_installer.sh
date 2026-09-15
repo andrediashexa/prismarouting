@@ -1008,6 +1008,91 @@ else
 " with a management network nothing reports on"
 fi
 
+echo
+echo "=== and the four ways the write itself can fail, on a read-only root ==="
+#
+# write_network_config has four `return 1` in it and nothing had ever taken
+# one. The caller turns all four into a single sentence - "could not write the
+# management network onto the target" - which is right for the operator and
+# useless for telling the four apart, so the only thing that can name WHICH of
+# them fired is how far the write got. That is what each case below asserts,
+# and it is why they are four cases and not one.
+#
+# WHY A ROOT THAT WILL NOT TAKE A WRITE IS THE REAL SHAPE. By the time this
+# function runs the disk has been partitioned and the filesystem unpacked. A
+# target mounted read only, a filesystem that filled during the unpack, an
+# unsquashfs that exited 0 having produced no /etc: in every one of them the
+# install is otherwise finished, so a write_network_config that reported
+# success would hand back a box that boots with its card down and no address -
+# found by whoever drove to the site, which is the failure this whole section
+# of the product exists to prevent.
+#
+# Mode bits, and mode bits do not stop root.
+if [ "$(id -u)" = 0 ]; then
+  echo "  SKIP: this suite is running as root, and a mode bit does not stop it"
+else
+  # 1. NO interfaces.d AT ALL, because the root itself will not take a mkdir.
+  #    This is the unpack that produced nothing: the directory the stanza goes
+  #    in cannot even be made.
+  w=$(mktemp -d); chmod 500 "$w"
+  wnc "$w" ens18 dhcp "" "" 2>/dev/null; rc=$?
+  [ "$rc" != 0 ] && [ ! -d "$w/etc" ] \
+    && ok "a root that will not take an interfaces.d is refused, nothing made" \
+    || bad "a root that cannot be given /etc/network/interfaces.d was reported
+        installed: rc=$rc, and the tree holds [$(cd "$w" && ls -A | tr '\n' ' ')]"
+  chmod 700 "$w"; rm -rf "$w"
+
+  # 2. THE DIRECTORY IS THERE AND THE STANZA CANNOT GO IN IT. The mkdir
+  #    succeeds - an existing directory is success - and the file is the thing
+  #    that cannot be created. This is the read-only target: everything the
+  #    unpack laid down is present and none of it can be added to.
+  w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
+  printf 'source /etc/network/interfaces.d/*\n' > "$w/etc/network/interfaces"
+  chmod 500 "$w/etc/network/interfaces.d"
+  wnc "$w" ens18 dhcp "" "" 2>/dev/null; rc=$?
+  [ "$rc" != 0 ] && [ -d "$w/etc/network/interfaces.d" ] && [ ! -f "$w$NETF" ] \
+    && ok "an interfaces.d that will not take the stanza is refused" \
+    || bad "a root whose interfaces.d cannot be written was reported installed:
+        rc=$rc, and the stanza file is [$(ls "$w$NETF" 2>&1)]"
+  chmod 700 "$w/etc/network/interfaces.d"; rm -rf "$w"
+
+  # 3. THE STANZA IS WRITTEN AND NOTHING WILL READ IT. /etc/network/interfaces
+  #    does not source interfaces.d and cannot be appended to, which is the
+  #    one of the four that leaves the MOST behind: a perfect stanza in a
+  #    directory nobody reads, which is the unreachable box with a file on it
+  #    saying it should not be. Told apart from 2 by the stanza being there and
+  #    from 4 by the source line still being absent.
+  w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
+  printf '# nothing here reads interfaces.d\nauto lo\niface lo inet loopback\n' \
+    > "$w/etc/network/interfaces"
+  chmod 444 "$w/etc/network/interfaces"
+  wnc "$w" ens18 dhcp "" "" 2>/dev/null; rc=$?
+  [ "$rc" != 0 ] && grep -q "^auto ens18\$" "$w$NETF" \
+    && ! grep -q "^source " "$w/etc/network/interfaces" \
+    && ok "an /etc/network/interfaces that cannot be made to read it is refused" \
+    || bad "a stanza was written into a directory nothing sources and the
+        install was reported done: rc=$rc, and interfaces holds
+        [$(tr '\n' ' ' < "$w/etc/network/interfaces")]"
+  chmod 600 "$w/etc/network/interfaces"; rm -rf "$w"
+
+  # 4. THE RESOLVER, which only a static answer with DNS in it reaches. The
+  #    stanza is written and the source line was already there, so the first
+  #    three are all past: this is the last write in the function and the only
+  #    one an ordinary DHCP answer never performs. A box that comes up with an
+  #    address and cannot resolve a name is reachable and useless, and the
+  #    operator who set the DNS has no way to know it did not land.
+  w=$(mktemp -d); mkdir -p "$w/etc/network/interfaces.d"
+  printf 'source /etc/network/interfaces.d/*\n' > "$w/etc/network/interfaces"
+  : > "$w/etc/resolv.conf"; chmod 444 "$w/etc/resolv.conf"
+  wnc "$w" ens18 192.0.2.10/24 192.0.2.1 192.0.2.53 2>/dev/null; rc=$?
+  [ "$rc" != 0 ] && grep -q "^    address 192.0.2.10/24\$" "$w$NETF" \
+    && [ ! -s "$w/etc/resolv.conf" ] \
+    && ok "and a root whose /etc/resolv.conf cannot be written is refused too" \
+    || bad "the DNS answer did not reach the box and the install was reported
+        done: rc=$rc, and resolv.conf holds [$(cat "$w/etc/resolv.conf" 2>&1)]"
+  chmod 600 "$w/etc/resolv.conf"; rm -rf "$w"
+fi
+
 # And the OTHER pair that has to agree: the default answer to the management
 # question is DHCP, and verify_installed() refuses a disk that answered DHCP
 # with no client on it. That refusal is only ever reached on a real install,
@@ -1961,14 +2046,21 @@ esac
 RLSBLK
   chmod +x "$rbin/lsblk"
 
+  # ONE MORE BIND MOUNT, for the case that needs one and empty for every case
+  # that does not. It lives in the helper rather than in a second copy of the
+  # run below because a case that skips this helper does not get the
+  # partitioner's counter zeroed and reads the previous case's count - which
+  # is a way of being wrong that looks exactly like a pass.
+  RBIND=""
   real() {  # <what is typed> <sfdisk exit status> [extra env...]
     : > "$rwork/sfdisk.ran"
     echo "$2" > "$rwork/sfdisk.rc"
     _typed=$1; shift 2
     RROUT=$(printf '%s\n' "$_typed" | unshare -rm sh -c '
         mount --bind "$1" /tmp || exit 99
-        shift
-        exec env "$@"' _ "$rwork/tmp" \
+        [ -z "$2" ] || mount --bind $2 || exit 97
+        shift 2
+        exec env "$@"' _ "$rwork/tmp" "$RBIND" \
         PATH="$rbin:$PATH" \
         HEXA_INSTALL_SRC="$rwork/filesystem.squashfs" \
         HEXA_DISK=/dev/loop0 HEXA_HOSTNAME=cgnat01 \
@@ -1978,6 +2070,176 @@ RLSBLK
     RRRC=$?
     RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
   }
+
+  echo
+  echo "=== a medium that is missing one of the tools the install needs ==="
+  # Checked before a question is asked and long before anything is written,
+  # because a missing mkfs discovered after the partition table is rewritten
+  # leaves a disk that is neither the old system nor the new one. In check mode
+  # this is a note, collected and printed under the summary; on a run that
+  # means it, it is the refusal - and only the note had ever run.
+  #
+  # ARRANGED BY TAKING ONE STUB AWAY AND LEAVING THE PATH ALONE, which is the
+  # opposite of the obvious arrangement and is why it works. `command -v`
+  # searches PATH, so a tool cannot be hidden by putting something in front of
+  # it - the run has to be handed a PATH it is not on. Cutting PATH down to
+  # $rbin does that and costs the case everything: with the tool list
+  # neutralised the run would then die on the next command it could not find,
+  # so the assertion that it refused would stay green over a product that no
+  # longer refuses. The stub is taken away instead, from a tool THIS MACHINE
+  # does not have either - so the PATH is the full one every other case here
+  # uses and a run that got past the tool list would reach the partitioner.
+  #
+  # Which tool that is, is read off the machine rather than assumed. A box
+  # carrying all ten cannot run this case and says so.
+  #
+  # The ten in the order the INSTALL would miss them, latest first, which is
+  # not the order the product lists them in and is deliberate. Take sfdisk
+  # away and a run that got past the tool list stops at the partitioner
+  # anyway, so "nothing was partitioned" would be green over a product that
+  # had stopped refusing. Take unsquashfs away and it stops after the disk has
+  # been written, which is what that assertion is there to catch.
+  rgone=""
+  for t in update-grub grub-install chpasswd blkid unsquashfs mkfs.vfat \
+           mkfs.ext4 sfdisk findmnt lsblk; do
+    command -v "$t" >/dev/null 2>&1 || { rgone=$t; break; }
+  done
+  if [ -z "$rgone" ]; then
+    echo "  SKIP: this machine carries all ten of the installer's tools, so"
+    echo "        none of them can be taken off a PATH it is already on"
+  else
+    mv "$rbin/$rgone" "$rwork/tool.away"
+    real yes 0
+    mv "$rwork/tool.away" "$rbin/$rgone"
+    [ "$RRRC" != 0 ] && [ "$RRSFDISK" = 0 ] \
+      && ok "a medium missing one of them refuses, and partitions nothing" \
+      || bad "the install ran on a medium with no $rgone on it: rc=$RRRC, the \
+partitioner ran $RRSFDISK time(s)"
+    # ONE TOOL, NAMED. The message is composed from whatever is missing, so
+    # "$rgone and nothing after it" is also the proof that the other nine were
+    # on the PATH this case ran with - a rig that had lost a second stub would
+    # print two names here and be measuring a different machine.
+    case "$RROUT" in
+      *"missing tools: $rgone - "*)
+        ok "and it names the one tool that is gone, and only that one" ;;
+      *) bad "the refusal does not name $rgone by itself, so either the tool \
+list or this case's rig is not what it says it is: $RROUT" ;;
+    esac
+  fi
+
+  echo
+  echo "=== a run that is not standing on the medium it unpacks from ==="
+  # $SRC is the squashfs the box is copied out of, checked in the same breath
+  # as the tools and for the same reason. Someone running this script off a
+  # box rather than off the ISO gets this, and gets it before the first
+  # question rather than after the partition table has been rewritten.
+  #
+  # The full PATH here, so every tool is present and the only thing left to
+  # stop the run is the medium. The path named is inside this suite's own
+  # directory and was never created, so it cannot exist by accident.
+  real yes 0 HEXA_INSTALL_SRC="$rwork/there-is-no-medium-here.squashfs"
+  [ "$RRRC" != 0 ] && [ "$RRSFDISK" = 0 ] \
+    && ok "a run with no live filesystem to unpack refuses, disk untouched" \
+    || bad "the install carried on with nothing to unpack: rc=$RRRC, the \
+partitioner ran $RRSFDISK time(s)"
+  case "$RROUT" in
+    *"live filesystem not found at $rwork/there-is-no-medium-here.squashfs"*)
+      ok "and names the path it looked at, which is the whole of the answer" ;;
+    *) bad "the refusal does not name the path it went looking for: $RROUT" ;;
+  esac
+  # WHICH REFUSAL STOPPED IT. The tool list is two lines above this one and
+  # would also refuse; a case that had lost a stub would read as a pass here
+  # while measuring the wrong sentence.
+  case "$RROUT" in
+    *"missing tools"*)
+      bad "this run was stopped by the tool list and not by the medium, so \
+the stub set is not what this case assumed: $RROUT" ;;
+    *) ok "and it got past the tool list, so the medium is what stopped it" ;;
+  esac
+
+  echo
+  echo "=== a machine with no disk to install onto, through the installer ==="
+  # The empty menu is driven at the library seam further up this file, which
+  # proves choose_disk returns 1. What had never run is the line that READS
+  # that - `DISK=$(choose_disk) || exit 1` in the body - and a seam returning
+  # 1 into a caller that dropped it is a menu that refuses while the install
+  # goes on to ask the rest of its questions.
+  #
+  # ARRANGED BY NAMING NO DISK AT ALL, so the menu is reached. The rig's lsblk
+  # answers the table query with nothing, so there is no candidate to offer.
+  #
+  # WHAT THE SEAM CANNOT ANSWER. That the menu refuses and says what to do
+  # about it is asserted further up this file, against choose_disk itself.
+  # What is asserted here is only the thing the seam cannot reach: WHICH
+  # sentence an operator gets. "no disk given" is the check two lines below,
+  # and it is what an installer that dropped the menu's refusal would print
+  # instead - same exit status, a sentence about an answer they did not give
+  # rather than about a machine with nothing in it to install onto.
+  real yes 0 HEXA_DISK=
+  case "$RROUT" in
+    *"no disk given"*)
+      bad "the menu refused and the run carried on to the check below it, so \
+the operator is told they gave no answer rather than that this machine has \
+nothing to install onto: $RROUT" ;;
+    *"No disk to install onto."*)
+      [ "$RRSFDISK" = 0 ] \
+        && ok "a machine with nothing to install onto stops at the menu" \
+        || bad "the empty menu refused and the disk was partitioned \
+$RRSFDISK time(s) anyway" ;;
+    *) bad "the run never reached the disk menu, so this case measured \
+something else: $RROUT" ;;
+  esac
+
+  echo
+  echo "=== a medium with no mdadm, asked for a records mirror ==="
+  # mdadm is deliberately NOT in the tool list at the top: a medium without it
+  # must still install a one-disk box. So the question is asked down where a
+  # mirror was actually answered, and that is the second of the two
+  # `command -v mdadm` in this program - the other is in release_disk, and a
+  # mutation without an anchor moves both.
+  #
+  # ARRANGED AS A SECOND DISK BIG ENOUGH TO HOLD THE RECORDS. /dev/loop1 is
+  # unbound like loop0, so it is zero bytes and every check before this one
+  # would refuse it for being short. The mount namespace this run already has
+  # puts a 2 GB answer over /sys/block/loop1/size, which is the only place the
+  # installer reads a mirror's size from. Nothing is bound to the device and
+  # nothing is written to it.
+  if [ ! -b /dev/loop1 ] \
+     || [ "$(cat /sys/block/loop1/size 2>/dev/null || echo 1)" != 0 ]; then
+    echo "  SKIP: no second unbound loop device to stand in as the mirror"
+  else
+    echo 4194304 > "$rwork/loop1.size"   # 2 GB, in 512-byte sectors
+    RBIND="$rwork/loop1.size /sys/block/loop1/size"
+    # THE CONTROL FIRST, because it is also the proof that this is the box the
+    # case below claims to measure. With mdadm present the same run has to get
+    # PAST the mirror question, which it can only do if /dev/loop1 was taken as
+    # a whole second disk wide enough for the records. A size that did not take
+    # or a mirror refused for some other reason would stop here, and the
+    # refusal below would be measuring a machine with no mirror answer at all.
+    real yes 0 HEXA_MIRROR=/dev/loop1
+    case "$RROUT" in
+      *"has no mdadm"*)
+        bad "the control run had mdadm on its PATH and was told it had none, \
+so the stub set is not what this case assumed: $RROUT" ;;
+      *"records mirror /dev/loop1"*)
+        ok "a second disk two gigabytes wide is taken as the records mirror" ;;
+      *) bad "/dev/loop1 was not accepted as a mirror, so the case below would \
+measure a machine that was never asked for one: $RROUT" ;;
+    esac
+    mv "$rbin/mdadm" "$rwork/mdadm.away"
+    real yes 0 HEXA_MIRROR=/dev/loop1
+    mv "$rwork/mdadm.away" "$rbin/mdadm"
+    RBIND=""
+    [ "$RRRC" != 0 ] && [ "$RRSFDISK" = 0 ] \
+      && ok "and a medium with no mdadm refuses the mirror, disk untouched" \
+      || bad "a mirror was accepted on a medium that cannot build one: \
+rc=$RRRC, the partitioner ran $RRSFDISK time(s)"
+    case "$RROUT" in
+      *"this medium has no mdadm"*)
+        ok "and it says the MEDIUM is what cannot do it, not the answer" ;;
+      *) bad "refused, but not over the tool that builds the array: $RROUT" ;;
+    esac
+  fi
 
   echo
   echo "=== a box that cannot be asked whether an array holds the disk ==="

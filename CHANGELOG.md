@@ -77,6 +77,133 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The nine refusals the `appliance/` sweep named as renderable here, and
+  left.** That sweep read 113 refusal sites in the scripts that put this
+  product on somebody's disk, found 51 had ever been rendered by anything,
+  raised it to 77, and listed nine more as reachable without a real machine:
+  `write_network_config`'s four write failures, `missing tools:` and `live
+  filesystem not found` on a run that means it, the empty disk menu through
+  the body rather than at the seam, `this medium has no mdadm`, and
+  `appliance/upgrade`'s `There is no dpkg-query here`. None of the nine was
+  covered by anything; all nine are now. Every assertion below was shown red
+  on a mutation ANCHORED TO ITS OWN LINE, which is not a formality: there are
+  two `command -v mdadm` in `hexarouting-install` and a `sed` without a line
+  number moves both, so the red would be about a line nobody was claiming.
+
+  **`write_network_config`'s four write failures**
+  (`appliance/hexarouting-install:665`, `:700`, `:715`, `:731`), against a
+  root that will not take a write. By the time this function runs the disk has
+  been partitioned and the filesystem unpacked, so a target mounted read only,
+  a filesystem that filled during the unpack, or an `unsquashfs` that exited 0
+  having produced no `/etc` all arrive here with the install otherwise
+  finished - and a `write_network_config` that reported success would hand
+  back a box that boots with its card down and no address, found by whoever
+  drove to the site.
+
+  The four are SILENT. Each is a bare `return 1` and the caller turns all four
+  into one sentence, so nothing outside the function can say which one fired;
+  the only thing that can is how far the write got, and that is what each case
+  asserts. Shown red one line at a time, with `return 1` replaced by `return
+  0` at that line and nowhere else - and each mutation reddens its own case
+  and no other, which is the evidence that the four fixtures land where they
+  claim to:
+
+  * `:665` - *"FAIL: a root that cannot be given /etc/network/interfaces.d was
+    reported installed: rc=0, and the tree holds []"*
+  * `:700` - *"FAIL: a root whose interfaces.d cannot be written was reported
+    installed: rc=0, and the stanza file is [ls: cannot access
+    '.../etc/network/interfaces.d/hexarouting': No such file or directory]"*
+  * `:715` - *"FAIL: a stanza was written into a directory nothing sources and
+    the install was reported done: rc=0, and interfaces holds [# nothing here
+    reads interfaces.d auto lo iface lo inet loopback ]"*
+  * `:731` - *"FAIL: the DNS answer did not reach the box and the install was
+    reported done: rc=0, and resolv.conf holds []"*
+
+  They are arranged with mode bits, and mode bits do not stop root, so the
+  four say so and skip when the suite is run as root.
+
+  **`missing tools:` and `live filesystem not found` on the real run**
+  (`:990`, `:992`). Both are `fatal`, which is a note in check mode and a
+  refusal in a run that means it, and only the note had ever happened. They
+  are driven through the same arrangement as the confirmation prompt -
+  `unshare -r`, an unbound `/dev/loop0`, every tool stubbed on PATH ahead of
+  the real one - so a run that got past either would reach a partitioner that
+  appends to a file rather than a disk.
+
+  **The obvious arrangement for the tool list is the wrong one, and it cost
+  two false greens before it was.** `command -v` searches PATH, so a tool
+  cannot be hidden by putting something in front of it: the run has to be
+  handed a PATH the tool is not on. Cutting PATH down to the stub directory
+  does that, and the first attempt at it left `sh` off - `env` could not start
+  the installer at all, so nothing ran, nothing was partitioned and the exit
+  status was not zero, and the case's first assertion read as a pass over a
+  product that had not been executed. Putting `sh` back fixed that and left
+  the second: with the tool check neutralised, a cut-down PATH means the run
+  dies on the next command it cannot find, so *"it refused and nothing was
+  partitioned"* stays green over a product that no longer refuses. What works
+  is the opposite - leave the PATH alone and take away the stub for a tool
+  THIS MACHINE does not have either, chosen at runtime from the installer's
+  own list and ordered latest-used first, so that a run getting past the check
+  reaches the partitioner. The message is composed from whatever is missing,
+  so *"missing tools: update-grub"* with no second name in it is also the
+  proof that the other nine were on the PATH the case ran with. With `:990`
+  neutralised: *"FAIL: the install ran on a medium with no update-grub on it:
+  rc=1, the partitioner ran 1 time(s)"*. With `:992` neutralised: *"FAIL: the
+  install carried on with nothing to unpack: rc=1, the partitioner ran 1
+  time(s)"*.
+
+  **The empty disk menu, through the body** (`:1001`). That `choose_disk`
+  refuses an empty machine and says what to do about it is asserted at the
+  library seam and was already; what had never run is `DISK=$(choose_disk) ||
+  exit 1`, the line that READS it. So the new case asserts only what the seam
+  cannot reach, which is WHICH sentence the operator gets: with the `|| exit
+  1` dropped the run carries on to the check two lines below and prints *"no
+  disk given"*, a sentence about an answer they did not give rather than about
+  a machine with nothing in it to install onto. *"FAIL: the menu refused and
+  the run carried on to the check below it, so the operator is told they gave
+  no answer rather than that this machine has nothing to install onto"*.
+
+  **`this medium has no mdadm`** (`:1159`), which is the second of the two
+  `command -v mdadm` and is asked down where a mirror was actually answered,
+  because a medium without `mdadm` must still install a one-disk box. It needs
+  a second disk that passes every check above it, and `/dev/loop1` unbound is
+  zero bytes and would be refused for being too short - so the mount namespace
+  the real run already has is given a 2 GB answer bound over
+  `/sys/block/loop1/size`, which is the only place the installer reads a
+  mirror's size from. Nothing is bound to the device and nothing is written to
+  it. THE CONTROL IS THE ARRANGEMENT PROOF: with the `mdadm` stub present the
+  same run has to get past the mirror question, which it can only do if
+  `/dev/loop1` was taken as a whole second disk wide enough for the records,
+  and the summary says *"records mirror /dev/loop1"*. With `:1159`
+  neutralised: *"FAIL: a mirror was accepted on a medium that cannot build
+  one: rc=1, the partitioner ran 1 time(s)"*.
+
+  **`There is no dpkg-query here`** (`appliance/upgrade:153`). The platform
+  check is asked of the box, and `dpkg-query` is the half of "ask the box"
+  that is not a file the script can look for. Driven with a PATH holding the
+  four commands `appliance/upgrade` uses before that line and nothing else,
+  against the suite's ordinary fixture box; the control adds a `dpkg-query`
+  to the same PATH that answers a version no release was built against, so the
+  run is stopped by the platform check instead and the PATH is proved not to
+  be what refused. What the refusal is worth is the sentence, not the refusal:
+  without it `have()` comes back empty for both packages and a box carrying a
+  perfectly good database is told it has no VPP installed at all, which sends
+  its owner looking for a package that is on the disk. *"FAIL: a box nothing
+  could ask was told it is not an appliance at all, about a package database
+  that has vpp 26.06-release in it"*.
+
+  **Found and not fixed, because it is a product change and not a test.** The
+  four `return 1` in `write_network_config` carry no diagnosis of their own
+  and the caller cannot invent one: an operator reading *"could not write the
+  management network onto the target"* is not told whether the target had no
+  `/etc/network` at all, whether it would not take the stanza, or whether the
+  stanza went down and `/etc/network/interfaces` could not be made to read it.
+  The last of those is the one that leaves the most behind - a perfect file in
+  a directory nothing sources - and it is the only one where the box is
+  otherwise complete. The four states are now written down in
+  `test/test_installer.sh`, which is where somebody adding the messages would
+  look to see what there is to say.
+
 * **The installer said a disk was held by an array on a box that has no
   arrays, and then partitioned it**
   ([#339](https://github.com/andrediashexa/hexarouting/issues/339)).
