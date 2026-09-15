@@ -75,6 +75,28 @@ version has a chance of seeing it.
 
 ## Unreleased
 
+### Added
+
+* **A lab performs the bind, on a real guest, for the first time**
+  ([#329](https://github.com/andrediashexa/hexarouting/issues/329)). Handing a
+  card to the dataplane means unbinding it from its kernel driver and binding
+  it to `vfio-pci` or `uio_pci_generic`. Nothing in this repository had ever
+  performed that bind. `lab/one-nic.sh` models it and says so in its own
+  header, because a container has no PCI device to hand DPDK; `lab/install-iso.sh`
+  booted a real qemu guest with a real virtio card and never asked the box to
+  take it. What was proven was the decision and the boot-time replay - the
+  driver change itself was unmeasured, on the path most deployments will
+  actually run: a virtual machine with one virtio card and no IOMMU. Two new
+  phases ask the box, through the VTY, with the one statement an operator has
+  on a single-card machine, and then assert the four things that have to be
+  true together afterwards: the card is on a driver DPDK can use and not the
+  kernel driver it started on, Linux no longer has the netdev, the management
+  address moved off the card, and the dataplane holds an interface that is not
+  `local0`. The network reading is taken before this phase logs in at all,
+  because a box that takes its card and stops answering has eaten its own
+  management port, and on a single-card machine that means somebody walks to
+  it.
+
 ### Fixed
 
 * **`show hardware` told an operator their card was unusable and stopped
