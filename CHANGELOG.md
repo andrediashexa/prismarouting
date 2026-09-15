@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The one-card handover printed two lines wider than the console it is read
+  on** ([#346](https://github.com/andrediashexa/hexarouting/issues/346)). It is
+  the path a VM operator meets first, and `config.CONSOLE_COLUMNS` is 79. The
+  headline was **81 columns** on `ens18` and would be 91 on the longest name
+  Linux can carry, because it was printed with a bare `print()` rather than
+  through `print_prose` and the name is interpolated into it. The completion
+  row offered **before** the name is typed - the row that tells the operator
+  what handing this card over means - was **100**. The two-card spelling of
+  the same entry has always been 44.
+
+  The real fix is the third one: the width sweep in `test/test_dataplane_if.py`
+  collected from the two-card box only, because `one_card_box()` is defined
+  three hundred lines below it. So the one path where the box gives away the
+  card the session is on was the one path nobody measured. It is measured now,
+  with the longest name Linux can carry and with the completion rows rendered
+  the way the VTY renders them, and the case refuses a run in which the box did
+  not accept the name - or the widest line it measured would be a refusal and
+  not the handover.
+
 * **Twenty-one corrections on eight public wiki pages, and the rule about that
   wiki had no reader.** Swept against the product since the last wiki sweep of
   2026-09-13, which is three releases and a day of defect work ago - most of it

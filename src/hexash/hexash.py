@@ -10450,8 +10450,18 @@ class Shell:
                           for l in self.candidate.routing if l.split())
         if not has_default:
             self.candidate.routing.append(route)
-        print(f"dataplane interface {name}: this box has no other card, so it "
-              f"keeps its management")
+        # Inside the console, and the arithmetic is the reason rather than the
+        # look of it: Linux carries interface names up to fifteen characters,
+        # so a headline is as wide as its words plus fifteen. The old one was
+        # "this box has no other card, so it keeps its management", which is
+        # 81 columns on `ens18` and 91 on the longest name a card can have -
+        # the one line an operator reads before handing over the card their
+        # session is on, wrapped by the terminal in the middle of a word
+        # (#346). The refusal headline beside this one carries the same
+        # argument in as many words and has always fitted.
+        print(f"dataplane interface {name}: this box has no other card")
+        print_prose("so it keeps its management, and the address moves with "
+                    "the card")
         print_prose(f"{hand['address']} moves onto the linux_cp pair the "
                     f"dataplane keeps for {name}, and the box is then reached "
                     f"through the dataplane rather than beside it")
@@ -12111,8 +12121,14 @@ class Shell:
         default = self.default_route_nic()
         names = [n["name"] for n in self.host_nics()]
         alone = len(names) == 1
-        return {n: ("carries the default route: the only card, so it is "
-                    "handed over and its address goes with it" if alone
+        # AND IT FITS THE CONSOLE. display_matches puts the name, two spaces
+        # and this text on one row, so the text is as wide as itself plus the
+        # longest name. "the only card, so it is handed over and its address
+        # goes with it" measured 100 columns against a 79-column console
+        # (#346), on the row an operator reads BEFORE typing the name - so the
+        # sentence telling them what handing this card over means was the one
+        # the terminal broke. The two-card spelling was always 44.
+        return {n: ("the only card: handed over, address and all" if alone
                     else "carries the default route: refused")
                 if n == default else "card"
                 for n in names}
