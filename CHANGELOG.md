@@ -77,6 +77,25 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The lab's console driver could only wait for success, and had never been
+  tested** ([#332](https://github.com/andrediashexa/hexarouting/issues/332)).
+  `lab/install-iso.sh` types at a serial console and waits for strings the box
+  prints, and every one of those waits had only ever been exercised by booting
+  a machine - which costs minutes and cannot arrange the case where the box
+  answers something else. It cost exactly that: PHASE 4 spent its full 600
+  seconds waiting for `commit complete` on a commit that had printed `commit
+  failed` seconds in, and what diagnosed it was the console dump the timeout
+  prints rather than the wait. Ten minutes per run, and a verdict reading "the
+  box never answered" about a box that answered immediately. `wait_for_either`
+  takes both strings and reports which arrived: 0 for the first, 2 for the
+  second, 1 for neither, so a caller that ignores the distinction still reads a
+  refusal as a failure rather than as a pass. `test/test_console_driver.sh`
+  measures those waits **without qemu**, reading the functions out of the lab
+  rather than copying them, because a second copy of a wait would pass while
+  the real one did whatever it does.
+
+### Fixed
+
 * **`commit` bound the card immediately while telling the operator it had
   not** ([#336](https://github.com/andrediashexa/hexarouting/issues/336)).
   Naming the dataplane card restarts `hexarouting-tune`, that unit runs
