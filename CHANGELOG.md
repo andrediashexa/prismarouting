@@ -1550,6 +1550,53 @@ version has a chance of seeing it.
 
 ### Added
 
+* **The other 70 VTY refusals, and the floor is zero.** The sweep below left
+  70 of the VTY's 180 refusal sites unrendered and held them as a floor.
+  Every one of them now has a box in `test/test_hexash_refusals.py`, so all
+  180 have been watched printing and `UNRENDERED_AT_MOST` is **0** - the first
+  time it has been. The next refusal added to `src/hexash/hexash.py` with no
+  box added anywhere goes red on the next run with nothing to subtract from,
+  which is the state that file was written to reach rather than a milestone.
+
+  Arranged in the order the refusals matter rather than the order they are
+  easy. 11 are the CGNAT globals and the IPFIX export, which are reached by
+  `--load`, `rollback` and hexarouting.service without anybody at the prompt:
+  a timeout this box has no field for, a session table named with one of its
+  two numbers, and each way the export does not arrive - on a box where the
+  allocation log **is** the connection record the Marco Civil asks for. 10 are
+  a pool's data and the paths that run unattended: a commit that would re-map
+  1200 subscribers onto different public addresses and stops to make the
+  operator type `commit remap`, a `commit confirmed` window that is not a
+  number, a confirm-revert that does not validate, the restart that gives a
+  management card back, and a pool statement accepted in silence - which is
+  #224's defect, where `show this` still showed the old value. 16 are the
+  accounts and the box's own settings, where a refusal that does not fire ends
+  with somebody holding a console cable: a plaintext password in
+  `/etc/shadow`, which does not fail loudly but produces a password that never
+  matches; `no user root`; an ssh value sshd would not take; a management
+  record the parser cannot read. 13 are the interface statements, every one of
+  which would otherwise be staged as an FRR statement and reach the TAP and
+  not the packet path - the failure whose lab assertions were vacuous for that
+  reason. The rest are a routing daemon that is not answering told apart from
+  a protocol nobody configured, a policy no daemon is running to store, IS-IS
+  frames that would never be punted to the kernel (#168), the interface
+  sampler refusing to print a rate it cannot measure, the shell escape and the
+  installer, and a pipe filter this box has not got.
+
+  **69 of the 70 were shown red on their own mutation of the product**, each
+  one a single line making the guard that reaches the refusal false, never the
+  message edited - a reader keyed on the line is unmoved by the text - and
+  each checked to take exactly one call site down with it. Sixteen of those
+  guards protect the dereference on the line after them, so falsifying them
+  ends in a traceback rather than a red box and a crash is not evidence; those
+  sixteen were falsified one step further out instead, at the branch that
+  matches the operator's line or the value the guard reads. The one that has
+  no such mutation is named here rather than left to be discovered:
+  `no candidate configuration` guards every use of the candidate in
+  `do_commit()`, and every way of making its guard false ends in
+  `AttributeError: 'NoneType' object has no attribute 'routing'`. Its box
+  passes and its red was not shown.
+
 * **The release gate compares the published release's title with the CHANGELOG
   heading** ([#340](https://github.com/andrediashexa/hexarouting/issues/340)).
   Nothing read the published releases at all. Measured over all 74: 66 titles
