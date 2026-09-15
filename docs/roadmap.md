@@ -2188,6 +2188,25 @@ non-interactive path and is not what a first install uses.
 have the same gap and are smaller; a reader written for the installer alone
 would be the third one this repository wrote per component.
 
+**And a reader can be right about most screens and blind to one word**
+([#365](https://github.com/andrediashexa/hexarouting/issues/365)).
+`test/test_wiki_screens.py` compares every screen the public wiki quotes
+against what the product builds - by driving it where it can, 25 screens
+character for character, and by template for another 34 - and it caught two
+pages the same session broke, within the hour. It did **not** catch a third:
+the BGP page carried `error: neighbour 200.150.0.2 does not keep what it
+received` after the noun was taken out of that verdict, and the reader passed
+on it before and after. The product builds that row as `f"{peer} does not keep
+what it received"`, so the template OPENS with a hole, a hole is matched as
+`[^\n]+?`, and `neighbour 200.150.0.2` goes into it whole. **199 of the
+corpus's templates open with a hole.** The file's four existing defences are
+all about a template being MOSTLY hole and this one is 60% literal, so it
+passes every one of them correctly; the question is not how much of a row is a
+hole but what a hole is allowed to contain, and the reader knows each slot's
+expression from the AST. What has to be measured before that rule goes in is
+what it costs in false reds, because a check that goes red on correct work is
+one people learn to run around.
+
 **Vector provenance.** Only `test_bpa_pool.c` reads `test/bpa_vectors.h`, and
 its 21,072 lines come from `ref/gen_vectors.py` over `ref/bpa_model.py` - pure
 Python, no `ctypes`, no `subprocess`, nothing that calls into the C. The other
