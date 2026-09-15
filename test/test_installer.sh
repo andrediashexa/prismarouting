@@ -14,6 +14,30 @@ INSTALLER=$(cd "$(dirname "$0")/.." && pwd)/appliance/hexarouting-install
 SELFTEST=$(cd "$(dirname "$0")/.." && pwd)/appliance/selftest
 fail=0
 
+# THE TWO READERS AT THE BOTTOM OF THIS FILE, and the reason every helper
+# below hands its output to say_box.
+#
+# #364 measured what the four suites that drive this program had ever made it
+# print: 113 of its messages, by that measurement, had been produced by none
+# of them. They are the interactive half - the disk list, the two "there is no
+# disk" refusals an operator meets after mistyping a letter, the management
+# network paragraph, and EVERYTHING ON THE DISK YOU CHOOSE IS DESTROYED. The
+# four suites all drive the answer file, which is the non-interactive path.
+#
+# WHY THE READER IS HERE AND NOT IN A SUITE OF ITS OWN. The boxes are already
+# here: a hundred-odd runs of this program against fake disk tables, fake
+# roots, fake cards and an unprivileged namespace with a loop device in it. A
+# second suite would have to build all of that again to read it, and the day
+# after it was written the two rigs would differ. test_selftest.sh puts its
+# pair at the bottom of the file that arranges its boxes for the same reason,
+# and every case added below is a box from the moment it is written.
+#
+# The reader itself is in test/say-coverage.sh, once, so that
+# appliance/bind-dataplane-nic and appliance/apply-tuning do not each get a
+# third spelling of it.
+. "$(cd "$(dirname "$0")" && pwd)/say-coverage.sh"
+say_init "$INSTALLER"
+
 # A real block device, because check mode deliberately does not relax that:
 # a check more permissive than the real run is a check that agrees with itself.
 DISK=/dev/$(lsblk -dno NAME 2>/dev/null | head -1)
@@ -70,6 +94,7 @@ run() {  # <expected exit 0|1> <description> <env assignments...>
   out=$(env HEXA_INSTALL_CHECK=1 "$@" sh "$INSTALLER" </dev/null 2>&1)
   rc=$?
   LAST_OUT=$out
+  printf '%s\n' "$out" | say_box
   if [ "$_want" = 0 ] && [ "$rc" != 0 ]; then
     echo "  FAIL: $_desc (expected acceptance, got $rc)"; echo "$out" | sed 's/^/        /'
     fail=$((fail + 1)); return
@@ -148,6 +173,7 @@ pwrun() {  # <what is typed at the prompts> -> $PWOUT, $PWRC
       HEXA_DISK="$DISK" HEXA_HOSTNAME=cgnat01 \
       HEXA_TIMEZONE=America/Sao_Paulo HEXA_LOG_GB=1 \
       sh "$INSTALLER" 2>&1) || PWRC=$?
+  printf '%s\n' "$PWOUT" | say_box
 }
 
 pwrun 'onlyonce
@@ -182,6 +208,23 @@ that differ, which is a mistake the operator did not make: $PWOUT" ;;
   *) ok "and it does not accuse them of mistyping a repeat they never gave" ;;
 esac
 
+# AN EMPTY ANSWER, which is a bare Enter at a prompt that echoes nothing - the
+# commonest thing to type at a question you cannot see yourself answering. It
+# has to be refused and asked again, not taken: a box whose root password is
+# the empty string is a box anyone with a console owns.
+pwrun '
+s3cr3t
+s3cr3t
+'
+case "$PWOUT" in
+  *"the root password may not be empty"*)
+    ok "an empty password is refused and the question asked again" ;;
+  *) bad "an empty password was taken, or refused without saying why: $PWOUT" ;;
+esac
+[ "$PWRC" = 0 ] \
+  && ok "and the answer typed after it is the one that is used" \
+  || bad "the retry after an empty password was not accepted: $PWOUT"
+
 # And the two not matching, which is the path that sends the loop round again.
 # It must come back to the SAME refusal and not to a third state: this is a
 # console, the operator has mistyped, and what they get is another pair of
@@ -215,6 +258,33 @@ run 1 "a log size of zero" $OK HEXA_ROOT_PASSWORD=s3cr3t HEXA_LOG_GB=0
 # 8 TB of records on any disk this test can see leaves the system nothing.
 run 1 "a log that leaves the system no room" $OK HEXA_ROOT_PASSWORD=s3cr3t \
     HEXA_LOG_GB=8192
+
+# A DISK WHOSE SIZE NOTHING HERE CAN READ, which is the other arm of every
+# check above and had never run. The fit between the records and the disk is
+# checked only when the size is known, and a check that skipped it in silence
+# would be more permissive than the real run - so the installer says the fit
+# was NOT checked instead of saying nothing.
+#
+# Arranged as a symlink to a real block device: [ -b ] follows it, so the
+# target is as real as every other case here, and /sys/block has no entry
+# under the link's own name - which is exactly what a partition named as the
+# target gives. blockdev is the fallback and it is refused too, because on a
+# box where /sys cannot answer it is privileges that stop blockdev, and this
+# suite has none to hand it.
+szdir=$(mktemp -d); szbin=$(mktemp -d)
+ln -s "$DISK" "$szdir/hexa-nameless"
+printf '#!/bin/sh\nexit 1\n' > "$szbin/blockdev"; chmod +x "$szbin/blockdev"
+run 0 "a disk whose size cannot be read is still installable" \
+    PATH="$szbin:$PATH" HEXA_DISK="$szdir/hexa-nameless" \
+    HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
+    HEXA_ROOT_PASSWORD=s3cr3t
+case "$LAST_OUT" in
+  *"could not be read, so the fit is not checked"*)
+    ok "and it says the fit was not checked rather than saying nothing" ;;
+  *) bad "a disk of unknown size was sized in silence:
+$LAST_OUT" ;;
+esac
+rm -rf "$szdir" "$szbin"
 
 echo "=== the disk menu: a letter, or Enter for the largest ==="
 #
@@ -271,14 +341,19 @@ chmod +x "$fake/lsblk" "$fake/findmnt"
 
 INST=$(cd "$(dirname "$0")/.." && pwd)/appliance/hexarouting-install
 pick() {  # <answer on stdin> -> the chosen path
+  # The MENU goes to a file rather than to /dev/null, because the menu is the
+  # screen: every line of it is one of the messages the reader at the bottom
+  # of this file demands a box for, and dropping it here is what made every
+  # one of these runs invisible to it.
   printf '%s
 ' "$1" | (
     PATH="$fake:$PATH"
     HEXA_INSTALL_LIB=1
     export HEXA_INSTALL_LIB
     . "$INST"
-    choose_disk 2>/dev/null
+    choose_disk 2>"$SAY_DIR/box.err"
   )
+  say_box < "$SAY_DIR/box.err"
 }
 
 out=$(pick "")
@@ -312,6 +387,7 @@ esac
 menu=$(printf '
 ' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
                       . "$INST"; choose_disk 2>&1 >/dev/null))
+printf '%s\n' "$menu" | say_box
 case "$menu" in
   *sdc*) bad "the boot medium was offered in the menu:
 $menu" ;;
@@ -340,6 +416,17 @@ case "$out" in
   *) bad "'z' then 'b' must end up at the second disk, got '$out'" ;;
 esac
 
+# AND AN ANSWER THAT IS NEITHER. A letter off the end of the list gets the
+# message above; something that is not a letter at all - a bare disk name, a
+# number, a word - is a different mistake, and what it gets is the sentence
+# that says what the two shapes of answer are. Neither may be read as a disk.
+out=$(pick "sdb
+b")
+case "$out" in
+  /dev/sda) ok "an answer that is neither a letter nor a path re-asks: $out" ;;
+  *) bad "'sdb' then 'b' must end at the second disk, got '$out'" ;;
+esac
+
 # A MACHINE WITH NOTHING TO INSTALL ONTO, which is a live medium booted on a
 # diskless box or one whose controller the live kernel has no driver for. The
 # menu has no lines, and the question then has no answer: ask() substitutes
@@ -363,6 +450,7 @@ chmod +x "$fake/lsblk"
 nodisk=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1
                         export HEXA_INSTALL_LIB; . "$INST"
                         choose_disk 2>&1 >/dev/null); echo "rc=$?")
+printf '%s\n' "$nodisk" | say_box
 case "$nodisk" in
   *"rc=0") bad "a machine with no disk but the medium was given one anyway:
 $nodisk" ;;
@@ -422,7 +510,11 @@ printf '%s1\n' "$DISK" > "$BOOT_MEDIUM"
 out=$(env HEXA_INSTALL_CHECK=1 HEXA_DISK="$DISK" \
       HEXA_HOSTNAME=cgnat01 HEXA_TIMEZONE=America/Sao_Paulo \
       HEXA_ROOT_PASSWORD=s3cr3t sh "$INSTALLER" </dev/null 2>&1)
-if [ $? = 0 ]; then
+# The status FIRST: say_box is a pipeline, and a $? read after one is the
+# recorder's status and not the installer's.
+brc=$?
+printf '%s\n' "$out" | say_box
+if [ "$brc" = 0 ]; then
   bad "the medium this system booted from was accepted as the target"
 else
   case "$out" in
@@ -868,6 +960,124 @@ WIDE=$(printf '%s\n' "$LAST_OUT" | sed '/could not run the install/,$d' \
   || bad "the installer printed lines wider than the console:
 $WIDE"
 
+# A MACHINE WITH NO NETWORK CARD AT ALL, which is a virtual machine built
+# without one and a box whose card the live kernel has no driver for. There is
+# nothing to ask and nothing to write a stanza for, so the question is not
+# asked - and the install says why, because a question that is silently not
+# asked reads exactly like one that was answered.
+nonic=$(mktemp -d)
+# shellcheck disable=SC2086
+run 0 "a machine with no network card is installed without being asked" $OK \
+    HEXA_ROOT_PASSWORD=s3cr3t HEXA_NET_SYS="$nonic"
+case "$LAST_OUT" in
+  *"management network: this machine has no network card"*)
+    ok "and it says why it did not ask" ;;
+  *) bad "the management question was dropped in silence on a machine with \
+no card, so nothing on the screen tells the operator which it was:
+$LAST_OUT" ;;
+esac
+rmdir "$nonic"
+
+echo
+echo "=== the three management questions, TYPED at, which is how they are met ==="
+#
+# Every case above answers these from the environment, which is the unattended
+# path. An operator meets them as prompts, and what they meet after getting
+# one slightly wrong - a letter that is not on the list, a card this box has
+# not got, an address with no prefix, a gateway on the wrong subnet - had been
+# printed by nothing in this repository (#364). They are the ordinary mistakes,
+# and the screens that answer them are where a defect sits with nobody meeting
+# it.
+#
+# DRIVEN AT THE LIBRARY SEAM, like the disk menu further up, because the whole
+# point is to feed several answers to one question and read back what each one
+# was told. An install per answer would be a boot cycle per answer.
+mask() {  # <function and its arguments>: the prompts on stdin, screen kept
+  ( PATH="$netbin:$PATH"
+    HEXA_INSTALL_LIB=1
+    HEXA_NET_SYS=$netsys
+    export HEXA_INSTALL_LIB HEXA_NET_SYS
+    . "$INSTALLER"
+    "$@" 2>"$SAY_DIR/box.err" )
+  say_box < "$SAY_DIR/box.err"
+}
+# THE SCREEN IS READ BACK FROM THE FILE, not from a variable mask() set. Every
+# call above is inside a command substitution, because what the function
+# RETURNS is half of what is being asserted - and a variable assigned in there
+# dies with the subshell. Read after the fact, the assertion is about the same
+# screen the reader at the bottom of this file was given.
+msaid() {  # <description> <sentence>
+  MASKED=$(cat "$SAY_DIR/box.err")
+  case "$MASKED" in
+    *"$2"*) ok "$1" ;;
+    *) bad "$1: it was not said.
+$MASKED" ;;
+  esac
+}
+
+# A LETTER NOBODY OFFERED. Two cards are on the list, so 'z' is off the end of
+# it, and the question has to be asked again rather than answered with
+# nothing - a card chosen by silence here is a box nobody can reach.
+out=$(printf 'z\nens19\n' | mask choose_interface ens18)
+[ "$out" = ens19 ] \
+  && ok "an unoffered letter re-asks rather than guessing: $out" \
+  || bad "'z' then 'ens19' must end at ens19, got '$out'"
+msaid "and says that letter is not on the list" "there is no card 'z' in that list."
+
+# A NAME THIS BOX HAS NOT GOT, which is the likelier mistake: a name is what
+# an operator has written down, and the one they wrote down may be the card in
+# the other machine.
+out=$(printf 'wlan9\nens18\n' | mask choose_interface ens18)
+[ "$out" = ens18 ] \
+  && ok "a name this box has not got re-asks: $out" \
+  || bad "'wlan9' then 'ens18' must end at ens18, got '$out'"
+msaid "and says this box has no card of that name" "this box has no card called 'wlan9'."
+
+# And the two answers that end the question, so the refusals above are not
+# satisfied by a menu that refuses everything.
+out=$(printf 'a\n' | mask choose_interface ens18)
+[ "$out" = ens18 ] && ok "'a' takes the first card on the list: $out" \
+  || bad "'a' must take the first card, got '$out'"
+out=$(printf 'none\n' | mask choose_interface ens18)
+[ "$out" = none ] && ok "'none' is an answer: no management network" \
+  || bad "'none' must answer the question, got '$out'"
+
+# THE ADDRESS, and the mistake that is not a typo: an address typed without
+# its prefix is the commonest thing anybody writes down, and the message says
+# what to add rather than that the answer is wrong.
+out=$(printf '10.0.0.2\n10.0.0.2/24\n' | mask ask_address)
+[ "$out" = 10.0.0.2/24 ] \
+  && ok "an address with no prefix re-asks, and the next answer is taken" \
+  || bad "'10.0.0.2' then '10.0.0.2/24' must end at the second, got '$out'"
+msaid "and it spells out what the answer should have been" \
+      "an address needs its prefix: '10.0.0.2/24', not '10.0.0.2'."
+
+# And one that HAS a prefix and is still not an address, which is a different
+# message because it is a different mistake.
+out=$(printf '10.0.0.2/99\ndhcp\n' | mask ask_address)
+[ "$out" = dhcp ] \
+  && ok "a prefix outside 1..32 re-asks, and 'dhcp' still answers" \
+  || bad "'10.0.0.2/99' then 'dhcp' must end at dhcp, got '$out'"
+msaid "and says what an address and a prefix look like" \
+      "is not an address and a prefix, like 10.0.0.2/24."
+
+# THE GATEWAY, whose wrong answer this installer can catch on the arithmetic
+# alone: a gateway off the address's own subnet is a box that boots with an
+# address, refuses the default route, and is reachable from its own subnet and
+# nowhere else. That is a box somebody drives to.
+out=$(printf '10.9.9.1\n10.0.0.1\n' | mask ask_gateway 10.0.0.2/24)
+[ "$out" = 10.0.0.1 ] \
+  && ok "a gateway off the subnet re-asks, and the next answer is taken" \
+  || bad "'10.9.9.1' then '10.0.0.1' must end at the second, got '$out'"
+msaid "and says which of the two to check, and what it would cost" \
+      "own subnet only. Check which of the two is wrong."
+
+out=$(printf 'the-router\n\n' | mask ask_gateway 10.0.0.2/24)
+[ -z "$out" ] \
+  && ok "a gateway that is not an address at all re-asks, and empty ends it" \
+  || bad "'the-router' then Enter must end with no gateway, got '$out'"
+msaid "and says it is not an address" "'the-router' is not an address."
+
 echo
 echo "=== the file the answer becomes, written into a root (#303) ==="
 #
@@ -1172,12 +1382,16 @@ mkroot() {  # <dir>: what a good install leaves behind
 vnet=$(mktemp -d); mkdir -p "$vnet/ens18/device"; echo up > "$vnet/ens18/operstate"
 
 verify() {  # <root> -> output on stdout, status in $?
-  ( PATH="$vbin:$PATH"
+  _vrc=0
+  _vout=$( ( PATH="$vbin:$PATH"
     HEXA_INSTALL_LIB=1
     HEXA_NET_SYS=$vnet
     export HEXA_INSTALL_LIB HEXA_NET_SYS
     . "$INSTALLER"
-    verify_installed "$1" 2>&1 )
+    verify_installed "$1" 2>&1 ) ) || _vrc=$?
+  printf '%s\n' "$_vout" | say_box
+  printf '%s\n' "$_vout"
+  return $_vrc
 }
 
 vgood=$(mktemp -d); mkroot "$vgood"
@@ -1394,6 +1608,46 @@ case "$LAST_OUT" in
   *) bad "a one-disk install does not say it has no mirror: $LAST_OUT" ;;
 esac
 
+# AN UNATTENDED INSTALL ON A MACHINE THAT HAS A SECOND DISK, which is the one
+# install where somebody may have expected a mirror and got none. It cannot be
+# asked - there is no console to answer from - so it takes one disk and says
+# so, and it NAMES the other disk, because "there is another disk" on a
+# machine the operator believes has one is a statement they cannot check.
+#
+# Driven against a fake lsblk, because this machine's own second disk is not
+# something a suite may assume or destroy. The target is still the real block
+# device every case here names: check mode does not relax that.
+twodisk=$(mktemp -d)
+cat > "$twodisk/lsblk" <<TWO
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in -dnbo) M=table ;; -ndo) M=pkname ;; esac
+done
+case "\${M:-other}" in
+  table)  printf '%s 21474836480 disk QEMU HARDDISK\\n' "\$(basename $DISK)"
+          printf 'vdz 10737418240 disk SPARE DISK\\n' ;;
+  pkname) : ;;
+  *)      exec /bin/lsblk "\$@" ;;
+esac
+TWO
+chmod +x "$twodisk/lsblk"
+# shellcheck disable=SC2086
+run 0 "an unattended install on a two-disk machine still installs" $OK \
+    PATH="$twodisk:$PATH" HEXA_ROOT_PASSWORD=s3cr3t HEXA_INSTALL_YES=1
+case "$LAST_OUT" in
+  *"records: not mirrored, and this machine has /dev/vdz"*)
+    ok "and it names the disk the records could have been mirrored onto" ;;
+  *) bad "an unattended install passed over a second disk in silence, so \
+nobody learns the records are on one until one of them fails:
+$LAST_OUT" ;;
+esac
+case "$LAST_OUT" in
+  *"hexarouting.mirror=<disk>"*)
+    ok "and says what to pass to get a mirror on the next one" ;;
+  *) bad "it named the disk and not what to do about it: $LAST_OUT" ;;
+esac
+rm -rf "$twodisk"
+
 # The mirror as an ANSWER IN THE FILE, which is the unattended path. A key the
 # installer does not know is refused rather than ignored, so a medium written
 # with "mirror" would have hung every unattended install if the parser had not
@@ -1456,8 +1710,9 @@ mpick() {  # <answer on stdin> <target disk> -> the chosen mirror, or nothing
     HEXA_INSTALL_LIB=1
     export HEXA_INSTALL_LIB
     . "$INSTALLER"
-    choose_mirror "$2" 2>/dev/null
+    choose_mirror "$2" 2>"$SAY_DIR/box.err"
   )
+  say_box < "$SAY_DIR/box.err"
 }
 
 out=$(mpick "" /dev/sdb)
@@ -1494,6 +1749,7 @@ esac
 # medium: both are already destroyed or already being read.
 menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
                       . "$INSTALLER"; choose_mirror /dev/sdb 2>&1 >/dev/null))
+printf '%s\n' "$menu" | say_box
 case "$menu" in
   *sdb*) bad "the disk being installed was offered as its own mirror:
 $menu" ;;
@@ -1536,6 +1792,7 @@ VIRT
 chmod +x "$fake/lsblk"
 menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
                       . "$INSTALLER"; choose_mirror /dev/sdb 2>&1))
+printf '%s\n' "$menu" | say_box
 if [ -z "$menu" ]; then
   ok "RAM and zram devices are not a second disk, so nothing is asked"
 else
@@ -1566,6 +1823,7 @@ ONE
 chmod +x "$fake/lsblk"
 menu=$(printf '\n' | (PATH="$fake:$PATH"; HEXA_INSTALL_LIB=1; export HEXA_INSTALL_LIB;
                       . "$INSTALLER"; choose_mirror /dev/sdb 2>&1))
+printf '%s\n' "$menu" | say_box
 if [ -z "$menu" ]; then
   ok "a machine with one disk is asked nothing about mirrors"
 else
@@ -1586,10 +1844,14 @@ echo "=== the mirror is verified before the install reports success ==="
 # produce these is a machine with a disk that has just died.
 mstat=$(mktemp -d)
 vmirror() {  # <mdstat file> <device> -> output on stdout, status in $?
-  ( HEXA_INSTALL_LIB=1
+  _mrc=0
+  _mout=$( ( HEXA_INSTALL_LIB=1
     export HEXA_INSTALL_LIB
     . "$INSTALLER"
-    verify_mirror "$1" "$2" 2>&1 )
+    verify_mirror "$1" "$2" 2>&1 ) ) || _mrc=$?
+  printf '%s\n' "$_mout" | say_box
+  printf '%s\n' "$_mout"
+  return $_mrc
 }
 cat > "$mstat/good" <<'MD'
 Personalities : [raid1]
@@ -1821,6 +2083,7 @@ CHROOT
               export HEXA_INSTALL_LIB
               . "$INSTALLER"
               install_ssh_host_keys "$1" ) 2>&1 ) || KRC=$?
+    printf '%s\n' "$KOUT" | say_box
   }
 
   T=$kwork/from-old-medium
@@ -2070,6 +2333,7 @@ RLSBLK
         "$@" sh "$INSTALLER" 2>&1)
     RRRC=$?
     RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
+    printf '%s\n' "$RROUT" | say_box
   }
 
   echo
@@ -2172,16 +2436,20 @@ the stub set is not what this case assumed: $RROUT" ;;
   # WHAT THE SEAM CANNOT ANSWER. That the menu refuses and says what to do
   # about it is asserted further up this file, against choose_disk itself.
   # What is asserted here is only the thing the seam cannot reach: WHICH
-  # sentence an operator gets. "no disk given" is the check two lines below,
-  # and it is what an installer that dropped the menu's refusal would print
-  # instead - same exit status, a sentence about an answer they did not give
-  # rather than about a machine with nothing in it to install onto.
+  # sentence an operator gets, and that nothing was partitioned.
+  #
+  # An installer that dropped the menu's refusal would carry $DISK empty into
+  # the block-device check below it and say "error:  is not a block device" -
+  # the same exit status, about an answer they did not give rather than about
+  # a machine with nothing in it to install onto. That is what the last arm
+  # here catches. It used to be caught by "no disk given", which was a line
+  # this program could not reach on any input and is gone (#364).
   real yes 0 HEXA_DISK=
   case "$RROUT" in
-    *"no disk given"*)
+    *"is not a block device"*)
       bad "the menu refused and the run carried on to the check below it, so \
-the operator is told they gave no answer rather than that this machine has \
-nothing to install onto: $RROUT" ;;
+the operator is told their answer is not a disk rather than that this machine \
+has nothing to install onto: $RROUT" ;;
     *"No disk to install onto."*)
       [ "$RRSFDISK" = 0 ] \
         && ok "a machine with nothing to install onto stops at the menu" \
@@ -2302,6 +2570,7 @@ md0 : active raid1 loop0p1[0]
       sh "$INSTALLER" 2>&1)
   RRRC=$?
   RRSFDISK=$(wc -l < "$rwork/sfdisk.ran" | tr -d ' ')
+  printf '%s\n' "$RROUT" | say_box
   rm -f "$rbin/mdadm"
   if [ "$RRRC" = 0 ]; then
     bad "a disk an array would not release was installed onto anyway:
@@ -2440,6 +2709,394 @@ install would sit at a prompt with nobody to answer it: $RROUT"
 fi
 
 echo
+echo "=== the install that WRITES, every step of it, against stubs (#364) ==="
+#
+# EVERY SCREEN AFTER THE PARTITIONER, and until this existed nothing in this
+# repository had produced one of them. The section above reaches the
+# confirmation and stops at the first sfdisk; lab/install-iso.sh reaches the
+# rest by building an ISO and booting a virtual machine, which is minutes per
+# answer and cannot be asked for a grub-install that fails. So "cannot mount",
+# "unsquashfs failed", "no kernel in /boot", "grub-install (BIOS) failed",
+# "setting the root password failed" and the closing screen an operator reads
+# before they walk away from the machine were all unrun - and they are the
+# messages somebody reads with a disk already half written.
+#
+# HOW A DISK IS ARRANGED WITHOUT ONE. The installer wants block devices at
+# $DISK, ${DISK}1, ${DISK}2 and ${DISK}3, and check mode deliberately does not
+# relax that. Inside `unshare -rm` an ordinary FILE with a block device bound
+# over it IS a block device to every test the installer makes, and the device
+# bound over all four is /dev/loop0, UNBOUND - a block device backed by
+# nothing, reporting zero bytes, with no disk behind it to lose. Nothing here
+# opens it: the partitioner, the mkfs and the mount are all stubs.
+#
+# AND A CLOSED PATH, which is the difference between this rig and the one
+# above. PATH is $ibin and nothing else: every tool the installer reaches for
+# is either a symlink to the real one - sed, awk, cut, the things that only
+# read - or a stub. A stub set that is merely FIRST on PATH is a stub set with
+# a hole in it, and the hole here would be `systemctl reboot` on the machine
+# running the tests.
+#
+# /sys/block AND /sys/firmware, replaced by tmpfs of their own. The first is
+# how a disk's size is answered - a tmpfs with nothing in it sends the
+# installer to blockdev, which is a stub, so the arithmetic is this suite's
+# and not this machine's. The second is how EFI is decided, and it is the
+# reason both `grub-install (UEFI) failed` and `grub-install (BIOS) failed`
+# can be arranged here: a machine is one or the other and a mount is either.
+if ! unshare -r true 2>/dev/null; then
+  echo "  SKIP: no unprivileged user namespaces on this machine"
+elif [ ! -b /dev/loop0 ] \
+     || [ "$(cat /sys/block/loop0/size 2>/dev/null || echo 1)" != 0 ]; then
+  echo "  SKIP: /dev/loop0 is not an unbound (zero-byte) loop device"
+else
+  iwork=$(mktemp -d -p /var/tmp hexa-install-write.XXXXXX)
+  ibin=$iwork/bin
+  mkdir -p "$ibin" "$iwork/tmp" "$iwork/rc" "$iwork/net/ens18/device"
+  echo up > "$iwork/net/ens18/operstate"
+  : > "$iwork/filesystem.squashfs"
+  # The kernel's account of its arrays, written rather than read off this
+  # machine. It names a complete array of its own, because verify_mirror reads
+  # /proc/mdstat to decide whether the records reached two disks and a
+  # mirrored install that finds no array is refused - and its members are
+  # called nothing any disk in this rig is called, so release_disk still finds
+  # nothing holding them.
+  imdstat() {
+    printf 'Personalities : [raid1]\nmd0 : active raid1 zz1[1] zz0[0]\n      2094080 blocks super 1.2 [2/2] [UU]\n\nunused devices: <none>\n' \
+      > "$iwork/mdstat"
+  }
+  imdstat
+
+  # The tools that only READ, linked to the real ones. A stub for sed would be
+  # a stub for the thing being measured.
+  for c in sh env sed awk cut sort head tail tr cat grep basename readlink dirname \
+           mkdir rm ln chmod sync sleep timeout wc id expr stty; do
+    _r=$(command -v "$c" 2>/dev/null) && ln -sf "$_r" "$ibin/$c"
+  done
+  # And everything that would touch a disk, a mount, or this machine's init.
+  # They record that they ran and exit with whatever this suite asked for, so
+  # a refusal is arranged by writing one number into a file.
+  for t in lsblk findmnt blkid blockdev ip sfdisk partprobe udevadm mdadm \
+           mount umount mkfs.vfat mkfs.ext4 unsquashfs chroot chpasswd \
+           grub-install update-grub ssh-keygen systemctl reboot; do
+    printf '#!/bin/sh\necho "%s $*" >> "%s/ran"\nexit $(cat "%s/rc/%s" 2>/dev/null || echo 0)\n' \
+      "$t" "$iwork" "$iwork" "$t" > "$ibin/$t"
+    chmod +x "$ibin/$t"
+  done
+
+  # A machine with nothing else in it, so the mirror question is never asked
+  # and no answer below is eaten by it. The sizes the summary reads come from
+  # here; the size the arithmetic reads comes from blockdev.
+  cat > "$ibin/lsblk" <<'ILSBLK'
+#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    -dnbo) M=table ;; -ndo) M=pkname ;; -lnpo) M=parts ;;
+    NAME,SIZE,FSTYPE,MOUNTPOINT) M=tree ;;
+    SIZE,MODEL) M=sizemodel ;; MODEL) M=model ;; SIZE) M=size ;;
+  esac
+done
+case "${M:-size}" in
+  table|pkname|parts|tree) : ;;
+  sizemodel) echo ' 20G QEMU HARDDISK' ;;
+  model)     echo 'QEMU HARDDISK' ;;
+  *)         echo '20G' ;;
+esac
+ILSBLK
+  # 20 GB, which leaves the system its 8 and the records their 1.
+  printf '#!/bin/sh\necho 21474836480\n' > "$ibin/blockdev"
+  # A UUID per device, and a device for every UUID - unless this case asked
+  # for the other answer, which is how a disk that does not verify is
+  # arranged without breaking the tree the verification reads.
+  cat > "$ibin/blkid" <<IBLKID
+#!/bin/sh
+case "\$1" in
+  -U) [ -f "$iwork/rc/blkid-unresolvable" ] || echo /dev/loop0 ;;
+  *)  # HEXADECIMAL, because fstab is read back by a grep for
+      # "UUID=[-0-9A-Fa-f]+" and a stub that answered "uuid-tmp-disk2" would
+      # write an fstab the verification reports as naming no UUID at all -
+      # which is a real refusal, arranged by accident, standing in for the
+      # success this box is the control for.
+      n=\$(cat "$iwork/blkid.n" 2>/dev/null || echo 0)
+      n=\$((n + 1)); echo "\$n" > "$iwork/blkid.n"
+      printf 'abcdef%02d-1111-2222-3333-444444444444\n' "\$n" ;;
+esac
+IBLKID
+  # The medium's filesystem, unpacked. What it puts on the target is what a
+  # squashfs of this product carries and what the verification reads back: a
+  # kernel, a GRUB menu naming it, a locked root, a DHCP client, and the
+  # /etc/network/interfaces that says interfaces.d is read.
+  cat > "$ibin/unsquashfs" <<IUNSQ
+#!/bin/sh
+echo "unsquashfs \$*" >> "$iwork/ran"
+_rc=\$(cat "$iwork/rc/unsquashfs" 2>/dev/null || echo 0)
+[ "\$_rc" = 0 ] || exit "\$_rc"
+d=""
+while [ \$# -gt 0 ]; do [ "\$1" = -d ] && { d=\$2; break; }; shift; done
+[ -n "\$d" ] || exit 1
+mkdir -p "\$d/boot/grub" "\$d/etc/ssh" "\$d/sbin" "\$d/etc/network/interfaces.d" \\
+         "\$d/etc/systemd/system" "\$d/etc/default" "\$d/usr/lib/hexarouting"
+[ -f "$iwork/rc/no-kernel" ] || { : > "\$d/boot/vmlinuz-6.1.0"
+  echo 'linux /boot/vmlinuz-6.1.0 root=UUID=x' > "\$d/boot/grub/grub.cfg" ; }
+printf 'root:!:19000:0:99999:7:::\n' > "\$d/etc/shadow"
+printf 'source /etc/network/interfaces.d/*\n' > "\$d/etc/network/interfaces"
+printf '#!/bin/sh\n' > "\$d/sbin/dhclient"; chmod +x "\$d/sbin/dhclient"
+# A root the management stanza cannot be written into: /etc/network is a FILE,
+# so write_network_config's own mkdir fails and the install stops where it
+# says it does.
+[ -f "$iwork/rc/no-network-dir" ] && { rm -rf "\$d/etc/network"; : > "\$d/etc/network"; }
+exit 0
+IUNSQ
+  # What runs INSIDE the target. chpasswd and ssh-keygen are the two whose
+  # effect the installer reads back afterwards, so the stub has to leave that
+  # effect behind or the install refuses for the right reason at the wrong
+  # step. Each is refusable on its own: "$iwork/rc/chroot-<command>".
+  cat > "$ibin/chroot" <<ICHROOT
+#!/bin/sh
+r=\$1; shift
+echo "chroot \$r \$*" >> "$iwork/ran"
+c=\${1##*/}
+case "\$c" in
+  chpasswd)
+    cat >/dev/null
+    [ -f "$iwork/rc/chroot-chpasswd" ] || \\
+      printf 'root:\$6\$salt\$hash:19000:0:99999:7:::\n' > "\$r/etc/shadow" ;;
+  ssh-keygen)
+    [ -f "$iwork/rc/chroot-ssh-keygen" ] || {
+      mkdir -p "\$r/etc/ssh"
+      : > "\$r/etc/ssh/ssh_host_ed25519_key"
+      : > "\$r/etc/ssh/ssh_host_ed25519_key.pub" ; } ;;
+esac
+exit \$(cat "$iwork/rc/chroot-\$c" 2>/dev/null || echo 0)
+ICHROOT
+  # The partitioner, answering per CALL and not once: a mirrored install runs
+  # it twice, and the second one failing is a different screen from the first.
+  cat > "$ibin/sfdisk" <<ISFDISK
+#!/bin/sh
+echo "sfdisk \$*" >> "$iwork/ran"
+echo "the disk is in use by something this stub invented"
+n=\$(( \$(grep -c '^sfdisk ' "$iwork/ran") ))
+exit \$(cat "$iwork/rc/sfdisk.\$n" 2>/dev/null || cat "$iwork/rc/sfdisk" 2>/dev/null || echo 0)
+ISFDISK
+  chmod +x "$ibin/lsblk" "$ibin/blockdev" "$ibin/blkid" "$ibin/unsquashfs" \
+           "$ibin/chroot" "$ibin/sfdisk"
+
+  # WHICH PARTITIONS EXIST, as a list this rig binds a block device over. A
+  # case that wants "partitioning did not produce /tmp/disk3" takes disk3 off
+  # it, and the install then meets exactly what a partitioner that exited zero
+  # having made nothing leaves behind.
+  IPARTS="disk disk1 disk2 disk3"
+  IEFI=""            # "1" mounts an empty /sys/firmware with efi in it
+  iwrite() {  # <what is typed> <env...>; -> $IWOUT, $IWRC
+    rm -f "$iwork/ran"; : > "$iwork/ran"
+    _typed=$1; shift
+    IWOUT=$(printf '%s\n' "$_typed" | unshare -rm sh -c '
+        mount --bind "$1" /tmp                 || exit 99
+        mount --bind "$2" /proc/mdstat         || exit 98
+        mount -t tmpfs tmpfs /sys/block        || exit 97
+        mount -t tmpfs tmpfs /sys/firmware     || exit 96
+        [ -z "$3" ] || mkdir -p /sys/firmware/efi
+        for p in $4; do
+          : > "/tmp/$p"; mount --bind /dev/loop0 "/tmp/$p" || exit 95
+        done
+        [ -z "$5" ] || { mkdir -p "/sys/block/$5"; echo 41943040 > "/sys/block/$5/size"; }
+        shift 5
+        exec env "$@"' _ "$iwork/tmp" "$iwork/mdstat" "$IEFI" "$IPARTS" \
+        "${IMIRRORSYS:-}" \
+        PATH="$ibin" \
+        HEXA_INSTALL_SRC="$iwork/filesystem.squashfs" \
+        HEXA_DISK=/tmp/disk HEXA_HOSTNAME=cgnat01 \
+        HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
+        HEXA_LOG_GB=1 HEXA_NET_SYS="$iwork/net" \
+        HEXA_MGMT_INTERFACE=ens18 HEXA_MGMT_ADDRESS=dhcp \
+        "$@" sh "$INSTALLER" 2>&1)
+    IWRC=$?
+    printf '%s\n' "$IWOUT" | say_box
+  }
+  isaid() {  # <description> <sentence>
+    case "$IWOUT" in
+      *"$2"*) ok "$1" ;;
+      *) bad "$1: the run did not say it.
+$IWOUT" ;;
+    esac
+  }
+
+  # THE CONTROL, and the box every failure below is a mutation of: a whole
+  # install, from the confirmation to the sentence an operator reads before
+  # they take the medium out.
+  iwrite 'yes
+'
+  [ "$IWRC" = 0 ] \
+    && ok "an install that is answered and not interrupted runs to the end" \
+    || bad "the control install failed: rc=$IWRC
+$IWOUT"
+  isaid "and it says it is verifying the disk it just wrote" \
+        "verifying the disk that was just written"
+  isaid "and where the box is managed, on the screen they walk away from" \
+        "Managed on ens18 by DHCP"
+  isaid "and to take the medium out before it reboots" \
+        "REMOVE THE INSTALLATION MEDIUM"
+
+  # The two other answers to the management question, which are the two other
+  # closing screens. An operator who chose no management network has to be
+  # told that is what they get, on the same screen.
+  iwrite 'yes
+' HEXA_MGMT_ADDRESS=none HEXA_MGMT_INTERFACE=
+  isaid "an install answered 'none' says so where it is written" \
+        "management network: none, by answer"
+  isaid "and again on the closing screen, with where the box IS reached" \
+        "No management network was asked for"
+  iwrite 'yes
+' HEXA_MGMT_ADDRESS=10.0.0.2/24 HEXA_MGMT_GATEWAY=10.0.0.1 \
+  HEXA_MGMT_DNS=192.0.2.53
+  isaid "and a static answer closes with the address it was given" \
+        "Managed on ens18 at 10.0.0.2/24 via 10.0.0.1"
+  # A STATIC ADDRESS WITH NO GATEWAY, typed rather than passed: an empty
+  # answer to the gateway question is a real arrangement - an out-of-band
+  # management LAN with a jump host on it - and what it costs is said in the
+  # summary, which is the one moment anybody can act on it.
+  iwrite '
+
+yes
+' HEXA_MGMT_ADDRESS=10.0.0.2/24
+  isaid "an empty gateway is taken, and the summary says what it costs" \
+        "no gateway: its own subnet reaches it, nothing else"
+
+  # EVERY STEP THAT CAN FAIL, one file each. The install has already written
+  # the partition table by the time any of these is reached, which is why each
+  # one has to name its own step: "the install failed" sends the operator to
+  # start again on a disk that is already half a system.
+  ifail() {  # <description> <rc file> <sentence> [env...]
+    _d=$1; _f=$2; _s=$3; shift 3
+    echo 1 > "$iwork/rc/$_f"
+    iwrite 'yes
+' "$@"
+    rm -f "$iwork/rc/$_f"
+    if [ "$IWRC" = 0 ]; then
+      bad "$_d: the install reported success anyway
+$IWOUT"
+    else
+      isaid "$_d" "$_s"
+    fi
+  }
+  ifail "a root filesystem that will not mount stops the install" \
+        mount "cannot mount /tmp/disk2"
+  ifail "an unsquashfs that fails stops it, before anything is configured" \
+        unsquashfs "unsquashfs failed"
+  ifail "a live filesystem built without /boot is caught here and not at a
+         grub prompt" no-kernel "the live filesystem was built without /boot"
+  ifail "a target the management stanza cannot be written into is refused" \
+        no-network-dir "could not write the management network onto the target"
+  ifail "an update-grub that fails stops the install" \
+        chroot-update-grub "update-grub failed"
+  ifail "a chpasswd that fails leaves the account locked and says so" \
+        chroot-chpasswd "setting the root password failed"
+  ifail "an ssh-keygen that makes no key is a box with no way in over the
+         network, and is refused" \
+        chroot-ssh-keygen "could not generate ssh host keys on the target"
+  ifail "and a disk that does not verify is NOT reported as an install" \
+        blkid-unresolvable "the installed system did not verify"
+
+  # THE BOOTLOADER, ON BOTH FIRMWARES. A machine is one or the other, so the
+  # arm that is not this machine's had never run anywhere - and the two
+  # messages differ by the word that says which one to look at.
+  IEFI=1
+  ifail "grub-install failing on a UEFI box names UEFI" \
+        chroot-grub-install "grub-install (UEFI) failed"
+  IEFI=""
+  ifail "and on a BIOS box it names BIOS" \
+        chroot-grub-install "grub-install (BIOS) failed"
+
+  # A PARTITION TABLE THAT PRODUCED NO RECORDS PARTITION. The second of the
+  # two, which is the one the connection records go on: a box that came up
+  # without it writes a year of records onto the root filesystem, which is
+  # the arrangement the separate volume exists to replace.
+  IPARTS="disk disk1 disk2"
+  iwrite 'yes
+'
+  [ "$IWRC" = 0 ] \
+    && bad "a table with no records partition was installed onto anyway" \
+    || isaid "a table that produced no records partition stops by name" \
+             "partitioning did not produce /tmp/disk3 for the records"
+  IPARTS="disk disk1 disk2 disk3"
+
+  # AN ARRAY THIS BOX CANNOT STOP. release_disk says what it found and what it
+  # could not do about it; the install goes on, because a disk this installer
+  # could not release is a disk sfdisk will refuse and say so about.
+  printf 'Personalities : [raid1]\nmd0 : active raid1 disk1[0]\n      1 blocks\n' \
+    > "$iwork/mdstat"
+  echo 1 > "$iwork/rc/mdadm"
+  iwrite 'yes
+'
+  rm -f "$iwork/rc/mdadm"
+  imdstat
+  isaid "an array that will not stop is named, not passed over in silence" \
+        "would not stop"
+
+  # ------------------------------------------------------- the records mirror
+  #
+  # The second disk, which is the half of this program that only runs on a box
+  # with one - and every screen it prints was unrun. /sys/block is a tmpfs
+  # here, so the mirror's size is a number this suite writes: the installer
+  # reads it from there and from nowhere else.
+  IPARTS="disk disk1 disk2 disk3 mirror mirror1"
+  IMIRRORSYS=mirror
+  iwrite 'yes
+' HEXA_MIRROR=/tmp/mirror
+  [ "$IWRC" = 0 ] \
+    && ok "an install with a records mirror runs to the end" \
+    || bad "the mirrored install failed: rc=$IWRC
+$IWOUT"
+  isaid "and says it is building the array, and that it syncs afterwards" \
+        "building the mirror (it synchronises in the background)"
+  isaid "and writes the array into the installed system's own mdadm.conf" \
+        "recording the mirror in the installed system"
+  isaid "and arms the survivor, which is the only time any of it matters" \
+        "arming the survivor"
+  isaid "and the closing screen names both disks the records are on" \
+        "The connection records are on /tmp/disk and /tmp/mirror"
+
+  # The mirror's own partitioner, which is the SECOND sfdisk: the run that
+  # only stubbed the first got the system disk partitioned and was then
+  # refused on this one.
+  echo 124 > "$iwork/rc/sfdisk.2"
+  iwrite 'yes
+' HEXA_MIRROR=/tmp/mirror
+  rm -f "$iwork/rc/sfdisk.2"
+  [ "$IWRC" = 0 ] \
+    && bad "the mirror's partitioner was killed and the install went on" \
+    || isaid "an sfdisk killed on the mirror disk names that disk" \
+             "sfdisk timed out on /tmp/mirror after 90s"
+  IPARTS="disk disk1 disk2 disk3 mirror"
+  iwrite 'yes
+' HEXA_MIRROR=/tmp/mirror
+  [ "$IWRC" = 0 ] \
+    && bad "the mirror produced no partition and the install went on" \
+    || isaid "and a mirror disk whose table produced nothing stops by name" \
+             "partitioning did not produce /tmp/mirror1 on the mirror disk"
+  IPARTS="disk disk1 disk2 disk3 mirror mirror1"
+  ifail "an mdadm that cannot create the array stops the install" \
+        mdadm "mdadm could not create the records mirror" \
+        HEXA_MIRROR=/tmp/mirror
+  ifail "and a records-array unit that will not enable stops it too" \
+        chroot-systemctl "could not enable the records array unit" \
+        HEXA_MIRROR=/tmp/mirror
+  # update-initramfs is the one step here that is NOT fatal: nothing at boot
+  # depends on the initramfs copy of mdadm.conf, and an install refused over
+  # it would be an install refused over a file that is read by nothing.
+  echo 1 > "$iwork/rc/chroot-update-initramfs"
+  iwrite 'yes
+' HEXA_MIRROR=/tmp/mirror
+  rm -f "$iwork/rc/chroot-update-initramfs"
+  [ "$IWRC" = 0 ] \
+    && isaid "an update-initramfs that does not run is said out loud and the
+         install finishes, because the boot does not depend on it" \
+             "update-initramfs did not run" \
+    || bad "the install was refused over an initramfs nothing reads: rc=$IWRC
+$IWOUT"
+
+  rm -rf "$iwork"
+fi
+
+echo
 echo "=== a real run that is not root refuses before it asks anything ==="
 # `id -u` is the installer's first check and it is a `fatal`: a note in check
 # mode, a refusal in a real one. Every other case in this file is check mode,
@@ -2455,6 +3112,7 @@ else
       HEXA_TIMEZONE=America/Sao_Paulo HEXA_ROOT_PASSWORD=s3cr3t \
       sh "$INSTALLER" </dev/null 2>&1)
   nrrc=$?
+  printf '%s\n' "$nrout" | say_box
   [ "$nrrc" != 0 ] \
     && ok "a real run as an ordinary user is refused" \
     || bad "the installer ran as an ordinary user"
@@ -2474,6 +3132,9 @@ could not write anything: $nrout" ;;
     *) ok "and it stops before the banner, so no question was asked" ;;
   esac
 fi
+
+say_report appliance/hexarouting-install
+rm -rf "$SAY_DIR" "$GLOBALBIN"
 
 echo
 if [ "$fail" = 0 ]; then echo "ALL TESTS PASSED"; exit 0; fi
