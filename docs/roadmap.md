@@ -2240,6 +2240,33 @@ records, holding an interface name, an address and a MAC. The method is
 rather than to wrap the verdict, because `say_list` and `say_prose` already
 fold and the scripts choose between them on purpose.
 
+**And the third thing they found is a warning that reaches nobody**
+([#372](https://github.com/andrediashexa/hexarouting/issues/372)). Making
+`bpa_reserve_warn()` run for the first time showed it has **one caller, and it
+is the `vppctl` handler**. The binary API path hexash uses calls the other two
+warn functions and not this one, so an operator who configures `reserve` from
+the VTY - which is every operator, since the VTY exists so nobody has to drop
+to `vppctl` - sees it neither on the terminal nor in the log. And
+`configuracao-de-pool.md` tells them *"A caixa avisa na criação do pool"*. The
+cost is concrete: workers holding no reserve at all, whose subscribers can
+never be given a second block, so a customer who fills their block stays full
+on a box that reports a reserve. This is the highest-priority open defect by
+this file's own rule - what the product claims and does not do comes above
+everything - and the wiki page is wrong until it closes.
+
+**And `appliance/install.sh` has no message reader, unlike the four that got
+one** ([#371](https://github.com/andrediashexa/hexarouting/issues/371)). It is
+the program that puts files on the box, on a first install and on every
+upgrade, and **44 of its 75 messages are printed by no run of the five suites
+that run it**. The 44 include the manifest header the boot self-test reads,
+the last thing an operator sees after an install, and the whole of what the
+box says about upgrading while it is running - the #291 and #293 work that
+stopped a box reporting a new version while forwarding through the previous
+dataplane. That measurement took two attempts and the first was wrong: those
+suites redirect the program's output to a file by design, so a corpus built
+from suite stdout sees almost none of it and reports 71. The corpus behind the
+44 is the program's own output.
+
 **The first two things those readers found are warnings an operator would
 act on, and neither had ever been printed**
 ([#370](https://github.com/andrediashexa/hexarouting/issues/370)).
