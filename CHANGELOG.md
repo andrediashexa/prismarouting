@@ -77,6 +77,29 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **The installer sent the operator to a path the box does not have**
+  ([#348](https://github.com/andrediashexa/hexarouting/issues/348)). The
+  connection-records question said *"one year at 200k subscribers in dynamic
+  mode is about 29 GB (see `docs/logging.md`)"*. There is no `docs/` on a box
+  this product installs: `appliance/install.sh` puts that file at
+  `/usr/share/doc/hexarouting/logging.md`, and the person answering that
+  question has the box rather than the repository. The public installation page
+  quotes that screen verbatim - because the rule there is that box output is
+  what the box prints - so the path nobody could follow reached a reader who
+  had not installed anything yet. Both now name the path the box has.
+
+  `test/test_appliance_paths.py` holds it, with two rules and no allowlist
+  behind either. **No script that runs on a box prints a repository-relative
+  path**, where repository-relative means the first component is one of this
+  tree's own top-level directories - the rule `test/doc_paths.py` established
+  and measured. **And a document named under `/usr/share/doc/hexarouting/` is
+  one `install.sh` puts there**, read out of `install.sh`'s own loop so that
+  adding or dropping a document moves both sides at once. Which scripts run on
+  a box is `install.sh`'s answer too: a file it copies into `$DESTDIR` is a
+  file that runs where `docs/` does not exist, so `build-iso.sh` and
+  `install.sh` themselves - which run in a checkout, by somebody who has the
+  repository - are outside the rule without being listed as exceptions.
+
 * **`show hardware`'s Link and Speed columns ran together**
   ([#347](https://github.com/andrediashexa/hexarouting/issues/347)). The Link
   column was seven wide and `unknown` is seven characters, so a card in that

@@ -179,8 +179,9 @@ O padrão é conta, não chute, e a conta aparece na tela:
 ```
   Connection records go on their own filesystem, so that a full log
   cannot stop the box working. One year at 200k subscribers in dynamic
-  mode is about 29 GB (see docs/logging.md); deterministic mode logs
-  no allocations and needs almost none.
+  mode is about 29 GB; deterministic mode logs no allocations and
+  needs almost none. The arithmetic is in
+  /usr/share/doc/hexarouting/logging.md once this box is installed.
   This disk is 240 GB; at most 231 GB can go to records.
 Gigabytes for connection records [30]:
 ```

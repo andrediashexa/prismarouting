@@ -78,3 +78,4 @@ sh test/test_tool_refusals.sh
 sh test/test_off_run_coverage.sh
 python3 test/test_hexash_refusals.py
 python3 test/test_collector_stop.py
+python3 test/test_appliance_paths.py
