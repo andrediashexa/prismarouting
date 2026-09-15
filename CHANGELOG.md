@@ -120,6 +120,28 @@ version has a chance of seeing it.
 
 ### Fixed
 
+* **Half of the audit trail's tamper message had never been printed by
+  anything.** `bpa_audit.c` builds it as `%llu entr%s removed from the middle`
+  with the suffix chosen by `this_seq - expect == 1 ? "y was" : "ies were"`,
+  and every case in `lab/audit.sh` removed exactly **one** line - so the plural
+  branch had never run anywhere.
+
+  That is the screen somebody reads when they are asking whether the
+  configuration trail was altered, and the half nobody had seen is the half
+  about the worse case. `lab/audit.sh` removes two adjacent entries now, so
+  the sequence jumps by two and the arithmetic is exercised along with the
+  wording:
+
+  ```
+  the sequence jumps from 2 to 4: 1 entry was removed from the middle
+  the sequence jumps from 2 to 5: 2 entries were removed from the middle
+  ```
+
+  Two adjacent and not two far apart, because a verifier that stops at the
+  first gap would print `1 entry was` again. And the singular is asserted by
+  name now as well: `removed from the middle` is in both messages, so without
+  the `entr[y|ies]` half the two cases are two assertions about the same word.
+
 * **The README said the configuration trail's every entry names the operator,
   and the product has a shape where there is nobody to name.** A change typed
   at the dataplane's own CLI is recorded `by unattributed via cli`, and

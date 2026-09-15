@@ -177,6 +177,25 @@ REMOVED=$(vppctl show bpa pool history verify)
 printf '%s\n' "$REMOVED" | sed 's/^/  /'
 
 echo
+echo "=== TWO entries removed from the middle ==="
+# The same refusal, and the half of its sentence nothing had ever produced.
+# The message is built as "%llu entr%s removed from the middle" with the
+# suffix chosen by `this_seq - expect == 1 ? "y was" : "ies were"`, and every
+# case in this file until now removed exactly ONE line - so the plural branch
+# had never run anywhere, on the screen somebody reads when they are asking
+# whether the trail was altered. Found by tools/plugin-says.sh, which names a
+# message no box has printed (#366, #368).
+#
+# Two ADJACENT lines, so the sequence jumps by two and the arithmetic in the
+# message is exercised as well as the wording: a case that removed two lines
+# far apart would stop at the first gap and print "1 entry was" again.
+cp $TRAIL /tmp/removed2.log
+sed -i '3,4d' /tmp/removed2.log
+vppctl bpa audit-path /tmp/removed2.log >/dev/null
+REMOVED2=$(vppctl show bpa pool history verify)
+printf '%s\n' "$REMOVED2" | sed 's/^/  /'
+
+echo
 echo "=== entries removed from the END ==="
 # The case a file cannot report about itself: every remaining link is genuine,
 # so the chain verifies. Only something that remembers what it wrote can tell.
@@ -283,6 +302,14 @@ expect_not_in "an altered trail is not reported as intact" "chain intact" \
 expect_in "an entry removed from the middle is detected" "BROKEN" "$REMOVED"
 expect_in "and diagnosed as a removal, not as an alteration" \
   "removed from the middle" "$REMOVED"
+# THE SINGULAR, named. Without it the pair below is two assertions about the
+# same word: "removed from the middle" is in both messages, so only the
+# entr[y|ies] half tells the two cases apart.
+expect_in "and one removal is counted as one, in the singular" \
+  "1 entry was removed from the middle" "$REMOVED"
+expect_in "two adjacent entries removed are detected too" "BROKEN" "$REMOVED2"
+expect_in "and counted as two, in the plural" \
+  "2 entries were removed from the middle" "$REMOVED2"
 
 # The three cases have to be TOLD APART. A verifier that says "broken" for all
 # of them leaves the operator to guess what happened to their evidence.
