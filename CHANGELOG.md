@@ -212,6 +212,38 @@ version has a chance of seeing it.
   those were changed, because a lab whose green nobody has seen is the failure
   this project keeps paying for.
 
+* **The self-test coverage reader could be satisfied by the wrong message.** It
+  took each call site's longest literal chunk as a needle and asked whether any
+  printed line contained it. Measured on this tree: 7 of 113 needles are
+  substrings of another message's, and two pairs of call sites have needles
+  that are byte-identical - `statistics segment ` belongs to both the
+  75%-full refusal and the healthy report, and `records mirrored on ` to both
+  mirror lines. A reader keyed on the longest chunk alone cannot tell those
+  apart, so it either misses a branch that never ran or accuses one that did.
+  It now matches **every** literal fragment of a message, in order, and spends
+  each printed line on the most specific message it satisfies. Getting there
+  cost two wrong versions, both caught by running it: cutting the message at
+  the first quote before punching out the values truncates any message
+  containing a `$(...)`, and cutting it afterwards is required because a `case`
+  arm is `ok "..." ;;` and the trailing `;;` otherwise becomes a fragment the
+  reader demands of a printed line.
+
+### Added
+
+* **Six of the release gate's refusals now have assertions, and it had two.**
+  `tools/release-gate.sh` carries 22 refusals and its own header calls it "the
+  only thing in this project that has ever caught a release mistake". Until
+  tonight the only two anything had watched fire were the two added tonight;
+  the rest had been seen only when a real release went wrong. A refusal nobody
+  has watched fire is a refusal that may not fire, which is #335's finding in
+  the place it would cost the most. `test/test_release_gate.sh` clones the
+  newest tag, **breaks exactly one thing**, re-tags and requires that one
+  refusal - starting from a tree that passes is what makes each case about its
+  own break rather than about the scaffolding. It also says, as a number, that
+  it reaches 14 of the 22: everything after `RELEASE_GATE_CHECK_ONLY` needs a
+  321 MB image built, booted and installed, and is still measured only by
+  running a real release.
+
 ### Fixed
 
 * **`docs/appliance.md` still said the commit binds the NIC**
@@ -360,6 +392,77 @@ version has a chance of seeing it.
   measures those waits **without qemu**, reading the functions out of the lab
   rather than copying them, because a second copy of a wait would pass while
   the real one did whatever it does.
+
+### Fixed
+
+* **Swept every harness for the stub that answers a constant, and found seven
+  self-test branches, a lockout and two suites that were red on the machines
+  this product ships to.** Four times now a test stub has answered the same
+  thing on every box a suite arranges, leaving the branch that handles the
+  other answer unreachable - twice in one `systemctl` stub
+  ([#222](https://github.com/andrediashexa/hexarouting/issues/222)), once in
+  `vat2` ([#335](https://github.com/andrediashexa/hexarouting/issues/335)) and
+  once as a stub that was simply missing
+  ([#336](https://github.com/andrediashexa/hexarouting/issues/336)). Each was
+  found by hand, one at a time. All 50 harnesses have now been read and driven
+  under a PATH that records every command reaching the machine underneath: 48
+  stubs, and five suites answering questions about a box from whichever
+  machine ran them.
+
+  Three branches of `appliance/selftest` reported a broken box as a healthy
+  one and no box had ever run them. A VTY that is installed and dies at start -
+  the defect 0.2.0 shipped, a `hexash` that died for want of `config.py` -
+  printed `[ ok ] VTY starts: Traceback (most recent call last):`, because the
+  stub answered one constant line. A box in FIRST BOOT mode, running unpinned
+  with no hugepages at a fraction of the throughput it will have after the
+  reboot, only ever reached `[ ok ] full tuning active`. A records volume
+  naming an array `/proc/mdstat` does not describe only ever reached
+  `[ ok ] records mirrored on 2 disks ()`, counted off a block belonging to a
+  different array. Four more are the ways a manifest can fail to answer for
+  itself ([#302](https://github.com/andrediashexa/hexarouting/issues/302)).
+  All seven have a box now, and `journalctl` - the one command the self-test
+  reaches for that nothing stubbed - answers from the fake box rather than
+  splicing the journal of whatever machine ran the suite into the report the
+  80-column check reads.
+
+  `appliance/hexash-login` read the VTY at `/usr/bin/hexash`, written out, so
+  nothing could arrange a box that HAS one: every check ran against the
+  absence of that file on the machine running the suite, and the fallback that
+  drops an operator into a shell when the VTY dies - the only reason the
+  wrapper exists instead of pointing root's login shell straight at `hexash` -
+  had never been executed anywhere. `HEXA_HEXASH` is the seam, and three boxes
+  are arranged where there was one.
+
+  Two suites were green here and red on the boxes this product runs on.
+  `test/test_installer.sh` names the machine's own first block device as its
+  install target and nothing stubbed `findmnt`, so on a live-booted machine -
+  the ISO this product ships - the installer refuses every case as the medium
+  it booted from: **34 failures**, over a product nobody changed. Nothing
+  stubbed `ip` either, so the card an unattended install takes came from the
+  machine's routing table; the suite passed only because the box these
+  fixtures were written on routes out of a card called `ens18`, and the
+  fallback beside it - "no default route, so take the first card", which is
+  the one-NIC box
+  [#303](https://github.com/andrediashexa/hexarouting/issues/303) is about -
+  had never run. And `appliance/test_tune.py` drives the real `apply-tuning`
+  with no `HEXA_ROOT` and no binder stub: measured with a recording binder
+  installed, **five real bind attempts in one run** - on an appliance running
+  its own suite, five attempts to take its dataplane card off the kernel
+  driver.
+
+  The class is closed rather than the instances. `test/test_selftest.sh` now
+  carries a second reader beside the one
+  [#335](https://github.com/andrediashexa/hexarouting/issues/335) added. That
+  one refuses an `[ ok ]` line printed by every box, which is a check whose red
+  form nothing has seen; this one refuses a message printed by no box, which is
+  a whole branch nothing has run. The `hexash` constant showed up only as the
+  second, because the line it hid behind was printed by a handful of boxes and
+  not by all of them. The call sites are read out of `appliance/selftest`
+  itself, so there is no list to keep up to date and no exception in the rule:
+
+  ```
+  [ ok ] 113 messages appliance/selftest can print, and a box for every one
+  ```
 
 ### Fixed
 

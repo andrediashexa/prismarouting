@@ -26,12 +26,22 @@ if grep -qw "hexash=off" /proc/cmdline 2>/dev/null; then
   exec "$SHELL_FALLBACK" -l
 fi
 
-if [ ! -x /usr/bin/hexash ]; then
+# HEXA_HEXASH is the same kind of seam as HEXA_FALLBACK_SHELL above, and the
+# reason it exists is the whole of what this script is for. The path was
+# written out here, so nothing could arrange a box that HAS a VTY: every check
+# ran against the absence of /usr/bin/hexash on the machine running them, and
+# the fallback below - the one that keeps an operator out of a box whose VTY
+# died, which is the only reason this wrapper exists instead of pointing the
+# login shell straight at hexash - had never been executed anywhere. It is set
+# by nothing on a real box.
+HEXASH=${HEXA_HEXASH:-/usr/bin/hexash}
+
+if [ ! -x "$HEXASH" ]; then
   echo "hexash is not installed; starting $SHELL_FALLBACK" >&2
   exec "$SHELL_FALLBACK" -l
 fi
 
-/usr/bin/hexash
+"$HEXASH"
 rc=$?
 
 # Exit code 0 means the operator typed "exit": log them out, as a VTY should.

@@ -19,7 +19,13 @@ EOF
 chmod +x "$d/bin/fakeshell"
 
 echo "=== hexash missing: must fall back, not fail the login ==="
-out=$(HEXA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
+# HEXA_HEXASH points at a path that is not there. It used to point at nothing:
+# the wrapper read /usr/bin/hexash outright, so this case was arranged by the
+# machine running the suite not having one - green on a build runner, red on
+# the appliance itself, over a product nobody changed. And the other side of
+# that branch could not be arranged at all, which is the three cases below.
+out=$(HEXA_HEXASH="$d/bin/no-such-hexash" \
+      HEXA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
 case "$out" in
   *FELL-BACK-TO-SHELL*) ok "fell back to a shell" ;;
   *) bad "no fallback; got: $out" ;;
@@ -98,6 +104,61 @@ out=$(PATH="$d/bin:$PATH" HEXA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
 case "$out" in
   *"kernel command line"*) bad "hexash=off matched inside another argument" ;;
   *) ok "the match is a whole word, not a substring" ;;
+esac
+
+echo "=== a VTY that is THERE and dies: the lockout this wrapper exists for ==="
+# THE WHOLE POINT OF THE SCRIPT, and nothing had ever run it. A bad edit, a
+# missing Python module, a half-finished upgrade - the VTY exits non-zero and
+# the operator has to land in a shell, or nobody reaches the box over console
+# or ssh again. Every check in this file ran against a machine with no
+# /usr/bin/hexash, so the wrapper had never once got as far as starting a VTY,
+# and the fallback under it existed on paper only.
+cat > "$d/bin/dying-hexash" <<'EOF'
+#!/bin/sh
+echo "ModuleNotFoundError: No module named 'config'" >&2
+exit 1
+EOF
+chmod +x "$d/bin/dying-hexash"
+out=$(HEXA_HEXASH="$d/bin/dying-hexash" \
+      HEXA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
+case "$out" in
+  *FELL-BACK-TO-SHELL*) ok "a VTY that dies leaves the operator in a shell" ;;
+  *) bad "a VTY that died left no shell behind, so the box is unreachable \
+over console and ssh both; got: $out" ;;
+esac
+# The status, not just the fallback. An operator who lands in a shell with no
+# reason given cannot tell a broken VTY from a policy that put them there, and
+# this is the one console where they have nothing else to read.
+case "$out" in
+  *"hexash exited with status 1"*) ok "and is told the VTY failed, and with what" ;;
+  *) bad "it fell back silently: got: $out" ;;
+esac
+case "$out" in
+  *"hexash=off"*) ok "and how to stop it trying, which is the way back in" ;;
+  *) bad "the fallback does not name the escape, so the next login walks \
+into the same VTY: $out" ;;
+esac
+
+echo "=== and a VTY the operator simply left: that is a logout, not a failure ==="
+# The other side of the same branch. "exit" in the VTY must end the session,
+# not drop the operator into a shell they did not ask for - a login shell that
+# cannot be exited is a box whose ssh sessions never close.
+cat > "$d/bin/clean-hexash" <<'EOF'
+#!/bin/sh
+echo "VTY-RAN"
+exit 0
+EOF
+chmod +x "$d/bin/clean-hexash"
+out=$(HEXA_HEXASH="$d/bin/clean-hexash" \
+      HEXA_FALLBACK_SHELL="$d/bin/fakeshell" sh "$W" 2>&1)
+case "$out" in
+  *VTY-RAN*) ok "the VTY is what a login lands in" ;;
+  *) bad "the wrapper never started the VTY at all; got: $out" ;;
+esac
+case "$out" in
+  *FELL-BACK-TO-SHELL*) bad "typing 'exit' in the VTY dropped the operator \
+into a shell instead of logging them out; got: $out" ;;
+  *) ok "and typing 'exit' logs out rather than opening a shell" ;;
 esac
 
 rm -rf "$d"
