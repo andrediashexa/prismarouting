@@ -485,6 +485,55 @@ here says whether it reads this at all. It stopped at:"
       bad "the holder says '$HOLDER' and the gate says '$GATE', so the gate \
 is deciding this for itself instead of reading the one place it is written" ;;
   esac
+  # AND IT GOT PAST THE WIKI STEP TO THE NEXT DOCUMENT CHECK. The roadmap is
+  # compared against the tracker right after this one, and while the wiki
+  # refusal exited on the spot that comparison could never run: the wiki has
+  # been behind since 2026-09-09, so a check placed behind it would have been
+  # unexecuted for its whole life. Both verdicts are taken before either
+  # refusal now, and this is what keeps it that way.
+  #
+  # Three lines are acceptable because three outcomes are: the roadmap agrees,
+  # it does not, or gh cannot answer - which is a legitimate state for a gate
+  # run offline and must not read as a pass.
+  if grep -qE "the roadmap and the tracker agree|roadmap.md and the tracker disagree|roadmap was NOT checked" "$WORK/gate.log"; then
+    ok "and it reaches the roadmap check rather than stopping at the wiki"
+  else
+    bad "the gate never reached the roadmap check for $GATE_TAG, so a \
+document comparison sits behind one that has been red since September and \
+has never run"
+  fi
+  # AND IT ASKED. "reaches the check" and "prints one of its three lines" are
+  # not the same thing: a gate that stopped calling the holder would still
+  # print "the roadmap and the tracker agree", and that reads as a pass. So
+  # the holder is run too and the two are required to match.
+  #
+  # Run IN THE CLONE the gate made, not in this working tree. roadmap-state
+  # reads the repository it sits in, and the gate checks the TAG - whose
+  # roadmap is a different file from the one being edited here. Comparing the
+  # gate's answer about the tag with this tree's answer about itself would be
+  # comparing two different questions and calling the difference a defect.
+  if grep -q "roadmap was NOT checked" "$WORK/gate.log"; then
+    ok "and where gh cannot answer it says so, rather than reading as a pass"
+  elif [ ! -d "$WORK/gate/tools" ]; then
+    bad "the gate left no clone to ask, so nothing here can tell 'asked and \
+agreed' from 'never asked'"
+  else
+    if sh "$WORK/gate/tools/roadmap-state.sh" >/dev/null 2>&1; then
+      RM_HOLDER=agree
+    else
+      RM_HOLDER=disagree
+    fi
+    if grep -q "the roadmap and the tracker agree" "$WORK/gate.log"; then
+      RM_GATE=agree
+    else
+      RM_GATE=disagree
+    fi
+    [ "$RM_HOLDER" = "$RM_GATE" ] \
+      && ok "and the gate and tools/roadmap-state.sh agree: $RM_GATE" \
+      || bad "the holder says '$RM_HOLDER' about the tagged tree and the gate \
+says '$RM_GATE', so the gate is not asking it"
+  fi
+
   # And it repeats what the holder said rather than listing pages of its own.
   # A second list is a second thing to keep true, and this one would be read
   # by somebody about to publish.
