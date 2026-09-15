@@ -1423,6 +1423,18 @@ version has a chance of seeing it.
 
 ### Added
 
+* **Eleven of the release gate's fourteen reachable refusals are driven now,
+  up from six.** The five added protect what an operator reads about their own
+  version: a commit that is not a tag; a release tag whose `## Unreleased`
+  section still carries entries, so the release contains work it does not
+  claim; a shipped release's section edited after the fact, which changes what
+  a box somebody is running is said to do; the guard for a section that
+  extracts to nothing, without which the duplicate-heading check passes over
+  anything; and a CHANGELOG carrying one entry twice, where an operator cannot
+  tell which release carried the fix. Everything after
+  `RELEASE_GATE_CHECK_ONLY` still needs a 321 MB image built, booted and
+  installed, and the suite says so as a number rather than leaving it assumed.
+
 * **Every lab is now accounted for on whether its checks have ever been seen
   to fail, or it is named.** `tools/run-all-labs.sh` runs some labs a third
   time with the feature they test switched off and requires each to go red

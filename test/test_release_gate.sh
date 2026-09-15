@@ -57,6 +57,14 @@ NOTE=$(git -C "$FIX" tag -l --format='%(contents)' "$TAG")
 # the CHANGELOG and cases 4, 5 and 6 all refused on it.
 BASE=$(git -C "$FIX" rev-parse "$TAG^{commit}")
 
+# The tags the clone arrived with. Cases make their own - v9.9.8 for the
+# VERSION mismatch, and each retag of v<version> - and without removing them
+# the next case picks one of those as "the previous release" and compares a
+# section against a tag that never shipped anything. That happened: the
+# released-section case read v9.9.8 and stopped on an assertion of its own.
+ORIG_TAGS=$WORK/orig-tags
+git -C "$FIX" tag -l | sort > "$ORIG_TAGS"
+
 # THE GATE BEING EDITED, NOT THE ONE LAST COMMITTED. git clone takes the
 # committed state, so without this the suite drives whatever tools/ was at the
 # last commit and an edit to the gate cannot change a single result here. It
@@ -79,6 +87,10 @@ run_gate() {  # <case tag>; -> $OUT and $RC
 reset_fixture() {
   git -C "$FIX" checkout -q -B gatecase "$BASE"
   git -C "$FIX" clean -qfd
+  git -C "$FIX" tag -l | sort | comm -13 "$ORIG_TAGS" - \
+    | while IFS= read -r _t; do
+        [ -n "$_t" ] && git -C "$FIX" tag -d "$_t" >/dev/null 2>&1
+      done
   install_gate
 }
 retag() {  # <name>
@@ -176,6 +188,120 @@ run_gate "v$V"
   || bad "a section repeating a heading was accepted (rc=$RC): $OUT"
 
 echo
+echo "=== HEAD not on a tag at all, with no tag named ==="
+# The only refusal that needs no fixture and the only one reached by running
+# the gate with no argument: a release is built from a tag, and the commit
+# somebody happens to be sitting on is not one.
+reset_fixture
+OUT=$(cd "$FIX" && RELEASE_WORK="$WORK/w-notag" RELEASE_GATE_CHECK_ONLY=1 \
+      sh tools/release-gate.sh 2>&1) && RC=0 || RC=$?
+[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "HEAD is not on a tag" \
+  && ok "refused, and it says how to pass one" \
+  || bad "the gate built a release from a commit that is not a tag (rc=$RC): $OUT"
+
+echo
+echo "=== a release tag whose Unreleased section still has entries ==="
+# Renaming the section to a version is what cuts a release. A tag carrying
+# both means the entries under Unreleased are work this release contains and
+# does not claim, so an operator reading the entry for their version gets a
+# shorter list than the box they are running.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+python3 - "$FIX/CHANGELOG.md" <<'PYE'
+import sys, re
+p = sys.argv[1]
+t = open(p, encoding="utf-8").read()
+m = re.search(r"^## Unreleased$\n", t, re.M)
+t = t[:m.end()] + "\n### Fixed\n\n* **Left behind.** Text.\n" + t[m.end():]
+open(p, "w", encoding="utf-8").write(t)
+PYE
+retag "v$V"
+run_gate "v$V"
+[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "still has entries under" \
+  && ok "refused, and it names the entries left behind" \
+  || bad "a tag carrying both a version and an unreleased entry was accepted \
+(rc=$RC): $OUT"
+
+echo
+echo "=== a released section that is not what its own tag shipped ==="
+# A branch cut before a release rename lands its bullets INSIDE the released
+# version, crediting it with work it did not carry. The section for a version
+# already tagged must be, byte for byte, what that tag had.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+PREV=$(git -C "$FIX" tag -l "v*" --sort=-v:refname \
+       | grep -v "^v$V\$" | head -1 | sed 's/^v//')
+if [ -z "$PREV" ]; then
+  bad "the fixture has no previous release section, so this case is about \
+nothing"
+else
+  python3 - "$FIX/CHANGELOG.md" "$PREV" <<'PYE'
+import sys, re
+p, prev = sys.argv[1], sys.argv[2]
+t = open(p, encoding="utf-8").read()
+m = re.search(r"^## " + re.escape(prev) + r"\b.*$", t, re.M)
+assert m, "no '## " + prev + "' heading at the start of a line"
+t = t[:m.end()] + "\n\n* **Added to a shipped release.** Text.\n" + t[m.end():]
+open(p, "w", encoding="utf-8").write(t)
+PYE
+  retag "v$V"
+  run_gate "v$V"
+  [ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "the .## $PREV. section of CHANGELOG.md is not what" \
+    && ok "refused, and it names the version whose section moved" \
+    || bad "a shipped release's section was edited and the gate accepted it \
+(rc=$RC): $OUT"
+fi
+
+echo
+echo "=== and the guard for a check that has stopped checking ==="
+# The duplicate-heading check extracts the version's section first. An
+# extraction that comes back empty would make that check pass over anything,
+# so the gate refuses the empty extraction itself rather than the file - and
+# says which of the two it is, because the heading is verified above.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+python3 - "$FIX/CHANGELOG.md" "$V" <<'PYE'
+import sys, re
+p, v = sys.argv[1], sys.argv[2]
+t = open(p, encoding="utf-8").read()
+mh = re.search(r"^## " + re.escape(v) + r"\b.*$", t, re.M)
+assert mh, "no version heading at the start of a line"
+i = mh.start()
+j = t.index("\n## ", mh.end())
+# The heading stays and its body goes, which is the shape that makes the
+# extraction empty while every check above it still passes.
+t = t[:t.index("\n", i) + 1] + t[j + 1:]
+open(p, "w", encoding="utf-8").write(t)
+PYE
+retag "v$V"
+run_gate "v$V"
+[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "came out empty" \
+  && ok "refused, and it says the extraction broke rather than the file" \
+  || bad "a version section that extracted to nothing was accepted, so the \
+duplicate-heading check passed over it (rc=$RC): $OUT"
+
+echo
+echo "=== a CHANGELOG that says the same thing twice ==="
+# A branch cut before a release rename re-adds its own bullet under the
+# renamed heading, so one entry appears under two versions and an operator
+# cannot tell which release carried the fix.
+reset_fixture
+V=$(cat "$FIX/VERSION")
+python3 - "$FIX/CHANGELOG.md" <<'PYE'
+import sys
+p = sys.argv[1]
+lines = open(p, encoding="utf-8").read().split("\n")
+i = next(k for k, l in enumerate(lines) if l.startswith("* **"))
+lines.insert(i + 1, lines[i])
+open(p, "w", encoding="utf-8").write("\n".join(lines))
+PYE
+retag "v$V"
+run_gate "v$V"
+[ "$RC" != 0 ] && printf '%s\n' "$OUT" | grep -q "says the same thing twice" \
+  && ok "refused, and it quotes the line that appears twice" \
+  || bad "a CHANGELOG carrying one entry twice was accepted (rc=$RC): $OUT"
+
+echo
 echo "=== and this suite reaches only the half that needs no image ==="
 # Said as a number rather than left to be assumed. The gate refuses eighteen
 # times; everything after RELEASE_GATE_CHECK_ONLY needs a 321 MB image built,
@@ -185,7 +311,7 @@ BEFORE=$(awk '/RELEASE_GATE_CHECK_ONLY:-0/ {exit} /echo "error:/ {n++} END {prin
          "$REPO/tools/release-gate.sh")
 [ "$BEFORE" -ge 6 ] \
   && ok "$BEFORE of the gate's $REFUSALS refusals are reachable without an \
-image, and this file drives 6 of them" \
+image, and this file drives 11 of them" \
   || bad "the gate's checks moved: only $BEFORE refusals now come before the \
 check-only seam, so this suite is measuring less than it says"
 
