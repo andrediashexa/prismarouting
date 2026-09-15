@@ -641,7 +641,7 @@ at half.
 
 `hexarouting-tune` says what it found and what it did about it, beside the
 figures it computes from the hardware. A box configured for 20,000
-sub-interfaces:
+sub-interfaces, on **one socket, eight cores and 64 GB**:
 
 ```
 # 1G hugepages: 6 GB requested (sized for 200000 subscribers), 6 reserved right now
@@ -654,6 +654,16 @@ sub-interfaces:
 #          Put your own statseg in /etc/hexarouting/vpp-base.conf
 #          to choose the size instead.
 ```
+
+**The box matters, and only one of those two numbers follows from the 20,000.**
+The segment is 20,000 x 4,793 bytes, so it moves with the interface count and
+with nothing else. The hugepage figure does not: it is the session table for
+the subscriber target plus **one gigabyte per four workers**, and the worker
+count is the box. The same 200,000 subscribers ask for 6 GB here and 12 GB on
+a 32-core machine, and an operator who runs the tuner on their own hardware
+and reads a different number has this paragraph to reconcile it with rather
+than nothing. `appliance/test_tune.py` builds this box and requires every line
+quoted above to be a line it printed.
 
 and the stanza that reaches `/etc/vpp/startup.conf`:
 
